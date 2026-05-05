@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { client } from './discord/client.js';
 import { registerHandlers } from './discord/handler.js';
 
