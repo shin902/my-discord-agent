@@ -12,6 +12,7 @@ export function registerHandlers(): void {
     console.log(`起動しました: ${c.user.tag}`);
   });
 
+  // メッセージ受信時の処理。MessageCreate イベント
   client.on(Events.MessageCreate, async (message: Message) => {
     // ボット自身のメッセージには反応しない（無限ループ防止）
     if (message.author.bot) return;
