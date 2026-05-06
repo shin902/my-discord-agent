@@ -46,13 +46,13 @@ function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
 */
 export async function appendInbox(msg: Omit<InboxMessage, 'id' | 'retries'>): Promise<void> {
   return withFileLock(async () => {
-  await ensureDir();
-  const record: InboxMessage = {
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    retries: 0,
-    ...msg,
-  };
-  await appendFile(INBOX_PATH, JSON.stringify(record) + '\n', 'utf-8');
+    await ensureDir();
+    const record: InboxMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      retries: 0,
+      ...msg,
+    };
+    await appendFile(INBOX_PATH, JSON.stringify(record) + '\n', 'utf-8');
   });
 }
 
@@ -63,25 +63,81 @@ export async function appendInbox(msg: Omit<InboxMessage, 'id' | 'retries'>): Pr
  */
 export async function shiftInbox(): Promise<InboxMessage | null> {
   return withFileLock(async () => {
-  if (!existsSync(INBOX_PATH)) return null;
+    if (!existsSync(INBOX_PATH)) return null;
 
-  const text = await readFile(INBOX_PATH, 'utf-8');
-  const lines = text.split('\n').filter((l) => l.trim());
-  if (lines.length === 0) return null;
+    const text = await readFile(INBOX_PATH, 'utf-8');
+    const lines = text.split('\n').filter((l) => l.trim());
+    if (lines.length === 0) return null;
 
-  const msg = JSON.parse(lines[0]) as InboxMessage;
-  const remaining = lines.slice(1).join('\n');
-  await writeFile(INBOX_PATH, remaining ? remaining + '\n' : '', 'utf-8');
-  return msg;
+    const msg = JSON.parse(lines[0]) as InboxMessage;
+    const remaining = lines.slice(1).join('\n');
+    await writeFile(INBOX_PATH, remaining ? remaining + '\n' : '', 'utf-8');
+    return msg;
   });
 }
 
 /** リトライ時にメッセージをキューの先頭に戻す。 */
 export async function prependInbox(msg: InboxMessage): Promise<void> {
   return withFileLock(async () => {
-  await ensureDir();
-  const existing = existsSync(INBOX_PATH)
-    ? await readFile(INBOX_PATH, 'utf-8')
-    : '';
-  await writeFile(INBOX_PATH, JSON.stringify(msg) + '\n' + existing);
+    await ensureDir();
+    const existing = existsSync(INBOX_PATH)
+      ? await readFile(INBOX_PATH, 'utf-8')
+      : '';
+    await writeFile(INBOX_PATH, JSON.stringify(msg) + '\n' + existing);
+  });
 }
+
+
+
+/**
+ * ⏺ pendingOp という変数に「直前の操作の Promise」を常に持ち続ける仕組みです。
+
+  let pendingOp = Promise.resolve<void>(undefined); // 最初は「何もない」Promise
+
+  function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
+    const result = pendingOp.then(fn);              // 前の操作が終わったら fn を実行
+    pendingOp = result.then(() => {}, () => {});    // pendingOp を「fn が終わるまで待つ」に更新
+    return result;
+  }
+
+  時系列で見るとこうなります。
+
+  appendInbox が呼ばれる
+    result = Promise.resolve().then(appendInbox)   → すぐ実行開始
+    pendingOp = appendInboxが終わるまで待つPromise
+
+  shiftInbox が割り込んで呼ばれる（appendInbox がまだ実行中）
+    result = pendingOp.then(shiftInbox)            → appendInbox が終わるまで待機
+    pendingOp = shiftInboxが終わるまで待つPromise
+
+  つまり「次の操作は前の操作の .then() に繋ぐ」を繰り返すことで、自動的に順番待ち行列ができます。
+
+  result.then(() => {}, () => {}) の部分は、操作が失敗しても pendingOp が rejected
+  のままにならないようにするためです。失敗で止まると以降の操作が全部待ちっぱなしになるので。
+
+❯ 全部の外側にwithfilelockが追加されてる？
+
+⏺ はい。3つ全部の外側を withFileLock で包んでいます。
+
+  export async function appendInbox(...) {
+    return withFileLock(async () => {
+      // 中身
+    });
+  }
+
+  export async function shiftInbox() {
+    return withFileLock(async () => {
+      // 中身
+    });
+  }
+
+  export async function prependInbox(...) {
+    return withFileLock(async () => {
+      // 中身
+    });
+  }
+
+  pendingOp はモジュールレベルの変数なので、3つの関数が同じキューを共有しています。どの関数が呼ばれても前の操作が
+  終わるまで待つようになっています。
+ * 
+ */
