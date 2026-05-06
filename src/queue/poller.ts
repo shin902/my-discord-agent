@@ -6,7 +6,6 @@
  * 失敗時は retries をインクリメントして先頭に戻す。
  * MAX_RETRIES を超えたらメッセージを破棄する。
  */
-import { TextChannel, DMChannel } from 'discord.js';
 import { client } from '../discord/client.js';
 import { shiftInbox, prependInbox } from './inbox.js';
 import { sendMessage } from '../agent/manager.js';
@@ -36,7 +35,7 @@ async function poll(): Promise<void> {
         try {
           const response = await sendMessage(msg.channelId, msg.content);
           const channel = await client.channels.fetch(msg.channelId);
-          if (channel instanceof TextChannel || channel instanceof DMChannel) {
+          if (channel?.isSendable()) {
             await channel.send(response);
           }
         } catch (err) {
