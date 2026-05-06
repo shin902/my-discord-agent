@@ -25,6 +25,7 @@ export function registerHandlers(): void {
     if (!isDM && !isMentioned && !isThread) return;
 
     const response = await sendMessage(message.channelId, message.content);
+    console.log(`Received message: ${message.content}`);
     if (response && message.channel.isSendable()) {
       await message.channel.send(response);
     }
