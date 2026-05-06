@@ -39,7 +39,7 @@ async function poll(): Promise<void> {
             await channel.send(response);
           }
         } catch (err) {
-          console.error(`[poller] 処理失敗 (試行 ${msg.retries + 1}/${MAX_RETRIES}):`, err);
+          console.error(`[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`, err);
           if (msg.retries + 1 < MAX_RETRIES) {
             // リトライ: retries をインクリメントして先頭に戻す
             await prependInbox({ ...msg, retries: msg.retries + 1 });
