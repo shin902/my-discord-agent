@@ -24,10 +24,12 @@ export function registerHandlers(): void {
     // DM・メンション・スレッド以外は無視する
     if (!isDM && !isMentioned && !isThread) return;
 
-    // 残るのはDM/メンション/スレッドのいずれか。普通のチャットでは反応しない
+    // ここで、message.content を Agent Manager に渡して応答を得る
     const response = await sendMessage(message.channelId, message.content);
     console.log(`Received message: ${message.content}`);
     if (response && message.channel.isSendable()) {
+      // 残るのはDM/メンション/スレッドのいずれか。普通のチャットでは反応しない。
+      // 実際にDiscordに送信
       await message.channel.send(response);
     }
   });
