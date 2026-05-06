@@ -9,6 +9,7 @@ import { appendInbox } from '../queue/inbox.js';
 export function registerHandlers(): void {
   client.once(Events.ClientReady, (c) => {
     console.log(`起動しました: ${c.user.tag}`);
+    console.log(`[handler] cwd: ${process.cwd()}`);
   });
 
   // メッセージ受信イベント。
@@ -26,10 +27,11 @@ export function registerHandlers(): void {
     if (!isDM && !isMentioned && !isThread) return;
 
     // inbox に積んで即リターン。応答は poller.ts が非同期で行う。
+    console.log(`[handler] inbox に積みます: ${message.channelId} "${message.content}"`);
     await appendInbox({
       channelId: message.channelId,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
-    });
+    }).catch((err) => console.error('[handler] appendInbox 失敗:', err));
   });
 }
