@@ -3,19 +3,24 @@
  *
  * フロー: Discord受信 → appendInbox() → poller が shiftInbox() で取り出して処理
  *
- * JSONL はインプレース更新ができないためファイル全体の書き直し方式を使う。
- * シングルプロセスのbotなので競合は起きない。
+ * ファイル形式は JSONL（1行1メッセージ）。例：
+ *   {"id":"msg-1234-abc","channelId":"9876","content":"こんにちは","timestamp":"2026-05-06T10:00:00.000Z","retries":0}
+ *   {"id":"msg-1235-def","channelId":"9876","content":"返事して","timestamp":"2026-05-06T10:00:01.000Z","retries":0}
+ *
+ * JSONL はインプレース更新ができないため、shiftInbox / prependInbox はファイル全体を書き直す。
+ * シングルプロセスの bot なので競合は起きない。
  */
 import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 
+// InboxMessage は JSONL の 1行 = 1レコードに対応する型
 export interface InboxMessage {
   id: string;
   channelId: string;
   content: string;
   timestamp: string;
-  retries: number;
+  retries: number; // 失敗してリトライした回数。初回は 0
 }
 
 const QUEUE_DIR = path.join(process.cwd(), 'data', 'queue');
@@ -25,7 +30,9 @@ async function ensureDir(): Promise<void> {
   await mkdir(QUEUE_DIR, { recursive: true });
 }
 
-/** Discord のメッセージをキューの末尾に追記する。 */
+/** Discord のメッセージをキューの末尾に追記する。
+ * id と retries は自動で付与される。Omitは除外の意味（関数内で生成するので、引数では明示しなくていい）
+*/
 export async function appendInbox(msg: Omit<InboxMessage, 'id' | 'retries'>): Promise<void> {
   await ensureDir();
   const record: InboxMessage = {
