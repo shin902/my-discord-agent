@@ -12,7 +12,7 @@ import { shiftInbox, prependInbox } from './inbox.js';
 import { sendMessage } from '../agent/manager.js';
 
 const POLL_MS = 1000;
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 10;
 let running = false;
 
 export function startPoller(): void {
