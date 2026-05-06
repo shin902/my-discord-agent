@@ -24,6 +24,7 @@ export function registerHandlers(): void {
     // DM・メンション・スレッド以外は無視する
     if (!isDM && !isMentioned && !isThread) return;
 
+    // 残るのはDM/メンション/スレッドのいずれか。普通のチャットでは反応しない
     const response = await sendMessage(message.channelId, message.content);
     console.log(`Received message: ${message.content}`);
     if (response && message.channel.isSendable()) {
