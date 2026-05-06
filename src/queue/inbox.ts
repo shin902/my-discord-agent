@@ -1,0 +1,64 @@
+/**
+ * inbox キュー — Discord から受け取ったメッセージを処理前に一時保存する。
+ *
+ * フロー: Discord受信 → appendInbox() → poller が shiftInbox() で取り出して処理
+ *
+ * JSONL はインプレース更新ができないためファイル全体の書き直し方式を使う。
+ * シングルプロセスのbotなので競合は起きない。
+ */
+import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
+import { existsSync } from 'fs';
+import path from 'path';
+
+export interface InboxMessage {
+  id: string;
+  channelId: string;
+  content: string;
+  timestamp: string;
+  retries: number;
+}
+
+const QUEUE_DIR = path.join(process.cwd(), 'data', 'queue');
+const INBOX_PATH = path.join(QUEUE_DIR, 'inbox.jsonl');
+
+async function ensureDir(): Promise<void> {
+  await mkdir(QUEUE_DIR, { recursive: true });
+}
+
+/** Discord のメッセージをキューの末尾に追記する。 */
+export async function appendInbox(msg: Omit<InboxMessage, 'id' | 'retries'>): Promise<void> {
+  await ensureDir();
+  const record: InboxMessage = {
+    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    retries: 0,
+    ...msg,
+  };
+  await appendFile(INBOX_PATH, JSON.stringify(record) + '\n', 'utf-8');
+}
+
+/**
+ * 先頭の1件を取り出してファイルから削除する。なければ null を返す。
+ *
+ * 取り出し後に失敗した場合は prependInbox() で先頭に戻す。
+ */
+export async function shiftInbox(): Promise<InboxMessage | null> {
+  if (!existsSync(INBOX_PATH)) return null;
+
+  const text = await readFile(INBOX_PATH, 'utf-8');
+  const lines = text.split('\n').filter((l) => l.trim());
+  if (lines.length === 0) return null;
+
+  const msg = JSON.parse(lines[0]) as InboxMessage;
+  const remaining = lines.slice(1).join('\n');
+  await writeFile(INBOX_PATH, remaining ? remaining + '\n' : '', 'utf-8');
+  return msg;
+}
+
+/** リトライ時にメッセージをキューの先頭に戻す。 */
+export async function prependInbox(msg: InboxMessage): Promise<void> {
+  await ensureDir();
+  const existing = existsSync(INBOX_PATH)
+    ? await readFile(INBOX_PATH, 'utf-8')
+    : '';
+  await writeFile(INBOX_PATH, JSON.stringify(msg) + '\n' + existing);
+}
