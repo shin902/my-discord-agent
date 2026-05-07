@@ -24,21 +24,21 @@ export function stopPoller(): void {
   running = false;
 }
 
-async function poll(): Promise<void> {
-  if (!running) return;
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // client が未接続の間はスキップ（起動直後など）
-  if (client.isReady()) {
-    try {
+async function poll(): Promise<void> {
+  while (running) {
+    await sleep(POLL_MS);
+
+    // client が未接続の間はスキップ（起動直後など）
+    if (client.isReady()) {
       const msg = await shiftInbox();
+
       if (msg) {
+        let response: string;
+
         try {
-          const response = await sendMessage(msg.channelId, msg.content);
-          const channel = await client.channels.fetch(msg.channelId);
-          // テキストチャネルなど送信可能なチャンネルかつ、エージェントが何かしらのレスポンスを返した場合のみ送信（nullじゃだめ。空文字とかもだめ）
-          if (channel?.isSendable() && response) {
-            await channel.send(response);
-          }
+          response = await sendMessage(msg.channelId, msg.content);
         } catch (err) {
           console.error(`[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`, err);
           if (msg.retries + 1 < MAX_RETRIES) {
@@ -48,12 +48,19 @@ async function poll(): Promise<void> {
             console.error('[poller] リトライ上限に達しました。dead-letter に移動:', msg.id);
             await appendDeadLetter(msg);
           }
+          continue;
+        }
+
+        try {
+          const channel = await client.channels.fetch(msg.channelId);
+          // テキストチャネルなど送信可能なチャンネルかつ、エージェントが何かしらのレスポンスを返した場合のみ送信（nullじゃだめ。空文字とかもだめ）
+          if (channel?.isSendable() && response) {
+            await channel.send(response);
+          }
+        } catch (err) {
+          console.error(`[poller] Discord送信エラー:`, err);
         }
       }
-    } catch (err) {
-      console.error('[poller] キュー読み取りエラー:', err);
     }
   }
-
-  setTimeout(poll, POLL_MS);
 }
