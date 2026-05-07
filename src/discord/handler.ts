@@ -32,6 +32,9 @@ export function registerHandlers(): void {
       channelId: message.channelId,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
-    }).catch((err) => console.error('[handler] appendInbox 失敗:', err));
+    }).catch(async (err) => {
+      console.error('[handler] appendInbox 失敗:', err);
+      await message.reply('メッセージの受信に失敗しました。もう一度送ってください。');
+    });
   });
 }
