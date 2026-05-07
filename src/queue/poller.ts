@@ -10,6 +10,7 @@ import { client } from '../discord/client.js';
 import { shiftInbox, prependInbox } from './inbox.js';
 import { appendDeadLetter } from './dead-letter.js';
 import { sendMessage } from '../agent/manager.js';
+import { splitMessage } from '../utils/splitMessage.js';
 
 const POLL_MS = 1000;
 const MAX_RETRIES = 10;
@@ -56,7 +57,10 @@ async function poll(): Promise<void> {
           const channel = await client.channels.fetch(msg.channelId);
           // テキストチャネルなど送信可能なチャンネルかつ、エージェントが何かしらのレスポンスを返した場合のみ送信（nullじゃだめ。空文字とかもだめ）
           if (channel?.isSendable() && response) {
-            await channel.send(response);
+            const chunks = splitMessage(response);
+            for (const chunk of chunks) {
+              await channel.send(chunk);
+            }
           }
         } catch (err) {
           console.error(`[poller] Discord送信エラー:`, err);
