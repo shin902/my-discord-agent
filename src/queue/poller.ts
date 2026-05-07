@@ -32,7 +32,6 @@ function splitMessage(text: string, maxLength: number = DISCORD_MAX_LENGTH): str
       splitIndex = maxLength;
     }
     chunks.push(remaining.slice(0, splitIndex));
-    // 残った先頭の改行を消す
     remaining = remaining.slice(splitIndex).trimStart();
   }
 
