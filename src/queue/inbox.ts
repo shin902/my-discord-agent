@@ -14,6 +14,7 @@
 import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 // InboxMessage は JSONL の 1行 = 1レコードに対応する型
 export interface InboxMessage {
@@ -24,7 +25,9 @@ export interface InboxMessage {
   retries: number; // 失敗してリトライした回数。初回は 0
 }
 
-const QUEUE_DIR = path.join(process.cwd(), 'data', 'queue');
+// process.cwd() は起動ディレクトリに依存するため、ファイルの場所を基準にパスを解決する
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const QUEUE_DIR = path.join(__dirname, '../../data/queue');
 const INBOX_PATH = path.join(QUEUE_DIR, 'inbox.jsonl');
 
 async function ensureDir(): Promise<void> {
