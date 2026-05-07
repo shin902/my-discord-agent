@@ -9,7 +9,6 @@ import { appendInbox } from '../queue/inbox.js';
 export function registerHandlers(): void {
   client.once(Events.ClientReady, (c) => {
     console.log(`起動しました: ${c.user.tag}`);
-    console.log(`[handler] cwd: ${process.cwd()}`);
   });
 
   // メッセージ受信イベント。
