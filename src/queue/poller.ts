@@ -7,7 +7,7 @@
  * MAX_RETRIES を超えたらメッセージを破棄する。
  */
 import { client } from '../discord/client.js';
-import { shiftInbox, prependInbox } from './inbox.js';
+import { shiftInbox, prependInbox, appendDeadLetter } from './inbox.js';
 import { sendMessage } from '../agent/manager.js';
 
 const POLL_MS = 1000;
@@ -44,7 +44,8 @@ async function poll(): Promise<void> {
             // リトライ: retries をインクリメントして先頭に戻す
             await prependInbox({ ...msg, retries: msg.retries + 1 });
           } else {
-            console.error('[poller] リトライ上限に達しました。メッセージを破棄:', msg.id);
+            console.error('[poller] リトライ上限に達しました。dead-letter に移動:', msg.id);
+            await appendDeadLetter(msg);
           }
         }
       }
