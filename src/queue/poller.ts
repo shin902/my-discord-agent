@@ -28,8 +28,6 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function poll(): Promise<void> {
   while (running) {
-    await sleep(POLL_MS);
-
     // client が未接続の間はスキップ（起動直後など）
     if (client.isReady()) {
       const msg = await shiftInbox();
@@ -48,6 +46,8 @@ async function poll(): Promise<void> {
             console.error('[poller] リトライ上限に達しました。dead-letter に移動:', msg.id);
             await appendDeadLetter(msg);
           }
+          const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
+          await sleep(retryDelay);
           continue;
         }
 
@@ -62,5 +62,6 @@ async function poll(): Promise<void> {
         }
       }
     }
+    await sleep(POLL_MS);
   }
 }
