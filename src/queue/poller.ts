@@ -7,7 +7,8 @@
  * MAX_RETRIES を超えたらメッセージを破棄する。
  */
 import { client } from '../discord/client.js';
-import { shiftInbox, prependInbox, appendDeadLetter } from './inbox.js';
+import { shiftInbox, prependInbox } from './inbox.js';
+import { appendDeadLetter } from './dead-letter.js';
 import { sendMessage } from '../agent/manager.js';
 
 const POLL_MS = 1000;

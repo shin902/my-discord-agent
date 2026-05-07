@@ -90,12 +90,3 @@ export async function prependInbox(msg: InboxMessage): Promise<void> {
   });
 }
 
-const DEAD_LETTER_PATH = path.join(QUEUE_DIR, 'dead-letter.jsonl');
-
-/** MAX_RETRIES を超えたメッセージを dead-letter.jsonl に移す。調査用。 */
-export async function appendDeadLetter(msg: InboxMessage): Promise<void> {
-  return withFileLock(async () => {
-    await ensureDir();
-    await appendFile(DEAD_LETTER_PATH, JSON.stringify(msg) + '\n', 'utf-8');
-  });
-}
