@@ -13,7 +13,35 @@ import { sendMessage } from '../agent/manager.js';
 
 const POLL_MS = 1000;
 const MAX_RETRIES = 10;
+const DISCORD_MAX_LENGTH = 2000;
 let running = false;
+
+/**
+ * 改行を優先して Discord の文字数制限内に収めるようにメッセージを分割する。
+ * 2000文字以内で最後の改行を探し、そこで分割。改行がなければ強制分割。
+ */
+function splitMessage(text: string, maxLength: number = DISCORD_MAX_LENGTH): string[] {
+  if (text.length <= maxLength) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > maxLength) {
+    let splitIndex: number = remaining.lastIndexOf('\n', maxLength);
+    if (splitIndex <= 0) {
+      splitIndex = maxLength;
+    }
+    chunks.push(remaining.slice(0, splitIndex));
+    // 残った先頭の改行を消す
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  if (remaining.length > 0) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
 
 export function startPoller(): void {
   if (running) return;
@@ -56,7 +84,10 @@ async function poll(): Promise<void> {
           const channel = await client.channels.fetch(msg.channelId);
           // テキストチャネルなど送信可能なチャンネルかつ、エージェントが何かしらのレスポンスを返した場合のみ送信（nullじゃだめ。空文字とかもだめ）
           if (channel?.isSendable() && response) {
-            await channel.send(response);
+            const chunks = splitMessage(response);
+            for (const chunk of chunks) {
+              await channel.send(chunk);
+            }
           }
         } catch (err) {
           console.error(`[poller] Discord送信エラー:`, err);
