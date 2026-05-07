@@ -28,7 +28,7 @@ function splitMessage(text: string, maxLength: number = DISCORD_MAX_LENGTH): str
 
   while (remaining.length > maxLength) {
     let splitIndex: number = remaining.lastIndexOf('\n', maxLength);
-    if (splitIndex <= 0) {
+    if (splitIndex < 1) {
       splitIndex = maxLength;
     }
     chunks.push(remaining.slice(0, splitIndex));
