@@ -35,7 +35,8 @@ async function poll(): Promise<void> {
         try {
           const response = await sendMessage(msg.channelId, msg.content);
           const channel = await client.channels.fetch(msg.channelId);
-          if (channel?.isSendable()) {
+          // テキストチャネルなど送信可能なチャンネルかつ、エージェントが何かしらのレスポンスを返した場合のみ送信（nullじゃだめ。空文字とかもだめ）
+          if (channel?.isSendable() && response) {
             await channel.send(response);
           }
         } catch (err) {
