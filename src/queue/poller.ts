@@ -37,7 +37,7 @@ async function processMessage(msg: InboxMessage): Promise<void> {
   let response: string;
 
   try {
-    response = await sendMessage(msg.groupName, msg.channelId, msg.content);
+    response = await sendMessage(msg.groupName, msg.sessionId, msg.content);
   } catch (err) {
     console.error(`[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`, err);
     if (msg.retries + 1 < MAX_RETRIES) {

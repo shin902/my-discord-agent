@@ -27,6 +27,7 @@ export function registerHandlers(): void {
     await appendInbox({
       channelId: message.channelId,
       groupName: match.group.name,
+      sessionId: message.channelId,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
     }).catch(async (err) => {
