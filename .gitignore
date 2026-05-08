@@ -5,3 +5,4 @@ data/
 .env
 
 config/*
+!groups.example.json
