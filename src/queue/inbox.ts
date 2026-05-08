@@ -20,6 +20,7 @@ import { fileURLToPath } from 'url';
 export interface InboxMessage {
   id: string;
   channelId: string;
+  groupName: string;
   content: string;
   timestamp: string;
   retries: number; // 失敗してリトライした回数。初回は 0
