@@ -14,7 +14,9 @@ const channelChain = new Map<string, Promise<void>>();
 
 function dispatchWithChannelLock(channelId: string, fn: () => Promise<void>): void {
   const prev = channelChain.get(channelId) ?? Promise.resolve();
-  const next = prev.then(fn, () => fn());
+  const next = prev.then(fn, () => fn()).catch((err) => {
+    console.error('[poller] 予期せぬエラー (channelId:', channelId, '):', err);
+  });
   channelChain.set(channelId, next);
   next.finally(() => {
     if (channelChain.get(channelId) === next) channelChain.delete(channelId);
