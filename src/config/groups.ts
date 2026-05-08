@@ -23,12 +23,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, '../../config/groups.json');
 
 export async function loadGroups(): Promise<GroupConfig[]> {
+  let text: string;
   try {
-    const raw = JSON.parse(await readFile(CONFIG_PATH, 'utf-8'));
-    return GroupsConfigSchema.parse(raw);
+    text = await readFile(CONFIG_PATH, 'utf-8');
   } catch (err) {
-    throw new Error(`config/groups.json のスキーマ検証失敗: ${err}`);
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('config/groups.json が見つかりません');
+    }
+    throw err;
   }
+  return GroupsConfigSchema.parse(JSON.parse(text));
 }
 
 export async function findGroupByChannelId(
