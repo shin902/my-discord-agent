@@ -24,7 +24,11 @@ const CONFIG_PATH = path.join(__dirname, '../../config/groups.json');
 
 export async function loadGroups(): Promise<GroupConfig[]> {
   const raw = JSON.parse(await readFile(CONFIG_PATH, 'utf-8'));
-  return GroupsConfigSchema.parse(raw);
+    try {
+      return GroupsConfigSchema.parse(raw);
+    } catch (err) {
+      throw new Error(`config/groups.json のスキーマ検証失敗: ${err}`);
+    }
 }
 
 export async function findGroupByChannelId(
