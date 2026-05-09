@@ -7,5 +7,5 @@ data/
 config/*
 !config/groups.example.json
 
-groups/*
-!groups/*/group.example.json
+groups/*/group.json
+groups/*/AGENTS.md

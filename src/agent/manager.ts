@@ -2,7 +2,7 @@ import { Agent } from '@mariozechner/pi-agent-core';
 import { getProviders, getModels } from '@mariozechner/pi-ai';
 import type { KnownProvider } from '@mariozechner/pi-ai';
 import { loadMessages, appendMessage } from './session.js';
-import { loadGroupConfig } from '../config/group-config.js';
+import { loadGroupConfig, loadGroupSystemPrompt } from '../config/group-config.js';
 
 const DEFAULT_PROVIDER = 'opencode-go';
 const DEFAULT_MODEL_ID = 'kimi-k2.6';
@@ -24,9 +24,10 @@ function resolveModel(provider: string, modelId: string) {
  * discord/ 層はこの関数だけを呼ぶ。
  */
 export async function sendMessage(groupName: string, sessionId: string, content: string): Promise<string> {
-  const [messages, groupConfig] = await Promise.all([
+  const [messages, groupConfig, systemPrompt] = await Promise.all([
     loadMessages(groupName, sessionId),
     loadGroupConfig(groupName),
+    loadGroupSystemPrompt(groupName),
   ]);
 
   const model = resolveModel(
@@ -36,7 +37,7 @@ export async function sendMessage(groupName: string, sessionId: string, content:
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       model,
       messages,
     },

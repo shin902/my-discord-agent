@@ -28,3 +28,14 @@ export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfi
   }
   return GroupJsonSchema.parse(JSON.parse(text));
 }
+
+/** groups/<groupName>/AGENTS.md を読み込む。ファイルがなければ null を返す。 */
+export async function loadGroupSystemPrompt(groupName: string): Promise<string | null> {
+  const promptPath = path.join(GROUPS_DIR, groupName, 'AGENTS.md');
+  try {
+    return await readFile(promptPath, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
