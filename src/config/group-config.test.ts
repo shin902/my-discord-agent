@@ -5,7 +5,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 const { readFile } = await import('fs/promises');
-const { loadGroupConfig } = await import('./group-config.js');
+const { loadGroupConfig, loadGroupSystemPrompt } = await import('./group-config.js');
 
 beforeEach(() => {
   vi.mocked(readFile).mockReset();
@@ -42,5 +42,26 @@ describe('loadGroupConfig', () => {
     );
     const config = await loadGroupConfig('test');
     expect(config.model).toEqual({ provider: 'opencode-go', modelId: 'kimi-k2.6' });
+  });
+});
+
+describe('loadGroupSystemPrompt', () => {
+  it('パストラバーサルを含むグループ名はエラー', async () => {
+    await expect(loadGroupSystemPrompt('../../etc/passwd')).rejects.toThrow('不正なグループ名');
+  });
+
+  it('ファイルが存在しない場合は null を返す', async () => {
+    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    expect(await loadGroupSystemPrompt('test')).toBeNull();
+  });
+
+  it('ENOENT 以外のエラーは再スロー', async () => {
+    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(loadGroupSystemPrompt('test')).rejects.toThrow('EACCES');
+  });
+
+  it('ファイルが存在する場合は内容を返す', async () => {
+    vi.mocked(readFile).mockResolvedValue('あなたは役立つアシスタントです。' as any);
+    expect(await loadGroupSystemPrompt('test')).toBe('あなたは役立つアシスタントです。');
   });
 });
