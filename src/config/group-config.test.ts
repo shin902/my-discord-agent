@@ -30,9 +30,14 @@ describe('loadGroupConfig', () => {
     await expect(loadGroupConfig('test')).rejects.toThrow('EACCES');
   });
 
-  it('不正な JSON は SyntaxError を投げる', async () => {
+  it('不正な JSON はグループ名入りのエラーを投げる', async () => {
     mockReadFile.mockResolvedValue('{ invalid json }');
-    await expect(loadGroupConfig('test')).rejects.toThrow(SyntaxError);
+    await expect(loadGroupConfig('test')).rejects.toThrow('グループ設定の JSON が不正です (test)');
+  });
+
+  it('空ファイルはグループ名入りのエラーを投げる', async () => {
+    mockReadFile.mockResolvedValue('');
+    await expect(loadGroupConfig('test')).rejects.toThrow('グループ設定の JSON が不正です (test)');
   });
 
   it('スキーマに合わない JSON はグループ名入りのエラーを投げる', async () => {

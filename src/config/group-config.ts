@@ -27,7 +27,13 @@ export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfi
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw err;
   }
-  const result = GroupJsonSchema.safeParse(JSON.parse(text));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`グループ設定の JSON が不正です (${groupName})`);
+  }
+  const result = GroupJsonSchema.safeParse(parsed);
   if (!result.success) throw new Error(`グループ設定が不正です (${groupName}): ${result.error.message}`);
   return result.data;
 }
