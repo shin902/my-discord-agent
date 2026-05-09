@@ -27,7 +27,9 @@ export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfi
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw err;
   }
-  return GroupJsonSchema.parse(JSON.parse(text));
+  const result = GroupJsonSchema.safeParse(JSON.parse(text));
+  if (!result.success) throw new Error(`グループ設定が不正です (${groupName}): ${result.error.message}`);
+  return result.data;
 }
 
 /** groups/<groupName>/AGENTS.md を読み込む。ファイルがなければ null を返す。 */

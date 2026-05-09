@@ -31,6 +31,11 @@ describe('loadGroupConfig', () => {
     await expect(loadGroupConfig('test')).rejects.toThrow(SyntaxError);
   });
 
+  it('スキーマに合わない JSON はグループ名入りのエラーを投げる', async () => {
+    vi.mocked(readFile).mockResolvedValue('{"model":"invalid"}' as any);
+    await expect(loadGroupConfig('test')).rejects.toThrow('グループ設定が不正です (test)');
+  });
+
   it('model フィールドなしの空オブジェクトはそのまま返す', async () => {
     vi.mocked(readFile).mockResolvedValue('{}' as any);
     expect(await loadGroupConfig('test')).toEqual({});
