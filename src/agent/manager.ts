@@ -65,14 +65,6 @@ export async function sendMessage(groupName: string, sessionId: string, content:
     }
   });
 
-  try {
-    await agent.prompt(content);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[sendMessage] sessionId=${sessionId} でエラーが発生しました:`, errorMessage);
-    // TODO: 一時的エラー（タイムアウト・レートリミット等）の場合はリトライ処理を検討する
-    return `エラーが発生しました: ${errorMessage}`;
-  }
-
+  await agent.prompt(content);
   return response;
 }
