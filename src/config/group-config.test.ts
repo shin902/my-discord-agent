@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('fs/promises', () => ({
   readFile: vi.fn(),
@@ -9,7 +9,7 @@ const { loadGroupConfig, loadGroupSystemPrompt } = await import('./group-config.
 
 // readFile はオーバーロードがあり vi.mocked がデフォルトで Buffer 返しの overload を選ぶため、
 // string 返しの overload に一度だけキャストして各テストで as any を使わずに済むようにする。
-const mockReadFile = vi.mocked(readFile) as unknown as MockInstance<[path: unknown, options: unknown], Promise<string>>;
+const mockReadFile = vi.mocked(readFile) as unknown as Mock<() => Promise<string>>;
 
 beforeEach(() => {
   mockReadFile.mockReset();
