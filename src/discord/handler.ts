@@ -15,10 +15,23 @@ export function registerHandlers(): void {
   client.on(Events.MessageCreate, async (message: Message) => {
     if (message.author.bot) return;
 
-    const match = await findGroupByChannelId(message.channelId);
+    // スレッドの場合は親チャンネルIDで設定を検索する
+    const lookupId =
+      message.channel.isThread() && message.channel.parentId
+        ? message.channel.parentId
+        : message.channelId;
+
+    const match = await findGroupByChannelId(lookupId);
     if (!match) return;
 
-    if (match.channel.sessionMode !== 'shared') {
+    let sessionId: string;
+
+    if (match.channel.sessionMode === 'shared') {
+      sessionId = message.channelId;
+    } else if (match.channel.sessionMode === 'thread') {
+      if (!message.channel.isThread()) return;
+      sessionId = message.channelId; // スレッドIDがそのままセッションID
+    } else {
       console.log(`[handler] sessionMode=${match.channel.sessionMode} は未実装のためスキップ: ${message.channelId}`);
       return;
     }
@@ -27,7 +40,7 @@ export function registerHandlers(): void {
     await appendInbox({
       channelId: message.channelId,
       groupName: match.group.name,
-      sessionId: message.channelId,
+      sessionId,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
     }).catch(async (err) => {
