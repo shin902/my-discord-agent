@@ -1,5 +1,5 @@
 import { Agent } from '@mariozechner/pi-agent-core';
-import { getProviders, getModels } from '@mariozechner/pi-ai';
+import { getProviders, getModels, type TextContent } from '@mariozechner/pi-ai';
 import type { KnownProvider } from '@mariozechner/pi-ai';
 import { loadMessages, appendMessage } from './session.js';
 import { loadGroupConfig, loadGroupSystemPrompt } from '../config/group-config.js';
@@ -51,17 +51,17 @@ export async function sendMessage(groupName: string, sessionId: string, content:
   // メッセージ完了のたびに JSONL へ追記する（セッション永続化）
   // user・assistant・toolResult をすべて保存する。toolResult を欠かすと
   // 再読み込み時にコンテキストが壊れてプロンプトキャッシュも効かなくなる。
+  let response = '';
   agent.subscribe(async (event) => {
     if (event.type === 'message_end') {
       await appendMessage(groupName, sessionId, event.message);
-    }
-  });
-
-  // ストリーミングレスポンスを連結して返す。Agent は使い捨てなので、完了後は破棄される。unsubscribe は不要。
-  let response = '';
-  agent.subscribe((event) => {
-    if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
-      response += event.assistantMessageEvent.delta;
+      // メッセージの生成
+      if ('role' in event.message && event.message.role === 'assistant') {
+        response = event.message.content
+          .filter((c): c is TextContent => c.type === 'text')
+          .map((c) => c.text)
+          .join('');
+      }
     }
   });
 
