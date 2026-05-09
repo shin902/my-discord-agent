@@ -107,6 +107,17 @@ describe('registerHandlers - MessageCreate', () => {
     expect(mockAppendInbox).not.toHaveBeenCalled();
   });
 
+  it('appendInbox が失敗した場合 reply を送信する', async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: 'default', channels: [] },
+      channel: { channelId: 'ch-1', sessionMode: 'shared' },
+    });
+    mockAppendInbox.mockRejectedValue(new Error('disk full'));
+    const msg = makeMockMessage({ isThread: false, channelId: 'ch-1' });
+    await getMessageHandler()(msg);
+    expect(msg.reply).toHaveBeenCalledWith('メッセージの受信に失敗しました。もう一度送ってください。');
+  });
+
   it('thread モード: スレッドメッセージは親チャンネルIDで検索しスレッドIDをセッションIDとして積む', async () => {
     mockFindGroup.mockResolvedValue({
       group: { name: 'support', channels: [] },
