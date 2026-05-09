@@ -30,10 +30,15 @@ export async function sendMessage(groupName: string, sessionId: string, content:
     loadGroupSystemPrompt(groupName),
   ]);
 
-  const model = resolveModel(
-    groupConfig.model?.provider ?? DEFAULT_PROVIDER,
-    groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
-  );
+  let model;
+  try {
+    model = resolveModel(
+      groupConfig.model?.provider ?? DEFAULT_PROVIDER,
+      groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
+    );
+  } catch (err) {
+    return `設定エラー: ${err instanceof Error ? err.message : '不明なエラー'}`;
+  }
 
   const agent = new Agent({
     initialState: {
