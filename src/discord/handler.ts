@@ -27,6 +27,7 @@ export function registerHandlers(): void {
     let sessionId: string;
 
     if (match.channel.sessionMode === 'shared') {
+      if (message.channel.isThread()) return;
       sessionId = message.channelId;
     } else if (match.channel.sessionMode === 'thread') {
       if (!message.channel.isThread()) return;
