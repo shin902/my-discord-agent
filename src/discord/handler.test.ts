@@ -79,32 +79,35 @@ describe('registerHandlers - MessageCreate', () => {
     });
     const msg = makeMockMessage({ isThread: false, channelId: 'ch-1', content: 'テスト' });
     await getMessageHandler()(msg);
+    expect(mockFindGroup).toHaveBeenCalledWith('ch-1');
     expect(mockAppendInbox).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'ch-1', groupName: 'default', content: 'テスト' }),
     );
   });
 
-  it('shared モード: スレッドメッセージは無視される', async () => {
+  it('shared モード: スレッドメッセージは親チャンネルIDで検索し無視される', async () => {
     mockFindGroup.mockResolvedValue({
       group: { name: 'default', channels: [] },
       channel: { channelId: 'ch-1', sessionMode: 'shared' },
     });
     const msg = makeMockMessage({ isThread: true, channelId: 'thread-1', parentId: 'ch-1' });
     await getMessageHandler()(msg);
+    expect(mockFindGroup).toHaveBeenCalledWith('ch-1'); // スレッドIDではなく parentId で検索
     expect(mockAppendInbox).not.toHaveBeenCalled();
   });
 
-  it('thread モード: 直接メッセージは無視される', async () => {
+  it('thread モード: 直接メッセージはチャンネルIDで検索し無視される', async () => {
     mockFindGroup.mockResolvedValue({
       group: { name: 'support', channels: [] },
       channel: { channelId: 'ch-1', sessionMode: 'thread' },
     });
     const msg = makeMockMessage({ isThread: false, channelId: 'ch-1' });
     await getMessageHandler()(msg);
+    expect(mockFindGroup).toHaveBeenCalledWith('ch-1');
     expect(mockAppendInbox).not.toHaveBeenCalled();
   });
 
-  it('thread モード: スレッドメッセージはスレッドIDをセッションIDとして積む', async () => {
+  it('thread モード: スレッドメッセージは親チャンネルIDで検索しスレッドIDをセッションIDとして積む', async () => {
     mockFindGroup.mockResolvedValue({
       group: { name: 'support', channels: [] },
       channel: { channelId: 'ch-1', sessionMode: 'thread' },
@@ -116,6 +119,7 @@ describe('registerHandlers - MessageCreate', () => {
       content: 'こんにちは',
     });
     await getMessageHandler()(msg);
+    expect(mockFindGroup).toHaveBeenCalledWith('ch-1'); // スレッドIDではなく parentId で検索
     expect(mockAppendInbox).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'thread-123', groupName: 'support' }),
     );
