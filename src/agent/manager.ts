@@ -8,7 +8,7 @@ const DEFAULT_PROVIDER = 'opencode-go';
 const DEFAULT_MODEL_ID = 'kimi-k2.6';
 const DEFAULT_SYSTEM_PROMPT = 'あなたは役立つDiscordアシスタントです。';
 
-function resolveModel(provider: string, modelId: string) {
+export function resolveModel(provider: string, modelId: string) {
   const providers = getProviders();
   if (!providers.includes(provider as KnownProvider)) {
     throw new Error(`不明なプロバイダ: ${provider}`);
