@@ -1,7 +1,6 @@
 [
   {
     "name": "default",
-    "folder": "default",
     "channels": [
       { "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }
     ]
