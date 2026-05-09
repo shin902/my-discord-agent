@@ -1,6 +1,22 @@
 import { Agent } from '@mariozechner/pi-agent-core';
-import { getModel } from '@mariozechner/pi-ai';
+import { getProviders, getModels } from '@mariozechner/pi-ai';
+import type { KnownProvider } from '@mariozechner/pi-ai';
 import { loadMessages, appendMessage } from './session.js';
+import { loadGroupConfig } from '../config/group-config.js';
+
+const DEFAULT_PROVIDER = 'opencode-go';
+const DEFAULT_MODEL_ID = 'kimi-k2.6';
+const DEFAULT_SYSTEM_PROMPT = 'あなたは役立つDiscordアシスタントです。';
+
+function resolveModel(provider: string, modelId: string) {
+  const providers = getProviders();
+  if (!providers.includes(provider as KnownProvider)) {
+    throw new Error(`不明なプロバイダ: ${provider}`);
+  }
+  const model = getModels(provider as KnownProvider).find((m) => m.id === modelId);
+  if (!model) throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
+  return model;
+}
 
 /**
  * 指定セッションの Agent にメッセージを送り、返答テキストを返す。
@@ -8,12 +24,20 @@ import { loadMessages, appendMessage } from './session.js';
  * discord/ 層はこの関数だけを呼ぶ。
  */
 export async function sendMessage(groupName: string, sessionId: string, content: string): Promise<string> {
-  const messages = await loadMessages(groupName, sessionId);
+  const [messages, groupConfig] = await Promise.all([
+    loadMessages(groupName, sessionId),
+    loadGroupConfig(groupName),
+  ]);
+
+  const model = resolveModel(
+    groupConfig.model?.provider ?? DEFAULT_PROVIDER,
+    groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
+  );
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: 'あなたは役立つDiscordアシスタントです。',
-      model: getModel('opencode-go', 'kimi-k2.6'),
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      model,
       messages,
     },
   });

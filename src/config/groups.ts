@@ -10,7 +10,6 @@ const ChannelConfigSchema = z.object({
 
 const GroupConfigSchema = z.object({
   name: z.string(),
-  folder: z.string(),
   channels: z.array(ChannelConfigSchema),
 });
 

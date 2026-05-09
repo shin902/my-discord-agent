@@ -6,3 +6,6 @@ data/
 
 config/*
 !config/groups.example.json
+
+groups/*
+!groups/*/group.example.json
