@@ -23,10 +23,6 @@ export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfi
   if (!existsSync(configPath)) return {};
 
   let text: string;
-  try {
-    text = await readFile(configPath, 'utf-8');
-  } catch (err) {
-    throw err;
-  }
+  text = await readFile(configPath, 'utf-8');
   return GroupJsonSchema.parse(JSON.parse(text));
 }
