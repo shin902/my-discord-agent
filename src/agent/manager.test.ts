@@ -75,12 +75,12 @@ describe('sendMessage', () => {
     vi.mocked(loadGroupSystemPrompt).mockResolvedValue(null);
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
-      return createMockAgent(['OK'], { role: 'assistant', content: 'OK' });
+      return createMockAgent(['OK'], { role: 'assistant', content: [{ type: 'text', text: 'OK' }] });
     } as any);
   });
 
   it('メッセージを送信して返答テキストを返す', async () => {
-    const mockAgent = createMockAgent(['Hello', ' world'], { role: 'assistant', content: 'Hello world' });
+    const mockAgent = createMockAgent(['Hello', ' world'], { role: 'assistant', content: [{ type: 'text', text: 'Hello world' }] });
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
       return mockAgent;
@@ -100,7 +100,7 @@ describe('sendMessage', () => {
     });
     expect(mockAgent.prompt).toHaveBeenCalledWith('こんにちは');
     expect(result).toBe('Hello world');
-    expect(appendMessage).toHaveBeenCalledWith('test-group', 'session-1', { role: 'assistant', content: 'Hello world' });
+    expect(appendMessage).toHaveBeenCalledWith('test-group', 'session-1', { role: 'assistant', content: [{ type: 'text', text: 'Hello world' }] });
   });
 
   it('グループ設定のモデルを使用する', async () => {
@@ -108,7 +108,7 @@ describe('sendMessage', () => {
       model: { provider: 'provider-a', modelId: 'model-x' },
     });
 
-    const mockAgent = createMockAgent(['OK'], { role: 'assistant', content: 'OK' });
+    const mockAgent = createMockAgent(['OK'], { role: 'assistant', content: [{ type: 'text', text: 'OK' }] });
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
       return mockAgent;
@@ -128,7 +128,7 @@ describe('sendMessage', () => {
   it('カスタム systemPrompt を使用する', async () => {
     vi.mocked(loadGroupSystemPrompt).mockResolvedValue('カスタムプロンプト');
 
-    const mockAgent = createMockAgent(['OK'], { role: 'assistant', content: 'OK' });
+    const mockAgent = createMockAgent(['OK'], { role: 'assistant', content: [{ type: 'text', text: 'OK' }] });
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
       return mockAgent;
@@ -160,7 +160,7 @@ describe('sendMessage', () => {
     const history = [{ role: 'user' as const, content: '前回のメッセージ', timestamp: Date.now() }];
     vi.mocked(loadMessages).mockResolvedValue(history);
 
-    const mockAgent = createMockAgent(['OK'], { role: 'assistant', content: 'OK' });
+    const mockAgent = createMockAgent(['OK'], { role: 'assistant', content: [{ type: 'text', text: 'OK' }] });
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
       return mockAgent;
