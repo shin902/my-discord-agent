@@ -7,9 +7,8 @@ import { loadMessages, appendMessage } from './session.js';
  * Agent はリクエストごとに JSONL から作成して使い捨てる。
  * discord/ 層はこの関数だけを呼ぶ。
  */
-export async function sendMessage(sessionId: string, content: string): Promise<string> {
-  // JSONL から過去の会話を復元して Agent を作成する
-  const messages = await loadMessages(sessionId);
+export async function sendMessage(groupName: string, sessionId: string, content: string): Promise<string> {
+  const messages = await loadMessages(groupName, sessionId);
 
   const agent = new Agent({
     initialState: {
@@ -24,7 +23,7 @@ export async function sendMessage(sessionId: string, content: string): Promise<s
   // 再読み込み時にコンテキストが壊れてプロンプトキャッシュも効かなくなる。
   agent.subscribe(async (event) => {
     if (event.type === 'message_end') {
-      await appendMessage(sessionId, event.message);
+      await appendMessage(groupName, sessionId, event.message);
     }
   });
 
