@@ -21,7 +21,10 @@ export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, '../../config/groups.json');
 
+let _groups: GroupConfig[] | null = null;
+
 export async function loadGroups(): Promise<GroupConfig[]> {
+  if (_groups !== null) return _groups;
   let text: string;
   try {
     text = await readFile(CONFIG_PATH, 'utf-8');
@@ -31,7 +34,8 @@ export async function loadGroups(): Promise<GroupConfig[]> {
     }
     throw err;
   }
-  return GroupsConfigSchema.parse(JSON.parse(text));
+  _groups = GroupsConfigSchema.parse(JSON.parse(text));
+  return _groups;
 }
 
 export async function findGroupByChannelId(

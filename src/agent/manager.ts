@@ -4,8 +4,8 @@ import type { KnownProvider } from '@mariozechner/pi-ai';
 import { loadMessages, appendMessage } from './session.js';
 import { loadGroupConfig, loadGroupSystemPrompt } from '../config/group-config.js';
 
-const DEFAULT_PROVIDER = 'opencode-go';
-const DEFAULT_MODEL_ID = 'kimi-k2.6';
+export const DEFAULT_PROVIDER = 'opencode-go';
+export const DEFAULT_MODEL_ID = 'kimi-k2.6';
 const DEFAULT_SYSTEM_PROMPT = 'あなたは役立つDiscordアシスタントです。';
 
 export function resolveModel(provider: string, modelId: string) {
