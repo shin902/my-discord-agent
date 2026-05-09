@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 
 vi.mock('fs/promises', () => ({
   readFile: vi.fn(),
@@ -7,8 +7,12 @@ vi.mock('fs/promises', () => ({
 const { readFile } = await import('fs/promises');
 const { loadGroupConfig, loadGroupSystemPrompt } = await import('./group-config.js');
 
+// readFile はオーバーロードがあり vi.mocked がデフォルトで Buffer 返しの overload を選ぶため、
+// string 返しの overload に一度だけキャストして各テストで as any を使わずに済むようにする。
+const mockReadFile = vi.mocked(readFile) as unknown as MockInstance<[path: unknown, options: unknown], Promise<string>>;
+
 beforeEach(() => {
-  vi.mocked(readFile).mockReset();
+  mockReadFile.mockReset();
 });
 
 describe('loadGroupConfig', () => {
@@ -17,34 +21,32 @@ describe('loadGroupConfig', () => {
   });
 
   it('ファイルが存在しない場合は空オブジェクトを返す', async () => {
-    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     expect(await loadGroupConfig('nonexistent')).toEqual({});
   });
 
   it('ENOENT 以外のエラーは再スロー', async () => {
-    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    mockReadFile.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
     await expect(loadGroupConfig('test')).rejects.toThrow('EACCES');
   });
 
   it('不正な JSON は SyntaxError を投げる', async () => {
-    vi.mocked(readFile).mockResolvedValue('{ invalid json }' as any);
+    mockReadFile.mockResolvedValue('{ invalid json }');
     await expect(loadGroupConfig('test')).rejects.toThrow(SyntaxError);
   });
 
   it('スキーマに合わない JSON はグループ名入りのエラーを投げる', async () => {
-    vi.mocked(readFile).mockResolvedValue('{"model":"invalid"}' as any);
+    mockReadFile.mockResolvedValue('{"model":"invalid"}');
     await expect(loadGroupConfig('test')).rejects.toThrow('グループ設定が不正です (test)');
   });
 
   it('model フィールドなしの空オブジェクトはそのまま返す', async () => {
-    vi.mocked(readFile).mockResolvedValue('{}' as any);
+    mockReadFile.mockResolvedValue('{}');
     expect(await loadGroupConfig('test')).toEqual({});
   });
 
   it('有効な model 設定をパースして返す', async () => {
-    vi.mocked(readFile).mockResolvedValue(
-      '{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}' as any,
-    );
+    mockReadFile.mockResolvedValue('{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}');
     const config = await loadGroupConfig('test');
     expect(config.model).toEqual({ provider: 'opencode-go', modelId: 'kimi-k2.6' });
   });
@@ -56,17 +58,17 @@ describe('loadGroupSystemPrompt', () => {
   });
 
   it('ファイルが存在しない場合は null を返す', async () => {
-    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     expect(await loadGroupSystemPrompt('test')).toBeNull();
   });
 
   it('ENOENT 以外のエラーは再スロー', async () => {
-    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    mockReadFile.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
     await expect(loadGroupSystemPrompt('test')).rejects.toThrow('EACCES');
   });
 
   it('ファイルが存在する場合は内容を返す', async () => {
-    vi.mocked(readFile).mockResolvedValue('あなたは役立つアシスタントです。' as any);
+    mockReadFile.mockResolvedValue('あなたは役立つアシスタントです。');
     expect(await loadGroupSystemPrompt('test')).toBe('あなたは役立つアシスタントです。');
   });
 });
