@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
-vi.mock("fs/promises", () => ({
+vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
 }));
 
