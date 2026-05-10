@@ -1,5 +1,5 @@
 import { lookup } from "node:dns/promises";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 // typebox は @sinclair/typebox の v1 系として別名リリースされたパッケージ。
 // pi-agent-core が "typebox" に依存しており AgentTool の型もここから来るため、
 // @sinclair/typebox では型が一致しない。

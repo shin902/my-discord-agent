@@ -4,7 +4,7 @@ const { AgentMock } = vi.hoisted(() => ({
   AgentMock: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: () => ["provider-a", "opencode-go"],
   getModels: (provider: string) =>
     provider === "opencode-go"
@@ -12,7 +12,7 @@ vi.mock("@mariozechner/pi-ai", () => ({
       : [{ id: "model-x", name: "Model X" }],
 }));
 
-vi.mock("@mariozechner/pi-agent-core", () => ({
+vi.mock("@earendil-works/pi-agent-core", () => ({
   Agent: AgentMock,
 }));
 
