@@ -18,7 +18,7 @@
     }
   },
   "files": {
-    "includes": ["src/**/*"]
+    "includes": ["src/**/*", "vitest.config.ts", "config/**/*"]
   },
   "overrides": [
     {
