@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "biome format --write .",
-    "format:check": "biome format ."
+    "format:check": "biome format .",
+    "lint": "biome lint src/",
+    "check": "biome check --write src/"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "latest",
