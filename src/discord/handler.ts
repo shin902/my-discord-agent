@@ -41,6 +41,9 @@ export function registerHandlers(): void {
 
     let sessionId: string;
     let inboxChannelId = message.channelId;
+    // レスポンス送信先チャンネルと元メッセージが同一チャンネルの場合のみ設定する。
+    // auto-thread で新規スレッドを作る場合は inboxChannelId がスレッドに変わるため undefined のまま。
+    let replyMessageId: string | undefined = message.id;
 
     if (match.channel.sessionMode === "shared") {
       if (message.channel.isThread()) return;
@@ -68,6 +71,9 @@ export function registerHandlers(): void {
         }
         sessionId = thread.id;
         inboxChannelId = thread.id;
+        // 返信先はスレッドだが元メッセージは親チャンネルにあるため、
+        // Discord のクロスチャンネル引用はできない
+        replyMessageId = undefined;
       }
     } else {
       // Zod が loadGroups() 時点で未知の sessionMode を弾くため、ここには到達しない。
@@ -83,6 +89,7 @@ export function registerHandlers(): void {
       channelId: inboxChannelId,
       groupName: match.group.name,
       sessionId,
+      messageId: replyMessageId,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
     }).catch(async (err) => {

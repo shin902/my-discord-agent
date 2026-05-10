@@ -1,4 +1,4 @@
-import type { Message } from "discord.js";
+import { ThreadAutoArchiveDuration, type Message } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./client.js", () => ({
@@ -99,6 +99,7 @@ describe("registerHandlers - MessageCreate", () => {
         sessionId: "ch-1",
         groupName: "default",
         content: "テスト",
+        messageId: "000000000000000000",
       }),
     );
   });
@@ -159,6 +160,7 @@ describe("registerHandlers - MessageCreate", () => {
       expect.objectContaining({
         sessionId: "thread-123",
         groupName: "support",
+        messageId: "000000000000000000",
       }),
     );
   });
@@ -179,12 +181,16 @@ describe("registerHandlers - MessageCreate", () => {
         startThread,
       });
       await getMessageHandler()(msg);
-      expect(startThread).toHaveBeenCalledWith({ name: "thread-a1b2c3" });
+      expect(startThread).toHaveBeenCalledWith({
+        name: "thread-a1b2c3",
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      });
       expect(mockAppendInbox).toHaveBeenCalledWith(
         expect.objectContaining({
           channelId: "thread-new-abc",
           sessionId: "thread-new-abc",
           groupName: "group1",
+          messageId: undefined,
         }),
       );
     });
@@ -204,7 +210,10 @@ describe("registerHandlers - MessageCreate", () => {
         startThread,
       });
       await getMessageHandler()(msg);
-      expect(startThread).toHaveBeenCalledWith({ name: "github-com-a1b2c3" });
+      expect(startThread).toHaveBeenCalledWith({
+        name: "github-com-a1b2c3",
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      });
     });
 
     it("startThread が失敗した場合: inbox に積まず reply を送信する", async () => {
@@ -245,6 +254,7 @@ describe("registerHandlers - MessageCreate", () => {
           channelId: "thread-existing-456",
           sessionId: "thread-existing-456",
           groupName: "group1",
+          messageId: "000000000000000000",
         }),
       );
     });
