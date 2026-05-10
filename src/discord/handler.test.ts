@@ -207,6 +207,27 @@ describe("registerHandlers - MessageCreate", () => {
       expect(startThread).toHaveBeenCalledWith({ name: "github-com-a1b2c3" });
     });
 
+    it("startThread が失敗した場合: inbox に積まず reply を送信する", async () => {
+      const startThread = vi
+        .fn()
+        .mockRejectedValue(new Error("Missing Permissions"));
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      const msg = makeMockMessage({
+        isThread: false,
+        channelId: "ch-auto",
+        content: "質問です",
+        startThread,
+      });
+      await getMessageHandler()(msg);
+      expect(mockAppendInbox).not.toHaveBeenCalled();
+      expect(msg.reply).toHaveBeenCalledWith(
+        "スレッドの作成に失敗しました。もう一度送ってください。",
+      );
+    });
+
     it("スレッド内のメッセージ: スレッドIDをそのまま channelId/sessionId として積む", async () => {
       mockFindGroup.mockResolvedValue({
         group: { name: "group1", channels: [] },

@@ -53,7 +53,16 @@ export function registerHandlers(): void {
         sessionId = message.channelId;
       } else {
         const threadName = buildThreadName(message.content, message.id);
-        const thread = await message.startThread({ name: threadName });
+        let thread: { id: string };
+        try {
+          thread = await message.startThread({ name: threadName });
+        } catch (err) {
+          console.error("[handler] スレッド作成失敗:", err);
+          await message.reply(
+            "スレッドの作成に失敗しました。もう一度送ってください。",
+          );
+          return;
+        }
         sessionId = thread.id;
         inboxChannelId = thread.id;
       }
