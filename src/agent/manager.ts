@@ -18,6 +18,11 @@ export function resolveModel(provider: string, modelId: string) {
   return model;
 }
 
+// 起動時バリデーション専用。無効な設定はスローして即クラッシュさせる
+export function validateModel(provider: string, modelId: string): void {
+  resolveModel(provider, modelId);
+}
+
 /**
  * 指定セッションの Agent にメッセージを送り、返答テキストを返す。
  * Agent はリクエストごとに JSONL から作成して使い捨てる。

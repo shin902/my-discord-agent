@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   startPoller: vi.fn(),
   loadGroups: vi.fn(),
   initGroupConfigs: vi.fn(),
-  resolveModel: vi.fn(),
+  validateModel: vi.fn(),
 }));
 
 vi.mock('./discord/client.js', () => ({ client: { login: mocks.login } }));
@@ -16,7 +16,7 @@ vi.mock('./queue/poller.js', () => ({ startPoller: mocks.startPoller, stopPoller
 vi.mock('./config/groups.js', () => ({ loadGroups: mocks.loadGroups }));
 vi.mock('./config/group-config.js', () => ({ initGroupConfigs: mocks.initGroupConfigs }));
 vi.mock('./agent/manager.js', () => ({
-  resolveModel: mocks.resolveModel,
+  validateModel: mocks.validateModel,
   DEFAULT_PROVIDER: 'opencode-go',
   DEFAULT_MODEL_ID: 'kimi-k2.6',
 }));
@@ -51,7 +51,7 @@ describe('index: 起動時バリデーション', () => {
     mocks.initGroupConfigs.mockResolvedValue(
       new Map([['bad-group', { model: { provider: 'unknown', modelId: 'x' } }]]),
     );
-    mocks.resolveModel.mockImplementation((provider: string) => {
+    mocks.validateModel.mockImplementation((provider: string) => {
       throw new Error(`不明なプロバイダ: ${provider}`);
     });
 
@@ -63,7 +63,7 @@ describe('index: 起動時バリデーション', () => {
     mocks.initGroupConfigs.mockResolvedValue(
       new Map([['ok-group', { model: { provider: 'opencode-go', modelId: 'kimi-k2.6' } }]]),
     );
-    mocks.resolveModel.mockReturnValue({ id: 'kimi-k2.6', name: 'Kimi K2.6' });
+    mocks.validateModel.mockReturnValue({ id: 'kimi-k2.6', name: 'Kimi K2.6' });
 
     await import('./index.js');
 
