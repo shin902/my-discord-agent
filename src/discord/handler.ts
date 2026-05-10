@@ -1,7 +1,7 @@
-import { Events, Message } from 'discord.js';
-import { client } from './client.js';
-import { appendInbox } from '../queue/inbox.js';
-import { findGroupByChannelId } from '../config/groups.js';
+import { Events, type Message } from "discord.js";
+import { findGroupByChannelId } from "../config/groups.js";
+import { appendInbox } from "../queue/inbox.js";
+import { client } from "./client.js";
 
 /**
  * Discord のイベントハンドラーを登録する。
@@ -26,18 +26,22 @@ export function registerHandlers(): void {
 
     let sessionId: string;
 
-    if (match.channel.sessionMode === 'shared') {
+    if (match.channel.sessionMode === "shared") {
       if (message.channel.isThread()) return;
       sessionId = message.channelId;
-    } else if (match.channel.sessionMode === 'thread') {
+    } else if (match.channel.sessionMode === "thread") {
       if (!message.channel.isThread()) return;
       sessionId = message.channelId; // スレッドIDがそのままセッションID
     } else {
-      console.log(`[handler] sessionMode=${match.channel.sessionMode} は未実装のためスキップ: ${message.channelId}`);
+      console.log(
+        `[handler] sessionMode=${match.channel.sessionMode} は未実装のためスキップ: ${message.channelId}`,
+      );
       return;
     }
 
-    console.log(`[handler] inbox に積みます: ${message.channelId} "${message.content}"`);
+    console.log(
+      `[handler] inbox に積みます: ${message.channelId} "${message.content}"`,
+    );
     await appendInbox({
       channelId: message.channelId,
       groupName: match.group.name,
@@ -45,8 +49,10 @@ export function registerHandlers(): void {
       content: message.content,
       timestamp: message.createdAt.toISOString(),
     }).catch(async (err) => {
-      console.error('[handler] appendInbox 失敗:', err);
-      await message.reply('メッセージの受信に失敗しました。もう一度送ってください。');
+      console.error("[handler] appendInbox 失敗:", err);
+      await message.reply(
+        "メッセージの受信に失敗しました。もう一度送ってください。",
+      );
     });
   });
 }

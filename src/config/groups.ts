@@ -1,11 +1,12 @@
-import { z } from 'zod';
-import { readFile } from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { z } from "zod";
 
 const ChannelConfigSchema = z.object({
   channelId: z.string(),
-  sessionMode: z.enum(['shared', 'thread', 'auto-thread']),
+  sessionMode: z.enum(["shared", "thread", "auto-thread"]),
 });
 
 const GroupConfigSchema = z.object({
@@ -19,7 +20,7 @@ export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.join(__dirname, '../../config/groups.json');
+const CONFIG_PATH = path.join(__dirname, "../../config/groups.json");
 
 let _groups: GroupConfig[] | null = null;
 
@@ -27,10 +28,10 @@ export async function loadGroups(): Promise<GroupConfig[]> {
   if (_groups !== null) return _groups;
   let text: string;
   try {
-    text = await readFile(CONFIG_PATH, 'utf-8');
+    text = await readFile(CONFIG_PATH, "utf-8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new Error('config/groups.json が見つかりません');
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("config/groups.json が見つかりません");
     }
     throw err;
   }
@@ -39,7 +40,7 @@ export async function loadGroups(): Promise<GroupConfig[]> {
 }
 
 export async function findGroupByChannelId(
-  channelId: string
+  channelId: string,
 ): Promise<{ group: GroupConfig; channel: ChannelConfig } | null> {
   const groups = await loadGroups();
   for (const group of groups) {

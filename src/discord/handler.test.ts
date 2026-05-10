@@ -1,22 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Message } from 'discord.js';
+import type { Message } from "discord.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock('./client.js', () => ({
+vi.mock("./client.js", () => ({
   client: { once: vi.fn(), on: vi.fn() },
 }));
 
-vi.mock('../queue/inbox.js', () => ({
+vi.mock("../queue/inbox.js", () => ({
   appendInbox: vi.fn(),
 }));
 
-vi.mock('../config/groups.js', () => ({
+vi.mock("../config/groups.js", () => ({
   findGroupByChannelId: vi.fn(),
 }));
 
-const { client } = await import('./client.js');
-const { appendInbox } = await import('../queue/inbox.js');
-const { findGroupByChannelId } = await import('../config/groups.js');
-const { registerHandlers } = await import('./handler.js');
+const { client } = await import("./client.js");
+const { appendInbox } = await import("../queue/inbox.js");
+const { findGroupByChannelId } = await import("../config/groups.js");
+const { registerHandlers } = await import("./handler.js");
 
 const mockAppendInbox = vi.mocked(appendInbox);
 const mockFindGroup = vi.mocked(findGroupByChannelId);
@@ -25,10 +25,12 @@ const mockFindGroup = vi.mocked(findGroupByChannelId);
 registerHandlers();
 
 function getMessageHandler(): (msg: Message) => Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const calls = (client.on as any).mock.calls as [string, (msg: Message) => Promise<void>][];
-  const call = calls.find(([event]) => event === 'messageCreate');
-  if (!call) throw new Error('messageCreate ハンドラーが登録されていません');
+  const calls = vi.mocked(client.on).mock.calls as [
+    string,
+    (msg: Message) => Promise<void>,
+  ][];
+  const call = calls.find(([event]) => event === "messageCreate");
+  if (!call) throw new Error("messageCreate ハンドラーが登録されていません");
   return call[1];
 }
 
@@ -46,93 +48,114 @@ function makeMockMessage(opts: {
       isThread: () => opts.isThread,
       parentId: opts.parentId ?? null,
     },
-    content: opts.content ?? 'hello',
+    content: opts.content ?? "hello",
     createdAt: new Date(),
     reply: vi.fn().mockResolvedValue(undefined),
   } as unknown as Message;
 }
 
-describe('registerHandlers - MessageCreate', () => {
+describe("registerHandlers - MessageCreate", () => {
   beforeEach(() => {
     mockFindGroup.mockReset();
     mockAppendInbox.mockReset().mockResolvedValue(undefined);
   });
 
-  it('bot のメッセージは無視される', async () => {
-    const msg = makeMockMessage({ isBot: true, isThread: false, channelId: 'ch-1' });
+  it("bot のメッセージは無視される", async () => {
+    const msg = makeMockMessage({
+      isBot: true,
+      isThread: false,
+      channelId: "ch-1",
+    });
     await getMessageHandler()(msg);
     expect(mockFindGroup).not.toHaveBeenCalled();
     expect(mockAppendInbox).not.toHaveBeenCalled();
   });
 
-  it('グループ設定がないチャンネルは無視される', async () => {
+  it("グループ設定がないチャンネルは無視される", async () => {
     mockFindGroup.mockResolvedValue(null);
-    const msg = makeMockMessage({ isThread: false, channelId: 'unknown-ch' });
+    const msg = makeMockMessage({ isThread: false, channelId: "unknown-ch" });
     await getMessageHandler()(msg);
     expect(mockAppendInbox).not.toHaveBeenCalled();
   });
 
-  it('shared モード: 直接メッセージはチャンネルIDをセッションIDとして積む', async () => {
+  it("shared モード: 直接メッセージはチャンネルIDをセッションIDとして積む", async () => {
     mockFindGroup.mockResolvedValue({
-      group: { name: 'default', channels: [] },
-      channel: { channelId: 'ch-1', sessionMode: 'shared' },
+      group: { name: "default", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
     });
-    const msg = makeMockMessage({ isThread: false, channelId: 'ch-1', content: 'テスト' });
+    const msg = makeMockMessage({
+      isThread: false,
+      channelId: "ch-1",
+      content: "テスト",
+    });
     await getMessageHandler()(msg);
-    expect(mockFindGroup).toHaveBeenCalledWith('ch-1');
+    expect(mockFindGroup).toHaveBeenCalledWith("ch-1");
     expect(mockAppendInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'ch-1', groupName: 'default', content: 'テスト' }),
+      expect.objectContaining({
+        sessionId: "ch-1",
+        groupName: "default",
+        content: "テスト",
+      }),
     );
   });
 
-  it('shared モード: スレッドメッセージは親チャンネルIDで検索し無視される', async () => {
+  it("shared モード: スレッドメッセージは親チャンネルIDで検索し無視される", async () => {
     mockFindGroup.mockResolvedValue({
-      group: { name: 'default', channels: [] },
-      channel: { channelId: 'ch-1', sessionMode: 'shared' },
-    });
-    const msg = makeMockMessage({ isThread: true, channelId: 'thread-1', parentId: 'ch-1' });
-    await getMessageHandler()(msg);
-    expect(mockFindGroup).toHaveBeenCalledWith('ch-1'); // スレッドIDではなく parentId で検索
-    expect(mockAppendInbox).not.toHaveBeenCalled();
-  });
-
-  it('thread モード: 直接メッセージはチャンネルIDで検索し無視される', async () => {
-    mockFindGroup.mockResolvedValue({
-      group: { name: 'support', channels: [] },
-      channel: { channelId: 'ch-1', sessionMode: 'thread' },
-    });
-    const msg = makeMockMessage({ isThread: false, channelId: 'ch-1' });
-    await getMessageHandler()(msg);
-    expect(mockFindGroup).toHaveBeenCalledWith('ch-1');
-    expect(mockAppendInbox).not.toHaveBeenCalled();
-  });
-
-  it('appendInbox が失敗した場合 reply を送信する', async () => {
-    mockFindGroup.mockResolvedValue({
-      group: { name: 'default', channels: [] },
-      channel: { channelId: 'ch-1', sessionMode: 'shared' },
-    });
-    mockAppendInbox.mockRejectedValue(new Error('disk full'));
-    const msg = makeMockMessage({ isThread: false, channelId: 'ch-1' });
-    await getMessageHandler()(msg);
-    expect(msg.reply).toHaveBeenCalledWith('メッセージの受信に失敗しました。もう一度送ってください。');
-  });
-
-  it('thread モード: スレッドメッセージは親チャンネルIDで検索しスレッドIDをセッションIDとして積む', async () => {
-    mockFindGroup.mockResolvedValue({
-      group: { name: 'support', channels: [] },
-      channel: { channelId: 'ch-1', sessionMode: 'thread' },
+      group: { name: "default", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
     });
     const msg = makeMockMessage({
       isThread: true,
-      channelId: 'thread-123',
-      parentId: 'ch-1',
-      content: 'こんにちは',
+      channelId: "thread-1",
+      parentId: "ch-1",
     });
     await getMessageHandler()(msg);
-    expect(mockFindGroup).toHaveBeenCalledWith('ch-1'); // スレッドIDではなく parentId で検索
+    expect(mockFindGroup).toHaveBeenCalledWith("ch-1"); // スレッドIDではなく parentId で検索
+    expect(mockAppendInbox).not.toHaveBeenCalled();
+  });
+
+  it("thread モード: 直接メッセージはチャンネルIDで検索し無視される", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "support", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "thread" },
+    });
+    const msg = makeMockMessage({ isThread: false, channelId: "ch-1" });
+    await getMessageHandler()(msg);
+    expect(mockFindGroup).toHaveBeenCalledWith("ch-1");
+    expect(mockAppendInbox).not.toHaveBeenCalled();
+  });
+
+  it("appendInbox が失敗した場合 reply を送信する", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "default", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
+    });
+    mockAppendInbox.mockRejectedValue(new Error("disk full"));
+    const msg = makeMockMessage({ isThread: false, channelId: "ch-1" });
+    await getMessageHandler()(msg);
+    expect(msg.reply).toHaveBeenCalledWith(
+      "メッセージの受信に失敗しました。もう一度送ってください。",
+    );
+  });
+
+  it("thread モード: スレッドメッセージは親チャンネルIDで検索しスレッドIDをセッションIDとして積む", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "support", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "thread" },
+    });
+    const msg = makeMockMessage({
+      isThread: true,
+      channelId: "thread-123",
+      parentId: "ch-1",
+      content: "こんにちは",
+    });
+    await getMessageHandler()(msg);
+    expect(mockFindGroup).toHaveBeenCalledWith("ch-1"); // スレッドIDではなく parentId で検索
     expect(mockAppendInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'thread-123', groupName: 'support' }),
+      expect.objectContaining({
+        sessionId: "thread-123",
+        groupName: "support",
+      }),
     );
   });
 });
