@@ -56,10 +56,13 @@ async function _loadGroupSystemPromptFromFile(groupName: string): Promise<string
 export async function initGroupConfigs(groupNames: string[]): Promise<void> {
   await Promise.all(
     groupNames.map(async (name) => {
-      _configCache.set(name, await _loadGroupConfigFromFile(name));
-      _promptCache.set(name, await _loadGroupSystemPromptFromFile(name));
-    }),
-  );
+      const [config, prompt] = await Promise.all([
+        _loadGroupConfigFromFile(name),
+        _loadGroupSystemPromptFromFile(name),
+      ]);
+      _configCache.set(name, config);
+      _promptCache.set(name, prompt);
+    }));
 }
 
 export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfig> {
