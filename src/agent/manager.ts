@@ -40,17 +40,18 @@ export async function sendMessage(
   content: string,
 ): Promise<string> {
   const workerPath = resolve(process.cwd(), "dist", "agent", "worker.js");
+  const groupDir = resolve(process.cwd(), "groups", groupName);
+  const sessionDir = resolve(process.cwd(), "data", "sessions", groupName);
   const cmd = await SandboxManager.wrapWithSandbox(
     `node ${workerPath}`,
     undefined,
-    // network キーなし = ネットワーク制限なし（TODO: 必要ドメインのみ許可する設定に移行）
     {
       filesystem: {
-        denyRead: [".env", ".env.*"],
-        allowWrite: [".", "/tmp"],
-        denyWrite: [] as string[],
+        denyRead: [".env", ".env.*", "~/.ssh"],
+        allowWrite: [groupDir, sessionDir],
+        denyWrite: [".env", ".env.*", "pnpm-lock.yaml", "package.json"],
       },
-    } as any,
+    },
   );
 
   return new Promise((res, rej) => {
@@ -68,9 +69,9 @@ export async function sendMessage(
 
     child.on("close", () => {
       try {
-        const { response } = JSON.parse(
-          Buffer.concat(chunks).toString(),
-        ) as { response: string };
+        const { response } = JSON.parse(Buffer.concat(chunks).toString()) as {
+          response: string;
+        };
         res(response);
       } catch (e) {
         rej(new Error(`Worker出力のパースに失敗: ${e}`));
