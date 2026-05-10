@@ -71,6 +71,15 @@ describe("processMessage - autoReply", () => {
     expect(mockSend).toHaveBeenCalledWith("AI response");
   });
 
+  it("loadGroupConfig が失敗した場合 → 通常送信にフォールバック", async () => {
+    vi.mocked(loadGroupConfig).mockRejectedValue(new Error("file not found"));
+
+    await processMessage(makeMsg());
+
+    expect(mockSend).toHaveBeenCalledOnce();
+    expect(mockSend).toHaveBeenCalledWith("AI response");
+  });
+
   it("複数チャンク: 先頭のみ reply 形式、残りは通常送信", async () => {
     vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
     vi.mocked(sendMessage).mockResolvedValue("A".repeat(2001));

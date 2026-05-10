@@ -1,5 +1,8 @@
 import { sendMessage } from "../agent/manager.js";
-import { loadGroupConfig } from "../config/group-config.js";
+import {
+  type GroupJsonConfig,
+  loadGroupConfig,
+} from "../config/group-config.js";
 import { client } from "../discord/client.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
@@ -73,7 +76,7 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
   try {
     const [channel, groupConfig] = await Promise.all([
       client.channels.fetch(msg.channelId),
-      loadGroupConfig(msg.groupName),
+      loadGroupConfig(msg.groupName).catch((): GroupJsonConfig => ({})),
     ]);
     if (channel?.isSendable() && response) {
       const chunks = splitMessage(response);
