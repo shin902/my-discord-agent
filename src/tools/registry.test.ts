@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { webfetchTool } from "./webfetch.js";
 import { resolveTools } from "./registry.js";
+import { webfetchTool } from "./webfetch.js";
 
 describe("resolveTools", () => {
   it("webfetch を解決して webfetchTool を返す", () => {
