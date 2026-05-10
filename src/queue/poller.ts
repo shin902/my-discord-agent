@@ -46,7 +46,7 @@ export function stopPoller(): void {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function processMessage(msg: InboxMessage): Promise<void> {
+export async function processMessage(msg: InboxMessage): Promise<void> {
   let response: string;
 
   try {
