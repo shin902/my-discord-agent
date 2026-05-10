@@ -1,9 +1,17 @@
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
-import { loadGroupConfig, loadGroupSystemPrompt } from "../config/group-config.js";
+import {
+  loadGroupConfig,
+  loadGroupSystemPrompt,
+} from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER,
+  DEFAULT_SYSTEM_PROMPT,
+  resolveModel,
+} from "./manager.js";
 import { appendMessage, loadMessages } from "./session.js";
-import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, DEFAULT_SYSTEM_PROMPT, resolveModel } from "./manager.js";
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -28,7 +36,9 @@ async function main(): Promise<void> {
     );
   } catch (err) {
     process.stdout.write(
-      JSON.stringify({ response: `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}` }),
+      JSON.stringify({
+        response: `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+      }),
     );
     return;
   }
@@ -38,7 +48,9 @@ async function main(): Promise<void> {
     tools = resolveTools(groupConfig.tools ?? []);
   } catch (err) {
     process.stdout.write(
-      JSON.stringify({ response: `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}` }),
+      JSON.stringify({
+        response: `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+      }),
     );
     return;
   }
