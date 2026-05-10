@@ -1,10 +1,10 @@
-import { Agent, type AgentTool } from "@mariozechner/pi-agent-core";
+import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import {
   getModels,
   getProviders,
   type KnownProvider,
   type TextContent,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import {
   loadGroupConfig,
   loadGroupSystemPrompt,
