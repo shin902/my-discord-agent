@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, Partials } from "discord.js";
 
 /**
  * Discord クライアントのシングルトン。
@@ -15,5 +15,5 @@ export const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
   ],
-  partials: [Partials.Channel],      // DM受信するため
+  partials: [Partials.Channel], // DM受信するため
 });

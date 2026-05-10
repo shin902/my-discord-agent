@@ -11,10 +11,11 @@
  * readFile と writeFile の間に appendInbox が割り込むとメッセージが消えるため、
  * Promise チェーンで全ファイル操作を直列化している。
  */
-import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+
+import { existsSync } from "node:fs";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // InboxMessage は JSONL の 1行 = 1レコードに対応する型
 export interface InboxMessage {
@@ -29,8 +30,8 @@ export interface InboxMessage {
 
 // process.cwd() は起動ディレクトリに依存するため、ファイルの場所を基準にパスを解決する
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const QUEUE_DIR = path.join(__dirname, '../../data/queue');
-const INBOX_PATH = path.join(QUEUE_DIR, 'inbox.jsonl');
+const QUEUE_DIR = path.join(__dirname, "../../data/queue");
+const INBOX_PATH = path.join(QUEUE_DIR, "inbox.jsonl");
 
 async function ensureDir(): Promise<void> {
   await mkdir(QUEUE_DIR, { recursive: true });
@@ -42,14 +43,19 @@ async function ensureDir(): Promise<void> {
 let pendingOp = Promise.resolve<void>(undefined);
 function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
   const result = pendingOp.then(fn);
-  pendingOp = result.then(() => {}, () => {});
+  pendingOp = result.then(
+    () => {},
+    () => {},
+  );
   return result;
 }
 
 /** Discord のメッセージをキューの末尾に追記する。
  * id と retries は自動で付与される。Omitは除外の意味（関数内で生成するので、引数では明示しなくていい）
-*/
-export async function appendInbox(msg: Omit<InboxMessage, 'id' | 'retries'>): Promise<void> {
+ */
+export async function appendInbox(
+  msg: Omit<InboxMessage, "id" | "retries">,
+): Promise<void> {
   return withFileLock(async () => {
     await ensureDir();
     const record: InboxMessage = {
@@ -57,7 +63,7 @@ export async function appendInbox(msg: Omit<InboxMessage, 'id' | 'retries'>): Pr
       retries: 0,
       ...msg,
     };
-    await appendFile(INBOX_PATH, JSON.stringify(record) + '\n', 'utf-8');
+    await appendFile(INBOX_PATH, `${JSON.stringify(record)}\n`, "utf-8");
   });
 }
 
@@ -70,13 +76,13 @@ export async function shiftInbox(): Promise<InboxMessage | null> {
   return withFileLock(async () => {
     if (!existsSync(INBOX_PATH)) return null;
 
-    const text = await readFile(INBOX_PATH, 'utf-8');
-    const lines = text.split('\n').filter((l) => l.trim());
+    const text = await readFile(INBOX_PATH, "utf-8");
+    const lines = text.split("\n").filter((l) => l.trim());
     if (lines.length === 0) return null;
 
     const msg = JSON.parse(lines[0]) as InboxMessage;
-    const remaining = lines.slice(1).join('\n');
-    await writeFile(INBOX_PATH, remaining ? remaining + '\n' : '', 'utf-8');
+    const remaining = lines.slice(1).join("\n");
+    await writeFile(INBOX_PATH, remaining ? `${remaining}\n` : "", "utf-8");
     return msg;
   });
 }
@@ -86,9 +92,8 @@ export async function prependInbox(msg: InboxMessage): Promise<void> {
   return withFileLock(async () => {
     await ensureDir();
     const existing = existsSync(INBOX_PATH)
-      ? await readFile(INBOX_PATH, 'utf-8')
-      : '';
-    await writeFile(INBOX_PATH, JSON.stringify(msg) + '\n' + existing);
+      ? await readFile(INBOX_PATH, "utf-8")
+      : "";
+    await writeFile(INBOX_PATH, `${JSON.stringify(msg)}\n${existing}`);
   });
 }
-

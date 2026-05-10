@@ -14,7 +14,7 @@ export function splitMessage(
   let remaining = text;
 
   while (remaining.length > maxLength) {
-    let splitIndex = remaining.lastIndexOf('\n', maxLength);
+    let splitIndex = remaining.lastIndexOf("\n", maxLength);
     if (splitIndex < 1) {
       splitIndex = maxLength;
     }

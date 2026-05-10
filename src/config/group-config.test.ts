@@ -1,115 +1,159 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
-vi.mock('fs/promises', () => ({
+vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
 }));
 
-const { readFile } = await import('fs/promises');
-const { loadGroupConfig, loadGroupSystemPrompt, initGroupConfigs } = await import('./group-config.js');
+const { readFile } = await import("node:fs/promises");
+const { loadGroupConfig, loadGroupSystemPrompt, initGroupConfigs } =
+  await import("./group-config.js");
 
 // readFile はオーバーロードがあり vi.mocked がデフォルトで Buffer 返しの overload を選ぶため、
 // string 返しの overload に一度だけキャストして各テストで as any を使わずに済むようにする。
-const mockReadFile = vi.mocked(readFile) as unknown as Mock<() => Promise<string>>;
+const mockReadFile = vi.mocked(readFile) as unknown as Mock<
+  () => Promise<string>
+>;
 
 beforeEach(() => {
   mockReadFile.mockReset();
 });
 
-describe('loadGroupConfig', () => {
-  it('パストラバーサルを含むグループ名はエラー', async () => {
-    await expect(loadGroupConfig('../../etc/passwd')).rejects.toThrow('不正なグループ名');
+describe("loadGroupConfig", () => {
+  it("パストラバーサルを含むグループ名はエラー", async () => {
+    await expect(loadGroupConfig("../../etc/passwd")).rejects.toThrow(
+      "不正なグループ名",
+    );
   });
 
-  it('ファイルが存在しない場合は空オブジェクトを返す', async () => {
-    mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-    expect(await loadGroupConfig('nonexistent')).toEqual({});
+  it("ファイルが存在しない場合は空オブジェクトを返す", async () => {
+    mockReadFile.mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    expect(await loadGroupConfig("nonexistent")).toEqual({});
   });
 
-  it('ENOENT 以外のエラーは再スロー', async () => {
-    mockReadFile.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
-    await expect(loadGroupConfig('test')).rejects.toThrow('EACCES');
+  it("ENOENT 以外のエラーは再スロー", async () => {
+    mockReadFile.mockRejectedValue(
+      Object.assign(new Error("EACCES"), { code: "EACCES" }),
+    );
+    await expect(loadGroupConfig("test")).rejects.toThrow("EACCES");
   });
 
-  it('不正な JSON はグループ名入りのエラーを投げる', async () => {
-    mockReadFile.mockResolvedValue('{ invalid json }');
-    await expect(loadGroupConfig('test')).rejects.toThrow('グループ設定の JSON が不正です (test)');
+  it("不正な JSON はグループ名入りのエラーを投げる", async () => {
+    mockReadFile.mockResolvedValue("{ invalid json }");
+    await expect(loadGroupConfig("test")).rejects.toThrow(
+      "グループ設定の JSON が不正です (test)",
+    );
   });
 
-  it('空ファイルはグループ名入りのエラーを投げる', async () => {
-    mockReadFile.mockResolvedValue('');
-    await expect(loadGroupConfig('test')).rejects.toThrow('グループ設定の JSON が不正です (test)');
+  it("空ファイルはグループ名入りのエラーを投げる", async () => {
+    mockReadFile.mockResolvedValue("");
+    await expect(loadGroupConfig("test")).rejects.toThrow(
+      "グループ設定の JSON が不正です (test)",
+    );
   });
 
-  it('スキーマに合わない JSON はグループ名入りのエラーを投げる', async () => {
+  it("スキーマに合わない JSON はグループ名入りのエラーを投げる", async () => {
     mockReadFile.mockResolvedValue('{"model":"invalid"}');
-    await expect(loadGroupConfig('test')).rejects.toThrow('グループ設定が不正です (test)');
+    await expect(loadGroupConfig("test")).rejects.toThrow(
+      "グループ設定が不正です (test)",
+    );
   });
 
-  it('model フィールドなしの空オブジェクトはそのまま返す', async () => {
-    mockReadFile.mockResolvedValue('{}');
-    expect(await loadGroupConfig('test')).toEqual({});
+  it("model フィールドなしの空オブジェクトはそのまま返す", async () => {
+    mockReadFile.mockResolvedValue("{}");
+    expect(await loadGroupConfig("test")).toEqual({});
   });
 
-  it('有効な model 設定をパースして返す', async () => {
-    mockReadFile.mockResolvedValue('{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}');
-    const config = await loadGroupConfig('test');
-    expect(config.model).toEqual({ provider: 'opencode-go', modelId: 'kimi-k2.6' });
-  });
-});
-
-describe('loadGroupSystemPrompt', () => {
-  it('パストラバーサルを含むグループ名はエラー', async () => {
-    await expect(loadGroupSystemPrompt('../../etc/passwd')).rejects.toThrow('不正なグループ名');
-  });
-
-  it('ファイルが存在しない場合は null を返す', async () => {
-    mockReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-    expect(await loadGroupSystemPrompt('test')).toBeNull();
-  });
-
-  it('ENOENT 以外のエラーは再スロー', async () => {
-    mockReadFile.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
-    await expect(loadGroupSystemPrompt('test')).rejects.toThrow('EACCES');
-  });
-
-  it('ファイルが存在する場合は内容を返す', async () => {
-    mockReadFile.mockResolvedValue('あなたは役立つアシスタントです。');
-    expect(await loadGroupSystemPrompt('test')).toBe('あなたは役立つアシスタントです。');
+  it("有効な model 設定をパースして返す", async () => {
+    mockReadFile.mockResolvedValue(
+      '{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}',
+    );
+    const config = await loadGroupConfig("test");
+    expect(config.model).toEqual({
+      provider: "opencode-go",
+      modelId: "kimi-k2.6",
+    });
   });
 });
 
-describe('initGroupConfigs', () => {
+describe("loadGroupSystemPrompt", () => {
+  it("パストラバーサルを含むグループ名はエラー", async () => {
+    await expect(loadGroupSystemPrompt("../../etc/passwd")).rejects.toThrow(
+      "不正なグループ名",
+    );
+  });
+
+  it("ファイルが存在しない場合は null を返す", async () => {
+    mockReadFile.mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    expect(await loadGroupSystemPrompt("test")).toBeNull();
+  });
+
+  it("ENOENT 以外のエラーは再スロー", async () => {
+    mockReadFile.mockRejectedValue(
+      Object.assign(new Error("EACCES"), { code: "EACCES" }),
+    );
+    await expect(loadGroupSystemPrompt("test")).rejects.toThrow("EACCES");
+  });
+
+  it("ファイルが存在する場合は内容を返す", async () => {
+    mockReadFile.mockResolvedValue("あなたは役立つアシスタントです。");
+    expect(await loadGroupSystemPrompt("test")).toBe(
+      "あなたは役立つアシスタントです。",
+    );
+  });
+});
+
+describe("initGroupConfigs", () => {
   // 既存テストのキャッシュ汚染を避けるため init-* 系のグループ名を使用
-  it('グループ設定を読み込んで Map を返す', async () => {
+  it("グループ設定を読み込んで Map を返す", async () => {
     mockReadFile
-      .mockResolvedValueOnce('{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}')
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      .mockResolvedValueOnce(
+        '{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}',
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+      );
 
-    const map = await initGroupConfigs(['init-valid']);
+    const map = await initGroupConfigs(["init-valid"]);
 
-    expect(map.get('init-valid')).toEqual({ model: { provider: 'opencode-go', modelId: 'kimi-k2.6' } });
+    expect(map.get("init-valid")).toEqual({
+      model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+    });
   });
 
-  it('group.json がない場合は空オブジェクトが Map に入る', async () => {
+  it("group.json がない場合は空オブジェクトが Map に入る", async () => {
     mockReadFile
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+      );
 
-    const map = await initGroupConfigs(['init-absent']);
+    const map = await initGroupConfigs(["init-absent"]);
 
-    expect(map.get('init-absent')).toEqual({});
+    expect(map.get("init-absent")).toEqual({});
   });
 
-  it('キャッシュ後の loadGroupConfig は readFile を呼ばない', async () => {
+  it("キャッシュ後の loadGroupConfig は readFile を呼ばない", async () => {
     mockReadFile
-      .mockResolvedValueOnce('{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}')
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      .mockResolvedValueOnce(
+        '{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}',
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+      );
 
-    await initGroupConfigs(['init-cache-verify']);
+    await initGroupConfigs(["init-cache-verify"]);
     mockReadFile.mockReset();
 
-    const config = await loadGroupConfig('init-cache-verify');
+    const config = await loadGroupConfig("init-cache-verify");
     expect(mockReadFile).not.toHaveBeenCalled();
-    expect(config).toEqual({ model: { provider: 'opencode-go', modelId: 'kimi-k2.6' } });
+    expect(config).toEqual({
+      model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+    });
   });
 });
