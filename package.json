@@ -18,6 +18,7 @@
     "@mariozechner/pi-ai": "latest",
     "discord.js": "^14.0.0",
     "dotenv": "^17.4.2",
+    "typebox": "^1.1.37",
     "zod": "^4.4.3"
   },
   "devDependencies": {

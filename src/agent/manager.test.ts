@@ -108,6 +108,7 @@ describe("sendMessage", () => {
         systemPrompt: "あなたは役立つDiscordアシスタントです。",
         model: { id: "kimi-k2.6", name: "Kimi K2.6" },
         messages: [],
+        tools: [],
       },
     });
     expect(mockAgent.prompt).toHaveBeenCalledWith("こんにちは");
@@ -164,6 +165,17 @@ describe("sendMessage", () => {
         }),
       }),
     );
+  });
+
+  it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
+    vi.mocked(loadGroupConfig).mockResolvedValue({
+      tools: ["invalid"],
+    });
+
+    const result = await sendMessage("test-group", "session-1", "hi");
+
+    expect(result).toBe("設定エラー: 不明なツール名: invalid");
+    expect(lastAgentOptions).toBeUndefined();
   });
 
   it("resolveModel 失敗時はエラーメッセージを返す", async () => {

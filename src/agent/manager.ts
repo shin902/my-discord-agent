@@ -1,4 +1,4 @@
-import { Agent } from "@mariozechner/pi-agent-core";
+import { Agent, type AgentTool } from "@mariozechner/pi-agent-core";
 import {
   getModels,
   getProviders,
@@ -9,6 +9,7 @@ import {
   loadGroupConfig,
   loadGroupSystemPrompt,
 } from "../config/group-config.js";
+import { resolveTools } from "../tools/registry.js";
 import { appendMessage, loadMessages } from "./session.js";
 
 export const DEFAULT_PROVIDER = "opencode-go";
@@ -59,11 +60,19 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
+  let tools: AgentTool[];
+  try {
+    tools = resolveTools(groupConfig.tools ?? []);
+  } catch (err) {
+    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+  }
+
   const agent = new Agent({
     initialState: {
       systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       model,
       messages,
+      tools,
     },
   });
 
