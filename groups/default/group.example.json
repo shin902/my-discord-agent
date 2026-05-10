@@ -2,5 +2,6 @@
   "model": {
     "provider": "opencode-go",
     "modelId": "kimi-k2.6"
-  }
+  },
+  "tools": []
 }
