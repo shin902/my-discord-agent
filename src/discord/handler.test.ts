@@ -1,4 +1,4 @@
-import type { Message } from "discord.js";
+import { ThreadAutoArchiveDuration, type Message } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./client.js", () => ({
@@ -179,7 +179,10 @@ describe("registerHandlers - MessageCreate", () => {
         startThread,
       });
       await getMessageHandler()(msg);
-      expect(startThread).toHaveBeenCalledWith({ name: "thread-a1b2c3" });
+      expect(startThread).toHaveBeenCalledWith({
+        name: "thread-a1b2c3",
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      });
       expect(mockAppendInbox).toHaveBeenCalledWith(
         expect.objectContaining({
           channelId: "thread-new-abc",
@@ -204,7 +207,10 @@ describe("registerHandlers - MessageCreate", () => {
         startThread,
       });
       await getMessageHandler()(msg);
-      expect(startThread).toHaveBeenCalledWith({ name: "github-com-a1b2c3" });
+      expect(startThread).toHaveBeenCalledWith({
+        name: "github-com-a1b2c3",
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      });
     });
 
     it("startThread が失敗した場合: inbox に積まず reply を送信する", async () => {

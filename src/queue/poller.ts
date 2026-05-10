@@ -1,4 +1,5 @@
 import { sendMessage } from "../agent/manager.js";
+import { loadGroupConfig } from "../config/group-config.js";
 import { client } from "../discord/client.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
@@ -70,10 +71,25 @@ async function processMessage(msg: InboxMessage): Promise<void> {
   }
 
   try {
-    const channel = await client.channels.fetch(msg.channelId);
+    const [channel, groupConfig] = await Promise.all([
+      client.channels.fetch(msg.channelId),
+      loadGroupConfig(msg.groupName),
+    ]);
     if (channel?.isSendable() && response) {
       const chunks = splitMessage(response);
-      for (const chunk of chunks) {
+      const [firstChunk, ...restChunks] = chunks;
+      if (firstChunk) {
+        await channel.send(
+          groupConfig.autoReply
+            ? {
+                content: firstChunk,
+                reply: { messageReference: msg.messageId, failIfNotExists: false },
+                allowedMentions: { repliedUser: false },
+              }
+            : firstChunk,
+        );
+      }
+      for (const chunk of restChunks) {
         await channel.send(chunk);
       }
     }

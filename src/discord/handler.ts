@@ -83,6 +83,7 @@ export function registerHandlers(): void {
       channelId: inboxChannelId,
       groupName: match.group.name,
       sessionId,
+      messageId: message.id,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
     }).catch(async (err) => {
