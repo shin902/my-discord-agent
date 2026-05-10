@@ -83,7 +83,10 @@ async function processMessage(msg: InboxMessage): Promise<void> {
           groupConfig.autoReply
             ? {
                 content: firstChunk,
-                reply: { messageReference: msg.messageId, failIfNotExists: false },
+                reply: {
+                  messageReference: msg.messageId,
+                  failIfNotExists: false,
+                },
                 allowedMentions: { repliedUser: false },
               }
             : firstChunk,
