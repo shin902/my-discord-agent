@@ -1,4 +1,4 @@
-import { Agent } from "@mariozechner/pi-agent-core";
+import { Agent, type AgentTool } from "@mariozechner/pi-agent-core";
 import {
   getModels,
   getProviders,
@@ -60,7 +60,7 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  let tools;
+  let tools: AgentTool[];
   try {
     tools = resolveTools(groupConfig.tools ?? []);
   } catch (err) {
