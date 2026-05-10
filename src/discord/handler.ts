@@ -58,9 +58,9 @@ export function registerHandlers(): void {
         inboxChannelId = thread.id;
       }
     } else {
-      console.log(
-        `[handler] sessionMode=${match.channel.sessionMode} は未実装のためスキップ: ${message.channelId}`,
-      );
+      // Zod が loadGroups() 時点で未知の sessionMode を弾くため、ここには到達しない。
+      // 新しいモードを groups.ts の enum に追加したときの対応漏れをコンパイルエラーで検知する。
+      const _: never = match.channel.sessionMode;
       return;
     }
 
