@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@anthropic-ai/sandbox-runtime", () => ({
@@ -33,7 +33,10 @@ function makeMockChild(workerResponse: string): ChildProcess {
   // setImmediate: ミクロタスク（wrapWithSandbox の await 等）が全て完了した後に
   // イベントを発火させることで、sendMessage がハンドラを登録してから届くようにする
   setImmediate(() => {
-    stdout.emit("data", Buffer.from(JSON.stringify({ response: workerResponse })));
+    stdout.emit(
+      "data",
+      Buffer.from(JSON.stringify({ response: workerResponse })),
+    );
     child.emit("close", 0);
   });
 
@@ -75,32 +78,40 @@ describe("resolveModel", () => {
 describe("sendMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(SandboxManager.wrapWithSandbox).mockResolvedValue("sandboxed-cmd");
+    vi.mocked(SandboxManager.wrapWithSandbox).mockResolvedValue(
+      "sandboxed-cmd",
+    );
   });
 
   it("Worker の返答テキストを返す", async () => {
-    vi.mocked(spawn).mockReturnValue(makeMockChild("Hello world") as any);
+    vi.mocked(spawn).mockReturnValue(makeMockChild("Hello world"));
     const result = await sendMessage("test-group", "session-1", "こんにちは");
     expect(result).toBe("Hello world");
   });
 
   it("wrapWithSandbox でコマンドをラップする", async () => {
-    vi.mocked(spawn).mockReturnValue(makeMockChild("OK") as any);
+    vi.mocked(spawn).mockReturnValue(makeMockChild("OK"));
     await sendMessage("test-group", "session-1", "hi");
     expect(SandboxManager.wrapWithSandbox).toHaveBeenCalledOnce();
   });
 
   it("stdin に groupName/sessionId/content を JSON で渡す", async () => {
     const child = makeMockChild("OK");
-    vi.mocked(spawn).mockReturnValue(child as any);
+    vi.mocked(spawn).mockReturnValue(child);
     await sendMessage("test-group", "session-1", "こんにちは");
-    expect((child as any).stdin.write).toHaveBeenCalledWith(
-      JSON.stringify({ groupName: "test-group", sessionId: "session-1", content: "こんにちは" }),
+    expect((child.stdin as NonNullable<typeof child.stdin>).write).toHaveBeenCalledWith(
+      JSON.stringify({
+        groupName: "test-group",
+        sessionId: "session-1",
+        content: "こんにちは",
+      }),
     );
   });
 
   it("spawn エラー時は reject する", async () => {
-    vi.mocked(spawn).mockReturnValue(makeMockChildError() as any);
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow("spawn ENOENT");
+    vi.mocked(spawn).mockReturnValue(makeMockChildError());
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
+      "spawn ENOENT",
+    );
   });
 });
