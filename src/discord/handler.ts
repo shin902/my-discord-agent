@@ -1,4 +1,4 @@
-import { Events, type Message } from "discord.js";
+import { Events, ThreadAutoArchiveDuration, type Message } from "discord.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { appendInbox } from "../queue/inbox.js";
 import { client } from "./client.js";
@@ -55,7 +55,10 @@ export function registerHandlers(): void {
         const threadName = buildThreadName(message.content, message.id);
         let thread: { id: string };
         try {
-          thread = await message.startThread({ name: threadName });
+          thread = await message.startThread({
+            name: threadName,
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+          });
         } catch (err) {
           console.error("[handler] スレッド作成失敗:", err);
           await message
