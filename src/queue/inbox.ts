@@ -23,7 +23,7 @@ export interface InboxMessage {
   channelId: string;
   groupName: string;
   sessionId: string; // shared: channelId, thread/auto-thread: スレッドの channelId
-  messageId: string; // 返信引用に使う元メッセージの Discord ID
+  messageId?: string; // 返信引用に使う元メッセージの Discord ID。旧キュー互換のためオプショナル
   content: string;
   timestamp: string;
   retries: number; // 失敗してリトライした回数。初回は 0

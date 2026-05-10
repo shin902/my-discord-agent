@@ -80,7 +80,7 @@ async function processMessage(msg: InboxMessage): Promise<void> {
       const [firstChunk, ...restChunks] = chunks;
       if (firstChunk) {
         await channel.send(
-          groupConfig.autoReply
+          groupConfig.autoReply && msg.messageId
             ? {
                 content: firstChunk,
                 reply: {
