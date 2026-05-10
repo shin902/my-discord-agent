@@ -108,6 +108,7 @@ describe("sendMessage", () => {
         systemPrompt: "あなたは役立つDiscordアシスタントです。",
         model: { id: "kimi-k2.6", name: "Kimi K2.6" },
         messages: [],
+        tools: [],
       },
     });
     expect(mockAgent.prompt).toHaveBeenCalledWith("こんにちは");
