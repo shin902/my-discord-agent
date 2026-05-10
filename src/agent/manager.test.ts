@@ -1,7 +1,15 @@
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { AgentMock } = vi.hoisted(() => ({
-  AgentMock: vi.fn(),
+vi.mock("@anthropic-ai/sandbox-runtime", () => ({
+  SandboxManager: {
+    wrapWithSandbox: vi.fn(),
+  },
+}));
+
+vi.mock("node:child_process", () => ({
+  spawn: vi.fn(),
 }));
 
 vi.mock("@earendil-works/pi-ai", () => ({
@@ -12,45 +20,37 @@ vi.mock("@earendil-works/pi-ai", () => ({
       : [{ id: "model-x", name: "Model X" }],
 }));
 
-vi.mock("@earendil-works/pi-agent-core", () => ({
-  Agent: AgentMock,
-}));
-
-vi.mock("./session.js", () => ({
-  loadMessages: vi.fn(),
-  appendMessage: vi.fn(),
-}));
-
-vi.mock("../config/group-config.js", () => ({
-  loadGroupConfig: vi.fn(),
-  loadGroupSystemPrompt: vi.fn(),
-}));
-
 const { resolveModel, sendMessage } = await import("./manager.js");
-const { loadMessages, appendMessage } = await import("./session.js");
-const { loadGroupConfig, loadGroupSystemPrompt } = await import(
-  "../config/group-config.js"
-);
-let lastAgentOptions: unknown;
+const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
+const { spawn } = await import("node:child_process");
 
-function createMockAgent(deltas: string[], endMessage: unknown) {
-  const subscribers: Array<(event: unknown) => void> = [];
-  return {
-    subscribe: vi.fn((cb: (event: unknown) => void) => subscribers.push(cb)),
-    prompt: vi.fn(async () => {
-      for (const delta of deltas) {
-        for (const cb of subscribers) {
-          cb({
-            type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta },
-          });
-        }
-      }
-      for (const cb of subscribers) {
-        cb({ type: "message_end", message: endMessage });
-      }
-    }),
-  };
+function makeMockChild(workerResponse: string): ChildProcess {
+  const stdin = { write: vi.fn(), end: vi.fn() };
+  const stdout = new EventEmitter();
+  const child = new EventEmitter();
+  Object.assign(child, { stdin, stdout });
+
+  // setImmediate: ミクロタスク（wrapWithSandbox の await 等）が全て完了した後に
+  // イベントを発火させることで、sendMessage がハンドラを登録してから届くようにする
+  setImmediate(() => {
+    stdout.emit("data", Buffer.from(JSON.stringify({ response: workerResponse })));
+    child.emit("close", 0);
+  });
+
+  return child as unknown as ChildProcess;
+}
+
+function makeMockChildError(): ChildProcess {
+  const stdin = { write: vi.fn(), end: vi.fn() };
+  const stdout = new EventEmitter();
+  const child = new EventEmitter();
+  Object.assign(child, { stdin, stdout });
+
+  setImmediate(() => {
+    child.emit("error", new Error("spawn ENOENT"));
+  });
+
+  return child as unknown as ChildProcess;
 }
 
 describe("resolveModel", () => {
@@ -75,147 +75,32 @@ describe("resolveModel", () => {
 describe("sendMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    lastAgentOptions = undefined;
-    vi.mocked(loadMessages).mockResolvedValue([]);
-    vi.mocked(loadGroupConfig).mockResolvedValue({});
-    vi.mocked(loadGroupSystemPrompt).mockResolvedValue(null);
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return createMockAgent(["OK"], {
-        role: "assistant",
-        content: [{ type: "text", text: "OK" }],
-      });
-    });
+    vi.mocked(SandboxManager.wrapWithSandbox).mockResolvedValue("sandboxed-cmd");
   });
 
-  it("メッセージを送信して返答テキストを返す", async () => {
-    const mockAgent = createMockAgent(["Hello", " world"], {
-      role: "assistant",
-      content: [{ type: "text", text: "Hello world" }],
-    });
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return mockAgent;
-    });
-
+  it("Worker の返答テキストを返す", async () => {
+    vi.mocked(spawn).mockReturnValue(makeMockChild("Hello world") as any);
     const result = await sendMessage("test-group", "session-1", "こんにちは");
-
-    expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
-    expect(loadGroupConfig).toHaveBeenCalledWith("test-group");
-    expect(loadGroupSystemPrompt).toHaveBeenCalledWith("test-group");
-    expect(lastAgentOptions).toEqual({
-      initialState: {
-        systemPrompt: "あなたは役立つDiscordアシスタントです。",
-        model: { id: "kimi-k2.6", name: "Kimi K2.6" },
-        messages: [],
-        tools: [],
-      },
-    });
-    expect(mockAgent.prompt).toHaveBeenCalledWith("こんにちは");
     expect(result).toBe("Hello world");
-    expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", {
-      role: "assistant",
-      content: [{ type: "text", text: "Hello world" }],
-    });
   });
 
-  it("グループ設定のモデルを使用する", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({
-      model: { provider: "provider-a", modelId: "model-x" },
-    });
-
-    const mockAgent = createMockAgent(["OK"], {
-      role: "assistant",
-      content: [{ type: "text", text: "OK" }],
-    });
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return mockAgent;
-    });
-
+  it("wrapWithSandbox でコマンドをラップする", async () => {
+    vi.mocked(spawn).mockReturnValue(makeMockChild("OK") as any);
     await sendMessage("test-group", "session-1", "hi");
+    expect(SandboxManager.wrapWithSandbox).toHaveBeenCalledOnce();
+  });
 
-    expect(lastAgentOptions).toEqual(
-      expect.objectContaining({
-        initialState: expect.objectContaining({
-          model: { id: "model-x", name: "Model X" },
-        }),
-      }),
+  it("stdin に groupName/sessionId/content を JSON で渡す", async () => {
+    const child = makeMockChild("OK");
+    vi.mocked(spawn).mockReturnValue(child as any);
+    await sendMessage("test-group", "session-1", "こんにちは");
+    expect((child as any).stdin.write).toHaveBeenCalledWith(
+      JSON.stringify({ groupName: "test-group", sessionId: "session-1", content: "こんにちは" }),
     );
   });
 
-  it("カスタム systemPrompt を使用する", async () => {
-    vi.mocked(loadGroupSystemPrompt).mockResolvedValue("カスタムプロンプト");
-
-    const mockAgent = createMockAgent(["OK"], {
-      role: "assistant",
-      content: [{ type: "text", text: "OK" }],
-    });
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return mockAgent;
-    });
-
-    await sendMessage("test-group", "session-1", "hi");
-
-    expect(lastAgentOptions).toEqual(
-      expect.objectContaining({
-        initialState: expect.objectContaining({
-          systemPrompt: "カスタムプロンプト",
-        }),
-      }),
-    );
-  });
-
-  it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({
-      tools: ["invalid"],
-    });
-
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("設定エラー: 不明なツール名: invalid");
-    expect(lastAgentOptions).toBeUndefined();
-  });
-
-  it("resolveModel 失敗時はエラーメッセージを返す", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({
-      model: { provider: "unknown", modelId: "model-x" },
-    });
-
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("設定エラー: 不明なプロバイダ: unknown");
-    expect(lastAgentOptions).toBeUndefined();
-  });
-
-  it("メッセージ履歴を Agent に引き継ぐ", async () => {
-    const history = [
-      {
-        role: "user" as const,
-        content: "前回のメッセージ",
-        timestamp: Date.now(),
-      },
-    ];
-    vi.mocked(loadMessages).mockResolvedValue(history);
-
-    const mockAgent = createMockAgent(["OK"], {
-      role: "assistant",
-      content: [{ type: "text", text: "OK" }],
-    });
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return mockAgent;
-    });
-
-    await sendMessage("test-group", "session-1", "hi");
-
-    expect(lastAgentOptions).toEqual(
-      expect.objectContaining({
-        initialState: expect.objectContaining({
-          messages: history,
-        }),
-      }),
-    );
+  it("spawn エラー時は reject する", async () => {
+    vi.mocked(spawn).mockReturnValue(makeMockChildError() as any);
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow("spawn ENOENT");
   });
 });

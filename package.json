@@ -14,6 +14,7 @@
     "check": "biome check --write src/"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.50",
     "@earendil-works/pi-agent-core": "latest",
     "@earendil-works/pi-ai": "latest",
     "discord.js": "^14.0.0",

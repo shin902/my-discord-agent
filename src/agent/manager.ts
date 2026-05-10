@@ -1,20 +1,15 @@
-import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
+import { spawn } from "node:child_process";
+import { resolve } from "node:path";
+import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import {
   getModels,
   getProviders,
   type KnownProvider,
-  type TextContent,
 } from "@earendil-works/pi-ai";
-import {
-  loadGroupConfig,
-  loadGroupSystemPrompt,
-} from "../config/group-config.js";
-import { resolveTools } from "../tools/registry.js";
-import { appendMessage, loadMessages } from "./session.js";
 
 export const DEFAULT_PROVIDER = "opencode-go";
 export const DEFAULT_MODEL_ID = "kimi-k2.6";
-const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
+export const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
 export function resolveModel(provider: string, modelId: string) {
   const providers = getProviders();
@@ -36,7 +31,7 @@ export function validateModel(provider: string, modelId: string): void {
 
 /**
  * 指定セッションの Agent にメッセージを送り、返答テキストを返す。
- * Agent はリクエストごとに JSONL から作成して使い捨てる。
+ * agent/worker.js をサンドボックス内で起動し、stdin/stdout で通信する。
  * discord/ 層はこの関数だけを呼ぶ。
  */
 export async function sendMessage(
@@ -44,55 +39,43 @@ export async function sendMessage(
   sessionId: string,
   content: string,
 ): Promise<string> {
-  const [messages, groupConfig, systemPrompt] = await Promise.all([
-    loadMessages(groupName, sessionId),
-    loadGroupConfig(groupName),
-    loadGroupSystemPrompt(groupName),
-  ]);
+  const workerPath = resolve(process.cwd(), "dist", "agent", "worker.js");
+  const cmd = await SandboxManager.wrapWithSandbox(
+    `node ${workerPath}`,
+    undefined,
+    // network キーなし = ネットワーク制限なし（TODO: 必要ドメインのみ許可する設定に移行）
+    {
+      filesystem: {
+        denyRead: [".env", ".env.*"],
+        allowWrite: [".", "/tmp"],
+        denyWrite: [] as string[],
+      },
+    } as any,
+  );
 
-  let model: ReturnType<typeof resolveModel>;
-  try {
-    model = resolveModel(
-      groupConfig.model?.provider ?? DEFAULT_PROVIDER,
-      groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
-    );
-  } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
-  }
+  return new Promise((res, rej) => {
+    const child = spawn(cmd, {
+      shell: true,
+      stdio: ["pipe", "pipe", "inherit"],
+      env: process.env,
+    });
 
-  let tools: AgentTool[];
-  try {
-    tools = resolveTools(groupConfig.tools ?? []);
-  } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
-  }
+    child.stdin.write(JSON.stringify({ groupName, sessionId, content }));
+    child.stdin.end();
 
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      model,
-      messages,
-      tools,
-    },
-  });
+    const chunks: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
 
-  // メッセージ完了のたびに JSONL へ追記する（セッション永続化）
-  // user・assistant・toolResult をすべて保存する。toolResult を欠かすと
-  // 再読み込み時にコンテキストが壊れてプロンプトキャッシュも効かなくなる。
-  let response = "";
-  agent.subscribe(async (event) => {
-    if (event.type === "message_end") {
-      await appendMessage(groupName, sessionId, event.message);
-      // メッセージの生成
-      if ("role" in event.message && event.message.role === "assistant") {
-        response = event.message.content
-          .filter((c): c is TextContent => c.type === "text")
-          .map((c) => c.text)
-          .join("");
+    child.on("close", () => {
+      try {
+        const { response } = JSON.parse(
+          Buffer.concat(chunks).toString(),
+        ) as { response: string };
+        res(response);
+      } catch (e) {
+        rej(new Error(`Worker出力のパースに失敗: ${e}`));
       }
-    }
+    });
+    child.on("error", rej);
   });
-
-  await agent.prompt(content);
-  return response;
 }
