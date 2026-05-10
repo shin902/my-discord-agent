@@ -58,9 +58,9 @@ export function registerHandlers(): void {
           thread = await message.startThread({ name: threadName });
         } catch (err) {
           console.error("[handler] スレッド作成失敗:", err);
-          await message.reply(
-            "スレッドの作成に失敗しました。もう一度送ってください。",
-          );
+          await message
+            .reply("スレッドの作成に失敗しました。もう一度送ってください。")
+            .catch((e) => console.error("[handler] reply 失敗:", e));
           return;
         }
         sessionId = thread.id;
