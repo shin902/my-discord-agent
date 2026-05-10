@@ -31,6 +31,9 @@ export const webfetchTool: AgentTool<typeof parameters> = {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
     }
+    // TOCTOU: lookup と fetch の間に DNS が別の IP へ変わる可能性がある（DNS
+    // リバインディング等）。完全な排除には fetch の接続先 IP を直接制御する
+    // カスタムエージェントが必要だが、個人用途のリスク許容として未対応。
     const { address } = await lookup(parsed.hostname);
     if (isPrivateAddress(address)) {
       throw new Error(`内部アドレスへのアクセスは禁止: ${address}`);
