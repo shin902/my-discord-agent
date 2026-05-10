@@ -3,6 +3,21 @@ import { findGroupByChannelId } from "../config/groups.js";
 import { appendInbox } from "../queue/inbox.js";
 import { client } from "./client.js";
 
+// URL あり → "{hostname}-{messageId末尾6文字}", URL なし → "thread-{messageId末尾6文字}", 最大100文字
+function buildThreadName(content: string, messageId: string): string {
+  const suffix = messageId.slice(-6);
+  const urlMatch = /https?:\/\/[^\s<>()]+/iu.exec(content);
+  if (urlMatch) {
+    try {
+      const hostname = new URL(urlMatch[0]).hostname.replace(/\./g, "-");
+      return `${hostname}-${suffix}`.slice(0, 100);
+    } catch {
+      // URL パースに失敗したら fallthrough
+    }
+  }
+  return `thread-${suffix}`;
+}
+
 /**
  * Discord のイベントハンドラーを登録する。
  * index.ts から一度だけ呼ぶ。
@@ -25,6 +40,7 @@ export function registerHandlers(): void {
     if (!match) return;
 
     let sessionId: string;
+    let inboxChannelId = message.channelId;
 
     if (match.channel.sessionMode === "shared") {
       if (message.channel.isThread()) return;
@@ -32,18 +48,36 @@ export function registerHandlers(): void {
     } else if (match.channel.sessionMode === "thread") {
       if (!message.channel.isThread()) return;
       sessionId = message.channelId; // スレッドIDがそのままセッションID
+    } else if (match.channel.sessionMode === "auto-thread") {
+      if (message.channel.isThread()) {
+        sessionId = message.channelId;
+      } else {
+        const threadName = buildThreadName(message.content, message.id);
+        let thread: { id: string };
+        try {
+          thread = await message.startThread({ name: threadName });
+        } catch (err) {
+          console.error("[handler] スレッド作成失敗:", err);
+          await message
+            .reply("スレッドの作成に失敗しました。もう一度送ってください。")
+            .catch((e) => console.error("[handler] reply 失敗:", e));
+          return;
+        }
+        sessionId = thread.id;
+        inboxChannelId = thread.id;
+      }
     } else {
-      console.log(
-        `[handler] sessionMode=${match.channel.sessionMode} は未実装のためスキップ: ${message.channelId}`,
-      );
+      // Zod が loadGroups() 時点で未知の sessionMode を弾くため、ここには到達しない。
+      // 新しいモードを groups.ts の enum に追加したときの対応漏れをコンパイルエラーで検知する。
+      const _: never = match.channel.sessionMode;
       return;
     }
 
     console.log(
-      `[handler] inbox に積みます: ${message.channelId} "${message.content}"`,
+      `[handler] inbox に積みます: ${inboxChannelId} "${message.content}"`,
     );
     await appendInbox({
-      channelId: message.channelId,
+      channelId: inboxChannelId,
       groupName: match.group.name,
       sessionId,
       content: message.content,

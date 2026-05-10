@@ -40,10 +40,13 @@ function makeMockMessage(opts: {
   parentId?: string | null;
   content?: string;
   isBot?: boolean;
+  id?: string;
+  startThread?: ReturnType<typeof vi.fn>;
 }): Message {
   return {
     author: { bot: opts.isBot ?? false },
     channelId: opts.channelId,
+    id: opts.id ?? "000000000000000000",
     channel: {
       isThread: () => opts.isThread,
       parentId: opts.parentId ?? null,
@@ -51,6 +54,7 @@ function makeMockMessage(opts: {
     content: opts.content ?? "hello",
     createdAt: new Date(),
     reply: vi.fn().mockResolvedValue(undefined),
+    startThread: opts.startThread ?? vi.fn(),
   } as unknown as Message;
 }
 
@@ -157,5 +161,129 @@ describe("registerHandlers - MessageCreate", () => {
         groupName: "support",
       }),
     );
+  });
+
+  describe("auto-thread モード", () => {
+    it("親チャンネルのメッセージ: スレッドを作成し、スレッドIDで inbox に積む", async () => {
+      const mockThread = { id: "thread-new-abc" };
+      const startThread = vi.fn().mockResolvedValue(mockThread);
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      const msg = makeMockMessage({
+        isThread: false,
+        channelId: "ch-auto",
+        id: "111222333a1b2c3",
+        content: "質問です",
+        startThread,
+      });
+      await getMessageHandler()(msg);
+      expect(startThread).toHaveBeenCalledWith({ name: "thread-a1b2c3" });
+      expect(mockAppendInbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelId: "thread-new-abc",
+          sessionId: "thread-new-abc",
+          groupName: "group1",
+        }),
+      );
+    });
+
+    it("親チャンネルのメッセージにURLがある: hostname-suffix でスレッドを作成する", async () => {
+      const mockThread = { id: "thread-url-xyz" };
+      const startThread = vi.fn().mockResolvedValue(mockThread);
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      const msg = makeMockMessage({
+        isThread: false,
+        channelId: "ch-auto",
+        id: "000000000000a1b2c3",
+        content: "https://github.com/example/repo を教えて",
+        startThread,
+      });
+      await getMessageHandler()(msg);
+      expect(startThread).toHaveBeenCalledWith({ name: "github-com-a1b2c3" });
+    });
+
+    it("startThread が失敗した場合: inbox に積まず reply を送信する", async () => {
+      const startThread = vi
+        .fn()
+        .mockRejectedValue(new Error("Missing Permissions"));
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      const msg = makeMockMessage({
+        isThread: false,
+        channelId: "ch-auto",
+        content: "質問です",
+        startThread,
+      });
+      await getMessageHandler()(msg);
+      expect(mockAppendInbox).not.toHaveBeenCalled();
+      expect(msg.reply).toHaveBeenCalledWith(
+        "スレッドの作成に失敗しました。もう一度送ってください。",
+      );
+    });
+
+    it("スレッド内のメッセージ: スレッドIDをそのまま channelId/sessionId として積む", async () => {
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      const msg = makeMockMessage({
+        isThread: true,
+        channelId: "thread-existing-456",
+        parentId: "ch-auto",
+        content: "続きです",
+      });
+      await getMessageHandler()(msg);
+      expect(mockAppendInbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelId: "thread-existing-456",
+          sessionId: "thread-existing-456",
+          groupName: "group1",
+        }),
+      );
+    });
+
+    it("親チャンネル: appendInbox が失敗した場合 reply を送信する", async () => {
+      const startThread = vi.fn().mockResolvedValue({ id: "thread-fail-abc" });
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      mockAppendInbox.mockRejectedValue(new Error("disk full"));
+      const msg = makeMockMessage({
+        isThread: false,
+        channelId: "ch-auto",
+        content: "質問です",
+        startThread,
+      });
+      await getMessageHandler()(msg);
+      expect(msg.reply).toHaveBeenCalledWith(
+        "メッセージの受信に失敗しました。もう一度送ってください。",
+      );
+    });
+
+    it("スレッド内: appendInbox が失敗した場合 reply を送信する", async () => {
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      mockAppendInbox.mockRejectedValue(new Error("disk full"));
+      const msg = makeMockMessage({
+        isThread: true,
+        channelId: "thread-existing-456",
+        parentId: "ch-auto",
+        content: "続きです",
+      });
+      await getMessageHandler()(msg);
+      expect(msg.reply).toHaveBeenCalledWith(
+        "メッセージの受信に失敗しました。もう一度送ってください。",
+      );
+    });
   });
 });
