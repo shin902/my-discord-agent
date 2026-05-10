@@ -32,6 +32,7 @@ describe("processMessage - autoReply", () => {
   const mockSend = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
+    vi.mocked(loadGroupConfig).mockReset();
     vi.mocked(sendMessage).mockResolvedValue("AI response");
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => true,

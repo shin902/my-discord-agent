@@ -99,6 +99,7 @@ describe("registerHandlers - MessageCreate", () => {
         sessionId: "ch-1",
         groupName: "default",
         content: "テスト",
+        messageId: "000000000000000000",
       }),
     );
   });
@@ -159,6 +160,7 @@ describe("registerHandlers - MessageCreate", () => {
       expect.objectContaining({
         sessionId: "thread-123",
         groupName: "support",
+        messageId: "000000000000000000",
       }),
     );
   });
@@ -188,6 +190,7 @@ describe("registerHandlers - MessageCreate", () => {
           channelId: "thread-new-abc",
           sessionId: "thread-new-abc",
           groupName: "group1",
+          messageId: undefined,
         }),
       );
     });
@@ -251,6 +254,7 @@ describe("registerHandlers - MessageCreate", () => {
           channelId: "thread-existing-456",
           sessionId: "thread-existing-456",
           groupName: "group1",
+          messageId: "000000000000000000",
         }),
       );
     });
