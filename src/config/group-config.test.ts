@@ -5,7 +5,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 const { readFile } = await import('fs/promises');
-const { loadGroupConfig, loadGroupSystemPrompt } = await import('./group-config.js');
+const { loadGroupConfig, loadGroupSystemPrompt, initGroupConfigs } = await import('./group-config.js');
 
 // readFile はオーバーロードがあり vi.mocked がデフォルトで Buffer 返しの overload を選ぶため、
 // string 返しの overload に一度だけキャストして各テストで as any を使わずに済むようにする。
@@ -75,5 +75,41 @@ describe('loadGroupSystemPrompt', () => {
   it('ファイルが存在する場合は内容を返す', async () => {
     mockReadFile.mockResolvedValue('あなたは役立つアシスタントです。');
     expect(await loadGroupSystemPrompt('test')).toBe('あなたは役立つアシスタントです。');
+  });
+});
+
+describe('initGroupConfigs', () => {
+  // 既存テストのキャッシュ汚染を避けるため init-* 系のグループ名を使用
+  it('グループ設定を読み込んで Map を返す', async () => {
+    mockReadFile
+      .mockResolvedValueOnce('{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}')
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const map = await initGroupConfigs(['init-valid']);
+
+    expect(map.get('init-valid')).toEqual({ model: { provider: 'opencode-go', modelId: 'kimi-k2.6' } });
+  });
+
+  it('group.json がない場合は空オブジェクトが Map に入る', async () => {
+    mockReadFile
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const map = await initGroupConfigs(['init-absent']);
+
+    expect(map.get('init-absent')).toEqual({});
+  });
+
+  it('キャッシュ後の loadGroupConfig は readFile を呼ばない', async () => {
+    mockReadFile
+      .mockResolvedValueOnce('{"model":{"provider":"opencode-go","modelId":"kimi-k2.6"}}')
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    await initGroupConfigs(['init-cache-verify']);
+    mockReadFile.mockReset();
+
+    const config = await loadGroupConfig('init-cache-verify');
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(config).toEqual({ model: { provider: 'opencode-go', modelId: 'kimi-k2.6' } });
   });
 });

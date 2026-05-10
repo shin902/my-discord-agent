@@ -17,7 +17,10 @@ export type GroupJsonConfig = z.infer<typeof GroupJsonSchema>;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GROUPS_DIR = path.join(__dirname, '../../groups');
 
-export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfig> {
+const _configCache = new Map<string, GroupJsonConfig>();
+const _promptCache = new Map<string, string | null>();
+
+async function _loadGroupConfigFromFile(groupName: string): Promise<GroupJsonConfig> {
   if (!/^[a-zA-Z0-9_-]+$/.test(groupName)) throw new Error(`不正なグループ名: ${groupName}`);
   const configPath = path.join(GROUPS_DIR, groupName, 'group.json');
   let text: string;
@@ -38,8 +41,7 @@ export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfi
   return result.data;
 }
 
-/** groups/<groupName>/AGENTS.md を読み込む。ファイルがなければ null を返す。 */
-export async function loadGroupSystemPrompt(groupName: string): Promise<string | null> {
+async function _loadGroupSystemPromptFromFile(groupName: string): Promise<string | null> {
   if (!/^[a-zA-Z0-9_-]+$/.test(groupName)) throw new Error(`不正なグループ名: ${groupName}`);
   const promptPath = path.join(GROUPS_DIR, groupName, 'AGENTS.md');
   try {
@@ -48,4 +50,28 @@ export async function loadGroupSystemPrompt(groupName: string): Promise<string |
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
+}
+
+/** 起動時に全グループの設定を一括読み込みしてキャッシュし、config の Map を返す */
+export async function initGroupConfigs(groupNames: string[]): Promise<Map<string, GroupJsonConfig>> {
+  await Promise.all(
+    groupNames.map(async (name) => {
+      const [config, prompt] = await Promise.all([
+        _loadGroupConfigFromFile(name),
+        _loadGroupSystemPromptFromFile(name),
+      ]);
+      _configCache.set(name, config);
+      _promptCache.set(name, prompt);
+    }));
+  return new Map(_configCache);
+}
+
+export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfig> {
+  if (_configCache.has(groupName)) return _configCache.get(groupName)!;
+  return _loadGroupConfigFromFile(groupName);
+}
+
+export async function loadGroupSystemPrompt(groupName: string): Promise<string | null> {
+  if (_promptCache.has(groupName)) return _promptCache.get(groupName)!;
+  return _loadGroupSystemPromptFromFile(groupName);
 }

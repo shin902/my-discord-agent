@@ -4,8 +4,8 @@ import type { KnownProvider } from '@mariozechner/pi-ai';
 import { loadMessages, appendMessage } from './session.js';
 import { loadGroupConfig, loadGroupSystemPrompt } from '../config/group-config.js';
 
-const DEFAULT_PROVIDER = 'opencode-go';
-const DEFAULT_MODEL_ID = 'kimi-k2.6';
+export const DEFAULT_PROVIDER = 'opencode-go';
+export const DEFAULT_MODEL_ID = 'kimi-k2.6';
 const DEFAULT_SYSTEM_PROMPT = 'あなたは役立つDiscordアシスタントです。';
 
 export function resolveModel(provider: string, modelId: string) {
@@ -16,6 +16,11 @@ export function resolveModel(provider: string, modelId: string) {
   const model = getModels(provider as KnownProvider).find((m) => m.id === modelId);
   if (!model) throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
   return model;
+}
+
+// 起動時バリデーション専用。無効な設定はスローして即クラッシュさせる
+export function validateModel(provider: string, modelId: string): void {
+  resolveModel(provider, modelId);
 }
 
 /**
