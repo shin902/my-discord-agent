@@ -52,8 +52,8 @@ async function _loadGroupSystemPromptFromFile(groupName: string): Promise<string
   }
 }
 
-/** 起動時に全グループの設定を一括読み込みしてキャッシュする */
-export async function initGroupConfigs(groupNames: string[]): Promise<void> {
+/** 起動時に全グループの設定を一括読み込みしてキャッシュし、config の Map を返す */
+export async function initGroupConfigs(groupNames: string[]): Promise<Map<string, GroupJsonConfig>> {
   await Promise.all(
     groupNames.map(async (name) => {
       const [config, prompt] = await Promise.all([
@@ -63,6 +63,7 @@ export async function initGroupConfigs(groupNames: string[]): Promise<void> {
       _configCache.set(name, config);
       _promptCache.set(name, prompt);
     }));
+  return new Map(_configCache);
 }
 
 export async function loadGroupConfig(groupName: string): Promise<GroupJsonConfig> {
