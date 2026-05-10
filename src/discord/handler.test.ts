@@ -248,5 +248,42 @@ describe("registerHandlers - MessageCreate", () => {
         }),
       );
     });
+
+    it("親チャンネル: appendInbox が失敗した場合 reply を送信する", async () => {
+      const startThread = vi.fn().mockResolvedValue({ id: "thread-fail-abc" });
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      mockAppendInbox.mockRejectedValue(new Error("disk full"));
+      const msg = makeMockMessage({
+        isThread: false,
+        channelId: "ch-auto",
+        content: "質問です",
+        startThread,
+      });
+      await getMessageHandler()(msg);
+      expect(msg.reply).toHaveBeenCalledWith(
+        "メッセージの受信に失敗しました。もう一度送ってください。",
+      );
+    });
+
+    it("スレッド内: appendInbox が失敗した場合 reply を送信する", async () => {
+      mockFindGroup.mockResolvedValue({
+        group: { name: "group1", channels: [] },
+        channel: { channelId: "ch-auto", sessionMode: "auto-thread" },
+      });
+      mockAppendInbox.mockRejectedValue(new Error("disk full"));
+      const msg = makeMockMessage({
+        isThread: true,
+        channelId: "thread-existing-456",
+        parentId: "ch-auto",
+        content: "続きです",
+      });
+      await getMessageHandler()(msg);
+      expect(msg.reply).toHaveBeenCalledWith(
+        "メッセージの受信に失敗しました。もう一度送ってください。",
+      );
+    });
   });
 });
