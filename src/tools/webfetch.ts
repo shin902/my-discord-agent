@@ -35,9 +35,16 @@ export const webfetchTool: AgentTool<typeof parameters> = {
     if (isPrivateAddress(address)) {
       throw new Error(`内部アドレスへのアクセスは禁止: ${address}`);
     }
-    const res = await fetch(url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${url}`);
+    }
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.startsWith("text/") && !contentType.includes("json")) {
+      throw new Error(`テキスト以外のコンテンツ: ${contentType}`);
     }
     const text = await res.text();
     return {
