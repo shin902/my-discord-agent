@@ -14,6 +14,7 @@ import {
   type GroupJsonConfig,
   GroupJsonSchema,
 } from "../config/group-config.js";
+import { editTool, listTool, readTool, writeTool } from "../tools/fs.js";
 import { webfetchTool } from "../tools/webfetch.js";
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
@@ -21,6 +22,10 @@ const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントで
 // microsandbox等のネイティブバイナリを含まないツールのみ登録
 const SAFE_TOOLS: Record<string, AgentTool> = {
   webfetch: webfetchTool,
+  read: readTool,
+  write: writeTool,
+  list: listTool,
+  edit: editTool,
 };
 
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
