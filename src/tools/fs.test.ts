@@ -126,6 +126,8 @@ describe("edit", () => {
         oldString: "",
         newString: "x",
       }),
-    ).rejects.toThrow("置換対象の文字列（oldString）を空にすることはできません");
+    ).rejects.toThrow(
+      "置換対象の文字列（oldString）を空にすることはできません",
+    );
   });
 });
