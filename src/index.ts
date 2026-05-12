@@ -2,6 +2,7 @@ import "dotenv/config";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
+  initManager,
   validateModel,
 } from "./agent/manager.js";
 import { initGroupConfigs } from "./config/group-config.js";
@@ -15,6 +16,7 @@ if (!token) throw new Error("DISCORD_BOT_TOKEN が設定されていません");
 
 const groups = await loadGroups();
 try {
+  await initManager();
   const configs = await initGroupConfigs(groups.map((g) => g.name));
   for (const group of groups) {
     const config = configs.get(group.name);

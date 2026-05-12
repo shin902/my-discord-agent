@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   startPoller: vi.fn(),
   loadGroups: vi.fn(),
   initGroupConfigs: vi.fn(),
+  initManager: vi.fn(),
   validateModel: vi.fn(),
 }));
 
@@ -23,6 +24,7 @@ vi.mock("./config/group-config.js", () => ({
   initGroupConfigs: mocks.initGroupConfigs,
 }));
 vi.mock("./agent/manager.js", () => ({
+  initManager: mocks.initManager,
   validateModel: mocks.validateModel,
   DEFAULT_PROVIDER: "opencode-go",
   DEFAULT_MODEL_ID: "kimi-k2.6",
@@ -37,6 +39,7 @@ describe("index: 起動時バリデーション", () => {
     vi.resetAllMocks();
     process.env.DISCORD_BOT_TOKEN = "test-token";
     mocks.loadGroups.mockResolvedValue([]);
+    mocks.initManager.mockResolvedValue(undefined);
     mocks.initGroupConfigs.mockResolvedValue(new Map());
     // 実際に終了させず、呼び出し後の継続を防ぐためにスロー
     mockExit = vi.fn((code?: number) => {
