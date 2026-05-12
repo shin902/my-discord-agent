@@ -73,12 +73,15 @@ export async function sendMessage(
     .cpus(1)
     .memory(512)
     .volume("/app/dist", (mb) => mb.bind(path.join(ROOT, "dist")).readonly())
-    .volume(
-      "/app/node_modules",
-      (mb) => mb.bind(path.join(ROOT, "node_modules")).readonly(),
+    .volume("/app/node_modules", (mb) =>
+      mb.bind(path.join(ROOT, "node_modules")).readonly(),
     )
-    .volume("/app/config", (mb) => mb.bind(path.join(ROOT, "config")).readonly())
-    .volume("/app/groups", (mb) => mb.bind(path.join(ROOT, "groups")).readonly())
+    .volume("/app/config", (mb) =>
+      mb.bind(path.join(ROOT, "config")).readonly(),
+    )
+    .volume("/app/groups", (mb) =>
+      mb.bind(path.join(ROOT, "groups")).readonly(),
+    )
     .volume("/app/data/sessions", (mb) =>
       mb.bind(path.join(ROOT, "data/sessions")),
     );

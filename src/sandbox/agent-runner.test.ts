@@ -153,9 +153,9 @@ describe("runAgentLoop", () => {
       model: { provider: "unknown", modelId: "model-x" },
     });
 
-    await expect(
-      runAgentLoop("test-group", "session-1", "hi"),
-    ).rejects.toThrow("不明なプロバイダ: unknown");
+    await expect(runAgentLoop("test-group", "session-1", "hi")).rejects.toThrow(
+      "不明なプロバイダ: unknown",
+    );
   });
 
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
