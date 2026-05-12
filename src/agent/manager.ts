@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,7 +80,13 @@ export async function sendMessage(
     groupConfig,
   });
 
-  let builder = Sandbox.builder(`agent-${sessionId}-${randomUUID()}`)
+  // Unixドメインソケットのパス長制限（SUN_LEN）対策: 短い一意名を生成
+  const sessionHash = createHash("sha256")
+    .update(sessionId)
+    .digest("hex")
+    .slice(0, 8);
+  const randSuffix = randomUUID().slice(0, 8);
+  let builder = Sandbox.builder(`a-${sessionHash}-${randSuffix}`)
     .image("node:22-alpine")
     .workdir("/workspace")
     .cpus(1)
