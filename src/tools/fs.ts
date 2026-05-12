@@ -1,4 +1,11 @@
-import { glob, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  glob,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -258,9 +265,7 @@ export const grepTool: AgentTool<typeof grepParameters> = {
 
     const lines = truncated
       ? [
-          ...matches.map(
-            (m) => `${m.file}:${m.line}: ${m.content}`,
-          ),
+          ...matches.map((m) => `${m.file}:${m.line}: ${m.content}`),
           "... (省略: 結果が多すぎます)",
         ]
       : matches.map((m) => `${m.file}:${m.line}: ${m.content}`);

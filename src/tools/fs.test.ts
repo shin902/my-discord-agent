@@ -9,8 +9,22 @@ vi.mock("node:fs/promises", () => ({
   stat: vi.fn(),
 }));
 
-import { glob, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { editTool, globTool, grepTool, listTool, readTool, writeTool } from "./fs.js";
+import {
+  glob,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import {
+  editTool,
+  globTool,
+  grepTool,
+  listTool,
+  readTool,
+  writeTool,
+} from "./fs.js";
 
 beforeEach(() => {
   vi.clearAllMocks();

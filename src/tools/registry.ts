@@ -1,5 +1,12 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { editTool, globTool, grepTool, listTool, readTool, writeTool } from "./fs.js";
+import {
+  editTool,
+  globTool,
+  grepTool,
+  listTool,
+  readTool,
+  writeTool,
+} from "./fs.js";
 import { sandboxTool } from "./sandbox.js";
 import { webfetchTool } from "./webfetch.js";
 
