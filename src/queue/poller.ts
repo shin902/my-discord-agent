@@ -1,6 +1,7 @@
 import { sendMessage } from "../agent/manager.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { client } from "../discord/client.js";
+import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import { type InboxMessage, prependInbox, shiftInbox } from "./inbox.js";
@@ -52,6 +53,11 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
   try {
     response = await sendMessage(msg.groupName, msg.sessionId, msg.content);
   } catch (err) {
+    if (err instanceof NonRetryableError) {
+      console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+      await appendDeadLetter(msg);
+      return;
+    }
     console.error(
       `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
       err,

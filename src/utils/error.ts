@@ -14,3 +14,10 @@ export function isTransientError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return TRANSIENT_PATTERNS.some((re) => re.test(msg));
 }
+
+export class NonRetryableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NonRetryableError";
+  }
+}

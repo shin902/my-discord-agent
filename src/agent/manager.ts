@@ -1,7 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Sandbox } from "microsandbox";
+import { ExecTimeoutError, Sandbox } from "microsandbox";
+import { NonRetryableError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
@@ -103,18 +104,26 @@ export async function sendMessage(
 
   await using sandbox = await builder.create();
 
-  const result = await sandbox.exec("node", [
-    "/app/dist/sandbox/agent-runner.js",
-    payload,
-  ]);
+  try {
+    const result = await sandbox.execWith("node", (e) =>
+      e
+        .args(["/app/dist/sandbox/agent-runner.js", payload])
+        .timeout(10 * 60 * 1000),
+    );
 
-  if (result.code !== 0) {
-    const stderr = result.stderr().trim();
-    if (result.code === 2) {
-      throw new Error(`一時的エラー: ${stderr}`);
+    if (result.code !== 0) {
+      const stderr = result.stderr().trim();
+      if (result.code === 2) {
+        throw new Error(`一時的エラー: ${stderr}`);
+      }
+      return `エージェント実行エラー: ${stderr}`;
     }
-    return `エージェント実行エラー: ${stderr}`;
-  }
 
-  return result.stdout().trim();
+    return result.stdout().trim();
+  } catch (err) {
+    if (err instanceof ExecTimeoutError) {
+      throw new NonRetryableError("タイムアウト（10分を超過しました）");
+    }
+    throw err;
+  }
 }
