@@ -20,23 +20,31 @@ describe("loadCredentialProxy", () => {
   it("設定ファイルを読み込んでパースする", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([{ envVar: "API_KEY", baseUrl: "https://api.example.com" }]),
+      JSON.stringify([
+        { envVar: "API_KEY", baseUrl: "https://api.example.com" },
+      ]),
     );
 
     const result = await loadCredentialProxy();
-    expect(result).toEqual([{ envVar: "API_KEY", baseUrl: "https://api.example.com" }]);
+    expect(result).toEqual([
+      { envVar: "API_KEY", baseUrl: "https://api.example.com" },
+    ]);
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
   it("2回目以降の呼び出しではキャッシュを返し readFile を呼ばない", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([{ envVar: "API_KEY", baseUrl: "https://api.example.com" }]),
+      JSON.stringify([
+        { envVar: "API_KEY", baseUrl: "https://api.example.com" },
+      ]),
     );
 
     await loadCredentialProxy();
     const result = await loadCredentialProxy();
-    expect(result).toEqual([{ envVar: "API_KEY", baseUrl: "https://api.example.com" }]);
+    expect(result).toEqual([
+      { envVar: "API_KEY", baseUrl: "https://api.example.com" },
+    ]);
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 

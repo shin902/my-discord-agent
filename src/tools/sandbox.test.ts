@@ -39,9 +39,14 @@ describe("sandboxTool", () => {
   it("コードを実行して stdout を返す", async () => {
     mockExec.mockResolvedValue(makeResult("hello", "", 0));
 
-    const result = await sandboxTool.execute("call-1", { code: "console.log('hello')" });
+    const result = await sandboxTool.execute("call-1", {
+      code: "console.log('hello')",
+    });
 
-    expect(mockExec).toHaveBeenCalledWith("node", ["-e", "console.log('hello')"]);
+    expect(mockExec).toHaveBeenCalledWith("node", [
+      "-e",
+      "console.log('hello')",
+    ]);
     expect(result.content).toEqual([{ type: "text", text: "stdout:\nhello" }]);
     expect(result.details).toEqual({ exitCode: 0 });
   });
@@ -78,9 +83,9 @@ describe("sandboxTool", () => {
   it("exec が失敗した場合はエラーを投げる", async () => {
     mockExec.mockRejectedValue(new Error("sandbox crashed"));
 
-    await expect(sandboxTool.execute("call-1", { code: "throw 1" })).rejects.toThrow(
-      "sandbox crashed",
-    );
+    await expect(
+      sandboxTool.execute("call-1", { code: "throw 1" }),
+    ).rejects.toThrow("sandbox crashed");
   });
 
   it("タイムアウトした場合はエラーを投げる", async () => {
