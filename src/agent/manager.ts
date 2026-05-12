@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,7 +68,7 @@ export async function sendMessage(
     systemPrompt,
   });
 
-  let builder = Sandbox.builder(`agent-${sessionId}-${Date.now()}`)
+  let builder = Sandbox.builder(`agent-${sessionId}-${randomUUID()}`)
     .image("node:22-alpine")
     .workdir("/workspace")
     .cpus(1)
