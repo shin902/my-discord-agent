@@ -19,11 +19,16 @@ let cache: CredentialEntry[] | null = null;
 
 export async function loadCredentialProxy(): Promise<CredentialEntry[]> {
   if (cache) return cache;
+  let raw: string;
   try {
-    const raw = await readFile(CONFIG_PATH, "utf-8");
-    cache = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
-  } catch {
-    cache = [];
+    raw = await readFile(CONFIG_PATH, "utf-8");
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      cache = [];
+      return cache;
+    }
+    throw err;
   }
+  cache = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
   return cache;
 }
