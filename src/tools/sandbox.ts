@@ -1,5 +1,4 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Sandbox } from "microsandbox";
 import { Type } from "typebox";
 
 const MAX_OUTPUT_CHARS = 4000;
@@ -16,6 +15,7 @@ export const sandboxTool: AgentTool<typeof parameters> = {
     "JavaScriptコードをmicroVM内で安全に実行し、標準出力・標準エラーを返す",
   parameters,
   execute: async (_toolCallId, { code }) => {
+    const { Sandbox } = await import("microsandbox");
     const name = `agent-sandbox-${Date.now()}`;
     await using sandbox = await Sandbox.builder(name)
       .image("node:22-alpine")

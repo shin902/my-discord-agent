@@ -81,7 +81,7 @@ export async function sendMessage(
     .slice(0, 8);
   const randSuffix = randomUUID().slice(0, 8);
   let builder = Sandbox.builder(`a-${sessionHash}-${randSuffix}`)
-    .image("node:22-slim")
+    .image("node:22-alpine")
     .workdir("/workspace")
     .cpus(1)
     .memory(512)
