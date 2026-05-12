@@ -1,20 +1,17 @@
-import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { Sandbox } from "microsandbox";
 import {
   getModels,
   getProviders,
   type KnownProvider,
-  type TextContent,
 } from "@earendil-works/pi-ai";
-import {
-  loadGroupConfig,
-  loadGroupSystemPrompt,
-} from "../config/group-config.js";
+import { loadCredentialProxy } from "../config/credential-proxy.js";
+import { loadGroupConfig } from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
-import { appendMessage, loadMessages } from "./session.js";
 
 export const DEFAULT_PROVIDER = "opencode-go";
 export const DEFAULT_MODEL_ID = "kimi-k2.6";
-const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
 export function resolveModel(provider: string, modelId: string) {
   const providers = getProviders();
@@ -35,24 +32,19 @@ export function validateModel(provider: string, modelId: string): void {
 }
 
 /**
- * 指定セッションの Agent にメッセージを送り、返答テキストを返す。
- * Agent はリクエストごとに JSONL から作成して使い捨てる。
- * discord/ 層はこの関数だけを呼ぶ。
+ * 指定セッションのメッセージをmicroVM内のエージェントに送り、返答テキストを返す。
+ * モデル・ツールのバリデーションをサンドボックス起動前に行い設定エラーを早期検出する。
+ * クレデンシャルはTSI経由でVMに渡さずネットワーク層で差し替える。
  */
 export async function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
 ): Promise<string> {
-  const [messages, groupConfig, systemPrompt] = await Promise.all([
-    loadMessages(groupName, sessionId),
-    loadGroupConfig(groupName),
-    loadGroupSystemPrompt(groupName),
-  ]);
+  const groupConfig = await loadGroupConfig(groupName);
 
-  let model: ReturnType<typeof resolveModel>;
   try {
-    model = resolveModel(
+    resolveModel(
       groupConfig.model?.provider ?? DEFAULT_PROVIDER,
       groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
     );
@@ -60,39 +52,60 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  let tools: AgentTool[];
   try {
-    tools = resolveTools(groupConfig.tools ?? []);
+    resolveTools(groupConfig.tools ?? []);
   } catch (err) {
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      model,
-      messages,
-      tools,
-    },
-  });
+  await mkdir("data/sessions", { recursive: true });
 
-  // メッセージ完了のたびに JSONL へ追記する（セッション永続化）
-  // user・assistant・toolResult をすべて保存する。toolResult を欠かすと
-  // 再読み込み時にコンテキストが壊れてプロンプトキャッシュも効かなくなる。
-  let response = "";
-  agent.subscribe(async (event) => {
-    if (event.type === "message_end") {
-      await appendMessage(groupName, sessionId, event.message);
-      // メッセージの生成
-      if ("role" in event.message && event.message.role === "assistant") {
-        response = event.message.content
-          .filter((c): c is TextContent => c.type === "text")
-          .map((c) => c.text)
-          .join("");
-      }
-    }
-  });
+  const creds = await loadCredentialProxy();
+  const payload = JSON.stringify({ groupName, sessionId, content });
 
-  await agent.prompt(content);
-  return response;
+  let builder = Sandbox.builder(`agent-${sessionId}-${Date.now()}`)
+    .image("node:22-alpine")
+    .workdir("/app")
+    .cpus(1)
+    .memory(512)
+    .volume("/app/dist", (mb) => mb.bind(path.resolve("dist")).readonly())
+    .volume(
+      "/app/node_modules",
+      (mb) => mb.bind(path.resolve("node_modules")).readonly(),
+    )
+    .volume("/app/config", (mb) => mb.bind(path.resolve("config")).readonly())
+    .volume("/app/groups", (mb) => mb.bind(path.resolve("groups")).readonly())
+    .volume("/app/data/sessions", (mb) =>
+      mb.bind(path.resolve("data/sessions")),
+    );
+
+  for (const entry of creds) {
+    const value = process.env[entry.envVar];
+    if (!value) continue;
+    const placeholder = `msb_${entry.envVar.toLowerCase()}`;
+    const host = new URL(entry.baseUrl).hostname;
+    const headerValue = entry.injectFormat.replace("{value}", placeholder);
+    builder = builder
+      .secret((sb) =>
+        sb
+          .value(value)
+          .placeholder(placeholder)
+          .allowHost(host)
+          .injectHeaders({ [entry.injectHeader]: headerValue }),
+      )
+      .env(entry.envVar, placeholder);
+  }
+
+  await using sandbox = await builder.create();
+
+  const result = await sandbox.exec("node", [
+    "/app/dist/sandbox/agent-runner.js",
+    payload,
+  ]);
+
+  if (result.code !== 0) {
+    return `エージェント実行エラー: ${result.stderr().trim()}`;
+  }
+
+  return result.stdout().trim();
 }
