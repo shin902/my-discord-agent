@@ -22,12 +22,7 @@ import {
   validateModel,
 } from "./model.js";
 
-export {
-  DEFAULT_MODEL_ID,
-  DEFAULT_PROVIDER,
-  resolveModel,
-  validateModel,
-};
+export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel, validateModel };
 
 /**
  * 指定セッションのメッセージをmicroVM内のエージェントに送り、返答テキストを返す。
