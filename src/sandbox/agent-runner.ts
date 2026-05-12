@@ -60,10 +60,12 @@ export async function runAgentLoop(
     },
   });
 
+  const pendingAppends: Promise<void>[] = [];
   let response = "";
-  agent.subscribe(async (event) => {
+
+  agent.subscribe((event) => {
     if (event.type === "message_end") {
-      await appendMessage(groupName, sessionId, event.message);
+      pendingAppends.push(appendMessage(groupName, sessionId, event.message));
       if ("role" in event.message && event.message.role === "assistant") {
         response = event.message.content
           .filter((c): c is TextContent => c.type === "text")
@@ -74,6 +76,7 @@ export async function runAgentLoop(
   });
 
   await agent.prompt(content);
+  await Promise.all(pendingAppends);
   return response;
 }
 

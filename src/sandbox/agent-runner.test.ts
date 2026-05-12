@@ -213,4 +213,22 @@ describe("runAgentLoop", () => {
       }),
     ).rejects.toThrow("不明なツール名: unknown-tool");
   });
+
+  it("appendMessage が失敗した場合は runAgentLoop も reject する", async () => {
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+    vi.mocked(appendMessage).mockRejectedValue(
+      new Error("session write error"),
+    );
+
+    await expect(
+      runAgentLoop("test-group", "session-1", "hi", {}),
+    ).rejects.toThrow("session write error");
+  });
 });

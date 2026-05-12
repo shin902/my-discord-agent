@@ -122,7 +122,17 @@ export async function sendMessage(
     );
   }
 
-  await using sandbox = await builder.create();
+  const CREATE_TIMEOUT = 60_000;
+  const sandboxPromise = builder.create();
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(
+      () => reject(new Error("VM起動がタイムアウトしました")),
+      CREATE_TIMEOUT,
+    ),
+  );
+
+  const sandbox = await Promise.race([sandboxPromise, timeoutPromise]);
+  await using _sandbox = sandbox;
 
   try {
     const result = _distExists
