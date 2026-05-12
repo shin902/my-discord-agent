@@ -4,6 +4,10 @@ const { AgentMock } = vi.hoisted(() => ({
   AgentMock: vi.fn(),
 }));
 
+vi.mock("node:fs/promises", () => ({
+  readFile: vi.fn(),
+}));
+
 vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: () => ["provider-a", "opencode-go"],
   getModels: (provider: string) =>
@@ -23,6 +27,7 @@ vi.mock("../agent/session.js", () => ({
 
 const { runAgentLoop } = await import("./agent-runner.js");
 const { loadMessages, appendMessage } = await import("../agent/session.js");
+const { readFile } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
 function createMockAgent(deltas: string[], endMessage: unknown) {
@@ -50,6 +55,9 @@ describe("runAgentLoop", () => {
     vi.clearAllMocks();
     lastAgentOptions = undefined;
     vi.mocked(loadMessages).mockResolvedValue([]);
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
       return createMockAgent(["OK"], {
@@ -74,7 +82,6 @@ describe("runAgentLoop", () => {
       "session-1",
       "こんにちは",
       {},
-      null,
     );
 
     expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
@@ -109,7 +116,6 @@ describe("runAgentLoop", () => {
       "session-1",
       "hi",
       { model: { provider: "provider-a", modelId: "model-x" } },
-      null,
     );
 
     expect(lastAgentOptions).toEqual(
@@ -121,7 +127,9 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("カスタム systemPrompt を使用する", async () => {
+  it("AGENTS.md が存在する場合はその内容を systemPrompt に使用する", async () => {
+    vi.mocked(readFile).mockResolvedValue("カスタムプロンプト" as never);
+
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
       content: [{ type: "text", text: "OK" }],
@@ -131,14 +139,9 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop(
-      "test-group",
-      "session-1",
-      "hi",
-      {},
-      "カスタムプロンプト",
-    );
+    await runAgentLoop("test-group", "session-1", "hi", {});
 
+    expect(readFile).toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
         initialState: expect.objectContaining({
@@ -155,7 +158,6 @@ describe("runAgentLoop", () => {
         "session-1",
         "hi",
         { model: { provider: "unknown", modelId: "model-x" } },
-        null,
       ),
     ).rejects.toThrow("不明なプロバイダ: unknown");
   });
@@ -179,7 +181,7 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {}, null);
+    await runAgentLoop("test-group", "session-1", "hi", {});
 
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
@@ -204,7 +206,6 @@ describe("runAgentLoop", () => {
       "session-1",
       "hi",
       { tools: ["webfetch", "sandbox"] },
-      null,
     );
 
     const tools = (
@@ -221,7 +222,6 @@ describe("runAgentLoop", () => {
         "session-1",
         "hi",
         { tools: ["unknown-tool"] },
-        null,
       ),
     ).rejects.toThrow("不明なツール名: unknown-tool");
   });

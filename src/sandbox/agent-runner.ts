@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
@@ -40,14 +41,25 @@ function resolveSafeTools(toolNames: string[]): AgentTool[] {
   });
 }
 
+async function loadSystemPromptFromWorkspace(): Promise<string | null> {
+  try {
+    return await readFile("/workspace/AGENTS.md", "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
 export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
   groupConfig: GroupJsonConfig,
-  systemPrompt: string | null,
 ): Promise<string> {
-  const messages = await loadMessages(groupName, sessionId);
+  const [messages, systemPrompt] = await Promise.all([
+    loadMessages(groupName, sessionId),
+    loadSystemPromptFromWorkspace(),
+  ]);
 
   const model = resolveModel(
     groupConfig.model?.provider ?? DEFAULT_PROVIDER,
@@ -87,7 +99,6 @@ const PayloadSchema = z.object({
   sessionId: z.string(),
   content: z.string(),
   groupConfig: GroupJsonSchema,
-  systemPrompt: z.string().nullable(),
 });
 
 // CLIエントリポイント（import時は実行しない）
@@ -101,7 +112,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       payload.sessionId,
       payload.content,
       payload.groupConfig,
-      payload.systemPrompt,
     );
     process.stdout.write(response);
   })().catch((err) => {

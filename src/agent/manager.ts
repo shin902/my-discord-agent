@@ -78,7 +78,6 @@ export async function sendMessage(
     sessionId,
     content,
     groupConfig,
-    systemPrompt,
   });
 
   let builder = Sandbox.builder(`agent-${sessionId}-${randomUUID()}`)
