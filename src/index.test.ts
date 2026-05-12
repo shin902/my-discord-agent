@@ -29,6 +29,7 @@ vi.mock("./agent/manager.js", () => ({
   DEFAULT_PROVIDER: "opencode-go",
   DEFAULT_MODEL_ID: "kimi-k2.6",
 }));
+vi.mock("dotenv/config", () => ({}));
 
 describe("index: 起動時バリデーション", () => {
   const ORIGINAL_TOKEN = process.env.DISCORD_BOT_TOKEN;
