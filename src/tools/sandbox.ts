@@ -31,10 +31,12 @@ export const sandboxTool: AgentTool<typeof parameters> = {
       );
     });
 
-    const result = await Promise.race([
-      sandbox.exec("node", ["-e", code]),
-      timer,
-    ]).finally(() => clearTimeout(timerId));
+    const execPromise = sandbox.exec("node", ["-e", code]);
+    const result = await Promise.race([execPromise, timer]).finally(() =>
+      clearTimeout(timerId),
+    );
+    // タイムアウト勝利時に execPromise の後続エラーを unhandled rejection にしない
+    execPromise.catch(() => {});
 
     const stdout = result.stdout().slice(0, MAX_OUTPUT_CHARS);
     const stderr = result.stderr().slice(0, MAX_OUTPUT_CHARS);
