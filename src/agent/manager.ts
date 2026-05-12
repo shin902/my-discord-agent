@@ -75,15 +75,14 @@ export async function sendMessage(
     if (!value) continue;
     const placeholder = `msb_${entry.envVar.toLowerCase()}`;
     const host = new URL(entry.baseUrl).hostname;
-    builder = builder
-      .secret((sb) =>
-        sb
-          .value(value)
-          .placeholder(placeholder)
-          .allowHost(host)
-          .injectHeaders(true),
-      )
-      .env(entry.envVar, placeholder);
+    builder = builder.secret((sb) =>
+      sb
+        .env(entry.envVar)
+        .value(value)
+        .placeholder(placeholder)
+        .allowHost(host)
+        .injectHeaders(true),
+    );
   }
 
   await using sandbox = await builder.create();
