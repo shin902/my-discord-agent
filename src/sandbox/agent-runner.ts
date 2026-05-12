@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
-import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
+import { Agent } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import {
@@ -14,32 +14,13 @@ import {
   type GroupJsonConfig,
   GroupJsonSchema,
 } from "../config/group-config.js";
-import { editTool, listTool, readTool, writeTool } from "../tools/fs.js";
-import { webfetchTool } from "../tools/webfetch.js";
+import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
-// microsandbox等のネイティブバイナリを含まないツールのみ登録
-const SAFE_TOOLS: Record<string, AgentTool> = {
-  webfetch: webfetchTool,
-  read: readTool,
-  write: writeTool,
-  list: listTool,
-  edit: editTool,
-};
-
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set(["sandbox"]);
-
-function resolveSafeTools(toolNames: string[]): AgentTool[] {
-  return toolNames.flatMap((name) => {
-    if (VM_UNSUPPORTED_TOOLS.has(name)) return [];
-    const tool = SAFE_TOOLS[name];
-    if (!tool) throw new Error(`不明なツール名: ${name}`);
-    return [tool];
-  });
-}
 
 async function loadSystemPromptFromWorkspace(): Promise<string | null> {
   try {
@@ -66,7 +47,9 @@ export async function runAgentLoop(
     groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
   );
 
-  const tools = resolveSafeTools(groupConfig.tools ?? []);
+  const tools = resolveTools(groupConfig.tools ?? []).filter(
+    (t) => !VM_UNSUPPORTED_TOOLS.has(t.name),
+  );
 
   const agent = new Agent({
     initialState: {
