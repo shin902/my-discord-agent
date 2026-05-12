@@ -5,35 +5,17 @@ import { Sandbox } from "microsandbox";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
-import {
-  getModels,
-  getProviders,
-  type KnownProvider,
-} from "@earendil-works/pi-ai";
+
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
-
-export const DEFAULT_PROVIDER = "opencode-go";
-export const DEFAULT_MODEL_ID = "kimi-k2.6";
-
-export function resolveModel(provider: string, modelId: string) {
-  const providers = getProviders();
-  if (!providers.includes(provider as KnownProvider)) {
-    throw new Error(`不明なプロバイダ: ${provider}`);
-  }
-  const model = getModels(provider as KnownProvider).find(
-    (m) => m.id === modelId,
-  );
-  if (!model)
-    throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
-  return model;
-}
-
-// 起動時バリデーション専用。無効な設定はスローして即クラッシュさせる
-export function validateModel(provider: string, modelId: string): void {
-  resolveModel(provider, modelId);
-}
+export {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER,
+  resolveModel,
+  validateModel,
+} from "./model.js";
+import { resolveModel, DEFAULT_PROVIDER, DEFAULT_MODEL_ID } from "./model.js";
 
 /**
  * 指定セッションのメッセージをmicroVM内のエージェントに送り、返答テキストを返す。

@@ -1,21 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
+import { type TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import {
-  getModels,
-  getProviders,
-  type KnownProvider,
-  type TextContent,
-} from "@earendil-works/pi-ai";
 import {
   loadGroupConfig,
   loadGroupSystemPrompt,
 } from "../config/group-config.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
+import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel } from "../agent/model.js";
 import { webfetchTool } from "../tools/webfetch.js";
 
-const DEFAULT_PROVIDER = "opencode-go";
-const DEFAULT_MODEL_ID = "kimi-k2.6";
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
 // microsandbox等のネイティブバイナリを含まないツールのみ登録
@@ -46,18 +40,10 @@ export async function runAgentLoop(
     loadGroupSystemPrompt(groupName),
   ]);
 
-  const providers = getProviders();
-  const providerName = groupConfig.model?.provider ?? DEFAULT_PROVIDER;
-  if (!providers.includes(providerName as KnownProvider)) {
-    throw new Error(`不明なプロバイダ: ${providerName}`);
-  }
-  const modelId = groupConfig.model?.modelId ?? DEFAULT_MODEL_ID;
-  const model = getModels(providerName as KnownProvider).find(
-    (m) => m.id === modelId,
+  const model = resolveModel(
+    groupConfig.model?.provider ?? DEFAULT_PROVIDER,
+    groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
   );
-  if (!model) {
-    throw new Error(`不明なモデル: ${modelId} (provider: ${providerName})`);
-  }
 
   const tools = resolveSafeTools(groupConfig.tools ?? []);
 
