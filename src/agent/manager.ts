@@ -9,10 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
 import { loadCredentialProxy } from "../config/credential-proxy.js";
-import {
-  loadGroupConfig,
-  loadGroupSystemPrompt,
-} from "../config/group-config.js";
+import { loadGroupConfig } from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
 
 import {
@@ -50,10 +47,7 @@ export async function sendMessage(
   sessionId: string,
   content: string,
 ): Promise<string> {
-  const [groupConfig, systemPrompt] = await Promise.all([
-    loadGroupConfig(groupName),
-    loadGroupSystemPrompt(groupName),
-  ]);
+  const groupConfig = await loadGroupConfig(groupName);
 
   try {
     resolveModel(

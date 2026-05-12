@@ -59,7 +59,6 @@ describe("sendMessage: 設定バリデーション", () => {
   it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({ tools: ["invalid"] }),
-      loadGroupSystemPrompt: vi.fn().mockResolvedValue(null),
     }));
 
     const { sendMessage } = await import("./manager.js");
@@ -73,7 +72,6 @@ describe("sendMessage: 設定バリデーション", () => {
       loadGroupConfig: vi
         .fn()
         .mockResolvedValue({ model: { provider: "unknown", modelId: "x" } }),
-      loadGroupSystemPrompt: vi.fn().mockResolvedValue(null),
     }));
 
     const { sendMessage } = await import("./manager.js");
