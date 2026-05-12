@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: () => ["provider-a", "opencode-go"],
@@ -30,15 +30,18 @@ describe("resolveModel", () => {
 });
 
 describe("sendMessage: 設定バリデーション", () => {
-  it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
+  beforeEach(() => {
     vi.resetModules();
     vi.doMock("microsandbox", () => ({ Sandbox: { builder: vi.fn() } }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+  });
+
+  it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({ tools: ["invalid"] }),
       loadGroupSystemPrompt: vi.fn().mockResolvedValue(null),
-    }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
 
     const { sendMessage } = await import("./manager.js");
@@ -48,16 +51,11 @@ describe("sendMessage: 設定バリデーション", () => {
   });
 
   it("不正なプロバイダを持つグループ設定は設定エラーを返す", async () => {
-    vi.resetModules();
-    vi.doMock("microsandbox", () => ({ Sandbox: { builder: vi.fn() } }));
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi
         .fn()
         .mockResolvedValue({ model: { provider: "unknown", modelId: "x" } }),
       loadGroupSystemPrompt: vi.fn().mockResolvedValue(null),
-    }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
 
     const { sendMessage } = await import("./manager.js");
