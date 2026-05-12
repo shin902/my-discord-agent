@@ -203,7 +203,9 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi");
 
-    const tools = (lastAgentOptions as any).initialState.tools;
+    const tools = (
+      lastAgentOptions as { initialState: { tools: { name: string }[] } }
+    ).initialState.tools;
     expect(tools).toHaveLength(1);
     expect(tools[0].name).toBe("webfetch");
   });
@@ -213,8 +215,8 @@ describe("runAgentLoop", () => {
       tools: ["unknown-tool"],
     });
 
-    await expect(
-      runAgentLoop("test-group", "session-1", "hi"),
-    ).rejects.toThrow("不明なツール名: unknown-tool");
+    await expect(runAgentLoop("test-group", "session-1", "hi")).rejects.toThrow(
+      "不明なツール名: unknown-tool",
+    );
   });
 });
