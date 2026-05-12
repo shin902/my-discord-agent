@@ -32,7 +32,25 @@ describe("resolveModel", () => {
 describe("sendMessage: 設定バリデーション", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.doMock("microsandbox", () => ({ Sandbox: { builder: vi.fn() } }));
+    const builderChain = {
+      image: vi.fn().mockReturnThis(),
+      workdir: vi.fn().mockReturnThis(),
+      cpus: vi.fn().mockReturnThis(),
+      memory: vi.fn().mockReturnThis(),
+      env: vi.fn().mockReturnThis(),
+      volume: vi.fn().mockReturnThis(),
+      secret: vi.fn().mockReturnThis(),
+      create: vi.fn().mockResolvedValue({
+        execWith: vi.fn().mockResolvedValue({
+          code: 0,
+          stdout: vi.fn().mockReturnValue("mocked response"),
+          stderr: vi.fn().mockReturnValue(""),
+        }),
+      }),
+    };
+    vi.doMock("microsandbox", () => ({
+      Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
