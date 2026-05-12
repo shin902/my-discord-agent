@@ -86,26 +86,9 @@ export async function sendMessage(
     .cpus(1)
     .memory(512)
     .env("SESSIONS_DIR", "/app/data/sessions")
-    .volume("/app/node_modules", (mb) =>
-      mb.bind(path.join(ROOT, "node_modules")).readonly(true),
-    )
-    .volume("/app/config", (mb) =>
-      mb.bind(path.join(ROOT, "config")).readonly(true),
-    )
-    .volume("/workspace", (mb) => mb.bind(path.join(ROOT, "groups", groupName)))
-    .volume("/app/data/sessions", (mb) =>
-      mb.bind(path.join(ROOT, "data/sessions")),
-    );
-
-  if (_distExists) {
-    builder = builder.volume("/app/dist", (mb) =>
-      mb.bind(path.join(ROOT, "dist")).readonly(true),
-    );
-  } else {
-    builder = builder.volume("/app/src", (mb) =>
-      mb.bind(path.join(ROOT, "src")).readonly(true),
-    );
-  }
+    .replace()
+    .volume("/app", (mb) => mb.bind(ROOT))
+    .volume("/workspace", (mb) => mb.bind(path.join(ROOT, "groups", groupName)));
 
   for (const entry of creds) {
     const value = process.env[entry.envVar];
@@ -122,7 +105,7 @@ export async function sendMessage(
     );
   }
 
-  const CREATE_TIMEOUT = 60_000;
+  const CREATE_TIMEOUT = 180_000;
   const sandboxPromise = builder.create();
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(
@@ -131,7 +114,21 @@ export async function sendMessage(
     ),
   );
 
-  const sandbox = await Promise.race([sandboxPromise, timeoutPromise]);
+  let sandbox: Sandbox;
+  try {
+    sandbox = await Promise.race([sandboxPromise, timeoutPromise]);
+  } catch (err) {
+    // タイムアウト時に生成途中のサンドボックスがリークしないようクリーンアップ
+    sandboxPromise
+      .then((s) =>
+        s
+          .stop()
+          .catch(() => {})
+          .then(() => s.removePersisted().catch(() => {})),
+      )
+      .catch(() => {});
+    throw err;
+  }
   await using _sandbox = sandbox;
 
   try {
