@@ -111,12 +111,9 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop(
-      "test-group",
-      "session-1",
-      "hi",
-      { model: { provider: "provider-a", modelId: "model-x" } },
-    );
+    await runAgentLoop("test-group", "session-1", "hi", {
+      model: { provider: "provider-a", modelId: "model-x" },
+    });
 
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
@@ -153,12 +150,9 @@ describe("runAgentLoop", () => {
 
   it("不明なプロバイダはエラーをスロー", async () => {
     await expect(
-      runAgentLoop(
-        "test-group",
-        "session-1",
-        "hi",
-        { model: { provider: "unknown", modelId: "model-x" } },
-      ),
+      runAgentLoop("test-group", "session-1", "hi", {
+        model: { provider: "unknown", modelId: "model-x" },
+      }),
     ).rejects.toThrow("不明なプロバイダ: unknown");
   });
 
@@ -201,12 +195,9 @@ describe("runAgentLoop", () => {
       });
     });
 
-    await runAgentLoop(
-      "test-group",
-      "session-1",
-      "hi",
-      { tools: ["webfetch", "sandbox"] },
-    );
+    await runAgentLoop("test-group", "session-1", "hi", {
+      tools: ["webfetch", "sandbox"],
+    });
 
     const tools = (
       lastAgentOptions as { initialState: { tools: { name: string }[] } }
@@ -217,12 +208,9 @@ describe("runAgentLoop", () => {
 
   it("VM内で不明なツール名はエラーをスロー", async () => {
     await expect(
-      runAgentLoop(
-        "test-group",
-        "session-1",
-        "hi",
-        { tools: ["unknown-tool"] },
-      ),
+      runAgentLoop("test-group", "session-1", "hi", {
+        tools: ["unknown-tool"],
+      }),
     ).rejects.toThrow("不明なツール名: unknown-tool");
   });
 });
