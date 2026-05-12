@@ -21,3 +21,10 @@ export class NonRetryableError extends Error {
     this.name = "NonRetryableError";
   }
 }
+
+export class TransientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TransientError";
+  }
+}

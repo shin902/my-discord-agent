@@ -3,7 +3,7 @@ import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ExecTimeoutError, Sandbox } from "microsandbox";
-import { NonRetryableError } from "../utils/error.js";
+import { NonRetryableError, TransientError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
@@ -152,7 +152,7 @@ export async function sendMessage(
     if (result.code !== 0) {
       const stderr = result.stderr().trim();
       if (result.code === 2) {
-        throw new Error(`一時的エラー: ${stderr}`);
+        throw new TransientError(stderr);
       }
       return `エージェント実行エラー: ${stderr}`;
     }
