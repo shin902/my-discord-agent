@@ -118,6 +118,9 @@ export const editTool: AgentTool<typeof editParameters> = {
     const safePath = sanitizePath(path);
     const fp = fullPath(safePath);
     const original = await readFile(fp, "utf-8");
+    if (oldString === "") {
+      throw new Error("置換対象の文字列（oldString）を空にすることはできません");
+    }
     if (!original.includes(oldString)) {
       throw new Error(`置換対象が見つかりません: ${oldString.slice(0, 50)}`);
     }
