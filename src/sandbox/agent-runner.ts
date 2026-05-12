@@ -1,13 +1,19 @@
 import { fileURLToPath } from "node:url";
+
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
-import { type TextContent } from "@earendil-works/pi-ai";
+import type { TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
+
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER,
+  resolveModel,
+} from "../agent/model.js";
+import { appendMessage, loadMessages } from "../agent/session.js";
 import {
   loadGroupConfig,
   loadGroupSystemPrompt,
 } from "../config/group-config.js";
-import { appendMessage, loadMessages } from "../agent/session.js";
-import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel } from "../agent/model.js";
 import { webfetchTool } from "../tools/webfetch.js";
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
