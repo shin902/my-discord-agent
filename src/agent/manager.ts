@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ExecTimeoutError, Sandbox } from "microsandbox";
@@ -59,6 +59,14 @@ export async function sendMessage(
     mkdir(path.join(ROOT, "groups", groupName), { recursive: true }),
   ]);
 
+  let distExists = false;
+  try {
+    await stat(path.join(ROOT, "dist"));
+    distExists = true;
+  } catch {
+    distExists = false;
+  }
+
   const creds = await loadCredentialProxy();
   const payload = JSON.stringify({
     groupName,
@@ -74,9 +82,6 @@ export async function sendMessage(
     .cpus(1)
     .memory(512)
     .env("SESSIONS_DIR", "/app/data/sessions")
-    .volume("/app/dist", (mb) =>
-      mb.bind(path.join(ROOT, "dist")).readonly(true),
-    )
     .volume("/app/node_modules", (mb) =>
       mb.bind(path.join(ROOT, "node_modules")).readonly(true),
     )
@@ -87,6 +92,16 @@ export async function sendMessage(
     .volume("/app/data/sessions", (mb) =>
       mb.bind(path.join(ROOT, "data/sessions")),
     );
+
+  if (distExists) {
+    builder = builder.volume("/app/dist", (mb) =>
+      mb.bind(path.join(ROOT, "dist")).readonly(true),
+    );
+  } else {
+    builder = builder.volume("/app/src", (mb) =>
+      mb.bind(path.join(ROOT, "src")).readonly(true),
+    );
+  }
 
   for (const entry of creds) {
     const value = process.env[entry.envVar];
@@ -106,11 +121,17 @@ export async function sendMessage(
   await using sandbox = await builder.create();
 
   try {
-    const result = await sandbox.execWith("node", (e) =>
-      e
-        .args(["/app/dist/sandbox/agent-runner.js", payload])
-        .timeout(10 * 60 * 1000),
-    );
+    const result = distExists
+      ? await sandbox.execWith("node", (e) =>
+          e
+            .args(["/app/dist/sandbox/agent-runner.js", payload])
+            .timeout(10 * 60 * 1000),
+        )
+      : await sandbox.execWith("npx", (e) =>
+          e
+            .args(["tsx", "/app/src/sandbox/agent-runner.ts", payload])
+            .timeout(10 * 60 * 1000),
+        );
 
     if (result.code !== 0) {
       const stderr = result.stderr().trim();
