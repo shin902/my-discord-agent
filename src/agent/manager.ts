@@ -71,6 +71,7 @@ export async function sendMessage(
     .workdir("/workspace")
     .cpus(1)
     .memory(512)
+    .env("SESSIONS_DIR", "/app/data/sessions")
     .volume("/app/dist", (mb) =>
       mb.bind(path.join(ROOT, "dist")).readonly(true),
     )
