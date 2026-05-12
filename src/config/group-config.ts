@@ -8,7 +8,7 @@ const ModelConfigSchema = z.object({
   modelId: z.string(),
 });
 
-const GroupJsonSchema = z.object({
+export const GroupJsonSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
   autoReply: z.boolean().optional(),

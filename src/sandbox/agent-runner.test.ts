@@ -21,16 +21,8 @@ vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn(),
 }));
 
-vi.mock("../config/group-config.js", () => ({
-  loadGroupConfig: vi.fn(),
-  loadGroupSystemPrompt: vi.fn(),
-}));
-
 const { runAgentLoop } = await import("./agent-runner.js");
 const { loadMessages, appendMessage } = await import("../agent/session.js");
-const { loadGroupConfig, loadGroupSystemPrompt } = await import(
-  "../config/group-config.js"
-);
 let lastAgentOptions: unknown;
 
 function createMockAgent(deltas: string[], endMessage: unknown) {
@@ -58,8 +50,6 @@ describe("runAgentLoop", () => {
     vi.clearAllMocks();
     lastAgentOptions = undefined;
     vi.mocked(loadMessages).mockResolvedValue([]);
-    vi.mocked(loadGroupConfig).mockResolvedValue({});
-    vi.mocked(loadGroupSystemPrompt).mockResolvedValue(null);
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
       return createMockAgent(["OK"], {
@@ -79,11 +69,15 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    const result = await runAgentLoop("test-group", "session-1", "こんにちは");
+    const result = await runAgentLoop(
+      "test-group",
+      "session-1",
+      "こんにちは",
+      {},
+      null,
+    );
 
     expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
-    expect(loadGroupConfig).toHaveBeenCalledWith("test-group");
-    expect(loadGroupSystemPrompt).toHaveBeenCalledWith("test-group");
     expect(lastAgentOptions).toEqual({
       initialState: {
         systemPrompt: "あなたは役立つDiscordアシスタントです。",
@@ -101,10 +95,6 @@ describe("runAgentLoop", () => {
   });
 
   it("グループ設定のモデルを使用する", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({
-      model: { provider: "provider-a", modelId: "model-x" },
-    });
-
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
       content: [{ type: "text", text: "OK" }],
@@ -114,7 +104,13 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi");
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "hi",
+      { model: { provider: "provider-a", modelId: "model-x" } },
+      null,
+    );
 
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
@@ -126,8 +122,6 @@ describe("runAgentLoop", () => {
   });
 
   it("カスタム systemPrompt を使用する", async () => {
-    vi.mocked(loadGroupSystemPrompt).mockResolvedValue("カスタムプロンプト");
-
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
       content: [{ type: "text", text: "OK" }],
@@ -137,7 +131,13 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi");
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "hi",
+      {},
+      "カスタムプロンプト",
+    );
 
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
@@ -149,13 +149,15 @@ describe("runAgentLoop", () => {
   });
 
   it("不明なプロバイダはエラーをスロー", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({
-      model: { provider: "unknown", modelId: "model-x" },
-    });
-
-    await expect(runAgentLoop("test-group", "session-1", "hi")).rejects.toThrow(
-      "不明なプロバイダ: unknown",
-    );
+    await expect(
+      runAgentLoop(
+        "test-group",
+        "session-1",
+        "hi",
+        { model: { provider: "unknown", modelId: "model-x" } },
+        null,
+      ),
+    ).rejects.toThrow("不明なプロバイダ: unknown");
   });
 
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
@@ -177,7 +179,7 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi");
+    await runAgentLoop("test-group", "session-1", "hi", {}, null);
 
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
@@ -189,10 +191,6 @@ describe("runAgentLoop", () => {
   });
 
   it("sandbox ツールはVM内で除外される（webfetchのみ残る）", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({
-      tools: ["webfetch", "sandbox"],
-    });
-
     AgentMock.mockImplementation(function (options: unknown) {
       lastAgentOptions = options;
       return createMockAgent(["OK"], {
@@ -201,7 +199,13 @@ describe("runAgentLoop", () => {
       });
     });
 
-    await runAgentLoop("test-group", "session-1", "hi");
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "hi",
+      { tools: ["webfetch", "sandbox"] },
+      null,
+    );
 
     const tools = (
       lastAgentOptions as { initialState: { tools: { name: string }[] } }
@@ -211,12 +215,14 @@ describe("runAgentLoop", () => {
   });
 
   it("VM内で不明なツール名はエラーをスロー", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({
-      tools: ["unknown-tool"],
-    });
-
-    await expect(runAgentLoop("test-group", "session-1", "hi")).rejects.toThrow(
-      "不明なツール名: unknown-tool",
-    );
+    await expect(
+      runAgentLoop(
+        "test-group",
+        "session-1",
+        "hi",
+        { tools: ["unknown-tool"] },
+        null,
+      ),
+    ).rejects.toThrow("不明なツール名: unknown-tool");
   });
 });

@@ -11,8 +11,8 @@ import {
 } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
 import {
-  loadGroupConfig,
-  loadGroupSystemPrompt,
+  type GroupJsonConfig,
+  GroupJsonSchema,
 } from "../config/group-config.js";
 import { webfetchTool } from "../tools/webfetch.js";
 
@@ -39,12 +39,10 @@ export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
+  groupConfig: GroupJsonConfig,
+  systemPrompt: string | null,
 ): Promise<string> {
-  const [messages, groupConfig, systemPrompt] = await Promise.all([
-    loadMessages(groupName, sessionId),
-    loadGroupConfig(groupName),
-    loadGroupSystemPrompt(groupName),
-  ]);
+  const messages = await loadMessages(groupName, sessionId);
 
   const model = resolveModel(
     groupConfig.model?.provider ?? DEFAULT_PROVIDER,
@@ -83,13 +81,21 @@ const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
   content: z.string(),
+  groupConfig: GroupJsonSchema,
+  systemPrompt: z.string().nullable(),
 });
 
 // CLIエントリポイント（import時は実行しない）
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const payload = PayloadSchema.parse(JSON.parse(process.argv[2] ?? "{}"));
 
-  runAgentLoop(payload.groupName, payload.sessionId, payload.content)
+  runAgentLoop(
+    payload.groupName,
+    payload.sessionId,
+    payload.content,
+    payload.groupConfig,
+    payload.systemPrompt,
+  )
     .then((response) => {
       process.stdout.write(response);
     })

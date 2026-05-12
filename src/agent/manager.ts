@@ -7,7 +7,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
 import { loadCredentialProxy } from "../config/credential-proxy.js";
-import { loadGroupConfig } from "../config/group-config.js";
+import {
+  loadGroupConfig,
+  loadGroupSystemPrompt,
+} from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
 
 export {
@@ -29,7 +32,10 @@ export async function sendMessage(
   sessionId: string,
   content: string,
 ): Promise<string> {
-  const groupConfig = await loadGroupConfig(groupName);
+  const [groupConfig, systemPrompt] = await Promise.all([
+    loadGroupConfig(groupName),
+    loadGroupSystemPrompt(groupName),
+  ]);
 
   try {
     resolveModel(
@@ -46,26 +52,35 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  await mkdir(path.join(ROOT, "data/sessions"), { recursive: true });
+  await Promise.all([
+    mkdir(path.join(ROOT, "data/sessions"), { recursive: true }),
+    mkdir(path.join(ROOT, "groups", groupName), { recursive: true }),
+  ]);
 
   const creds = await loadCredentialProxy();
-  const payload = JSON.stringify({ groupName, sessionId, content });
+  const payload = JSON.stringify({
+    groupName,
+    sessionId,
+    content,
+    groupConfig,
+    systemPrompt,
+  });
 
   let builder = Sandbox.builder(`agent-${sessionId}-${Date.now()}`)
     .image("node:22-alpine")
-    .workdir("/app")
+    .workdir("/workspace")
     .cpus(1)
     .memory(512)
-    .volume("/app/dist", (mb) => mb.bind(path.join(ROOT, "dist")).readonly(true))
+    .volume("/app/dist", (mb) =>
+      mb.bind(path.join(ROOT, "dist")).readonly(true),
+    )
     .volume("/app/node_modules", (mb) =>
       mb.bind(path.join(ROOT, "node_modules")).readonly(true),
     )
     .volume("/app/config", (mb) =>
       mb.bind(path.join(ROOT, "config")).readonly(true),
     )
-    .volume("/app/groups", (mb) =>
-      mb.bind(path.join(ROOT, "groups")).readonly(true),
-    )
+    .volume("/workspace", (mb) => mb.bind(path.join(ROOT, "groups", groupName)))
     .volume("/app/data/sessions", (mb) =>
       mb.bind(path.join(ROOT, "data/sessions")),
     );
