@@ -75,14 +75,13 @@ export async function sendMessage(
     if (!value) continue;
     const placeholder = `msb_${entry.envVar.toLowerCase()}`;
     const host = new URL(entry.baseUrl).hostname;
-    const headerValue = entry.injectFormat.replace("{value}", placeholder);
     builder = builder
       .secret((sb) =>
         sb
           .value(value)
           .placeholder(placeholder)
           .allowHost(host)
-          .injectHeaders({ [entry.injectHeader]: headerValue }),
+          .injectHeaders(true),
       )
       .env(entry.envVar, placeholder);
   }
