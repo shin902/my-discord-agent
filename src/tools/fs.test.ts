@@ -16,7 +16,9 @@ beforeEach(() => {
   vi.mocked(writeFile).mockResolvedValue(undefined);
 });
 
-function firstText(result: { content: Array<{ type: string; text?: string }> }): string {
+function firstText(result: {
+  content: Array<{ type: string; text?: string }>;
+}): string {
   const first = result.content[0];
   if (!first || first.type !== "text" || first.text == null) {
     throw new Error("Expected text content");
@@ -52,12 +54,21 @@ describe("write", () => {
       content: "hello",
     });
     expect(firstText(result)).toBe("書き込み完了: out.txt");
-    expect(writeFile).toHaveBeenCalledWith("/workspace/out.txt", "hello", "utf-8");
+    expect(writeFile).toHaveBeenCalledWith(
+      "/workspace/out.txt",
+      "hello",
+      "utf-8",
+    );
   });
 
   it("サブディレクトリを自動作成する", async () => {
-    await writeTool.execute("call-1", { path: "sub/dir/file.txt", content: "x" });
-    expect(mkdir).toHaveBeenCalledWith("/workspace/sub/dir", { recursive: true });
+    await writeTool.execute("call-1", {
+      path: "sub/dir/file.txt",
+      content: "x",
+    });
+    expect(mkdir).toHaveBeenCalledWith("/workspace/sub/dir", {
+      recursive: true,
+    });
   });
 });
 
@@ -88,7 +99,11 @@ describe("edit", () => {
       oldString: "world",
       newString: "sandbox",
     });
-    expect(writeFile).toHaveBeenCalledWith("/workspace/test.txt", "hello sandbox", "utf-8");
+    expect(writeFile).toHaveBeenCalledWith(
+      "/workspace/test.txt",
+      "hello sandbox",
+      "utf-8",
+    );
     expect(firstText(result)).toBe("編集完了: test.txt (1 箇所置換)");
   });
 

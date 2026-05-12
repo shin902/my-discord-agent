@@ -1,4 +1,4 @@
-import { mkdir, readdir,readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -12,7 +12,9 @@ function sanitizePath(raw: string): string {
   const withoutPrefix = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed;
   const normalized = normalize(withoutPrefix);
   if (normalized.startsWith("..")) {
-    throw new Error(`アクセス拒否: ボリューム外へのパスは許可されていません (${raw})`);
+    throw new Error(
+      `アクセス拒否: ボリューム外へのパスは許可されていません (${raw})`,
+    );
   }
   return normalized === "." ? "" : normalized;
 }
@@ -22,7 +24,9 @@ function fullPath(safePath: string): string {
 }
 
 const readParameters = Type.Object({
-  path: Type.String({ description: "読み込むファイルのパス（ワークスペースルートからの相対パス）" }),
+  path: Type.String({
+    description: "読み込むファイルのパス（ワークスペースルートからの相対パス）",
+  }),
 });
 
 export const readTool: AgentTool<typeof readParameters> = {
@@ -46,7 +50,9 @@ export const readTool: AgentTool<typeof readParameters> = {
 };
 
 const writeParameters = Type.Object({
-  path: Type.String({ description: "書き込むファイルのパス（ワークスペースルートからの相対パス）" }),
+  path: Type.String({
+    description: "書き込むファイルのパス（ワークスペースルートからの相対パス）",
+  }),
   content: Type.String({ description: "書き込む内容" }),
 });
 
@@ -96,7 +102,9 @@ export const listTool: AgentTool<typeof listParameters> = {
 };
 
 const editParameters = Type.Object({
-  path: Type.String({ description: "編集するファイルのパス（ワークスペースルートからの相対パス）" }),
+  path: Type.String({
+    description: "編集するファイルのパス（ワークスペースルートからの相対パス）",
+  }),
   oldString: Type.String({ description: "置換対象の文字列" }),
   newString: Type.String({ description: "置換後の文字列" }),
 });
@@ -117,7 +125,9 @@ export const editTool: AgentTool<typeof editParameters> = {
     await writeFile(fp, updated, "utf-8");
     const count = original.split(oldString).length - 1;
     return {
-      content: [{ type: "text", text: `編集完了: ${safePath} (${count} 箇所置換)` }],
+      content: [
+        { type: "text", text: `編集完了: ${safePath} (${count} 箇所置換)` },
+      ],
       details: { path: safePath, replacements: count },
     };
   },
