@@ -5,10 +5,12 @@ vi.mock("node:fs/promises", () => ({
   writeFile: vi.fn(),
   mkdir: vi.fn(),
   readdir: vi.fn(),
+  glob: vi.fn(),
+  stat: vi.fn(),
 }));
 
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { editTool, listTool, readTool, writeTool } from "./fs.js";
+import { glob, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { editTool, globTool, grepTool, listTool, readTool, writeTool } from "./fs.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -129,5 +131,95 @@ describe("edit", () => {
     ).rejects.toThrow(
       "置換対象の文字列（oldString）を空にすることはできません",
     );
+  });
+});
+
+describe("glob", () => {
+  it("glob パターンでファイルを検索する", async () => {
+    async function* mockGlob() {
+      yield "foo.ts";
+      yield "bar.ts";
+    }
+    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    const result = await globTool.execute("call-1", {
+      pattern: "*.ts",
+      path: "",
+    });
+    expect(firstText(result)).toContain("foo.ts");
+    expect(firstText(result)).toContain("bar.ts");
+  });
+
+  it("一致なし", async () => {
+    async function* mockGlob() {
+      yield* [];
+    }
+    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    const result = await globTool.execute("call-1", {
+      pattern: "*.md",
+      path: "",
+    });
+    expect(firstText(result)).toBe("(一致なし)");
+  });
+});
+
+describe("grep", () => {
+  it("正規表現でファイル内容を検索する", async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
+    vi.mocked(readFile).mockResolvedValue(
+      "hello world\nfoo bar\nhello sandbox" as never,
+    );
+    const result = await grepTool.execute("call-1", {
+      pattern: "hello",
+      path: "test.txt",
+    });
+    expect(firstText(result)).toContain("test.txt:1: hello world");
+    expect(firstText(result)).toContain("test.txt:3: hello sandbox");
+  });
+
+  it("ディレクトリを再帰検索する", async () => {
+    vi.mocked(stat).mockResolvedValue({
+      isFile: () => false,
+      isDirectory: () => true,
+    } as never);
+    async function* mockGlob() {
+      yield "a.txt";
+    }
+    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    const result = await grepTool.execute("call-1", {
+      pattern: "hello",
+      path: "src",
+    });
+    expect(firstText(result)).toContain("src/a.txt:1: hello world");
+  });
+
+  it("一致なし", async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
+    vi.mocked(readFile).mockResolvedValue("foo bar" as never);
+    const result = await grepTool.execute("call-1", {
+      pattern: "baz",
+      path: "test.txt",
+    });
+    expect(firstText(result)).toBe("(一致なし)");
+  });
+
+  it("存在しないパスは (一致なし) を返す", async () => {
+    vi.mocked(stat).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    const result = await grepTool.execute("call-1", {
+      pattern: "hello",
+      path: "nonexistent.txt",
+    });
+    expect(firstText(result)).toBe("(一致なし)");
+  });
+
+  it("ENOENT 以外の stat エラーは再スロー", async () => {
+    vi.mocked(stat).mockRejectedValue(
+      Object.assign(new Error("EACCES"), { code: "EACCES" }),
+    );
+    await expect(
+      grepTool.execute("call-1", { pattern: "hello", path: "secret.txt" }),
+    ).rejects.toThrow("EACCES");
   });
 });

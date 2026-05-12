@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { editTool, listTool, readTool, writeTool } from "./fs.js";
+import { editTool, globTool, grepTool, listTool, readTool, writeTool } from "./fs.js";
 import { sandboxTool } from "./sandbox.js";
 import { webfetchTool } from "./webfetch.js";
 
@@ -10,6 +10,8 @@ const TOOLS: Record<string, AgentTool> = {
   write: writeTool,
   list: listTool,
   edit: editTool,
+  glob: globTool,
+  grep: grepTool,
 };
 
 export function resolveTools(toolNames: string[]): AgentTool[] {

@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { glob, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -134,6 +134,141 @@ export const editTool: AgentTool<typeof editParameters> = {
         { type: "text", text: `編集完了: ${safePath} (${count} 箇所置換)` },
       ],
       details: { path: safePath, replacements: count },
+    };
+  },
+};
+
+const globParameters = Type.Object({
+  pattern: Type.String({
+    description: "glob パターン（例: **/*.ts）",
+  }),
+  path: Type.String({
+    description:
+      "検索のベースディレクトリ（ワークスペースルートからの相対パス。空文字でルート）",
+    default: "",
+  }),
+});
+
+export const globTool: AgentTool<typeof globParameters> = {
+  name: "glob",
+  label: "Glob",
+  description: "ワークスペース内のファイルを glob パターンで検索する",
+  parameters: globParameters,
+  execute: async (_toolCallId, { pattern, path }) => {
+    const safePath = sanitizePath(path ?? "");
+    const cwd = fullPath(safePath);
+    const iterable = glob(pattern, { cwd, withFileTypes: false });
+    const files: string[] = [];
+    for await (const f of iterable) {
+      files.push(join(safePath, f));
+    }
+    const text = files.join("\n");
+    const truncated = text.slice(0, MAX_OUTPUT_CHARS);
+    const finalText =
+      truncated.length < text.length
+        ? `${truncated}\n\n... (省略: 合計 ${files.length} ファイル)`
+        : truncated;
+    return {
+      content: [{ type: "text", text: finalText || "(一致なし)" }],
+      details: { pattern, path: safePath, count: files.length },
+    };
+  },
+};
+
+const grepParameters = Type.Object({
+  pattern: Type.String({
+    description: "検索する正規表現パターン",
+  }),
+  path: Type.String({
+    description:
+      "検索対象のファイルまたはディレクトリ（ワークスペースルートからの相対パス）",
+  }),
+  glob: Type.Optional(
+    Type.String({
+      description: "ファイルフィルタの glob パターン（例: *.ts）",
+    }),
+  ),
+});
+
+export const grepTool: AgentTool<typeof grepParameters> = {
+  name: "grep",
+  label: "Grep",
+  description: "ワークスペース内のファイルを正規表現で検索する",
+  parameters: grepParameters,
+  execute: async (_toolCallId, { pattern, path, glob: globPattern }) => {
+    const safePath = sanitizePath(path);
+    const basePath = fullPath(safePath);
+    const regex = new RegExp(pattern, "gm");
+
+    let files: string[];
+    let statInfo: Awaited<ReturnType<typeof stat>>;
+    try {
+      statInfo = await stat(basePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return {
+          content: [{ type: "text", text: "(一致なし)" }],
+          details: { pattern, count: 0 },
+        };
+      }
+      throw err;
+    }
+    if (statInfo.isFile()) {
+      files = [safePath];
+    } else {
+      const gp = globPattern ?? "**/*";
+      const iterable = glob(gp, {
+        cwd: basePath,
+        withFileTypes: false,
+      });
+      files = [];
+      for await (const f of iterable) {
+        files.push(join(safePath, f));
+      }
+    }
+
+    const matches: Array<{ file: string; line: number; content: string }> = [];
+    let totalChars = 0;
+    let truncated = false;
+
+    for (const filePath of files) {
+      if (truncated) break;
+      const fp = fullPath(filePath);
+      let content: string;
+      try {
+        content = await readFile(fp, "utf-8");
+      } catch {
+        continue;
+      }
+
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        regex.lastIndex = 0;
+        if (regex.test(lines[i])) {
+          const entry = `${filePath}:${i + 1}: ${lines[i]}`;
+          if (totalChars + entry.length + 1 > MAX_OUTPUT_CHARS) {
+            truncated = true;
+            break;
+          }
+          matches.push({ file: filePath, line: i + 1, content: lines[i] });
+          totalChars += entry.length + 1;
+        }
+      }
+    }
+
+    const lines = truncated
+      ? [
+          ...matches.map(
+            (m) => `${m.file}:${m.line}: ${m.content}`,
+          ),
+          "... (省略: 結果が多すぎます)",
+        ]
+      : matches.map((m) => `${m.file}:${m.line}: ${m.content}`);
+    const text = lines.length === 0 ? "(一致なし)" : lines.join("\n");
+
+    return {
+      content: [{ type: "text", text }],
+      details: { pattern, count: matches.length },
     };
   },
 };
