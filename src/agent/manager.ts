@@ -15,14 +15,19 @@ import {
 } from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
 
-export {
+import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
   resolveModel,
   validateModel,
 } from "./model.js";
 
-import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel } from "./model.js";
+export {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER,
+  resolveModel,
+  validateModel,
+};
 
 /**
  * 指定セッションのメッセージをmicroVM内のエージェントに送り、返答テキストを返す。
