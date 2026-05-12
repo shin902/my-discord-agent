@@ -1,9 +1,7 @@
 import { fileURLToPath } from "node:url";
-
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
-
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
@@ -15,8 +13,8 @@ import {
   GroupJsonSchema,
 } from "../config/group-config.js";
 import { editTool, listTool, readTool, writeTool } from "../tools/fs.js";
-import { isTransientError } from "../utils/error.js";
 import { webfetchTool } from "../tools/webfetch.js";
+import { isTransientError } from "../utils/error.js";
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
