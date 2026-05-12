@@ -117,4 +117,15 @@ describe("edit", () => {
       }),
     ).rejects.toThrow("置換対象が見つかりません");
   });
+
+  it("oldString が空文字列の場合はエラー", async () => {
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    await expect(
+      editTool.execute("call-1", {
+        path: "test.txt",
+        oldString: "",
+        newString: "x",
+      }),
+    ).rejects.toThrow("置換対象の文字列（oldString）を空にすることはできません");
+  });
 });
