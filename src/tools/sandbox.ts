@@ -23,7 +23,7 @@ export const sandboxTool: AgentTool<typeof parameters> = {
       .memory(512)
       .create();
 
-    let timerId: ReturnType<typeof setTimeout>;
+    let timerId: ReturnType<typeof setTimeout> | undefined;
     const timer = new Promise<never>((_, reject) => {
       timerId = setTimeout(
         () => reject(new Error("実行タイムアウト (30秒)")),
