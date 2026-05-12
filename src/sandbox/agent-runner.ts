@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { text } from "node:stream/consumers";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
@@ -91,24 +92,24 @@ const PayloadSchema = z.object({
 
 // CLIエントリポイント（import時は実行しない）
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const payload = PayloadSchema.parse(JSON.parse(process.argv[2] ?? "{}"));
+  (async () => {
+    const raw = await text(process.stdin);
+    const payload = PayloadSchema.parse(JSON.parse(raw || "{}"));
 
-  runAgentLoop(
-    payload.groupName,
-    payload.sessionId,
-    payload.content,
-    payload.groupConfig,
-    payload.systemPrompt,
-  )
-    .then((response) => {
-      process.stdout.write(response);
-    })
-    .catch((err) => {
-      const transient = isTransientError(err);
-      const code = transient ? 2 : 1;
-      process.stderr.write(
-        `agent-runner エラー${transient ? "（一時的）" : ""}: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-      process.exit(code);
-    });
+    const response = await runAgentLoop(
+      payload.groupName,
+      payload.sessionId,
+      payload.content,
+      payload.groupConfig,
+      payload.systemPrompt,
+    );
+    process.stdout.write(response);
+  })().catch((err) => {
+    const transient = isTransientError(err);
+    const code = transient ? 2 : 1;
+    process.stderr.write(
+      `agent-runner エラー${transient ? "（一時的）" : ""}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    process.exit(code);
+  });
 }

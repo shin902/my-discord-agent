@@ -124,12 +124,14 @@ export async function sendMessage(
     const result = distExists
       ? await sandbox.execWith("node", (e) =>
           e
-            .args(["/app/dist/sandbox/agent-runner.js", payload])
+            .args(["/app/dist/sandbox/agent-runner.js"])
+            .stdinBytes(Buffer.from(payload))
             .timeout(10 * 60 * 1000),
         )
       : await sandbox.execWith("npx", (e) =>
           e
-            .args(["tsx", "/app/src/sandbox/agent-runner.ts", payload])
+            .args(["tsx", "/app/src/sandbox/agent-runner.ts"])
+            .stdinBytes(Buffer.from(payload))
             .timeout(10 * 60 * 1000),
         );
 
