@@ -1,5 +1,5 @@
-import { Sandbox } from "microsandbox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Sandbox } from "microsandbox";
 import { Type } from "typebox";
 
 const MAX_OUTPUT_CHARS = 4000;
