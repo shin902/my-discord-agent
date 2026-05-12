@@ -3,7 +3,8 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
-const SESSIONS_DIR = path.join(process.cwd(), "data", "sessions");
+const SESSIONS_DIR =
+  process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {

@@ -1,58 +1,62 @@
-import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
-import {
-  getModels,
-  getProviders,
-  type KnownProvider,
-  type TextContent,
-} from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
+import { mkdir, stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { ExecTimeoutError, Sandbox } from "microsandbox";
+import { NonRetryableError, TransientError } from "../utils/error.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(__dirname, "../../");
+
+import { loadCredentialProxy } from "../config/credential-proxy.js";
 import {
   loadGroupConfig,
   loadGroupSystemPrompt,
 } from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
-import { appendMessage, loadMessages } from "./session.js";
 
-export const DEFAULT_PROVIDER = "opencode-go";
-export const DEFAULT_MODEL_ID = "kimi-k2.6";
-const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER,
+  resolveModel,
+  validateModel,
+} from "./model.js";
 
-export function resolveModel(provider: string, modelId: string) {
-  const providers = getProviders();
-  if (!providers.includes(provider as KnownProvider)) {
-    throw new Error(`不明なプロバイダ: ${provider}`);
+export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel, validateModel };
+
+let _distExists = false;
+
+/**
+ * エージェントマネージャーの初期化。起動時に一度だけ呼ぶこと。
+ * data/sessions の作成と dist ディレクトリの存在チェックを行い結果をキャッシュする。
+ */
+export async function initManager(): Promise<void> {
+  await mkdir(path.join(ROOT, "data/sessions"), { recursive: true });
+  try {
+    await stat(path.join(ROOT, "dist"));
+    _distExists = true;
+  } catch {
+    _distExists = false;
   }
-  const model = getModels(provider as KnownProvider).find(
-    (m) => m.id === modelId,
-  );
-  if (!model)
-    throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
-  return model;
-}
-
-// 起動時バリデーション専用。無効な設定はスローして即クラッシュさせる
-export function validateModel(provider: string, modelId: string): void {
-  resolveModel(provider, modelId);
 }
 
 /**
- * 指定セッションの Agent にメッセージを送り、返答テキストを返す。
- * Agent はリクエストごとに JSONL から作成して使い捨てる。
- * discord/ 層はこの関数だけを呼ぶ。
+ * 指定セッションのメッセージをmicroVM内のエージェントに送り、返答テキストを返す。
+ * モデル・ツールのバリデーションをサンドボックス起動前に行い設定エラーを早期検出する。
+ * クレデンシャルはTSI経由でVMに渡さずネットワーク層で差し替える。
  */
 export async function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
 ): Promise<string> {
-  const [messages, groupConfig, systemPrompt] = await Promise.all([
-    loadMessages(groupName, sessionId),
+  const [groupConfig, systemPrompt] = await Promise.all([
     loadGroupConfig(groupName),
     loadGroupSystemPrompt(groupName),
   ]);
 
-  let model: ReturnType<typeof resolveModel>;
   try {
-    model = resolveModel(
+    resolveModel(
       groupConfig.model?.provider ?? DEFAULT_PROVIDER,
       groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
     );
@@ -60,39 +64,104 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  let tools: AgentTool[];
   try {
-    tools = resolveTools(groupConfig.tools ?? []);
+    resolveTools(groupConfig.tools ?? []);
   } catch (err) {
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      model,
-      messages,
-      tools,
-    },
+  await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });
+
+  const creds = await loadCredentialProxy();
+  const payload = JSON.stringify({
+    groupName,
+    sessionId,
+    content,
+    groupConfig,
   });
 
-  // メッセージ完了のたびに JSONL へ追記する（セッション永続化）
-  // user・assistant・toolResult をすべて保存する。toolResult を欠かすと
-  // 再読み込み時にコンテキストが壊れてプロンプトキャッシュも効かなくなる。
-  let response = "";
-  agent.subscribe(async (event) => {
-    if (event.type === "message_end") {
-      await appendMessage(groupName, sessionId, event.message);
-      // メッセージの生成
-      if ("role" in event.message && event.message.role === "assistant") {
-        response = event.message.content
-          .filter((c): c is TextContent => c.type === "text")
-          .map((c) => c.text)
-          .join("");
+  let builder = Sandbox.builder(`agent-${sessionId}-${randomUUID()}`)
+    .image("node:22-alpine")
+    .workdir("/workspace")
+    .cpus(1)
+    .memory(512)
+    .env("SESSIONS_DIR", "/app/data/sessions")
+    .volume("/app/node_modules", (mb) =>
+      mb.bind(path.join(ROOT, "node_modules")).readonly(true),
+    )
+    .volume("/app/config", (mb) =>
+      mb.bind(path.join(ROOT, "config")).readonly(true),
+    )
+    .volume("/workspace", (mb) => mb.bind(path.join(ROOT, "groups", groupName)))
+    .volume("/app/data/sessions", (mb) =>
+      mb.bind(path.join(ROOT, "data/sessions")),
+    );
+
+  if (_distExists) {
+    builder = builder.volume("/app/dist", (mb) =>
+      mb.bind(path.join(ROOT, "dist")).readonly(true),
+    );
+  } else {
+    builder = builder.volume("/app/src", (mb) =>
+      mb.bind(path.join(ROOT, "src")).readonly(true),
+    );
+  }
+
+  for (const entry of creds) {
+    const value = process.env[entry.envVar];
+    if (!value) continue;
+    const placeholder = `msb_${entry.envVar.toLowerCase()}`;
+    const host = new URL(entry.baseUrl).hostname;
+    builder = builder.secret((sb) =>
+      sb
+        .env(entry.envVar)
+        .value(value)
+        .placeholder(placeholder)
+        .allowHost(host)
+        .injectHeaders(true),
+    );
+  }
+
+  const CREATE_TIMEOUT = 60_000;
+  const sandboxPromise = builder.create();
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(
+      () => reject(new Error("VM起動がタイムアウトしました")),
+      CREATE_TIMEOUT,
+    ),
+  );
+
+  const sandbox = await Promise.race([sandboxPromise, timeoutPromise]);
+  await using _sandbox = sandbox;
+
+  try {
+    const result = _distExists
+      ? await sandbox.execWith("node", (e) =>
+          e
+            .args(["/app/dist/sandbox/agent-runner.js"])
+            .stdinBytes(Buffer.from(payload))
+            .timeout(10 * 60 * 1000),
+        )
+      : await sandbox.execWith("npx", (e) =>
+          e
+            .args(["tsx", "/app/src/sandbox/agent-runner.ts"])
+            .stdinBytes(Buffer.from(payload))
+            .timeout(10 * 60 * 1000),
+        );
+
+    if (result.code !== 0) {
+      const stderr = result.stderr().trim();
+      if (result.code === 2) {
+        throw new TransientError(stderr);
       }
+      return `エージェント実行エラー: ${stderr}`;
     }
-  });
 
-  await agent.prompt(content);
-  return response;
+    return result.stdout().trim();
+  } catch (err) {
+    if (err instanceof ExecTimeoutError) {
+      throw new NonRetryableError("タイムアウト（10分を超過しました）");
+    }
+    throw err;
+  }
 }
