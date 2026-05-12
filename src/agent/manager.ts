@@ -24,6 +24,22 @@ import {
 
 export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel, validateModel };
 
+let _distExists = false;
+
+/**
+ * エージェントマネージャーの初期化。起動時に一度だけ呼ぶこと。
+ * data/sessions の作成と dist ディレクトリの存在チェックを行い結果をキャッシュする。
+ */
+export async function initManager(): Promise<void> {
+  await mkdir(path.join(ROOT, "data/sessions"), { recursive: true });
+  try {
+    await stat(path.join(ROOT, "dist"));
+    _distExists = true;
+  } catch {
+    _distExists = false;
+  }
+}
+
 /**
  * 指定セッションのメッセージをmicroVM内のエージェントに送り、返答テキストを返す。
  * モデル・ツールのバリデーションをサンドボックス起動前に行い設定エラーを早期検出する。
@@ -54,18 +70,7 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  await Promise.all([
-    mkdir(path.join(ROOT, "data/sessions"), { recursive: true }),
-    mkdir(path.join(ROOT, "groups", groupName), { recursive: true }),
-  ]);
-
-  let distExists = false;
-  try {
-    await stat(path.join(ROOT, "dist"));
-    distExists = true;
-  } catch {
-    distExists = false;
-  }
+  await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });
 
   const creds = await loadCredentialProxy();
   const payload = JSON.stringify({
@@ -93,7 +98,7 @@ export async function sendMessage(
       mb.bind(path.join(ROOT, "data/sessions")),
     );
 
-  if (distExists) {
+  if (_distExists) {
     builder = builder.volume("/app/dist", (mb) =>
       mb.bind(path.join(ROOT, "dist")).readonly(true),
     );
@@ -121,7 +126,7 @@ export async function sendMessage(
   await using sandbox = await builder.create();
 
   try {
-    const result = distExists
+    const result = _distExists
       ? await sandbox.execWith("node", (e) =>
           e
             .args(["/app/dist/sandbox/agent-runner.js"])
