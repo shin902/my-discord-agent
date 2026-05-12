@@ -207,4 +207,14 @@ describe("runAgentLoop", () => {
     expect(tools).toHaveLength(1);
     expect(tools[0].name).toBe("webfetch");
   });
+
+  it("VM内で不明なツール名はエラーをスロー", async () => {
+    vi.mocked(loadGroupConfig).mockResolvedValue({
+      tools: ["unknown-tool"],
+    });
+
+    await expect(
+      runAgentLoop("test-group", "session-1", "hi"),
+    ).rejects.toThrow("不明なツール名: unknown-tool");
+  });
 });

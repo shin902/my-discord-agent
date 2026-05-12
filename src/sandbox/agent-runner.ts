@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
+import { z } from "zod";
 import {
   getModels,
   getProviders,
@@ -22,10 +23,14 @@ const SAFE_TOOLS: Record<string, AgentTool> = {
   webfetch: webfetchTool,
 };
 
+// VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
+const VM_UNSUPPORTED_TOOLS = new Set(["sandbox"]);
+
 function resolveSafeTools(toolNames: string[]): AgentTool[] {
   return toolNames.flatMap((name) => {
+    if (VM_UNSUPPORTED_TOOLS.has(name)) return [];
     const tool = SAFE_TOOLS[name];
-    if (!tool) return [];
+    if (!tool) throw new Error(`不明なツール名: ${name}`);
     return [tool];
   });
 }
@@ -82,13 +87,15 @@ export async function runAgentLoop(
   return response;
 }
 
+const PayloadSchema = z.object({
+  groupName: z.string(),
+  sessionId: z.string(),
+  content: z.string(),
+});
+
 // CLIエントリポイント（import時は実行しない）
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const payload = JSON.parse(process.argv[2] ?? "{}") as {
-    groupName: string;
-    sessionId: string;
-    content: string;
-  };
+  const payload = PayloadSchema.parse(JSON.parse(process.argv[2] ?? "{}"));
 
   runAgentLoop(payload.groupName, payload.sessionId, payload.content)
     .then((response) => {

@@ -23,17 +23,18 @@ export const sandboxTool: AgentTool<typeof parameters> = {
       .memory(512)
       .create();
 
-    const timer = new Promise<never>((_, reject) =>
-      setTimeout(
+    let timerId: ReturnType<typeof setTimeout>;
+    const timer = new Promise<never>((_, reject) => {
+      timerId = setTimeout(
         () => reject(new Error("実行タイムアウト (30秒)")),
         EXEC_TIMEOUT_MS,
-      ),
-    );
+      );
+    });
 
     const result = await Promise.race([
       sandbox.exec("node", ["-e", code]),
       timer,
-    ]);
+    ]).finally(() => clearTimeout(timerId));
 
     const stdout = result.stdout().slice(0, MAX_OUTPUT_CHARS);
     const stderr = result.stderr().slice(0, MAX_OUTPUT_CHARS);
