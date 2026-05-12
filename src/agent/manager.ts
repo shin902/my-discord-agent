@@ -1,6 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Sandbox } from "microsandbox";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(__dirname, "../../");
 import {
   getModels,
   getProviders,
@@ -58,7 +62,7 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
-  await mkdir("data/sessions", { recursive: true });
+  await mkdir(path.join(ROOT, "data/sessions"), { recursive: true });
 
   const creds = await loadCredentialProxy();
   const payload = JSON.stringify({ groupName, sessionId, content });
@@ -68,15 +72,15 @@ export async function sendMessage(
     .workdir("/app")
     .cpus(1)
     .memory(512)
-    .volume("/app/dist", (mb) => mb.bind(path.resolve("dist")).readonly())
+    .volume("/app/dist", (mb) => mb.bind(path.join(ROOT, "dist")).readonly())
     .volume(
       "/app/node_modules",
-      (mb) => mb.bind(path.resolve("node_modules")).readonly(),
+      (mb) => mb.bind(path.join(ROOT, "node_modules")).readonly(),
     )
-    .volume("/app/config", (mb) => mb.bind(path.resolve("config")).readonly())
-    .volume("/app/groups", (mb) => mb.bind(path.resolve("groups")).readonly())
+    .volume("/app/config", (mb) => mb.bind(path.join(ROOT, "config")).readonly())
+    .volume("/app/groups", (mb) => mb.bind(path.join(ROOT, "groups")).readonly())
     .volume("/app/data/sessions", (mb) =>
-      mb.bind(path.resolve("data/sessions")),
+      mb.bind(path.join(ROOT, "data/sessions")),
     );
 
   for (const entry of creds) {
