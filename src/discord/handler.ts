@@ -1,4 +1,4 @@
-import { Events, ThreadAutoArchiveDuration, type Message } from "discord.js";
+import { Events, type Message, ThreadAutoArchiveDuration } from "discord.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { appendInbox } from "../queue/inbox.js";
 import { client } from "./client.js";

@@ -9,13 +9,15 @@ const ROOT = path.join(__dirname, "../../");
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { resolveTools } from "../tools/registry.js";
+
 export {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
   resolveModel,
   validateModel,
 } from "./model.js";
-import { resolveModel, DEFAULT_PROVIDER, DEFAULT_MODEL_ID } from "./model.js";
+
+import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel } from "./model.js";
 
 /**
  * 指定セッションのメッセージをmicroVM内のエージェントに送り、返答テキストを返す。

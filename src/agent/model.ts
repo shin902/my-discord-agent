@@ -1,4 +1,8 @@
-import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
+import {
+  getModels,
+  getProviders,
+  type KnownProvider,
+} from "@earendil-works/pi-ai";
 
 export const DEFAULT_PROVIDER = "opencode-go";
 export const DEFAULT_MODEL_ID = "kimi-k2.6";

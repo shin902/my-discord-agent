@@ -1,4 +1,4 @@
-import { ThreadAutoArchiveDuration, type Message } from "discord.js";
+import { type Message, ThreadAutoArchiveDuration } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./client.js", () => ({
