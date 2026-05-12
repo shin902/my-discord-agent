@@ -109,7 +109,11 @@ export async function sendMessage(
   ]);
 
   if (result.code !== 0) {
-    return `エージェント実行エラー: ${result.stderr().trim()}`;
+    const stderr = result.stderr().trim();
+    if (result.code === 2) {
+      throw new Error(`一時的エラー: ${stderr}`);
+    }
+    return `エージェント実行エラー: ${stderr}`;
   }
 
   return result.stdout().trim();

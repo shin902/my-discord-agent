@@ -15,6 +15,7 @@ import {
   GroupJsonSchema,
 } from "../config/group-config.js";
 import { editTool, listTool, readTool, writeTool } from "../tools/fs.js";
+import { isTransientError } from "../utils/error.js";
 import { webfetchTool } from "../tools/webfetch.js";
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
@@ -105,9 +106,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.stdout.write(response);
     })
     .catch((err) => {
+      const transient = isTransientError(err);
+      const code = transient ? 2 : 1;
       process.stderr.write(
-        `agent-runner エラー: ${err instanceof Error ? err.message : String(err)}\n`,
+        `agent-runner エラー${transient ? "（一時的）" : ""}: ${err instanceof Error ? err.message : String(err)}\n`,
       );
-      process.exit(1);
+      process.exit(code);
     });
 }
