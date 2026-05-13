@@ -42,7 +42,7 @@ export async function runAgentLoop(
   const [messages, systemPrompt, skills] = await Promise.all([
     loadMessages(groupName, sessionId),
     loadSystemPromptFromWorkspace(),
-    loadSkills("/skills", groupConfig.skills),
+    loadSkills("/workspace/SKILLS", groupConfig.skills),
   ]);
 
   const model = resolveModel(

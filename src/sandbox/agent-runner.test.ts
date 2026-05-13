@@ -245,7 +245,7 @@ describe("runAgentLoop", () => {
       if (filePath === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
       }
-      if (filePath === "/skills/review/SKILL.md") {
+      if (filePath === "/workspace/SKILLS/review/SKILL.md") {
         return "---\nname: review\ndescription: レビュースキル\n---\n" as never;
       }
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
