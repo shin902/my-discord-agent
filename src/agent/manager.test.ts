@@ -117,8 +117,9 @@ describe("sendMessage: credential-proxy 処理", () => {
     }));
 
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    const result = await sendMessage("test-group", "session-1", "hi");
 
+    expect(result).toBe("mocked response");
     expect(secretMock).toHaveBeenCalledTimes(2);
     const sb1 = {
       env: vi.fn().mockReturnThis(),
@@ -162,8 +163,9 @@ describe("sendMessage: credential-proxy 処理", () => {
     }));
 
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    const result = await sendMessage("test-group", "session-1", "hi");
 
+    expect(result).toBe("mocked response");
     expect(secretMock).toHaveBeenCalledTimes(1);
     const secretBuilder = secretMock.mock.calls[0][0];
     const sb = {
@@ -195,8 +197,9 @@ describe("sendMessage: credential-proxy 処理", () => {
     }));
 
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    const result = await sendMessage("test-group", "session-1", "hi");
 
+    expect(result).toBe("mocked response");
     expect(secretMock).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
@@ -220,8 +223,9 @@ describe("sendMessage: credential-proxy 処理", () => {
     }));
 
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    const result = await sendMessage("test-group", "session-1", "hi");
 
+    expect(result).toBe("mocked response");
     expect(secretMock).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("test-provider: 一部の環境変数が未設定です"),
