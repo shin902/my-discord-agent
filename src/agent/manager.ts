@@ -23,6 +23,14 @@ export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel, validateModel };
 
 let _distExists = false;
 
+export function resolveBaseUrl(baseUrl: string): string | null {
+  const resolved = baseUrl.replace(/\{([A-Z0-9_]+)\}/g, (_, envVar) => {
+    return process.env[envVar] || `{${envVar}}`;
+  });
+  if (/\{[A-Z0-9_]+\}/.test(resolved)) return null;
+  return resolved;
+}
+
 /**
  * エージェントマネージャーの初期化。起動時に一度だけ呼ぶこと。
  * data/sessions の作成と dist ディレクトリの存在チェックを行い結果をキャッシュする。
@@ -108,13 +116,37 @@ export async function sendMessage(
   }
 
   for (const entry of creds) {
-    const value = process.env[entry.envVar];
-    if (!value) continue;
-    const placeholder = `msb_${entry.envVar.toLowerCase()}`;
-    const host = new URL(entry.baseUrl).hostname;
+    const envVarName = entry.envVars.find((name: string) => process.env[name]);
+    if (!envVarName) continue;
+    const value = process.env[envVarName];
+
+    let baseUrl = entry.baseUrl;
+    if (entry.provider === "azure-openai-responses" && process.env.AZURE_OPENAI_BASE_URL) {
+      baseUrl = process.env.AZURE_OPENAI_BASE_URL;
+    }
+
+    const resolvedBaseUrl = resolveBaseUrl(baseUrl);
+    if (!resolvedBaseUrl) {
+      console.warn(
+        `[credential-proxy] ${entry.provider}: baseUrl に未解決のプレースホルダがあります（${baseUrl}）`,
+      );
+      continue;
+    }
+
+    let host: string;
+    try {
+      host = new URL(resolvedBaseUrl).hostname;
+    } catch {
+      console.warn(
+        `[credential-proxy] ${entry.provider}: 無効な baseUrl です（${resolvedBaseUrl}）`,
+      );
+      continue;
+    }
+
+    const placeholder = `msb_${envVarName.toLowerCase()}`;
     builder = builder.secret((sb) =>
       sb
-        .env(entry.envVar)
+        .env(envVarName)
         .value(value)
         .placeholder(placeholder)
         .allowHost(host)
