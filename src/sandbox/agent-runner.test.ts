@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { AgentMock } = vi.hoisted(() => ({
@@ -239,7 +240,7 @@ describe("runAgentLoop", () => {
 
   it("スキルがある場合は systemPrompt にスキル一覧を追加する", async () => {
     vi.mocked(readdir).mockResolvedValue([
-      { name: "review", isDirectory: () => true } as unknown as never,
+      { name: "review", isDirectory: () => true } as unknown as Dirent,
     ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (filePath === "/workspace/AGENTS.md") {
@@ -273,8 +274,8 @@ describe("runAgentLoop", () => {
 
   it("skills allowlist でフィルタリングする", async () => {
     vi.mocked(readdir).mockResolvedValue([
-      { name: "allowed", isDirectory: () => true } as unknown as never,
-      { name: "blocked", isDirectory: () => true } as unknown as never,
+      { name: "allowed", isDirectory: () => true } as unknown as Dirent,
+      { name: "blocked", isDirectory: () => true } as unknown as Dirent,
     ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath).includes("allowed")) {
