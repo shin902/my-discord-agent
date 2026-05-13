@@ -80,11 +80,13 @@ export async function loadSkills(
 
     if (allowlist && !allowlist.includes(name)) continue;
 
-    skills.push({
-      name,
-      description,
-      location: skillPath,
-    });
+    skills.push(
+      SkillSchema.parse({
+        name,
+        description,
+        location: skillPath,
+      }),
+    );
   }
 
   return skills;
