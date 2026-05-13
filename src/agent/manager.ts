@@ -23,6 +23,14 @@ export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel, validateModel };
 
 let _distExists = false;
 
+export function resolveBaseUrl(baseUrl: string): string | null {
+  const resolved = baseUrl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, envVar) => {
+    return process.env[envVar] ?? `{${envVar}}`;
+  });
+  if (/\{[A-Za-z0-9_]+\}/.test(resolved)) return null;
+  return resolved;
+}
+
 /**
  * エージェントマネージャーの初期化。起動時に一度だけ呼ぶこと。
  * data/sessions の作成と dist ディレクトリの存在チェックを行い結果をキャッシュする。
@@ -91,18 +99,51 @@ export async function sendMessage(
     .volume("/workspace", (mb) => mb.bind(path.join(ROOT, "groups", groupName)));
 
   for (const entry of creds) {
-    const value = process.env[entry.envVar];
-    if (!value) continue;
-    const placeholder = `msb_${entry.envVar.toLowerCase()}`;
-    const host = new URL(entry.baseUrl).hostname;
-    builder = builder.secret((sb) =>
-      sb
-        .env(entry.envVar)
-        .value(value)
-        .placeholder(placeholder)
-        .allowHost(host)
-        .injectHeaders(true),
+    const setEnvVars = entry.envVars.filter(
+      (name: string) => process.env[name],
     );
+    if (setEnvVars.length === 0) {
+      continue;
+    }
+    if (setEnvVars.length < entry.envVars.length) {
+      const missing = entry.envVars.filter((name) => !process.env[name]);
+      console.warn(
+        `[credential-proxy] ${entry.provider}: 一部の環境変数が未設定です [設定済: ${setEnvVars.join(", ")}] [未設定: ${missing.join(", ")}]`,
+      );
+    }
+
+    const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
+    if (!resolvedBaseUrl) {
+      // 注意: baseUrl のプレースホルダが未解決の場合、env vars の注入もスキップされる
+      console.warn(
+        `[credential-proxy] ${entry.provider}: baseUrl に未解決のプレースホルダがあります（${entry.baseUrl}）`,
+      );
+      continue;
+    }
+
+    let host: string;
+    try {
+      host = new URL(resolvedBaseUrl).hostname;
+    } catch {
+      console.warn(
+        `[credential-proxy] ${entry.provider}: 無効な baseUrl です（${resolvedBaseUrl}）`,
+      );
+      continue;
+    }
+
+    for (const envVarName of setEnvVars) {
+      const value = process.env[envVarName];
+      if (value === undefined) continue;
+      const placeholder = `msb_${envVarName.toLowerCase()}`;
+      builder = builder.secret((sb) =>
+        sb
+          .env(envVarName)
+          .value(value)
+          .placeholder(placeholder)
+          .allowHost(host)
+          .injectHeaders(true),
+      );
+    }
   }
 
   const CREATE_TIMEOUT = 180_000;

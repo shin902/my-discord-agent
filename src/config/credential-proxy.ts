@@ -7,7 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, "../../config/credential-proxy.json");
 
 const CredentialEntrySchema = z.object({
-  envVar: z.string(),
+  provider: z.string(),
+  envVars: z.array(z.string()),
   baseUrl: z.string().url(),
 });
 

@@ -76,6 +76,8 @@ data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
 - `DISCORD_BOT_TOKEN`: Discord Bot トークン
 - `OPENCODE_API_KEY`: OpenCode Go の API キー
 
+その他のプロバイダー環境変数は `.env.example` のコメントを参照。クレデンシャルプロキシの詳細は `docs/spec/proxy.md` を参照。
+
 ## テストの注意点
 
 `group-config.ts` のキャッシュをテスト間でリセットするには `vi.resetModules()` + dynamic import を使う（プロダクションコードに `_resetCache()` を生やさない）。
