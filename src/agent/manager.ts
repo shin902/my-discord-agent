@@ -25,7 +25,7 @@ let _distExists = false;
 
 export function resolveBaseUrl(baseUrl: string): string | null {
   const resolved = baseUrl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, envVar) => {
-    return process.env[envVar] || `{${envVar}}`;
+    return process.env[envVar] ?? `{${envVar}}`;
   });
   if (/\{[A-Za-z0-9_]+\}/.test(resolved)) return null;
   return resolved;
