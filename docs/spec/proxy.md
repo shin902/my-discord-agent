@@ -49,7 +49,7 @@ Host
 ```
 
 **重要な挙動**:
-- `envVars` は優先順位順のリスト。設定されている**最初の1つだけ**が secret として注入される。
+- `envVars` リスト内で `process.env` に設定されている**すべて**が secret として注入される。Cloudflare（API_KEY + ACCOUNT_ID + GATEWAY_ID）など、複数変数が必要なプロバイダにも対応。
 - 同じ環境変数が複数の provider に含まれている場合、**各 provider ごとに独立して注入される**。
 - `baseUrl` に `{ENV_VAR}` 形式のプレースホルダが含まれている場合、`process.env` の値で動的に置換される。置換できない場合はその provider をスキップ。
 - **Azure 専用の特殊ロジック**: `provider === "azure-openai-responses"` の場合、`AZURE_OPENAI_BASE_URL` が設定されていればそちらを `baseUrl` として優先使用する。

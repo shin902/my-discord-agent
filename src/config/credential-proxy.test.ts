@@ -21,13 +21,21 @@ describe("loadCredentialProxy", () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
       JSON.stringify([
-        { provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "https://api.example.com" },
+        {
+          provider: "openai",
+          envVars: ["OPENAI_API_KEY"],
+          baseUrl: "https://api.example.com",
+        },
       ]),
     );
 
     const result = await loadCredentialProxy();
     expect(result).toEqual([
-      { provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "https://api.example.com" },
+      {
+        provider: "openai",
+        envVars: ["OPENAI_API_KEY"],
+        baseUrl: "https://api.example.com",
+      },
     ]);
     expect(readFile).toHaveBeenCalledTimes(1);
   });
@@ -36,14 +44,22 @@ describe("loadCredentialProxy", () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
       JSON.stringify([
-        { provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "https://api.example.com" },
+        {
+          provider: "openai",
+          envVars: ["OPENAI_API_KEY"],
+          baseUrl: "https://api.example.com",
+        },
       ]),
     );
 
     await loadCredentialProxy();
     const result = await loadCredentialProxy();
     expect(result).toEqual([
-      { provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "https://api.example.com" },
+      {
+        provider: "openai",
+        envVars: ["OPENAI_API_KEY"],
+        baseUrl: "https://api.example.com",
+      },
     ]);
     expect(readFile).toHaveBeenCalledTimes(1);
   });
@@ -81,7 +97,13 @@ describe("loadCredentialProxy", () => {
   it("スキーマに合わない JSON は ZodError を投げる", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([{ provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "not-a-url" }]),
+      JSON.stringify([
+        {
+          provider: "openai",
+          envVars: ["OPENAI_API_KEY"],
+          baseUrl: "not-a-url",
+        },
+      ]),
     );
 
     await expect(loadCredentialProxy()).rejects.toThrow();

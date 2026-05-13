@@ -98,7 +98,8 @@ describe("sendMessage: credential-proxy 処理", () => {
     process.env = originalEnv;
   });
 
-  it("envVars の最初に設定されているものが secret として注入される", async () => {
+  it("envVars に設定されているものがすべて secret として注入される", async () => {
+    process.env.API_KEY = "primary-value";
     process.env.FALLBACK_KEY = "fallback-value";
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([
@@ -116,11 +117,26 @@ describe("sendMessage: credential-proxy 処理", () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
 
-    expect(secretMock).toHaveBeenCalledTimes(1);
-    const secretBuilder = secretMock.mock.calls[0][0];
-    const sb = { env: vi.fn().mockReturnThis(), value: vi.fn().mockReturnThis(), placeholder: vi.fn().mockReturnThis(), allowHost: vi.fn().mockReturnThis(), injectHeaders: vi.fn().mockReturnThis() };
-    secretBuilder(sb);
-    expect(sb.env).toHaveBeenCalledWith("FALLBACK_KEY");
+    expect(secretMock).toHaveBeenCalledTimes(2);
+    const sb1 = {
+      env: vi.fn().mockReturnThis(),
+      value: vi.fn().mockReturnThis(),
+      placeholder: vi.fn().mockReturnThis(),
+      allowHost: vi.fn().mockReturnThis(),
+      injectHeaders: vi.fn().mockReturnThis(),
+    };
+    secretMock.mock.calls[0][0](sb1);
+    expect(sb1.env).toHaveBeenCalledWith("API_KEY");
+
+    const sb2 = {
+      env: vi.fn().mockReturnThis(),
+      value: vi.fn().mockReturnThis(),
+      placeholder: vi.fn().mockReturnThis(),
+      allowHost: vi.fn().mockReturnThis(),
+      injectHeaders: vi.fn().mockReturnThis(),
+    };
+    secretMock.mock.calls[1][0](sb2);
+    expect(sb2.env).toHaveBeenCalledWith("FALLBACK_KEY");
   });
 
   it("Azure の AZURE_OPENAI_BASE_URL が設定されていればそちらを優先使用する", async () => {
@@ -131,7 +147,8 @@ describe("sendMessage: credential-proxy 処理", () => {
         {
           provider: "azure-openai-responses",
           envVars: ["AZURE_OPENAI_API_KEY"],
-          baseUrl: "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
+          baseUrl:
+            "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
         },
       ]),
     }));
@@ -144,7 +161,13 @@ describe("sendMessage: credential-proxy 処理", () => {
 
     expect(secretMock).toHaveBeenCalledTimes(1);
     const secretBuilder = secretMock.mock.calls[0][0];
-    const sb = { env: vi.fn().mockReturnThis(), value: vi.fn().mockReturnThis(), placeholder: vi.fn().mockReturnThis(), allowHost: vi.fn().mockReturnThis(), injectHeaders: vi.fn().mockReturnThis() };
+    const sb = {
+      env: vi.fn().mockReturnThis(),
+      value: vi.fn().mockReturnThis(),
+      placeholder: vi.fn().mockReturnThis(),
+      allowHost: vi.fn().mockReturnThis(),
+      injectHeaders: vi.fn().mockReturnThis(),
+    };
     secretBuilder(sb);
     expect(sb.allowHost).toHaveBeenCalledWith("custom.azure.com");
   });
@@ -161,7 +184,8 @@ describe("sendMessage: credential-proxy 処理", () => {
         {
           provider: "azure-openai-responses",
           envVars: ["AZURE_OPENAI_API_KEY"],
-          baseUrl: "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
+          baseUrl:
+            "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
         },
       ]),
     }));
@@ -174,9 +198,42 @@ describe("sendMessage: credential-proxy 処理", () => {
 
     expect(secretMock).toHaveBeenCalledTimes(1);
     const secretBuilder = secretMock.mock.calls[0][0];
-    const sb = { env: vi.fn().mockReturnThis(), value: vi.fn().mockReturnThis(), placeholder: vi.fn().mockReturnThis(), allowHost: vi.fn().mockReturnThis(), injectHeaders: vi.fn().mockReturnThis() };
+    const sb = {
+      env: vi.fn().mockReturnThis(),
+      value: vi.fn().mockReturnThis(),
+      placeholder: vi.fn().mockReturnThis(),
+      allowHost: vi.fn().mockReturnThis(),
+      injectHeaders: vi.fn().mockReturnThis(),
+    };
     secretBuilder(sb);
     expect(sb.env).toHaveBeenCalledWith("OPENAI_API_KEY");
+  });
+
+  it("envVars がすべて未設定の場合は警告を出してスキップする", async () => {
+    delete process.env.MISSING_KEY_1;
+    delete process.env.MISSING_KEY_2;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([
+        {
+          provider: "test-provider",
+          envVars: ["MISSING_KEY_1", "MISSING_KEY_2"],
+          baseUrl: "https://api.example.com",
+        },
+      ]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+
+    expect(secretMock).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("test-provider: 必要な環境変数が設定されていません"),
+    );
+    warnSpy.mockRestore();
   });
 });
 
