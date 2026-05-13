@@ -41,13 +41,17 @@ describe("resolveBaseUrl", () => {
 
   it("小文字のプレースホルダも置換される", () => {
     process.env.aws_region = "ap-northeast-1";
-    const result = resolveBaseUrl("https://bedrock-runtime.{aws_region}.amazonaws.com");
+    const result = resolveBaseUrl(
+      "https://bedrock-runtime.{aws_region}.amazonaws.com",
+    );
     expect(result).toBe("https://bedrock-runtime.ap-northeast-1.amazonaws.com");
   });
 
   it("未解決の小文字プレースホルダがあると null を返す", () => {
     delete process.env.aws_region;
-    const result = resolveBaseUrl("https://bedrock-runtime.{aws_region}.amazonaws.com");
+    const result = resolveBaseUrl(
+      "https://bedrock-runtime.{aws_region}.amazonaws.com",
+    );
     expect(result).toBeNull();
   });
 
