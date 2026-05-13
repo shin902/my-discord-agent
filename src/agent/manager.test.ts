@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@earendil-works/pi-ai", () => ({
-  getProviders: () => ["provider-a", "opencode-go", "azure-openai-responses"],
+  getProviders: () => ["provider-a", "opencode-go"],
   getModels: (provider: string) =>
     provider === "opencode-go"
       ? [{ id: "kimi-k2.6", name: "Kimi K2.6" }]
@@ -22,17 +22,19 @@ describe("resolveBaseUrl", () => {
   });
 
   it("プレースホルダが環境変数で置換される", () => {
-    process.env.AZURE_OPENAI_RESOURCE_NAME = "my-resource";
+    process.env.CLOUDFLARE_ACCOUNT_ID = "abc123";
     const result = resolveBaseUrl(
-      "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
+      "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
     );
-    expect(result).toBe("https://my-resource.openai.azure.com/openai/v1");
+    expect(result).toBe(
+      "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1",
+    );
   });
 
   it("未解決のプレースホルダがあると null を返す", () => {
-    delete process.env.AZURE_OPENAI_RESOURCE_NAME;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
     const result = resolveBaseUrl(
-      "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
+      "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
     );
     expect(result).toBeNull();
   });
@@ -139,40 +141,6 @@ describe("sendMessage: credential-proxy 処理", () => {
     expect(sb2.env).toHaveBeenCalledWith("FALLBACK_KEY");
   });
 
-  it("overrideUrlEnvVar が設定されていれば baseUrl を上書きする", async () => {
-    process.env.AZURE_OPENAI_API_KEY = "azure-key";
-    process.env.AZURE_OPENAI_BASE_URL = "https://custom.azure.com/openai/v1";
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "azure-openai-responses",
-          envVars: ["AZURE_OPENAI_API_KEY"],
-          baseUrl:
-            "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
-          overrideUrlEnvVar: "AZURE_OPENAI_BASE_URL",
-        },
-      ]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
-
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
-
-    expect(secretMock).toHaveBeenCalledTimes(1);
-    const secretBuilder = secretMock.mock.calls[0][0];
-    const sb = {
-      env: vi.fn().mockReturnThis(),
-      value: vi.fn().mockReturnThis(),
-      placeholder: vi.fn().mockReturnThis(),
-      allowHost: vi.fn().mockReturnThis(),
-      injectHeaders: vi.fn().mockReturnThis(),
-    };
-    secretBuilder(sb);
-    expect(sb.allowHost).toHaveBeenCalledWith("custom.azure.com");
-  });
-
   it("baseUrl のプレースホルダが未解決の場合はスキップする", async () => {
     process.env.OPENAI_API_KEY = "openai-key";
     vi.doMock("../config/credential-proxy.js", () => ({
@@ -183,10 +151,9 @@ describe("sendMessage: credential-proxy 処理", () => {
           baseUrl: "https://api.openai.com/v1",
         },
         {
-          provider: "azure-openai-responses",
-          envVars: ["AZURE_OPENAI_API_KEY"],
-          baseUrl:
-            "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
+          provider: "test-provider",
+          envVars: ["MISSING_VAR"],
+          baseUrl: "https://api.example.com/{MISSING_VAR}",
         },
       ]),
     }));

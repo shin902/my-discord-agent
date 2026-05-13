@@ -10,7 +10,6 @@ const CredentialEntrySchema = z.object({
   provider: z.string(),
   envVars: z.array(z.string()),
   baseUrl: z.string().url(),
-  overrideUrlEnvVar: z.string().optional(),
 });
 
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;

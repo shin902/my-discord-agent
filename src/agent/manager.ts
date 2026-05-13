@@ -129,17 +129,10 @@ export async function sendMessage(
       );
     }
 
-    let baseUrl = entry.baseUrl;
-    const overrideUrl =
-      entry.overrideUrlEnvVar && process.env[entry.overrideUrlEnvVar];
-    if (overrideUrl) {
-      baseUrl = overrideUrl;
-    }
-
-    const resolvedBaseUrl = resolveBaseUrl(baseUrl);
+    const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
     if (!resolvedBaseUrl) {
       console.warn(
-        `[credential-proxy] ${entry.provider}: baseUrl に未解決のプレースホルダがあります（${baseUrl}）`,
+        `[credential-proxy] ${entry.provider}: baseUrl に未解決のプレースホルダがあります（${entry.baseUrl}）`,
       );
       continue;
     }
