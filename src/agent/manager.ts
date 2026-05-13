@@ -131,6 +131,7 @@ export async function sendMessage(
 
     const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
     if (!resolvedBaseUrl) {
+      // 注意: baseUrl のプレースホルダが未解決の場合、env vars の注入もスキップされる
       console.warn(
         `[credential-proxy] ${entry.provider}: baseUrl に未解決のプレースホルダがあります（${entry.baseUrl}）`,
       );
