@@ -24,10 +24,10 @@ export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel, validateModel };
 let _distExists = false;
 
 export function resolveBaseUrl(baseUrl: string): string | null {
-  const resolved = baseUrl.replace(/\{([A-Z0-9_]+)\}/g, (_, envVar) => {
+  const resolved = baseUrl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, envVar) => {
     return process.env[envVar] || `{${envVar}}`;
   });
-  if (/\{[A-Z0-9_]+\}/.test(resolved)) return null;
+  if (/\{[A-Za-z0-9_]+\}/.test(resolved)) return null;
   return resolved;
 }
 

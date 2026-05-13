@@ -39,6 +39,18 @@ describe("resolveBaseUrl", () => {
     expect(result).toBeNull();
   });
 
+  it("小文字のプレースホルダも置換される", () => {
+    process.env.aws_region = "ap-northeast-1";
+    const result = resolveBaseUrl("https://bedrock-runtime.{aws_region}.amazonaws.com");
+    expect(result).toBe("https://bedrock-runtime.ap-northeast-1.amazonaws.com");
+  });
+
+  it("未解決の小文字プレースホルダがあると null を返す", () => {
+    delete process.env.aws_region;
+    const result = resolveBaseUrl("https://bedrock-runtime.{aws_region}.amazonaws.com");
+    expect(result).toBeNull();
+  });
+
   it("プレースホルダがない URL はそのまま返す", () => {
     const result = resolveBaseUrl("https://api.openai.com/v1");
     expect(result).toBe("https://api.openai.com/v1");
