@@ -210,7 +210,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     expect(sb.env).toHaveBeenCalledWith("OPENAI_API_KEY");
   });
 
-  it("envVars がすべて未設定の場合は警告を出してスキップする", async () => {
+  it("envVars がすべて未設定の場合は静かにスキップする", async () => {
     delete process.env.MISSING_KEY_1;
     delete process.env.MISSING_KEY_2;
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -231,10 +231,33 @@ describe("sendMessage: credential-proxy 処理", () => {
     await sendMessage("test-group", "session-1", "hi");
 
     expect(secretMock).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("envVars が一部未設定の場合は警告を出して注入する", async () => {
+    process.env.PARTIAL_KEY_1 = "value1";
+    delete process.env.PARTIAL_KEY_2;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([
+        {
+          provider: "test-provider",
+          envVars: ["PARTIAL_KEY_1", "PARTIAL_KEY_2"],
+          baseUrl: "https://api.example.com",
+        },
+      ]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+
+    expect(secretMock).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "test-provider: 必要な環境変数が設定されていません",
-      ),
+      expect.stringContaining("test-provider: 一部の環境変数が未設定です"),
     );
     warnSpy.mockRestore();
   });

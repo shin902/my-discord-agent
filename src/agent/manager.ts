@@ -120,10 +120,13 @@ export async function sendMessage(
       (name: string) => process.env[name],
     );
     if (setEnvVars.length === 0) {
-      console.warn(
-        `[credential-proxy] ${entry.provider}: 必要な環境変数が設定されていません (${entry.envVars.join(", ")})`,
-      );
       continue;
+    }
+    if (setEnvVars.length < entry.envVars.length) {
+      const missing = entry.envVars.filter((name) => !process.env[name]);
+      console.warn(
+        `[credential-proxy] ${entry.provider}: 一部の環境変数が未設定です [設定済: ${setEnvVars.join(", ")}] [未設定: ${missing.join(", ")}]`,
+      );
     }
 
     let baseUrl = entry.baseUrl;
