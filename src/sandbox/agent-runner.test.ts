@@ -6,6 +6,7 @@ const { AgentMock } = vi.hoisted(() => ({
 
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
+  readdir: vi.fn(),
 }));
 
 vi.mock("@earendil-works/pi-ai", () => ({
@@ -27,7 +28,7 @@ vi.mock("../agent/session.js", () => ({
 
 const { runAgentLoop } = await import("./agent-runner.js");
 const { loadMessages, appendMessage } = await import("../agent/session.js");
-const { readFile } = await import("node:fs/promises");
+const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
 function createMockAgent(deltas: string[], endMessage: unknown) {
@@ -55,7 +56,11 @@ describe("runAgentLoop", () => {
     vi.clearAllMocks();
     lastAgentOptions = undefined;
     vi.mocked(loadMessages).mockResolvedValue([]);
+    vi.mocked(appendMessage).mockResolvedValue(undefined);
     vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    vi.mocked(readdir).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
     AgentMock.mockImplementation(function (options: unknown) {
@@ -230,5 +235,74 @@ describe("runAgentLoop", () => {
     await expect(
       runAgentLoop("test-group", "session-1", "hi", {}),
     ).rejects.toThrow("session write error");
+  });
+
+  it("スキルがある場合は systemPrompt にスキル一覧を追加する", async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      { name: "review", isDirectory: () => true } as unknown as never,
+    ]);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (filePath === "/workspace/AGENTS.md") {
+        return "カスタムプロンプト" as never;
+      }
+      if (filePath === "/skills/review/SKILL.md") {
+        return "---\nname: review\ndescription: レビュースキル\n---\n" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const systemPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(systemPrompt).toContain("カスタムプロンプト");
+    expect(systemPrompt).toContain("<available_skills>");
+    expect(systemPrompt).toContain("<name>review</name>");
+    expect(systemPrompt).toContain("<description>レビュースキル</description>");
+  });
+
+  it("skills allowlist でフィルタリングする", async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      { name: "allowed", isDirectory: () => true } as unknown as never,
+      { name: "blocked", isDirectory: () => true } as unknown as never,
+    ]);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath).includes("allowed")) {
+        return "---\nname: allowed\ndescription: OK\n---\n" as never;
+      }
+      if (String(filePath).includes("blocked")) {
+        return "---\nname: blocked\ndescription: NG\n---\n" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {
+      skills: ["allowed"],
+    });
+
+    const systemPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(systemPrompt).toContain("<name>allowed</name>");
+    expect(systemPrompt).not.toContain("<name>blocked</name>");
   });
 });

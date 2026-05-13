@@ -12,6 +12,7 @@ export const GroupJsonSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
   autoReply: z.boolean().optional(),
+  skills: z.array(z.string()).optional(),
 });
 
 export type GroupJsonConfig = z.infer<typeof GroupJsonSchema>;

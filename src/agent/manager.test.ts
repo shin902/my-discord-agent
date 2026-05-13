@@ -96,6 +96,7 @@ describe("sendMessage: credential-proxy 処理", () => {
       cpus: vi.fn().mockReturnThis(),
       memory: vi.fn().mockReturnThis(),
       env: vi.fn().mockReturnThis(),
+      replace: vi.fn().mockReturnThis(),
       volume: vi.fn().mockReturnThis(),
       secret: secretMock,
       create: vi.fn().mockResolvedValue({
@@ -259,6 +260,7 @@ describe("sendMessage: 設定バリデーション", () => {
       cpus: vi.fn().mockReturnThis(),
       memory: vi.fn().mockReturnThis(),
       env: vi.fn().mockReturnThis(),
+      replace: vi.fn().mockReturnThis(),
       volume: vi.fn().mockReturnThis(),
       secret: vi.fn().mockReturnThis(),
       create: vi.fn().mockResolvedValue({
