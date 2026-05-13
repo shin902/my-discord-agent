@@ -65,6 +65,7 @@ config/groups.json          # チャンネル→グループのマッピング�
 groups/{name}/
   group.json                # モデル・ツール・autoReply 設定（省略可）
   AGENTS.md                 # グループのシステムプロンプト（省略可）
+  SKILLS/{skill}/SKILL.md   # グループ固有のスキル定義（省略可）
 data/queue/inbox.jsonl      # 処理待ちメッセージキュー（自動生成）
 data/queue/dead-letter.jsonl# リトライ上限超えたメッセージ（自動生成）
 data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
