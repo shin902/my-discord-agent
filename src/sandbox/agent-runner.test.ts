@@ -243,10 +243,10 @@ describe("runAgentLoop", () => {
       { name: "review", isDirectory: () => true } as unknown as Dirent,
     ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
-      if (filePath === "/workspace/AGENTS.md") {
+      if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
       }
-      if (filePath === "/workspace/SKILLS/review/SKILL.md") {
+      if (String(filePath) === "/workspace/SKILLS/review/SKILL.md") {
         return "---\nname: review\ndescription: レビュースキル\n---\n" as never;
       }
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
