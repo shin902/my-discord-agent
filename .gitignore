@@ -6,7 +6,7 @@ data/
 
 config/*
 !config/groups.example.json
-!config/credential-proxy.json.example
+!config/credential-proxy.example.json
 
 groups/*/group.json
 groups/*/AGENTS.md

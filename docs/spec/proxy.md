@@ -36,7 +36,7 @@ Host
 
 ### credential-proxy.json
 
-`config/credential-proxy.json.example` をコピーして `config/credential-proxy.json` を作成する。
+`config/credential-proxy.example.json` をコピーして `config/credential-proxy.json` を作成する。
 
 ```json
 [
@@ -49,10 +49,11 @@ Host
 ```
 
 **重要な挙動**:
-- `envVars` リスト内で `process.env` に設定されている**すべて**が secret として注入される。Cloudflare（API_KEY + ACCOUNT_ID + GATEWAY_ID）など、複数変数が必要なプロバイダにも対応。
+- `envVars` リスト内で `process.env` に設定されている**すべて**が secret として注入される。
+- **注意**: プロバイダによっては一部の変数だけでは動作しない場合がある（例: Cloudflare は API_KEY + ACCOUNT_ID + GATEWAY_ID がすべて必要）。`envVars` に含まれる変数は「設定されていれば注入」され、未設定のものは無視される。必要な変数がすべて揃っているかは `.env` 側で管理すること。
 - 同じ環境変数が複数の provider に含まれている場合、**各 provider ごとに独立して注入される**。
 - `baseUrl` に `{ENV_VAR}` 形式のプレースホルダが含まれている場合、`process.env` の値で動的に置換される。置換できない場合はその provider をスキップ。
-- **Azure 専用の特殊ロジック**: `provider === "azure-openai-responses"` の場合、`AZURE_OPENAI_BASE_URL` が設定されていればそちらを `baseUrl` として優先使用する。
+- **`overrideUrlEnvVar`**: エントリに `overrideUrlEnvVar` が指定されている場合、その環境変数が設定されていれば `baseUrl` をその値で上書きする。Azure など、直接 URL を指定したいプロバイダで使用。
 
 ### .env 設定
 

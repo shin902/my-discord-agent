@@ -116,7 +116,9 @@ export async function sendMessage(
   }
 
   for (const entry of creds) {
-    const setEnvVars = entry.envVars.filter((name: string) => process.env[name]);
+    const setEnvVars = entry.envVars.filter(
+      (name: string) => process.env[name],
+    );
     if (setEnvVars.length === 0) {
       console.warn(
         `[credential-proxy] ${entry.provider}: 必要な環境変数が設定されていません (${entry.envVars.join(", ")})`,
@@ -126,10 +128,10 @@ export async function sendMessage(
 
     let baseUrl = entry.baseUrl;
     if (
-      entry.provider === "azure-openai-responses" &&
-      process.env.AZURE_OPENAI_BASE_URL
+      entry.overrideUrlEnvVar &&
+      process.env[entry.overrideUrlEnvVar]
     ) {
-      baseUrl = process.env.AZURE_OPENAI_BASE_URL;
+      baseUrl = process.env[entry.overrideUrlEnvVar];
     }
 
     const resolvedBaseUrl = resolveBaseUrl(baseUrl);

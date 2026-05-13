@@ -139,7 +139,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     expect(sb2.env).toHaveBeenCalledWith("FALLBACK_KEY");
   });
 
-  it("Azure の AZURE_OPENAI_BASE_URL が設定されていればそちらを優先使用する", async () => {
+  it("overrideUrlEnvVar が設定されていれば baseUrl を上書きする", async () => {
     process.env.AZURE_OPENAI_API_KEY = "azure-key";
     process.env.AZURE_OPENAI_BASE_URL = "https://custom.azure.com/openai/v1";
     vi.doMock("../config/credential-proxy.js", () => ({
@@ -149,6 +149,7 @@ describe("sendMessage: credential-proxy 処理", () => {
           envVars: ["AZURE_OPENAI_API_KEY"],
           baseUrl:
             "https://{AZURE_OPENAI_RESOURCE_NAME}.openai.azure.com/openai/v1",
+          overrideUrlEnvVar: "AZURE_OPENAI_BASE_URL",
         },
       ]),
     }));
@@ -231,7 +232,9 @@ describe("sendMessage: credential-proxy 処理", () => {
 
     expect(secretMock).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("test-provider: 必要な環境変数が設定されていません"),
+      expect.stringContaining(
+        "test-provider: 必要な環境変数が設定されていません",
+      ),
     );
     warnSpy.mockRestore();
   });
