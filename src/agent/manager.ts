@@ -149,6 +149,7 @@ export async function sendMessage(
 
     for (const envVarName of setEnvVars) {
       const value = process.env[envVarName];
+      if (value === undefined) continue;
       const placeholder = `msb_${envVarName.toLowerCase()}`;
       builder = builder.secret((sb) =>
         sb
