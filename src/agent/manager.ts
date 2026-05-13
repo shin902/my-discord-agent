@@ -127,11 +127,10 @@ export async function sendMessage(
     }
 
     let baseUrl = entry.baseUrl;
-    if (
-      entry.overrideUrlEnvVar &&
-      process.env[entry.overrideUrlEnvVar]
-    ) {
-      baseUrl = process.env[entry.overrideUrlEnvVar];
+    const overrideUrl =
+      entry.overrideUrlEnvVar && process.env[entry.overrideUrlEnvVar];
+    if (overrideUrl) {
+      baseUrl = overrideUrl;
     }
 
     const resolvedBaseUrl = resolveBaseUrl(baseUrl);
