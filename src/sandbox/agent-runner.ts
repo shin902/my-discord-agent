@@ -14,6 +14,8 @@ import {
   type GroupJsonConfig,
   GroupJsonSchema,
 } from "../config/group-config.js";
+import { loadSkills } from "../skills/loader.js";
+import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 
@@ -37,9 +39,10 @@ export async function runAgentLoop(
   content: string,
   groupConfig: GroupJsonConfig,
 ): Promise<string> {
-  const [messages, systemPrompt] = await Promise.all([
+  const [messages, systemPrompt, skills] = await Promise.all([
     loadMessages(groupName, sessionId),
     loadSystemPromptFromWorkspace(),
+    loadSkills("/workspace/SKILLS", groupConfig.skills),
   ]);
 
   const model = resolveModel(
@@ -51,9 +54,14 @@ export async function runAgentLoop(
     (t) => !VM_UNSUPPORTED_TOOLS.has(t.name),
   );
 
+  const skillPrompt = formatSkillsForPrompt(skills);
+  const fullSystemPrompt = [systemPrompt ?? DEFAULT_SYSTEM_PROMPT, skillPrompt]
+    .filter(Boolean)
+    .join("\n\n");
+
   const agent = new Agent({
     initialState: {
-      systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      systemPrompt: fullSystemPrompt,
       model,
       messages,
       tools,
