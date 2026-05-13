@@ -96,7 +96,9 @@ export async function sendMessage(
     .env("SESSIONS_DIR", "/app/data/sessions")
     .replace()
     .volume("/app", (mb) => mb.bind(ROOT))
-    .volume("/workspace", (mb) => mb.bind(path.join(ROOT, "groups", groupName)));
+    .volume("/workspace", (mb) =>
+      mb.bind(path.join(ROOT, "groups", groupName)),
+    );
 
   for (const entry of creds) {
     const setEnvVars = entry.envVars.filter(
