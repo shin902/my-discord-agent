@@ -251,7 +251,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     warnSpy.mockRestore();
   });
 
-    it("envVars が省略された場合は secret 注入をスキップしつつ allowHost する", async () => {
+  it("envVars が省略された場合は secret 注入をスキップしつつ allowHost する", async () => {
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([
         {

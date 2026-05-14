@@ -2,7 +2,11 @@ import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import { Agent } from "@earendil-works/pi-agent-core";
-import { getProviders, type KnownProvider, type TextContent } from "@earendil-works/pi-ai";
+import {
+  getProviders,
+  type KnownProvider,
+  type TextContent,
+} from "@earendil-works/pi-ai";
 import { z } from "zod";
 import {
   DEFAULT_MODEL_ID,

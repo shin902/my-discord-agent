@@ -111,6 +111,8 @@ describe("resolveBaseUrl", () => {
 
   it("プレースホルダがない場合はそのまま返す", async () => {
     const { resolveBaseUrl } = await importFresh();
-    expect(resolveBaseUrl("http://localhost:8080")).toBe("http://localhost:8080");
+    expect(resolveBaseUrl("http://localhost:8080")).toBe(
+      "http://localhost:8080",
+    );
   });
 });
