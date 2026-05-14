@@ -1,8 +1,4 @@
 {
-  "model": {
-    "provider": "opencode-go",
-    "modelId": "your-model-id"
-  },
   "tools": [],
   "autoReply": false
 }
