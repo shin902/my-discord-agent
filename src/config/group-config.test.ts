@@ -206,6 +206,14 @@ describe("ensureGroupDirs", () => {
     await ensureGroupDirs(["new-group"]);
     expect(mockCp).not.toHaveBeenCalled();
   });
+
+  it("cp が失敗してもエラーをスローせず続行する", async () => {
+    mockStat
+      .mockImplementationOnce(statDir) // template dir exists
+      .mockImplementationOnce(statMissing); // group dir missing
+    mockCp.mockRejectedValueOnce(new Error("EACCES: permission denied"));
+    await expect(ensureGroupDirs(["broken-group"])).resolves.toBeUndefined();
+  });
 });
 
 describe("ensureGroupSkills", () => {
@@ -256,5 +264,15 @@ describe("ensureGroupSkills", () => {
       .mockImplementationOnce(statDir); // skill-b template exists
     await ensureGroupSkills("mygroup", ["skill-a", "skill-b"]);
     expect(mockCp).toHaveBeenCalledOnce();
+  });
+
+  it("cp が失敗してもエラーをスローせず続行する", async () => {
+    mockStat
+      .mockImplementationOnce(statMissing) // skill dest missing
+      .mockImplementationOnce(statDir); // skill template exists
+    mockCp.mockRejectedValueOnce(new Error("EACCES: permission denied"));
+    await expect(
+      ensureGroupSkills("mygroup", ["explain"]),
+    ).resolves.toBeUndefined();
   });
 });
