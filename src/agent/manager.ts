@@ -20,7 +20,13 @@ import {
   validateModel,
 } from "./model.js";
 
-export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveBaseUrl, resolveModel, validateModel };
+export {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER,
+  resolveBaseUrl,
+  resolveModel,
+  validateModel,
+};
 
 let _distExists = false;
 
@@ -95,9 +101,7 @@ export async function sendMessage(
 
   for (const entry of creds) {
     const envVars = entry.envVars ?? [];
-    const setEnvVars = envVars.filter(
-      (name: string) => process.env[name],
-    );
+    const setEnvVars = envVars.filter((name: string) => process.env[name]);
     if (envVars.length > 0 && setEnvVars.length === 0) {
       continue;
     }
