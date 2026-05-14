@@ -1,13 +1,13 @@
 import {
+  type Api,
   getModels,
   getProviders,
   type KnownProvider,
   type Model,
-  type Api,
 } from "@earendil-works/pi-ai";
 import {
-  loadCredentialProxy,
   type CredentialEntry,
+  loadCredentialProxy,
 } from "../config/credential-proxy.js";
 
 export const DEFAULT_PROVIDER = "opencode-go";
