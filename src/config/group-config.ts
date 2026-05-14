@@ -53,11 +53,15 @@ export async function ensureGroupSkills(
   groupName: string,
   skills: string[],
 ): Promise<void> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(groupName))
+    throw new Error(`不正なグループ名: ${groupName}`);
   if (skills.length === 0) return;
   const skillsTemplateDir = path.join(TEMPLATES_DIR, "SKILLS");
 
   await Promise.all(
     skills.map(async (skill) => {
+      if (!/^[a-zA-Z0-9_-]+$/.test(skill))
+        throw new Error(`不正なスキル名: ${skill}`);
       const dest = path.join(GROUPS_DIR, groupName, "SKILLS", skill);
       if (await _dirExists(dest)) return;
       const src = path.join(skillsTemplateDir, skill);

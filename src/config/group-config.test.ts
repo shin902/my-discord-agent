@@ -208,6 +208,18 @@ describe("ensureGroupDirs", () => {
 });
 
 describe("ensureGroupSkills", () => {
+  it("不正なグループ名はエラー", async () => {
+    await expect(ensureGroupSkills("../../evil", ["explain"])).rejects.toThrow(
+      "不正なグループ名",
+    );
+  });
+
+  it("不正なスキル名はエラー", async () => {
+    await expect(
+      ensureGroupSkills("mygroup", ["../../../etc/passwd"]),
+    ).rejects.toThrow("不正なスキル名");
+  });
+
   it("スキルリストが空の場合は stat を呼ばない", async () => {
     await ensureGroupSkills("mygroup", []);
     expect(mockStat).not.toHaveBeenCalled();
