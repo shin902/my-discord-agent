@@ -94,7 +94,7 @@ export async function sendMessage(
     .memory(512)
     .env("SESSIONS_DIR", "/app/data/sessions")
     .replace()
-    .network((n) => n.policyJson(JSON.stringify(NetworkPolicy.nonLocal())))
+    .network((n) => n.policy(NetworkPolicy.nonLocal()))
     .volume("/app", (mb) => mb.bind(ROOT))
     .volume("/workspace", (mb) =>
       mb.bind(path.join(ROOT, "groups", groupName)),
