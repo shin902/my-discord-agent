@@ -119,8 +119,6 @@ export async function sendMessage(
       continue;
     }
 
-
-
     const envVars = entry.envVars ?? [];
     const setEnvVars = envVars.filter((name: string) => process.env[name]);
     if (envVars.length > 0 && setEnvVars.length === 0) {
