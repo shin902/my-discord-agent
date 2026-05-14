@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ExecTimeoutError, Sandbox } from "microsandbox";
+import { ExecTimeoutError, NetworkPolicy, Sandbox } from "microsandbox";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -94,6 +94,7 @@ export async function sendMessage(
     .memory(512)
     .env("SESSIONS_DIR", "/app/data/sessions")
     .replace()
+    .network((n) => n.policyJson(JSON.stringify(NetworkPolicy.nonLocal())))
     .volume("/app", (mb) => mb.bind(ROOT))
     .volume("/workspace", (mb) =>
       mb.bind(path.join(ROOT, "groups", groupName)),
@@ -118,8 +119,7 @@ export async function sendMessage(
       continue;
     }
 
-    // 全プロバイダーのホストを通信許可（API キー不要なローカルサーバーも含む）
-    builder = builder.allowHost(host);
+
 
     const envVars = entry.envVars ?? [];
     const setEnvVars = envVars.filter((name: string) => process.env[name]);

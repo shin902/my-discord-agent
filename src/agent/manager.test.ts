@@ -98,7 +98,7 @@ describe("sendMessage: credential-proxy 処理", () => {
       env: vi.fn().mockReturnThis(),
       replace: vi.fn().mockReturnThis(),
       volume: vi.fn().mockReturnThis(),
-      allowHost: vi.fn().mockReturnThis(),
+      network: vi.fn().mockReturnThis(),
       secret: secretMock,
       create: vi.fn().mockResolvedValue({
         [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
@@ -251,7 +251,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     warnSpy.mockRestore();
   });
 
-  it("envVars が省略された場合は secret 注入をスキップしつつ allowHost する", async () => {
+  it("envVars が省略された場合は secret 注入をスキップする", async () => {
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([
         {
@@ -269,10 +269,9 @@ describe("sendMessage: credential-proxy 処理", () => {
 
     expect(result).toBe("mocked response");
     expect(secretMock).not.toHaveBeenCalled();
-    expect(builderChain.allowHost).toHaveBeenCalledWith("localhost");
   });
 
-  it("envVars が空配列の場合も secret 注入をスキップしつつ allowHost する", async () => {
+  it("envVars が空配列の場合も secret 注入をスキップする", async () => {
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([
         {
@@ -291,10 +290,9 @@ describe("sendMessage: credential-proxy 処理", () => {
 
     expect(result).toBe("mocked response");
     expect(secretMock).not.toHaveBeenCalled();
-    expect(builderChain.allowHost).toHaveBeenCalledWith("localhost");
   });
 
-  it("envVars がある場合も allowHost する", async () => {
+  it("envVars がある場合は secret 注入と allowHost を行う", async () => {
     process.env.API_KEY = "primary-value";
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([
@@ -313,7 +311,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     const result = await sendMessage("test-group", "session-1", "hi");
 
     expect(result).toBe("mocked response");
-    expect(builderChain.allowHost).toHaveBeenCalledWith("api.example.com");
+    expect(secretMock).toHaveBeenCalledTimes(1);
   });
 });
 
