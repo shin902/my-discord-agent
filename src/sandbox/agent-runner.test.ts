@@ -240,7 +240,7 @@ describe("runAgentLoop", () => {
 
   it("スキルがある場合は systemPrompt にスキル一覧を追加する", async () => {
     vi.mocked(readdir).mockResolvedValue([
-      { name: "review", isDirectory: () => true } as unknown as Dirent,
+      { name: "review", isDirectory: () => true } as unknown as Awaited<ReturnType<typeof readdir>>[number],
     ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
@@ -274,8 +274,8 @@ describe("runAgentLoop", () => {
 
   it("skills allowlist でフィルタリングする", async () => {
     vi.mocked(readdir).mockResolvedValue([
-      { name: "allowed", isDirectory: () => true } as unknown as Dirent,
-      { name: "blocked", isDirectory: () => true } as unknown as Dirent,
+      { name: "allowed", isDirectory: () => true } as unknown as Awaited<ReturnType<typeof readdir>>[number],
+      { name: "blocked", isDirectory: () => true } as unknown as Awaited<ReturnType<typeof readdir>>[number],
     ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath).includes("allowed")) {

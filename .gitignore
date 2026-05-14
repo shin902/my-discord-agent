@@ -8,5 +8,4 @@ config/*
 !config/groups.example.json
 !config/credential-proxy.example.json
 
-groups/*/group.json
-groups/*/AGENTS.md
+groups/*/
