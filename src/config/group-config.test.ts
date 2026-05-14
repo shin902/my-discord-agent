@@ -34,6 +34,7 @@ beforeEach(() => {
   mockStat.mockReset();
   mockCp.mockReset();
   mockCp.mockResolvedValue(undefined);
+  mockStat.mockImplementation(statMissing);
 });
 
 describe("loadGroupConfig", () => {

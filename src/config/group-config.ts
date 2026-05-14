@@ -24,8 +24,9 @@ const TEMPLATES_DIR = path.join(__dirname, "../../templates");
 async function _dirExists(p: string): Promise<boolean> {
   try {
     return (await stat(p)).isDirectory();
-  } catch {
-    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
   }
 }
 
