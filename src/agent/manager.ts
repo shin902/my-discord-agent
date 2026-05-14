@@ -100,21 +100,8 @@ export async function sendMessage(
     );
 
   for (const entry of creds) {
-    const envVars = entry.envVars ?? [];
-    const setEnvVars = envVars.filter((name: string) => process.env[name]);
-    if (envVars.length > 0 && setEnvVars.length === 0) {
-      continue;
-    }
-    if (setEnvVars.length < envVars.length) {
-      const missing = envVars.filter((name) => !process.env[name]);
-      console.warn(
-        `[credential-proxy] ${entry.provider}: 一部の環境変数が未設定です [設定済: ${setEnvVars.join(", ")}] [未設定: ${missing.join(", ")}]`,
-      );
-    }
-
     const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
     if (!resolvedBaseUrl) {
-      // 注意: baseUrl のプレースホルダが未解決の場合、env vars の注入もスキップされる
       console.warn(
         `[credential-proxy] ${entry.provider}: baseUrl に未解決のプレースホルダがあります（${entry.baseUrl}）`,
       );
@@ -129,6 +116,21 @@ export async function sendMessage(
         `[credential-proxy] ${entry.provider}: 無効な baseUrl です（${resolvedBaseUrl}）`,
       );
       continue;
+    }
+
+    // 全プロバイダーのホストを通信許可（API キー不要なローカルサーバーも含む）
+    builder = builder.allowHost(host);
+
+    const envVars = entry.envVars ?? [];
+    const setEnvVars = envVars.filter((name: string) => process.env[name]);
+    if (envVars.length > 0 && setEnvVars.length === 0) {
+      continue;
+    }
+    if (setEnvVars.length < envVars.length) {
+      const missing = envVars.filter((name) => !process.env[name]);
+      console.warn(
+        `[credential-proxy] ${entry.provider}: 一部の環境変数が未設定です [設定済: ${setEnvVars.join(", ")}] [未設定: ${missing.join(", ")}]`,
+      );
     }
 
     for (const envVarName of setEnvVars) {
