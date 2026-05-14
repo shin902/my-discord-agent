@@ -241,9 +241,10 @@ describe("ensureGroupSkills", () => {
   });
 
   it("テンプレートにスキルがない場合は cp を呼ばない", async () => {
+    // 実装は dest → src の順で _dirExists を呼ぶ（既存なら早期リターン）
     mockStat
-      .mockImplementationOnce(statMissing) // skill dest missing
-      .mockImplementationOnce(statMissing); // skill template missing
+      .mockImplementationOnce(statMissing) // dest: skill missing
+      .mockImplementationOnce(statMissing); // src: template missing
     await ensureGroupSkills("mygroup", ["unknown-skill"]);
     expect(mockCp).not.toHaveBeenCalled();
   });
