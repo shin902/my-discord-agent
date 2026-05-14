@@ -2,20 +2,38 @@ import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
+  stat: vi.fn(),
+  cp: vi.fn(),
 }));
 
-const { readFile } = await import("node:fs/promises");
-const { loadGroupConfig, loadGroupSystemPrompt, initGroupConfigs } =
-  await import("./group-config.js");
+const { readFile, stat, cp } = await import("node:fs/promises");
+const {
+  loadGroupConfig,
+  loadGroupSystemPrompt,
+  initGroupConfigs,
+  ensureGroupDirs,
+  ensureGroupSkills,
+} = await import("./group-config.js");
 
 // readFile はオーバーロードがあり vi.mocked がデフォルトで Buffer 返しの overload を選ぶため、
 // string 返しの overload に一度だけキャストして各テストで as any を使わずに済むようにする。
 const mockReadFile = vi.mocked(readFile) as unknown as Mock<
   () => Promise<string>
 >;
+const mockStat = vi.mocked(stat) as unknown as Mock<
+  () => Promise<{ isDirectory: () => boolean }>
+>;
+const mockCp = vi.mocked(cp);
+
+const statDir = () => Promise.resolve({ isDirectory: () => true });
+const statMissing = () =>
+  Promise.reject(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
 
 beforeEach(() => {
   mockReadFile.mockReset();
+  mockStat.mockReset();
+  mockCp.mockReset();
+  mockCp.mockResolvedValue(undefined);
 });
 
 describe("loadGroupConfig", () => {
@@ -146,6 +164,7 @@ describe("initGroupConfigs", () => {
       .mockRejectedValueOnce(
         Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
       );
+    mockStat.mockImplementation(statMissing);
 
     await initGroupConfigs(["init-cache-verify"]);
     mockReadFile.mockReset();
@@ -155,5 +174,73 @@ describe("initGroupConfigs", () => {
     expect(config).toEqual({
       model: { provider: "opencode-go", modelId: "kimi-k2.6" },
     });
+  });
+});
+
+describe("ensureGroupDirs", () => {
+  it("不正なグループ名はエラー", async () => {
+    await expect(ensureGroupDirs(["../../evil"])).rejects.toThrow(
+      "不正なグループ名",
+    );
+  });
+
+  it("グループフォルダが既に存在する場合は cp を呼ばない", async () => {
+    mockStat.mockImplementation(statDir); // template も group も存在
+    await ensureGroupDirs(["existing-group"]);
+    expect(mockCp).not.toHaveBeenCalled();
+  });
+
+  it("グループフォルダが存在せずテンプレートがある場合は cp を呼ぶ", async () => {
+    mockStat
+      .mockImplementationOnce(statDir) // template dir exists
+      .mockImplementationOnce(statMissing); // group dir missing
+    await ensureGroupDirs(["new-group"]);
+    expect(mockCp).toHaveBeenCalledOnce();
+  });
+
+  it("テンプレートが存在しない場合は cp を呼ばない", async () => {
+    mockStat
+      .mockImplementationOnce(statMissing) // template dir missing
+      .mockImplementationOnce(statMissing); // group dir missing
+    await ensureGroupDirs(["new-group"]);
+    expect(mockCp).not.toHaveBeenCalled();
+  });
+});
+
+describe("ensureGroupSkills", () => {
+  it("スキルリストが空の場合は stat を呼ばない", async () => {
+    await ensureGroupSkills("mygroup", []);
+    expect(mockStat).not.toHaveBeenCalled();
+  });
+
+  it("スキルフォルダが既に存在する場合は cp を呼ばない", async () => {
+    mockStat.mockImplementation(statDir); // skill dest exists
+    await ensureGroupSkills("mygroup", ["explain"]);
+    expect(mockCp).not.toHaveBeenCalled();
+  });
+
+  it("スキルフォルダが存在せずテンプレートがある場合は cp を呼ぶ", async () => {
+    mockStat
+      .mockImplementationOnce(statMissing) // skill dest missing
+      .mockImplementationOnce(statDir); // skill template exists
+    await ensureGroupSkills("mygroup", ["explain"]);
+    expect(mockCp).toHaveBeenCalledOnce();
+  });
+
+  it("テンプレートにスキルがない場合は cp を呼ばない", async () => {
+    mockStat
+      .mockImplementationOnce(statMissing) // skill dest missing
+      .mockImplementationOnce(statMissing); // skill template missing
+    await ensureGroupSkills("mygroup", ["unknown-skill"]);
+    expect(mockCp).not.toHaveBeenCalled();
+  });
+
+  it("複数スキルで存在するものはスキップ、ないものだけコピー", async () => {
+    mockStat
+      .mockImplementationOnce(statDir) // skill-a dest exists → skip
+      .mockImplementationOnce(statMissing) // skill-b dest missing
+      .mockImplementationOnce(statDir); // skill-b template exists
+    await ensureGroupSkills("mygroup", ["skill-a", "skill-b"]);
+    expect(mockCp).toHaveBeenCalledOnce();
   });
 });

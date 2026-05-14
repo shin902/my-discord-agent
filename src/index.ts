@@ -5,7 +5,7 @@ import {
   initManager,
   validateModel,
 } from "./agent/manager.js";
-import { initGroupConfigs } from "./config/group-config.js";
+import { ensureGroupDirs, initGroupConfigs } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
@@ -16,6 +16,7 @@ if (!token) throw new Error("DISCORD_BOT_TOKEN が設定されていません");
 
 const groups = await loadGroups();
 try {
+  await ensureGroupDirs(groups.map((g) => g.name));
   await initManager();
   const configs = await initGroupConfigs(groups.map((g) => g.name));
   for (const group of groups) {

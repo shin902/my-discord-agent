@@ -1,7 +1,7 @@
 {
   "model": {
     "provider": "opencode-go",
-    "modelId": "kimi-k2.6"
+    "modelId": "your-model-id"
   },
   "tools": [],
   "autoReply": false
