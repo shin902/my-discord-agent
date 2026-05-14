@@ -42,8 +42,8 @@ export async function ensureGroupDirs(groupNames: string[]): Promise<void> {
       if (await _dirExists(groupDir)) return;
       if (hasTemplate) {
         await cp(templateDir, groupDir, { recursive: true });
+        console.log(`[group-config] グループフォルダを作成しました: ${name}`);
       }
-      console.log(`[group-config] グループフォルダを作成しました: ${name}`);
     }),
   );
 }
