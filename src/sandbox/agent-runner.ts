@@ -45,7 +45,7 @@ export async function runAgentLoop(
     loadSkills("/workspace/SKILLS", groupConfig.skills),
   ]);
 
-  const model = resolveModel(
+  const model = await resolveModel(
     groupConfig.model?.provider ?? DEFAULT_PROVIDER,
     groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
   );

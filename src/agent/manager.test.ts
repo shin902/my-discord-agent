@@ -62,19 +62,19 @@ describe("resolveBaseUrl", () => {
 });
 
 describe("resolveModel", () => {
-  it("有効なプロバイダとモデルIDはモデルを返す", () => {
-    const model = resolveModel("provider-a", "model-x");
+  it("有効なプロバイダとモデルIDはモデルを返す", async () => {
+    const model = await resolveModel("provider-a", "model-x");
     expect(model.id).toBe("model-x");
   });
 
-  it("不明なプロバイダはエラー", () => {
-    expect(() => resolveModel("unknown-provider", "model-x")).toThrow(
+  it("不明なプロバイダはエラー", async () => {
+    await expect(resolveModel("unknown-provider", "model-x")).rejects.toThrow(
       "不明なプロバイダ: unknown-provider",
     );
   });
 
-  it("不明なモデルIDはエラー", () => {
-    expect(() => resolveModel("provider-a", "unknown-model")).toThrow(
+  it("不明なモデルIDはエラー", async () => {
+    await expect(resolveModel("provider-a", "unknown-model")).rejects.toThrow(
       "不明なモデル: unknown-model (provider: provider-a)",
     );
   });
@@ -248,6 +248,47 @@ describe("sendMessage: credential-proxy 処理", () => {
       expect.stringContaining("test-provider: 一部の環境変数が未設定です"),
     );
     warnSpy.mockRestore();
+  });
+
+  it("envVars が省略された場合は secret 注入をスキップしつつ baseUrl を解決する", async () => {
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([
+        {
+          provider: "local-llm",
+          baseUrl: "http://localhost:8080/v1",
+        },
+      ]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { sendMessage } = await import("./manager.js");
+    const result = await sendMessage("test-group", "session-1", "hi");
+
+    expect(result).toBe("mocked response");
+    expect(secretMock).not.toHaveBeenCalled();
+  });
+
+  it("envVars が空配列の場合も secret 注入をスキップしつつ baseUrl を解決する", async () => {
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([
+        {
+          provider: "local-llm",
+          envVars: [],
+          baseUrl: "http://localhost:8080/v1",
+        },
+      ]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { sendMessage } = await import("./manager.js");
+    const result = await sendMessage("test-group", "session-1", "hi");
+
+    expect(result).toBe("mocked response");
+    expect(secretMock).not.toHaveBeenCalled();
   });
 });
 

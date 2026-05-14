@@ -46,7 +46,10 @@ export async function ensureGroupDirs(groupNames: string[]): Promise<void> {
           await cp(templateDir, groupDir, { recursive: true });
           console.log(`[group-config] グループフォルダを作成しました: ${name}`);
         } catch (err) {
-          console.warn(`[group-config] グループフォルダの作成に失敗しました: ${name}`, err);
+          console.warn(
+            `[group-config] グループフォルダの作成に失敗しました: ${name}`,
+            err,
+          );
         }
       }
     }),
@@ -73,9 +76,14 @@ export async function ensureGroupSkills(
       if (!(await _dirExists(src))) return;
       try {
         await cp(src, dest, { recursive: true });
-        console.log(`[group-config] スキルをコピーしました: ${groupName}/${skill}`);
+        console.log(
+          `[group-config] スキルをコピーしました: ${groupName}/${skill}`,
+        );
       } catch (err) {
-        console.warn(`[group-config] スキルのコピーに失敗しました: ${groupName}/${skill}`, err);
+        console.warn(
+          `[group-config] スキルのコピーに失敗しました: ${groupName}/${skill}`,
+          err,
+        );
       }
     }),
   );

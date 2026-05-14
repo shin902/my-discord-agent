@@ -15,21 +15,14 @@ import { resolveTools } from "../tools/registry.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
+  resolveBaseUrl,
   resolveModel,
   validateModel,
 } from "./model.js";
 
-export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveModel, validateModel };
+export { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, resolveBaseUrl, resolveModel, validateModel };
 
 let _distExists = false;
-
-export function resolveBaseUrl(baseUrl: string): string | null {
-  const resolved = baseUrl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, envVar) => {
-    return process.env[envVar] ?? `{${envVar}}`;
-  });
-  if (/\{[A-Za-z0-9_]+\}/.test(resolved)) return null;
-  return resolved;
-}
 
 /**
  * エージェントマネージャーの初期化。起動時に一度だけ呼ぶこと。
@@ -58,7 +51,7 @@ export async function sendMessage(
   const groupConfig = await loadGroupConfig(groupName);
 
   try {
-    resolveModel(
+    await resolveModel(
       groupConfig.model?.provider ?? DEFAULT_PROVIDER,
       groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
     );
@@ -101,14 +94,15 @@ export async function sendMessage(
     );
 
   for (const entry of creds) {
-    const setEnvVars = entry.envVars.filter(
+    const envVars = entry.envVars ?? [];
+    const setEnvVars = envVars.filter(
       (name: string) => process.env[name],
     );
-    if (setEnvVars.length === 0) {
+    if (envVars.length > 0 && setEnvVars.length === 0) {
       continue;
     }
-    if (setEnvVars.length < entry.envVars.length) {
-      const missing = entry.envVars.filter((name) => !process.env[name]);
+    if (setEnvVars.length < envVars.length) {
+      const missing = envVars.filter((name) => !process.env[name]);
       console.warn(
         `[credential-proxy] ${entry.provider}: 一部の環境変数が未設定です [設定済: ${setEnvVars.join(", ")}] [未設定: ${missing.join(", ")}]`,
       );

@@ -8,8 +8,9 @@ const CONFIG_PATH = path.join(__dirname, "../../config/credential-proxy.json");
 
 const CredentialEntrySchema = z.object({
   provider: z.string(),
-  envVars: z.array(z.string()),
+  envVars: z.array(z.string()).optional(),
   baseUrl: z.string().url(),
+  api: z.string().optional(),
 });
 
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;

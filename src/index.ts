@@ -24,7 +24,7 @@ try {
     if (config === undefined) {
       throw new Error(`グループ "${group.name}" の設定が見つかりません`);
     }
-    validateModel(
+    await validateModel(
       config.model?.provider ?? DEFAULT_PROVIDER,
       config.model?.modelId ?? DEFAULT_MODEL_ID,
     );
