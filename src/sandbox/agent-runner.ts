@@ -72,7 +72,7 @@ export async function runAgentLoop(
     },
     getApiKey: (provider: string) => {
       if (!getProviders().includes(provider as KnownProvider)) {
-        return "not-needed";
+        return undefined;
       }
       return undefined;
     },
