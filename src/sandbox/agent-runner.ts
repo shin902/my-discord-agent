@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { TextContent } from "@earendil-works/pi-ai";
+import { getProviders, type KnownProvider, type TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import {
   DEFAULT_MODEL_ID,
@@ -65,6 +65,12 @@ export async function runAgentLoop(
       model,
       messages,
       tools,
+    },
+    getApiKey: (provider: string) => {
+      if (!getProviders().includes(provider as KnownProvider)) {
+        return "not-needed";
+      }
+      return undefined;
     },
   });
 

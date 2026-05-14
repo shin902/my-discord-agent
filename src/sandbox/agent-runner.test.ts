@@ -102,6 +102,7 @@ describe("runAgentLoop", () => {
         messages: [],
         tools: [],
       },
+      getApiKey: expect.any(Function),
     });
     expect(mockAgent.prompt).toHaveBeenCalledWith("こんにちは");
     expect(result).toBe("Hello world");
