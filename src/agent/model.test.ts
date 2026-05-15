@@ -22,9 +22,7 @@ beforeEach(() => {
 describe("resolveModel", () => {
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders, getModels } = await import(
-      "@earendil-works/pi-ai"
-    );
+    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
     vi.mocked(getProviders).mockReturnValue(["openai"] as any);
     vi.mocked(getModels).mockReturnValue([
       {
@@ -97,9 +95,7 @@ describe("resolveModel", () => {
 
   it("既知のプロバイダーでモデルが見つからない場合はエラー", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders, getModels } = await import(
-      "@earendil-works/pi-ai"
-    );
+    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
     vi.mocked(getProviders).mockReturnValue(["openai"] as any);
     vi.mocked(getModels).mockReturnValue([] as any);
 
