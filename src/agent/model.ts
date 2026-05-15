@@ -43,7 +43,7 @@ function createCustomModel(
     },
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
-  } as Model<Api>;
+  };
 }
 
 export async function resolveModel(provider: string, modelId: string) {
