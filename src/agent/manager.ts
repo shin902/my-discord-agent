@@ -57,7 +57,7 @@ export async function sendMessage(
   const groupConfig = await loadGroupConfig(groupName);
 
   try {
-    await resolveModel(
+    await validateModel(
       groupConfig.model?.provider ?? DEFAULT_PROVIDER,
       groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
     );
