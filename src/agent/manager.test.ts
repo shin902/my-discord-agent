@@ -162,6 +162,7 @@ describe("sendMessage: credential-proxy 処理", () => {
 
   it("baseUrl のプレースホルダが未解決の場合はスキップする", async () => {
     process.env.OPENAI_API_KEY = "openai-key";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([
         {
@@ -185,6 +186,11 @@ describe("sendMessage: credential-proxy 処理", () => {
 
     expect(result).toBe("mocked response");
     expect(secretMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "test-provider: baseUrl に未解決のプレースホルダがあります",
+      ),
+    );
     const secretBuilder = secretMock.mock.calls[0][0];
     const sb = {
       env: vi.fn().mockReturnThis(),
@@ -195,6 +201,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     };
     secretBuilder(sb);
     expect(sb.env).toHaveBeenCalledWith("OPENAI_API_KEY");
+    warnSpy.mockRestore();
   });
 
   it("envVars がすべて未設定の場合は静かにスキップする", async () => {
