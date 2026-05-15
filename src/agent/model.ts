@@ -33,7 +33,7 @@ function createCustomModel(
     api,
     provider: entry.provider,
     baseUrl,
-    reasoning: false,
+    reasoning: entry.reasoning ?? false,
     input: ["text"],
     cost: {
       input: 0,

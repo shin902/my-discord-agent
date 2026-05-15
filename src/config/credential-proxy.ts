@@ -23,6 +23,7 @@ const CredentialEntrySchema = z.object({
       "google-vertex",
     ])
     .optional(),
+  reasoning: z.boolean().optional(),
   contextWindow: z.number().int().min(1).optional(),
   maxTokens: z.number().int().min(1).optional(),
 });
