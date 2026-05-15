@@ -9,6 +9,7 @@ import {
   type TextContent,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import { CredentialEntrySchema } from "../config/credential-proxy.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
@@ -35,18 +36,19 @@ async function getCustomProviderApiKey(
 ): Promise<string | undefined> {
   try {
     const raw = await readFile("/app/config/credential-proxy.json", "utf-8");
-    const entries = JSON.parse(raw) as Array<{
-      provider: string;
-      envVars?: string[];
-    }>;
+    const entries = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
     const entry = entries.find((e) => e.provider === provider);
     if (!entry?.envVars) return undefined;
     for (const envVar of entry.envVars) {
       const value = process.env[envVar];
       if (value) return value;
     }
-  } catch {
-    // credential-proxy.json が読めない場合はフォールバック
+  } catch (err) {
+    console.error(
+      `[agent-runner] credential-proxy.json の読み込みに失敗: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
   return undefined;
 }
