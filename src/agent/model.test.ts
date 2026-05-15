@@ -9,9 +9,6 @@ vi.mock("../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn(),
 }));
 
-const { getProviders, getModels } = await import("@earendil-works/pi-ai");
-const { loadCredentialProxy } = await import("../config/credential-proxy.js");
-
 async function importFresh() {
   vi.resetModules();
   const mod = await import("./model.js");
@@ -25,6 +22,9 @@ beforeEach(() => {
 describe("resolveModel", () => {
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
+    const { getProviders, getModels } = await import(
+      "@earendil-works/pi-ai"
+    );
     vi.mocked(getProviders).mockReturnValue(["openai"] as any);
     vi.mocked(getModels).mockReturnValue([
       {
@@ -42,6 +42,10 @@ describe("resolveModel", () => {
 
   it("credential-proxy に定義されたカスタムプロバイダを解決する", async () => {
     const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
     vi.mocked(getProviders).mockReturnValue([] as any);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
@@ -60,6 +64,10 @@ describe("resolveModel", () => {
 
   it("不明なプロバイダはエラー", async () => {
     const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
     vi.mocked(getProviders).mockReturnValue([] as any);
     vi.mocked(loadCredentialProxy).mockResolvedValue([]);
 
@@ -70,6 +78,10 @@ describe("resolveModel", () => {
 
   it("baseUrl に未解決のプレースホルダがある場合はエラー", async () => {
     const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
     vi.mocked(getProviders).mockReturnValue([] as any);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
@@ -85,6 +97,9 @@ describe("resolveModel", () => {
 
   it("既知のプロバイダーでモデルが見つからない場合はエラー", async () => {
     const { resolveModel } = await importFresh();
+    const { getProviders, getModels } = await import(
+      "@earendil-works/pi-ai"
+    );
     vi.mocked(getProviders).mockReturnValue(["openai"] as any);
     vi.mocked(getModels).mockReturnValue([] as any);
 
