@@ -111,6 +111,13 @@ describe("sendMessage: credential-proxy 処理", () => {
     };
     vi.doMock("microsandbox", () => ({
       Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
+      NetworkPolicy: {
+        builder: () => ({
+          defaultIngress: vi.fn().mockReturnThis(),
+          egress: vi.fn().mockReturnThis(),
+          build: vi.fn().mockReturnValue({}),
+        }),
+      },
     }));
   });
 
@@ -345,6 +352,13 @@ describe("sendMessage: 設定バリデーション", () => {
     };
     vi.doMock("microsandbox", () => ({
       Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
+      NetworkPolicy: {
+        builder: () => ({
+          defaultIngress: vi.fn().mockReturnThis(),
+          egress: vi.fn().mockReturnThis(),
+          build: vi.fn().mockReturnValue({}),
+        }),
+      },
     }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),

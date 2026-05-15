@@ -94,7 +94,16 @@ export async function sendMessage(
     .memory(512)
     .env("SESSIONS_DIR", "/app/data/sessions")
     .replace()
-    .network((n) => n.policy(NetworkPolicy.nonLocal()))
+    .network((n) =>
+      n.policy(
+        NetworkPolicy.builder()
+          .defaultIngress("allow")
+          .egress((rb) => rb.allowPublic())
+          .egress((rb) => rb.allowPrivate())
+          .egress((rb) => rb.allowLoopback())
+          .build(),
+      ),
+    )
     .volume("/app", (mb) => mb.bind(ROOT))
     .volume("/workspace", (mb) =>
       mb.bind(path.join(ROOT, "groups", groupName)),
