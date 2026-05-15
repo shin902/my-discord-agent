@@ -28,7 +28,7 @@ import { isTransientError } from "../utils/error.js";
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
-const VM_UNSUPPORTED_TOOLS = new Set(["sandbox"]);
+const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 
 /** カスタムプロバイダーの API キーを credential-proxy.json + 環境変数から取得 */
 async function getCustomProviderApiKey(

@@ -7,12 +7,10 @@ import {
   readTool,
   writeTool,
 } from "./fs.js";
-import { sandboxTool } from "./sandbox.js";
 import { webfetchTool } from "./webfetch.js";
 
 const TOOLS: Record<string, AgentTool> = {
   webfetch: webfetchTool,
-  sandbox: sandboxTool,
   read: readTool,
   write: writeTool,
   list: listTool,
