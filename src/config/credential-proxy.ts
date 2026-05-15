@@ -10,7 +10,19 @@ const CredentialEntrySchema = z.object({
   provider: z.string(),
   envVars: z.array(z.string()).optional(),
   baseUrl: z.string().url(),
-  api: z.string().optional(),
+  api: z
+    .enum([
+      "openai-completions",
+      "mistral-conversations",
+      "openai-responses",
+      "azure-openai-responses",
+      "openai-codex-responses",
+      "anthropic-messages",
+      "bedrock-converse-stream",
+      "google-generative-ai",
+      "google-vertex",
+    ])
+    .optional(),
   contextWindow: z.number().int().min(1).optional(),
   maxTokens: z.number().int().min(1).optional(),
 });

@@ -26,7 +26,7 @@ function createCustomModel(
   baseUrl: string,
   modelId: string,
 ): Model<Api> {
-  const api = (entry.api ?? "openai-completions") as Api;
+  const api = entry.api ?? "openai-completions";
   return {
     id: modelId,
     name: modelId,
