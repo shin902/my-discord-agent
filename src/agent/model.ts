@@ -41,8 +41,8 @@ function createCustomModel(
       cacheRead: 0,
       cacheWrite: 0,
     },
-    contextWindow: 128000,
-    maxTokens: 4096,
+    contextWindow: entry.contextWindow ?? 128000,
+    maxTokens: entry.maxTokens ?? 4096,
   } as Model<Api>;
 }
 

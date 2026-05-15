@@ -11,6 +11,8 @@ const CredentialEntrySchema = z.object({
   envVars: z.array(z.string()).optional(),
   baseUrl: z.string().url(),
   api: z.string().optional(),
+  contextWindow: z.number().int().min(1).optional(),
+  maxTokens: z.number().int().min(1).optional(),
 });
 
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;
