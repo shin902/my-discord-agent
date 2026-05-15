@@ -2,8 +2,14 @@ import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { TextContent } from "@earendil-works/pi-ai";
+import {
+  getEnvApiKey,
+  getProviders,
+  type KnownProvider,
+  type TextContent,
+} from "@earendil-works/pi-ai";
 import { z } from "zod";
+import { CredentialEntrySchema } from "../config/credential-proxy.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
@@ -23,6 +29,29 @@ const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントで
 
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set(["sandbox"]);
+
+/** カスタムプロバイダーの API キーを credential-proxy.json + 環境変数から取得 */
+async function getCustomProviderApiKey(
+  provider: string,
+): Promise<string | undefined> {
+  try {
+    const raw = await readFile("/app/config/credential-proxy.json", "utf-8");
+    const entries = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
+    const entry = entries.find((e) => e.provider === provider);
+    if (!entry?.envVars) return undefined;
+    for (const envVar of entry.envVars) {
+      const value = process.env[envVar];
+      if (value) return value;
+    }
+  } catch (err) {
+    console.error(
+      `[agent-runner] credential-proxy.json の読み込みに失敗: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  return undefined;
+}
 
 async function loadSystemPromptFromWorkspace(): Promise<string | null> {
   try {
@@ -45,7 +74,7 @@ export async function runAgentLoop(
     loadSkills("/workspace/SKILLS", groupConfig.skills),
   ]);
 
-  const model = resolveModel(
+  const model = await resolveModel(
     groupConfig.model?.provider ?? DEFAULT_PROVIDER,
     groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
   );
@@ -65,6 +94,14 @@ export async function runAgentLoop(
       model,
       messages,
       tools,
+    },
+    getApiKey: (provider: string) => {
+      // KnownProvider: pi-ai の環境変数マッピングを使用
+      const knownKey = getEnvApiKey(provider);
+      if (knownKey) return knownKey;
+
+      // カスタムプロバイダー: credential-proxy.json を読んで envVars から取得
+      return getCustomProviderApiKey(provider);
     },
   });
 

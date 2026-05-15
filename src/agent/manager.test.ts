@@ -62,19 +62,19 @@ describe("resolveBaseUrl", () => {
 });
 
 describe("resolveModel", () => {
-  it("有効なプロバイダとモデルIDはモデルを返す", () => {
-    const model = resolveModel("provider-a", "model-x");
+  it("有効なプロバイダとモデルIDはモデルを返す", async () => {
+    const model = await resolveModel("provider-a", "model-x");
     expect(model.id).toBe("model-x");
   });
 
-  it("不明なプロバイダはエラー", () => {
-    expect(() => resolveModel("unknown-provider", "model-x")).toThrow(
+  it("不明なプロバイダはエラー", async () => {
+    await expect(resolveModel("unknown-provider", "model-x")).rejects.toThrow(
       "不明なプロバイダ: unknown-provider",
     );
   });
 
-  it("不明なモデルIDはエラー", () => {
-    expect(() => resolveModel("provider-a", "unknown-model")).toThrow(
+  it("不明なモデルIDはエラー", async () => {
+    await expect(resolveModel("provider-a", "unknown-model")).rejects.toThrow(
       "不明なモデル: unknown-model (provider: provider-a)",
     );
   });
@@ -98,6 +98,7 @@ describe("sendMessage: credential-proxy 処理", () => {
       env: vi.fn().mockReturnThis(),
       replace: vi.fn().mockReturnThis(),
       volume: vi.fn().mockReturnThis(),
+      network: vi.fn().mockReturnThis(),
       secret: secretMock,
       create: vi.fn().mockResolvedValue({
         [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
@@ -110,6 +111,13 @@ describe("sendMessage: credential-proxy 処理", () => {
     };
     vi.doMock("microsandbox", () => ({
       Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
+      NetworkPolicy: {
+        builder: () => ({
+          defaultIngress: vi.fn().mockReturnThis(),
+          egress: vi.fn().mockReturnThis(),
+          build: vi.fn().mockReturnValue({}),
+        }),
+      },
     }));
   });
 
@@ -161,6 +169,7 @@ describe("sendMessage: credential-proxy 処理", () => {
 
   it("baseUrl のプレースホルダが未解決の場合はスキップする", async () => {
     process.env.OPENAI_API_KEY = "openai-key";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([
         {
@@ -184,6 +193,11 @@ describe("sendMessage: credential-proxy 処理", () => {
 
     expect(result).toBe("mocked response");
     expect(secretMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "test-provider: baseUrl に未解決のプレースホルダがあります",
+      ),
+    );
     const secretBuilder = secretMock.mock.calls[0][0];
     const sb = {
       env: vi.fn().mockReturnThis(),
@@ -194,6 +208,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     };
     secretBuilder(sb);
     expect(sb.env).toHaveBeenCalledWith("OPENAI_API_KEY");
+    warnSpy.mockRestore();
   });
 
   it("envVars がすべて未設定の場合は静かにスキップする", async () => {
@@ -249,6 +264,69 @@ describe("sendMessage: credential-proxy 処理", () => {
     );
     warnSpy.mockRestore();
   });
+
+  it("envVars が省略された場合は secret 注入をスキップする", async () => {
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([
+        {
+          provider: "local-llm",
+          baseUrl: "http://localhost:8080/v1",
+        },
+      ]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { sendMessage } = await import("./manager.js");
+    const result = await sendMessage("test-group", "session-1", "hi");
+
+    expect(result).toBe("mocked response");
+    expect(secretMock).not.toHaveBeenCalled();
+  });
+
+  it("envVars が空配列の場合も secret 注入をスキップする", async () => {
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([
+        {
+          provider: "local-llm",
+          envVars: [],
+          baseUrl: "http://localhost:8080/v1",
+        },
+      ]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { sendMessage } = await import("./manager.js");
+    const result = await sendMessage("test-group", "session-1", "hi");
+
+    expect(result).toBe("mocked response");
+    expect(secretMock).not.toHaveBeenCalled();
+  });
+
+  it("envVars がある場合は secret 注入と allowHost を行う", async () => {
+    process.env.API_KEY = "primary-value";
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([
+        {
+          provider: "test",
+          envVars: ["API_KEY"],
+          baseUrl: "https://api.example.com",
+        },
+      ]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { sendMessage } = await import("./manager.js");
+    const result = await sendMessage("test-group", "session-1", "hi");
+
+    expect(result).toBe("mocked response");
+    expect(secretMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("sendMessage: 設定バリデーション", () => {
@@ -262,6 +340,7 @@ describe("sendMessage: 設定バリデーション", () => {
       env: vi.fn().mockReturnThis(),
       replace: vi.fn().mockReturnThis(),
       volume: vi.fn().mockReturnThis(),
+      network: vi.fn().mockReturnThis(),
       secret: vi.fn().mockReturnThis(),
       create: vi.fn().mockResolvedValue({
         execWith: vi.fn().mockResolvedValue({
@@ -273,6 +352,13 @@ describe("sendMessage: 設定バリデーション", () => {
     };
     vi.doMock("microsandbox", () => ({
       Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
+      NetworkPolicy: {
+        builder: () => ({
+          defaultIngress: vi.fn().mockReturnThis(),
+          egress: vi.fn().mockReturnThis(),
+          build: vi.fn().mockReturnValue({}),
+        }),
+      },
     }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),

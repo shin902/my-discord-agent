@@ -21,6 +21,7 @@ vi.mock("./queue/poller.js", () => ({
 }));
 vi.mock("./config/groups.js", () => ({ loadGroups: mocks.loadGroups }));
 vi.mock("./config/group-config.js", () => ({
+  ensureGroupDirs: vi.fn().mockResolvedValue(undefined),
   initGroupConfigs: mocks.initGroupConfigs,
 }));
 vi.mock("./agent/manager.js", () => ({

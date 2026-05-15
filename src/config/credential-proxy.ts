@@ -6,10 +6,26 @@ import { z } from "zod";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, "../../config/credential-proxy.json");
 
-const CredentialEntrySchema = z.object({
+export const CredentialEntrySchema = z.object({
   provider: z.string(),
-  envVars: z.array(z.string()),
+  envVars: z.array(z.string()).optional(),
   baseUrl: z.string().url(),
+  api: z
+    .enum([
+      "openai-completions",
+      "mistral-conversations",
+      "openai-responses",
+      "azure-openai-responses",
+      "openai-codex-responses",
+      "anthropic-messages",
+      "bedrock-converse-stream",
+      "google-generative-ai",
+      "google-vertex",
+    ])
+    .optional(),
+  reasoning: z.boolean().optional(),
+  contextWindow: z.number().int().min(1).optional(),
+  maxTokens: z.number().int().min(1).optional(),
 });
 
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;

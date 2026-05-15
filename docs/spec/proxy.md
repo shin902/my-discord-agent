@@ -74,6 +74,23 @@ Host
 
 `.env.example` には上記を含む全プロバイダの環境変数がコメント付きで記載されている。
 
+### カスタムプロバイダー
+
+`pi-ai` の組み込みプロバイダー以外（ローカルの llama-cpp サーバーなど）も `credential-proxy.json` に定義可能。
+
+```json
+{
+  "provider": "llama-cpp",
+  "baseUrl": "http://localhost:8080/v1",
+  "api": "openai-completions"
+}
+```
+
+- `provider` は自由な名前を指定可能。`group.json` の `model.provider` に同じ名前を設定する。
+- `api` はオプション。未指定時のデフォルトは `"openai-completions"`。他に `"openai-responses"` や `"anthropic-messages"` 等が指定可能。
+- `envVars` はオプション。省略または空配列の場合、secret 注入は行われず baseUrl の解決と allowHost の登録のみ行う。これは API Key が不要なローカルサーバーに便利。
+- カスタムプロバイダーの場合、モデルIDの検証は行われず、任意の文字列を `modelId` に指定できる。
+
 ### 将来的な拡張
 
 - OneCLI への移行

@@ -18,6 +18,10 @@ vi.mock("@earendil-works/pi-ai", () => ({
       : [{ id: "model-x", name: "Model X" }],
 }));
 
+vi.mock("../config/credential-proxy.js", () => ({
+  loadCredentialProxy: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock("@earendil-works/pi-agent-core", () => ({
   Agent: AgentMock,
 }));
@@ -98,6 +102,7 @@ describe("runAgentLoop", () => {
         messages: [],
         tools: [],
       },
+      getApiKey: expect.any(Function),
     });
     expect(mockAgent.prompt).toHaveBeenCalledWith("こんにちは");
     expect(result).toBe("Hello world");
@@ -240,7 +245,9 @@ describe("runAgentLoop", () => {
 
   it("スキルがある場合は systemPrompt にスキル一覧を追加する", async () => {
     vi.mocked(readdir).mockResolvedValue([
-      { name: "review", isDirectory: () => true } as unknown as Awaited<ReturnType<typeof readdir>>[number],
+      { name: "review", isDirectory: () => true } as unknown as Awaited<
+        ReturnType<typeof readdir>
+      >[number],
     ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
@@ -274,8 +281,12 @@ describe("runAgentLoop", () => {
 
   it("skills allowlist でフィルタリングする", async () => {
     vi.mocked(readdir).mockResolvedValue([
-      { name: "allowed", isDirectory: () => true } as unknown as Awaited<ReturnType<typeof readdir>>[number],
-      { name: "blocked", isDirectory: () => true } as unknown as Awaited<ReturnType<typeof readdir>>[number],
+      { name: "allowed", isDirectory: () => true } as unknown as Awaited<
+        ReturnType<typeof readdir>
+      >[number],
+      { name: "blocked", isDirectory: () => true } as unknown as Awaited<
+        ReturnType<typeof readdir>
+      >[number],
     ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath).includes("allowed")) {
