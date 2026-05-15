@@ -326,6 +326,7 @@ describe("sendMessage: 設定バリデーション", () => {
       env: vi.fn().mockReturnThis(),
       replace: vi.fn().mockReturnThis(),
       volume: vi.fn().mockReturnThis(),
+      network: vi.fn().mockReturnThis(),
       secret: vi.fn().mockReturnThis(),
       create: vi.fn().mockResolvedValue({
         execWith: vi.fn().mockResolvedValue({
