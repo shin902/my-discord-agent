@@ -6,8 +6,8 @@
 ```
 AgentGroup（エージェント設定プロファイル）
   id, name, folder
-  ← groups/<folder>/group.json  (MCP・マウント・ツール・モデル)
-  ← groups/<folder>/CLAUDE.local.md (グループ固有の指示・メモリ)
+  ← groups/<folder>/group.json  (モデル・ツール・autoReply・スキル設定)
+  ← groups/<folder>/AGENTS.md (グループ固有の指示・メモリ)
   │
   └── [1対多] Channel（Discordチャンネル / DM）
         sessionMode
@@ -20,6 +20,6 @@ AgentGroup（エージェント設定プロファイル）
 
 | エンティティ | 責務 |
 |---|---|
-| `AgentGroup` | エージェントの能力設定（モデル・MCP・マウント）。複数チャンネルを持つ |
+| `AgentGroup` | エージェントの能力設定（モデル・ツール・スキル）。複数チャンネルを持つ |
 | `Channel` | Discordチャンネル1つ。必ず1つのグループに属する。`sessionMode`（`shared` / `thread` / `auto-thread`）を持つ |
 | `Session` | 1会話。sessionId（= message.channelId）で一意。スレッドも独自の channelId を持つため自然に分離される |

@@ -18,8 +18,8 @@ data/
 
 groups/
   <folder>/
-    CLAUDE.local.md     # グループ固有の指示・メモリ
-    group.json      # MCP・マウント・ツール・モデル設定
+    AGENTS.md           # グループ固有の指示・メモリ
+    group.json          # モデル・ツール・autoReply・スキル設定
 ```
 
 ## `config/groups.json`
@@ -30,42 +30,26 @@ groups/
 > VRC-AI-Bot の `watch-locations.json` と同じアプローチ
 
 ```json
-{
-  "groups": [
-    {
-      "id": "g-dev",
-      "name": "開発",
-      "folder": "dev",
-      "channels": [
-        {
-          "channelId": "111",
-          "name": "dev-chat",
-          "sessionMode": "shared"
-        },
-        {
-          "channelId": "222",
-          "name": "dev-threads",
-          "sessionMode": "thread"
-        }
-      ]
-    },
-    {
-      "id": "g-general",
-      "name": "汎用",
-      "folder": "general",
-      "channels": [
-        {
-          "channelId": "333",
-          "name": "general",
-          "sessionMode": "auto-thread"
-        }
-      ]
-    }
-  ]
-}
+[
+  {
+    "name": "dev",
+    "channels": [
+      { "channelId": "111", "sessionMode": "shared" },
+      { "channelId": "222", "sessionMode": "thread" }
+    ]
+  },
+  {
+    "name": "general",
+    "channels": [
+      { "channelId": "333", "sessionMode": "auto-thread" }
+    ]
+  }
+]
 ```
 
-起動時に Zod でバリデーション。`channelId` の重複はエラー。
+- トップレベルは配列（オブジェクトラッパーなし）
+- `name` がグループフォルダ名（`groups/<name>/`）と対応
+- 起動時に Zod でバリデーション
 
 ## ファイル操作の方針
 
