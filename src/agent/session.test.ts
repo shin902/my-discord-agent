@@ -139,6 +139,38 @@ describe("appendMessage", () => {
     );
   });
 
+  it("reasoning フィールドを保存しない", async () => {
+    await appendMessage("group1", "session-a", {
+      role: "assistant",
+      reasoning: "内部思考",
+      content: "hi",
+      timestamp: 123,
+    } as unknown as Parameters<typeof appendMessage>[2]);
+
+    const saved = JSON.parse(
+      (mockAppendFile.mock.calls[0][1] as string).trim(),
+    );
+    expect(saved).not.toHaveProperty("reasoning");
+    expect(saved.content).toBe("hi");
+  });
+
+  it("content 内の thinking ブロックを保存しない", async () => {
+    await appendMessage("group1", "session-a", {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "思考中" },
+        { type: "text", text: "hi" },
+      ],
+      timestamp: 123,
+    } as unknown as Parameters<typeof appendMessage>[2]);
+
+    const saved = JSON.parse(
+      (mockAppendFile.mock.calls[0][1] as string).trim(),
+    );
+    expect(saved.content).toHaveLength(1);
+    expect(saved.content[0]).toEqual({ type: "text", text: "hi" });
+  });
+
   it("パストラバーサルを含むグループ名はエラー", async () => {
     await expect(
       appendMessage("../../etc/passwd", "session-a", {
