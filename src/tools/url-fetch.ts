@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -58,11 +58,29 @@ function formatDuration(seconds: number): string {
     : `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** VTT 字幕ファイルからタイムスタンプを除いたテキストを抽出する */
+function parseVtt(content: string): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of content.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    if (t.startsWith("WEBVTT") || t.startsWith("Kind:") || t.startsWith("Language:")) continue;
+    if (/^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->/.test(t)) continue;
+    if (/^\d+$/.test(t)) continue;
+    // 自動字幕は同一テキストが複数 cue にまたがって重複する
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out.join("\n");
+}
+
 /** yt-dlp の巨大 JSON を Markdown サマリーに変換する */
 async function buildYouTubeMarkdown(
   metaJsonPath: string,
   subsDir: string,
-  relSubsDir: string,
 ): Promise<string> {
   let raw: string;
   try {
@@ -128,19 +146,22 @@ async function buildYouTubeMarkdown(
     }
   }
 
-  // 字幕ファイル一覧
+  // 字幕テキストを Markdown に埋め込む
   let subFiles: string[] = [];
   try {
     const { readdir } = await import("node:fs/promises");
-    subFiles = await readdir(subsDir);
+    subFiles = (await readdir(subsDir)).filter((f) => f.endsWith(".vtt"));
   } catch {
     // 字幕なし
   }
 
   if (subFiles.length > 0) {
-    lines.push("", "## 字幕ファイル", "");
     for (const f of subFiles) {
-      lines.push(`- ${relSubsDir}/${f}`);
+      const lang = f.match(/\.([a-z-]+)\.vtt$/i)?.[1] ?? f;
+      const vtt = await readFile(join(subsDir, f), "utf-8").catch(() => null);
+      if (!vtt) continue;
+      const text = parseVtt(vtt);
+      if (text) lines.push("", `## 字幕 (${lang})`, "", text);
     }
   } else {
     lines.push("", "## 字幕", "", "(取得できませんでした)");
@@ -237,12 +258,15 @@ function buildCommand(
   switch (service) {
     case "youtube": {
       const q = shellQuote(url);
-      const metaOutQ = shellQuote(`${outAbsPath}.meta.json`);
-      const subDirQ = shellQuote(`${outAbsPath}.subs`);
+      // outAbsPath = /workspace/fetched/youtube-xxx.md
+      // base      = /workspace/fetched/youtube-xxx  (拡張子なし)
+      const base = outAbsPath.replace(/\.[^.]+$/, "");
+      const metaOutQ = shellQuote(`${base}.meta.json`);
+      const subDirQ = shellQuote(`${base}.subs`);
       return (
         `mkdir -p ${subDirQ} && ` +
         `(yt-dlp --no-check-certificate --dump-json ${q} > ${metaOutQ} 2>&1 || true) && ` +
-        `(yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download -o ${shellQuote(`${outAbsPath}.subs/%(id)s`)} ${q} > /dev/null 2>&1 || true)`
+        `(yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download -o ${shellQuote(`${base}.subs/%(id)s`)} ${q} > /dev/null 2>&1 || true)`
       );
     }
     case "github-repo": {
@@ -329,11 +353,13 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
 
     // YouTube / Reddit: 巨大 JSON → Markdown サマリーに変換して保存
     if (service === "youtube") {
-      const metaJson = `${absPath}.meta.json`;
-      const subsDir = `${absPath}.subs`;
-      const relSubsDir = `${relPath}.subs`;
-      const md = await buildYouTubeMarkdown(metaJson, subsDir, relSubsDir);
+      const base = absPath.replace(/\.[^.]+$/, "");
+      const metaJson = `${base}.meta.json`;
+      const subsDir = `${base}.subs`;
+      const md = await buildYouTubeMarkdown(metaJson, subsDir);
       await writeFile(absPath, md, "utf-8");
+      await rm(metaJson, { force: true });
+      await rm(subsDir, { recursive: true, force: true });
     } else if (service === "reddit") {
       const md = await buildRedditMarkdown(absPath);
       await writeFile(absPath, md, "utf-8");
