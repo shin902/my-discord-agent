@@ -1,4 +1,6 @@
+import type { KnownProvider, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CredentialEntry } from "../config/credential-proxy.js";
 
 vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: vi.fn(),
@@ -23,7 +25,7 @@ describe("resolveModel", () => {
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import("@earendil-works/pi-ai");
-    vi.mocked(getProviders).mockReturnValue(["openai"] as any);
+    vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
     vi.mocked(getModels).mockReturnValue([
       {
         id: "gpt-4",
@@ -31,7 +33,7 @@ describe("resolveModel", () => {
         api: "openai-chat",
         provider: "openai",
       },
-    ] as any);
+    ] as unknown as Model<never>[]);
 
     const model = await resolveModel("openai", "gpt-4");
     expect(model.id).toBe("gpt-4");
@@ -44,14 +46,14 @@ describe("resolveModel", () => {
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as any);
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "llama-cpp",
         baseUrl: "http://localhost:8080/v1",
         api: "openai-completions",
       },
-    ] as any);
+    ] as CredentialEntry[]);
 
     const model = await resolveModel("llama-cpp", "llama3");
     expect(model.id).toBe("llama3");
@@ -66,7 +68,7 @@ describe("resolveModel", () => {
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as any);
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([]);
 
     await expect(resolveModel("unknown", "model")).rejects.toThrow(
@@ -80,13 +82,13 @@ describe("resolveModel", () => {
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as any);
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom",
         baseUrl: "http://{UNSET_HOST}/v1",
       },
-    ] as any);
+    ] as CredentialEntry[]);
 
     await expect(resolveModel("custom", "model")).rejects.toThrow(
       "baseUrl に未解決のプレースホルダがあります",
@@ -96,8 +98,8 @@ describe("resolveModel", () => {
   it("既知のプロバイダーでモデルが見つからない場合はエラー", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import("@earendil-works/pi-ai");
-    vi.mocked(getProviders).mockReturnValue(["openai"] as any);
-    vi.mocked(getModels).mockReturnValue([] as any);
+    vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
+    vi.mocked(getModels).mockReturnValue([]);
 
     await expect(resolveModel("openai", "unknown-model")).rejects.toThrow(
       "不明なモデル: unknown-model (provider: openai)",
