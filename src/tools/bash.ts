@@ -28,7 +28,8 @@ const parameters = Type.Object({
 export const bashTool: AgentTool<typeof parameters> = {
   name: "bash",
   label: "Bash",
-  description: "シェルコマンドを実行する。curl・yt-dlp・gh 等の CLI ツールも使用可",
+  description:
+    "シェルコマンドを実行する。curl・yt-dlp・gh 等の CLI ツールも使用可",
   parameters,
   execute: async (_toolCallId, { command }) => {
     try {

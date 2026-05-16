@@ -65,7 +65,12 @@ function parseVtt(content: string): string {
   for (const line of content.split("\n")) {
     const t = line.trim();
     if (!t) continue;
-    if (t.startsWith("WEBVTT") || t.startsWith("Kind:") || t.startsWith("Language:")) continue;
+    if (
+      t.startsWith("WEBVTT") ||
+      t.startsWith("Kind:") ||
+      t.startsWith("Language:")
+    )
+      continue;
     if (/^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->/.test(t)) continue;
     if (/^\d+$/.test(t)) continue;
     // 自動字幕は同一テキストが複数 cue にまたがって重複する
@@ -91,7 +96,8 @@ async function buildYouTubeMarkdown(
 
   // yt-dlp は先頭に WARNING 行を出すことがある。JSON 部分だけ抽出する。
   const jsonStart = raw.indexOf("{");
-  if (jsonStart === -1) return `(JSON が見つかりません)\n\n${raw.slice(0, 2000)}`;
+  if (jsonStart === -1)
+    return `(JSON が見つかりません)\n\n${raw.slice(0, 2000)}`;
 
   let meta: Record<string, unknown>;
   try {
@@ -100,8 +106,10 @@ async function buildYouTubeMarkdown(
     return `(JSON パース失敗)\n\n${raw.slice(jsonStart, jsonStart + 2000)}`;
   }
 
-  const str = (k: string) => (typeof meta[k] === "string" ? (meta[k] as string) : "");
-  const num = (k: string) => (typeof meta[k] === "number" ? (meta[k] as number) : null);
+  const str = (k: string) =>
+    typeof meta[k] === "string" ? (meta[k] as string) : "";
+  const num = (k: string) =>
+    typeof meta[k] === "number" ? (meta[k] as number) : null;
 
   const lines: string[] = [];
 
@@ -119,7 +127,8 @@ async function buildYouTubeMarkdown(
   }
 
   const duration = num("duration");
-  if (duration !== null) lines.push(`**再生時間**: ${formatDuration(duration)}`);
+  if (duration !== null)
+    lines.push(`**再生時間**: ${formatDuration(duration)}`);
 
   const views = num("view_count");
   if (views !== null) lines.push(`**視聴回数**: ${views.toLocaleString()}`);
@@ -141,7 +150,10 @@ async function buildYouTubeMarkdown(
   if (Array.isArray(chapters) && chapters.length > 0) {
     lines.push("", "## チャプター", "");
     for (const ch of chapters as Array<Record<string, unknown>>) {
-      const t = typeof ch["start_time"] === "number" ? formatDuration(ch["start_time"] as number) : "?";
+      const t =
+        typeof ch["start_time"] === "number"
+          ? formatDuration(ch["start_time"] as number)
+          : "?";
       lines.push(`- ${t} ${ch["title"] ?? ""}`);
     }
   }
@@ -190,18 +202,27 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
 
   // スレッド詳細: [{post listing}, {comments listing}]
   if (Array.isArray(data) && data.length >= 1) {
-    const postListing = (data[0] as Record<string, unknown>)?.data as Record<string, unknown>;
-    const postChildren = postListing?.children as Array<Record<string, unknown>>;
+    const postListing = (data[0] as Record<string, unknown>)?.data as Record<
+      string,
+      unknown
+    >;
+    const postChildren = postListing?.children as Array<
+      Record<string, unknown>
+    >;
     const post = postChildren?.[0]?.data as Record<string, unknown> | undefined;
 
     if (post) {
       lines.push(`# ${post["title"] ?? "(タイトル不明)"}`);
       lines.push("");
-      lines.push(`**r/${post["subreddit"]}** | u/${post["author"]} | スコア: ${post["score"]} | コメント: ${post["num_comments"]}`);
+      lines.push(
+        `**r/${post["subreddit"]}** | u/${post["author"]} | スコア: ${post["score"]} | コメント: ${post["num_comments"]}`,
+      );
 
       const created = post["created_utc"];
       if (typeof created === "number") {
-        lines.push(`**投稿日**: ${new Date(created * 1000).toISOString().slice(0, 10)}`);
+        lines.push(
+          `**投稿日**: ${new Date(created * 1000).toISOString().slice(0, 10)}`,
+        );
       }
 
       const selftext = post["selftext"] as string | undefined;
@@ -211,9 +232,11 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
 
       // コメント
       if (Array.isArray(data[1])) {
-        const commentListing = ((data[1] as unknown) as Record<string, unknown>)?.data as Record<string, unknown>;
-        const comments = (commentListing?.children as Array<Record<string, unknown>>)
-          ?.filter((c) => c["kind"] === "t1");
+        const commentListing = (data[1] as unknown as Record<string, unknown>)
+          ?.data as Record<string, unknown>;
+        const comments = (
+          commentListing?.children as Array<Record<string, unknown>>
+        )?.filter((c) => c["kind"] === "t1");
 
         if (comments?.length) {
           lines.push("", "## トップコメント", "");
@@ -232,14 +255,20 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
   }
 
   // サブレディット一覧: {kind: "Listing", data: {children: [...]}}
-  const listing = (data as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-  const children = listing?.children as Array<Record<string, unknown>> | undefined;
+  const listing = (data as Record<string, unknown>)?.data as
+    | Record<string, unknown>
+    | undefined;
+  const children = listing?.children as
+    | Array<Record<string, unknown>>
+    | undefined;
   if (children?.length) {
     lines.push("# 投稿一覧", "");
     for (const child of children) {
       const p = child["data"] as Record<string, unknown>;
       lines.push(`## ${p["title"]}`);
-      lines.push(`u/${p["author"]} | スコア: ${p["score"]} | コメント: ${p["num_comments"]}`);
+      lines.push(
+        `u/${p["author"]} | スコア: ${p["score"]} | コメント: ${p["num_comments"]}`,
+      );
       lines.push(`URL: ${p["url"]}`);
       lines.push("");
     }
@@ -333,7 +362,8 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
     }
 
     const service = detectService(parsed);
-    const ext = service === "youtube" ? "md" : service === "github-repo" ? "txt" : "md";
+    const ext =
+      service === "youtube" ? "md" : service === "github-repo" ? "txt" : "md";
     const filename = `${service}-${randomUUID().slice(0, 8)}.${ext}`;
     const relPath = `${FETCH_DIR}/${filename}`;
     const absPath = join(WORKSPACE, relPath);

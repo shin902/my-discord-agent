@@ -15,9 +15,9 @@ describe("detectService", () => {
   });
 
   it("github.com/owner/repo → github-repo", () => {
-    expect(
-      detectService(parse("https://github.com/owner/repo")),
-    ).toBe("github-repo");
+    expect(detectService(parse("https://github.com/owner/repo"))).toBe(
+      "github-repo",
+    );
   });
 
   it("github.com/owner/repo/blob/... → github-repo", () => {
