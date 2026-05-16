@@ -10,15 +10,6 @@ import { bashTool } from "./bash.js";
 
 const mockExec = vi.mocked(exec);
 
-function fakeExec(
-  cb: (err: Error | null, stdout: string, stderr: string) => void,
-) {
-  return (_cmd: unknown, _opts: unknown, callback: typeof cb) => {
-    cb === undefined ? callback(null, "", "") : cb(null, "", "");
-    return {} as ChildProcess;
-  };
-}
-
 function mockSuccess(stdout: string, stderr = "") {
   mockExec.mockImplementation((_cmd, _opts, cb) => {
     cb?.(null, stdout, stderr);
