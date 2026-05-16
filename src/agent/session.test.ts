@@ -64,6 +64,32 @@ describe("loadMessages", () => {
     expect(result).toEqual([]);
   });
 
+  it("reasoning フィールドを除去する", async () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFile.mockResolvedValue(
+      '{"role":"assistant","reasoning":"内部思考","content":"hi"}\n',
+    );
+
+    const result = await loadMessages("group1", "session-x");
+
+    expect(result[0]).not.toHaveProperty("reasoning");
+    expect(result[0]).toMatchObject({ role: "assistant", content: "hi" });
+  });
+
+  it("content 内の thinking ブロックを除去する", async () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFile.mockResolvedValue(
+      '{"role":"assistant","content":[{"type":"thinking","thinking":"思考中"},{"type":"text","text":"hi"}]}\n',
+    );
+
+    const result = await loadMessages("group1", "session-x");
+
+    const content = result[0].content as Array<{ type: string }>;
+    expect(content.some((b) => b.type === "thinking")).toBe(false);
+    expect(content).toHaveLength(1);
+    expect(content[0]).toEqual({ type: "text", text: "hi" });
+  });
+
   it("パストラバーサルを含むグループ名はエラー", async () => {
     await expect(loadMessages("../../etc/passwd", "session-a")).rejects.toThrow(
       "不正なグループ名",
