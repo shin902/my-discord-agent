@@ -150,6 +150,86 @@ async function buildYouTubeMarkdown(
   return lines.join("\n");
 }
 
+/** Reddit JSON API レスポンスを Markdown サマリーに変換する */
+async function buildRedditMarkdown(absPath: string): Promise<string> {
+  let raw: string;
+  try {
+    raw = await readFile(absPath, "utf-8");
+  } catch {
+    return "(Reddit JSON の読み込みに失敗しました)";
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
+  }
+
+  const lines: string[] = [];
+
+  // スレッド詳細: [{post listing}, {comments listing}]
+  if (Array.isArray(data) && data.length >= 1) {
+    const postListing = (data[0] as Record<string, unknown>)?.data as Record<string, unknown>;
+    const postChildren = postListing?.children as Array<Record<string, unknown>>;
+    const post = postChildren?.[0]?.data as Record<string, unknown> | undefined;
+
+    if (post) {
+      lines.push(`# ${post["title"] ?? "(タイトル不明)"}`);
+      lines.push("");
+      lines.push(`**r/${post["subreddit"]}** | u/${post["author"]} | スコア: ${post["score"]} | コメント: ${post["num_comments"]}`);
+
+      const created = post["created_utc"];
+      if (typeof created === "number") {
+        lines.push(`**投稿日**: ${new Date(created * 1000).toISOString().slice(0, 10)}`);
+      }
+
+      const selftext = post["selftext"] as string | undefined;
+      if (selftext && selftext !== "[removed]" && selftext !== "[deleted]") {
+        lines.push("", "## 本文", "", selftext.slice(0, 2000));
+        if (selftext.length > 2000) lines.push(`\n...(省略: 全${selftext.length}文字)`);
+      }
+
+      // コメント
+      if (Array.isArray(data[1])) {
+        const commentListing = ((data[1] as unknown) as Record<string, unknown>)?.data as Record<string, unknown>;
+        const comments = (commentListing?.children as Array<Record<string, unknown>>)
+          ?.filter((c) => c["kind"] === "t1");
+
+        if (comments?.length) {
+          lines.push("", "## トップコメント", "");
+          for (const c of comments) {
+            const cd = c["data"] as Record<string, unknown>;
+            const body = (cd["body"] as string | undefined)?.slice(0, 500) ?? "";
+            lines.push(`**u/${cd["author"]}** (スコア: ${cd["score"]})`);
+            lines.push(body);
+            lines.push("");
+          }
+        }
+      }
+
+      return lines.join("\n");
+    }
+  }
+
+  // サブレディット一覧: {kind: "Listing", data: {children: [...]}}
+  const listing = (data as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
+  const children = listing?.children as Array<Record<string, unknown>> | undefined;
+  if (children?.length) {
+    lines.push("# 投稿一覧", "");
+    for (const child of children) {
+      const p = child["data"] as Record<string, unknown>;
+      lines.push(`## ${p["title"]}`);
+      lines.push(`u/${p["author"]} | スコア: ${p["score"]} | コメント: ${p["num_comments"]}`);
+      lines.push(`URL: ${p["url"]}`);
+      lines.push("");
+    }
+    return lines.join("\n");
+  }
+
+  return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
+}
+
 function buildCommand(
   service: ServiceType,
   url: string,
@@ -249,12 +329,15 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
       );
     }
 
-    // YouTube: 巨大 JSON → Markdown サマリーに変換して保存
+    // YouTube / Reddit: 巨大 JSON → Markdown サマリーに変換して保存
     if (service === "youtube") {
       const metaJson = `${absPath}.meta.json`;
       const subsDir = `${absPath}.subs`;
       const relSubsDir = `${relPath}.subs`;
       const md = await buildYouTubeMarkdown(metaJson, subsDir, relSubsDir);
+      await writeFile(absPath, md, "utf-8");
+    } else if (service === "reddit") {
+      const md = await buildRedditMarkdown(absPath);
       await writeFile(absPath, md, "utf-8");
     }
 
