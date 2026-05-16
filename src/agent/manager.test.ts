@@ -155,6 +155,15 @@ describe("sendMessage: サンドボックス構成", () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     expect(execWithMock).toHaveBeenCalledWith("node", expect.any(Function));
+
+    const execBuilder = {
+      args: vi.fn().mockReturnThis(),
+      stdinBytes: vi.fn().mockReturnThis(),
+      timeout: vi.fn().mockReturnThis(),
+    };
+    const callback = execWithMock.mock.calls[0][1];
+    callback(execBuilder);
+    expect(execBuilder.args).toHaveBeenCalledWith(["/app/runner.mjs"]);
   });
 });
 
