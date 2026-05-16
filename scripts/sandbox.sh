@@ -12,8 +12,13 @@ warn() { echo -e "${YELLOW}[sandbox]${NC} $1"; }
 err()  { echo -e "${RED}[sandbox]${NC} $1" >&2; }
 
 registry_running() {
-  docker ps --filter "name=^/${REGISTRY_CONTAINER}$" --filter "status=running" --format '{{.Names}}' 2>/dev/null \
-    | grep -q "^${REGISTRY_CONTAINER}$"
+  # コンテナ名ではなくポートで判定（別名の既存レジストリも正常扱い）
+  docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":${REGISTRY_PORT}->"
+}
+
+registry_container_name() {
+  docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null \
+    | grep ":${REGISTRY_PORT}->" | awk '{print $1}' | head -1
 }
 
 cmd_registry_start() {
@@ -40,8 +45,10 @@ cmd_registry_stop() {
     warn "レジストリは起動していません"
     return 0
   fi
-  info "レジストリを停止します..."
-  docker stop "${REGISTRY_CONTAINER}" > /dev/null
+  local name
+  name="$(registry_container_name)"
+  info "レジストリを停止します (${name})..."
+  docker stop "${name}" > /dev/null
   ok "停止しました"
 }
 
@@ -87,15 +94,17 @@ cmd_status() {
 }
 
 cmd_logs() {
-  if ! docker ps -a --filter "name=^/${REGISTRY_CONTAINER}$" --format '{{.Names}}' | grep -q "^${REGISTRY_CONTAINER}$"; then
-    err "レジストリコンテナが存在しません"
+  if ! registry_running; then
+    err "レジストリが起動していません"
     exit 1
   fi
-  local follow="${1:-}"
+  local name follow
+  name="$(registry_container_name)"
+  follow="${1:-}"
   if [ "${follow}" = "-f" ]; then
-    docker logs -f "${REGISTRY_CONTAINER}"
+    docker logs -f "${name}"
   else
-    docker logs --tail 50 "${REGISTRY_CONTAINER}"
+    docker logs --tail 50 "${name}"
   fi
 }
 
