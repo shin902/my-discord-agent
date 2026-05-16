@@ -1,0 +1,9 @@
+FROM node:22-alpine
+
+RUN apk add --no-cache \
+    bash \
+    python3
+
+WORKDIR /app
+
+COPY dist/sandbox/runner.bundle.mjs ./runner.mjs

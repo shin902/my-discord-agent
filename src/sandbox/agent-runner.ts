@@ -35,7 +35,9 @@ async function getCustomProviderApiKey(
   provider: string,
 ): Promise<string | undefined> {
   try {
-    const raw = await readFile("/app/config/credential-proxy.json", "utf-8");
+    const credPath =
+      process.env.CREDENTIAL_PROXY_PATH ?? "/config/credential-proxy.json";
+    const raw = await readFile(credPath, "utf-8");
     const entries = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
     const entry = entries.find((e) => e.provider === provider);
     if (!entry?.envVars) return undefined;

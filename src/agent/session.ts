@@ -34,7 +34,12 @@ export async function loadMessages(
   return text
     .split("\n")
     .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as AgentMessage);
+    .map((line) => {
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      // reasoning フィールドは一部プロバイダー（openai-completions 等）が拒否するため除去
+      delete msg.reasoning;
+      return msg as AgentMessage;
+    });
 }
 
 export async function appendMessage(
