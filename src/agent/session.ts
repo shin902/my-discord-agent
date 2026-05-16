@@ -35,10 +35,11 @@ export async function loadMessages(
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => {
-      const msg = JSON.parse(line) as Record<string, unknown>;
+      // JSON.parse は any を返すので reasoning を直接削除できる
       // reasoning フィールドは一部プロバイダー（openai-completions 等）が拒否するため除去
+      const msg = JSON.parse(line);
       delete msg.reasoning;
-      return msg as AgentMessage;
+      return msg;
     });
 }
 

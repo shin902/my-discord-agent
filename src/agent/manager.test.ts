@@ -139,18 +139,14 @@ describe("sendMessage: サンドボックス構成", () => {
   it("/app を bind mount しない", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const volumeCalls: string[] = builderChain.volume.mock.calls.map(
-      (c: unknown[]) => c[0],
-    );
+    const volumeCalls = builderChain.volume.mock.calls.map((c) => c[0]);
     expect(volumeCalls).not.toContain("/app");
   });
 
   it("/sessions と /config を mount する", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const volumeCalls: string[] = builderChain.volume.mock.calls.map(
-      (c: unknown[]) => c[0],
-    );
+    const volumeCalls = builderChain.volume.mock.calls.map((c) => c[0]);
     expect(volumeCalls).toContain("/sessions");
     expect(volumeCalls).toContain("/config");
   });
