@@ -32,6 +32,7 @@ async function getCustomProviderApiKey(
   provider: string,
 ): Promise<string | undefined> {
   try {
+    // コンテナ内デフォルト（ホスト側は credential-proxy.ts が import.meta.url 基準で処理）
     const credPath =
       process.env.CREDENTIAL_PROXY_PATH ?? "/config/credential-proxy.json";
     const raw = await readFile(credPath, "utf-8");
