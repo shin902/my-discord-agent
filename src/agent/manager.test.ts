@@ -158,10 +158,7 @@ describe("sendMessage: サンドボックス構成", () => {
   it("node /app/runner.mjs で exec する", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    expect(execWithMock).toHaveBeenCalledWith(
-      "node",
-      expect.any(Function),
-    );
+    expect(execWithMock).toHaveBeenCalledWith("node", expect.any(Function));
   });
 });
 

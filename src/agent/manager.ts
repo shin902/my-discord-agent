@@ -97,9 +97,7 @@ export async function sendMessage(
       ),
     )
     .volume("/sessions", (mb) => mb.bind(path.join(ROOT, "data/sessions")))
-    .volume("/config", (mb) =>
-      mb.bind(path.join(ROOT, "config")).readonly(),
-    )
+    .volume("/config", (mb) => mb.bind(path.join(ROOT, "config")).readonly())
     .volume("/workspace", (mb) =>
       mb.bind(path.join(ROOT, "groups", groupName)),
     );
