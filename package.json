@@ -6,6 +6,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "build:runner": "esbuild src/sandbox/agent-runner.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/sandbox/runner.bundle.mjs",
+    "sandbox": "bash scripts/sandbox.sh",
     "runner:image:build": "pnpm build:runner && docker build -t localhost:5050/my-discord-agent-runner:latest . && docker push localhost:5050/my-discord-agent-runner:latest",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
