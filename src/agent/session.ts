@@ -35,9 +35,8 @@ export async function loadMessages(
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => {
-      // reasoning（トップレベル）と thinking ブロック（content 内）を除去する。
-      // openai-completions コンバーターが thinking ブロックをプロバイダー固有の
-      // reasoning フィールドに変換するため、両方を除去しないと 400 が再発する。
+      // 後方互換: appendMessage 以前に保存された旧 JSONL に reasoning/thinking が
+      // 残っている可能性があるため、ロード時も除去する。
       const msg = JSON.parse(line) as Record<string, unknown>;
       delete msg.reasoning;
       if (Array.isArray(msg.content)) {
@@ -58,9 +57,24 @@ export async function appendMessage(
   validateName(sessionId, "セッションID");
 
   await ensureDir(groupName);
+
+  // reasoning/thinkingをセーブ時に除去してJSONLをクリーンに保つ。
+  // AgentMessageの型には含まれないが、推論モデルが実行時に付与することがある。
+  const { reasoning: _r, ...rest } = message as AgentMessage & {
+    reasoning?: unknown;
+  };
+  const sanitized = {
+    ...rest,
+    content: Array.isArray(rest.content)
+      ? rest.content.filter(
+          (b): b is typeof b => (b as { type?: string }).type !== "thinking",
+        )
+      : rest.content,
+  };
+
   await appendFile(
     sessionPath(groupName, sessionId),
-    `${JSON.stringify(message)}\n`,
+    `${JSON.stringify(sanitized)}\n`,
     "utf-8",
   );
 }
