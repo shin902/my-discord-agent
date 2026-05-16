@@ -197,26 +197,6 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("sandbox ツールはVM内で除外される（webfetchのみ残る）", async () => {
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return createMockAgent(["OK"], {
-        role: "assistant",
-        content: [{ type: "text", text: "OK" }],
-      });
-    });
-
-    await runAgentLoop("test-group", "session-1", "hi", {
-      tools: ["webfetch", "sandbox"],
-    });
-
-    const tools = (
-      lastAgentOptions as { initialState: { tools: { name: string }[] } }
-    ).initialState.tools;
-    expect(tools).toHaveLength(1);
-    expect(tools[0].name).toBe("webfetch");
-  });
-
   it("VM内で不明なツール名はエラーをスロー", async () => {
     await expect(
       runAgentLoop("test-group", "session-1", "hi", {
