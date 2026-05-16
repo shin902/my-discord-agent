@@ -1,21 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
+
 import { Agent } from "@earendil-works/pi-agent-core";
-import {
-  getEnvApiKey,
-  getProviders,
-  type KnownProvider,
-  type TextContent,
-} from "@earendil-works/pi-ai";
+import { getEnvApiKey, type TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { CredentialEntrySchema } from "../config/credential-proxy.js";
+
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
   resolveModel,
 } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
+import { CredentialEntrySchema } from "../config/credential-proxy.js";
 import {
   type GroupJsonConfig,
   GroupJsonSchema,
@@ -35,7 +32,10 @@ async function getCustomProviderApiKey(
   provider: string,
 ): Promise<string | undefined> {
   try {
-    const raw = await readFile("/app/config/credential-proxy.json", "utf-8");
+    // コンテナ内デフォルト（ホスト側は credential-proxy.ts が import.meta.url 基準で処理）
+    const credPath =
+      process.env.CREDENTIAL_PROXY_PATH ?? "/config/credential-proxy.json";
+    const raw = await readFile(credPath, "utf-8");
     const entries = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
     const entry = entries.find((e) => e.provider === provider);
     if (!entry?.envVars) return undefined;

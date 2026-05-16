@@ -34,7 +34,18 @@ export async function loadMessages(
   return text
     .split("\n")
     .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as AgentMessage);
+    .map((line) => {
+      // 後方互換: appendMessage 以前に保存された旧 JSONL に reasoning/thinking が
+      // 残っている可能性があるため、ロード時も除去する。
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      delete msg.reasoning;
+      if (Array.isArray(msg.content)) {
+        msg.content = (msg.content as Array<{ type: string }>).filter(
+          (block) => block.type !== "thinking",
+        );
+      }
+      return msg as unknown as AgentMessage;
+    });
 }
 
 export async function appendMessage(
@@ -46,9 +57,24 @@ export async function appendMessage(
   validateName(sessionId, "セッションID");
 
   await ensureDir(groupName);
+
+  // reasoning/thinkingをセーブ時に除去してJSONLをクリーンに保つ。
+  // AgentMessageの型には含まれないが、推論モデルが実行時に付与することがある。
+  const { reasoning: _r, ...rest } = message as AgentMessage & {
+    reasoning?: unknown;
+  };
+  const sanitized = {
+    ...rest,
+    content: Array.isArray(rest.content)
+      ? rest.content.filter(
+          (b): b is typeof b => (b as { type?: string }).type !== "thinking",
+        )
+      : rest.content,
+  };
+
   await appendFile(
     sessionPath(groupName, sessionId),
-    `${JSON.stringify(message)}\n`,
+    `${JSON.stringify(sanitized)}\n`,
     "utf-8",
   );
 }

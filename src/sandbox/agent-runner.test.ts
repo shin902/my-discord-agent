@@ -1,4 +1,3 @@
-import type { Dirent } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { AgentMock } = vi.hoisted(() => ({

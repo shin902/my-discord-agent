@@ -80,6 +80,93 @@ describe("resolveModel", () => {
   });
 });
 
+describe("sendMessage: サンドボックス構成", () => {
+  let builderChain: Record<string, ReturnType<typeof vi.fn>>;
+  let execWithMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    execWithMock = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: vi.fn().mockReturnValue("mocked response"),
+      stderr: vi.fn().mockReturnValue(""),
+    });
+    builderChain = {
+      image: vi.fn().mockReturnThis(),
+      workdir: vi.fn().mockReturnThis(),
+      cpus: vi.fn().mockReturnThis(),
+      memory: vi.fn().mockReturnThis(),
+      env: vi.fn().mockReturnThis(),
+      replace: vi.fn().mockReturnThis(),
+      volume: vi.fn().mockReturnThis(),
+      network: vi.fn().mockReturnThis(),
+      secret: vi.fn().mockReturnThis(),
+      create: vi.fn().mockResolvedValue({
+        [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
+        execWith: execWithMock,
+      }),
+    };
+    vi.doMock("microsandbox", () => ({
+      Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
+      NetworkPolicy: {
+        builder: () => ({
+          defaultIngress: vi.fn().mockReturnThis(),
+          egress: vi.fn().mockReturnThis(),
+          build: vi.fn().mockReturnValue({}),
+        }),
+      },
+    }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("カスタムイメージを使用する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    expect(builderChain.image).toHaveBeenCalledWith(
+      "localhost:5050/my-discord-agent-runner:latest",
+    );
+  });
+
+  it("/app を bind mount しない", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const volumeCalls = builderChain.volume.mock.calls.map((c) => c[0]);
+    expect(volumeCalls).not.toContain("/app");
+  });
+
+  it("/sessions と /config を mount する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const volumeCalls = builderChain.volume.mock.calls.map((c) => c[0]);
+    expect(volumeCalls).toContain("/sessions");
+    expect(volumeCalls).toContain("/config");
+  });
+
+  it("node /app/runner.mjs で exec する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    expect(execWithMock).toHaveBeenCalledWith("node", expect.any(Function));
+
+    const execBuilder = {
+      args: vi.fn().mockReturnThis(),
+      stdinBytes: vi.fn().mockReturnThis(),
+      timeout: vi.fn().mockReturnThis(),
+    };
+    const callback = execWithMock.mock.calls[0][1];
+    callback(execBuilder);
+    expect(execBuilder.args).toHaveBeenCalledWith(["/app/runner.mjs"]);
+  });
+});
+
 describe("sendMessage: credential-proxy 処理", () => {
   const originalEnv = process.env;
   const secretMock = vi.fn();

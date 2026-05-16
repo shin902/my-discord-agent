@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ExecTimeoutError, NetworkPolicy, Sandbox } from "microsandbox";
@@ -28,20 +28,11 @@ export {
   validateModel,
 };
 
-let _distExists = false;
-
 /**
  * エージェントマネージャーの初期化。起動時に一度だけ呼ぶこと。
- * data/sessions の作成と dist ディレクトリの存在チェックを行い結果をキャッシュする。
  */
 export async function initManager(): Promise<void> {
   await mkdir(path.join(ROOT, "data/sessions"), { recursive: true });
-  try {
-    await stat(path.join(ROOT, "dist"));
-    _distExists = true;
-  } catch {
-    _distExists = false;
-  }
 }
 
 /**
@@ -88,11 +79,12 @@ export async function sendMessage(
     .slice(0, 8);
   const randSuffix = randomUUID().slice(0, 8);
   let builder = Sandbox.builder(`a-${sessionHash}-${randSuffix}`)
-    .image("node:22-alpine")
+    .image("localhost:5050/my-discord-agent-runner:latest")
     .workdir("/workspace")
     .cpus(1)
     .memory(512)
-    .env("SESSIONS_DIR", "/app/data/sessions")
+    .env("SESSIONS_DIR", "/sessions")
+    .env("CREDENTIAL_PROXY_PATH", "/config/credential-proxy.json")
     .replace()
     .network((n) =>
       n.policy(
@@ -104,7 +96,8 @@ export async function sendMessage(
           .build(),
       ),
     )
-    .volume("/app", (mb) => mb.bind(ROOT))
+    .volume("/sessions", (mb) => mb.bind(path.join(ROOT, "data/sessions")))
+    .volume("/config", (mb) => mb.bind(path.join(ROOT, "config")).readonly())
     .volume("/workspace", (mb) =>
       mb.bind(path.join(ROOT, "groups", groupName)),
     );
@@ -182,19 +175,12 @@ export async function sendMessage(
   await using _sandbox = sandbox;
 
   try {
-    const result = _distExists
-      ? await sandbox.execWith("node", (e) =>
-          e
-            .args(["/app/dist/sandbox/agent-runner.js"])
-            .stdinBytes(Buffer.from(payload))
-            .timeout(10 * 60 * 1000),
-        )
-      : await sandbox.execWith("npx", (e) =>
-          e
-            .args(["tsx", "/app/src/sandbox/agent-runner.ts"])
-            .stdinBytes(Buffer.from(payload))
-            .timeout(10 * 60 * 1000),
-        );
+    const result = await sandbox.execWith("node", (e) =>
+      e
+        .args(["/app/runner.mjs"])
+        .stdinBytes(Buffer.from(payload))
+        .timeout(10 * 60 * 1000),
+    );
 
     if (result.code !== 0) {
       const stderr = result.stderr().trim();

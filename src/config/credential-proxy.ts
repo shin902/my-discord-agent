@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.join(__dirname, "../../config/credential-proxy.json");
+const CONFIG_PATH =
+  process.env.CREDENTIAL_PROXY_PATH ??
+  path.join(__dirname, "../../config/credential-proxy.json");
 
 export const CredentialEntrySchema = z.object({
   provider: z.string(),

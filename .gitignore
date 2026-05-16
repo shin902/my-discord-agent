@@ -9,3 +9,5 @@ config/*
 !config/credential-proxy.example.json
 
 groups/*/
+
+.claude/plans/
