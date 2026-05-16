@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
@@ -13,7 +13,10 @@ function validateName(name: string, label: string): void {
 }
 
 async function ensureDir(groupName: string): Promise<void> {
-  await mkdir(path.join(SESSIONS_DIR, groupName), { recursive: true });
+  const dir = path.join(SESSIONS_DIR, groupName);
+  await mkdir(dir, { recursive: true, mode: 0o777 });
+  // VirtioFS では mkdir の mode は既存ディレクトリに適用されないため明示的に設定
+  await chmod(dir, 0o777);
 }
 
 function sessionPath(groupName: string, sessionId: string): string {
@@ -72,9 +75,11 @@ export async function appendMessage(
       : rest.content,
   };
 
-  await appendFile(
-    sessionPath(groupName, sessionId),
-    `${JSON.stringify(sanitized)}\n`,
-    "utf-8",
-  );
+  const filePath = sessionPath(groupName, sessionId);
+  // VirtioFS UID ミスマッチ対策: 既存ファイルが他UID所有の場合に備えて事前に chmod
+  await chmod(filePath, 0o666).catch(() => {});
+  await appendFile(filePath, `${JSON.stringify(sanitized)}\n`, {
+    encoding: "utf-8",
+    mode: 0o666,
+  });
 }
