@@ -111,13 +111,12 @@ async function buildYouTubeMarkdown(
 
   const tags = meta["tags"];
   if (Array.isArray(tags) && tags.length > 0) {
-    lines.push(`**タグ**: ${(tags as string[]).slice(0, 10).join(", ")}`);
+    lines.push(`**タグ**: ${(tags as string[]).join(", ")}`);
   }
 
   const desc = str("description");
   if (desc) {
-    lines.push("", "## 説明", "", desc.slice(0, 1000));
-    if (desc.length > 1000) lines.push(`\n...(省略: 全${desc.length}文字)`);
+    lines.push("", "## 説明", "", desc);
   }
 
   const chapters = meta["chapters"];
@@ -186,8 +185,7 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
 
       const selftext = post["selftext"] as string | undefined;
       if (selftext && selftext !== "[removed]" && selftext !== "[deleted]") {
-        lines.push("", "## 本文", "", selftext.slice(0, 2000));
-        if (selftext.length > 2000) lines.push(`\n...(省略: 全${selftext.length}文字)`);
+        lines.push("", "## 本文", "", selftext);
       }
 
       // コメント
@@ -200,7 +198,7 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
           lines.push("", "## トップコメント", "");
           for (const c of comments) {
             const cd = c["data"] as Record<string, unknown>;
-            const body = (cd["body"] as string | undefined)?.slice(0, 500) ?? "";
+            const body = (cd["body"] as string | undefined) ?? "";
             lines.push(`**u/${cd["author"]}** (スコア: ${cd["score"]})`);
             lines.push(body);
             lines.push("");
