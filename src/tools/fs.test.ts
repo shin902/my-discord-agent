@@ -50,10 +50,11 @@ describe("read", () => {
     expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
   });
 
-  it("長い内容は省略する", async () => {
-    vi.mocked(readFile).mockResolvedValue("a".repeat(9000) as never);
+  it("長い内容も省略せずそのまま返す", async () => {
+    const big = "a".repeat(9000);
+    vi.mocked(readFile).mockResolvedValue(big as never);
     const result = await readTool.execute("call-1", { path: "long.txt" });
-    expect(firstText(result)).toContain("... (省略");
+    expect(firstText(result)).toBe(big);
   });
 
   it("パストラバーサルを拒否", async () => {

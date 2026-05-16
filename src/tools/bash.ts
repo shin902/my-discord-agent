@@ -3,7 +3,6 @@ import { exec } from "node:child_process";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
-const MAX_OUTPUT_CHARS = 10_000;
 const TIMEOUT_MS = 30_000;
 
 function execAsync(
@@ -38,21 +37,12 @@ export const bashTool: AgentTool<typeof parameters> = {
         maxBuffer: 1024 * 1024,
         cwd: "/workspace",
       });
-      const combined = [stdout, stderr ? `stderr:\n${stderr}` : ""]
+      const text = [stdout, stderr ? `stderr:\n${stderr}` : ""]
         .filter(Boolean)
         .join("\n")
         .trim();
-      const text = combined.slice(0, MAX_OUTPUT_CHARS);
       return {
-        content: [
-          {
-            type: "text",
-            text:
-              text.length < combined.length
-                ? `${text}\n\n... (省略: 合計 ${combined.length} 文字)`
-                : text || "(出力なし)",
-          },
-        ],
+        content: [{ type: "text", text: text || "(出力なし)" }],
         details: { command },
       };
     } catch (err) {

@@ -70,10 +70,10 @@ describe("bashTool", () => {
     expect(getText(result)).toBe("(出力なし)");
   });
 
-  it("MAX_OUTPUT_CHARS を超えた出力は省略される", async () => {
-    mockSuccess("a".repeat(15_000));
+  it("大きな出力は省略せずそのまま返す", async () => {
+    const big = "a".repeat(15_000);
+    mockSuccess(big);
     const result = await bashTool.execute("id", { command: "cat big" }, undefined, undefined);
-    expect(getText(result)).toContain("省略");
-    expect(getText(result).length).toBeLessThan(15_000);
+    expect(getText(result)).toBe(big);
   });
 });

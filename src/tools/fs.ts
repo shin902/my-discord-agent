@@ -12,7 +12,6 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 const WORKSPACE = "/workspace";
-const MAX_OUTPUT_CHARS = 8000;
 
 function sanitizePath(raw: string): string {
   const trimmed = raw.trim();
@@ -44,13 +43,8 @@ export const readTool: AgentTool<typeof readParameters> = {
   execute: async (_toolCallId, { path }) => {
     const safePath = sanitizePath(path);
     const content = await readFile(fullPath(safePath), "utf-8");
-    const truncated = content.slice(0, MAX_OUTPUT_CHARS);
-    const text =
-      truncated.length < content.length
-        ? `${truncated}\n\n... (省略: 合計 ${content.length} 文字)`
-        : truncated;
     return {
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: content }],
       details: { path: safePath, size: content.length },
     };
   },
@@ -170,13 +164,8 @@ export const globTool: AgentTool<typeof globParameters> = {
       files.push(join(safePath, f));
     }
     const text = files.join("\n");
-    const truncated = text.slice(0, MAX_OUTPUT_CHARS);
-    const finalText =
-      truncated.length < text.length
-        ? `${truncated}\n\n... (省略: 合計 ${files.length} ファイル)`
-        : truncated;
     return {
-      content: [{ type: "text", text: finalText || "(一致なし)" }],
+      content: [{ type: "text", text: text || "(一致なし)" }],
       details: { pattern, path: safePath, count: files.length },
     };
   },
@@ -235,11 +224,8 @@ export const grepTool: AgentTool<typeof grepParameters> = {
     }
 
     const matches: Array<{ file: string; line: number; content: string }> = [];
-    let totalChars = 0;
-    let truncated = false;
 
     for (const filePath of files) {
-      if (truncated) break;
       const fp = fullPath(filePath);
       let content: string;
       try {
@@ -252,24 +238,15 @@ export const grepTool: AgentTool<typeof grepParameters> = {
       for (let i = 0; i < lines.length; i++) {
         regex.lastIndex = 0;
         if (regex.test(lines[i])) {
-          const entry = `${filePath}:${i + 1}: ${lines[i]}`;
-          if (totalChars + entry.length + 1 > MAX_OUTPUT_CHARS) {
-            truncated = true;
-            break;
-          }
           matches.push({ file: filePath, line: i + 1, content: lines[i] });
-          totalChars += entry.length + 1;
         }
       }
     }
 
-    const lines = truncated
-      ? [
-          ...matches.map((m) => `${m.file}:${m.line}: ${m.content}`),
-          "... (省略: 結果が多すぎます)",
-        ]
-      : matches.map((m) => `${m.file}:${m.line}: ${m.content}`);
-    const text = lines.length === 0 ? "(一致なし)" : lines.join("\n");
+    const text =
+      matches.length === 0
+        ? "(一致なし)"
+        : matches.map((m) => `${m.file}:${m.line}: ${m.content}`).join("\n");
 
     return {
       content: [{ type: "text", text }],
