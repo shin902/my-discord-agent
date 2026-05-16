@@ -8,11 +8,13 @@ import {
   readTool,
   writeTool,
 } from "./fs.js";
+import { urlFetchTool } from "./url-fetch.js";
 import { webfetchTool } from "./webfetch.js";
 
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
   webfetch: webfetchTool,
+  "url-fetch": urlFetchTool,
   read: readTool,
   write: writeTool,
   list: listTool,
