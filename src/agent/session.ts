@@ -35,10 +35,17 @@ export async function loadMessages(
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => {
-      // JSON.parse は any を返すので reasoning を直接削除できる
-      // reasoning フィールドは一部プロバイダー（openai-completions 等）が拒否するため除去
+      // JSON.parse は any を返すので直接操作できる
+      // reasoning（トップレベル）と thinking ブロック（content 内）を除去する。
+      // openai-completions コンバーターが thinking ブロックをプロバイダー固有の
+      // reasoning フィールドに変換するため、両方を除去しないと 400 が再発する。
       const msg = JSON.parse(line);
       delete msg.reasoning;
+      if (Array.isArray(msg.content)) {
+        msg.content = msg.content.filter(
+          (block: { type: string }) => block.type !== "thinking",
+        );
+      }
       return msg;
     });
 }
