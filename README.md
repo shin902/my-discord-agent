@@ -19,6 +19,43 @@ my-nanoclawプロジェクトの失敗を教訓に、"確実に動く"ことを�
 - **Model Provider**: OpenCode Go
 - **Platform**: Discord
 
+## セットアップ
+
+### 前提条件
+
+- Node.js 22+
+- pnpm
+- Docker
+
+### ローカルレジストリの起動（初回のみ）
+
+agent-runner イメージは `localhost:5050` のローカル OCI レジストリ経由で配布されます。
+microsandbox は Docker のローカルイメージストアを参照できないため、このレジストリが必須です。
+
+```bash
+docker run -d -p 5050:5000 --name local-registry registry:2
+```
+
+### agent-runner イメージのビルド・push
+
+agent-runner のソースを変更した際は以下を実行してください。
+
+```bash
+pnpm runner:image:build
+# esbuild バンドル → docker build → localhost:5050 へ push まで一括実行
+```
+
+### 通常の起動
+
+```bash
+cp .env.example .env   # 環境変数を設定
+pnpm dev
+```
+
+> **Note**: ローカルレジストリ（`localhost:5050`）は TLS・認証なし。
+> 共有ホストや CI 環境では他プロセスによる偽イメージ push のリスクがあるため、
+> 信頼できる環境でのみ使用してください。
+
 ## ドキュメント
 
 - [Research & Requirements](docs/research/README.md) - 技術調査・要件定義・選定理由
