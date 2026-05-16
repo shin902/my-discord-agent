@@ -1,21 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
+
 import { Agent } from "@earendil-works/pi-agent-core";
-import {
-  getEnvApiKey,
-  getProviders,
-  type KnownProvider,
-  type TextContent,
-} from "@earendil-works/pi-ai";
+import { getEnvApiKey, type TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { CredentialEntrySchema } from "../config/credential-proxy.js";
+
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
   resolveModel,
 } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
+import { CredentialEntrySchema } from "../config/credential-proxy.js";
 import {
   type GroupJsonConfig,
   GroupJsonSchema,
