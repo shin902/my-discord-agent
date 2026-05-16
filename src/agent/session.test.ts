@@ -4,19 +4,21 @@ vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
   appendFile: vi.fn(),
   mkdir: vi.fn(),
+  chmod: vi.fn(),
 }));
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
 }));
 
-const { readFile, appendFile, mkdir } = await import("node:fs/promises");
+const { readFile, appendFile, mkdir, chmod } = await import("node:fs/promises");
 const { existsSync } = await import("node:fs");
 const { loadMessages, appendMessage } = await import("./session.js");
 
 const mockReadFile = vi.mocked(readFile);
 const mockAppendFile = vi.mocked(appendFile);
 const mockMkdir = vi.mocked(mkdir);
+const mockChmod = vi.mocked(chmod);
 const mockExistsSync = vi.mocked(existsSync);
 
 describe("loadMessages", () => {
@@ -119,6 +121,7 @@ describe("appendMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockMkdir.mockResolvedValue(undefined);
+    mockChmod.mockResolvedValue(undefined);
     mockAppendFile.mockResolvedValue(undefined);
   });
 
@@ -131,11 +134,12 @@ describe("appendMessage", () => {
 
     expect(mockMkdir).toHaveBeenCalledWith(expect.stringContaining("group1"), {
       recursive: true,
+      mode: 0o777,
     });
     expect(mockAppendFile).toHaveBeenCalledWith(
       expect.stringContaining("session-a.jsonl"),
       '{"role":"user","content":"hello","timestamp":123}\n',
-      "utf-8",
+      { encoding: "utf-8", mode: 0o666 },
     );
   });
 
