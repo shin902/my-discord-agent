@@ -139,7 +139,7 @@ async function buildYouTubeMarkdown(
   const likes = num("like_count");
   if (likes !== null) lines.push(`**いいね**: ${likes.toLocaleString()}`);
 
-  const tags = meta["tags"];
+  const tags = meta.tags;
   if (Array.isArray(tags) && tags.length > 0) {
     lines.push(`**タグ**: ${(tags as string[]).join(", ")}`);
   }
@@ -149,15 +149,15 @@ async function buildYouTubeMarkdown(
     lines.push("", "## 説明", "", desc);
   }
 
-  const chapters = meta["chapters"];
+  const chapters = meta.chapters;
   if (Array.isArray(chapters) && chapters.length > 0) {
     lines.push("", "## チャプター", "");
     for (const ch of chapters as Array<Record<string, unknown>>) {
       const t =
-        typeof ch["start_time"] === "number"
-          ? formatDuration(ch["start_time"] as number)
+        typeof ch.start_time === "number"
+          ? formatDuration(ch.start_time as number)
           : "?";
-      lines.push(`- ${t} ${ch["title"] ?? ""}`);
+      lines.push(`- ${t} ${ch.title ?? ""}`);
     }
   }
 
@@ -215,20 +215,20 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
     const post = postChildren?.[0]?.data as Record<string, unknown> | undefined;
 
     if (post) {
-      lines.push(`# ${post["title"] ?? "(タイトル不明)"}`);
+      lines.push(`# ${post.title ?? "(タイトル不明)"}`);
       lines.push("");
       lines.push(
-        `**r/${post["subreddit"]}** | u/${post["author"]} | スコア: ${post["score"]} | コメント: ${post["num_comments"]}`,
+        `**r/${post.subreddit}** | u/${post.author} | スコア: ${post.score} | コメント: ${post.num_comments}`,
       );
 
-      const created = post["created_utc"];
+      const created = post.created_utc;
       if (typeof created === "number") {
         lines.push(
           `**投稿日**: ${new Date(created * 1000).toISOString().slice(0, 10)}`,
         );
       }
 
-      const selftext = post["selftext"] as string | undefined;
+      const selftext = post.selftext as string | undefined;
       if (selftext && selftext !== "[removed]" && selftext !== "[deleted]") {
         lines.push("", "## 本文", "", selftext);
       }
@@ -239,14 +239,14 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
           ?.data as Record<string, unknown>;
         const comments = (
           commentListing?.children as Array<Record<string, unknown>>
-        )?.filter((c) => c["kind"] === "t1");
+        )?.filter((c) => c.kind === "t1");
 
         if (comments?.length) {
           lines.push("", "## トップコメント", "");
           for (const c of comments) {
-            const cd = c["data"] as Record<string, unknown>;
-            const body = (cd["body"] as string | undefined) ?? "";
-            lines.push(`**u/${cd["author"]}** (スコア: ${cd["score"]})`);
+            const cd = c.data as Record<string, unknown>;
+            const body = (cd.body as string | undefined) ?? "";
+            lines.push(`**u/${cd.author}** (スコア: ${cd.score})`);
             lines.push(body);
             lines.push("");
           }
@@ -267,12 +267,12 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
   if (children?.length) {
     lines.push("# 投稿一覧", "");
     for (const child of children) {
-      const p = child["data"] as Record<string, unknown>;
-      lines.push(`## ${p["title"]}`);
+      const p = child.data as Record<string, unknown>;
+      lines.push(`## ${p.title}`);
       lines.push(
-        `u/${p["author"]} | スコア: ${p["score"]} | コメント: ${p["num_comments"]}`,
+        `u/${p.author} | スコア: ${p.score} | コメント: ${p.num_comments}`,
       );
-      lines.push(`URL: ${p["url"]}`);
+      lines.push(`URL: ${p.url}`);
       lines.push("");
     }
     return lines.join("\n");
@@ -321,12 +321,10 @@ function buildCommand(
         ) +
         ` ${shellQuote(url)} > ${out}`
       );
-    case "web":
     default:
       return `curl -sf ${shellQuote(`https://r.jina.ai/${url}`)} > ${out}`;
   }
 }
-
 
 const parameters = Type.Object({
   url: Type.String({ description: "取得するURL" }),
