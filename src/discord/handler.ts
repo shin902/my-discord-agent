@@ -68,7 +68,12 @@ export function registerHandlers(): void {
           // キャッシュ → APIから再取得 の順で確認
           const recovered =
             message.thread ??
-            (await message.fetch().catch((e) => { console.error("[handler] メッセージ再取得失敗:", e); return null; }))?.thread ??
+            (
+              await message.fetch().catch((e) => {
+                console.error("[handler] メッセージ再取得失敗:", e);
+                return null;
+              })
+            )?.thread ??
             null;
           if (recovered) {
             thread = recovered;

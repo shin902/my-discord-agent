@@ -208,7 +208,10 @@ describe("buildRedditMarkdown パース", () => {
       {
         data: {
           children: [
-            { kind: "t1", data: { author: "commenter", score: 10, body: "いいコメント" } },
+            {
+              kind: "t1",
+              data: { author: "commenter", score: 10, body: "いいコメント" },
+            },
           ],
         },
       },

@@ -203,7 +203,10 @@ export const grepTool: AgentTool<typeof grepParameters> = {
   label: "Grep",
   description: "ワークスペース内のファイルを正規表現で検索する",
   parameters: grepParameters,
-  execute: async (_toolCallId, { pattern, path, glob: globPattern, maxResults }) => {
+  execute: async (
+    _toolCallId,
+    { pattern, path, glob: globPattern, maxResults },
+  ) => {
     const limit = maxResults ?? GREP_MAX_RESULTS;
     const safePath = sanitizePath(path);
     const basePath = fullPath(safePath);
@@ -261,7 +264,9 @@ export const grepTool: AgentTool<typeof grepParameters> = {
     const shown = truncated ? matches.slice(0, limit) : matches;
     const lines = shown.map((m) => `${m.file}:${m.line}: ${m.content}`);
     if (truncated) {
-      lines.push(`\n[${matches.length - limit} 件省略。pattern をより具体的にするか maxResults を増やしてください]`);
+      lines.push(
+        `\n[${matches.length - limit} 件省略。pattern をより具体的にするか maxResults を増やしてください]`,
+      );
     }
     const text = lines.length === 0 ? "(一致なし)" : lines.join("\n");
 
