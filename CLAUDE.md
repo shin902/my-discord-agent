@@ -31,15 +31,29 @@ pnpm vitest run src/queue/poller.test.ts
 メッセージはDiscordイベント → インボックスキュー → ポーラー → エージェントという非同期パイプラインで処理される。
 
 ```
+【ホストプロセス】
 Discord受信
   └─ discord/handler.ts   (MessageCreateイベント)
        └─ queue/inbox.ts  (appendInbox: data/queue/inbox.jsonl へ追記)
             └─ queue/poller.ts (1秒ごとに shiftInbox() でデキュー)
-                 ├─ agent/manager.ts  (sendMessage: pi-agent-core の Agent を使い捨て生成)
+                 ├─ agent/manager.ts  (sendMessage: サンドボックスコンテナを起動)
                  │    ├─ agent/session.ts  (会話履歴を data/sessions/{group}/{sessionId}.jsonl に JSONL 永続化)
                  │    └─ config/group-config.ts (groups/{name}/group.json + AGENTS.md をキャッシュ読み込み)
                  └─ discord/client.ts  (返信送信)
+
+【サンドボックスコンテナ（Dockerコンテナ内）】
+  └─ sandbox/agent-runner.ts  (Agent ループ実行)
+       └─ tools/registry.ts   (bashTool・urlFetchTool など全ツールを登録・実行)
 ```
+
+### ツール実装の原則
+
+**すべてのツール（`src/tools/`）はサンドボックスコンテナ内で実行される。** ホスト側では実行されない。
+
+新しいツールを追加する場合:
+- `src/tools/` に実装し、`src/tools/registry.ts` に登録する
+- ホスト側のファイルシステムやプロセスに直接アクセスするAPIは使わない
+- コンテナ内の `/workspace` を作業ディレクトリとして使う
 
 ### 重要な設計判断
 

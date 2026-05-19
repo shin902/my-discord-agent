@@ -53,6 +53,8 @@ function makeMockMessage(opts: {
     },
     content: opts.content ?? "hello",
     createdAt: new Date(),
+    thread: null,
+    fetch: vi.fn().mockResolvedValue({ thread: null }),
     reply: vi.fn().mockResolvedValue(undefined),
     startThread: opts.startThread ?? vi.fn(),
   } as unknown as Message;

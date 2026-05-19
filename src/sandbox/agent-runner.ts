@@ -38,7 +38,8 @@ async function getCustomProviderApiKey(
     const raw = await readFile(credPath, "utf-8");
     const entries = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
     const entry = entries.find((e) => e.provider === provider);
-    if (!entry?.envVars) return undefined;
+    if (!entry) return undefined;
+    if (!entry.envVars) return "local"; // ローカルプロバイダーはAPIキー不要。SDKがundefinedを弾くためダミー値を返す
     for (const envVar of entry.envVars) {
       const value = process.env[envVar];
       if (value) return value;

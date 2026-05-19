@@ -64,10 +64,20 @@ export function registerHandlers(): void {
           });
         } catch (err) {
           console.error("[handler] スレッド作成失敗:", err);
-          await message
-            .reply("スレッドの作成に失敗しました。もう一度送ってください。")
-            .catch((e) => console.error("[handler] reply 失敗:", e));
-          return;
+          // Discord API タイムアウト等でスレッドが作成済みの場合に回復を試みる
+          // キャッシュ → APIから再取得 の順で確認
+          const recovered =
+            message.thread ??
+            (await message.fetch().catch((e) => { console.error("[handler] メッセージ再取得失敗:", e); return null; }))?.thread ??
+            null;
+          if (recovered) {
+            thread = recovered;
+          } else {
+            await message
+              .reply("スレッドの作成に失敗しました。もう一度送ってください。")
+              .catch((e) => console.error("[handler] reply 失敗:", e));
+            return;
+          }
         }
         sessionId = thread.id;
         inboxChannelId = thread.id;

@@ -1,4 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { bashTool } from "./bash.js";
 import {
   editTool,
   globTool,
@@ -7,10 +8,11 @@ import {
   readTool,
   writeTool,
 } from "./fs.js";
-import { webfetchTool } from "./webfetch.js";
+import { urlFetchTool } from "./url-fetch.js";
 
 const TOOLS: Record<string, AgentTool> = {
-  webfetch: webfetchTool,
+  bash: bashTool,
+  "url-fetch": urlFetchTool,
   read: readTool,
   write: writeTool,
   list: listTool,
