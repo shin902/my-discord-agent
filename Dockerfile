@@ -8,7 +8,7 @@ RUN apk add --no-cache \
     github-cli
 
 RUN pip3 install --break-system-packages \
-    https://github.com/Panniantong/agent-reach/archive/main.zip \
+    https://github.com/Panniantong/agent-reach/archive/17624268a059ccfb23eba8a2ba50f9f92c8dc0ca.zip \
     yt-dlp \
     feedparser
 
