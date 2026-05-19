@@ -12,6 +12,8 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 const WORKSPACE = "/workspace";
+const READ_CHAR_LIMIT = 50_000;
+const GREP_MAX_RESULTS = 200;
 
 function sanitizePath(raw: string): string {
   const trimmed = raw.trim();
@@ -42,10 +44,14 @@ export const readTool: AgentTool<typeof readParameters> = {
   parameters: readParameters,
   execute: async (_toolCallId, { path }) => {
     const safePath = sanitizePath(path);
-    const content = await readFile(fullPath(safePath), "utf-8");
+    const raw = await readFile(fullPath(safePath), "utf-8");
+    const truncated = raw.length > READ_CHAR_LIMIT;
+    const text = truncated
+      ? `${raw.slice(0, READ_CHAR_LIMIT)}\n\n[${raw.length - READ_CHAR_LIMIT} 文字省略。grep で範囲を絞ってから再度読み込んでください]`
+      : raw;
     return {
-      content: [{ type: "text", text: content }],
-      details: { path: safePath, size: content.length },
+      content: [{ type: "text", text }],
+      details: { path: safePath, size: raw.length, truncated },
     };
   },
 };
@@ -184,6 +190,12 @@ const grepParameters = Type.Object({
       description: "ファイルフィルタの glob パターン（例: *.ts）",
     }),
   ),
+  maxResults: Type.Optional(
+    Type.Number({
+      description: `返す最大マッチ件数（デフォルト: ${GREP_MAX_RESULTS}）`,
+      minimum: 1,
+    }),
+  ),
 });
 
 export const grepTool: AgentTool<typeof grepParameters> = {
@@ -191,7 +203,8 @@ export const grepTool: AgentTool<typeof grepParameters> = {
   label: "Grep",
   description: "ワークスペース内のファイルを正規表現で検索する",
   parameters: grepParameters,
-  execute: async (_toolCallId, { pattern, path, glob: globPattern }) => {
+  execute: async (_toolCallId, { pattern, path, glob: globPattern, maxResults }) => {
+    const limit = maxResults ?? GREP_MAX_RESULTS;
     const safePath = sanitizePath(path);
     const basePath = fullPath(safePath);
     const regex = new RegExp(pattern, "gm");
@@ -243,14 +256,17 @@ export const grepTool: AgentTool<typeof grepParameters> = {
       }
     }
 
-    const text =
-      matches.length === 0
-        ? "(一致なし)"
-        : matches.map((m) => `${m.file}:${m.line}: ${m.content}`).join("\n");
+    const truncated = matches.length > limit;
+    const shown = truncated ? matches.slice(0, limit) : matches;
+    const lines = shown.map((m) => `${m.file}:${m.line}: ${m.content}`);
+    if (truncated) {
+      lines.push(`\n[${matches.length - limit} 件省略。pattern をより具体的にするか maxResults を増やしてください]`);
+    }
+    const text = lines.length === 0 ? "(一致なし)" : lines.join("\n");
 
     return {
       content: [{ type: "text", text }],
-      details: { pattern, count: matches.length },
+      details: { pattern, count: matches.length, truncated },
     };
   },
 };

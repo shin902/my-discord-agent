@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -164,7 +164,6 @@ async function buildYouTubeMarkdown(
   // 字幕テキストを Markdown に埋め込む
   let subFiles: string[] = [];
   try {
-    const { readdir } = await import("node:fs/promises");
     subFiles = (await readdir(subsDir)).filter((f) => f.endsWith(".vtt"));
   } catch {
     // 字幕なし
@@ -303,8 +302,9 @@ function buildCommand(
     }
     case "github-repo": {
       const m = new URL(url).pathname.match(/^\/([^/]+)\/([^/]+)/);
-      const repoSlug = m ? `${m[1]}/${m[2]}` : "";
-      return `gh repo view ${shellQuote(repoSlug)} > ${out} 2>&1`;
+      if (!m)
+        throw new Error(`GitHub URL からリポジトリを取得できません: ${url}`);
+      return `gh repo view ${shellQuote(`${m[1]}/${m[2]}`)} > ${out} 2>&1`;
     }
     case "reddit": {
       const jsonUrl = url.endsWith(".json")
