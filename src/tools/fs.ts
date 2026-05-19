@@ -238,7 +238,7 @@ export const grepTool: AgentTool<typeof grepParameters> = {
 
     const matches: Array<{ file: string; line: number; content: string }> = [];
 
-    for (const filePath of files) {
+    outer: for (const filePath of files) {
       const fp = fullPath(filePath);
       let content: string;
       try {
@@ -252,6 +252,7 @@ export const grepTool: AgentTool<typeof grepParameters> = {
         regex.lastIndex = 0;
         if (regex.test(lines[i])) {
           matches.push({ file: filePath, line: i + 1, content: lines[i] });
+          if (matches.length > limit) break outer;
         }
       }
     }
