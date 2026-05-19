@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { resolveTools } from "./registry.js";
-import { webfetchTool } from "./webfetch.js";
+import { urlFetchTool } from "./url-fetch.js";
 
 describe("resolveTools", () => {
-  it("webfetch を解決して webfetchTool を返す", () => {
-    expect(resolveTools(["webfetch"])).toEqual([webfetchTool]);
+  it("url-fetch を解決して urlFetchTool を返す", () => {
+    expect(resolveTools(["url-fetch"])).toEqual([urlFetchTool]);
   });
 
   it("空配列は空配列を返す", () => {
