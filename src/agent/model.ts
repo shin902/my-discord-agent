@@ -44,7 +44,11 @@ function createCustomModel(
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
     ...(entry.compat
-      ? { compat: entry.compat as unknown as NonNullable<Model<"openai-completions">["compat"]> }
+      ? {
+          compat: entry.compat as unknown as NonNullable<
+            Model<"openai-completions">["compat"]
+          >,
+        }
       : {}),
   };
 }

@@ -31,7 +31,14 @@ export const CredentialEntrySchema = z.object({
   compat: z
     .object({
       thinkingFormat: z
-        .enum(["openai", "openrouter", "deepseek", "zai", "qwen", "qwen-chat-template"])
+        .enum([
+          "openai",
+          "openrouter",
+          "deepseek",
+          "zai",
+          "qwen",
+          "qwen-chat-template",
+        ])
         .optional(),
     })
     .optional(),
