@@ -122,6 +122,41 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 
 > **背景**: llama-cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `enable_thinking` が含まれない場合は自動で thinking を有効にする。`thinkingFormat` を明示しないと `pi-ai` が `enable_thinking` を送らず、thinking トークンがすべての出力予算を消費してタイムアウトになる。
 
+## thinkingLevel の制御（group.json 側）
+
+`compat.thinkingFormat` はプロバイダーが thinking をどう受け付けるかを定義する。**thinking を実際に ON にするかどうか** はグループごとの設定（`groups/{name}/group.json`）で行う。
+
+```json
+{
+  "model": {
+    "provider": "llama-cpp",
+    "modelId": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+    "thinkingLevel": "low"
+  }
+}
+```
+
+**`thinkingLevel` に指定できる値**:
+
+| 値 | `enable_thinking` | thinking トークン予算 |
+|---|---|---|
+| `"off"`（デフォルト） | `false` | 0（thinking しない） |
+| `"minimal"` | `true` | 1,024 トークン |
+| `"low"` | `true` | 2,048 トークン |
+| `"medium"` | `true` | 8,192 トークン |
+| `"high"` | `true` | 16,384 トークン |
+| `"xhigh"` | `true` | モデルの `thinkingLevelMap` に依存 |
+
+> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `credential-proxy.json` で `reasoning: true` かつ `compat.thinkingFormat` が `"qwen"` 等の thinking 制御に対応した値である必要がある。
+
+**thinking を完全に OFF にする**（デフォルト動作、明示不要）:
+
+```json
+{ "model": { "provider": "llama-cpp", "modelId": "Qwen3.6-35B-...", "thinkingLevel": "off" } }
+```
+
+→ `compat.thinkingFormat: "qwen"` と組み合わせることで `enable_thinking: false` がリクエストに付与される。
+
 ## 具体例
 
 ### KnownProvider（OpenAI）

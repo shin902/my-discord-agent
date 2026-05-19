@@ -6,6 +6,9 @@ import { z } from "zod";
 const ModelConfigSchema = z.object({
   provider: z.string(),
   modelId: z.string(),
+  thinkingLevel: z
+    .enum(["off", "minimal", "low", "medium", "high", "xhigh"])
+    .optional(),
 });
 
 export const GroupJsonSchema = z.object({
