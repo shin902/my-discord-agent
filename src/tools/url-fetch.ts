@@ -341,6 +341,8 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
     }
+    // TOCTOU: ここで解決したIPと curl/yt-dlp が実際に接続するIPは異なる可能性がある
+    // （DNS リバインディング）。サンドボックス内実行のため影響は限定的だが既知のリスク。
     const addresses = await lookup(parsed.hostname, { all: true });
     const blocked = addresses.find((a) => isPrivateAddress(a.address));
     if (blocked) {
