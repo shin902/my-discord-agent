@@ -93,8 +93,11 @@ export async function sendMessage(
         NetworkPolicy.builder()
           .defaultIngress("allow")
           .egress((rb) => rb.allowPublic())
+          // プライベート・ループバックへの egress はローカルLLMのために必要。
+          // allowHost() はホスト名ベースのため、プライベートIPに解決されるホストは
+          // allowPrivate() がないと到達できない。
+          // DNS リバインディングリスクは残るが、サンドボックス内実行のため影響は限定的。
           .egress((rb) => rb.allowPrivate())
-          .egress((rb) => rb.allowLoopback())
           .build(),
       ),
     )
