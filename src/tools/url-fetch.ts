@@ -231,7 +231,7 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
       }
 
       // コメント
-      if (Array.isArray(data[1])) {
+      if (data[1] != null && typeof data[1] === "object") {
         const commentListing = (data[1] as unknown as Record<string, unknown>)
           ?.data as Record<string, unknown>;
         const comments = (
