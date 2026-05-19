@@ -185,7 +185,7 @@ async function buildYouTubeMarkdown(
 }
 
 /** Reddit JSON API レスポンスを Markdown サマリーに変換する */
-async function buildRedditMarkdown(absPath: string): Promise<string> {
+export async function buildRedditMarkdown(absPath: string): Promise<string> {
   let raw: string;
   try {
     raw = await readFile(absPath, "utf-8");
@@ -280,7 +280,7 @@ async function buildRedditMarkdown(absPath: string): Promise<string> {
   return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
 }
 
-function buildCommand(
+export function buildCommand(
   service: ServiceType,
   url: string,
   outAbsPath: string,
