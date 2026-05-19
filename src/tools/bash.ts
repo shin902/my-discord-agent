@@ -1,25 +1,9 @@
-import { exec } from "node:child_process";
-
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
-const TIMEOUT_MS = 30_000;
+import { execAsync } from "./exec.js";
 
-function execAsync(
-  command: string,
-  options: { timeout: number; maxBuffer: number; cwd: string },
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    exec(command, options, (err, stdout, stderr) => {
-      if (err) {
-        Object.assign(err, { stdout, stderr });
-        reject(err);
-      } else {
-        resolve({ stdout, stderr });
-      }
-    });
-  });
-}
+const TIMEOUT_MS = 30_000;
 
 const parameters = Type.Object({
   command: Type.String({ description: "実行するシェルコマンド" }),

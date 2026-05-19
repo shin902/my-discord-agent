@@ -1,4 +1,3 @@
-import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,6 +5,8 @@ import { join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+
+import { execAsync } from "./exec.js";
 
 const WORKSPACE = "/workspace";
 const FETCH_DIR = "fetched";
@@ -326,22 +327,6 @@ function buildCommand(
   }
 }
 
-function execAsync(command: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    exec(
-      command,
-      { timeout: TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, cwd: WORKSPACE },
-      (err, stdout, stderr) => {
-        if (err) {
-          Object.assign(err, { stdout, stderr });
-          reject(err);
-        } else {
-          resolve();
-        }
-      },
-    );
-  });
-}
 
 const parameters = Type.Object({
   url: Type.String({ description: "取得するURL" }),
@@ -375,7 +360,11 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
 
     const cmd = buildCommand(service, url, absPath);
     try {
-      await execAsync(cmd);
+      await execAsync(cmd, {
+        timeout: TIMEOUT_MS,
+        maxBuffer: 64 * 1024 * 1024,
+        cwd: WORKSPACE,
+      });
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message?: string };
       throw new Error(
