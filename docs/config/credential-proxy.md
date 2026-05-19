@@ -149,13 +149,13 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 
 > **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `credential-proxy.json` で `reasoning: true` かつ `compat.thinkingFormat` が `"qwen"` 等の thinking 制御に対応した値である必要がある。
 
-**thinking を完全に OFF にする**（デフォルト動作、明示不要）:
+**thinking を完全に OFF にする**（`compat.thinkingFormat: "qwen"` が必須）:
 
 ```json
 { "model": { "provider": "llama-cpp", "modelId": "Qwen3.6-35B-...", "thinkingLevel": "off" } }
 ```
 
-→ `compat.thinkingFormat: "qwen"` と組み合わせることで `enable_thinking: false` がリクエストに付与される。
+`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `credential-proxy.json` の `compat.thinkingFormat: "qwen"` を設定していない場合、`enable_thinking` はリクエストに含まれず llama-cpp が thinking を自動 ON にする。
 
 ## 具体例
 
@@ -195,7 +195,13 @@ API Key 不要、最小構成:
 }
 ```
 
-`compat.thinkingFormat: "qwen"` を設定すると、エージェントが thinking を使わないとき（デフォルト）に `enable_thinking: false` が自動付与される。thinking を意図的に使いたいときは thinkingLevel を `"low"` 以上に設定すれば ON になる。
+`compat.thinkingFormat: "qwen"` を設定することで、`thinkingLevel` の値に応じて `enable_thinking` がリクエストに付与されるようになる。**設定しない場合は `enable_thinking` 自体が送られず、llama-cpp がデフォルト（thinking ON）で動作する。**
+
+| thinkingLevel | enable_thinking |
+|---|---|
+| `"off"`（デフォルト） | `false` を明示送信 |
+| `"low"` 以上 | `true` を明示送信 |
+| compat 未設定 | **送信しない**（llama-cpp 任せ = 実質 ON） |
 
 ### baseUrl にプレースホルダを含むケース
 
