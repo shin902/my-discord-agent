@@ -3,14 +3,15 @@ FROM node:22-alpine
 RUN apk add --no-cache \
     bash \
     python3 \
-    py3-pip \
     curl \
     github-cli
 
-RUN pip3 install --break-system-packages \
-    https://github.com/Panniantong/agent-reach/archive/17624268a059ccfb23eba8a2ba50f9f92c8dc0ca.zip \
-    yt-dlp \
-    feedparser
+RUN python3 -m venv /opt/venv
+RUN /opt/venv/bin/pip install --no-cache-dir \
+    yt-dlp==2026.3.17 \
+    feedparser==6.0.12
+
+ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /app
 
