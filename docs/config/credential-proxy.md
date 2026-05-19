@@ -76,6 +76,12 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 
 省略時は `4096` が使用されます。
 
+> **⚠️ reasoning モデルを使う場合は必ず明示指定すること**
+>
+> `reasoning: true` のモデル（Qwen3 等）は `<think>` ブロックと実際の返答が **同じ `maxTokens` 予算を共有する**。
+> デフォルトの `4096` では thinking がトークンを使い切り、`content: []`（空返答）が返る。
+> ローカル LLM にはコスト制約がないため、`16384` 以上を指定する。
+
 ## 具体例
 
 ### KnownProvider（OpenAI）
@@ -110,7 +116,7 @@ API Key 不要、最小構成:
   "api": "openai-completions",
   "reasoning": true,
   "contextWindow": 32768,
-  "maxTokens": 4096
+  "maxTokens": 16384
 }
 ```
 
