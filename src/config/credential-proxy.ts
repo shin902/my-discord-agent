@@ -28,6 +28,13 @@ export const CredentialEntrySchema = z.object({
   reasoning: z.boolean().optional(),
   contextWindow: z.number().int().min(1).optional(),
   maxTokens: z.number().int().min(1).optional(),
+  compat: z
+    .object({
+      thinkingFormat: z
+        .enum(["openai", "openrouter", "deepseek", "zai", "qwen", "qwen-chat-template"])
+        .optional(),
+    })
+    .optional(),
 });
 
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;

@@ -81,6 +81,46 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 > `reasoning: true` のモデル（Qwen3 等）は `<think>` ブロックと実際の返答が **同じ `maxTokens` 予算を共有する**。
 > デフォルトの `4096` では thinking がトークンを使い切り、`content: []`（空返答）が返る。
 > ローカル LLM にはコスト制約がないため、`16384` 以上を指定する。
+>
+> ただし `compat.thinkingFormat` で thinking を OFF にできる場合は `4096` のまま運用して問題ない（→ `compat` 参照）。
+
+### `compat`
+
+`pi-ai` の OpenAI-compatible ストリームレイヤーに渡す互換設定のオーバーライド。カスタムプロバイダーでのみ有効。
+
+現在サポートするフィールド:
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `thinkingFormat` | 文字列 | thinking ON/OFF の制御方法をプロバイダー別に指定 |
+
+**`thinkingFormat` に指定できる値**:
+
+| 値 | 対象サーバー | 挙動 |
+|---|---|---|
+| `"qwen"` | llama-cpp（Qwen3）、Ollama（Qwen3）等 | `enable_thinking: true/false` をリクエストに付与 |
+| `"qwen-chat-template"` | 一部の互換サーバー | `enable_thinking` + `preserve_thinking` を付与 |
+| `"deepseek"` | DeepSeek 互換 | `thinking.type: enabled/disabled` を付与 |
+| `"openrouter"` | OpenRouter | `reasoning.effort` を付与 |
+| `"openai"` | OpenAI 標準（デフォルト） | `enable_thinking` は送らない |
+
+**thinking を OFF にする典型例（llama-cpp + Qwen3）**:
+
+```json
+{
+  "provider": "llama-cpp",
+  "baseUrl": "http://localhost:8080/v1",
+  "api": "openai-completions",
+  "reasoning": true,
+  "contextWindow": 65536,
+  "maxTokens": 16384,
+  "compat": { "thinkingFormat": "qwen" }
+}
+```
+
+`reasoning: true` を維持しつつ `thinkingFormat: "qwen"` を設定することで、エージェントの thinkingLevel が `"off"`（デフォルト）のとき `enable_thinking: false` がリクエストに付与される。llama-cpp 側で Qwen3 の thinking が抑制され、タイムアウトを防げる。
+
+> **背景**: llama-cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `enable_thinking` が含まれない場合は自動で thinking を有効にする。`thinkingFormat` を明示しないと `pi-ai` が `enable_thinking` を送らず、thinking トークンがすべての出力予算を消費してタイムアウトになる。
 
 ## 具体例
 
@@ -106,19 +146,21 @@ API Key 不要、最小構成:
 }
 ```
 
-### カスタムプロバイダー（拡張設定）
+### カスタムプロバイダー（Qwen3 thinking 制御あり）
 
 ```json
 {
-  "provider": "qwen3-local",
-  "envVars": ["QWEN_API_KEY"],
-  "baseUrl": "http://192.168.1.50:8081/v1",
+  "provider": "llama-cpp",
+  "baseUrl": "http://192.168.1.50:8080/v1",
   "api": "openai-completions",
   "reasoning": true,
-  "contextWindow": 32768,
-  "maxTokens": 16384
+  "contextWindow": 65536,
+  "maxTokens": 16384,
+  "compat": { "thinkingFormat": "qwen" }
 }
 ```
+
+`compat.thinkingFormat: "qwen"` を設定すると、エージェントが thinking を使わないとき（デフォルト）に `enable_thinking: false` が自動付与される。thinking を意図的に使いたいときは thinkingLevel を `"low"` 以上に設定すれば ON になる。
 
 ### baseUrl にプレースホルダを含むケース
 
