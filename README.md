@@ -76,3 +76,7 @@ pnpm dev
     - [pi-agent-core](docs/research/pi/core/pi-agent-core.md)
     - [pi-ai](docs/research/pi/ai/pi-ai.md)
     - [droid-sdk](docs/research/droid-sdk.md)
+
+## 参考リポジトリ
+
+- [Agent-Reach](https://github.com/Panniantong/Agent-Reach) - url-fetch 設計の元ネタ
