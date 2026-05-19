@@ -135,7 +135,7 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
                     messageReference: msg.messageId,
                     failIfNotExists: false,
                   },
-                  allowedMentions: { repliedUser: false },
+                  allowedMentions: { repliedUser: true },
                 }
               : firstChunk,
           );
