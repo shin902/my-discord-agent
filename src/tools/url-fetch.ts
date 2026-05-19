@@ -296,7 +296,7 @@ export function buildCommand(
       const subDirQ = shellQuote(`${base}.subs`);
       return (
         `mkdir -p ${subDirQ} && ` +
-        `(yt-dlp --no-check-certificate --dump-json ${q} > ${metaOutQ} 2>&1 || true) && ` +
+        `yt-dlp --no-check-certificate --dump-json ${q} > ${metaOutQ} 2>&1 && ` +
         `(yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download -o ${shellQuote(`${base}.subs/%(id)s`)} ${q} > /dev/null 2>&1 || true)`
       );
     }
