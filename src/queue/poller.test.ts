@@ -4,7 +4,12 @@ import type { InboxMessage } from "./inbox.js";
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../config/group-config.js", () => ({ loadGroupConfig: vi.fn() }));
 vi.mock("../discord/client.js", () => ({
-  client: { channels: { fetch: vi.fn() } },
+  client: {
+    channels: {
+      cache: { get: vi.fn().mockReturnValue(undefined) },
+      fetch: vi.fn(),
+    },
+  },
 }));
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
 vi.mock("./inbox.js", () => ({ prependInbox: vi.fn(), shiftInbox: vi.fn() }));
@@ -36,6 +41,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(sendMessage).mockResolvedValue("AI response");
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => true,
+      isTextBased: () => false,
       send: mockSend,
     } as never);
     mockSend.mockClear();
@@ -50,7 +56,7 @@ describe("processMessage - autoReply", () => {
     expect(mockSend).toHaveBeenCalledWith({
       content: "AI response",
       reply: { messageReference: "msg-original", failIfNotExists: false },
-      allowedMentions: { repliedUser: false },
+      allowedMentions: { repliedUser: true },
     });
   });
 
@@ -82,7 +88,7 @@ describe("processMessage - autoReply", () => {
     expect(mockSend).toHaveBeenNthCalledWith(1, {
       content: "A".repeat(2000),
       reply: { messageReference: "msg-original", failIfNotExists: false },
-      allowedMentions: { repliedUser: false },
+      allowedMentions: { repliedUser: true },
     });
     expect(mockSend).toHaveBeenNthCalledWith(2, "A");
   });

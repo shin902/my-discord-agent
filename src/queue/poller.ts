@@ -54,15 +54,15 @@ function startTypingLoop(channelId: string): () => void {
   let cancelSleep: (() => void) | null = null;
 
   const loop = async () => {
+    const channel =
+      client.channels.cache.get(channelId) ??
+      (await client.channels.fetch(channelId).catch(() => null));
+    if (!channel?.isTextBased()) return;
+
     while (!cancelled) {
       try {
-        const channel =
-          client.channels.cache.get(channelId) ??
-          (await client.channels.fetch(channelId).catch(() => null));
-        if (channel?.isTextBased()) {
-          // PartialGroupDMChannel は sendTyping を持たないため型アサションを使用
-          await (channel as { sendTyping(): Promise<void> }).sendTyping();
-        }
+        // PartialGroupDMChannel は sendTyping を持たないため型アサションを使用
+        await (channel as { sendTyping(): Promise<void> }).sendTyping();
       } catch {
         // typing indicator はベストエフォート
       }
