@@ -43,8 +43,9 @@ function createCustomModel(
     },
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ...(entry.compat ? { compat: entry.compat as any } : {}),
+    ...(entry.compat
+      ? { compat: entry.compat as unknown as NonNullable<Model<"openai-completions">["compat"]> }
+      : {}),
   };
 }
 
