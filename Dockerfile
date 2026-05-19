@@ -6,8 +6,8 @@ RUN apk add --no-cache \
     curl \
     github-cli
 
-RUN python3 -m venv /opt/venv
-RUN /opt/venv/bin/pip install --no-cache-dir \
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir \
     yt-dlp \
     feedparser
 
