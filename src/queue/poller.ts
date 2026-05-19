@@ -47,63 +47,96 @@ export function stopPoller(): void {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const TYPING_INTERVAL_MS = 8_000;
+
+function startTypingLoop(channelId: string): () => void {
+  let cancelled = false;
+
+  const loop = async () => {
+    while (!cancelled) {
+      try {
+        const channel =
+          client.channels.cache.get(channelId) ??
+          (await client.channels.fetch(channelId).catch(() => null));
+        if (channel?.isTextBased()) {
+          // PartialGroupDMChannel は sendTyping を持たないため型アサションを使用
+          await (channel as { sendTyping(): Promise<void> }).sendTyping();
+        }
+      } catch {
+        // typing indicator はベストエフォート
+      }
+      await sleep(TYPING_INTERVAL_MS);
+    }
+  };
+
+  void loop();
+  return () => {
+    cancelled = true;
+  };
+}
+
 export async function processMessage(msg: InboxMessage): Promise<void> {
+  const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
   try {
-    response = await sendMessage(msg.groupName, msg.sessionId, msg.content);
-  } catch (err) {
-    if (err instanceof NonRetryableError) {
-      console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-      await appendDeadLetter(msg);
+    try {
+      response = await sendMessage(msg.groupName, msg.sessionId, msg.content);
+    } catch (err) {
+      if (err instanceof NonRetryableError) {
+        console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+        await appendDeadLetter(msg);
+        return;
+      }
+      console.error(
+        `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
+        err,
+      );
+      if (msg.retries + 1 < MAX_RETRIES) {
+        await prependInbox({ ...msg, retries: msg.retries + 1 });
+      } else {
+        console.error(
+          "[poller] リトライ上限に達しました。dead-letter に移動:",
+          msg.id,
+        );
+        await appendDeadLetter(msg);
+      }
+      const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
+      await sleep(retryDelay);
       return;
     }
-    console.error(
-      `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
-      err,
-    );
-    if (msg.retries + 1 < MAX_RETRIES) {
-      await prependInbox({ ...msg, retries: msg.retries + 1 });
-    } else {
-      console.error(
-        "[poller] リトライ上限に達しました。dead-letter に移動:",
-        msg.id,
-      );
-      await appendDeadLetter(msg);
-    }
-    const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
-    await sleep(retryDelay);
-    return;
-  }
 
-  try {
-    const [channel, groupConfig] = await Promise.all([
-      client.channels.fetch(msg.channelId),
-      loadGroupConfig(msg.groupName),
-    ]);
-    if (channel?.isSendable() && response) {
-      const chunks = splitMessage(response);
-      const [firstChunk, ...restChunks] = chunks;
-      if (firstChunk) {
-        await channel.send(
-          groupConfig.autoReply && msg.messageId
-            ? {
-                content: firstChunk,
-                reply: {
-                  messageReference: msg.messageId,
-                  failIfNotExists: false,
-                },
-                allowedMentions: { repliedUser: true },
-              }
-            : firstChunk,
-        );
+    try {
+      const [channel, groupConfig] = await Promise.all([
+        client.channels.fetch(msg.channelId),
+        loadGroupConfig(msg.groupName),
+      ]);
+      if (channel?.isSendable() && response) {
+        const chunks = splitMessage(response);
+        const [firstChunk, ...restChunks] = chunks;
+        if (firstChunk) {
+          await channel.send(
+            groupConfig.autoReply && msg.messageId
+              ? {
+                  content: firstChunk,
+                  reply: {
+                    messageReference: msg.messageId,
+                    failIfNotExists: false,
+                  },
+                  allowedMentions: { repliedUser: false },
+                }
+              : firstChunk,
+          );
+        }
+        for (const chunk of restChunks) {
+          await channel.send(chunk);
+        }
       }
-      for (const chunk of restChunks) {
-        await channel.send(chunk);
-      }
+    } catch (err) {
+      console.error(`[poller] Discord送信エラー:`, err);
     }
-  } catch (err) {
-    console.error(`[poller] Discord送信エラー:`, err);
+  } finally {
+    stopTyping();
   }
 }
 
