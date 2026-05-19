@@ -8,8 +8,8 @@ RUN apk add --no-cache \
 
 RUN python3 -m venv /opt/venv
 RUN /opt/venv/bin/pip install --no-cache-dir \
-    yt-dlp==2026.3.17 \
-    feedparser==6.0.12
+    yt-dlp \
+    feedparser
 
 ENV PATH="/opt/venv/bin:$PATH"
 
