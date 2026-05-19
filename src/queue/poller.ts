@@ -51,6 +51,7 @@ const TYPING_INTERVAL_MS = 8_000;
 
 function startTypingLoop(channelId: string): () => void {
   let cancelled = false;
+  let cancelSleep: (() => void) | null = null;
 
   const loop = async () => {
     while (!cancelled) {
@@ -65,13 +66,24 @@ function startTypingLoop(channelId: string): () => void {
       } catch {
         // typing indicator はベストエフォート
       }
-      await sleep(TYPING_INTERVAL_MS);
+      // sendTyping() の await 中に stopTyping() が呼ばれた場合はここで抜ける
+      if (cancelled) break;
+      await new Promise<void>((resolve) => {
+        const id = setTimeout(resolve, TYPING_INTERVAL_MS);
+        // stopTyping() が clearTimeout してすぐに resolve することでハンドルを即解放する
+        cancelSleep = () => {
+          clearTimeout(id);
+          resolve();
+        };
+      });
+      cancelSleep = null;
     }
   };
 
   void loop();
   return () => {
     cancelled = true;
+    cancelSleep?.();
   };
 }
 
