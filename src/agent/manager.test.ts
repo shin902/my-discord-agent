@@ -93,6 +93,7 @@ describe("sendMessage: サンドボックス構成", () => {
     });
     builderChain = {
       image: vi.fn().mockReturnThis(),
+      pullPolicy: vi.fn().mockReturnThis(),
       registry: vi.fn().mockReturnThis(),
       workdir: vi.fn().mockReturnThis(),
       cpus: vi.fn().mockReturnThis(),
@@ -180,6 +181,7 @@ describe("sendMessage: credential-proxy 処理", () => {
     secretMock.mockReturnThis();
     builderChain = {
       image: vi.fn().mockReturnThis(),
+      pullPolicy: vi.fn().mockReturnThis(),
       registry: vi.fn().mockReturnThis(),
       workdir: vi.fn().mockReturnThis(),
       cpus: vi.fn().mockReturnThis(),
