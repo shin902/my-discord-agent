@@ -12,17 +12,19 @@ const FETCH_DIR = "fetched";
 const TIMEOUT_MS = 120_000;
 
 const PRIVATE_IP = [
+  /^0\.0\.0\.0$/,
   /^127\./,
   /^169\.254\./,
   /^10\./,
   /^172\.(1[6-9]|2\d|3[01])\./,
   /^192\.168\./,
   /^::1$/,
-  /^fc00:/,
-  /^fe80:/,
+  /^f[cd][0-9a-f]{2}:/i, // fc00::/7 (fc00:: と fd00:: の両方)
+  /^fe80:/i,
+  /^::ffff:(127\.|10\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i, // IPv4マップドアドレス
 ];
 
-function isPrivateAddress(ip: string): boolean {
+export function isPrivateAddress(ip: string): boolean {
   return PRIVATE_IP.some((r) => r.test(ip));
 }
 
@@ -356,9 +358,10 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
     }
-    const { address } = await lookup(parsed.hostname);
-    if (isPrivateAddress(address)) {
-      throw new Error(`内部アドレスへのアクセスは禁止: ${address}`);
+    const addresses = await lookup(parsed.hostname, { all: true });
+    const blocked = addresses.find((a) => isPrivateAddress(a.address));
+    if (blocked) {
+      throw new Error(`内部アドレスへのアクセスは禁止: ${blocked.address}`);
     }
 
     const service = detectService(parsed);
