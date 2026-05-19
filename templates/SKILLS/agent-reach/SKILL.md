@@ -30,4 +30,3 @@ curl -s "https://www.reddit.com/r/subreddit/comments/POST_ID.json" -H "User-Agen
 ## RSS
 python3 -c "import feedparser; f=feedparser.parse('URL'); [print(e.title, e.link) for e in f.entries[:10]]"
 
-$ARGUMENTS$
