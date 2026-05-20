@@ -62,6 +62,16 @@ function resolveCompat(
 }
 
 function createCustomModel(
+  entry: CredentialEntry & { api?: "openai-completions" },
+  baseUrl: string,
+  modelId: string,
+): Model<"openai-completions">;
+function createCustomModel(
+  entry: CredentialEntry,
+  baseUrl: string,
+  modelId: string,
+): Model<Api>;
+function createCustomModel(
   entry: CredentialEntry,
   baseUrl: string,
   modelId: string,
@@ -94,15 +104,8 @@ function createCustomModel(
     },
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
-    ...(compat
-      ? {
-          // Model<Api>["compat"] は条件型のため TypeScript が直接代入を拒否する。
-          // api === "openai-completions" のときのみ compat を設定しているが、
-          // 型システム上は解決できないため as unknown as でキャストする。
-          compat: compat as unknown as Model<Api>["compat"],
-        }
-      : {}),
-  };
+    ...(compat ? { compat } : {}),
+  } as Model<Api>;
 }
 
 export async function resolveModel(provider: string, modelId: string) {
