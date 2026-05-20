@@ -65,8 +65,9 @@ export async function appendMessage(
   // AgentMessageの型には含まれないが、推論モデルが実行時に付与することがある。
   const { reasoning: _r, ...rest } = message as AgentMessage & {
     reasoning?: unknown;
+    reasoning_content?: string;
   };
-  const sanitized = {
+  const sanitized: Record<string, unknown> = {
     ...rest,
     content: Array.isArray(rest.content)
       ? rest.content.filter(
@@ -74,6 +75,20 @@ export async function appendMessage(
         )
       : rest.content,
   };
+
+  // Kimi K2.6 / DeepSeek V4 の thinking mode では、ツールコールを含む
+  // assistant メッセージに reasoning_content が必須。欠けていると次ターンで HTTP 400。
+  // refs: Hermes Agent v0.12.0 #15762, NousResearch/hermes-agent#16844
+  if (
+    rest.role === "assistant" &&
+    Array.isArray(sanitized.content) &&
+    (sanitized.content as Array<{ type?: string }>).some(
+      (b) => b.type === "tool_use",
+    ) &&
+    sanitized.reasoning_content === undefined
+  ) {
+    sanitized.reasoning_content = " ";
+  }
 
   const filePath = sessionPath(groupName, sessionId);
   // VirtioFS UID ミスマッチ対策: 既存ファイルが他UID所有の場合に備えて事前に chmod
