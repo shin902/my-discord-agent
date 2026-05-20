@@ -39,28 +39,6 @@ function resolveThinkingFormat(
   return format;
 }
 
-function isOllamaThinkingFormat(entry: CredentialEntry, baseUrl: string) {
-  const format = entry.compat?.thinkingFormat;
-  return (
-    format === "ollama" ||
-    (format === "qwen" &&
-      (entry.provider.toLowerCase().includes("ollama") ||
-        new URL(baseUrl).port === "11434"))
-  );
-}
-
-function resolveCompat(
-  entry: CredentialEntry,
-  baseUrl: string,
-): Model<"openai-completions">["compat"] | undefined {
-  if (!entry.compat) return undefined;
-
-  return {
-    ...entry.compat,
-    thinkingFormat: resolveThinkingFormat(entry, baseUrl),
-  } as Model<"openai-completions">["compat"];
-}
-
 function createCustomModel(
   entry: CredentialEntry & { api?: "openai-completions" },
   baseUrl: string,
@@ -77,8 +55,18 @@ function createCustomModel(
   modelId: string,
 ): Model<Api> {
   const api = entry.api ?? "openai-completions";
-  const compat =
-    api === "openai-completions" ? resolveCompat(entry, baseUrl) : undefined;
+  const resolvedFormat =
+    api === "openai-completions" ? resolveThinkingFormat(entry, baseUrl) : undefined;
+  const compat: Model<"openai-completions">["compat"] | undefined =
+    entry.compat && resolvedFormat !== undefined
+      ? ({ ...entry.compat, thinkingFormat: resolvedFormat } as Model<"openai-completions">["compat"])
+      : undefined;
+  const originalFormat = entry.compat?.thinkingFormat;
+  const isOllama =
+    originalFormat === "ollama" ||
+    (originalFormat === "qwen" &&
+      (entry.provider.toLowerCase().includes("ollama") ||
+        new URL(baseUrl).port === "11434"));
   return {
     id: modelId,
     name: modelId,
@@ -86,7 +74,7 @@ function createCustomModel(
     provider: entry.provider,
     baseUrl,
     reasoning: entry.reasoning ?? Boolean(compat?.thinkingFormat),
-    ...(isOllamaThinkingFormat(entry, baseUrl)
+    ...(isOllama
       ? {
           thinkingLevelMap: {
             off: "none",
