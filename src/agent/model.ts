@@ -63,11 +63,10 @@ function createCustomModel(
       ? ({ ...entry.compat, thinkingFormat: resolvedFormat } as Model<"openai-completions">["compat"])
       : undefined;
   const originalFormat = entry.compat?.thinkingFormat;
+  // resolveThinkingFormat が "qwen"→"openrouter" に変換した場合は Ollama 系プロバイダを意味する
   const isOllama =
     originalFormat === "ollama" ||
-    (originalFormat === "qwen" &&
-      (entry.provider.toLowerCase().includes("ollama") ||
-        new URL(baseUrl).port === "11434"));
+    (originalFormat === "qwen" && resolvedFormat === "openrouter");
   return {
     id: modelId,
     name: modelId,
