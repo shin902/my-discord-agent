@@ -129,6 +129,91 @@ describe("resolveModel", () => {
     });
   });
 
+  it("qwen: llama-cpp でも ollama でもないプロバイダはフォールスルーして thinkingFormat: 'qwen' のまま返す", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "custom-unknown",
+        baseUrl: "http://localhost:8080/v1",
+        api: "openai-completions",
+        compat: { thinkingFormat: "qwen" },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("custom-unknown", "qwen3");
+    expect(model.compat).toEqual({ thinkingFormat: "qwen" });
+    expect((model as { thinkingLevelMap?: unknown }).thinkingLevelMap).toBeUndefined();
+  });
+
+  it("thinkingFormat: 'openrouter' を明示した場合は thinkingLevelMap が付かない", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "my-openrouter",
+        baseUrl: "http://openrouter.ai/v1",
+        api: "openai-completions",
+        compat: { thinkingFormat: "openrouter" },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("my-openrouter", "deepseek-r1");
+    expect(model.compat).toEqual({ thinkingFormat: "openrouter" });
+    expect(model.reasoning).toBe(true);
+    expect((model as { thinkingLevelMap?: unknown }).thinkingLevelMap).toBeUndefined();
+  });
+
+  it("reasoning: true を明示した場合は compat がなくても上書きされない", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "custom-reasoning",
+        baseUrl: "http://localhost:9090/v1",
+        api: "openai-completions",
+        reasoning: true,
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("custom-reasoning", "some-model");
+    expect(model.reasoning).toBe(true);
+    expect(model.compat).toBeUndefined();
+  });
+
+  it("reasoning: false を明示した場合は thinkingFormat があっても上書きされない", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "custom-no-reasoning",
+        baseUrl: "http://localhost:9090/v1",
+        api: "openai-completions",
+        reasoning: false,
+        compat: { thinkingFormat: "qwen-chat-template" },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("custom-no-reasoning", "some-model");
+    expect(model.reasoning).toBe(false);
+  });
+
   it("不明なプロバイダはエラー", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
