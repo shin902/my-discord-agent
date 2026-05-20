@@ -100,6 +100,7 @@ describe("runAgentLoop", () => {
         model: { id: "kimi-k2.6", name: "Kimi K2.6" },
         messages: [],
         tools: [],
+        thinkingLevel: "off",
       },
       getApiKey: expect.any(Function),
     });

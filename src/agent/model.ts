@@ -21,19 +21,76 @@ export function resolveBaseUrl(baseUrl: string): string | null {
   return resolved;
 }
 
+function resolveThinkingFormat(
+  entry: CredentialEntry,
+  baseUrl: string,
+): NonNullable<Model<"openai-completions">["compat"]>["thinkingFormat"] {
+  const format = entry.compat?.thinkingFormat;
+  if (format === "qwen") {
+    const provider = entry.provider.toLowerCase();
+    if (provider.includes("llama-cpp")) return "qwen-chat-template";
+    if (provider.includes("ollama") || new URL(baseUrl).port === "11434") {
+      return "openrouter";
+    }
+    // 上記以外（vLLM・SGLang 等の Qwen 互換サーバー）は "qwen" のまま pi-ai に渡す。
+    // pi-ai は "qwen" を enable_thinking: boolean として処理する（types.d.ts:265 参照）。
+  }
+  // 暫定: pi-ai が "ollama" をサポートするまで "openrouter" で代用。
+  // Ollama の OpenAI 互換 API は reasoning: { effort } 形式を使うため動作上は等価。
+  // model.compat.thinkingFormat が "openrouter" に見えるのはこの変換によるもの。
+  if (format === "ollama") return "openrouter";
+  return format;
+}
+
+function createCustomModel(
+  entry: CredentialEntry & { api?: "openai-completions" },
+  baseUrl: string,
+  modelId: string,
+): Model<"openai-completions">;
+function createCustomModel(
+  entry: CredentialEntry,
+  baseUrl: string,
+  modelId: string,
+): Model<Api>;
 function createCustomModel(
   entry: CredentialEntry,
   baseUrl: string,
   modelId: string,
 ): Model<Api> {
   const api = entry.api ?? "openai-completions";
+  const resolvedFormat =
+    api === "openai-completions"
+      ? resolveThinkingFormat(entry, baseUrl)
+      : undefined;
+  // reasoning: false を明示した場合は thinking を完全に無効化するため compat も除外する
+  const compat: Model<"openai-completions">["compat"] | undefined =
+    entry.reasoning !== false && entry.compat && resolvedFormat !== undefined
+      ? ({
+          ...entry.compat,
+          thinkingFormat: resolvedFormat,
+        } as Model<"openai-completions">["compat"])
+      : undefined;
+  const originalFormat = entry.compat?.thinkingFormat;
+  // resolveThinkingFormat が "qwen"→"openrouter" に変換した場合は Ollama 系プロバイダを意味する
+  const isOllama =
+    originalFormat === "ollama" ||
+    (originalFormat === "qwen" && resolvedFormat === "openrouter");
   return {
     id: modelId,
     name: modelId,
     api,
     provider: entry.provider,
     baseUrl,
-    reasoning: entry.reasoning ?? false,
+    reasoning: entry.reasoning ?? Boolean(compat?.thinkingFormat),
+    ...(isOllama
+      ? {
+          thinkingLevelMap: {
+            off: "none",
+            minimal: "low",
+            xhigh: "high",
+          },
+        }
+      : {}),
     input: ["text"],
     cost: {
       input: 0,
@@ -43,7 +100,8 @@ function createCustomModel(
     },
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
-  };
+    ...(compat ? { compat } : {}),
+  } as Model<Api>;
 }
 
 export async function resolveModel(provider: string, modelId: string) {

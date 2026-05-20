@@ -95,6 +95,7 @@ export async function runAgentLoop(
       model,
       messages,
       tools,
+      thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
     },
     getApiKey: (provider: string) => {
       // KnownProvider: pi-ai の環境変数マッピングを使用

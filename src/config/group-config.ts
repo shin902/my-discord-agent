@@ -1,11 +1,22 @@
 import { cp, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
+
+const THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly [ModelThinkingLevel, ...ModelThinkingLevel[]];
 
 const ModelConfigSchema = z.object({
   provider: z.string(),
   modelId: z.string(),
+  thinkingLevel: z.enum(THINKING_LEVELS).optional(),
 });
 
 export const GroupJsonSchema = z.object({

@@ -15,7 +15,9 @@
 
 ### `baseUrl`
 
-API のベース URL。`{ENV_VAR}` 形式のプレースホルダを含めると、起動時に環境変数で置換されます。
+API のベース URL。**`http://` または `https://` のプロトコルを必ず含めてください**（例: `http://localhost/v1`）。プロトコルがない場合は起動時にバリデーションエラーになります。
+
+`{ENV_VAR}` 形式のプレースホルダを含めると、起動時に環境変数で置換されます。
 
 ```json
 { "baseUrl": "https://api.example.com/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1" }
@@ -81,6 +83,93 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 > `reasoning: true` のモデル（Qwen3 等）は `<think>` ブロックと実際の返答が **同じ `maxTokens` 予算を共有する**。
 > デフォルトの `4096` では thinking がトークンを使い切り、`content: []`（空返答）が返る。
 > ローカル LLM にはコスト制約がないため、`16384` 以上を指定する。
+>
+> ただし `compat.thinkingFormat` で thinking を OFF にできる場合は `4096` のまま運用して問題ない（→ `compat` 参照）。
+
+### `compat`
+
+`pi-ai` の OpenAI-compatible ストリームレイヤーに渡す互換設定のオーバーライド。カスタムプロバイダーでのみ有効。
+
+現在サポートするフィールド:
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `thinkingFormat` | 文字列 | thinking ON/OFF の制御方法をプロバイダー別に指定 |
+
+**`thinkingFormat` に指定できる値**:
+
+| 値 | 対象サーバー | 挙動 |
+|---|---|---|
+| `"qwen"` | Qwen 互換 API | `enable_thinking: true/false` をリクエストに付与。ただし `provider` が `llama-cpp` なら `"qwen-chat-template"`、`ollama` なら `"ollama"` 相当に自動補正 |
+| `"qwen-chat-template"` | llama.cpp / llama-cpp-python | `chat_template_kwargs.enable_thinking` + `preserve_thinking` を付与 |
+| `"ollama"` | Ollama OpenAI 互換 API | `reasoning.effort` を付与。`"off"` は `"none"` |
+| `"deepseek"` | DeepSeek 互換 | `thinking.type: enabled/disabled` を付与 |
+| `"openrouter"` | OpenRouter | `reasoning.effort` を付与 |
+| `"openai"` | OpenAI 標準（デフォルト） | `enable_thinking` は送らない |
+
+**thinking を OFF にする典型例（llama-cpp + Qwen3）**:
+
+```json
+{
+  "provider": "llama-cpp",
+  "baseUrl": "http://localhost:8080/v1",
+  "api": "openai-completions",
+  "contextWindow": 65536,
+  "maxTokens": 4096,
+  "compat": { "thinkingFormat": "qwen-chat-template" }
+}
+```
+
+`thinkingFormat` を設定すると自動的に reasoning モデルとして扱われる。エージェントの thinkingLevel が `"off"`（デフォルト）のとき `chat_template_kwargs.enable_thinking: false` がリクエストに付与される。llama.cpp 側で Qwen3 の thinking が抑制され、タイムアウトを防げる。
+
+> **前提**: `"qwen-chat-template"` が機能するには、llama.cpp サーバーを **`--jinja` フラグ付き**で起動する必要がある。`--jinja` がない場合 `chat_template_kwargs` は無視され、thinking が常に ON になってタイムアウトする。
+>
+> ```bash
+> llama-server -m /path/to/model.gguf --host 0.0.0.0 --port 8080 --jinja
+> ```
+>
+> **Qwen3.5 の既知バグ**: `enable_thinking: false` を送っても thinking が止まらないケースが報告されている（[llama.cpp #20409](https://github.com/ggml-org/llama.cpp/issues/20409)）。その場合は `--reasoning-budget 0` を追加することで thinking トークン予算をゼロに固定できる。
+>
+> ```bash
+> llama-server -m /path/to/Qwen3.5.gguf --host 0.0.0.0 --port 8080 --jinja --reasoning-budget 0
+> ```
+
+> **背景**: llama.cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `chat_template_kwargs.enable_thinking` が含まれない場合は自動で thinking を有効にする構成がある。`thinkingFormat` を明示しないと thinking トークンが出力予算を消費してタイムアウトしやすい。
+
+## thinkingLevel の制御（group.json 側）
+
+`compat.thinkingFormat` はプロバイダーが thinking をどう受け付けるかを定義する。**thinking を実際に ON にするかどうか** はグループごとの設定（`groups/{name}/group.json`）で行う。
+
+```json
+{
+  "model": {
+    "provider": "llama-cpp",
+    "modelId": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+    "thinkingLevel": "low"
+  }
+}
+```
+
+**`thinkingLevel` に指定できる値**:
+
+| 値 | `enable_thinking` | thinking トークン予算 |
+|---|---|---|
+| `"off"`（デフォルト） | `false` | 0（thinking しない） |
+| `"minimal"` | `true` | 1,024 トークン |
+| `"low"` | `true` | 2,048 トークン |
+| `"medium"` | `true` | 8,192 トークン |
+| `"high"` | `true` | 16,384 トークン |
+| `"xhigh"` | `true` | モデルの `thinkingLevelMap` に依存 |
+
+> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `credential-proxy.json` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"ollama"` 等の thinking 制御に対応した値である必要がある。
+
+**thinking を完全に OFF にする**（`compat.thinkingFormat` が必須）:
+
+```json
+{ "model": { "provider": "llama-cpp", "modelId": "Qwen3.6-35B-...", "thinkingLevel": "off" } }
+```
+
+`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `credential-proxy.json` の `compat.thinkingFormat` を設定していない場合、thinking OFF のフィールドはリクエストに含まれず、ローカル推論サーバー側のデフォルトに従う。
 
 ## 具体例
 
@@ -96,6 +185,8 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 
 ### カスタムプロバイダー（ローカル llama.cpp）
 
+> **プロバイダー名の使い分け**: `provider` の値は任意の文字列を指定できる。`"llama-cpp"` は単なる識別子で、`group.json` の `model.provider` と一致させれば何でもよい。thinking 制御が不要なモデル用と Qwen3 系モデル用を別エントリとして分けておくと管理しやすい（例: `"llama-cpp"` と `"llama-cpp-qwen3"`）。
+
 API Key 不要、最小構成:
 
 ```json
@@ -106,19 +197,45 @@ API Key 不要、最小構成:
 }
 ```
 
-### カスタムプロバイダー（拡張設定）
+### カスタムプロバイダー（Qwen3 thinking 制御あり）
 
 ```json
 {
-  "provider": "qwen3-local",
-  "envVars": ["QWEN_API_KEY"],
-  "baseUrl": "http://192.168.1.50:8081/v1",
+  "provider": "llama-cpp",
+  "baseUrl": "http://192.168.1.50:8080/v1",
   "api": "openai-completions",
-  "reasoning": true,
-  "contextWindow": 32768,
-  "maxTokens": 16384
+  "contextWindow": 65536,
+  "maxTokens": 4096,
+  "compat": { "thinkingFormat": "qwen-chat-template" }
 }
 ```
+
+`compat.thinkingFormat: "qwen-chat-template"` を設定することで、`thinkingLevel` の値に応じて `chat_template_kwargs.enable_thinking` がリクエストに付与されるようになる。**設定しない場合は thinking OFF のフィールド自体が送られず、llama.cpp がデフォルト（thinking ON）で動作する。**
+
+| thinkingLevel | chat_template_kwargs.enable_thinking |
+|---|---|
+| `"off"`（デフォルト） | `false` を明示送信 |
+| `"low"` 以上 | `true` を明示送信 |
+| compat 未設定 | **送信しない**（サーバー任せ） |
+
+### カスタムプロバイダー（Ollama + Qwen3 thinking 制御あり）
+
+```json
+{
+  "provider": "ollama",
+  "baseUrl": "http://192.168.1.50:11434/v1",
+  "api": "openai-completions",
+  "contextWindow": 65536,
+  "maxTokens": 4096,
+  "compat": { "thinkingFormat": "ollama" }
+}
+```
+
+Ollama の OpenAI 互換 API では `thinkingLevel: "off"` が `reasoning.effort: "none"` として送信される。
+
+> **前提**: Ollama **v0.9.0 以降**が必要（thinking サポートが v0.9.0 で追加）。llama.cpp の `--jinja` のような特別な起動フラグは不要。
+
+> **注意**: `"qwen"` の自動補正（→ `"ollama"` 相当）はプロバイダー名に `ollama` が含まれるか、`baseUrl` のポートが `11434`（Ollama のデフォルト）の場合にのみ機能する。リバースプロキシ経由など別ポートで運用する場合は、`"qwen"` の自動補正に頼らず `"thinkingFormat": "ollama"` を明示すること。
 
 ### baseUrl にプレースホルダを含むケース
 
