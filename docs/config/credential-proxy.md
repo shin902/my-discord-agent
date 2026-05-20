@@ -233,6 +233,8 @@ Ollama の OpenAI 互換 API では `thinkingLevel: "off"` が `reasoning.effort
 
 > **前提**: Ollama **v0.9.0 以降**が必要（thinking サポートが v0.9.0 で追加）。llama.cpp の `--jinja` のような特別な起動フラグは不要。
 
+> **注意**: `"qwen"` の自動補正（→ `"ollama"` 相当）はプロバイダー名に `ollama` が含まれるか、`baseUrl` のポートが `11434`（Ollama のデフォルト）の場合にのみ機能する。リバースプロキシ経由など別ポートで運用する場合は、`"qwen"` の自動補正に頼らず `"thinkingFormat": "ollama"` を明示すること。
+
 ### baseUrl にプレースホルダを含むケース
 
 ```json
