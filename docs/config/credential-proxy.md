@@ -231,6 +231,8 @@ API Key 不要、最小構成:
 
 Ollama の OpenAI 互換 API では `thinkingLevel: "off"` が `reasoning.effort: "none"` として送信される。
 
+> **前提**: Ollama **v0.9.0 以降**が必要（thinking サポートが v0.9.0 で追加）。llama.cpp の `--jinja` のような特別な起動フラグは不要。
+
 ### baseUrl にプレースホルダを含むケース
 
 ```json
