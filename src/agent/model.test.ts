@@ -215,6 +215,52 @@ describe("resolveModel", () => {
     expect(model.compat).toBeUndefined();
   });
 
+  it("ポート 11434 のみで Ollama を検出し thinkingLevelMap を付与する", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "custom",
+        baseUrl: "http://custom-host:11434/v1",
+        api: "openai-completions",
+        compat: { thinkingFormat: "qwen" },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("custom", "qwen3");
+    expect(model.compat).toEqual({ thinkingFormat: "openrouter" });
+    expect(model.thinkingLevelMap).toEqual({
+      off: "none",
+      minimal: "low",
+      xhigh: "high",
+    });
+  });
+
+  it("compat に thinkingFormat がない場合は compat が undefined になる", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "custom",
+        baseUrl: "http://localhost:8080/v1",
+        api: "openai-completions",
+        compat: {},
+      },
+    ] as unknown as CredentialEntry[]);
+
+    const model = await resolveModel("custom", "some-model");
+    expect(model.compat).toBeUndefined();
+    expect(model.reasoning).toBe(false);
+  });
+
   it("不明なプロバイダはエラー", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
