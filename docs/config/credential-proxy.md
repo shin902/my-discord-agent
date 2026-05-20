@@ -15,7 +15,9 @@
 
 ### `baseUrl`
 
-API のベース URL。`{ENV_VAR}` 形式のプレースホルダを含めると、起動時に環境変数で置換されます。
+API のベース URL。**`http://` または `https://` のプロトコルを必ず含めてください**（例: `http://localhost/v1`）。プロトコルがない場合は起動時にバリデーションエラーになります。
+
+`{ENV_VAR}` 形式のプレースホルダを含めると、起動時に環境変数で置換されます。
 
 ```json
 { "baseUrl": "https://api.example.com/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1" }
