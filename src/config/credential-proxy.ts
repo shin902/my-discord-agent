@@ -38,6 +38,7 @@ export const CredentialEntrySchema = z.object({
           "zai",
           "qwen",
           "qwen-chat-template",
+          "ollama",
         ])
         .optional(),
     })

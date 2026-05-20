@@ -120,4 +120,26 @@ describe("loadCredentialProxy", () => {
     expect(result2).toEqual([]);
     expect(readFile).toHaveBeenCalledTimes(1);
   });
+
+  it("ollama の thinkingFormat を受け付ける", async () => {
+    const { loadCredentialProxy } = await importFresh();
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify([
+        {
+          provider: "ollama",
+          baseUrl: "http://localhost:11434/v1",
+          compat: { thinkingFormat: "ollama" },
+        },
+      ]),
+    );
+
+    const result = await loadCredentialProxy();
+    expect(result).toEqual([
+      {
+        provider: "ollama",
+        baseUrl: "http://localhost:11434/v1",
+        compat: { thinkingFormat: "ollama" },
+      },
+    ]);
+  });
 });

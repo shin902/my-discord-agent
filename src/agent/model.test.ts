@@ -62,6 +62,73 @@ describe("resolveModel", () => {
     expect(model.baseUrl).toBe("http://localhost:8080/v1");
   });
 
+  it("compat.thinkingFormat があるカスタムプロバイダは reasoning を自動で有効にする", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "custom-qwen",
+        baseUrl: "http://localhost:8080/v1",
+        api: "openai-completions",
+        compat: { thinkingFormat: "qwen-chat-template" },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("custom-qwen", "qwen3");
+    expect(model.reasoning).toBe(true);
+    expect(model.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
+  });
+
+  it("llama-cpp の qwen 互換設定は chat_template_kwargs 形式に補正する", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "llama-cpp",
+        baseUrl: "http://localhost:8080/v1",
+        api: "openai-completions",
+        compat: { thinkingFormat: "qwen" },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("llama-cpp", "qwen3");
+    expect(model.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
+  });
+
+  it("Ollama の qwen 互換設定は reasoning.effort 形式に補正する", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "ollama",
+        baseUrl: "http://localhost:11434/v1",
+        api: "openai-completions",
+        compat: { thinkingFormat: "qwen" },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("ollama", "qwen3");
+    expect(model.compat).toEqual({ thinkingFormat: "openrouter" });
+    expect(model.reasoning).toBe(true);
+    expect(model.thinkingLevelMap).toEqual({
+      off: "none",
+      minimal: "low",
+      xhigh: "high",
+    });
+  });
+
   it("不明なプロバイダはエラー", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");

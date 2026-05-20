@@ -21,19 +21,67 @@ export function resolveBaseUrl(baseUrl: string): string | null {
   return resolved;
 }
 
+function resolveThinkingFormat(
+  entry: CredentialEntry,
+  baseUrl: string,
+): NonNullable<Model<"openai-completions">["compat"]>["thinkingFormat"] {
+  const format = entry.compat?.thinkingFormat;
+  if (format === "qwen") {
+    const provider = entry.provider.toLowerCase();
+    if (provider.includes("llama-cpp")) return "qwen-chat-template";
+    if (provider.includes("ollama") || new URL(baseUrl).port === "11434") {
+      return "openrouter";
+    }
+  }
+  if (format === "ollama") return "openrouter";
+  return format;
+}
+
+function isOllamaThinkingFormat(entry: CredentialEntry, baseUrl: string) {
+  return (
+    entry.compat?.thinkingFormat === "ollama" ||
+    (entry.compat?.thinkingFormat === "qwen" &&
+      (entry.provider.toLowerCase().includes("ollama") ||
+        new URL(baseUrl).port === "11434"))
+  );
+}
+
+function resolveCompat(
+  entry: CredentialEntry,
+  baseUrl: string,
+): Model<"openai-completions">["compat"] | undefined {
+  if (!entry.compat) return undefined;
+
+  return {
+    ...entry.compat,
+    thinkingFormat: resolveThinkingFormat(entry, baseUrl),
+  } as Model<"openai-completions">["compat"];
+}
+
 function createCustomModel(
   entry: CredentialEntry,
   baseUrl: string,
   modelId: string,
 ): Model<Api> {
   const api = entry.api ?? "openai-completions";
+  const compat =
+    api === "openai-completions" ? resolveCompat(entry, baseUrl) : undefined;
   return {
     id: modelId,
     name: modelId,
     api,
     provider: entry.provider,
     baseUrl,
-    reasoning: entry.reasoning ?? false,
+    reasoning: entry.reasoning ?? Boolean(compat?.thinkingFormat),
+    ...(isOllamaThinkingFormat(entry, baseUrl)
+      ? {
+          thinkingLevelMap: {
+            off: "none",
+            minimal: "low",
+            xhigh: "high",
+          },
+        }
+      : {}),
     input: ["text"],
     cost: {
       input: 0,
@@ -43,11 +91,9 @@ function createCustomModel(
     },
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
-    ...(entry.compat
+    ...(compat
       ? {
-          compat: entry.compat as unknown as NonNullable<
-            Model<"openai-completions">["compat"]
-          >,
+          compat: compat as unknown as Model<Api>["compat"],
         }
       : {}),
   };

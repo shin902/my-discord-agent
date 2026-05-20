@@ -98,8 +98,9 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 
 | 値 | 対象サーバー | 挙動 |
 |---|---|---|
-| `"qwen"` | llama-cpp（Qwen3）、Ollama（Qwen3）等 | `enable_thinking: true/false` をリクエストに付与 |
-| `"qwen-chat-template"` | 一部の互換サーバー | `enable_thinking` + `preserve_thinking` を付与 |
+| `"qwen"` | Qwen 互換 API | `enable_thinking: true/false` をリクエストに付与。ただし `provider` が `llama-cpp` なら `"qwen-chat-template"`、`ollama` なら `"ollama"` 相当に自動補正 |
+| `"qwen-chat-template"` | llama.cpp / llama-cpp-python | `chat_template_kwargs.enable_thinking` + `preserve_thinking` を付与 |
+| `"ollama"` | Ollama OpenAI 互換 API | `reasoning.effort` を付与。`"off"` は `"none"` |
 | `"deepseek"` | DeepSeek 互換 | `thinking.type: enabled/disabled` を付与 |
 | `"openrouter"` | OpenRouter | `reasoning.effort` を付与 |
 | `"openai"` | OpenAI 標準（デフォルト） | `enable_thinking` は送らない |
@@ -111,16 +112,15 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
   "provider": "llama-cpp",
   "baseUrl": "http://localhost:8080/v1",
   "api": "openai-completions",
-  "reasoning": true,
   "contextWindow": 65536,
-  "maxTokens": 16384,
-  "compat": { "thinkingFormat": "qwen" }
+  "maxTokens": 4096,
+  "compat": { "thinkingFormat": "qwen-chat-template" }
 }
 ```
 
-`reasoning: true` を維持しつつ `thinkingFormat: "qwen"` を設定することで、エージェントの thinkingLevel が `"off"`（デフォルト）のとき `enable_thinking: false` がリクエストに付与される。llama-cpp 側で Qwen3 の thinking が抑制され、タイムアウトを防げる。
+`thinkingFormat` を設定すると自動的に reasoning モデルとして扱われる。エージェントの thinkingLevel が `"off"`（デフォルト）のとき `chat_template_kwargs.enable_thinking: false` がリクエストに付与される。llama.cpp 側で Qwen3 の thinking が抑制され、タイムアウトを防げる。
 
-> **背景**: llama-cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `enable_thinking` が含まれない場合は自動で thinking を有効にする。`thinkingFormat` を明示しないと `pi-ai` が `enable_thinking` を送らず、thinking トークンがすべての出力予算を消費してタイムアウトになる。
+> **背景**: llama.cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `chat_template_kwargs.enable_thinking` が含まれない場合は自動で thinking を有効にする構成がある。`thinkingFormat` を明示しないと thinking トークンが出力予算を消費してタイムアウトしやすい。
 
 ## thinkingLevel の制御（group.json 側）
 
@@ -147,15 +147,15 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 | `"high"` | `true` | 16,384 トークン |
 | `"xhigh"` | `true` | モデルの `thinkingLevelMap` に依存 |
 
-> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `credential-proxy.json` で `reasoning: true` かつ `compat.thinkingFormat` が `"qwen"` 等の thinking 制御に対応した値である必要がある。
+> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `credential-proxy.json` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"ollama"` 等の thinking 制御に対応した値である必要がある。
 
-**thinking を完全に OFF にする**（`compat.thinkingFormat: "qwen"` が必須）:
+**thinking を完全に OFF にする**（`compat.thinkingFormat` が必須）:
 
 ```json
 { "model": { "provider": "llama-cpp", "modelId": "Qwen3.6-35B-...", "thinkingLevel": "off" } }
 ```
 
-`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `credential-proxy.json` の `compat.thinkingFormat: "qwen"` を設定していない場合、`enable_thinking` はリクエストに含まれず llama-cpp が thinking を自動 ON にする。
+`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `credential-proxy.json` の `compat.thinkingFormat` を設定していない場合、thinking OFF のフィールドはリクエストに含まれず、ローカル推論サーバー側のデフォルトに従う。
 
 ## 具体例
 
@@ -188,20 +188,34 @@ API Key 不要、最小構成:
   "provider": "llama-cpp",
   "baseUrl": "http://192.168.1.50:8080/v1",
   "api": "openai-completions",
-  "reasoning": true,
   "contextWindow": 65536,
-  "maxTokens": 16384,
-  "compat": { "thinkingFormat": "qwen" }
+  "maxTokens": 4096,
+  "compat": { "thinkingFormat": "qwen-chat-template" }
 }
 ```
 
-`compat.thinkingFormat: "qwen"` を設定することで、`thinkingLevel` の値に応じて `enable_thinking` がリクエストに付与されるようになる。**設定しない場合は `enable_thinking` 自体が送られず、llama-cpp がデフォルト（thinking ON）で動作する。**
+`compat.thinkingFormat: "qwen-chat-template"` を設定することで、`thinkingLevel` の値に応じて `chat_template_kwargs.enable_thinking` がリクエストに付与されるようになる。**設定しない場合は thinking OFF のフィールド自体が送られず、llama.cpp がデフォルト（thinking ON）で動作する。**
 
-| thinkingLevel | enable_thinking |
+| thinkingLevel | chat_template_kwargs.enable_thinking |
 |---|---|
 | `"off"`（デフォルト） | `false` を明示送信 |
 | `"low"` 以上 | `true` を明示送信 |
-| compat 未設定 | **送信しない**（llama-cpp 任せ = 実質 ON） |
+| compat 未設定 | **送信しない**（サーバー任せ） |
+
+### カスタムプロバイダー（Ollama + Qwen3 thinking 制御あり）
+
+```json
+{
+  "provider": "ollama",
+  "baseUrl": "http://192.168.1.50:11434/v1",
+  "api": "openai-completions",
+  "contextWindow": 65536,
+  "maxTokens": 4096,
+  "compat": { "thinkingFormat": "ollama" }
+}
+```
+
+Ollama の OpenAI 互換 API では `thinkingLevel: "off"` が `reasoning.effort: "none"` として送信される。
 
 ### baseUrl にプレースホルダを含むケース
 
