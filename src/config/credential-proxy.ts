@@ -41,6 +41,8 @@ export const CredentialEntrySchema = z.object({
           "ollama",
         ])
         .optional(),
+      requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
+      supportsReasoningEffort: z.boolean().optional(),
     })
     .optional(),
 });

@@ -58,14 +58,21 @@ function createCustomModel(
   modelId: string,
 ): Model<Api> {
   const api = entry.api ?? "openai-completions";
+  // opencode-go は全モデル（Kimi/DeepSeek 等）で reasoning_content が必須
+  const isOpencodeGo =
+    entry.provider === "opencode-go" || baseUrl.includes("opencode.ai");
   const resolvedFormat =
     api === "openai-completions"
-      ? resolveThinkingFormat(entry, baseUrl)
+      ? (resolveThinkingFormat(entry, baseUrl) ?? (isOpencodeGo ? "openai" : undefined))
       : undefined;
   // reasoning: false を明示した場合は thinking を完全に無効化するため compat も除外する
   const compat: Model<"openai-completions">["compat"] | undefined =
-    entry.reasoning !== false && entry.compat && resolvedFormat !== undefined
+    entry.reasoning !== false && (entry.compat != null || isOpencodeGo) && resolvedFormat !== undefined
       ? ({
+          // opencode-go デフォルト（entry.compat で上書き可能）
+          ...(isOpencodeGo
+            ? { requiresReasoningContentOnAssistantMessages: true, supportsReasoningEffort: false }
+            : {}),
           ...entry.compat,
           thinkingFormat: resolvedFormat,
         } as Model<"openai-completions">["compat"])
@@ -81,7 +88,7 @@ function createCustomModel(
     api,
     provider: entry.provider,
     baseUrl,
-    reasoning: entry.reasoning ?? Boolean(compat?.thinkingFormat),
+    reasoning: entry.reasoning ?? (isOpencodeGo || Boolean(compat?.thinkingFormat)),
     ...(isOllama
       ? {
           thinkingLevelMap: {
