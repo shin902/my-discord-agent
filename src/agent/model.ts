@@ -40,12 +40,7 @@ function resolveThinkingFormat(
 }
 
 function isOllamaThinkingFormat(entry: CredentialEntry, baseUrl: string) {
-  return (
-    entry.compat?.thinkingFormat === "ollama" ||
-    (entry.compat?.thinkingFormat === "qwen" &&
-      (entry.provider.toLowerCase().includes("ollama") ||
-        new URL(baseUrl).port === "11434"))
-  );
+  return resolveThinkingFormat(entry, baseUrl) === "openrouter";
 }
 
 function resolveCompat(
