@@ -33,6 +33,8 @@ function resolveThinkingFormat(
       return "openrouter";
     }
   }
+  // pi-ai は "ollama" を知らないが、Ollama の OpenAI 互換 API は
+  // OpenRouter と同じ reasoning: { effort: ... } 形式を使うため "openrouter" で代用する
   if (format === "ollama") return "openrouter";
   return format;
 }
