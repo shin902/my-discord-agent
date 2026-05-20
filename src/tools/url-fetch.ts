@@ -62,7 +62,7 @@ function formatDuration(seconds: number): string {
 }
 
 /** VTT 字幕ファイルからタイムスタンプを除いたテキストを抽出する */
-function parseVtt(content: string): string {
+export function parseVtt(content: string): string {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const line of content.split("\n")) {
@@ -76,13 +76,19 @@ function parseVtt(content: string): string {
       continue;
     if (/^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->/.test(t)) continue;
     if (/^\d+$/.test(t)) continue;
+    // インラインタイミングタグ（<00:00:00.000>）を含む行はスキップ（クリーン行で代替される）
+    if (/<\d{2}:\d{2}:\d{2}[.,]\d{3}>/.test(t)) continue;
+    // <c> 等の残留タグを除去
+    const clean = t.replace(/<[^>]+>/g, "").trim();
+    if (!clean) continue;
     // 自動字幕は同一テキストが複数 cue にまたがって重複する
-    if (!seen.has(t)) {
-      seen.add(t);
-      out.push(t);
+    if (!seen.has(clean)) {
+      seen.add(clean);
+      out.push(clean);
     }
   }
-  return out.join("\n");
+  // 全セグメントを連結し、。区切りで改行する
+  return out.join("").replace(/。/g, "。\n").trim();
 }
 
 /** yt-dlp の巨大 JSON を Markdown サマリーに変換する */

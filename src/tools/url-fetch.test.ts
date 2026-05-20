@@ -7,6 +7,7 @@ import {
   buildRedditMarkdown,
   detectService,
   isPrivateAddress,
+  parseVtt,
 } from "./url-fetch.js";
 
 describe("isPrivateAddress", () => {
@@ -133,6 +134,59 @@ describe("buildCommand シェルエスケープ", () => {
     const cmd = buildCommand("web", "https://example.com/article", out);
     expect(cmd).toContain("r.jina.ai");
     expect(cmd).toContain("curl -sf");
+  });
+});
+
+describe("parseVtt", () => {
+  it("インラインタイミングタグ付き行とクリーン行が混在しても重複なく出力する", () => {
+    const vtt = `WEBVTT
+Kind: captions
+Language: ja
+
+00:00:00.000 --> 00:00:03.000 align:start position:0%
+
+おスマ<00:00:00.599><c>です</c><00:00:00.719><c>。</c><00:00:00.919><c>本日</c><00:00:01.280><c>は</c><00:00:01.400><c>です</c><00:00:01.599><c>ね</c><00:00:01.719><c>、</c><00:00:02.120><c>Google</c>
+おスマです。本日はですね、Google
+
+00:00:03.000 --> 00:00:07.000 align:start position:0%
+
+IO<00:00:03.080><c>の</c><00:00:03.480><c>イベント</c><00:00:03.919><c>、</c>
+IOのイベント、え、そうまとめみたいな
+`;
+    const result = parseVtt(vtt);
+    const lines = result.split("\n");
+    // タグが含まれていないこと
+    expect(lines.every((l) => !/<\d{2}:\d{2}:\d{2}/.test(l))).toBe(true);
+    expect(lines.every((l) => !/<c>/.test(l))).toBe(true);
+    // 。の後で改行されていること
+    expect(result).toContain("おスマです。\n");
+    // 行結合されていること（GoogleIO がくっついて一行になる）
+    expect(result).toContain("GoogleIOのイベント、え、そうまとめみたいな");
+  });
+
+  it("WEBVTT ヘッダーと空行は除外する", () => {
+    const vtt = `WEBVTT
+Kind: captions
+Language: ja
+
+00:00:01.000 --> 00:00:02.000
+
+こんにちは
+`;
+    const result = parseVtt(vtt);
+    expect(result).toBe("こんにちは");
+  });
+
+  it("完全にタグのみの行は出力しない", () => {
+    const vtt = `WEBVTT
+
+00:00:00.000 --> 00:00:01.000
+
+<00:00:00.000><c>テスト</c>
+テスト
+`;
+    const result = parseVtt(vtt);
+    expect(result).toBe("テスト");
   });
 });
 
