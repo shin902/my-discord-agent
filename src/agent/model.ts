@@ -90,6 +90,9 @@ function createCustomModel(
     maxTokens: entry.maxTokens ?? 4096,
     ...(compat
       ? {
+          // Model<Api>["compat"] は条件型のため TypeScript が直接代入を拒否する。
+          // api === "openai-completions" のときのみ compat を設定しているが、
+          // 型システム上は解決できないため as unknown as でキャストする。
           compat: compat as unknown as Model<Api>["compat"],
         }
       : {}),
