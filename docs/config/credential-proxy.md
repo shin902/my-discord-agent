@@ -122,6 +122,12 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 
 `thinkingFormat` を設定すると自動的に reasoning モデルとして扱われる。エージェントの thinkingLevel が `"off"`（デフォルト）のとき `chat_template_kwargs.enable_thinking: false` がリクエストに付与される。llama.cpp 側で Qwen3 の thinking が抑制され、タイムアウトを防げる。
 
+> **前提**: `"qwen-chat-template"` が機能するには、llama.cpp サーバーを **`--jinja` フラグ付き**で起動する必要がある。`--jinja` がない場合 `chat_template_kwargs` は無視され、thinking が常に ON になってタイムアウトする。
+>
+> ```bash
+> llama-server -m /path/to/model.gguf --host 0.0.0.0 --port 8080 --jinja
+> ```
+
 > **背景**: llama.cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `chat_template_kwargs.enable_thinking` が含まれない場合は自動で thinking を有効にする構成がある。`thinkingFormat` を明示しないと thinking トークンが出力予算を消費してタイムアウトしやすい。
 
 ## thinkingLevel の制御（group.json 側）
