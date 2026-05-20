@@ -32,6 +32,8 @@ function resolveThinkingFormat(
     if (provider.includes("ollama") || new URL(baseUrl).port === "11434") {
       return "openrouter";
     }
+    // 上記以外（vLLM・SGLang 等の Qwen 互換サーバー）は "qwen" のまま pi-ai に渡す。
+    // pi-ai は "qwen" を enable_thinking: boolean として処理する（types.d.ts:265 参照）。
   }
   // pi-ai は "ollama" を知らないが、Ollama の OpenAI 互換 API は
   // OpenRouter と同じ reasoning: { effort: ... } 形式を使うため "openrouter" で代用する

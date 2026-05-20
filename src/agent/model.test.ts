@@ -129,7 +129,7 @@ describe("resolveModel", () => {
     });
   });
 
-  it("qwen: llama-cpp でも ollama でもないプロバイダはフォールスルーして thinkingFormat: 'qwen' のまま返す", async () => {
+  it("qwen: llama-cpp でも ollama でもないプロバイダ（vLLM 等）は 'qwen' のまま返す（pi-ai が enable_thinking で処理するため安全）", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
     const { loadCredentialProxy } = await import(
