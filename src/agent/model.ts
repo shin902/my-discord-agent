@@ -57,8 +57,9 @@ function createCustomModel(
   const api = entry.api ?? "openai-completions";
   const resolvedFormat =
     api === "openai-completions" ? resolveThinkingFormat(entry, baseUrl) : undefined;
+  // reasoning: false を明示した場合は thinking を完全に無効化するため compat も除外する
   const compat: Model<"openai-completions">["compat"] | undefined =
-    entry.compat && resolvedFormat !== undefined
+    entry.reasoning !== false && entry.compat && resolvedFormat !== undefined
       ? ({ ...entry.compat, thinkingFormat: resolvedFormat } as Model<"openai-completions">["compat"])
       : undefined;
   const originalFormat = entry.compat?.thinkingFormat;

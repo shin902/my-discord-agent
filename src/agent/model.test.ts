@@ -212,6 +212,7 @@ describe("resolveModel", () => {
 
     const model = await resolveModel("custom-no-reasoning", "some-model");
     expect(model.reasoning).toBe(false);
+    expect(model.compat).toBeUndefined();
   });
 
   it("不明なプロバイダはエラー", async () => {
