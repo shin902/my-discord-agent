@@ -80,7 +80,7 @@ export async function sendMessage(
   const randSuffix = randomUUID().slice(0, 8);
   let builder = Sandbox.builder(`a-${sessionHash}-${randSuffix}`)
     .image("localhost:5050/my-discord-agent-runner:latest")
-    .pullPolicy("if-missing")
+    .pullPolicy("always")
     .registry((r) => r.insecure())
     .workdir("/workspace")
     .cpus(1)
