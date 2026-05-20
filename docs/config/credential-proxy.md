@@ -185,6 +185,8 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 
 ### カスタムプロバイダー（ローカル llama.cpp）
 
+> **プロバイダー名の使い分け**: `provider` の値は任意の文字列を指定できる。`"llama-cpp"` は単なる識別子で、`group.json` の `model.provider` と一致させれば何でもよい。thinking 制御が不要なモデル用と Qwen3 系モデル用を別エントリとして分けておくと管理しやすい（例: `"llama-cpp"` と `"llama-cpp-qwen3"`）。
+
 API Key 不要、最小構成:
 
 ```json
