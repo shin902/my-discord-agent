@@ -127,6 +127,12 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 > ```bash
 > llama-server -m /path/to/model.gguf --host 0.0.0.0 --port 8080 --jinja
 > ```
+>
+> **Qwen3.5 の既知バグ**: `enable_thinking: false` を送っても thinking が止まらないケースが報告されている（[llama.cpp #20409](https://github.com/ggml-org/llama.cpp/issues/20409)）。その場合は `--reasoning-budget 0` を追加することで thinking トークン予算をゼロに固定できる。
+>
+> ```bash
+> llama-server -m /path/to/Qwen3.5.gguf --host 0.0.0.0 --port 8080 --jinja --reasoning-budget 0
+> ```
 
 > **背景**: llama.cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `chat_template_kwargs.enable_thinking` が含まれない場合は自動で thinking を有効にする構成がある。`thinkingFormat` を明示しないと thinking トークンが出力予算を消費してタイムアウトしやすい。
 
