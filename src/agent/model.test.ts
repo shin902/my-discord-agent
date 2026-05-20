@@ -147,7 +147,9 @@ describe("resolveModel", () => {
 
     const model = await resolveModel("custom-unknown", "qwen3");
     expect(model.compat).toEqual({ thinkingFormat: "qwen" });
-    expect((model as { thinkingLevelMap?: unknown }).thinkingLevelMap).toBeUndefined();
+    expect(
+      (model as { thinkingLevelMap?: unknown }).thinkingLevelMap,
+    ).toBeUndefined();
   });
 
   it("thinkingFormat: 'openrouter' を明示した場合は thinkingLevelMap が付かない", async () => {
@@ -169,7 +171,9 @@ describe("resolveModel", () => {
     const model = await resolveModel("my-openrouter", "deepseek-r1");
     expect(model.compat).toEqual({ thinkingFormat: "openrouter" });
     expect(model.reasoning).toBe(true);
-    expect((model as { thinkingLevelMap?: unknown }).thinkingLevelMap).toBeUndefined();
+    expect(
+      (model as { thinkingLevelMap?: unknown }).thinkingLevelMap,
+    ).toBeUndefined();
   });
 
   it("reasoning: true を明示した場合は compat がなくても上書きされない", async () => {
