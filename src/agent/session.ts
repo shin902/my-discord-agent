@@ -46,10 +46,12 @@ export async function loadMessages(
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => {
-      // 後方互換: appendMessage 以前に保存された旧 JSONL に reasoning/thinking が
-      // 残っている可能性があるため、ロード時も除去する。
+      // 後方互換: 旧バージョンが保存した不要フィールドをロード時に除去する。
+      // - reasoning: pi-ai が旧来付与していたフィールド
+      // - reasoning_content: 廃止された appendMessage のパッド補完が書き込んだフィールド
       const msg = JSON.parse(line) as Record<string, unknown>;
       delete msg.reasoning;
+      delete msg.reasoning_content;
       if (Array.isArray(msg.content)) {
         msg.content = (msg.content as Array<{ type: string }>).filter(
           (block) => block.type !== "thinking",
