@@ -75,7 +75,6 @@ pnpm dev
 - [Research & Requirements](docs/research/README.md) - 技術調査・要件定義・選定理由
     - [pi-agent-core](docs/research/pi/core/pi-agent-core.md)
     - [pi-ai](docs/research/pi/ai/pi-ai.md)
-    - [droid-sdk](docs/research/droid-sdk.md)
 
 ## 参考リポジトリ
 
