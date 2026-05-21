@@ -41,6 +41,11 @@ export const CredentialEntrySchema = z.object({
           "ollama",
         ])
         .optional(),
+      // model.ts の compat スプレッド経由で pi-ai に渡り、tool_use を含む
+      // assistant メッセージへの reasoning_content 補完を有効化する。
+      // DeepSeek 系プロバイダーは pi-ai が自動検出するが、カスタムプロバイダーで
+      // Kimi 互換 API を使う場合などに明示的に設定する。
+      requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
     })
     .optional(),
 });

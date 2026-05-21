@@ -23,6 +23,14 @@ function sessionPath(groupName: string, sessionId: string): string {
   return path.join(SESSIONS_DIR, groupName, `${sessionId}.jsonl`);
 }
 
+function hasArrayContent(
+  msg: object,
+): msg is { content: Array<{ type?: string }> } {
+  return (
+    "content" in msg && Array.isArray((msg as { content: unknown }).content)
+  );
+}
+
 export async function loadMessages(
   groupName: string,
   sessionId: string,
@@ -38,10 +46,12 @@ export async function loadMessages(
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => {
-      // 後方互換: appendMessage 以前に保存された旧 JSONL に reasoning/thinking が
-      // 残っている可能性があるため、ロード時も除去する。
+      // 後方互換: 旧バージョンが保存した不要フィールドをロード時に除去する。
+      // - reasoning: pi-ai が旧来付与していたフィールド
+      // - reasoning_content: 廃止された appendMessage のパッド補完が書き込んだフィールド
       const msg = JSON.parse(line) as Record<string, unknown>;
       delete msg.reasoning;
+      delete msg.reasoning_content;
       if (Array.isArray(msg.content)) {
         msg.content = (msg.content as Array<{ type: string }>).filter(
           (block) => block.type !== "thinking",
@@ -66,14 +76,10 @@ export async function appendMessage(
   const { reasoning: _r, ...rest } = message as AgentMessage & {
     reasoning?: unknown;
   };
-  const sanitized = {
-    ...rest,
-    content: Array.isArray(rest.content)
-      ? rest.content.filter(
-          (b): b is typeof b => (b as { type?: string }).type !== "thinking",
-        )
-      : rest.content,
-  };
+  const sanitized: Record<string, unknown> = { ...rest };
+  if (hasArrayContent(rest)) {
+    sanitized.content = rest.content.filter((b) => b.type !== "thinking");
+  }
 
   const filePath = sessionPath(groupName, sessionId);
   // VirtioFS UID ミスマッチ対策: 既存ファイルが他UID所有の場合に備えて事前に chmod
