@@ -86,8 +86,11 @@ describe("loadMessages", () => {
 
     const result = await loadMessages("group1", "session-x");
 
-    const msg = result[0] as { content: Array<{ type: string }> };
-    const content = msg.content;
+    const assistantMsg = result[0] as {
+      role: "assistant";
+      content: Array<{ type: string }>;
+    };
+    const content = assistantMsg.content;
     expect(content.some((b) => b.type === "thinking")).toBe(false);
     expect(content).toHaveLength(1);
     expect(content[0]).toEqual({ type: "text", text: "hi" });
