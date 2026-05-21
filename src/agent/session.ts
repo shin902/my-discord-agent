@@ -26,7 +26,9 @@ function sessionPath(groupName: string, sessionId: string): string {
 function hasArrayContent(
   msg: object,
 ): msg is { content: Array<{ type?: string }> } {
-  return "content" in msg && Array.isArray((msg as { content: unknown }).content);
+  return (
+    "content" in msg && Array.isArray((msg as { content: unknown }).content)
+  );
 }
 
 export async function loadMessages(
