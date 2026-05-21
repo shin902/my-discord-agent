@@ -86,8 +86,8 @@ describe("loadMessages", () => {
 
     const result = await loadMessages("group1", "session-x");
 
-    const content = (result[0] as unknown as Record<string, unknown>)
-      .content as Array<{ type: string }>;
+    const msg = result[0] as { content: Array<{ type: string }> };
+    const content = msg.content;
     expect(content.some((b) => b.type === "thinking")).toBe(false);
     expect(content).toHaveLength(1);
     expect(content[0]).toEqual({ type: "text", text: "hi" });

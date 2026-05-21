@@ -23,6 +23,12 @@ function sessionPath(groupName: string, sessionId: string): string {
   return path.join(SESSIONS_DIR, groupName, `${sessionId}.jsonl`);
 }
 
+function hasArrayContent(
+  msg: object,
+): msg is { content: Array<{ type?: string }> } {
+  return "content" in msg && Array.isArray((msg as { content: unknown }).content);
+}
+
 export async function loadMessages(
   groupName: string,
   sessionId: string,
@@ -66,15 +72,10 @@ export async function appendMessage(
   const { reasoning: _r, ...rest } = message as AgentMessage & {
     reasoning?: unknown;
   };
-  const restRecord = rest as Record<string, unknown>;
-  const sanitized: Record<string, unknown> = {
-    ...rest,
-    content: Array.isArray(restRecord.content)
-      ? (restRecord.content as Array<{ type?: string }>).filter(
-          (b) => b.type !== "thinking",
-        )
-      : restRecord.content,
-  };
+  const sanitized: Record<string, unknown> = { ...rest };
+  if (hasArrayContent(rest)) {
+    sanitized.content = rest.content.filter((b) => b.type !== "thinking");
+  }
 
   const filePath = sessionPath(groupName, sessionId);
   // VirtioFS UID ミスマッチ対策: 既存ファイルが他UID所有の場合に備えて事前に chmod
