@@ -67,13 +67,14 @@ export async function appendMessage(
     reasoning?: unknown;
     reasoning_content?: string;
   };
+  const restRecord = rest as Record<string, unknown>;
   const sanitized: Record<string, unknown> = {
     ...rest,
-    content: Array.isArray(rest.content)
-      ? rest.content.filter(
-          (b): b is typeof b => (b as { type?: string }).type !== "thinking",
+    content: Array.isArray(restRecord.content)
+      ? (restRecord.content as Array<{ type?: string }>).filter(
+          (b) => b.type !== "thinking",
         )
-      : rest.content,
+      : restRecord.content,
   };
 
   // Kimi K2.6 / DeepSeek V4 の thinking mode では、ツールコールを含む
