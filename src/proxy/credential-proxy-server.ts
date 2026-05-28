@@ -1,6 +1,6 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
 import * as https from "node:https";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveBaseUrl } from "../agent/model.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 

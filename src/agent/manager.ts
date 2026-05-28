@@ -94,7 +94,12 @@ export async function sendMessage(
   const proxyPort = getProxyPort();
   const credentialJson = buildSanitizedCredentialJson(creds, proxyPort);
 
-  const payload = JSON.stringify({ groupName, sessionId, content, groupConfig });
+  const payload = JSON.stringify({
+    groupName,
+    sessionId,
+    content,
+    groupConfig,
+  });
 
   const args = [
     "run",
@@ -128,10 +133,13 @@ export async function sendMessage(
       stderr += chunk.toString();
     });
 
-    const timeout = setTimeout(() => {
-      proc.kill("SIGKILL");
-      reject(new NonRetryableError("タイムアウト（10分を超過しました）"));
-    }, 10 * 60 * 1000);
+    const timeout = setTimeout(
+      () => {
+        proc.kill("SIGKILL");
+        reject(new NonRetryableError("タイムアウト（10分を超過しました）"));
+      },
+      10 * 60 * 1000,
+    );
 
     proc.on("close", (code: number | null) => {
       clearTimeout(timeout);
