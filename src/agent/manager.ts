@@ -143,6 +143,10 @@ export async function sendMessage(
 
     proc.on("close", (code: number | null) => {
       clearTimeout(timeout);
+      if (code === null) {
+        // SIGKILL などシグナルで終了した場合。タイムアウト時は既に reject 済み
+        return;
+      }
       if (code === 0) {
         resolve(stdout.trim());
       } else if (code === 2) {
