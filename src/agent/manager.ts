@@ -4,7 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { loadGroupConfig } from "../config/group-config.js";
-import { getProxyPort } from "../proxy/credential-proxy-server.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
@@ -27,7 +26,10 @@ export {
   validateModel,
 };
 
-export async function initManager(): Promise<void> {
+let storedProxyPort: number | null = null;
+
+export async function initManager(proxyPort: number): Promise<void> {
+  storedProxyPort = proxyPort;
   await mkdir(path.join(ROOT, "data/sessions"), { recursive: true });
 }
 
@@ -90,8 +92,14 @@ export async function sendMessage(
 
   await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });
 
+  if (storedProxyPort === null) {
+    throw new NonRetryableError(
+      "credential proxy server が初期化されていません。initCredentialProxyServer() を initManager() より前に呼んでください",
+    );
+  }
+  const proxyPort = storedProxyPort;
+
   const creds = await loadCredentialProxy();
-  const proxyPort = getProxyPort();
   const credentialJson = buildSanitizedCredentialJson(creds, proxyPort);
 
   const payload = JSON.stringify({
@@ -106,6 +114,8 @@ export async function sendMessage(
     "--rm",
     "-i",
     "--pull=always",
+    "--memory=512m",
+    "--cpus=1",
     "--add-host=host.docker.internal:host-gateway",
     "-v",
     `${path.join(ROOT, "data/sessions")}:/sessions`,

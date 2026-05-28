@@ -101,7 +101,7 @@ export function createRequestHandler(creds: CredentialEntry[]) {
   };
 }
 
-export async function initCredentialProxyServer(): Promise<void> {
+export async function initCredentialProxyServer(): Promise<number> {
   const creds = await loadCredentialProxy();
 
   const server = http.createServer(createRequestHandler(creds));
@@ -116,4 +116,6 @@ export async function initCredentialProxyServer(): Promise<void> {
       resolve();
     });
   });
+
+  return getProxyPort();
 }

@@ -18,8 +18,8 @@ if (!token) throw new Error("DISCORD_BOT_TOKEN が設定されていません");
 const groups = await loadGroups();
 try {
   await ensureGroupDirs(groups.map((g) => g.name));
-  await initManager();
-  await initCredentialProxyServer();
+  const proxyPort = await initCredentialProxyServer();
+  await initManager(proxyPort);
   const configs = await initGroupConfigs(groups.map((g) => g.name));
   for (const group of groups) {
     const config = configs.get(group.name);
