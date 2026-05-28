@@ -49,11 +49,17 @@ describe("createRequestHandler: エラーレスポンス", () => {
   });
 
   const CREDS: CredentialEntry[] = [
-    { provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "http://fake-openai.test/v1" },
+    {
+      provider: "openai",
+      envVars: ["OPENAI_API_KEY"],
+      baseUrl: "http://fake-openai.test/v1",
+    },
   ];
 
   it("未知のプロバイダは 404 を返す", async () => {
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
     const req = makeReq("/unknown/endpoint");
     const res = makeRes();
@@ -63,9 +69,14 @@ describe("createRequestHandler: エラーレスポンス", () => {
   });
 
   it("baseUrl に未解決のプレースホルダがある場合は 502 を返す", async () => {
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const badCreds: CredentialEntry[] = [
-      { provider: "bad", baseUrl: "http://fake.test/{UNSET_VAR_XYZ}/v1" as unknown as string } as CredentialEntry,
+      {
+        provider: "bad",
+        baseUrl: "http://fake.test/{UNSET_VAR_XYZ}/v1" as unknown as string,
+      } as CredentialEntry,
     ];
     const handler = createRequestHandler(badCreds);
     const req = makeReq("/bad/completions");
@@ -81,7 +92,11 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
   let upstreamOnMock: ReturnType<typeof vi.fn>;
 
   const CREDS: CredentialEntry[] = [
-    { provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "http://fake-openai.test/v1" },
+    {
+      provider: "openai",
+      envVars: ["OPENAI_API_KEY"],
+      baseUrl: "http://fake-openai.test/v1",
+    },
   ];
 
   beforeEach(() => {
@@ -97,18 +112,28 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
   });
 
   it("path と query が正しく転送される", async () => {
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
-    handler(makeReq("/openai/chat/completions?stream=true"), makeRes() as unknown as ServerResponse);
+    handler(
+      makeReq("/openai/chat/completions?stream=true"),
+      makeRes() as unknown as ServerResponse,
+    );
     const opts = requestMock.mock.calls[0][0];
     expect(opts.path).toBe("/v1/chat/completions?stream=true");
   });
 
   it("host ヘッダは upstream に転送しない", async () => {
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
     handler(
-      makeReq("/openai/v1", { host: "example.com", "content-type": "application/json" }),
+      makeReq("/openai/v1", {
+        host: "example.com",
+        "content-type": "application/json",
+      }),
       makeRes() as unknown as ServerResponse,
     );
     const opts = requestMock.mock.calls[0][0];
@@ -117,15 +142,22 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
   });
 
   it("HTTP メソッドが保持される", async () => {
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
-    handler(makeReq("/openai/v1", {}, "GET"), makeRes() as unknown as ServerResponse);
+    handler(
+      makeReq("/openai/v1", {}, "GET"),
+      makeRes() as unknown as ServerResponse,
+    );
     const opts = requestMock.mock.calls[0][0];
     expect(opts.method).toBe("GET");
   });
 
   it("upstream error のとき 502 Bad Gateway を返す", async () => {
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
     const res = makeRes();
     handler(makeReq("/openai/v1"), res as unknown as ServerResponse);
@@ -143,7 +175,11 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
   let requestMock: ReturnType<typeof vi.fn>;
 
   const CREDS: CredentialEntry[] = [
-    { provider: "openai", envVars: ["OPENAI_API_KEY"], baseUrl: "http://fake-openai.test/v1" },
+    {
+      provider: "openai",
+      envVars: ["OPENAI_API_KEY"],
+      baseUrl: "http://fake-openai.test/v1",
+    },
     { provider: "local-llm", baseUrl: "http://localhost:8080/v1" },
   ];
 
@@ -162,7 +198,9 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
 
   it("envVars に設定済みの環境変数があれば Bearer トークンを注入する", async () => {
     process.env.OPENAI_API_KEY = "sk-test-key";
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
     handler(
       makeReq("/openai/chat/completions", { authorization: "Bearer fake" }),
@@ -174,7 +212,9 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
 
   it("envVars が全て未設定の場合は Authorization ヘッダを削除する", async () => {
     delete process.env.OPENAI_API_KEY;
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
     handler(
       makeReq("/openai/chat/completions", { authorization: "Bearer fake" }),
@@ -185,10 +225,14 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
   });
 
   it("envVars がないプロバイダは Authorization ヘッダをそのまま通す", async () => {
-    const { createRequestHandler } = await import("./credential-proxy-server.js");
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
     const handler = createRequestHandler(CREDS);
     handler(
-      makeReq("/local-llm/completions", { authorization: "Bearer pass-through" }),
+      makeReq("/local-llm/completions", {
+        authorization: "Bearer pass-through",
+      }),
       makeRes() as unknown as ServerResponse,
     );
     const opts = requestMock.mock.calls[0][0];

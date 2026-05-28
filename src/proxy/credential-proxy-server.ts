@@ -41,8 +41,7 @@ export function createRequestHandler(creds: CredentialEntry[]) {
       return;
     }
 
-    const targetUrlStr =
-      resolvedBaseUrl.replace(/\/$/, "") + restPath + search;
+    const targetUrlStr = resolvedBaseUrl.replace(/\/$/, "") + restPath + search;
 
     let parsedTarget: URL;
     try {
