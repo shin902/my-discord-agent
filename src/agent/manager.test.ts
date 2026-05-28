@@ -233,7 +233,10 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const args = spawnMock.mock.calls[0][1] as string[];
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     const credArg = envArgs.find((v) => v.startsWith("CREDENTIAL_PROXY_JSON="));
-    return JSON.parse(credArg!.slice("CREDENTIAL_PROXY_JSON=".length));
+    return JSON.parse(
+      credArg?.slice("CREDENTIAL_PROXY_JSON=".length) ??
+        ("{}" as unknown as string),
+    );
   };
 
   it("envVars ありのエントリが proxy URL に変換される", async () => {
