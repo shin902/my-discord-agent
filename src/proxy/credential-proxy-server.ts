@@ -102,7 +102,8 @@ export async function initCredentialProxyServer(): Promise<void> {
     },
   );
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    server.on("error", reject);
     server.listen(0, "0.0.0.0", () => {
       proxyPort = (server.address() as { port: number }).port;
       console.log(
