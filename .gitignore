@@ -11,3 +11,5 @@ config/*
 groups/*/
 
 .claude/plans/
+
+.smallcode/
