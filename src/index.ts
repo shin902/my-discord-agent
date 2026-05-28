@@ -9,6 +9,7 @@ import { ensureGroupDirs, initGroupConfigs } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
+import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
 
 const token = process.env.DISCORD_BOT_TOKEN;
@@ -18,6 +19,7 @@ const groups = await loadGroups();
 try {
   await ensureGroupDirs(groups.map((g) => g.name));
   await initManager();
+  await initCredentialProxyServer();
   const configs = await initGroupConfigs(groups.map((g) => g.name));
   for (const group of groups) {
     const config = configs.get(group.name);

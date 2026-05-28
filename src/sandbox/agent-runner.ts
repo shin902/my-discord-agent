@@ -12,7 +12,7 @@ import {
   resolveModel,
 } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
-import { CredentialEntrySchema } from "../config/credential-proxy.js";
+import { loadCredentialProxy } from "../config/credential-proxy.js";
 import {
   type GroupJsonConfig,
   GroupJsonSchema,
@@ -27,26 +27,22 @@ const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントで
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 
-/** カスタムプロバイダーの API キーを credential-proxy.json + 環境変数から取得 */
+/** カスタムプロバイダーの API キーを credential-proxy + 環境変数から取得 */
 async function getCustomProviderApiKey(
   provider: string,
 ): Promise<string | undefined> {
   try {
-    // コンテナ内デフォルト（ホスト側は credential-proxy.ts が import.meta.url 基準で処理）
-    const credPath =
-      process.env.CREDENTIAL_PROXY_PATH ?? "/config/credential-proxy.json";
-    const raw = await readFile(credPath, "utf-8");
-    const entries = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
+    const entries = await loadCredentialProxy();
     const entry = entries.find((e) => e.provider === provider);
     if (!entry) return undefined;
-    if (!entry.envVars) return "local"; // ローカルプロバイダーはAPIキー不要。SDKがundefinedを弾くためダミー値を返す
+    if (!entry.envVars || entry.envVars.length === 0) return "local";
     for (const envVar of entry.envVars) {
       const value = process.env[envVar];
       if (value) return value;
     }
   } catch (err) {
     console.error(
-      `[agent-runner] credential-proxy.json の読み込みに失敗: ${
+      `[agent-runner] credential-proxy の読み込みに失敗: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );

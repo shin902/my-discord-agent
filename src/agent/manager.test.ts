@@ -80,380 +80,296 @@ describe("resolveModel", () => {
   });
 });
 
-describe("sendMessage: サンドボックス構成", () => {
-  let builderChain: Record<string, ReturnType<typeof vi.fn>>;
-  let execWithMock: ReturnType<typeof vi.fn>;
+const makeProc = (code = 0, stdout = "mocked response", stderr = "") => ({
+  stdin: { write: vi.fn(), end: vi.fn() },
+  stdout: {
+    on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+      if (event === "data") cb(Buffer.from(stdout));
+    }),
+  },
+  stderr: {
+    on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+      if (event === "data" && stderr) cb(Buffer.from(stderr));
+    }),
+  },
+  on: vi.fn((event: string, cb: (code: number) => void) => {
+    if (event === "close") cb(code);
+  }),
+  kill: vi.fn(),
+});
+
+describe("sendMessage: Docker 起動構成", () => {
+  let spawnMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.resetModules();
-    execWithMock = vi.fn().mockResolvedValue({
-      code: 0,
-      stdout: vi.fn().mockReturnValue("mocked response"),
-      stderr: vi.fn().mockReturnValue(""),
-    });
-    builderChain = {
-      image: vi.fn().mockReturnThis(),
-      pullPolicy: vi.fn().mockReturnThis(),
-      registry: vi.fn().mockReturnThis(),
-      workdir: vi.fn().mockReturnThis(),
-      cpus: vi.fn().mockReturnThis(),
-      memory: vi.fn().mockReturnThis(),
-      env: vi.fn().mockReturnThis(),
-      replace: vi.fn().mockReturnThis(),
-      volume: vi.fn().mockReturnThis(),
-      network: vi.fn().mockReturnThis(),
-      secret: vi.fn().mockReturnThis(),
-      create: vi.fn().mockResolvedValue({
-        [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
-        execWith: execWithMock,
-      }),
-    };
-    vi.doMock("microsandbox", () => ({
-      Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
-      NetworkPolicy: {
-        builder: () => ({
-          defaultIngress: vi.fn().mockReturnThis(),
-          egress: vi.fn().mockReturnThis(),
-          build: vi.fn().mockReturnValue({}),
-        }),
-      },
-    }));
+    spawnMock = vi.fn().mockReturnValue(makeProc());
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({}),
     }));
+    vi.doMock("../proxy/credential-proxy-server.js", () => ({
+      getProxyPort: vi.fn().mockReturnValue(12345),
+    }));
   });
 
   afterEach(() => {
     vi.resetModules();
+  });
+
+  it("docker run --rm -i --pull=always を含む", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("--rm");
+    expect(args).toContain("-i");
+    expect(args).toContain("--pull=always");
+  });
+
+  it("--add-host=host.docker.internal:host-gateway を含む", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("--add-host=host.docker.internal:host-gateway");
+  });
+
+  it("/sessions を mount する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs.some((v) => v.includes(":/sessions"))).toBe(true);
+  });
+
+  it("/workspace を mount する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(
+      volumeArgs.some(
+        (v) => v.includes("test-group") && v.includes(":/workspace"),
+      ),
+    ).toBe(true);
+  });
+
+  it("/config を mount しない", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
+  });
+
+  it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
+    expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_JSON="))).toBe(
+      true,
+    );
+  });
+
+  it("CREDENTIAL_PROXY_PATH 環境変数を渡さない", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
+    expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_PATH="))).toBe(
+      false,
+    );
+  });
+
+  it("node /app/runner.mjs で実行する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const nodeIdx = args.indexOf("node");
+    expect(nodeIdx).toBeGreaterThan(-1);
+    expect(args[nodeIdx + 1]).toBe("/app/runner.mjs");
   });
 
   it("カスタムイメージを使用する", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    expect(builderChain.image).toHaveBeenCalledWith(
-      "localhost:5050/my-discord-agent-runner:latest",
-    );
-  });
-
-  it("/app を bind mount しない", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
-    const volumeCalls = builderChain.volume.mock.calls.map((c) => c[0]);
-    expect(volumeCalls).not.toContain("/app");
-  });
-
-  it("/sessions と /config を mount する", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
-    const volumeCalls = builderChain.volume.mock.calls.map((c) => c[0]);
-    expect(volumeCalls).toContain("/sessions");
-    expect(volumeCalls).toContain("/config");
-  });
-
-  it("node /app/runner.mjs で exec する", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
-    expect(execWithMock).toHaveBeenCalledWith("node", expect.any(Function));
-
-    const execBuilder = {
-      args: vi.fn().mockReturnThis(),
-      stdinBytes: vi.fn().mockReturnThis(),
-      timeout: vi.fn().mockReturnThis(),
-    };
-    const callback = execWithMock.mock.calls[0][1];
-    callback(execBuilder);
-    expect(execBuilder.args).toHaveBeenCalledWith(["/app/runner.mjs"]);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("localhost:5050/my-discord-agent-runner:latest");
   });
 });
 
-describe("sendMessage: credential-proxy 処理", () => {
+describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
   const originalEnv = process.env;
-  const secretMock = vi.fn();
-  let builderChain: Record<string, ReturnType<typeof vi.fn>>;
 
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv };
-    secretMock.mockClear();
-    secretMock.mockReturnThis();
-    builderChain = {
-      image: vi.fn().mockReturnThis(),
-      pullPolicy: vi.fn().mockReturnThis(),
-      registry: vi.fn().mockReturnThis(),
-      workdir: vi.fn().mockReturnThis(),
-      cpus: vi.fn().mockReturnThis(),
-      memory: vi.fn().mockReturnThis(),
-      env: vi.fn().mockReturnThis(),
-      replace: vi.fn().mockReturnThis(),
-      volume: vi.fn().mockReturnThis(),
-      network: vi.fn().mockReturnThis(),
-      secret: secretMock,
-      create: vi.fn().mockResolvedValue({
-        [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
-        execWith: vi.fn().mockResolvedValue({
-          code: 0,
-          stdout: vi.fn().mockReturnValue("mocked response"),
-          stderr: vi.fn().mockReturnValue(""),
-        }),
-      }),
-    };
-    vi.doMock("microsandbox", () => ({
-      Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
-      NetworkPolicy: {
-        builder: () => ({
-          defaultIngress: vi.fn().mockReturnThis(),
-          egress: vi.fn().mockReturnThis(),
-          build: vi.fn().mockReturnValue({}),
-        }),
-      },
-    }));
   });
 
   afterEach(() => {
     process.env = originalEnv;
+    vi.resetModules();
   });
 
-  it("envVars に設定されているものがすべて secret として注入される", async () => {
-    process.env.API_KEY = "primary-value";
-    process.env.FALLBACK_KEY = "fallback-value";
+  const setup = (creds: unknown[]) => {
+    const spawnMock = vi.fn().mockReturnValue(makeProc());
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
     vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "test",
-          envVars: ["API_KEY", "FALLBACK_KEY"],
-          baseUrl: "https://api.example.com",
-        },
-      ]),
+      loadCredentialProxy: vi.fn().mockResolvedValue(creds),
     }));
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({}),
     }));
+    vi.doMock("../proxy/credential-proxy-server.js", () => ({
+      getProxyPort: vi.fn().mockReturnValue(12345),
+    }));
+    return spawnMock;
+  };
 
+  const getCredJson = (spawnMock: ReturnType<typeof vi.fn>) => {
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
+    const credArg = envArgs.find((v) => v.startsWith("CREDENTIAL_PROXY_JSON="));
+    return JSON.parse(credArg!.slice("CREDENTIAL_PROXY_JSON=".length));
+  };
+
+  it("envVars ありのエントリが proxy URL に変換される", async () => {
+    process.env.TEST_API_KEY = "test-key";
+    const spawnMock = setup([
+      {
+        provider: "test",
+        envVars: ["TEST_API_KEY"],
+        baseUrl: "https://api.example.com/v1",
+      },
+    ]);
     const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("mocked response");
-    expect(secretMock).toHaveBeenCalledTimes(2);
-    const sb1 = {
-      env: vi.fn().mockReturnThis(),
-      value: vi.fn().mockReturnThis(),
-      placeholder: vi.fn().mockReturnThis(),
-      allowHost: vi.fn().mockReturnThis(),
-      injectHeaders: vi.fn().mockReturnThis(),
-    };
-    secretMock.mock.calls[0][0](sb1);
-    expect(sb1.env).toHaveBeenCalledWith("API_KEY");
-
-    const sb2 = {
-      env: vi.fn().mockReturnThis(),
-      value: vi.fn().mockReturnThis(),
-      placeholder: vi.fn().mockReturnThis(),
-      allowHost: vi.fn().mockReturnThis(),
-      injectHeaders: vi.fn().mockReturnThis(),
-    };
-    secretMock.mock.calls[1][0](sb2);
-    expect(sb2.env).toHaveBeenCalledWith("FALLBACK_KEY");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/test");
   });
 
-  it("baseUrl のプレースホルダが未解決の場合はスキップする", async () => {
-    process.env.OPENAI_API_KEY = "openai-key";
+  it("proxy URL が http://host.docker.internal:{port}/{provider} 形式", async () => {
+    process.env.TEST_API_KEY = "test-key";
+    const spawnMock = setup([
+      {
+        provider: "my-provider",
+        envVars: ["TEST_API_KEY"],
+        baseUrl: "https://api.example.com/v1",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].baseUrl).toMatch(
+      /^http:\/\/host\.docker\.internal:\d+\/my-provider$/,
+    );
+  });
+
+  it("envVars フィールドが JSON に含まれない", async () => {
+    process.env.TEST_API_KEY = "test-key";
+    const spawnMock = setup([
+      {
+        provider: "test",
+        envVars: ["TEST_API_KEY"],
+        baseUrl: "https://api.example.com/v1",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].envVars).toBeUndefined();
+  });
+
+  it("api・reasoning 等の他フィールドは保持される", async () => {
+    process.env.TEST_API_KEY = "test-key";
+    const spawnMock = setup([
+      {
+        provider: "test",
+        envVars: ["TEST_API_KEY"],
+        baseUrl: "https://api.example.com/v1",
+        api: "openai-completions",
+        reasoning: true,
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].api).toBe("openai-completions");
+    expect(creds[0].reasoning).toBe(true);
+  });
+
+  it("baseUrl 未解決エントリは除外され warn ログが出る", async () => {
+    process.env.TEST_API_KEY = "test-key";
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "openai",
-          envVars: ["OPENAI_API_KEY"],
-          baseUrl: "https://api.openai.com/v1",
-        },
-        {
-          provider: "test-provider",
-          envVars: ["MISSING_VAR"],
-          baseUrl: "https://api.example.com/{MISSING_VAR}",
-        },
-      ]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
-
+    const spawnMock = setup([
+      {
+        provider: "good",
+        envVars: ["TEST_API_KEY"],
+        baseUrl: "https://api.example.com/v1",
+      },
+      { provider: "bad", baseUrl: "https://api.example.com/{MISSING_VAR}/v1" },
+    ]);
     const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("mocked response");
-    expect(secretMock).toHaveBeenCalledTimes(1);
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds).toHaveLength(1);
+    expect(creds[0].provider).toBe("good");
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining(
-        "test-provider: baseUrl に未解決のプレースホルダがあります",
+        "bad: baseUrl に未解決のプレースホルダがあります",
       ),
     );
-    const secretBuilder = secretMock.mock.calls[0][0];
-    const sb = {
-      env: vi.fn().mockReturnThis(),
-      value: vi.fn().mockReturnThis(),
-      placeholder: vi.fn().mockReturnThis(),
-      allowHost: vi.fn().mockReturnThis(),
-      injectHeaders: vi.fn().mockReturnThis(),
-    };
-    secretBuilder(sb);
-    expect(sb.env).toHaveBeenCalledWith("OPENAI_API_KEY");
     warnSpy.mockRestore();
   });
 
-  it("envVars がすべて未設定の場合は静かにスキップする", async () => {
-    delete process.env.MISSING_KEY_1;
-    delete process.env.MISSING_KEY_2;
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "test-provider",
-          envVars: ["MISSING_KEY_1", "MISSING_KEY_2"],
-          baseUrl: "https://api.example.com",
-        },
-      ]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
-
+  it("envVars なしのローカルLLMエントリも含まれる", async () => {
+    const spawnMock = setup([
+      { provider: "local-llm", baseUrl: "http://192.168.40.65:8080/v1" },
+    ]);
     const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("mocked response");
-    expect(secretMock).not.toHaveBeenCalled();
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
-  });
-
-  it("envVars が一部未設定の場合は警告を出して注入する", async () => {
-    process.env.PARTIAL_KEY_1 = "value1";
-    delete process.env.PARTIAL_KEY_2;
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "test-provider",
-          envVars: ["PARTIAL_KEY_1", "PARTIAL_KEY_2"],
-          baseUrl: "https://api.example.com",
-        },
-      ]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
-
-    const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("mocked response");
-    expect(secretMock).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("test-provider: 一部の環境変数が未設定です"),
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].provider).toBe("local-llm");
+    expect(creds[0].baseUrl).toBe(
+      "http://host.docker.internal:12345/local-llm",
     );
-    warnSpy.mockRestore();
   });
 
-  it("envVars が省略された場合は secret 注入をスキップする", async () => {
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "local-llm",
-          baseUrl: "http://localhost:8080/v1",
-        },
-      ]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
-
+  it("envVars がすべて未設定の場合はエントリを除外する", async () => {
+    delete process.env.MISSING_KEY;
+    const spawnMock = setup([
+      {
+        provider: "test",
+        envVars: ["MISSING_KEY"],
+        baseUrl: "https://api.example.com/v1",
+      },
+    ]);
     const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("mocked response");
-    expect(secretMock).not.toHaveBeenCalled();
-  });
-
-  it("envVars が空配列の場合も secret 注入をスキップする", async () => {
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "local-llm",
-          envVars: [],
-          baseUrl: "http://localhost:8080/v1",
-        },
-      ]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
-
-    const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("mocked response");
-    expect(secretMock).not.toHaveBeenCalled();
-  });
-
-  it("envVars がある場合は secret 注入と allowHost を行う", async () => {
-    process.env.API_KEY = "primary-value";
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "test",
-          envVars: ["API_KEY"],
-          baseUrl: "https://api.example.com",
-        },
-      ]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
-
-    const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("mocked response");
-    expect(secretMock).toHaveBeenCalledTimes(1);
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds).toHaveLength(0);
   });
 });
 
 describe("sendMessage: 設定バリデーション", () => {
   beforeEach(() => {
     vi.resetModules();
-    const builderChain = {
-      image: vi.fn().mockReturnThis(),
-      workdir: vi.fn().mockReturnThis(),
-      cpus: vi.fn().mockReturnThis(),
-      memory: vi.fn().mockReturnThis(),
-      env: vi.fn().mockReturnThis(),
-      replace: vi.fn().mockReturnThis(),
-      volume: vi.fn().mockReturnThis(),
-      network: vi.fn().mockReturnThis(),
-      secret: vi.fn().mockReturnThis(),
-      create: vi.fn().mockResolvedValue({
-        execWith: vi.fn().mockResolvedValue({
-          code: 0,
-          stdout: vi.fn().mockReturnValue("mocked response"),
-          stderr: vi.fn().mockReturnValue(""),
-        }),
-      }),
-    };
-    vi.doMock("microsandbox", () => ({
-      Sandbox: { builder: vi.fn().mockReturnValue(builderChain) },
-      NetworkPolicy: {
-        builder: () => ({
-          defaultIngress: vi.fn().mockReturnThis(),
-          egress: vi.fn().mockReturnThis(),
-          build: vi.fn().mockReturnValue({}),
-        }),
-      },
+    vi.doMock("node:child_process", () => ({
+      spawn: vi.fn().mockReturnValue(makeProc()),
     }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
+    vi.doMock("../proxy/credential-proxy-server.js", () => ({
+      getProxyPort: vi.fn().mockReturnValue(12345),
+    }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
   });
 
   it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {

@@ -56,6 +56,11 @@ let cache: CredentialEntry[] | null = null;
 
 export async function loadCredentialProxy(): Promise<CredentialEntry[]> {
   if (cache) return cache;
+  const inlineJson = process.env.CREDENTIAL_PROXY_JSON;
+  if (inlineJson) {
+    cache = z.array(CredentialEntrySchema).parse(JSON.parse(inlineJson));
+    return cache;
+  }
   let raw: string;
   try {
     raw = await readFile(CONFIG_PATH, "utf-8");
