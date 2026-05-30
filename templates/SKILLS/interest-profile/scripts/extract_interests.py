@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""
+会話ログ (.jsonl) から未処理のユーザーメッセージを差分抽出するスクリプト。
+
+抽出と状態コミットを「単一実行＋成功後コミット」の2フェーズで行う:
+
+  フェーズ1（抽出）: メッセージを stdout に出し、進めるべき状態を pending ファイルに書く。
+    python3 extract_interests.py \
+        --state-file data/interests/last-sync.json \
+        --state-out data/interests/last-sync.json.pending \
+        --max-messages 500
+
+    --logs-dir を省略するとカレントディレクトリから
+    ~/.claude/projects/<エンコード済みパス> を自動推定する。
+
+  フェーズ2（コミット）: 全処理が正常完了した後に pending を本ファイルへ原子的に昇格する。
+    python3 extract_interests.py \
+        --state-file data/interests/last-sync.json \
+        --commit data/interests/last-sync.json.pending
+
+Output (フェーズ1): JSON array of extracted user messages to stdout.
+
+動作要件: Python 3.7+（型注釈は from __future__ import annotations で遅延評価）
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+NOISE_PREFIXES = (
+    "<scheduled-task",
+    "<local-command",
+    "<command-message",
+    "<task-notification",
+    "<command-name>",
+    "Base directory for this skill:",  # スキル読込時に注入される SKILL.md 本文
+)
+
+MIN_LENGTH = 20
+
+
+def normalize_content(content) -> str | None:
+    """user メッセージの content を平文テキストに正規化する。
+
+    content は次の形式を取りうる:
+      - str                       … ユーザーが打った素のテキスト
+      - list[{"type":"text", ...}] … 添付つき送信等で配列化されたユーザー発言
+      - list[{"type":"tool_result", ...}] … ツール実行結果（ユーザー発言ではない）
+
+    text ブロックを連結して返す。tool_result しか含まない（=ユーザー発言でない）場合は None。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                texts.append(block["text"])
+        return "\n".join(texts) if texts else None
+    return None
+
+
+def default_logs_dir() -> Path:
+    """カレントディレクトリに対応する Claude Code のログディレクトリを推定する。
+
+    Claude Code はプロジェクトの絶対パスの '/' を '-' に置換して
+    ~/.claude/projects/ 配下のディレクトリ名にしている。
+    """
+    encoded = os.getcwd().replace("/", "-")
+    return Path.home() / ".claude" / "projects" / encoded
+
+
+def load_state(state_file: Path) -> dict:
+    if state_file.exists():
+        try:
+            with open(state_file, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            # 破損していても止めない（自律実行ルール: エラーは記録して継続）。
+            # 空状態にフォールバックすると全再読込になり安全側（取りこぼしより重複を許容）。
+            print(f"WARNING: state file unreadable, starting fresh: {e}", file=sys.stderr)
+    return {"last_sync_at": None, "sessions": {}}
+
+
+def save_state(state_file: Path, state: dict):
+    """一時ファイルへ書き込んでから os.replace で原子的に差し替える。"""
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = state_file.with_suffix(state_file.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, state_file)
+
+
+def extract_from_session(filepath: Path, skip_lines: int = 0):
+    """セッションを skip_lines の続きから読み、(抽出メッセージ, 走査した総行数) を返す。
+
+    総行数は「この open で実際に EOF まで読んだ行数」なので、これを lines_read に
+    使えば出力範囲としおりが必ず同一 open 内で整合する（読了後に別 open で数え直す
+    と、その隙の追記分までしおりが進み恒久的に取りこぼす TOCTOU を生むため避ける）。
+    """
+    messages = []
+    lines_total = 0
+    with open(filepath, encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            lines_total = i + 1
+            if i < skip_lines:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if obj.get("type") != "user":
+                continue
+
+            msg = obj.get("message", {})
+            content = normalize_content(msg.get("content", ""))
+            if content is None:
+                continue
+            if len(content) <= MIN_LENGTH:
+                continue
+            if any(content.lstrip().startswith(p) for p in NOISE_PREFIXES):
+                continue
+
+            ts = obj.get("timestamp", "")
+            messages.append({
+                "ts": ts,
+                "session_id": filepath.stem,
+                "content": content[:2000],
+            })
+    return messages, lines_total
+
+
+def read_recent_log(log_file: Path, days: int):
+    """interest-log.jsonl のうち直近 days 日分の行だけを stdout へ出す。
+
+    生ログ全体ではなく直近分だけを Claude に渡すことで、ログが何万行に
+    増えても INTERESTS.md 生成時のコンテキスト量を頭打ちにする（案A）。
+    ts がパースできない行は安全側に倒して出力する（取りこぼし防止）。
+    """
+    if not log_file.exists():
+        return  # ログ未作成なら何も出さない（初回sync等）
+
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    kept = 0
+    with open(log_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            try:
+                ts = json.loads(line).get("ts", "")
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < cutoff:
+                    continue
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                pass  # 壊れた行・ts欠損は念のため残す
+            print(line)
+            kept += 1
+    print(f"--- Loaded {kept} signals from last {days} days ---", file=sys.stderr)
+
+
+def commit_state(state_file: Path, pending_file: Path):
+    """pending ファイルを本ファイルへ原子的に昇格する。"""
+    if not pending_file.exists():
+        print(f"ERROR: pending file not found: {pending_file}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(pending_file, encoding="utf-8") as f:
+        state = json.load(f)
+
+    save_state(state_file, state)
+    pending_file.unlink()
+    print(f"--- Committed state to {state_file} ---", file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Extract user messages from Claude Code conversation logs")
+    parser.add_argument("--logs-dir", help="Path to project conversation logs directory（省略時はカレントディレクトリから自動推定）")
+    parser.add_argument("--state-file", help="Path to last-sync.json state file（抽出/コミット時に必須）")
+    parser.add_argument("--state-out", help="抽出フェーズで算出した状態を書き出す pending ファイル（本ファイルは触らない）")
+    parser.add_argument("--commit", help="pending ファイルを --state-file へ原子的に昇格する（コミットフェーズ）")
+    parser.add_argument("--recent-log", help="interest-log.jsonl のうち直近分だけを出力する（INTERESTS.md生成用）")
+    parser.add_argument("--recent-days", type=int, default=90, help="--recent-log で出力する日数（既定: 90）")
+    parser.add_argument("--max-messages", type=int, default=500, help="1実行あたりの抽出上限（0以下で無制限）")
+    args = parser.parse_args()
+
+    # 日本語を含む JSON を stdout へ出すため、出力を UTF-8 に固定する
+    # （非UTF-8コンソールでの UnicodeEncodeError を防ぐ）
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+    # 読み込みモード: 直近 N 日分のシグナルだけを出力して終了する
+    if args.recent_log:
+        read_recent_log(Path(args.recent_log), args.recent_days)
+        return
+
+    if not args.state_file:
+        parser.error("--state-file is required unless --recent-log is given")
+    state_file = Path(args.state_file)
+
+    # コミットフェーズ: 抽出は行わず pending を昇格して終了する
+    if args.commit:
+        commit_state(state_file, Path(args.commit))
+        return
+
+    # 抽出フェーズ
+    logs_dir = Path(args.logs_dir) if args.logs_dir else default_logs_dir()
+    if not logs_dir.exists():
+        print(f"ERROR: logs dir not found: {logs_dir}\n"
+              f"  --logs-dir で明示指定してください。", file=sys.stderr)
+        sys.exit(1)
+
+    state = load_state(state_file)
+    sessions_state = state.get("sessions", {})
+
+    all_messages = []
+    new_state = dict(sessions_state)
+
+    jsonl_files = sorted(logs_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+
+    for filepath in jsonl_files:
+        session_id = filepath.stem
+        current_mtime = filepath.stat().st_mtime
+        prev = sessions_state.get(session_id, {})
+        prev_mtime = prev.get("mtime", 0)
+        prev_lines = prev.get("lines_read", 0)
+
+        if current_mtime <= prev_mtime:
+            new_state[session_id] = prev
+            continue
+
+        # 同一 open で得た走査行数を lines_read にする（出力範囲としおりが必ず一致）。
+        messages, total_lines = extract_from_session(filepath, skip_lines=prev_lines)
+        if total_lines < prev_lines:
+            # ファイルが短縮/書き換えされている（append-only 前提が崩れた）。
+            # しおりより短いので skip 済みのまま 0 件になる。安全側に全行を読み直す
+            # （二重取得は起こりうるが取りこぼしより許容できる）。
+            messages, total_lines = extract_from_session(filepath, skip_lines=0)
+        all_messages.extend(messages)
+
+        new_state[session_id] = {
+            "mtime": current_mtime,
+            "lines_read": total_lines,
+        }
+
+        # ソフトキャップ: 上限超過セッションの途中で切らず、そのセッションを読み切ってから止める
+        if args.max_messages > 0 and len(all_messages) >= args.max_messages:
+            break
+
+    json.dump(all_messages, sys.stdout, ensure_ascii=False, indent=2)
+
+    if args.state_out:
+        from datetime import datetime
+
+        # 実行環境のローカルタイムゾーンで記録する（環境を問わず正しいオフセットになる）
+        state["last_sync_at"] = datetime.now().astimezone().isoformat()
+        state["sessions"] = new_state
+        save_state(Path(args.state_out), state)
+
+    print(f"\n--- Extracted {len(all_messages)} messages from {len([s for s in new_state if new_state[s] != sessions_state.get(s)])} new/updated sessions ---", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
