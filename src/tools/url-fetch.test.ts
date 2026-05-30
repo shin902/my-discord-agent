@@ -188,6 +188,26 @@ Language: ja
     const result = parseVtt(vtt);
     expect(result).toBe("テスト");
   });
+
+  it("本文と同じ行に潰れた cue timing は除去する", () => {
+    const vtt = `WEBVTT
+Kind: captions
+Language: ja
+
+00:11:08.920 --> 00:11:11.310 align:start position:0%
+
+ところを抽出すればどういったことを学習00:11:08.920 --> 00:11:11.310 align:start position:0%00:11:11.310 --> 00:11:11.320 align:start position:0%してるのかというところも抽出できるかと00:11:11.320 --> 00:11:14.069 align:start position:0%
+思います。
+`;
+    const result = parseVtt(vtt);
+
+    expect(result).toContain(
+      "ところを抽出すればどういったことを学習してるのかというところも抽出できるかと思います。",
+    );
+    expect(result).not.toContain("-->");
+    expect(result).not.toContain("align:start");
+    expect(result).not.toMatch(/\d{2}:\d{2}:\d{2}[.,]\d{3}/);
+  });
 });
 
 describe("buildRedditMarkdown パース", () => {

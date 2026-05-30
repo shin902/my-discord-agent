@@ -2,6 +2,7 @@ const TRANSIENT_PATTERNS = [
   /timeout/i,
   /rate.limit/i,
   /429/i,
+  /5\d\d/,
   /ETIMEDOUT/i,
   /ECONNRESET/i,
   /ECONNREFUSED/i,

@@ -65,7 +65,21 @@ function formatDuration(seconds: number): string {
 export function parseVtt(content: string): string {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const line of content.split("\n")) {
+  const timestamp = String.raw`\d{2}:\d{2}:\d{2}[.,]\d{3}`;
+  const cueSetting = String.raw`(?:align:[A-Za-z-]+|position:[^\s%]+%?|line:[^\s%]+%?|size:[^\s%]+%?|vertical:[A-Za-z-]+)`;
+  const cueTiming = new RegExp(
+    `${timestamp}\\s*-->\\s*${timestamp}(?:\\s+${cueSetting})*`,
+    "g",
+  );
+  const orphanCueEnd = new RegExp(
+    `\\s*-->\\s*${timestamp}(?:\\s+${cueSetting})*`,
+    "g",
+  );
+
+  for (const line of content
+    .replace(cueTiming, "\n")
+    .replace(orphanCueEnd, "\n")
+    .split("\n")) {
     const t = line.trim();
     if (!t) continue;
     if (
