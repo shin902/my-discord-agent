@@ -69,7 +69,7 @@ detect_service() {
       fi
       ;;
     reddit.com|old.reddit.com) echo "reddit" ;;
-    x.com|twitter.com)
+    x.com|www.x.com|twitter.com|www.twitter.com)
       if [[ "$path" =~ ^/[^/]+/status/[0-9]+ ]]; then
         echo "x-twitter"
       else
