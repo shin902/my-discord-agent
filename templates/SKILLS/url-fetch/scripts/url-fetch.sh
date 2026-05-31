@@ -437,25 +437,32 @@ fetch_x_twitter() {
   json=$(curl -sf "https://api.fxtwitter.com/${username}/status/${tweetId}") \
     || die "fxtwitter API error for ${url}"
 
+  local code
+  code=$(echo "$json" | jq -r '.code // 0')
+  [[ "$code" != "200" ]] && die "fxtwitter API returned code ${code} for ${url}"
+
   local text screen_name author_name created_at likes retweets replies views
-  text=$(echo "$json"        | jq -r '.tweet.text // empty')
-  screen_name=$(echo "$json" | jq -r '.tweet.author.screen_name // empty')
-  author_name=$(echo "$json" | jq -r '.tweet.author.name // empty')
-  created_at=$(echo "$json"  | jq -r '.tweet.created_at // empty')
-  likes=$(echo "$json"       | jq -r '.tweet.likes // empty')
-  retweets=$(echo "$json"    | jq -r '.tweet.retweets // empty')
-  replies=$(echo "$json"     | jq -r '.tweet.replies // empty')
-  views=$(echo "$json"       | jq -r '.tweet.views // empty')
+  eval "$(echo "$json" | jq -r '
+    .tweet as $t |
+    "text=\($t.text // "" | @sh)",
+    "screen_name=\($t.author.screen_name // "" | @sh)",
+    "author_name=\($t.author.name // "" | @sh)",
+    "created_at=\($t.created_at // "" | @sh)",
+    "likes=\(if $t.likes != null then ($t.likes|tostring) else "" end | @sh)",
+    "retweets=\(if $t.retweets != null then ($t.retweets|tostring) else "" end | @sh)",
+    "replies=\(if $t.replies != null then ($t.replies|tostring) else "" end | @sh)",
+    "views=\(if $t.views != null then ($t.views|tostring) else "" end | @sh)"
+  ')"
 
   echo "# @${screen_name} (${author_name})"
   echo ""
   echo "${text}"
   echo ""
-  [[ -n "$created_at" && "$created_at" != "null" ]] && echo "**投稿日時**: ${created_at}"
-  [[ -n "$likes"      && "$likes"      != "null" ]] && echo "**いいね**: ${likes}"
-  [[ -n "$retweets"   && "$retweets"   != "null" ]] && echo "**リツイート**: ${retweets}"
-  [[ -n "$replies"    && "$replies"    != "null" ]] && echo "**返信**: ${replies}"
-  [[ -n "$views"      && "$views"      != "null" ]] && echo "**表示回数**: ${views}"
+  [[ -n "$created_at" ]] && echo "**投稿日時**: ${created_at}"
+  [[ -n "$likes"      ]] && echo "**いいね**: ${likes}"
+  [[ -n "$retweets"   ]] && echo "**リツイート**: ${retweets}"
+  [[ -n "$replies"    ]] && echo "**返信**: ${replies}"
+  [[ -n "$views"      ]] && echo "**表示回数**: ${views}"
 }
 
 fetch_rss() {

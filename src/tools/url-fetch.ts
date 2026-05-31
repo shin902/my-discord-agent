@@ -405,9 +405,14 @@ export async function buildXTwitterMarkdown(absPath: string): Promise<string> {
     return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
   }
 
-  const tweet = (data as Record<string, unknown>)?.tweet as
-    | Record<string, unknown>
-    | undefined;
+  const d = data as Record<string, unknown>;
+  const code = typeof d.code === "number" ? d.code : null;
+  if (code !== null && code !== 200) {
+    const message = typeof d.message === "string" ? d.message : "unknown error";
+    return `(fxtwitter API エラー: ${code} ${message})`;
+  }
+
+  const tweet = d.tweet as Record<string, unknown> | undefined;
   if (!tweet) {
     return `(X/Twitter レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
   }

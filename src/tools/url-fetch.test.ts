@@ -424,8 +424,15 @@ describe("buildXTwitterMarkdown パース", () => {
     expect(result).toContain("リツイート");
   });
 
-  it("tweet キーなし → 構造解析失敗メッセージ", async () => {
-    const path = await write({ code: 404 });
+  it("code: 404 → API エラーメッセージ", async () => {
+    const path = await write({ code: 404, message: "Tweet not found" });
+    const result = await buildXTwitterMarkdown(path);
+    expect(result).toContain("fxtwitter API エラー: 404");
+    expect(result).toContain("Tweet not found");
+  });
+
+  it("tweet キーなし（code: 200）→ 構造解析失敗メッセージ", async () => {
+    const path = await write({ code: 200 });
     const result = await buildXTwitterMarkdown(path);
     expect(result).toContain("構造を解析できませんでした");
   });
