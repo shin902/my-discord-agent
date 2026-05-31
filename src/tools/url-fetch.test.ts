@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildCommand,
+  buildGitHubMarkdown,
   buildRedditMarkdown,
   detectService,
   isPrivateAddress,
@@ -63,10 +64,10 @@ describe("detectService", () => {
     );
   });
 
-  it("github.com/owner/repo/blob/... → github-repo", () => {
+  it("github.com/owner/repo/blob/... → web（サブパスは除外）", () => {
     expect(
       detectService(parse("https://github.com/owner/repo/blob/main/file.ts")),
-    ).toBe("github-repo");
+    ).toBe("web");
   });
 
   it("github.com/owner のみ → web（リポジトリ未満）", () => {
@@ -114,14 +115,16 @@ describe("buildCommand シェルエスケープ", () => {
     expect(cmd).toContain("'\\''");
   });
 
-  it("github-repo: owner/repo を抽出してgh repo viewを生成", () => {
+  it("github-repo: GitHub API への curl コマンドを生成する", () => {
     const cmd = buildCommand(
       "github-repo",
       "https://github.com/owner/my-repo",
       out,
     );
-    expect(cmd).toContain("gh repo view");
-    expect(cmd).toContain("owner/my-repo");
+    expect(cmd).toContain("api.github.com/repos/owner/my-repo");
+    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain(".repo.json");
+    expect(cmd).toContain(".readme.md");
   });
 
   it("github-repo: パスが /owner/repo 未満なら throw", () => {
@@ -207,6 +210,58 @@ Language: ja
     expect(result).not.toContain("-->");
     expect(result).not.toContain("align:start");
     expect(result).not.toMatch(/\d{2}:\d{2}:\d{2}[.,]\d{3}/);
+  });
+});
+
+describe("buildGitHubMarkdown パース", () => {
+  async function writeJson(data: unknown): Promise<string> {
+    const path = join(tmpdir(), `github-test-${Date.now()}.json`);
+    await writeFile(path, JSON.stringify(data), "utf-8");
+    return path;
+  }
+
+  it("正常なリポジトリ JSON → Markdown を生成する", async () => {
+    const repoJson = await writeJson({
+      full_name: "owner/my-repo",
+      description: "テストリポジトリ",
+      language: "TypeScript",
+      license: { name: "MIT License" },
+      stargazers_count: 123,
+      forks_count: 10,
+      open_issues_count: 5,
+      topics: ["typescript", "bot"],
+      homepage: "",
+      fork: false,
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: "2024-06-01T00:00:00Z",
+    });
+    const result = await buildGitHubMarkdown(repoJson, "/tmp/nonexistent-readme");
+    expect(result).toContain("# owner/my-repo");
+    expect(result).toContain("テストリポジトリ");
+    expect(result).toContain("TypeScript");
+    expect(result).toContain("MIT License");
+    expect(result).toContain("*(README not found)*");
+  });
+
+  it("README ファイルがある場合は含まれる", async () => {
+    const repoJson = await writeJson({ full_name: "owner/repo", stargazers_count: 0, forks_count: 0, open_issues_count: 0, fork: false });
+    const readmePath = join(tmpdir(), `readme-${Date.now()}.md`);
+    await writeFile(readmePath, "# Hello World", "utf-8");
+    const result = await buildGitHubMarkdown(repoJson, readmePath);
+    expect(result).toContain("## README");
+    expect(result).toContain("# Hello World");
+  });
+
+  it("無効な JSON → パース失敗メッセージ", async () => {
+    const path = join(tmpdir(), `github-invalid-${Date.now()}.json`);
+    await writeFile(path, "not json", "utf-8");
+    const result = await buildGitHubMarkdown(path, "/tmp/nonexistent");
+    expect(result).toContain("JSON パース失敗");
+  });
+
+  it("存在しないファイル → 読み込み失敗メッセージ", async () => {
+    const result = await buildGitHubMarkdown("/tmp/nonexistent.json", "/tmp/nonexistent");
+    expect(result).toContain("読み込みに失敗");
   });
 });
 
