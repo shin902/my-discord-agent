@@ -11,6 +11,16 @@ VERSION="0.1.0"
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+_cleanup_paths=()
+_register_cleanup() { _cleanup_paths+=("$@"); }
+_cleanup() {
+  for p in "${_cleanup_paths[@]+"${_cleanup_paths[@]}"}"; do
+    rm -rf "$p"
+  done
+}
+trap _cleanup EXIT
+
 usage() {
   cat <<EOF
 url-fetch v${VERSION}
@@ -52,7 +62,7 @@ detect_service() {
   case "$host" in
     youtube.com|youtu.be) echo "youtube" ;;
     github.com)
-      if [[ "$path" =~ ^/[^/]+/[^/]+ ]]; then
+      if [[ "$path" =~ ^/[^/]+/[^/?#]+/?$ ]]; then
         echo "github-repo"
       else
         echo "web"
@@ -205,7 +215,7 @@ format_youtube() {
         END {
           s = ""
           for (i = 1; i <= n; i++) {
-            s = s lines[i]
+            s = (s == "" ? "" : s " ") lines[i]
           }
           gsub(/。/, "。\n", s)
           printf "%s", s
@@ -316,7 +326,7 @@ fetch_youtube() {
 
   local tmp_dir
   tmp_dir=$(mktemp -d)
-  trap "rm -rf '$tmp_dir'" EXIT
+  _register_cleanup "$tmp_dir"
 
   local base="${tmp_dir}/yt"
   local meta_out="${base}.meta.json"
@@ -349,13 +359,13 @@ fetch_reddit() {
 
   local tmp_file
   tmp_file=$(mktemp)
-  trap "rm -f '$tmp_file'" EXIT
+  _register_cleanup "$tmp_file"
 
   local json_url
   if [[ "$url" == *.json ]]; then
     json_url="$url"
   else
-    json_url=$(echo "$url" | sed -E 's|/?(\\?.*)?$|.json\1|')
+    json_url=$(echo "$url" | sed -E 's|/?(\?.*)?$|.json\1|')
   fi
 
   curl -sf "$json_url" -H "User-Agent: url-fetch-cli/1.0" > "$tmp_file"
@@ -365,6 +375,7 @@ fetch_reddit() {
 fetch_rss() {
   local url="$1"
   check_cmd python3
+  python3 -c "import feedparser" 2>/dev/null || die "'feedparser' Python package is not installed (pip install feedparser)"
 
   python3 -c "
 import feedparser, json, sys
