@@ -442,17 +442,14 @@ fetch_x_twitter() {
   [[ "$code" != "200" ]] && die "fxtwitter API returned code ${code} for ${url}"
 
   local text screen_name author_name created_at likes retweets replies views
-  eval "$(echo "$json" | jq -r '
-    .tweet as $t |
-    "text=\($t.text // "" | @sh)",
-    "screen_name=\($t.author.screen_name // "" | @sh)",
-    "author_name=\($t.author.name // "" | @sh)",
-    "created_at=\($t.created_at // "" | @sh)",
-    "likes=\(if $t.likes != null then ($t.likes|tostring) else "" end | @sh)",
-    "retweets=\(if $t.retweets != null then ($t.retweets|tostring) else "" end | @sh)",
-    "replies=\(if $t.replies != null then ($t.replies|tostring) else "" end | @sh)",
-    "views=\(if $t.views != null then ($t.views|tostring) else "" end | @sh)"
-  ')"
+  text=$(echo "$json"        | jq -r '.tweet.text // ""')
+  screen_name=$(echo "$json" | jq -r '.tweet.author.screen_name // ""')
+  author_name=$(echo "$json" | jq -r '.tweet.author.name // ""')
+  created_at=$(echo "$json"  | jq -r '.tweet.created_at // ""')
+  likes=$(echo "$json"       | jq -r 'if .tweet.likes != null then (.tweet.likes|tostring) else "" end')
+  retweets=$(echo "$json"    | jq -r 'if .tweet.retweets != null then (.tweet.retweets|tostring) else "" end')
+  replies=$(echo "$json"     | jq -r 'if .tweet.replies != null then (.tweet.replies|tostring) else "" end')
+  views=$(echo "$json"       | jq -r 'if .tweet.views != null then (.tweet.views|tostring) else "" end')
 
   echo "# @${screen_name} (${author_name})"
   echo ""
