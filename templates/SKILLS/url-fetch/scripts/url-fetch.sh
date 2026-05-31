@@ -57,7 +57,7 @@ detect_service() {
   # Strip www. and scheme
   host=$(echo "$url" | sed -E 's|^https?://(www\.)?([^/]+).*|\2|')
   local path
-  path=$(echo "$url" | sed -E 's|^https?://[^/]+(/.*)?|\1|' | tr '[:upper:]' '[:lower:]')
+  path=$(echo "$url" | sed -E 's|^https?://[^/]+(/[^?#]*)?.*|\1|' | tr '[:upper:]' '[:lower:]')
 
   case "$host" in
     youtube.com|youtu.be) echo "youtube" ;;
@@ -345,12 +345,57 @@ fetch_youtube() {
 
 fetch_github_repo() {
   local url="$1"
-  check_cmd gh
+  check_cmd curl
+  check_cmd jq
 
   local repo_path
-  repo_path=$(echo "$url" | sed -E 's|^https?://github.com/([^/]+/[^/]+).*|\1|')
+  repo_path=$(echo "$url" | sed -E 's|^https?://github.com/([^/]+/[^/?#]+).*|\1|')
 
-  gh repo view "$repo_path" 2>&1
+  local api_base="https://api.github.com/repos/${repo_path}"
+
+  local repo_json
+  repo_json=$(curl -sf -H "Accept: application/vnd.github.v3+json" "${api_base}") \
+    || die "GitHub API error for ${repo_path} (check if the repo is public)"
+
+  local name description language license stars forks issues homepage is_fork created updated topics
+  name=$(echo "$repo_json" | jq -r '.full_name // empty')
+  description=$(echo "$repo_json" | jq -r '.description // empty')
+  language=$(echo "$repo_json" | jq -r '.language // "Unknown"')
+  license=$(echo "$repo_json" | jq -r '.license.name // "No License"')
+  stars=$(echo "$repo_json" | jq -r '.stargazers_count')
+  forks=$(echo "$repo_json" | jq -r '.forks_count')
+  issues=$(echo "$repo_json" | jq -r '.open_issues_count')
+  homepage=$(echo "$repo_json" | jq -r '.homepage // empty')
+  is_fork=$(echo "$repo_json" | jq -r '.fork')
+  created=$(echo "$repo_json" | jq -r '.created_at // empty')
+  updated=$(echo "$repo_json" | jq -r '.updated_at // empty')
+  topics=$(echo "$repo_json" | jq -r '(.topics // []) | join(", ")')
+
+  echo "# ${name:-"${repo_path}"}"
+  echo ""
+  if [[ -n "$description" ]]; then
+    echo "${description}"
+    echo ""
+  fi
+  echo "**Language**: ${language} | **License**: ${license} | **Stars**: ${stars} | **Forks**: ${forks} | **Open Issues**: ${issues}"
+  [[ -n "$topics" ]] && echo "**Topics**: ${topics}"
+  [[ -n "$homepage" ]] && echo "**Homepage**: ${homepage}"
+  echo "**Fork**: ${is_fork} | **Created**: ${created} | **Updated**: ${updated}"
+  echo "**URL**: https://github.com/${repo_path}"
+  echo ""
+  echo "---"
+  echo ""
+
+  local readme
+  readme=$(curl -sf -H "Accept: application/vnd.github.v3.raw" "${api_base}/readme" 2>/dev/null || true)
+
+  if [[ -n "$readme" ]]; then
+    echo "## README"
+    echo ""
+    echo "$readme"
+  else
+    echo "*(README not found)*"
+  fi
 }
 
 fetch_reddit() {

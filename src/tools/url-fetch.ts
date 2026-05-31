@@ -38,7 +38,7 @@ type ServiceType = "youtube" | "github-repo" | "reddit" | "rss" | "web";
 export function detectService(parsed: URL): ServiceType {
   const host = parsed.hostname.replace(/^www\./, "");
   if (host === "youtube.com" || host === "youtu.be") return "youtube";
-  if (host === "github.com" && /^\/[^/]+\/[^/]+/.test(parsed.pathname))
+  if (host === "github.com" && /^\/[^/]+\/[^/?#]+\/?$/.test(parsed.pathname))
     return "github-repo";
   if (host === "reddit.com") return "reddit";
   const p = parsed.pathname.toLowerCase();
@@ -204,6 +204,84 @@ async function buildYouTubeMarkdown(
   return lines.join("\n");
 }
 
+/** GitHub REST API レスポンス + README を Markdown サマリーに変換する */
+export async function buildGitHubMarkdown(
+  repoJsonPath: string,
+  readmePath: string,
+): Promise<string> {
+  let raw: string;
+  try {
+    raw = await readFile(repoJsonPath, "utf-8");
+  } catch {
+    return "(GitHub JSON の読み込みに失敗しました)";
+  }
+
+  let repo: Record<string, unknown>;
+  try {
+    repo = JSON.parse(raw);
+  } catch {
+    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
+  }
+
+  const str = (k: string) =>
+    typeof repo[k] === "string" ? (repo[k] as string) : "";
+  const num = (k: string) =>
+    typeof repo[k] === "number" ? (repo[k] as number) : null;
+
+  const lines: string[] = [];
+
+  const fullName = str("full_name");
+  lines.push(`# ${fullName || "(不明)"}`);
+  lines.push("");
+
+  const description = str("description");
+  if (description) {
+    lines.push(description);
+    lines.push("");
+  }
+
+  const language = str("language") || "Unknown";
+  const license =
+    (repo.license as Record<string, string> | null)?.name ?? "No License";
+  const stars = num("stargazers_count") ?? 0;
+  const forks = num("forks_count") ?? 0;
+  const issues = num("open_issues_count") ?? 0;
+
+  lines.push(
+    `**Language**: ${language} | **License**: ${license} | **Stars**: ${stars.toLocaleString()} | **Forks**: ${forks.toLocaleString()} | **Open Issues**: ${issues.toLocaleString()}`,
+  );
+
+  const topics = repo.topics as string[] | undefined;
+  if (Array.isArray(topics) && topics.length > 0) {
+    lines.push(`**Topics**: ${topics.join(", ")}`);
+  }
+
+  const homepage = str("homepage");
+  if (homepage) lines.push(`**Homepage**: ${homepage}`);
+
+  const isFork = repo.fork ? "Yes" : "No";
+  lines.push(
+    `**Fork**: ${isFork} | **Created**: ${str("created_at")} | **Updated**: ${str("updated_at")}`,
+  );
+  lines.push(`**URL**: https://github.com/${fullName}`);
+  lines.push("", "---", "");
+
+  let readme: string | null = null;
+  try {
+    readme = await readFile(readmePath, "utf-8");
+  } catch {
+    // README が存在しない
+  }
+
+  if (readme) {
+    lines.push("## README", "", readme);
+  } else {
+    lines.push("*(README not found)*");
+  }
+
+  return lines.join("\n");
+}
+
 /** Reddit JSON API レスポンスを Markdown サマリーに変換する */
 export async function buildRedditMarkdown(absPath: string): Promise<string> {
   let raw: string;
@@ -324,7 +402,14 @@ export function buildCommand(
       const m = new URL(url).pathname.match(/^\/([^/]+)\/([^/]+)/);
       if (!m)
         throw new Error(`GitHub URL からリポジトリを取得できません: ${url}`);
-      return `gh repo view ${shellQuote(`${m[1]}/${m[2]}`)} > ${out} 2>&1`;
+      const apiBase = `https://api.github.com/repos/${m[1]}/${m[2]}`;
+      const base = outAbsPath.replace(/\.[^.]+$/, "");
+      const repoJsonQ = shellQuote(`${base}.repo.json`);
+      const readmeQ = shellQuote(`${base}.readme.md`);
+      return (
+        `curl -sf -H "Accept: application/vnd.github.v3+json" ${shellQuote(apiBase)} > ${repoJsonQ} && ` +
+        `(curl -sf -H "Accept: application/vnd.github.v3.raw" ${shellQuote(`${apiBase}/readme`)} > ${readmeQ} 2>/dev/null || true)`
+      );
     }
     case "reddit": {
       const jsonUrl = url.endsWith(".json")
@@ -370,8 +455,7 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
     }
 
     const service = detectService(parsed);
-    const ext =
-      service === "youtube" ? "md" : service === "github-repo" ? "txt" : "md";
+    const ext = "md";
     const filename = `${service}-${randomUUID().slice(0, 8)}.${ext}`;
     const relPath = `${FETCH_DIR}/${filename}`;
     const absPath = join(WORKSPACE, relPath);
@@ -393,7 +477,7 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
       );
     }
 
-    // YouTube / Reddit: 巨大 JSON → Markdown サマリーに変換して保存
+    // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換して保存
     if (service === "youtube") {
       const base = absPath.replace(/\.[^.]+$/, "");
       const metaJson = `${base}.meta.json`;
@@ -402,6 +486,14 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
       await writeFile(absPath, md, "utf-8");
       await rm(metaJson, { force: true });
       await rm(subsDir, { recursive: true, force: true });
+    } else if (service === "github-repo") {
+      const base = absPath.replace(/\.[^.]+$/, "");
+      const repoJson = `${base}.repo.json`;
+      const readmeMd = `${base}.readme.md`;
+      const md = await buildGitHubMarkdown(repoJson, readmeMd);
+      await writeFile(absPath, md, "utf-8");
+      await rm(repoJson, { force: true });
+      await rm(readmeMd, { force: true });
     } else if (service === "reddit") {
       const md = await buildRedditMarkdown(absPath);
       await writeFile(absPath, md, "utf-8");
