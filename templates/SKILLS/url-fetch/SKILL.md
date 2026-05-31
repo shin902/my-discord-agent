@@ -1,6 +1,6 @@
 ---
 name: url-fetch
-description: URL からコンテンツを取得して整形するスキル。YouTube, GitHub, Reddit, RSS, 一般 Web ページに対応
+description: URL からコンテンツを取得して整形するスキル。YouTube, GitHub, Reddit, RSS, X/Twitter, 一般 Web ページに対応
 ---
 
 ## 使い方

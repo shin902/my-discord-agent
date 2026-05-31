@@ -6,6 +6,7 @@ import {
   buildCommand,
   buildGitHubMarkdown,
   buildRedditMarkdown,
+  buildXTwitterMarkdown,
   detectService,
   isPrivateAddress,
   parseVtt,
@@ -93,6 +94,28 @@ describe("detectService", () => {
   it("一般URL → web", () => {
     expect(detectService(parse("https://example.com/article"))).toBe("web");
   });
+
+  it("x.com/user/status/123 → x-twitter", () => {
+    expect(detectService(parse("https://x.com/user/status/123456789"))).toBe(
+      "x-twitter",
+    );
+  });
+
+  it("twitter.com/user/status/456 → x-twitter", () => {
+    expect(detectService(parse("https://twitter.com/user/status/456"))).toBe(
+      "x-twitter",
+    );
+  });
+
+  it("www.x.com/user/status/789 → x-twitter（www. strip確認）", () => {
+    expect(detectService(parse("https://www.x.com/user/status/789"))).toBe(
+      "x-twitter",
+    );
+  });
+
+  it("x.com/user（statusなし）→ web", () => {
+    expect(detectService(parse("https://x.com/user"))).toBe("web");
+  });
 });
 
 describe("buildCommand シェルエスケープ", () => {
@@ -136,6 +159,16 @@ describe("buildCommand シェルエスケープ", () => {
   it("web: jina.ai 経由でcurl", () => {
     const cmd = buildCommand("web", "https://example.com/article", out);
     expect(cmd).toContain("r.jina.ai");
+    expect(cmd).toContain("curl -sf");
+  });
+
+  it("x-twitter: fxtwitter API への curl コマンドを生成する", () => {
+    const cmd = buildCommand(
+      "x-twitter",
+      "https://x.com/testuser/status/123456789",
+      out,
+    );
+    expect(cmd).toContain("api.fxtwitter.com/testuser/status/123456789");
     expect(cmd).toContain("curl -sf");
   });
 });
@@ -360,5 +393,52 @@ describe("buildRedditMarkdown パース", () => {
     const result = await buildRedditMarkdown(path);
     expect(result).toContain("トップコメント");
     expect(result).toContain("いいコメント");
+  });
+});
+
+describe("buildXTwitterMarkdown パース", () => {
+  async function write(data: unknown): Promise<string> {
+    const path = join(tmpdir(), `x-test-${Date.now()}.json`);
+    await writeFile(path, JSON.stringify(data), "utf-8");
+    return path;
+  }
+
+  it("正常なレスポンス → ツイート本文・著者を含む Markdown", async () => {
+    const path = await write({
+      code: 200,
+      tweet: {
+        text: "テストツイートです",
+        created_at: "2025-01-01T00:00:00.000Z",
+        likes: 42,
+        retweets: 7,
+        replies: 3,
+        views: 1000,
+        author: { name: "テストユーザー", screen_name: "testuser" },
+      },
+    });
+    const result = await buildXTwitterMarkdown(path);
+    expect(result).toContain("@testuser");
+    expect(result).toContain("テストユーザー");
+    expect(result).toContain("テストツイートです");
+    expect(result).toContain("いいね");
+    expect(result).toContain("リツイート");
+  });
+
+  it("tweet キーなし → 構造解析失敗メッセージ", async () => {
+    const path = await write({ code: 404 });
+    const result = await buildXTwitterMarkdown(path);
+    expect(result).toContain("構造を解析できませんでした");
+  });
+
+  it("無効な JSON → パース失敗メッセージ", async () => {
+    const path = join(tmpdir(), `x-invalid-${Date.now()}.json`);
+    await writeFile(path, "not json", "utf-8");
+    const result = await buildXTwitterMarkdown(path);
+    expect(result).toContain("JSON パース失敗");
+  });
+
+  it("存在しないファイル → 読み込み失敗メッセージ", async () => {
+    const result = await buildXTwitterMarkdown("/tmp/nonexistent-x.json");
+    expect(result).toContain("読み込みに失敗");
   });
 });
