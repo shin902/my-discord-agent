@@ -33,7 +33,13 @@ function shellQuote(str: string): string {
   return `'${str.replace(/'/g, "'\\''")}'`;
 }
 
-type ServiceType = "youtube" | "github-repo" | "reddit" | "rss" | "web";
+type ServiceType =
+  | "youtube"
+  | "github-repo"
+  | "reddit"
+  | "rss"
+  | "x-twitter"
+  | "web";
 
 export function detectService(parsed: URL): ServiceType {
   const host = parsed.hostname.replace(/^www\./, "");
@@ -41,6 +47,11 @@ export function detectService(parsed: URL): ServiceType {
   if (host === "github.com" && /^\/[^/]+\/[^/?#]+\/?$/.test(parsed.pathname))
     return "github-repo";
   if (host === "reddit.com") return "reddit";
+  if (
+    (host === "x.com" || host === "twitter.com") &&
+    /\/[^/]+\/status\/\d+/.test(parsed.pathname)
+  )
+    return "x-twitter";
   const p = parsed.pathname.toLowerCase();
   if (
     p.endsWith(".xml") ||
@@ -378,6 +389,71 @@ export async function buildRedditMarkdown(absPath: string): Promise<string> {
   return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
 }
 
+/** fxtwitter API レスポンスを Markdown サマリーに変換する */
+export async function buildXTwitterMarkdown(absPath: string): Promise<string> {
+  let raw: string;
+  try {
+    raw = await readFile(absPath, "utf-8");
+  } catch {
+    return "(X/Twitter JSON の読み込みに失敗しました)";
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
+  }
+
+  const d = data as Record<string, unknown>;
+  const code = typeof d.code === "number" ? d.code : null;
+  if (code !== null && code !== 200) {
+    const message = typeof d.message === "string" ? d.message : "unknown error";
+    return `(fxtwitter API エラー: ${code} ${message})`;
+  }
+
+  const tweet = d.tweet as Record<string, unknown> | undefined;
+  if (!tweet) {
+    return `(X/Twitter レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
+  }
+
+  const str = (k: string) =>
+    typeof tweet[k] === "string" ? (tweet[k] as string) : "";
+  const num = (k: string) =>
+    typeof tweet[k] === "number" ? (tweet[k] as number) : null;
+
+  const author = tweet.author as Record<string, unknown> | undefined;
+  const screenName =
+    typeof author?.screen_name === "string" ? author.screen_name : "";
+  const authorName =
+    typeof author?.name === "string" ? author.name : screenName;
+
+  const lines: string[] = [];
+
+  lines.push(`# @${screenName} (${authorName})`);
+  lines.push("");
+  lines.push(str("text"));
+  lines.push("");
+
+  const createdAt = str("created_at");
+  if (createdAt) lines.push(`**投稿日時**: ${createdAt}`);
+
+  const likes = num("likes");
+  if (likes !== null) lines.push(`**いいね**: ${likes.toLocaleString()}`);
+
+  const retweets = num("retweets");
+  if (retweets !== null)
+    lines.push(`**リツイート**: ${retweets.toLocaleString()}`);
+
+  const replies = num("replies");
+  if (replies !== null) lines.push(`**返信**: ${replies.toLocaleString()}`);
+
+  const views = num("views");
+  if (views !== null) lines.push(`**表示回数**: ${views.toLocaleString()}`);
+
+  return lines.join("\n");
+}
+
 export function buildCommand(
   service: ServiceType,
   url: string,
@@ -410,6 +486,13 @@ export function buildCommand(
         `curl -sf -H "Accept: application/vnd.github.v3+json" ${shellQuote(apiBase)} > ${repoJsonQ} && ` +
         `(curl -sf -H "Accept: application/vnd.github.v3.raw" ${shellQuote(`${apiBase}/readme`)} > ${readmeQ} 2>/dev/null || true)`
       );
+    }
+    case "x-twitter": {
+      const m = new URL(url).pathname.match(/\/([^/]+)\/status\/(\d+)/);
+      if (!m)
+        throw new Error(`X/Twitter URL からツイートIDを取得できません: ${url}`);
+      const [, username, tweetId] = m;
+      return `curl -sf ${shellQuote(`https://api.fxtwitter.com/${username}/status/${tweetId}`)} > ${out}`;
     }
     case "reddit": {
       const jsonUrl = url.endsWith(".json")
@@ -494,6 +577,9 @@ export const urlFetchTool: AgentTool<typeof parameters> = {
       await writeFile(absPath, md, "utf-8");
       await rm(repoJson, { force: true });
       await rm(readmeMd, { force: true });
+    } else if (service === "x-twitter") {
+      const md = await buildXTwitterMarkdown(absPath);
+      await writeFile(absPath, md, "utf-8");
     } else if (service === "reddit") {
       const md = await buildRedditMarkdown(absPath);
       await writeFile(absPath, md, "utf-8");

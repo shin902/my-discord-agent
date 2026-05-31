@@ -69,6 +69,13 @@ detect_service() {
       fi
       ;;
     reddit.com|old.reddit.com) echo "reddit" ;;
+    x.com|www.x.com|twitter.com|www.twitter.com)
+      if [[ "$path" =~ ^/[^/]+/status/[0-9]+ ]]; then
+        echo "x-twitter"
+      else
+        echo "web"
+      fi
+      ;;
     *)
       if [[ "$path" == *.xml || "$path" == *.rss || "$path" == */feed* || "$path" == */rss* ]]; then
         echo "rss"
@@ -417,6 +424,44 @@ fetch_reddit() {
   format_reddit "$tmp_file"
 }
 
+fetch_x_twitter() {
+  local url="$1"
+  check_cmd curl
+  check_cmd jq
+
+  local username tweetId
+  username=$(echo "$url" | sed -E 's|^https?://(www\.)?(x|twitter)\.com/([^/]+)/status/([0-9]+).*|\3|')
+  tweetId=$(echo "$url"  | sed -E 's|^https?://(www\.)?(x|twitter)\.com/([^/]+)/status/([0-9]+).*|\4|')
+
+  local json
+  json=$(curl -sf "https://api.fxtwitter.com/${username}/status/${tweetId}") \
+    || die "fxtwitter API error for ${url}"
+
+  local code
+  code=$(echo "$json" | jq -r '.code // 0')
+  [[ "$code" != "200" ]] && die "fxtwitter API returned code ${code} for ${url}"
+
+  local text screen_name author_name created_at likes retweets replies views
+  text=$(echo "$json"        | jq -r '.tweet.text // ""')
+  screen_name=$(echo "$json" | jq -r '.tweet.author.screen_name // ""')
+  author_name=$(echo "$json" | jq -r '.tweet.author.name // ""')
+  created_at=$(echo "$json"  | jq -r '.tweet.created_at // ""')
+  likes=$(echo "$json"       | jq -r 'if .tweet.likes != null then (.tweet.likes|tostring) else "" end')
+  retweets=$(echo "$json"    | jq -r 'if .tweet.retweets != null then (.tweet.retweets|tostring) else "" end')
+  replies=$(echo "$json"     | jq -r 'if .tweet.replies != null then (.tweet.replies|tostring) else "" end')
+  views=$(echo "$json"       | jq -r 'if .tweet.views != null then (.tweet.views|tostring) else "" end')
+
+  echo "# @${screen_name} (${author_name})"
+  echo ""
+  echo "${text}"
+  echo ""
+  [[ -n "$created_at" ]] && echo "**投稿日時**: ${created_at}"
+  [[ -n "$likes"      ]] && echo "**いいね**: ${likes}"
+  [[ -n "$retweets"   ]] && echo "**リツイート**: ${retweets}"
+  [[ -n "$replies"    ]] && echo "**返信**: ${replies}"
+  [[ -n "$views"      ]] && echo "**表示回数**: ${views}"
+}
+
 fetch_rss() {
   local url="$1"
   check_cmd python3
@@ -456,6 +501,7 @@ main() {
     youtube)      fetch_youtube "$url" ;;
     github-repo)  fetch_github_repo "$url" ;;
     reddit)       fetch_reddit "$url" ;;
+    x-twitter)    fetch_x_twitter "$url" ;;
     rss)          fetch_rss "$url" ;;
     web)          fetch_web "$url" ;;
     *)            die "unknown service: $service" ;;
