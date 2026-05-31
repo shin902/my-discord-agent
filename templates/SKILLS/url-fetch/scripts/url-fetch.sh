@@ -57,7 +57,7 @@ detect_service() {
   # Strip www. and scheme
   host=$(echo "$url" | sed -E 's|^https?://(www\.)?([^/]+).*|\2|')
   local path
-  path=$(echo "$url" | sed -E 's|^https?://[^/]+(/.*)?|\1|' | tr '[:upper:]' '[:lower:]')
+  path=$(echo "$url" | sed -E 's|^https?://[^/]+(/[^?#]*)?.*|\1|' | tr '[:upper:]' '[:lower:]')
 
   case "$host" in
     youtube.com|youtu.be) echo "youtube" ;;
