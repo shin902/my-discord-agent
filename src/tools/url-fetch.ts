@@ -49,7 +49,7 @@ export function detectService(parsed: URL): ServiceType {
   if (host === "reddit.com") return "reddit";
   if (
     (host === "x.com" || host === "twitter.com") &&
-    /\/status\/\d+/.test(parsed.pathname)
+    /\/[^/]+\/status\/\d+/.test(parsed.pathname)
   )
     return "x-twitter";
   const p = parsed.pathname.toLowerCase();
