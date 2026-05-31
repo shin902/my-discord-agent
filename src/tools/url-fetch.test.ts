@@ -235,7 +235,10 @@ describe("buildGitHubMarkdown パース", () => {
       created_at: "2024-01-01T00:00:00Z",
       updated_at: "2024-06-01T00:00:00Z",
     });
-    const result = await buildGitHubMarkdown(repoJson, "/tmp/nonexistent-readme");
+    const result = await buildGitHubMarkdown(
+      repoJson,
+      "/tmp/nonexistent-readme",
+    );
     expect(result).toContain("# owner/my-repo");
     expect(result).toContain("テストリポジトリ");
     expect(result).toContain("TypeScript");
@@ -244,7 +247,13 @@ describe("buildGitHubMarkdown パース", () => {
   });
 
   it("README ファイルがある場合は含まれる", async () => {
-    const repoJson = await writeJson({ full_name: "owner/repo", stargazers_count: 0, forks_count: 0, open_issues_count: 0, fork: false });
+    const repoJson = await writeJson({
+      full_name: "owner/repo",
+      stargazers_count: 0,
+      forks_count: 0,
+      open_issues_count: 0,
+      fork: false,
+    });
     const readmePath = join(tmpdir(), `readme-${Date.now()}.md`);
     await writeFile(readmePath, "# Hello World", "utf-8");
     const result = await buildGitHubMarkdown(repoJson, readmePath);
@@ -260,7 +269,10 @@ describe("buildGitHubMarkdown パース", () => {
   });
 
   it("存在しないファイル → 読み込み失敗メッセージ", async () => {
-    const result = await buildGitHubMarkdown("/tmp/nonexistent.json", "/tmp/nonexistent");
+    const result = await buildGitHubMarkdown(
+      "/tmp/nonexistent.json",
+      "/tmp/nonexistent",
+    );
     expect(result).toContain("読み込みに失敗");
   });
 });
