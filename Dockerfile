@@ -4,6 +4,7 @@ RUN apk add --no-cache \
     bash \
     python3 \
     curl \
+    jq \
     github-cli
 
 RUN python3 -m venv /opt/venv && \
