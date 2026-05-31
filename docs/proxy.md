@@ -1,7 +1,5 @@
 # プロキシサーバー（クレデンシャル安全挿入）
 
-`src/agent/manager.ts` の `sendMessage()` 内で microsandbox の `secret()` を使って実装。
-
 ## 目的
 
 エージェントが使う外部 API へのリクエストを中継し、APIキー等のシークレットをエージェントに直接渡さずに注入する。
@@ -27,12 +25,16 @@ Agent container → OneCLI proxy（シークレット注入） → 外部API
 
 ```
 Host
-  ├─ .env                        # 環境変数（ホスト側で読み込み）
-  ├─ config/credential-proxy.json # プロバイダ→envVar→baseUrl マッピング
-  └─ src/agent/manager.ts         # 環境変数読み込み → sandbox.secret() 注入
-       └─ microsandbox VM        # TSI ネットワーク層でヘッダ差し替え
-            └─ @earendil-works/pi-ai
+  ├─ .env                              # 環境変数（ホスト側で読み込み）
+  ├─ config/credential-proxy.json      # プロバイダ→envVar→baseUrl マッピング
+  └─ src/proxy/credential-proxy-server.ts  # ホスト側 HTTP リバースプロキシ
+       ├─ Authorization ヘッダを注入して upstream へ転送
+       └─ src/agent/manager.ts         # CREDENTIAL_PROXY_JSON 環境変数でコンテナに渡す
+            └─ Docker コンテナ
+                 └─ @earendil-works/pi-ai
 ```
+
+コンテナには実際の API キーではなく、プロキシ URL（`http://host.docker.internal:{port}/{provider}`）を `CREDENTIAL_PROXY_JSON` 環境変数として渡す。実キーはホストプロセスのメモリにのみ存在する。
 
 ### credential-proxy.json
 

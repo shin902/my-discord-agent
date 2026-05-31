@@ -22,7 +22,6 @@
     "@earendil-works/pi-ai": "latest",
     "discord.js": "^14.0.0",
     "dotenv": "^17.4.2",
-    "microsandbox": "^0.4.5",
     "typebox": "^1.1.37",
     "zod": "^4.4.3"
   },
