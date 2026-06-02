@@ -6,13 +6,15 @@ const MSAL_CONFIG = {
   scopes: ["https://graph.microsoft.com/Mail.Read"],
 };
 
-function makePca(overrides: {
-  getAllAccounts?: ReturnType<typeof vi.fn>;
-  acquireTokenSilent?: ReturnType<typeof vi.fn>;
-  acquireTokenByDeviceCode?: ReturnType<typeof vi.fn>;
-  removeAccount?: ReturnType<typeof vi.fn>;
-  serialize?: ReturnType<typeof vi.fn>;
-} = {}) {
+function makePca(
+  overrides: {
+    getAllAccounts?: ReturnType<typeof vi.fn>;
+    acquireTokenSilent?: ReturnType<typeof vi.fn>;
+    acquireTokenByDeviceCode?: ReturnType<typeof vi.fn>;
+    removeAccount?: ReturnType<typeof vi.fn>;
+    serialize?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
   const getAllAccounts =
     overrides.getAllAccounts ?? vi.fn().mockResolvedValue([]);
   const acquireTokenSilent =
@@ -34,7 +36,13 @@ function makePca(overrides: {
       deserialize: vi.fn(),
       removeAccount,
     }),
-    _mocks: { getAllAccounts, acquireTokenSilent, acquireTokenByDeviceCode, removeAccount, serialize },
+    _mocks: {
+      getAllAccounts,
+      acquireTokenSilent,
+      acquireTokenByDeviceCode,
+      removeAccount,
+      serialize,
+    },
   };
 }
 
@@ -66,12 +74,16 @@ describe("getGraphAccessToken", () => {
     const fakeAccount = { homeAccountId: "acc-1" };
     const pca = makePca({
       getAllAccounts: vi.fn().mockResolvedValue([fakeAccount]),
-      acquireTokenSilent: vi.fn().mockResolvedValue({ accessToken: "silent-token" }),
+      acquireTokenSilent: vi
+        .fn()
+        .mockResolvedValue({ accessToken: "silent-token" }),
     });
     const writeFile = vi.fn().mockResolvedValue(undefined);
 
     vi.doMock("@azure/msal-node", () => ({
-      PublicClientApplication: function () { return pca; },
+      PublicClientApplication: function () {
+        return pca;
+      },
     }));
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
@@ -79,13 +91,18 @@ describe("getGraphAccessToken", () => {
       mkdir: vi.fn().mockResolvedValue(undefined),
     }));
 
-    const { initGraphAuth, getGraphAccessToken } = await import("./graph-auth.js");
+    const { initGraphAuth, getGraphAccessToken } = await import(
+      "./graph-auth.js"
+    );
     await initGraphAuth("graph", MSAL_CONFIG);
     const token = await getGraphAccessToken("graph");
 
     expect(token).toBe("silent-token");
     expect(pca._mocks.acquireTokenSilent).toHaveBeenCalledWith(
-      expect.objectContaining({ account: fakeAccount, scopes: MSAL_CONFIG.scopes }),
+      expect.objectContaining({
+        account: fakeAccount,
+        scopes: MSAL_CONFIG.scopes,
+      }),
     );
     expect(writeFile).toHaveBeenCalled();
   });
@@ -101,7 +118,9 @@ describe("getGraphAccessToken", () => {
     });
 
     vi.doMock("@azure/msal-node", () => ({
-      PublicClientApplication: function () { return pca; },
+      PublicClientApplication: function () {
+        return pca;
+      },
     }));
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
@@ -109,7 +128,9 @@ describe("getGraphAccessToken", () => {
       mkdir: vi.fn().mockResolvedValue(undefined),
     }));
 
-    const { initGraphAuth, getGraphAccessToken } = await import("./graph-auth.js");
+    const { initGraphAuth, getGraphAccessToken } = await import(
+      "./graph-auth.js"
+    );
     await initGraphAuth("graph", MSAL_CONFIG);
     const token = await getGraphAccessToken("graph");
 
@@ -131,7 +152,9 @@ describe("getGraphAccessToken", () => {
     });
 
     vi.doMock("@azure/msal-node", () => ({
-      PublicClientApplication: function () { return pca; },
+      PublicClientApplication: function () {
+        return pca;
+      },
     }));
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
@@ -139,7 +162,9 @@ describe("getGraphAccessToken", () => {
       mkdir: vi.fn().mockResolvedValue(undefined),
     }));
 
-    const { initGraphAuth, getGraphAccessToken } = await import("./graph-auth.js");
+    const { initGraphAuth, getGraphAccessToken } = await import(
+      "./graph-auth.js"
+    );
     await initGraphAuth("graph", MSAL_CONFIG);
     const token = await getGraphAccessToken("graph");
 
@@ -153,7 +178,9 @@ describe("getGraphAccessToken", () => {
     });
 
     vi.doMock("@azure/msal-node", () => ({
-      PublicClientApplication: function () { return pca; },
+      PublicClientApplication: function () {
+        return pca;
+      },
     }));
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
@@ -161,7 +188,9 @@ describe("getGraphAccessToken", () => {
       mkdir: vi.fn(),
     }));
 
-    const { initGraphAuth, getGraphAccessToken } = await import("./graph-auth.js");
+    const { initGraphAuth, getGraphAccessToken } = await import(
+      "./graph-auth.js"
+    );
     await initGraphAuth("graph", MSAL_CONFIG);
     await expect(getGraphAccessToken("graph")).rejects.toThrow(
       "デバイスコードフローでトークンを取得できませんでした",

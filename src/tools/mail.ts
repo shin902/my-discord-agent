@@ -142,7 +142,9 @@ export const readEmailTool: AgentTool<typeof readEmailParameters> = {
         .replace(/&quot;/g, '"')
         .replace(/&apos;/g, "'")
         .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-        .replace(/&#x([\da-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+        .replace(/&#x([\da-f]+);/gi, (_, h) =>
+          String.fromCharCode(parseInt(h, 16)),
+        )
         .trim();
     }
     if (bodyText.length > MAX_BODY_CHARS) {
