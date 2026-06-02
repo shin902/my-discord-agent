@@ -81,8 +81,10 @@ export async function getGraphAccessToken(provider: string): Promise<string> {
         await pca.acquireTokenSilent(silentRequest);
       await persistCache(state);
       return result.accessToken;
-    } catch {
-      // サイレント取得失敗 → デバイスコードフローで再認証
+    } catch (err) {
+      console.warn(
+        `[graph-auth:${provider}] silent token acquisition failed, falling back to device code: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
