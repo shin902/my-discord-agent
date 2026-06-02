@@ -224,19 +224,21 @@ Azure 無料アカウントまたは M365 開発者プログラムでテナン�
 認証に成功したアクセストークン・リフレッシュトークンは以下のファイルに保存されます：
 
 ```
-data/graph-token.json
+data/graph-token-{provider}.json
 ```
+
+`provider` は `credential-proxy.json` で指定したプロバイダー名です（例: `graph` の場合は `data/graph-token-graph.json`）。
 
 以降の実行では、このキャッシュが有効な限りデバイスコード認証は不要です。
 
 ### 再認証が必要なケース
 
-- `data/graph-token.json` を削除した場合
+- `data/graph-token-{provider}.json` を削除した場合
 - リフレッシュトークンの有効期限が切れた場合（通常90日間）
 - `scopes` の設定を変更してアクセス許可を追加した場合
 - アプリ登録のアクセス許可設定を変更した場合
 
-再認証が必要なときは、`data/graph-token.json` を削除してから再起動すれば、再度デバイスコードフローが起動します。
+再認証が必要なときは、`data/graph-token-{provider}.json` を削除してから再起動すれば、再度デバイスコードフローが起動します。
 
 ---
 
