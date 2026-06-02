@@ -14,9 +14,9 @@ function resolveBrowserlessBaseUrl(): string {
   return entry.baseUrl.replace(/\/$/, "");
 }
 
-const BASE_URL = resolveBrowserlessBaseUrl();
 async function post(path: string, body: unknown): Promise<string> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const baseUrl = resolveBrowserlessBaseUrl();
+  const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -63,8 +63,9 @@ const searchParams = Type.Object({
   query: Type.String({ description: "検索クエリ" }),
   limit: Type.Optional(
     Type.Number({
-      description: "最大件数（デフォルト: 10）",
+      description: "最大件数（デフォルト: 3、最大: 3）",
       minimum: 1,
+      maximum: 3,
     }),
   ),
   lang: Type.Optional(
@@ -85,7 +86,7 @@ export const browserlessSearchTool: AgentTool<typeof searchParams> = {
   execute: async (_id, { query, limit, lang, sources }) => {
     const text = await post("/search", {
       query,
-      limit: limit ?? 10,
+      limit: Math.min(limit ?? 3, 3),
       lang: lang ?? "ja",
       sources: sources ?? ["web"],
     });
