@@ -43,7 +43,7 @@ Discord受信
 
 【サンドボックスコンテナ（Dockerコンテナ内）】
   └─ sandbox/agent-runner.ts  (Agent ループ実行)
-       └─ tools/registry.ts   (bashTool・urlFetchTool など全ツールを登録・実行)
+       └─ tools/registry.ts   (bashTool・agentReachTool など全ツールを登録・実行)
 ```
 
 ### ツール実装の原則

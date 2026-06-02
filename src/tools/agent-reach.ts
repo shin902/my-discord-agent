@@ -518,9 +518,9 @@ const parameters = Type.Object({
   url: Type.String({ description: "取得するURL" }),
 });
 
-export const urlFetchTool: AgentTool<typeof parameters> = {
-  name: "url-fetch",
-  label: "URL Fetch to File",
+export const agentReachTool: AgentTool<typeof parameters> = {
+  name: "agent-reach",
+  label: "Agent Reach to File",
   description:
     "URLのサービスを自動検出してコンテンツをファイルに保存し、ワークスペース相対パスを返す。read ツールで内容を確認すること",
   parameters,

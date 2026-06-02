@@ -10,7 +10,7 @@ import {
   detectService,
   isPrivateAddress,
   parseVtt,
-} from "./url-fetch.js";
+} from "./agent-reach.js";
 
 describe("isPrivateAddress", () => {
   it.each([
