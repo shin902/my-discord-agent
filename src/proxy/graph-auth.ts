@@ -70,22 +70,25 @@ export async function getGraphAccessToken(provider: string): Promise<string> {
   const { pca, config } = state;
   const accounts = await pca.getTokenCache().getAllAccounts();
 
-  if (accounts.length > 0) {
-    const silentRequest: SilentFlowRequest = {
-      account: accounts[0],
-      scopes: config.scopes,
-    };
-
+  for (const account of accounts) {
     try {
+      const silentRequest: SilentFlowRequest = {
+        account,
+        scopes: config.scopes,
+      };
       const result: AuthenticationResult =
         await pca.acquireTokenSilent(silentRequest);
       await persistCache(state);
       return result.accessToken;
-    } catch (err) {
-      console.warn(
-        `[graph-auth:${provider}] silent token acquisition failed, falling back to device code: ${err instanceof Error ? err.message : err}`,
-      );
+    } catch {
+      // このアカウントのサイレント取得失敗、次を試みる
     }
+  }
+
+  if (accounts.length > 0) {
+    console.warn(
+      `[graph-auth:${provider}] ${accounts.length} 件のキャッシュ済みアカウントがすべてサイレント取得に失敗しました。デバイスコードフローにフォールバックします`,
+    );
   }
 
   const deviceCodeRequest: DeviceCodeRequest = {
@@ -101,6 +104,12 @@ export async function getGraphAccessToken(provider: string): Promise<string> {
     throw new Error(
       `デバイスコードフローでトークンを取得できませんでした (provider: ${provider})`,
     );
+
+  // 再認証後は古いアカウントを削除してキャッシュを1アカウントに保つ
+  for (const oldAccount of accounts) {
+    await pca.getTokenCache().removeAccount(oldAccount);
+  }
+
   await persistCache(state);
   return result.accessToken;
 }
