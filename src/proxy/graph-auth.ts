@@ -10,30 +10,42 @@ import {
 import type { MsalConfig } from "../config/credential-proxy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TOKEN_CACHE_PATH = path.join(__dirname, "../../data/graph-token.json");
+const DATA_DIR = path.join(__dirname, "../../data");
 
-let pca: PublicClientApplication | null = null;
-let msalConfig: MsalConfig | null = null;
+type ProviderState = {
+  pca: PublicClientApplication;
+  config: MsalConfig;
+  cachePath: string;
+};
 
-async function loadCacheFromFile(): Promise<string | null> {
+const registry = new Map<string, ProviderState>();
+
+function cachePathFor(provider: string): string {
+  return path.join(DATA_DIR, `graph-token-${provider}.json`);
+}
+
+async function loadCacheFromFile(cachePath: string): Promise<string | null> {
   try {
-    return await readFile(TOKEN_CACHE_PATH, "utf-8");
+    return await readFile(cachePath, "utf-8");
   } catch {
     return null;
   }
 }
 
-async function saveCacheToFile(serialized: string): Promise<void> {
-  await mkdir(path.dirname(TOKEN_CACHE_PATH), { recursive: true });
-  await writeFile(TOKEN_CACHE_PATH, serialized, "utf-8");
+async function persistCache(state: ProviderState): Promise<void> {
+  const serialized = state.pca.getTokenCache().serialize();
+  await mkdir(DATA_DIR, { recursive: true });
+  await writeFile(state.cachePath, serialized, "utf-8");
 }
 
-export async function initGraphAuth(config: MsalConfig): Promise<void> {
-  msalConfig = config;
+export async function initGraphAuth(
+  provider: string,
+  config: MsalConfig,
+): Promise<void> {
+  const cachePath = cachePathFor(provider);
+  const cachedData = await loadCacheFromFile(cachePath);
 
-  const cachedData = await loadCacheFromFile();
-
-  pca = new PublicClientApplication({
+  const pca = new PublicClientApplication({
     auth: {
       clientId: config.clientId,
       authority: `https://login.microsoftonline.com/${config.tenantId}`,
@@ -43,33 +55,31 @@ export async function initGraphAuth(config: MsalConfig): Promise<void> {
   if (cachedData) {
     pca.getTokenCache().deserialize(cachedData);
   }
+
+  registry.set(provider, { pca, config, cachePath });
 }
 
-async function persistCache(): Promise<void> {
-  if (!pca) return;
-  const serialized = pca.getTokenCache().serialize();
-  await saveCacheToFile(serialized);
-}
-
-export async function getGraphAccessToken(): Promise<string> {
-  if (!pca || !msalConfig) {
+export async function getGraphAccessToken(provider: string): Promise<string> {
+  const state = registry.get(provider);
+  if (!state) {
     throw new Error(
-      "Graph Auth が初期化されていません。initGraphAuth() を先に呼んでください",
+      `Graph Auth が初期化されていません (provider: ${provider})。initGraphAuth() を先に呼んでください`,
     );
   }
 
+  const { pca, config } = state;
   const accounts = await pca.getTokenCache().getAllAccounts();
 
   if (accounts.length > 0) {
     const silentRequest: SilentFlowRequest = {
       account: accounts[0],
-      scopes: msalConfig.scopes,
+      scopes: config.scopes,
     };
 
     try {
       const result: AuthenticationResult =
         await pca.acquireTokenSilent(silentRequest);
-      await persistCache();
+      await persistCache(state);
       return result.accessToken;
     } catch {
       // サイレント取得失敗 → デバイスコードフローで再認証
@@ -77,16 +87,18 @@ export async function getGraphAccessToken(): Promise<string> {
   }
 
   const deviceCodeRequest: DeviceCodeRequest = {
-    scopes: msalConfig.scopes,
+    scopes: config.scopes,
     deviceCodeCallback: (response) => {
-      console.log("\n[graph-auth] Outlook 認証が必要です");
-      console.log(`[graph-auth] ${response.message}`);
+      console.log(`\n[graph-auth:${provider}] 認証が必要です`);
+      console.log(`[graph-auth:${provider}] ${response.message}`);
     },
   };
 
   const result = await pca.acquireTokenByDeviceCode(deviceCodeRequest);
   if (!result)
-    throw new Error("デバイスコードフローでトークンを取得できませんでした");
-  await persistCache();
+    throw new Error(
+      `デバイスコードフローでトークンを取得できませんでした (provider: ${provider})`,
+    );
+  await persistCache(state);
   return result.accessToken;
 }

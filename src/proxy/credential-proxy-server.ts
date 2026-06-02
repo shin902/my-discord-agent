@@ -65,7 +65,7 @@ async function handleRequest(
     // MSALトークン注入（Graph API用）
     let token: string;
     try {
-      token = await getGraphAccessToken();
+      token = await getGraphAccessToken(entry.provider);
     } catch (err) {
       console.error(
         `[credential-proxy] graph token 取得失敗: ${err instanceof Error ? err.message : err}`,
@@ -142,7 +142,7 @@ export async function initCredentialProxyServer(): Promise<number> {
   // MSALが必要なプロバイダーを初期化
   for (const entry of creds) {
     if (entry.msal) {
-      await initGraphAuth(entry.msal);
+      await initGraphAuth(entry.provider, entry.msal);
       console.log(
         `[credential-proxy] Graph Auth initialized for provider: ${entry.provider}`,
       );

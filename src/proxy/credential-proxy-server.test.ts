@@ -199,10 +199,11 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     vi.resetModules();
   });
 
-  it("msal プロバイダーは getGraphAccessToken() のトークンを Bearer で注入する", async () => {
+  it("msal プロバイダーは getGraphAccessToken(provider) のトークンを Bearer で注入する", async () => {
+    const getGraphAccessToken = vi.fn().mockResolvedValue("msal-access-token");
     vi.doMock("./graph-auth.js", () => ({
       initGraphAuth: vi.fn(),
-      getGraphAccessToken: vi.fn().mockResolvedValue("msal-access-token"),
+      getGraphAccessToken,
     }));
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
@@ -213,6 +214,7 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     handler(req, res as unknown as ServerResponse);
     // 非同期でトークン取得するため、次の microtask まで待つ
     await new Promise((r) => setTimeout(r, 0));
+    expect(getGraphAccessToken).toHaveBeenCalledWith("graph");
     const opts = requestMock.mock.calls[0]?.[0];
     expect(opts?.headers.authorization).toBe("Bearer msal-access-token");
   });
