@@ -74,7 +74,6 @@ async function handleRequest(
       res.end("Graph token acquisition failed");
       return;
     }
-    delete headers.authorization;
     headers.authorization = `Bearer ${token}`;
   } else if (entry.envVars && entry.envVars.length > 0) {
     let apiKey: string | undefined;
