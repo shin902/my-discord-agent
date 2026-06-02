@@ -28,7 +28,7 @@ async function graphFetch(path: string): Promise<unknown> {
 
 const listEmailsParameters = Type.Object({
   limit: Type.Optional(
-    Type.Number({
+    Type.Integer({
       description: "取得件数（デフォルト: 10、最大: 50）",
       minimum: 1,
       maximum: 50,
