@@ -1,27 +1,22 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
-function getBrowserlessConfig(): { baseUrl: string; token: string } {
+function getBrowserlessBaseUrl(): string {
   const credJson = process.env.CREDENTIAL_PROXY_JSON;
   if (!credJson) throw new Error("CREDENTIAL_PROXY_JSON が設定されていません");
-  const creds: Array<{ provider: string; baseUrl: string; envVars?: string[] }> =
+  const creds: Array<{ provider: string; baseUrl: string }> =
     JSON.parse(credJson);
   const entry = creds.find((e) => e.provider === "browserless");
   if (!entry)
     throw new Error(
       "browserless プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません",
     );
-  const token = entry.envVars?.map((v) => process.env[v]).find(Boolean);
-  if (!token)
-    throw new Error(
-      "browserless トークンが見つかりません（CREDENTIAL_PROXY_JSON の envVars に設定してください）",
-    );
-  return { baseUrl: entry.baseUrl.replace(/\/$/, ""), token };
+  return entry.baseUrl.replace(/\/$/, "");
 }
 
 async function post(path: string, body: unknown): Promise<string> {
-  const { baseUrl, token } = getBrowserlessConfig();
-  const res = await fetch(`${baseUrl}${path}?token=${token}`, {
+  const baseUrl = getBrowserlessBaseUrl();
+  const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
