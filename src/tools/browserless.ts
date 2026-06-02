@@ -1,21 +1,11 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { z } from "zod";
-
-const CredentialEntrySchema = z.array(
-  z.object({ provider: z.string(), baseUrl: z.string() }),
-);
 
 function getBrowserlessBaseUrl(): string {
   const credJson = process.env.CREDENTIAL_PROXY_JSON;
   if (!credJson) throw new Error("CREDENTIAL_PROXY_JSON が設定されていません");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(credJson);
-  } catch {
-    throw new Error("CREDENTIAL_PROXY_JSON が不正な JSON です");
-  }
-  const creds = CredentialEntrySchema.parse(parsed);
+  const creds: Array<{ provider: string; baseUrl: string }> =
+    JSON.parse(credJson);
   const entry = creds.find((e) => e.provider === "browserless");
   if (!entry)
     throw new Error(
