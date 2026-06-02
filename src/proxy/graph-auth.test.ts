@@ -63,6 +63,7 @@ describe("getGraphAccessToken", () => {
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
       writeFile: vi.fn(),
       mkdir: vi.fn(),
+      chmod: vi.fn(),
     }));
     const { getGraphAccessToken } = await import("./graph-auth.js");
     await expect(getGraphAccessToken("graph")).rejects.toThrow(
@@ -89,6 +90,7 @@ describe("getGraphAccessToken", () => {
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
       writeFile,
       mkdir: vi.fn().mockResolvedValue(undefined),
+      chmod: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { initGraphAuth, getGraphAccessToken } = await import(
@@ -126,6 +128,7 @@ describe("getGraphAccessToken", () => {
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
       writeFile: vi.fn().mockResolvedValue(undefined),
       mkdir: vi.fn().mockResolvedValue(undefined),
+      chmod: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { initGraphAuth, getGraphAccessToken } = await import(
@@ -160,6 +163,7 @@ describe("getGraphAccessToken", () => {
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
       writeFile: vi.fn().mockResolvedValue(undefined),
       mkdir: vi.fn().mockResolvedValue(undefined),
+      chmod: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { initGraphAuth, getGraphAccessToken } = await import(
@@ -186,6 +190,7 @@ describe("getGraphAccessToken", () => {
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
       writeFile: vi.fn(),
       mkdir: vi.fn(),
+      chmod: vi.fn(),
     }));
 
     const { initGraphAuth, getGraphAccessToken } = await import(

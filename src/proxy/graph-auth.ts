@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -35,7 +35,8 @@ async function loadCacheFromFile(cachePath: string): Promise<string | null> {
 async function persistCache(state: ProviderState): Promise<void> {
   const serialized = state.pca.getTokenCache().serialize();
   await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(state.cachePath, serialized, "utf-8");
+  await writeFile(state.cachePath, serialized, { encoding: "utf-8", mode: 0o600 });
+  await chmod(state.cachePath, 0o600);
 }
 
 export async function initGraphAuth(
