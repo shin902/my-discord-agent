@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# url-fetch – CLI port of my-discord-agent's url-fetch tool
-# Usage: url-fetch.sh <URL>
+# agent-reach – CLI port of my-discord-agent's agent-reach tool
+# Usage: agent-reach.sh <URL>
 # Outputs fetched content to stdout. Pipe to file with > if needed.
 
 VERSION="0.1.0"
@@ -23,9 +23,9 @@ trap _cleanup EXIT
 
 usage() {
   cat <<EOF
-url-fetch v${VERSION}
+agent-reach v${VERSION}
 
-Usage: url-fetch.sh <URL>
+Usage: agent-reach.sh <URL>
 
 Fetches content from the given URL and outputs to stdout.
 Auto-detects service type (YouTube, GitHub, Reddit, RSS, web).
@@ -420,7 +420,7 @@ fetch_reddit() {
     json_url=$(echo "$url" | sed -E 's|/?(\?.*)?$|.json\1|')
   fi
 
-  curl -sf "$json_url" -H "User-Agent: url-fetch-cli/1.0" > "$tmp_file"
+  curl -sf "$json_url" -H "User-Agent: agent-reach-cli/1.0" > "$tmp_file"
   format_reddit "$tmp_file"
 }
 
