@@ -170,6 +170,71 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
   });
 });
 
+describe("createRequestHandler: MSAL プロバイダー", () => {
+  let requestMock: ReturnType<typeof vi.fn>;
+
+  const GRAPH_CREDS: CredentialEntry[] = [
+    {
+      provider: "graph",
+      baseUrl: "http://fake-graph.test/v1.0",
+      msal: {
+        tenantId: "consumers",
+        clientId: "test-client-id",
+        scopes: ["https://graph.microsoft.com/Mail.Read"],
+      },
+    } as unknown as CredentialEntry,
+  ];
+
+  beforeEach(() => {
+    vi.resetModules();
+    requestMock = vi.fn(() => ({ on: vi.fn(), pipe: vi.fn() }));
+    vi.doMock("node:http", () => ({
+      request: requestMock,
+      createServer: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: requestMock }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("msal プロバイダーは getGraphAccessToken() のトークンを Bearer で注入する", async () => {
+    vi.doMock("./graph-auth.js", () => ({
+      initGraphAuth: vi.fn(),
+      getGraphAccessToken: vi.fn().mockResolvedValue("msal-access-token"),
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(GRAPH_CREDS);
+    const req = makeReq("/graph/me/messages");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    // 非同期でトークン取得するため、次の microtask まで待つ
+    await new Promise((r) => setTimeout(r, 0));
+    const opts = requestMock.mock.calls[0]?.[0];
+    expect(opts?.headers.authorization).toBe("Bearer msal-access-token");
+  });
+
+  it("getGraphAccessToken() が失敗したとき 502 を返す", async () => {
+    vi.doMock("./graph-auth.js", () => ({
+      initGraphAuth: vi.fn(),
+      getGraphAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(GRAPH_CREDS);
+    const req = makeReq("/graph/me/messages");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res.writeHead).toHaveBeenCalledWith(502);
+    expect(res.end).toHaveBeenCalledWith("Graph token acquisition failed");
+  });
+});
+
 describe("createRequestHandler: Authorization ヘッダ", () => {
   const originalEnv = process.env;
   let requestMock: ReturnType<typeof vi.fn>;

@@ -59,7 +59,7 @@ function buildSanitizedCredentialJson(
       );
     }
 
-    const { envVars: _ev, ...rest } = entry;
+    const { envVars: _ev, msal: _msal, ...rest } = entry;
     sanitized.push({
       ...rest,
       baseUrl: `http://host.docker.internal:${proxyPort}/${entry.provider}`,
