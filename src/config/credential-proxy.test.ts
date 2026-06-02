@@ -142,4 +142,28 @@ describe("loadCredentialProxy", () => {
       },
     ]);
   });
+
+  it("query-token 認証設定を受け付ける", async () => {
+    const { loadCredentialProxy } = await importFresh();
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify([
+        {
+          provider: "browserless",
+          envVars: ["BROWSERLESS_TOKEN"],
+          auth: { type: "query-token", queryParam: "token" },
+          baseUrl: "https://production-sfo.browserless.io",
+        },
+      ]),
+    );
+
+    const result = await loadCredentialProxy();
+    expect(result).toEqual([
+      {
+        provider: "browserless",
+        envVars: ["BROWSERLESS_TOKEN"],
+        auth: { type: "query-token", queryParam: "token" },
+        baseUrl: "https://production-sfo.browserless.io",
+      },
+    ]);
+  });
 });

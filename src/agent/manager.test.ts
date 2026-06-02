@@ -283,6 +283,22 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(creds[0].envVars).toBeUndefined();
   });
 
+  it("auth フィールドが JSON に含まれない", async () => {
+    process.env.TEST_API_KEY = "test-key";
+    const spawnMock = await setup([
+      {
+        provider: "test",
+        envVars: ["TEST_API_KEY"],
+        auth: { type: "query-token" },
+        baseUrl: "https://api.example.com/v1",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].auth).toBeUndefined();
+  });
+
   it("api・reasoning 等の他フィールドは保持される", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([
