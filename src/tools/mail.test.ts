@@ -203,7 +203,10 @@ describe("read_email", () => {
 
   it("isRead:false のとき markAsRead デフォルト(true)で PATCH を送信する", async () => {
     fetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => makeMsg({ isRead: false }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => makeMsg({ isRead: false }),
+      })
       .mockResolvedValueOnce({ ok: true });
     const { readEmailTool } = await import("./mail.js");
     await readEmailTool.execute("id", { id: "msg-001" });
@@ -218,14 +221,20 @@ describe("read_email", () => {
   });
 
   it("markAsRead: false のとき PATCH を送信しない", async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => makeMsg({ isRead: false }) });
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makeMsg({ isRead: false }),
+    });
     const { readEmailTool } = await import("./mail.js");
     await readEmailTool.execute("id", { id: "msg-001", markAsRead: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("isRead:true のとき PATCH を送信しない（既に既読）", async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => makeMsg({ isRead: true }) });
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makeMsg({ isRead: true }),
+    });
     const { readEmailTool } = await import("./mail.js");
     await readEmailTool.execute("id", { id: "msg-001" });
     expect(fetchMock).toHaveBeenCalledTimes(1);

@@ -35,7 +35,9 @@ async function graphPatch(path: string, body: unknown): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Graph API PATCH エラー ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(
+      `Graph API PATCH エラー ${res.status}: ${text.slice(0, 200)}`,
+    );
   }
 }
 
