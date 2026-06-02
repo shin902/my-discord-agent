@@ -49,6 +49,9 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
     "Outlook メールの一覧を取得する。件名・送信者・受信日時・本文プレビューを返す",
   parameters: listEmailsParameters,
   execute: async (_toolCallId, { limit = 10, folder = "inbox" }) => {
+    if (!/^[a-zA-Z0-9_-]+$/.test(folder)) {
+      throw new Error(`無効なフォルダ名: ${folder}`);
+    }
     const top = Math.min(limit, 50);
     const select = "id,subject,from,receivedDateTime,bodyPreview,isRead";
     const data = (await graphFetch(
