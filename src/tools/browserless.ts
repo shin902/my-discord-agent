@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
-function getBrowserlessBaseUrl(): string {
+function resolveBrowserlessBaseUrl(): string {
   const credJson = process.env.CREDENTIAL_PROXY_JSON;
   if (!credJson) throw new Error("CREDENTIAL_PROXY_JSON が設定されていません");
   const creds: Array<{ provider: string; baseUrl: string }> =
@@ -14,15 +14,19 @@ function getBrowserlessBaseUrl(): string {
   return entry.baseUrl.replace(/\/$/, "");
 }
 
+const BASE_URL = resolveBrowserlessBaseUrl();
+const TOKEN = (() => {
+  const t = process.env.BROWSERLESS_TOKEN;
+  if (!t) throw new Error("BROWSERLESS_TOKEN が設定されていません");
+  return t;
+})();
+
 async function post(path: string, body: unknown): Promise<string> {
-  const baseUrl = getBrowserlessBaseUrl();
-  const token = process.env.BROWSERLESS_TOKEN;
-  if (!token) throw new Error("BROWSERLESS_TOKEN が設定されていません");
-  const res = await fetch(`${baseUrl}${path}`, {
+  const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${TOKEN}`,
     },
     body: JSON.stringify(body),
   });
