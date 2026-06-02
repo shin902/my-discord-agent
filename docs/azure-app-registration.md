@@ -31,14 +31,17 @@ Microsoft Graph API で Outlook メールを読むために必要な Azure AD �
 
 #### 手順
 
-1. [https://azure.microsoft.com/en-us/free/](https://azure.microsoft.com/en-us/free/) を開く
+1. [https://azure.microsoft.com/ja-jp/free/](https://azure.microsoft.com/ja-jp/free/) を開く
 2. **「Start free」** をクリック
 3. 個人の Microsoft アカウント（outlook.jp / outlook.com など）でサインイン
 4. 氏名・国/地域・電話番号を入力（SMS または通話で本人確認）
 5. クレジットカードまたはデビットカードの情報を入力（本人確認のみ。即時課金なし）
    - プリペイドカードや仮想カードは使用不可
 6. Microsoft カスタマー契約に同意して **「Sign up」**
-7. 登録完了後、Azure Portal（portal.azure.com）または Entra 管理センター（entra.microsoft.com）に自動的に遷移し、新しいテナントが作成される
+7. 登録完了後、Azure Portal（portal.azure.com）または Entra 管理センター（entra.microsoft.com）に自動的に遷移する
+   - **「既定のディレクトリ」（Default Directory）** という名前の Entra ID テナントが自動作成される
+   - テナントのドメイン名は `xxxxx.onmicrosoft.com` 形式になる（`xxxxx` はサインアップ時に設定した名前）
+   - このディレクトリが Entra 管理センターで表示されるテナントであり、**このディレクトリ内でアプリ登録を行えば OK**
 
 > **注意**：Azure 無料アカウントに付帯する $200 クレジット（30日間）はオプションの有料サービス試用に使うものです。アプリ登録には不要であり、クレジットを使い切っても Entra ID Free とアプリ登録は引き続き利用できます。
 
@@ -82,8 +85,8 @@ Azure 無料アカウントまたは M365 開発者プログラムでテナン�
 
 1. ブラウザで [https://entra.microsoft.com](https://entra.microsoft.com) を開く
 2. テナントに紐付いた Microsoft アカウント（Azure 無料アカウントの場合は個人 outlook.jp / outlook.com アカウント）でサインイン
-3. 右上のアカウントアイコンから、作成したテナント（`xxxxx.onmicrosoft.com`）が選択されていることを確認
-   - 「ディレクトリの切り替え」から正しいテナントを選ぶ
+3. 右上のアカウントアイコン（またはテナント表示部分）をクリックし、**「既定のディレクトリ」**（`xxxxx.onmicrosoft.com`）が選択されていることを確認する
+   - 別のテナントが選択されている場合は「ディレクトリの切り替え」から「既定のディレクトリ」を選ぶ
 
 ---
 
@@ -141,8 +144,9 @@ Azure 無料アカウントまたは M365 開発者プログラムでテナン�
    ```
    https://login.microsoftonline.com/common/oauth2/nativeclient
    ```
+   > **補足**: デバイスコードフロー自体はリダイレクト URI を使用しないため、このチェックは厳密には必須ではありません。ただし、アプリをパブリッククライアントとして認識させる目的と、将来的に他のネイティブフローを使う場合の備えとして、設定しておくことが推奨されます。
 4. **「構成」**（Configure）をクリック
-5. ページ下部の **「詳細設定」**（Advanced settings）セクションで **「パブリック クライアント フローを許可する」**（Allow public client flows）を **「はい」** に設定
+5. 「認証」ページに戻ったら、ページ下部の **「詳細設定」**（Advanced settings）セクションで **「パブリック クライアント フローを許可する」**（Allow public client flows）のトグルを **「はい」** に設定
 6. ページ上部の **「保存」**（Save）をクリック
 
 ---
