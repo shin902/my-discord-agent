@@ -26,9 +26,14 @@ function getBrowserlessBaseUrl(): string {
 
 async function post(path: string, body: unknown): Promise<string> {
   const baseUrl = getBrowserlessBaseUrl();
+  const token = process.env.BROWSERLESS_TOKEN;
+  if (!token) throw new Error("BROWSERLESS_TOKEN が設定されていません");
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
