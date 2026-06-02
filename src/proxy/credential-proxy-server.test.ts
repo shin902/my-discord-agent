@@ -170,6 +170,132 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
   });
 });
 
+describe("createRequestHandler: MSAL プロバイダー", () => {
+  let requestMock: ReturnType<typeof vi.fn>;
+
+  const GRAPH_CREDS: CredentialEntry[] = [
+    {
+      provider: "graph",
+      baseUrl: "http://fake-graph.test/v1.0",
+      msal: {
+        tenantId: "consumers",
+        clientId: "test-client-id",
+        scopes: ["https://graph.microsoft.com/Mail.Read"],
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    vi.resetModules();
+    requestMock = vi.fn(() => ({ on: vi.fn(), pipe: vi.fn() }));
+    vi.doMock("node:http", () => ({
+      request: requestMock,
+      createServer: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: requestMock }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("msal プロバイダーは getGraphAccessToken(provider) のトークンを Bearer で注入する", async () => {
+    const getGraphAccessToken = vi.fn().mockResolvedValue("msal-access-token");
+    vi.doMock("./graph-auth.js", () => ({
+      initGraphAuth: vi.fn(),
+      getGraphAccessToken,
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(GRAPH_CREDS);
+    const req = makeReq("/graph/me/messages");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    // 非同期でトークン取得するため、次の microtask まで待つ
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getGraphAccessToken).toHaveBeenCalledWith("graph");
+    const opts = requestMock.mock.calls[0]?.[0];
+    expect(opts?.headers.authorization).toBe("Bearer msal-access-token");
+  });
+
+  it("getGraphAccessToken() が失敗したとき 502 を返す", async () => {
+    vi.doMock("./graph-auth.js", () => ({
+      initGraphAuth: vi.fn(),
+      getGraphAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(GRAPH_CREDS);
+    const req = makeReq("/graph/me/messages");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res.writeHead).toHaveBeenCalledWith(502);
+    expect(res.end).toHaveBeenCalledWith("Graph token acquisition failed");
+  });
+
+  it("upstreamRes の end イベントで handleRequest の Promise が解決され writeHead と pipe が呼ばれる", async () => {
+    vi.doMock("./graph-auth.js", () => ({
+      initGraphAuth: vi.fn(),
+      getGraphAccessToken: vi.fn().mockResolvedValue("msal-access-token"),
+    }));
+
+    let capturedResponseCb: ((upstreamRes: unknown) => void) | undefined;
+    vi.doMock("node:http", () => ({
+      request: vi.fn((_opts: unknown, cb: (r: unknown) => void) => {
+        capturedResponseCb = cb;
+        return { on: vi.fn(), pipe: vi.fn() };
+      }),
+      createServer: vi.fn(),
+    }));
+
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(GRAPH_CREDS);
+    const req = makeReq("/graph/me/messages");
+    const res = makeRes();
+
+    handler(req, res as unknown as ServerResponse);
+
+    // getGraphAccessToken の非同期解決を待つ
+    await new Promise((r) => setTimeout(r, 0));
+    expect(capturedResponseCb).toBeDefined();
+
+    // upstreamRes のシミュレート（EventEmitter の簡易実装）
+    const listeners: Record<string, Array<() => void>> = {};
+    const fakeUpstreamRes = {
+      pipe: vi.fn(),
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      on: (event: string, cb: () => void) => {
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(cb);
+      },
+      emit: (event: string) => {
+        listeners[event]?.forEach((cb) => {
+          cb();
+        });
+      },
+    };
+
+    capturedResponseCb?.(fakeUpstreamRes);
+
+    expect(res.writeHead).toHaveBeenCalledWith(200, {
+      "content-type": "application/json",
+    });
+    expect(fakeUpstreamRes.pipe).toHaveBeenCalledWith(res);
+
+    // end を発火 → handleRequest の Promise が解決される（タイムアウトせず完了する）
+    fakeUpstreamRes.emit("end");
+    await new Promise((r) => setTimeout(r, 0));
+    // 500 Internal Server Error が返っていなければ Promise は正常解決
+    expect(res.writeHead).not.toHaveBeenCalledWith(500);
+  });
+});
+
 describe("createRequestHandler: Authorization ヘッダ", () => {
   const originalEnv = process.env;
   let requestMock: ReturnType<typeof vi.fn>;

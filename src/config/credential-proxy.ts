@@ -8,9 +8,18 @@ const CONFIG_PATH =
   process.env.CREDENTIAL_PROXY_PATH ??
   path.join(__dirname, "../../config/credential-proxy.json");
 
+export const MsalConfigSchema = z.object({
+  tenantId: z.string(),
+  clientId: z.string(),
+  scopes: z.array(z.string()),
+});
+
+export type MsalConfig = z.infer<typeof MsalConfigSchema>;
+
 export const CredentialEntrySchema = z.object({
   provider: z.string(),
   envVars: z.array(z.string()).optional(),
+  msal: MsalConfigSchema.optional(),
   baseUrl: z.string().url(),
   api: z
     .enum([

@@ -1,4 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { agentReachTool } from "./agent-reach.js";
 import { bashTool } from "./bash.js";
 import {
   editTool,
@@ -8,7 +9,7 @@ import {
   readTool,
   writeTool,
 } from "./fs.js";
-import { agentReachTool } from "./agent-reach.js";
+import { listEmailsTool, readEmailTool } from "./mail.js";
 
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
@@ -19,6 +20,8 @@ const TOOLS: Record<string, AgentTool> = {
   edit: editTool,
   glob: globTool,
   grep: grepTool,
+  list_emails: listEmailsTool,
+  read_email: readEmailTool,
 };
 
 export function resolveTools(toolNames: string[]): AgentTool[] {
