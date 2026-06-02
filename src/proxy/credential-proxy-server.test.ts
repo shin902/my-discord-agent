@@ -271,14 +271,17 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
       statusCode: 200,
       headers: { "content-type": "application/json" },
       on: (event: string, cb: () => void) => {
-        (listeners[event] ??= []).push(cb);
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(cb);
       },
       emit: (event: string) => {
-        listeners[event]?.forEach((cb) => cb());
+        listeners[event]?.forEach((cb) => {
+          cb();
+        });
       },
     };
 
-    capturedResponseCb!(fakeUpstreamRes);
+    capturedResponseCb?.(fakeUpstreamRes);
 
     expect(res.writeHead).toHaveBeenCalledWith(200, {
       "content-type": "application/json",
