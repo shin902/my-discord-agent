@@ -89,6 +89,28 @@ describe("list_emails", () => {
     expect(url).toContain("/me/mailFolders/sentitems/messages");
   });
 
+  it("unreadOnly: true のとき $filter=isRead eq false を付加する", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ value: [] }),
+    });
+    const { listEmailsTool } = await import("./mail.js");
+    await listEmailsTool.execute("id", { unreadOnly: true });
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("$filter=isRead eq false");
+  });
+
+  it("unreadOnly: false（デフォルト）のとき $filter を付加しない", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ value: [] }),
+    });
+    const { listEmailsTool } = await import("./mail.js");
+    await listEmailsTool.execute("id", {});
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).not.toContain("$filter");
+  });
+
   it("空フォルダのとき「メールはありません」を返す", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
@@ -177,6 +199,36 @@ describe("read_email", () => {
     expect(text).toContain("Alice <alice@example.com>");
     expect(text).toContain("Bob <bob@example.com>");
     expect(text).toContain("メール本文テキスト");
+  });
+
+  it("isRead:false のとき markAsRead デフォルト(true)で PATCH を送信する", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => makeMsg({ isRead: false }) })
+      .mockResolvedValueOnce({ ok: true });
+    const { readEmailTool } = await import("./mail.js");
+    await readEmailTool.execute("id", { id: "msg-001" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [patchUrl, patchInit] = fetchMock.mock.calls[1] as [
+      string,
+      RequestInit,
+    ];
+    expect(patchUrl).toContain("/me/messages/msg-001");
+    expect(patchInit.method).toBe("PATCH");
+    expect(JSON.parse(patchInit.body as string)).toEqual({ isRead: true });
+  });
+
+  it("markAsRead: false のとき PATCH を送信しない", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => makeMsg({ isRead: false }) });
+    const { readEmailTool } = await import("./mail.js");
+    await readEmailTool.execute("id", { id: "msg-001", markAsRead: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("isRead:true のとき PATCH を送信しない（既に既読）", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => makeMsg({ isRead: true }) });
+    const { readEmailTool } = await import("./mail.js");
+    await readEmailTool.execute("id", { id: "msg-001" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("HTML 本文からタグを除去する", async () => {

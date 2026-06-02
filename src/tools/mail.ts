@@ -26,6 +26,19 @@ async function graphFetch(path: string): Promise<unknown> {
   return res.json();
 }
 
+async function graphPatch(path: string, body: unknown): Promise<void> {
+  const baseUrl = getGraphBaseUrl();
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Graph API PATCH エラー ${res.status}: ${text.slice(0, 200)}`);
+  }
+}
+
 const listEmailsParameters = Type.Object({
   limit: Type.Optional(
     Type.Integer({
@@ -40,6 +53,11 @@ const listEmailsParameters = Type.Object({
         "フォルダ名（inbox / sentitems / drafts 等、デフォルト: inbox）",
     }),
   ),
+  unreadOnly: Type.Optional(
+    Type.Boolean({
+      description: "true のとき未読メールのみ取得する（デフォルト: false）",
+    }),
+  ),
 });
 
 export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
@@ -48,14 +66,18 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
   description:
     "Outlook メールの一覧を取得する。件名・送信者・受信日時・本文プレビューを返す",
   parameters: listEmailsParameters,
-  execute: async (_toolCallId, { limit = 10, folder = "inbox" }) => {
+  execute: async (
+    _toolCallId,
+    { limit = 10, folder = "inbox", unreadOnly = false },
+  ) => {
     if (!/^[a-zA-Z0-9_-]+$/.test(folder)) {
       throw new Error(`無効なフォルダ名: ${folder}`);
     }
     const top = Math.min(limit, 50);
     const select = "id,subject,from,receivedDateTime,bodyPreview,isRead";
+    const filterParam = unreadOnly ? "&$filter=isRead eq false" : "";
     const data = (await graphFetch(
-      `/me/mailFolders/${folder}/messages?$top=${top}&$select=${select}&$orderby=receivedDateTime desc`,
+      `/me/mailFolders/${folder}/messages?$top=${top}&$select=${select}&$orderby=receivedDateTime desc${filterParam}`,
     )) as { value: Array<Record<string, unknown>> };
 
     const lines: string[] = [`## メール一覧（${folder}）`, ""];
@@ -90,19 +112,31 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
 
 const readEmailParameters = Type.Object({
   id: Type.String({ description: "メールID（list_emails で取得した id）" }),
+  markAsRead: Type.Optional(
+    Type.Boolean({
+      description: "既読にマークするか（デフォルト: true）",
+    }),
+  ),
 });
 
 export const readEmailTool: AgentTool<typeof readEmailParameters> = {
   name: "read_email",
   label: "Read Email",
-  description: "指定したメールの全文を取得する。list_emails で得た id を渡す",
+  description:
+    "指定したメールの全文を取得する。list_emails で得た id を渡す。デフォルトで既読にマークする",
   parameters: readEmailParameters,
-  execute: async (_toolCallId, { id }) => {
+  execute: async (_toolCallId, { id, markAsRead = true }) => {
     const select =
       "id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,isRead";
     const msg = (await graphFetch(
       `/me/messages/${encodeURIComponent(id)}?$select=${select}`,
     )) as Record<string, unknown>;
+
+    if (markAsRead && msg.isRead === false) {
+      await graphPatch(`/me/messages/${encodeURIComponent(id)}`, {
+        isRead: true,
+      });
+    }
 
     const from = (
       msg.from as
