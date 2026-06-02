@@ -59,6 +59,7 @@ Host
 - **警告ログ**: 1つも設定されていないプロバイダは静かにスキップされる。一部だけ設定されている場合は「一部の環境変数が未設定です」と警告が出る（複数変数が必要なプロバイダで不足を検出するため）。
 - 同じ環境変数が複数の provider に含まれている場合、**各 provider ごとに独立して注入される**。
 - `baseUrl` に `{ENV_VAR}` 形式のプレースホルダが含まれている場合、`process.env` の値で動的に置換される。**置換できない場合は env vars の注入も含めてその provider を完全にスキップする**（`AZURE_OPENAI_API_KEY` は設定済みでも `AZURE_OPENAI_BASE_URL` が未設定なら注入されない）。
+- `auth` を省略した場合、`envVars` の値は `Authorization: Bearer ...` として注入される。Browserless のように query parameter が必要な API は `auth: { "type": "query-token", "queryParam": "token" }` を指定する。
 
 ### その他の pi-ai 対応プロバイダ
 
