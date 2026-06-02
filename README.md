@@ -22,7 +22,7 @@ my-nanoclawプロジェクトの失敗を教訓に、"確実に動く"ことを�
 Discord受信 → キュー → agent/manager.ts → サンドボックスコンテナを起動
 
 【サンドボックスコンテナ（Docker）】
-sandbox/agent-runner.ts → Agent ループ → tools/（bash・url-fetch など）を実行
+sandbox/agent-runner.ts → Agent ループ → tools/（bash・agent-reach など）を実行
 ```
 
 **ツールは全てコンテナ内で実行されます。** ホスト側のファイルシステムやプロセスには直接アクセスしません。
@@ -78,4 +78,4 @@ pnpm dev
 
 ## 参考リポジトリ
 
-- [Agent-Reach](https://github.com/Panniantong/Agent-Reach) - url-fetch 設計の元ネタ
+- [Agent-Reach](https://github.com/Panniantong/Agent-Reach) - agent-reach 設計の元ネタ
