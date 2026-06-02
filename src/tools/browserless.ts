@@ -47,26 +47,25 @@ const smartScrapeParams = Type.Object({
   formats: Type.Optional(
     Type.Array(Type.String(), {
       description:
-        "取得形式（html / markdown / screenshot / pdf / links、デフォルト: [\"markdown\"]）",
+        '取得形式（html / markdown / screenshot / pdf / links、デフォルト: ["markdown"]）',
     }),
   ),
 });
 
-export const browserlessSmartScrapeTool: AgentTool<typeof smartScrapeParams> =
-  {
-    name: "browserless_smart_scrape",
-    label: "Browserless Smart Scrape",
-    description:
-      "URL からコンテンツをスクレイプ。JS 描画・ブロック回避の自動フォールバック付き → JSON",
-    parameters: smartScrapeParams,
-    execute: async (_id, { url, formats }) => {
-      const text = await post("/smart-scrape", {
-        url,
-        formats: formats ?? ["markdown"],
-      });
-      return { content: [{ type: "text", text }], details: { url } };
-    },
-  };
+export const browserlessSmartScrapeTool: AgentTool<typeof smartScrapeParams> = {
+  name: "browserless_smart_scrape",
+  label: "Browserless Smart Scrape",
+  description:
+    "URL からコンテンツをスクレイプ。JS 描画・ブロック回避の自動フォールバック付き → JSON",
+  parameters: smartScrapeParams,
+  execute: async (_id, { url, formats }) => {
+    const text = await post("/smart-scrape", {
+      url,
+      formats: formats ?? ["markdown"],
+    });
+    return { content: [{ type: "text", text }], details: { url } };
+  },
+};
 
 const searchParams = Type.Object({
   query: Type.String({ description: "検索クエリ" }),
@@ -81,7 +80,7 @@ const searchParams = Type.Object({
   ),
   sources: Type.Optional(
     Type.Array(Type.String(), {
-      description: "検索ソース（web / news / images、デフォルト: [\"web\"]）",
+      description: '検索ソース（web / news / images、デフォルト: ["web"]）',
     }),
   ),
 });
