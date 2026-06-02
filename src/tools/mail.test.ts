@@ -196,6 +196,25 @@ describe("read_email", () => {
     expect(text).not.toContain("<b>");
   });
 
+  it("HTML エンティティをデコードする", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () =>
+        makeMsg({
+          body: {
+            contentType: "html",
+            content: "<p>Sales &amp; Marketing &lt;info@example.com&gt;</p>",
+          },
+        }),
+    });
+    const { readEmailTool } = await import("./mail.js");
+    const result = await readEmailTool.execute("id", { id: "msg-001" });
+    const text = firstText(result);
+    expect(text).toContain("Sales & Marketing <info@example.com>");
+    expect(text).not.toContain("&amp;");
+    expect(text).not.toContain("&lt;");
+  });
+
   it("本文が 8000 文字を超えたら省略する", async () => {
     const longBody = "a".repeat(10000);
     fetchMock.mockResolvedValue({

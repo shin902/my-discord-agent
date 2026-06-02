@@ -132,11 +132,17 @@ export const readEmailTool: AgentTool<typeof readEmailParameters> = {
       | { contentType?: string; content?: string }
       | undefined;
     let bodyText = body?.content ?? "";
-    // HTML の場合はタグを除去
     if (body?.contentType === "html") {
       bodyText = bodyText
         .replace(/<[^>]+>/g, "")
         .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+        .replace(/&#x([\da-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
         .trim();
     }
     if (bodyText.length > MAX_BODY_CHARS) {
