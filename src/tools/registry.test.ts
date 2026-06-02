@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveTools } from "./registry.js";
 import { agentReachTool } from "./agent-reach.js";
+import { resolveTools } from "./registry.js";
 
 describe("resolveTools", () => {
   it("agent-reach を解決して agentReachTool を返す", () => {
