@@ -182,7 +182,7 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
         clientId: "test-client-id",
         scopes: ["https://graph.microsoft.com/Mail.Read"],
       },
-    } as unknown as CredentialEntry,
+    },
   ];
 
   beforeEach(() => {

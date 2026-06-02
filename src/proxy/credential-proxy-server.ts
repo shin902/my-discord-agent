@@ -127,8 +127,8 @@ async function handleRequest(
 export function createRequestHandler(creds: CredentialEntry[]) {
   return (req: IncomingMessage, res: ServerResponse) => {
     handleRequest(creds, req, res).catch((err) => {
-      console.error(`[credential-proxy] unhandled error: ${err}`);
       if (!res.headersSent) {
+        console.error(`[credential-proxy] unhandled error: ${err}`);
         res.writeHead(500);
         res.end("Internal Server Error");
       }
