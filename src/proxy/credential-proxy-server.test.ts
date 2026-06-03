@@ -243,13 +243,12 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     }));
 
     let capturedResponseCb: ((upstreamRes: unknown) => void) | undefined;
-    vi.doMock("node:http", () => ({
-      request: vi.fn((_opts: unknown, cb: (r: unknown) => void) => {
+    requestMock.mockImplementation(
+      (_opts: unknown, cb: (r: unknown) => void) => {
         capturedResponseCb = cb;
         return { on: vi.fn(), pipe: vi.fn() };
-      }),
-      createServer: vi.fn(),
-    }));
+      },
+    );
 
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
