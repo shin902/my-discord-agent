@@ -54,12 +54,17 @@ export type CronContext = {
 
 type CronState = Record<string, { lastRun: string }>;
 
+let _state: CronState | null = null;
+
 async function loadState(): Promise<CronState> {
-  if (!existsSync(STATE_PATH)) return {};
-  return JSON.parse(await readFile(STATE_PATH, "utf-8")) as CronState;
+  if (_state !== null) return _state;
+  if (!existsSync(STATE_PATH)) return (_state = {});
+  _state = JSON.parse(await readFile(STATE_PATH, "utf-8")) as CronState;
+  return _state;
 }
 
 async function saveState(state: CronState): Promise<void> {
+  _state = state;
   await mkdir(path.dirname(STATE_PATH), { recursive: true });
   await writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
 }
