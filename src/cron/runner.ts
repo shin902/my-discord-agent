@@ -216,20 +216,26 @@ async function tick(): Promise<void> {
     const lastRun = entry ? new Date(entry.lastRun) : null;
     if (shouldRun(job.schedule, lastRun, now)) {
       toRun.push(job);
-      state[job.id] = { lastRun: now.toISOString() };
     }
   }
 
   if (toRun.length === 0) return;
-  await saveState(state);
 
-  await Promise.all(
-    toRun.map((job) =>
-      executeJob(job).catch((err) => {
-        console.error(`[cron] "${job.id}" 実行エラー:`, err);
-      }),
-    ),
-  );
+  const results = await Promise.allSettled(toRun.map((job) => executeJob(job)));
+
+  // 成功したジョブだけ lastRun を更新する（失敗時は次の tick でリトライ）
+  let changed = false;
+  for (let i = 0; i < toRun.length; i++) {
+    const result = results[i];
+    if (result.status === "fulfilled") {
+      state[toRun[i].id] = { lastRun: now.toISOString() };
+      changed = true;
+    } else {
+      console.error(`[cron] "${toRun[i].id}" 実行エラー:`, result.reason);
+    }
+  }
+
+  if (changed) await saveState(state);
 }
 
 let _timer: NodeJS.Timeout | null = null;
