@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { TextChannel } from "discord.js";
+import { ChannelType } from "discord.js";
 import { z } from "zod";
 import { sendMessage } from "../agent/manager.js";
 import { client } from "../discord/client.js";
@@ -187,7 +187,11 @@ export async function executeJob(job: CronJob): Promise<void> {
   } else {
     // mode === "thread": 実行のたびに新しいスレッドを作成
     const channel = await client.channels.fetch(channelId);
-    if (!channel || !("threads" in channel)) {
+    if (
+      !channel ||
+      (channel.type !== ChannelType.GuildText &&
+        channel.type !== ChannelType.GuildAnnouncement)
+    ) {
       throw new NonRetryableError(
         `チャンネル ${channelId} はスレッドをサポートしていません`,
       );
@@ -196,7 +200,7 @@ export async function executeJob(job: CronJob): Promise<void> {
     const suffix = `-${dateSuffix}`; // 11 chars
     const maxIdLen = 100 - "cron-".length - suffix.length; // 84 chars
     const truncatedId = job.id.slice(0, maxIdLen);
-    const thread = await (channel as TextChannel).threads.create({
+    const thread = await channel.threads.create({
       name: `cron-${truncatedId}${suffix}`,
     });
     // sendMessage を直接呼ぶ: sandbox が session/{group}/{thread.id}.jsonl に
