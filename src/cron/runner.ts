@@ -129,7 +129,7 @@ export function shouldRun(
 
 // --- Handler loading ---
 
-async function loadHandlerFn(
+export async function loadHandlerFn(
   handlerRelPath: string,
 ): Promise<(ctx: CronContext) => Promise<void>> {
   if (/\.\.(\/|\\|$)/.test(handlerRelPath)) {
@@ -161,7 +161,7 @@ async function loadHandlerFn(
 
 // --- Job execution ---
 
-async function executeJob(job: CronJob): Promise<void> {
+export async function executeJob(job: CronJob): Promise<void> {
   const ctx: CronContext = { client, appendInbox, ...job };
 
   if (job.handler) {
