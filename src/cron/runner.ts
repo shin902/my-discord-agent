@@ -225,51 +225,57 @@ async function loadJobs(): Promise<CronJob[]> {
 }
 
 async function tick(): Promise<void> {
+  if (_isRunning) return;
   if (!client.isReady()) return;
+  _isRunning = true;
+  try {
+    const jobs = await loadJobs();
+    if (jobs.length === 0) return;
 
-  const jobs = await loadJobs();
-  if (jobs.length === 0) return;
+    const now = new Date();
+    const state = await loadState();
+    const toRun: CronJob[] = [];
 
-  const now = new Date();
-  const state = await loadState();
-  const toRun: CronJob[] = [];
-
-  for (const job of jobs) {
-    const entry = state[job.id];
-    const lastRun = entry ? new Date(entry.lastRun) : null;
-    if (shouldRun(job.schedule, lastRun, now)) {
-      toRun.push(job);
+    for (const job of jobs) {
+      const entry = state[job.id];
+      const lastRun = entry ? new Date(entry.lastRun) : null;
+      if (shouldRun(job.schedule, lastRun, now)) {
+        toRun.push(job);
+      }
     }
-  }
 
-  if (toRun.length === 0) return;
+    if (toRun.length === 0) return;
 
-  const results = await Promise.allSettled(toRun.map((job) => executeJob(job)));
+    const results = await Promise.allSettled(toRun.map((job) => executeJob(job)));
 
-  let changed = false;
-  for (let i = 0; i < toRun.length; i++) {
-    const result = results[i];
-    const job = toRun[i];
-    if (result.status === "fulfilled") {
-      state[job.id] = { lastRun: now.toISOString() };
-      changed = true;
-    } else if (result.reason instanceof NonRetryableError) {
-      // 設定ミスなど永続的なエラーは lastRun を更新してリトライを止める
-      console.error(`[cron] "${job.id}" 非リトライエラー:`, result.reason);
-      state[job.id] = { lastRun: now.toISOString() };
-      changed = true;
-    } else {
-      // 一時的なエラーは lastRun を更新せず次の tick でリトライ
-      console.error(
-        `[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`,
-        result.reason,
-      );
+    let changed = false;
+    for (let i = 0; i < toRun.length; i++) {
+      const result = results[i];
+      const job = toRun[i];
+      if (result.status === "fulfilled") {
+        state[job.id] = { lastRun: now.toISOString() };
+        changed = true;
+      } else if (result.reason instanceof NonRetryableError) {
+        // 設定ミスなど永続的なエラーは lastRun を更新してリトライを止める
+        console.error(`[cron] "${job.id}" 非リトライエラー:`, result.reason);
+        state[job.id] = { lastRun: now.toISOString() };
+        changed = true;
+      } else {
+        // 一時的なエラーは lastRun を更新せず次の tick でリトライ
+        console.error(
+          `[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`,
+          result.reason,
+        );
+      }
     }
-  }
 
-  if (changed) await saveState(state);
+    if (changed) await saveState(state);
+  } finally {
+    _isRunning = false;
+  }
 }
 
+let _isRunning = false;
 let _timer: NodeJS.Timeout | null = null;
 let _alignTimeout: NodeJS.Timeout | null = null;
 
