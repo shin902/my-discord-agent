@@ -3,7 +3,11 @@ import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 
 import { Agent } from "@earendil-works/pi-agent-core";
-import { getEnvApiKey, type TextContent } from "@earendil-works/pi-ai";
+import {
+  type AssistantMessage,
+  getEnvApiKey,
+  type TextContent,
+} from "@earendil-works/pi-ai";
 import { z } from "zod";
 
 import {
@@ -108,13 +112,32 @@ export async function runAgentLoop(
 
   agent.subscribe((event) => {
     if (event.type === "message_end") {
-      pendingAppends.push(appendMessage(groupName, sessionId, event.message));
       if ("role" in event.message && event.message.role === "assistant") {
-        response = event.message.content
-          .filter((c): c is TextContent => c.type === "text")
-          .map((c) => c.text)
-          .join("");
+        const asstMsg = event.message as unknown as AssistantMessage;
+        if (asstMsg.errorMessage) {
+          process.stderr.write(
+            `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: asstMsg.errorMessage })}\n`,
+          );
+        } else {
+          pendingAppends.push(appendMessage(groupName, sessionId, event.message));
+          response = asstMsg.content
+            .filter((c): c is TextContent => c.type === "text")
+            .map((c) => c.text)
+            .join("");
+        }
+      } else {
+        pendingAppends.push(appendMessage(groupName, sessionId, event.message));
       }
+    }
+
+    if (event.type === "tool_execution_start") {
+      process.stderr.write(
+        `__DISCORD_EVENT__:${JSON.stringify({
+          type: "tool_start",
+          toolName: event.toolName,
+          args: event.args,
+        })}\n`,
+      );
     }
   });
 

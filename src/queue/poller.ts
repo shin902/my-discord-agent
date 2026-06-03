@@ -1,4 +1,4 @@
-import { sendMessage } from "../agent/manager.js";
+import { type DiscordEvent, sendMessage } from "../agent/manager.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
@@ -87,13 +87,46 @@ function startTypingLoop(channelId: string): () => void {
   };
 }
 
+async function sendDiscordEvent(
+  channelId: string,
+  event: DiscordEvent,
+): Promise<void> {
+  try {
+    const channel =
+      client.channels.cache.get(channelId) ??
+      (await client.channels.fetch(channelId).catch(() => null));
+    if (!channel?.isSendable()) return;
+
+    let text: string;
+    if (event.type === "tool_start") {
+      const argsStr = JSON.stringify(event.args);
+      const truncated =
+        argsStr.length > 300 ? `${argsStr.slice(0, 300)}…` : argsStr;
+      text = `🔧 \`${event.toolName}\` ${truncated}`;
+    } else {
+      text = `⚠️ エラー: ${event.message}`;
+    }
+
+    await channel.send(text);
+  } catch {
+    // best effort
+  }
+}
+
 export async function processMessage(msg: InboxMessage): Promise<void> {
   const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
   try {
     try {
-      response = await sendMessage(msg.groupName, msg.sessionId, msg.content);
+      response = await sendMessage(
+        msg.groupName,
+        msg.sessionId,
+        msg.content,
+        (event) => {
+          void sendDiscordEvent(msg.channelId, event);
+        },
+      );
     } catch (err) {
       if (err instanceof NonRetryableError) {
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);

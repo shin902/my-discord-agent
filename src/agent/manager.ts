@@ -26,6 +26,12 @@ export {
   validateModel,
 };
 
+export type DiscordEvent =
+  | { type: "tool_start"; toolName: string; args: unknown }
+  | { type: "error"; message: string };
+
+const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+
 let storedProxyPort: number | null = null;
 
 export async function initManager(proxyPort: number): Promise<void> {
@@ -72,6 +78,7 @@ export async function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
+  onDiscordEvent?: (event: DiscordEvent) => void,
 ): Promise<string> {
   const groupConfig = await loadGroupConfig(groupName);
 
@@ -134,13 +141,30 @@ export async function sendMessage(
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
 
     let stdout = "";
-    let stderr = "";
+    let stderrTail = "";
+    let plainStderr = "";
 
     proc.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
     proc.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderrTail += chunk.toString();
+      const lines = stderrTail.split("\n");
+      stderrTail = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith(DISCORD_EVENT_PREFIX)) {
+          try {
+            const event = JSON.parse(
+              line.slice(DISCORD_EVENT_PREFIX.length),
+            ) as DiscordEvent;
+            onDiscordEvent?.(event);
+          } catch {
+            // ignore malformed events
+          }
+        } else {
+          plainStderr += `${line}\n`;
+        }
+      }
     });
 
     const timeout = setTimeout(
@@ -153,6 +177,21 @@ export async function sendMessage(
 
     proc.on("close", (code: number | null) => {
       clearTimeout(timeout);
+      // 残バッファをフラッシュ
+      if (stderrTail) {
+        if (stderrTail.startsWith(DISCORD_EVENT_PREFIX)) {
+          try {
+            const event = JSON.parse(
+              stderrTail.slice(DISCORD_EVENT_PREFIX.length),
+            ) as DiscordEvent;
+            onDiscordEvent?.(event);
+          } catch {
+            // ignore
+          }
+        } else {
+          plainStderr += stderrTail;
+        }
+      }
       if (code === null) {
         // SIGKILL などシグナルで終了した場合。タイムアウト時は既に reject 済み
         return;
@@ -160,9 +199,9 @@ export async function sendMessage(
       if (code === 0) {
         resolve(stdout.trim());
       } else if (code === 2) {
-        reject(new TransientError(stderr.trim()));
+        reject(new TransientError(plainStderr.trim()));
       } else {
-        resolve(`エージェント実行エラー: ${stderr.trim()}`);
+        resolve(`エージェント実行エラー: ${plainStderr.trim()}`);
       }
     });
 
