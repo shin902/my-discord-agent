@@ -193,8 +193,11 @@ export async function executeJob(job: CronJob): Promise<void> {
       );
     }
     const dateSuffix = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const suffix = `-${dateSuffix}`; // 11 chars
+    const maxIdLen = 100 - "cron-".length - suffix.length; // 84 chars
+    const truncatedId = job.id.slice(0, maxIdLen);
     const thread = await (channel as TextChannel).threads.create({
-      name: `cron-${job.id}-${dateSuffix}`,
+      name: `cron-${truncatedId}${suffix}`,
     });
     // sendMessage を直接呼ぶ: sandbox が session/{group}/{thread.id}.jsonl に
     // 履歴を書き込むため、後続のスレッド会話でコンテキストが引き継がれる
