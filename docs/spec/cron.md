@@ -74,13 +74,22 @@ handlerが設定されてる場合、JSONの "handler なし時必須"、"オプ
 
 ### output
 
-- `"thread"` → 結果投稿後に `startThread()` でスレッドを作成。そのスレッドをセッションに紐付け
+- `"thread"` → `channel.threads.create({ name: jobId, message: { content: 結果 } })` で直接スレッドを作成。スレッドID を sessionId として使う。`channel.threads.create()` は `MessageCreate` イベントを発火しないため `handler.ts` が拾わず、`data/sessions/{groupName}/{threadId}.jsonl` は自動作成されない。cron 側で明示的に JSONL を初期化する必要がある
 - `"channel"` → 指定チャンネルに `channel.send()` するだけ
 
 ### session
 
-- `"new"` → 毎回新規セッション（スレッド作成と組み合わせることが多い）
+- `"new"` → 毎回新規セッション
 - `"fixed"` → `cron-{id}` の固定 sessionId を使い、実行間で会話履歴を持ち越す
+
+**有効な組み合わせ**:
+
+| output | session | 動作 |
+|--------|---------|------|
+| `thread` | `new` | 毎回新スレッド・新セッション |
+| `channel` | `new` | チャンネルに送るだけ、毎回独立 |
+| `channel` | `fixed` | 特定セッションを使い回し、前の会話履歴を毎回コンテキストに持ちながら作業する |
+| `thread` | `fixed` | 不正（スレッドIDが毎回変わるため固定セッションは使えない） |
 
 ---
 
@@ -105,7 +114,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - **cron式**: `"0 9 * * *"` — 分・時・日・月・曜日。標準的な cron 記法
 - **インターバル**: `"30m"` `"1h"` `"2h"` — 起動からの経過時間ベース
 
-重複実行防止は `data/cron/state.json` に各ジョブの `lastRun` を記録して管理。
+**重複実行防止**: `data/cron/state.json` に各ジョブの `lastRun` を記録。チェック条件は `前回実行時刻 < 今回の予定実行時刻 ≤ 現在時刻`。これにより cron式 `0 9 * * *` が 9:00〜9:59 の間に何度もマッチする問題を防ぐ。
 
 ---
 
