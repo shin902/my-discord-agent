@@ -384,7 +384,11 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", errorMsg);
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      errorMsg,
+    );
     stderrSpy.mockRestore();
   });
 
