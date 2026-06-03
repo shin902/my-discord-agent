@@ -24,8 +24,6 @@ const CronJobSchema = z
     groupName: z.string().optional(),
     prompt: z.string().optional(),
     channelId: z.string().optional(),
-    allowedTools: z.array(z.string()).optional(),
-    allowedSkills: z.array(z.string()).optional(),
     mode: z.enum(["channel", "thread"]).optional(),
     handler: z.string().optional(),
   })
