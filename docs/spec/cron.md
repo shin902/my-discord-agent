@@ -63,8 +63,6 @@ data/cron/
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
-| `allowedTools` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なツール |
-| `allowedSkills` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なスキル |
 | `mode` | handler なし時必須 | `"channel"` \| `"thread"` | 実行モード（後述） |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
 
@@ -93,7 +91,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `mode?`, `handler?`, `allowedTools?`, `allowedSkills?`）を展開して渡す
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `mode?`, `handler?`）を展開して渡す
 
 ---
 
@@ -152,6 +150,8 @@ cron 設計とは独立した新しいセッションモード。
 ---
 
 ## スコープ外（別途検討）
+
+- **`allowedTools` / `allowedSkills`**: ジョブごとにグループ設定のツール・スキルをオーバーライドする機能（issue #73）。`InboxMessage` と `sendMessage` 両方への対応が必要なため別途実装。
 
 - **Discord カスタムスラッシュコマンド**: cron のトグル、ローカル LLM の Heartbeat 制御など（issue #70）。
 
