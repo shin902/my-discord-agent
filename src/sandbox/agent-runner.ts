@@ -119,7 +119,9 @@ export async function runAgentLoop(
             `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: asstMsg.errorMessage })}\n`,
           );
         } else {
-          pendingAppends.push(appendMessage(groupName, sessionId, event.message));
+          pendingAppends.push(
+            appendMessage(groupName, sessionId, event.message),
+          );
           response = asstMsg.content
             .filter((c): c is TextContent => c.type === "text")
             .map((c) => c.text)
