@@ -259,7 +259,7 @@ let _alignTimeout: NodeJS.Timeout | null = null;
 
 export function startCron(): void {
   if (_timer !== null || _alignTimeout !== null) return;
-  const msToNextMinute = (60_000 - Date.now() % 60_000) % 60_000;
+  const msToNextMinute = (60_000 - (Date.now() % 60_000)) % 60_000;
   _alignTimeout = setTimeout(() => {
     _alignTimeout = null;
     tick().catch((err) => console.error("[cron] tick エラー:", err));
