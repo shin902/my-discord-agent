@@ -129,8 +129,8 @@ async function sendDiscordEvent(
           }
         : content,
     );
-  } catch {
-    // best effort
+  } catch (err) {
+    console.error("[poller] Discord イベント送信エラー:", err);
   }
 }
 
