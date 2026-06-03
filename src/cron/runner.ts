@@ -180,8 +180,9 @@ async function executeJob(job: CronJob): Promise<void> {
         `チャンネル ${channelId} はスレッドをサポートしていません`,
       );
     }
+    const dateSuffix = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const thread = await (channel as TextChannel).threads.create({
-      name: `cron-${job.id}`,
+      name: `cron-${job.id}-${dateSuffix}`,
     });
     await appendInbox({
       channelId: thread.id,
