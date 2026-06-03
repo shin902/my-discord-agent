@@ -39,10 +39,11 @@ const CronJobSchema = z
     },
   );
 
-const CronJobsSchema = z.array(CronJobSchema).refine(
-  (jobs) => new Set(jobs.map((j) => j.id)).size === jobs.length,
-  { message: "ジョブIDが重複しています" },
-);
+const CronJobsSchema = z
+  .array(CronJobSchema)
+  .refine((jobs) => new Set(jobs.map((j) => j.id)).size === jobs.length, {
+    message: "ジョブIDが重複しています",
+  });
 
 export type CronJob = z.infer<typeof CronJobSchema>;
 

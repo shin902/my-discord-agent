@@ -8,11 +8,13 @@ vi.mock("../discord/client.js", () => ({
 }));
 vi.mock("../queue/inbox.js", () => ({ appendInbox: vi.fn() }));
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
-vi.mock("../utils/splitMessage.js", () => ({ splitMessage: (s: string) => [s] }));
+vi.mock("../utils/splitMessage.js", () => ({
+  splitMessage: (s: string) => [s],
+}));
 
+import { sendMessage } from "../agent/manager.js";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
-import { sendMessage } from "../agent/manager.js";
 import { NonRetryableError } from "../utils/error.js";
 import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
 
