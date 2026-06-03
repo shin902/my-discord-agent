@@ -21,6 +21,7 @@ const CronJobSchema = z
   .object({
     id: z.string(),
     schedule: z.string(),
+    enabled: z.boolean().default(true),
     groupName: z.string().optional(),
     prompt: z.string().optional(),
     channelId: z.string().optional(),
@@ -203,11 +204,11 @@ export async function executeJob(job: CronJob): Promise<void> {
         `チャンネル ${channelId} はスレッドをサポートしていません`,
       );
     }
-    // YYYY-MM-DD-HH-MM: 同日内の実行ごとにスレッド名が衝突しないよう分まで含める
+    // YYYY-MM-DD-HH-MM: 同日内の実行ごとにスレッド名が衝突しないよう分まで含める（JST）
     const dateSuffix = new Date()
-      .toISOString()
+      .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
       .slice(0, 16)
-      .replace("T", "-")
+      .replace(" ", "-")
       .replace(":", "-"); // YYYY-MM-DD-HH-MM
     const suffix = `-${dateSuffix}`; // 17 chars
     const maxIdLen = 100 - "cron-".length - suffix.length; // 78 chars
@@ -254,6 +255,7 @@ async function tick(): Promise<void> {
     const toRun: CronJob[] = [];
 
     for (const job of jobs) {
+      if (!job.enabled) continue;
       const entry = state[job.id];
       const lastRun = entry ? new Date(entry.lastRun) : null;
       if (shouldRun(job.schedule, lastRun, now)) {
@@ -262,6 +264,10 @@ async function tick(): Promise<void> {
     }
 
     if (toRun.length === 0) return;
+
+    for (const job of toRun) {
+      console.log(`[cron] "${job.id}" 開始`);
+    }
 
     const results = await Promise.allSettled(
       toRun.map((job) => executeJob(job)),
@@ -272,6 +278,7 @@ async function tick(): Promise<void> {
       const result = results[i];
       const job = toRun[i];
       if (result.status === "fulfilled") {
+        console.log(`[cron] "${job.id}" 完了`);
         state[job.id] = { lastRun: now.toISOString() };
         changed = true;
       } else if (result.reason instanceof NonRetryableError) {

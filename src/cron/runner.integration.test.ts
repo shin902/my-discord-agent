@@ -58,6 +58,7 @@ describe("executeJob", () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
+      enabled: true,
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
@@ -87,6 +88,7 @@ describe("executeJob", () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
+      enabled: true,
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
@@ -121,6 +123,7 @@ describe("executeJob", () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
+      enabled: true,
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
