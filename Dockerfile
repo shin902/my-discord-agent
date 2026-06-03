@@ -10,7 +10,8 @@ RUN apk add --no-cache \
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir \
     yt-dlp \
-    feedparser
+    feedparser \
+    md2html-phuker
 
 ENV PATH="/opt/venv/bin:$PATH"
 

@@ -7,12 +7,6 @@ description: "Markdown ファイルをオフライン完結の単一 HTML ファ
 
 Markdown ファイルを、CDN・外部 JS 依存なしで完全自己完結型の単一 HTML ファイルに変換する。
 
-## インストール確認
-
-```bash
-python3 -m md2html --version 2>/dev/null || pip install md2html-phuker
-```
-
 ## 変換コマンド
 
 ```bash
