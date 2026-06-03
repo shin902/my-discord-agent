@@ -50,7 +50,7 @@ export type CronContext = {
 
 // --- State ---
 
-const CronStateSchema = z.record(z.object({ lastRun: z.string() }));
+const CronStateSchema = z.record(z.string(), z.object({ lastRun: z.string() }));
 type CronState = z.infer<typeof CronStateSchema>;
 
 let _state: CronState | null = null;
