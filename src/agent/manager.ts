@@ -144,6 +144,21 @@ export async function sendMessage(
     let stderrTail = "";
     let plainStderr = "";
 
+    const processStderrLine = (line: string): void => {
+      if (line.startsWith(DISCORD_EVENT_PREFIX)) {
+        try {
+          const event = JSON.parse(
+            line.slice(DISCORD_EVENT_PREFIX.length),
+          ) as DiscordEvent;
+          onDiscordEvent?.(event);
+        } catch {
+          // ignore malformed events
+        }
+      } else {
+        plainStderr += `${line}\n`;
+      }
+    };
+
     proc.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -152,18 +167,7 @@ export async function sendMessage(
       const lines = stderrTail.split("\n");
       stderrTail = lines.pop() ?? "";
       for (const line of lines) {
-        if (line.startsWith(DISCORD_EVENT_PREFIX)) {
-          try {
-            const event = JSON.parse(
-              line.slice(DISCORD_EVENT_PREFIX.length),
-            ) as DiscordEvent;
-            onDiscordEvent?.(event);
-          } catch {
-            // ignore malformed events
-          }
-        } else {
-          plainStderr += `${line}\n`;
-        }
+        processStderrLine(line);
       }
     });
 
@@ -179,18 +183,7 @@ export async function sendMessage(
       clearTimeout(timeout);
       // 残バッファをフラッシュ
       if (stderrTail) {
-        if (stderrTail.startsWith(DISCORD_EVENT_PREFIX)) {
-          try {
-            const event = JSON.parse(
-              stderrTail.slice(DISCORD_EVENT_PREFIX.length),
-            ) as DiscordEvent;
-            onDiscordEvent?.(event);
-          } catch {
-            // ignore
-          }
-        } else {
-          plainStderr += stderrTail;
-        }
+        processStderrLine(stderrTail);
       }
       if (code === null) {
         // SIGKILL などシグナルで終了した場合。タイムアウト時は既に reject 済み
