@@ -61,12 +61,16 @@ data/cron/
 |-----------|------|-----|------|
 | `id` | ✓ | string | ジョブID（一意）。fixed セッションの ID にも使われる |
 | `schedule` | ✓ | string | cron式 `"0 9 * * *"` or インターバル `"30m"` `"1h"` |
-| `groupName` | ✓ | string | エージェントグループ名 |
+| `groupName` | handler なし時必須 | string | エージェントグループ名 |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
-| `output` | オプション | `"thread"` \| `"channel"` | 結果の返し方（後述） |
-| `session` | オプション | `"new"` \| `"fixed"` | セッション方針（後述） |
+| `allowedTools` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なツール |
+| `allowedSkills` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なスキル |
+| `output` | handler なし時必須 | `"thread"` \| `"channel"` | 結果の返し方（後述） |
+| `session` | handler なし時必須 | `"new"` \| `"fixed"` | セッション方針（後述） |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス |
+
+handlerが設定されてる場合、JSONの "handler なし時必須"、"オプション"は無視する方針
 
 ### output
 
@@ -111,36 +115,35 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 ```
 cron（mail.ts）
-  → メール確認（既存のメール系ツール）
+  → メール確認（既存のメール系ツールを改変）
   → 新着なければ終了
-  → ホスト側でLLMを呼んで要約生成（セッションなし、使い捨て）
+  → ホスト側でLLMを呼んで要約生成（セッションなし、使い捨て。システムプロンプトをどうするかは要検討）
   → Discord チャンネルに要約を投稿
+  （以降は新しく作る email-mode に任せる）
   → startThread() でスレッド作成
-  → sessionId = "mail-{mailId}" として JSONL を初期化
+  → sessionId = {スレッドID} として JSONL を初期化。（ここは auto-thread のフローと同じ）その際に要約の文章と一緒にメールのIDもコンテキストに含める
 
-以降は mail-mode のフロー（後述）
+以降は通常のDiscordの処理のフロー（後述）
   → ユーザーがスレッドに返信 → handler.ts → appendInbox → エージェントが応答
 ```
 
 ---
 
-## mail-mode（別設計・未実装）
+## email-mode（別設計・未実装）
 
 cron 設計とは独立した新しいセッションモード。
 
 **通常の auto-thread との違い**:
 
-| | auto-thread | mail-mode |
+| | auto-thread | email-mode |
 |--|-------------|-----------|
 | トリガー | ユーザーのメッセージ | cron（外部イベント） |
 | スレッド作成後 | エージェントが自動応答 | 自動応答なし |
-| sessionId | スレッドID | `mail-{mailId}` |
-
-処理内容: メッセージ投稿 → スレッド作成 → セッション JSONL 作成のみ。`autoReply: false` とは別物。
 
 ---
 
 ## スコープ外（別途検討）
 
-- **Heartbeat**: 一定間隔でエージェントに話しかけるユースケース。毎回セッションが積み上がりコンテキストが肥大化するため、cron 基盤では対応しない。別の方式を検討。
+- **Heartbeat**: 一定間隔でエージェントに話しかけるユースケース。毎回セッションが積み上がりコンテキストが肥大化するため、cron 基盤では対応しない。それ専用のカスタムジョブをエージェントに作成依頼することを推奨
+
 - **Discord カスタムスラッシュコマンド**: cron のトグル、ローカル LLM の Heartbeat 制御など（issue #70）。
