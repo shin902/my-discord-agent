@@ -74,7 +74,7 @@ handlerが設定されてる場合、JSONの "handler なし時必須"、"オプ
 
 ### output
 
-- `"thread"` → `channel.threads.create({ name: jobId, message: { content: 結果 } })` で直接スレッドを作成。スレッドID を sessionId として使う。`channel.threads.create()` は `MessageCreate` イベントを発火しないため `handler.ts` が拾わず、`data/sessions/{groupName}/{threadId}.jsonl` は自動作成されない。cron 側で明示的に JSONL を初期化する必要がある
+- `"thread"` → `channel.threads.create({ name: jobId })` でスレッドを作成し、続けて `thread.send(結果)` で投稿する。スレッドID を sessionId として使う。`thread.send()` は `MessageCreate` を発火するが bot 発言のため `handler.ts` が無視し、JSONL には自動で記録されない。後続の会話でエージェントにコンテキストを持たせたい場合は cron 側で `appendMessage(groupName, thread.id, { role: "assistant", content: 結果 })` を明示的に呼ぶ
 - `"channel"` → 指定チャンネルに `channel.send()` するだけ
 
 ### session
