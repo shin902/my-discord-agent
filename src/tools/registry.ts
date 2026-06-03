@@ -2,6 +2,12 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { agentReachTool } from "./agent-reach.js";
 import { bashTool } from "./bash.js";
 import {
+  browserlessContentTool,
+  browserlessFunctionTool,
+  browserlessSearchTool,
+  browserlessSmartScrapeTool,
+} from "./browserless.js";
+import {
   editTool,
   globTool,
   grepTool,
@@ -22,6 +28,10 @@ const TOOLS: Record<string, AgentTool> = {
   grep: grepTool,
   list_emails: listEmailsTool,
   read_email: readEmailTool,
+  browserless_smart_scrape: browserlessSmartScrapeTool,
+  browserless_search: browserlessSearchTool,
+  browserless_function: browserlessFunctionTool,
+  browserless_content: browserlessContentTool,
 };
 
 export function resolveTools(toolNames: string[]): AgentTool[] {

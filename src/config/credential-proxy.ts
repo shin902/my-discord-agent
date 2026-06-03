@@ -19,6 +19,12 @@ export type MsalConfig = z.infer<typeof MsalConfigSchema>;
 export const CredentialEntrySchema = z.object({
   provider: z.string(),
   envVars: z.array(z.string()).optional(),
+  auth: z
+    .object({
+      type: z.enum(["bearer", "query-token"]),
+      queryParam: z.string().optional(),
+    })
+    .optional(),
   msal: MsalConfigSchema.optional(),
   baseUrl: z.string().url(),
   api: z

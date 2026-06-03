@@ -41,6 +41,29 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 - すべて未設定 → 静かにスキップ（プロバイダー自体が無効になったわけではない）
 - 省略または空配列 `[]` → secret 注入を行わない（API Key が不要なローカルサーバー等に便利）
 
+### `auth`
+
+`envVars` で見つかった API キーを upstream に渡す形式を指定します。
+
+省略時は `Bearer` 認証です。
+
+```json
+{ "envVars": ["OPENAI_API_KEY"], "auth": { "type": "bearer" } }
+```
+
+Browserless のように query parameter で token を要求する API では `query-token` を指定します。
+
+```json
+{
+  "provider": "browserless",
+  "envVars": ["BROWSERLESS_TOKEN"],
+  "baseUrl": "https://production-sfo.browserless.io",
+  "auth": { "type": "query-token", "queryParam": "token" }
+}
+```
+
+`queryParam` を省略した場合は `"token"` が使われます。
+
 ### `api`
 
 `pi-ai` が使用する API プロトコル。カスタムプロバイダーでのみ有効。

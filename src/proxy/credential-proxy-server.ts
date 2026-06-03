@@ -16,6 +16,18 @@ export function getProxyPort(): number {
   return proxyPort;
 }
 
+function getFirstSetEnvVar(envVars: string[] | undefined): string | undefined {
+  for (const envVar of envVars ?? []) {
+    const val = process.env[envVar];
+    if (val) return val;
+  }
+  return undefined;
+}
+
+function appendPath(basePath: string, restPath: string): string {
+  return `${basePath.replace(/\/$/, "")}/${restPath.replace(/^\//, "")}`;
+}
+
 async function handleRequest(
   creds: CredentialEntry[],
   req: IncomingMessage,
@@ -45,15 +57,18 @@ async function handleRequest(
     return;
   }
 
-  const targetUrlStr = resolvedBaseUrl.replace(/\/$/, "") + restPath + search;
-
   let parsedTarget: URL;
   try {
-    parsedTarget = new URL(targetUrlStr);
+    parsedTarget = new URL(resolvedBaseUrl);
   } catch {
     res.writeHead(502);
     res.end("Invalid target URL");
     return;
+  }
+  parsedTarget.pathname = appendPath(parsedTarget.pathname, restPath);
+  const reqSearchParams = new URLSearchParams(search);
+  for (const [key, value] of reqSearchParams) {
+    parsedTarget.searchParams.append(key, value);
   }
 
   const headers: Record<string, string | string[] | undefined> = {};
@@ -77,16 +92,15 @@ async function handleRequest(
     delete headers.authorization;
     headers.authorization = `Bearer ${token}`;
   } else if (entry.envVars && entry.envVars.length > 0) {
-    let apiKey: string | undefined;
-    for (const envVar of entry.envVars) {
-      const val = process.env[envVar];
-      if (val) {
-        apiKey = val;
-        break;
+    const apiKey = getFirstSetEnvVar(entry.envVars);
+    delete headers.authorization;
+    if (apiKey) {
+      if (entry.auth?.type === "query-token") {
+        parsedTarget.searchParams.set(entry.auth.queryParam ?? "token", apiKey);
+      } else {
+        headers.authorization = `Bearer ${apiKey}`;
       }
     }
-    delete headers.authorization;
-    if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   }
 
   const isHttps = parsedTarget.protocol === "https:";

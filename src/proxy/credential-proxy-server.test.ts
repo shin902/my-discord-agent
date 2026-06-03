@@ -243,13 +243,12 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     }));
 
     let capturedResponseCb: ((upstreamRes: unknown) => void) | undefined;
-    vi.doMock("node:http", () => ({
-      request: vi.fn((_opts: unknown, cb: (r: unknown) => void) => {
+    requestMock.mockImplementation(
+      (_opts: unknown, cb: (r: unknown) => void) => {
         capturedResponseCb = cb;
         return { on: vi.fn(), pipe: vi.fn() };
-      }),
-      createServer: vi.fn(),
-    }));
+      },
+    );
 
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
@@ -299,6 +298,7 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
 describe("createRequestHandler: Authorization ヘッダ", () => {
   const originalEnv = process.env;
   let requestMock: ReturnType<typeof vi.fn>;
+  let httpsRequestMock: ReturnType<typeof vi.fn>;
 
   const CREDS: CredentialEntry[] = [
     {
@@ -313,8 +313,9 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     vi.resetModules();
     process.env = { ...originalEnv };
     requestMock = vi.fn(() => ({ on: vi.fn() }));
+    httpsRequestMock = vi.fn(() => ({ on: vi.fn() }));
     vi.doMock("node:http", () => ({ request: requestMock }));
-    vi.doMock("node:https", () => ({ request: vi.fn() }));
+    vi.doMock("node:https", () => ({ request: httpsRequestMock }));
   });
 
   afterEach(() => {
@@ -334,6 +335,53 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     );
     const opts = requestMock.mock.calls[0][0];
     expect(opts.headers.authorization).toBe("Bearer sk-test-key");
+  });
+
+  it("auth.type=query-token はトークンを query parameter に注入する", async () => {
+    process.env.BROWSERLESS_TOKEN = "browserless-test-token";
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler([
+      {
+        provider: "browserless",
+        envVars: ["BROWSERLESS_TOKEN"],
+        auth: { type: "query-token" },
+        baseUrl: "https://production-sfo.browserless.io",
+      },
+    ]);
+    handler(
+      makeReq("/browserless/content?timeout=30000", {
+        authorization: "Bearer fake",
+      }),
+      makeRes() as unknown as ServerResponse,
+    );
+    const opts = httpsRequestMock.mock.calls[0][0];
+    expect(opts.path).toBe(
+      "/content?timeout=30000&token=browserless-test-token",
+    );
+    expect(opts.headers.authorization).toBeUndefined();
+  });
+
+  it("auth.queryParam で query parameter 名を変更できる", async () => {
+    process.env.TEST_API_KEY = "query-test-key";
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler([
+      {
+        provider: "query-api",
+        envVars: ["TEST_API_KEY"],
+        auth: { type: "query-token", queryParam: "api_key" },
+        baseUrl: "https://api.example.com/v1?existing=true",
+      },
+    ]);
+    handler(
+      makeReq("/query-api/content"),
+      makeRes() as unknown as ServerResponse,
+    );
+    const opts = httpsRequestMock.mock.calls[0][0];
+    expect(opts.path).toBe("/v1/content?existing=true&api_key=query-test-key");
   });
 
   it("envVars が全て未設定の場合は Authorization ヘッダを削除する", async () => {
