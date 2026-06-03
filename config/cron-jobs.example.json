@@ -1,0 +1,15 @@
+[
+  {
+    "id": "daily-report",
+    "schedule": "0 9 * * *",
+    "groupName": "my-group",
+    "prompt": "昨日のログを分析して日次レポートを作成してください",
+    "channelId": "12345",
+    "mode": "thread"
+  },
+  {
+    "id": "mail-check",
+    "schedule": "*/30 * * * *",
+    "handler": "jobs/mail.ts"
+  }
+]

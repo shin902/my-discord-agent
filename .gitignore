@@ -7,6 +7,7 @@ data/
 config/*
 !config/groups.example.json
 !config/credential-proxy.example.json
+!config/cron-jobs.example.json
 
 groups/*/
 
