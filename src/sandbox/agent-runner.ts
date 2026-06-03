@@ -34,6 +34,15 @@ const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 // Discord 通知で引数を隠すツール（機密情報が引数に含まれる可能性があるため）
 const ARGS_HIDDEN_TOOLS = new Set<string>(["bash"]);
 
+function isAssistantMessage(msg: unknown): msg is AssistantMessage {
+  return (
+    typeof msg === "object" &&
+    msg !== null &&
+    "role" in msg &&
+    (msg as Record<string, unknown>).role === "assistant"
+  );
+}
+
 /** カスタムプロバイダーの API キーを credential-proxy + 環境変数から取得 */
 async function getCustomProviderApiKey(
   provider: string,
@@ -122,11 +131,10 @@ export async function runAgentLoop(
 
   agent.subscribe((event) => {
     if (event.type === "message_end") {
-      if ("role" in event.message && event.message.role === "assistant") {
-        const asstMsg = event.message as unknown as AssistantMessage;
-        if (asstMsg.errorMessage) {
+      if (isAssistantMessage(event.message)) {
+        if (event.message.errorMessage) {
           process.stderr.write(
-            `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: asstMsg.errorMessage })}\n`,
+            `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: event.message.errorMessage })}\n`,
           );
           // デバッグ用にセッションには残す（次回ロード時にフィルタして LLM には渡さない）
           pendingAppends.push(
@@ -136,7 +144,7 @@ export async function runAgentLoop(
           pendingAppends.push(
             appendMessage(groupName, sessionId, event.message),
           );
-          response = asstMsg.content
+          response = event.message.content
             .filter((c): c is TextContent => c.type === "text")
             .map((c) => c.text)
             .join("");
