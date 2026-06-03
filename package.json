@@ -9,7 +9,7 @@
     "sandbox": "bash scripts/sandbox.sh",
     "runner:image:build": "pnpm build:runner && docker build -t localhost:5050/my-discord-agent-runner:latest . && docker push localhost:5050/my-discord-agent-runner:latest",
     "restart": "pnpm sandbox build && pnpm build && node dist/index.js",
-    "start": "node --env-file=.env dist/index.js",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "biome format --write .",
