@@ -60,13 +60,13 @@ data/cron/
 |-----------|------|-----|------|
 | `id` | ✓ | string | ジョブID（一意） |
 | `schedule` | ✓ | string | cron式 `"0 9 * * *"` or インターバル `"30m"` `"1h"` |
-| `groupName` | handler なし時必須 | string | エージェントグループ名 |
+| `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `allowedTools` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なツール |
 | `allowedSkills` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なスキル |
 | `mode` | handler なし時必須 | `"channel"` \| `"thread"` | 実行モード（後述） |
-| `handler` | オプション | string | カスタムロジックの TS ファイルパス |
+| `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
 
 handlerが設定されてる場合、JSONの "handler なし時必須"、"オプション"は無視する方針
 
@@ -75,7 +75,7 @@ handlerが設定されてる場合、JSONの "handler なし時必須"、"オプ
 | 値 | 動作 |
 |----|------|
 | `"channel"` | 指定チャンネルに `channel.send()` するだけ。毎回独立、セッションなし |
-| `"thread"` | `channel.threads.create({ name: cron-jobId })` でスレッドを作成し `thread.send(結果)` で投稿。スレッドID を sessionId として使う。`thread.send()` は `MessageCreate` を発火するが bot 発言のため `handler.ts` が無視し JSONL には自動で記録されない。後続の会話でエージェントにコンテキストを持たせたいので、 `appendMessage(groupName, thread.id, { role: "assistant", content: 結果 })` を明示的に呼ぶ |
+| `"thread"` | 実行のたびに新しいスレッドを作成する。`channel.threads.create({ name: cron-jobId })` でスレッドを作成し `thread.send(結果)` で投稿。スレッドID を sessionId として使う。`thread.send()` は `MessageCreate` を発火するが bot 発言のため `handler.ts` が無視し JSONL には自動で記録されない。後続の会話でエージェントにコンテキストを持たせたいので、 `appendMessage(groupName, thread.id, { role: "assistant", content: 結果 })` を明示的に呼ぶ |
 
 ---
 
@@ -91,7 +91,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの（未確定）:
 - Discord `client`
 - `appendInbox`
-- `groupName`（ジョブ定義から渡す）
+- `groupName?: string`（JSON に `groupName` が書かれていれば runner.ts が詰めて渡す。ない場合は `undefined`）
 
 ---
 
@@ -100,7 +100,19 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - **cron式**: `"0 9 * * *"` — 分・時・日・月・曜日。標準的な cron 記法
 - **インターバル**: `"30m"` `"1h"` `"2h"` — 起動からの経過時間ベース
 
-**重複実行防止**: `data/cron/state.json` に各ジョブの `lastRun` を記録。チェック条件は `前回実行時刻 < 今回の予定実行時刻 ≤ 現在時刻`。これにより cron式 `0 9 * * *` が 9:00〜9:59 の間に何度もマッチする問題を防ぐ。
+**重複実行防止**: `data/cron/state.json` に各ジョブの `lastRun` を記録。
+
+- **cron式**: チェック条件は `前回実行時刻 < 今回の予定実行時刻 ≤ 現在時刻`。これにより `0 9 * * *` が 9:00〜9:59 の間に何度もマッチする問題を防ぐ。
+- **インターバル**: チェック条件は `lastRun + interval ≤ 現在時刻`。
+
+`state.json` の構造例:
+
+```json
+{
+  "daily-report": { "lastRun": "2025-01-01T09:00:00.000Z" },
+  "mail-check": { "lastRun": "2025-01-01T09:30:00.000Z" }
+}
+```
 
 ---
 
@@ -112,7 +124,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 cron（mail.ts）
   → メール確認（既存のメール系ツールを改変）
   → 新着なければ終了
-  → ホスト側でLLMを呼んで要約生成（セッションなし、使い捨て。システムプロンプトをどうするかは要検討）
+  → LLMを呼んで要約生成（実装は mail.ts に委ねる。メール内容を扱うためローカルLLM推奨。ホスト側でSDK直接呼び出しを想定。システムプロンプトどうするかは検討中（AGENTS.mdを読む？））
   → Discord チャンネルに要約を投稿
   （以降は新しく作る email-mode に任せる。後述）
   → startThread() でスレッド作成
