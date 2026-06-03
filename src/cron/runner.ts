@@ -238,7 +238,10 @@ async function tick(): Promise<void> {
       changed = true;
     } else {
       // 一時的なエラーは lastRun を更新せず次の tick でリトライ
-      console.error(`[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`, result.reason);
+      console.error(
+        `[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`,
+        result.reason,
+      );
     }
   }
 
