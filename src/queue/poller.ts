@@ -90,6 +90,7 @@ function startTypingLoop(channelId: string): () => void {
 async function sendDiscordEvent(
   channelId: string,
   event: DiscordEvent,
+  replyMessageId?: string,
 ): Promise<void> {
   try {
     const channel =
@@ -108,8 +109,20 @@ async function sendDiscordEvent(
     }
 
     const DISCORD_MAX = 2000;
+    const content =
+      text.length > DISCORD_MAX ? `${text.slice(0, DISCORD_MAX - 1)}…` : text;
+
     await channel.send(
-      text.length > DISCORD_MAX ? `${text.slice(0, DISCORD_MAX - 1)}…` : text,
+      replyMessageId
+        ? {
+            content,
+            reply: {
+              messageReference: replyMessageId,
+              failIfNotExists: false,
+            },
+            allowedMentions: { repliedUser: true },
+          }
+        : content,
     );
   } catch {
     // best effort
@@ -120,6 +133,11 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
   const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
+  // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
+  const groupConfig = await loadGroupConfig(msg.groupName).catch(() => null);
+  const replyMessageId =
+    groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
+
   try {
     try {
       response = await sendMessage(
@@ -127,7 +145,7 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
         msg.sessionId,
         msg.content,
         (event) => {
-          void sendDiscordEvent(msg.channelId, event);
+          void sendDiscordEvent(msg.channelId, event, replyMessageId);
         },
       );
     } catch (err) {
@@ -155,20 +173,17 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
     }
 
     try {
-      const [channel, groupConfig] = await Promise.all([
-        client.channels.fetch(msg.channelId),
-        loadGroupConfig(msg.groupName),
-      ]);
+      const channel = await client.channels.fetch(msg.channelId);
       if (channel?.isSendable() && response) {
         const chunks = splitMessage(response);
         const [firstChunk, ...restChunks] = chunks;
         if (firstChunk) {
           await channel.send(
-            groupConfig.autoReply && msg.messageId
+            replyMessageId
               ? {
                   content: firstChunk,
                   reply: {
-                    messageReference: msg.messageId,
+                    messageReference: replyMessageId,
                     failIfNotExists: false,
                   },
                   allowedMentions: { repliedUser: true },

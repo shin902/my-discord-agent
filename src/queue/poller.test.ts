@@ -145,6 +145,42 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 
+  it("autoReply: true のとき error イベントは元メッセージに reply 形式で送信される", async () => {
+    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({ type: "error", message: "Context window exceeded" });
+        return "";
+      },
+    );
+
+    await processMessage(makeMsg({ messageId: "msg-original" }));
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "⚠️ エラー: Context window exceeded",
+        reply: { messageReference: "msg-original", failIfNotExists: false },
+        allowedMentions: { repliedUser: true },
+      });
+    });
+  });
+
+  it("autoReply: false のとき error イベントは通常送信される", async () => {
+    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: false });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({ type: "error", message: "oops" });
+        return "";
+      },
+    );
+
+    await processMessage(makeMsg({ messageId: "msg-original" }));
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
+    });
+  });
+
   it("2000文字を超えるイベントテキストは先頭2000文字に切り詰められる", async () => {
     const longMessage = "x".repeat(2100);
     vi.mocked(sendMessage).mockImplementation(
