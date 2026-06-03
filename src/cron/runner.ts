@@ -127,7 +127,13 @@ async function loadHandlerFn(
     runnerExt === ".ts"
       ? handlerRelPath
       : handlerRelPath.replace(/\.ts$/, ".js");
-  const absUrl = pathToFileURL(path.resolve(__dirname, resolvedPath)).href;
+  const absPath = path.resolve(__dirname, resolvedPath);
+  if (!absPath.startsWith(ROOT)) {
+    throw new NonRetryableError(
+      `ハンドラーパスがプロジェクト外を参照しています: ${handlerRelPath}`,
+    );
+  }
+  const absUrl = pathToFileURL(absPath).href;
   const mod = (await import(absUrl)) as {
     default?: (ctx: CronContext) => Promise<void>;
   };
