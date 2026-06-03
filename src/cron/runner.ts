@@ -66,7 +66,7 @@ async function saveState(state: CronState): Promise<void> {
 
 // --- Schedule matching ---
 
-function matchField(value: number, field: string): boolean {
+export function matchField(value: number, field: string): boolean {
   if (field === "*") return true;
   if (field.startsWith("*/")) return value % parseInt(field.slice(2), 10) === 0;
   if (field.includes(","))
@@ -78,7 +78,7 @@ function matchField(value: number, field: string): boolean {
   return value === parseInt(field, 10);
 }
 
-function cronMatches(expr: string, date: Date): boolean {
+export function cronMatches(expr: string, date: Date): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
   const [min, hour, dom, mon, dow] = parts;
@@ -91,17 +91,21 @@ function cronMatches(expr: string, date: Date): boolean {
   );
 }
 
-function parseIntervalMs(schedule: string): number | null {
+export function parseIntervalMs(schedule: string): number | null {
   const m = schedule.match(/^(\d+)(m|h)$/);
   if (!m) return null;
   return parseInt(m[1], 10) * (m[2] === "h" ? 3_600_000 : 60_000);
 }
 
-function isCronExpr(schedule: string): boolean {
+export function isCronExpr(schedule: string): boolean {
   return schedule.trim().split(/\s+/).length === 5;
 }
 
-function shouldRun(schedule: string, lastRun: Date | null, now: Date): boolean {
+export function shouldRun(
+  schedule: string,
+  lastRun: Date | null,
+  now: Date,
+): boolean {
   if (isCronExpr(schedule)) {
     const floored = new Date(now);
     floored.setSeconds(0, 0);
