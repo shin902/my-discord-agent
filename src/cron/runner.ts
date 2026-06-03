@@ -142,7 +142,7 @@ async function loadHandlerFn(
       ? handlerRelPath
       : handlerRelPath.replace(/\.ts$/, ".js");
   const absPath = path.resolve(__dirname, resolvedPath);
-  if (!absPath.startsWith(ROOT)) {
+  if (!absPath.startsWith(ROOT + path.sep)) {
     throw new NonRetryableError(
       `ハンドラーパスがプロジェクト外を参照しています: ${handlerRelPath}`,
     );
