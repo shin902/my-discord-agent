@@ -439,106 +439,64 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     );
   });
 
-  it("bash ツールは args を含まない __DISCORD_EVENT__ が書かれる", async () => {
+  function makeToolAgent(toolName: string, args: unknown) {
+    const subscribers: Array<(event: unknown) => void> = [];
+    return {
+      subscribe: vi.fn((cb: (event: unknown) => void) => subscribers.push(cb)),
+      prompt: vi.fn(async () => {
+        for (const cb of subscribers) {
+          cb({ type: "tool_execution_start", toolCallId: "call-1", toolName, args });
+        }
+        for (const cb of subscribers) {
+          cb({
+            type: "message_end",
+            message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+          });
+        }
+      }),
+    };
+  }
+
+  it("toolLogArgs: false（デフォルト）のとき args を含まない", async () => {
     const written: string[] = [];
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
-      .mockImplementation((chunk) => {
-        written.push(String(chunk));
-        return true;
-      });
+      .mockImplementation((chunk) => { written.push(String(chunk)); return true; });
 
     AgentMock.mockImplementation(function () {
-      const subscribers: Array<(event: unknown) => void> = [];
-      return {
-        subscribe: vi.fn((cb: (event: unknown) => void) =>
-          subscribers.push(cb),
-        ),
-        prompt: vi.fn(async () => {
-          for (const cb of subscribers) {
-            cb({
-              type: "tool_execution_start",
-              toolCallId: "call-1",
-              toolName: "bash",
-              args: { command: "echo $OPENCODE_API_KEY" },
-            });
-          }
-          for (const cb of subscribers) {
-            cb({
-              type: "message_end",
-              message: {
-                role: "assistant",
-                content: [{ type: "text", text: "done" }],
-              },
-            });
-          }
-        }),
-      };
+      return makeToolAgent("bash", { command: "echo $OPENCODE_API_KEY" });
     });
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();
-    if (!eventLine) throw new Error("eventLine not found");
-    const event = JSON.parse(
-      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
-    );
+    const event = JSON.parse(eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd());
     expect(event).toEqual({ type: "tool_start", toolName: "bash" });
     expect(event.args).toBeUndefined();
 
     stderrSpy.mockRestore();
   });
 
-  it("bash 以外のツールは args を含む __DISCORD_EVENT__ が書かれる", async () => {
+  it("toolLogArgs: true のとき args を含む", async () => {
     const written: string[] = [];
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
-      .mockImplementation((chunk) => {
-        written.push(String(chunk));
-        return true;
-      });
+      .mockImplementation((chunk) => { written.push(String(chunk)); return true; });
 
     AgentMock.mockImplementation(function () {
-      const subscribers: Array<(event: unknown) => void> = [];
-      return {
-        subscribe: vi.fn((cb: (event: unknown) => void) =>
-          subscribers.push(cb),
-        ),
-        prompt: vi.fn(async () => {
-          for (const cb of subscribers) {
-            cb({
-              type: "tool_execution_start",
-              toolCallId: "call-1",
-              toolName: "read_file",
-              args: { path: "/workspace/README.md" },
-            });
-          }
-          for (const cb of subscribers) {
-            cb({
-              type: "message_end",
-              message: {
-                role: "assistant",
-                content: [{ type: "text", text: "done" }],
-              },
-            });
-          }
-        }),
-      };
+      return makeToolAgent("bash", { command: "ls /workspace" });
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", { toolLogArgs: true });
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();
-    if (!eventLine) throw new Error("eventLine not found");
-    const event = JSON.parse(
-      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
-    );
+    const event = JSON.parse(eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd());
     expect(event).toEqual({
       type: "tool_start",
-      toolName: "read_file",
-      args: { path: "/workspace/README.md" },
+      toolName: "bash",
+      args: { command: "ls /workspace" },
     });
 
     stderrSpy.mockRestore();

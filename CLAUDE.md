@@ -77,7 +77,7 @@ Discord受信
 ```
 config/groups.json          # チャンネル→グループのマッピング（Zodで検証）
 groups/{name}/
-  group.json                # モデル・ツール・autoReply 設定（省略可）
+  group.json                # モデル・ツール・autoReply・toolLogArgs 設定（省略可）
   AGENTS.md                 # グループのシステムプロンプト（省略可）
   SKILLS/{skill}/SKILL.md   # グループ固有のスキル定義（省略可）
 data/queue/inbox.jsonl      # 処理待ちメッセージキュー（自動生成）

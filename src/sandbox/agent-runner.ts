@@ -31,8 +31,6 @@ const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントで
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 
-// Discord 通知で引数を隠すツール（機密情報が引数に含まれる可能性があるため）
-const ARGS_HIDDEN_TOOLS = new Set<string>(["bash"]);
 
 function isAssistantMessage(msg: unknown): msg is AssistantMessage {
   return (
@@ -151,7 +149,7 @@ export async function runAgentLoop(
         type: "tool_start",
         toolName: event.toolName,
       };
-      if (!ARGS_HIDDEN_TOOLS.has(event.toolName)) {
+      if (groupConfig.toolLogArgs) {
         payload.args = event.args;
       }
       process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
