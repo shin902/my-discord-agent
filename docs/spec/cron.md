@@ -76,7 +76,6 @@ handlerが設定されてる場合、JSONの "handler なし時必須"、"オプ
 |----|------|
 | `"channel"` | 指定チャンネルに `channel.send()` するだけ。毎回独立、セッションなし |
 | `"thread"` | `channel.threads.create({ name: cron-jobId })` でスレッドを作成し `thread.send(結果)` で投稿。スレッドID を sessionId として使う。`thread.send()` は `MessageCreate` を発火するが bot 発言のため `handler.ts` が無視し JSONL には自動で記録されない。後続の会話でエージェントにコンテキストを持たせたいので、 `appendMessage(groupName, thread.id, { role: "assistant", content: 結果 })` を明示的に呼ぶ |
-| `"fixed"` | `cron-{id}` の固定 sessionId を使い、チャンネルに `channel.send()` で投稿。実行間で会話履歴を持ち越す |
 
 ---
 
