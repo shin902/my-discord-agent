@@ -1,4 +1,4 @@
-import { sendMessage } from "../agent/manager.js";
+import { type DiscordEvent, sendMessage } from "../agent/manager.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
@@ -87,13 +87,75 @@ function startTypingLoop(channelId: string): () => void {
   };
 }
 
+async function sendDiscordEvent(
+  channelId: string,
+  event: DiscordEvent,
+  replyMessageId?: string,
+): Promise<void> {
+  try {
+    const channel =
+      client.channels.cache.get(channelId) ??
+      (await client.channels.fetch(channelId).catch(() => null));
+    if (!channel?.isSendable()) return;
+
+    let text: string;
+    if (event.type === "tool_start") {
+      if (event.args !== undefined) {
+        const argsStr = JSON.stringify(event.args);
+        const truncated =
+          argsStr.length > 300 ? `${argsStr.slice(0, 300)}…` : argsStr;
+        text = `🔧 \`${event.toolName}\` ${truncated}`;
+      } else {
+        text = `🔧 \`${event.toolName}\``;
+      }
+    } else {
+      text = `⚠️ エラー: ${event.message}`;
+    }
+
+    const DISCORD_MAX = 2000;
+    const content =
+      text.length > DISCORD_MAX ? `${text.slice(0, DISCORD_MAX - 1)}…` : text;
+
+    const shouldReply = event.type === "error" && replyMessageId;
+    await channel.send(
+      shouldReply
+        ? {
+            content,
+            reply: {
+              messageReference: replyMessageId,
+              failIfNotExists: false,
+            },
+            allowedMentions: { repliedUser: true },
+          }
+        : content,
+    );
+  } catch (err) {
+    console.error("[poller] Discord イベント送信エラー:", err);
+  }
+}
+
 export async function processMessage(msg: InboxMessage): Promise<void> {
   const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
+  // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
+  const groupConfig = await loadGroupConfig(msg.groupName).catch((err) => {
+    console.error("[poller] グループ設定の読み込みエラー:", err);
+    return null;
+  });
+  const replyMessageId =
+    groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
+
   try {
     try {
-      response = await sendMessage(msg.groupName, msg.sessionId, msg.content);
+      response = await sendMessage(
+        msg.groupName,
+        msg.sessionId,
+        msg.content,
+        (event) => {
+          void sendDiscordEvent(msg.channelId, event, replyMessageId);
+        },
+      );
     } catch (err) {
       if (err instanceof NonRetryableError) {
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
@@ -119,20 +181,17 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
     }
 
     try {
-      const [channel, groupConfig] = await Promise.all([
-        client.channels.fetch(msg.channelId),
-        loadGroupConfig(msg.groupName),
-      ]);
+      const channel = await client.channels.fetch(msg.channelId);
       if (channel?.isSendable() && response) {
         const chunks = splitMessage(response);
         const [firstChunk, ...restChunks] = chunks;
         if (firstChunk) {
           await channel.send(
-            groupConfig.autoReply && msg.messageId
+            replyMessageId
               ? {
                   content: firstChunk,
                   reply: {
-                    messageReference: msg.messageId,
+                    messageReference: replyMessageId,
                     failIfNotExists: false,
                   },
                   allowedMentions: { repliedUser: true },

@@ -167,6 +167,37 @@ describe("runAgentLoop", () => {
     ).rejects.toThrow("不明なプロバイダ: unknown");
   });
 
+  it("セッション履歴の error/aborted メッセージは Agent に渡さない", async () => {
+    const history = [
+      { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
+      {
+        role: "assistant" as const,
+        content: [{ type: "text", text: "" }],
+        errorMessage: "Context window exceeded",
+        stopReason: "error",
+        timestamp: Date.now(),
+      },
+    ];
+    vi.mocked(loadMessages).mockResolvedValue(history as never);
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const passedMessages = (
+      lastAgentOptions as { initialState: { messages: unknown[] } }
+    ).initialState.messages;
+    expect(passedMessages).toHaveLength(1);
+    expect(passedMessages[0]).toMatchObject({ role: "user" });
+  });
+
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
     const history = [
       {
@@ -259,6 +290,31 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).toContain("<description>レビュースキル</description>");
   });
 
+  it("非 assistant メッセージ（user・tool-result）は appendMessage される", async () => {
+    const userMsg = {
+      role: "user" as const,
+      content: "hi",
+      timestamp: Date.now(),
+    };
+    const mockAgent = {
+      subscribe: vi.fn((cb: (event: unknown) => void) => {
+        cb({ type: "message_end", message: userMsg });
+      }),
+      prompt: vi.fn(async () => {}),
+    };
+    AgentMock.mockImplementation(function () {
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      userMsg,
+    );
+  });
+
   it("skills allowlist でフィルタリングする", async () => {
     vi.mocked(readdir).mockResolvedValue([
       { name: "allowed", isDirectory: () => true } as unknown as Awaited<
@@ -296,5 +352,171 @@ describe("runAgentLoop", () => {
     ).initialState.systemPrompt;
     expect(systemPrompt).toContain("<name>allowed</name>");
     expect(systemPrompt).not.toContain("<name>blocked</name>");
+  });
+});
+
+describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadMessages).mockResolvedValue([]);
+    vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    vi.mocked(readdir).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+  });
+
+  it("appendMessage はデバッグ用に呼ばれる（セッションに保存）", async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    const errorMsg = {
+      role: "assistant",
+      content: [{ type: "text", text: "" }],
+      errorMessage: "Context window exceeded",
+    };
+    AgentMock.mockImplementation(function () {
+      return createMockAgent([], errorMsg);
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      errorMsg,
+    );
+    stderrSpy.mockRestore();
+  });
+
+  it("__DISCORD_EVENT__:error として stderr に書かれる", async () => {
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    AgentMock.mockImplementation(function () {
+      return createMockAgent([], {
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        errorMessage: "Context window exceeded",
+      });
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
+    expect(eventLine).toBeDefined();
+    if (!eventLine) throw new Error("eventLine not found");
+    const event = JSON.parse(
+      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(event).toEqual({
+      type: "error",
+      message: "Context window exceeded",
+    });
+
+    stderrSpy.mockRestore();
+  });
+});
+
+describe("runAgentLoop - tool_execution_start イベント", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadMessages).mockResolvedValue([]);
+    vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    vi.mocked(readdir).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+  });
+
+  function makeToolAgent(toolName: string, args: unknown) {
+    const subscribers: Array<(event: unknown) => void> = [];
+    return {
+      subscribe: vi.fn((cb: (event: unknown) => void) => subscribers.push(cb)),
+      prompt: vi.fn(async () => {
+        for (const cb of subscribers) {
+          cb({
+            type: "tool_execution_start",
+            toolCallId: "call-1",
+            toolName,
+            args,
+          });
+        }
+        for (const cb of subscribers) {
+          cb({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "done" }],
+            },
+          });
+        }
+      }),
+    };
+  }
+
+  it("toolLogArgs: false（デフォルト）のとき args を含まない", async () => {
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    AgentMock.mockImplementation(function () {
+      return makeToolAgent("bash", { command: "echo $OPENCODE_API_KEY" });
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
+    if (!eventLine) throw new Error("eventLine not found");
+    const event = JSON.parse(
+      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(event).toEqual({ type: "tool_start", toolName: "bash" });
+    expect(event.args).toBeUndefined();
+
+    stderrSpy.mockRestore();
+  });
+
+  it("toolLogArgs: true のとき args を含む", async () => {
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    AgentMock.mockImplementation(function () {
+      return makeToolAgent("bash", { command: "ls /workspace" });
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", { toolLogArgs: true });
+
+    const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
+    if (!eventLine) throw new Error("eventLine not found");
+    const event = JSON.parse(
+      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(event).toEqual({
+      type: "tool_start",
+      toolName: "bash",
+      args: { command: "ls /workspace" },
+    });
+
+    stderrSpy.mockRestore();
   });
 });

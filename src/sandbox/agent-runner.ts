@@ -3,7 +3,11 @@ import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 
 import { Agent } from "@earendil-works/pi-agent-core";
-import { getEnvApiKey, type TextContent } from "@earendil-works/pi-ai";
+import {
+  type AssistantMessage,
+  getEnvApiKey,
+  type TextContent,
+} from "@earendil-works/pi-ai";
 import { z } from "zod";
 
 import {
@@ -26,6 +30,15 @@ const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントで
 
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
+
+function isAssistantMessage(msg: unknown): msg is AssistantMessage {
+  return (
+    typeof msg === "object" &&
+    msg !== null &&
+    "role" in msg &&
+    (msg as Record<string, unknown>).role === "assistant"
+  );
+}
 
 /** カスタムプロバイダーの API キーを credential-proxy + 環境変数から取得 */
 async function getCustomProviderApiKey(
@@ -65,11 +78,18 @@ export async function runAgentLoop(
   content: string,
   groupConfig: GroupJsonConfig,
 ): Promise<string> {
-  const [messages, systemPrompt, skills] = await Promise.all([
+  const [rawMessages, systemPrompt, skills] = await Promise.all([
     loadMessages(groupName, sessionId),
     loadSystemPromptFromWorkspace(),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
   ]);
+
+  // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
+  // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
+  const messages = rawMessages.filter((m) => {
+    if (!isAssistantMessage(m)) return true;
+    return m.stopReason !== "error" && m.stopReason !== "aborted";
+  });
 
   const model = await resolveModel(
     groupConfig.model?.provider ?? DEFAULT_PROVIDER,
@@ -109,12 +129,29 @@ export async function runAgentLoop(
   agent.subscribe((event) => {
     if (event.type === "message_end") {
       pendingAppends.push(appendMessage(groupName, sessionId, event.message));
-      if ("role" in event.message && event.message.role === "assistant") {
-        response = event.message.content
-          .filter((c): c is TextContent => c.type === "text")
-          .map((c) => c.text)
-          .join("");
+      if (isAssistantMessage(event.message)) {
+        if (event.message.errorMessage) {
+          process.stderr.write(
+            `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: event.message.errorMessage })}\n`,
+          );
+        } else {
+          response = event.message.content
+            .filter((c): c is TextContent => c.type === "text")
+            .map((c) => c.text)
+            .join("");
+        }
       }
+    }
+
+    if (event.type === "tool_execution_start") {
+      const payload: Record<string, unknown> = {
+        type: "tool_start",
+        toolName: event.toolName,
+      };
+      if (groupConfig.toolLogArgs) {
+        payload.args = event.args;
+      }
+      process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     }
   });
 

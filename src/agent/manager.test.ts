@@ -411,3 +411,76 @@ describe("sendMessage: 設定バリデーション", () => {
     expect(result).toBe("設定エラー: 不明なプロバイダ: unknown");
   });
 });
+
+describe("sendMessage: onDiscordEvent コールバック", () => {
+  const setupWithStderr = async (stderr: string, code = 0) => {
+    vi.resetModules();
+    const spawnMock = vi
+      .fn()
+      .mockReturnValue(makeProc(code, "response", stderr));
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+    const { initManager } = await import("./manager.js");
+    await initManager(12345);
+    return (await import("./manager.js")).sendMessage;
+  };
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("__DISCORD_EVENT__ 行はコールバックに渡される", async () => {
+    const eventPayload = {
+      type: "tool_start",
+      toolName: "bash",
+      args: { command: "ls" },
+    };
+    const sendMessage = await setupWithStderr(
+      `__DISCORD_EVENT__:${JSON.stringify(eventPayload)}\n`,
+    );
+
+    const onDiscordEvent = vi.fn();
+    await sendMessage("g", "s", "hi", onDiscordEvent);
+
+    expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
+  });
+
+  it("通常の stderr はコールバックに渡されずエラー文字列に含まれる", async () => {
+    const sendMessage = await setupWithStderr("plain error\n", 1);
+
+    const onDiscordEvent = vi.fn();
+    const result = await sendMessage("g", "s", "hi", onDiscordEvent);
+
+    expect(onDiscordEvent).not.toHaveBeenCalled();
+    expect(result).toContain("plain error");
+  });
+
+  it("イベント行と通常行が混在した場合それぞれ適切に処理される", async () => {
+    const eventPayload = { type: "error", message: "oops" };
+    const sendMessage = await setupWithStderr(
+      `log line\n__DISCORD_EVENT__:${JSON.stringify(eventPayload)}\nanother log\n`,
+      1,
+    );
+
+    const onDiscordEvent = vi.fn();
+    const result = await sendMessage("g", "s", "hi", onDiscordEvent);
+
+    expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
+    expect(result).toContain("log line");
+    expect(result).toContain("another log");
+    expect(result).not.toContain("__DISCORD_EVENT__");
+  });
+
+  it("コールバックなしでも正常に動作する", async () => {
+    const sendMessage = await setupWithStderr(
+      `__DISCORD_EVENT__:${JSON.stringify({ type: "tool_start", toolName: "x", args: {} })}\n`,
+    );
+
+    await expect(sendMessage("g", "s", "hi")).resolves.toBe("response");
+  });
+});

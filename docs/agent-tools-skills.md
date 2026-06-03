@@ -39,6 +39,31 @@
 
 **代替手段:** 一般的なウェブコンテンツ取得は `agent-reach` スキル（`r.jina.ai` 経由）を使う。Jina Reader はマークダウン変換済みの本文のみを返すため、HTML 全文よりも大幅にトークン数が少ない。
 
+## Discord へのツールコール通知
+
+エージェントがツールを実行するたびに Discord チャンネルへ通知が届く（`🔧 \`toolName\``）。
+
+### 引数の表示設定
+
+`group.json` の `toolLogArgs` で引数を表示するかどうかをグループごとに設定できる。
+
+| 値 | 挙動 |
+|----|------|
+| `false`（省略時デフォルト） | ツール名のみ表示。引数は送信しない（セキュリティ上の安全側） |
+| `true` | ツール名 + 引数 JSON を表示（先頭 300 文字で切り詰め） |
+
+```json
+{
+  "model": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
+  "tools": ["bash", "read", "write"],
+  "autoReply": true,
+  "toolLogArgs": true
+}
+```
+
+> **注意:** `bash` ツールは `echo $OPENCODE_API_KEY` のようなコマンドを引数に含む場合がある。
+> `toolLogArgs: true` にする場合は Discord チャンネルの閲覧者を考慮すること。
+
 ## スキル
 
 `groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。ユーザーがスキル名で呼び出すと、テンプレートがシステムプロンプトに注入される。
