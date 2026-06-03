@@ -33,8 +33,7 @@ data/cron/
     "groupName": "my-group",
     "prompt": "昨日のログを分析して日次レポートを作成してください",
     "channelId": "12345",
-    "output": "thread",
-    "session": "new"
+    "mode": "thread"
   }
 ]
 ```
@@ -66,30 +65,18 @@ data/cron/
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `allowedTools` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なツール |
 | `allowedSkills` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なスキル |
-| `output` | handler なし時必須 | `"thread"` \| `"channel"` | 結果の返し方（後述） |
-| `session` | handler なし時必須 | `"new"` \| `"fixed"` | セッション方針（後述） |
+| `mode` | handler なし時必須 | `"channel"` \| `"thread"` \| `"fixed"` | 実行モード（後述） |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス |
 
 handlerが設定されてる場合、JSONの "handler なし時必須"、"オプション"は無視する方針
 
-### output
+### mode
 
-- `"thread"` → `channel.threads.create({ name: jobId })` でスレッドを作成し、続けて `thread.send(結果)` で投稿する。スレッドID を sessionId として使う。`thread.send()` は `MessageCreate` を発火するが bot 発言のため `handler.ts` が無視し、JSONL には自動で記録されない。後続の会話でエージェントにコンテキストを持たせたい場合は cron 側で `appendMessage(groupName, thread.id, { role: "assistant", content: 結果 })` を明示的に呼ぶ
-- `"channel"` → 指定チャンネルに `channel.send()` するだけ
-
-### session
-
-- `"new"` → 毎回新規セッション
-- `"fixed"` → `cron-{id}` の固定 sessionId を使い、実行間で会話履歴を持ち越す
-
-**有効な組み合わせ**:
-
-| output | session | 動作 |
-|--------|---------|------|
-| `thread` | `new` | 毎回新スレッド・新セッション |
-| `channel` | `new` | チャンネルに送るだけ、毎回独立 |
-| `channel` | `fixed` | 特定セッションを使い回し、前の会話履歴を毎回コンテキストに持ちながら作業する |
-| `thread` | `fixed` | 不正（スレッドIDが毎回変わるため固定セッションは使えない） |
+| 値 | 動作 |
+|----|------|
+| `"channel"` | 指定チャンネルに `channel.send()` するだけ。毎回独立、セッションなし |
+| `"thread"` | `channel.threads.create({ name: cron-jobId })` でスレッドを作成し `thread.send(結果)` で投稿。スレッドID を sessionId として使う。`thread.send()` は `MessageCreate` を発火するが bot 発言のため `handler.ts` が無視し JSONL には自動で記録されない。後続の会話でエージェントにコンテキストを持たせたいので、 `appendMessage(groupName, thread.id, { role: "assistant", content: 結果 })` を明示的に呼ぶ |
+| `"fixed"` | `cron-{id}` の固定 sessionId を使い、チャンネルに `channel.send()` で投稿。実行間で会話履歴を持ち越す |
 
 ---
 
