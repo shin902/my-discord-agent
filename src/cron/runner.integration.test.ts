@@ -17,6 +17,7 @@ import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
 import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
+import { ChannelType } from "discord.js";
 
 // --- loadHandlerFn: path traversal ---
 
@@ -75,6 +76,7 @@ describe("executeJob", () => {
     const mockSend = vi.fn();
     const mockThread = { id: "thread-456", send: mockSend };
     const mockChannel = {
+      type: ChannelType.GuildText,
       threads: { create: vi.fn().mockResolvedValue(mockThread) },
     };
     (client.channels.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -108,6 +110,7 @@ describe("executeJob", () => {
     const mockSend = vi.fn();
     const mockThread = { id: "thread-789", send: mockSend };
     const mockChannel = {
+      type: ChannelType.GuildText,
       threads: { create: vi.fn().mockResolvedValue(mockThread) },
     };
     (client.channels.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
