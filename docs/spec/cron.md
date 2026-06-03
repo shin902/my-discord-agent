@@ -74,8 +74,10 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 
 | 値 | 動作 |
 |----|------|
-| `"channel"` | 指定チャンネルに `channel.send()` するだけ。毎回独立、セッションなし |
-| `"thread"` | 実行のたびに新しいスレッドを作成する。`channel.threads.create({ name: cron-jobId })` でスレッドを作成し `thread.send(結果)` で投稿。スレッドID を sessionId として使う。`thread.send()` は `MessageCreate` を発火するが bot 発言のため `handler.ts` が無視し JSONL には自動で記録されない。後続の会話でエージェントにコンテキストを持たせたいので、 `appendMessage(groupName, thread.id, { role: "assistant", content: 結果 })` を明示的に呼ぶ |
+| `"channel"` | `appendInbox()` 経由でキューに積む。tick は即座に返る（非ブロッキング）。毎回独立したセッション |
+| `"thread"` | スレッドを作成し `sendMessage()` でエージェント実行を直接 await する。エージェントが応答するまで tick が完了しない（ブロッキング）。スレッド ID を sessionId として使うため後続のスレッド会話でコンテキストが引き継がれる |
+
+**`channel` vs `thread` の非対称性**: `channel` はキュー経由で即時返却、`thread` はエージェント完了まで await する。複数の `thread` ジョブが同一 tick で起動すると `Promise.allSettled` で並走し、全ジョブ完了まで tick がブロックされる。エージェント実行が長い場合（数分〜）は `channel` モードを検討すること。`_isRunning` フラグにより次の tick は前の tick が完了するまでスキップされる。
 
 ---
 
