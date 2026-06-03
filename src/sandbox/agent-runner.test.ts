@@ -260,7 +260,11 @@ describe("runAgentLoop", () => {
   });
 
   it("非 assistant メッセージ（user・tool-result）は appendMessage される", async () => {
-    const userMsg = { role: "user" as const, content: "hi", timestamp: Date.now() };
+    const userMsg = {
+      role: "user" as const,
+      content: "hi",
+      timestamp: Date.now(),
+    };
     const mockAgent = {
       subscribe: vi.fn((cb: (event: unknown) => void) => {
         cb({ type: "message_end", message: userMsg });
@@ -273,7 +277,11 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", userMsg);
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      userMsg,
+    );
   });
 
   it("skills allowlist でフィルタリングする", async () => {
@@ -372,7 +380,10 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
     const event = JSON.parse(
       eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
     );
-    expect(event).toEqual({ type: "error", message: "Context window exceeded" });
+    expect(event).toEqual({
+      type: "error",
+      message: "Context window exceeded",
+    });
 
     stderrSpy.mockRestore();
   });
