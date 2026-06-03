@@ -107,7 +107,10 @@ async function sendDiscordEvent(
       text = `⚠️ エラー: ${event.message}`;
     }
 
-    await channel.send(text);
+    const DISCORD_MAX = 2000;
+    await channel.send(
+      text.length > DISCORD_MAX ? `${text.slice(0, DISCORD_MAX - 1)}…` : text,
+    );
   } catch {
     // best effort
   }

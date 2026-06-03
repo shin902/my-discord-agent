@@ -144,4 +144,23 @@ describe("processMessage - Discord イベント通知", () => {
       );
     });
   });
+
+  it("2000文字を超えるイベントテキストは先頭2000文字に切り詰められる", async () => {
+    const longMessage = "x".repeat(2100);
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({ type: "error", message: longMessage });
+        return "";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledOnce();
+      const sent = mockSend.mock.calls[0][0] as string;
+      expect(sent.length).toBeLessThanOrEqual(2000);
+      expect(sent.endsWith("…")).toBe(true);
+    });
+  });
 });
