@@ -31,7 +31,6 @@ const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントで
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 
-
 function isAssistantMessage(msg: unknown): msg is AssistantMessage {
   return (
     typeof msg === "object" &&

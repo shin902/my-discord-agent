@@ -445,12 +445,20 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
       subscribe: vi.fn((cb: (event: unknown) => void) => subscribers.push(cb)),
       prompt: vi.fn(async () => {
         for (const cb of subscribers) {
-          cb({ type: "tool_execution_start", toolCallId: "call-1", toolName, args });
+          cb({
+            type: "tool_execution_start",
+            toolCallId: "call-1",
+            toolName,
+            args,
+          });
         }
         for (const cb of subscribers) {
           cb({
             type: "message_end",
-            message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "done" }],
+            },
           });
         }
       }),
@@ -461,7 +469,10 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     const written: string[] = [];
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
-      .mockImplementation((chunk) => { written.push(String(chunk)); return true; });
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
 
     AgentMock.mockImplementation(function () {
       return makeToolAgent("bash", { command: "echo $OPENCODE_API_KEY" });
@@ -471,7 +482,9 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();
-    const event = JSON.parse(eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd());
+    const event = JSON.parse(
+      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
     expect(event).toEqual({ type: "tool_start", toolName: "bash" });
     expect(event.args).toBeUndefined();
 
@@ -482,7 +495,10 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     const written: string[] = [];
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
-      .mockImplementation((chunk) => { written.push(String(chunk)); return true; });
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
 
     AgentMock.mockImplementation(function () {
       return makeToolAgent("bash", { command: "ls /workspace" });
@@ -492,7 +508,9 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();
-    const event = JSON.parse(eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd());
+    const event = JSON.parse(
+      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
     expect(event).toEqual({
       type: "tool_start",
       toolName: "bash",
