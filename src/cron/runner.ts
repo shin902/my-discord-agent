@@ -4,9 +4,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TextChannel } from "discord.js";
 import { z } from "zod";
+import { sendMessage } from "../agent/manager.js";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
+import { splitMessage } from "../utils/splitMessage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
@@ -176,7 +178,7 @@ async function executeJob(job: CronJob): Promise<void> {
     // mode === "thread": 実行のたびに新しいスレッドを作成
     const channel = await client.channels.fetch(channelId);
     if (!channel || !("threads" in channel)) {
-      throw new Error(
+      throw new NonRetryableError(
         `チャンネル ${channelId} はスレッドをサポートしていません`,
       );
     }
@@ -184,13 +186,14 @@ async function executeJob(job: CronJob): Promise<void> {
     const thread = await (channel as TextChannel).threads.create({
       name: `cron-${job.id}-${dateSuffix}`,
     });
-    await appendInbox({
-      channelId: thread.id,
-      groupName,
-      sessionId: thread.id,
-      content: prompt,
-      timestamp,
-    });
+    // sendMessage を直接呼ぶ: sandbox が session/{group}/{thread.id}.jsonl に
+    // 履歴を書き込むため、後続のスレッド会話でコンテキストが引き継がれる
+    const result = await sendMessage(groupName, thread.id, prompt);
+    if (result) {
+      for (const chunk of splitMessage(result)) {
+        await thread.send(chunk);
+      }
+    }
   }
 }
 
