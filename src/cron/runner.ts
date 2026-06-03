@@ -33,7 +33,9 @@ const CronJobSchema = z
         job.prompt != null &&
         job.channelId != null &&
         job.mode != null),
-    { message: "handler なし時は groupName, prompt, channelId, mode が必須です" },
+    {
+      message: "handler なし時は groupName, prompt, channelId, mode が必須です",
+    },
   );
 
 const CronJobsSchema = z.array(CronJobSchema);
@@ -129,7 +131,9 @@ async function loadHandlerFn(
     default?: (ctx: CronContext) => Promise<void>;
   };
   if (typeof mod.default !== "function") {
-    throw new Error(`ハンドラー ${handlerRelPath} に default export がありません`);
+    throw new Error(
+      `ハンドラー ${handlerRelPath} に default export がありません`,
+    );
   }
   return mod.default;
 }
@@ -234,8 +238,7 @@ let _alignTimeout: NodeJS.Timeout | null = null;
 export function startCron(): void {
   if (_timer !== null || _alignTimeout !== null) return;
   const now = new Date();
-  const msToNextMinute =
-    (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+  const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
   _alignTimeout = setTimeout(() => {
     _alignTimeout = null;
     tick().catch((err) => console.error("[cron] tick エラー:", err));
