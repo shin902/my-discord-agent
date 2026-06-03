@@ -72,11 +72,18 @@ export async function runAgentLoop(
   content: string,
   groupConfig: GroupJsonConfig,
 ): Promise<string> {
-  const [messages, systemPrompt, skills] = await Promise.all([
+  const [rawMessages, systemPrompt, skills] = await Promise.all([
     loadMessages(groupName, sessionId),
     loadSystemPromptFromWorkspace(),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
   ]);
+
+  // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
+  // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
+  const messages = rawMessages.filter((m) => {
+    const sr = (m as { stopReason?: string }).stopReason;
+    return sr !== "error" && sr !== "aborted";
+  });
 
   const model = await resolveModel(
     groupConfig.model?.provider ?? DEFAULT_PROVIDER,
@@ -120,6 +127,10 @@ export async function runAgentLoop(
         if (asstMsg.errorMessage) {
           process.stderr.write(
             `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: asstMsg.errorMessage })}\n`,
+          );
+          // デバッグ用にセッションには残す（次回ロード時にフィルタして LLM には渡さない）
+          pendingAppends.push(
+            appendMessage(groupName, sessionId, event.message),
           );
         } else {
           pendingAppends.push(

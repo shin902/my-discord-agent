@@ -167,6 +167,37 @@ describe("runAgentLoop", () => {
     ).rejects.toThrow("不明なプロバイダ: unknown");
   });
 
+  it("セッション履歴の error/aborted メッセージは Agent に渡さない", async () => {
+    const history = [
+      { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
+      {
+        role: "assistant" as const,
+        content: [{ type: "text", text: "" }],
+        errorMessage: "Context window exceeded",
+        stopReason: "error",
+        timestamp: Date.now(),
+      },
+    ];
+    vi.mocked(loadMessages).mockResolvedValue(history as never);
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const passedMessages = (
+      lastAgentOptions as { initialState: { messages: unknown[] } }
+    ).initialState.messages;
+    expect(passedMessages).toHaveLength(1);
+    expect(passedMessages[0]).toMatchObject({ role: "user" });
+  });
+
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
     const history = [
       {
@@ -337,22 +368,23 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
     );
   });
 
-  it("appendMessage は呼ばれない", async () => {
+  it("appendMessage はデバッグ用に呼ばれる（セッションに保存）", async () => {
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
 
+    const errorMsg = {
+      role: "assistant",
+      content: [{ type: "text", text: "" }],
+      errorMessage: "Context window exceeded",
+    };
     AgentMock.mockImplementation(function () {
-      return createMockAgent([], {
-        role: "assistant",
-        content: [{ type: "text", text: "" }],
-        errorMessage: "Context window exceeded",
-      });
+      return createMockAgent([], errorMsg);
     });
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    expect(appendMessage).not.toHaveBeenCalled();
+    expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", errorMsg);
     stderrSpy.mockRestore();
   });
 
