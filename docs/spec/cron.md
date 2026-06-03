@@ -50,7 +50,7 @@ data/cron/
 ]
 ```
 
-`handler` があるジョブは `prompt`・`channelId`・`output`・`session` 不要（TS側が全部管理）。
+`handler` があるジョブは `prompt`・`channelId`・`mode` 不要（TS側が全部管理）。
 
 ---
 
@@ -58,14 +58,14 @@ data/cron/
 
 | フィールド | 必須 | 型 | 説明 |
 |-----------|------|-----|------|
-| `id` | ✓ | string | ジョブID（一意）。fixed セッションの ID にも使われる |
+| `id` | ✓ | string | ジョブID（一意） |
 | `schedule` | ✓ | string | cron式 `"0 9 * * *"` or インターバル `"30m"` `"1h"` |
 | `groupName` | handler なし時必須 | string | エージェントグループ名 |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `allowedTools` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なツール |
 | `allowedSkills` | オプション（デフォルトでグループの設定、記述時はこっちにオーバーライド） | string[] | 有効なスキル |
-| `mode` | handler なし時必須 | `"channel"` \| `"thread"` \| `"fixed"` | 実行モード（後述） |
+| `mode` | handler なし時必須 | `"channel"` \| `"thread"` | 実行モード（後述） |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス |
 
 handlerが設定されてる場合、JSONの "handler なし時必須"、"オプション"は無視する方針
