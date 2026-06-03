@@ -7,6 +7,7 @@ import {
 } from "./agent/manager.js";
 import { ensureGroupDirs, initGroupConfigs } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
+import { startCron, stopCron } from "./cron/runner.js";
 import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
@@ -38,13 +39,16 @@ try {
 
 registerHandlers();
 startPoller();
+startCron();
 client.login(token);
 
 process.on("SIGTERM", () => {
   stopPoller();
+  stopCron();
   process.exit(0);
 });
 process.on("SIGINT", () => {
   stopPoller();
+  stopCron();
   process.exit(0);
 });

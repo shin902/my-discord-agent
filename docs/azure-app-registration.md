@@ -250,6 +250,63 @@ data/graph-token-{provider}.json
 
 ---
 
+## メールの既読マーク（markAsRead）を使う場合
+
+### 必要な権限：`Mail.ReadWrite`
+
+メッセージを既読にする `PATCH /me/messages/{id}` エンドポイントは、`Mail.Read` 権限では呼び出せません。**`Mail.ReadWrite` が必要です。** `Mail.Read` のみで PATCH を呼ぶと `403 ErrorAccessDenied` が返ります。
+
+`Mail.ReadWrite` は読み取り（`Mail.Read` 相当）と書き込みの両方を含む上位権限です。`Mail.ReadWrite` を付与した場合、`Mail.Read` を別途追加する必要はありません（重複になるだけで意味はありません）。
+
+> **注意**：2026年12月31日以降、メール本文・件名・宛先などの「機密プロパティ」を変更するには `Mail-Advanced.ReadWrite` という上位権限が別途必要になります。ただし `isRead` は非機密プロパティに分類されており、`Mail.ReadWrite` のみで引き続き更新可能です。
+
+### Azure アプリ登録での設定変更（手順4の補足）
+
+既読マーク機能を使う場合は、手順4の API アクセス許可設定で `Mail.Read` の代わりに（または追加で）`Mail.ReadWrite` を設定します。
+
+1. 左メニューの **「API のアクセス許可」**（API permissions）を選択
+2. **「+ アクセス許可の追加」**（Add a permission）をクリック
+3. 「Microsoft Graph」→ **「委任されたアクセス許可」**（Delegated permissions）を選択
+4. 検索ボックスに `Mail.ReadWrite` と入力して選択
+5. **「アクセス許可の追加」**（Add permissions）をクリック
+6. すでに `Mail.Read` が登録されている場合は、その行の右端にある **「…」→「アクセス許可の削除」** で削除する（重複は不要）
+
+`credential-proxy.json` の `scopes` も合わせて変更します：
+
+```json
+"scopes": ["https://graph.microsoft.com/Mail.ReadWrite"]
+```
+
+スコープを変更したら、既存のトークンキャッシュ（`data/graph-token-graph.json`）を削除し、再度デバイスコード認証を行ってください（「再認証が必要なケース」参照）。
+
+### 既読マークを使わない場合
+
+メールを読むだけで既読にする必要がない場合は、`read_email` ツールに `markAsRead: false` を渡すことで `PATCH` リクエスト自体をスキップできます。この場合は `Mail.Read` 権限のみで問題なく動作します。
+
+### Exchange Online の OData アクセスポリシーについて
+
+`ErrorAccessDenied` の原因として「Exchange Online の EWS アクセスポリシーが OData を無効化している」というケースが知られています。具体的には、Exchange Online 組織の設定（`EwsApplicationAccessPolicy`）によって、特定のアプリケーションまたは全アプリケーションの REST/OData アクセスが制限されることがあります。
+
+Exchange 管理者が PowerShell で確認・変更する場合のコマンド：
+
+```powershell
+# 組織全体のポリシーを確認
+Get-OrganizationConfig | fl EwsApplicationAccessPolicy,EWS*List
+
+# ユーザー単位のポリシーを確認
+Get-CASMailbox <user-principal-name> | fl EwsApplicationAccessPolicy,EWS*List
+```
+
+`EwsApplicationAccessPolicy` が `EnforceAllowList` に設定されている場合、アプリの User-Agent 値を `EwsAllowList` に追加する必要があります。
+
+**個人用 Microsoft アカウント（consumers テナント）への影響について：**
+
+この EWS/OData アクセスポリシーは、Exchange Online を含む **法人・組織向けテナント（Microsoft 365 Business / Enterprise）の機能** です。`consumers` テナント（outlook.com / outlook.jp / hotmail.com などの個人アカウント）は Exchange Online の組織管理機能の対象外であり、`Get-OrganizationConfig` による EWS ポリシー設定は存在しません。
+
+したがって、**個人アカウントで `PATCH /me/messages/{id}` が `403` になる場合、原因は EWS ポリシーではなく、純粋に権限不足（`Mail.Read` のみで `Mail.ReadWrite` を付与していない）である可能性が高い** です。上記の `Mail.ReadWrite` への変更で解消できます。
+
+---
+
 ## 参考リンク
 
 - [Microsoft Entra 管理センター](https://entra.microsoft.com)
