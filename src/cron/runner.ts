@@ -6,6 +6,7 @@ import type { TextChannel } from "discord.js";
 import { z } from "zod";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
+import { NonRetryableError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
@@ -118,7 +119,7 @@ async function loadHandlerFn(
   handlerRelPath: string,
 ): Promise<(ctx: CronContext) => Promise<void>> {
   if (/\.\.(\/|\\|$)/.test(handlerRelPath)) {
-    throw new Error(`不正なハンドラーパス: ${handlerRelPath}`);
+    throw new NonRetryableError(`不正なハンドラーパス: ${handlerRelPath}`);
   }
   // tsx (dev): .ts そのまま / tsc (prod): .ts → .js
   const runnerExt = path.extname(new URL(import.meta.url).pathname);
@@ -131,7 +132,7 @@ async function loadHandlerFn(
     default?: (ctx: CronContext) => Promise<void>;
   };
   if (typeof mod.default !== "function") {
-    throw new Error(
+    throw new NonRetryableError(
       `ハンドラー ${handlerRelPath} に default export がありません`,
     );
   }
@@ -223,15 +224,21 @@ async function tick(): Promise<void> {
 
   const results = await Promise.allSettled(toRun.map((job) => executeJob(job)));
 
-  // 成功したジョブだけ lastRun を更新する（失敗時は次の tick でリトライ）
   let changed = false;
   for (let i = 0; i < toRun.length; i++) {
     const result = results[i];
+    const job = toRun[i];
     if (result.status === "fulfilled") {
-      state[toRun[i].id] = { lastRun: now.toISOString() };
+      state[job.id] = { lastRun: now.toISOString() };
+      changed = true;
+    } else if (result.reason instanceof NonRetryableError) {
+      // 設定ミスなど永続的なエラーは lastRun を更新してリトライを止める
+      console.error(`[cron] "${job.id}" 非リトライエラー:`, result.reason);
+      state[job.id] = { lastRun: now.toISOString() };
       changed = true;
     } else {
-      console.error(`[cron] "${toRun[i].id}" 実行エラー:`, result.reason);
+      // 一時的なエラーは lastRun を更新せず次の tick でリトライ
+      console.error(`[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`, result.reason);
     }
   }
 
