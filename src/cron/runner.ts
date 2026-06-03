@@ -170,11 +170,11 @@ async function executeJob(job: CronJob): Promise<void> {
     return;
   }
 
-  // handler なし: groupName, prompt, channelId, mode は Zod refine で保証済み
-  const { groupName, prompt, channelId, mode } = job;
-  if (!groupName || !prompt || !channelId || !mode) {
-    throw new Error(`[cron] "${job.id}": 必須フィールドが未設定です`);
-  }
+  // groupName, prompt, channelId, mode は Zod refine で保証済み
+  const { groupName, prompt, channelId, mode } = job as Required<
+    Pick<CronJob, "groupName" | "prompt" | "channelId" | "mode">
+  > &
+    CronJob;
   const timestamp = new Date().toISOString();
 
   if (mode === "channel") {
