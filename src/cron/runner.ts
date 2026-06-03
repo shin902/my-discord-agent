@@ -246,7 +246,9 @@ async function tick(): Promise<void> {
 
     if (toRun.length === 0) return;
 
-    const results = await Promise.allSettled(toRun.map((job) => executeJob(job)));
+    const results = await Promise.allSettled(
+      toRun.map((job) => executeJob(job)),
+    );
 
     let changed = false;
     for (let i = 0; i < toRun.length; i++) {
