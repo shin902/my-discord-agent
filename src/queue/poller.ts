@@ -116,8 +116,9 @@ async function sendDiscordEvent(
     const content =
       text.length > DISCORD_MAX ? `${text.slice(0, DISCORD_MAX - 1)}…` : text;
 
+    const shouldReply = event.type === "error" && replyMessageId;
     await channel.send(
-      replyMessageId
+      shouldReply
         ? {
             content,
             reply: {

@@ -108,6 +108,7 @@ describe("processMessage - Discord イベント通知", () => {
   });
 
   it("tool_start イベント（args あり）で 🔧 ツール名 + 引数が送信される", async () => {
+    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, onDiscordEvent) => {
         onDiscordEvent?.({
@@ -119,12 +120,17 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg());
+    await processMessage(makeMsg({ messageId: "msg-original" }));
 
     await vi.waitFor(() => {
+      // autoReply が true でもツールコールはリプライしない
       expect(mockSend).toHaveBeenCalledWith(
         expect.stringMatching(/^🔧 `read_file` /),
       );
+      const call = mockSend.mock.calls.find((c) =>
+        String(c[0]).startsWith("🔧"),
+      );
+      expect(typeof call?.[0]).toBe("string");
     });
   });
 
