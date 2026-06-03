@@ -377,8 +377,9 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();
+    if (!eventLine) throw new Error("eventLine not found");
     const event = JSON.parse(
-      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
     );
     expect(event).toEqual({
       type: "error",
@@ -443,8 +444,9 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();
+    if (!eventLine) throw new Error("eventLine not found");
     const event = JSON.parse(
-      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
     );
     expect(event).toEqual({ type: "tool_start", toolName: "bash" });
     expect(event.args).toBeUndefined();
@@ -493,8 +495,9 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();
+    if (!eventLine) throw new Error("eventLine not found");
     const event = JSON.parse(
-      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+      eventLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
     );
     expect(event).toEqual({
       type: "tool_start",
