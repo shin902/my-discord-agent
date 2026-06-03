@@ -259,6 +259,23 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).toContain("<description>レビュースキル</description>");
   });
 
+  it("非 assistant メッセージ（user・tool-result）は appendMessage される", async () => {
+    const userMsg = { role: "user" as const, content: "hi", timestamp: Date.now() };
+    const mockAgent = {
+      subscribe: vi.fn((cb: (event: unknown) => void) => {
+        cb({ type: "message_end", message: userMsg });
+      }),
+      prompt: vi.fn(async () => {}),
+    };
+    AgentMock.mockImplementation(function () {
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", userMsg);
+  });
+
   it("skills allowlist でフィルタリングする", async () => {
     vi.mocked(readdir).mockResolvedValue([
       { name: "allowed", isDirectory: () => true } as unknown as Awaited<
@@ -296,5 +313,134 @@ describe("runAgentLoop", () => {
     ).initialState.systemPrompt;
     expect(systemPrompt).toContain("<name>allowed</name>");
     expect(systemPrompt).not.toContain("<name>blocked</name>");
+  });
+});
+
+describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadMessages).mockResolvedValue([]);
+    vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    vi.mocked(readdir).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+  });
+
+  it("appendMessage は呼ばれない", async () => {
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    AgentMock.mockImplementation(function () {
+      return createMockAgent([], {
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        errorMessage: "Context window exceeded",
+      });
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    expect(appendMessage).not.toHaveBeenCalled();
+    stderrSpy.mockRestore();
+  });
+
+  it("__DISCORD_EVENT__:error として stderr に書かれる", async () => {
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    AgentMock.mockImplementation(function () {
+      return createMockAgent([], {
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        errorMessage: "Context window exceeded",
+      });
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
+    expect(eventLine).toBeDefined();
+    const event = JSON.parse(
+      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(event).toEqual({ type: "error", message: "Context window exceeded" });
+
+    stderrSpy.mockRestore();
+  });
+});
+
+describe("runAgentLoop - tool_execution_start イベント", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadMessages).mockResolvedValue([]);
+    vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(readFile).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    vi.mocked(readdir).mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+  });
+
+  it("__DISCORD_EVENT__:tool_start として stderr に書かれる", async () => {
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    AgentMock.mockImplementation(function () {
+      const subscribers: Array<(event: unknown) => void> = [];
+      return {
+        subscribe: vi.fn((cb: (event: unknown) => void) =>
+          subscribers.push(cb),
+        ),
+        prompt: vi.fn(async () => {
+          for (const cb of subscribers) {
+            cb({
+              type: "tool_execution_start",
+              toolCallId: "call-1",
+              toolName: "bash",
+              args: { command: "ls" },
+            });
+          }
+          for (const cb of subscribers) {
+            cb({
+              type: "message_end",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "done" }],
+              },
+            });
+          }
+        }),
+      };
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
+    expect(eventLine).toBeDefined();
+    const event = JSON.parse(
+      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(event).toEqual({
+      type: "tool_start",
+      toolName: "bash",
+      args: { command: "ls" },
+    });
+
+    stderrSpy.mockRestore();
   });
 });

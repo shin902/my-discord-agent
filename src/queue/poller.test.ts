@@ -93,3 +93,55 @@ describe("processMessage - autoReply", () => {
     expect(mockSend).toHaveBeenNthCalledWith(2, "A");
   });
 });
+
+describe("processMessage - Discord イベント通知", () => {
+  const mockSend = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: false });
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => true,
+      isTextBased: () => false,
+      send: mockSend,
+    } as never);
+    mockSend.mockClear();
+  });
+
+  it("tool_start イベントで 🔧 メッセージが Discord に送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({
+          type: "tool_start",
+          toolName: "bash",
+          args: { command: "ls" },
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith(
+        expect.stringMatching(/^🔧 `bash`/),
+      );
+    });
+  });
+
+  it("error イベントで ⚠️ メッセージが Discord に送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({ type: "error", message: "Context window exceeded" });
+        return "";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith(
+        "⚠️ エラー: Context window exceeded",
+      );
+    });
+  });
+});
