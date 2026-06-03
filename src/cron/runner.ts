@@ -58,7 +58,10 @@ let _state: CronState | null = null;
 
 async function loadState(): Promise<CronState> {
   if (_state !== null) return _state;
-  if (!existsSync(STATE_PATH)) return (_state = {});
+  if (!existsSync(STATE_PATH)) {
+    _state = {};
+    return _state;
+  }
   _state = JSON.parse(await readFile(STATE_PATH, "utf-8")) as CronState;
   return _state;
 }
