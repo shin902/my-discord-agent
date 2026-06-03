@@ -131,26 +131,18 @@ export async function runAgentLoop(
 
   agent.subscribe((event) => {
     if (event.type === "message_end") {
+      pendingAppends.push(appendMessage(groupName, sessionId, event.message));
       if (isAssistantMessage(event.message)) {
         if (event.message.errorMessage) {
           process.stderr.write(
             `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: event.message.errorMessage })}\n`,
           );
-          // デバッグ用にセッションには残す（次回ロード時にフィルタして LLM には渡さない）
-          pendingAppends.push(
-            appendMessage(groupName, sessionId, event.message),
-          );
         } else {
-          pendingAppends.push(
-            appendMessage(groupName, sessionId, event.message),
-          );
           response = event.message.content
             .filter((c): c is TextContent => c.type === "text")
             .map((c) => c.text)
             .join("");
         }
-      } else {
-        pendingAppends.push(appendMessage(groupName, sessionId, event.message));
       }
     }
 
