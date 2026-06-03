@@ -50,7 +50,7 @@ data/cron/
 ]
 ```
 
-`handler` があるジョブは `prompt`・`channelId`・`mode` 不要（TS側が全部管理）。
+`handler` があるジョブは `prompt`・`channelId`・`mode` 省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される。
 
 ---
 
@@ -68,7 +68,7 @@ data/cron/
 | `mode` | handler なし時必須 | `"channel"` \| `"thread"` | 実行モード（後述） |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
 
-handlerが設定されてる場合、JSONの "handler なし時必須"、"オプション"は無視する方針
+handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
 
 ### mode
 
@@ -88,10 +88,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
 }
 ```
 
-`CronContext` に含めるもの（未確定）:
+`CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- `groupName?: string`（JSON に `groupName` が書かれていれば runner.ts が詰めて渡す。ない場合は `undefined`）
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `mode?`, `handler?`, `allowedTools?`, `allowedSkills?`）を展開して渡す
 
 ---
 
