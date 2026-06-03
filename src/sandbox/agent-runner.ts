@@ -87,8 +87,8 @@ export async function runAgentLoop(
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
   // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
   const messages = rawMessages.filter((m) => {
-    const sr = (m as { stopReason?: string }).stopReason;
-    return sr !== "error" && sr !== "aborted";
+    if (!isAssistantMessage(m)) return true;
+    return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
 
   const model = await resolveModel(

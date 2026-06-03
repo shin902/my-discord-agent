@@ -139,7 +139,10 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
   let response: string;
 
   // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
-  const groupConfig = await loadGroupConfig(msg.groupName).catch(() => null);
+  const groupConfig = await loadGroupConfig(msg.groupName).catch((err) => {
+    console.error("[poller] グループ設定の読み込みエラー:", err);
+    return null;
+  });
   const replyMessageId =
     groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
