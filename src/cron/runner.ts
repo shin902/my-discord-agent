@@ -50,7 +50,8 @@ export type CronContext = {
 
 // --- State ---
 
-type CronState = Record<string, { lastRun: string }>;
+const CronStateSchema = z.record(z.object({ lastRun: z.string() }));
+type CronState = z.infer<typeof CronStateSchema>;
 
 let _state: CronState | null = null;
 
@@ -60,7 +61,9 @@ async function loadState(): Promise<CronState> {
     _state = {};
     return _state;
   }
-  _state = JSON.parse(await readFile(STATE_PATH, "utf-8")) as CronState;
+  _state = CronStateSchema.parse(
+    JSON.parse(await readFile(STATE_PATH, "utf-8")),
+  );
   return _state;
 }
 
