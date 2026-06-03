@@ -391,7 +391,7 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     );
   });
 
-  it("__DISCORD_EVENT__:tool_start として stderr に書かれる", async () => {
+  it("bash ツールは args を含まない __DISCORD_EVENT__ が書かれる", async () => {
     const written: string[] = [];
     const stderrSpy = vi
       .spyOn(process.stderr, "write")
@@ -412,7 +412,57 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
               type: "tool_execution_start",
               toolCallId: "call-1",
               toolName: "bash",
-              args: { command: "ls" },
+              args: { command: "echo $OPENCODE_API_KEY" },
+            });
+          }
+          for (const cb of subscribers) {
+            cb({
+              type: "message_end",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "done" }],
+              },
+            });
+          }
+        }),
+      };
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
+    expect(eventLine).toBeDefined();
+    const event = JSON.parse(
+      eventLine!.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(event).toEqual({ type: "tool_start", toolName: "bash" });
+    expect(event.args).toBeUndefined();
+
+    stderrSpy.mockRestore();
+  });
+
+  it("bash 以外のツールは args を含む __DISCORD_EVENT__ が書かれる", async () => {
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    AgentMock.mockImplementation(function () {
+      const subscribers: Array<(event: unknown) => void> = [];
+      return {
+        subscribe: vi.fn((cb: (event: unknown) => void) =>
+          subscribers.push(cb),
+        ),
+        prompt: vi.fn(async () => {
+          for (const cb of subscribers) {
+            cb({
+              type: "tool_execution_start",
+              toolCallId: "call-1",
+              toolName: "read_file",
+              args: { path: "/workspace/README.md" },
             });
           }
           for (const cb of subscribers) {
@@ -437,8 +487,8 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     );
     expect(event).toEqual({
       type: "tool_start",
-      toolName: "bash",
-      args: { command: "ls" },
+      toolName: "read_file",
+      args: { path: "/workspace/README.md" },
     });
 
     stderrSpy.mockRestore();

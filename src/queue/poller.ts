@@ -100,10 +100,14 @@ async function sendDiscordEvent(
 
     let text: string;
     if (event.type === "tool_start") {
-      const argsStr = JSON.stringify(event.args);
-      const truncated =
-        argsStr.length > 300 ? `${argsStr.slice(0, 300)}…` : argsStr;
-      text = `🔧 \`${event.toolName}\` ${truncated}`;
+      if (event.args !== undefined) {
+        const argsStr = JSON.stringify(event.args);
+        const truncated =
+          argsStr.length > 300 ? `${argsStr.slice(0, 300)}…` : argsStr;
+        text = `🔧 \`${event.toolName}\` ${truncated}`;
+      } else {
+        text = `🔧 \`${event.toolName}\``;
+      }
     } else {
       text = `⚠️ エラー: ${event.message}`;
     }

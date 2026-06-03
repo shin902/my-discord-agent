@@ -107,13 +107,13 @@ describe("processMessage - Discord イベント通知", () => {
     mockSend.mockClear();
   });
 
-  it("tool_start イベントで 🔧 メッセージが Discord に送信される", async () => {
+  it("tool_start イベント（args あり）で 🔧 ツール名 + 引数が送信される", async () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, onDiscordEvent) => {
         onDiscordEvent?.({
           type: "tool_start",
-          toolName: "bash",
-          args: { command: "ls" },
+          toolName: "read_file",
+          args: { path: "/workspace/foo.ts" },
         });
         return "AI response";
       },
@@ -123,8 +123,23 @@ describe("processMessage - Discord イベント通知", () => {
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith(
-        expect.stringMatching(/^🔧 `bash`/),
+        expect.stringMatching(/^🔧 `read_file` /),
       );
+    });
+  });
+
+  it("tool_start イベント（args なし）で 🔧 ツール名のみが送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({ type: "tool_start", toolName: "bash" });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith("🔧 `bash`");
     });
   });
 

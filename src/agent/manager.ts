@@ -27,7 +27,7 @@ export {
 };
 
 export type DiscordEvent =
-  | { type: "tool_start"; toolName: string; args: unknown }
+  | { type: "tool_start"; toolName: string; args?: unknown }
   | { type: "error"; message: string };
 
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
