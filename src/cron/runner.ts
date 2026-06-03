@@ -196,9 +196,14 @@ export async function executeJob(job: CronJob): Promise<void> {
         `チャンネル ${channelId} はスレッドをサポートしていません`,
       );
     }
-    const dateSuffix = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const suffix = `-${dateSuffix}`; // 11 chars
-    const maxIdLen = 100 - "cron-".length - suffix.length; // 84 chars
+    // YYYY-MM-DD-HH-MM: 同日内の実行ごとにスレッド名が衝突しないよう分まで含める
+    const dateSuffix = new Date()
+      .toISOString()
+      .slice(0, 16)
+      .replace("T", "-")
+      .replace(":", "-"); // YYYY-MM-DD-HH-MM
+    const suffix = `-${dateSuffix}`; // 17 chars
+    const maxIdLen = 100 - "cron-".length - suffix.length; // 78 chars
     const truncatedId = job.id.slice(0, maxIdLen);
     const thread = await channel.threads.create({
       name: `cron-${truncatedId}${suffix}`,
