@@ -21,8 +21,7 @@ describe("browserless tools", () => {
 
   it("import 時に CREDENTIAL_PROXY_JSON を要求しない", async () => {
     vi.resetModules();
-    const { CREDENTIAL_PROXY_JSON: _credentialProxyJson, ...env } =
-      originalEnv;
+    const { CREDENTIAL_PROXY_JSON: _credentialProxyJson, ...env } = originalEnv;
     process.env = env;
 
     await expect(import("./browserless.js")).resolves.toBeTruthy();
