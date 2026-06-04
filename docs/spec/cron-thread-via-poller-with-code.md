@@ -1,4 +1,4 @@
-# cron thread モード → poller 経由 設計メモ
+# cron thread モード → poller 経由 設計メモ（コードあり版）
 
 ## 解決する問題
 
@@ -18,68 +18,110 @@ thread モードはエージェントの応答が返るまで tick 全体が止�
 
 cron の tick はキューへの書き込みだけ行って即終了する。スレッド作成・AI応答の取得・Discord への投稿はすべて poller 側が担う。
 
+```
+変更前:
+  cron tick → sendMessage（await）→ thread.send
+
+変更後:
+  cron tick → appendInbox → 即終了
+                    ↓
+               poller → スレッド作成 → sendMessage → thread.send
+```
+
 ### 問題B の解消
 
-メッセージのロック粒度を設定で切り替えられるようにする。
-
-| モード | 動作 | 適した環境 |
-|---|---|---|
-| `serial` | すべてのメッセージを1本のキューで直列処理 | ローカルLLM など同時処理数=1 |
-| `parallel-session` | 同一セッション内は直列、別セッションは並列 | 複数LLM・APIキーで並列処理できる環境 |
-
-デフォルトは `serial`。設定ファイルまたは環境変数で切り替える。
-
-現行の「チャンネル単位」ロックは廃止し、どちらかを選ぶ。
+poller 経由にすることで sendMessage の並列起動が抑制され、タイムアウトが発生しにくくなる。ロック粒度の変更（`serial` / `parallel-session` の切り替え）は別スペックで扱う。
 
 ---
 
-## メッセージの流れ（cron-thread）
+## 変更内容
 
-1. cron が起動時刻を迎えると、メッセージをキューに積んで即終了する
-2. poller がキューからメッセージを取り出す
-3. poller が親チャンネルに新しいスレッドを作成する
-4. poller がスレッドID をセッションIDとして AI に問い合わせる
-5. AI の応答をスレッドに投稿する
+### 1. `InboxMessage` に cron-thread フィールドを追加（`queue/inbox.ts`）
+
+```typescript
+export interface InboxMessage {
+  // ... 既存フィールド
+  cronThread?: true;   // cron-thread トリガー
+  cronJobId?: string;  // スレッド名生成用（cron-${jobId}-${dateSuffix}）
+}
+```
+
+`channelId`: 親チャンネルID（スレッド作成先）  
+`sessionId`: tick 時点では未確定。poller がスレッド作成後に `thread.id` で sendMessage を呼ぶため placeholder  
+`content`: cron プロンプト
+
+### 2. cron runner の thread モード変更（`cron/runner.ts`）
+
+```typescript
+// 変更前
+const thread = await channel.threads.create({ name: `cron-...` });
+const result = await sendMessage(groupName, thread.id, prompt);
+if (result) {
+  for (const chunk of splitMessage(result)) {
+    await thread.send(chunk);
+  }
+}
+
+// 変更後
+await appendInbox({
+  channelId,
+  groupName,
+  sessionId: `cron-${job.id}`,  // placeholder
+  content: prompt,
+  timestamp,
+  cronThread: true,
+  cronJobId: job.id,
+});
+```
+
+### 3. poller の変更（`queue/poller.ts`）
+
+typing indicator は cron-thread では不要なため、`startTypingLoop` より前で分岐する：
+
+```typescript
+export async function processMessage(msg: InboxMessage): Promise<void> {
+  // cron-thread は typing indicator 不要のため先頭で分岐
+  if (msg.cronThread && msg.cronJobId) {
+    const channel = await client.channels.fetch(msg.channelId);
+    if (
+      !channel ||
+      (channel.type !== ChannelType.GuildText &&
+        channel.type !== ChannelType.GuildAnnouncement)
+    ) {
+      console.error("[poller] cron-thread: チャンネルがスレッドをサポートしていません", msg.channelId);
+      return;
+    }
+    const dateSuffix = new Date()
+      .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
+      .slice(0, 16)
+      .replace(" ", "-")
+      .replace(":", "-");
+    const suffix = `-${dateSuffix}`;
+    const maxIdLen = 100 - "cron-".length - suffix.length;
+    const truncatedId = msg.cronJobId.slice(0, maxIdLen);
+    const thread = await channel.threads.create({
+      name: `cron-${truncatedId}${suffix}`,
+    });
+    const response = await sendMessage(msg.groupName, thread.id, msg.content);
+    if (response) {
+      for (const chunk of splitMessage(response)) {
+        await thread.send(chunk);
+      }
+    }
+    return;
+  }
+
+  // 以降は通常フロー（typing indicator あり）
+  const stopTyping = startTypingLoop(msg.channelId);
+  // ...
+}
+```
 
 ---
 
-## 各挙動の詳細
+## セッション継続性
 
-### cron-thread メッセージの識別
-
-キューに積まれたメッセージには「cron-thread である」というフラグと、元のジョブIDが含まれる。poller はこのフラグを見て通常メッセージとは別のフローで処理する。
-
-### スレッド名の命名規則
-
-`cron-{ジョブID}-{YYYY-MM-DD-HH-MM}` (JST) の形式。同日内の複数回実行でスレッド名が衝突しないよう分まで含める。ジョブIDが長い場合は Discord のスレッド名上限（100文字）に収まるよう末尾を切り詰める。
-
-### 対応チャンネルの制限
-
-cron-thread が作成できるのはテキストチャンネルとアナウンスチャンネルのみ。それ以外のチャンネルIDが設定されていた場合はエラーにして処理を止める（リトライしない）。
-
-### typing indicator
-
-cron-thread はユーザーからの問いかけではないため、typing indicator は表示しない。通常メッセージのみ表示する。
-
-### セッション継続性
-
-poller がスレッドを作成した時点のスレッドIDがそのままセッションIDになる。ユーザーがそのスレッドに返信すると、同じセッションIDで会話履歴が引き継がれる。
-
-### parallel-session モードでのロック動作
-
-| メッセージ種別 | ロックの単位 | 効果 |
-|---|---|---|
-| shared モード | チャンネルID（= セッションID） | 同一チャンネルは直列（現行と同等） |
-| thread / auto-thread モード | スレッドID（= セッションID） | 同一スレッドは直列、別スレッドは並列 |
-| cron-thread | ジョブID（placeholder として使用） | 同一ジョブの重複起動を直列化 |
-
-### ロックエントリのクリーンアップ
-
-parallel-session モードでは、あるセッションの処理が完了したらそのセッションのロックエントリをメモリから削除する。削除しないとエントリが無限に積み上がってメモリリークになる。
-
-### エラー時の挙動
-
-あるタスクが失敗した場合、そのタスクのエラーをログに記録してから次のタスクを通常通り実行する。失敗が後続タスクをブロックしない点は serial・parallel-session 両モードで共通。
+poller がスレッドを作成した時点のスレッドIDがそのままセッションIDになる。`data/sessions/{group}/{thread.id}.jsonl` が生成され、ユーザーがスレッドに返信すると同じセッションIDで会話履歴が引き継がれる。
 
 ---
 
@@ -87,7 +129,6 @@ parallel-session モードでは、あるセッションの処理が完了した
 
 | ファイル | 変更内容 |
 |---|---|
-| `queue/inbox.ts` | cron-thread フラグとジョブIDのフィールドを追加 |
-| `cron/runner.ts` | thread モードをキュー書き込みに変更、AI への直接呼び出しを削除 |
-| `queue/poller.ts` | serial / parallel-session の切り替え、cron-thread 専用フローを追加（typing indicator より前に分岐）、セッションロックのクリーンアップ追加 |
-| `config/poller.json`（新規・任意） | `dispatchMode` の設定ファイル。未設定時は `serial` |
+| `queue/inbox.ts` | `InboxMessage` に `cronThread`, `cronJobId` フィールド追加 |
+| `cron/runner.ts` | thread モードを `appendInbox` に変更、`sendMessage` 直接呼び出しを削除 |
+| `queue/poller.ts` | cron-thread 専用フローを追加（`startTypingLoop` より前に分岐） |
