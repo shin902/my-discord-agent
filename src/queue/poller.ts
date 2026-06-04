@@ -137,34 +137,37 @@ async function sendDiscordEvent(
 
 export async function processMessage(msg: InboxMessage): Promise<void> {
   if (msg.cronThread && msg.cronJobId) {
-    const channel = await client.channels.fetch(msg.channelId);
-    if (
-      !channel ||
-      (channel.type !== ChannelType.GuildText &&
-        channel.type !== ChannelType.GuildAnnouncement)
-    ) {
-      console.error(
-        "[poller] cron-thread: チャンネルがスレッドをサポートしていません",
-        msg.channelId,
-      );
-      return;
-    }
-    const dateSuffix = new Date(msg.timestamp)
-      .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
-      .slice(0, 16)
-      .replace(" ", "-")
-      .replace(":", "-");
-    const suffix = `-${dateSuffix}`;
-    const maxIdLen = 100 - "cron-".length - suffix.length;
-    const truncatedId = msg.cronJobId.slice(0, maxIdLen);
-    const thread = await channel.threads.create({
-      name: `cron-${truncatedId}${suffix}`,
-    });
-    const response = await sendMessage(msg.groupName, thread.id, msg.content);
-    if (response) {
-      for (const chunk of splitMessage(response)) {
-        await thread.send(chunk);
+    try {
+      const channel = await client.channels.fetch(msg.channelId);
+      if (
+        !channel ||
+        (channel.type !== ChannelType.GuildText &&
+          channel.type !== ChannelType.GuildAnnouncement)
+      ) {
+        throw new NonRetryableError(
+          `cron-thread: チャンネル ${msg.channelId} はスレッドをサポートしていません`,
+        );
       }
+      const dateSuffix = new Date(msg.timestamp)
+        .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
+        .slice(0, 16)
+        .replace(" ", "-")
+        .replace(":", "-");
+      const suffix = `-${dateSuffix}`;
+      const maxIdLen = 100 - "cron-".length - suffix.length;
+      const truncatedId = msg.cronJobId.slice(0, maxIdLen);
+      const thread = await channel.threads.create({
+        name: `cron-${truncatedId}${suffix}`,
+      });
+      const response = await sendMessage(msg.groupName, thread.id, msg.content);
+      if (response) {
+        for (const chunk of splitMessage(response)) {
+          await thread.send(chunk);
+        }
+      }
+    } catch (err) {
+      console.error("[poller] cron-thread 処理失敗、dead-letter に移動:", err);
+      await appendDeadLetter(msg);
     }
     return;
   }
