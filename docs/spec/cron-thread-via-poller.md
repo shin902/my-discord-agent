@@ -88,7 +88,7 @@ if (result) {
 await appendInbox({
   channelId,         // 親チャンネルID
   groupName,
-  sessionId: `cron-${job.id}`,  // placeholder
+  sessionId: `cron-${job.id}`,  // placeholder（poller がスレッド作成後に thread.id で sendMessage する）
   content: prompt,
   timestamp,
   cronThread: true,
@@ -99,6 +99,8 @@ await appendInbox({
 ### 3. poller の変更（`queue/poller.ts`）
 
 #### ロック粒度の切り替え
+
+`channelChain` / `dispatchWithChannelLock` を廃止し、`dispatch` に一本化する。
 
 ```typescript
 type DispatchMode = "serial" | "parallel-session";
@@ -121,43 +123,82 @@ function dispatch(
     globalChain = globalChain.then(fn).catch(onError);
   } else {
     const prev = sessionChain.get(sessionId) ?? Promise.resolve();
-    sessionChain.set(sessionId, prev.then(fn).catch(onError));
+    const next = prev.then(fn).catch(onError);
+    sessionChain.set(sessionId, next);
+    // 完了後にエントリを削除してメモリリークを防ぐ
+    next.finally(() => {
+      if (sessionChain.get(sessionId) === next) sessionChain.delete(sessionId);
+    });
   }
 }
 ```
 
 `mode` は設定ファイル（例: `config/poller.json` または環境変数 `POLLER_DISPATCH_MODE`）から読み込む想定。未設定時のデフォルトは `serial`。
 
-#### cron-thread 処理の追加
+**注意**: 現行の `dispatchWithChannelLock` は `.then(fn, () => fn())` で prev の失敗を無視して fn を実行していたが、新実装では `.then(fn).catch(onError)` に変わる。prev が reject されると fn はスキップされ onError が呼ばれるが、その後の Promise は resolved になるため次のタスクは正常に実行される。
 
-`processMessage` で `cronThread` フラグを検出したら専用フローへ：
+#### poll ループの変更
+
+`dispatchWithChannelLock(msg.channelId, ...)` を `dispatch(msg.sessionId, ..., mode)` に変更する。
 
 ```typescript
-if (msg.cronThread && msg.cronJobId) {
-  const channel = await client.channels.fetch(msg.channelId);
-  // チャンネル型バリデーション（GuildText / GuildAnnouncement のみ）
-  const dateSuffix = new Date()
-    .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
-    .slice(0, 16)
-    .replace(" ", "-")
-    .replace(":", "-");
-  const suffix = `-${dateSuffix}`;
-  const maxIdLen = 100 - "cron-".length - suffix.length;
-  const truncatedId = msg.cronJobId.slice(0, maxIdLen);
-  const thread = await channel.threads.create({
-    name: `cron-${truncatedId}${suffix}`,
-  });
-  const response = await sendMessage(msg.groupName, thread.id, msg.content);
-  if (response) {
-    for (const chunk of splitMessage(response)) {
-      await thread.send(chunk);
-    }
-  }
-  return;
-}
+// 変更前
+dispatchWithChannelLock(msg.channelId, () => processMessage(msg));
+
+// 変更後
+dispatch(msg.sessionId, () => processMessage(msg), mode);
 ```
 
-typing indicator は cron-thread では不要なためスキップ。
+`parallel-session` モードでのセッション ID の意味：
+
+| メッセージ種別 | sessionId の値 | ロックの効果 |
+|---|---|---|
+| shared モード | `channelId` | 同一チャンネルは直列（変更前と同等） |
+| thread / auto-thread モード | `thread.id` | 同一スレッドは直列、別スレッドは並列 |
+| cron-thread | `"cron-${job.id}"` (placeholder) | 同一ジョブの重複起動を防ぐ |
+
+#### cron-thread 処理の追加
+
+**typing indicator は cron-thread では不要**なため、`processMessage` の先頭（`startTypingLoop` より前）で分岐する：
+
+```typescript
+export async function processMessage(msg: InboxMessage): Promise<void> {
+  // cron-thread は typing indicator 不要のため先頭で分岐
+  if (msg.cronThread && msg.cronJobId) {
+    const channel = await client.channels.fetch(msg.channelId);
+    if (
+      !channel ||
+      (channel.type !== ChannelType.GuildText &&
+        channel.type !== ChannelType.GuildAnnouncement)
+    ) {
+      console.error("[poller] cron-thread: チャンネルがスレッドをサポートしていません", msg.channelId);
+      return;
+    }
+    const dateSuffix = new Date()
+      .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
+      .slice(0, 16)
+      .replace(" ", "-")
+      .replace(":", "-");
+    const suffix = `-${dateSuffix}`;
+    const maxIdLen = 100 - "cron-".length - suffix.length;
+    const truncatedId = msg.cronJobId.slice(0, maxIdLen);
+    const thread = await channel.threads.create({
+      name: `cron-${truncatedId}${suffix}`,
+    });
+    const response = await sendMessage(msg.groupName, thread.id, msg.content);
+    if (response) {
+      for (const chunk of splitMessage(response)) {
+        await thread.send(chunk);
+      }
+    }
+    return;
+  }
+
+  // 以降は通常フロー（typing indicator あり）
+  const stopTyping = startTypingLoop(msg.channelId);
+  // ...
+}
+```
 
 ---
 
@@ -173,5 +214,5 @@ poller が `sendMessage(groupName, thread.id, prompt)` を呼ぶことで `data/
 |---|---|
 | `queue/inbox.ts` | `InboxMessage` に `cronThread`, `cronJobId` フィールド追加 |
 | `cron/runner.ts` | thread モードを `appendInbox` に変更、`sendMessage` 直接呼び出しを削除 |
-| `queue/poller.ts` | `dispatch()` にモード切り替え（`serial` / `parallel-session`）を追加 + cron-thread 処理追加 |
+| `queue/poller.ts` | `dispatchWithChannelLock` を廃止し `dispatch(sessionId, fn, mode)` に一本化、`sessionChain` の `.finally()` クリーンアップ追加、cron-thread 処理を `startTypingLoop` より前に分岐 |
 | `config/poller.json`（新規・任意） | `dispatchMode` の設定ファイル。未設定時は `serial` |
