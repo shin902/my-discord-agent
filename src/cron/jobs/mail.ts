@@ -10,7 +10,6 @@ import { appendMessage } from "../../agent/session.js";
 import {
   type GroupJsonConfig,
   loadGroupConfig,
-  loadGroupSystemPrompt,
 } from "../../config/group-config.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import { splitMessage } from "../../utils/splitMessage.js";
@@ -112,12 +111,9 @@ async function generateSummary(
   ctx: CronContext,
 ): Promise<string> {
   const { groupName } = ctx;
-  const [groupConfig, systemPrompt] = await Promise.all([
-    groupName
-      ? loadGroupConfig(groupName)
-      : Promise.resolve({} as GroupJsonConfig),
-    groupName ? loadGroupSystemPrompt(groupName) : Promise.resolve(null),
-  ]);
+  const groupConfig = await (groupName
+    ? loadGroupConfig(groupName)
+    : Promise.resolve({} as GroupJsonConfig));
 
   const providerName = groupConfig.model?.provider ?? DEFAULT_PROVIDER;
   const modelId = groupConfig.model?.modelId ?? DEFAULT_MODEL_ID;
@@ -132,7 +128,7 @@ async function generateSummary(
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: systemPrompt ?? DEFAULT_SUMMARY_PROMPT,
+      systemPrompt: ctx.prompt ?? DEFAULT_SUMMARY_PROMPT,
       model: proxyModel,
       messages: [],
       tools: [],
