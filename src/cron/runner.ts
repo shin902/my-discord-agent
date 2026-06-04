@@ -194,7 +194,7 @@ export async function executeJob(job: CronJob): Promise<void> {
     await appendInbox({
       channelId,
       groupName,
-      sessionId: `cron-${job.id}`,
+      sessionId: `cron-${job.id}`, // poller が thread.id で上書きするため未使用
       content: prompt,
       timestamp,
       cronThread: true,
