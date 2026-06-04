@@ -111,7 +111,7 @@ async function fetchEmailBody(emailId: string): Promise<string> {
 async function generateSummary(
   emailText: string,
   ctx: CronContext,
-): Promise<string> {
+): Promise<{ summary: string; agentMessage: AgentMessage | null }> {
   const { groupName } = ctx;
   const groupConfig = await (groupName
     ? loadGroupConfig(groupName)
@@ -140,12 +140,14 @@ async function generateSummary(
   });
 
   let summary = "";
+  let agentMessage: AgentMessage | null = null;
   agent.subscribe((event) => {
     if (
       event.type === "message_end" &&
       "role" in event.message &&
       (event.message as { role: unknown }).role === "assistant"
     ) {
+      agentMessage = event.message as AgentMessage;
       const content = (
         event.message as { content: Array<{ type: string; text?: string }> }
       ).content;
@@ -157,7 +159,10 @@ async function generateSummary(
   });
 
   await agent.prompt(emailText);
-  return summary || "(要約を生成できませんでした)";
+  return {
+    summary: summary || "(要約を生成できませんでした)",
+    agentMessage,
+  };
 }
 
 export default async function handler(ctx: CronContext): Promise<void> {
@@ -191,7 +196,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     try {
       const bodyText = await fetchEmailBody(meta.id);
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
-      const summary = await generateSummary(emailText, ctx);
+      const { summary, agentMessage } = await generateSummary(emailText, ctx);
 
       const chunks = splitMessage(summary);
       const sentMsg = await channel.send(chunks[0] ?? "(要約なし)");
@@ -207,15 +212,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
       // セッション初期化: 以降のスレッド返信でエージェントがメール内容を把握できるよう
       // メール本文（user）と要約（assistant）をペアで記録する
-      await appendMessage(ctx.groupName, thread.id, {
-        role: "user",
-        content: `メールID: ${meta.id}\n\n${emailText}`,
-      } as AgentMessage);
-      await appendMessage(ctx.groupName, thread.id, {
-        role: "assistant",
-        content: [{ type: "text", text: summary }],
-        stopReason: "end_turn",
-      } as unknown as AgentMessage);
+      if (agentMessage) {
+        await appendMessage(ctx.groupName, thread.id, {
+          role: "user",
+          content: `メールID: ${meta.id}\n\n${emailText}`,
+          timestamp: Date.now(),
+        } as AgentMessage);
+        await appendMessage(ctx.groupName, thread.id, agentMessage);
+      }
 
       await graphPatch(`/me/messages/${encodeURIComponent(meta.id)}`, {
         isRead: true,
