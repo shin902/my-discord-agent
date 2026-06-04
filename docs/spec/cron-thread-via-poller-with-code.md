@@ -91,7 +91,10 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
       console.error("[poller] cron-thread: チャンネルがスレッドをサポートしていません", msg.channelId);
       return;
     }
-    const dateSuffix = new Date()
+    // new Date() ではなく msg.timestamp を使う。
+    // poller の処理遅延でスレッド名の時刻がずれるのを防ぐため、
+    // cron が実際に起動した時刻（キュー投入時刻）を使う。
+    const dateSuffix = new Date(msg.timestamp)
       .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
       .slice(0, 16)
       .replace(" ", "-")
