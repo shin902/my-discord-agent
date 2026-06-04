@@ -30,16 +30,28 @@
 
 `sendMessage` は JSONL への書き込みとレスポンス返却のみ行う。Discord への投稿は poller が明示的に `thread.send(response)` で行う。
 
-### 問題B の解消: poller を全直列化
+### 問題B の解消: poller のロック粒度をオプション化（トグル）
 
-`channelChain` をチャンネル単位からグローバル単一キューに変更する。ローカルLLM は同時処理数=1 のため、Node.js 側でも直列にするのが最もシンプル。
+`channelChain` のロック単位を設定で切り替えられるようにする。2つのモードを用意する。
+
+| モード | ロック単位 | 適用場面 |
+|---|---|---|
+| `serial` | グローバル単一キュー | ローカルLLM など同時処理数=1 の環境 |
+| `parallel-session` | セッション ID ごと | 複数LLM／APIキーで並列処理できる環境 |
+
+現行の「チャンネル単位」は廃止し、どちらかを選ぶ。デフォルトは `parallel-session`。
+
+`parallel-session` は親チャンネル単位ではなく **セッション ID 単位** でロックする。同一チャンネルに複数スレッドがあっても互いをブロックしない。
 
 ```typescript
 // 変更前: チャンネル単位
 const channelChain = new Map<string, Promise<void>>();
 
-// 変更後: グローバル直列キュー
+// serial モード: グローバル直列キュー
 let globalChain = Promise.resolve();
+
+// parallel-session モード: セッション単位キュー
+const sessionChain = new Map<string, Promise<void>>();
 ```
 
 ---
@@ -86,21 +98,35 @@ await appendInbox({
 
 ### 3. poller の変更（`queue/poller.ts`）
 
-#### 直列化
+#### ロック粒度の切り替え
 
 ```typescript
-// 変更前: チャンネル単位ロック
-const channelChain = new Map<string, Promise<void>>();
-dispatchWithChannelLock(msg.channelId, () => processMessage(msg));
+type DispatchMode = "serial" | "parallel-session";
 
-// 変更後: グローバル直列キュー
+// serial: グローバル直列キュー
 let globalChain = Promise.resolve();
-function dispatch(fn: () => Promise<void>): void {
-  globalChain = globalChain.then(fn).catch((err) => {
+
+// parallel-session: セッション単位キュー
+const sessionChain = new Map<string, Promise<void>>();
+
+function dispatch(
+  sessionId: string,
+  fn: () => Promise<void>,
+  mode: DispatchMode,
+): void {
+  const onError = (err: unknown) => {
     console.error("[poller] 予期せぬエラー:", err);
-  });
+  };
+  if (mode === "serial") {
+    globalChain = globalChain.then(fn).catch(onError);
+  } else {
+    const prev = sessionChain.get(sessionId) ?? Promise.resolve();
+    sessionChain.set(sessionId, prev.then(fn).catch(onError));
+  }
 }
 ```
+
+`mode` は設定ファイル（例: `config/poller.json` または環境変数 `POLLER_DISPATCH_MODE`）から読み込む想定。未設定時のデフォルトは `serial`。
 
 #### cron-thread 処理の追加
 
@@ -147,4 +173,5 @@ poller が `sendMessage(groupName, thread.id, prompt)` を呼ぶことで `data/
 |---|---|
 | `queue/inbox.ts` | `InboxMessage` に `cronThread`, `cronJobId` フィールド追加 |
 | `cron/runner.ts` | thread モードを `appendInbox` に変更、`sendMessage` 直接呼び出しを削除 |
-| `queue/poller.ts` | グローバル直列キュー化 + cron-thread 処理追加 |
+| `queue/poller.ts` | `dispatch()` にモード切り替え（`serial` / `parallel-session`）を追加 + cron-thread 処理追加 |
+| `config/poller.json`（新規・任意） | `dispatchMode` の設定ファイル。未設定時は `serial` |
