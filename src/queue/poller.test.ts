@@ -1,3 +1,4 @@
+import { ChannelType } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InboxMessage } from "./inbox.js";
 
@@ -17,6 +18,7 @@ vi.mock("./inbox.js", () => ({ prependInbox: vi.fn(), shiftInbox: vi.fn() }));
 const { sendMessage } = await import("../agent/manager.js");
 const { loadGroupConfig } = await import("../config/group-config.js");
 const { client } = await import("../discord/client.js");
+const { appendDeadLetter } = await import("./dead-letter.js");
 const { processMessage } = await import("./poller.js");
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
@@ -219,5 +221,108 @@ describe("processMessage - Discord イベント通知", () => {
       expect(sent.length).toBeLessThanOrEqual(2000);
       expect(sent.endsWith("…")).toBe(true);
     });
+  });
+});
+
+describe("processMessage - cron-thread", () => {
+  const mockThreadSend = vi.fn().mockResolvedValue(undefined);
+  const mockThread = { id: "thread-123", send: mockThreadSend };
+  const mockThreadsCreate = vi.fn().mockResolvedValue(mockThread);
+  const mockGuildTextChannel = {
+    type: ChannelType.GuildText,
+    threads: { create: mockThreadsCreate },
+  };
+
+  function makeCronThreadMsg(overrides?: Partial<InboxMessage>): InboxMessage {
+    return makeMsg({
+      cronThread: true,
+      cronJobId: "daily-report",
+      // 2026-06-04T10:30:00.000Z → JST 2026-06-04 19:30
+      timestamp: "2026-06-04T10:30:00.000Z",
+      ...overrides,
+    });
+  }
+
+  beforeEach(() => {
+    vi.mocked(client.channels.fetch).mockResolvedValue(
+      mockGuildTextChannel as never,
+    );
+    vi.mocked(sendMessage).mockResolvedValue("AI response");
+    mockThreadSend.mockClear();
+    mockThreadsCreate.mockClear();
+    vi.mocked(appendDeadLetter).mockClear();
+  });
+
+  it("正常系: スレッドを作成して sendMessage を呼び、応答を thread.send で投稿する", async () => {
+    await processMessage(makeCronThreadMsg());
+
+    expect(mockThreadsCreate).toHaveBeenCalledOnce();
+    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
+      "default",
+      "thread-123",
+      "hello",
+    );
+    expect(mockThreadSend).toHaveBeenCalledWith("AI response");
+  });
+
+  it("sendMessage が空文字を返した場合 thread.send を呼ばない", async () => {
+    vi.mocked(sendMessage).mockResolvedValue("");
+
+    await processMessage(makeCronThreadMsg());
+
+    expect(mockThreadsCreate).toHaveBeenCalledOnce();
+    expect(mockThreadSend).not.toHaveBeenCalled();
+  });
+
+  it("スレッド名は cron-{jobId}-{YYYY-MM-DD-HH-MM}（JST）の形式", async () => {
+    await processMessage(makeCronThreadMsg());
+
+    expect(mockThreadsCreate).toHaveBeenCalledWith({
+      name: "cron-daily-report-2026-06-04-19-30",
+    });
+  });
+
+  it("ジョブID が長い場合はスレッド名が100文字を超えないよう切り詰める", async () => {
+    await processMessage(makeCronThreadMsg({ cronJobId: "a".repeat(100) }));
+
+    const { name } = mockThreadsCreate.mock.calls[0][0] as { name: string };
+    expect(name.length).toBeLessThanOrEqual(100);
+  });
+
+  it("GuildText/GuildAnnouncement 以外のチャンネルは appendDeadLetter に移動する", async () => {
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      type: ChannelType.GuildVoice,
+    } as never);
+
+    await processMessage(makeCronThreadMsg());
+
+    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
+    expect(mockThreadsCreate).not.toHaveBeenCalled();
+  });
+
+  it("チャンネル fetch が null を返した場合 appendDeadLetter に移動する", async () => {
+    vi.mocked(client.channels.fetch).mockResolvedValue(null as never);
+
+    await processMessage(makeCronThreadMsg());
+
+    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
+  });
+
+  it("sendMessage が例外をスローした場合 appendDeadLetter に移動する", async () => {
+    vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
+
+    await processMessage(makeCronThreadMsg());
+
+    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
+    expect(mockThreadSend).not.toHaveBeenCalled();
+  });
+
+  it("cron-thread は typing indicator を開始しない", async () => {
+    const getCacheSpy = vi.mocked(client.channels.cache.get);
+    getCacheSpy.mockClear();
+
+    await processMessage(makeCronThreadMsg());
+
+    expect(getCacheSpy).not.toHaveBeenCalled();
   });
 });
