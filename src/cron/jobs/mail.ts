@@ -87,6 +87,8 @@ async function fetchEmailBody(emailId: string): Promise<string> {
   let text = body?.content ?? "";
   if (body?.contentType === "html") {
     text = text
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
       .replace(/<[^>]+>/g, "")
       .replace(/&nbsp;/g, " ")
       .replace(/&amp;/g, "&")
