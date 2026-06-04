@@ -328,8 +328,28 @@ describe("processMessage - cron-thread", () => {
     await processMessage(makeCronThreadMsg({ retries: 0 }));
 
     expect(vi.mocked(prependInbox)).toHaveBeenCalledOnce();
-    expect(vi.mocked(prependInbox).mock.calls[0][0].retries).toBe(1);
+    const retried = vi.mocked(prependInbox).mock.calls[0][0];
+    expect(retried.retries).toBe(1);
+    // スレッド作成後に失敗したので thread.id を引き継ぎ、次回リトライで再作成しない
+    expect(retried.cronThreadId).toBe("thread-123");
     expect(vi.mocked(appendDeadLetter)).not.toHaveBeenCalled();
+  });
+
+  it("cronThreadId が設定されている場合はスレッド作成をスキップして既存スレッドに送る", async () => {
+    const mockSendableThread = { isSendable: () => true, send: mockThreadSend };
+    vi.mocked(client.channels.fetch).mockResolvedValue(
+      mockSendableThread as never,
+    );
+
+    await processMessage(makeCronThreadMsg({ cronThreadId: "thread-123" }));
+
+    expect(mockThreadsCreate).not.toHaveBeenCalled();
+    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
+      "default",
+      "thread-123",
+      "hello",
+    );
+    expect(mockThreadSend).toHaveBeenCalledWith("AI response");
   });
 
   it("transient error でリトライ上限に達したら appendDeadLetter に移動する", async () => {
