@@ -90,6 +90,10 @@ export function registerHandlers(): void {
         // Discord のクロスチャンネル引用はできない
         replyMessageId = undefined;
       }
+    } else if (match.channel.sessionMode === "email-mode") {
+      // メールからcronで作成されたスレッドへの返信のみ処理。非スレッドは無視。
+      if (!message.channel.isThread()) return;
+      sessionId = message.channelId;
     } else {
       // Zod が loadGroups() 時点で未知の sessionMode を弾くため、ここには到達しない。
       // 新しいモードを groups.ts の enum に追加したときの対応漏れをコンパイルエラーで検知する。

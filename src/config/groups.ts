@@ -6,7 +6,7 @@ import { z } from "zod";
 
 const ChannelConfigSchema = z.object({
   channelId: z.string(),
-  sessionMode: z.enum(["shared", "thread", "auto-thread"]),
+  sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
 });
 
 const GroupConfigSchema = z.object({
