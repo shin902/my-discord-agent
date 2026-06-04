@@ -1,3 +1,4 @@
+import { ChannelType } from "discord.js";
 import { type DiscordEvent, sendMessage } from "../agent/manager.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { client } from "../discord/client.js";
@@ -5,7 +6,6 @@ import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import { type InboxMessage, prependInbox, shiftInbox } from "./inbox.js";
-import { ChannelType } from "discord.js";
 
 const POLL_MS = 1000;
 const MAX_RETRIES = 10;
