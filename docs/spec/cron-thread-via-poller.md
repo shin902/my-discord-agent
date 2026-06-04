@@ -20,7 +20,7 @@ cron の tick はキューへの書き込みだけ行って即終了する。ス
 
 ### 問題B の解消
 
-poller 経由にすることで sendMessage の並列起動が抑制され、タイムアウトが発生しにくくなる。ロック粒度の変更（`serial` / `parallel-session` の切り替え）は別スペックで扱う。
+ロック粒度の変更（`serial` / `parallel-session` の切り替え。並列処理、直列処理を変更可能にする実装）は別スペックで扱う。該当スペック → [poller-dispatch-mode.md](docs/spec/poller-dispatch-mode.md)
 
 ---
 
