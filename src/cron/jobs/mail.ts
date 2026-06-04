@@ -176,6 +176,18 @@ export default async function handler(ctx: CronContext): Promise<void> {
     return;
   }
 
+  const channel = await ctx.client.channels.fetch(ctx.channelId);
+  if (
+    !channel ||
+    (channel.type !== ChannelType.GuildText &&
+      channel.type !== ChannelType.GuildAnnouncement)
+  ) {
+    console.error(
+      `[mail] チャンネル ${ctx.channelId} はスレッドをサポートしていません`,
+    );
+    return;
+  }
+
   const unread = await listUnreadEmails();
   if (unread.length === 0) return;
 
@@ -186,18 +198,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
       const bodyText = await fetchEmailBody(meta.id);
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
       const summary = await generateSummary(emailText, ctx);
-
-      const channel = await ctx.client.channels.fetch(ctx.channelId);
-      if (
-        !channel ||
-        (channel.type !== ChannelType.GuildText &&
-          channel.type !== ChannelType.GuildAnnouncement)
-      ) {
-        console.error(
-          `[mail] チャンネル ${ctx.channelId} はスレッドをサポートしていません`,
-        );
-        return;
-      }
 
       const chunks = splitMessage(summary);
       const sentMsg = await channel.send(chunks[0] ?? "(要約なし)");
