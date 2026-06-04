@@ -22,7 +22,7 @@ const CronJobSchema = z
     groupName: z.string().optional(),
     prompt: z.string().optional(),
     channelId: z.string().optional(),
-    mode: z.enum(["channel", "thread"]).optional(),
+    mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
   })
   .refine(
@@ -180,7 +180,7 @@ export async function executeJob(job: CronJob): Promise<void> {
     CronJob;
   const timestamp = new Date().toISOString();
 
-  if (mode === "channel") {
+  if (mode === "to-channel") {
     // 毎回独立したセッション
     await appendInbox({
       channelId,
@@ -190,7 +190,7 @@ export async function executeJob(job: CronJob): Promise<void> {
       timestamp,
     });
   } else {
-    // mode === "thread": poller 経由でスレッドを作成・投稿する
+    // mode === "to-thread": poller 経由でスレッドを作成・投稿する
     await appendInbox({
       channelId,
       groupName,

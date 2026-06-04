@@ -10,7 +10,7 @@ const CHANNEL_JOB = JSON.stringify([
     groupName: "g",
     prompt: "p",
     channelId: "c",
-    mode: "channel",
+    mode: "to-channel",
   },
 ]);
 

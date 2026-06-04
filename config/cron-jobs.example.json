@@ -6,7 +6,7 @@
     "groupName": "my-group",
     "prompt": "昨日のログを分析して日次レポートを作成してください",
     "channelId": "12345",
-    "mode": "thread"
+    "mode": "to-thread"
   },
   {
     "id": "mail-check",

@@ -60,7 +60,7 @@ describe("executeJob", () => {
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
-      mode: "channel",
+      mode: "to-channel",
     });
 
     expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
@@ -71,7 +71,7 @@ describe("executeJob", () => {
     expect(arg.sessionId).toMatch(/^cron-test-job-/);
   });
 
-  it("thread mode: appendInbox に cronThread フラグとジョブIDを渡す", async () => {
+  it("to-thread mode: appendInbox に cronThread フラグとジョブIDを渡す", async () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
@@ -79,7 +79,7 @@ describe("executeJob", () => {
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
-      mode: "thread",
+      mode: "to-thread",
     });
 
     expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
