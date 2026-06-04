@@ -12,7 +12,6 @@ vi.mock("../utils/splitMessage.js", () => ({
   splitMessage: (s: string) => [s],
 }));
 
-import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
 import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
