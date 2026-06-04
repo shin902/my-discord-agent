@@ -12,12 +12,9 @@ vi.mock("../utils/splitMessage.js", () => ({
   splitMessage: (s: string) => [s],
 }));
 
-import { sendMessage } from "../agent/manager.js";
-import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
 import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
-import { ChannelType } from "discord.js";
 
 // --- loadHandlerFn: path traversal ---
 
@@ -62,7 +59,7 @@ describe("executeJob", () => {
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
-      mode: "channel",
+      mode: "to-channel",
     });
 
     expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
@@ -73,18 +70,7 @@ describe("executeJob", () => {
     expect(arg.sessionId).toMatch(/^cron-test-job-/);
   });
 
-  it("thread mode: creates thread and calls sendMessage", async () => {
-    const mockSend = vi.fn();
-    const mockThread = { id: "thread-456", send: mockSend };
-    const mockChannel = {
-      type: ChannelType.GuildText,
-      threads: { create: vi.fn().mockResolvedValue(mockThread) },
-    };
-    (client.channels.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
-      mockChannel,
-    );
-    vi.mocked(sendMessage).mockResolvedValue("result text");
-
+  it("to-thread mode: appendInbox に cronThread フラグとジョブIDを渡す", async () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
@@ -92,45 +78,17 @@ describe("executeJob", () => {
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
-      mode: "thread",
+      mode: "to-thread",
     });
 
-    expect(mockChannel.threads.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: expect.stringMatching(/^cron-test-job-/),
-      }),
-    );
-    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
-      "my-group",
-      "thread-456",
-      "do something",
-    );
-    expect(mockSend).toHaveBeenCalledWith("result text");
-  });
-
-  it("thread mode: does not call thread.send when sendMessage returns null", async () => {
-    const mockSend = vi.fn();
-    const mockThread = { id: "thread-789", send: mockSend };
-    const mockChannel = {
-      type: ChannelType.GuildText,
-      threads: { create: vi.fn().mockResolvedValue(mockThread) },
-    };
-    (client.channels.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
-      mockChannel,
-    );
-    vi.mocked(sendMessage).mockResolvedValue("");
-
-    await executeJob({
-      id: "test-job",
-      schedule: "* * * * *",
-      enabled: true,
-      groupName: "my-group",
-      prompt: "do something",
-      channelId: "ch-123",
-      mode: "thread",
-    });
-
-    expect(mockSend).not.toHaveBeenCalled();
+    expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
+    const arg = vi.mocked(appendInbox).mock.calls[0][0];
+    expect(arg.channelId).toBe("ch-123");
+    expect(arg.groupName).toBe("my-group");
+    expect(arg.content).toBe("do something");
+    expect(arg.sessionId).toBe("cron-test-job");
+    expect(arg.cronThread).toBe(true);
+    expect(arg.cronJobId).toBe("test-job");
   });
 });
 

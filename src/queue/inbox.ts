@@ -27,6 +27,9 @@ export interface InboxMessage {
   content: string;
   timestamp: string;
   retries: number; // 失敗してリトライした回数。初回は 0
+  cronThread?: boolean; // cron thread モードのトリガー
+  cronJobId?: string; // スレッド名生成用（cron-${jobId}-${dateSuffix}）
+  cronThreadId?: string; // スレッド作成後にセット。リトライ時の再作成を防ぐ
 }
 
 // process.cwd() は起動ディレクトリに依存するため、ファイルの場所を基準にパスを解決する

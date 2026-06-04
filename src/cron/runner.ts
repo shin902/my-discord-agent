@@ -2,13 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { ChannelType } from "discord.js";
 import { z } from "zod";
-import { sendMessage } from "../agent/manager.js";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
-import { splitMessage } from "../utils/splitMessage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
@@ -25,7 +22,7 @@ const CronJobSchema = z
     groupName: z.string().optional(),
     prompt: z.string().optional(),
     channelId: z.string().optional(),
-    mode: z.enum(["channel", "thread"]).optional(),
+    mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
   })
   .refine(
@@ -183,7 +180,7 @@ export async function executeJob(job: CronJob): Promise<void> {
     CronJob;
   const timestamp = new Date().toISOString();
 
-  if (mode === "channel") {
+  if (mode === "to-channel") {
     // 毎回独立したセッション
     await appendInbox({
       channelId,
@@ -193,37 +190,16 @@ export async function executeJob(job: CronJob): Promise<void> {
       timestamp,
     });
   } else {
-    // mode === "thread": 実行のたびに新しいスレッドを作成
-    const channel = await client.channels.fetch(channelId);
-    if (
-      !channel ||
-      (channel.type !== ChannelType.GuildText &&
-        channel.type !== ChannelType.GuildAnnouncement)
-    ) {
-      throw new NonRetryableError(
-        `チャンネル ${channelId} はスレッドをサポートしていません`,
-      );
-    }
-    // YYYY-MM-DD-HH-MM: 同日内の実行ごとにスレッド名が衝突しないよう分まで含める（JST）
-    const dateSuffix = new Date()
-      .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
-      .slice(0, 16)
-      .replace(" ", "-")
-      .replace(":", "-"); // YYYY-MM-DD-HH-MM
-    const suffix = `-${dateSuffix}`; // 17 chars
-    const maxIdLen = 100 - "cron-".length - suffix.length; // 78 chars
-    const truncatedId = job.id.slice(0, maxIdLen);
-    const thread = await channel.threads.create({
-      name: `cron-${truncatedId}${suffix}`,
+    // mode === "to-thread": poller 経由でスレッドを作成・投稿する
+    await appendInbox({
+      channelId,
+      groupName,
+      sessionId: `cron-${job.id}`, // スレッド作成前の placeholder。poller は thread.id をセッション ID として使用する
+      content: prompt,
+      timestamp,
+      cronThread: true,
+      cronJobId: job.id,
     });
-    // sendMessage を直接呼ぶ: sandbox が session/{group}/{thread.id}.jsonl に
-    // 履歴を書き込むため、後続のスレッド会話でコンテキストが引き継がれる
-    const result = await sendMessage(groupName, thread.id, prompt);
-    if (result) {
-      for (const chunk of splitMessage(result)) {
-        await thread.send(chunk);
-      }
-    }
   }
 }
 
