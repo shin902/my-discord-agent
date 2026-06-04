@@ -5,6 +5,7 @@ import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import { type InboxMessage, prependInbox, shiftInbox } from "./inbox.js";
+import { ChannelType } from "discord.js";
 
 const POLL_MS = 1000;
 const MAX_RETRIES = 10;
@@ -135,6 +136,39 @@ async function sendDiscordEvent(
 }
 
 export async function processMessage(msg: InboxMessage): Promise<void> {
+  if (msg.cronThread && msg.cronJobId) {
+    const channel = await client.channels.fetch(msg.channelId);
+    if (
+      !channel ||
+      (channel.type !== ChannelType.GuildText &&
+        channel.type !== ChannelType.GuildAnnouncement)
+    ) {
+      console.error(
+        "[poller] cron-thread: チャンネルがスレッドをサポートしていません",
+        msg.channelId,
+      );
+      return;
+    }
+    const dateSuffix = new Date(msg.timestamp)
+      .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
+      .slice(0, 16)
+      .replace(" ", "-")
+      .replace(":", "-");
+    const suffix = `-${dateSuffix}`;
+    const maxIdLen = 100 - "cron-".length - suffix.length;
+    const truncatedId = msg.cronJobId.slice(0, maxIdLen);
+    const thread = await channel.threads.create({
+      name: `cron-${truncatedId}${suffix}`,
+    });
+    const response = await sendMessage(msg.groupName, thread.id, msg.content);
+    if (response) {
+      for (const chunk of splitMessage(response)) {
+        await thread.send(chunk);
+      }
+    }
+    return;
+  }
+
   const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
