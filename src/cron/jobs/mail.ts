@@ -82,10 +82,6 @@ async function fetchEmailBody(emailId: string): Promise<string> {
     `/me/messages/${encodeURIComponent(emailId)}?$select=body`,
   )) as Record<string, unknown>;
 
-  await graphPatch(`/me/messages/${encodeURIComponent(emailId)}`, {
-    isRead: true,
-  });
-
   const body = msg.body as
     | { contentType?: string; content?: string }
     | undefined;
@@ -222,6 +218,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
         content: [{ type: "text", text: summary }],
         stopReason: "end_turn",
       } as unknown as AgentMessage);
+
+      await graphPatch(`/me/messages/${encodeURIComponent(meta.id)}`, {
+        isRead: true,
+      });
 
       console.log(
         `[mail] "${meta.subject}" → スレッド ${thread.id} を作成しました`,
