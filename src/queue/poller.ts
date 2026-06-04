@@ -139,7 +139,10 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
   if (msg.cronThread) {
     // msg.sessionId は placeholder。スレッド作成後に thread.id をセッションIDとして sendMessage に渡す
     if (!msg.cronJobId) {
-      console.error("[poller] cronThread フラグがあるが cronJobId が未設定:", msg);
+      console.error(
+        "[poller] cronThread フラグがあるが cronJobId が未設定:",
+        msg,
+      );
       await appendDeadLetter(msg);
       return;
     }
