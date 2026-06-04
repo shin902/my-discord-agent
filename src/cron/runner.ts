@@ -194,7 +194,7 @@ export async function executeJob(job: CronJob): Promise<void> {
     await appendInbox({
       channelId,
       groupName,
-      sessionId: `cron-${job.id}`, // parallel-session モードで同一ジョブの重複起動を直列化するロックキーを兼ねる
+      sessionId: `cron-${job.id}`, // スレッド作成前の placeholder。poller は thread.id をセッション ID として使用する
       content: prompt,
       timestamp,
       cronThread: true,
