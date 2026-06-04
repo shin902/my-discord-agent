@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
 import {
   DEFAULT_MODEL_ID,
@@ -16,6 +17,7 @@ import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
 
 const MAX_BODY_CHARS = 8000;
+const UNREAD_FETCH_LIMIT = 20;
 const DEFAULT_SUMMARY_PROMPT =
   "受信したメールを日本語で簡潔に要約してください。";
 
@@ -56,7 +58,7 @@ interface UnreadEmail {
 async function listUnreadEmails(): Promise<UnreadEmail[]> {
   const select = "id,subject,from";
   const data = (await graphFetch(
-    `/me/mailFolders/inbox/messages?$top=20&$select=${select}&$orderby=receivedDateTime asc&$filter=isRead eq false`,
+    `/me/mailFolders/inbox/messages?$top=${UNREAD_FETCH_LIMIT}&$select=${select}&$orderby=receivedDateTime asc&$filter=isRead eq false`,
   )) as { value: Array<Record<string, unknown>> };
 
   return data.value.map((msg) => {
@@ -89,6 +91,8 @@ async function fetchEmailBody(emailId: string): Promise<string> {
     text = text
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/?(p|div|li|tr|h[1-6])[^>]*>/gi, "\n")
       .replace(/<[^>]+>/g, "")
       .replace(/&nbsp;/g, " ")
       .replace(/&amp;/g, "&")
@@ -100,6 +104,7 @@ async function fetchEmailBody(emailId: string): Promise<string> {
       .replace(/&#x([\da-f]+);/gi, (_, h) =>
         String.fromCharCode(parseInt(h, 16)),
       )
+      .replace(/\n{3,}/g, "\n\n")
       .trim();
   }
   if (text.length > MAX_BODY_CHARS) {
@@ -142,18 +147,13 @@ async function generateSummary(
   let summary = "";
   let agentMessage: AgentMessage | null = null;
   agent.subscribe((event) => {
-    if (
-      event.type === "message_end" &&
-      "role" in event.message &&
-      (event.message as { role: unknown }).role === "assistant"
-    ) {
-      agentMessage = event.message as AgentMessage;
-      const content = (
-        event.message as { content: Array<{ type: string; text?: string }> }
-      ).content;
-      summary = content
+    if (event.type === "message_end") {
+      const msg = event.message as AssistantMessage;
+      if (msg.role !== "assistant") return;
+      agentMessage = msg as AgentMessage;
+      summary = msg.content
         .filter((c) => c.type === "text")
-        .map((c) => c.text ?? "")
+        .map((c) => ("text" in c ? (c.text ?? "") : ""))
         .join("");
     }
   });
