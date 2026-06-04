@@ -1,13 +1,12 @@
-import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
-import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { CronContext } from "../runner.js";
-import { appendMessage } from "../../agent/session.js";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
   resolveModel,
 } from "../../agent/model.js";
+import { appendMessage } from "../../agent/session.js";
 import {
   type GroupJsonConfig,
   loadGroupConfig,
@@ -15,9 +14,11 @@ import {
 } from "../../config/group-config.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import { splitMessage } from "../../utils/splitMessage.js";
+import type { CronContext } from "../runner.js";
 
 const MAX_BODY_CHARS = 8000;
-const DEFAULT_SUMMARY_PROMPT = "受信したメールを日本語で簡潔に要約してください。";
+const DEFAULT_SUMMARY_PROMPT =
+  "受信したメールを日本語で簡潔に要約してください。";
 
 function graphUrl(path: string): string {
   const port = getProxyPort();
@@ -41,7 +42,9 @@ async function graphPatch(path: string, body: unknown): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Graph API PATCH エラー ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(
+      `Graph API PATCH エラー ${res.status}: ${text.slice(0, 200)}`,
+    );
   }
 }
 
@@ -114,7 +117,9 @@ async function generateSummary(
 ): Promise<string> {
   const { groupName } = ctx;
   const [groupConfig, systemPrompt] = await Promise.all([
-    groupName ? loadGroupConfig(groupName) : Promise.resolve({} as GroupJsonConfig),
+    groupName
+      ? loadGroupConfig(groupName)
+      : Promise.resolve({} as GroupJsonConfig),
     groupName ? loadGroupSystemPrompt(groupName) : Promise.resolve(null),
   ]);
 
