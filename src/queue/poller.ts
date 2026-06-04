@@ -136,7 +136,12 @@ async function sendDiscordEvent(
 }
 
 export async function processMessage(msg: InboxMessage): Promise<void> {
-  if (msg.cronThread && msg.cronJobId) {
+  if (msg.cronThread) {
+    if (!msg.cronJobId) {
+      console.error("[poller] cronThread フラグがあるが cronJobId が未設定:", msg);
+      await appendDeadLetter(msg);
+      return;
+    }
     try {
       const channel = await client.channels.fetch(msg.channelId);
       if (

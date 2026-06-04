@@ -341,6 +341,17 @@ describe("processMessage - cron-thread", () => {
     expect(vi.mocked(prependInbox)).not.toHaveBeenCalled();
   });
 
+  it("cronThread: true だが cronJobId が未設定の場合 appendDeadLetter に移動し通常フローに落ちない", async () => {
+    const getCacheSpy = vi.mocked(client.channels.cache.get);
+    getCacheSpy.mockClear();
+
+    await processMessage(makeCronThreadMsg({ cronJobId: undefined }));
+
+    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
+    expect(mockThreadsCreate).not.toHaveBeenCalled();
+    expect(getCacheSpy).not.toHaveBeenCalled(); // typing loop に入っていない
+  });
+
   it("cron-thread は typing indicator を開始しない", async () => {
     const getCacheSpy = vi.mocked(client.channels.cache.get);
     getCacheSpy.mockClear();
