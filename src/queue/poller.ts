@@ -1,3 +1,4 @@
+import { ChannelType } from "discord.js";
 import { type DiscordEvent, sendMessage } from "../agent/manager.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { client } from "../discord/client.js";
@@ -134,7 +135,96 @@ async function sendDiscordEvent(
   }
 }
 
+async function processCronThread(msg: InboxMessage): Promise<void> {
+  if (!msg.cronJobId) {
+    console.error(
+      "[poller] cronThread フラグがあるが cronJobId が未設定:",
+      msg,
+    );
+    await appendDeadLetter(msg);
+    return;
+  }
+  // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
+  let threadId: string | undefined;
+  try {
+    let sessionId: string;
+    let threadSend: (content: string) => Promise<unknown>;
+    if (msg.cronThreadId) {
+      // リトライ: スレッドは作成済み。再作成せず既存スレッドをフェッチ
+      threadId = msg.cronThreadId;
+      sessionId = threadId;
+      const fetched = await client.channels.fetch(threadId);
+      if (!fetched?.isSendable()) {
+        throw new NonRetryableError(
+          `cron-thread: スレッド ${threadId} が見つかりません`,
+        );
+      }
+      threadSend = (content) => fetched.send(content);
+    } else {
+      // 初回: チャンネルをフェッチしてスレッドを作成
+      const channel = await client.channels.fetch(msg.channelId);
+      if (
+        !channel ||
+        (channel.type !== ChannelType.GuildText &&
+          channel.type !== ChannelType.GuildAnnouncement)
+      ) {
+        throw new NonRetryableError(
+          `cron-thread: チャンネル ${msg.channelId} はスレッドをサポートしていません`,
+        );
+      }
+      const dateSuffix = new Date(msg.timestamp)
+        .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
+        .slice(0, 16)
+        .replace(" ", "-")
+        .replace(":", "-");
+      const suffix = `-${dateSuffix}`;
+      const maxIdLen = 100 - "cron-".length - suffix.length;
+      const truncatedId = msg.cronJobId.slice(0, maxIdLen);
+      const thread = await channel.threads.create({
+        name: `cron-${truncatedId}${suffix}`,
+      });
+      threadId = thread.id;
+      sessionId = thread.id;
+      threadSend = (content) => thread.send(content);
+    }
+    const response = await sendMessage(msg.groupName, sessionId, msg.content);
+    if (response) {
+      for (const chunk of splitMessage(response)) {
+        await threadSend(chunk);
+      }
+    }
+  } catch (err) {
+    if (err instanceof NonRetryableError) {
+      console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
+      await appendDeadLetter(msg);
+    } else {
+      console.error(
+        `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
+        err,
+      );
+      if (msg.retries + 1 < MAX_RETRIES) {
+        // threadId がセット済み（スレッド作成後に失敗）なら次回リトライでスレッド再作成をスキップ
+        await prependInbox({
+          ...msg,
+          retries: msg.retries + 1,
+          cronThreadId: threadId,
+        });
+      } else {
+        console.error(
+          "[poller] cron-thread リトライ上限。dead-letter に移動:",
+          msg.id,
+        );
+        await appendDeadLetter(msg);
+      }
+    }
+  }
+}
+
 export async function processMessage(msg: InboxMessage): Promise<void> {
+  if (msg.cronThread) {
+    return processCronThread(msg);
+  }
+
   const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
