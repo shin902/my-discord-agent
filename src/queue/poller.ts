@@ -166,8 +166,24 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
         }
       }
     } catch (err) {
-      console.error("[poller] cron-thread 処理失敗、dead-letter に移動:", err);
-      await appendDeadLetter(msg);
+      if (err instanceof NonRetryableError) {
+        console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
+        await appendDeadLetter(msg);
+      } else {
+        console.error(
+          `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
+          err,
+        );
+        if (msg.retries + 1 < MAX_RETRIES) {
+          await prependInbox({ ...msg, retries: msg.retries + 1 });
+        } else {
+          console.error(
+            "[poller] cron-thread リトライ上限。dead-letter に移動:",
+            msg.id,
+          );
+          await appendDeadLetter(msg);
+        }
+      }
     }
     return;
   }

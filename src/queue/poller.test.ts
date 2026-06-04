@@ -19,6 +19,7 @@ const { sendMessage } = await import("../agent/manager.js");
 const { loadGroupConfig } = await import("../config/group-config.js");
 const { client } = await import("../discord/client.js");
 const { appendDeadLetter } = await import("./dead-letter.js");
+const { prependInbox } = await import("./inbox.js");
 const { processMessage } = await import("./poller.js");
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
@@ -251,6 +252,7 @@ describe("processMessage - cron-thread", () => {
     mockThreadSend.mockClear();
     mockThreadsCreate.mockClear();
     vi.mocked(appendDeadLetter).mockClear();
+    vi.mocked(prependInbox).mockClear();
   });
 
   it("正常系: スレッドを作成して sendMessage を呼び、応答を thread.send で投稿する", async () => {
@@ -308,13 +310,35 @@ describe("processMessage - cron-thread", () => {
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
   });
 
-  it("sendMessage が例外をスローした場合 appendDeadLetter に移動する", async () => {
-    vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
+  it("NonRetryableError は即 appendDeadLetter に移動する", async () => {
+    const { NonRetryableError } = await import("../utils/error.js");
+    vi.mocked(sendMessage).mockRejectedValue(
+      new NonRetryableError("context window exceeded"),
+    );
 
     await processMessage(makeCronThreadMsg());
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-    expect(mockThreadSend).not.toHaveBeenCalled();
+    expect(vi.mocked(prependInbox)).not.toHaveBeenCalled();
+  });
+
+  it("transient error はリトライカウントを増やして prependInbox に戻す", async () => {
+    vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
+
+    await processMessage(makeCronThreadMsg({ retries: 0 }));
+
+    expect(vi.mocked(prependInbox)).toHaveBeenCalledOnce();
+    expect(vi.mocked(prependInbox).mock.calls[0][0].retries).toBe(1);
+    expect(vi.mocked(appendDeadLetter)).not.toHaveBeenCalled();
+  });
+
+  it("transient error でリトライ上限に達したら appendDeadLetter に移動する", async () => {
+    vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
+
+    await processMessage(makeCronThreadMsg({ retries: 9 }));
+
+    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
+    expect(vi.mocked(prependInbox)).not.toHaveBeenCalled();
   });
 
   it("cron-thread は typing indicator を開始しない", async () => {
