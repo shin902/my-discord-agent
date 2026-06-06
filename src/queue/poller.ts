@@ -18,7 +18,7 @@ let running = false;
 let globalChain = Promise.resolve();
 const sessionChain = new Map<string, Promise<void>>();
 
-function dispatch(
+export function dispatch(
   sessionId: string,
   fn: () => Promise<void>,
   mode: DispatchMode,
