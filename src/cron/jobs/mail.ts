@@ -175,6 +175,16 @@ export default async function handler(ctx: CronContext): Promise<void> {
     return;
   }
 
+  const groupConfig = await loadGroupConfig(ctx.groupName);
+  const providerName = groupConfig?.model?.provider ?? DEFAULT_PROVIDER;
+  const modelId = groupConfig?.model?.modelId ?? DEFAULT_MODEL_ID;
+  try {
+    await resolveModel(providerName, modelId);
+  } catch (err) {
+    console.error("[mail] モデル設定が無効なため処理を中断します:", err);
+    return;
+  }
+
   const channel = await ctx.client.channels.fetch(ctx.channelId);
   if (
     !channel ||
@@ -197,6 +207,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
       const bodyText = await fetchEmailBody(meta.id);
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
       const { summary, agentMessage } = await generateSummary(emailText, ctx);
+
+      if (!agentMessage) {
+        console.warn(`[mail] "${meta.subject}" の要約生成に失敗しました。スキップします。`);
+        continue;
+      }
 
       const chunks = splitMessage(summary);
       const sentMsg = await channel.send(chunks[0] ?? "(要約なし)");
