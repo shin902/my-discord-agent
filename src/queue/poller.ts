@@ -24,7 +24,7 @@ function dispatch(
   mode: DispatchMode,
 ): void {
   const onError = (err: unknown) => {
-    console.error("[poller] 予期せぬエラー:", err);
+    console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err);
   };
   if (mode === "serial") {
     globalChain = globalChain.then(fn).catch(onError);
