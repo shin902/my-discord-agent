@@ -22,7 +22,7 @@ export async function loadGroups(): Promise<GroupConfig[]> {
   if (_groups !== null) return _groups;
   const raw = await loadRawConfig();
   if (!raw.groups) {
-    throw new Error("config/config.json の groups が見つかりません");
+    throw new Error("config/config.json に groups キーがありません");
   }
   _groups = GroupsConfigSchema.parse(raw.groups);
   return _groups;
