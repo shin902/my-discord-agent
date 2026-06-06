@@ -1,6 +1,10 @@
 import { ChannelType } from "discord.js";
 import { type DiscordEvent, sendMessage } from "../agent/manager.js";
 import { loadGroupConfig } from "../config/group-config.js";
+import {
+  type DispatchMode,
+  loadDispatchMode,
+} from "../config/poller-config.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
@@ -11,29 +15,27 @@ const POLL_MS = 1000;
 const MAX_RETRIES = 10;
 let running = false;
 
-// チャンネルごとに処理を直列化する Promise チェーン。
-// 異なるチャンネルは並列実行、同一チャンネルは順番通りに処理される。
-const channelChain = new Map<string, Promise<void>>();
+let globalChain = Promise.resolve();
+const sessionChain = new Map<string, Promise<void>>();
 
-function dispatchWithChannelLock(
-  channelId: string,
+export function dispatch(
+  sessionId: string,
   fn: () => Promise<void>,
+  mode: DispatchMode,
 ): void {
-  const prev = channelChain.get(channelId) ?? Promise.resolve();
-  const next = prev
-    .then(fn, () => fn())
-    .catch((err) => {
-      console.error(
-        "[poller] 予期せぬエラー (channelId:",
-        channelId,
-        "):",
-        err,
-      );
+  const onError = (err: unknown) => {
+    console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err);
+  };
+  if (mode === "serial") {
+    globalChain = globalChain.then(fn).catch(onError);
+  } else {
+    const prev = sessionChain.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(fn).catch(onError);
+    sessionChain.set(sessionId, next);
+    next.finally(() => {
+      if (sessionChain.get(sessionId) === next) sessionChain.delete(sessionId);
     });
-  channelChain.set(channelId, next);
-  next.finally(() => {
-    if (channelChain.get(channelId) === next) channelChain.delete(channelId);
-  });
+  }
 }
 
 export function startPoller(): void {
@@ -44,6 +46,8 @@ export function startPoller(): void {
 
 export function stopPoller(): void {
   running = false;
+  globalChain = Promise.resolve();
+  sessionChain.clear();
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -302,12 +306,13 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
 }
 
 async function poll(): Promise<void> {
+  const mode = await loadDispatchMode();
   while (running) {
     if (client.isReady()) {
       const msg = await shiftInbox();
       if (msg) {
         // ノンブロッキングで dispatch → 即次のメッセージを取りに行く
-        dispatchWithChannelLock(msg.channelId, () => processMessage(msg));
+        dispatch(msg.sessionId, () => processMessage(msg), mode);
         continue;
       }
     }

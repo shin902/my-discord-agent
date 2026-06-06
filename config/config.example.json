@@ -94,5 +94,8 @@
       "enabled": true,
       "handler": "jobs/mail.ts"
     }
-  ]
+  ],
+  "poller": {
+    "dispatchMode": "parallel-session"
+  }
 }
