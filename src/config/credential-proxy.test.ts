@@ -68,18 +68,13 @@ describe("loadCredentialProxy", () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
-  it("ファイルが存在しない場合は空配列をキャッシュして返す", async () => {
+  it("ファイルが存在しない場合はエラーをスローする", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
 
-    const result1 = await loadCredentialProxy();
-    expect(result1).toEqual([]);
-
-    const result2 = await loadCredentialProxy();
-    expect(result2).toEqual([]);
-    expect(readFile).toHaveBeenCalledTimes(1);
+    await expect(loadCredentialProxy()).rejects.toThrow("config/config.json が見つかりません");
   });
 
   it("ENOENT 以外のエラーは再スロー", async () => {

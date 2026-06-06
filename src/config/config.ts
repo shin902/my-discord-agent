@@ -16,8 +16,9 @@ export async function loadRawConfig(): Promise<Record<string, unknown>> {
     return _raw;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      _raw = {};
-      return _raw;
+      throw new Error(
+        "config/config.json が見つかりません。config/config.example.json をコピーして作成してください",
+      );
     }
     throw err;
   }
