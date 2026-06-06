@@ -50,4 +50,15 @@ describe("loadDispatchMode", () => {
     mockLoadRawConfig.mockResolvedValue({ someOtherKey: {} });
     expect(await loadDispatchMode()).toBe("parallel-session");
   });
+
+  it("無効な環境変数値は warn してデフォルトを返す", async () => {
+    process.env.POLLER_DISPATCH_MODE = "Serial";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await loadDispatchMode()).toBe("parallel-session");
+    expect(warn).toHaveBeenCalledWith(
+      '[poller] 無効な POLLER_DISPATCH_MODE: "Serial"、デフォルト使用',
+    );
+    warn.mockRestore();
+  });
 });
