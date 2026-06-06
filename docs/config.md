@@ -112,11 +112,13 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 |---|---|
 | `credentials` | 再起動が必要（起動時に読み込みキャッシュ） |
 | `groups` | 再起動が必要（起動時に読み込みキャッシュ） |
-| `cron` | **次の tick（最大1分）で自動反映** |
-
-`cron` だけ挙動が異なる理由：`loadJobs()` はエラー時に `_jobs` をキャッシュしないため、次の tick でファイルを再読みする。ファイルが存在しない状態で起動しても、後から `config.json` を配置すれば cronが動き始める。
+| `cron` | 再起動が必要（起動時に読み込みキャッシュ） |
 
 `credentials` と `groups` は起動時に読み込みに失敗すると `process.exit(1)` するため、修正後は再起動が必要。
+
+`cron` は `loadRawConfig()` → `loadJobs()` の順でキャッシュされるため、一度読み込んだ後は再起動まで変更が反映されない（`docs/spec/cron.md` と同じ）。
+
+**例外（ENOENT 時の自動回復）**: 起動時に `config.json` が存在しない場合、`loadRawConfig()` はエラーをスローして `_raw` をキャッシュしないため、後から `config.json` を配置すれば次の tick（最大1分）で cron が動き始める。ただしこれは `config.json` 自体が存在しない場合のみ。
 
 ## 変更履歴
 
