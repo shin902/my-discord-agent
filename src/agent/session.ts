@@ -16,7 +16,7 @@ async function ensureDir(groupName: string): Promise<void> {
   const dir = path.join(SESSIONS_DIR, groupName);
   await mkdir(dir, { recursive: true, mode: 0o777 });
   // VirtioFS では mkdir の mode は既存ディレクトリに適用されないため明示的に設定
-  await chmod(dir, 0o777);
+  await chmod(dir, 0o777).catch(() => {});
 }
 
 function sessionPath(groupName: string, sessionId: string): string {

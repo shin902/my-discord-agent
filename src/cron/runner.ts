@@ -8,7 +8,7 @@ import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, "../../");
+const ROOT = path.resolve(__dirname, "../..");
 const CRON_JOBS_PATH = path.join(ROOT, "config/cron-jobs.json");
 const STATE_PATH = path.join(ROOT, "data/cron/state.json");
 

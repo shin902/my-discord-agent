@@ -210,6 +210,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
         await thread.send(chunk);
       }
 
+      await graphPatch(`/me/messages/${encodeURIComponent(meta.id)}`, {
+        isRead: true,
+      });
+
       // セッション初期化: 以降のスレッド返信でエージェントがメール内容を把握できるよう
       // メール本文（user）と要約（assistant）をペアで記録する
       if (agentMessage) {
@@ -220,10 +224,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
         } as AgentMessage);
         await appendMessage(ctx.groupName, thread.id, agentMessage);
       }
-
-      await graphPatch(`/me/messages/${encodeURIComponent(meta.id)}`, {
-        isRead: true,
-      });
 
       console.log(
         `[mail] "${meta.subject}" → スレッド ${thread.id} を作成しました`,
