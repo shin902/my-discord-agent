@@ -95,7 +95,7 @@ data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
 
 ## テストの注意点
 
-`group-config.ts` のキャッシュをテスト間でリセットするには `vi.resetModules()` + dynamic import を使う（プロダクションコードに `_resetCache()` を生やさない）。
+`group-config.ts` / `config/config.ts` などモジュールレベルキャッシュを持つファイルのキャッシュをテスト間でリセットするには `vi.resetModules()` + dynamic import を使う（プロダクションコードに `_resetCache()` を生やさない）。
 
 ## 参照クローン（`docs/clone/`）
 
