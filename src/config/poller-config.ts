@@ -23,7 +23,10 @@ export async function loadDispatchMode(): Promise<DispatchMode> {
       return result.data.dispatchMode;
     }
     if (!result.success) {
-      console.warn("[poller] poller 設定が不正、デフォルト使用:", result.error.message);
+      console.warn(
+        "[poller] poller 設定が不正、デフォルト使用:",
+        result.error.message,
+      );
     }
   }
 
