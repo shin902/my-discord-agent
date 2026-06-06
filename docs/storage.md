@@ -46,8 +46,8 @@ groups / cron / credentials をひとつのファイルに集約する。
       ]
     }
   ],
-  "cron": [...],
-  "credentials": [...]
+  "cron": [],
+  "credentials": []
 }
 ```
 

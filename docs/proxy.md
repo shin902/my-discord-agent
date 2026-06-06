@@ -53,8 +53,8 @@ Host
     { "provider": "openrouter",  "envVars": ["OPENROUTER_API_KEY"], "baseUrl": "https://openrouter.ai/api/v1" },
     { "provider": "opencode-go", "envVars": ["OPENCODE_API_KEY"],   "baseUrl": "https://opencode.ai/zen/go/v1" }
   ],
-  "groups": [...],
-  "cron": [...]
+  "groups": [],
+  "cron": []
 }
 ```
 
