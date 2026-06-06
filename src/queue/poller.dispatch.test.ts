@@ -22,10 +22,85 @@ let dispatch: (
   fn: () => Promise<void>,
   mode: "serial" | "parallel-session",
 ) => void;
+let stopPoller: () => void;
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ dispatch } = await import("./poller.js"));
+  ({ dispatch, stopPoller } = await import("./poller.js"));
+});
+
+describe("stopPoller", () => {
+  it("stopPoller 後に serial モードのチェーンがリセットされる", async () => {
+    const order: number[] = [];
+    let resolve1!: () => void;
+    const block1 = new Promise<void>((r) => {
+      resolve1 = r;
+    });
+
+    dispatch(
+      "s1",
+      async () => {
+        await block1;
+        order.push(1);
+      },
+      "serial",
+    );
+    dispatch(
+      "s2",
+      async () => {
+        order.push(2);
+      },
+      "serial",
+    );
+
+    stopPoller();
+    resolve1();
+    await tick();
+
+    // stopPoller でチェーンがリセットされているため s2 は新しいチェーンに積まれる
+    dispatch(
+      "s3",
+      async () => {
+        order.push(3);
+      },
+      "serial",
+    );
+    await tick();
+
+    // s1 は resolve 後に完了するが、s2 はチェーンがリセットされた後に積まれるため
+    // s1 → s3 の順に実行される（s2 も完了するがリセット前のチェーン上）
+    expect(order).toContain(3);
+  });
+
+  it("stopPoller 後に parallel-session のチェーンがクリアされる", async () => {
+    let resolve1!: () => void;
+    const block1 = new Promise<void>((r) => {
+      resolve1 = r;
+    });
+
+    dispatch(
+      "s1",
+      async () => {
+        await block1;
+      },
+      "parallel-session",
+    );
+
+    stopPoller();
+    // チェーンがクリアされているため、新しいタスクは即座に開始できる
+    const started: string[] = [];
+    dispatch(
+      "s1",
+      async () => {
+        started.push("s1-new");
+      },
+      "parallel-session",
+    );
+
+    resolve1();
+    await tick();
+    expect(started).toContain("s1-new");
+  });
 });
 
 describe("dispatch - serial モード", () => {

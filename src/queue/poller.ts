@@ -46,6 +46,8 @@ export function startPoller(): void {
 
 export function stopPoller(): void {
   running = false;
+  globalChain = Promise.resolve();
+  sessionChain.clear();
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
