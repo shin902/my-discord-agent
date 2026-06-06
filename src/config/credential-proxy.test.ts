@@ -68,6 +68,17 @@ describe("loadCredentialProxy", () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
+  it("credentials キーがない場合はエラーをスローする", async () => {
+    const { loadCredentialProxy } = await importFresh();
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify({ groups: [], cron: [] }),
+    );
+
+    await expect(loadCredentialProxy()).rejects.toThrow(
+      "credentials は必須項目です",
+    );
+  });
+
   it("ファイルが存在しない場合はエラーをスローする", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockRejectedValue(

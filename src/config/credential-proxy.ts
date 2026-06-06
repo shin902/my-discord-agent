@@ -71,6 +71,9 @@ export async function loadCredentialProxy(): Promise<CredentialEntry[]> {
     return cache;
   }
   const raw = await loadRawConfig();
-  cache = z.array(CredentialEntrySchema).parse(raw.credentials ?? []);
+  if (raw.credentials === undefined) {
+    throw new Error("config/config.json に credentials キーがありません（credentials は必須項目です）");
+  }
+  cache = z.array(CredentialEntrySchema).parse(raw.credentials);
   return cache;
 }
