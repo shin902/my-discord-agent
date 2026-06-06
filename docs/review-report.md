@@ -135,7 +135,7 @@ if (msg.retries + 1 < MAX_RETRIES) {
 
 **問題**: `src/config/group-config.ts` と `src/config/groups.ts` は起動時に1回だけ読み込み、以降キャッシュを固定します。`group.json` や `AGENTS.md`、チャンネル設定を変更しても**再起動が必要**です。
 
-**推奨対策（groups.json の例）**:
+**推奨対策（config.json の例）**:
 
 ```ts
 // src/config/groups.ts
@@ -151,7 +151,7 @@ export async function loadGroups(): Promise<GroupConfig[]> {
     text = await readFile(CONFIG_PATH, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error("config/groups.json が見つかりません");
+      throw new Error("config/config.json が見つかりません");
     }
     throw err;
   }
@@ -225,7 +225,7 @@ await fh.close();
 現存のテストは `inbox.test.ts`（競合ロック）、`session.test.ts`（JSONL I/O）、`poller.test.ts`（モック）など充実していますが、以下のカバレッジが不足しています：
 
 - **`manager.ts` のエラーハンドリングパス**: `NonRetryableError`（タイムアウト）/`TransientError`（exit code 2）/モデル設定エラー の分岐がテストされていない
-- **`credential-proxy.ts` のキャッシュ無効化**: ファイル変更後の再読み込みパスがテストされていない
+- **`config.ts` のキャッシュ無効化**: ファイル変更後の再読み込みパスがテストされていない
 - **セッション並行書き込み**: `session.test.ts` に混線テストを追加すべき
 
 ---
