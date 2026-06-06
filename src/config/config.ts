@@ -4,8 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const CONFIG_PATH =
-  process.env.CONFIG_PATH ??
-  path.join(__dirname, "../../config/config.json");
+  process.env.CONFIG_PATH ?? path.join(__dirname, "../../config/config.json");
 
 let _raw: Record<string, unknown> | null = null;
 
