@@ -18,8 +18,13 @@ export async function loadDispatchMode(): Promise<DispatchMode> {
 
   const raw = await loadRawConfig();
   if (raw.poller !== undefined) {
-    const parsed = PollerConfigSchema.parse(raw.poller);
-    if (parsed.dispatchMode !== undefined) return parsed.dispatchMode;
+    const result = PollerConfigSchema.safeParse(raw.poller);
+    if (result.success && result.data.dispatchMode !== undefined) {
+      return result.data.dispatchMode;
+    }
+    if (!result.success) {
+      console.warn("[poller] poller 設定が不正、デフォルト使用:", result.error.message);
+    }
   }
 
   return "parallel-session";
