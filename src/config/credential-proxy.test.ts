@@ -74,7 +74,9 @@ describe("loadCredentialProxy", () => {
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
 
-    await expect(loadCredentialProxy()).rejects.toThrow("config/config.json が見つかりません");
+    await expect(loadCredentialProxy()).rejects.toThrow(
+      "config/config.json が見つかりません",
+    );
   });
 
   it("ENOENT 以外のエラーは再スロー", async () => {
