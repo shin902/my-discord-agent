@@ -5,9 +5,7 @@ data/
 .env
 
 config/*
-!config/groups.example.json
-!config/credential-proxy.example.json
-!config/cron-jobs.example.json
+!config/config.example.json
 
 groups/*/
 

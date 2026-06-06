@@ -1,12 +1,5 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH =
-  process.env.CREDENTIAL_PROXY_PATH ??
-  path.join(__dirname, "../../config/credential-proxy.json");
+import { loadRawConfig } from "./config.js";
 
 export const MsalConfigSchema = z.object({
   tenantId: z.string(),
@@ -56,10 +49,6 @@ export const CredentialEntrySchema = z.object({
           "ollama",
         ])
         .optional(),
-      // model.ts の compat スプレッド経由で pi-ai に渡り、tool_use を含む
-      // assistant メッセージへの reasoning_content 補完を有効化する。
-      // DeepSeek 系プロバイダーは pi-ai が自動検出するが、カスタムプロバイダーで
-      // Kimi 互換 API を使う場合などに明示的に設定する。
       requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
     })
     .optional(),
@@ -71,21 +60,13 @@ let cache: CredentialEntry[] | null = null;
 
 export async function loadCredentialProxy(): Promise<CredentialEntry[]> {
   if (cache) return cache;
+  // sandbox コンテナへの受け渡し: manager.ts が CREDENTIAL_PROXY_JSON に直列化して渡す
   const inlineJson = process.env.CREDENTIAL_PROXY_JSON;
   if (inlineJson) {
     cache = z.array(CredentialEntrySchema).parse(JSON.parse(inlineJson));
     return cache;
   }
-  let raw: string;
-  try {
-    raw = await readFile(CONFIG_PATH, "utf-8");
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      cache = [];
-      return cache;
-    }
-    throw err;
-  }
-  cache = z.array(CredentialEntrySchema).parse(JSON.parse(raw));
+  const raw = await loadRawConfig();
+  cache = z.array(CredentialEntrySchema).parse(raw.credentials ?? []);
   return cache;
 }

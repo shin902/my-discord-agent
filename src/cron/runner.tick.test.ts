@@ -3,16 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // tick() のオーケストレーションテスト
 // _jobs / _state はモジュールレベルキャッシュのため vi.resetModules() + vi.doMock() パターンを使用
 
-const CHANNEL_JOB = JSON.stringify([
-  {
-    id: "tick-job",
-    schedule: "* * * * *",
-    groupName: "g",
-    prompt: "p",
-    channelId: "c",
-    mode: "to-channel",
-  },
-]);
+const CONFIG_JSON = JSON.stringify({
+  credentials: [],
+  groups: [],
+  cron: [
+    {
+      id: "tick-job",
+      schedule: "* * * * *",
+      groupName: "g",
+      prompt: "p",
+      channelId: "c",
+      mode: "to-channel",
+    },
+  ],
+});
 
 describe("tick() orchestration", () => {
   let mockAppendInbox: ReturnType<typeof vi.fn>;
@@ -31,7 +35,7 @@ describe("tick() orchestration", () => {
     mockAppendInbox = vi.fn().mockResolvedValue(undefined);
     mockIsReady = vi.fn().mockReturnValue(true);
     mockExistsSync = vi.fn();
-    mockReadFile = vi.fn().mockResolvedValue(CHANNEL_JOB);
+    mockReadFile = vi.fn().mockResolvedValue(CONFIG_JSON);
     mockWriteFile = vi.fn().mockResolvedValue(undefined);
 
     vi.resetModules();
@@ -50,10 +54,8 @@ describe("tick() orchestration", () => {
       splitMessage: (s: string) => [s],
     }));
 
-    // cron-jobs.json は存在する、state.json は存在しない
-    mockExistsSync.mockImplementation(
-      (p: unknown) => typeof p === "string" && p.includes("cron-jobs.json"),
-    );
+    // state.json は存在しない
+    mockExistsSync.mockReturnValue(false);
 
     const runner = await import("./runner.js");
     startCron = runner.startCron;
@@ -103,8 +105,10 @@ describe("tick() orchestration", () => {
     );
   });
 
-  it("cron-jobs.json がない場合 tick は何も実行しない", async () => {
-    mockExistsSync.mockReturnValue(false);
+  it("config.json に cron が空の場合 tick は何も実行しない", async () => {
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({ credentials: [], groups: [], cron: [] }),
+    );
     startCron();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(mockAppendInbox).not.toHaveBeenCalled();
