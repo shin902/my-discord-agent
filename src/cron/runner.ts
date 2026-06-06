@@ -209,6 +209,8 @@ let _jobs: CronJob[] | null = null;
 
 async function loadJobs(): Promise<CronJob[]> {
   if (_jobs !== null) return _jobs;
+  // エラー時（ENOENT 含む）は _jobs をキャッシュしない。
+  // 次の tick で再試行するため、起動後に config.json を配置すれば動き始める。
   const raw = await loadRawConfig();
   _jobs = CronJobsSchema.parse(raw.cron ?? []);
   return _jobs;

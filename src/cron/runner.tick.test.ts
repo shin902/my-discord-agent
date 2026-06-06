@@ -115,7 +115,10 @@ describe("tick() orchestration", () => {
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
 
-  it("config.json が存在しない場合 tick は何も実行しない", async () => {
+  it("config.json が存在しない場合 tick は何も実行しない（エラーは startCron の .catch で吸収）", async () => {
+    // loadJobs() → loadRawConfig() が ENOENT をスロー → tick() から伝播
+    // → startCron() の tick().catch() で console.error されるだけ。
+    // _jobs は null のまま残るため次の tick でも再試行する（旧実装とは異なる挙動）。
     mockReadFile.mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
