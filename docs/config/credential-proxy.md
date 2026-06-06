@@ -1,8 +1,8 @@
-# credential-proxy.json 設定リファレンス
+# config/config.json の credentials 設定リファレンス
 
-`config/credential-proxy.json` は Discord ボットが利用する AI プロバイダーの接続設定を定義するファイルです。
+`config/config.json` の `credentials` セクションは Discord ボットが利用する AI プロバイダーの接続設定を定義します。
 
-`config/credential-proxy.example.json` をコピーして編集してください。
+`config/config.example.json` をコピーして `config/config.json` を作成し、編集してください。
 
 ## 必須フィールド
 
@@ -184,7 +184,7 @@ Browserless のように query parameter で token を要求する API では `q
 | `"high"` | `true` | 16,384 トークン |
 | `"xhigh"` | `true` | モデルの `thinkingLevelMap` に依存 |
 
-> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `credential-proxy.json` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"ollama"` 等の thinking 制御に対応した値である必要がある。
+> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `config/config.json` の `credentials` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"ollama"` 等の thinking 制御に対応した値である必要がある。
 
 **thinking を完全に OFF にする**（`compat.thinkingFormat` が必須）:
 
@@ -192,7 +192,7 @@ Browserless のように query parameter で token を要求する API では `q
 { "model": { "provider": "llama-cpp", "modelId": "Qwen3.6-35B-...", "thinkingLevel": "off" } }
 ```
 
-`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `credential-proxy.json` の `compat.thinkingFormat` を設定していない場合、thinking OFF のフィールドはリクエストに含まれず、ローカル推論サーバー側のデフォルトに従う。
+`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `config/config.json` の `credentials` の `compat.thinkingFormat` を設定していない場合、thinking OFF のフィールドはリクエストに含まれず、ローカル推論サーバー側のデフォルトに従う。
 
 ## 具体例
 
@@ -282,7 +282,7 @@ KnownProvider でない場合、`modelId` は自由な文字列を指定でき�
 
 ### カスタムプロバイダーの入力制限
 
-現状の実装では、カスタムプロバイダーの `input` は常に `["text"]`（テキスト入力のみ）に固定されています。画像入力（`["text", "image"]`）等をサポートするモデル（例: LLaVA）を使用する場合、現在の `credential-proxy.json` では指定できません。必要であればコード（`src/agent/model.ts` の `createCustomModel`）を拡張してください。
+現状の実装では、カスタムプロバイダーの `input` は常に `["text"]`（テキスト入力のみ）に固定されています。画像入力（`["text", "image"]`）等をサポートするモデル（例: LLaVA）を使用する場合、現在の `config/config.json` の `credentials` では指定できません。必要であればコード（`src/agent/model.ts` の `createCustomModel`）を拡張してください。
 
 ### 将来的な拡張
 
