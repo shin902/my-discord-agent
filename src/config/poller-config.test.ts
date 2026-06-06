@@ -34,7 +34,9 @@ describe("loadDispatchMode", () => {
 
   it("環境変数が設定ファイルより優先される", async () => {
     process.env.POLLER_DISPATCH_MODE = "serial";
-    mockLoadRawConfig.mockResolvedValue({ poller: { dispatchMode: "parallel-session" } });
+    mockLoadRawConfig.mockResolvedValue({
+      poller: { dispatchMode: "parallel-session" },
+    });
     expect(await loadDispatchMode()).toBe("serial");
   });
 

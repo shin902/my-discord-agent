@@ -36,8 +36,21 @@ describe("dispatch - serial モード", () => {
       resolve1 = r;
     });
 
-    dispatch("s1", async () => { await block1; order.push(1); }, "serial");
-    dispatch("s2", async () => { order.push(2); }, "serial");
+    dispatch(
+      "s1",
+      async () => {
+        await block1;
+        order.push(1);
+      },
+      "serial",
+    );
+    dispatch(
+      "s2",
+      async () => {
+        order.push(2);
+      },
+      "serial",
+    );
 
     await Promise.resolve();
     expect(order).toEqual([]);
@@ -54,8 +67,21 @@ describe("dispatch - serial モード", () => {
       resolve1 = r;
     });
 
-    dispatch("s1", async () => { await block1; order.push(1); }, "serial");
-    dispatch("s2", async () => { order.push(2); }, "serial");
+    dispatch(
+      "s1",
+      async () => {
+        await block1;
+        order.push(1);
+      },
+      "serial",
+    );
+    dispatch(
+      "s2",
+      async () => {
+        order.push(2);
+      },
+      "serial",
+    );
 
     await Promise.resolve();
     expect(order).toEqual([]);
@@ -68,7 +94,13 @@ describe("dispatch - serial モード", () => {
   it("エラー発生時に sessionId がログに出力される", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    dispatch("my-session-123", async () => { throw new Error("boom"); }, "serial");
+    dispatch(
+      "my-session-123",
+      async () => {
+        throw new Error("boom");
+      },
+      "serial",
+    );
 
     await tick();
 
@@ -90,8 +122,21 @@ describe("dispatch - parallel-session モード", () => {
       resolve1 = r;
     });
 
-    dispatch("s1", async () => { await block1; order.push(1); }, "parallel-session");
-    dispatch("s1", async () => { order.push(2); }, "parallel-session");
+    dispatch(
+      "s1",
+      async () => {
+        await block1;
+        order.push(1);
+      },
+      "parallel-session",
+    );
+    dispatch(
+      "s1",
+      async () => {
+        order.push(2);
+      },
+      "parallel-session",
+    );
 
     await Promise.resolve();
     expect(order).toEqual([]);
@@ -108,8 +153,21 @@ describe("dispatch - parallel-session モード", () => {
       resolve1 = r;
     });
 
-    dispatch("s1", async () => { started.push("s1"); await block1; }, "parallel-session");
-    dispatch("s2", async () => { started.push("s2"); }, "parallel-session");
+    dispatch(
+      "s1",
+      async () => {
+        started.push("s1");
+        await block1;
+      },
+      "parallel-session",
+    );
+    dispatch(
+      "s2",
+      async () => {
+        started.push("s2");
+      },
+      "parallel-session",
+    );
 
     await tick();
     expect(started).toContain("s1");
@@ -121,7 +179,13 @@ describe("dispatch - parallel-session モード", () => {
 
   it("タスク完了後に sessionChain から削除される（メモリリークなし）", async () => {
     let completed = false;
-    dispatch("s1", async () => { completed = true; }, "parallel-session");
+    dispatch(
+      "s1",
+      async () => {
+        completed = true;
+      },
+      "parallel-session",
+    );
 
     await tick();
     expect(completed).toBe(true);
@@ -134,7 +198,13 @@ describe("dispatch - parallel-session モード", () => {
   it("parallel-session でのエラーに sessionId がログに出力される", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    dispatch("session-abc", async () => { throw new Error("fail"); }, "parallel-session");
+    dispatch(
+      "session-abc",
+      async () => {
+        throw new Error("fail");
+      },
+      "parallel-session",
+    );
 
     await tick();
 
