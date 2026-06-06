@@ -10,6 +10,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+function makeConfig(credentials: unknown[]) {
+  return JSON.stringify({ credentials, groups: [], cron: [] });
+}
+
 async function importFresh() {
   vi.resetModules();
   const mod = await import("./credential-proxy.js");
@@ -20,7 +24,7 @@ describe("loadCredentialProxy", () => {
   it("設定ファイルを読み込んでパースする", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([
+      makeConfig([
         {
           provider: "openai",
           envVars: ["OPENAI_API_KEY"],
@@ -43,7 +47,7 @@ describe("loadCredentialProxy", () => {
   it("2回目以降の呼び出しではキャッシュを返し readFile を呼ばない", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([
+      makeConfig([
         {
           provider: "openai",
           envVars: ["OPENAI_API_KEY"],
@@ -64,18 +68,26 @@ describe("loadCredentialProxy", () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
-  it("ファイルが存在しない場合は空配列をキャッシュして返す", async () => {
+  it("credentials キーがない場合はエラーをスローする", async () => {
+    const { loadCredentialProxy } = await importFresh();
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify({ groups: [], cron: [] }),
+    );
+
+    await expect(loadCredentialProxy()).rejects.toThrow(
+      "credentials は必須項目です",
+    );
+  });
+
+  it("ファイルが存在しない場合はエラーをスローする", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
 
-    const result1 = await loadCredentialProxy();
-    expect(result1).toEqual([]);
-
-    const result2 = await loadCredentialProxy();
-    expect(result2).toEqual([]);
-    expect(readFile).toHaveBeenCalledTimes(1);
+    await expect(loadCredentialProxy()).rejects.toThrow(
+      "config/config.json が見つかりません",
+    );
   });
 
   it("ENOENT 以外のエラーは再スロー", async () => {
@@ -94,10 +106,10 @@ describe("loadCredentialProxy", () => {
     await expect(loadCredentialProxy()).rejects.toThrow(SyntaxError);
   });
 
-  it("スキーマに合わない JSON は ZodError を投げる", async () => {
+  it("credentials のスキーマに合わない JSON は ZodError を投げる", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([
+      makeConfig([
         {
           provider: "openai",
           envVars: ["OPENAI_API_KEY"],
@@ -109,9 +121,9 @@ describe("loadCredentialProxy", () => {
     await expect(loadCredentialProxy()).rejects.toThrow();
   });
 
-  it("空配列も正常にキャッシュされる", async () => {
+  it("credentials が空配列も正常にキャッシュされる", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue("[]");
+    vi.mocked(readFile).mockResolvedValue(makeConfig([]));
 
     const result1 = await loadCredentialProxy();
     expect(result1).toEqual([]);
@@ -124,7 +136,7 @@ describe("loadCredentialProxy", () => {
   it("ollama の thinkingFormat を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([
+      makeConfig([
         {
           provider: "ollama",
           baseUrl: "http://localhost:11434/v1",
@@ -146,7 +158,7 @@ describe("loadCredentialProxy", () => {
   it("query-token 認証設定を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify([
+      makeConfig([
         {
           provider: "browserless",
           envVars: ["BROWSERLESS_TOKEN"],

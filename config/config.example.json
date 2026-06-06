@@ -1,0 +1,98 @@
+{
+  "credentials": [
+    {
+      "provider": "openai",
+      "envVars": ["OPENAI_API_KEY"],
+      "baseUrl": "https://api.openai.com/v1"
+    },
+    {
+      "provider": "anthropic",
+      "envVars": ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+      "baseUrl": "https://api.anthropic.com"
+    },
+    {
+      "provider": "deepseek",
+      "envVars": ["DEEPSEEK_API_KEY"],
+      "baseUrl": "https://api.deepseek.com"
+    },
+    {
+      "provider": "google",
+      "envVars": ["GEMINI_API_KEY"],
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    {
+      "provider": "groq",
+      "envVars": ["GROQ_API_KEY"],
+      "baseUrl": "https://api.groq.com/openai/v1"
+    },
+    {
+      "provider": "openrouter",
+      "envVars": ["OPENROUTER_API_KEY"],
+      "baseUrl": "https://openrouter.ai/api/v1"
+    },
+    {
+      "provider": "graph",
+      "baseUrl": "https://graph.microsoft.com/v1.0",
+      "msal": {
+        "tenantId": "consumers",
+        "clientId": "YOUR_CLIENT_ID",
+        "scopes": ["https://graph.microsoft.com/Mail.Read"]
+      }
+    },
+    {
+      "provider": "opencode-go",
+      "envVars": ["OPENCODE_API_KEY"],
+      "baseUrl": "https://opencode.ai/zen/go/v1"
+    },
+    {
+      "provider": "llama-cpp",
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions"
+    },
+    {
+      "provider": "llama-cpp-qwen3",
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "contextWindow": 65536,
+      "maxTokens": 4096,
+      "compat": { "thinkingFormat": "qwen-chat-template" }
+    },
+    {
+      "provider": "ollama-qwen3",
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "contextWindow": 65536,
+      "maxTokens": 4096,
+      "compat": { "thinkingFormat": "ollama" }
+    },
+    {
+      "provider": "browserless",
+      "baseUrl": "https://production-sfo.browserless.io",
+      "envVars": ["BROWSERLESS_TOKEN"],
+      "auth": { "type": "query-token", "queryParam": "token" }
+    }
+  ],
+  "groups": [
+    {
+      "name": "default",
+      "channels": [{ "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }]
+    }
+  ],
+  "cron": [
+    {
+      "id": "daily-report",
+      "schedule": "0 9 * * *",
+      "enabled": true,
+      "groupName": "my-group",
+      "prompt": "昨日のログを分析して日次レポートを作成してください",
+      "channelId": "YOUR_CHANNEL_ID",
+      "mode": "to-thread"
+    },
+    {
+      "id": "mail-check",
+      "schedule": "*/30 * * * *",
+      "enabled": true,
+      "handler": "jobs/mail.ts"
+    }
+  ]
+}

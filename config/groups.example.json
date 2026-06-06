@@ -1,6 +1,0 @@
-[
-  {
-    "name": "default",
-    "channels": [{ "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }]
-  }
-]

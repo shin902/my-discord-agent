@@ -30,6 +30,13 @@ vi.mock("./agent/manager.js", () => ({
   DEFAULT_PROVIDER: "opencode-go",
   DEFAULT_MODEL_ID: "kimi-k2.6",
 }));
+vi.mock("./proxy/credential-proxy-server.js", () => ({
+  initCredentialProxyServer: vi.fn().mockResolvedValue(0),
+}));
+vi.mock("./cron/runner.js", () => ({
+  startCron: vi.fn(),
+  stopCron: vi.fn(),
+}));
 vi.mock("dotenv/config", () => ({}));
 
 describe("index: 起動時バリデーション", () => {

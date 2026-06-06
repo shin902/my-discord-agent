@@ -1,8 +1,5 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { z } from "zod";
+import { loadRawConfig } from "./config.js";
 
 const ChannelConfigSchema = z.object({
   channelId: z.string(),
@@ -19,23 +16,17 @@ const GroupsConfigSchema = z.array(GroupConfigSchema);
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.join(__dirname, "../../config/groups.json");
-
 let _groups: GroupConfig[] | null = null;
 
 export async function loadGroups(): Promise<GroupConfig[]> {
   if (_groups !== null) return _groups;
-  let text: string;
-  try {
-    text = await readFile(CONFIG_PATH, "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error("config/groups.json が見つかりません");
-    }
-    throw err;
+  const raw = await loadRawConfig();
+  if (raw.groups === undefined) {
+    throw new Error(
+      "config/config.json に groups キーがありません（groups は必須項目です）",
+    );
   }
-  _groups = GroupsConfigSchema.parse(JSON.parse(text));
+  _groups = GroupsConfigSchema.parse(raw.groups);
   return _groups;
 }
 

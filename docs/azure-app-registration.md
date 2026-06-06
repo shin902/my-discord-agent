@@ -117,7 +117,7 @@ Azure 無料アカウントまたは M365 開発者プログラムでテナン�
 
 例: `12345678-abcd-1234-efgh-1234567890ab`
 
-このIDが後述の `credential-proxy.json` に記載する `clientId` になります。
+このIDが後述の `config/config.json` に記載する `clientId` になります。
 
 ---
 
@@ -151,9 +151,9 @@ Azure 無料アカウントまたは M365 開発者プログラムでテナン�
 
 ---
 
-## 6. `credential-proxy.json` に設定を追記する
+## 6. `config/config.json` に設定を追記する
 
-`config/credential-proxy.json` を開き、配列に以下のエントリを追加します。
+`config/config.json` を開き、`credentials` 配列に以下のエントリを追加します。
 
 `YOUR_CLIENT_ID` は手順 3 で控えたクライアント ID に置き換えてください。
 
@@ -175,25 +175,27 @@ Azure 無料アカウントまたは M365 開発者プログラムでテナン�
 }
 ```
 
-追記後の `credential-proxy.json` 全体の例：
+追記後の `config/config.json` の credentials 部分の例：
 
 ```json
-[
-  {
-    "provider": "openai",
-    "envVars": ["OPENAI_API_KEY"],
-    "baseUrl": "https://api.openai.com/v1"
-  },
-  {
-    "provider": "graph",
-    "baseUrl": "https://graph.microsoft.com/v1.0",
-    "msal": {
-      "tenantId": "consumers",
-      "clientId": "12345678-abcd-1234-efgh-1234567890ab",
-      "scopes": ["https://graph.microsoft.com/Mail.Read"]
+{
+  "credentials": [
+    {
+      "provider": "openai",
+      "envVars": ["OPENAI_API_KEY"],
+      "baseUrl": "https://api.openai.com/v1"
+    },
+    {
+      "provider": "graph",
+      "baseUrl": "https://graph.microsoft.com/v1.0",
+      "msal": {
+        "tenantId": "consumers",
+        "clientId": "12345678-abcd-1234-efgh-1234567890ab",
+        "scopes": ["https://graph.microsoft.com/Mail.Read"]
+      }
     }
-  }
-]
+  ]
+}
 ```
 
 ---
@@ -227,7 +229,7 @@ Azure 無料アカウントまたは M365 開発者プログラムでテナン�
 data/graph-token-{provider}.json
 ```
 
-`provider` は `credential-proxy.json` で指定したプロバイダー名です（例: `graph` の場合は `data/graph-token-graph.json`）。
+`provider` は `config/config.json` の `credentials` で指定したプロバイダー名です（例: `graph` の場合は `data/graph-token-graph.json`）。
 
 以降の実行では、このキャッシュが有効な限りデバイスコード認証は不要です。
 
@@ -271,7 +273,7 @@ data/graph-token-{provider}.json
 5. **「アクセス許可の追加」**（Add permissions）をクリック
 6. すでに `Mail.Read` が登録されている場合は、その行の右端にある **「…」→「アクセス許可の削除」** で削除する（重複は不要）
 
-`credential-proxy.json` の `scopes` も合わせて変更します：
+`config/config.json` の `credentials` の `scopes` も合わせて変更します：
 
 ```json
 "scopes": ["https://graph.microsoft.com/Mail.ReadWrite"]

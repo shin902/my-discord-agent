@@ -8,6 +8,10 @@ vi.mock("@earendil-works/pi-ai", () => ({
       : [{ id: "model-x", name: "Model X" }],
 }));
 
+vi.mock("../config/credential-proxy.js", () => ({
+  loadCredentialProxy: vi.fn().mockResolvedValue([]),
+}));
+
 const { resolveModel, resolveBaseUrl } = await import("./manager.js");
 
 describe("resolveBaseUrl", () => {

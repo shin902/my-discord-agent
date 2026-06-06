@@ -3,13 +3,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
+import { loadRawConfig } from "../config/config.js";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
-const CRON_JOBS_PATH = path.join(ROOT, "config/cron-jobs.json");
 const STATE_PATH = path.join(ROOT, "data/cron/state.json");
 
 // --- Schema ---
@@ -209,12 +209,10 @@ let _jobs: CronJob[] | null = null;
 
 async function loadJobs(): Promise<CronJob[]> {
   if (_jobs !== null) return _jobs;
-  if (!existsSync(CRON_JOBS_PATH)) {
-    _jobs = [];
-    return _jobs;
-  }
-  const text = await readFile(CRON_JOBS_PATH, "utf-8");
-  _jobs = CronJobsSchema.parse(JSON.parse(text));
+  // エラー時（ENOENT 含む）は _jobs をキャッシュしない。
+  // 次の tick で再試行するため、起動後に config.json を配置すれば動き始める。
+  const raw = await loadRawConfig();
+  _jobs = CronJobsSchema.parse(raw.cron ?? []);
   return _jobs;
 }
 
