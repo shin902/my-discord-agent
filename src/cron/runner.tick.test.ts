@@ -114,4 +114,14 @@ describe("tick() orchestration", () => {
     expect(mockAppendInbox).not.toHaveBeenCalled();
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
+
+  it("config.json が存在しない場合 tick は何も実行しない", async () => {
+    mockReadFile.mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+    startCron();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockAppendInbox).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
 });
