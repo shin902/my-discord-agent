@@ -40,9 +40,30 @@
       }
     },
     {
+      "provider": "opencode-go",
+      "envVars": ["OPENCODE_API_KEY"],
+      "baseUrl": "https://opencode.ai/zen/go/v1"
+    },
+    {
       "provider": "llama-cpp",
       "baseUrl": "http://localhost:8080/v1",
       "api": "openai-completions"
+    },
+    {
+      "provider": "llama-cpp-qwen3",
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "contextWindow": 65536,
+      "maxTokens": 4096,
+      "compat": { "thinkingFormat": "qwen-chat-template" }
+    },
+    {
+      "provider": "ollama-qwen3",
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "contextWindow": 65536,
+      "maxTokens": 4096,
+      "compat": { "thinkingFormat": "ollama" }
     },
     {
       "provider": "browserless",
@@ -66,6 +87,12 @@
       "prompt": "昨日のログを分析して日次レポートを作成してください",
       "channelId": "YOUR_CHANNEL_ID",
       "mode": "to-thread"
+    },
+    {
+      "id": "mail-check",
+      "schedule": "*/30 * * * *",
+      "enabled": true,
+      "handler": "jobs/mail.ts"
     }
   ]
 }
