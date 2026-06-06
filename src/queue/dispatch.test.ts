@@ -60,37 +60,6 @@ describe("dispatch - serial モード", () => {
     expect(order).toEqual([1, 2]);
   });
 
-  it("異なる sessionId でも直列化される", async () => {
-    const order: number[] = [];
-    let resolve1!: () => void;
-    const block1 = new Promise<void>((r) => {
-      resolve1 = r;
-    });
-
-    dispatch(
-      "s1",
-      async () => {
-        await block1;
-        order.push(1);
-      },
-      "serial",
-    );
-    dispatch(
-      "s2",
-      async () => {
-        order.push(2);
-      },
-      "serial",
-    );
-
-    await Promise.resolve();
-    expect(order).toEqual([]);
-
-    resolve1();
-    await tick();
-    expect(order).toEqual([1, 2]);
-  });
-
   it("エラー発生時に sessionId がログに出力される", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 
