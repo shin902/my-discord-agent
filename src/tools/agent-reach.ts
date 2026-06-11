@@ -522,7 +522,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
   name: "agent-reach",
   label: "Agent Reach to File",
   description:
-    "URLのサービスを自動検出してコンテンツをファイルに保存し、ワークスペース相対パスを返す。read ツールで内容を確認すること",
+    "youtube, github, reddit, x, rss, webページの情報をmarkdownにしてファイルに保存する。左のサービスのURLから情報を取得するときは必ず使うこと。",
   parameters,
   execute: async (_toolCallId, { url }) => {
     const parsed = new URL(url);
