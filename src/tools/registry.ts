@@ -17,6 +17,7 @@ import {
 } from "./fs.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import { tavilySearchTool } from "./tavily.js";
+import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
@@ -34,6 +35,8 @@ const TOOLS: Record<string, AgentTool> = {
   browserless_function: browserlessFunctionTool,
   browserless_content: browserlessContentTool,
   tavily_search: tavilySearchTool,
+  get_current_weather: getCurrentWeatherTool,
+  get_weather_forecast: getWeatherForecastTool,
 };
 
 export function resolveTools(toolNames: string[]): AgentTool[] {
