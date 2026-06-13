@@ -15,12 +15,9 @@ describe("loadDefaultModel", () => {
     ({ loadDefaultModel } = await import("./default-model.js"));
   });
 
-  it("defaultModel が未設定の場合はフォールバック値を返す", async () => {
+  it("defaultModel が未設定の場合はエラーになる", async () => {
     mockLoadRawConfig.mockResolvedValue({});
-    expect(await loadDefaultModel()).toEqual({
-      provider: "opencode-go",
-      modelId: "kimi-k2.6",
-    });
+    await expect(loadDefaultModel()).rejects.toThrow("defaultModel");
   });
 
   it("config.json の defaultModel を優先して返す", async () => {

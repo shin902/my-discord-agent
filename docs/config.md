@@ -30,7 +30,7 @@ groups/{name}/
 | キー | 必須 | 内容 |
 |---|---|---|
 | `credentials` | ✓ | AI プロバイダー・外部サービスの接続設定 |
-| `defaultModel` | — | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`）。省略時は `opencode-go` / `kimi-k2.6` |
+| `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `groups` | ✓ | チャンネル → グループのマッピング |
 | `cron` | — | 定期実行ジョブ定義（省略時は空配列） |
 
