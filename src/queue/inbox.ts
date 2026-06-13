@@ -17,6 +17,14 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Discord メッセージに添付されたファイルの参照情報
+export interface AttachmentRef {
+  url: string;
+  name: string;
+  contentType: string | null;
+  size: number;
+}
+
 // InboxMessage は JSONL の 1行 = 1レコードに対応する型
 export interface InboxMessage {
   id: string;
@@ -30,6 +38,7 @@ export interface InboxMessage {
   cronThread?: boolean; // cron thread モードのトリガー
   cronJobId?: string; // to-thread: スレッド名生成用（cron-${jobId}-${dateSuffix}）。to-channel: ツールコール通知抑制の判定用
   cronThreadId?: string; // スレッド作成後にセット。リトライ時の再作成を防ぐ
+  attachments?: AttachmentRef[]; // Discord メッセージに添付されたファイル
 }
 
 // process.cwd() は起動ディレクトリに依存するため、ファイルの場所を基準にパスを解決する
