@@ -1,22 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-
-function resolveTavilyBaseUrl(): string {
-  const credJson = process.env.CREDENTIAL_PROXY_JSON;
-  if (!credJson) throw new Error("CREDENTIAL_PROXY_JSON が設定されていません");
-  let creds: Array<{ provider: string; baseUrl: string }>;
-  try {
-    creds = JSON.parse(credJson);
-  } catch {
-    throw new Error("CREDENTIAL_PROXY_JSON が不正な JSON です");
-  }
-  const entry = creds.find((e) => e.provider === "tavily");
-  if (!entry)
-    throw new Error(
-      "tavily プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません",
-    );
-  return entry.baseUrl.replace(/\/$/, "");
-}
+import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const searchParams = Type.Object({
   query: Type.String({ description: "検索クエリ" }),
@@ -76,7 +60,7 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
       topic = "general",
     },
   ) => {
-    const baseUrl = resolveTavilyBaseUrl();
+    const baseUrl = resolveProxyBaseUrl("tavily");
     const res = await fetch(`${baseUrl}/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

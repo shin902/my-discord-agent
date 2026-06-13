@@ -1,23 +1,11 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const MAX_BODY_CHARS = 8000;
 
-function getGraphBaseUrl(): string {
-  const credJson = process.env.CREDENTIAL_PROXY_JSON;
-  if (!credJson) throw new Error("CREDENTIAL_PROXY_JSON が設定されていません");
-  const creds: Array<{ provider: string; baseUrl: string }> =
-    JSON.parse(credJson);
-  const entry = creds.find((e) => e.provider === "graph");
-  if (!entry)
-    throw new Error(
-      "graph プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません",
-    );
-  return entry.baseUrl.replace(/\/$/, "");
-}
-
 async function graphFetch(path: string): Promise<unknown> {
-  const baseUrl = getGraphBaseUrl();
+  const baseUrl = resolveProxyBaseUrl("graph");
   const res = await fetch(`${baseUrl}${path}`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -27,7 +15,7 @@ async function graphFetch(path: string): Promise<unknown> {
 }
 
 async function graphPatch(path: string, body: unknown): Promise<void> {
-  const baseUrl = getGraphBaseUrl();
+  const baseUrl = resolveProxyBaseUrl("graph");
   const res = await fetch(`${baseUrl}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
