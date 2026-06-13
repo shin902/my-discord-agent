@@ -349,6 +349,7 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
     vi.doMock("./google-auth.js", () => ({
       initGoogleAuth: vi.fn(),
       getGoogleAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
+      GoogleAuthRequiredError: class GoogleAuthRequiredError extends Error {},
     }));
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
