@@ -35,17 +35,12 @@ const searchParams = Type.Object({
   ),
   include_answer: Type.Optional(
     Type.Boolean({
-      description:
-        "AIによる要約回答を含めるか（デフォルト: true）",
+      description: "AIによる要約回答を含めるか（デフォルト: true）",
     }),
   ),
   topic: Type.Optional(
     Type.Union(
-      [
-        Type.Literal("general"),
-        Type.Literal("news"),
-        Type.Literal("finance"),
-      ],
+      [Type.Literal("general"), Type.Literal("news"), Type.Literal("finance")],
       {
         description: "検索トピック（デフォルト: general）",
       },
@@ -68,7 +63,8 @@ type TavilyResponse = {
 export const tavilySearchTool: AgentTool<typeof searchParams> = {
   name: "tavily_search",
   label: "Tavily Search",
-  description: "ウェブ検索を実行して結果を返す。最新の情報やファクトチェックに使う",
+  description:
+    "ウェブ検索を実行して結果を返す。最新の情報やファクトチェックに使う",
   parameters: searchParams,
   execute: async (
     _toolCallId,
