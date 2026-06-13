@@ -165,9 +165,7 @@ describe("processMessage - Discord イベント通知", () => {
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledOnce();
     });
-    expect(mockSend).not.toHaveBeenCalledWith(
-      expect.stringMatching(/^🔧/),
-    );
+    expect(mockSend).not.toHaveBeenCalledWith(expect.stringMatching(/^🔧/));
   });
 
   it("cronJobId が設定されていても error イベントは送信される", async () => {
