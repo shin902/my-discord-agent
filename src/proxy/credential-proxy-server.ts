@@ -6,7 +6,11 @@ import {
   type CredentialEntry,
   loadCredentialProxy,
 } from "../config/credential-proxy.js";
-import { getGoogleAccessToken, initGoogleAuth } from "./google-auth.js";
+import {
+  GoogleAuthRequiredError,
+  getGoogleAccessToken,
+  initGoogleAuth,
+} from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 
 let proxyPort: number | null = null;
@@ -189,14 +193,19 @@ export async function initCredentialProxyServer(): Promise<number> {
       console.log(
         `[credential-proxy] Google Auth initialized for provider: ${entry.provider}`,
       );
-      // 初回利用時のデバイスコードフロー（最大30分ブロック）を起動時に済ませておく。
-      // ここで行わないと、最初のカレンダー操作リクエストがそのままハングしてしまう。
+      // 初回利用時のデバイスコードフローを起動時にトリガーしておく。
+      // 認証未完了の場合 getGoogleAccessToken は GoogleAuthRequiredError を
+      // 即座に投げ、ポーリングはバックグラウンドで継続する（ここではブロックしない）。
       try {
         await getGoogleAccessToken(entry.provider);
       } catch (err) {
-        console.error(
-          `[credential-proxy] Google Auth トークン取得に失敗しました (provider: ${entry.provider}): ${err instanceof Error ? err.message : err}`,
-        );
+        if (err instanceof GoogleAuthRequiredError) {
+          console.log(`[credential-proxy] ${err.message}`);
+        } else {
+          console.error(
+            `[credential-proxy] Google Auth トークン取得に失敗しました (provider: ${entry.provider}): ${err instanceof Error ? err.message : err}`,
+          );
+        }
       }
     }
   }

@@ -583,6 +583,7 @@ describe("initCredentialProxyServer: Google Auth 初期化", () => {
     vi.doMock("./google-auth.js", () => ({
       initGoogleAuth: vi.fn(),
       getGoogleAccessToken,
+      GoogleAuthRequiredError: class GoogleAuthRequiredError extends Error {},
     }));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
