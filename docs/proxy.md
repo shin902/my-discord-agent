@@ -117,7 +117,7 @@ Google Cloud Console での OAuth クライアント作成手順（OAuth 同意�
 }
 ```
 
-- `provider` は自由な名前を指定可能。`group.json` の `model.provider` に同じ名前を設定する。
+- `provider` は自由な名前を指定可能。`config/config.json` の `groups[].model.provider` に同じ名前を設定する。
 - `api` はオプション。未指定時のデフォルトは `"openai-completions"`。他に `"openai-responses"` や `"anthropic-messages"` 等が指定可能。
 - `envVars` はオプション。省略または空配列の場合、secret 注入は行われず baseUrl の解決と allowHost の登録のみ行う。これは API Key が不要なローカルサーバーに便利。
 - カスタムプロバイダーの場合、モデルIDの検証は行われず、任意の文字列を `modelId` に指定できる。
