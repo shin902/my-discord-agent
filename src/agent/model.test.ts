@@ -25,6 +25,10 @@ describe("resolveModel", () => {
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(loadCredentialProxy).mockResolvedValue([]);
     vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
     vi.mocked(getModels).mockReturnValue([
       {
