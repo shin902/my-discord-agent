@@ -4,11 +4,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-ユーザーが完全に理解するまで実装を禁止します。
-実装前に、ユーザーの理解度を試す問題を質問ツールで必ず聞いてください
-
----
-
 ## コマンド
 
 ```bash
