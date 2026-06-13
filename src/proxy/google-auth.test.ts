@@ -181,4 +181,69 @@ describe("getGoogleAccessToken", () => {
     ).toHaveLength(1);
     vi.useRealTimers();
   });
+
+  it("デバイスコードフローが access_denied を返すと認証中フラグを解除し、次回呼び出しでデバイスコードを再取得する", async () => {
+    vi.doMock("node:fs/promises", () => ({
+      readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      chmod: vi.fn().mockResolvedValue(undefined),
+    }));
+    fetchMock
+      .mockResolvedValueOnce({
+        json: async () => ({
+          device_code: "device-code-1",
+          user_code: "ABCD-EFGH",
+          verification_url: "https://www.google.com/device",
+          expires_in: 1800,
+          interval: 0,
+        }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          error: "access_denied",
+          error_description: "User denied access",
+        }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          device_code: "device-code-2",
+          user_code: "IJKL-MNOP",
+          verification_url: "https://www.google.com/device",
+          expires_in: 0,
+          interval: 0,
+        }),
+      });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { initGoogleAuth, getGoogleAccessToken, GoogleAuthRequiredError } =
+      await import("./google-auth.js");
+    await initGoogleAuth("google-calendar", GOOGLE_CONFIG, CLIENT_SECRET);
+
+    const error1 = await getGoogleAccessToken("google-calendar").catch(
+      (e) => e,
+    );
+    expect(error1).toBeInstanceOf(GoogleAuthRequiredError);
+    expect((error1 as Error).message).toContain("ABCD-EFGH");
+
+    // バックグラウンドのポーリングが access_denied を処理するまで待つ
+    await vi.waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("access_denied"),
+      ),
+    );
+
+    // pendingAuth が解除されているので、新しいデバイスコードを再取得する
+    const error2 = await getGoogleAccessToken("google-calendar").catch(
+      (e) => e,
+    );
+    expect(error2).toBeInstanceOf(GoogleAuthRequiredError);
+    expect((error2 as Error).message).toContain("IJKL-MNOP");
+    expect(
+      fetchMock.mock.calls.filter(
+        (c) => c[0] === "https://oauth2.googleapis.com/device/code",
+      ),
+    ).toHaveLength(2);
+  });
 });
