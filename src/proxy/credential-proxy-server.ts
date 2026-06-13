@@ -189,6 +189,15 @@ export async function initCredentialProxyServer(): Promise<number> {
       console.log(
         `[credential-proxy] Google Auth initialized for provider: ${entry.provider}`,
       );
+      // 初回利用時のデバイスコードフロー（最大30分ブロック）を起動時に済ませておく。
+      // ここで行わないと、最初のカレンダー操作リクエストがそのままハングしてしまう。
+      try {
+        await getGoogleAccessToken(entry.provider);
+      } catch (err) {
+        console.error(
+          `[credential-proxy] Google Auth トークン取得に失敗しました (provider: ${entry.provider}): ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
   }
 

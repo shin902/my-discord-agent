@@ -558,4 +558,43 @@ describe("initCredentialProxyServer: Google Auth 初期化", () => {
       "test-secret",
     );
   });
+
+  it("起動時に getGoogleAccessToken を呼んでデバイスコードフローを済ませておく", async () => {
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
+    const getGoogleAccessToken = vi.fn().mockResolvedValue("token");
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth: vi.fn(),
+      getGoogleAccessToken,
+    }));
+
+    const { initCredentialProxyServer } = await import(
+      "./credential-proxy-server.js"
+    );
+    await initCredentialProxyServer();
+
+    expect(getGoogleAccessToken).toHaveBeenCalledWith("google-calendar");
+  });
+
+  it("getGoogleAccessToken が失敗してもサーバー起動は継続する", async () => {
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
+    const getGoogleAccessToken = vi
+      .fn()
+      .mockRejectedValue(new Error("device flow timeout"));
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth: vi.fn(),
+      getGoogleAccessToken,
+    }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { initCredentialProxyServer } = await import(
+      "./credential-proxy-server.js"
+    );
+    const port = await initCredentialProxyServer();
+
+    expect(port).toBe(12345);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("device flow timeout"),
+    );
+    errorSpy.mockRestore();
+  });
 });
