@@ -19,6 +19,9 @@
 | `browserless_search` | ウェブ検索を実行して結果（JSON）を返す |
 | `browserless_function` | Puppeteer コードをブラウザで実行する |
 | `tavily_search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
+| `tavily_extract` | Tavily Extract API で指定URLのページ本文を抽出する |
+| `tavily_crawl` | Tavily Crawl API でサイト内をクロールし各ページの本文を取得する |
+| `tavily_map` | Tavily Map API でサイト内のURL構造をマッピングする |
 
 **注意:** `webfetch` は削除済み。ウェブアクセスはすべて `agent-reach` または `bash` 経由で行う。
 

@@ -9,6 +9,17 @@ export const MsalConfigSchema = z.object({
 
 export type MsalConfig = z.infer<typeof MsalConfigSchema>;
 
+export const GoogleOAuthConfigSchema = z.object({
+  clientId: z.string(),
+  // クライアントシークレットそのものは config.json に書かず、
+  // ホスト側 process.env からこの名前で読み込む（graph の msal.clientId とは異なり
+  // Google の OAuth Device Flow は client_secret を必須とするため）
+  clientSecretEnvVar: z.string(),
+  scopes: z.array(z.string()),
+});
+
+export type GoogleOAuthConfig = z.infer<typeof GoogleOAuthConfigSchema>;
+
 export const CredentialEntrySchema = z.object({
   provider: z.string(),
   // pi-ai の KnownProvider 名と衝突する場合でも credential-proxy 経由の
@@ -22,6 +33,7 @@ export const CredentialEntrySchema = z.object({
     })
     .optional(),
   msal: MsalConfigSchema.optional(),
+  google: GoogleOAuthConfigSchema.optional(),
   baseUrl: z.string().url(),
   api: z
     .enum([

@@ -28,8 +28,6 @@ export function registerHandlers(): void {
   });
 
   client.on(Events.MessageCreate, async (message: Message) => {
-    if (message.author.bot) return;
-
     // スレッドの場合は親チャンネルIDで設定を検索する
     const lookupId =
       message.channel.isThread() && message.channel.parentId
@@ -38,6 +36,17 @@ export function registerHandlers(): void {
 
     const match = await findGroupByChannelId(lookupId);
     if (!match) return;
+
+    // bot/Webhookのメッセージは、許可リストに登録されたWebhook IDのみ処理する（feedcord等のRSS連携用）
+    if (message.author.bot) {
+      const allowedWebhookIds = match.channel.allowedWebhookIds ?? [];
+      if (
+        !message.webhookId ||
+        !allowedWebhookIds.includes(message.webhookId)
+      ) {
+        return;
+      }
+    }
 
     let sessionId: string;
     let inboxChannelId = message.channelId;

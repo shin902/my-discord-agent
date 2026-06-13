@@ -6,6 +6,7 @@ import {
   type CredentialEntry,
   loadCredentialProxy,
 } from "../config/credential-proxy.js";
+import { getGoogleAccessToken, initGoogleAuth } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 
 let proxyPort: number | null = null;
@@ -91,6 +92,21 @@ async function handleRequest(
     }
     delete headers.authorization;
     headers.authorization = `Bearer ${token}`;
+  } else if (entry.google) {
+    // Google OAuth トークン注入（Google Calendar API 等用）
+    let token: string;
+    try {
+      token = await getGoogleAccessToken(entry.provider);
+    } catch (err) {
+      console.error(
+        `[credential-proxy] google token 取得失敗: ${err instanceof Error ? err.message : err}`,
+      );
+      res.writeHead(502);
+      res.end("Google token acquisition failed");
+      return;
+    }
+    delete headers.authorization;
+    headers.authorization = `Bearer ${token}`;
   } else if (entry.envVars && entry.envVars.length > 0) {
     const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
@@ -160,6 +176,28 @@ export async function initCredentialProxyServer(): Promise<number> {
       console.log(
         `[credential-proxy] Graph Auth initialized for provider: ${entry.provider}`,
       );
+    }
+    if (entry.google) {
+      const clientSecret = process.env[entry.google.clientSecretEnvVar];
+      if (!clientSecret) {
+        console.warn(
+          `[credential-proxy] ${entry.google.clientSecretEnvVar} が未設定のため provider ${entry.provider} の Google Auth をスキップします`,
+        );
+        continue;
+      }
+      await initGoogleAuth(entry.provider, entry.google, clientSecret);
+      console.log(
+        `[credential-proxy] Google Auth initialized for provider: ${entry.provider}`,
+      );
+      // 初回利用時のデバイスコードフロー（最大30分ブロック）を起動時に済ませておく。
+      // ここで行わないと、最初のカレンダー操作リクエストがそのままハングしてしまう。
+      try {
+        await getGoogleAccessToken(entry.provider);
+      } catch (err) {
+        console.error(
+          `[credential-proxy] Google Auth トークン取得に失敗しました (provider: ${entry.provider}): ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
   }
 
