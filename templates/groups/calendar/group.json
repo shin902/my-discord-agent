@@ -1,3 +1,0 @@
-{
-  "tools": ["list_events", "read_event", "create_event", "update_event", "delete_event"]
-}
