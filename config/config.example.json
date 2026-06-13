@@ -22,6 +22,7 @@
     },
     {
       "provider": "groq",
+      "forceCustom": true,
       "envVars": ["GROQ_API_KEY"],
       "baseUrl": "https://api.groq.com/openai/v1"
     },
