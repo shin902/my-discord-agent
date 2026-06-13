@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
-import { loadDefaultModel } from "../config/default-model.js";
+import { resolveModelConfig } from "../config/default-model.js";
 import {
   type AgentConfig,
   findGroupByName,
@@ -180,14 +180,7 @@ export async function sendMessage(
   const groupsEntry = await findGroupByName(groupName);
   const groupConfig: AgentConfig = groupsEntry ?? {};
 
-  const defaultModel = await loadDefaultModel();
-  const resolvedModel = {
-    provider: groupConfig.model?.provider ?? defaultModel.provider,
-    modelId: groupConfig.model?.modelId ?? defaultModel.modelId,
-    ...(groupConfig.model?.thinkingLevel !== undefined
-      ? { thinkingLevel: groupConfig.model.thinkingLevel }
-      : {}),
-  };
+  const resolvedModel = await resolveModelConfig(groupConfig.model);
 
   try {
     await validateModel(resolvedModel.provider, resolvedModel.modelId);
