@@ -4,9 +4,10 @@ vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
   stat: vi.fn(),
   cp: vi.fn(),
+  mkdir: vi.fn(),
 }));
 
-const { readFile, stat, cp } = await import("node:fs/promises");
+const { readFile, stat, cp, mkdir } = await import("node:fs/promises");
 const {
   loadGroupSystemPrompt,
   initGroupPrompts,
@@ -20,11 +21,15 @@ const mockReadFile = vi.mocked(readFile) as unknown as Mock<
   () => Promise<string>
 >;
 const mockStat = vi.mocked(stat) as unknown as Mock<
-  () => Promise<{ isDirectory: () => boolean }>
+  () => Promise<{ isDirectory: () => boolean; isFile: () => boolean }>
 >;
 const mockCp = vi.mocked(cp);
+const mockMkdir = vi.mocked(mkdir);
 
-const statDir = () => Promise.resolve({ isDirectory: () => true });
+const statDir = () =>
+  Promise.resolve({ isDirectory: () => true, isFile: () => false });
+const statFile = () =>
+  Promise.resolve({ isDirectory: () => false, isFile: () => true });
 const statMissing = () =>
   Promise.reject(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
 
@@ -32,7 +37,9 @@ beforeEach(() => {
   mockReadFile.mockReset();
   mockStat.mockReset();
   mockCp.mockReset();
+  mockMkdir.mockReset();
   mockCp.mockResolvedValue(undefined);
+  mockMkdir.mockResolvedValue(undefined);
   mockStat.mockImplementation(statMissing);
 });
 
@@ -115,22 +122,25 @@ describe("ensureGroupDirs", () => {
   });
 
   it("グループフォルダが既に存在する場合は cp を呼ばない", async () => {
-    mockStat.mockImplementation(statDir); // template も group も存在
+    mockStat
+      .mockImplementationOnce(statFile) // config/prompts/AGENTS.md が存在
+      .mockImplementationOnce(statDir); // group dir が存在
     await ensureGroupDirs(["existing-group"]);
     expect(mockCp).not.toHaveBeenCalled();
   });
 
   it("グループフォルダが存在せずテンプレートがある場合は cp を呼ぶ", async () => {
     mockStat
-      .mockImplementationOnce(statDir) // template dir exists
+      .mockImplementationOnce(statFile) // config/prompts/AGENTS.md が存在
       .mockImplementationOnce(statMissing); // group dir missing
     await ensureGroupDirs(["new-group"]);
+    expect(mockMkdir).toHaveBeenCalledOnce();
     expect(mockCp).toHaveBeenCalledOnce();
   });
 
   it("テンプレートが存在しない場合は cp を呼ばない", async () => {
     mockStat
-      .mockImplementationOnce(statMissing) // template dir missing
+      .mockImplementationOnce(statMissing) // config/prompts/AGENTS.md missing
       .mockImplementationOnce(statMissing); // group dir missing
     await ensureGroupDirs(["new-group"]);
     expect(mockCp).not.toHaveBeenCalled();
@@ -138,7 +148,7 @@ describe("ensureGroupDirs", () => {
 
   it("cp が失敗してもエラーをスローせず続行する", async () => {
     mockStat
-      .mockImplementationOnce(statDir) // template dir exists
+      .mockImplementationOnce(statFile) // config/prompts/AGENTS.md が存在
       .mockImplementationOnce(statMissing); // group dir missing
     mockCp.mockRejectedValueOnce(new Error("EACCES: permission denied"));
     await expect(ensureGroupDirs(["broken-group"])).resolves.toBeUndefined();
