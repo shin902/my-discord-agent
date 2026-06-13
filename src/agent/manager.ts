@@ -36,7 +36,6 @@ let storedProxyPort: number | null = null;
 
 export async function initManager(proxyPort: number): Promise<void> {
   storedProxyPort = proxyPort;
-  await mkdir(path.join(ROOT, "data/sessions"), { recursive: true });
 }
 
 type CredentialEntry = Awaited<ReturnType<typeof loadCredentialProxy>>[number];
