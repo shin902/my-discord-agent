@@ -3,8 +3,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
-import { loadGroupConfig } from "../config/group-config.js";
-import { findGroupByName, type MountConfig } from "../config/groups.js";
+import {
+  type AgentConfig,
+  findGroupByName,
+  type MountConfig,
+} from "../config/groups.js";
 import type { AttachmentRef } from "../queue/inbox.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
@@ -185,7 +188,8 @@ export async function sendMessage(
   onDiscordEvent?: (event: DiscordEvent) => void,
   attachments?: AttachmentRef[],
 ): Promise<string> {
-  const groupConfig = await loadGroupConfig(groupName);
+  const groupsEntry = await findGroupByName(groupName);
+  const groupConfig: AgentConfig = groupsEntry ?? {};
 
   try {
     await validateModel(
@@ -204,7 +208,6 @@ export async function sendMessage(
 
   let extraMountArgs: string[];
   try {
-    const groupsEntry = await findGroupByName(groupName);
     extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
   } catch (err) {
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;

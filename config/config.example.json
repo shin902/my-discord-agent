@@ -85,6 +85,13 @@
   "groups": [
     {
       "name": "default",
+      "model": {
+        "provider": "opencode-go",
+        "modelId": "kimi-k2.6"
+      },
+      "tools": ["tavily_search"],
+      "autoReply": false,
+      "toolLogArgs": true,
       "channels": [{ "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }],
       "mounts": [
         {

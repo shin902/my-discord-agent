@@ -8,7 +8,7 @@
 
 ### `provider`
 
-プロバイダーの識別子。`group.json` の `model.provider` に指定する値と一致させます。
+プロバイダーの識別子。`config/config.json` の `groups[].model.provider` に指定する値と一致させます。
 
 - `pi-ai` の **KnownProvider**（`openai`, `anthropic`, `deepseek` 等）を指定する場合：組み込みモデル一覧が使用され、モデルIDの厳密なバリデーションが行われます。
 - それ以外の任意の文字列：カスタムプロバイダーとして扱われ、モデルIDの検証はスキップされます（任意の文字列を `modelId` に指定可能）。
@@ -176,9 +176,9 @@ Browserless のように query parameter で token を要求する API では `q
 
 > **背景**: llama.cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `chat_template_kwargs.enable_thinking` が含まれない場合は自動で thinking を有効にする構成がある。`thinkingFormat` を明示しないと thinking トークンが出力予算を消費してタイムアウトしやすい。
 
-## thinkingLevel の制御（group.json 側）
+## thinkingLevel の制御（config/config.json の groups[] 側）
 
-`compat.thinkingFormat` はプロバイダーが thinking をどう受け付けるかを定義する。**thinking を実際に ON にするかどうか** はグループごとの設定（`groups/{name}/group.json`）で行う。
+`compat.thinkingFormat` はプロバイダーが thinking をどう受け付けるかを定義する。**thinking を実際に ON にするかどうか** はグループごとの設定（`config/config.json` の `groups[].model.thinkingLevel`）で行う。
 
 ```json
 {
@@ -225,7 +225,7 @@ Browserless のように query parameter で token を要求する API では `q
 
 ### カスタムプロバイダー（ローカル llama.cpp）
 
-> **プロバイダー名の使い分け**: `provider` の値は任意の文字列を指定できる。`"llama-cpp"` は単なる識別子で、`group.json` の `model.provider` と一致させれば何でもよい。thinking 制御が不要なモデル用と Qwen3 系モデル用を別エントリとして分けておくと管理しやすい（例: `"llama-cpp"` と `"llama-cpp-qwen3"`）。
+> **プロバイダー名の使い分け**: `provider` の値は任意の文字列を指定できる。`"llama-cpp"` は単なる識別子で、`config/config.json` の `groups[].model.provider` と一致させれば何でもよい。thinking 制御が不要なモデル用と Qwen3 系モデル用を別エントリとして分けておくと管理しやすい（例: `"llama-cpp"` と `"llama-cpp-qwen3"`）。
 
 API Key 不要、最小構成:
 

@@ -8,10 +8,7 @@ import {
   resolveModel,
 } from "../../agent/model.js";
 import { appendMessage } from "../../agent/session.js";
-import {
-  type GroupJsonConfig,
-  loadGroupConfig,
-} from "../../config/group-config.js";
+import { findGroupByName, type GroupConfig } from "../../config/groups.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
@@ -119,11 +116,11 @@ async function generateSummary(
 ): Promise<{ summary: string; agentMessage: AgentMessage | null }> {
   const { groupName } = ctx;
   const groupConfig = await (groupName
-    ? loadGroupConfig(groupName)
-    : Promise.resolve({} as GroupJsonConfig));
+    ? findGroupByName(groupName)
+    : Promise.resolve(undefined as GroupConfig | undefined));
 
-  const providerName = groupConfig.model?.provider ?? DEFAULT_PROVIDER;
-  const modelId = groupConfig.model?.modelId ?? DEFAULT_MODEL_ID;
+  const providerName = groupConfig?.model?.provider ?? DEFAULT_PROVIDER;
+  const modelId = groupConfig?.model?.modelId ?? DEFAULT_MODEL_ID;
   const model = await resolveModel(providerName, modelId);
 
   const port = getProxyPort();
@@ -139,7 +136,7 @@ async function generateSummary(
       model: proxyModel,
       messages: [],
       tools: [],
-      thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
+      thinkingLevel: groupConfig?.model?.thinkingLevel ?? "off",
     },
     getApiKey: () => Promise.resolve("proxy"),
   });
@@ -175,7 +172,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     return;
   }
 
-  const groupConfig = await loadGroupConfig(ctx.groupName);
+  const groupConfig = await findGroupByName(ctx.groupName);
   const providerName = groupConfig?.model?.provider ?? DEFAULT_PROVIDER;
   const modelId = groupConfig?.model?.modelId ?? DEFAULT_MODEL_ID;
   try {

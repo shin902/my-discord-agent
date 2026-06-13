@@ -11,11 +11,10 @@ config/
   config.example.json  # テンプレート
 
 groups/{name}/
-  group.json           # グループ固有の設定（モデル・ツール・autoReply 等）
   AGENTS.md            # グループのシステムプロンプト
 ```
 
-`groups/{name}/group.json` はグループの「部屋」（AGENTS.md と同居）なので統合対象外。
+グループのモデル・ツール・autoReply 等の設定は `config/config.json` の `groups` エントリに含まれる（`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が変更できる設定値を置かないようにしている）。
 
 ## config/config.json の構造
 
@@ -58,18 +57,27 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ## groups
 
-チャンネル ID とグループ名・セッションモードのマッピング。
+チャンネル ID とグループ名・セッションモードのマッピングに加えて、グループごとのエージェント設定（モデル・ツール・autoReply 等）。
 
 ```json
 "groups": [
   {
     "name": "chat",
+    "model": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
+    "tools": ["tavily_search"],
+    "autoReply": false,
+    "toolLogArgs": true,
     "channels": [
       { "channelId": "111", "sessionMode": "shared" }
     ]
   },
   {
     "name": "thread",
+    "model": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
+    "tools": ["tavily_search", "agent-reach", "bash", "read", "write", "edit"],
+    "skills": ["session-logs"],
+    "autoReply": true,
+    "toolLogArgs": true,
     "channels": [
       { "channelId": "222", "sessionMode": "thread" },
       { "channelId": "333", "sessionMode": "auto-thread" }
@@ -78,8 +86,18 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 ]
 ```
 
-`name` は `groups/{name}/` ディレクトリ名と対応する。
-`sessionMode` の詳細は `CLAUDE.md` を参照。
+| キー | 必須 | 内容 |
+|---|---|---|
+| `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
+| `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
+| `model` | — | `provider`/`modelId`/`thinkingLevel`。省略時は `DEFAULT_PROVIDER`/`DEFAULT_MODEL_ID` |
+| `tools` | — | エージェントに渡す MCP ツール名の配列 |
+| `autoReply` | — | Discord メッセージへの返信時に元メッセージへの reply 形式にするか |
+| `toolLogArgs` | — | ツール実行ログに引数を含めるか |
+| `skills` | — | `groups/{name}/SKILLS/` にロードするスキル名の配列 |
+| `mounts` | — | コンテナへの追加マウント設定 |
+
+`sessionMode` の詳細は `CLAUDE.md` を参照。エージェント設定（`model`/`tools`/`autoReply`/`toolLogArgs`/`skills`）はサンドボックスコンテナにマウントされない `config/config.json` 側で管理しており、エージェント自身が自分の設定を書き換えることはできない。
 
 ## cron
 
@@ -121,6 +139,13 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 **例外（ENOENT 時の自動回復）**: 起動時に `config.json` が存在しない場合、`loadRawConfig()` はエラーをスローして `_raw` をキャッシュしないため、後から `config.json` を配置すれば次の tick（最大1分）で cron が動き始める。ただしこれは `config.json` 自体が存在しない場合のみ。
 
 ## 変更履歴
+
+### groups/{name}/group.json の統合（#93）
+
+旧: `groups/{name}/group.json` にモデル・ツール・autoReply・toolLogArgs・skills を設定  
+新: `config/config.json` の `groups[].model` / `groups[].tools` / `groups[].autoReply` / `groups[].toolLogArgs` / `groups[].skills` に統合
+
+**理由**: `groups/{name}/` はサンドボックスコンテナに `/workspace` として書き込み可能でマウントされるため、`group.json` をそこに置くとエージェント自身がモデルやツールの設定を書き換えられてしまう。コンテナにマウントされない `config/config.json` 側に移すことでこれを防ぐ。
 
 ### config ファイルの統合（#76）
 

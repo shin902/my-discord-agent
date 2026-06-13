@@ -1,6 +1,6 @@
 import { ChannelType } from "discord.js";
 import { type DiscordEvent, sendMessage } from "../agent/manager.js";
-import { loadGroupConfig } from "../config/group-config.js";
+import { findGroupByName } from "../config/groups.js";
 import {
   type DispatchMode,
   loadDispatchMode,
@@ -233,9 +233,9 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
   let response: string;
 
   // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
-  const groupConfig = await loadGroupConfig(msg.groupName).catch((err) => {
+  const groupConfig = await findGroupByName(msg.groupName).catch((err) => {
     console.error("[poller] グループ設定の読み込みエラー:", err);
-    return null;
+    return undefined;
   });
   const replyMessageId =
     groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;

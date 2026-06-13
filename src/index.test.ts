@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   registerHandlers: vi.fn(),
   startPoller: vi.fn(),
   loadGroups: vi.fn(),
-  initGroupConfigs: vi.fn(),
+  initGroupPrompts: vi.fn(),
   initManager: vi.fn(),
   validateModel: vi.fn(),
 }));
@@ -22,7 +22,7 @@ vi.mock("./queue/poller.js", () => ({
 vi.mock("./config/groups.js", () => ({ loadGroups: mocks.loadGroups }));
 vi.mock("./config/group-config.js", () => ({
   ensureGroupDirs: vi.fn().mockResolvedValue(undefined),
-  initGroupConfigs: mocks.initGroupConfigs,
+  initGroupPrompts: mocks.initGroupPrompts,
 }));
 vi.mock("./agent/manager.js", () => ({
   initManager: mocks.initManager,
@@ -49,7 +49,7 @@ describe("index: 起動時バリデーション", () => {
     process.env.DISCORD_BOT_TOKEN = "test-token";
     mocks.loadGroups.mockResolvedValue([]);
     mocks.initManager.mockResolvedValue(undefined);
-    mocks.initGroupConfigs.mockResolvedValue(new Map());
+    mocks.initGroupPrompts.mockResolvedValue(undefined);
     // 実際に終了させず、呼び出し後の継続を防ぐためにスロー
     mockExit = vi.fn((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -74,12 +74,13 @@ describe("index: 起動時バリデーション", () => {
   });
 
   it("不明なプロバイダーは [startup] ログを出して process.exit(1) する", async () => {
-    mocks.loadGroups.mockResolvedValue([{ name: "bad-group", channels: [] }]);
-    mocks.initGroupConfigs.mockResolvedValue(
-      new Map([
-        ["bad-group", { model: { provider: "unknown", modelId: "x" } }],
-      ]),
-    );
+    mocks.loadGroups.mockResolvedValue([
+      {
+        name: "bad-group",
+        channels: [],
+        model: { provider: "unknown", modelId: "x" },
+      },
+    ]);
     mocks.validateModel.mockImplementation(() => {
       throw new Error("不明なプロバイダ: unknown");
     });
@@ -90,15 +91,13 @@ describe("index: 起動時バリデーション", () => {
   });
 
   it("有効な設定では registerHandlers・startPoller・login が呼ばれる", async () => {
-    mocks.loadGroups.mockResolvedValue([{ name: "ok-group", channels: [] }]);
-    mocks.initGroupConfigs.mockResolvedValue(
-      new Map([
-        [
-          "ok-group",
-          { model: { provider: "opencode-go", modelId: "kimi-k2.6" } },
-        ],
-      ]),
-    );
+    mocks.loadGroups.mockResolvedValue([
+      {
+        name: "ok-group",
+        channels: [],
+        model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+      },
+    ]);
 
     await import("./index.js");
 

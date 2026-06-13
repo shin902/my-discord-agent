@@ -1,33 +1,7 @@
 import { cp, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { z } from "zod";
-
-const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-] as const satisfies readonly [ModelThinkingLevel, ...ModelThinkingLevel[]];
-
-const ModelConfigSchema = z.object({
-  provider: z.string(),
-  modelId: z.string(),
-  thinkingLevel: z.enum(THINKING_LEVELS).optional(),
-});
-
-export const GroupJsonSchema = z.object({
-  model: ModelConfigSchema.optional(),
-  tools: z.array(z.string()).optional(),
-  autoReply: z.boolean().optional(),
-  toolLogArgs: z.boolean().optional(),
-  skills: z.array(z.string()).optional(),
-});
-
-export type GroupJsonConfig = z.infer<typeof GroupJsonSchema>;
+import type { GroupConfig } from "./groups.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GROUPS_DIR = path.join(__dirname, "../../groups");
@@ -68,7 +42,7 @@ export async function ensureGroupDirs(groupNames: string[]): Promise<void> {
   );
 }
 
-/** group.json の skills リストに対して、未コピーのスキルを templates/SKILLS/ からコピーする */
+/** skills リストに対して、未コピーのスキルを templates/SKILLS/ からコピーする */
 export async function ensureGroupSkills(
   groupName: string,
   skills: string[],
@@ -101,35 +75,7 @@ export async function ensureGroupSkills(
   );
 }
 
-const _configCache = new Map<string, GroupJsonConfig>();
 const _promptCache = new Map<string, string | null>();
-
-async function _loadGroupConfigFromFile(
-  groupName: string,
-): Promise<GroupJsonConfig> {
-  if (!/^[a-zA-Z0-9_-]+$/.test(groupName))
-    throw new Error(`不正なグループ名: ${groupName}`);
-  const configPath = path.join(GROUPS_DIR, groupName, "group.json");
-  let text: string;
-  try {
-    text = await readFile(configPath, "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw err;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error(`グループ設定の JSON が不正です (${groupName})`);
-  }
-  const result = GroupJsonSchema.safeParse(parsed);
-  if (!result.success)
-    throw new Error(
-      `グループ設定が不正です (${groupName}): ${result.error.message}`,
-    );
-  return result.data;
-}
 
 async function _loadGroupSystemPromptFromFile(
   groupName: string,
@@ -145,30 +91,17 @@ async function _loadGroupSystemPromptFromFile(
   }
 }
 
-/** 起動時に全グループの設定を一括読み込みしてキャッシュし、config の Map を返す */
-export async function initGroupConfigs(
-  groupNames: string[],
-): Promise<Map<string, GroupJsonConfig>> {
+/** 起動時に全グループのシステムプロンプトを一括読み込みしてキャッシュし、skills をコピーする */
+export async function initGroupPrompts(groups: GroupConfig[]): Promise<void> {
   await Promise.all(
-    groupNames.map(async (name) => {
-      const [config, prompt] = await Promise.all([
-        _loadGroupConfigFromFile(name),
-        _loadGroupSystemPromptFromFile(name),
+    groups.map(async (group) => {
+      const [, prompt] = await Promise.all([
+        ensureGroupSkills(group.name, group.skills ?? []),
+        _loadGroupSystemPromptFromFile(group.name),
       ]);
-      await ensureGroupSkills(name, config.skills ?? []);
-      _configCache.set(name, config);
-      _promptCache.set(name, prompt);
+      _promptCache.set(group.name, prompt);
     }),
   );
-  return new Map(_configCache);
-}
-
-export async function loadGroupConfig(
-  groupName: string,
-): Promise<GroupJsonConfig> {
-  const cached = _configCache.get(groupName);
-  if (cached !== undefined) return cached;
-  return _loadGroupConfigFromFile(groupName);
 }
 
 export async function loadGroupSystemPrompt(

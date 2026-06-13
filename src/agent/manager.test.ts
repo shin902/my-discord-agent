@@ -112,9 +112,6 @@ describe("sendMessage: Docker 起動構成", () => {
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
     vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi.fn().mockResolvedValue(undefined),
     }));
@@ -227,9 +224,6 @@ describe("sendMessage: 添付ファイル", () => {
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
     vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi.fn().mockResolvedValue(undefined),
     }));
@@ -333,9 +327,6 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
     vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi
         .fn()
@@ -417,9 +408,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue(creds),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
     }));
     vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi.fn().mockResolvedValue(undefined),
@@ -606,11 +594,12 @@ describe("sendMessage: 設定バリデーション", () => {
   });
 
   it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({ tools: ["invalid"] }),
-    }));
     vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi.fn().mockResolvedValue(undefined),
+      findGroupByName: vi.fn().mockResolvedValue({
+        name: "test-group",
+        channels: [],
+        tools: ["invalid"],
+      }),
     }));
 
     const { sendMessage, initManager } = await import("./manager.js");
@@ -621,13 +610,12 @@ describe("sendMessage: 設定バリデーション", () => {
   });
 
   it("不正なプロバイダを持つグループ設定は設定エラーを返す", async () => {
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi
-        .fn()
-        .mockResolvedValue({ model: { provider: "unknown", modelId: "x" } }),
-    }));
     vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi.fn().mockResolvedValue(undefined),
+      findGroupByName: vi.fn().mockResolvedValue({
+        name: "test-group",
+        channels: [],
+        model: { provider: "unknown", modelId: "x" },
+      }),
     }));
 
     const { sendMessage, initManager } = await import("./manager.js");
@@ -638,9 +626,6 @@ describe("sendMessage: 設定バリデーション", () => {
   });
 
   it("mounts.container が /workspace と重複する場合は設定エラーを返す", async () => {
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
-    }));
     vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi.fn().mockResolvedValue({
         name: "test-group",
@@ -667,9 +652,6 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
-      loadGroupConfig: vi.fn().mockResolvedValue({}),
     }));
     vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi.fn().mockResolvedValue(undefined),

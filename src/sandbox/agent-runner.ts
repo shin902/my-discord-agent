@@ -17,10 +17,7 @@ import {
 } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
-import {
-  type GroupJsonConfig,
-  GroupJsonSchema,
-} from "../config/group-config.js";
+import { type AgentConfig, AgentConfigSchema } from "../config/groups.js";
 import { loadSkills } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
@@ -107,7 +104,7 @@ export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
-  groupConfig: GroupJsonConfig,
+  groupConfig: AgentConfig,
 ): Promise<string> {
   const [rawMessages, systemPrompt, skills, memory] = await Promise.all([
     loadMessages(groupName, sessionId),
@@ -203,7 +200,7 @@ const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
   content: z.string(),
-  groupConfig: GroupJsonSchema,
+  groupConfig: AgentConfigSchema,
 });
 
 // CLIエントリポイント（import時は実行しない）

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InboxMessage } from "./inbox.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
-vi.mock("../config/group-config.js", () => ({ loadGroupConfig: vi.fn() }));
+vi.mock("../config/groups.js", () => ({ findGroupByName: vi.fn() }));
 vi.mock("../discord/client.js", () => ({
   client: {
     channels: {
@@ -16,7 +16,7 @@ vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
 vi.mock("./inbox.js", () => ({ prependInbox: vi.fn(), shiftInbox: vi.fn() }));
 
 const { sendMessage } = await import("../agent/manager.js");
-const { loadGroupConfig } = await import("../config/group-config.js");
+const { findGroupByName } = await import("../config/groups.js");
 const { client } = await import("../discord/client.js");
 const { appendDeadLetter } = await import("./dead-letter.js");
 const { prependInbox } = await import("./inbox.js");
@@ -40,7 +40,7 @@ describe("processMessage - autoReply", () => {
   const mockSend = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
-    vi.mocked(loadGroupConfig).mockReset();
+    vi.mocked(findGroupByName).mockReset();
     vi.mocked(sendMessage).mockResolvedValue("AI response");
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => true,
@@ -51,7 +51,11 @@ describe("processMessage - autoReply", () => {
   });
 
   it("autoReply: true かつ messageId あり → reply 形式で送信", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: true,
+    });
 
     await processMessage(makeMsg({ messageId: "msg-original" }));
 
@@ -64,7 +68,11 @@ describe("processMessage - autoReply", () => {
   });
 
   it("autoReply: true かつ messageId なし → 通常送信にフォールバック", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: true,
+    });
 
     await processMessage(makeMsg({ messageId: undefined }));
 
@@ -73,7 +81,11 @@ describe("processMessage - autoReply", () => {
   });
 
   it("autoReply: false → 通常送信", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: false });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
 
     await processMessage(makeMsg());
 
@@ -82,7 +94,11 @@ describe("processMessage - autoReply", () => {
   });
 
   it("attachments を sendMessage に渡す", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: false });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
     const attachments = [
       {
         url: "https://cdn.discordapp.com/attachments/x/y/photo.png",
@@ -104,7 +120,11 @@ describe("processMessage - autoReply", () => {
   });
 
   it("複数チャンク: 先頭のみ reply 形式、残りは通常送信", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: true,
+    });
     vi.mocked(sendMessage).mockResolvedValue("A".repeat(2001));
 
     await processMessage(makeMsg());
@@ -123,7 +143,11 @@ describe("processMessage - Discord イベント通知", () => {
   const mockSend = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: false });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => true,
       isTextBased: () => false,
@@ -133,7 +157,11 @@ describe("processMessage - Discord イベント通知", () => {
   });
 
   it("tool_start イベント（args あり）で 🔧 ツール名 + 引数が送信される", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: true,
+    });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, onDiscordEvent) => {
         onDiscordEvent?.({
@@ -223,7 +251,11 @@ describe("processMessage - Discord イベント通知", () => {
   });
 
   it("autoReply: true のとき error イベントは元メッセージに reply 形式で送信される", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: true,
+    });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, onDiscordEvent) => {
         onDiscordEvent?.({ type: "error", message: "Context window exceeded" });
@@ -243,7 +275,11 @@ describe("processMessage - Discord イベント通知", () => {
   });
 
   it("autoReply: false のとき error イベントは通常送信される", async () => {
-    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: false });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, onDiscordEvent) => {
         onDiscordEvent?.({ type: "error", message: "oops" });

@@ -19,7 +19,6 @@ data/
 groups/
   <folder>/
     AGENTS.md           # グループ固有の指示・メモリ
-    group.json          # モデル・ツール・autoReply・スキル設定
 ```
 
 ## `config/config.json`

@@ -1,5 +1,21 @@
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { loadRawConfig } from "./config.js";
+
+const THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly [ModelThinkingLevel, ...ModelThinkingLevel[]];
+
+const ModelConfigSchema = z.object({
+  provider: z.string(),
+  modelId: z.string(),
+  thinkingLevel: z.enum(THINKING_LEVELS).optional(),
+});
 
 const ChannelConfigSchema = z.object({
   channelId: z.string(),
@@ -16,7 +32,17 @@ const MountConfigSchema = z.object({
   readOnly: z.boolean().optional(),
 });
 
-const GroupConfigSchema = z.object({
+// エージェントの挙動を決める設定。サンドボックスコンテナにそのまま渡される
+// （エージェント自身が書き換えられない config/config.json 側で管理する）
+export const AgentConfigSchema = z.object({
+  model: ModelConfigSchema.optional(),
+  tools: z.array(z.string()).optional(),
+  autoReply: z.boolean().optional(),
+  toolLogArgs: z.boolean().optional(),
+  skills: z.array(z.string()).optional(),
+});
+
+const GroupConfigSchema = AgentConfigSchema.extend({
   name: z.string(),
   channels: z.array(ChannelConfigSchema),
   mounts: z.array(MountConfigSchema).optional(),
@@ -26,6 +52,7 @@ const GroupsConfigSchema = z.array(GroupConfigSchema);
 
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 export type MountConfig = z.infer<typeof MountConfigSchema>;
+export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 
 let _groups: GroupConfig[] | null = null;
