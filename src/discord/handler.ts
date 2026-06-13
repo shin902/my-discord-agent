@@ -110,6 +110,16 @@ export function registerHandlers(): void {
       return;
     }
 
+    const attachments =
+      message.attachments.size > 0
+        ? [...message.attachments.values()].map((a) => ({
+            url: a.url,
+            name: a.name,
+            contentType: a.contentType,
+            size: a.size,
+          }))
+        : undefined;
+
     console.log(
       `[handler] inbox に積みます: ${inboxChannelId} "${message.content}"`,
     );
@@ -120,6 +130,7 @@ export function registerHandlers(): void {
       messageId: replyMessageId,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
+      attachments,
     }).catch(async (err) => {
       console.error("[handler] appendInbox 失敗:", err);
       await message.reply(

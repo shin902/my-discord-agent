@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { loadGroupConfig } from "../config/group-config.js";
 import { findGroupByName, type MountConfig } from "../config/groups.js";
+import type { AttachmentRef } from "../queue/inbox.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
@@ -114,11 +115,75 @@ function buildExtraMountArgs(mounts: MountConfig[]): string[] {
   return args;
 }
 
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
+
+interface SavedAttachment {
+  relPath: string;
+  name: string;
+  contentType: string | null;
+  size: number;
+}
+
+// Discord の添付ファイル名から、コンテナにマウントしても安全なファイル名を作る
+function sanitizeAttachmentName(name: string, index: number): string {
+  const base = path
+    .basename(name)
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(-100);
+  return `${index}-${base || "file"}`;
+}
+
+/**
+ * 添付ファイルを data/attachments/{groupName}/{sessionId}/ にダウンロードする。
+ * サイズ超過・件数超過・ダウンロード失敗のファイルはスキップする。
+ */
+async function downloadAttachments(
+  groupName: string,
+  sessionId: string,
+  attachments: AttachmentRef[],
+): Promise<SavedAttachment[]> {
+  const dir = path.join(ROOT, "data/attachments", groupName, sessionId);
+  await mkdir(dir, { recursive: true });
+
+  const saved: SavedAttachment[] = [];
+  for (const [index, att] of attachments.slice(0, MAX_ATTACHMENTS).entries()) {
+    if (att.size > MAX_ATTACHMENT_BYTES) {
+      console.warn(
+        `[manager] 添付ファイルが大きすぎるためスキップ: ${att.name} (${att.size} bytes)`,
+      );
+      continue;
+    }
+    try {
+      const res = await fetch(att.url);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      const safeName = sanitizeAttachmentName(att.name, index);
+      await writeFile(path.join(dir, safeName), buf);
+      saved.push({
+        relPath: `attachments/${safeName}`,
+        name: att.name,
+        contentType: att.contentType,
+        size: buf.length,
+      });
+    } catch (err) {
+      console.error(
+        `[manager] 添付ファイルのダウンロード失敗: ${att.name}`,
+        err,
+      );
+    }
+  }
+  return saved;
+}
+
 export async function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
   onDiscordEvent?: (event: DiscordEvent) => void,
+  attachments?: AttachmentRef[],
 ): Promise<string> {
   const groupConfig = await loadGroupConfig(groupName);
 
@@ -160,10 +225,27 @@ export async function sendMessage(
   const creds = await loadCredentialProxy();
   const credentialJson = buildSanitizedCredentialJson(creds, proxyPort);
 
+  let attachmentMountArgs: string[] = [];
+  let promptContent = content;
+  if (attachments && attachments.length > 0) {
+    const saved = await downloadAttachments(groupName, sessionId, attachments);
+    if (saved.length > 0) {
+      attachmentMountArgs = [
+        "-v",
+        `${path.join(ROOT, "data/attachments", groupName, sessionId)}:/workspace/attachments:ro`,
+      ];
+      const lines = saved.map(
+        (f) =>
+          `- ${f.relPath} (${f.contentType ?? "unknown"}, ${f.size} bytes)`,
+      );
+      promptContent = `${content}\n\n[添付ファイル]\n${lines.join("\n")}`;
+    }
+  }
+
   const payload = JSON.stringify({
     groupName,
     sessionId,
-    content,
+    content: promptContent,
     groupConfig,
   });
 
@@ -179,6 +261,7 @@ export async function sendMessage(
     `${path.join(ROOT, "data/sessions", groupName)}:/sessions/${groupName}`,
     "-v",
     `${path.join(ROOT, "groups", groupName)}:/workspace`,
+    ...attachmentMountArgs,
     ...extraMountArgs,
     "-e",
     "SESSIONS_DIR=/sessions",

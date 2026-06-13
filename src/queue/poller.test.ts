@@ -81,6 +81,28 @@ describe("processMessage - autoReply", () => {
     expect(mockSend).toHaveBeenCalledWith("AI response");
   });
 
+  it("attachments を sendMessage に渡す", async () => {
+    vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: false });
+    const attachments = [
+      {
+        url: "https://cdn.discordapp.com/attachments/x/y/photo.png",
+        name: "photo.png",
+        contentType: "image/png",
+        size: 12345,
+      },
+    ];
+
+    await processMessage(makeMsg({ attachments }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "default",
+      "ch-1",
+      "hello",
+      expect.any(Function),
+      attachments,
+    );
+  });
+
   it("複数チャンク: 先頭のみ reply 形式、残りは通常送信", async () => {
     vi.mocked(loadGroupConfig).mockResolvedValue({ autoReply: true });
     vi.mocked(sendMessage).mockResolvedValue("A".repeat(2001));

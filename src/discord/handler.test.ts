@@ -56,6 +56,7 @@ function makeMockMessage(opts: {
     content: opts.content ?? "hello",
     createdAt: new Date(),
     thread: null,
+    attachments: new Map(),
     fetch: vi.fn().mockResolvedValue({ thread: null }),
     reply: vi.fn().mockResolvedValue(undefined),
     startThread: opts.startThread ?? vi.fn(),
@@ -152,6 +153,59 @@ describe("registerHandlers - MessageCreate", () => {
         content: "テスト",
         messageId: "000000000000000000",
       }),
+    );
+  });
+
+  it("添付ファイルがある場合は attachments を含めて積む", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "default", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
+    });
+    const msg = makeMockMessage({
+      isThread: false,
+      channelId: "ch-1",
+      content: "画像を見て",
+    });
+    (msg as unknown as { attachments: Map<string, unknown> }).attachments =
+      new Map([
+        [
+          "att-1",
+          {
+            url: "https://cdn.discordapp.com/attachments/x/y/photo.png",
+            name: "photo.png",
+            contentType: "image/png",
+            size: 12345,
+          },
+        ],
+      ]);
+    await getMessageHandler()(msg);
+    expect(mockAppendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: [
+          {
+            url: "https://cdn.discordapp.com/attachments/x/y/photo.png",
+            name: "photo.png",
+            contentType: "image/png",
+            size: 12345,
+          },
+        ],
+      }),
+    );
+  });
+
+  it("添付ファイルがない場合は attachments が undefined", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "default", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
+    });
+    const msg = makeMockMessage({
+      isThread: false,
+      channelId: "ch-1",
+      content: "テスト",
+    });
+    await getMessageHandler()(msg);
+    expect(mockAppendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: undefined }),
     );
   });
 
