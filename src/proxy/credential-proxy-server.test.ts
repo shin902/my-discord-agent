@@ -295,6 +295,74 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
   });
 });
 
+describe("createRequestHandler: Google OAuth プロバイダー", () => {
+  let requestMock: ReturnType<typeof vi.fn>;
+
+  const GOOGLE_CREDS: CredentialEntry[] = [
+    {
+      provider: "google-calendar",
+      baseUrl: "http://fake-google.test/calendar/v3",
+      google: {
+        clientId: "test-client-id",
+        clientSecretEnvVar: "GOOGLE_CALENDAR_CLIENT_SECRET",
+        scopes: ["https://www.googleapis.com/auth/calendar"],
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    vi.resetModules();
+    requestMock = vi.fn(() => ({ on: vi.fn(), pipe: vi.fn() }));
+    vi.doMock("node:http", () => ({
+      request: requestMock,
+      createServer: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: requestMock }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("google プロバイダーは getGoogleAccessToken(provider) のトークンを Bearer で注入する", async () => {
+    const getGoogleAccessToken = vi
+      .fn()
+      .mockResolvedValue("google-access-token");
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth: vi.fn(),
+      getGoogleAccessToken,
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(GOOGLE_CREDS);
+    const req = makeReq("/google-calendar/calendars/primary/events");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getGoogleAccessToken).toHaveBeenCalledWith("google-calendar");
+    const opts = requestMock.mock.calls[0]?.[0];
+    expect(opts?.headers.authorization).toBe("Bearer google-access-token");
+  });
+
+  it("getGoogleAccessToken() が失敗したとき 502 を返す", async () => {
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth: vi.fn(),
+      getGoogleAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(GOOGLE_CREDS);
+    const req = makeReq("/google-calendar/calendars/primary/events");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res.writeHead).toHaveBeenCalledWith(502);
+    expect(res.end).toHaveBeenCalledWith("Google token acquisition failed");
+  });
+});
+
 describe("createRequestHandler: Authorization ヘッダ", () => {
   const originalEnv = process.env;
   let requestMock: ReturnType<typeof vi.fn>;
@@ -411,5 +479,83 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     );
     const opts = requestMock.mock.calls[0][0];
     expect(opts.headers.authorization).toBe("Bearer pass-through");
+  });
+});
+
+describe("initCredentialProxyServer: Google Auth 初期化", () => {
+  const originalEnv = process.env;
+  const GOOGLE_CREDS: CredentialEntry[] = [
+    {
+      provider: "google-calendar",
+      baseUrl: "https://www.googleapis.com/calendar/v3",
+      google: {
+        clientId: "test-client-id",
+        clientSecretEnvVar: "GOOGLE_CALENDAR_CLIENT_SECRET",
+        scopes: ["https://www.googleapis.com/auth/calendar"],
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv };
+    vi.doMock("node:http", () => ({
+      createServer: vi.fn(() => ({
+        on: vi.fn(),
+        listen: vi.fn((_port: number, _host: string, cb: () => void) => cb()),
+        address: vi.fn(() => ({ port: 12345 })),
+      })),
+      request: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: vi.fn() }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue(GOOGLE_CREDS),
+    }));
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.resetModules();
+  });
+
+  it("clientSecretEnvVar が未設定のとき Google Auth をスキップして警告する", async () => {
+    delete process.env.GOOGLE_CALENDAR_CLIENT_SECRET;
+    const initGoogleAuth = vi.fn();
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth,
+      getGoogleAccessToken: vi.fn(),
+    }));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { initCredentialProxyServer } = await import(
+      "./credential-proxy-server.js"
+    );
+    await initCredentialProxyServer();
+
+    expect(initGoogleAuth).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("GOOGLE_CALENDAR_CLIENT_SECRET"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("clientSecretEnvVar が設定済みのとき initGoogleAuth を呼ぶ", async () => {
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
+    const initGoogleAuth = vi.fn();
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth,
+      getGoogleAccessToken: vi.fn(),
+    }));
+
+    const { initCredentialProxyServer } = await import(
+      "./credential-proxy-server.js"
+    );
+    await initCredentialProxyServer();
+
+    expect(initGoogleAuth).toHaveBeenCalledWith(
+      "google-calendar",
+      GOOGLE_CREDS[0]?.google,
+      "test-secret",
+    );
   });
 });

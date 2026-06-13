@@ -376,6 +376,26 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(creds[0].envVars).toBeUndefined();
   });
 
+  it("google フィールドが JSON に含まれない", async () => {
+    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
+    const spawnMock = await setup([
+      {
+        provider: "google-calendar",
+        baseUrl: "https://www.googleapis.com/calendar/v3",
+        google: {
+          clientId: "test-client-id",
+          clientSecretEnvVar: "GOOGLE_CALENDAR_CLIENT_SECRET",
+          scopes: ["https://www.googleapis.com/auth/calendar"],
+        },
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].google).toBeUndefined();
+    expect(creds[0].provider).toBe("google-calendar");
+  });
+
   it("auth フィールドが JSON に含まれない", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([

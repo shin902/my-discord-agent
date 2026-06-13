@@ -65,6 +65,33 @@ Host
 - `baseUrl` に `{ENV_VAR}` 形式のプレースホルダが含まれている場合、`process.env` の値で動的に置換される。**置換できない場合は env vars の注入も含めてその provider を完全にスキップする**（`AZURE_OPENAI_API_KEY` は設定済みでも `AZURE_OPENAI_BASE_URL` が未設定なら注入されない）。
 - `auth` を省略した場合、`envVars` の値は `Authorization: Bearer ...` として注入される。Browserless のように query parameter が必要な API は `auth: { "type": "query-token", "queryParam": "token" }` を指定する。
 
+### Google OAuth（Google Calendar 等）
+
+`graph`（MSAL）と同様に、`google` フィールドを指定したプロバイダーは OAuth トークンが `Authorization: Bearer ...` として自動注入される。
+
+```json
+{
+  "provider": "google-calendar",
+  "baseUrl": "https://www.googleapis.com/calendar/v3",
+  "google": {
+    "clientId": "xxxxx.apps.googleusercontent.com",
+    "clientSecretEnvVar": "GOOGLE_CALENDAR_CLIENT_SECRET",
+    "scopes": ["https://www.googleapis.com/auth/calendar"]
+  }
+}
+```
+
+セットアップ手順:
+
+1. Google Cloud Console でプロジェクトを作成し、Calendar API を有効化する。
+2. OAuth クライアントID（種類: 「TV と入力制限のあるデバイス」）を作成し、クライアントID・クライアントシークレットを取得する。
+3. クライアントIDを `config.json` の `google.clientId` に、クライアントシークレットを `.env` の `GOOGLE_CALENDAR_CLIENT_SECRET` に設定する。
+
+**重要な挙動**:
+- `clientSecretEnvVar` が指す環境変数が未設定の場合、そのプロバイダーの Google Auth 初期化はスキップされ、警告ログが出る（リクエストは 502 になる）。
+- 初回利用時は OAuth デバイスフローが起動し、表示される URL とコードでブラウザ認証を行う。取得したリフレッシュトークンは `data/google-token-{provider}.json`（0600）に保存され、以後はサイレント更新される。
+- `msal` と同様、`google` フィールドはサンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
+
 ### その他の pi-ai 対応プロバイダ
 
 以下のプロバイダも pi-ai では対応しているが、現状未検証・未使用のため `config.example.json` からは除外している。必要に応じて手動で追加可能：
