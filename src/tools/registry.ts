@@ -23,7 +23,12 @@ import {
   writeTool,
 } from "./fs.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
-import { tavilySearchTool } from "./tavily.js";
+import {
+  tavilyCrawlTool,
+  tavilyExtractTool,
+  tavilyMapTool,
+  tavilySearchTool,
+} from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 const TOOLS: Record<string, AgentTool> = {
@@ -47,6 +52,9 @@ const TOOLS: Record<string, AgentTool> = {
   browserless_function: browserlessFunctionTool,
   browserless_content: browserlessContentTool,
   tavily_search: tavilySearchTool,
+  tavily_extract: tavilyExtractTool,
+  tavily_crawl: tavilyCrawlTool,
+  tavily_map: tavilyMapTool,
   get_current_weather: getCurrentWeatherTool,
   get_weather_forecast: getWeatherForecastTool,
 };

@@ -153,3 +153,232 @@ describe("tavily search tool", () => {
     ).rejects.toThrow("Tavily API エラー 429");
   });
 });
+
+describe("tavily extract tool", () => {
+  const originalEnv = process.env;
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("tavily プロキシへ抽出リクエストを送信する", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily/" },
+      ]),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          { url: "https://example.com", raw_content: "本文テキスト" },
+        ],
+        failed_results: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { tavilyExtractTool } = await import("./tavily.js");
+    const result = await tavilyExtractTool.execute("id", {
+      urls: ["https://example.com"],
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://proxy.test/tavily/extract",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          urls: ["https://example.com"],
+          extract_depth: "basic",
+          include_images: false,
+        }),
+      }),
+    );
+    const text = firstText(result);
+    expect(text).toContain("https://example.com");
+    expect(text).toContain("本文テキスト");
+  });
+
+  it("失敗したURLは失敗理由とともに表示する", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+      ]),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [],
+          failed_results: [
+            { url: "https://broken.example", error: "timeout" },
+          ],
+        }),
+      }),
+    );
+
+    const { tavilyExtractTool } = await import("./tavily.js");
+    const result = await tavilyExtractTool.execute("id", {
+      urls: ["https://broken.example"],
+    });
+
+    const text = firstText(result);
+    expect(text).toContain("https://broken.example");
+    expect(text).toContain("timeout");
+  });
+
+  it("API エラー時に例外を投げる", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+      ]),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => "Internal Server Error",
+      }),
+    );
+
+    const { tavilyExtractTool } = await import("./tavily.js");
+    await expect(
+      tavilyExtractTool.execute("id", { urls: ["https://example.com"] }),
+    ).rejects.toThrow("Tavily API エラー 500");
+  });
+});
+
+describe("tavily crawl tool", () => {
+  const originalEnv = process.env;
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("tavily プロキシへクロールリクエストを送信する", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily/" },
+      ]),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        base_url: "https://example.com",
+        results: [
+          { url: "https://example.com/a", raw_content: "ページAの本文" },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { tavilyCrawlTool } = await import("./tavily.js");
+    const result = await tavilyCrawlTool.execute("id", {
+      url: "https://example.com",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://proxy.test/tavily/crawl",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const text = firstText(result);
+    expect(text).toContain("https://example.com/a");
+    expect(text).toContain("ページAの本文");
+  });
+
+  it("結果が空のとき '(結果なし)' を返す", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+      ]),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ base_url: "https://example.com", results: [] }),
+      }),
+    );
+
+    const { tavilyCrawlTool } = await import("./tavily.js");
+    const result = await tavilyCrawlTool.execute("id", {
+      url: "https://example.com",
+    });
+
+    expect(firstText(result)).toContain("(結果なし)");
+  });
+});
+
+describe("tavily map tool", () => {
+  const originalEnv = process.env;
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("tavily プロキシへマッピングリクエストを送信する", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily/" },
+      ]),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        base_url: "https://example.com",
+        results: ["https://example.com/a", "https://example.com/b"],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { tavilyMapTool } = await import("./tavily.js");
+    const result = await tavilyMapTool.execute("id", {
+      url: "https://example.com",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://proxy.test/tavily/map",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const text = firstText(result);
+    expect(text).toContain("https://example.com/a");
+    expect(text).toContain("https://example.com/b");
+  });
+
+  it("結果が空のとき '(結果なし)' を返す", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+      ]),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ base_url: "https://example.com", results: [] }),
+      }),
+    );
+
+    const { tavilyMapTool } = await import("./tavily.js");
+    const result = await tavilyMapTool.execute("id", {
+      url: "https://example.com",
+    });
+
+    expect(firstText(result)).toContain("(結果なし)");
+  });
+});
