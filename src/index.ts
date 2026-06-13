@@ -5,7 +5,7 @@ import {
   initManager,
   validateModel,
 } from "./agent/manager.js";
-import { ensureGroupDirs, initGroupConfigs } from "./config/group-config.js";
+import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { startCron, stopCron } from "./cron/runner.js";
 import { client } from "./discord/client.js";
@@ -21,15 +21,11 @@ try {
   await ensureGroupDirs(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
   await initManager(proxyPort);
-  const configs = await initGroupConfigs(groups.map((g) => g.name));
+  await initGroupPrompts(groups);
   for (const group of groups) {
-    const config = configs.get(group.name);
-    if (config === undefined) {
-      throw new Error(`グループ "${group.name}" の設定が見つかりません`);
-    }
     await validateModel(
-      config.model?.provider ?? DEFAULT_PROVIDER,
-      config.model?.modelId ?? DEFAULT_MODEL_ID,
+      group.model?.provider ?? DEFAULT_PROVIDER,
+      group.model?.modelId ?? DEFAULT_MODEL_ID,
     );
   }
 } catch (err) {

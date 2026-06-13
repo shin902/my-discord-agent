@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
-vi.mock("../config/group-config.js", () => ({ loadGroupConfig: vi.fn() }));
+vi.mock("../config/groups.js", () => ({ findGroupByName: vi.fn() }));
 vi.mock("../config/poller-config.js", () => ({ loadDispatchMode: vi.fn() }));
 vi.mock("../discord/client.js", () => ({
   client: {

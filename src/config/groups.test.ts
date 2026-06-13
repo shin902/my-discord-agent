@@ -60,6 +60,42 @@ describe("loadGroups", () => {
       "mounts.container は絶対パスで指定してください",
     );
   });
+
+  it("model/tools/autoReply/toolLogArgs/skills を含むグループ設定をパースできる", async () => {
+    const { loadGroups } = await setupRawConfig({
+      groups: [
+        {
+          name: "chat",
+          model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+          tools: ["tavily_search"],
+          autoReply: true,
+          toolLogArgs: true,
+          skills: ["session-logs"],
+          channels: [],
+        },
+      ],
+    });
+    const groups = await loadGroups();
+    expect(groups[0]).toMatchObject({
+      model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+      tools: ["tavily_search"],
+      autoReply: true,
+      toolLogArgs: true,
+      skills: ["session-logs"],
+    });
+  });
+
+  it("エージェント設定フィールドは省略可能", async () => {
+    const { loadGroups } = await setupRawConfig({
+      groups: [{ name: "chat", channels: [] }],
+    });
+    const groups = await loadGroups();
+    expect(groups[0].model).toBeUndefined();
+    expect(groups[0].tools).toBeUndefined();
+    expect(groups[0].autoReply).toBeUndefined();
+    expect(groups[0].toolLogArgs).toBeUndefined();
+    expect(groups[0].skills).toBeUndefined();
+  });
 });
 
 describe("findGroupByName", () => {
