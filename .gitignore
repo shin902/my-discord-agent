@@ -9,4 +9,9 @@ config/*
 
 groups/*/
 
+# 個人用 cron ハンドラー置き場。機構（src/cron/）とサンプル（jobs/*.ts）はコミットし、
+# 個人ワークフロー固有のハンドラーはここに置いて git 管理外にする。
+# src/ 配下なので tsc はコンパイルする（prod でも dist/ に .js が出る）。
+src/cron/jobs/local/
+
 .claude/plans/
