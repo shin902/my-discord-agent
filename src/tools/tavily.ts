@@ -298,7 +298,8 @@ const mapParams = Type.Object({
   ),
   instructions: Type.Optional(
     Type.String({
-      description: "マッピング対象を絞り込む自然言語の指示（指定するとコスト2倍）",
+      description:
+        "マッピング対象を絞り込む自然言語の指示（指定するとコスト2倍）",
     }),
   ),
   select_paths: Type.Optional(

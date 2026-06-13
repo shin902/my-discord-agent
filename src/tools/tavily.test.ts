@@ -173,9 +173,7 @@ describe("tavily extract tool", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        results: [
-          { url: "https://example.com", raw_content: "本文テキスト" },
-        ],
+        results: [{ url: "https://example.com", raw_content: "本文テキスト" }],
         failed_results: [],
       }),
     });
@@ -215,9 +213,7 @@ describe("tavily extract tool", () => {
         ok: true,
         json: async () => ({
           results: [],
-          failed_results: [
-            { url: "https://broken.example", error: "timeout" },
-          ],
+          failed_results: [{ url: "https://broken.example", error: "timeout" }],
         }),
       }),
     );
