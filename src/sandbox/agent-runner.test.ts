@@ -35,6 +35,10 @@ const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
+function todayJST(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" });
+}
+
 function createMockAgent(deltas: string[], endMessage: unknown) {
   const subscribers: Array<(event: unknown) => void> = [];
   return {
@@ -93,9 +97,7 @@ describe("runAgentLoop", () => {
       {},
     );
 
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: "Asia/Tokyo",
-    });
+    const today = todayJST();
     expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
     expect(lastAgentOptions).toEqual({
       initialState: {
@@ -157,9 +159,7 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: "Asia/Tokyo",
-    });
+    const today = todayJST();
     expect(readFile).toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
