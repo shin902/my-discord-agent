@@ -21,6 +21,7 @@ groups/{name}/
 ```json
 {
   "credentials": [...],
+  "defaultModel": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
   "groups": [...],
   "cron": []
 }
@@ -29,6 +30,7 @@ groups/{name}/
 | キー | 必須 | 内容 |
 |---|---|---|
 | `credentials` | ✓ | AI プロバイダー・外部サービスの接続設定 |
+| `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `groups` | ✓ | チャンネル → グループのマッピング |
 | `cron` | — | 定期実行ジョブ定義（省略時は空配列） |
 
@@ -90,7 +92,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
 | `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
-| `model` | — | `provider`/`modelId`/`thinkingLevel`。省略時は `DEFAULT_PROVIDER`/`DEFAULT_MODEL_ID` |
+| `model` | — | `provider`/`modelId`/`thinkingLevel`。省略時は config.json トップレベルの `defaultModel` |
 | `tools` | — | エージェントに渡す MCP ツール名の配列 |
 | `autoReply` | — | Discord メッセージへの返信時に元メッセージへの reply 形式にするか |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |

@@ -10,9 +10,6 @@ import {
   loadCredentialProxy,
 } from "../config/credential-proxy.js";
 
-export const DEFAULT_PROVIDER = "opencode-go";
-export const DEFAULT_MODEL_ID = "kimi-k2.6";
-
 export function resolveBaseUrl(baseUrl: string): string | null {
   const resolved = baseUrl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, envVar) => {
     return process.env[envVar] ?? `{${envVar}}`;

@@ -11,7 +11,7 @@ const THINKING_LEVELS = [
   "xhigh",
 ] as const satisfies readonly [ModelThinkingLevel, ...ModelThinkingLevel[]];
 
-const ModelConfigSchema = z.object({
+export const ModelConfigSchema = z.object({
   provider: z.string(),
   modelId: z.string(),
   thinkingLevel: z.enum(THINKING_LEVELS).optional(),
@@ -51,6 +51,7 @@ const GroupConfigSchema = AgentConfigSchema.extend({
 const GroupsConfigSchema = z.array(GroupConfigSchema);
 
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type MountConfig = z.infer<typeof MountConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;

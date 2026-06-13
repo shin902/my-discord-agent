@@ -1,4 +1,4 @@
-import { cp, readFile, stat } from "node:fs/promises";
+import { cp, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GroupConfig } from "./groups.js";
@@ -6,6 +6,7 @@ import type { GroupConfig } from "./groups.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GROUPS_DIR = path.join(__dirname, "../../groups");
 const TEMPLATES_DIR = path.join(__dirname, "../../templates");
+const PROMPTS_DIR = path.join(__dirname, "../../config/prompts");
 
 async function _dirExists(p: string): Promise<boolean> {
   try {
@@ -16,10 +17,19 @@ async function _dirExists(p: string): Promise<boolean> {
   }
 }
 
-/** グループフォルダが存在しない場合は templates/group/ からコピーして作成する */
+async function _fileExists(p: string): Promise<boolean> {
+  try {
+    return (await stat(p)).isFile();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/** グループフォルダが存在しない場合は config/prompts/AGENTS.md をコピーして作成する */
 export async function ensureGroupDirs(groupNames: string[]): Promise<void> {
-  const templateDir = path.join(TEMPLATES_DIR, "group");
-  const hasTemplate = await _dirExists(templateDir);
+  const templatePath = path.join(PROMPTS_DIR, "AGENTS.md");
+  const hasTemplate = await _fileExists(templatePath);
 
   await Promise.all(
     groupNames.map(async (name) => {
@@ -29,7 +39,8 @@ export async function ensureGroupDirs(groupNames: string[]): Promise<void> {
       if (await _dirExists(groupDir)) return;
       if (hasTemplate) {
         try {
-          await cp(templateDir, groupDir, { recursive: true });
+          await mkdir(groupDir, { recursive: true });
+          await cp(templatePath, path.join(groupDir, "AGENTS.md"));
           console.log(`[group-config] グループフォルダを作成しました: ${name}`);
         } catch (err) {
           console.warn(
