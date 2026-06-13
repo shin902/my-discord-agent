@@ -35,6 +35,10 @@ const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
+function todayJST(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" });
+}
+
 function createMockAgent(deltas: string[], endMessage: unknown) {
   const subscribers: Array<(event: unknown) => void> = [];
   return {
@@ -93,10 +97,11 @@ describe("runAgentLoop", () => {
       {},
     );
 
+    const today = todayJST();
     expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
     expect(lastAgentOptions).toEqual({
       initialState: {
-        systemPrompt: "あなたは役立つDiscordアシスタントです。",
+        systemPrompt: `あなたは役立つDiscordアシスタントです。\n\n## 今日の日付\n\n${today} (JST)`,
         model: { id: "kimi-k2.6", name: "Kimi K2.6" },
         messages: [],
         tools: [],
@@ -154,11 +159,12 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
+    const today = todayJST();
     expect(readFile).toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
         initialState: expect.objectContaining({
-          systemPrompt: "カスタムプロンプト",
+          systemPrompt: `カスタムプロンプト\n\n## 今日の日付\n\n${today} (JST)`,
         }),
       }),
     );

@@ -84,6 +84,13 @@ async function loadMemoryFromWorkspace(): Promise<string | null> {
   }
 }
 
+function formatDateForPrompt(): string {
+  const today = new Date().toLocaleDateString("en-CA", {
+    timeZone: "Asia/Tokyo",
+  });
+  return `## 今日の日付\n\n${today} (JST)`;
+}
+
 function formatMemoryForPrompt(memory: string | null): string {
   if (!memory) return "";
 
@@ -127,10 +134,12 @@ export async function runAgentLoop(
 
   const skillPrompt = formatSkillsForPrompt(skills);
   const memoryPrompt = formatMemoryForPrompt(memory);
+  const datePrompt = formatDateForPrompt();
   const fullSystemPrompt = [
     systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     skillPrompt,
     memoryPrompt,
+    datePrompt,
   ]
     .filter(Boolean)
     .join("\n\n");
