@@ -81,11 +81,7 @@ Host
 }
 ```
 
-セットアップ手順:
-
-1. Google Cloud Console でプロジェクトを作成し、Calendar API を有効化する。
-2. OAuth クライアントID（種類: 「TV と入力制限のあるデバイス」）を作成し、クライアントID・クライアントシークレットを取得する。
-3. クライアントIDを `config.json` の `google.clientId` に、クライアントシークレットを `.env` の `GOOGLE_CALENDAR_CLIENT_SECRET` に設定する。
+Google Cloud Console での OAuth クライアント作成手順（OAuth 同意画面のテストユーザー登録を含む）は [`docs/google-cloud-oauth-setup.md`](./google-cloud-oauth-setup.md) を参照。
 
 **重要な挙動**:
 - `clientSecretEnvVar` が指す環境変数が未設定の場合、そのプロバイダーの Google Auth 初期化はスキップされ、警告ログが出る（リクエストは 502 になる）。
