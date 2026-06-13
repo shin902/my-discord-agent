@@ -37,19 +37,29 @@ Google Calendar API を `google-calendar` プロバイダー（`src/tools/calend
 
 ---
 
-## 4. `.env` への設定
+## 4. `config/config.json` と `.env` への設定
 
-`.env` に以下を追記するだけでよい（`config/config.json` の編集は不要）。両方設定されていれば、`google-calendar` プロバイダーが自動的に有効化される:
+`config/config.json` の `credentials` 配列に追加（`config.example.json` も参照）:
+
+```json
+{
+  "provider": "google-calendar",
+  "baseUrl": "https://www.googleapis.com/calendar/v3",
+  "google": {
+    "clientId": "手順3で控えたクライアントID",
+    "clientSecretEnvVar": "GOOGLE_CALENDAR_CLIENT_SECRET",
+    "scopes": ["https://www.googleapis.com/auth/calendar"]
+  }
+}
+```
+
+`.env` に以下を追記:
 
 ```
-GOOGLE_CALENDAR_CLIENT_ID=手順3で控えたクライアントID
 GOOGLE_CALENDAR_CLIENT_SECRET=手順3で控えたクライアントシークレット
 ```
 
-（`config/config.json` の `credentials` 配列に独自の `google-calendar` エントリを書いた場合はそちらが優先され、自動追加は行われない。`config.example.json` 参照）
-
-`GOOGLE_CALENDAR_CLIENT_ID` が未設定の場合、`google-calendar` プロバイダーは登録されず、カレンダー系ツールは「連携は未設定のため利用できません」というメッセージを返す（起動エラーにはならない）。
-`GOOGLE_CALENDAR_CLIENT_SECRET` のみ未設定の場合は、起動時に警告ログが出てこのプロバイダーの初期化はスキップされる（リクエストは 502 になる）。
+`clientSecretEnvVar` が指す環境変数が未設定の場合、起動時に警告ログが出てこのプロバイダーの初期化はスキップされる（リクエストは 502 になる）。
 
 ---
 
