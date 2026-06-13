@@ -16,6 +16,7 @@ import {
   writeTool,
 } from "./fs.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
+import { tavilySearchTool } from "./tavily.js";
 
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
@@ -32,6 +33,7 @@ const TOOLS: Record<string, AgentTool> = {
   browserless_search: browserlessSearchTool,
   browserless_function: browserlessFunctionTool,
   browserless_content: browserlessContentTool,
+  tavily_search: tavilySearchTool,
 };
 
 export function resolveTools(toolNames: string[]): AgentTool[] {

@@ -18,6 +18,7 @@
 | `grep` | 正規表現でファイル内を検索する |
 | `browserless_search` | ウェブ検索を実行して結果（JSON）を返す |
 | `browserless_function` | Puppeteer コードをブラウザで実行する |
+| `tavily_search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
 **注意:** `webfetch` は削除済み。ウェブアクセスはすべて `agent-reach` または `bash` 経由で行う。
 
