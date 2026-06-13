@@ -1,4 +1,8 @@
 {
+  "defaultModel": {
+    "provider": "opencode-go",
+    "modelId": "kimi-k2.6"
+  },
   "credentials": [
     {
       "provider": "openai",
@@ -82,10 +86,6 @@
       "auth": { "type": "query-token", "queryParam": "token" }
     }
   ],
-  "defaultModel": {
-    "provider": "opencode-go",
-    "modelId": "kimi-k2.6"
-  },
   "groups": [
     {
       "name": "default",
