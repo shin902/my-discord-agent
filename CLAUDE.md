@@ -67,10 +67,29 @@ Discord受信
 - `thread`: 既存スレッド内のメッセージのみ処理（スレッドIDがセッションID）
 - `auto-thread`: 非スレッドメッセージで自動スレッド作成、スレッド内は継続会話
 
+### mounts（追加のホストディレクトリマウント）
+
+`config/groups.json` の各グループ要素に `mounts` 配列（省略可）を指定すると、サンドボックスコンテナ起動時に `groups/{name}` (`/workspace`) や `data/sessions/{name}` (`/sessions/{name}`) に加えて任意のホストディレクトリを追加マウントできる（manager.ts の `buildExtraMountArgs`）。
+
+```json
+{
+  "name": "dev",
+  "channels": [...],
+  "mounts": [
+    { "host": "/home/shi/ghq/github.com/shin902/some-folder", "container": "/folder" },
+    { "host": "relative/path", "container": "/data", "readOnly": true }
+  ]
+}
+```
+
+- `host`: 絶対パスはそのまま使用、相対パスはリポジトリルート基準で解決される
+- `container`: 絶対パスのみ許可。`/workspace`・`/sessions` 配下と重複する場合は設定エラーになる
+- `readOnly: true` でコンテナ側を読み取り専用マウントにする
+
 ### ファイルシステム構造
 
 ```
-config/groups.json          # チャンネル→グループのマッピング（Zodで検証）
+config/groups.json          # チャンネル→グループのマッピング・追加マウント設定（Zodで検証）
 groups/{name}/
   group.json                # モデル・ツール・autoReply・toolLogArgs 設定（省略可）
   AGENTS.md                 # グループのシステムプロンプト（省略可）

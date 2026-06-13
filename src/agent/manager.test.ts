@@ -115,6 +115,9 @@ describe("sendMessage: Docker 起動構成", () => {
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({}),
     }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue(undefined),
+    }));
     const { initManager } = await import("./manager.js");
     await initManager(12345);
   });
@@ -213,6 +216,74 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 });
 
+describe("sendMessage: 追加マウント (config/groups.json の mounts)", () => {
+  let spawnMock: ReturnType<typeof vi.fn>;
+
+  const setup = async (mounts: unknown) => {
+    vi.resetModules();
+    spawnMock = vi.fn().mockReturnValue(makeProc());
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi
+        .fn()
+        .mockResolvedValue({ name: "test-group", channels: [], mounts }),
+    }));
+    const { initManager } = await import("./manager.js");
+    await initManager(12345);
+  };
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("絶対パスの host を container にそのままマウントする", async () => {
+    await setup([{ host: "/host/repo", container: "/repo" }]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs).toContain("/host/repo:/repo");
+  });
+
+  it("readOnly: true の場合は :ro が付与される", async () => {
+    await setup([{ host: "/host/repo", container: "/repo", readOnly: true }]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs).toContain("/host/repo:/repo:ro");
+  });
+
+  it("相対パスの host は ROOT 基準で解決される", async () => {
+    await setup([{ host: "relative/dir", container: "/relative" }]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(
+      volumeArgs.some(
+        (v) =>
+          v.endsWith("relative/dir:/relative") && !v.startsWith("relative"),
+      ),
+    ).toBe(true);
+  });
+
+  it("mounts が未設定の場合は追加マウントなし", async () => {
+    await setup(undefined);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs).toHaveLength(2);
+  });
+});
+
 describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
   const originalEnv = process.env;
 
@@ -234,6 +305,9 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     }));
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue(undefined),
     }));
     const { initManager } = await import("./manager.js");
     await initManager(12345);
@@ -400,6 +474,9 @@ describe("sendMessage: 設定バリデーション", () => {
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({ tools: ["invalid"] }),
     }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue(undefined),
+    }));
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
@@ -414,12 +491,35 @@ describe("sendMessage: 設定バリデーション", () => {
         .fn()
         .mockResolvedValue({ model: { provider: "unknown", modelId: "x" } }),
     }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue(undefined),
+    }));
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
     const result = await sendMessage("test-group", "session-1", "hi");
 
     expect(result).toBe("設定エラー: 不明なプロバイダ: unknown");
+  });
+
+  it("mounts.container が /workspace と重複する場合は設定エラーを返す", async () => {
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue({
+        name: "test-group",
+        channels: [],
+        mounts: [{ host: "/host/repo", container: "/workspace" }],
+      }),
+    }));
+
+    const { sendMessage, initManager } = await import("./manager.js");
+    await initManager(12345);
+    const result = await sendMessage("test-group", "session-1", "hi");
+
+    expect(result).toContain("設定エラー");
+    expect(result).toContain("/workspace");
   });
 });
 
@@ -435,6 +535,9 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     }));
     vi.doMock("../config/group-config.js", () => ({
       loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue(undefined),
     }));
     const { initManager } = await import("./manager.js");
     await initManager(12345);
