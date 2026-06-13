@@ -102,6 +102,12 @@ async function handleRequest(
     try {
       token = await getGoogleAccessToken(entry.provider);
     } catch (err) {
+      if (err instanceof GoogleAuthRequiredError) {
+        console.log(`[credential-proxy] ${err.message}`);
+        res.writeHead(502);
+        res.end(err.message);
+        return;
+      }
       console.error(
         `[credential-proxy] google token 取得失敗: ${err instanceof Error ? err.message : err}`,
       );
