@@ -189,13 +189,7 @@ export async function sendMessage(
   attachments?: AttachmentRef[],
 ): Promise<string> {
   const groupsEntry = await findGroupByName(groupName);
-  const groupConfig: AgentConfig = {
-    model: groupsEntry?.model,
-    tools: groupsEntry?.tools,
-    autoReply: groupsEntry?.autoReply,
-    toolLogArgs: groupsEntry?.toolLogArgs,
-    skills: groupsEntry?.skills,
-  };
+  const groupConfig: AgentConfig = groupsEntry ?? {};
 
   try {
     await validateModel(
