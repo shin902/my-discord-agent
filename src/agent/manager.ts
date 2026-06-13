@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
+import { loadDefaultModel } from "../config/default-model.js";
 import {
   type AgentConfig,
   findGroupByName,
@@ -15,21 +16,9 @@ import { NonRetryableError, TransientError } from "../utils/error.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
-import {
-  DEFAULT_MODEL_ID,
-  DEFAULT_PROVIDER,
-  resolveBaseUrl,
-  resolveModel,
-  validateModel,
-} from "./model.js";
+import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
 
-export {
-  DEFAULT_MODEL_ID,
-  DEFAULT_PROVIDER,
-  resolveBaseUrl,
-  resolveModel,
-  validateModel,
-};
+export { resolveBaseUrl, resolveModel, validateModel };
 
 export type DiscordEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
@@ -191,11 +180,17 @@ export async function sendMessage(
   const groupsEntry = await findGroupByName(groupName);
   const groupConfig: AgentConfig = groupsEntry ?? {};
 
+  const defaultModel = await loadDefaultModel();
+  const resolvedModel = {
+    provider: groupConfig.model?.provider ?? defaultModel.provider,
+    modelId: groupConfig.model?.modelId ?? defaultModel.modelId,
+    ...(groupConfig.model?.thinkingLevel !== undefined
+      ? { thinkingLevel: groupConfig.model.thinkingLevel }
+      : {}),
+  };
+
   try {
-    await validateModel(
-      groupConfig.model?.provider ?? DEFAULT_PROVIDER,
-      groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
-    );
+    await validateModel(resolvedModel.provider, resolvedModel.modelId);
   } catch (err) {
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
@@ -249,7 +244,7 @@ export async function sendMessage(
     groupName,
     sessionId,
     content: promptContent,
-    groupConfig,
+    groupConfig: { ...groupConfig, model: resolvedModel },
   });
 
   const args = [

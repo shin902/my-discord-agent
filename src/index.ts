@@ -1,10 +1,6 @@
 import "dotenv/config";
-import {
-  DEFAULT_MODEL_ID,
-  DEFAULT_PROVIDER,
-  initManager,
-  validateModel,
-} from "./agent/manager.js";
+import { initManager, validateModel } from "./agent/manager.js";
+import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { startCron, stopCron } from "./cron/runner.js";
@@ -22,10 +18,11 @@ try {
   const proxyPort = await initCredentialProxyServer();
   await initManager(proxyPort);
   await initGroupPrompts(groups);
+  const defaultModel = await loadDefaultModel();
   for (const group of groups) {
     await validateModel(
-      group.model?.provider ?? DEFAULT_PROVIDER,
-      group.model?.modelId ?? DEFAULT_MODEL_ID,
+      group.model?.provider ?? defaultModel.provider,
+      group.model?.modelId ?? defaultModel.modelId,
     );
   }
 } catch (err) {

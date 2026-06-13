@@ -2,12 +2,9 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
-import {
-  DEFAULT_MODEL_ID,
-  DEFAULT_PROVIDER,
-  resolveModel,
-} from "../../agent/model.js";
+import { resolveModel } from "../../agent/model.js";
 import { appendMessage } from "../../agent/session.js";
+import { loadDefaultModel } from "../../config/default-model.js";
 import { findGroupByName, type GroupConfig } from "../../config/groups.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import { splitMessage } from "../../utils/splitMessage.js";
@@ -119,8 +116,9 @@ async function generateSummary(
     ? findGroupByName(groupName)
     : Promise.resolve(undefined as GroupConfig | undefined));
 
-  const providerName = groupConfig?.model?.provider ?? DEFAULT_PROVIDER;
-  const modelId = groupConfig?.model?.modelId ?? DEFAULT_MODEL_ID;
+  const defaultModel = await loadDefaultModel();
+  const providerName = groupConfig?.model?.provider ?? defaultModel.provider;
+  const modelId = groupConfig?.model?.modelId ?? defaultModel.modelId;
   const model = await resolveModel(providerName, modelId);
 
   const port = getProxyPort();
@@ -173,8 +171,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
   }
 
   const groupConfig = await findGroupByName(ctx.groupName);
-  const providerName = groupConfig?.model?.provider ?? DEFAULT_PROVIDER;
-  const modelId = groupConfig?.model?.modelId ?? DEFAULT_MODEL_ID;
+  const defaultModel = await loadDefaultModel();
+  const providerName = groupConfig?.model?.provider ?? defaultModel.provider;
+  const modelId = groupConfig?.model?.modelId ?? defaultModel.modelId;
   try {
     await resolveModel(providerName, modelId);
   } catch (err) {

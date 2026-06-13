@@ -10,13 +10,10 @@ import {
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
 
-import {
-  DEFAULT_MODEL_ID,
-  DEFAULT_PROVIDER,
-  resolveModel,
-} from "../agent/model.js";
+import { resolveModel } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
+import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
 import { type AgentConfig, AgentConfigSchema } from "../config/groups.js";
 import { loadSkills } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
@@ -121,8 +118,8 @@ export async function runAgentLoop(
   });
 
   const model = await resolveModel(
-    groupConfig.model?.provider ?? DEFAULT_PROVIDER,
-    groupConfig.model?.modelId ?? DEFAULT_MODEL_ID,
+    groupConfig.model?.provider ?? FALLBACK_DEFAULT_MODEL.provider,
+    groupConfig.model?.modelId ?? FALLBACK_DEFAULT_MODEL.modelId,
   );
 
   const tools = resolveTools(groupConfig.tools ?? []).filter(

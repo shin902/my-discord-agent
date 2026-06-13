@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   initGroupPrompts: vi.fn(),
   initManager: vi.fn(),
   validateModel: vi.fn(),
+  loadDefaultModel: vi.fn(),
 }));
 
 vi.mock("./discord/client.js", () => ({ client: { login: mocks.login } }));
@@ -27,8 +28,9 @@ vi.mock("./config/group-config.js", () => ({
 vi.mock("./agent/manager.js", () => ({
   initManager: mocks.initManager,
   validateModel: mocks.validateModel,
-  DEFAULT_PROVIDER: "opencode-go",
-  DEFAULT_MODEL_ID: "kimi-k2.6",
+}));
+vi.mock("./config/default-model.js", () => ({
+  loadDefaultModel: mocks.loadDefaultModel,
 }));
 vi.mock("./proxy/credential-proxy-server.js", () => ({
   initCredentialProxyServer: vi.fn().mockResolvedValue(0),
@@ -50,6 +52,10 @@ describe("index: 起動時バリデーション", () => {
     mocks.loadGroups.mockResolvedValue([]);
     mocks.initManager.mockResolvedValue(undefined);
     mocks.initGroupPrompts.mockResolvedValue(undefined);
+    mocks.loadDefaultModel.mockResolvedValue({
+      provider: "opencode-go",
+      modelId: "kimi-k2.6",
+    });
     // 実際に終了させず、呼び出し後の継続を防ぐためにスロー
     mockExit = vi.fn((code?: number) => {
       throw new Error(`process.exit(${code})`);
