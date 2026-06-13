@@ -97,3 +97,15 @@ cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 **場所:** `templates/SKILLS/explain/SKILL.md`
 
 技術用語を使わず、実際の挙動に焦点を当てた説明を生成するスキル。
+
+### session-logs
+
+**場所:** `templates/SKILLS/session-logs/SKILL.md`
+
+自分自身の過去のセッションログ(`/sessions/*/*.jsonl`)を jq/grep で検索・集計するスキル。`MEMORY.md` に無い過去の会話について聞かれたときに使う。PR #87 のセッションマウント絞り込みにより、自グループのログのみが見える。
+
+### 日次記録・週次MEMORY.md更新(memory-daily / memory-weekly cron)
+
+専用スキルは設けず、`config/config.json` の `cron` 配列に prompt-only ジョブを登録し、`session-logs` スキルの使い方と出力フォーマットをそのまま `prompt` に書く(`config.example.json` 参照)。出力フォーマットは個人の好みに依存するため、共有テンプレートにはしない。
+
+導入するグループには `session-logs` を `skills` に追加し、`bash` / `write` / `edit` ツールを有効にする。
