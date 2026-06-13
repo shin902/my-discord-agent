@@ -6,7 +6,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
@@ -14,6 +14,15 @@ import { Type } from "typebox";
 const WORKSPACE = "/workspace";
 const READ_CHAR_LIMIT = 50_000;
 const GREP_MAX_RESULTS = 200;
+const READ_IMAGE_BYTE_LIMIT = 10 * 1024 * 1024; // 10MB
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 
 function sanitizePath(raw: string): string {
   const trimmed = raw.trim();
@@ -44,7 +53,24 @@ export const readTool: AgentTool<typeof readParameters> = {
   parameters: readParameters,
   execute: async (_toolCallId, { path }) => {
     const safePath = sanitizePath(path);
-    const raw = await readFile(fullPath(safePath), "utf-8");
+    const fp = fullPath(safePath);
+
+    const mimeType = IMAGE_MIME_TYPES[extname(safePath).toLowerCase()];
+    if (mimeType) {
+      const { size } = await stat(fp);
+      if (size > READ_IMAGE_BYTE_LIMIT) {
+        throw new Error(
+          `画像が大きすぎます (${size} bytes > ${READ_IMAGE_BYTE_LIMIT} bytes)`,
+        );
+      }
+      const data = await readFile(fp, "base64");
+      return {
+        content: [{ type: "image", data, mimeType }],
+        details: { path: safePath, size, mimeType },
+      };
+    }
+
+    const raw = await readFile(fp, "utf-8");
     const truncated = raw.length > READ_CHAR_LIMIT;
     const text = truncated
       ? `${raw.slice(0, READ_CHAR_LIMIT)}\n\n[${raw.length - READ_CHAR_LIMIT} 文字省略。grep で範囲を絞ってから再度読み込んでください]`

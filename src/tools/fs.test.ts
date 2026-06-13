@@ -62,6 +62,45 @@ describe("read", () => {
       readTool.execute("call-1", { path: "../etc/passwd" }),
     ).rejects.toThrow("アクセス拒否");
   });
+
+  it("画像ファイルは base64 の image content を返す", async () => {
+    vi.mocked(stat).mockResolvedValue({ size: 1234 } as never);
+    vi.mocked(readFile).mockResolvedValue("base64data" as never);
+
+    const result = await readTool.execute("call-1", { path: "photo.png" });
+
+    expect(readFile).toHaveBeenCalledWith("/workspace/photo.png", "base64");
+    expect(result.content[0]).toEqual({
+      type: "image",
+      data: "base64data",
+      mimeType: "image/png",
+    });
+  });
+
+  it("拡張子に応じて mimeType を判定する (jpg/jpeg/gif/webp)", async () => {
+    vi.mocked(stat).mockResolvedValue({ size: 100 } as never);
+    vi.mocked(readFile).mockResolvedValue("data" as never);
+
+    const cases: Array<[string, string]> = [
+      ["a.jpg", "image/jpeg"],
+      ["a.jpeg", "image/jpeg"],
+      ["a.gif", "image/gif"],
+      ["a.webp", "image/webp"],
+    ];
+    for (const [path, mimeType] of cases) {
+      const result = await readTool.execute("call-1", { path });
+      expect(result.content[0]).toMatchObject({ type: "image", mimeType });
+    }
+  });
+
+  it("画像が10MBを超える場合はエラーになる", async () => {
+    vi.mocked(stat).mockResolvedValue({ size: 11 * 1024 * 1024 } as never);
+
+    await expect(
+      readTool.execute("call-1", { path: "huge.png" }),
+    ).rejects.toThrow("画像が大きすぎます");
+    expect(readFile).not.toHaveBeenCalled();
+  });
 });
 
 describe("write", () => {
