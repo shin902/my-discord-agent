@@ -106,9 +106,12 @@ function createCustomModel(
 
 export async function resolveModel(provider: string, modelId: string) {
   const providers = getProviders();
-  if (!providers.includes(provider as KnownProvider)) {
-    const creds = await loadCredentialProxy();
-    const entry = creds.find((e) => e.provider === provider);
+  const creds = await loadCredentialProxy();
+  const entry = creds.find((e) => e.provider === provider);
+
+  // forceCustom: pi-ai の KnownProvider 名と衝突していても
+  // credential-proxy 経由のカスタムプロバイダー解決を強制する
+  if (entry?.forceCustom || !providers.includes(provider as KnownProvider)) {
     if (!entry) {
       throw new Error(`不明なプロバイダ: ${provider}`);
     }

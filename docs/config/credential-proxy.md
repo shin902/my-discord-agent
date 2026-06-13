@@ -27,6 +27,23 @@ API のベース URL。**`http://` または `https://` のプロトコルを必
 
 ## オプションフィールド
 
+### `forceCustom`
+
+`provider` の値が `pi-ai` の **KnownProvider**（`groq`, `openai` 等）と衝突する場合でも、credential-proxy 側のカスタムプロバイダー設定（`baseUrl`・`envVars`・`compat` 等）を優先して使用する。
+
+`pi-ai` が標準サポートしているプロバイダー名と同じ `provider` を指定すると、通常はそちらの組み込み設定（モデル一覧・baseUrl 等）が優先され、`credentials` 側の設定が無視される。`forceCustom: true` を指定すると、`provider` が KnownProvider と一致していてもカスタムプロバイダーとして解決される。
+
+```json
+{
+  "provider": "groq",
+  "forceCustom": true,
+  "envVars": ["GROQ_API_KEY"],
+  "baseUrl": "https://api.groq.com/openai/v1"
+}
+```
+
+省略時は `false`（KnownProvider と衝突する場合は組み込み設定が優先される）。
+
 ### `envVars`
 
 API キー等の環境変数名を配列で指定。設定ファイル読み込み時に `process.env` を参照し、存在する値を sandbox 内に secret として注入します。

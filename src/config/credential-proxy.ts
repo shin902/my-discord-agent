@@ -11,6 +11,9 @@ export type MsalConfig = z.infer<typeof MsalConfigSchema>;
 
 export const CredentialEntrySchema = z.object({
   provider: z.string(),
+  // pi-ai の KnownProvider 名と衝突する場合でも credential-proxy 経由の
+  // カスタムプロバイダー解決を強制する（resolveModel 参照）
+  forceCustom: z.boolean().optional(),
   envVars: z.array(z.string()).optional(),
   auth: z
     .object({

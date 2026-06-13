@@ -25,6 +25,10 @@ describe("resolveModel", () => {
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(loadCredentialProxy).mockResolvedValue([]);
     vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
     vi.mocked(getModels).mockReturnValue([
       {
@@ -60,6 +64,55 @@ describe("resolveModel", () => {
     expect(model.api).toBe("openai-completions");
     expect(model.provider).toBe("llama-cpp");
     expect(model.baseUrl).toBe("http://localhost:8080/v1");
+  });
+
+  it("forceCustom: true の場合、KnownProvider と衝突していてもカスタムプロバイダーとして解決する", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue(["groq"] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "groq",
+        forceCustom: true,
+        baseUrl: "https://api.groq.com/openai/v1",
+        api: "openai-completions",
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("groq", "llama-3.3-70b-versatile");
+    expect(model.provider).toBe("groq");
+    expect(model.baseUrl).toBe("https://api.groq.com/openai/v1");
+    expect(model.id).toBe("llama-3.3-70b-versatile");
+  });
+
+  it("forceCustom が未指定の場合は KnownProvider 側のモデル一覧から解決する（回帰確認）", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue(["groq"] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "groq",
+        baseUrl: "https://api.groq.com/openai/v1",
+      },
+    ] as CredentialEntry[]);
+    vi.mocked(getModels).mockReturnValue([
+      {
+        id: "llama-3.3-70b-versatile",
+        name: "Llama 3.3 70B",
+        api: "openai-chat",
+        provider: "groq",
+      },
+    ] as unknown as Model<never>[]);
+
+    const model = await resolveModel("groq", "llama-3.3-70b-versatile");
+    expect(model.id).toBe("llama-3.3-70b-versatile");
+    expect(model.provider).toBe("groq");
   });
 
   it("compat.thinkingFormat があるカスタムプロバイダは reasoning を自動で有効にする", async () => {
@@ -301,7 +354,11 @@ describe("resolveModel", () => {
   it("既知のプロバイダーでモデルが見つからない場合はエラー", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
     vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([]);
     vi.mocked(getModels).mockReturnValue([]);
 
     await expect(resolveModel("openai", "unknown-model")).rejects.toThrow(
