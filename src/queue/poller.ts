@@ -247,6 +247,10 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
         msg.sessionId,
         msg.content,
         (event) => {
+          // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
+          if (msg.cronJobId && !msg.cronThread && event.type === "tool_start") {
+            return;
+          }
           void sendDiscordEvent(msg.channelId, event, replyMessageId);
         },
       );
