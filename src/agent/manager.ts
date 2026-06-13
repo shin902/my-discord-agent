@@ -65,18 +65,9 @@ function buildSanitizedCredentialJson(
     }
 
     const { envVars: _ev, msal: _msal, auth: _auth, ...rest } = entry;
-    
-    // API キーをホスト側で解決して _apiKey として含める
-    // サンドボックス内では環境変数は設定されないため、直接値を渡す
-    let apiKey: string | undefined;
-    if (setEnvVars.length > 0) {
-      apiKey = process.env[setEnvVars[0]]; // 最初の設定済み envVar を使用
-    }
-    
     sanitized.push({
       ...rest,
       baseUrl: `http://host.docker.internal:${proxyPort}/${entry.provider}`,
-      ...(apiKey && { _apiKey: apiKey }),
     });
   }
   return JSON.stringify(sanitized);

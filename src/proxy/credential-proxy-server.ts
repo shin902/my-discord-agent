@@ -92,8 +92,7 @@ async function handleRequest(
     delete headers.authorization;
     headers.authorization = `Bearer ${token}`;
   } else if (entry.envVars && entry.envVars.length > 0) {
-    // _apiKey があればそれを優先（ホスト側で解決済み）、なければ envVar から取得
-    const apiKey = (entry as any)._apiKey ?? getFirstSetEnvVar(entry.envVars);
+    const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
     if (apiKey) {
       if (entry.auth?.type === "query-token") {
