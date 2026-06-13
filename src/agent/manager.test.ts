@@ -141,12 +141,19 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toContain("--add-host=host.docker.internal:host-gateway");
   });
 
-  it("/sessions を mount する", async () => {
+  it("/sessions/{groupName} にグループ単位でmountする", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
-    expect(volumeArgs.some((v) => v.includes(":/sessions"))).toBe(true);
+    expect(
+      volumeArgs.some(
+        (v) =>
+          v.includes("data/sessions/test-group") &&
+          v.endsWith(":/sessions/test-group"),
+      ),
+    ).toBe(true);
+    expect(volumeArgs.some((v) => v.endsWith(":/sessions"))).toBe(false);
   });
 
   it("/workspace を mount する", async () => {
