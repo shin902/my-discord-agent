@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { loadGroupConfig } from "../config/group-config.js";
+import { findGroupByName, type MountConfig } from "../config/groups.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
@@ -73,6 +74,40 @@ function buildSanitizedCredentialJson(
   return JSON.stringify(sanitized);
 }
 
+const RESERVED_CONTAINER_PATHS = ["/workspace", "/sessions"];
+
+function buildExtraMountArgs(mounts: MountConfig[]): string[] {
+  const args: string[] = [];
+  for (const mount of mounts) {
+    if (
+      RESERVED_CONTAINER_PATHS.some(
+        (reserved) =>
+          mount.container === reserved ||
+          mount.container.startsWith(`${reserved}/`),
+      )
+    ) {
+      throw new NonRetryableError(
+        `mounts.container は予約済みパス (${RESERVED_CONTAINER_PATHS.join(", ")}) と重複できません: ${mount.container}`,
+      );
+    }
+    let hostPath: string;
+    if (path.isAbsolute(mount.host)) {
+      hostPath = mount.host;
+    } else {
+      hostPath = path.join(ROOT, mount.host);
+      const rel = path.relative(ROOT, hostPath);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        throw new NonRetryableError(
+          `mounts.host はリポジトリルート外を指しています: ${mount.host}`,
+        );
+      }
+    }
+    const suffix = mount.readOnly ? ":ro" : "";
+    args.push("-v", `${hostPath}:${mount.container}${suffix}`);
+  }
+  return args;
+}
+
 export async function sendMessage(
   groupName: string,
   sessionId: string,
@@ -92,6 +127,14 @@ export async function sendMessage(
 
   try {
     resolveTools(groupConfig.tools ?? []);
+  } catch (err) {
+    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+  }
+
+  let extraMountArgs: string[];
+  try {
+    const groupsEntry = await findGroupByName(groupName);
+    extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
   } catch (err) {
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
@@ -130,6 +173,7 @@ export async function sendMessage(
     `${path.join(ROOT, "data/sessions", groupName)}:/sessions/${groupName}`,
     "-v",
     `${path.join(ROOT, "groups", groupName)}:/workspace`,
+    ...extraMountArgs,
     "-e",
     "SESSIONS_DIR=/sessions",
     "-e",
