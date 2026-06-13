@@ -120,23 +120,26 @@ describe("getGoogleAccessToken", () => {
         }),
       });
 
-    const { initGoogleAuth, getGoogleAccessToken } = await import(
-      "./google-auth.js"
-    );
+    const { initGoogleAuth, getGoogleAccessToken, GoogleAuthRequiredError } =
+      await import("./google-auth.js");
     await initGoogleAuth("google-calendar", GOOGLE_CONFIG, CLIENT_SECRET);
-    const token = await getGoogleAccessToken("google-calendar");
 
-    expect(token).toBe("device-access-token");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const error = await getGoogleAccessToken("google-calendar").catch((e) => e);
+    expect(error).toBeInstanceOf(GoogleAuthRequiredError);
+    expect((error as Error).message).toContain("https://www.google.com/device");
+    expect((error as Error).message).toContain("ABCD-EFGH");
     expect(fetchMock.mock.calls[0][0]).toBe(
       "https://oauth2.googleapis.com/device/code",
     );
-    expect(writeFile).toHaveBeenCalled();
+
+    // バックグラウンドのポーリングが完了するまで待つ
+    await vi.waitFor(() => expect(writeFile).toHaveBeenCalled());
     const persisted = JSON.parse(writeFile.mock.calls[0][1] as string);
     expect(persisted.refreshToken).toBe("device-refresh-token");
   });
 
-  it("デバイスコードフローが authorization_pending を返した後成功する", async () => {
+  it("認証案内中に再度呼び出すと同じ案内を返し、デバイスコードを取得し直さない", async () => {
+    vi.useFakeTimers();
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
       writeFile: vi.fn().mockResolvedValue(undefined),
@@ -150,59 +153,32 @@ describe("getGoogleAccessToken", () => {
           user_code: "ABCD-EFGH",
           verification_url: "https://www.google.com/device",
           expires_in: 1800,
-          interval: 0,
+          interval: 60,
         }),
       })
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         json: async () => ({ error: "authorization_pending" }),
-      })
-      .mockResolvedValueOnce({
-        json: async () => ({
-          access_token: "device-access-token",
-          expires_in: 3600,
-        }),
       });
 
-    const { initGoogleAuth, getGoogleAccessToken } = await import(
-      "./google-auth.js"
-    );
+    const { initGoogleAuth, getGoogleAccessToken, GoogleAuthRequiredError } =
+      await import("./google-auth.js");
     await initGoogleAuth("google-calendar", GOOGLE_CONFIG, CLIENT_SECRET);
-    const token = await getGoogleAccessToken("google-calendar");
 
-    expect(token).toBe("device-access-token");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it("デバイスコードフローが access_denied 等のエラーを返したら例外を投げる", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
-      writeFile: vi.fn().mockResolvedValue(undefined),
-      mkdir: vi.fn().mockResolvedValue(undefined),
-      chmod: vi.fn().mockResolvedValue(undefined),
-    }));
-    fetchMock
-      .mockResolvedValueOnce({
-        json: async () => ({
-          device_code: "device-code-123",
-          user_code: "ABCD-EFGH",
-          verification_url: "https://www.google.com/device",
-          expires_in: 1800,
-          interval: 0,
-        }),
-      })
-      .mockResolvedValueOnce({
-        json: async () => ({
-          error: "access_denied",
-          error_description: "User denied access",
-        }),
-      });
-
-    const { initGoogleAuth, getGoogleAccessToken } = await import(
-      "./google-auth.js"
+    const error1 = await getGoogleAccessToken("google-calendar").catch(
+      (e) => e,
     );
-    await initGoogleAuth("google-calendar", GOOGLE_CONFIG, CLIENT_SECRET);
-    await expect(getGoogleAccessToken("google-calendar")).rejects.toThrow(
-      "access_denied",
+    const error2 = await getGoogleAccessToken("google-calendar").catch(
+      (e) => e,
     );
+    expect(error1).toBeInstanceOf(GoogleAuthRequiredError);
+    expect(error2).toBeInstanceOf(GoogleAuthRequiredError);
+    expect((error1 as Error).message).toBe((error2 as Error).message);
+    // device/code は1回だけリクエストされる
+    expect(
+      fetchMock.mock.calls.filter(
+        (c) => c[0] === "https://oauth2.googleapis.com/device/code",
+      ),
+    ).toHaveLength(1);
+    vi.useRealTimers();
   });
 });
