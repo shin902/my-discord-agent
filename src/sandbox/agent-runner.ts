@@ -87,12 +87,13 @@ async function loadMemoryFromWorkspace(): Promise<string | null> {
 function formatMemoryForPrompt(memory: string | null): string {
   if (!memory) return "";
 
-  if (memory.length <= MEMORY_CHAR_LIMIT) {
+  const codePoints = Array.from(memory);
+  if (codePoints.length <= MEMORY_CHAR_LIMIT) {
     return `## 記憶 (MEMORY.md)\n\n${memory}`;
   }
 
-  const truncated = memory.slice(0, MEMORY_CHAR_LIMIT);
-  return `## 記憶 (MEMORY.md)\n\n${truncated}\n\n[警告: MEMORY.md が上限(${MEMORY_CHAR_LIMIT}字)を超えています。古い情報を整理・要約してください]`;
+  const truncated = codePoints.slice(0, MEMORY_CHAR_LIMIT).join("");
+  return `## 記憶 (MEMORY.md)\n\n${truncated}\n\n[警告: MEMORY.md が上限(${MEMORY_CHAR_LIMIT}字)を超えています。古いセクションを削除・要約して整理してください]`;
 }
 
 export async function runAgentLoop(
