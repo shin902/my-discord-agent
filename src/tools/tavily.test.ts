@@ -110,6 +110,27 @@ describe("tavily search tool", () => {
     expect(firstText(result)).toContain("(結果なし)");
   });
 
+  it("results が undefined でもクラッシュしない", async () => {
+    process.env = {
+      ...originalEnv,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+      ]),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      }),
+    );
+
+    const { tavilySearchTool } = await import("./tavily.js");
+    const result = await tavilySearchTool.execute("id", { query: "test" });
+
+    expect(firstText(result)).toContain("(結果なし)");
+  });
+
   it("API エラー時に例外を投げる", async () => {
     process.env = {
       ...originalEnv,

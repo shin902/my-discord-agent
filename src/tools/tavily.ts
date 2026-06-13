@@ -97,24 +97,26 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
       throw new Error(`Tavily API エラー ${res.status}: ${text.slice(0, 200)}`);
     }
     const data = (await res.json()) as TavilyResponse;
+    const results = data.results ?? [];
 
     const lines: string[] = [];
     if (data.answer) {
       lines.push("## 回答", "", data.answer, "");
     }
     lines.push("## 検索結果", "");
-    for (const r of data.results) {
-      lines.push(`### ${r.title}`);
-      lines.push(`- URL: ${r.url}`);
-      lines.push(`- スコア: ${r.score.toFixed(2)}`);
-      lines.push(`- ${r.content}`);
+    for (const r of results) {
+      lines.push(`### ${r.title ?? "(タイトルなし)"}`);
+      if (r.url) lines.push(`- URL: ${r.url}`);
+      if (typeof r.score === "number")
+        lines.push(`- スコア: ${r.score.toFixed(2)}`);
+      if (r.content) lines.push(`- ${r.content}`);
       lines.push("");
     }
-    if (data.results.length === 0) lines.push("(結果なし)");
+    if (results.length === 0) lines.push("(結果なし)");
 
     return {
       content: [{ type: "text", text: lines.join("\n") }],
-      details: { query, resultCount: data.results.length },
+      details: { query, resultCount: results.length },
     };
   },
 };
