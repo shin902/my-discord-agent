@@ -254,6 +254,7 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
           }
           void sendDiscordEvent(msg.channelId, event, replyMessageId);
         },
+        msg.attachments,
       );
     } catch (err) {
       if (err instanceof NonRetryableError) {

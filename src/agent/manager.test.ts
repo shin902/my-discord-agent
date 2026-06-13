@@ -216,6 +216,113 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 });
 
+describe("sendMessage: 添付ファイル", () => {
+  let spawnMock: ReturnType<typeof vi.fn>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    spawnMock = vi.fn().mockReturnValue(makeProc());
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      loadGroupConfig: vi.fn().mockResolvedValue({}),
+    }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue(undefined),
+    }));
+    fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { initManager } = await import("./manager.js");
+    await initManager(12345);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  const attachments = [
+    {
+      url: "https://cdn.discordapp.com/attachments/x/y/photo.png",
+      name: "photo.png",
+      contentType: "image/png",
+      size: 8,
+    },
+  ];
+
+  it("添付ファイルを /workspace/attachments に読み取り専用でマウントする", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "見て",
+      undefined,
+      attachments,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(attachments[0].url);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(
+      volumeArgs.some(
+        (v) =>
+          v.includes("data/attachments/test-group/session-1") &&
+          v.endsWith(":/workspace/attachments:ro"),
+      ),
+    ).toBe(true);
+  });
+
+  it("プロンプトに添付ファイルのパス一覧を追記する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "見て",
+      undefined,
+      attachments,
+    );
+
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.content).toContain("見て");
+    expect(payload.content).toContain("[添付ファイル]");
+    expect(payload.content).toContain("attachments/0-photo.png");
+  });
+
+  it("添付ファイルがない場合はマウントせず content も変更しない", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs.some((v) => v.includes(":/workspace/attachments"))).toBe(
+      false,
+    );
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.content).toBe("hi");
+  });
+
+  it("サイズが上限を超える添付ファイルはダウンロードしない", async () => {
+    const { sendMessage } = await import("./manager.js");
+    const tooLarge = [{ ...attachments[0], size: 11 * 1024 * 1024 }];
+    await sendMessage("test-group", "session-1", "hi", undefined, tooLarge);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs.some((v) => v.includes(":/workspace/attachments"))).toBe(
+      false,
+    );
+  });
+});
+
 describe("sendMessage: 追加マウント (config/groups.json の mounts)", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
 
