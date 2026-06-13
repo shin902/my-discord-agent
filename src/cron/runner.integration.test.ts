@@ -68,6 +68,7 @@ describe("executeJob", () => {
     expect(arg.groupName).toBe("my-group");
     expect(arg.content).toBe("do something");
     expect(arg.sessionId).toMatch(/^cron-test-job-/);
+    expect(arg.cronJobId).toBe("test-job");
   });
 
   it("to-thread mode: appendInbox に cronThread フラグとジョブIDを渡す", async () => {

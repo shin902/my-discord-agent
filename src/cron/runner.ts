@@ -188,6 +188,7 @@ export async function executeJob(job: CronJob): Promise<void> {
       sessionId: `cron-${job.id}-${Date.now()}`,
       content: prompt,
       timestamp,
+      cronJobId: job.id,
     });
   } else {
     // mode === "to-thread": poller 経由でスレッドを作成・投稿する

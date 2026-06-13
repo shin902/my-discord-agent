@@ -152,6 +152,37 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 
+  it("cronJobId が設定されている（to-channel cron）場合、tool_start イベントは送信されない", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({ type: "tool_start", toolName: "bash" });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg({ cronJobId: "daily-report" }));
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledOnce();
+    });
+    expect(mockSend).not.toHaveBeenCalledWith(expect.stringMatching(/^🔧/));
+  });
+
+  it("cronJobId が設定されていても error イベントは送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, onDiscordEvent) => {
+        onDiscordEvent?.({ type: "error", message: "oops" });
+        return "";
+      },
+    );
+
+    await processMessage(makeMsg({ cronJobId: "daily-report" }));
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
+    });
+  });
+
   it("error イベントで ⚠️ メッセージが Discord に送信される", async () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, onDiscordEvent) => {
