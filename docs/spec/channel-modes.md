@@ -19,6 +19,24 @@ Discord でスレッドを手動作成すると `ThreadCreated` という特殊�
 
 ---
 
+## bot/Webhook投稿の扱い
+
+`message.author.bot === true` のメッセージ(Webhook経由の投稿を含む)は、デフォルトでは無視される。
+
+チャンネル設定の `allowedWebhookIds`(`string[]`、任意)に Webhook ID を登録すると、その Webhook からの投稿のみ例外的に処理対象になる。feedcord等のRSS連携で `auto-thread` モードと組み合わせて使う(`.claude/skills/add-rss-feed/SKILL.md` 参照)。
+
+```json
+{
+  "channelId": "...",
+  "sessionMode": "auto-thread",
+  "allowedWebhookIds": ["123456789012345678"]
+}
+```
+
+Webhook IDは、Discordで発行されるWebhook URL `https://discord.com/api/webhooks/<WEBHOOK_ID>/<TOKEN>` の `<WEBHOOK_ID>` 部分。
+
+---
+
 ## `auto-thread` の詳細
 
 > 参考（URLのみに限定されてる）:

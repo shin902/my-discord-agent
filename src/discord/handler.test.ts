@@ -40,11 +40,13 @@ function makeMockMessage(opts: {
   parentId?: string | null;
   content?: string;
   isBot?: boolean;
+  webhookId?: string | null;
   id?: string;
   startThread?: ReturnType<typeof vi.fn>;
 }): Message {
   return {
     author: { bot: opts.isBot ?? false },
+    webhookId: opts.webhookId ?? null,
     channelId: opts.channelId,
     id: opts.id ?? "000000000000000000",
     channel: {
@@ -66,15 +68,62 @@ describe("registerHandlers - MessageCreate", () => {
     mockAppendInbox.mockReset().mockResolvedValue(undefined);
   });
 
-  it("bot のメッセージは無視される", async () => {
+  it("bot のメッセージは allowedWebhookIds 未設定の場合無視される", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "default", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
+    });
     const msg = makeMockMessage({
       isBot: true,
       isThread: false,
       channelId: "ch-1",
     });
     await getMessageHandler()(msg);
-    expect(mockFindGroup).not.toHaveBeenCalled();
     expect(mockAppendInbox).not.toHaveBeenCalled();
+  });
+
+  it("bot のメッセージは webhookId が allowedWebhookIds に無い場合無視される", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "default", channels: [] },
+      channel: {
+        channelId: "ch-1",
+        sessionMode: "shared",
+        allowedWebhookIds: ["webhook-allowed"],
+      },
+    });
+    const msg = makeMockMessage({
+      isBot: true,
+      isThread: false,
+      channelId: "ch-1",
+      webhookId: "webhook-other",
+    });
+    await getMessageHandler()(msg);
+    expect(mockAppendInbox).not.toHaveBeenCalled();
+  });
+
+  it("bot のメッセージは webhookId が allowedWebhookIds に含まれていれば処理される", async () => {
+    mockFindGroup.mockResolvedValue({
+      group: { name: "default", channels: [] },
+      channel: {
+        channelId: "ch-1",
+        sessionMode: "shared",
+        allowedWebhookIds: ["webhook-allowed"],
+      },
+    });
+    const msg = makeMockMessage({
+      isBot: true,
+      isThread: false,
+      channelId: "ch-1",
+      webhookId: "webhook-allowed",
+      content: "RSS更新",
+    });
+    await getMessageHandler()(msg);
+    expect(mockAppendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "ch-1",
+        content: "RSS更新",
+      }),
+    );
   });
 
   it("グループ設定がないチャンネルは無視される", async () => {

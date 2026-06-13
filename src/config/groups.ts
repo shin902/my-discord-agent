@@ -4,6 +4,8 @@ import { loadRawConfig } from "./config.js";
 const ChannelConfigSchema = z.object({
   channelId: z.string(),
   sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
+  // feedcord 等、Webhook経由でこのチャンネルに投稿するメッセージを許可するWebhook IDのリスト
+  allowedWebhookIds: z.array(z.string()).optional(),
 });
 
 const MountConfigSchema = z.object({
