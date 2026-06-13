@@ -8,7 +8,7 @@ import {
   resolveModel,
 } from "../../agent/model.js";
 import { appendMessage } from "../../agent/session.js";
-import { type AgentConfig, findGroupByName } from "../../config/groups.js";
+import { findGroupByName, type GroupConfig } from "../../config/groups.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
@@ -117,7 +117,7 @@ async function generateSummary(
   const { groupName } = ctx;
   const groupConfig = await (groupName
     ? findGroupByName(groupName)
-    : Promise.resolve(undefined as AgentConfig | undefined));
+    : Promise.resolve(undefined as GroupConfig | undefined));
 
   const providerName = groupConfig?.model?.provider ?? DEFAULT_PROVIDER;
   const modelId = groupConfig?.model?.modelId ?? DEFAULT_MODEL_ID;
