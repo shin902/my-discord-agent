@@ -12,6 +12,12 @@ vi.mock("../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../config/default-model.js", () => ({
+  loadDefaultModel: vi
+    .fn()
+    .mockResolvedValue({ provider: "opencode-go", modelId: "kimi-k2.6" }),
+}));
+
 const { resolveModel, resolveBaseUrl } = await import("./manager.js");
 
 describe("resolveBaseUrl", () => {
