@@ -98,6 +98,9 @@ export async function sendMessage(
   }
 
   await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });
+  await mkdir(path.join(ROOT, "data/sessions", groupName), {
+    recursive: true,
+  });
 
   if (storedProxyPort === null) {
     throw new NonRetryableError(
@@ -125,7 +128,7 @@ export async function sendMessage(
     "--cpus=1",
     "--add-host=host.docker.internal:host-gateway",
     "-v",
-    `${path.join(ROOT, "data/sessions")}:/sessions`,
+    `${path.join(ROOT, "data/sessions", groupName)}:/sessions/${groupName}`,
     "-v",
     `${path.join(ROOT, "groups", groupName)}:/workspace`,
     "-e",
