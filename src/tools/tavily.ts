@@ -133,7 +133,7 @@ export const tavilyExtractTool: AgentTool<typeof extractParams> = {
   name: "tavily_extract",
   label: "Tavily Extract",
   description:
-    "⚠️ローカルLLM禁止（コンテキスト爆発リスク）: 指定したURLのページ本文を抽出する。検索結果のページを詳しく読むときに使う",
+    "指定したURLのページ本文を抽出する。検索結果のページを詳しく読むときに使う",
   parameters: extractParams,
   execute: async (
     _toolCallId,
@@ -226,7 +226,7 @@ export const tavilyCrawlTool: AgentTool<typeof crawlParams> = {
   name: "tavily_crawl",
   label: "Tavily Crawl",
   description:
-    "⚠️ローカルLLM禁止（コンテキスト爆発リスク）: 指定URLを起点にサイト内のページをクロールし、各ページの本文を取得する",
+    "指定URLを起点にサイト内のページをクロールし、各ページの本文を取得する",
   parameters: crawlParams,
   execute: async (
     _toolCallId,
