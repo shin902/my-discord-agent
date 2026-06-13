@@ -90,9 +90,18 @@ function buildExtraMountArgs(mounts: MountConfig[]): string[] {
         `mounts.container は予約済みパス (${RESERVED_CONTAINER_PATHS.join(", ")}) と重複できません: ${mount.container}`,
       );
     }
-    const hostPath = path.isAbsolute(mount.host)
-      ? mount.host
-      : path.join(ROOT, mount.host);
+    let hostPath: string;
+    if (path.isAbsolute(mount.host)) {
+      hostPath = mount.host;
+    } else {
+      hostPath = path.join(ROOT, mount.host);
+      const rel = path.relative(ROOT, hostPath);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        throw new NonRetryableError(
+          `mounts.host はリポジトリルート外を指しています: ${mount.host}`,
+        );
+      }
+    }
     const suffix = mount.readOnly ? ":ro" : "";
     args.push("-v", `${hostPath}:${mount.container}${suffix}`);
   }

@@ -282,6 +282,14 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs).toHaveLength(2);
   });
+
+  it("相対パスの host がリポジトリルート外を指す場合は設定エラーを返す", async () => {
+    await setup([{ host: "../outside", container: "/outside" }]);
+    const { sendMessage } = await import("./manager.js");
+    const result = await sendMessage("test-group", "session-1", "hi");
+    expect(result).toContain("設定エラー");
+    expect(result).toContain("リポジトリルート外");
+  });
 });
 
 describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
