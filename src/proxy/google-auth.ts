@@ -13,11 +13,29 @@ const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 // アクセストークンの有効期限直前での失効を避けるための安全マージン
 const EXPIRY_MARGIN_MS = 60_000;
 
+type PendingAuth = {
+  verificationUrl: string;
+  userCode: string;
+};
+
 type ProviderState = {
   config: GoogleOAuthConfig;
   clientSecret: string;
   cachePath: string;
+  pendingAuth?: PendingAuth;
 };
+
+// ツール実行時にデバイス認証が未完了の場合に投げる。
+// verificationUrl・userCode をエラーメッセージに含め、
+// Discord 上のユーザーに認証手順を案内できるようにする。
+export class GoogleAuthRequiredError extends Error {
+  constructor(provider: string, pending: PendingAuth) {
+    super(
+      `Google Calendar の認証が必要です。${pending.verificationUrl} を開き、コード "${pending.userCode}" を入力して認証してください。認証完了後、しばらくしてから再度お試しください。(provider: ${provider})`,
+    );
+    this.name = "GoogleAuthRequiredError";
+  }
+}
 
 type CachedTokens = {
   accessToken?: string;
@@ -92,43 +110,56 @@ async function refreshAccessToken(
   })) as TokenResponse;
 }
 
-async function runDeviceCodeFlow(
+// デバイスコードフローをバックグラウンドでポーリングし、完了したらトークンを
+// キャッシュに保存する。getGoogleAccessToken はこの完了を待たずに
+// GoogleAuthRequiredError を投げて即座に呼び出し元へ認証URLを返す。
+async function pollDeviceCode(
   provider: string,
   state: ProviderState,
-): Promise<TokenResponse> {
-  const deviceCode = (await postForm(DEVICE_CODE_URL, {
-    client_id: state.config.clientId,
-    scope: state.config.scopes.join(" "),
-  })) as DeviceCodeResponse;
-
-  console.log(`\n[google-auth:${provider}] 認証が必要です`);
-  console.log(
-    `[google-auth:${provider}] ${deviceCode.verification_url} を開き、コード ${deviceCode.user_code} を入力してください`,
-  );
-
+  deviceCode: DeviceCodeResponse,
+): Promise<void> {
   const intervalMs = (deviceCode.interval ?? 5) * 1000;
   const deadline = Date.now() + deviceCode.expires_in * 1000;
 
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    const result = (await postForm(TOKEN_URL, {
-      client_id: state.config.clientId,
-      client_secret: state.clientSecret,
-      device_code: deviceCode.device_code,
-      grant_type: DEVICE_GRANT_TYPE,
-    })) as TokenResponse;
 
-    if (result.access_token) return result;
+    let result: TokenResponse;
+    try {
+      result = (await postForm(TOKEN_URL, {
+        client_id: state.config.clientId,
+        client_secret: state.clientSecret,
+        device_code: deviceCode.device_code,
+        grant_type: DEVICE_GRANT_TYPE,
+      })) as TokenResponse;
+    } catch (err) {
+      console.error(
+        `[google-auth:${provider}] トークン取得中にエラーが発生しました: ${err instanceof Error ? err.message : err}`,
+      );
+      continue;
+    }
+
+    if (result.access_token) {
+      const tokens: CachedTokens = {
+        accessToken: result.access_token,
+        refreshToken: result.refresh_token,
+        expiresAt: Date.now() + (result.expires_in ?? 0) * 1000,
+      };
+      await persistCache(state.cachePath, tokens);
+      console.log(`[google-auth:${provider}] 認証が完了しました`);
+      return;
+    }
     if (result.error && result.error !== "authorization_pending") {
       if (result.error === "slow_down") continue;
-      throw new Error(
-        `Google OAuth デバイスフローが失敗しました: ${result.error} ${result.error_description ?? ""}`,
+      console.error(
+        `[google-auth:${provider}] デバイスコードフローが失敗しました: ${result.error} ${result.error_description ?? ""}`,
       );
+      return;
     }
   }
 
-  throw new Error(
-    `Google OAuth デバイスフローがタイムアウトしました (provider: ${provider})`,
+  console.error(
+    `[google-auth:${provider}] デバイスコードフローがタイムアウトしました`,
   );
 }
 
@@ -178,18 +209,30 @@ export async function getGoogleAccessToken(provider: string): Promise<string> {
     );
   }
 
-  const result = await runDeviceCodeFlow(provider, state);
-  if (!result.access_token) {
-    throw new Error(
-      `デバイスコードフローでトークンを取得できませんでした (provider: ${provider})`,
-    );
+  // 認証フローが既に進行中なら、同じ案内を返して再開要求しない
+  if (state.pendingAuth) {
+    throw new GoogleAuthRequiredError(provider, state.pendingAuth);
   }
 
-  const tokens: CachedTokens = {
-    accessToken: result.access_token,
-    refreshToken: result.refresh_token ?? cached.refreshToken,
-    expiresAt: Date.now() + (result.expires_in ?? 0) * 1000,
+  const deviceCode = (await postForm(DEVICE_CODE_URL, {
+    client_id: state.config.clientId,
+    scope: state.config.scopes.join(" "),
+  })) as DeviceCodeResponse;
+
+  const pending: PendingAuth = {
+    verificationUrl: deviceCode.verification_url,
+    userCode: deviceCode.user_code,
   };
-  await persistCache(state.cachePath, tokens);
-  return tokens.accessToken as string;
+  state.pendingAuth = pending;
+
+  console.log(`\n[google-auth:${provider}] 認証が必要です`);
+  console.log(
+    `[google-auth:${provider}] ${pending.verificationUrl} を開き、コード ${pending.userCode} を入力してください`,
+  );
+
+  void pollDeviceCode(provider, state, deviceCode).finally(() => {
+    if (state.pendingAuth === pending) state.pendingAuth = undefined;
+  });
+
+  throw new GoogleAuthRequiredError(provider, pending);
 }

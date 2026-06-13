@@ -7,7 +7,7 @@ Google Calendar API を `google-calendar` プロバイダー（`src/tools/calend
 ## 1. プロジェクトの作成と Calendar API の有効化
 
 1. [Google Cloud Console](https://console.cloud.google.com/) を開く（既存プロジェクトがあれば流用可）
-2. 新規プロジェクトを作成（または既存プロジェクトを選択）
+2. 新規プロジェクトを作成（または既存プロジェクトを選択）。画面右上のプロジェクト名から選択するか、新規作成する
 3. 左メニュー「APIとサービス」→「ライブラリ」を開く
 4. **Google Calendar API** を検索し、「有効にする」をクリック
 
@@ -17,8 +17,9 @@ Google Calendar API を `google-calendar` プロバイダー（`src/tools/calend
 
 1. 左メニュー「APIとサービス」→「OAuth 同意画面」を開く
 2. User Type は **「外部」** を選択（個人 Google アカウントの場合）
-3. アプリ名・サポートメール等の必須項目を入力
-4. 「スコープ」の追加で `https://www.googleapis.com/auth/calendar` を追加
+3. アプリ名を入力し、ユーザーサポートメールに自分のメールアドレスを入力して次へ進む
+4. 連絡先情報を入力し、ポリシーに同意して保存する
+5. 「データアクセス」→「スコープ」の追加で `https://www.googleapis.com/auth/calendar` を手動で追加する
 
 > **重要**: アプリの公開ステータスは「テスト」のままで問題ない（検証申請は不要）。ただし**テストユーザーに自分の Google アカウントを追加していないと、認証時に「このアプリは確認されていません」エラーで先に進めない**。「OAuth 同意画面」→「テストユーザー」で自分のアカウントを追加すること。
 
@@ -28,7 +29,7 @@ Google Calendar API を `google-calendar` プロバイダー（`src/tools/calend
 
 1. 左メニュー「APIとサービス」→「認証情報」を開く
 2. 「+ 認証情報を作成」→「OAuth クライアント ID」を選択
-3. アプリケーションの種類で **「TV と入力制限のあるデバイス」**（TVs and Limited Input devices）を選択
+3. アプリケーションの種類で **「テレビと入力が限られたデバイス」**（TVs and Limited Input devices）を選択
 4. 名前を入力して作成
 5. 表示される **クライアントID** と **クライアントシークレット** を控える
 
