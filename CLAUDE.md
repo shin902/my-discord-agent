@@ -80,10 +80,14 @@ groups/{name}/
   group.json                # モデル・ツール・autoReply・toolLogArgs 設定（省略可）
   AGENTS.md                 # グループのシステムプロンプト（省略可）
   SKILLS/{skill}/SKILL.md   # グループ固有のスキル定義（省略可）
+src/cron/jobs/*.ts          # 共有 cron ハンドラー（コミット対象。mail.ts 等のサンプル）
+src/cron/jobs/local/*.ts    # 個人ワークフロー固有の cron ハンドラー（gitignore）
 data/queue/inbox.jsonl      # 処理待ちメッセージキュー（自動生成）
 data/queue/dead-letter.jsonl# リトライ上限超えたメッセージ（自動生成）
 data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
 ```
+
+cron ハンドラーの置き場は `src/cron/jobs/local/` を gitignore し、機構（`src/cron/`）・共有サンプルと個人ジョブを分離している。`local/` を `src/` 配下に置くのは必須で、`tsconfig.json` の `include: ["src/**/*"]` 上 `tsc` が `src/` 外をコンパイルせず、prod（`pnpm start`）で `loadHandlerFn` が `dist/` の `.js` を import できなくなるため。ジョブ定義（`cron` 配列・`handler` パス）は gitignore 済みの `config` 側に書く。
 
 ### 環境変数
 
