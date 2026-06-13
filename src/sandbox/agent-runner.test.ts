@@ -136,7 +136,12 @@ describe("runAgentLoop", () => {
   });
 
   it("AGENTS.md が存在する場合はその内容を systemPrompt に使用する", async () => {
-    vi.mocked(readFile).mockResolvedValue("カスタムプロンプト" as never);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/AGENTS.md") {
+        return "カスタムプロンプト" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
 
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
@@ -157,6 +162,79 @@ describe("runAgentLoop", () => {
         }),
       }),
     );
+  });
+
+  it("MEMORY.md が存在する場合はsystemPromptに記憶セクションを追加する", async () => {
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/MEMORY.md") {
+        return "ユーザーは猫が好き" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    expect(readFile).toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
+    const systemPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(systemPrompt).toContain("## 記憶 (MEMORY.md)");
+    expect(systemPrompt).toContain("ユーザーは猫が好き");
+  });
+
+  it("MEMORY.md が存在しない場合は記憶セクションを追加しない", async () => {
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const systemPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(systemPrompt).not.toContain("## 記憶 (MEMORY.md)");
+  });
+
+  it("MEMORY.md が文字数上限を超える場合は切り詰めて警告を注入する", async () => {
+    const longMemory = "あ".repeat(3000);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/MEMORY.md") {
+        return longMemory as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const systemPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(systemPrompt).toContain("あ".repeat(2000));
+    expect(systemPrompt).not.toContain("あ".repeat(2001));
+    expect(systemPrompt).toContain("上限(2000字)を超えています");
   });
 
   it("不明なプロバイダはエラーをスロー", async () => {

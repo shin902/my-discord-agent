@@ -28,6 +28,9 @@ import { isTransientError } from "../utils/error.js";
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
+// MEMORY.md をシステムプロンプトに注入する際の文字数上限
+const MEMORY_CHAR_LIMIT = 2000;
+
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 
@@ -72,16 +75,38 @@ async function loadSystemPromptFromWorkspace(): Promise<string | null> {
   }
 }
 
+async function loadMemoryFromWorkspace(): Promise<string | null> {
+  try {
+    return await readFile("/workspace/MEMORY.md", "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function formatMemoryForPrompt(memory: string | null): string {
+  if (!memory) return "";
+
+  const codePoints = Array.from(memory);
+  if (codePoints.length <= MEMORY_CHAR_LIMIT) {
+    return `## 記憶 (MEMORY.md)\n\n${memory}`;
+  }
+
+  const truncated = codePoints.slice(0, MEMORY_CHAR_LIMIT).join("");
+  return `## 記憶 (MEMORY.md)\n\n${truncated}\n\n[警告: MEMORY.md が上限(${MEMORY_CHAR_LIMIT}字)を超えています。古いセクションを削除・要約して整理してください]`;
+}
+
 export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
   groupConfig: GroupJsonConfig,
 ): Promise<string> {
-  const [rawMessages, systemPrompt, skills] = await Promise.all([
+  const [rawMessages, systemPrompt, skills, memory] = await Promise.all([
     loadMessages(groupName, sessionId),
     loadSystemPromptFromWorkspace(),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
+    loadMemoryFromWorkspace(),
   ]);
 
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
@@ -101,7 +126,12 @@ export async function runAgentLoop(
   );
 
   const skillPrompt = formatSkillsForPrompt(skills);
-  const fullSystemPrompt = [systemPrompt ?? DEFAULT_SYSTEM_PROMPT, skillPrompt]
+  const memoryPrompt = formatMemoryForPrompt(memory);
+  const fullSystemPrompt = [
+    systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    skillPrompt,
+    memoryPrompt,
+  ]
     .filter(Boolean)
     .join("\n\n");
 
