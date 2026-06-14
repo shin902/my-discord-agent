@@ -10,7 +10,7 @@ import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import { type InboxMessage, prependInbox, shiftInbox } from "./inbox.js";
-import { acquireLlmLock } from "./llm-semaphore.js";
+import { acquireLlmLock } from "./llm-mutex.js";
 
 const POLL_MS = 1000;
 const MAX_RETRIES = 10;

@@ -1,6 +1,6 @@
 import type { DispatchMode } from "../config/poller-config.js";
 
-// concurrency=1 のグローバルセマフォ。serial モードで sendMessage() の同時実行を 1 つに絞る。
+// グローバルミューテックス（concurrency=1）。serial モードで sendMessage() の同時実行を 1 つに絞る。
 let locked = false;
 const waiters: Array<() => void> = [];
 
@@ -31,8 +31,8 @@ function release(): void {
 
 /**
  * LLM 呼び出し（sendMessage()）の前後で取得するロック。
- * - serial モード: グローバルな concurrency=1 セマフォで待機し、release 関数を返す
- * - parallel-session モード: セマフォなし。即座に no-op の release を返す
+ * - serial モード: グローバルなミューテックス（concurrency=1）で待機し、release 関数を返す
+ * - parallel-session モード: ロックなし。即座に no-op の release を返す
  */
 export async function acquireLlmLock(mode: DispatchMode): Promise<() => void> {
   if (mode !== "serial") {

@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-type LlmSemaphoreModule = typeof import("./llm-semaphore.js");
+type LlmMutexModule = typeof import("./llm-mutex.js");
 
-let acquireLlmLock: LlmSemaphoreModule["acquireLlmLock"];
+let acquireLlmLock: LlmMutexModule["acquireLlmLock"];
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 20));
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ acquireLlmLock } = await import("./llm-semaphore.js"));
+  ({ acquireLlmLock } = await import("./llm-mutex.js"));
 });
 
 describe("acquireLlmLock - parallel-session モード", () => {
