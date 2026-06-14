@@ -34,12 +34,9 @@ function release(): void {
  * - serial モード: グローバルな concurrency=1 セマフォで待機し、release 関数を返す
  * - parallel-session モード: セマフォなし。即座に no-op の release を返す
  */
-export async function acquireLlmLock(
-  mode: DispatchMode
-): Promise<() => void> {
+export async function acquireLlmLock(mode: DispatchMode): Promise<() => void> {
   if (mode !== "serial") {
     return noopRelease;
   }
   return acquire();
 }
-

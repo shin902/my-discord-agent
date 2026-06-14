@@ -1,4 +1,11 @@
-import { type MockInstance, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type MockInstance,
+  vi,
+} from "vitest";
 
 type LlmSemaphoreModule = typeof import("./llm-semaphore.js");
 
