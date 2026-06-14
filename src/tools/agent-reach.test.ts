@@ -128,7 +128,8 @@ describe("buildCommand シェルエスケープ", () => {
       out,
     );
     expect(cmd).toContain(".json");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
   });
 
   it("reddit: シングルクォートを含むURLをエスケープする", () => {
@@ -145,7 +146,8 @@ describe("buildCommand シェルエスケープ", () => {
       out,
     );
     expect(cmd).toContain("api.github.com/repos/owner/my-repo");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
     expect(cmd).toContain(".repo.json");
     expect(cmd).toContain(".readme.md");
   });
@@ -159,7 +161,8 @@ describe("buildCommand シェルエスケープ", () => {
   it("web: jina.ai 経由でcurl", () => {
     const cmd = buildCommand("web", "https://example.com/article", out);
     expect(cmd).toContain("r.jina.ai");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
   });
 
   it("x-twitter: fxtwitter API への curl コマンドを生成する", () => {
@@ -169,7 +172,8 @@ describe("buildCommand シェルエスケープ", () => {
       out,
     );
     expect(cmd).toContain("api.fxtwitter.com/testuser/status/123456789");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
   });
 });
 

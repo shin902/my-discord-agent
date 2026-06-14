@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,26 @@ const MEMORY_CHAR_LIMIT = 2000;
 
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
 const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
+
+// コンテナ起動直後はDNSリゾルバの準備が整っていないことがあるため待機する
+const NETWORK_READY_HOST = "r.jina.ai";
+const NETWORK_READY_TIMEOUT_MS = 10_000;
+const NETWORK_READY_RETRY_MS = 500;
+
+/** 外部ホスト名解決ができるまで待機する（最大 NETWORK_READY_TIMEOUT_MS、失敗時はそのまま続行） */
+export async function waitForNetwork(): Promise<void> {
+  const deadline = Date.now() + NETWORK_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      await lookup(NETWORK_READY_HOST);
+      return;
+    } catch {
+      await new Promise((resolve) =>
+        setTimeout(resolve, NETWORK_READY_RETRY_MS),
+      );
+    }
+  }
+}
 
 function isAssistantMessage(msg: unknown): msg is AssistantMessage {
   return (
@@ -203,6 +224,7 @@ const PayloadSchema = z.object({
 // CLIエントリポイント（import時は実行しない）
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   (async () => {
+    await waitForNetwork();
     const raw = await text(process.stdin);
     const payload = PayloadSchema.parse(JSON.parse(raw || "{}"));
 

@@ -483,7 +483,7 @@ export function buildCommand(
       const repoJsonQ = shellQuote(`${base}.repo.json`);
       const readmeQ = shellQuote(`${base}.readme.md`);
       return (
-        `curl -sf -H "Accept: application/vnd.github.v3+json" ${shellQuote(apiBase)} > ${repoJsonQ} && ` +
+        `curl -sS -o ${repoJsonQ} -w '%{http_code}' -H "Accept: application/vnd.github.v3+json" ${shellQuote(apiBase)} && ` +
         `(curl -sf -H "Accept: application/vnd.github.v3.raw" ${shellQuote(`${apiBase}/readme`)} > ${readmeQ} 2>/dev/null || true)`
       );
     }
@@ -492,13 +492,13 @@ export function buildCommand(
       if (!m)
         throw new Error(`X/Twitter URL からツイートIDを取得できません: ${url}`);
       const [, username, tweetId] = m;
-      return `curl -sf ${shellQuote(`https://api.fxtwitter.com/${username}/status/${tweetId}`)} > ${out}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(`https://api.fxtwitter.com/${username}/status/${tweetId}`)}`;
     }
     case "reddit": {
       const jsonUrl = url.endsWith(".json")
         ? url
         : url.replace(/\/?(\?.*)?$/, (s) => `.json${s}`);
-      return `curl -sf ${shellQuote(jsonUrl)} -H "User-Agent: discord-agent/1.0" > ${out}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(jsonUrl)} -H "User-Agent: discord-agent/1.0"`;
     }
     case "rss":
       return (
@@ -510,9 +510,17 @@ export function buildCommand(
         ` ${shellQuote(url)} > ${out}`
       );
     default:
-      return `curl -sf ${shellQuote(`https://r.jina.ai/${url}`)} > ${out}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(`https://r.jina.ai/${url}`)}`;
   }
 }
+
+/** buildCommand が `-w '%{http_code}'` で HTTP ステータスコードを stdout に出力するサービス */
+const HTTP_STATUS_SERVICES: ReadonlySet<ServiceType> = new Set([
+  "web",
+  "x-twitter",
+  "reddit",
+  "github-repo",
+]);
 
 const parameters = Type.Object({
   url: Type.String({ description: "取得するURL" }),
@@ -546,18 +554,36 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     await mkdir(join(WORKSPACE, FETCH_DIR), { recursive: true });
 
     const cmd = buildCommand(service, url, absPath);
+    let stdout: string;
     try {
-      await execAsync(cmd, {
+      ({ stdout } = await execAsync(cmd, {
         timeout: TIMEOUT_MS,
         maxBuffer: 64 * 1024 * 1024,
         cwd: WORKSPACE,
-      });
+      }));
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message?: string };
       throw new Error(
         [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
           "フェッチ失敗",
       );
+    }
+
+    if (HTTP_STATUS_SERVICES.has(service)) {
+      const status = Number.parseInt(stdout.trim(), 10);
+      if (Number.isFinite(status) && status >= 400) {
+        const base = absPath.replace(/\.[^.]+$/, "");
+        // github-repo はレスポンス本文を absPath ではなく {base}.repo.json に書き出す
+        const bodyPath = service === "github-repo" ? `${base}.repo.json` : absPath;
+        const body = await readFile(bodyPath, "utf-8").catch(() => "");
+        await rm(bodyPath, { force: true });
+        if (service === "github-repo") {
+          await rm(`${base}.readme.md`, { force: true });
+        }
+        throw new Error(
+          `HTTPエラー ${status} (${url})\n${body.slice(0, 500)}`.trim(),
+        );
+      }
     }
 
     // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換して保存
