@@ -23,7 +23,7 @@ export type GoogleOAuthConfig = z.infer<typeof GoogleOAuthConfigSchema>;
 // プロバイダー単位の設定のうち、modelId ごとに上書き可能なもの
 // （同一サーバーで複数モデルを切り替える場合に使う）
 const ModelOverrideSchema = z.object({
-  // モデルが受け付ける入力モダリティ。省略時はプロバイダー側の input（さらに省略時 ["text"]）
+  // モデルが受け付ける入力モダリティ。省略時は ["text"]
   input: z.array(z.enum(["text", "image"])).optional(),
 });
 
@@ -56,8 +56,6 @@ export const CredentialEntrySchema = z.object({
     ])
     .optional(),
   reasoning: z.boolean().optional(),
-  // カスタムプロバイダーが受け付ける入力モダリティ。省略時は ["text"]
-  input: z.array(z.enum(["text", "image"])).optional(),
   contextWindow: z.number().int().min(1).optional(),
   maxTokens: z.number().int().min(1).optional(),
   compat: z

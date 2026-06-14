@@ -88,7 +88,7 @@ function createCustomModel(
           },
         }
       : {}),
-    input: entry.models?.[modelId]?.input ?? entry.input ?? ["text"],
+    input: entry.models?.[modelId]?.input ?? ["text"],
     cost: {
       input: 0,
       output: 0,

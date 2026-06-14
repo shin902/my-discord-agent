@@ -67,7 +67,7 @@ describe("resolveModel", () => {
     expect(model.input).toEqual(["text"]);
   });
 
-  it("input が指定されたカスタムプロバイダはそのモダリティを反映する", async () => {
+  it("models[modelId].input で modelId 単位に入力モダリティを指定できる", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
     const { loadCredentialProxy } = await import(
@@ -79,27 +79,6 @@ describe("resolveModel", () => {
         provider: "llama-cpp",
         baseUrl: "http://localhost:8080/v1",
         api: "openai-completions",
-        input: ["text", "image"],
-      },
-    ] as CredentialEntry[]);
-
-    const model = await resolveModel("llama-cpp", "qwen-vl");
-    expect(model.input).toEqual(["text", "image"]);
-  });
-
-  it("models[modelId].input はプロバイダー共通の input を modelId 単位で上書きする", async () => {
-    const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
-    const { loadCredentialProxy } = await import(
-      "../config/credential-proxy.js"
-    );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
-    vi.mocked(loadCredentialProxy).mockResolvedValue([
-      {
-        provider: "llama-cpp",
-        baseUrl: "http://localhost:8080/v1",
-        api: "openai-completions",
-        input: ["text"],
         models: {
           "qwen-vl": { input: ["text", "image"] },
         },

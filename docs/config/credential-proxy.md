@@ -297,18 +297,20 @@ Ollama の OpenAI 互換 API では `thinkingLevel: "off"` が `reasoning.effort
 
 KnownProvider でない場合、`modelId` は自由な文字列を指定できます（例: `"llama3-8b"`, `"custom-model-001"`）。`pi-ai` 側での検証は行われず、指定された文字列がそのまま API リクエストに使用されます。
 
-### カスタムプロバイダーの入力モダリティ（`input`）
+### モデル単位の入力モダリティ（`models[modelId].input`）
 
-カスタムプロバイダーが受け付ける入力モダリティを `input` フィールドで指定できる。省略時は `["text"]`（テキスト入力のみ）。
+カスタムプロバイダーの `models` フィールドで、`modelId` ごとに受け付ける入力モダリティを指定できる。省略時は `["text"]`（テキスト入力のみ）。
 
-`read` ツールが画像ファイル（png/jpg/gif/webp）を読み込むと `type: "image"` のコンテンツブロックを返すが、`pi-ai` の `openai-completions` プロバイダーは `model.input` に `"image"` が含まれていない場合、その画像を `"(see attached image)"` というテキストに差し替えて送信する。Vision 対応モデル（mmproj 付き llama.cpp サーバー等）を使う場合は `input: ["text", "image"]` を指定する。
+`read` ツールが画像ファイル（png/jpg/gif/webp）を読み込むと `type: "image"` のコンテンツブロックを返すが、`pi-ai` の `openai-completions` プロバイダーは `model.input` に `"image"` が含まれていない場合、その画像を `"(see attached image)"` というテキストに差し替えて送信する。同じ llama.cpp サーバーでも modelId によって vision 対応（mmproj）の有無が異なるため、vision 対応モデルにのみ `input: ["text", "image"]` を指定する。
 
 ```json
 {
   "provider": "llama-cpp",
   "baseUrl": "http://localhost:8080/v1",
   "api": "openai-completions",
-  "input": ["text", "image"]
+  "models": {
+    "qwen3-vl": { "input": ["text", "image"] }
+  }
 }
 ```
 
