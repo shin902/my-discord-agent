@@ -550,7 +550,9 @@ export function formatHttpError(
   url: string,
   body: string,
 ): string {
-  return `HTTPエラー ${status} (${url})\n${body.slice(0, 500)}`.trim();
+  const header = `HTTPエラー ${status} (${url})`;
+  const truncated = body.slice(0, 500).trim();
+  return truncated ? `${header}\n${truncated}` : header;
 }
 
 const parameters = Type.Object({
