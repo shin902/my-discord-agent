@@ -90,9 +90,7 @@
     },
     {
       "provider": "tavily",
-      "envVars": [
-        "TAVILY_API_KEY"
-      ],
+      "envVars": ["TAVILY_API_KEY"],
       "baseUrl": "https://api.tavily.com"
     }
   ],
