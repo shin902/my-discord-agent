@@ -318,6 +318,37 @@ describe("sendMessage: 添付ファイル", () => {
     expect(payload.content).toContain("attachments/0-photo.png");
   });
 
+  it("画像添付がある場合は read ツールでの確認を促すヒントを追記する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "見て",
+      undefined,
+      attachments,
+    );
+
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.content).toContain("read ツール");
+  });
+
+  it("画像以外の添付ファイルのみの場合は read ツールのヒントを追記しない", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "見て", undefined, [
+      {
+        url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
+        name: "note.txt",
+        contentType: "text/plain",
+        size: 8,
+      },
+    ]);
+
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.content).not.toContain("read ツール");
+  });
+
   it("添付ファイルがない場合はマウントせず content も変更しない", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");

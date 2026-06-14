@@ -224,7 +224,11 @@ export async function sendMessage(
         (f) =>
           `- ${f.relPath} (${f.contentType ?? "unknown"}, ${f.size} bytes)`,
       );
-      promptContent = `${content}\n\n[添付ファイル]\n${lines.join("\n")}`;
+      const hasImage = saved.some((f) => f.contentType?.startsWith("image/"));
+      const hint = hasImage
+        ? "\n\n画像ファイルは read ツールでパスを指定すると内容を確認できます。"
+        : "";
+      promptContent = `${content}\n\n[添付ファイル]\n${lines.join("\n")}${hint}`;
     }
   }
 
