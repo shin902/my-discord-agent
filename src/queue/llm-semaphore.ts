@@ -44,8 +44,3 @@ export async function acquireLlmLock(
   return acquire();
 }
 
-/** テスト専用: セマフォの内部状態をリセットする */
-export function _resetLlmSemaphore(): void {
-  locked = false;
-  waiters.length = 0;
-}

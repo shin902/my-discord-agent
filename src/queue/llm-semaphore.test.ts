@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { _resetLlmSemaphore, acquireLlmLock } from "./llm-semaphore.js";
+import { type MockInstance, beforeEach, describe, expect, it, vi } from "vitest";
+
+type LlmSemaphoreModule = typeof import("./llm-semaphore.js");
+
+let acquireLlmLock: LlmSemaphoreModule["acquireLlmLock"];
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 20));
 
-beforeEach(() => {
-  _resetLlmSemaphore();
+beforeEach(async () => {
+  vi.resetModules();
+  ({ acquireLlmLock } = await import("./llm-semaphore.js"));
 });
 
 describe("acquireLlmLock - parallel-session モード", () => {
@@ -14,7 +18,6 @@ describe("acquireLlmLock - parallel-session モード", () => {
 
     expect(typeof release1).toBe("function");
     expect(typeof release2).toBe("function");
-    // no-op なので呼んでも問題ない
     release1();
     release2();
   });
