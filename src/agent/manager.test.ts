@@ -363,6 +363,34 @@ describe("sendMessage: 添付ファイル", () => {
     expect(payload.content).toBe("hi");
   });
 
+  it("過去のメッセージで添付ディレクトリが作られていれば、添付なしの後続メッセージでもマウントする", async () => {
+    const { sendMessage } = await import("./manager.js");
+
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "見て",
+      undefined,
+      attachments,
+    );
+
+    await sendMessage("test-group", "session-1", "さっきの画像について教えて");
+
+    const args = spawnMock.mock.calls[1][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(
+      volumeArgs.some(
+        (v) =>
+          v.includes("data/attachments/test-group/session-1") &&
+          v.endsWith(":/workspace/attachments:ro"),
+      ),
+    ).toBe(true);
+
+    const proc = spawnMock.mock.results[1].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[1][0] as string);
+    expect(payload.content).toBe("さっきの画像について教えて");
+  });
+
   it("サイズが上限を超える添付ファイルはダウンロードしない", async () => {
     const { sendMessage } = await import("./manager.js");
     const tooLarge = [{ ...attachments[0], size: 11 * 1024 * 1024 }];
