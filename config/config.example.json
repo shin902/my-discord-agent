@@ -69,7 +69,10 @@
       "api": "openai-completions",
       "contextWindow": 65536,
       "maxTokens": 4096,
-      "compat": { "thinkingFormat": "qwen-chat-template" }
+      "compat": { "thinkingFormat": "qwen-chat-template" },
+      "models": {
+        "qwen3-vl": { "input": ["text", "image"] }
+      }
     },
     {
       "provider": "ollama-qwen3",
@@ -87,9 +90,7 @@
     },
     {
       "provider": "tavily",
-      "envVars": [
-        "TAVILY_API_KEY"
-      ],
+      "envVars": ["TAVILY_API_KEY"],
       "baseUrl": "https://api.tavily.com"
     }
   ],

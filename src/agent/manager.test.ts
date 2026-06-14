@@ -1,4 +1,13 @@
+import { rm } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TEST_ATTACHMENTS_DIR = path.join(
+  __dirname,
+  "../../data/attachments/test-group",
+);
 
 vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: () => ["provider-a", "opencode-go"],
@@ -236,6 +245,7 @@ describe("sendMessage: 添付ファイル", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
@@ -254,9 +264,10 @@ describe("sendMessage: 添付ファイル", () => {
     await initManager(12345);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals();
     vi.resetModules();
+    await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
   });
 
   const attachments = [
@@ -307,6 +318,37 @@ describe("sendMessage: 添付ファイル", () => {
     expect(payload.content).toContain("attachments/0-photo.png");
   });
 
+  it("画像添付がある場合は read ツールでの確認を促すヒントを追記する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "見て",
+      undefined,
+      attachments,
+    );
+
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.content).toContain("read ツール");
+  });
+
+  it("画像以外の添付ファイルのみの場合は read ツールのヒントを追記しない", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "見て", undefined, [
+      {
+        url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
+        name: "note.txt",
+        contentType: "text/plain",
+        size: 8,
+      },
+    ]);
+
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.content).not.toContain("read ツール");
+  });
+
   it("添付ファイルがない場合はマウントせず content も変更しない", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
@@ -319,6 +361,34 @@ describe("sendMessage: 添付ファイル", () => {
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.content).toBe("hi");
+  });
+
+  it("過去のメッセージで添付ディレクトリが作られていれば、添付なしの後続メッセージでもマウントする", async () => {
+    const { sendMessage } = await import("./manager.js");
+
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "見て",
+      undefined,
+      attachments,
+    );
+
+    await sendMessage("test-group", "session-1", "さっきの画像について教えて");
+
+    const args = spawnMock.mock.calls[1][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(
+      volumeArgs.some(
+        (v) =>
+          v.includes("data/attachments/test-group/session-1") &&
+          v.endsWith(":/workspace/attachments:ro"),
+      ),
+    ).toBe(true);
+
+    const proc = spawnMock.mock.results[1].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[1][0] as string);
+    expect(payload.content).toBe("さっきの画像について教えて");
   });
 
   it("サイズが上限を超える添付ファイルはダウンロードしない", async () => {

@@ -297,9 +297,22 @@ Ollama の OpenAI 互換 API では `thinkingLevel: "off"` が `reasoning.effort
 
 KnownProvider でない場合、`modelId` は自由な文字列を指定できます（例: `"llama3-8b"`, `"custom-model-001"`）。`pi-ai` 側での検証は行われず、指定された文字列がそのまま API リクエストに使用されます。
 
-### カスタムプロバイダーの入力制限
+### モデル単位の入力モダリティ（`models[modelId].input`）
 
-現状の実装では、カスタムプロバイダーの `input` は常に `["text"]`（テキスト入力のみ）に固定されています。画像入力（`["text", "image"]`）等をサポートするモデル（例: LLaVA）を使用する場合、現在の `config/config.json` の `credentials` では指定できません。必要であればコード（`src/agent/model.ts` の `createCustomModel`）を拡張してください。
+カスタムプロバイダーの `models` フィールドで、`modelId` ごとに受け付ける入力モダリティを指定できる。省略時は `["text"]`（テキスト入力のみ）。
+
+`read` ツールが画像ファイル（png/jpg/gif/webp）を読み込むと `type: "image"` のコンテンツブロックを返すが、`pi-ai` の `openai-completions` プロバイダーは `model.input` に `"image"` が含まれていない場合、その画像を `"(see attached image)"` というテキストに差し替えて送信する。同じ llama.cpp サーバーでも modelId によって vision 対応（mmproj）の有無が異なるため、vision 対応モデルにのみ `input: ["text", "image"]` を指定する。
+
+```json
+{
+  "provider": "llama-cpp",
+  "baseUrl": "http://localhost:8080/v1",
+  "api": "openai-completions",
+  "models": {
+    "qwen3-vl": { "input": ["text", "image"] }
+  }
+}
+```
 
 ### 将来的な拡張
 

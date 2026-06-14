@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
@@ -216,21 +216,41 @@ export async function sendMessage(
   const creds = await loadCredentialProxy();
   const credentialJson = buildSanitizedCredentialJson(creds, proxyPort);
 
-  let attachmentMountArgs: string[] = [];
   let promptContent = content;
   if (attachments && attachments.length > 0) {
     const saved = await downloadAttachments(groupName, sessionId, attachments);
     if (saved.length > 0) {
-      attachmentMountArgs = [
-        "-v",
-        `${path.join(ROOT, "data/attachments", groupName, sessionId)}:/workspace/attachments:ro`,
-      ];
       const lines = saved.map(
         (f) =>
           `- ${f.relPath} (${f.contentType ?? "unknown"}, ${f.size} bytes)`,
       );
-      promptContent = `${content}\n\n[添付ファイル]\n${lines.join("\n")}`;
+      const hasImage = saved.some((f) => f.contentType?.startsWith("image/"));
+      const hint = hasImage
+        ? "\n\n画像ファイルは read ツールでパスを指定すると内容を確認できます。"
+        : "";
+      promptContent = `${content}\n\n[添付ファイル]\n${lines.join("\n")}${hint}`;
     }
+  }
+
+  // 過去のメッセージで添付された分も含め、セッションの添付ディレクトリがあれば
+  // 常にマウントする（エージェントは1メッセージごとに使い捨てコンテナで起動するため）
+  const attachmentsDir = path.join(
+    ROOT,
+    "data/attachments",
+    groupName,
+    sessionId,
+  );
+  let attachmentMountArgs: string[] = [];
+  try {
+    const entries = await readdir(attachmentsDir);
+    if (entries.length > 0) {
+      attachmentMountArgs = [
+        "-v",
+        `${attachmentsDir}:/workspace/attachments:ro`,
+      ];
+    }
+  } catch {
+    // ディレクトリが存在しない場合はマウントしない
   }
 
   const payload = JSON.stringify({

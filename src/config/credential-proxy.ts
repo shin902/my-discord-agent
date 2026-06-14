@@ -20,6 +20,13 @@ export const GoogleOAuthConfigSchema = z.object({
 
 export type GoogleOAuthConfig = z.infer<typeof GoogleOAuthConfigSchema>;
 
+// プロバイダー単位の設定のうち、modelId ごとに上書き可能なもの
+// （同一サーバーで複数モデルを切り替える場合に使う）
+const ModelOverrideSchema = z.object({
+  // モデルが受け付ける入力モダリティ。省略時は ["text"]
+  input: z.array(z.enum(["text", "image"])).optional(),
+});
+
 export const CredentialEntrySchema = z.object({
   provider: z.string(),
   // pi-ai の KnownProvider 名と衝突する場合でも credential-proxy 経由の
@@ -71,6 +78,9 @@ export const CredentialEntrySchema = z.object({
       requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
     })
     .optional(),
+  // modelId ごとの上書き設定。同一サーバー（同一 baseUrl）で複数モデルを
+  // 切り替える場合に、input をモデル単位で指定する
+  models: z.record(z.string(), ModelOverrideSchema).optional(),
 });
 
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;
