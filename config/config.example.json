@@ -84,6 +84,13 @@
       "baseUrl": "https://production-sfo.browserless.io",
       "envVars": ["BROWSERLESS_TOKEN"],
       "auth": { "type": "query-token", "queryParam": "token" }
+    },
+    {
+      "provider": "tavily",
+      "envVars": [
+        "TAVILY_API_KEY"
+      ],
+      "baseUrl": "https://api.tavily.com"
     }
   ],
   "groups": [
