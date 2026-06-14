@@ -202,17 +202,22 @@ describe("getHttpErrorBodyPath", () => {
     );
   });
 
-  it.each(["web", "x-twitter", "reddit"] as const)(
-    "%s は absPath をそのまま返す",
-    (service) => {
-      expect(getHttpErrorBodyPath(service, absPath)).toBe(absPath);
-    },
-  );
+  it.each([
+    "web",
+    "x-twitter",
+    "reddit",
+  ] as const)("%s は absPath をそのまま返す", (service) => {
+    expect(getHttpErrorBodyPath(service, absPath)).toBe(absPath);
+  });
 });
 
 describe("formatHttpError", () => {
   it("ステータス・URL・本文を含むメッセージを組み立てる", () => {
-    const msg = formatHttpError(404, "https://example.com/missing", "Not Found");
+    const msg = formatHttpError(
+      404,
+      "https://example.com/missing",
+      "Not Found",
+    );
     expect(msg).toContain("HTTPエラー 404");
     expect(msg).toContain("https://example.com/missing");
     expect(msg).toContain("Not Found");
