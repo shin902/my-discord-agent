@@ -61,7 +61,8 @@
     {
       "provider": "llama-cpp",
       "baseUrl": "http://localhost:8080/v1",
-      "api": "openai-completions"
+      "api": "openai-completions",
+      "input": ["text", "image"]
     },
     {
       "provider": "llama-cpp-qwen3",
@@ -69,7 +70,10 @@
       "api": "openai-completions",
       "contextWindow": 65536,
       "maxTokens": 4096,
-      "compat": { "thinkingFormat": "qwen-chat-template" }
+      "compat": { "thinkingFormat": "qwen-chat-template" },
+      "models": {
+        "qwen3-coder": { "input": ["text"] }
+      }
     },
     {
       "provider": "ollama-qwen3",
