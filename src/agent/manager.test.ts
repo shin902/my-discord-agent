@@ -1,4 +1,13 @@
+import { rm } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TEST_ATTACHMENTS_DIR = path.join(
+  __dirname,
+  "../../data/attachments/test-group",
+);
 
 vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: () => ["provider-a", "opencode-go"],
@@ -236,6 +245,7 @@ describe("sendMessage: 添付ファイル", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
@@ -254,9 +264,10 @@ describe("sendMessage: 添付ファイル", () => {
     await initManager(12345);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals();
     vi.resetModules();
+    await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
   });
 
   const attachments = [
