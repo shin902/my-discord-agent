@@ -232,7 +232,6 @@ export async function processMessage(
     return processCronThread(msg, mode);
   }
 
-  const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
   // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
@@ -243,9 +242,10 @@ export async function processMessage(
   const replyMessageId =
     groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
+  const release = await acquireLlmLock(mode, msg.sessionId);
+  const stopTyping = startTypingLoop(msg.channelId);
   try {
     try {
-      const release = await acquireLlmLock(mode, msg.sessionId);
       try {
         response = await sendMessage(
           msg.groupName,
