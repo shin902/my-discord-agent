@@ -57,7 +57,10 @@ describe("processMessage - autoReply", () => {
       autoReply: true,
     });
 
-    await processMessage(makeMsg({ messageId: "msg-original" }));
+    await processMessage(
+      makeMsg({ messageId: "msg-original" }),
+      "parallel-session",
+    );
 
     expect(mockSend).toHaveBeenCalledOnce();
     expect(mockSend).toHaveBeenCalledWith({
@@ -74,7 +77,7 @@ describe("processMessage - autoReply", () => {
       autoReply: true,
     });
 
-    await processMessage(makeMsg({ messageId: undefined }));
+    await processMessage(makeMsg({ messageId: undefined }), "parallel-session");
 
     expect(mockSend).toHaveBeenCalledOnce();
     expect(mockSend).toHaveBeenCalledWith("AI response");
@@ -87,7 +90,7 @@ describe("processMessage - autoReply", () => {
       autoReply: false,
     });
 
-    await processMessage(makeMsg());
+    await processMessage(makeMsg(), "parallel-session");
 
     expect(mockSend).toHaveBeenCalledOnce();
     expect(mockSend).toHaveBeenCalledWith("AI response");
@@ -108,7 +111,7 @@ describe("processMessage - autoReply", () => {
       },
     ];
 
-    await processMessage(makeMsg({ attachments }));
+    await processMessage(makeMsg({ attachments }), "parallel-session");
 
     expect(sendMessage).toHaveBeenCalledWith(
       "default",
@@ -127,7 +130,7 @@ describe("processMessage - autoReply", () => {
     });
     vi.mocked(sendMessage).mockResolvedValue("A".repeat(2001));
 
-    await processMessage(makeMsg());
+    await processMessage(makeMsg(), "parallel-session");
 
     expect(mockSend).toHaveBeenCalledTimes(2);
     expect(mockSend).toHaveBeenNthCalledWith(1, {
@@ -173,7 +176,10 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg({ messageId: "msg-original" }));
+    await processMessage(
+      makeMsg({ messageId: "msg-original" }),
+      "parallel-session",
+    );
 
     await vi.waitFor(() => {
       // autoReply が true でもツールコールはリプライしない
@@ -195,7 +201,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg());
+    await processMessage(makeMsg(), "parallel-session");
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith("🔧 `bash`");
@@ -210,7 +216,10 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg({ cronJobId: "daily-report" }));
+    await processMessage(
+      makeMsg({ cronJobId: "daily-report" }),
+      "parallel-session",
+    );
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledOnce();
@@ -226,7 +235,10 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg({ cronJobId: "daily-report" }));
+    await processMessage(
+      makeMsg({ cronJobId: "daily-report" }),
+      "parallel-session",
+    );
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
@@ -241,7 +253,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg());
+    await processMessage(makeMsg(), "parallel-session");
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith(
@@ -263,7 +275,10 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg({ messageId: "msg-original" }));
+    await processMessage(
+      makeMsg({ messageId: "msg-original" }),
+      "parallel-session",
+    );
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith({
@@ -287,7 +302,10 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg({ messageId: "msg-original" }));
+    await processMessage(
+      makeMsg({ messageId: "msg-original" }),
+      "parallel-session",
+    );
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
@@ -303,7 +321,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg());
+    await processMessage(makeMsg(), "parallel-session");
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledOnce();
@@ -345,7 +363,7 @@ describe("processMessage - cron-thread", () => {
   });
 
   it("正常系: スレッドを作成して sendMessage を呼び、応答を thread.send で投稿する", async () => {
-    await processMessage(makeCronThreadMsg());
+    await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(mockThreadsCreate).toHaveBeenCalledOnce();
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
@@ -359,14 +377,14 @@ describe("processMessage - cron-thread", () => {
   it("sendMessage が空文字を返した場合 thread.send を呼ばない", async () => {
     vi.mocked(sendMessage).mockResolvedValue("");
 
-    await processMessage(makeCronThreadMsg());
+    await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(mockThreadsCreate).toHaveBeenCalledOnce();
     expect(mockThreadSend).not.toHaveBeenCalled();
   });
 
   it("スレッド名は cron-{jobId}-{YYYY-MM-DD-HH-MM}（JST）の形式", async () => {
-    await processMessage(makeCronThreadMsg());
+    await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(mockThreadsCreate).toHaveBeenCalledWith({
       name: "cron-daily-report-2026-06-04-19-30",
@@ -374,7 +392,10 @@ describe("processMessage - cron-thread", () => {
   });
 
   it("ジョブID が長い場合はスレッド名が100文字を超えないよう切り詰める", async () => {
-    await processMessage(makeCronThreadMsg({ cronJobId: "a".repeat(100) }));
+    await processMessage(
+      makeCronThreadMsg({ cronJobId: "a".repeat(100) }),
+      "parallel-session",
+    );
 
     const { name } = mockThreadsCreate.mock.calls[0][0] as { name: string };
     expect(name.length).toBeLessThanOrEqual(100);
@@ -385,7 +406,7 @@ describe("processMessage - cron-thread", () => {
       type: ChannelType.GuildVoice,
     } as never);
 
-    await processMessage(makeCronThreadMsg());
+    await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(mockThreadsCreate).not.toHaveBeenCalled();
@@ -394,7 +415,7 @@ describe("processMessage - cron-thread", () => {
   it("チャンネル fetch が null を返した場合 appendDeadLetter に移動する", async () => {
     vi.mocked(client.channels.fetch).mockResolvedValue(null as never);
 
-    await processMessage(makeCronThreadMsg());
+    await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
   });
@@ -405,7 +426,7 @@ describe("processMessage - cron-thread", () => {
       new NonRetryableError("context window exceeded"),
     );
 
-    await processMessage(makeCronThreadMsg());
+    await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(vi.mocked(prependInbox)).not.toHaveBeenCalled();
@@ -414,7 +435,7 @@ describe("processMessage - cron-thread", () => {
   it("transient error はリトライカウントを増やして prependInbox に戻す", async () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
 
-    await processMessage(makeCronThreadMsg({ retries: 0 }));
+    await processMessage(makeCronThreadMsg({ retries: 0 }), "parallel-session");
 
     expect(vi.mocked(prependInbox)).toHaveBeenCalledOnce();
     const retried = vi.mocked(prependInbox).mock.calls[0][0];
@@ -430,7 +451,10 @@ describe("processMessage - cron-thread", () => {
       mockSendableThread as never,
     );
 
-    await processMessage(makeCronThreadMsg({ cronThreadId: "thread-123" }));
+    await processMessage(
+      makeCronThreadMsg({ cronThreadId: "thread-123" }),
+      "parallel-session",
+    );
 
     expect(mockThreadsCreate).not.toHaveBeenCalled();
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
@@ -444,7 +468,7 @@ describe("processMessage - cron-thread", () => {
   it("transient error でリトライ上限に達したら appendDeadLetter に移動する", async () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
 
-    await processMessage(makeCronThreadMsg({ retries: 9 }));
+    await processMessage(makeCronThreadMsg({ retries: 9 }), "parallel-session");
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(vi.mocked(prependInbox)).not.toHaveBeenCalled();
@@ -454,7 +478,10 @@ describe("processMessage - cron-thread", () => {
     const getCacheSpy = vi.mocked(client.channels.cache.get);
     getCacheSpy.mockClear();
 
-    await processMessage(makeCronThreadMsg({ cronJobId: undefined }));
+    await processMessage(
+      makeCronThreadMsg({ cronJobId: undefined }),
+      "parallel-session",
+    );
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(mockThreadsCreate).not.toHaveBeenCalled();
@@ -465,8 +492,54 @@ describe("processMessage - cron-thread", () => {
     const getCacheSpy = vi.mocked(client.channels.cache.get);
     getCacheSpy.mockClear();
 
-    await processMessage(makeCronThreadMsg());
+    await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(getCacheSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("processMessage - serial モードの LLM ロック", () => {
+  const mockSend = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => true,
+      isTextBased: () => false,
+      send: mockSend,
+    } as never);
+    mockSend.mockClear();
+  });
+
+  it("serial モードでは sendMessage の実行が重複しない", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let resolveFirst!: (value: string) => void;
+    const first = new Promise<string>((r) => {
+      resolveFirst = r;
+    });
+
+    vi.mocked(sendMessage).mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      const result = inFlight === 1 ? await first : "second";
+      inFlight--;
+      return result;
+    });
+
+    const p1 = processMessage(makeMsg({ sessionId: "s1" }), "serial");
+    const p2 = processMessage(makeMsg({ sessionId: "s2" }), "serial");
+
+    await new Promise((r) => setTimeout(r, 20));
+    // 1つ目が解決するまで2つ目の sendMessage は開始されない
+    expect(maxInFlight).toBe(1);
+
+    resolveFirst("first");
+    await Promise.all([p1, p2]);
+    expect(maxInFlight).toBe(1);
   });
 });

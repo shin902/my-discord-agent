@@ -17,11 +17,7 @@ vi.mock("./inbox.js", () => ({ prependInbox: vi.fn(), shiftInbox: vi.fn() }));
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 20));
 
-let dispatch: (
-  sessionId: string,
-  fn: () => Promise<void>,
-  mode: "serial" | "parallel-session",
-) => void;
+let dispatch: (sessionId: string, fn: () => Promise<void>) => void;
 let stopPoller: () => void;
 
 beforeEach(async () => {
@@ -30,72 +26,22 @@ beforeEach(async () => {
 });
 
 describe("stopPoller", () => {
-  it("stopPoller 後に serial モードのチェーンがリセットされる", async () => {
-    const order: number[] = [];
+  it("stopPoller 後にセッションチェーンがクリアされる", async () => {
     let resolve1!: () => void;
     const block1 = new Promise<void>((r) => {
       resolve1 = r;
     });
 
-    dispatch(
-      "s1",
-      async () => {
-        await block1;
-        order.push(1);
-      },
-      "serial",
-    );
-    dispatch(
-      "s2",
-      async () => {
-        order.push(2);
-      },
-      "serial",
-    );
-
-    stopPoller();
-    resolve1();
-    await tick();
-
-    // stopPoller でチェーンがリセットされているため s2 は新しいチェーンに積まれる
-    dispatch(
-      "s3",
-      async () => {
-        order.push(3);
-      },
-      "serial",
-    );
-    await tick();
-
-    // s1 は resolve 後に完了するが、s2 はチェーンがリセットされた後に積まれるため
-    // s1 → s3 の順に実行される（s2 も完了するがリセット前のチェーン上）
-    expect(order).toContain(3);
-  });
-
-  it("stopPoller 後に parallel-session のチェーンがクリアされる", async () => {
-    let resolve1!: () => void;
-    const block1 = new Promise<void>((r) => {
-      resolve1 = r;
+    dispatch("s1", async () => {
+      await block1;
     });
-
-    dispatch(
-      "s1",
-      async () => {
-        await block1;
-      },
-      "parallel-session",
-    );
 
     stopPoller();
     // チェーンがクリアされているため、新しいタスクは即座に開始できる
     const started: string[] = [];
-    dispatch(
-      "s1",
-      async () => {
-        started.push("s1-new");
-      },
-      "parallel-session",
-    );
+    dispatch("s1", async () => {
+      started.push("s1-new");
+    });
 
     resolve1();
     await tick();
@@ -103,62 +49,7 @@ describe("stopPoller", () => {
   });
 });
 
-describe("dispatch - serial モード", () => {
-  it("タスク1が完了するまでタスク2は開始されない", async () => {
-    const order: number[] = [];
-    let resolve1!: () => void;
-    const block1 = new Promise<void>((r) => {
-      resolve1 = r;
-    });
-
-    dispatch(
-      "s1",
-      async () => {
-        await block1;
-        order.push(1);
-      },
-      "serial",
-    );
-    dispatch(
-      "s2",
-      async () => {
-        order.push(2);
-      },
-      "serial",
-    );
-
-    await Promise.resolve();
-    expect(order).toEqual([]);
-
-    resolve1();
-    await tick();
-    expect(order).toEqual([1, 2]);
-  });
-
-  it("エラー発生時に sessionId がログに出力される", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    dispatch(
-      "my-session-123",
-      async () => {
-        throw new Error("boom");
-      },
-      "serial",
-    );
-
-    await tick();
-
-    expect(spy).toHaveBeenCalledWith(
-      "[poller] 予期せぬエラー (sessionId:",
-      "my-session-123",
-      "):",
-      expect.any(Error),
-    );
-    spy.mockRestore();
-  });
-});
-
-describe("dispatch - parallel-session モード", () => {
+describe("dispatch", () => {
   it("同一 sessionId のタスクは順番通りに実行される", async () => {
     const order: number[] = [];
     let resolve1!: () => void;
@@ -166,21 +57,13 @@ describe("dispatch - parallel-session モード", () => {
       resolve1 = r;
     });
 
-    dispatch(
-      "s1",
-      async () => {
-        await block1;
-        order.push(1);
-      },
-      "parallel-session",
-    );
-    dispatch(
-      "s1",
-      async () => {
-        order.push(2);
-      },
-      "parallel-session",
-    );
+    dispatch("s1", async () => {
+      await block1;
+      order.push(1);
+    });
+    dispatch("s1", async () => {
+      order.push(2);
+    });
 
     await Promise.resolve();
     expect(order).toEqual([]);
@@ -197,21 +80,13 @@ describe("dispatch - parallel-session モード", () => {
       resolve1 = r;
     });
 
-    dispatch(
-      "s1",
-      async () => {
-        started.push("s1");
-        await block1;
-      },
-      "parallel-session",
-    );
-    dispatch(
-      "s2",
-      async () => {
-        started.push("s2");
-      },
-      "parallel-session",
-    );
+    dispatch("s1", async () => {
+      started.push("s1");
+      await block1;
+    });
+    dispatch("s2", async () => {
+      started.push("s2");
+    });
 
     await tick();
     expect(started).toContain("s1");
@@ -223,38 +98,30 @@ describe("dispatch - parallel-session モード", () => {
 
   it("タスク完了後に sessionChain から削除される（メモリリークなし）", async () => {
     let completed = false;
-    dispatch(
-      "s1",
-      async () => {
-        completed = true;
-      },
-      "parallel-session",
-    );
+    dispatch("s1", async () => {
+      completed = true;
+    });
 
     await tick();
     expect(completed).toBe(true);
     // 次のタスクが来ても prev = Promise.resolve() から始まること（チェーンが消えている）を
     // 間接的に確認: エラーが起きても他セッションに影響しない
-    dispatch("s2", async () => {}, "parallel-session");
+    dispatch("s2", async () => {});
     await tick();
   });
 
-  it("parallel-session でのエラーに sessionId がログに出力される", async () => {
+  it("エラー発生時に sessionId がログに出力される", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    dispatch(
-      "session-abc",
-      async () => {
-        throw new Error("fail");
-      },
-      "parallel-session",
-    );
+    dispatch("my-session-123", async () => {
+      throw new Error("boom");
+    });
 
     await tick();
 
     expect(spy).toHaveBeenCalledWith(
       "[poller] 予期せぬエラー (sessionId:",
-      "session-abc",
+      "my-session-123",
       "):",
       expect.any(Error),
     );
