@@ -483,7 +483,9 @@ export function buildCommand(
       const repoJsonQ = shellQuote(`${base}.repo.json`);
       const readmeQ = shellQuote(`${base}.readme.md`);
       return (
-        `curl -sf -H "Accept: application/vnd.github.v3+json" ${shellQuote(apiBase)} > ${repoJsonQ} && ` +
+        `curl -sS -o ${repoJsonQ} -w '%{http_code}' -H "Accept: application/vnd.github.v3+json" ${shellQuote(apiBase)} && ` +
+        // README は -sf のまま維持: 404時にファイル自体を作らせず、buildGitHubMarkdown の
+        // 「README not found」分岐に委ねる（エラーレスポンス本文をREADMEとして埋め込まないため）
         `(curl -sf -H "Accept: application/vnd.github.v3.raw" ${shellQuote(`${apiBase}/readme`)} > ${readmeQ} 2>/dev/null || true)`
       );
     }
@@ -492,13 +494,13 @@ export function buildCommand(
       if (!m)
         throw new Error(`X/Twitter URL からツイートIDを取得できません: ${url}`);
       const [, username, tweetId] = m;
-      return `curl -sf ${shellQuote(`https://api.fxtwitter.com/${username}/status/${tweetId}`)} > ${out}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(`https://api.fxtwitter.com/${username}/status/${tweetId}`)}`;
     }
     case "reddit": {
       const jsonUrl = url.endsWith(".json")
         ? url
         : url.replace(/\/?(\?.*)?$/, (s) => `.json${s}`);
-      return `curl -sf ${shellQuote(jsonUrl)} -H "User-Agent: discord-agent/1.0" > ${out}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(jsonUrl)} -H "User-Agent: discord-agent/1.0"`;
     }
     case "rss":
       return (
@@ -510,8 +512,47 @@ export function buildCommand(
         ` ${shellQuote(url)} > ${out}`
       );
     default:
-      return `curl -sf ${shellQuote(`https://r.jina.ai/${url}`)} > ${out}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(`https://r.jina.ai/${url}`)}`;
   }
+}
+
+/** buildCommand が `-w '%{http_code}'` で HTTP ステータスコードを stdout に出力するサービス */
+const HTTP_STATUS_SERVICES: ReadonlySet<ServiceType> = new Set([
+  "web",
+  "x-twitter",
+  "reddit",
+  "github-repo",
+]);
+
+/** curl の `-w '%{http_code}'` 出力（stdout）から HTTP ステータスコードを取り出す */
+export function parseHttpStatus(stdout: string): number | null {
+  const status = Number.parseInt(stdout.trim(), 10);
+  // curl は応答を受け取れなかった場合 %{http_code} に "000" を出力する。
+  // 0 は有効なHTTPステータスではないため null とする。
+  return Number.isFinite(status) && status > 0 ? status : null;
+}
+
+/** HTTPエラー時、curl がレスポンス本文を書き出したファイルのパスを返す */
+export function getHttpErrorBodyPath(
+  service: ServiceType,
+  absPath: string,
+): string {
+  // github-repo はレスポンス本文を absPath ではなく {base}.repo.json に書き出す
+  if (service === "github-repo") {
+    return `${absPath.replace(/\.[^.]+$/, "")}.repo.json`;
+  }
+  return absPath;
+}
+
+/** HTTPエラーをエージェントに伝えるメッセージを組み立てる */
+export function formatHttpError(
+  status: number,
+  url: string,
+  body: string,
+): string {
+  const header = `HTTPエラー ${status} (${url})`;
+  const truncated = body.slice(0, 500).trim();
+  return truncated ? `${header}\n${truncated}` : header;
 }
 
 const parameters = Type.Object({
@@ -546,18 +587,33 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     await mkdir(join(WORKSPACE, FETCH_DIR), { recursive: true });
 
     const cmd = buildCommand(service, url, absPath);
+    let stdout: string;
     try {
-      await execAsync(cmd, {
+      ({ stdout } = await execAsync(cmd, {
         timeout: TIMEOUT_MS,
         maxBuffer: 64 * 1024 * 1024,
         cwd: WORKSPACE,
-      });
+      }));
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message?: string };
       throw new Error(
         [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
           "フェッチ失敗",
       );
+    }
+
+    if (HTTP_STATUS_SERVICES.has(service)) {
+      const status = parseHttpStatus(stdout);
+      if (status !== null && status >= 400) {
+        const bodyPath = getHttpErrorBodyPath(service, absPath);
+        const body = await readFile(bodyPath, "utf-8").catch(() => "");
+        await rm(bodyPath, { force: true });
+        if (service === "github-repo") {
+          const base = absPath.replace(/\.[^.]+$/, "");
+          await rm(`${base}.readme.md`, { force: true });
+        }
+        throw new Error(formatHttpError(status, url, body));
+      }
     }
 
     // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換して保存

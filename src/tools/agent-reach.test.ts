@@ -8,7 +8,10 @@ import {
   buildRedditMarkdown,
   buildXTwitterMarkdown,
   detectService,
+  formatHttpError,
+  getHttpErrorBodyPath,
   isPrivateAddress,
+  parseHttpStatus,
   parseVtt,
 } from "./agent-reach.js";
 
@@ -128,7 +131,8 @@ describe("buildCommand シェルエスケープ", () => {
       out,
     );
     expect(cmd).toContain(".json");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
   });
 
   it("reddit: シングルクォートを含むURLをエスケープする", () => {
@@ -145,7 +149,8 @@ describe("buildCommand シェルエスケープ", () => {
       out,
     );
     expect(cmd).toContain("api.github.com/repos/owner/my-repo");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
     expect(cmd).toContain(".repo.json");
     expect(cmd).toContain(".readme.md");
   });
@@ -159,7 +164,8 @@ describe("buildCommand シェルエスケープ", () => {
   it("web: jina.ai 経由でcurl", () => {
     const cmd = buildCommand("web", "https://example.com/article", out);
     expect(cmd).toContain("r.jina.ai");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
   });
 
   it("x-twitter: fxtwitter API への curl コマンドを生成する", () => {
@@ -169,7 +175,69 @@ describe("buildCommand シェルエスケープ", () => {
       out,
     );
     expect(cmd).toContain("api.fxtwitter.com/testuser/status/123456789");
-    expect(cmd).toContain("curl -sf");
+    expect(cmd).toContain("curl -sS");
+    expect(cmd).toContain("-w '%{http_code}'");
+  });
+});
+
+describe("parseHttpStatus", () => {
+  it("正常なステータスコード文字列をパースする", () => {
+    expect(parseHttpStatus("200")).toBe(200);
+    expect(parseHttpStatus("404\n")).toBe(404);
+    expect(parseHttpStatus("  500  ")).toBe(500);
+  });
+
+  it("数値でない場合は null を返す", () => {
+    expect(parseHttpStatus("")).toBeNull();
+    expect(parseHttpStatus("not-a-status")).toBeNull();
+  });
+
+  it("0 や 000（curlが応答を受け取れなかった場合）は null を返す", () => {
+    expect(parseHttpStatus("0")).toBeNull();
+    expect(parseHttpStatus("000")).toBeNull();
+  });
+});
+
+describe("getHttpErrorBodyPath", () => {
+  const absPath = "/workspace/fetched/web-abcd1234.md";
+
+  it("github-repo は {base}.repo.json を返す", () => {
+    expect(getHttpErrorBodyPath("github-repo", absPath)).toBe(
+      "/workspace/fetched/web-abcd1234.repo.json",
+    );
+  });
+
+  it.each([
+    "web",
+    "x-twitter",
+    "reddit",
+  ] as const)("%s は absPath をそのまま返す", (service) => {
+    expect(getHttpErrorBodyPath(service, absPath)).toBe(absPath);
+  });
+});
+
+describe("formatHttpError", () => {
+  it("ステータス・URL・本文を含むメッセージを組み立てる", () => {
+    const msg = formatHttpError(
+      404,
+      "https://example.com/missing",
+      "Not Found",
+    );
+    expect(msg).toContain("HTTPエラー 404");
+    expect(msg).toContain("https://example.com/missing");
+    expect(msg).toContain("Not Found");
+  });
+
+  it("本文が500文字を超える場合は切り詰める", () => {
+    const body = "x".repeat(1000);
+    const msg = formatHttpError(500, "https://example.com", body);
+    expect(msg).toContain("x".repeat(500));
+    expect(msg).not.toContain("x".repeat(501));
+  });
+
+  it("本文が空でもエラーにならない", () => {
+    const msg = formatHttpError(400, "https://example.com", "");
+    expect(msg).toBe("HTTPエラー 400 (https://example.com)");
   });
 });
 
