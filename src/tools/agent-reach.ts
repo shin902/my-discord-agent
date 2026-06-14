@@ -522,6 +522,33 @@ const HTTP_STATUS_SERVICES: ReadonlySet<ServiceType> = new Set([
   "github-repo",
 ]);
 
+/** curl の `-w '%{http_code}'` 出力（stdout）から HTTP ステータスコードを取り出す */
+export function parseHttpStatus(stdout: string): number | null {
+  const status = Number.parseInt(stdout.trim(), 10);
+  return Number.isFinite(status) ? status : null;
+}
+
+/** HTTPエラー時、curl がレスポンス本文を書き出したファイルのパスを返す */
+export function getHttpErrorBodyPath(
+  service: ServiceType,
+  absPath: string,
+): string {
+  // github-repo はレスポンス本文を absPath ではなく {base}.repo.json に書き出す
+  if (service === "github-repo") {
+    return `${absPath.replace(/\.[^.]+$/, "")}.repo.json`;
+  }
+  return absPath;
+}
+
+/** HTTPエラーをエージェントに伝えるメッセージを組み立てる */
+export function formatHttpError(
+  status: number,
+  url: string,
+  body: string,
+): string {
+  return `HTTPエラー ${status} (${url})\n${body.slice(0, 500)}`.trim();
+}
+
 const parameters = Type.Object({
   url: Type.String({ description: "取得するURL" }),
 });
@@ -570,19 +597,16 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     }
 
     if (HTTP_STATUS_SERVICES.has(service)) {
-      const status = Number.parseInt(stdout.trim(), 10);
-      if (Number.isFinite(status) && status >= 400) {
-        const base = absPath.replace(/\.[^.]+$/, "");
-        // github-repo はレスポンス本文を absPath ではなく {base}.repo.json に書き出す
-        const bodyPath = service === "github-repo" ? `${base}.repo.json` : absPath;
+      const status = parseHttpStatus(stdout);
+      if (status !== null && status >= 400) {
+        const bodyPath = getHttpErrorBodyPath(service, absPath);
         const body = await readFile(bodyPath, "utf-8").catch(() => "");
         await rm(bodyPath, { force: true });
         if (service === "github-repo") {
+          const base = absPath.replace(/\.[^.]+$/, "");
           await rm(`${base}.readme.md`, { force: true });
         }
-        throw new Error(
-          `HTTPエラー ${status} (${url})\n${body.slice(0, 500)}`.trim(),
-        );
+        throw new Error(formatHttpError(status, url, body));
       }
     }
 

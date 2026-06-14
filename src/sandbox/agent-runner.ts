@@ -34,17 +34,29 @@ const NETWORK_READY_HOST = "r.jina.ai";
 const NETWORK_READY_TIMEOUT_MS = 10_000;
 const NETWORK_READY_RETRY_MS = 500;
 
-/** 外部ホスト名解決ができるまで待機する（最大 NETWORK_READY_TIMEOUT_MS、失敗時はそのまま続行） */
-export async function waitForNetwork(): Promise<void> {
-  const deadline = Date.now() + NETWORK_READY_TIMEOUT_MS;
+/** 外部ホスト名解決ができるまで待機する（最大 timeoutMs、失敗時はそのまま続行） */
+export async function waitForNetwork(options?: {
+  host?: string;
+  timeoutMs?: number;
+  retryMs?: number;
+  lookupFn?: (host: string) => Promise<unknown>;
+  sleepFn?: (ms: number) => Promise<void>;
+}): Promise<void> {
+  const host = options?.host ?? NETWORK_READY_HOST;
+  const timeoutMs = options?.timeoutMs ?? NETWORK_READY_TIMEOUT_MS;
+  const retryMs = options?.retryMs ?? NETWORK_READY_RETRY_MS;
+  const lookupFn = options?.lookupFn ?? lookup;
+  const sleepFn =
+    options?.sleepFn ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      await lookup(NETWORK_READY_HOST);
+      await lookupFn(host);
       return;
     } catch {
-      await new Promise((resolve) =>
-        setTimeout(resolve, NETWORK_READY_RETRY_MS),
-      );
+      await sleepFn(retryMs);
     }
   }
 }
