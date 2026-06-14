@@ -484,6 +484,8 @@ export function buildCommand(
       const readmeQ = shellQuote(`${base}.readme.md`);
       return (
         `curl -sS -o ${repoJsonQ} -w '%{http_code}' -H "Accept: application/vnd.github.v3+json" ${shellQuote(apiBase)} && ` +
+        // README は -sf のまま維持: 404時にファイル自体を作らせず、buildGitHubMarkdown の
+        // 「README not found」分岐に委ねる（エラーレスポンス本文をREADMEとして埋め込まないため）
         `(curl -sf -H "Accept: application/vnd.github.v3.raw" ${shellQuote(`${apiBase}/readme`)} > ${readmeQ} 2>/dev/null || true)`
       );
     }
