@@ -191,6 +191,11 @@ describe("parseHttpStatus", () => {
     expect(parseHttpStatus("")).toBeNull();
     expect(parseHttpStatus("not-a-status")).toBeNull();
   });
+
+  it("0 や 000（curlが応答を受け取れなかった場合）は null を返す", () => {
+    expect(parseHttpStatus("0")).toBeNull();
+    expect(parseHttpStatus("000")).toBeNull();
+  });
 });
 
 describe("getHttpErrorBodyPath", () => {

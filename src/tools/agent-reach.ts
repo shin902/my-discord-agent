@@ -527,7 +527,9 @@ const HTTP_STATUS_SERVICES: ReadonlySet<ServiceType> = new Set([
 /** curl の `-w '%{http_code}'` 出力（stdout）から HTTP ステータスコードを取り出す */
 export function parseHttpStatus(stdout: string): number | null {
   const status = Number.parseInt(stdout.trim(), 10);
-  return Number.isFinite(status) ? status : null;
+  // curl は応答を受け取れなかった場合 %{http_code} に "000" を出力する。
+  // 0 は有効なHTTPステータスではないため null とする。
+  return Number.isFinite(status) && status > 0 ? status : null;
 }
 
 /** HTTPエラー時、curl がレスポンス本文を書き出したファイルのパスを返す */
