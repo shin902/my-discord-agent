@@ -10,32 +10,24 @@ import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import { type InboxMessage, prependInbox, shiftInbox } from "./inbox.js";
+import { acquireLlmLock } from "./llm-mutex.js";
 
 const POLL_MS = 1000;
 const MAX_RETRIES = 10;
 let running = false;
 
-let globalChain = Promise.resolve();
 const sessionChain = new Map<string, Promise<void>>();
 
-export function dispatch(
-  sessionId: string,
-  fn: () => Promise<void>,
-  mode: DispatchMode,
-): void {
+export function dispatch(sessionId: string, fn: () => Promise<void>): void {
   const onError = (err: unknown) => {
     console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err);
   };
-  if (mode === "serial") {
-    globalChain = globalChain.then(fn).catch(onError);
-  } else {
-    const prev = sessionChain.get(sessionId) ?? Promise.resolve();
-    const next = prev.then(fn).catch(onError);
-    sessionChain.set(sessionId, next);
-    next.finally(() => {
-      if (sessionChain.get(sessionId) === next) sessionChain.delete(sessionId);
-    });
-  }
+  const prev = sessionChain.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(fn).catch(onError);
+  sessionChain.set(sessionId, next);
+  next.finally(() => {
+    if (sessionChain.get(sessionId) === next) sessionChain.delete(sessionId);
+  });
 }
 
 export function startPoller(): void {
@@ -46,7 +38,6 @@ export function startPoller(): void {
 
 export function stopPoller(): void {
   running = false;
-  globalChain = Promise.resolve();
   sessionChain.clear();
 }
 
@@ -139,7 +130,23 @@ async function sendDiscordEvent(
   }
 }
 
-async function processCronThread(msg: InboxMessage): Promise<void> {
+// LLM ロックを取得してから fn() を実行し、完了後に必ず解放する
+async function withLlmLock<T>(
+  mode: DispatchMode,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const release = await acquireLlmLock(mode);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+async function processCronThread(
+  msg: InboxMessage,
+  mode: DispatchMode,
+): Promise<void> {
   if (!msg.cronJobId) {
     console.error(
       "[poller] cronThread フラグがあるが cronJobId が未設定:",
@@ -191,7 +198,9 @@ async function processCronThread(msg: InboxMessage): Promise<void> {
       sessionId = thread.id;
       threadSend = (content) => thread.send(content);
     }
-    const response = await sendMessage(msg.groupName, sessionId, msg.content);
+    const response = await withLlmLock(mode, () =>
+      sendMessage(msg.groupName, sessionId, msg.content),
+    );
     if (response) {
       for (const chunk of splitMessage(response)) {
         await threadSend(chunk);
@@ -224,12 +233,14 @@ async function processCronThread(msg: InboxMessage): Promise<void> {
   }
 }
 
-export async function processMessage(msg: InboxMessage): Promise<void> {
+export async function processMessage(
+  msg: InboxMessage,
+  mode: DispatchMode,
+): Promise<void> {
   if (msg.cronThread) {
-    return processCronThread(msg);
+    return processCronThread(msg, mode);
   }
 
-  const stopTyping = startTypingLoop(msg.channelId);
   let response: string;
 
   // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
@@ -240,9 +251,13 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
   const replyMessageId =
     groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
+  // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
+  // ここではプレースホルダを持ち、catch / finally の両方で停止できるようにする
+  let stopTyping = () => {};
   try {
-    try {
-      response = await sendMessage(
+    response = await withLlmLock(mode, () => {
+      stopTyping = startTypingLoop(msg.channelId);
+      return sendMessage(
         msg.groupName,
         msg.sessionId,
         msg.content,
@@ -256,56 +271,57 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
         },
         msg.attachments,
       );
-    } catch (err) {
-      if (err instanceof NonRetryableError) {
-        console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-        await appendDeadLetter(msg);
-        return;
-      }
-      console.error(
-        `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
-        err,
-      );
-      if (msg.retries + 1 < MAX_RETRIES) {
-        await prependInbox({ ...msg, retries: msg.retries + 1 });
-      } else {
-        console.error(
-          "[poller] リトライ上限に達しました。dead-letter に移動:",
-          msg.id,
-        );
-        await appendDeadLetter(msg);
-      }
-      const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
-      await sleep(retryDelay);
+    });
+  } catch (err) {
+    stopTyping();
+    if (err instanceof NonRetryableError) {
+      console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+      await appendDeadLetter(msg);
       return;
     }
-
-    try {
-      const channel = await client.channels.fetch(msg.channelId);
-      if (channel?.isSendable() && response) {
-        const chunks = splitMessage(response);
-        const [firstChunk, ...restChunks] = chunks;
-        if (firstChunk) {
-          await channel.send(
-            replyMessageId
-              ? {
-                  content: firstChunk,
-                  reply: {
-                    messageReference: replyMessageId,
-                    failIfNotExists: false,
-                  },
-                  allowedMentions: { repliedUser: true },
-                }
-              : firstChunk,
-          );
-        }
-        for (const chunk of restChunks) {
-          await channel.send(chunk);
-        }
-      }
-    } catch (err) {
-      console.error(`[poller] Discord送信エラー:`, err);
+    console.error(
+      `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
+      err,
+    );
+    if (msg.retries + 1 < MAX_RETRIES) {
+      await prependInbox({ ...msg, retries: msg.retries + 1 });
+    } else {
+      console.error(
+        "[poller] リトライ上限に達しました。dead-letter に移動:",
+        msg.id,
+      );
+      await appendDeadLetter(msg);
     }
+    const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
+    await sleep(retryDelay);
+    return;
+  }
+
+  try {
+    const channel = await client.channels.fetch(msg.channelId);
+    if (channel?.isSendable() && response) {
+      const chunks = splitMessage(response);
+      const [firstChunk, ...restChunks] = chunks;
+      if (firstChunk) {
+        await channel.send(
+          replyMessageId
+            ? {
+                content: firstChunk,
+                reply: {
+                  messageReference: replyMessageId,
+                  failIfNotExists: false,
+                },
+                allowedMentions: { repliedUser: true },
+              }
+            : firstChunk,
+        );
+      }
+      for (const chunk of restChunks) {
+        await channel.send(chunk);
+      }
+    }
+  } catch (err) {
+    console.error(`[poller] Discord送信エラー:`, err);
   } finally {
     stopTyping();
   }
@@ -318,7 +334,7 @@ async function poll(): Promise<void> {
       const msg = await shiftInbox();
       if (msg) {
         // ノンブロッキングで dispatch → 即次のメッセージを取りに行く
-        dispatch(msg.sessionId, () => processMessage(msg), mode);
+        dispatch(msg.sessionId, () => processMessage(msg, mode));
         continue;
       }
     }
