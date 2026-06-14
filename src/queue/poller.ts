@@ -130,6 +130,19 @@ async function sendDiscordEvent(
   }
 }
 
+// LLM ロックを取得してから fn() を実行し、完了後に必ず解放する
+async function withLlmLock<T>(
+  mode: DispatchMode,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const release = await acquireLlmLock(mode);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 async function processCronThread(
   msg: InboxMessage,
   mode: DispatchMode,
@@ -185,13 +198,9 @@ async function processCronThread(
       sessionId = thread.id;
       threadSend = (content) => thread.send(content);
     }
-    const release = await acquireLlmLock(mode);
-    let response: string;
-    try {
-      response = await sendMessage(msg.groupName, sessionId, msg.content);
-    } finally {
-      release();
-    }
+    const response = await withLlmLock(mode, () =>
+      sendMessage(msg.groupName, sessionId, msg.content),
+    );
     if (response) {
       for (const chunk of splitMessage(response)) {
         await threadSend(chunk);
@@ -242,78 +251,77 @@ export async function processMessage(
   const replyMessageId =
     groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
-  const release = await acquireLlmLock(mode);
-  const stopTyping = startTypingLoop(msg.channelId);
+  // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
+  // ここではプレースホルダを持ち、catch / finally の両方で停止できるようにする
+  let stopTyping = () => {};
   try {
-    try {
-      try {
-        response = await sendMessage(
-          msg.groupName,
-          msg.sessionId,
-          msg.content,
-          (event) => {
-            // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
-            // (cronThread の場合はここに到達せず processCronThread 側で処理される)
-            if (msg.cronJobId && event.type === "tool_start") {
-              return;
-            }
-            void sendDiscordEvent(msg.channelId, event, replyMessageId);
-          },
-          msg.attachments,
-        );
-      } finally {
-        release();
-      }
-    } catch (err) {
-      if (err instanceof NonRetryableError) {
-        console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-        await appendDeadLetter(msg);
-        return;
-      }
-      console.error(
-        `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
-        err,
+    response = await withLlmLock(mode, () => {
+      stopTyping = startTypingLoop(msg.channelId);
+      return sendMessage(
+        msg.groupName,
+        msg.sessionId,
+        msg.content,
+        (event) => {
+          // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
+          // (cronThread の場合はここに到達せず processCronThread 側で処理される)
+          if (msg.cronJobId && event.type === "tool_start") {
+            return;
+          }
+          void sendDiscordEvent(msg.channelId, event, replyMessageId);
+        },
+        msg.attachments,
       );
-      if (msg.retries + 1 < MAX_RETRIES) {
-        await prependInbox({ ...msg, retries: msg.retries + 1 });
-      } else {
-        console.error(
-          "[poller] リトライ上限に達しました。dead-letter に移動:",
-          msg.id,
-        );
-        await appendDeadLetter(msg);
-      }
-      const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
-      await sleep(retryDelay);
+    });
+  } catch (err) {
+    stopTyping();
+    if (err instanceof NonRetryableError) {
+      console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+      await appendDeadLetter(msg);
       return;
     }
-
-    try {
-      const channel = await client.channels.fetch(msg.channelId);
-      if (channel?.isSendable() && response) {
-        const chunks = splitMessage(response);
-        const [firstChunk, ...restChunks] = chunks;
-        if (firstChunk) {
-          await channel.send(
-            replyMessageId
-              ? {
-                  content: firstChunk,
-                  reply: {
-                    messageReference: replyMessageId,
-                    failIfNotExists: false,
-                  },
-                  allowedMentions: { repliedUser: true },
-                }
-              : firstChunk,
-          );
-        }
-        for (const chunk of restChunks) {
-          await channel.send(chunk);
-        }
-      }
-    } catch (err) {
-      console.error(`[poller] Discord送信エラー:`, err);
+    console.error(
+      `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
+      err,
+    );
+    if (msg.retries + 1 < MAX_RETRIES) {
+      await prependInbox({ ...msg, retries: msg.retries + 1 });
+    } else {
+      console.error(
+        "[poller] リトライ上限に達しました。dead-letter に移動:",
+        msg.id,
+      );
+      await appendDeadLetter(msg);
     }
+    const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
+    await sleep(retryDelay);
+    return;
+  }
+
+  try {
+    const channel = await client.channels.fetch(msg.channelId);
+    if (channel?.isSendable() && response) {
+      const chunks = splitMessage(response);
+      const [firstChunk, ...restChunks] = chunks;
+      if (firstChunk) {
+        await channel.send(
+          replyMessageId
+            ? {
+                content: firstChunk,
+                reply: {
+                  messageReference: replyMessageId,
+                  failIfNotExists: false,
+                },
+                allowedMentions: { repliedUser: true },
+              }
+            : firstChunk,
+        );
+      }
+      for (const chunk of restChunks) {
+        await channel.send(chunk);
+      }
+    }
+  } catch (err) {
+    console.error(`[poller] Discord送信エラー:`, err);
   } finally {
     stopTyping();
   }
