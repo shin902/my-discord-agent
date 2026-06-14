@@ -35,8 +35,7 @@ function release(): void {
  * - parallel-session モード: セマフォなし。即座に no-op の release を返す
  */
 export async function acquireLlmLock(
-  mode: DispatchMode,
-  _sessionId: string,
+  mode: DispatchMode
 ): Promise<() => void> {
   if (mode !== "serial") {
     return noopRelease;

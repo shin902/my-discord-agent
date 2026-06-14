@@ -185,7 +185,7 @@ async function processCronThread(
       sessionId = thread.id;
       threadSend = (content) => thread.send(content);
     }
-    const release = await acquireLlmLock(mode, sessionId);
+    const release = await acquireLlmLock(mode);
     let response: string;
     try {
       response = await sendMessage(msg.groupName, sessionId, msg.content);
@@ -242,7 +242,7 @@ export async function processMessage(
   const replyMessageId =
     groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
-  const release = await acquireLlmLock(mode, msg.sessionId);
+  const release = await acquireLlmLock(mode);
   const stopTyping = startTypingLoop(msg.channelId);
   try {
     try {
