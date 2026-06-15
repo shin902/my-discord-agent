@@ -26,6 +26,7 @@ WantedBy=default.target
 EOF
     systemctl --user daemon-reload
     systemctl --user enable $SERVICE
+    sudo loginctl enable-linger "$USER"
     echo "セットアップ完了。'$0 start' で起動できます。"
     ;;
   start)   systemctl --user start   $SERVICE ;;
