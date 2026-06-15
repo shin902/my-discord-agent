@@ -63,6 +63,22 @@ describe("read", () => {
     ).rejects.toThrow("アクセス拒否");
   });
 
+  it("/workspace 始まりの絶対パスも相対パスと同様に解決する", async () => {
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    const result = await readTool.execute("call-1", {
+      path: "/workspace/test.txt",
+    });
+    expect(firstText(result)).toBe("hello world");
+    expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+  });
+
+  it("先頭が / の絶対パスも相対パスと同様に解決する", async () => {
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    const result = await readTool.execute("call-1", { path: "/test.txt" });
+    expect(firstText(result)).toBe("hello world");
+    expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+  });
+
   it("画像ファイルは base64 の image content を返す", async () => {
     vi.mocked(stat).mockResolvedValue({ size: 1234 } as never);
     vi.mocked(readFile).mockResolvedValue("base64data" as never);

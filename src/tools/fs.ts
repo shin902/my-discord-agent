@@ -26,7 +26,13 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 
 function sanitizePath(raw: string): string {
   const trimmed = raw.trim();
-  const withoutPrefix = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed;
+  const withoutWorkspacePrefix =
+    trimmed === WORKSPACE || trimmed.startsWith(`${WORKSPACE}/`)
+      ? trimmed.slice(WORKSPACE.length)
+      : trimmed;
+  const withoutPrefix = withoutWorkspacePrefix.startsWith("/")
+    ? withoutWorkspacePrefix.slice(1)
+    : withoutWorkspacePrefix;
   const normalized = normalize(withoutPrefix);
   if (normalized.startsWith("..")) {
     throw new Error(
