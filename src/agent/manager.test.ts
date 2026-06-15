@@ -203,6 +203,19 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
   });
 
+  it("--user にホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const userIdx = args.indexOf("--user");
+    expect(userIdx).toBeGreaterThanOrEqual(0);
+    expect(args[userIdx + 1]).toBe(
+      `${process.getuid?.()}:${process.getgid?.()}`,
+    );
+    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
+    expect(envArgs).toContain("HOME=/tmp");
+  });
+
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
