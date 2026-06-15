@@ -5,7 +5,8 @@ RUN apk add --no-cache \
     python3 \
     curl \
     jq \
-    github-cli
+    github-cli \
+    tzdata
 
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir \
