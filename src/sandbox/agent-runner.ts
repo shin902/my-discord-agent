@@ -186,7 +186,7 @@ export async function runAgentLoop(
 
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
   // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
-  const messages = rawMessages.filter((m) => {
+  let messages = rawMessages.filter((m) => {
     if (!isAssistantMessage(m)) return true;
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
@@ -267,8 +267,7 @@ export async function runAgentLoop(
         sessionId,
         bootstrapMessage as AgentMessage,
       );
-      // messages 配列の先頭に追加
-      messages.unshift(bootstrapMessage as AgentMessage);
+      messages = [bootstrapMessage as AgentMessage, ...messages];
     }
   }
 
