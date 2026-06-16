@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultConvertToLlm } from "./agent-runner.js";
 
 const { AgentMock } = vi.hoisted(() => ({
   AgentMock: vi.fn(),
@@ -802,5 +803,66 @@ describe("waitForNetwork", () => {
     expect(lookupFn.mock.calls.length).toBeGreaterThan(1);
 
     dateSpy.mockRestore();
+  });
+});
+
+describe("defaultConvertToLlm", () => {
+  const bootstrapMsg = {
+    role: "prompt" as const,
+    customType: "bootstrap-context" as const,
+    content: "## エージェント設定\n\nテスト",
+    timestamp: 1000,
+  };
+  const userMsg = { role: "user" as const, content: "hi", timestamp: 2000 };
+  const assistantMsg = {
+    role: "assistant" as const,
+    content: [{ type: "text" as const, text: "hello" }],
+    timestamp: 3000,
+    stopReason: "end_turn" as const,
+    model: "test",
+    provider: "test",
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cost: { input: 0, output: 0, total: 0 },
+      totalTokens: 0,
+    },
+  };
+
+  it("bootstrap メッセージを user ロールに変換する", () => {
+    const result = defaultConvertToLlm([bootstrapMsg] as never);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      role: "user",
+      content: bootstrapMsg.content,
+    });
+  });
+
+  it("2件目以降の bootstrap メッセージはスキップする", () => {
+    const result = defaultConvertToLlm([bootstrapMsg, bootstrapMsg] as never);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+  });
+
+  it("通常の user / assistant メッセージはそのまま通す", () => {
+    const result = defaultConvertToLlm([
+      bootstrapMsg,
+      userMsg,
+      assistantMsg,
+    ] as never);
+    expect(result).toHaveLength(3);
+    expect(result[0]).toMatchObject({
+      role: "user",
+      content: bootstrapMsg.content,
+    });
+    expect(result[1]).toMatchObject({ role: "user", content: "hi" });
+    expect(result[2]).toMatchObject({ role: "assistant" });
+  });
+
+  it("bootstrap なしでも通常メッセージを返す", () => {
+    const result = defaultConvertToLlm([userMsg, assistantMsg] as never);
+    expect(result).toHaveLength(2);
+    expect(result[0].role).toBe("user");
+    expect(result[1].role).toBe("assistant");
   });
 });

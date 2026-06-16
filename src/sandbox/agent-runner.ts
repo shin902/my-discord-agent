@@ -166,7 +166,7 @@ function formatMemoryForPrompt(memory: string | null): string {
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
  * prompt メッセージ（contextBootstrap）は最初の1件のみ user として展開し、残りは除外する。
  * セッションあたり bootstrap は1件しか書き込まれないため、実質的にフィルタが発動するケースはない。 */
-function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
+export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   let bootstrapSeen = false;
   return messages.flatMap((msg) => {
     if (isContextBootstrapMessage(msg)) {
