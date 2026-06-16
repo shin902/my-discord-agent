@@ -206,9 +206,8 @@ export async function runAgentLoop(
 
   // セッションが初回（messages が空）かどうかで注入戦略を決定
   const isNewSession = messages.length === 0;
-  // 既存セッションで先頭が bootstrap メッセージの場合は新方式セッション
-  const hasBootstrap =
-    messages.length > 0 && isContextBootstrapMessage(messages[0]);
+  // 既存セッションに bootstrap メッセージが含まれる場合は新方式セッション
+  const hasBootstrap = messages.some(isContextBootstrapMessage);
   // フォールバック: 既存セッションで bootstrap がない場合（旧形式）
   const needsLegacyInjection = !isNewSession && !hasBootstrap;
 
