@@ -227,14 +227,10 @@ export async function runAgentLoop(
   let fullSystemPrompt: string;
   if (isNewSession || hasBootstrap) {
     // 新方式: AGENTS.md / MEMORY.md はシステムプロンプトに含めない。
-    // hasBootstrap 時は shouldReadContextFiles = false なので systemPrompt = null になり
-    // DEFAULT_SYSTEM_PROMPT にフォールバックする。AGENTS.md の指示は初回注入した
-    // prompt ロールのメッセージが会話履歴として維持されるため、LLM には届いている。
-    fullSystemPrompt = [
-      systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      skillPrompt,
-      datePrompt,
-    ]
+    // AGENTS.md の指示は初回注入した prompt ロールのメッセージが会話履歴として維持されるため
+    // LLM には届いている。isNewSession 時も systemPrompt をここに入れると初回だけ二重注入
+    // になるため、常に DEFAULT_SYSTEM_PROMPT を使う。
+    fullSystemPrompt = [DEFAULT_SYSTEM_PROMPT, skillPrompt, datePrompt]
       .filter(Boolean)
       .join("\n\n");
   } else {

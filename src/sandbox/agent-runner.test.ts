@@ -138,7 +138,7 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("新規セッションでは AGENTS.md の内容を systemPrompt に使用する（AGENTS.md / MEMORY.md のセクションは除外）", async () => {
+  it("新規セッションではシステムプロンプトは DEFAULT_SYSTEM_PROMPT + 日付のみ（AGENTS.md は bootstrap メッセージに注入）", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -162,8 +162,8 @@ describe("runAgentLoop", () => {
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
         initialState: expect.objectContaining({
-          // 新方式: AGENTS.md をシステムプロンプトに結合せず、スキル + 日付のみ
-          systemPrompt: `カスタムプロンプト\n\n## 今日の日付\n\n${today} (JST)`,
+          // 新方式: AGENTS.md はシステムプロンプトに含めない（二重注入防止）
+          systemPrompt: `あなたは役立つDiscordアシスタントです。\n\n## 今日の日付\n\n${today} (JST)`,
         }),
       }),
     );
@@ -516,7 +516,8 @@ describe("runAgentLoop", () => {
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).toContain("カスタムプロンプト");
+    expect(systemPrompt).toContain("あなたは役立つDiscordアシスタントです。");
+    expect(systemPrompt).not.toContain("カスタムプロンプト");
     expect(systemPrompt).toContain("<available_skills>");
     expect(systemPrompt).toContain("<name>review</name>");
     expect(systemPrompt).toContain("<description>レビュースキル</description>");
