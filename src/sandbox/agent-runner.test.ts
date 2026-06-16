@@ -221,6 +221,40 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("新規セッションで AGENTS.md はあるが MEMORY.md がない場合は AGENTS.md のみ bootstrap に注入する", async () => {
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/AGENTS.md") {
+        return "カスタムプロンプト" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const bootstrapCall = vi
+      .mocked(appendMessage)
+      .mock.calls.find(
+        (call) =>
+          call[2] &&
+          typeof call[2] === "object" &&
+          "role" in call[2] &&
+          (call[2] as { role: string }).role === "prompt",
+      );
+    expect(bootstrapCall).toBeDefined();
+    const content = (bootstrapCall?.[2] as { content: string }).content;
+    expect(content).toContain("カスタムプロンプト");
+    expect(content).not.toContain("記憶 (MEMORY.md)");
+  });
+
   it("新規セッションで AGENTS.md も MEMORY.md もない場合は custom メッセージを追加しない", async () => {
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
