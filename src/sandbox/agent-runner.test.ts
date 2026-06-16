@@ -376,7 +376,8 @@ describe("runAgentLoop", () => {
           (call[2] as { role: string }).role === "prompt",
       );
     expect(bootstrapCall).toBeDefined();
-    const bootstrapContent = (bootstrapCall![2] as { content: string }).content;
+    const bootstrapContent = (bootstrapCall?.[2] as { content: string })
+      .content;
     expect(bootstrapContent).toContain("あ".repeat(2000));
     expect(bootstrapContent).not.toContain("あ".repeat(2001));
     expect(bootstrapContent).toContain("上限(2000字)を超えています");
