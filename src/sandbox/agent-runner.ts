@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   type AssistantMessage,
   getEnvApiKey,
+  type Message,
   type TextContent,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
@@ -21,9 +22,28 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 
+// CustomAgentMessages の拡張: AGENTS.md / MEMORY.md の初回注入に使うカスタムメッセージ型
+declare module "@earendil-works/pi-agent-core" {
+  interface CustomAgentMessages {
+    contextBootstrap: {
+      role: "custom";
+      customType: "bootstrap-context";
+      content: string;
+      timestamp: number;
+    };
+  }
+}
+
+type ContextBootstrapMessage = {
+  role: "custom";
+  customType: "bootstrap-context";
+  content: string;
+  timestamp: number;
+};
+
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
-// MEMORY.md をシステムプロンプトに注入する際の文字数上限
+// MEMORY.md をコンテキストに注入する際の文字数上限
 const MEMORY_CHAR_LIMIT = 2000;
 
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
@@ -67,6 +87,19 @@ function isAssistantMessage(msg: unknown): msg is AssistantMessage {
     msg !== null &&
     "role" in msg &&
     (msg as Record<string, unknown>).role === "assistant"
+  );
+}
+
+function isContextBootstrapMessage(
+  msg: AgentMessage,
+): msg is ContextBootstrapMessage {
+  return (
+    typeof msg === "object" &&
+    msg !== null &&
+    "role" in msg &&
+    (msg as Record<string, unknown>).role === "custom" &&
+    "customType" in msg &&
+    (msg as Record<string, unknown>).customType === "bootstrap-context"
   );
 }
 
@@ -130,18 +163,39 @@ function formatMemoryForPrompt(memory: string | null): string {
   return `## 記憶 (MEMORY.md)\n\n${truncated}\n\n[警告: MEMORY.md が上限(${MEMORY_CHAR_LIMIT}字)を超えています。古いセクションを削除・要約して整理してください]`;
 }
 
+/** AgentMessage[] を LLM 送信用 Message[] に変換する。
+ * custom メッセージ（contextBootstrap）は初回のみ user として展開し、2回目以降は除外する。 */
+function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
+  const result: Message[] = [];
+  let bootstrapInjected = false;
+
+  for (const msg of messages) {
+    if (isContextBootstrapMessage(msg)) {
+      if (!bootstrapInjected) {
+        // 初回の custom メッセージは user ロールとして LLM に渡す
+        result.push({
+          role: "user",
+          content: msg.content,
+          timestamp: msg.timestamp,
+        });
+        bootstrapInjected = true;
+      }
+      // 2回目以降の custom メッセージはスキップ（LLM には渡さない）
+    } else {
+      result.push(msg as Message);
+    }
+  }
+
+  return result;
+}
+
 export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
   groupConfig: AgentConfig,
 ): Promise<string> {
-  const [rawMessages, systemPrompt, skills, memory] = await Promise.all([
-    loadMessages(groupName, sessionId),
-    loadSystemPromptFromWorkspace(),
-    loadSkills("/workspace/SKILLS", groupConfig.skills),
-    loadMemoryFromWorkspace(),
-  ]);
+  const rawMessages = await loadMessages(groupName, sessionId);
 
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
   // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
@@ -149,6 +203,26 @@ export async function runAgentLoop(
     if (!isAssistantMessage(m)) return true;
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
+
+  // セッションが初回（messages が空）かどうかで注入戦略を決定
+  const isNewSession = messages.length === 0;
+  // 既存セッションで先頭が bootstrap メッセージの場合は新方式セッション
+  const hasBootstrap =
+    messages.length > 0 && isContextBootstrapMessage(messages[0]);
+  // フォールバック: 既存セッションで bootstrap がない場合（旧形式）
+  const needsLegacyInjection = !isNewSession && !hasBootstrap;
+
+  // 新規セッションの場合のみ AGENTS.md / MEMORY.md を読み込む
+  // フォールバック（旧形式セッション）の場合も読み込む
+  const shouldReadContextFiles = isNewSession || needsLegacyInjection;
+
+  const [systemPrompt, skills, memory] = await Promise.all([
+    shouldReadContextFiles
+      ? loadSystemPromptFromWorkspace()
+      : Promise.resolve(null),
+    loadSkills("/workspace/SKILLS", groupConfig.skills),
+    shouldReadContextFiles ? loadMemoryFromWorkspace() : Promise.resolve(null),
+  ]);
 
   const model = await resolveModel(
     groupConfig.model?.provider ?? FALLBACK_DEFAULT_MODEL.provider,
@@ -160,16 +234,54 @@ export async function runAgentLoop(
   );
 
   const skillPrompt = formatSkillsForPrompt(skills);
-  const memoryPrompt = formatMemoryForPrompt(memory);
   const datePrompt = formatDateForPrompt();
-  const fullSystemPrompt = [
-    systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-    skillPrompt,
-    memoryPrompt,
-    datePrompt,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+
+  let fullSystemPrompt: string;
+  if (isNewSession || hasBootstrap) {
+    // 新方式: AGENTS.md / MEMORY.md はシステムプロンプトに含めない
+    fullSystemPrompt = [
+      systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      skillPrompt,
+      datePrompt,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  } else {
+    // フォールバック: 旧形式セッション（AGENTS.md / MEMORY.md をシステムプロンプトに含める）
+    const memoryPrompt = formatMemoryForPrompt(memory);
+    fullSystemPrompt = [
+      systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      skillPrompt,
+      memoryPrompt,
+      datePrompt,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  // 新規セッションの場合、AGENTS.md / MEMORY.md を custom メッセージとして注入する
+  if (isNewSession) {
+    const contextParts: string[] = [];
+    if (systemPrompt) {
+      contextParts.push(`## エージェント設定 (AGENTS.md)\n\n${systemPrompt}`);
+    }
+    if (memory) {
+      contextParts.push(formatMemoryForPrompt(memory));
+    }
+
+    if (contextParts.length > 0) {
+      const bootstrapMessage: ContextBootstrapMessage = {
+        role: "custom",
+        customType: "bootstrap-context",
+        content: contextParts.join("\n\n"),
+        timestamp: Date.now(),
+      };
+      // JSONL に書き込む
+      await appendMessage(groupName, sessionId, bootstrapMessage as AgentMessage);
+      // messages 配列の先頭に追加
+      messages.unshift(bootstrapMessage as AgentMessage);
+    }
+  }
 
   const agent = new Agent({
     initialState: {
@@ -179,6 +291,7 @@ export async function runAgentLoop(
       tools,
       thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
     },
+    convertToLlm: defaultConvertToLlm,
     getApiKey: (provider: string) => {
       // KnownProvider: pi-ai の環境変数マッピングを使用
       const knownKey = getEnvApiKey(provider);
