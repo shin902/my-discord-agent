@@ -195,7 +195,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       expect.objectContaining({
-        role: "custom",
+        role: "prompt",
         customType: "bootstrap-context",
         content: expect.stringContaining("カスタムプロンプト"),
       }),
@@ -204,7 +204,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       expect.objectContaining({
-        role: "custom",
+        role: "prompt",
         customType: "bootstrap-context",
         content: expect.stringContaining("ユーザーは猫が好き"),
       }),
@@ -215,7 +215,7 @@ describe("runAgentLoop", () => {
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({
-      role: "custom",
+      role: "prompt",
       customType: "bootstrap-context",
     });
   });
@@ -240,7 +240,7 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          call[2].role === "custom",
+          call[2].role === "prompt",
       );
     expect(bootstrapCalls).toHaveLength(0);
 
@@ -252,7 +252,7 @@ describe("runAgentLoop", () => {
 
   it("既存セッション（bootstrap あり）では AGENTS.md / MEMORY.md を読み込まない", async () => {
     const bootstrapMsg = {
-      role: "custom",
+      role: "prompt",
       customType: "bootstrap-context",
       content: "## エージェント設定 (AGENTS.md)\n\n古いプロンプト",
       timestamp: Date.now() - 1000,
@@ -282,7 +282,7 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          (call[2] as { role: string }).role === "custom",
+          (call[2] as { role: string }).role === "prompt",
       );
     expect(bootstrapAppends).toHaveLength(0);
   });
@@ -373,7 +373,7 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          (call[2] as { role: string }).role === "custom",
+          (call[2] as { role: string }).role === "prompt",
       );
     expect(bootstrapCall).toBeDefined();
     const bootstrapContent = (bootstrapCall![2] as { content: string }).content;
@@ -423,7 +423,7 @@ describe("runAgentLoop", () => {
 
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
     const bootstrapMsg = {
-      role: "custom",
+      role: "prompt",
       customType: "bootstrap-context",
       content: "## エージェント設定 (AGENTS.md)\n\n古いプロンプト",
       timestamp: Date.now() - 1000,

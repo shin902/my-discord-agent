@@ -26,7 +26,7 @@ import { isTransientError } from "../utils/error.js";
 declare module "@earendil-works/pi-agent-core" {
   interface CustomAgentMessages {
     contextBootstrap: {
-      role: "custom";
+      role: "prompt";
       customType: "bootstrap-context";
       content: string;
       timestamp: number;
@@ -35,7 +35,7 @@ declare module "@earendil-works/pi-agent-core" {
 }
 
 type ContextBootstrapMessage = {
-  role: "custom";
+  role: "prompt";
   customType: "bootstrap-context";
   content: string;
   timestamp: number;
@@ -97,7 +97,7 @@ function isContextBootstrapMessage(
     typeof msg === "object" &&
     msg !== null &&
     "role" in msg &&
-    (msg as Record<string, unknown>).role === "custom" &&
+    (msg as Record<string, unknown>).role === "prompt" &&
     "customType" in msg &&
     (msg as Record<string, unknown>).customType === "bootstrap-context"
   );
@@ -271,7 +271,7 @@ export async function runAgentLoop(
 
     if (contextParts.length > 0) {
       const bootstrapMessage: ContextBootstrapMessage = {
-        role: "custom",
+        role: "prompt",
         customType: "bootstrap-context",
         content: contextParts.join("\n\n"),
         timestamp: Date.now(),
