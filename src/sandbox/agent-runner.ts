@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 
-import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+  Agent,
+  type AgentMessage,
+  type CustomAgentMessages,
+} from "@earendil-works/pi-agent-core";
 import {
   type AssistantMessage,
   getEnvApiKey,
@@ -34,12 +38,7 @@ declare module "@earendil-works/pi-agent-core" {
   }
 }
 
-type ContextBootstrapMessage = {
-  role: "prompt";
-  customType: "bootstrap-context";
-  content: string;
-  timestamp: number;
-};
+type ContextBootstrapMessage = CustomAgentMessages["contextBootstrap"];
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
