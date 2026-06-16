@@ -94,12 +94,10 @@ function isContextBootstrapMessage(
   msg: AgentMessage,
 ): msg is ContextBootstrapMessage {
   return (
-    typeof msg === "object" &&
-    msg !== null &&
     "role" in msg &&
-    (msg as Record<string, unknown>).role === "prompt" &&
+    (msg as { role: unknown }).role === "prompt" &&
     "customType" in msg &&
-    (msg as Record<string, unknown>).customType === "bootstrap-context"
+    (msg as { customType: unknown }).customType === "bootstrap-context"
   );
 }
 
