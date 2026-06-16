@@ -164,29 +164,18 @@ function formatMemoryForPrompt(memory: string | null): string {
 }
 
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
- * custom メッセージ（contextBootstrap）は初回のみ user として展開し、2回目以降は除外する。 */
+ * prompt メッセージ（contextBootstrap）は最初の1件のみ user として展開し、残りは除外する。
+ * セッションあたり bootstrap は1件しか書き込まれないため、実質的にフィルタが発動するケースはない。 */
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
-  const result: Message[] = [];
-  let bootstrapInjected = false;
-
-  for (const msg of messages) {
+  let bootstrapSeen = false;
+  return messages.flatMap((msg) => {
     if (isContextBootstrapMessage(msg)) {
-      if (!bootstrapInjected) {
-        // 初回の custom メッセージは user ロールとして LLM に渡す
-        result.push({
-          role: "user",
-          content: msg.content,
-          timestamp: msg.timestamp,
-        });
-        bootstrapInjected = true;
-      }
-      // 2回目以降の custom メッセージはスキップ（LLM には渡さない）
-    } else {
-      result.push(msg as Message);
+      if (bootstrapSeen) return [];
+      bootstrapSeen = true;
+      return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
     }
-  }
-
-  return result;
+    return [msg as Message];
+  });
 }
 
 export async function runAgentLoop(
