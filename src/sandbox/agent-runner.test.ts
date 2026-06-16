@@ -271,14 +271,8 @@ describe("runAgentLoop", () => {
     await runAgentLoop("test-group", "session-1", "hi", {});
 
     // AGENTS.md / MEMORY.md は読み込まれない
-    expect(readFile).not.toHaveBeenCalledWith(
-      "/workspace/AGENTS.md",
-      "utf-8",
-    );
-    expect(readFile).not.toHaveBeenCalledWith(
-      "/workspace/MEMORY.md",
-      "utf-8",
-    );
+    expect(readFile).not.toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
+    expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
 
     // bootstrap custom メッセージは追加で書き込まれない
     const bootstrapAppends = vi

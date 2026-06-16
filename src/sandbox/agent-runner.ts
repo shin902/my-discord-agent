@@ -277,7 +277,11 @@ export async function runAgentLoop(
         timestamp: Date.now(),
       };
       // JSONL に書き込む
-      await appendMessage(groupName, sessionId, bootstrapMessage as AgentMessage);
+      await appendMessage(
+        groupName,
+        sessionId,
+        bootstrapMessage as AgentMessage,
+      );
       // messages 配列の先頭に追加
       messages.unshift(bootstrapMessage as AgentMessage);
     }
