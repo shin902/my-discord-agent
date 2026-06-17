@@ -355,6 +355,7 @@ describe("runAgentLoop", () => {
     ).initialState.systemPrompt;
     expect(systemPrompt).not.toContain("旧形式プロンプト");
     expect(systemPrompt).not.toContain("旧記憶");
+    expect(systemPrompt).not.toContain("## 記憶 (MEMORY.md)");
 
     // bootstrap メッセージとして JSONL に書き込まれ、次回以降は新方式に移行する
     expect(appendMessage).toHaveBeenCalledWith(
@@ -366,8 +367,18 @@ describe("runAgentLoop", () => {
         content: expect.stringContaining("旧形式プロンプト"),
       }),
     );
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        role: "prompt",
+        customType: "bootstrap-context",
+        content: expect.stringContaining("旧記憶"),
+      }),
+    );
 
     // Agent に渡す messages にも bootstrap メッセージが先頭に含まれ、このターンの LLM 呼び出しに反映される
+    // （AGENTS.md と MEMORY.md の両方が漏れず1件の bootstrap メッセージに乗っていることを確認）
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
@@ -376,6 +387,9 @@ describe("runAgentLoop", () => {
       customType: "bootstrap-context",
       content: expect.stringContaining("旧形式プロンプト"),
     });
+    expect((messages[0] as { content: string }).content).toContain("旧記憶");
+    // 同一ターンで二重に渡されていないことを確認（bootstrap は1件のみ）
+    expect(messages).toHaveLength(2);
   });
 
   it("MEMORY.md が存在しない場合は bootstrap メッセージに記憶セクションを追加しない（旧形式セッション）", async () => {
