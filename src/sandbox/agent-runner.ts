@@ -3,10 +3,16 @@ import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 
-import { Agent } from "@earendil-works/pi-agent-core";
+import {
+  Agent,
+  type AgentMessage,
+  type CustomMessage,
+  convertToLlm as libraryConvertToLlm,
+} from "@earendil-works/pi-agent-core";
 import {
   type AssistantMessage,
   getEnvApiKey,
+  type Message,
   type TextContent,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
@@ -21,9 +27,32 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 
+// pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
+// - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
+//   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
+// - "memory-bootstrap": MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
+//
+// display フラグについて: 標準 CustomMessage の必須フィールドで、pi-coding-agent 系 TUI が
+// チャット表示の可否判定に使う。LLM 送信可否（defaultConvertToLlm 側で制御）とは別概念。
+// うちはその TUI を使わないため実質無効だが、いずれも裏方メッセージなので意味的に false 固定。
+const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
+const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
+
+// CustomMessage.content は string | (TextContent | ImageContent)[] だが、
+// このファイルでは常に string のみを書き込むため、テンプレートリテラル展開時に
+// [object Object] 化しないよう型上も string に絞る
+type AgentsSnapshotMessage = Omit<CustomMessage, "content"> & {
+  customType: typeof AGENTS_SNAPSHOT_TYPE;
+  content: string;
+};
+type MemoryBootstrapMessage = Omit<CustomMessage, "content"> & {
+  customType: typeof MEMORY_BOOTSTRAP_TYPE;
+  content: string;
+};
+
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
-// MEMORY.md をシステムプロンプトに注入する際の文字数上限
+// MEMORY.md をコンテキストに注入する際の文字数上限
 const MEMORY_CHAR_LIMIT = 2000;
 
 // VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
@@ -67,6 +96,28 @@ function isAssistantMessage(msg: unknown): msg is AssistantMessage {
     msg !== null &&
     "role" in msg &&
     (msg as Record<string, unknown>).role === "assistant"
+  );
+}
+
+function isAgentsSnapshotMessage(
+  msg: AgentMessage,
+): msg is AgentsSnapshotMessage {
+  return (
+    "role" in msg &&
+    (msg as { role: unknown }).role === "custom" &&
+    "customType" in msg &&
+    (msg as { customType: unknown }).customType === AGENTS_SNAPSHOT_TYPE
+  );
+}
+
+function isMemoryBootstrapMessage(
+  msg: AgentMessage,
+): msg is MemoryBootstrapMessage {
+  return (
+    "role" in msg &&
+    (msg as { role: unknown }).role === "custom" &&
+    "customType" in msg &&
+    (msg as { customType: unknown }).customType === MEMORY_BOOTSTRAP_TYPE
   );
 }
 
@@ -130,25 +181,70 @@ function formatMemoryForPrompt(memory: string | null): string {
   return `## 記憶 (MEMORY.md)\n\n${truncated}\n\n[警告: MEMORY.md が上限(${MEMORY_CHAR_LIMIT}字)を超えています。古いセクションを削除・要約して整理してください]`;
 }
 
+/** AgentMessage[] を LLM 送信用 Message[] に変換する。
+ * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
+ * - memoryBootstrap: 最初の1件のみ user として展開し、残りは除外する
+ *   （セッションあたり1件しか書き込まれないため、実質的にフィルタが発動するケースはない）。
+ * - それ以外（bashExecution・branchSummary・compactionSummary・他の customType 等）は
+ *   pi-agent-core 標準の convertToLlm に委譲する。未知の role を無効なまま LLM へ渡さないため。 */
+export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
+  let memoryBootstrapSeen = false;
+  return messages.flatMap((msg) => {
+    if (isAgentsSnapshotMessage(msg)) return [];
+    if (isMemoryBootstrapMessage(msg)) {
+      if (memoryBootstrapSeen) return [];
+      memoryBootstrapSeen = true;
+      return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
+    }
+    return libraryConvertToLlm([msg]);
+  });
+}
+
 export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
   groupConfig: AgentConfig,
 ): Promise<string> {
-  const [rawMessages, systemPrompt, skills, memory] = await Promise.all([
-    loadMessages(groupName, sessionId),
-    loadSystemPromptFromWorkspace(),
-    loadSkills("/workspace/SKILLS", groupConfig.skills),
-    loadMemoryFromWorkspace(),
-  ]);
+  const rawMessages = await loadMessages(groupName, sessionId);
 
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
   // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
-  const messages = rawMessages.filter((m) => {
+  let messages = rawMessages.filter((m) => {
     if (!isAssistantMessage(m)) return true;
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
+
+  // bootstrap 系（agents-snapshot / memory-bootstrap）は常に先頭に並べる。
+  // 旧形式セッションの移行では appendMessage で JSONL 末尾に追記されるため、
+  // ロード後に並べ替えないと、移行ターンと次ターン以降で memory-bootstrap の位置が
+  // 変わり、LLM への見え方が非対称になる上にプロンプトキャッシュも効かなくなる。
+  const isBootstrapMessage = (m: AgentMessage) =>
+    isAgentsSnapshotMessage(m) || isMemoryBootstrapMessage(m);
+  messages = [
+    ...messages.filter(isBootstrapMessage),
+    ...messages.filter((m) => !isBootstrapMessage(m)),
+  ];
+
+  // AGENTS.md: 既存セッションにスナップショットがあれば再読み込みせず再利用する
+  // （system role のまま固定し、ファイル更新の影響を受けないようにする）。
+  // 新規セッション（messages が空）では必然的に見つからず needsAgentsSnapshot は true になる
+  const existingAgentsSnapshot = messages.find(isAgentsSnapshotMessage);
+  const needsAgentsSnapshot = !existingAgentsSnapshot;
+
+  // MEMORY.md: 既存セッションに bootstrap メッセージがあれば新方式セッションとみなす。
+  // フォールバック: bootstrap がない既存セッション（旧形式）は次回以降のため移行する。
+  // 新規セッションでは必然的に false になり needsMemoryBootstrap は true になる
+  const hasMemoryBootstrap = messages.some(isMemoryBootstrapMessage);
+  const needsMemoryBootstrap = !hasMemoryBootstrap;
+
+  const [systemPromptFile, skills, memory] = await Promise.all([
+    needsAgentsSnapshot
+      ? loadSystemPromptFromWorkspace()
+      : Promise.resolve(null),
+    loadSkills("/workspace/SKILLS", groupConfig.skills),
+    needsMemoryBootstrap ? loadMemoryFromWorkspace() : Promise.resolve(null),
+  ]);
 
   const model = await resolveModel(
     groupConfig.model?.provider ?? FALLBACK_DEFAULT_MODEL.provider,
@@ -160,16 +256,70 @@ export async function runAgentLoop(
   );
 
   const skillPrompt = formatSkillsForPrompt(skills);
-  const memoryPrompt = formatMemoryForPrompt(memory);
   const datePrompt = formatDateForPrompt();
+
+  // AGENTS.md の内容: 新規読み込み分があればそれを、なければ既存スナップショットを使う
+  const agentsContent = needsAgentsSnapshot
+    ? systemPromptFile
+    : (existingAgentsSnapshot?.content ?? null);
+
+  // AGENTS.md は system role の systemPrompt に固定で含める（指示遵守の優先度を維持するため）。
+  // AGENTS.md が存在する場合はそれが DEFAULT_SYSTEM_PROMPT を完全に置き換える
+  // （グループ独自のペルソナ定義と汎用文言が矛盾しないようにするため）。
+  //
+  // 【仕様】AGENTS.md が空文字（ファイルは存在するが中身が空）の場合、
+  // `agentsContent ?? DEFAULT_SYSTEM_PROMPT` は "" のままとなり、続く .filter(Boolean) で
+  // 除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は skills+date のみになる。
+  // これは意図的な挙動: 「空の AGENTS.md を置く」ことを、グループがベースプロンプトを
+  // 明示的にオプトアウトする手段として扱う（ファイル不存在=null の場合のみ DEFAULT を適用する）。
+  //
+  // MEMORY.md は下の memoryBootstrap 注入によって会話履歴経由で LLM に届く
+  // （user role に変換されるため、AGENTS.md と二重注入にはならない）。
   const fullSystemPrompt = [
-    systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    agentsContent ?? DEFAULT_SYSTEM_PROMPT,
     skillPrompt,
-    memoryPrompt,
     datePrompt,
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  const newBootstrapMessages: AgentMessage[] = [];
+
+  // 新規セッション、またはスナップショット未作成の既存セッションの場合、
+  // AGENTS.md をセッションに固定化するスナップショットを書き込む。
+  // AGENTS.md が空文字でも「ファイルは存在し空である」という状態を固定化するため、
+  // null（ファイル不存在）とは区別して書き込む（そうしないと毎ターン再読み込みし続ける）
+  if (needsAgentsSnapshot && systemPromptFile !== null) {
+    const agentsSnapshotMessage: AgentsSnapshotMessage = {
+      role: "custom",
+      customType: AGENTS_SNAPSHOT_TYPE,
+      content: systemPromptFile,
+      display: false,
+      timestamp: Date.now(),
+    };
+    await appendMessage(groupName, sessionId, agentsSnapshotMessage);
+    newBootstrapMessages.push(agentsSnapshotMessage);
+  }
+
+  // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
+  // MEMORY.md を custom メッセージとして注入する。
+  // MEMORY.md が空文字でも「ファイルは存在し空である」という状態を固定化するため、
+  // null（ファイル不存在）とは区別して書き込む（AGENTS.md と同様、そうしないと毎ターン再読み込みし続ける）
+  if (needsMemoryBootstrap && memory !== null) {
+    const memoryBootstrapMessage: MemoryBootstrapMessage = {
+      role: "custom",
+      customType: MEMORY_BOOTSTRAP_TYPE,
+      content: formatMemoryForPrompt(memory),
+      display: false,
+      timestamp: Date.now(),
+    };
+    await appendMessage(groupName, sessionId, memoryBootstrapMessage);
+    newBootstrapMessages.push(memoryBootstrapMessage);
+  }
+
+  if (newBootstrapMessages.length > 0) {
+    messages = [...newBootstrapMessages, ...messages];
+  }
 
   const agent = new Agent({
     initialState: {
@@ -179,6 +329,7 @@ export async function runAgentLoop(
       tools,
       thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
     },
+    convertToLlm: defaultConvertToLlm,
     getApiKey: (provider: string) => {
       // KnownProvider: pi-ai の環境変数マッピングを使用
       const knownKey = getEnvApiKey(provider);
