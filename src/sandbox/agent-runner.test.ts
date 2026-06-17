@@ -712,7 +712,9 @@ describe("runAgentLoop", () => {
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).not.toContain("あなたは役立つDiscordアシスタントです。");
+    expect(systemPrompt).not.toContain(
+      "あなたは役立つDiscordアシスタントです。",
+    );
     expect(systemPrompt).toContain("カスタムプロンプト");
     expect(systemPrompt).toContain("<available_skills>");
     expect(systemPrompt).toContain("<name>review</name>");
