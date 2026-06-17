@@ -357,6 +357,42 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).toContain("旧記憶");
   });
 
+  it("既存セッション（bootstrap なし・旧形式）でも bootstrap メッセージを注入し新方式へ移行する", async () => {
+    const existingHistory = [
+      { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
+    ];
+    vi.mocked(loadMessages).mockResolvedValue(existingHistory as never);
+
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/AGENTS.md") {
+        return "旧形式プロンプト" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    // 旧形式セッションでも bootstrap メッセージが JSONL に書き込まれる（次回以降は新方式に移行）
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        role: "prompt",
+        customType: "bootstrap-context",
+        content: expect.stringContaining("旧形式プロンプト"),
+      }),
+    );
+  });
+
   it("MEMORY.md が存在しない場合は記憶セクションをシステムプロンプトに追加しない（旧形式セッション）", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },

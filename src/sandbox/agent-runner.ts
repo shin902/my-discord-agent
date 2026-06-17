@@ -231,7 +231,9 @@ export async function runAgentLoop(
       .filter(Boolean)
       .join("\n\n");
   } else {
-    // フォールバック: 旧形式セッション（AGENTS.md / MEMORY.md をシステムプロンプトに含める）
+    // フォールバック: 旧形式セッション（AGENTS.md / MEMORY.md をシステムプロンプトに含める）。
+    // このターンでは旧形式の挙動を維持するが、下の bootstrap 注入によって
+    // 次回以降は新方式（isNewSession || hasBootstrap）に移行する。
     const memoryPrompt = formatMemoryForPrompt(memory);
     fullSystemPrompt = [
       systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
@@ -243,8 +245,9 @@ export async function runAgentLoop(
       .join("\n\n");
   }
 
-  // 新規セッションの場合、AGENTS.md / MEMORY.md を custom メッセージとして注入する
-  if (isNewSession) {
+  // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
+  // AGENTS.md / MEMORY.md を custom メッセージとして注入する
+  if (isNewSession || needsLegacyInjection) {
     const contextParts: string[] = [];
     if (systemPrompt) {
       contextParts.push(`## エージェント設定 (AGENTS.md)\n\n${systemPrompt}`);
