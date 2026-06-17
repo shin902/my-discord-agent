@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   Agent,
   type AgentMessage,
+  convertToLlm as libraryConvertToLlm,
   type CustomMessage,
 } from "@earendil-works/pi-agent-core";
 import {
@@ -174,7 +175,9 @@ function formatMemoryForPrompt(memory: string | null): string {
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
  * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
  * - memoryBootstrap: 最初の1件のみ user として展開し、残りは除外する
- *   （セッションあたり1件しか書き込まれないため、実質的にフィルタが発動するケースはない）。 */
+ *   （セッションあたり1件しか書き込まれないため、実質的にフィルタが発動するケースはない）。
+ * - それ以外（bashExecution・branchSummary・compactionSummary・他の customType 等）は
+ *   pi-agent-core 標準の convertToLlm に委譲する。未知の role を無効なまま LLM へ渡さないため。 */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   let memoryBootstrapSeen = false;
   return messages.flatMap((msg) => {
@@ -184,11 +187,7 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
       memoryBootstrapSeen = true;
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
     }
-    // agents-snapshot / memory-bootstrap 以外の customType を持つ custom メッセージや、
-    // bashExecution 等の他の役割が AgentMessage に増えた場合、ここでの cast は素通しになり
-    // 型的に破綻する。追加時は isAgentsSnapshotMessage / isMemoryBootstrapMessage と同様の
-    // 判別関数で分岐を追加すること。
-    return [msg as Message];
+    return libraryConvertToLlm([msg]);
   });
 }
 

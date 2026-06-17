@@ -22,9 +22,13 @@ vi.mock("../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("@earendil-works/pi-agent-core", () => ({
-  Agent: AgentMock,
-}));
+vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    Agent: AgentMock,
+  };
+});
 
 vi.mock("../agent/session.js", () => ({
   loadMessages: vi.fn(),
@@ -968,5 +972,20 @@ describe("defaultConvertToLlm", () => {
     expect(result).toHaveLength(2);
     expect(result[0].role).toBe("user");
     expect(result[1].role).toBe("assistant");
+  });
+
+  it("agents-snapshot/memory-bootstrap 以外の role はライブラリ標準の convertToLlm に委譲する", () => {
+    const bashExecutionMsg = {
+      role: "bashExecution" as const,
+      command: "echo hi",
+      output: "hi",
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      timestamp: 4000,
+    };
+    const result = defaultConvertToLlm([bashExecutionMsg] as never);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
   });
 });
