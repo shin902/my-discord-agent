@@ -295,6 +295,43 @@ describe("runAgentLoop", () => {
     expect(messages).toHaveLength(0);
   });
 
+  it("新規セッションで AGENTS.md が空文字の場合でも agents-snapshot を保存し、次回以降は再読み込みしない", async () => {
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/AGENTS.md") {
+        return "" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    // 空文字でも「ファイルは存在する」という状態を agents-snapshot として固定化する
+    const snapshotCalls = vi
+      .mocked(appendMessage)
+      .mock.calls.filter(
+        (call) =>
+          call[2] &&
+          typeof call[2] === "object" &&
+          "customType" in call[2] &&
+          (call[2] as { customType: string }).customType ===
+            "agents-snapshot",
+      );
+    expect(snapshotCalls).toHaveLength(1);
+    expect(snapshotCalls[0][2]).toMatchObject({
+      customType: "agents-snapshot",
+      content: "",
+    });
+  });
+
   it("既存セッション（agents-snapshot と memory-bootstrap あり）では AGENTS.md / MEMORY.md を読み込まない", async () => {
     const agentsSnapshotMsg = {
       role: "custom",

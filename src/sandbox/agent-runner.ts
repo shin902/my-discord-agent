@@ -261,8 +261,10 @@ export async function runAgentLoop(
   const newBootstrapMessages: AgentMessage[] = [];
 
   // 新規セッション、またはスナップショット未作成の既存セッションの場合、
-  // AGENTS.md をセッションに固定化するスナップショットを書き込む
-  if (needsAgentsSnapshot && systemPromptFile) {
+  // AGENTS.md をセッションに固定化するスナップショットを書き込む。
+  // AGENTS.md が空文字でも「ファイルは存在し空である」という状態を固定化するため、
+  // null（ファイル不存在）とは区別して書き込む（そうしないと毎ターン再読み込みし続ける）
+  if (needsAgentsSnapshot && systemPromptFile !== null) {
     const agentsSnapshotMessage: AgentsSnapshotMessage = {
       role: "custom",
       customType: AGENTS_SNAPSHOT_TYPE,
