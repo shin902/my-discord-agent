@@ -143,7 +143,7 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("新規セッションでは AGENTS.md がシステムプロンプトに固定で含まれる", async () => {
+  it("AGENTS.md がある場合は DEFAULT_SYSTEM_PROMPT を置き換えてシステムプロンプトになる", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -167,8 +167,8 @@ describe("runAgentLoop", () => {
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
         initialState: expect.objectContaining({
-          // AGENTS.md は system role の systemPrompt に固定で含める
-          systemPrompt: `あなたは役立つDiscordアシスタントです。\n\n## エージェント設定 (AGENTS.md)\n\nカスタムプロンプト\n\n## 今日の日付\n\n${today} (JST)`,
+          // AGENTS.md がある場合は DEFAULT_SYSTEM_PROMPT を完全に置き換える
+          systemPrompt: `カスタムプロンプト\n\n## 今日の日付\n\n${today} (JST)`,
         }),
       }),
     );
@@ -712,7 +712,7 @@ describe("runAgentLoop", () => {
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).toContain("あなたは役立つDiscordアシスタントです。");
+    expect(systemPrompt).not.toContain("あなたは役立つDiscordアシスタントです。");
     expect(systemPrompt).toContain("カスタムプロンプト");
     expect(systemPrompt).toContain("<available_skills>");
     expect(systemPrompt).toContain("<name>review</name>");
