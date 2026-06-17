@@ -31,6 +31,10 @@ import { isTransientError } from "../utils/error.js";
 // - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
 //   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
 // - "memory-bootstrap": MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
+//
+// display フラグについて: 標準 CustomMessage の必須フィールドで、pi-coding-agent 系 TUI が
+// チャット表示の可否判定に使う。LLM 送信可否（defaultConvertToLlm 側で制御）とは別概念。
+// うちはその TUI を使わないため実質無効だが、いずれも裏方メッセージなので意味的に false 固定。
 const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 
