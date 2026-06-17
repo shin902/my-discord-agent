@@ -133,14 +133,17 @@ describe("loadCredentialProxy", () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
-  it("ollama の thinkingFormat を受け付ける", async () => {
+  it("ollama 向け thinkingFormat: openrouter と thinkingLevelMap を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
       makeConfig([
         {
           provider: "ollama",
           baseUrl: "http://localhost:11434/v1",
-          compat: { thinkingFormat: "ollama" },
+          compat: {
+            thinkingFormat: "openrouter",
+            thinkingLevelMap: { off: "none", minimal: "low", xhigh: "high" },
+          },
         },
       ]),
     );
@@ -150,7 +153,10 @@ describe("loadCredentialProxy", () => {
       {
         provider: "ollama",
         baseUrl: "http://localhost:11434/v1",
-        compat: { thinkingFormat: "ollama" },
+        compat: {
+          thinkingFormat: "openrouter",
+          thinkingLevelMap: { off: "none", minimal: "low", xhigh: "high" },
+        },
       },
     ]);
   });

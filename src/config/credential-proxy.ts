@@ -60,16 +60,22 @@ export const CredentialEntrySchema = z.object({
   maxTokens: z.number().int().min(1).optional(),
   compat: z
     .object({
+      // pi-ai が解釈する具体 wire format を直接指定する（自動補正は行わない）。
       thinkingFormat: z
-        .enum([
-          "openai",
-          "openrouter",
-          "deepseek",
-          "zai",
-          "qwen",
-          "qwen-chat-template",
-          "ollama",
-        ])
+        .enum(["openai", "openrouter", "deepseek", "zai", "qwen-chat-template"])
+        .optional(),
+      // thinkingLevel をサーバー固有の effort 値にマッピングする。
+      // Ollama の OpenAI 互換 API（reasoning.effort）など、
+      // pi-ai のデフォルトマップと異なる値体系を使うサーバーで指定する。
+      thinkingLevelMap: z
+        .object({
+          off: z.string(),
+          minimal: z.string().optional(),
+          low: z.string().optional(),
+          medium: z.string().optional(),
+          high: z.string().optional(),
+          xhigh: z.string().optional(),
+        })
         .optional(),
       // model.ts の compat スプレッド経由で pi-ai に渡り、tool_use を含む
       // assistant メッセージへの reasoning_content 補完を有効化する。

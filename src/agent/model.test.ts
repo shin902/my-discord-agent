@@ -162,27 +162,7 @@ describe("resolveModel", () => {
     expect(model.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
   });
 
-  it("llama-cpp の qwen 互換設定は chat_template_kwargs 形式に補正する", async () => {
-    const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
-    const { loadCredentialProxy } = await import(
-      "../config/credential-proxy.js"
-    );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
-    vi.mocked(loadCredentialProxy).mockResolvedValue([
-      {
-        provider: "llama-cpp",
-        baseUrl: "http://localhost:8080/v1",
-        api: "openai-completions",
-        compat: { thinkingFormat: "qwen" },
-      },
-    ] as CredentialEntry[]);
-
-    const model = await resolveModel("llama-cpp", "qwen3");
-    expect(model.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
-  });
-
-  it("Ollama の qwen 互換設定は reasoning.effort 形式に補正する", async () => {
+  it("thinkingLevelMap を config に書いた場合、そのまま model.thinkingLevelMap に渡る", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
     const { loadCredentialProxy } = await import(
@@ -194,7 +174,10 @@ describe("resolveModel", () => {
         provider: "ollama",
         baseUrl: "http://localhost:11434/v1",
         api: "openai-completions",
-        compat: { thinkingFormat: "qwen" },
+        compat: {
+          thinkingFormat: "openrouter",
+          thinkingLevelMap: { off: "none", minimal: "low", xhigh: "high" },
+        },
       },
     ] as CredentialEntry[]);
 
@@ -206,29 +189,6 @@ describe("resolveModel", () => {
       minimal: "low",
       xhigh: "high",
     });
-  });
-
-  it("qwen: llama-cpp でも ollama でもないプロバイダ（vLLM 等）は 'qwen' のまま返す（pi-ai が enable_thinking で処理するため安全）", async () => {
-    const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
-    const { loadCredentialProxy } = await import(
-      "../config/credential-proxy.js"
-    );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
-    vi.mocked(loadCredentialProxy).mockResolvedValue([
-      {
-        provider: "custom-unknown",
-        baseUrl: "http://localhost:8080/v1",
-        api: "openai-completions",
-        compat: { thinkingFormat: "qwen" },
-      },
-    ] as CredentialEntry[]);
-
-    const model = await resolveModel("custom-unknown", "qwen3");
-    expect(model.compat).toEqual({ thinkingFormat: "qwen" });
-    expect(
-      (model as { thinkingLevelMap?: unknown }).thinkingLevelMap,
-    ).toBeUndefined();
   });
 
   it("thinkingFormat: 'openrouter' を明示した場合は thinkingLevelMap が付かない", async () => {
@@ -298,7 +258,7 @@ describe("resolveModel", () => {
     expect(model.compat).toBeUndefined();
   });
 
-  it("ポート 11434 のみで Ollama を検出し thinkingLevelMap を付与する", async () => {
+  it("thinkingLevelMap 省略時は model.thinkingLevelMap が undefined になる", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
     const { loadCredentialProxy } = await import(
@@ -308,19 +268,17 @@ describe("resolveModel", () => {
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom",
-        baseUrl: "http://custom-host:11434/v1",
+        baseUrl: "http://custom-host:8080/v1",
         api: "openai-completions",
-        compat: { thinkingFormat: "qwen" },
+        compat: { thinkingFormat: "qwen-chat-template" },
       },
     ] as CredentialEntry[]);
 
     const model = await resolveModel("custom", "qwen3");
-    expect(model.compat).toEqual({ thinkingFormat: "openrouter" });
-    expect(model.thinkingLevelMap).toEqual({
-      off: "none",
-      minimal: "low",
-      xhigh: "high",
-    });
+    expect(model.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
+    expect(
+      (model as { thinkingLevelMap?: unknown }).thinkingLevelMap,
+    ).toBeUndefined();
   });
 
   it("compat に thinkingFormat がない場合は compat が undefined になる", async () => {
