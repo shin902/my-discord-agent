@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import {
   Agent,
   type AgentMessage,
-  convertToLlm as libraryConvertToLlm,
   type CustomMessage,
+  convertToLlm as libraryConvertToLlm,
 } from "@earendil-works/pi-agent-core";
 import {
   type AssistantMessage,

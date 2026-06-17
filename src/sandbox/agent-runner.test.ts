@@ -23,7 +23,8 @@ vi.mock("../config/credential-proxy.js", () => ({
 }));
 
 vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@earendil-works/pi-agent-core")>();
+  const actual =
+    await importOriginal<typeof import("@earendil-works/pi-agent-core")>();
   return {
     ...actual,
     Agent: AgentMock,
@@ -322,8 +323,7 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "customType" in call[2] &&
-          (call[2] as { customType: string }).customType ===
-            "agents-snapshot",
+          (call[2] as { customType: string }).customType === "agents-snapshot",
       );
     expect(snapshotCalls).toHaveLength(1);
     expect(snapshotCalls[0][2]).toMatchObject({
