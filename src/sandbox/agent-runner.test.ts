@@ -451,6 +451,73 @@ describe("runAgentLoop", () => {
     expect(messages).toHaveLength(3);
   });
 
+  it("ロード時に JSONL 末尾にある agents-snapshot / memory-bootstrap を先頭へ並べ替える（移行ターン以降のキャッシュ整合性）", async () => {
+    // 旧形式セッションの移行ターン直後を模した JSONL の中身。
+    // appendMessage で末尾追記されているため、bootstrap 系が履歴の途中に挟まっている。
+    const agentsSnapshotMsg = {
+      role: "custom",
+      customType: "agents-snapshot",
+      content: "保存済みプロンプト",
+      timestamp: 1000,
+    };
+    const memoryBootstrapMsg = {
+      role: "custom",
+      customType: "memory-bootstrap",
+      content: "## 記憶 (MEMORY.md)\n\n保存済み記憶",
+      timestamp: 1001,
+    };
+    vi.mocked(loadMessages).mockResolvedValue([
+      { role: "user", content: "旧user1", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "旧assistant1" }],
+        timestamp: 2,
+      },
+      { role: "user", content: "旧user2", timestamp: 3 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "旧assistant2" }],
+        timestamp: 4,
+      },
+      agentsSnapshotMsg,
+      memoryBootstrapMsg,
+      { role: "user", content: "移行ターンのuser", timestamp: 1002 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "移行ターンのassistant" }],
+        timestamp: 1003,
+      },
+    ] as never);
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    // bootstrap 系が先頭に並び替えられ、残り履歴は元の順序を保つ
+    const messages = (
+      lastAgentOptions as { initialState: { messages: unknown[] } }
+    ).initialState.messages;
+    expect(messages[0]).toMatchObject({ customType: "agents-snapshot" });
+    expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
+    expect(messages[2]).toMatchObject({ role: "user", content: "旧user1" });
+    expect(messages[3]).toMatchObject({ role: "assistant" });
+    expect(messages[4]).toMatchObject({ role: "user", content: "旧user2" });
+    expect(messages[5]).toMatchObject({ role: "assistant" });
+    expect(messages[6]).toMatchObject({
+      role: "user",
+      content: "移行ターンのuser",
+    });
+    expect(messages[7]).toMatchObject({ role: "assistant" });
+    expect(messages).toHaveLength(8);
+  });
+
   it("AGENTS.md も MEMORY.md も存在しない場合は新規メッセージを追加しない（旧形式セッション）", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },

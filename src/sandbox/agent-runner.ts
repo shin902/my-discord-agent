@@ -206,6 +206,17 @@ export async function runAgentLoop(
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
 
+  // bootstrap 系（agents-snapshot / memory-bootstrap）は常に先頭に並べる。
+  // 旧形式セッションの移行では appendMessage で JSONL 末尾に追記されるため、
+  // ロード後に並べ替えないと、移行ターンと次ターン以降で memory-bootstrap の位置が
+  // 変わり、LLM への見え方が非対称になる上にプロンプトキャッシュも効かなくなる。
+  const isBootstrapMessage = (m: AgentMessage) =>
+    isAgentsSnapshotMessage(m) || isMemoryBootstrapMessage(m);
+  messages = [
+    ...messages.filter(isBootstrapMessage),
+    ...messages.filter((m) => !isBootstrapMessage(m)),
+  ];
+
   // AGENTS.md: 既存セッションにスナップショットがあれば再読み込みせず再利用する
   // （system role のまま固定し、ファイル更新の影響を受けないようにする）。
   // 新規セッション（messages が空）では必然的に見つからず needsAgentsSnapshot は true になる
