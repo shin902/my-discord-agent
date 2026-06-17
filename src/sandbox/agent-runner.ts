@@ -283,12 +283,8 @@ export async function runAgentLoop(
       display: false,
       timestamp: Date.now(),
     };
-    await appendMessage(
-      groupName,
-      sessionId,
-      agentsSnapshotMessage as AgentMessage,
-    );
-    newBootstrapMessages.push(agentsSnapshotMessage as AgentMessage);
+    await appendMessage(groupName, sessionId, agentsSnapshotMessage);
+    newBootstrapMessages.push(agentsSnapshotMessage);
   }
 
   // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
@@ -301,12 +297,8 @@ export async function runAgentLoop(
       display: false,
       timestamp: Date.now(),
     };
-    await appendMessage(
-      groupName,
-      sessionId,
-      memoryBootstrapMessage as AgentMessage,
-    );
-    newBootstrapMessages.push(memoryBootstrapMessage as AgentMessage);
+    await appendMessage(groupName, sessionId, memoryBootstrapMessage);
+    newBootstrapMessages.push(memoryBootstrapMessage);
   }
 
   if (newBootstrapMessages.length > 0) {
