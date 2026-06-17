@@ -292,8 +292,10 @@ export async function runAgentLoop(
   }
 
   // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
-  // MEMORY.md を custom メッセージとして注入する
-  if (needsMemoryBootstrap && memory) {
+  // MEMORY.md を custom メッセージとして注入する。
+  // MEMORY.md が空文字でも「ファイルは存在し空である」という状態を固定化するため、
+  // null（ファイル不存在）とは区別して書き込む（AGENTS.md と同様、そうしないと毎ターン再読み込みし続ける）
+  if (needsMemoryBootstrap && memory !== null) {
     const memoryBootstrapMessage: MemoryBootstrapMessage = {
       role: "custom",
       customType: MEMORY_BOOTSTRAP_TYPE,
