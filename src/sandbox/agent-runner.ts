@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   Agent,
   type AgentMessage,
-  type CustomAgentMessages,
+  type CustomMessage,
 } from "@earendil-works/pi-agent-core";
 import {
   type AssistantMessage,
@@ -26,30 +26,19 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 
-// CustomAgentMessages の拡張:
-// - agentsSnapshot: AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
-//   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う
-//   （メッセージ自体の role フィールドは "prompt" 固定で、システムロールの値そのものではない）。
-// - memoryBootstrap: MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
-declare module "@earendil-works/pi-agent-core" {
-  interface CustomAgentMessages {
-    agentsSnapshot: {
-      role: "prompt";
-      customType: "agents-snapshot";
-      content: string;
-      timestamp: number;
-    };
-    memoryBootstrap: {
-      role: "prompt";
-      customType: "memory-bootstrap";
-      content: string;
-      timestamp: number;
-    };
-  }
-}
+// pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
+// - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
+//   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
+// - "memory-bootstrap": MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
+const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
+const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 
-type AgentsSnapshotMessage = CustomAgentMessages["agentsSnapshot"];
-type MemoryBootstrapMessage = CustomAgentMessages["memoryBootstrap"];
+type AgentsSnapshotMessage = CustomMessage & {
+  customType: typeof AGENTS_SNAPSHOT_TYPE;
+};
+type MemoryBootstrapMessage = CustomMessage & {
+  customType: typeof MEMORY_BOOTSTRAP_TYPE;
+};
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
@@ -105,9 +94,9 @@ function isAgentsSnapshotMessage(
 ): msg is AgentsSnapshotMessage {
   return (
     "role" in msg &&
-    (msg as { role: unknown }).role === "prompt" &&
+    (msg as { role: unknown }).role === "custom" &&
     "customType" in msg &&
-    (msg as { customType: unknown }).customType === "agents-snapshot"
+    (msg as { customType: unknown }).customType === AGENTS_SNAPSHOT_TYPE
   );
 }
 
@@ -116,9 +105,9 @@ function isMemoryBootstrapMessage(
 ): msg is MemoryBootstrapMessage {
   return (
     "role" in msg &&
-    (msg as { role: unknown }).role === "prompt" &&
+    (msg as { role: unknown }).role === "custom" &&
     "customType" in msg &&
-    (msg as { customType: unknown }).customType === "memory-bootstrap"
+    (msg as { customType: unknown }).customType === MEMORY_BOOTSTRAP_TYPE
   );
 }
 
@@ -195,9 +184,10 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
       memoryBootstrapSeen = true;
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
     }
-    // agentsSnapshot / memoryBootstrap 以外の custom 型が CustomAgentMessages に追加された場合、
-    // ここでの cast は素通しになり型的に破綻する。追加時は isAgentsSnapshotMessage /
-    // isMemoryBootstrapMessage と同様の判別関数で分岐を追加すること。
+    // agents-snapshot / memory-bootstrap 以外の customType を持つ custom メッセージや、
+    // bashExecution 等の他の役割が AgentMessage に増えた場合、ここでの cast は素通しになり
+    // 型的に破綻する。追加時は isAgentsSnapshotMessage / isMemoryBootstrapMessage と同様の
+    // 判別関数で分岐を追加すること。
     return [msg as Message];
   });
 }
@@ -276,9 +266,10 @@ export async function runAgentLoop(
   // AGENTS.md をセッションに固定化するスナップショットを書き込む
   if (needsAgentsSnapshot && systemPromptFile) {
     const agentsSnapshotMessage: AgentsSnapshotMessage = {
-      role: "prompt",
-      customType: "agents-snapshot",
+      role: "custom",
+      customType: AGENTS_SNAPSHOT_TYPE,
       content: systemPromptFile,
+      display: false,
       timestamp: Date.now(),
     };
     await appendMessage(
@@ -293,9 +284,10 @@ export async function runAgentLoop(
   // MEMORY.md を custom メッセージとして注入する
   if (needsMemoryBootstrap && memory) {
     const memoryBootstrapMessage: MemoryBootstrapMessage = {
-      role: "prompt",
-      customType: "memory-bootstrap",
+      role: "custom",
+      customType: MEMORY_BOOTSTRAP_TYPE,
       content: formatMemoryForPrompt(memory),
+      display: false,
       timestamp: Date.now(),
     };
     await appendMessage(

@@ -196,7 +196,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       expect.objectContaining({
-        role: "prompt",
+        role: "custom",
         customType: "agents-snapshot",
         content: "カスタムプロンプト",
       }),
@@ -206,7 +206,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       expect.objectContaining({
-        role: "prompt",
+        role: "custom",
         customType: "memory-bootstrap",
         content: expect.stringContaining("ユーザーは猫が好き"),
       }),
@@ -217,11 +217,11 @@ describe("runAgentLoop", () => {
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({
-      role: "prompt",
+      role: "custom",
       customType: "agents-snapshot",
     });
     expect(messages[1]).toMatchObject({
-      role: "prompt",
+      role: "custom",
       customType: "memory-bootstrap",
     });
   });
@@ -252,7 +252,7 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          (call[2] as { role: string }).role === "prompt",
+          (call[2] as { role: string }).role === "custom",
       );
     expect(promptCalls).toHaveLength(1);
     expect(promptCalls[0][2]).toMatchObject({
@@ -281,7 +281,7 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          call[2].role === "prompt",
+          call[2].role === "custom",
       );
     expect(bootstrapCalls).toHaveLength(0);
 
@@ -293,13 +293,13 @@ describe("runAgentLoop", () => {
 
   it("既存セッション（agents-snapshot と memory-bootstrap あり）では AGENTS.md / MEMORY.md を読み込まない", async () => {
     const agentsSnapshotMsg = {
-      role: "prompt",
+      role: "custom",
       customType: "agents-snapshot",
       content: "古いプロンプト",
       timestamp: Date.now() - 2000,
     };
     const memoryBootstrapMsg = {
-      role: "prompt",
+      role: "custom",
       customType: "memory-bootstrap",
       content: "## 記憶 (MEMORY.md)\n\n古い記憶",
       timestamp: Date.now() - 1000,
@@ -332,7 +332,7 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          (call[2] as { role: string }).role === "prompt",
+          (call[2] as { role: string }).role === "custom",
       );
     expect(promptAppends).toHaveLength(0);
 
@@ -384,7 +384,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       expect.objectContaining({
-        role: "prompt",
+        role: "custom",
         customType: "agents-snapshot",
         content: "旧形式プロンプト",
       }),
@@ -394,7 +394,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       expect.objectContaining({
-        role: "prompt",
+        role: "custom",
         customType: "memory-bootstrap",
         content: expect.stringContaining("旧記憶"),
       }),
@@ -513,7 +513,7 @@ describe("runAgentLoop", () => {
 
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
     const bootstrapMsg = {
-      role: "prompt",
+      role: "custom",
       customType: "agents-snapshot",
       content: "古いプロンプト",
       timestamp: Date.now() - 1000,
@@ -897,13 +897,13 @@ describe("waitForNetwork", () => {
 
 describe("defaultConvertToLlm", () => {
   const agentsSnapshotMsg = {
-    role: "prompt" as const,
+    role: "custom" as const,
     customType: "agents-snapshot" as const,
     content: "## エージェント設定\n\nテスト",
     timestamp: 500,
   };
   const memoryBootstrapMsg = {
-    role: "prompt" as const,
+    role: "custom" as const,
     customType: "memory-bootstrap" as const,
     content: "## 記憶 (MEMORY.md)\n\nテスト",
     timestamp: 1000,
