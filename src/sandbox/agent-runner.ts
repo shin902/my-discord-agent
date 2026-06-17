@@ -266,6 +266,13 @@ export async function runAgentLoop(
   // AGENTS.md は system role の systemPrompt に固定で含める（指示遵守の優先度を維持するため）。
   // AGENTS.md が存在する場合はそれが DEFAULT_SYSTEM_PROMPT を完全に置き換える
   // （グループ独自のペルソナ定義と汎用文言が矛盾しないようにするため）。
+  //
+  // 【仕様】AGENTS.md が空文字（ファイルは存在するが中身が空）の場合、
+  // `agentsContent ?? DEFAULT_SYSTEM_PROMPT` は "" のままとなり、続く .filter(Boolean) で
+  // 除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は skills+date のみになる。
+  // これは意図的な挙動: 「空の AGENTS.md を置く」ことを、グループがベースプロンプトを
+  // 明示的にオプトアウトする手段として扱う（ファイル不存在=null の場合のみ DEFAULT を適用する）。
+  //
   // MEMORY.md は下の memoryBootstrap 注入によって会話履歴経由で LLM に届く
   // （user role に変換されるため、AGENTS.md と二重注入にはならない）。
   const fullSystemPrompt = [
