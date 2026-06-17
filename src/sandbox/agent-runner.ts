@@ -207,18 +207,17 @@ export async function runAgentLoop(
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
 
-  // セッションが初回（messages が空）かどうかで注入戦略を決定
-  const isNewSession = messages.length === 0;
-
   // AGENTS.md: 既存セッションにスナップショットがあれば再読み込みせず再利用する
-  // （system role のまま固定し、ファイル更新の影響を受けないようにする）
+  // （system role のまま固定し、ファイル更新の影響を受けないようにする）。
+  // 新規セッション（messages が空）では必然的に見つからず needsAgentsSnapshot は true になる
   const existingAgentsSnapshot = messages.find(isAgentsSnapshotMessage);
-  const needsAgentsSnapshot = isNewSession || !existingAgentsSnapshot;
+  const needsAgentsSnapshot = !existingAgentsSnapshot;
 
-  // MEMORY.md: 既存セッションに bootstrap メッセージがあれば新方式セッションとみなす
-  // フォールバック: bootstrap がない既存セッション（旧形式）は次回以降のため移行する
+  // MEMORY.md: 既存セッションに bootstrap メッセージがあれば新方式セッションとみなす。
+  // フォールバック: bootstrap がない既存セッション（旧形式）は次回以降のため移行する。
+  // 新規セッションでは必然的に false になり needsMemoryBootstrap は true になる
   const hasMemoryBootstrap = messages.some(isMemoryBootstrapMessage);
-  const needsMemoryBootstrap = isNewSession || !hasMemoryBootstrap;
+  const needsMemoryBootstrap = !hasMemoryBootstrap;
 
   const [systemPromptFile, skills, memory] = await Promise.all([
     needsAgentsSnapshot
