@@ -171,6 +171,9 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
       bootstrapSeen = true;
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
     }
+    // contextBootstrap 以外の custom 型が CustomAgentMessages に追加された場合、
+    // ここでの cast は素通しになり型的に破綻する。追加時は isContextBootstrapMessage
+    // と同様の判別関数で分岐を追加すること。
     return [msg as Message];
   });
 }
