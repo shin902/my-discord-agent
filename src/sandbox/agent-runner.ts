@@ -38,11 +38,16 @@ import { isTransientError } from "../utils/error.js";
 const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 
-type AgentsSnapshotMessage = CustomMessage & {
+// CustomMessage.content は string | (TextContent | ImageContent)[] だが、
+// このファイルでは常に string のみを書き込むため、テンプレートリテラル展開時に
+// [object Object] 化しないよう型上も string に絞る
+type AgentsSnapshotMessage = Omit<CustomMessage, "content"> & {
   customType: typeof AGENTS_SNAPSHOT_TYPE;
+  content: string;
 };
-type MemoryBootstrapMessage = CustomMessage & {
+type MemoryBootstrapMessage = Omit<CustomMessage, "content"> & {
   customType: typeof MEMORY_BOOTSTRAP_TYPE;
+  content: string;
 };
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
