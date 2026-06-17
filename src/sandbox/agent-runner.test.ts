@@ -23,7 +23,7 @@ vi.mock("../config/credential-proxy.js", () => ({
 }));
 
 vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<typeof import("@earendil-works/pi-agent-core")>();
   return {
     ...actual,
     Agent: AgentMock,
