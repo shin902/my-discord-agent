@@ -28,7 +28,8 @@ import { isTransientError } from "../utils/error.js";
 
 // CustomAgentMessages の拡張:
 // - agentsSnapshot: AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
-//   role を system のまま保つため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
+//   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う
+//   （メッセージ自体の role フィールドは "prompt" 固定で、システムロールの値そのものではない）。
 // - memoryBootstrap: MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
 declare module "@earendil-works/pi-agent-core" {
   interface CustomAgentMessages {
