@@ -138,7 +138,7 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("新規セッションではシステムプロンプトは DEFAULT_SYSTEM_PROMPT + 日付のみ（AGENTS.md は bootstrap メッセージに注入）", async () => {
+  it("新規セッションでは AGENTS.md がシステムプロンプトに固定で含まれる", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -162,14 +162,14 @@ describe("runAgentLoop", () => {
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
         initialState: expect.objectContaining({
-          // 新方式: AGENTS.md はシステムプロンプトに含めない（二重注入防止）
-          systemPrompt: `あなたは役立つDiscordアシスタントです。\n\n## 今日の日付\n\n${today} (JST)`,
+          // AGENTS.md は system role の systemPrompt に固定で含める
+          systemPrompt: `あなたは役立つDiscordアシスタントです。\n\n## エージェント設定 (AGENTS.md)\n\nカスタムプロンプト\n\n## 今日の日付\n\n${today} (JST)`,
         }),
       }),
     );
   });
 
-  it("新規セッションでは AGENTS.md / MEMORY.md を custom メッセージとして注入する", async () => {
+  it("新規セッションでは AGENTS.md は agents-snapshot として、MEMORY.md は memory-bootstrap として保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -191,37 +191,42 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // bootstrap メッセージが appendMessage で保存される
+    // agents-snapshot が appendMessage で保存される（system role 維持のため AGENTS.md 原文をそのまま保持）
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "prompt",
-        customType: "bootstrap-context",
-        content: expect.stringContaining("カスタムプロンプト"),
+        customType: "agents-snapshot",
+        content: "カスタムプロンプト",
       }),
     );
+    // memory-bootstrap が appendMessage で保存される
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "prompt",
-        customType: "bootstrap-context",
+        customType: "memory-bootstrap",
         content: expect.stringContaining("ユーザーは猫が好き"),
       }),
     );
 
-    // messages 配列の先頭に custom メッセージが含まれる
+    // messages 配列の先頭に agents-snapshot、続いて memory-bootstrap が含まれる
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({
       role: "prompt",
-      customType: "bootstrap-context",
+      customType: "agents-snapshot",
+    });
+    expect(messages[1]).toMatchObject({
+      role: "prompt",
+      customType: "memory-bootstrap",
     });
   });
 
-  it("新規セッションで AGENTS.md はあるが MEMORY.md がない場合は AGENTS.md のみ bootstrap に注入する", async () => {
+  it("新規セッションで AGENTS.md はあるが MEMORY.md がない場合は agents-snapshot のみ保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -240,19 +245,20 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    const bootstrapCall = vi
+    const promptCalls = vi
       .mocked(appendMessage)
-      .mock.calls.find(
+      .mock.calls.filter(
         (call) =>
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
           (call[2] as { role: string }).role === "prompt",
       );
-    expect(bootstrapCall).toBeDefined();
-    const content = (bootstrapCall?.[2] as { content: string }).content;
-    expect(content).toContain("カスタムプロンプト");
-    expect(content).not.toContain("記憶 (MEMORY.md)");
+    expect(promptCalls).toHaveLength(1);
+    expect(promptCalls[0][2]).toMatchObject({
+      customType: "agents-snapshot",
+      content: "カスタムプロンプト",
+    });
   });
 
   it("新規セッションで AGENTS.md も MEMORY.md もない場合は custom メッセージを追加しない", async () => {
@@ -285,14 +291,23 @@ describe("runAgentLoop", () => {
     expect(messages).toHaveLength(0);
   });
 
-  it("既存セッション（bootstrap あり）では AGENTS.md / MEMORY.md を読み込まない", async () => {
-    const bootstrapMsg = {
+  it("既存セッション（agents-snapshot と memory-bootstrap あり）では AGENTS.md / MEMORY.md を読み込まない", async () => {
+    const agentsSnapshotMsg = {
       role: "prompt",
-      customType: "bootstrap-context",
-      content: "## エージェント設定 (AGENTS.md)\n\n古いプロンプト",
+      customType: "agents-snapshot",
+      content: "古いプロンプト",
+      timestamp: Date.now() - 2000,
+    };
+    const memoryBootstrapMsg = {
+      role: "prompt",
+      customType: "memory-bootstrap",
+      content: "## 記憶 (MEMORY.md)\n\n古い記憶",
       timestamp: Date.now() - 1000,
     };
-    vi.mocked(loadMessages).mockResolvedValue([bootstrapMsg as never]);
+    vi.mocked(loadMessages).mockResolvedValue([
+      agentsSnapshotMsg,
+      memoryBootstrapMsg,
+    ] as never);
 
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
@@ -309,8 +324,8 @@ describe("runAgentLoop", () => {
     expect(readFile).not.toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
     expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
 
-    // bootstrap custom メッセージは追加で書き込まれない
-    const bootstrapAppends = vi
+    // custom メッセージは追加で書き込まれない
+    const promptAppends = vi
       .mocked(appendMessage)
       .mock.calls.filter(
         (call) =>
@@ -319,10 +334,16 @@ describe("runAgentLoop", () => {
           "role" in call[2] &&
           (call[2] as { role: string }).role === "prompt",
       );
-    expect(bootstrapAppends).toHaveLength(0);
+    expect(promptAppends).toHaveLength(0);
+
+    // 既存スナップショットの内容が systemPrompt に再利用される
+    const systemPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(systemPrompt).toContain("古いプロンプト");
   });
 
-  it("既存セッション（bootstrap なし・旧形式）は bootstrap メッセージとして新方式に移行し、systemPrompt には二重注入しない", async () => {
+  it("既存セッション（スナップショットなし・旧形式）は AGENTS.md をスナップショット化し、MEMORY.md を memory-bootstrap に移行する", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];
@@ -349,50 +370,47 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // 移行ターンでは systemPrompt に AGENTS.md / MEMORY.md を含めない（二重注入防止）
+    // AGENTS.md は systemPrompt に含まれる（system role として復元）
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).not.toContain("旧形式プロンプト");
+    expect(systemPrompt).toContain("旧形式プロンプト");
+    // MEMORY.md は systemPrompt には含めない（memory-bootstrap 経由で user role として渡す）
     expect(systemPrompt).not.toContain("旧記憶");
     expect(systemPrompt).not.toContain("## 記憶 (MEMORY.md)");
 
-    // bootstrap メッセージとして JSONL に書き込まれ、次回以降は新方式に移行する
+    // agents-snapshot として JSONL に書き込まれ、次回以降は再読み込みされない
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "prompt",
-        customType: "bootstrap-context",
-        content: expect.stringContaining("旧形式プロンプト"),
+        customType: "agents-snapshot",
+        content: "旧形式プロンプト",
       }),
     );
+    // memory-bootstrap として JSONL に書き込まれる
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "prompt",
-        customType: "bootstrap-context",
+        customType: "memory-bootstrap",
         content: expect.stringContaining("旧記憶"),
       }),
     );
 
-    // Agent に渡す messages にも bootstrap メッセージが先頭に含まれ、このターンの LLM 呼び出しに反映される
-    // （AGENTS.md と MEMORY.md の両方が漏れず1件の bootstrap メッセージに乗っていることを確認）
+    // Agent に渡す messages の先頭に agents-snapshot、続いて memory-bootstrap が入る
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
-    expect(messages[0]).toMatchObject({
-      role: "prompt",
-      customType: "bootstrap-context",
-      content: expect.stringContaining("旧形式プロンプト"),
-    });
-    expect((messages[0] as { content: string }).content).toContain("旧記憶");
-    // 同一ターンで二重に渡されていないことを確認（bootstrap は1件のみ）
-    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ customType: "agents-snapshot" });
+    expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
+    // 既存履歴1件 + agents-snapshot 1件 + memory-bootstrap 1件
+    expect(messages).toHaveLength(3);
   });
 
-  it("MEMORY.md が存在しない場合は bootstrap メッセージに記憶セクションを追加しない（旧形式セッション）", async () => {
+  it("AGENTS.md も MEMORY.md も存在しない場合は新規メッセージを追加しない（旧形式セッション）", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];
@@ -436,15 +454,15 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // bootstrap メッセージの content に切り詰めた MEMORY.md が含まれる
+    // memory-bootstrap メッセージの content に切り詰めた MEMORY.md が含まれる
     const bootstrapCall = vi
       .mocked(appendMessage)
       .mock.calls.find(
         (call) =>
           call[2] &&
           typeof call[2] === "object" &&
-          "role" in call[2] &&
-          (call[2] as { role: string }).role === "prompt",
+          "customType" in call[2] &&
+          (call[2] as { customType: string }).customType === "memory-bootstrap",
       );
     expect(bootstrapCall).toBeDefined();
     const bootstrapContent = (bootstrapCall?.[2] as { content: string })
@@ -496,8 +514,8 @@ describe("runAgentLoop", () => {
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
     const bootstrapMsg = {
       role: "prompt",
-      customType: "bootstrap-context",
-      content: "## エージェント設定 (AGENTS.md)\n\n古いプロンプト",
+      customType: "agents-snapshot",
+      content: "古いプロンプト",
       timestamp: Date.now() - 1000,
     };
     const history = [
@@ -587,7 +605,7 @@ describe("runAgentLoop", () => {
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
     expect(systemPrompt).toContain("あなたは役立つDiscordアシスタントです。");
-    expect(systemPrompt).not.toContain("カスタムプロンプト");
+    expect(systemPrompt).toContain("カスタムプロンプト");
     expect(systemPrompt).toContain("<available_skills>");
     expect(systemPrompt).toContain("<name>review</name>");
     expect(systemPrompt).toContain("<description>レビュースキル</description>");
@@ -878,10 +896,16 @@ describe("waitForNetwork", () => {
 });
 
 describe("defaultConvertToLlm", () => {
-  const bootstrapMsg = {
+  const agentsSnapshotMsg = {
     role: "prompt" as const,
-    customType: "bootstrap-context" as const,
+    customType: "agents-snapshot" as const,
     content: "## エージェント設定\n\nテスト",
+    timestamp: 500,
+  };
+  const memoryBootstrapMsg = {
+    role: "prompt" as const,
+    customType: "memory-bootstrap" as const,
+    content: "## 記憶 (MEMORY.md)\n\nテスト",
     timestamp: 1000,
   };
   const userMsg = { role: "user" as const, content: "hi", timestamp: 2000 };
@@ -900,37 +924,46 @@ describe("defaultConvertToLlm", () => {
     },
   };
 
-  it("bootstrap メッセージを user ロールに変換する", () => {
-    const result = defaultConvertToLlm([bootstrapMsg] as never);
+  it("agents-snapshot メッセージは LLM 送信用メッセージから常に除外する", () => {
+    const result = defaultConvertToLlm([agentsSnapshotMsg] as never);
+    expect(result).toHaveLength(0);
+  });
+
+  it("memory-bootstrap メッセージを user ロールに変換する", () => {
+    const result = defaultConvertToLlm([memoryBootstrapMsg] as never);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       role: "user",
-      content: bootstrapMsg.content,
+      content: memoryBootstrapMsg.content,
     });
   });
 
-  it("2件目以降の bootstrap メッセージはスキップする", () => {
-    const result = defaultConvertToLlm([bootstrapMsg, bootstrapMsg] as never);
+  it("2件目以降の memory-bootstrap メッセージはスキップする", () => {
+    const result = defaultConvertToLlm([
+      memoryBootstrapMsg,
+      memoryBootstrapMsg,
+    ] as never);
     expect(result).toHaveLength(1);
     expect(result[0].role).toBe("user");
   });
 
-  it("通常の user / assistant メッセージはそのまま通す", () => {
+  it("agents-snapshot は除外し、memory-bootstrap と通常メッセージはそのまま通す", () => {
     const result = defaultConvertToLlm([
-      bootstrapMsg,
+      agentsSnapshotMsg,
+      memoryBootstrapMsg,
       userMsg,
       assistantMsg,
     ] as never);
     expect(result).toHaveLength(3);
     expect(result[0]).toMatchObject({
       role: "user",
-      content: bootstrapMsg.content,
+      content: memoryBootstrapMsg.content,
     });
     expect(result[1]).toMatchObject({ role: "user", content: "hi" });
     expect(result[2]).toMatchObject({ role: "assistant" });
   });
 
-  it("bootstrap なしでも通常メッセージを返す", () => {
+  it("custom メッセージなしでも通常メッセージを返す", () => {
     const result = defaultConvertToLlm([userMsg, assistantMsg] as never);
     expect(result).toHaveLength(2);
     expect(result[0].role).toBe("user");

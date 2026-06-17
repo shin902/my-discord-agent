@@ -26,19 +26,29 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 
-// CustomAgentMessages の拡張: AGENTS.md / MEMORY.md の初回注入に使うカスタムメッセージ型
+// CustomAgentMessages の拡張:
+// - agentsSnapshot: AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
+//   role を system のまま保つため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
+// - memoryBootstrap: MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
 declare module "@earendil-works/pi-agent-core" {
   interface CustomAgentMessages {
-    contextBootstrap: {
+    agentsSnapshot: {
       role: "prompt";
-      customType: "bootstrap-context";
+      customType: "agents-snapshot";
+      content: string;
+      timestamp: number;
+    };
+    memoryBootstrap: {
+      role: "prompt";
+      customType: "memory-bootstrap";
       content: string;
       timestamp: number;
     };
   }
 }
 
-type ContextBootstrapMessage = CustomAgentMessages["contextBootstrap"];
+type AgentsSnapshotMessage = CustomAgentMessages["agentsSnapshot"];
+type MemoryBootstrapMessage = CustomAgentMessages["memoryBootstrap"];
 
 const DEFAULT_SYSTEM_PROMPT = "あなたは役立つDiscordアシスタントです。";
 
@@ -89,14 +99,25 @@ function isAssistantMessage(msg: unknown): msg is AssistantMessage {
   );
 }
 
-function isContextBootstrapMessage(
+function isAgentsSnapshotMessage(
   msg: AgentMessage,
-): msg is ContextBootstrapMessage {
+): msg is AgentsSnapshotMessage {
   return (
     "role" in msg &&
     (msg as { role: unknown }).role === "prompt" &&
     "customType" in msg &&
-    (msg as { customType: unknown }).customType === "bootstrap-context"
+    (msg as { customType: unknown }).customType === "agents-snapshot"
+  );
+}
+
+function isMemoryBootstrapMessage(
+  msg: AgentMessage,
+): msg is MemoryBootstrapMessage {
+  return (
+    "role" in msg &&
+    (msg as { role: unknown }).role === "prompt" &&
+    "customType" in msg &&
+    (msg as { customType: unknown }).customType === "memory-bootstrap"
   );
 }
 
@@ -161,19 +182,21 @@ function formatMemoryForPrompt(memory: string | null): string {
 }
 
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
- * prompt メッセージ（contextBootstrap）は最初の1件のみ user として展開し、残りは除外する。
- * セッションあたり bootstrap は1件しか書き込まれないため、実質的にフィルタが発動するケースはない。 */
+ * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
+ * - memoryBootstrap: 最初の1件のみ user として展開し、残りは除外する
+ *   （セッションあたり1件しか書き込まれないため、実質的にフィルタが発動するケースはない）。 */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
-  let bootstrapSeen = false;
+  let memoryBootstrapSeen = false;
   return messages.flatMap((msg) => {
-    if (isContextBootstrapMessage(msg)) {
-      if (bootstrapSeen) return [];
-      bootstrapSeen = true;
+    if (isAgentsSnapshotMessage(msg)) return [];
+    if (isMemoryBootstrapMessage(msg)) {
+      if (memoryBootstrapSeen) return [];
+      memoryBootstrapSeen = true;
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
     }
-    // contextBootstrap 以外の custom 型が CustomAgentMessages に追加された場合、
-    // ここでの cast は素通しになり型的に破綻する。追加時は isContextBootstrapMessage
-    // と同様の判別関数で分岐を追加すること。
+    // agentsSnapshot / memoryBootstrap 以外の custom 型が CustomAgentMessages に追加された場合、
+    // ここでの cast は素通しになり型的に破綻する。追加時は isAgentsSnapshotMessage /
+    // isMemoryBootstrapMessage と同様の判別関数で分岐を追加すること。
     return [msg as Message];
   });
 }
@@ -195,21 +218,23 @@ export async function runAgentLoop(
 
   // セッションが初回（messages が空）かどうかで注入戦略を決定
   const isNewSession = messages.length === 0;
-  // 既存セッションに bootstrap メッセージが含まれる場合は新方式セッション
-  const hasBootstrap = messages.some(isContextBootstrapMessage);
-  // フォールバック: 既存セッションで bootstrap がない場合（旧形式）
-  const needsLegacyInjection = !isNewSession && !hasBootstrap;
 
-  // 新規セッションの場合のみ AGENTS.md / MEMORY.md を読み込む
-  // フォールバック（旧形式セッション）の場合も読み込む
-  const shouldReadContextFiles = isNewSession || needsLegacyInjection;
+  // AGENTS.md: 既存セッションにスナップショットがあれば再読み込みせず再利用する
+  // （system role のまま固定し、ファイル更新の影響を受けないようにする）
+  const existingAgentsSnapshot = messages.find(isAgentsSnapshotMessage);
+  const needsAgentsSnapshot = isNewSession || !existingAgentsSnapshot;
 
-  const [systemPrompt, skills, memory] = await Promise.all([
-    shouldReadContextFiles
+  // MEMORY.md: 既存セッションに bootstrap メッセージがあれば新方式セッションとみなす
+  // フォールバック: bootstrap がない既存セッション（旧形式）は次回以降のため移行する
+  const hasMemoryBootstrap = messages.some(isMemoryBootstrapMessage);
+  const needsMemoryBootstrap = isNewSession || !hasMemoryBootstrap;
+
+  const [systemPromptFile, skills, memory] = await Promise.all([
+    needsAgentsSnapshot
       ? loadSystemPromptFromWorkspace()
       : Promise.resolve(null),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
-    shouldReadContextFiles ? loadMemoryFromWorkspace() : Promise.resolve(null),
+    needsMemoryBootstrap ? loadMemoryFromWorkspace() : Promise.resolve(null),
   ]);
 
   const model = await resolveModel(
@@ -224,41 +249,64 @@ export async function runAgentLoop(
   const skillPrompt = formatSkillsForPrompt(skills);
   const datePrompt = formatDateForPrompt();
 
-  // AGENTS.md / MEMORY.md はシステムプロンプトに含めない。
-  // isNewSession・needsLegacyInjection の場合は下の bootstrap 注入によって会話履歴
-  // 経由で LLM に届き、hasBootstrap の場合は過去に注入済みの履歴がそのまま使われる
-  // （isNewSession || hasBootstrap || needsLegacyInjection は常に true）。
-  // ここに systemPrompt / memory を混ぜると bootstrap メッセージと二重注入になる。
-  const fullSystemPrompt = [DEFAULT_SYSTEM_PROMPT, skillPrompt, datePrompt]
+  // AGENTS.md の内容: 新規読み込み分があればそれを、なければ既存スナップショットを使う
+  const agentsContent = needsAgentsSnapshot
+    ? systemPromptFile
+    : (existingAgentsSnapshot?.content ?? null);
+  const agentsSection = agentsContent
+    ? `## エージェント設定 (AGENTS.md)\n\n${agentsContent}`
+    : "";
+
+  // AGENTS.md は system role の systemPrompt に固定で含める（指示遵守の優先度を維持するため）。
+  // MEMORY.md は下の memoryBootstrap 注入によって会話履歴経由で LLM に届く
+  // （user role に変換されるため、AGENTS.md と二重注入にはならない）。
+  const fullSystemPrompt = [
+    DEFAULT_SYSTEM_PROMPT,
+    agentsSection,
+    skillPrompt,
+    datePrompt,
+  ]
     .filter(Boolean)
     .join("\n\n");
 
-  // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
-  // AGENTS.md / MEMORY.md を custom メッセージとして注入する
-  if (isNewSession || needsLegacyInjection) {
-    const contextParts: string[] = [];
-    if (systemPrompt) {
-      contextParts.push(`## エージェント設定 (AGENTS.md)\n\n${systemPrompt}`);
-    }
-    if (memory) {
-      contextParts.push(formatMemoryForPrompt(memory));
-    }
+  const newBootstrapMessages: AgentMessage[] = [];
 
-    if (contextParts.length > 0) {
-      const bootstrapMessage: ContextBootstrapMessage = {
-        role: "prompt",
-        customType: "bootstrap-context",
-        content: contextParts.join("\n\n"),
-        timestamp: Date.now(),
-      };
-      // JSONL に書き込む
-      await appendMessage(
-        groupName,
-        sessionId,
-        bootstrapMessage as AgentMessage,
-      );
-      messages = [bootstrapMessage as AgentMessage, ...messages];
-    }
+  // 新規セッション、またはスナップショット未作成の既存セッションの場合、
+  // AGENTS.md をセッションに固定化するスナップショットを書き込む
+  if (needsAgentsSnapshot && systemPromptFile) {
+    const agentsSnapshotMessage: AgentsSnapshotMessage = {
+      role: "prompt",
+      customType: "agents-snapshot",
+      content: systemPromptFile,
+      timestamp: Date.now(),
+    };
+    await appendMessage(
+      groupName,
+      sessionId,
+      agentsSnapshotMessage as AgentMessage,
+    );
+    newBootstrapMessages.push(agentsSnapshotMessage as AgentMessage);
+  }
+
+  // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
+  // MEMORY.md を custom メッセージとして注入する
+  if (needsMemoryBootstrap && memory) {
+    const memoryBootstrapMessage: MemoryBootstrapMessage = {
+      role: "prompt",
+      customType: "memory-bootstrap",
+      content: formatMemoryForPrompt(memory),
+      timestamp: Date.now(),
+    };
+    await appendMessage(
+      groupName,
+      sessionId,
+      memoryBootstrapMessage as AgentMessage,
+    );
+    newBootstrapMessages.push(memoryBootstrapMessage as AgentMessage);
+  }
+
+  if (newBootstrapMessages.length > 0) {
+    messages = [...newBootstrapMessages, ...messages];
   }
 
   const agent = new Agent({
