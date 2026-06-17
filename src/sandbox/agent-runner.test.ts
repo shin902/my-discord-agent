@@ -322,7 +322,7 @@ describe("runAgentLoop", () => {
     expect(bootstrapAppends).toHaveLength(0);
   });
 
-  it("既存セッション（bootstrap なし・旧形式）では AGENTS.md / MEMORY.md をシステムプロンプトに含める", async () => {
+  it("既存セッション（bootstrap なし・旧形式）は bootstrap メッセージとして新方式に移行し、systemPrompt には二重注入しない", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];
@@ -349,39 +349,14 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
+    // 移行ターンでは systemPrompt に AGENTS.md / MEMORY.md を含めない（二重注入防止）
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).toContain("旧形式プロンプト");
-    expect(systemPrompt).toContain("## 記憶 (MEMORY.md)");
-    expect(systemPrompt).toContain("旧記憶");
-  });
+    expect(systemPrompt).not.toContain("旧形式プロンプト");
+    expect(systemPrompt).not.toContain("旧記憶");
 
-  it("既存セッション（bootstrap なし・旧形式）でも bootstrap メッセージを注入し新方式へ移行する", async () => {
-    const existingHistory = [
-      { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
-    ];
-    vi.mocked(loadMessages).mockResolvedValue(existingHistory as never);
-
-    vi.mocked(readFile).mockImplementation(async (filePath) => {
-      if (String(filePath) === "/workspace/AGENTS.md") {
-        return "旧形式プロンプト" as never;
-      }
-      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-    });
-
-    const mockAgent = createMockAgent(["OK"], {
-      role: "assistant",
-      content: [{ type: "text", text: "OK" }],
-    });
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return mockAgent;
-    });
-
-    await runAgentLoop("test-group", "session-1", "hi", {});
-
-    // 旧形式セッションでも bootstrap メッセージが JSONL に書き込まれる（次回以降は新方式に移行）
+    // bootstrap メッセージとして JSONL に書き込まれ、次回以降は新方式に移行する
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -391,9 +366,19 @@ describe("runAgentLoop", () => {
         content: expect.stringContaining("旧形式プロンプト"),
       }),
     );
+
+    // Agent に渡す messages にも bootstrap メッセージが先頭に含まれ、このターンの LLM 呼び出しに反映される
+    const messages = (
+      lastAgentOptions as { initialState: { messages: unknown[] } }
+    ).initialState.messages;
+    expect(messages[0]).toMatchObject({
+      role: "prompt",
+      customType: "bootstrap-context",
+      content: expect.stringContaining("旧形式プロンプト"),
+    });
   });
 
-  it("MEMORY.md が存在しない場合は記憶セクションをシステムプロンプトに追加しない（旧形式セッション）", async () => {
+  it("MEMORY.md が存在しない場合は bootstrap メッセージに記憶セクションを追加しない（旧形式セッション）", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];
@@ -410,10 +395,11 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    const systemPrompt = (
-      lastAgentOptions as { initialState: { systemPrompt: string } }
-    ).initialState.systemPrompt;
-    expect(systemPrompt).not.toContain("## 記憶 (MEMORY.md)");
+    const messages = (
+      lastAgentOptions as { initialState: { messages: unknown[] } }
+    ).initialState.messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: "user", content: "前回の質問" });
   });
 
   it("MEMORY.md が文字数上限を超える場合は切り詰めて警告を注入する（新規セッションの bootstrap メッセージ）", async () => {

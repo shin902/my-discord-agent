@@ -221,29 +221,14 @@ export async function runAgentLoop(
   const skillPrompt = formatSkillsForPrompt(skills);
   const datePrompt = formatDateForPrompt();
 
-  let fullSystemPrompt: string;
-  if (isNewSession || hasBootstrap) {
-    // 新方式: AGENTS.md / MEMORY.md はシステムプロンプトに含めない。
-    // AGENTS.md の指示は初回注入した prompt ロールのメッセージが会話履歴として維持されるため
-    // LLM には届いている。isNewSession 時も systemPrompt をここに入れると初回だけ二重注入
-    // になるため、常に DEFAULT_SYSTEM_PROMPT を使う。
-    fullSystemPrompt = [DEFAULT_SYSTEM_PROMPT, skillPrompt, datePrompt]
-      .filter(Boolean)
-      .join("\n\n");
-  } else {
-    // フォールバック: 旧形式セッション（AGENTS.md / MEMORY.md をシステムプロンプトに含める）。
-    // このターンでは旧形式の挙動を維持するが、下の bootstrap 注入によって
-    // 次回以降は新方式（isNewSession || hasBootstrap）に移行する。
-    const memoryPrompt = formatMemoryForPrompt(memory);
-    fullSystemPrompt = [
-      systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-      skillPrompt,
-      memoryPrompt,
-      datePrompt,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-  }
+  // AGENTS.md / MEMORY.md はシステムプロンプトに含めない。
+  // isNewSession・needsLegacyInjection の場合は下の bootstrap 注入によって会話履歴
+  // 経由で LLM に届き、hasBootstrap の場合は過去に注入済みの履歴がそのまま使われる
+  // （isNewSession || hasBootstrap || needsLegacyInjection は常に true）。
+  // ここに systemPrompt / memory を混ぜると bootstrap メッセージと二重注入になる。
+  const fullSystemPrompt = [DEFAULT_SYSTEM_PROMPT, skillPrompt, datePrompt]
+    .filter(Boolean)
+    .join("\n\n");
 
   // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
   // AGENTS.md / MEMORY.md を custom メッセージとして注入する
