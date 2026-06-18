@@ -62,7 +62,15 @@ export const CredentialEntrySchema = z.object({
     .object({
       // pi-ai が解釈する具体 wire format を直接指定する（自動補正は行わない）。
       thinkingFormat: z
-        .enum(["openai", "openrouter", "deepseek", "zai", "qwen-chat-template"])
+        .enum(
+          ["openai", "openrouter", "deepseek", "zai", "qwen-chat-template"],
+          {
+            error: (issue) =>
+              issue.code === "invalid_value"
+                ? 'thinkingFormat は pi-ai が解釈する具体値を直接指定してください（自動補正は廃止）。移行先の例: "qwen"(llama.cpp向け)→"qwen-chat-template" / "qwen"(Ollama向け)・"ollama"→"openrouter"+thinkingLevelMap'
+                : undefined,
+          },
+        )
         .optional(),
       // thinkingLevel をサーバー固有の effort 値にマッピングする。
       // Ollama の OpenAI 互換 API（reasoning.effort）など、
