@@ -34,10 +34,14 @@ function createCustomModel(
   modelId: string,
 ): Model<Api> {
   const api = entry.api ?? "openai-completions";
-  const thinkingFormat = entry.compat?.thinkingFormat;
+  // compat は pi-ai の OpenAI 互換ストリームレイヤー専用のフィールドなので、
+  // api が openai-completions 以外の場合は付与しない
+  const thinkingFormat =
+    api === "openai-completions" ? entry.compat?.thinkingFormat : undefined;
   // thinkingLevelMap は pi-ai の Model 型ではトップレベルのフィールドなので、
   // entry.compat からは除外して compat に渡す
-  const { thinkingLevelMap, ...entryCompatRest } = entry.compat ?? {};
+  const { thinkingLevelMap, ...entryCompatRest } =
+    api === "openai-completions" ? entry.compat ?? {} : {};
   // reasoning: false を明示した場合は thinking を完全に無効化するため compat も除外する
   const compat: Model<"openai-completions">["compat"] | undefined =
     entry.reasoning !== false && entry.compat && thinkingFormat !== undefined

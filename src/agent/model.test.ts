@@ -162,6 +162,33 @@ describe("resolveModel", () => {
     expect(model.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
   });
 
+  it("api が openai-completions 以外の場合は compat.thinkingFormat があっても compat を付与しない", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "custom-anthropic",
+        baseUrl: "http://localhost:9090/v1",
+        api: "anthropic-messages",
+        compat: {
+          thinkingFormat: "openai",
+          thinkingLevelMap: { off: "none" },
+        },
+      },
+    ] as CredentialEntry[]);
+
+    const model = await resolveModel("custom-anthropic", "some-model");
+    expect(model.compat).toBeUndefined();
+    expect(
+      (model as { thinkingLevelMap?: unknown }).thinkingLevelMap,
+    ).toBeUndefined();
+    expect(model.reasoning).toBe(false);
+  });
+
   it("thinkingLevelMap を config に書いた場合、そのまま model.thinkingLevelMap に渡る", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
