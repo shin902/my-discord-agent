@@ -10,7 +10,9 @@ describe("parseSkillCommand", () => {
   });
 
   it("追加指示付きのコマンドを解析する", () => {
-    expect(parseSkillCommand("./command agent-reach https://example.com を要約して")).toEqual({
+    expect(
+      parseSkillCommand("./command agent-reach https://example.com を要約して"),
+    ).toEqual({
       skillName: "agent-reach",
       args: "https://example.com を要約して",
     });
