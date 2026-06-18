@@ -70,7 +70,26 @@
 
 ## スキル
 
-`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。ユーザーがスキル名で呼び出すと、テンプレートがシステムプロンプトに注入される。
+`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常はシステムプロンプトの `<available_skills>` 一覧として渡され、LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
+
+### スキルの明示的実行（`./command`）
+
+LLM の自律判断を待たず、ユーザーが特定のスキルを確実に実行させたい場合は次の形式で発火できる。
+
+```
+./command スキル名 [追加指示]
+```
+
+| 例 | 動作 |
+|----|------|
+| `./command agent-reach https://example.com を要約して` | `agent-reach` の `SKILL.md` 本文をプロンプトに強制注入し、追加指示と共に実行させる |
+| `./command session-logs` | 追加指示なしで `session-logs` を実行させる |
+
+**仕組み（`src/skills/command.ts` / `src/sandbox/agent-runner.ts`）:**
+
+- `parseSkillCommand()` がメッセージ先頭の `./command スキル名` パターンを解析する
+- 指定されたスキル名がグループの `skills` 許可リスト（`groups/{name}/group.json`）に存在しない場合、LLM を呼ばずに利用可能なスキル一覧をエラーとして即時返信する
+- 存在する場合は `SKILL.md` のフロントマターを除いた本文をそのままプロンプトに展開し、「このスキルの手順に従って実行してください」という明示的な指示として LLM に渡す（`<available_skills>` 経由の自律判断とは異なり、必ず該当スキルの手順が実行される）
 
 ### agent-reach
 

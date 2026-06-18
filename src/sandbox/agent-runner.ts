@@ -22,7 +22,11 @@ import { appendMessage, loadMessages } from "../agent/session.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
 import { type AgentConfig, AgentConfigSchema } from "../config/groups.js";
-import { loadSkills } from "../skills/loader.js";
+import {
+  formatSkillCommandPrompt,
+  parseSkillCommand,
+} from "../skills/command.js";
+import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
@@ -245,6 +249,24 @@ export async function runAgentLoop(
     loadSkills("/workspace/SKILLS", groupConfig.skills),
     needsMemoryBootstrap ? loadMemoryFromWorkspace() : Promise.resolve(null),
   ]);
+
+  // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
+  // 指定スキルのSKILL.md本文をそのままプロンプトへ強制注入して実行させる。
+  const skillCommand = parseSkillCommand(content);
+  if (skillCommand) {
+    const skill = skills.find((s) => s.name === skillCommand.skillName);
+    if (!skill) {
+      const available = skills.map((s) => s.name).join(", ") || "(なし)";
+      return `❌ スキル "${skillCommand.skillName}" が見つかりません。利用可能なスキル: ${available}`;
+    }
+    const skillFile = await readFile(skill.location, "utf-8");
+    const { body: skillBody } = parseYamlFrontmatter(skillFile);
+    content = formatSkillCommandPrompt(
+      skillCommand.skillName,
+      skillBody,
+      skillCommand.args,
+    );
+  }
 
   const model = await resolveModel(
     groupConfig.model?.provider ?? FALLBACK_DEFAULT_MODEL.provider,
