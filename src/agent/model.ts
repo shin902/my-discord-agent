@@ -41,7 +41,7 @@ function createCustomModel(
   // thinkingLevelMap は pi-ai の Model 型ではトップレベルのフィールドなので、
   // entry.compat からは除外して compat に渡す
   const { thinkingLevelMap, ...entryCompatRest } =
-    api === "openai-completions" ? entry.compat ?? {} : {};
+    api === "openai-completions" ? (entry.compat ?? {}) : {};
   // reasoning: false を明示した場合は thinking を完全に無効化するため compat も除外する
   const compat: Model<"openai-completions">["compat"] | undefined =
     entry.reasoning !== false && entry.compat && thinkingFormat !== undefined
