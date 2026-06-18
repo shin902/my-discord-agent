@@ -121,6 +121,23 @@ describe("loadCredentialProxy", () => {
     await expect(loadCredentialProxy()).rejects.toThrow();
   });
 
+  it("廃止された thinkingFormat: 'qwen' は移行先を示すエラーメッセージで弾かれる", async () => {
+    const { loadCredentialProxy } = await importFresh();
+    vi.mocked(readFile).mockResolvedValue(
+      makeConfig([
+        {
+          provider: "llama-cpp",
+          baseUrl: "http://localhost:8080/v1",
+          compat: { thinkingFormat: "qwen" },
+        },
+      ]),
+    );
+
+    await expect(loadCredentialProxy()).rejects.toThrow(
+      /qwen-chat-template.*openrouter/,
+    );
+  });
+
   it("credentials が空配列も正常にキャッシュされる", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(makeConfig([]));
@@ -133,14 +150,17 @@ describe("loadCredentialProxy", () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
-  it("ollama の thinkingFormat を受け付ける", async () => {
+  it("ollama 向け thinkingFormat: openrouter と thinkingLevelMap を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(
       makeConfig([
         {
           provider: "ollama",
           baseUrl: "http://localhost:11434/v1",
-          compat: { thinkingFormat: "ollama" },
+          compat: {
+            thinkingFormat: "openrouter",
+            thinkingLevelMap: { off: "none", minimal: "low", xhigh: "high" },
+          },
         },
       ]),
     );
@@ -150,7 +170,10 @@ describe("loadCredentialProxy", () => {
       {
         provider: "ollama",
         baseUrl: "http://localhost:11434/v1",
-        compat: { thinkingFormat: "ollama" },
+        compat: {
+          thinkingFormat: "openrouter",
+          thinkingLevelMap: { off: "none", minimal: "low", xhigh: "high" },
+        },
       },
     ]);
   });

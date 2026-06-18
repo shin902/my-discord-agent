@@ -80,7 +80,14 @@
       "api": "openai-completions",
       "contextWindow": 65536,
       "maxTokens": 4096,
-      "compat": { "thinkingFormat": "ollama" }
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "thinkingLevelMap": {
+          "off": "none",
+          "minimal": "low",
+          "xhigh": "high"
+        }
+      }
     },
     {
       "provider": "browserless",

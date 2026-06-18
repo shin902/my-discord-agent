@@ -134,18 +134,33 @@ Browserless のように query parameter で token を要求する API では `q
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `thinkingFormat` | 文字列 | thinking ON/OFF の制御方法をプロバイダー別に指定 |
+| `thinkingFormat` | 文字列 | thinking ON/OFF の制御方法をプロバイダー別に指定。`pi-ai` が解釈する具体値を直接指定する（自動補正は行わない） |
+| `thinkingLevelMap` | オブジェクト | `thinkingLevel` をサーバー固有の effort 値にマッピングする（→ 後述） |
 
 **`thinkingFormat` に指定できる値**:
 
 | 値 | 対象サーバー | 挙動 |
 |---|---|---|
-| `"qwen"` | Qwen 互換 API | `enable_thinking: true/false` をリクエストに付与。ただし `provider` が `llama-cpp` なら `"qwen-chat-template"`、`ollama` なら `"ollama"` 相当に自動補正 |
 | `"qwen-chat-template"` | llama.cpp / llama-cpp-python | `chat_template_kwargs.enable_thinking` + `preserve_thinking` を付与 |
-| `"ollama"` | Ollama OpenAI 互換 API | `reasoning.effort` を付与。`"off"` は `"none"` |
+| `"openrouter"` | Ollama（v0.9.0+）OpenAI 互換 API / OpenRouter | `reasoning.effort` を付与 |
 | `"deepseek"` | DeepSeek 互換 | `thinking.type: enabled/disabled` を付与 |
-| `"openrouter"` | OpenRouter | `reasoning.effort` を付与 |
-| `"openai"` | OpenAI 標準（デフォルト） | `enable_thinking` は送らない |
+| `"zai"` | ZAI 互換 | `pi-ai` の定義に従う |
+| `"openai"` | OpenAI 標準（デフォルト） | thinking 関連フィールドは送らない |
+
+### `compat.thinkingLevelMap`
+
+`thinkingLevel`（`"off" | "minimal" | "low" | "medium" | "high" | "xhigh"`）をサーバー固有の effort 値にマッピングする。Ollama の OpenAI 互換 API（`reasoning.effort`）など、`reasoning.effort` の値体系が `pi-ai` のデフォルトと異なるサーバーで指定する。
+
+```json
+{
+  "compat": {
+    "thinkingFormat": "openrouter",
+    "thinkingLevelMap": { "off": "none", "minimal": "low", "xhigh": "high" }
+  }
+}
+```
+
+省略時は `pi-ai` のデフォルトマップが使われる（`openrouter` なら `off`/`minimal`/`low`/`medium`/`high`/`xhigh` がそのまま effort 値になる）。
 
 **thinking を OFF にする典型例（llama-cpp + Qwen3）**:
 
@@ -201,7 +216,7 @@ Browserless のように query parameter で token を要求する API では `q
 | `"high"` | `true` | 16,384 トークン |
 | `"xhigh"` | `true` | モデルの `thinkingLevelMap` に依存 |
 
-> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `config/config.json` の `credentials` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"ollama"` 等の thinking 制御に対応した値である必要がある。
+> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `config/config.json` の `credentials` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"openrouter"` 等の thinking 制御に対応した値である必要がある。
 
 **thinking を完全に OFF にする**（`compat.thinkingFormat` が必須）:
 
@@ -267,15 +282,16 @@ API Key 不要、最小構成:
   "api": "openai-completions",
   "contextWindow": 65536,
   "maxTokens": 4096,
-  "compat": { "thinkingFormat": "ollama" }
+  "compat": {
+    "thinkingFormat": "openrouter",
+    "thinkingLevelMap": { "off": "none", "minimal": "low", "xhigh": "high" }
+  }
 }
 ```
 
-Ollama の OpenAI 互換 API では `thinkingLevel: "off"` が `reasoning.effort: "none"` として送信される。
+Ollama の OpenAI 互換 API は `reasoning.effort` 形式を使うため `thinkingFormat: "openrouter"` を指定する。`thinkingLevel: "off"` が `reasoning.effort: "none"` として送信されるように、`thinkingLevelMap` で明示的にマッピングする。
 
 > **前提**: Ollama **v0.9.0 以降**が必要（thinking サポートが v0.9.0 で追加）。llama.cpp の `--jinja` のような特別な起動フラグは不要。
-
-> **注意**: `"qwen"` の自動補正（→ `"ollama"` 相当）はプロバイダー名に `ollama` が含まれるか、`baseUrl` のポートが `11434`（Ollama のデフォルト）の場合にのみ機能する。リバースプロキシ経由など別ポートで運用する場合は、`"qwen"` の自動補正に頼らず `"thinkingFormat": "ollama"` を明示すること。
 
 ### baseUrl にプレースホルダを含むケース
 

@@ -18,27 +18,6 @@ export function resolveBaseUrl(baseUrl: string): string | null {
   return resolved;
 }
 
-function resolveThinkingFormat(
-  entry: CredentialEntry,
-  baseUrl: string,
-): NonNullable<Model<"openai-completions">["compat"]>["thinkingFormat"] {
-  const format = entry.compat?.thinkingFormat;
-  if (format === "qwen") {
-    const provider = entry.provider.toLowerCase();
-    if (provider.includes("llama-cpp")) return "qwen-chat-template";
-    if (provider.includes("ollama") || new URL(baseUrl).port === "11434") {
-      return "openrouter";
-    }
-    // 上記以外（vLLM・SGLang 等の Qwen 互換サーバー）は "qwen" のまま pi-ai に渡す。
-    // pi-ai は "qwen" を enable_thinking: boolean として処理する（types.d.ts:265 参照）。
-  }
-  // 暫定: pi-ai が "ollama" をサポートするまで "openrouter" で代用。
-  // Ollama の OpenAI 互換 API は reasoning: { effort } 形式を使うため動作上は等価。
-  // model.compat.thinkingFormat が "openrouter" に見えるのはこの変換によるもの。
-  if (format === "ollama") return "openrouter";
-  return format;
-}
-
 function createCustomModel(
   entry: CredentialEntry & { api?: "openai-completions" },
   baseUrl: string,
@@ -55,23 +34,22 @@ function createCustomModel(
   modelId: string,
 ): Model<Api> {
   const api = entry.api ?? "openai-completions";
-  const resolvedFormat =
-    api === "openai-completions"
-      ? resolveThinkingFormat(entry, baseUrl)
-      : undefined;
+  // compat は pi-ai の OpenAI 互換ストリームレイヤー専用のフィールドなので、
+  // api が openai-completions 以外の場合は付与しない
+  const thinkingFormat =
+    api === "openai-completions" ? entry.compat?.thinkingFormat : undefined;
+  // thinkingLevelMap は pi-ai の Model 型ではトップレベルのフィールドなので、
+  // entry.compat からは除外して compat に渡す
+  const { thinkingLevelMap, ...entryCompatRest } =
+    api === "openai-completions" ? (entry.compat ?? {}) : {};
   // reasoning: false を明示した場合は thinking を完全に無効化するため compat も除外する
   const compat: Model<"openai-completions">["compat"] | undefined =
-    entry.reasoning !== false && entry.compat && resolvedFormat !== undefined
+    entry.reasoning !== false && entry.compat && thinkingFormat !== undefined
       ? ({
-          ...entry.compat,
-          thinkingFormat: resolvedFormat,
+          ...entryCompatRest,
+          thinkingFormat,
         } as Model<"openai-completions">["compat"])
       : undefined;
-  const originalFormat = entry.compat?.thinkingFormat;
-  // resolveThinkingFormat が "qwen"→"openrouter" に変換した場合は Ollama 系プロバイダを意味する
-  const isOllama =
-    originalFormat === "ollama" ||
-    (originalFormat === "qwen" && resolvedFormat === "openrouter");
   return {
     id: modelId,
     name: modelId,
@@ -79,15 +57,7 @@ function createCustomModel(
     provider: entry.provider,
     baseUrl,
     reasoning: entry.reasoning ?? Boolean(compat?.thinkingFormat),
-    ...(isOllama
-      ? {
-          thinkingLevelMap: {
-            off: "none",
-            minimal: "low",
-            xhigh: "high",
-          },
-        }
-      : {}),
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     input: entry.models?.[modelId]?.input ?? ["text"],
     cost: {
       input: 0,
