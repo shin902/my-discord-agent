@@ -9,7 +9,7 @@ Scaffold a fresh LLM-maintained wiki: a persistent, interlinked markdown knowled
 
 ## The model in one paragraph
 
-Three layers. **Raw sources** (`raw/`) are immutable inputs the user curates — articles, PDFs, notes, images. **The wiki** (`wiki/`) is markdown you own entirely — summaries, entity pages, concept pages, an index, a log. **The schema** (`CLAUDE.md` at the root) is the rulebook that turns you from a generic chatbot into a disciplined wiki maintainer. The user curates and asks; you do all the summarizing, cross-referencing, filing, and bookkeeping.
+Three layers. **Raw sources** (`raw/`) are immutable inputs the user curates — articles, PDFs, notes, images. **The wiki** (`wiki/`) is markdown you own entirely — summaries, entity pages, concept pages, an index, a log. **The schema** (`AGENTS.md` at the root) is the rulebook that turns you from a generic chatbot into a disciplined wiki maintainer. The user curates and asks; you do all the summarizing, cross-referencing, filing, and bookkeeping.
 
 ## Steps
 
@@ -27,7 +27,7 @@ Don't proceed to scaffolding until you have real answers, not assumptions — th
 
 ```
 <root>/
-  CLAUDE.md          # the schema (rulebook) — see step 3
+  AGENTS.md          # the schema (rulebook) — see step 3
   raw/               # immutable source files (user-owned)
     assets/          # downloaded images referenced by sources
   wiki/              # LLM-owned markdown
@@ -41,7 +41,7 @@ Don't proceed to scaffolding until you have real answers, not assumptions — th
 
 Create the folders and seed `index.md`, `log.md`, and `overview.md` (see step 4). Don't invent content — only structure plus empty/placeholder pages.
 
-### 3. Write CLAUDE.md (the schema)
+### 3. Write AGENTS.md (the schema)
 
 This is the most important file. It is read at the start of every future session and is what keeps the wiki consistent. Write it tailored to the chosen purpose. It must cover:
 
@@ -65,7 +65,7 @@ tags: []
 ---
 ```
 
-A ready-to-edit starter is in `assets/CLAUDE.md.template` — copy it to the root and adapt the purpose-specific sections.
+A ready-to-edit starter is in `assets/AGENTS.md.template` — copy it to the root and adapt the purpose-specific sections.
 
 ### 4. Seed the navigation files
 
@@ -82,4 +82,4 @@ Mention, don't force: Obsidian as the browsing frontend (graph view, Web Clipper
 
 ### 6. Hand off
 
-Tell the user the structure is ready, show the tree, and explain the loop: drop sources into `raw/` → run ingest → ask questions via query → run lint periodically. Confirm the `CLAUDE.md` purpose section matches what they want before finishing.
+Tell the user the structure is ready, show the tree, and explain the loop: drop sources into `raw/` → run ingest → ask questions via query → run lint periodically. Confirm the `AGENTS.md` purpose section matches what they want before finishing.

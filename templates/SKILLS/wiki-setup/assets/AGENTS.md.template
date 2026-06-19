@@ -13,7 +13,7 @@ organized so I can find connections later. -->
 - `raw/` — immutable source files. The source of truth. **Never edit or delete these.** Read from them only.
 - `raw/assets/` — images downloaded from sources, referenced locally.
 - `wiki/` — markdown you own entirely. Create and update freely.
-- `CLAUDE.md` (this file) — the rulebook. Co-evolve it with the user when conventions change.
+- `AGENTS.md` (this file) — the rulebook. Co-evolve it with the user when conventions change.
 
 ## Wiki layout
 

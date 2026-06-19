@@ -7,7 +7,7 @@ description: "Ingest a new source into an LLM-maintained wiki: read it, summariz
 
 Integrate one source into the wiki so its knowledge is *compiled in*, not just stored. The goal is not a summary that sits alone — it's updating the whole connected graph so the next question is already answered. A single source typically touches 10–15 pages.
 
-Read the root `CLAUDE.md` first; follow its conventions over anything here if they conflict.
+Read the root `AGENTS.md` first; follow its conventions over anything here if they conflict.
 
 ## Procedure
 
@@ -28,7 +28,7 @@ Create `wiki/sources/<slug>.md` with frontmatter (`type: source`, `created`/`upd
 This is the real work. For each entity and concept the source touches:
 
 - If a page exists, **update it** — add the new fact, strengthen or revise the synthesis, and add a citation to the source page.
-- If a distinct entity/concept recurs or earns its own identity and has no page, **create one** (follow the `CLAUDE.md` new-page-vs-edit rule).
+- If a distinct entity/concept recurs or earns its own identity and has no page, **create one** (follow the `AGENTS.md` new-page-vs-edit rule).
 - **Flag contradictions explicitly.** When the new source disagrees with an existing claim, don't silently overwrite — note both, mark which is newer, and surface it. Add a `> ⚠️ Contradiction:` callout on the affected page.
 - Add reciprocal `[[wikilinks]]` so connections are bidirectional, and update `overview.md` if the source shifts the big picture.
 

@@ -7,7 +7,7 @@ description: "Health-check an LLM-maintained wiki: find contradictions, stale cl
 
 Keep the wiki healthy as it grows. Humans abandon wikis because maintenance outpaces value; this pass is the maintenance, done cheaply. Produce a report of issues with proposed fixes, and apply the safe ones with the user's go-ahead.
 
-Read the root `CLAUDE.md` first and follow its conventions.
+Read the root `AGENTS.md` first and follow its conventions.
 
 ## What to check
 

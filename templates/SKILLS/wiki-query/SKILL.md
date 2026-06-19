@@ -7,7 +7,7 @@ description: "Answer a question against an LLM-maintained wiki with citations, a
 
 Answer the user's question from the wiki, with citations — and, when the answer is durable, file it back so the exploration becomes part of the knowledge base instead of disappearing into chat history.
 
-Read the root `CLAUDE.md` first and follow its conventions.
+Read the root `AGENTS.md` first and follow its conventions.
 
 ## Procedure
 

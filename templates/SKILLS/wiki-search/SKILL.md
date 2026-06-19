@@ -23,4 +23,4 @@ It ranks pages by a simple TF score over whitespace/word tokens (case-insensitiv
 
 ## Scaling up
 
-This helper is intentionally naive (keyword TF, no stemming, no vectors). It's fine to a few hundred pages. When the wiki outgrows it, switch to **[qmd](https://github.com/tobi/qmd)** — a local markdown search engine with hybrid BM25 + vector search and LLM re-ranking, on-device. It offers both a CLI (shell out to it) and an MCP server (use it as a native tool). Update the root `CLAUDE.md` to point future sessions at whichever search tool is in use.
+This helper is intentionally naive (keyword TF, no stemming, no vectors). It's fine to a few hundred pages. When the wiki outgrows it, switch to **[qmd](https://github.com/tobi/qmd)** — a local markdown search engine with hybrid BM25 + vector search and LLM re-ranking, on-device. It offers both a CLI (shell out to it) and an MCP server (use it as a native tool). Update the root `AGENTS.md` to point future sessions at whichever search tool is in use.
