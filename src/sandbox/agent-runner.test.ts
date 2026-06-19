@@ -785,6 +785,69 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).not.toContain("<name>blocked</name>");
   });
 
+  it("./command 形式のメッセージは元の発言と skill-invocation を分けて prompt する", async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      { name: "review", isDirectory: () => true } as unknown as Awaited<
+        ReturnType<typeof readdir>
+      >[number],
+    ]);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/SKILLS/review/SKILL.md") {
+        return "---\nname: review\ndescription: レビュースキル\n---\n本文だよ" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "./command review 追加指示だよ",
+      {},
+    );
+
+    expect(mockAgent.prompt).toHaveBeenCalledWith([
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "./command review 追加指示だよ" }],
+      }),
+      expect.objectContaining({
+        role: "custom",
+        customType: "skill-invocation",
+        content: expect.stringContaining("本文だよ"),
+      }),
+    ]);
+  });
+
+  it("./command で未知のスキルを指定した場合は LLM を呼ばずにエラーを返す", async () => {
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    const result = await runAgentLoop(
+      "test-group",
+      "session-1",
+      "./command unknown",
+      {},
+    );
+
+    expect(result).toContain("見つかりません");
+    expect(mockAgent.prompt).not.toHaveBeenCalled();
+  });
+
   it("convertToLlm が Agent に渡される", async () => {
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
@@ -1078,6 +1141,35 @@ describe("defaultConvertToLlm", () => {
     expect(result).toHaveLength(2);
     expect(result[0].role).toBe("user");
     expect(result[1].role).toBe("assistant");
+  });
+
+  it("skill-invocation メッセージを user ロールに変換する", () => {
+    const skillInvocationMsg = {
+      role: "custom" as const,
+      customType: "skill-invocation" as const,
+      content: "スキル本文",
+      timestamp: 2500,
+    };
+    const result = defaultConvertToLlm([skillInvocationMsg] as never);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      role: "user",
+      content: "スキル本文",
+    });
+  });
+
+  it("skill-invocation は memory-bootstrap と違い複数件あっても全て user に変換する", () => {
+    const skillInvocationMsg = {
+      role: "custom" as const,
+      customType: "skill-invocation" as const,
+      content: "スキル本文",
+      timestamp: 2500,
+    };
+    const result = defaultConvertToLlm([
+      skillInvocationMsg,
+      skillInvocationMsg,
+    ] as never);
+    expect(result).toHaveLength(2);
   });
 
   it("agents-snapshot/memory-bootstrap 以外の role はライブラリ標準の convertToLlm に委譲する", () => {

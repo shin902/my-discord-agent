@@ -35,12 +35,16 @@ import { isTransientError } from "../utils/error.js";
 // - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
 //   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
 // - "memory-bootstrap": MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
+// - "skill-invocation": `./command` で明示実行されたスキルの SKILL.md 本文を注入する擬似ユーザーメッセージ。
+//   ユーザーの生発言（`./command スキル名 ...`）とは別メッセージとして保存することで、
+//   JSONL履歴上でも「ユーザーが何を打ったか」と「LLMに渡った指示内容」を区別できるようにする。
 //
 // display フラグについて: 標準 CustomMessage の必須フィールドで、pi-coding-agent 系 TUI が
 // チャット表示の可否判定に使う。LLM 送信可否（defaultConvertToLlm 側で制御）とは別概念。
 // うちはその TUI を使わないため実質無効だが、いずれも裏方メッセージなので意味的に false 固定。
 const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
+const SKILL_INVOCATION_TYPE = "skill-invocation";
 
 // CustomMessage.content は string | (TextContent | ImageContent)[] だが、
 // このファイルでは常に string のみを書き込むため、テンプレートリテラル展開時に
@@ -51,6 +55,10 @@ type AgentsSnapshotMessage = Omit<CustomMessage, "content"> & {
 };
 type MemoryBootstrapMessage = Omit<CustomMessage, "content"> & {
   customType: typeof MEMORY_BOOTSTRAP_TYPE;
+  content: string;
+};
+type SkillInvocationMessage = Omit<CustomMessage, "content"> & {
+  customType: typeof SKILL_INVOCATION_TYPE;
   content: string;
 };
 
@@ -125,6 +133,17 @@ function isMemoryBootstrapMessage(
   );
 }
 
+function isSkillInvocationMessage(
+  msg: AgentMessage,
+): msg is SkillInvocationMessage {
+  return (
+    "role" in msg &&
+    (msg as { role: unknown }).role === "custom" &&
+    "customType" in msg &&
+    (msg as { customType: unknown }).customType === SKILL_INVOCATION_TYPE
+  );
+}
+
 /** カスタムプロバイダーの API キーを credential-proxy + 環境変数から取得 */
 async function getCustomProviderApiKey(
   provider: string,
@@ -189,6 +208,8 @@ function formatMemoryForPrompt(memory: string | null): string {
  * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
  * - memoryBootstrap: 最初の1件のみ user として展開し、残りは除外する
  *   （セッションあたり1件しか書き込まれないため、実質的にフィルタが発動するケースはない）。
+ * - skillInvocation: `./command` 実行ごとに作られるため、常に user として展開する
+ *   （memoryBootstrap と異なりセッション内に複数件存在しうる）。
  * - それ以外（bashExecution・branchSummary・compactionSummary・他の customType 等）は
  *   pi-agent-core 標準の convertToLlm に委譲する。未知の role を無効なまま LLM へ渡さないため。 */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
@@ -198,6 +219,9 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
     if (isMemoryBootstrapMessage(msg)) {
       if (memoryBootstrapSeen) return [];
       memoryBootstrapSeen = true;
+      return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
+    }
+    if (isSkillInvocationMessage(msg)) {
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
     }
     return libraryConvertToLlm([msg]);
@@ -252,6 +276,10 @@ export async function runAgentLoop(
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
   // 指定スキルのSKILL.md本文をそのままプロンプトへ強制注入して実行させる。
+  // ユーザーの生発言は content のまま user メッセージとして残し、
+  // 注入指示は別の skill-invocation custom メッセージに分離する
+  // （JSONL履歴上で「何を打ったか」と「LLMに渡った指示」を区別できるようにするため）。
+  let promptInput: string | AgentMessage[] = content;
   const skillCommand = parseSkillCommand(content);
   if (skillCommand) {
     const skill = skills.find((s) => s.name === skillCommand.skillName);
@@ -261,11 +289,25 @@ export async function runAgentLoop(
     }
     const skillFile = await readFile(skill.location, "utf-8");
     const { body: skillBody } = parseYamlFrontmatter(skillFile);
-    content = formatSkillCommandPrompt(
-      skillCommand.skillName,
-      skillBody,
-      skillCommand.args,
-    );
+    const skillInvocationMessage: SkillInvocationMessage = {
+      role: "custom",
+      customType: SKILL_INVOCATION_TYPE,
+      content: formatSkillCommandPrompt(
+        skillCommand.skillName,
+        skillBody,
+        skillCommand.args,
+      ),
+      display: false,
+      timestamp: Date.now(),
+    };
+    promptInput = [
+      {
+        role: "user",
+        content: [{ type: "text", text: content }],
+        timestamp: Date.now(),
+      } as AgentMessage,
+      skillInvocationMessage,
+    ];
   }
 
   const model = await resolveModel(
@@ -394,7 +436,11 @@ export async function runAgentLoop(
     }
   });
 
-  await agent.prompt(content);
+  if (typeof promptInput === "string") {
+    await agent.prompt(promptInput);
+  } else {
+    await agent.prompt(promptInput);
+  }
   await Promise.all(pendingAppends);
   return response;
 }
