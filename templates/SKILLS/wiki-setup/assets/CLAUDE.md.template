@@ -1,0 +1,71 @@
+# <Wiki name> — schema
+
+This file tells any LLM agent how to maintain this wiki. Read it at the start of every session. The user curates sources and asks questions; you do all the writing, cross-referencing, filing, and bookkeeping.
+
+## Purpose
+
+<!-- One paragraph: what this knowledge base is for, who reads it, what "done well" looks like.
+Default: a general personal knowledge base accumulating what I read, watch, and think about,
+organized so I can find connections later. -->
+
+## Layers
+
+- `raw/` — immutable source files. The source of truth. **Never edit or delete these.** Read from them only.
+- `raw/assets/` — images downloaded from sources, referenced locally.
+- `wiki/` — markdown you own entirely. Create and update freely.
+- `CLAUDE.md` (this file) — the rulebook. Co-evolve it with the user when conventions change.
+
+## Wiki layout
+
+- `wiki/index.md` — content catalog. Update on every ingest.
+- `wiki/log.md` — append-only timeline. Append on every ingest, filed-back answer, and lint pass.
+- `wiki/overview.md` — top-level synthesis and entry point.
+- `wiki/sources/` — one summary page per ingested source.
+- `wiki/entities/` — people, organizations, products, places, works.
+- `wiki/concepts/` — ideas, themes, topics, methods.
+
+## Page conventions
+
+- One entity / concept / source per file. Filenames in kebab-case.
+- Cross-reference with `[[wikilinks]]` so Obsidian's graph view connects pages. Link liberally.
+- Every wiki page starts with YAML frontmatter:
+
+```yaml
+---
+title: <human title>
+type: source | entity | concept | overview
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+sources: [<source-page-slugs>]
+tags: []
+---
+```
+
+- Cite claims back to the `sources/` page they came from. Source pages link to the file in `raw/`.
+
+## New page vs. edit existing
+
+Create a new page when a distinct entity or concept recurs across sources or earns its own identity. Otherwise fold the detail into an existing page and add a cross-reference. Early on, prefer fewer, richer pages; split a section into its own page when it outgrows its host.
+
+## Workflows
+
+**Ingest** — when the user adds a source: read it, discuss key takeaways, write a `sources/` summary, update `index.md`, update every relevant entity/concept page, flag contradictions with existing claims, append a `log.md` entry. A single source may touch 10–15 pages.
+
+**Query** — when the user asks a question: read `index.md`, drill into relevant pages, answer with citations. If the answer is durable (a comparison, analysis, or discovered connection), file it back as a new wiki page so explorations compound.
+
+**Lint** — periodically: find contradictions, stale claims, orphan pages, missing cross-references, concepts mentioned but lacking a page, and gaps a web search could fill. Report and propose fixes.
+
+## Log format
+
+Each `log.md` entry starts with a parseable prefix so `grep "^## \[" log.md | tail` works:
+
+```
+## [YYYY-MM-DD] ingest | <source title>
+## [YYYY-MM-DD] query  | <question, filed back as [[page]]>
+## [YYYY-MM-DD] lint   | <summary of findings>
+```
+
+## Conventions log
+
+<!-- Append decisions you and the user make over time, so future sessions stay consistent.
+e.g. "2026-06-13: entity pages get a ## Timeline section when dates matter." -->
