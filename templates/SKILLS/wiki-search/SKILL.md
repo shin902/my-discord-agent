@@ -10,7 +10,7 @@ A lightweight full-text search over the wiki's markdown, for when the wiki has g
 ## Usage
 
 ```
-python3 scripts/search.py "<query>" [WIKI_DIR]      # WIKI_DIR defaults to ./wiki
+python3 SKILLS/wiki-search/scripts/search.py "<query>" [WIKI_DIR]      # WIKI_DIR defaults to ./wiki
 ```
 
 It ranks pages by a simple TF score over whitespace/word tokens (case-insensitive), with a bonus for matches in the title/frontmatter and headings, and prints the top pages with the best-matching line from each. Multi-word queries are OR-matched and scored by how many query terms hit.

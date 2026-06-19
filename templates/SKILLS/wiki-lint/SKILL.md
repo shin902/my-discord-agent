@@ -11,7 +11,7 @@ Read the root `AGENTS.md` first and follow its conventions.
 
 ## What to check
 
-Run the `wiki-lint/scripts/lint.py` helper first for the mechanical checks (orphans, broken links, missing frontmatter, stale dates), then do the judgment-based checks by reading pages.
+Run the `SKILLS/wiki-lint/scripts/lint.py` helper first for the mechanical checks (orphans, broken links, missing frontmatter, stale dates), then do the judgment-based checks by reading pages.
 
 **Mechanical (script-assisted):**
 - **Orphan pages** — pages with no inbound `[[wikilinks]]`. Either link them in or justify keeping them.
@@ -29,7 +29,7 @@ Run the `wiki-lint/scripts/lint.py` helper first for the mechanical checks (orph
 
 ## Procedure
 
-1. Run `python3 scripts/lint.py <wiki-dir>` (defaults to `./wiki`). It prints a structured report of the mechanical issues.
+1. Run `python3 SKILLS/wiki-lint/scripts/lint.py <wiki-dir>` (defaults to `./wiki`). It prints a structured report of the mechanical issues.
 2. Read the flagged pages plus a sample of the rest for the judgment-based checks.
 3. Write a findings report grouped by category, each item with a concrete proposed fix.
 4. Apply the safe, unambiguous fixes (add a missing back-link, register a page in the index, add frontmatter). Ask before anything lossy — merging pages, deleting orphans, resolving a contradiction by picking a side.
