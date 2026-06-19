@@ -41,3 +41,4 @@ Run the `SKILLS/wiki-lint/scripts/lint.py` helper first for the mechanical check
 
 - The script is read-only; it never edits the wiki. All changes go through you with user sign-off.
 - Run lint after every batch of ingests, or on a schedule (it pairs well with a recurring scheduled task).
+- Tests: `python3 -m unittest test_lint -v` from `scripts/` (stdlib only, no install needed).
