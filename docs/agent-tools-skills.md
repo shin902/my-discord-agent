@@ -70,7 +70,28 @@
 
 ## スキル
 
-`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。ユーザーがスキル名で呼び出すと、テンプレートがシステムプロンプトに注入される。
+`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常はシステムプロンプトの `<available_skills>` 一覧として渡され、LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
+
+### スキルの明示的実行（`./command`）
+
+LLM の自律判断を待たず、ユーザーが特定のスキルを確実に実行させたい場合は次の形式で発火できる。
+
+```
+./command スキル名 [追加指示]
+```
+
+| 例 | 動作 |
+|----|------|
+| `./command agent-reach https://example.com を要約して` | `agent-reach` の `SKILL.md` 本文をプロンプトに強制注入し、追加指示と共に実行させる |
+| `./command session-logs` | 追加指示なしで `session-logs` を実行させる |
+
+**仕組み（`src/skills/command.ts` / `src/sandbox/agent-runner.ts`）:**
+
+- `parseSkillCommand()` がメッセージ先頭の `./command スキル名` パターンを解析する
+- 指定されたスキル名がグループの `skills` 許可リスト（`groups/{name}/group.json`）に存在しない場合、LLM を呼ばずに利用可能なスキル一覧をエラーとして即時返信する
+- 存在する場合、`SKILL.md` のフロントマターを除いた本文を「このスキルの手順に従って実行してください」という指示文に整形し、`role: "custom"` / `customType: "skill-invocation"` の専用メッセージとして組み立てる
+- ユーザーの生発言（`./command スキル名 ...`）はそのまま `role: "user"` メッセージとして保持し、上記の skill-invocation メッセージと**2件セット**で `agent.prompt()` に渡す。両方とも JSONL セッションに永続化されるため、履歴上で「ユーザーが何を打ったか」と「LLM に渡った実行指示」を区別できる
+- `defaultConvertToLlm()` が skill-invocation メッセージを `user` ロールとして LLM 送信用メッセージに変換する（`<available_skills>` 経由の自律判断とは異なり、必ず該当スキルの手順が実行される）。`memory-bootstrap` と異なり1セッション内に複数件存在しうるため、出現するたびに変換する（最初の1件だけに絞るデデュープはしない）
 
 ### agent-reach
 
