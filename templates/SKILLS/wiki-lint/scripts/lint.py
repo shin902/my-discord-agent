@@ -19,8 +19,14 @@ STALE_DAYS = 120
 
 
 def slug(path, root):
+    """Unique key for a page: relative path without extension (e.g. 'entities/alice')."""
     rel = os.path.relpath(path, root)
-    return os.path.splitext(os.path.basename(rel))[0]
+    return os.path.splitext(rel)[0].replace(os.sep, "/")
+
+
+def basename_slug(path):
+    """Bare name a [[wikilink]] refers to, e.g. 'alice' for both entities/alice.md and concepts/alice.md."""
+    return os.path.splitext(os.path.basename(path))[0]
 
 
 def parse_frontmatter(text):
@@ -41,9 +47,10 @@ def main():
         print(f"error: wiki dir not found: {root}", file=sys.stderr)
         sys.exit(1)
 
-    pages = {}          # slug -> path
-    outlinks = {}       # slug -> set(target slugs)
-    inlinks = {}        # slug -> count
+    pages = {}          # unique slug (relpath w/o ext) -> path
+    by_basename = {}    # bare wikilink name -> list of unique slugs sharing it
+    outlinks = {}       # unique slug -> set(target bare names)
+    inlinks = {}        # unique slug -> count
     no_frontmatter = []
     bad_frontmatter = []
     stale = []
@@ -59,13 +66,15 @@ def main():
 
     for path in md_files:
         s = slug(path, root)
+        b = basename_slug(path)
         pages[s] = path
+        by_basename.setdefault(b, []).append(s)
         inlinks.setdefault(s, 0)
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
         outlinks[s] = set(m.group(1).strip().lower().replace(" ", "-")
                           for m in WIKILINK.finditer(text))
-        if s in SPECIAL:
+        if b in SPECIAL:
             continue
         fm = parse_frontmatter(text)
         if fm is None:
@@ -84,20 +93,29 @@ def main():
                 except ValueError:
                     pass
 
-    # resolve inbound links and broken links
+    # bare names that resolve to more than one page (e.g. entities/alice.md and concepts/alice.md)
+    collisions = {b: sorted(slugs) for b, slugs in by_basename.items()
+                  if len(slugs) > 1 and b not in SPECIAL}
+
+    # resolve inbound links, broken links, and ambiguous links (collisions referenced by a wikilink)
     broken = {}
+    ambiguous = {}
     for s, targets in outlinks.items():
         for t in targets:
-            if t in pages:
-                inlinks[t] = inlinks.get(t, 0) + 1
+            candidates = by_basename.get(t, [])
+            if len(candidates) == 1:
+                inlinks[candidates[0]] += 1
+            elif len(candidates) > 1:
+                ambiguous.setdefault(s, set()).add(t)
             else:
                 broken.setdefault(s, set()).add(t)
 
     orphans = [s for s, n in inlinks.items()
-               if n == 0 and s not in SPECIAL]
+               if n == 0 and basename_slug(pages[s]) not in SPECIAL]
 
     # index coverage
-    index_path = pages.get("index")
+    index_slugs = by_basename.get("index", [])
+    index_path = pages.get(index_slugs[0]) if index_slugs else None
     in_index = set()
     if index_path:
         with open(index_path, encoding="utf-8") as fh:
@@ -105,8 +123,9 @@ def main():
         in_index = set(m.group(1).strip().lower().replace(" ", "-")
                        for m in WIKILINK.finditer(itext))
     not_in_index = [s for s in pages
-                    if s not in SPECIAL and s not in in_index] if index_path else []
-    index_dangling = [t for t in in_index if t not in pages]
+                    if basename_slug(pages[s]) not in SPECIAL
+                    and basename_slug(pages[s]) not in in_index] if index_path else []
+    index_dangling = [t for t in in_index if t not in by_basename]
 
     # ---- report ----
     def section(title, items, fmt):
@@ -117,8 +136,12 @@ def main():
             print("  - " + fmt(it))
 
     print(f"# wiki-lint report — {root} — {len(pages)} pages — {today}")
+    section("Slug collisions (same filename in multiple folders)", sorted(collisions.items()),
+            lambda kv: f"{kv[0]} -> {', '.join(kv[1])}")
     section("Orphan pages (no inbound links)", sorted(orphans), str)
     section("Broken wikilinks", sorted(broken.items()),
+            lambda kv: f"{kv[0]} -> {', '.join(sorted(kv[1]))}")
+    section("Ambiguous wikilinks (target name has multiple matching pages)", sorted(ambiguous.items()),
             lambda kv: f"{kv[0]} -> {', '.join(sorted(kv[1]))}")
     section("Missing frontmatter", sorted(no_frontmatter), str)
     section("Incomplete frontmatter", sorted(bad_frontmatter),
@@ -130,9 +153,9 @@ def main():
     if not index_path:
         print("\n! no index.md found at wiki root")
 
-    total = (len(orphans) + len(broken) + len(no_frontmatter) +
-             len(bad_frontmatter) + len(stale) + len(not_in_index) +
-             len(index_dangling))
+    total = (len(collisions) + len(orphans) + len(broken) + len(ambiguous) +
+             len(no_frontmatter) + len(bad_frontmatter) + len(stale) +
+             len(not_in_index) + len(index_dangling))
     print(f"\n# total mechanical issues: {total}")
 
 
