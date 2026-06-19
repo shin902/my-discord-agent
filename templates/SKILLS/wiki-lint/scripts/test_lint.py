@@ -68,6 +68,22 @@ class TestSlugCollision(LintTestCase):
         # both pages (+ index.md) must still be counted, not collapsed into one
         self.assertIn("3 pages", out)
 
+    def test_link_to_colliding_basename_reported_as_ambiguous(self):
+        """If a page links to a basename that collides across folders, the link
+        must be classified as ambiguous — not silently resolved to one of the
+        candidates, and not reported as broken either."""
+        write(self.root, "entities/alice.md", page("Alice", body="entity version"))
+        write(self.root, "concepts/alice.md", page("Alice", body="concept version"))
+        write(self.root, "entities/bob.md", page("Bob", body="friend of [[alice]]"))
+        write(self.root, "index.md", "[[alice]]\n[[bob]]\n")
+
+        out = self.run_lint()
+        self.assertIn("Ambiguous wikilinks", out)
+        ambiguous_block = _section(out, "Ambiguous wikilinks (target name has multiple matching pages)")
+        self.assertIn("entities/bob -> alice", ambiguous_block)
+        self.assertIn("index -> alice", ambiguous_block)
+        self.assertNotIn("alice", _section(out, "Broken wikilinks"))
+
 
 class TestWikilinkResolution(LintTestCase):
     def test_broken_link_reported(self):
