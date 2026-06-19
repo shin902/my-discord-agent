@@ -9,11 +9,27 @@ import re
 import sys
 
 WORD = re.compile(r"[a-z0-9][a-z0-9'_-]*")
+# Hiragana, katakana, CJK unified ideographs, and CJK compat — languages with
+# no whitespace between words. Tokenized separately as character bigrams since
+# WORD's ascii-only class would otherwise drop them and leave qterms empty.
+CJK_RUN = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿]+")
 HEADING = re.compile(r"^#{1,6}\s|^title:|^tags:|^---", re.IGNORECASE)
 
 
 def tokenize(text):
-    return WORD.findall(text.lower())
+    text = text.lower()
+    tokens = []
+    pos = 0
+    for m in CJK_RUN.finditer(text):
+        tokens += WORD.findall(text[pos:m.start()])
+        run = m.group(0)
+        if len(run) == 1:
+            tokens.append(run)
+        else:
+            tokens += [run[i:i + 2] for i in range(len(run) - 1)]
+        pos = m.end()
+    tokens += WORD.findall(text[pos:])
+    return tokens
 
 
 def main():
