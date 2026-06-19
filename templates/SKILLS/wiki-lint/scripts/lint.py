@@ -24,9 +24,16 @@ def slug(path, root):
     return os.path.splitext(rel)[0].replace(os.sep, "/")
 
 
+def normalize_name(name):
+    """Normalize a name the same way a [[wikilink]] target is normalized, so
+    filename-derived keys and link-derived keys are comparable."""
+    return name.strip().lower().replace(" ", "-")
+
+
 def basename_slug(path):
-    """Bare name a [[wikilink]] refers to, e.g. 'alice' for both entities/alice.md and concepts/alice.md."""
-    return os.path.splitext(os.path.basename(path))[0]
+    """Bare name a [[wikilink]] refers to, e.g. 'alice' for both entities/alice.md and concepts/alice.md.
+    Normalized to match wikilink targets (kebab-case filenames are a convention, not a guarantee)."""
+    return normalize_name(os.path.splitext(os.path.basename(path))[0])
 
 
 def parse_frontmatter(text):
@@ -72,8 +79,7 @@ def main():
         inlinks.setdefault(s, 0)
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
-        outlinks[s] = set(m.group(1).strip().lower().replace(" ", "-")
-                          for m in WIKILINK.finditer(text))
+        outlinks[s] = set(normalize_name(m.group(1)) for m in WIKILINK.finditer(text))
         if b in SPECIAL:
             continue
         fm = parse_frontmatter(text)
@@ -120,8 +126,7 @@ def main():
     if index_path:
         with open(index_path, encoding="utf-8") as fh:
             itext = fh.read()
-        in_index = set(m.group(1).strip().lower().replace(" ", "-")
-                       for m in WIKILINK.finditer(itext))
+        in_index = set(normalize_name(m.group(1)) for m in WIKILINK.finditer(itext))
     not_in_index = [s for s in pages
                     if basename_slug(pages[s]) not in SPECIAL
                     and basename_slug(pages[s]) not in in_index] if index_path else []
