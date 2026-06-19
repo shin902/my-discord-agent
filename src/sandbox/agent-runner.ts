@@ -436,6 +436,8 @@ export async function runAgentLoop(
     }
   });
 
+  // promptInput は string | AgentMessage[] のunion。Agent.prompt はオーバーロードで
+  // union型を直接渡すと解決できないため、typeof で型を絞ってから呼び分けている。
   if (typeof promptInput === "string") {
     await agent.prompt(promptInput);
   } else {
