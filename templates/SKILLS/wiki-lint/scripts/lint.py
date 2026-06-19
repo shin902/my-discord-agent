@@ -26,14 +26,34 @@ def slug(path, root):
 
 def normalize_name(name):
     """Normalize a name the same way a [[wikilink]] target is normalized, so
-    filename-derived keys and link-derived keys are comparable."""
-    return name.strip().lower().replace(" ", "-")
+    filename-derived keys and link-derived keys are comparable.
+
+    Absorbs common spacing notation variants — half-width space, full-width
+    space (U+3000, common in Japanese text), and underscore — by folding them
+    all to hyphens, so e.g. "my page", "my_page", "my　page", and "my-page"
+    all normalize to the same key."""
+    return (
+        name.strip()
+        .lower()
+        .replace("　", "-")
+        .replace(" ", "-")
+        .replace("_", "-")
+    )
 
 
 def basename_slug(path):
     """Bare name a [[wikilink]] refers to, e.g. 'alice' for both entities/alice.md and concepts/alice.md.
     Normalized to match wikilink targets (kebab-case filenames are a convention, not a guarantee)."""
     return normalize_name(os.path.splitext(os.path.basename(path))[0])
+
+
+def is_root_special(path, root):
+    """True only for index.md / log.md sitting directly at the wiki root.
+    A same-named file in a subdirectory (e.g. sources/index.md) is a regular
+    page, not the wiki's special index/log — basename alone can't tell the
+    two apart, so we check the relative path instead."""
+    rel = os.path.relpath(path, root).replace(os.sep, "/")
+    return rel in ("index.md", "log.md")
 
 
 def parse_frontmatter(text):
@@ -69,18 +89,24 @@ def main():
             if f.endswith(".md"):
                 md_files.append(os.path.join(dirpath, f))
 
-    SPECIAL = {"index", "log"}
+    special_slugs = set()      # slugs of the root-level index.md / log.md
+    misplaced_special = []     # index.md/log.md found outside the wiki root
 
     for path in md_files:
         s = slug(path, root)
         b = basename_slug(path)
+        special = is_root_special(path, root)
         pages[s] = path
         by_basename.setdefault(b, []).append(s)
         inlinks.setdefault(s, 0)
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
         outlinks[s] = set(normalize_name(m.group(1)) for m in WIKILINK.finditer(text))
-        if b in SPECIAL:
+        if special:
+            special_slugs.add(s)
+        elif b in ("index", "log"):
+            misplaced_special.append(s)
+        if special:
             continue
         fm = parse_frontmatter(text)
         if fm is None:
@@ -101,7 +127,7 @@ def main():
 
     # bare names that resolve to more than one page (e.g. entities/alice.md and concepts/alice.md)
     collisions = {b: sorted(slugs) for b, slugs in by_basename.items()
-                  if len(slugs) > 1 and b not in SPECIAL}
+                  if len(slugs) > 1 and not (special_slugs & set(slugs))}
 
     # resolve inbound links, broken links, and ambiguous links (collisions referenced by a wikilink)
     broken = {}
@@ -117,18 +143,19 @@ def main():
                 broken.setdefault(s, set()).add(t)
 
     orphans = [s for s, n in inlinks.items()
-               if n == 0 and basename_slug(pages[s]) not in SPECIAL]
+               if n == 0 and s not in special_slugs]
 
-    # index coverage
-    index_slugs = by_basename.get("index", [])
-    index_path = pages.get(index_slugs[0]) if index_slugs else None
+    # index coverage — resolve the root index.md unambiguously via special_slugs,
+    # not by basename (a subdirectory index.md must never be mistaken for it)
+    index_root_slugs = [s for s in special_slugs if basename_slug(pages[s]) == "index"]
+    index_path = pages.get(index_root_slugs[0]) if index_root_slugs else None
     in_index = set()
     if index_path:
         with open(index_path, encoding="utf-8") as fh:
             itext = fh.read()
         in_index = set(normalize_name(m.group(1)) for m in WIKILINK.finditer(itext))
     not_in_index = [s for s in pages
-                    if basename_slug(pages[s]) not in SPECIAL
+                    if s not in special_slugs
                     and basename_slug(pages[s]) not in in_index] if index_path else []
     index_dangling = [t for t in in_index if t not in by_basename]
 
@@ -155,12 +182,14 @@ def main():
             lambda t: f"{t[0]} (updated {t[1]}, {t[2]}d ago)")
     section("Pages missing from index.md", sorted(not_in_index), str)
     section("index.md entries with no page", sorted(index_dangling), str)
+    section("Misplaced index.md/log.md (outside wiki root, treated as a regular page)",
+            sorted(misplaced_special), str)
     if not index_path:
         print("\n! no index.md found at wiki root")
 
     total = (len(collisions) + len(orphans) + len(broken) + len(ambiguous) +
              len(no_frontmatter) + len(bad_frontmatter) + len(stale) +
-             len(not_in_index) + len(index_dangling))
+             len(not_in_index) + len(index_dangling) + len(misplaced_special))
     print(f"\n# total mechanical issues: {total}")
 
 

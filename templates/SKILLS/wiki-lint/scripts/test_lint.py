@@ -116,6 +116,31 @@ class TestWikilinkResolution(LintTestCase):
         self.assertIn("Orphan pages (no inbound links) (0)", out)
         self.assertIn("total mechanical issues: 0", out)
 
+    def test_fullwidth_space_in_filename_still_resolves(self):
+        """Regression test: a filename containing a full-width space (U+3000,
+        common in Japanese text) must normalize to the same key as a wikilink
+        using a full-width space, so it isn't reported broken/orphaned."""
+        write(self.root, "entities/東京　都.md", page("Tokyo Metropolis", body="capital"))
+        write(self.root, "concepts/japan.md", page("Japan", body="see [[東京　都]]"))
+        write(self.root, "index.md", "[[東京　都]]\n[[japan]]\n")
+
+        out = self.run_lint()
+        self.assertNotIn("entities/東京", _section(out, "Broken wikilinks"))
+        self.assertEqual([], _section_items(out, "Orphan pages (no inbound links)"))
+        self.assertEqual([], _section_items(out, "Broken wikilinks"))
+
+    def test_underscore_filename_matches_hyphenated_link(self):
+        """Regression test: underscore is a common word-separator variant in
+        filenames (my_page.md) and must normalize the same as a hyphenated or
+        space-separated wikilink target ([[my-page]] / [[my page]])."""
+        write(self.root, "entities/my_page.md", page("My Page", body="content"))
+        write(self.root, "concepts/linker.md", page("Linker", body="see [[my-page]]"))
+        write(self.root, "index.md", "[[my page]]\n[[linker]]\n")
+
+        out = self.run_lint()
+        self.assertEqual([], _section_items(out, "Broken wikilinks"))
+        self.assertEqual([], _section_items(out, "Orphan pages (no inbound links)"))
+
 
 class TestFrontmatter(LintTestCase):
     def test_missing_frontmatter_reported(self):
