@@ -17,8 +17,8 @@ organized so I can find connections later. -->
 
 ## Wiki layout
 
-- `wiki/index.md` — content catalog. Update on every ingest.
-- `wiki/log.md` — append-only timeline. Append on every ingest, filed-back answer, and lint pass.
+- `wiki/index.md` — content catalog. Update on every ingest. Keep exactly one `index.md`, directly under `wiki/` — never create a same-named page in a subdirectory.
+- `wiki/log.md` — append-only timeline. Append on every ingest, filed-back answer, and lint pass. Keep exactly one `log.md`, directly under `wiki/` — never create a same-named page in a subdirectory.
 - `wiki/overview.md` — top-level synthesis and entry point.
 - `wiki/sources/` — one summary page per ingested source.
 - `wiki/entities/` — people, organizations, products, places, works.

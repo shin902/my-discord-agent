@@ -41,6 +41,8 @@ Don't proceed to scaffolding until you have real answers, not assumptions — th
 
 Create the folders and seed `index.md`, `log.md`, and `overview.md` (see step 4). Don't invent content — only structure plus empty/placeholder pages.
 
+`index.md` and `log.md` must exist exactly once, directly under `wiki/` — never create a same-named page in a subdirectory (e.g. `sources/index.md`), since `wiki-lint` only treats the wiki-root copies as special.
+
 ### 3. Write AGENTS.md (the schema)
 
 This is the most important file. It is read at the start of every future session and is what keeps the wiki consistent. Write it tailored to the chosen purpose. It must cover:

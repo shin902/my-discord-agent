@@ -179,6 +179,68 @@ class TestStaleness(LintTestCase):
         self.assertEqual([], _section_items(out, "Stale pages"))
 
 
+class TestRootOnlySpecialPages(LintTestCase):
+    """Regression test: index.md / log.md must only be treated as SPECIAL when
+    they sit directly at the wiki root. A same-named file in a subdirectory
+    (e.g. sources/index.md) is a regular page, and must not be picked as
+    "the" index nor silently exempted from frontmatter/orphan checks."""
+
+    def test_subdir_index_is_not_special(self):
+        write(self.root, "index.md", "[[alice]]\n")
+        write(self.root, "entities/alice.md", page("Alice"))
+        write(self.root, "sources/index.md", page("Sources", body="not the real index"))
+
+        out = self.run_lint()
+        # the subdirectory index.md is a normal page: it needs frontmatter coverage,
+        # must appear in "missing from index.md" (nobody links it, root index doesn't list it),
+        # and must show up as an orphan (no inbound links).
+        self.assertIn("sources/index", _section(out, "Pages missing from index.md"))
+        self.assertIn("sources/index", _section(out, "Orphan pages"))
+        # it must not be silently merged with the root index.md or dropped as SPECIAL.
+        self.assertIn("3 pages", out)
+
+    def test_subdir_log_is_not_special(self):
+        write(self.root, "index.md", "[[alice]]\n")
+        write(self.root, "entities/alice.md", page("Alice"))
+        write(self.root, "projects/log.md", page("Project Log", body="not the real log"))
+
+        out = self.run_lint()
+        self.assertIn("projects/log", _section(out, "Pages missing from index.md"))
+        self.assertIn("projects/log", _section(out, "Orphan pages"))
+
+    def test_root_index_used_for_index_coverage_even_with_subdir_index(self):
+        """The root index.md must be the one used to compute index coverage,
+        regardless of os.walk's traversal order relative to a subdir index.md."""
+        write(self.root, "index.md", "[[alice]]\n[[sources/index]]\n")
+        write(self.root, "entities/alice.md", page("Alice"))
+        write(self.root, "sources/index.md", page("Sources"))
+
+        out = self.run_lint()
+        # alice is linked from the real root index -> no longer "missing from index.md"
+        self.assertNotIn("entities/alice", _section(out, "Pages missing from index.md"))
+
+    def test_misplaced_special_reported(self):
+        write(self.root, "index.md", "# Index\n")
+        write(self.root, "sources/index.md", page("Sources"))
+        write(self.root, "projects/log.md", page("Log"))
+
+        out = self.run_lint()
+        block = _section(out, "Misplaced index.md/log.md (outside wiki root, treated as a regular page)")
+        self.assertIn("sources/index", block)
+        self.assertIn("projects/log", block)
+
+    def test_root_log_still_special(self):
+        """Sanity check: the root-level log.md keeps its SPECIAL treatment
+        (exempt from frontmatter/orphan checks) just like before."""
+        write(self.root, "index.md", "[[alice]]\n")
+        write(self.root, "entities/alice.md", page("Alice"))
+        write(self.root, "log.md", "2026-06-19: did stuff\n")
+
+        out = self.run_lint()
+        self.assertNotIn("log", _section(out, "Missing frontmatter"))
+        self.assertNotIn("log", _section(out, "Orphan pages"))
+
+
 class TestIndexCoverage(LintTestCase):
     def test_page_missing_from_index(self):
         write(self.root, "entities/alice.md", page("Alice"))

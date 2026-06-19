@@ -18,6 +18,7 @@ Run the `SKILLS/wiki-lint/scripts/lint.py` helper first for the mechanical check
 - **Broken links** — `[[wikilinks]]` pointing to pages that don't exist. Create the page or fix the link.
 - **Missing/invalid frontmatter** — pages lacking the required YAML fields.
 - **Index drift** — pages on disk not listed in `index.md`, or index entries pointing to deleted pages.
+- **Misplaced index/log pages** — the script only treats `index.md`/`log.md` directly under the wiki root as special; a same-named page in a subdirectory (e.g. `sources/index.md`) is flagged separately and should be renamed.
 - **Stale by date** — pages not updated in a long time relative to sources that should have touched them.
 
 **Judgment-based (read the pages):**
