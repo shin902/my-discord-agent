@@ -20,6 +20,14 @@ export const GoogleOAuthConfigSchema = z.object({
 
 export type GoogleOAuthConfig = z.infer<typeof GoogleOAuthConfigSchema>;
 
+export const RedditOAuthConfigSchema = z.object({
+  clientId: z.string(),
+  // client_secret 自体は config.json に書かず、ホスト側 process.env からこの名前で読み込む
+  clientSecretEnvVar: z.string(),
+});
+
+export type RedditOAuthConfig = z.infer<typeof RedditOAuthConfigSchema>;
+
 // プロバイダー単位の設定のうち、modelId ごとに上書き可能なもの
 // （同一サーバーで複数モデルを切り替える場合に使う）
 const ModelOverrideSchema = z.object({
@@ -41,6 +49,7 @@ export const CredentialEntrySchema = z.object({
     .optional(),
   msal: MsalConfigSchema.optional(),
   google: GoogleOAuthConfigSchema.optional(),
+  reddit: RedditOAuthConfigSchema.optional(),
   baseUrl: z.string().url(),
   api: z
     .enum([

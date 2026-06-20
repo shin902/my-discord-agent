@@ -12,6 +12,7 @@ import {
   initGoogleAuth,
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
+import { getRedditAccessToken, initRedditAuth } from "./reddit-auth.js";
 
 let proxyPort: number | null = null;
 
@@ -117,6 +118,21 @@ async function handleRequest(
     }
     delete headers.authorization;
     headers.authorization = `Bearer ${token}`;
+  } else if (entry.reddit) {
+    // Reddit OAuth トークン注入（oauth.reddit.com 用）
+    let token: string;
+    try {
+      token = await getRedditAccessToken(entry.provider);
+    } catch (err) {
+      console.error(
+        `[credential-proxy] reddit token 取得失敗: ${err instanceof Error ? err.message : err}`,
+      );
+      res.writeHead(502);
+      res.end("Reddit token acquisition failed");
+      return;
+    }
+    delete headers.authorization;
+    headers.authorization = `Bearer ${token}`;
   } else if (entry.envVars && entry.envVars.length > 0) {
     const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
@@ -213,6 +229,19 @@ export async function initCredentialProxyServer(): Promise<number> {
           );
         }
       }
+    }
+    if (entry.reddit) {
+      const clientSecret = process.env[entry.reddit.clientSecretEnvVar];
+      if (!clientSecret) {
+        console.warn(
+          `[credential-proxy] ${entry.reddit.clientSecretEnvVar} が未設定のため provider ${entry.provider} の Reddit Auth をスキップします`,
+        );
+        continue;
+      }
+      await initRedditAuth(entry.provider, entry.reddit, clientSecret);
+      console.log(
+        `[credential-proxy] Reddit Auth initialized for provider: ${entry.provider}`,
+      );
     }
   }
 

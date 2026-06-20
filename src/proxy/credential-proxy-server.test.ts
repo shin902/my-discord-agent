@@ -364,6 +364,73 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
   });
 });
 
+describe("createRequestHandler: Reddit OAuth プロバイダー", () => {
+  let requestMock: ReturnType<typeof vi.fn>;
+
+  const REDDIT_CREDS: CredentialEntry[] = [
+    {
+      provider: "reddit",
+      baseUrl: "https://oauth.reddit.com",
+      reddit: {
+        clientId: "test-client-id",
+        clientSecretEnvVar: "REDDIT_CLIENT_SECRET",
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    vi.resetModules();
+    requestMock = vi.fn(() => ({ on: vi.fn(), pipe: vi.fn() }));
+    vi.doMock("node:http", () => ({
+      request: requestMock,
+      createServer: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: requestMock }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("reddit プロバイダーは getRedditAccessToken(provider) のトークンを Bearer で注入する", async () => {
+    const getRedditAccessToken = vi
+      .fn()
+      .mockResolvedValue("reddit-access-token");
+    vi.doMock("./reddit-auth.js", () => ({
+      initRedditAuth: vi.fn(),
+      getRedditAccessToken,
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(REDDIT_CREDS);
+    const req = makeReq("/reddit/r/programming/comments/abc.json");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getRedditAccessToken).toHaveBeenCalledWith("reddit");
+    const opts = requestMock.mock.calls[0]?.[0];
+    expect(opts?.headers.authorization).toBe("Bearer reddit-access-token");
+  });
+
+  it("getRedditAccessToken() が失敗したとき 502 を返す", async () => {
+    vi.doMock("./reddit-auth.js", () => ({
+      initRedditAuth: vi.fn(),
+      getRedditAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(REDDIT_CREDS);
+    const req = makeReq("/reddit/r/programming/comments/abc.json");
+    const res = makeRes();
+    handler(req, res as unknown as ServerResponse);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res.writeHead).toHaveBeenCalledWith(502);
+    expect(res.end).toHaveBeenCalledWith("Reddit token acquisition failed");
+  });
+});
+
 describe("createRequestHandler: Authorization ヘッダ", () => {
   const originalEnv = process.env;
   let requestMock: ReturnType<typeof vi.fn>;
@@ -598,5 +665,82 @@ describe("initCredentialProxyServer: Google Auth 初期化", () => {
       expect.stringContaining("device flow timeout"),
     );
     errorSpy.mockRestore();
+  });
+});
+
+describe("initCredentialProxyServer: Reddit Auth 初期化", () => {
+  const originalEnv = process.env;
+  const REDDIT_CREDS: CredentialEntry[] = [
+    {
+      provider: "reddit",
+      baseUrl: "https://oauth.reddit.com",
+      reddit: {
+        clientId: "test-client-id",
+        clientSecretEnvVar: "REDDIT_CLIENT_SECRET",
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv };
+    vi.doMock("node:http", () => ({
+      createServer: vi.fn(() => ({
+        on: vi.fn(),
+        listen: vi.fn((_port: number, _host: string, cb: () => void) => cb()),
+        address: vi.fn(() => ({ port: 12345 })),
+      })),
+      request: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: vi.fn() }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue(REDDIT_CREDS),
+    }));
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.resetModules();
+  });
+
+  it("clientSecretEnvVar が未設定のとき Reddit Auth をスキップして警告する", async () => {
+    delete process.env.REDDIT_CLIENT_SECRET;
+    const initRedditAuth = vi.fn();
+    vi.doMock("./reddit-auth.js", () => ({
+      initRedditAuth,
+      getRedditAccessToken: vi.fn(),
+    }));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { initCredentialProxyServer } = await import(
+      "./credential-proxy-server.js"
+    );
+    await initCredentialProxyServer();
+
+    expect(initRedditAuth).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("REDDIT_CLIENT_SECRET"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("clientSecretEnvVar が設定済みのとき initRedditAuth を呼ぶ", async () => {
+    process.env.REDDIT_CLIENT_SECRET = "test-secret";
+    const initRedditAuth = vi.fn();
+    vi.doMock("./reddit-auth.js", () => ({
+      initRedditAuth,
+      getRedditAccessToken: vi.fn(),
+    }));
+
+    const { initCredentialProxyServer } = await import(
+      "./credential-proxy-server.js"
+    );
+    await initCredentialProxyServer();
+
+    expect(initRedditAuth).toHaveBeenCalledWith(
+      "reddit",
+      REDDIT_CREDS[0]?.reddit,
+      "test-secret",
+    );
   });
 });
