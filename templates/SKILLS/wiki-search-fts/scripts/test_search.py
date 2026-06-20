@@ -173,5 +173,62 @@ class TestIncrementalSync(SearchTestCase):
         self.assertEqual(removed, 0)
 
 
+class TestExtractTitle(unittest.TestCase):
+    def test_frontmatter_title_used(self):
+        text = "---\ntitle: My Title\n---\n# Heading\nbody\n"
+        self.assertEqual(search.extract_title(text, fallback="x.md"), "My Title")
+
+    def test_falls_back_to_heading(self):
+        text = "no frontmatter here\n# The Heading\nbody\n"
+        self.assertEqual(search.extract_title(text, fallback="x.md"), "The Heading")
+
+    def test_falls_back_to_path(self):
+        text = "no frontmatter, no heading, just text\n"
+        self.assertEqual(search.extract_title(text, fallback="x.md"), "x.md")
+
+
+class TestStripFrontmatter(unittest.TestCase):
+    def test_removes_leading_frontmatter_block(self):
+        text = "---\ntitle: A\ntags: []\n---\nbody text\n"
+        self.assertEqual(search.strip_frontmatter(text), "body text\n")
+
+    def test_no_frontmatter_is_noop(self):
+        text = "just plain body text\n"
+        self.assertEqual(search.strip_frontmatter(text), text)
+
+
+class TestBestExcerpt(unittest.TestCase):
+    def test_picks_line_with_most_query_hits(self):
+        raw_body = "irrelevant line\nfoo bar baz line\njust foo here\n"
+        excerpt = search.best_excerpt(raw_body, ["foo", "bar", "baz"])
+        self.assertEqual(excerpt, "foo bar baz line")
+
+    def test_falls_back_to_first_nonempty_line(self):
+        raw_body = "\n   \nfirst real line\nsecond line\n"
+        excerpt = search.best_excerpt(raw_body, ["zzznomatch"])
+        self.assertEqual(excerpt, "first real line")
+
+    def test_empty_body_returns_empty_string(self):
+        self.assertEqual(search.best_excerpt("   \n\n", ["foo"]), "")
+
+    def test_truncates_to_width(self):
+        long_line = "x" * 200
+        excerpt = search.best_excerpt(long_line, ["x"], width=50)
+        self.assertEqual(len(excerpt), 50)
+
+
+class TestSyncIndexFiltering(SearchTestCase):
+    def test_non_markdown_files_are_ignored(self):
+        write(self.root, "notes.txt", "uniqueword should not be indexed\n")
+        out = self.run_search("uniqueword")
+        self.assertIn("一致するページがありません", out)
+
+    def test_git_directory_is_skipped(self):
+        write(self.root, ".git/hooks/note.md", "---\ntitle: Hook\n---\nuniquegitterm\n")
+        write(self.root, "a.md", "---\ntitle: A\n---\nregular page\n")
+        out = self.run_search("uniquegitterm")
+        self.assertIn("一致するページがありません", out)
+
+
 if __name__ == "__main__":
     unittest.main()
