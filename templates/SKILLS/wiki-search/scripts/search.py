@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Dependency-free keyword search over an LLM-maintained wiki.
+"""LLMが運用するwiki向けの、依存ライブラリ不要なキーワード検索。
 
-Usage:
-    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR defaults to ./wiki
+使い方:
+    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は ./wiki
 """
 import os
 import re
 import sys
 
 WORD = re.compile(r"[a-z0-9][a-z0-9'_-]*")
-# Hiragana, katakana, CJK unified ideographs, and CJK compat — languages with
-# no whitespace between words. Tokenized separately as character bigrams since
-# WORD's ascii-only class would otherwise drop them and leave qterms empty.
+# ひらがな、カタカナ、CJK統合漢字、CJK互換漢字 — 単語間に空白を入れない言語。
+# WORDのASCII限定文字クラスではこれらが落ちてqtermsが空になってしまうため、
+# 文字バイグラムとして別途トークン化する。
 CJK_RUN = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿]+")
 HEADING = re.compile(r"^#{1,6}\s|^title:|^tags:|^---", re.IGNORECASE)
 
@@ -34,17 +34,17 @@ def tokenize(text):
 
 def main():
     if len(sys.argv) < 2:
-        print('usage: search.py "QUERY" [WIKI_DIR]', file=sys.stderr)
+        print('使い方: search.py "QUERY" [WIKI_DIR]', file=sys.stderr)
         sys.exit(1)
     query = sys.argv[1]
     root = sys.argv[2] if len(sys.argv) > 2 else "wiki"
     if not os.path.isdir(root):
-        print(f"error: wiki dir not found: {root}", file=sys.stderr)
+        print(f"エラー: wikiディレクトリが見つかりません: {root}", file=sys.stderr)
         sys.exit(1)
 
     qterms = set(tokenize(query))
     if not qterms:
-        print("error: empty query", file=sys.stderr)
+        print("エラー: クエリが空です", file=sys.stderr)
         sys.exit(1)
 
     results = []
@@ -67,15 +67,15 @@ def main():
                     hit_terms.add(t)
             if not hit_terms:
                 continue
-            # bonus for matches in headings / frontmatter / title
+            # 見出し/frontmatter/タイトル内のマッチにボーナスを付与
             for ln in lines[:40]:
                 if HEADING.match(ln.strip()):
                     for t in tokenize(ln):
                         if t in qterms:
                             score += 2.0
-            # coverage bonus: reward hitting more distinct query terms
+            # カバレッジボーナス: より多くの異なるクエリ語にマッチしたものを優遇する
             score *= (1 + len(hit_terms) / len(qterms))
-            # best matching line for preview
+            # プレビュー用の最も良くマッチした行
             best = ""
             best_n = 0
             for ln in lines:
@@ -87,11 +87,11 @@ def main():
 
     results.sort(reverse=True)
     if not results:
-        print("no matches")
+        print("一致するページがありません")
         return
-    print(f"# {len(results)} pages match — query: {query!r}\n")
+    print(f"# {len(results)} 件のページが一致 — クエリ: {query!r}\n")
     for score, rel, nterms, preview in results[:15]:
-        print(f"{score:6.1f}  {rel}  ({nterms}/{len(qterms)} terms)")
+        print(f"{score:6.1f}  {rel}  ({nterms}/{len(qterms)} 語)")
         if preview:
             print(f"        … {preview}")
 

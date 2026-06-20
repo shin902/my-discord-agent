@@ -1,44 +1,44 @@
 ---
 name: "wiki-lint"
-description: "Health-check an LLM-maintained wiki: find contradictions, stale claims, orphan pages, missing cross-references, undocumented concepts, and data gaps, then propose fixes. Use when the user says 'lint the wiki', 'health check', 'clean up the knowledge base', 'find gaps', or periodically after many ingests."
+description: "LLMが管理するwikiの健全性をチェックする：矛盾、古くなった主張、孤立ページ、相互参照の欠落、未文書化の概念、データの欠落を見つけて修正案を提示する。「wikiをlintして」「健全性チェックして」「ナレッジベースを整理して」「ギャップを見つけて」と言われたとき、または多数のingest後に定期的に使う。"
 ---
 
 # wiki-lint
 
-Keep the wiki healthy as it grows. Humans abandon wikis because maintenance outpaces value; this pass is the maintenance, done cheaply. Produce a report of issues with proposed fixes, and apply the safe ones with the user's go-ahead.
+wikiが大きくなっても健全な状態を保つ。人間がwikiを放棄してしまうのは、メンテナンスのコストが価値を上回ってしまうからだ。このパスは、そのメンテナンスを安価に行うためのものだ。問題点と修正案をまとめたレポートを作成し、安全な修正はユーザーの許可を得て適用する。
 
-Read the root `AGENTS.md` first and follow its conventions.
+まずルートの`AGENTS.md`を読み、その規約に従うこと。
 
-## What to check
+## チェック項目
 
-Run the `SKILLS/wiki-lint/scripts/lint.py` helper first for the mechanical checks (orphans, broken links, missing frontmatter, stale dates), then do the judgment-based checks by reading pages.
+まず`SKILLS/wiki-lint/scripts/lint.py`ヘルパーを実行して機械的チェック（孤立ページ、リンク切れ、frontmatterの欠落、日付の陳腐化）を行い、その後ページを読んで判断ベースのチェックを行う。
 
-**Mechanical (script-assisted):**
-- **Orphan pages** — pages with no inbound `[[wikilinks]]`. Either link them in or justify keeping them.
-- **Broken links** — `[[wikilinks]]` pointing to pages that don't exist. Create the page or fix the link.
-- **Missing/invalid frontmatter** — pages lacking the required YAML fields.
-- **Index drift** — pages on disk not listed in `index.md`, or index entries pointing to deleted pages.
-- **Misplaced index/log pages** — the script only treats `index.md`/`log.md` directly under the wiki root as special; a same-named page in a subdirectory (e.g. `sources/index.md`) is flagged separately and should be renamed.
-- **Stale by date** — pages not updated in a long time relative to sources that should have touched them.
+**機械的チェック（スクリプト支援）:**
+- **孤立ページ** — 他のページから`[[wikilinks]]`でリンクされていないページ。リンクを追加するか、そのまま残す理由を説明する。
+- **リンク切れ** — 存在しないページを指す`[[wikilinks]]`。ページを作成するか、リンクを修正する。
+- **frontmatterの欠落・不正** — 必須のYAMLフィールドが欠けているページ。
+- **インデックスのずれ** — ディスク上にあるが`index.md`に記載されていないページ、または削除済みページを指しているインデックスエントリ。
+- **誤った位置にあるindex/logページ** — スクリプトはwikiルート直下の`index.md`/`log.md`のみを特別扱いする。サブディレクトリ内の同名ページ（例: `sources/index.md`）は別途フラグが立てられ、リネームすべきものとして扱われる。
+- **日付による陳腐化** — 関連するソースが更新されているにもかかわらず、長期間更新されていないページ。
 
-**Judgment-based (read the pages):**
-- **Contradictions** — claims on different pages that disagree. Flag both, mark which is newer, propose a resolution.
-- **Stale claims** — statements a newer source has superseded but that were never revised.
-- **Missing cross-references** — pages that clearly relate but don't link each other.
-- **Undocumented concepts** — entities/concepts mentioned across pages but lacking their own page.
-- **Data gaps** — open questions a web search or a new source could resolve. Suggest specific searches/sources.
+**判断ベースのチェック（ページを読む）:**
+- **矛盾** — 異なるページ間で食い違う主張。両方にフラグを立て、どちらが新しいかを示し、解決策を提案する。
+- **古くなった主張** — より新しいソースによって上書きされたが、まだ修正されていない記述。
+- **相互参照の欠落** — 明らかに関連しているのに互いにリンクしていないページ。
+- **未文書化の概念** — 複数のページで言及されているが、専用のページがないエンティティ・概念。
+- **データの欠落** — Web検索や新しいソースで解決できる未解決の疑問。具体的な検索クエリ・参照先を提案する。
 
-## Procedure
+## 手順
 
-1. Run `python3 SKILLS/wiki-lint/scripts/lint.py <wiki-dir>` (defaults to `./wiki`). It prints a structured report of the mechanical issues.
-2. Read the flagged pages plus a sample of the rest for the judgment-based checks.
-3. Write a findings report grouped by category, each item with a concrete proposed fix.
-4. Apply the safe, unambiguous fixes (add a missing back-link, register a page in the index, add frontmatter). Ask before anything lossy — merging pages, deleting orphans, resolving a contradiction by picking a side.
-5. Append a log entry:
+1. `python3 SKILLS/wiki-lint/scripts/lint.py <wiki-dir>`を実行する（デフォルトは`./wiki`）。機械的な問題点の構造化レポートが出力される。
+2. フラグが立てられたページと、それ以外のページのサンプルを読んで判断ベースのチェックを行う。
+3. カテゴリ別にまとめた所見レポートを作成し、各項目に具体的な修正案を付ける。
+4. 安全で曖昧さのない修正（欠落しているバックリンクの追加、ページのインデックス登録、frontmatterの追加）を適用する。何かを失う可能性がある操作（ページの統合、孤立ページの削除、矛盾をどちらか一方に決めて解決すること）の前には必ず確認を取る。
+5. ログエントリを追記する:
    `## [YYYY-MM-DD] lint | <N issues found, M fixed, K need decisions>`
-6. End with a short list of suggested next questions to investigate and sources to look for — linting is also where the wiki tells you what to read next.
+6. 最後に、次に調査すべき質問や探すべきソースの簡単なリストを示す — lintはwikiが「次に何を読むべきか」を教えてくれる場でもある。
 
-## Notes
+## 補足
 
-- The script is read-only; it never edits the wiki. All changes go through you with user sign-off.
-- Run lint after every batch of ingests, or on a schedule (it pairs well with a recurring scheduled task).
+- このスクリプトは読み取り専用であり、wikiを編集することは一切ない。変更はすべてあなたを経由し、ユーザーの承認を得る。
+- ingestをまとめて行った後、またはスケジュールに従って定期的にlintを実行すること（定期実行タスクと組み合わせるとよい）。

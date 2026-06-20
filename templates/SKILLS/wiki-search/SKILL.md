@@ -1,26 +1,26 @@
 ---
 name: "wiki-search"
-description: "Search across the pages of an LLM-maintained wiki when the index file alone isn't enough. Use during ingest (to find which pages already mention an entity before creating vs editing), during query (to locate relevant pages), and during lint. Provides a dependency-free local search; recommend qmd for heavier needs."
+description: "インデックスファイルだけでは不十分な場合に、LLMが管理するwikiのページ全体を検索する。ingest時（エンティティを新規作成するか既存ページを編集するか判断する前に、すでにそのエンティティに言及しているページを探すため）、query時（関連ページを特定するため）、lint時に使用する。依存ライブラリ不要のローカル検索を提供する。より重い用途にはqmdを推奨。"
 ---
 
 # wiki-search
 
-A lightweight full-text search over the wiki's markdown, for when the wiki has grown past the point where reading `index.md` is enough. No external dependencies — pure Python over the files.
+`index.md` を読むだけでは不十分なほどwikiが大きくなった場合のための、軽量なフルテキスト検索。wikiのmarkdownファイルを対象とする。外部依存なし — 純粋なPythonでファイルを処理する。
 
-## Usage
+## 使い方
 
 ```
-python3 SKILLS/wiki-search/scripts/search.py "<query>" [WIKI_DIR]      # WIKI_DIR defaults to ./wiki
+python3 SKILLS/wiki-search/scripts/search.py "<query>" [WIKI_DIR]      # WIKI_DIRを省略した場合は ./wiki が使われる
 ```
 
-It ranks pages by a simple TF score over whitespace/word tokens (case-insensitive), with a bonus for matches in the title/frontmatter and headings, and prints the top pages with the best-matching line from each. Multi-word queries are OR-matched and scored by how many query terms hit.
+空白/単語トークンに対する単純なTFスコア（大小文字を区別しない）でページをランク付けし、タイトル/フロントマターや見出しにマッチした場合にはボーナスを加算する。各ページについて最もマッチ度の高い行とともに、上位のページを表示する。複数語のクエリはOR検索となり、クエリ中の何語がマッチしたかでスコアが決まる。
 
-## When to use it
+## 使用するタイミング
 
-- **Ingest** — before deciding create-vs-edit for an entity, search its name to see which existing pages already mention it.
-- **Query** — find candidate pages when the index doesn't obviously point to the answer; then read and follow `[[wikilinks]]` from the top hits.
-- **Lint** — locate every page that mentions a concept to check for missing cross-references.
+- **Ingest（取り込み）** — あるエンティティについて新規作成するか既存ページを編集するか判断する前に、その名前を検索し、既存のどのページがすでに言及しているかを確認する。
+- **Query（検索）** — インデックスを見ても答えが明らかでない場合に候補ページを探す。その後、上位の検索結果から `[[wikilinks]]` を読みながらたどっていく。
+- **Lint（検証）** — あるコンセプトに言及しているすべてのページを特定し、相互参照の欠落をチェックする。
 
-## Scaling up
+## 規模が大きくなった場合
 
-This helper is intentionally naive (keyword TF, no stemming, no vectors). It's fine to a few hundred pages. When the wiki outgrows it, switch to **[qmd](https://github.com/tobi/qmd)** — a local markdown search engine with hybrid BM25 + vector search and LLM re-ranking, on-device. It offers both a CLI (shell out to it) and an MCP server (use it as a native tool). Update the root `AGENTS.md` to point future sessions at whichever search tool is in use.
+このヘルパーは意図的に単純な実装になっている（キーワードTF、ステミングなし、ベクトルなし）。数百ページ程度までは問題ない。wikiがこの規模を超えた場合は、**[qmd](https://github.com/tobi/qmd)** に切り替えること — これはハイブリッドBM25＋ベクトル検索とLLM再ランキングをオンデバイスで行うローカルmarkdown検索エンジンである。CLI（シェルから呼び出す）とMCPサーバー（ネイティブツールとして使う）の両方を提供している。今後のセッションがどの検索ツールを使うべきかを示すため、ルートの `AGENTS.md` を更新すること。

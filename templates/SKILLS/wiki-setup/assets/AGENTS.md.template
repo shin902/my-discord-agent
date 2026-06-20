@@ -1,34 +1,34 @@
-# <Wiki name> — schema
+# <Wiki name> — スキーマ
 
-This file tells any LLM agent how to maintain this wiki. Read it at the start of every session. The user curates sources and asks questions; you do all the writing, cross-referencing, filing, and bookkeeping.
+このファイルは、あらゆるLLMエージェントがこのwikiをどのように維持管理すべきかを伝えるものです。セッションの開始時に必ず読むこと。ユーザーは情報源を選定し質問を投げかける役割を担い、執筆・相互参照・整理・記録といった作業はすべてあなたが行います。
 
-## Purpose
+## 目的
 
-<!-- One paragraph: what this knowledge base is for, who reads it, what "done well" looks like.
-Default: a general personal knowledge base accumulating what I read, watch, and think about,
-organized so I can find connections later. -->
+<!-- 1段落で記述する: このナレッジベースが何のためにあり、誰が読み、「うまくできている」とはどういう状態かを書く。
+デフォルト: 自分が読んだり見たり考えたりしたことを蓄積していく汎用的な個人用ナレッジベースであり、
+後から関連性を見つけられるように整理されている。 -->
 
-## Layers
+## レイヤー
 
-- `raw/` — immutable source files. The source of truth. **Never edit or delete these.** Read from them only.
-- `raw/assets/` — images downloaded from sources, referenced locally.
-- `wiki/` — markdown you own entirely. Create and update freely.
-- `AGENTS.md` (this file) — the rulebook. Co-evolve it with the user when conventions change.
+- `raw/` — 不変の情報源ファイル。信頼できる唯一の原典。**これらを編集・削除してはならない。** 読み取り専用として扱う。
+- `raw/assets/` — 情報源からダウンロードした画像で、ローカルから参照される。
+- `wiki/` — あなたが完全に管理するMarkdown群。自由に作成・更新してよい。
+- `AGENTS.md`（このファイル） — 運用ルールブック。慣習が変わった際はユーザーと共に育てていくこと。
 
-## Wiki layout
+## wikiの構成
 
-- `wiki/index.md` — content catalog. Update on every ingest. Keep exactly one `index.md`, directly under `wiki/` — never create a same-named page in a subdirectory.
-- `wiki/log.md` — append-only timeline. Append on every ingest, filed-back answer, and lint pass. Keep exactly one `log.md`, directly under `wiki/` — never create a same-named page in a subdirectory.
-- `wiki/overview.md` — top-level synthesis and entry point.
-- `wiki/sources/` — one summary page per ingested source.
-- `wiki/entities/` — people, organizations, products, places, works.
-- `wiki/concepts/` — ideas, themes, topics, methods.
+- `wiki/index.md` — コンテンツ目録。ingestのたびに更新する。`index.md` は `wiki/` 直下にちょうど1つだけ置く — サブディレクトリ内に同名ページを作成してはならない。
+- `wiki/log.md` — 追記専用のタイムライン。ingest・問い合わせへの回答の書き戻し・lint実行のたびに追記する。`log.md` は `wiki/` 直下にちょうど1つだけ置く — サブディレクトリ内に同名ページを作成してはならない。
+- `wiki/overview.md` — 全体の統合と入口となるページ。
+- `wiki/sources/` — ingestした情報源ごとに1つの要約ページ。
+- `wiki/entities/` — 人物・組織・製品・場所・作品。
+- `wiki/concepts/` — アイデア・テーマ・トピック・手法。
 
-## Page conventions
+## ページの規約
 
-- One entity / concept / source per file. Filenames in kebab-case.
-- Cross-reference with `[[wikilinks]]` so Obsidian's graph view connects pages. Link liberally.
-- Every wiki page starts with YAML frontmatter:
+- 1つのエンティティ／コンセプト／情報源につき1ファイル。ファイル名はkebab-case。
+- `[[wikilinks]]`で相互参照し、Obsidianのグラフビューでページがつながるようにする。リンクは惜しみなく張ること。
+- すべてのwikiページはYAMLフロントマターで始める:
 
 ```yaml
 ---
@@ -41,23 +41,23 @@ tags: []
 ---
 ```
 
-- Cite claims back to the `sources/` page they came from. Source pages link to the file in `raw/`.
+- 主張には必ず出典となった `sources/` ページを引用する。sourcesページは `raw/` 内のファイルにリンクする。
 
-## New page vs. edit existing
+## 新規ページを作るか、既存ページを編集するか
 
-Create a new page when a distinct entity or concept recurs across sources or earns its own identity. Otherwise fold the detail into an existing page and add a cross-reference. Early on, prefer fewer, richer pages; split a section into its own page when it outgrows its host.
+特定のエンティティやコンセプトが複数の情報源にわたって繰り返し登場したり、それ自体が独立した存在意義を持つようになったら新規ページを作成する。それ以外の場合は既存ページに詳細を追記し、相互参照を追加する。初期段階では、少数でも内容の濃いページを優先し、あるセクションがホストページの域を超えて肥大化したら独立したページへ分割する。
 
-## Workflows
+## ワークフロー
 
-**Ingest** — when the user adds a source: read it, discuss key takeaways, write a `sources/` summary, update `index.md`, update every relevant entity/concept page, flag contradictions with existing claims, append a `log.md` entry. A single source may touch 10–15 pages.
+**Ingest（取り込み）** — ユーザーが情報源を追加したとき: それを読み、要点を議論し、`sources/` に要約を書き、`index.md` を更新し、関連するすべてのエンティティ／コンセプトページを更新し、既存の主張との矛盾があれば指摘し、`log.md` に記録を追記する。1つの情報源が10〜15ページに影響することもある。
 
-**Query** — when the user asks a question: read `index.md`, drill into relevant pages, answer with citations. If the answer is durable (a comparison, analysis, or discovered connection), file it back as a new wiki page so explorations compound.
+**Query（問い合わせ）** — ユーザーが質問したとき: `index.md` を読み、関連ページを掘り下げ、引用付きで回答する。回答が継続的に価値を持つもの（比較・分析・新たに発見した関連性など）であれば、新規wikiページとして書き戻し、探索の成果が積み重なるようにする。
 
-**Lint** — periodically: find contradictions, stale claims, orphan pages, missing cross-references, concepts mentioned but lacking a page, and gaps a web search could fill. Report and propose fixes.
+**Lint** — 定期的に: 矛盾・古くなった主張・孤立したページ・欠落している相互参照・言及されているが専用ページのないコンセプト・Web検索で埋められそうなギャップを見つける。結果を報告し、修正案を提示する。
 
-## Log format
+## ログ形式
 
-Each `log.md` entry starts with a parseable prefix so `grep "^## \[" log.md | tail` works:
+各 `log.md` エントリは、`grep "^## \[" log.md | tail` でパースできるよう、決まった接頭辞で始める:
 
 ```
 ## [YYYY-MM-DD] ingest | <source title>
@@ -65,7 +65,7 @@ Each `log.md` entry starts with a parseable prefix so `grep "^## \[" log.md | ta
 ## [YYYY-MM-DD] lint   | <summary of findings>
 ```
 
-## Conventions log
+## 慣習ログ
 
-<!-- Append decisions you and the user make over time, so future sessions stay consistent.
-e.g. "2026-06-13: entity pages get a ## Timeline section when dates matter." -->
+<!-- ユーザーとあなたが時間をかけて決めてきた事項をここに追記し、今後のセッションでも一貫性を保てるようにする。
+例: 「2026-06-13: 日付が重要な意味を持つ場合、エンティティページには## Timelineセクションを設ける。」 -->

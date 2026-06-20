@@ -1,51 +1,51 @@
 ---
 name: "wiki-query"
-description: "Answer a question against an LLM-maintained wiki with citations, and file durable answers back as new wiki pages so explorations compound. Use when the user asks a question about their knowledge base, says 'what does the wiki say about…', 'compare X and Y from my notes', 'synthesize…', or wants an answer drawn from their accumulated sources."
+description: "LLMが管理するwikiに対して出典付きで質問に回答し、永続的な価値のある回答は新しいwikiページとして書き戻すことで調査結果を蓄積させる。ユーザーが知識ベースについて質問したとき、「wikiには〜について何が書いてある？」「自分のノートからXとYを比較して」「〜を統合して」と言ったとき、または蓄積した情報源に基づく回答を求めているときに使う。"
 ---
 
 # wiki-query
 
-Answer the user's question from the wiki, with citations — and, when the answer is durable, file it back so the exploration becomes part of the knowledge base instead of disappearing into chat history.
+wikiに基づいてユーザーの質問に出典付きで回答する。そして回答が永続的な価値を持つ場合は、それを書き戻して、調査結果がチャット履歴の中に消えてしまうのではなく知識ベースの一部になるようにする。
 
-Read the root `AGENTS.md` first and follow its conventions.
+最初にルートの `AGENTS.md` を読み、その規約に従うこと。
 
-## Procedure
+## 手順
 
-### 1. Find the relevant pages
+### 1. 関連ページを見つける
 
-Read `wiki/index.md` first to locate candidate pages, then drill into them. For larger wikis, shell out to the `wiki-search` helper (or `qmd`) for ranked full-text search instead of relying on the index alone. Follow `[[wikilinks]]` outward from the most relevant pages — the connections are often where the answer lives.
+まず `wiki/index.md` を読んで候補ページを特定し、そこから深く掘っていく。大規模なwikiでは、インデックスだけに頼るのではなく `wiki-search` ヘルパー（または `qmd`）を実行してランク付けされた全文検索を行う。最も関連性の高いページから `[[wikilinks]]` をたどっていく — つながりの中に答えがあることが多い。
 
-### 2. Synthesize an answer
+### 2. 回答を統合する
 
-Compose the answer from what the pages say. Cite the pages you drew from as `[[page]]` (and, through them, the underlying sources). If the wiki only partially answers the question, say so plainly and distinguish what's grounded in sources from what's inference. If there's a relevant gap, offer to fill it with a web search or a new source.
+ページに書かれている内容から回答を組み立てる。参照したページは `[[page]]` として引用する（そしてそのページを通じて、元となる情報源も示す）。wikiが質問に部分的にしか答えられない場合は、その旨を明確に述べ、出典に基づく部分と推論部分を区別する。関連するギャップがあれば、web検索や新しい情報源で埋めることを提案する。
 
-### 3. Choose the answer's form
+### 3. 回答の形式を選ぶ
 
-Match the format to the question:
+質問に合わせて形式を選択する。
 
-- a short prose answer for simple questions,
-- a markdown comparison table for "X vs Y",
-- a Marp slide deck for a presentation-shaped ask,
-- a matplotlib chart for something quantitative,
-- a new synthesis page for a broad "pull this together" request.
+- 単純な質問には短い文章での回答
+- 「XとYの比較」にはMarkdownの比較表
+- プレゼンテーション形式の依頼にはMarpスライドデック
+- 量的なものにはmatplotlibのチャート
+- 広範な「まとめて」という依頼には新しい統合ページ
 
-### 4. File durable answers back
+### 4. 永続的な回答を書き戻す
 
-This is what makes the wiki compound. If the answer is more than a quick lookup — a comparison, an analysis, a discovered connection, a synthesis — file it back as a new page:
+これがwikiを蓄積させる仕組みだ。回答が単純な検索以上のもの — 比較、分析、発見したつながり、統合 — であれば、新しいページとして書き戻す。
 
-- Create `wiki/concepts/<slug>.md` (or a `wiki/syntheses/` page) with normal frontmatter, marking it as a derived/answer page in `tags`.
-- Add `[[wikilinks]]` to every page it draws on, and add reciprocal links back from those pages.
-- Add it to `wiki/index.md`.
-- Append a log entry:
+- `wiki/concepts/<slug>.md`（または `wiki/syntheses/` ページ）を通常のフロントマター付きで作成し、`tags` に派生/回答ページであることを示すマークを付ける。
+- そのページが参照しているすべてのページへ `[[wikilinks]]` を追加し、それらのページからも相互リンクを追加する。
+- `wiki/index.md` に追加する。
+- ログエントリを追記する。
   `## [YYYY-MM-DD] query | <question> → filed as [[page]]`
 
-Ask the user before filing if it's ambiguous whether the answer is worth keeping; for clearly durable results, file it and tell them. Don't file ephemeral lookups ("what year was X published") — those add noise.
+回答を残す価値があるか曖昧な場合はユーザーに確認してから書き戻す。明らかに永続的な価値がある結果については、書き戻してからその旨を伝える。一時的な検索（「Xが出版されたのは何年？」など）は書き戻さない — それらはノイズになる。
 
-### 5. Report
+### 5. 報告
 
-Give the user the answer, the citations, and — if you filed something — the new page name so they can browse it.
+ユーザーに回答と出典を提示し、何かを書き戻した場合は新しいページ名も伝えて、後から参照できるようにする。
 
-## Notes
+## 補足
 
-- Never fabricate citations. If a claim isn't on a page, mark it as your own inference.
-- Surface contradictions you encounter while answering rather than silently picking one side — they're often the most interesting part, and may warrant a `wiki-lint` follow-up.
+- 出典を絶対に偽造しない。あるページに書かれていない主張は、自分自身の推論であると明示する。
+- 回答中に矛盾を見つけた場合は、黙ってどちらかの説を採用するのではなく明示する — それらはしばしば最も興味深い部分であり、`wiki-lint` のフォローアップが必要になることもある。

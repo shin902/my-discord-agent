@@ -1,60 +1,60 @@
 ---
 name: "wiki-setup"
-description: "Bootstrap an LLM-maintained personal wiki (the raw → wiki → schema three-layer pattern). Use when the user wants to start a new knowledge base, set up a wiki, scaffold an Obsidian vault for an agent, or says things like 'initialize the wiki', 'set up my knowledge base', or 'create the wiki structure'."
+description: "LLMが維持する個人用wiki（raw → wiki → schemaの三層構造パターン）を初期構築する。ユーザーが新しいナレッジベースを始めたい、wikiを構築したい、エージェント用のObsidian vaultを足場として作りたい場合、または「wikiを初期化して」「ナレッジベースをセットアップして」「wiki構造を作って」のように言われた場合に使う。"
 ---
 
 # wiki-setup
 
-Scaffold a fresh LLM-maintained wiki: a persistent, interlinked markdown knowledge base that you (the agent) build and keep current as the user adds sources. This is the one-time initializer. After setup, day-to-day work uses `wiki-ingest`, `wiki-query`, and `wiki-lint`.
+新しいLLM管理wikiを足場から構築する。これはあなた（エージェント）が構築し、ユーザーがソースを追加するたびに最新の状態に保つ、永続的で相互リンクされたMarkdownナレッジベースである。これは一回限りの初期化処理である。セットアップ後の日常的な作業は `wiki-ingest`・`wiki-query`・`wiki-lint` を使う。
 
-## The model in one paragraph
+## モデルの概要（一段落で）
 
-Three layers. **Raw sources** (`raw/`) are immutable inputs the user curates — articles, PDFs, notes, images. **The wiki** (`wiki/`) is markdown you own entirely — summaries, entity pages, concept pages, an index, a log. **The schema** (`AGENTS.md` at the root) is the rulebook that turns you from a generic chatbot into a disciplined wiki maintainer. The user curates and asks; you do all the summarizing, cross-referencing, filing, and bookkeeping.
+三層構造になっている。**生ソース**（`raw/`）はユーザーが整理する不変の入力データ — 記事、PDF、ノート、画像など。**wiki**（`wiki/`）はあなたが完全に所有するMarkdown — 要約、エンティティページ、コンセプトページ、インデックス、ログ。**スキーマ**（ルートの `AGENTS.md`）は、あなたを汎用チャットボットから規律あるwikiメンテナーへと変えるルールブックである。ユーザーは整理して質問し、あなたが要約・相互参照・整理・記録のすべてを行う。
 
-## Steps
+## 手順
 
-### 1. Confirm location and purpose
+### 1. 場所と目的を確認する
 
-Work in the user's selected folder. Before scaffolding anything, ask the user directly (in plain conversation, not just inferring) what the wiki is for — this shapes the schema. At minimum, ask:
+ユーザーが選択したフォルダで作業する。何かを構築する前に、wikiが何のためのものかをユーザーに直接尋ねる（推測だけで済ませず、普通の会話の中で聞く）— これがスキーマの形を決める。最低限、以下を確認する:
 
-- **Primary purpose**: personal knowledge / research deep-dive / reading a book / team or domain wiki / something else.
-- **What kinds of sources** will feed it (articles, PDFs, meeting notes, papers, images...) — affects `raw/` conventions and whether OCR/image-summary handling matters.
-- **Update cadence and scale**: a few sources a week vs. heavy daily ingest — affects whether `wiki-search` is enough from day one or `qmd` should be set up immediately.
+- **主な目的**: 個人的な知識管理 / 研究の深掘り / 読書記録 / チームやドメイン向けwiki / その他。
+- **どんな種類のソース**を入れていくか（記事、PDF、会議メモ、論文、画像など）— `raw/` の運用規則やOCR・画像要約処理が必要かどうかに影響する。
+- **更新の頻度と規模**: 週に数件程度か、毎日大量に取り込むか — 初日から `wiki-search` で十分か、すぐに `qmd` を導入すべきかに影響する。
 
-Don't proceed to scaffolding until you have real answers, not assumptions — these decisions are expensive to unwind once pages exist. If the user is vague, ask a follow-up rather than defaulting silently.
+推測ではなく実際の回答を得るまで、構築作業に進まないこと — ページができてしまった後にこれらの判断を覆すのはコストが高い。ユーザーの回答が曖昧な場合は、黙って既定値を採用するのではなく、追加で質問すること。
 
-### 2. Create the directory structure
+### 2. ディレクトリ構造を作成する
 
 ```
 <root>/
-  AGENTS.md          # the schema (rulebook) — see step 3
-  raw/               # immutable source files (user-owned)
-    assets/          # downloaded images referenced by sources
-  wiki/              # LLM-owned markdown
-    index.md         # catalog of every page (content-oriented)
-    log.md           # append-only chronological record
-    overview.md      # the top-level synthesis / entry point
-    sources/         # one summary page per ingested source
-    entities/        # people, orgs, products, places, etc.
-    concepts/        # ideas, themes, topics
+  AGENTS.md          # スキーマ（ルールブック） — 手順3を参照
+  raw/               # 不変のソースファイル（ユーザー所有）
+    assets/          # ソースから参照されるダウンロード画像
+  wiki/              # LLMが所有するMarkdown
+    index.md         # 全ページのカタログ（コンテンツ中心の一覧）
+    log.md           # 追記専用の時系列記録
+    overview.md      # トップレベルの統合ページ／入口
+    sources/         # 取り込んだソースごとの要約ページ
+    entities/        # 人物・組織・製品・場所など
+    concepts/        # アイデア・テーマ・トピック
 ```
 
-Create the folders and seed `index.md`, `log.md`, and `overview.md` (see step 4). Don't invent content — only structure plus empty/placeholder pages.
+フォルダを作成し、`index.md`・`log.md`・`overview.md` を初期化する（手順4を参照）。内容を創作しないこと — 構造と空のプレースホルダーページのみを用意する。
 
-`index.md` and `log.md` must exist exactly once, directly under `wiki/` — never create a same-named page in a subdirectory (e.g. `sources/index.md`), since `wiki-lint` only treats the wiki-root copies as special.
+`index.md` と `log.md` は `wiki/` 直下にそれぞれ一つだけ存在しなければならない — サブディレクトリ内に同名のページ（例: `sources/index.md`）を作らないこと。`wiki-lint` はwikiルート直下のものだけを特別扱いするためである。
 
-### 3. Write AGENTS.md (the schema)
+### 3. AGENTS.md（スキーマ）を書く
 
-This is the most important file. It is read at the start of every future session and is what keeps the wiki consistent. Write it tailored to the chosen purpose. It must cover:
+これが最も重要なファイルである。今後のすべてのセッション開始時に読み込まれ、wikiの一貫性を保つ役割を担う。選択された目的に合わせて書くこと。以下を必ず含めること:
 
-- **Layers & rules**: `raw/` is read-only source-of-truth; `wiki/` is yours to write; never edit `raw/`.
-- **Page conventions**: file naming (kebab-case), one entity/concept per page, YAML frontmatter on every wiki page (see below), `[[wikilinks]]` for cross-references so Obsidian's graph view works.
-- **When to create a new page vs. edit an existing one**: create a page when a distinct entity/concept recurs across sources or earns its own identity; otherwise fold the detail into an existing page and add a cross-reference. Err toward fewer, richer pages early on; split when a section outgrows its host.
-- **Workflows**: point to the ingest / query / lint procedures (the companion skills) and summarize each in a sentence so the agent follows them even without the skill loaded.
-- **Index & log discipline**: update `index.md` on every ingest; append to `log.md` for every ingest, query-filed-back, and lint pass, using the prefix format `## [YYYY-MM-DD] <op> | <title>`.
-- **Citations**: wiki claims cite their source page; source pages link back to the file in `raw/`.
+- **層とルール**: `raw/` は読み取り専用の正データ、`wiki/` はあなたが書き込む領域、`raw/` は絶対に編集しないこと。
+- **ページの規則**: ファイル名（kebab-case）、1ページにエンティティ／コンセプトを1つだけ、すべてのwikiページにYAMLフロントマター（後述）、Obsidianのグラフビューが機能するように相互参照には `[[wikilinks]]` 記法を使うこと。
+- **新規ページを作るか既存ページを編集するかの判断基準**: 複数のソースに渡って繰り返し登場する、あるいは独立した識別性を持つエンティティ／コンセプトには新規ページを作る。それ以外は既存ページに詳細を統合し、相互参照を追加する。最初は少数の充実したページを優先し、セクションが肥大化したら分割する。
+- **ワークフロー**: 取り込み／検索／lintの手順（対になるスキル群）を参照し、スキルが読み込まれていない場合でもエージェントが従えるように、それぞれを一文で要約しておく。
+- **インデックスとログの規律**: 取り込みごとに `index.md` を更新する。取り込み・検索結果の反映・lintの実行ごとに `log.md` に追記し、`## [YYYY-MM-DD] <op> | <title>` という接頭フォーマットを使う。
+- **引用**: wiki内の主張は元のソースページを引用する。ソースページは `raw/` 内のファイルへリンクし返す。
 
-Use this frontmatter convention on every wiki page (Dataview/Bases-friendly):
+すべてのwikiページで以下のフロントマター規則を使う（Dataview/Bases対応）:
 
 ```yaml
 ---
@@ -67,21 +67,21 @@ tags: []
 ---
 ```
 
-A ready-to-edit starter is in `assets/AGENTS.md.template` — copy it to the root and adapt the purpose-specific sections.
+すぐに編集できる雛形が `assets/AGENTS.md.template` にある — これをルートにコピーし、目的に応じたセクションを調整すること。
 
-### 4. Seed the navigation files
+### 4. ナビゲーションファイルを初期化する
 
-`index.md` — headed catalog with empty category sections (Overview, Sources, Entities, Concepts), each a bulleted list of `[[page]] — one-line summary`.
+`index.md` — 見出し付きカタログとし、カテゴリーごとの空セクション（Overview、Sources、Entities、Concepts）を用意する。各セクションは `[[page]] — 一行要約` の箇条書きとする。
 
-`log.md` — a single header plus the first entry:
+`log.md` — 単一の見出しと最初のエントリのみ:
 `## [<today>] setup | wiki initialized`
 
-`overview.md` — a short stub stating the wiki's purpose and that it will grow as sources are ingested. Link `[[index]]`.
+`overview.md` — wikiの目的と、ソースが取り込まれるにつれて成長していくことを述べる短いスタブ。`[[index]]` へリンクする。
 
-### 5. Optional tooling
+### 5. 任意のツール
 
-Mention, don't force: Obsidian as the browsing frontend (graph view, Web Clipper for capturing sources, Bases/Dataview over frontmatter, Marp for slides); `git init` so the wiki gets free version history; a search tool (the `wiki-search` helper, or `qmd`) once the wiki outgrows the index file.
+強制せず、案として伝える: 閲覧フロントエンドとしてのObsidian（グラフビュー、ソース収集用のWeb Clipper、フロントマターを扱うBases/Dataview、スライド用のMarp）、無料でバージョン履歴を得るための `git init`、wikiがindexファイルだけでは追いつかなくなった時点での検索ツール（`wiki-search` ヘルパー、または `qmd`）。
 
-### 6. Hand off
+### 6. 引き渡し
 
-Tell the user the structure is ready, show the tree, and explain the loop: drop sources into `raw/` → run ingest → ask questions via query → run lint periodically. Confirm the `AGENTS.md` purpose section matches what they want before finishing.
+構造が準備できたことをユーザーに伝え、ツリーを示し、運用の流れを説明する: `raw/` にソースを置く → 取り込みを実行する → 検索で質問する → 定期的にlintを実行する。完了前に、`AGENTS.md` の目的セクションがユーザーの望むものと一致しているか確認すること。

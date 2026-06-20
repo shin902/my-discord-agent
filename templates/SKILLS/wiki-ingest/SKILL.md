@@ -1,42 +1,42 @@
 ---
 name: "wiki-ingest"
-description: "Ingest a new source into an LLM-maintained wiki: read it, summarize it, and integrate it across entity/concept pages, the index, and the log. Use when the user drops a file into raw/, shares a URL/article/PDF/note to file, or says things like 'ingest this', 'add this source', 'process this into the wiki', or 'file this away'."
+description: "新しいソースをLLMが管理するwikiに取り込む: 読み込み、要約し、エンティティ/コンセプトページ・インデックス・ログ全体に統合する。ユーザーがraw/にファイルを置いたとき、URL/記事/PDF/メモを共有したとき、または「これを取り込んで」「このソースを追加して」「wikiに反映して」「これをファイルしておいて」のように言ったときに使う。"
 ---
 
 # wiki-ingest
 
-Integrate one source into the wiki so its knowledge is *compiled in*, not just stored. The goal is not a summary that sits alone — it's updating the whole connected graph so the next question is already answered. A single source typically touches 10–15 pages.
+1つのソースをwikiに統合し、その知識を単に保存するのではなく*組み込む*。目標は単独で存在する要約ではなく、次の質問にすでに答えられるよう接続されたグラフ全体を更新することにある。1つのソースは通常10〜15ページに影響する。
 
-Read the root `AGENTS.md` first; follow its conventions over anything here if they conflict.
+まずルートの `AGENTS.md` を読むこと。矛盾する場合はここに書かれている内容よりそちらの規約を優先する。
 
-## Procedure
+## 手順
 
-### 1. Locate and read the source
+### 1. ソースを特定して読む
 
-The source lives in `raw/` (or the user just provided it — if so, save a copy into `raw/` first, since raw is the immutable record). Read it fully. For sources with images, read the text first, then view the referenced images separately for additional context — and write the key visual details into the summary as text so future reads don't need the images. For web articles, prefer a markdown capture (e.g. Obsidian Web Clipper) saved into `raw/`.
+ソースは `raw/` にある（あるいはユーザーがちょうど提供したものであれば、rawは不変の記録なので、まずそのコピーを `raw/` に保存する）。全体を読み込む。画像を含むソースの場合は、まずテキストを読み、その後参照されている画像を個別に確認して追加の文脈を得る。さらに重要な視覚的詳細はテキストとして要約に書き込み、今後の読み込みで画像を再度見る必要がないようにする。Web記事の場合は、Markdownキャプチャ（例: Obsidian Web Clipper）を `raw/` に保存することを優先する。
 
-### 2. Discuss takeaways
+### 2. 要点について話し合う
 
-Before writing, surface the key takeaways to the user in a few sentences: what's new here, what it confirms, what it contradicts. Let them steer emphasis. (Skip the back-and-forth only if the user asked for batch/unsupervised ingest.)
+書き始める前に、ユーザーに数文で要点を提示する: 何が新しいのか、何を裏付けるのか、何と矛盾するのか。強調点はユーザーに決めてもらう（ユーザーがバッチ/無人取り込みを求めた場合のみ、このやり取りを省略する）。
 
-### 3. Write the source summary page
+### 3. ソース要約ページを書く
 
-Create `wiki/sources/<slug>.md` with frontmatter (`type: source`, `created`/`updated` = today, `sources: []`, a link to the raw file). Include: a tight summary, the key claims/facts worth retaining, notable quotes or figures, and a `## Connections` section listing the entities and concepts it touches as `[[wikilinks]]`.
+`wiki/sources/<slug>.md` をフロントマター付きで作成する（`type: source`、`created`/`updated` は今日の日付、`sources: []`、rawファイルへのリンク）。含めるべき内容: 簡潔な要約、保持すべき重要な主張/事実、注目すべき引用や数値、そしてそのソースが触れるエンティティとコンセプトを `[[wikilinks]]` として列挙する `## Connections` セクション。
 
-### 4. Propagate across the wiki
+### 4. wiki全体へ反映する
 
-This is the real work. For each entity and concept the source touches:
+これが本質的な作業である。ソースが触れる各エンティティ・コンセプトについて:
 
-- If a page exists, **update it** — add the new fact, strengthen or revise the synthesis, and add a citation to the source page.
-- If a distinct entity/concept recurs or earns its own identity and has no page, **create one** (follow the `AGENTS.md` new-page-vs-edit rule).
-- **Flag contradictions explicitly.** When the new source disagrees with an existing claim, don't silently overwrite — note both, mark which is newer, and surface it. Add a `> ⚠️ Contradiction:` callout on the affected page.
-- Add reciprocal `[[wikilinks]]` so connections are bidirectional, and update `overview.md` if the source shifts the big picture.
+- ページが既にあれば**更新する** — 新しい事実を追加し、統合的な説明を強化または修正し、ソースページへの引用を加える。
+- 明確なエンティティ/コンセプトが繰り返し登場し独自性を持つにもかかわらずページがなければ、**新規作成する**（`AGENTS.md` の新規作成 vs 編集のルールに従う）。
+- **矛盾は明示的にフラグを立てる。** 新しいソースが既存の主張と食い違う場合、黙って上書きせず、両方を記載し、どちらが新しいかを示し、表面化させる。影響を受けるページに `> ⚠️ Contradiction:` のコールアウトを追加する。
+- 接続が双方向になるよう相互の `[[wikilinks]]` を追加し、ソースが全体像を変える場合は `overview.md` も更新する。
 
-### 5. Update the index
+### 5. インデックスを更新する
 
-Add the new source page (and any newly created entity/concept pages) to `wiki/index.md` under the right category, each as `[[page]] — one-line summary`.
+新しいソースページ（および新規作成したエンティティ/コンセプトページ）を、適切なカテゴリの下の `wiki/index.md` に `[[page]] — 一行要約` の形式で追加する。
 
-### 6. Append to the log
+### 6. ログに追記する
 
 ```
 ## [YYYY-MM-DD] ingest | <source title>
@@ -45,12 +45,12 @@ Add the new source page (and any newly created entity/concept pages) to `wiki/in
 - contradictions: <none | brief note>
 ```
 
-### 7. Report
+### 7. 報告する
 
-Tell the user concisely: what page was created, which pages were updated/created, and any contradictions flagged — so they can browse the changes (e.g. in Obsidian's graph view).
+ユーザーに簡潔に伝える: どのページが作成されたか、どのページが更新/作成されたか、フラグが立てられた矛盾があるか。これにより変更内容を確認できる（例: Obsidianのグラフビューで）。
 
-## Notes
+## 補足
 
-- Stay disciplined about citations: every new claim on a wiki page traces back to a source page.
-- Prefer touching more pages with small, accurate edits over one big dump on the summary page — the value is in the cross-references.
-- If the source is large, you can shell out to the `wiki-search` helper to find which existing pages already mention its entities before deciding create-vs-edit.
+- 引用については規律を保つこと: wikiページ上の新しい主張は必ずソースページに遡れるようにする。
+- 要約ページに大量の情報を一括投入するより、より多くのページに小さく正確な編集を加えることを優先する — 価値は相互参照にある。
+- ソースが大規模な場合、`wiki-search` ヘルパーを使って、既存のどのページがすでにそのエンティティに言及しているかを確認した上で新規作成か編集かを判断するとよい。

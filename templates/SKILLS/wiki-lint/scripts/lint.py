@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Read-only health checker for an LLM-maintained wiki.
+"""LLMが運用するwikiの読み取り専用ヘルスチェッカー。
 
-Reports mechanical issues only — it never edits the wiki. The agent reads this
-report, does the judgment-based checks, and applies fixes with the user's sign-off.
+機械的に検出できる問題のみを報告する — wikiを編集することは一切ない。
+エージェントがこのレポートを読み、判断が必要なチェックを行い、
+ユーザーの承認を得てから修正を適用する。
 
-Usage:
-    python3 lint.py [WIKI_DIR]      # WIKI_DIR defaults to ./wiki
+使い方:
+    python3 lint.py [WIKI_DIR]      # WIKI_DIR省略時は ./wiki
 """
 import os
 import re
@@ -19,19 +20,19 @@ STALE_DAYS = 120
 
 
 def slug(path, root):
-    """Unique key for a page: relative path without extension (e.g. 'entities/alice')."""
+    """ページの一意キー: 拡張子を除いた相対パス（例: 'entities/alice'）。"""
     rel = os.path.relpath(path, root)
     return os.path.splitext(rel)[0].replace(os.sep, "/")
 
 
 def normalize_name(name):
-    """Normalize a name the same way a [[wikilink]] target is normalized, so
-    filename-derived keys and link-derived keys are comparable.
+    """[[wikilink]]のターゲットと同じ方法で名前を正規化し、
+    ファイル名由来のキーとリンク由来のキーを比較可能にする。
 
-    Absorbs common spacing notation variants — half-width space, full-width
-    space (U+3000, common in Japanese text), and underscore — by folding them
-    all to hyphens, so e.g. "my page", "my_page", "my　page", and "my-page"
-    all normalize to the same key."""
+    半角スペース、全角スペース（U+3000、日本語テキストで一般的）、
+    アンダースコアといった表記揺れをすべてハイフンに変換して吸収する。
+    例えば "my page"、"my_page"、"my　page"、"my-page" はすべて
+    同じキーに正規化される。"""
     return (
         name.strip()
         .lower()
@@ -42,16 +43,18 @@ def normalize_name(name):
 
 
 def basename_slug(path):
-    """Bare name a [[wikilink]] refers to, e.g. 'alice' for both entities/alice.md and concepts/alice.md.
-    Normalized to match wikilink targets (kebab-case filenames are a convention, not a guarantee)."""
+    """[[wikilink]]が参照する裸の名前。例えば entities/alice.md と
+    concepts/alice.md の両方に対して 'alice'。
+    wikilinkのターゲットに合わせて正規化される（kebab-caseのファイル名は
+    あくまで慣習であり保証ではない）。"""
     return normalize_name(os.path.splitext(os.path.basename(path))[0])
 
 
 def is_root_special(path, root):
-    """True only for index.md / log.md sitting directly at the wiki root.
-    A same-named file in a subdirectory (e.g. sources/index.md) is a regular
-    page, not the wiki's special index/log — basename alone can't tell the
-    two apart, so we check the relative path instead."""
+    """wikiルートに直接置かれた index.md / log.md の場合のみ True を返す。
+    サブディレクトリ内の同名ファイル（例: sources/index.md）は通常の
+    ページであり、wiki特有のindex/logではない — basenameだけでは
+    両者を区別できないため、相対パスをチェックする。"""
     rel = os.path.relpath(path, root).replace(os.sep, "/")
     return rel in ("index.md", "log.md")
 
@@ -71,13 +74,13 @@ def parse_frontmatter(text):
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "wiki"
     if not os.path.isdir(root):
-        print(f"error: wiki dir not found: {root}", file=sys.stderr)
+        print(f"エラー: wikiディレクトリが見つかりません: {root}", file=sys.stderr)
         sys.exit(1)
 
-    pages = {}          # unique slug (relpath w/o ext) -> path
-    by_basename = {}    # bare wikilink name -> list of unique slugs sharing it
-    outlinks = {}       # unique slug -> set(target bare names)
-    inlinks = {}        # unique slug -> count
+    pages = {}          # 一意スラッグ（拡張子なし相対パス） -> パス
+    by_basename = {}    # 裸のwikilink名 -> それを共有する一意スラッグのリスト
+    outlinks = {}       # 一意スラッグ -> set(ターゲットの裸の名前)
+    inlinks = {}        # 一意スラッグ -> カウント
     no_frontmatter = []
     bad_frontmatter = []
     stale = []
@@ -89,8 +92,8 @@ def main():
             if f.endswith(".md"):
                 md_files.append(os.path.join(dirpath, f))
 
-    special_slugs = set()      # slugs of the root-level index.md / log.md
-    misplaced_special = []     # index.md/log.md found outside the wiki root
+    special_slugs = set()      # ルート直下のindex.md / log.mdのスラッグ
+    misplaced_special = []     # wikiルート以外で見つかったindex.md/log.md
 
     for path in md_files:
         s = slug(path, root)
@@ -125,11 +128,11 @@ def main():
                 except ValueError:
                     pass
 
-    # bare names that resolve to more than one page (e.g. entities/alice.md and concepts/alice.md)
+    # 複数のページに解決される裸の名前（例: entities/alice.md と concepts/alice.md）
     collisions = {b: sorted(slugs) for b, slugs in by_basename.items()
                   if len(slugs) > 1 and not (special_slugs & set(slugs))}
 
-    # resolve inbound links, broken links, and ambiguous links (collisions referenced by a wikilink)
+    # インバウンドリンク、リンク切れ、曖昧なリンク（wikilinkで参照されたcollision）を解決する
     broken = {}
     ambiguous = {}
     for s, targets in outlinks.items():
@@ -145,8 +148,8 @@ def main():
     orphans = [s for s, n in inlinks.items()
                if n == 0 and s not in special_slugs]
 
-    # index coverage — resolve the root index.md unambiguously via special_slugs,
-    # not by basename (a subdirectory index.md must never be mistaken for it)
+    # indexカバレッジ — basenameではなくspecial_slugsを使ってルートのindex.mdを
+    # 一意に解決する（サブディレクトリのindex.mdを誤って取得してはならない）
     index_root_slugs = [s for s in special_slugs if basename_slug(pages[s]) == "index"]
     index_path = pages.get(index_root_slugs[0]) if index_root_slugs else None
     in_index = set()
@@ -159,38 +162,38 @@ def main():
                     and basename_slug(pages[s]) not in in_index] if index_path else []
     index_dangling = [t for t in in_index if t not in by_basename]
 
-    # ---- report ----
+    # ---- レポート ----
     def section(title, items, fmt):
         print(f"\n## {title} ({len(items)})")
         if not items:
-            print("  none")
+            print("  なし")
         for it in items:
             print("  - " + fmt(it))
 
-    print(f"# wiki-lint report — {root} — {len(pages)} pages — {today}")
-    section("Slug collisions (same filename in multiple folders)", sorted(collisions.items()),
+    print(f"# wiki-lint レポート — {root} — {len(pages)} ページ — {today}")
+    section("スラッグの衝突（同じファイル名が複数フォルダに存在）", sorted(collisions.items()),
             lambda kv: f"{kv[0]} -> {', '.join(kv[1])}")
-    section("Orphan pages (no inbound links)", sorted(orphans), str)
-    section("Broken wikilinks", sorted(broken.items()),
+    section("孤立ページ（インバウンドリンクなし）", sorted(orphans), str)
+    section("リンク切れのwikilink", sorted(broken.items()),
             lambda kv: f"{kv[0]} -> {', '.join(sorted(kv[1]))}")
-    section("Ambiguous wikilinks (target name has multiple matching pages)", sorted(ambiguous.items()),
+    section("曖昧なwikilink（ターゲット名が複数ページに一致）", sorted(ambiguous.items()),
             lambda kv: f"{kv[0]} -> {', '.join(sorted(kv[1]))}")
-    section("Missing frontmatter", sorted(no_frontmatter), str)
-    section("Incomplete frontmatter", sorted(bad_frontmatter),
-            lambda kv: f"{kv[0]} (missing: {', '.join(kv[1])})")
-    section(f"Stale pages (>{STALE_DAYS}d since updated)", sorted(stale),
-            lambda t: f"{t[0]} (updated {t[1]}, {t[2]}d ago)")
-    section("Pages missing from index.md", sorted(not_in_index), str)
-    section("index.md entries with no page", sorted(index_dangling), str)
-    section("Misplaced index.md/log.md (outside wiki root, treated as a regular page)",
+    section("frontmatterの欠落", sorted(no_frontmatter), str)
+    section("frontmatterの不足", sorted(bad_frontmatter),
+            lambda kv: f"{kv[0]} (不足: {', '.join(kv[1])})")
+    section(f"古いページ（更新から{STALE_DAYS}日超）", sorted(stale),
+            lambda t: f"{t[0]} (更新日 {t[1]}、{t[2]}日前)")
+    section("index.mdに記載のないページ", sorted(not_in_index), str)
+    section("index.mdに記載されているがページが存在しないエントリ", sorted(index_dangling), str)
+    section("誤った位置のindex.md/log.md（wikiルート外、通常ページとして扱う）",
             sorted(misplaced_special), str)
     if not index_path:
-        print("\n! no index.md found at wiki root")
+        print("\n! wikiルートにindex.mdが見つかりません")
 
     total = (len(collisions) + len(orphans) + len(broken) + len(ambiguous) +
              len(no_frontmatter) + len(bad_frontmatter) + len(stale) +
              len(not_in_index) + len(index_dangling) + len(misplaced_special))
-    print(f"\n# total mechanical issues: {total}")
+    print(f"\n# 機械的に検出された問題の総数: {total}")
 
 
 if __name__ == "__main__":

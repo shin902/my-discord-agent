@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for search.py. Run with: python3 -m unittest test_search -v"""
+"""search.pyの単体テスト。実行方法: python3 -m unittest test_search -v"""
 import importlib.util
 import os
 import sys
@@ -47,8 +47,8 @@ class TestTokenize(unittest.TestCase):
         self.assertEqual(search.tokenize("Hello World"), ["hello", "world"])
 
     def test_cjk_only_query_is_not_empty(self):
-        """Regression test: an all-Japanese query used to produce zero tokens
-        because WORD is ascii-only, causing 'error: empty query'."""
+        """回帰テスト: 全て日本語のクエリは、WORDがASCII限定であるため
+        以前はトークンが0個になり、'エラー: クエリが空です' を引き起こしていた。"""
         toks = search.tokenize("情報")
         self.assertNotEqual(toks, [])
 
@@ -62,7 +62,7 @@ class TestSearchCLI(SearchTestCase):
     def test_no_matches(self):
         write(self.root, "a.md", "---\ntitle: A\n---\nnothing relevant here\n")
         out = self.run_search("zzzznomatch")
-        self.assertIn("no matches", out)
+        self.assertIn("一致するページがありません", out)
 
     def test_ascii_query_finds_page(self):
         write(self.root, "entities/agents.md", "---\ntitle: Agents\n---\nAGENTS.md is the schema file.\n")
@@ -70,7 +70,7 @@ class TestSearchCLI(SearchTestCase):
         self.assertIn("entities/agents.md", out)
 
     def test_japanese_only_query_does_not_error(self):
-        """Regression test: previously exited 1 with 'error: empty query'."""
+        """回帰テスト: 以前は終了コード1で 'エラー: クエリが空です' となっていた。"""
         write(self.root, "sources/note.md", "---\ntitle: Note\n---\n日本語の情報を含むページです。\n")
         out = self.run_search("情報")
         self.assertIn("sources/note.md", out)
