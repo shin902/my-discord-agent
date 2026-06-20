@@ -63,6 +63,12 @@ describe("read", () => {
     ).rejects.toThrow("アクセス拒否");
   });
 
+  it("/workspace プレフィックス + トラバーサルも拒否", async () => {
+    await expect(
+      readTool.execute("call-1", { path: "/workspace/../../etc/passwd" }),
+    ).rejects.toThrow("アクセス拒否");
+  });
+
   it("/workspace 始まりの絶対パスも相対パスと同様に解決する", async () => {
     vi.mocked(readFile).mockResolvedValue("hello world" as never);
     const result = await readTool.execute("call-1", {
@@ -72,11 +78,13 @@ describe("read", () => {
     expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
   });
 
-  it("先頭が / の絶対パスも相対パスと同様に解決する", async () => {
+  it("/workspace 以外の絶対パスはコンテナ内の実パスとしてそのまま読む（追加マウント対応）", async () => {
     vi.mocked(readFile).mockResolvedValue("hello world" as never);
-    const result = await readTool.execute("call-1", { path: "/test.txt" });
+    const result = await readTool.execute("call-1", {
+      path: "/obsidian/wiki/index.md",
+    });
     expect(firstText(result)).toBe("hello world");
-    expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
   });
 
   it("画像ファイルは base64 の image content を返す", async () => {
@@ -142,6 +150,18 @@ describe("write", () => {
       recursive: true,
     });
   });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスとしてそのまま書き込む（追加マウント対応）", async () => {
+    await writeTool.execute("call-1", {
+      path: "/obsidian/wiki/index.md",
+      content: "hello",
+    });
+    expect(writeFile).toHaveBeenCalledWith(
+      "/obsidian/wiki/index.md",
+      "hello",
+      "utf-8",
+    );
+  });
 });
 
 describe("list", () => {
@@ -160,6 +180,19 @@ describe("list", () => {
     vi.mocked(readdir).mockResolvedValue([] as never);
     const result = await listTool.execute("call-1", { path: "" });
     expect(firstText(result)).toBe("(空のディレクトリ)");
+  });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま一覧する（追加マウント対応）", async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      { name: "index.md", isDirectory: () => false, isFile: () => true },
+    ] as never);
+    const result = await listTool.execute("call-1", {
+      path: "/obsidian/wiki",
+    });
+    expect(readdir).toHaveBeenCalledWith("/obsidian/wiki", {
+      withFileTypes: true,
+    });
+    expect(firstText(result)).toContain("file: index.md");
   });
 });
 
@@ -188,6 +221,21 @@ describe("edit", () => {
         newString: "x",
       }),
     ).rejects.toThrow("置換対象が見つかりません");
+  });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま編集する（追加マウント対応）", async () => {
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    await editTool.execute("call-1", {
+      path: "/obsidian/wiki/index.md",
+      oldString: "world",
+      newString: "sandbox",
+    });
+    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(writeFile).toHaveBeenCalledWith(
+      "/obsidian/wiki/index.md",
+      "hello sandbox",
+      "utf-8",
+    );
   });
 
   it("oldString が空文字列の場合はエラー", async () => {
@@ -230,6 +278,22 @@ describe("glob", () => {
     });
     expect(firstText(result)).toBe("(一致なし)");
   });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま検索する（追加マウント対応）", async () => {
+    async function* mockGlob() {
+      yield "index.md";
+    }
+    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    const result = await globTool.execute("call-1", {
+      pattern: "*.md",
+      path: "/obsidian/wiki",
+    });
+    expect(glob).toHaveBeenCalledWith("*.md", {
+      cwd: "/obsidian/wiki",
+      withFileTypes: false,
+    });
+    expect(firstText(result)).toContain("/obsidian/wiki/index.md");
+  });
 });
 
 describe("grep", () => {
@@ -244,6 +308,20 @@ describe("grep", () => {
     });
     expect(firstText(result)).toContain("test.txt:1: hello world");
     expect(firstText(result)).toContain("test.txt:3: hello sandbox");
+  });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま検索する（追加マウント対応）", async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    const result = await grepTool.execute("call-1", {
+      pattern: "hello",
+      path: "/obsidian/wiki/index.md",
+    });
+    expect(stat).toHaveBeenCalledWith("/obsidian/wiki/index.md");
+    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(firstText(result)).toContain(
+      "/obsidian/wiki/index.md:1: hello world",
+    );
   });
 
   it("ディレクトリを再帰検索する", async () => {
