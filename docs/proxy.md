@@ -89,6 +89,29 @@ Google Cloud Console での OAuth クライアント作成手順（OAuth 同意�
 - デバイスフローは `initCredentialProxyServer()`（ホスト起動時）で一度トリガーされる。これにより、Discordからの最初のカレンダー操作リクエストでデバイスフロー（最大30分）がブロックすることを避けている。認証に失敗・タイムアウトした場合はエラーログを出すのみで、ホストの起動自体は継続する（以後のカレンダー系ツール呼び出しは502になる）。
 - `msal` と同様、`google` フィールドはサンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
 
+### Reddit OAuth（agent-reach の reddit サービス用）
+
+Reddit は未認証の `.json` API アクセスを一律ブロックするため、`client_credentials` グラント（アプリ単位の読み取り専用トークン）で `oauth.reddit.com` にアクセスする。個人・非商用利用は無料（100 QPM まで）。
+
+Reddit アプリの作成手順（client_id / client_secret の取得）は [`docs/reddit-oauth-setup.md`](./reddit-oauth-setup.md) を参照。
+
+```json
+{
+  "provider": "reddit",
+  "baseUrl": "https://oauth.reddit.com",
+  "reddit": {
+    "clientId": "YOUR_REDDIT_CLIENT_ID",
+    "clientSecretEnvVar": "REDDIT_CLIENT_SECRET"
+  }
+}
+```
+
+- `reddit.com/prefs/apps` で **script** タイプのアプリを作成すると `client_id`（アプリ名の下に表示される文字列）と `client_secret` が発行される。
+- アクセストークンはプロキシ内のメモリにのみキャッシュされ、期限切れ（約1時間）の60秒前に自動再取得する。Google OAuth と異なりリフレッシュトークンやデバイスフローは不要（アプリ単位の認可のため）。
+- `clientSecretEnvVar` が未設定の場合、そのプロバイダーの初期化はスキップされ、警告ログが出る（リクエストは 502 になる）。
+- `reddit` フィールドは `msal` / `google` と同様、サンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
+- `agent-reach` ツールの reddit サービスは `resolveProxyBaseUrl("reddit")` でこのプロキシ経由のURLを構築する。
+
 ### その他の pi-ai 対応プロバイダ
 
 以下のプロバイダも pi-ai では対応しているが、現状未検証・未使用のため `config.example.json` からは除外している。必要に応じて手動で追加可能：

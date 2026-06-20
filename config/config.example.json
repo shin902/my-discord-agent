@@ -54,6 +54,14 @@
       }
     },
     {
+      "provider": "reddit",
+      "baseUrl": "https://oauth.reddit.com",
+      "reddit": {
+        "clientId": "YOUR_REDDIT_CLIENT_ID",
+        "clientSecretEnvVar": "REDDIT_CLIENT_SECRET"
+      }
+    },
+    {
       "provider": "opencode-go",
       "envVars": ["OPENCODE_API_KEY"],
       "baseUrl": "https://opencode.ai/zen/go/v1"
