@@ -181,6 +181,19 @@ describe("list", () => {
     const result = await listTool.execute("call-1", { path: "" });
     expect(firstText(result)).toBe("(空のディレクトリ)");
   });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま一覧する（追加マウント対応）", async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      { name: "index.md", isDirectory: () => false, isFile: () => true },
+    ] as never);
+    const result = await listTool.execute("call-1", {
+      path: "/obsidian/wiki",
+    });
+    expect(readdir).toHaveBeenCalledWith("/obsidian/wiki", {
+      withFileTypes: true,
+    });
+    expect(firstText(result)).toContain("file: index.md");
+  });
 });
 
 describe("edit", () => {
@@ -208,6 +221,21 @@ describe("edit", () => {
         newString: "x",
       }),
     ).rejects.toThrow("置換対象が見つかりません");
+  });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま編集する（追加マウント対応）", async () => {
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    await editTool.execute("call-1", {
+      path: "/obsidian/wiki/index.md",
+      oldString: "world",
+      newString: "sandbox",
+    });
+    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(writeFile).toHaveBeenCalledWith(
+      "/obsidian/wiki/index.md",
+      "hello sandbox",
+      "utf-8",
+    );
   });
 
   it("oldString が空文字列の場合はエラー", async () => {
@@ -280,6 +308,20 @@ describe("grep", () => {
     });
     expect(firstText(result)).toContain("test.txt:1: hello world");
     expect(firstText(result)).toContain("test.txt:3: hello sandbox");
+  });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま検索する（追加マウント対応）", async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
+    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    const result = await grepTool.execute("call-1", {
+      pattern: "hello",
+      path: "/obsidian/wiki/index.md",
+    });
+    expect(stat).toHaveBeenCalledWith("/obsidian/wiki/index.md");
+    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(firstText(result)).toContain(
+      "/obsidian/wiki/index.md:1: hello world",
+    );
   });
 
   it("ディレクトリを再帰検索する", async () => {
