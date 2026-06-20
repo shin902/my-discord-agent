@@ -63,6 +63,12 @@ describe("read", () => {
     ).rejects.toThrow("アクセス拒否");
   });
 
+  it("/workspace プレフィックス + トラバーサルも拒否", async () => {
+    await expect(
+      readTool.execute("call-1", { path: "/workspace/../../etc/passwd" }),
+    ).rejects.toThrow("アクセス拒否");
+  });
+
   it("/workspace 始まりの絶対パスも相対パスと同様に解決する", async () => {
     vi.mocked(readFile).mockResolvedValue("hello world" as never);
     const result = await readTool.execute("call-1", {
@@ -143,6 +149,18 @@ describe("write", () => {
     expect(mkdir).toHaveBeenCalledWith("/workspace/sub/dir", {
       recursive: true,
     });
+  });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスとしてそのまま書き込む（追加マウント対応）", async () => {
+    await writeTool.execute("call-1", {
+      path: "/obsidian/wiki/index.md",
+      content: "hello",
+    });
+    expect(writeFile).toHaveBeenCalledWith(
+      "/obsidian/wiki/index.md",
+      "hello",
+      "utf-8",
+    );
   });
 });
 
@@ -231,6 +249,22 @@ describe("glob", () => {
       path: "",
     });
     expect(firstText(result)).toBe("(一致なし)");
+  });
+
+  it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま検索する（追加マウント対応）", async () => {
+    async function* mockGlob() {
+      yield "index.md";
+    }
+    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    const result = await globTool.execute("call-1", {
+      pattern: "*.md",
+      path: "/obsidian/wiki",
+    });
+    expect(glob).toHaveBeenCalledWith("*.md", {
+      cwd: "/obsidian/wiki",
+      withFileTypes: false,
+    });
+    expect(firstText(result)).toContain("/obsidian/wiki/index.md");
   });
 });
 
