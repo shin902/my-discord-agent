@@ -72,11 +72,13 @@ describe("read", () => {
     expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
   });
 
-  it("先頭が / の絶対パスも相対パスと同様に解決する", async () => {
+  it("/workspace 以外の絶対パスはコンテナ内の実パスとしてそのまま読む（追加マウント対応）", async () => {
     vi.mocked(readFile).mockResolvedValue("hello world" as never);
-    const result = await readTool.execute("call-1", { path: "/test.txt" });
+    const result = await readTool.execute("call-1", {
+      path: "/obsidian/wiki/index.md",
+    });
     expect(firstText(result)).toBe("hello world");
-    expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
   });
 
   it("画像ファイルは base64 の image content を返す", async () => {

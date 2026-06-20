@@ -6,7 +6,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, extname, join, normalize } from "node:path";
+import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
@@ -24,31 +24,44 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+// /workspace 始まりのパスはワークスペースルートからの相対パスとして扱う。
+// それ以外の絶対パスは、追加マウント（例: 個人用Obsidian Vaultの /obsidian）に
+// アクセスできるよう、コンテナ内の実パスとしてそのまま扱う。
+// （bash ツールがすでにコンテナ内の全パスへ無制限にアクセスできるため、
+// read/write 系ツールだけを /workspace 配下に閉じ込めても実質的な安全境界にはならない）
 function sanitizePath(raw: string): string {
   const trimmed = raw.trim();
-  const withoutWorkspacePrefix =
-    trimmed === WORKSPACE || trimmed.startsWith(`${WORKSPACE}/`)
-      ? trimmed.slice(WORKSPACE.length)
-      : trimmed;
-  const withoutPrefix = withoutWorkspacePrefix.startsWith("/")
-    ? withoutWorkspacePrefix.slice(1)
-    : withoutWorkspacePrefix;
-  const normalized = normalize(withoutPrefix);
+  if (trimmed === WORKSPACE || trimmed.startsWith(`${WORKSPACE}/`)) {
+    const stripped = trimmed.slice(WORKSPACE.length).replace(/^\/+/, "");
+    const normalized = normalize(stripped);
+    if (normalized.startsWith("..")) {
+      throw new Error(
+        `アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください (${raw})`,
+      );
+    }
+    return normalized === "." ? "" : normalized;
+  }
+  if (isAbsolute(trimmed)) {
+    return normalize(trimmed);
+  }
+  const normalized = normalize(trimmed);
   if (normalized.startsWith("..")) {
     throw new Error(
-      `アクセス拒否: ボリューム外へのパスは許可されていません (${raw})`,
+      `アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください (${raw})`,
     );
   }
   return normalized === "." ? "" : normalized;
 }
 
 function fullPath(safePath: string): string {
-  return safePath === "" ? WORKSPACE : join(WORKSPACE, safePath);
+  if (safePath === "") return WORKSPACE;
+  return isAbsolute(safePath) ? safePath : join(WORKSPACE, safePath);
 }
 
 const readParameters = Type.Object({
   path: Type.String({
-    description: "読み込むファイルのパス（ワークスペースルートからの相対パス）",
+    description:
+      "読み込むファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
   }),
 });
 
@@ -90,7 +103,8 @@ export const readTool: AgentTool<typeof readParameters> = {
 
 const writeParameters = Type.Object({
   path: Type.String({
-    description: "書き込むファイルのパス（ワークスペースルートからの相対パス）",
+    description:
+      "書き込むファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
   }),
   content: Type.String({ description: "書き込む内容" }),
 });
@@ -115,7 +129,7 @@ export const writeTool: AgentTool<typeof writeParameters> = {
 const listParameters = Type.Object({
   path: Type.String({
     description:
-      "一覧するディレクトリのパス（ワークスペースルートからの相対パス。空文字でルート）",
+      "一覧するディレクトリのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス。空文字でルート）",
     default: "",
   }),
 });
@@ -142,7 +156,8 @@ export const listTool: AgentTool<typeof listParameters> = {
 
 const editParameters = Type.Object({
   path: Type.String({
-    description: "編集するファイルのパス（ワークスペースルートからの相対パス）",
+    description:
+      "編集するファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
   }),
   oldString: Type.String({ description: "置換対象の文字列" }),
   newString: Type.String({ description: "置換後の文字列" }),
@@ -183,7 +198,7 @@ const globParameters = Type.Object({
   }),
   path: Type.String({
     description:
-      "検索のベースディレクトリ（ワークスペースルートからの相対パス。空文字でルート）",
+      "検索のベースディレクトリ（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス。空文字でルート）",
     default: "",
   }),
 });
@@ -215,7 +230,7 @@ const grepParameters = Type.Object({
   }),
   path: Type.String({
     description:
-      "検索対象のファイルまたはディレクトリ（ワークスペースルートからの相対パス）",
+      "検索対象のファイルまたはディレクトリ（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
   }),
   glob: Type.Optional(
     Type.String({
