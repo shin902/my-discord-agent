@@ -19,7 +19,7 @@ export function formatSkillCommandPrompt(
   args: string,
 ): string {
   return [
-    `ユーザーが \`./command\` で "${skillName}" スキルの実行を明示的に指示しました。以下の指示に従って実行してください。`,
+    `ユーザーが "${skillName}" スキルの実行を明示的に指示しました。以下の指示に従って実行してください。`,
     `<skill_instructions name="${skillName}">\n${skillBody.trim()}\n</skill_instructions>`,
     args ? `ユーザーからの追加指示:\n${args}` : "",
   ]
