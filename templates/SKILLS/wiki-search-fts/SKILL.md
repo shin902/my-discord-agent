@@ -7,6 +7,8 @@ description: "LLMが管理するwikiのページ全体を検索する。ingest�
 
 `wiki-search` の自前TFスコアリングでは追いつかなくなった大規模wiki向けの全文検索。SQLite標準搭載の **FTS5**（全文検索用VIRTUAL TABLE機能）を使い、BM25ランキングをSQLite組み込みの `bm25()` 関数で計算する。外部パッケージは一切使わず、Python標準ライブラリの `sqlite3` のみで動く（`node-llama-cpp` や `sqlite-vec` のようなネイティブ依存は不要）。
 
+`wiki-search` と同時に有効化しないこと。両方のdescriptionは互いを区別しない共通の文言になっているため、両方を `SKILLS/` 配下に置くとどちらが選ばれるか不定になる。このスキルを有効化する際は `wiki-search` を `SKILLS/` から削除する。
+
 ## 使い方
 
 ```

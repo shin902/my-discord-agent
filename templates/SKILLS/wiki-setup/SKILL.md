@@ -85,7 +85,7 @@ tags: []
 
 ### 5. 任意のツール
 
-強制せず、案として伝える: 閲覧フロントエンドとしてのObsidian（グラフビュー、ソース収集用のWeb Clipper、フロントマターを扱うBases/Dataview、スライド用のMarp）、無料でバージョン履歴を得るための `git init`、wikiがindexファイルだけでは追いつかなくなった時点での検索ツール（`wiki-search` ヘルパー、数百ページを超えたら `wiki-search-fts` への移行、さらにベクトル検索が必要になったら `qmd` のような外部ツールの検討をユーザーに相談する）。
+強制せず、案として伝える: 閲覧フロントエンドとしてのObsidian（グラフビュー、ソース収集用のWeb Clipper、フロントマターを扱うBases/Dataview、スライド用のMarp）、無料でバージョン履歴を得るための `git init`、wikiがindexファイルだけでは追いつかなくなった時点での検索ツール（`wiki-search` ヘルパー、数百ページを超えたら `wiki-search-fts` への移行、さらにベクトル検索が必要になったら `qmd` のような外部ツールの検討をユーザーに相談する）。`wiki-search` と `wiki-search-fts` は同時に有効化せず、移行時は旧方を `SKILLS/` から削除すること。
 
 ### 6. 引き渡し
 
