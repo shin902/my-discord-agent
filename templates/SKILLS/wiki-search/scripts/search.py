@@ -47,8 +47,13 @@ def main():
         print("エラー: クエリが空です", file=sys.stderr)
         sys.exit(1)
 
+    git_dir = os.path.join(os.path.abspath(root), ".git")
+
     results = []
     for dirpath, _, files in os.walk(root):
+        abs_dirpath = os.path.abspath(dirpath)
+        if abs_dirpath == git_dir or abs_dirpath.startswith(git_dir + os.sep):
+            continue
         for f in files:
             if not f.endswith(".md"):
                 continue
