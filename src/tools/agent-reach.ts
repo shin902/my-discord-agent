@@ -7,6 +7,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 import { execAsync } from "./exec.js";
+import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const WORKSPACE = "/workspace";
 const FETCH_DIR = "fetched";
@@ -497,10 +498,14 @@ export function buildCommand(
       return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(`https://api.fxtwitter.com/${username}/status/${tweetId}`)}`;
     }
     case "reddit": {
-      const jsonUrl = url.endsWith(".json")
-        ? url
-        : url.replace(/\/?(\?.*)?$/, (s) => `.json${s}`);
-      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(jsonUrl)} -H "User-Agent: discord-agent/1.0"`;
+      // Reddit の .json API は未認証アクセスを一律ブロックするため、
+      // credential-proxy 経由で OAuth (oauth.reddit.com) にアクセスする
+      const parsed = new URL(url);
+      const jsonPath = parsed.pathname.endsWith(".json")
+        ? parsed.pathname
+        : `${parsed.pathname.replace(/\/+$/, "")}.json`;
+      const proxyUrl = `${resolveProxyBaseUrl("reddit")}${jsonPath}${parsed.search}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(proxyUrl)} -H "User-Agent: discord-agent/1.0"`;
     }
     case "rss":
       return (
