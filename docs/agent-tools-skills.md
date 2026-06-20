@@ -116,12 +116,6 @@ rm -rf groups/{name}/SKILLS/agent-reach
 cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 ```
 
-### explain
-
-**場所:** `templates/SKILLS/explain/SKILL.md`
-
-技術用語を使わず、実際の挙動に焦点を当てた説明を生成するスキル。
-
 ### session-logs
 
 **場所:** `templates/SKILLS/session-logs/SKILL.md`
@@ -133,3 +127,38 @@ cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 専用スキルは設けず、`config/config.json` の `cron` 配列に prompt-only ジョブを登録し、`session-logs` スキルの使い方と出力フォーマットをそのまま `prompt` に書く(`config.example.json` 参照)。出力フォーマットは個人の好みに依存するため、共有テンプレートにはしない。
 
 導入するグループには `session-logs` を `skills` に追加し、`bash` / `write` / `edit` ツールを有効にする。
+
+### interest-profile
+
+**場所:** `templates/SKILLS/interest-profile/SKILL.md`
+
+会話履歴からユーザーの興味プロファイルを抽出・蓄積し `INTERESTS.md`（プロジェクトルート）を生成・更新するスキル。`sync`（履歴差分を分析してシグナルを `data/interests/interest-log.jsonl` に追記し再生成）と `show`（既存の `INTERESTS.md` を表示するだけ）の2モードを持つ。cron等からの自律実行時はユーザーへの確認を行わない設計。
+
+### last30days
+
+**場所:** `templates/SKILLS/last30days/SKILL.md`
+
+指定トピックについて、HackerNews・Reddit・GitHub（いずれもAPIキー不要）から過去30日間の議論・反応を横断的に収集し、注目トピック・プラットフォーム別サマリー・センチメント・注目リンクの形式で集約するスキル。
+
+### md2html
+
+**場所:** `templates/SKILLS/md2html/SKILL.md`
+
+Markdownファイルを、CDN/外部JS依存なしの単一HTMLファイルに変換するスキル。`pip install md2html-phuker` の `md2html` コマンドを使う。ダークテーマやサイドバー目次付きスタイルにも対応。
+
+### wiki系スキル（wiki-setup / wiki-ingest / wiki-query / wiki-lint / wiki-search / wiki-search-fts）
+
+**場所:** `templates/SKILLS/wiki-{setup,ingest,query,lint,search,search-fts}/SKILL.md`
+
+LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM所有のMarkdown）→ `AGENTS.md`（スキーマ）の三層構造で運用するためのスキル群。
+
+| スキル | 役割 |
+|--------|------|
+| `wiki-setup` | wikiを初期構築する一回限りの足場作り。既存wikiの有無、目的、ディレクトリ名・ファイル名規則（英語/日本語）をユーザーにヒアリングしてから `AGENTS.md` とディレクトリ構造を作る |
+| `wiki-ingest` | 新しいソースを読み込み、要約してソースページを作成し、関連するエンティティ/コンセプトページ・`index.md`・`log.md` に反映する |
+| `wiki-query` | wikiに基づいて出典付きで質問に回答し、永続的価値のある回答は新しいページとして書き戻す |
+| `wiki-lint` | 孤立ページ・リンク切れ・frontmatter欠落・矛盾などを機械的チェック＋判断ベースのチェックで検出し、安全な修正を適用する |
+| `wiki-search` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
+| `wiki-search-fts` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が遅く/不十分になった大規模wiki向けの移行先で、ユーザーが明示的に有効化する |
+
+`wiki-ingest`/`wiki-query`はページ保存先パスを `AGENTS.md` で定義されたディレクトリ規約に従って決定する（既定値は `wiki/sources/`・`wiki/concepts/`）ため、`wiki-setup`でディレクトリ名を変更した場合もそれに追従する。
