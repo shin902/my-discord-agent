@@ -2,25 +2,35 @@
 
 `agent-reach` ツールの reddit サービス（`src/tools/agent-reach.ts`）が `oauth.reddit.com` にアクセスするために必要な、Reddit アプリ登録の手順です。
 
-Reddit は未認証の `.json` API アクセスを一律ブロックしているため、`client_credentials` グラント（アプリ単位の読み取り専用トークン）での認証が必須になっています。個人・非商用利用の Free Access Tier は無料（100 QPM まで）。
+Reddit は未認証の `.json` API アクセスを一律ブロックしているため、`client_credentials` グラント（アプリ単位の読み取り専用トークン）での認証が必須になっています。個人・非商用利用の Free Access Tier は無料（100 QPM まで）── ただし **2025年11月の Responsible Builder Policy 改定以降、個人がこのトークンを実際に取得するのはかなり厳しくなっている。** 以下、本プロジェクトで実際に確認した状況を記す。
+
+> [!WARNING]
+> **現状（2026年6月時点の調査結果）: 新規ユーザーが個人で client_id / client_secret を取得すること自体が難しい。**
+>
+> - `prefs/apps` でアプリを新規作成しようとすると `In order to create an application or use our API you can read our full policies here: ...Responsible-Builder-Policy` というエラーで弾かれ、申請フォームにすら進めないケースが本プロジェクトの検証でも実際に発生した
+> - 同様の報告は [gallery-dl#8559](https://github.com/mikf/gallery-dl/issues/8559) でも多数あり、Reddit からは `You cannot create any more applications if you are a developer on 0 or more applications, reach out to us...` という案内が出る
+> - 実際に「reach out」して個別に申請したユーザーも、Reddit 側から**「Responsible API Requirements に違反するスクレイパー」として明確に拒否**されている
+> - OAuth を経由しない代替手段（`.json` への直接アクセス、通常HTMLページのcurl取得、匿名クッキー使用）も全て試したが、`.json` は403、通常HTMLは「Please wait for verification」というbot検証ページが返るだけで、いずれも実コンテンツの取得には至らなかった（IPレピュテーション依存のヒューリスティックなため、別環境では通る可能性はあるが保証はできない）
+>
+> つまり**現時点で個人開発者がこの reddit 機能を実際に使える状態にできるかどうかは、Reddit 側の審査結果に完全に依存し、見通しが立たない。** 以下の手順はあくまで「申請がもし通った場合」のための設定方法であり、申請自体が通る保証はないことを理解した上で進めること。
 
 ---
 
-## 1. Reddit アプリの作成
+## 1. Reddit アプリの作成・申請
 
 1. Reddit にログインした状態で [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) を開く
-2. 画面下部の「create another app...」（または「create app」）をクリック
+2. 画面下部の「開発者ならアプリを作ってもいいです！」をクリック
 3. 以下を入力する:
    - **name**: 任意の名前（例: `my-discord-agent`）
-   - **type**: **`script`** を選択（`client_credentials` グラントが使えるのは script タイプのみ）
+   - **スクリプト** を選択（`client_credentials` グラントが使えるのは script タイプのみ）
    - **description**: 任意（省略可）
    - **about url**: 空欄でよい
    - **redirect uri**: `http://localhost` など適当な値で構わない（script タイプではリダイレクトフローを使わないため実際には使用されない。ただし入力必須）
-4. 「create app」をクリックして作成する
+4. reCAPTCHAを認証した後で「アプリを作成」をクリックして申請する
 
-作成後、アプリ名の下に表示される短い英数字文字列が **client_id**、「secret」欄の値が **client_secret**。
+承認後、アプリ名の下に表示される短い英数字文字列が **client_id**、「secret」欄の値が **client_secret**。
 
-> **重要**: script タイプのアプリは、作成したRedditアカウントに紐づく。アカウント停止・削除されるとトークンも無効になる。bot専用アカウントでの作成を推奨する。
+> **重要**: script タイプのアプリは、作成したRedditアカウントに紐づく。アカウント停止・削除されるとトークンも無効になる。bot専用アカウントでの作成を推奨するが、アカウントの活動量も審査対象になるため、作成直後の新規アカウントでは承認されにくい可能性がある。
 
 ---
 
