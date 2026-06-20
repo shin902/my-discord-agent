@@ -16,3 +16,5 @@ groups/*/
 src/cron/jobs/local/
 
 .claude/plans/
+
+__pycache__/
