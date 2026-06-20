@@ -40,10 +40,7 @@ export async function getRedditAccessToken(provider: string): Promise<string> {
     );
   }
 
-  if (
-    state.cached &&
-    state.cached.expiresAt - EXPIRY_MARGIN_MS > Date.now()
-  ) {
+  if (state.cached && state.cached.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
     return state.cached.accessToken;
   }
 
