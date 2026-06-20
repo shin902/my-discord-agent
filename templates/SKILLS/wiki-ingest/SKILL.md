@@ -21,7 +21,7 @@ description: "新しいソースをLLMが管理するwikiに取り込む: 読み
 
 ### 3. ソース要約ページを書く
 
-`wiki/sources/<slug>.md` をフロントマター付きで作成する（`type: source`、`created`/`updated` は今日の日付、`sources: []`、rawファイルへのリンク）。含めるべき内容: 簡潔な要約、保持すべき重要な主張/事実、注目すべき引用や数値、そしてそのソースが触れるエンティティとコンセプトを `[[wikilinks]]` として列挙する `## Connections` セクション。
+ソースページ用ディレクトリ（`AGENTS.md` で定義された規約に従う。既定では `wiki/sources/`）に `<slug>.md` をフロントマター付きで作成する（`type: source`、`created`/`updated` は今日の日付、`sources: []`、rawファイルへのリンク）。含めるべき内容: 簡潔な要約、保持すべき重要な主張/事実、注目すべき引用や数値、そしてそのソースが触れるエンティティとコンセプトを `[[wikilinks]]` として列挙する `## Connections` セクション。
 
 ### 4. wiki全体へ反映する
 
@@ -40,7 +40,7 @@ description: "新しいソースをLLMが管理するwikiに取り込む: 読み
 
 ```
 ## [YYYY-MM-DD] ingest | <source title>
-- summary: wiki/sources/<slug>.md
+- summary: <ソースページ用ディレクトリ>/<slug>.md
 - touched: [[page-a]], [[page-b]], [[page-c]], …
 - contradictions: <none | brief note>
 ```
