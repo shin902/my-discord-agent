@@ -115,10 +115,11 @@ def sync_index(conn, root):
     - 削除されたファイル: テーブルから削除
     戻り値: (追加・更新件数, 削除件数)
     """
-    git_prefix = os.path.join(os.path.abspath(root), ".git")
+    git_dir = os.path.join(os.path.abspath(root), ".git")
     seen = {}
     for dirpath, _, files in os.walk(root):
-        if os.path.abspath(dirpath).startswith(git_prefix):
+        abs_dirpath = os.path.abspath(dirpath)
+        if abs_dirpath == git_dir or abs_dirpath.startswith(git_dir + os.sep):
             continue
         for f in files:
             if not f.endswith(".md"):
