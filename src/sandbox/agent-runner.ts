@@ -467,7 +467,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       payload.content,
       payload.groupConfig,
     );
-    process.stdout.write(response);
+    // pi-agent-core/pi-ai 側がHTTPクライアントのkeep-aliveソケット等を残し、
+    // イベントループが自然に空にならずプロセスがexitしないケースがある。
+    // ホスト側（manager.ts）は proc の close イベントを10分タイムアウトで
+    // 待っているため、自然終了に任せると応答済みでもSIGKILLされてDiscordに
+    // 届かなくなる。write完了を待って明示的にexitし、確実にcloseさせる。
+    await new Promise<void>((resolve) => {
+      process.stdout.write(response, () => resolve());
+    });
+    process.exit(0);
   })().catch((err) => {
     const transient = isTransientError(err);
     const code = transient ? 2 : 1;
