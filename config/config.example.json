@@ -54,6 +54,14 @@
       }
     },
     {
+      "provider": "reddit",
+      "baseUrl": "https://www.reddit.com",
+      "redditCookie": {
+        "cookieFile": "data/reddit-cookies.json",
+        "maxAgeDays": 7
+      }
+    },
+    {
       "provider": "opencode-go",
       "envVars": ["OPENCODE_API_KEY"],
       "baseUrl": "https://opencode.ai/zen/go/v1"
@@ -136,6 +144,12 @@
       "schedule": "*/30 * * * *",
       "enabled": true,
       "handler": "jobs/mail.ts"
+    },
+    {
+      "id": "reddit-cookie-refresh",
+      "schedule": "0 4 */3 * *",
+      "enabled": true,
+      "handler": "jobs/reddit-cookie-refresh.ts"
     },
     {
       "id": "memory-daily",
