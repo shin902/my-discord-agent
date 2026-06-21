@@ -252,6 +252,10 @@ const updateEventParameters = Type.Object({
   calendarId: calendarIdParameter,
 });
 
+// issue #125 の再現時に Google Calendar API が実際に返したエラー文言は
+// `{"error":{"errors":[{"reason":"invalid","message":"Invalid start time."}],"message":"Invalid start time."}}`。
+// 他要因（日時フォーマット誤りなど）でも同文言が返ると誤って再作成フォールバックに入る可能性があるが、
+// その場合も POST が失敗すれば旧イベントは消えないため実害は小さい。
 const INVALID_TIME_ERROR = /Invalid (start|end) time/i;
 
 // 再作成時に元イベントから引き継がない項目。id/etag 等はサーバー管理のフィールドなので POST に含めない。
