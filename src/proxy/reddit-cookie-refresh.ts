@@ -16,15 +16,46 @@ const SETTLE_MS = 4_000;
 // ブロックされるが、Xvfb 上でフルChromiumを headless:false 起動すると通過する
 // ことを実機検証で確認済み(docs/reddit-cookie-setup.md 参照)。
 function startXvfb(display: string): ChildProcess {
-  return spawn(
+  const proc = spawn(
     "Xvfb",
     [display, "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
     { stdio: "ignore" },
   );
+  // spawn失敗時(Xvfb未インストール等)はデフォルトでエラーが握り潰されるため明示的にログ出力する
+  proc.on("error", (err) => {
+    console.error(`[reddit-cookie-refresh] Xvfb起動失敗: ${err.message}`);
+  });
+  return proc;
 }
 
-async function waitForXvfbReady(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
+async function waitForXvfbReady(xvfb: ChildProcess): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => reject(err);
+    const onExit = (code: number | null) =>
+      reject(new Error(`Xvfbが起動直後に終了しました (exit code: ${code})`));
+    xvfb.once("error", onError);
+    xvfb.once("exit", onExit);
+    setTimeout(() => {
+      xvfb.off("error", onError);
+      xvfb.off("exit", onExit);
+      resolve();
+    }, 500);
+  });
+}
+
+async function stopXvfb(xvfb: ChildProcess): Promise<void> {
+  if (xvfb.exitCode !== null || xvfb.killed) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      xvfb.kill("SIGKILL");
+      resolve();
+    }, 2_000);
+    xvfb.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    xvfb.kill("SIGTERM");
+  });
 }
 
 export async function refreshRedditCookies(
@@ -39,7 +70,7 @@ export async function refreshRedditCookies(
   process.env.DISPLAY = display;
 
   try {
-    await waitForXvfbReady();
+    await waitForXvfbReady(xvfb);
 
     const context = await chromium.launchPersistentContext(profileDir, {
       headless: false,
@@ -79,6 +110,6 @@ export async function refreshRedditCookies(
   } finally {
     if (prevDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = prevDisplay;
-    xvfb.kill();
+    await stopXvfb(xvfb);
   }
 }
