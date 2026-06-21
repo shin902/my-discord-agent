@@ -320,8 +320,8 @@ describe("update_event", () => {
     fetchMock
       .mockResolvedValueOnce(invalidTimeError) // PATCH
       .mockResolvedValueOnce(currentEvent) // GET current
-      .mockResolvedValueOnce(deleteOk) // DELETE
-      .mockResolvedValueOnce(created); // POST recreate
+      .mockResolvedValueOnce(created) // POST recreate
+      .mockResolvedValueOnce(deleteOk); // DELETE
 
     const { updateEventTool } = await import("./calendar.js");
     const result = await updateEventTool.execute("id", {
@@ -331,10 +331,10 @@ describe("update_event", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    const [, deleteInit] = fetchMock.mock.calls[2] as [string, RequestInit];
-    expect(deleteInit.method).toBe("DELETE");
-    const [, createInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+    const [, createInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(createInit.method).toBe("POST");
+    const [, deleteInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+    expect(deleteInit.method).toBe("DELETE");
     const createBody = JSON.parse(createInit.body as string);
     expect(createBody).toEqual({
       summary: "既存タイトル",
@@ -348,6 +348,56 @@ describe("update_event", () => {
       eventId: "evt-new-001",
       calendarId: "primary",
       recreatedFrom: "evt-001",
+    });
+  });
+
+  it("再作成後の DELETE が失敗した場合は例外にせず、重複している旨をエージェントに伝える", async () => {
+    const invalidTimeError = {
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({ error: { message: "Invalid start time." } }),
+    };
+    const currentEvent = {
+      ok: true,
+      json: async () => ({
+        id: "evt-001",
+        summary: "既存タイトル",
+        start: { date: "2026-06-19" },
+        end: { date: "2026-06-20" },
+      }),
+    };
+    const created = {
+      ok: true,
+      json: async () => ({ id: "evt-new-001", summary: "既存タイトル" }),
+    };
+    const deleteFailed = {
+      ok: false,
+      status: 500,
+      text: async () => "internal error",
+    };
+
+    fetchMock
+      .mockResolvedValueOnce(invalidTimeError) // PATCH
+      .mockResolvedValueOnce(currentEvent) // GET current
+      .mockResolvedValueOnce(created) // POST recreate
+      .mockResolvedValueOnce(deleteFailed); // DELETE 失敗
+
+    const { updateEventTool } = await import("./calendar.js");
+    const result = await updateEventTool.execute("id", {
+      eventId: "evt-001",
+      start: "2026-06-19T14:50:00+09:00",
+      end: "2026-06-19T16:50:00+09:00",
+    });
+
+    expect(firstText(result)).toContain("削除に失敗");
+    expect(firstText(result)).toContain("evt-new-001");
+    expect(firstText(result)).toContain("evt-001");
+    expect(result.details).toEqual({
+      eventId: "evt-new-001",
+      calendarId: "primary",
+      recreatedFrom: "evt-001",
+      oldEventDeleted: false,
     });
   });
 

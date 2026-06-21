@@ -327,25 +327,51 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
       const finalAttendees =
         attendees !== undefined
           ? attendees.map((email) => ({ email }))
-          : current.attendees?.map((a) => ({ email: a.email }));
-      if (finalAttendees !== undefined)
-        recreateBody.attendees = finalAttendees;
+          : current.attendees
+              ?.filter((a): a is { email: string } => a.email != null)
+              .map((a) => ({ email: a.email }));
+      if (finalAttendees !== undefined) recreateBody.attendees = finalAttendees;
 
-      await calendarRequest(
-        "DELETE",
-        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-      );
+      // 先に新イベントを作成してから旧イベントを削除する（POST 失敗時に予定が消失しないようにするため）
       const recreated = (await calendarRequest(
         "POST",
         `/calendars/${encodeURIComponent(calendarId)}/events`,
         recreateBody,
       )) as CalendarEvent;
 
+      try {
+        await calendarRequest(
+          "DELETE",
+          `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        );
+      } catch (deleteErr) {
+        const deleteMessage =
+          deleteErr instanceof Error ? deleteErr.message : String(deleteErr);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `終日↔時刻指定の変更のため新しい予定を作成しましたが、旧予定の削除に失敗しました。重複している可能性があるため旧予定の削除をご確認ください。\n- 新しいID: \`${recreated.id}\`\n- 旧ID（削除失敗）: \`${eventId}\`\n- 削除エラー: ${deleteMessage}`,
+            },
+          ],
+          details: {
+            eventId: recreated.id,
+            calendarId,
+            recreatedFrom: eventId,
+            oldEventDeleted: false,
+          },
+        };
+      }
+
+      const attendeeNotice = finalAttendees?.length
+        ? "\n（参加者への招待が再送される可能性があります）"
+        : "";
+
       return {
         content: [
           {
             type: "text",
-            text: `終日↔時刻指定の変更だったため予定を再作成しました: ${recreated.summary ?? "(タイトルなし)"}\n- 新しいID: \`${recreated.id}\`（旧ID: \`${eventId}\` は削除済み）`,
+            text: `終日↔時刻指定の変更だったため予定を再作成しました: ${recreated.summary ?? "(タイトルなし)"}\n- 新しいID: \`${recreated.id}\`（旧ID: \`${eventId}\` は削除済み）${attendeeNotice}`,
           },
         ],
         details: { eventId: recreated.id, calendarId, recreatedFrom: eventId },
