@@ -83,6 +83,14 @@ export async function refreshRedditCookies(
       });
       await page.waitForTimeout(SETTLE_MS);
 
+      // セッション失効時はreddit.comがログイン画面にリダイレクトする。
+      // この場合もクッキー自体は存在するため件数チェックだけでは検知できない。
+      if (/\/login/.test(page.url())) {
+        throw new Error(
+          "reddit.com のセッションが失効し、ログイン画面にリダイレクトされました。scripts/reddit-cookie-login.ts で再ログインを行ってください",
+        );
+      }
+
       const cookies = await context.cookies("https://www.reddit.com");
       if (cookies.length === 0) {
         throw new Error(
