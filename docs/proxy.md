@@ -89,6 +89,28 @@ Google Cloud Console での OAuth クライアント作成手順（OAuth 同意�
 - デバイスフローは `initCredentialProxyServer()`（ホスト起動時）で一度トリガーされる。これにより、Discordからの最初のカレンダー操作リクエストでデバイスフロー（最大30分）がブロックすることを避けている。認証に失敗・タイムアウトした場合はエラーログを出すのみで、ホストの起動自体は継続する（以後のカレンダー系ツール呼び出しは502になる）。
 - `msal` と同様、`google` フィールドはサンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
 
+### Reddit クッキー認証（agent-reach の reddit サービス用）
+
+Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月のポリシー改定以降事実上ブロックしているため（詳細は [`docs/reddit-oauth-setup.md`](./reddit-oauth-setup.md)）、ログイン済みブラウザの永続プロファイルから定期的に抽出したクッキーで `www.reddit.com` にアクセスする。
+
+初回ログイン手順・定期延命の仕組みは [`docs/reddit-cookie-setup.md`](./reddit-cookie-setup.md) を参照。
+
+```json
+{
+  "provider": "reddit",
+  "baseUrl": "https://www.reddit.com",
+  "redditCookie": {
+    "cookieFile": "data/reddit-cookies.json",
+    "maxAgeDays": 7
+  }
+}
+```
+
+- `pnpm reddit:login` で初回ログイン（Playwright永続プロファイル: `data/reddit-browser-profile/`）。以後は `cron`(`jobs/reddit-cookie-refresh.ts`)が定期的にセッション延命＋クッキー再抽出を行う。
+- `cookieFile` の内容が `maxAgeDays`(デフォルト7日)より古い場合、そのプロバイダーへのリクエストは 502 になる。
+- `redditCookie` フィールドは `msal` / `google` と同様、サンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
+- `agent-reach` ツールの reddit サービスは `resolveProxyBaseUrl("reddit")` でこのプロキシ経由のURLを構築する。
+
 ### その他の pi-ai 対応プロバイダ
 
 以下のプロバイダも pi-ai では対応しているが、現状未検証・未使用のため `config.example.json` からは除外している。必要に応じて手動で追加可能：

@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildCommand,
   buildGitHubMarkdown,
@@ -124,22 +124,69 @@ describe("detectService", () => {
 describe("buildCommand シェルエスケープ", () => {
   const out = "/workspace/fetched/out.md";
 
-  it("reddit: 通常URL → .json を付与してcurl", () => {
-    const cmd = buildCommand(
-      "reddit",
-      "https://www.reddit.com/r/programming/comments/abc/",
-      out,
-    );
-    expect(cmd).toContain(".json");
-    expect(cmd).toContain("curl -sS");
-    expect(cmd).toContain("-w '%{http_code}'");
-  });
+  describe("reddit", () => {
+    beforeEach(() => {
+      process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
+        { provider: "reddit", baseUrl: "http://localhost:12345/reddit" },
+      ]);
+    });
 
-  it("reddit: シングルクォートを含むURLをエスケープする", () => {
-    const url = "https://example.com/path?q=it's";
-    const cmd = buildCommand("reddit", url, out);
-    expect(cmd).not.toContain(`'https://example.com/path?q=it's'`);
-    expect(cmd).toContain("'\\''");
+    afterEach(() => {
+      delete process.env.CREDENTIAL_PROXY_JSON;
+    });
+
+    it("通常URL → .json を付与し credential-proxy 経由のcurlを生成", () => {
+      const cmd = buildCommand(
+        "reddit",
+        "https://www.reddit.com/r/programming/comments/abc/",
+        out,
+      );
+      expect(cmd).toContain(
+        "http://localhost:12345/reddit/r/programming/comments/abc.json",
+      );
+      expect(cmd).toContain("curl -sS");
+      expect(cmd).toContain("-w '%{http_code}'");
+    });
+
+    it("既に .json で終わるURLは二重に付与しない", () => {
+      const cmd = buildCommand(
+        "reddit",
+        "https://www.reddit.com/r/programming/comments/abc.json",
+        out,
+      );
+      expect(cmd).toContain(
+        "http://localhost:12345/reddit/r/programming/comments/abc.json",
+      );
+      expect(cmd).not.toContain(".json.json");
+    });
+
+    it("クエリ文字列を維持する", () => {
+      const cmd = buildCommand(
+        "reddit",
+        "https://www.reddit.com/r/programming/comments/abc/?sort=top",
+        out,
+      );
+      expect(cmd).toContain(
+        "http://localhost:12345/reddit/r/programming/comments/abc.json?sort=top",
+      );
+    });
+
+    it("シングルクォートを含むURLをエスケープする", () => {
+      const url = "https://www.reddit.com/r/test/it's-test";
+      const cmd = buildCommand("reddit", url, out);
+      expect(cmd).toContain("'\\''");
+    });
+
+    it("CREDENTIAL_PROXY_JSON が未設定の場合は例外を投げる", () => {
+      delete process.env.CREDENTIAL_PROXY_JSON;
+      expect(() =>
+        buildCommand(
+          "reddit",
+          "https://www.reddit.com/r/programming/comments/abc/",
+          out,
+        ),
+      ).toThrow("CREDENTIAL_PROXY_JSON が設定されていません");
+    });
   });
 
   it("github-repo: GitHub API への curl コマンドを生成する", () => {

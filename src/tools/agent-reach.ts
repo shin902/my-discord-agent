@@ -7,6 +7,12 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 import { execAsync } from "./exec.js";
+import { resolveProxyBaseUrl } from "./proxy-url.js";
+
+// Reddit は bot 判定が厳しく、汎用的な curl の User-Agent では JS チャレンジで
+// ブロックされる。ログインに使ったブラウザに近い UA を送ることで通過率を上げる。
+const REDDIT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const WORKSPACE = "/workspace";
 const FETCH_DIR = "fetched";
@@ -497,10 +503,15 @@ export function buildCommand(
       return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(`https://api.fxtwitter.com/${username}/status/${tweetId}`)}`;
     }
     case "reddit": {
-      const jsonUrl = url.endsWith(".json")
-        ? url
-        : url.replace(/\/?(\?.*)?$/, (s) => `.json${s}`);
-      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(jsonUrl)} -H "User-Agent: discord-agent/1.0"`;
+      // Reddit は未認証アクセスを一律ブロックするため、credential-proxy 経由で
+      // ログイン済みクッキー(www.reddit.com)を使ってアクセスする
+      // (docs/reddit-cookie-setup.md 参照)
+      const parsed = new URL(url);
+      const jsonPath = parsed.pathname.endsWith(".json")
+        ? parsed.pathname
+        : `${parsed.pathname.replace(/\/+$/, "")}.json`;
+      const proxyUrl = `${resolveProxyBaseUrl("reddit")}${jsonPath}${parsed.search}`;
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(proxyUrl)} -H "User-Agent: ${REDDIT_USER_AGENT}"`;
     }
     case "rss":
       return (

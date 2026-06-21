@@ -7,6 +7,7 @@
     "build": "tsc",
     "build:runner": "esbuild src/sandbox/agent-runner.ts --bundle --platform=node --target=node22 --format=esm --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --outfile=dist/sandbox/runner.bundle.mjs",
     "sandbox": "bash scripts/sandbox.sh",
+    "reddit:login": "tsx scripts/reddit-cookie-login.ts",
     "runner:image:build": "pnpm build:runner && docker build -t localhost:5050/my-discord-agent-runner:latest . && docker push localhost:5050/my-discord-agent-runner:latest",
     "restart": "pnpm sandbox build && pnpm build && node dist/index.js",
     "start": "node --env-file-if-exists=.env dist/index.js",
@@ -23,6 +24,7 @@
     "@earendil-works/pi-ai": "latest",
     "discord.js": "^14.0.0",
     "dotenv": "^17.4.2",
+    "playwright": "^1.61.0",
     "typebox": "^1.1.37",
     "zod": "^4.4.3"
   },

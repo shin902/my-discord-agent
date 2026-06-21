@@ -20,6 +20,16 @@ export const GoogleOAuthConfigSchema = z.object({
 
 export type GoogleOAuthConfig = z.infer<typeof GoogleOAuthConfigSchema>;
 
+// Reddit は OAuth (client_credentials) の新規アプリ申請を事実上ブロックしているため、
+// ログイン済みブラウザの永続プロファイルから定期的に抽出したクッキーを使う
+// (docs/reddit-cookie-setup.md 参照)。cookieFile は reddit-cookie-refresh ジョブが書き込む。
+export const RedditCookieConfigSchema = z.object({
+  cookieFile: z.string().default("data/reddit-cookies.json"),
+  maxAgeDays: z.number().int().min(1).default(7),
+});
+
+export type RedditCookieConfig = z.infer<typeof RedditCookieConfigSchema>;
+
 // プロバイダー単位の設定のうち、modelId ごとに上書き可能なもの
 // （同一サーバーで複数モデルを切り替える場合に使う）
 const ModelOverrideSchema = z.object({
@@ -41,6 +51,7 @@ export const CredentialEntrySchema = z.object({
     .optional(),
   msal: MsalConfigSchema.optional(),
   google: GoogleOAuthConfigSchema.optional(),
+  redditCookie: RedditCookieConfigSchema.optional(),
   baseUrl: z.string().url(),
   api: z
     .enum([

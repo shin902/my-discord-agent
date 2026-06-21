@@ -62,6 +62,7 @@ function buildSanitizedCredentialJson(
       envVars: _ev,
       msal: _msal,
       google: _google,
+      redditCookie: _redditCookie,
       auth: _auth,
       ...rest
     } = entry;
