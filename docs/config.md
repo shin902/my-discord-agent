@@ -21,11 +21,13 @@ groups/{name}/
 ```json
 {
   "credentials": [...],
-  "defaultModel": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
+  "defaultModel": { "provider": "zai", "modelId": "glm-4.7-flash" },
   "groups": [...],
   "cron": []
 }
 ```
+
+> **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動くため、`poller.dispatchMode: "serial"`（`docs/spec/poller-dispatch-mode.md` 参照）と組み合わせて使うことを推奨する。
 
 | キー | 必須 | 内容 |
 |---|---|---|
@@ -41,6 +43,11 @@ AI プロバイダーや外部サービス（Microsoft Graph・Browserless 等�
 
 ```json
 "credentials": [
+  {
+    "provider": "zai",
+    "envVars": ["ZAI_API_KEY"],
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4"
+  },
   {
     "provider": "anthropic",
     "envVars": ["ANTHROPIC_API_KEY"],
@@ -65,7 +72,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 "groups": [
   {
     "name": "chat",
-    "model": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
+    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["tavily_search"],
     "autoReply": false,
     "toolLogArgs": true,
@@ -75,7 +82,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   },
   {
     "name": "thread",
-    "model": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
+    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["tavily_search", "agent-reach", "bash", "read", "write", "edit"],
     "skills": ["session-logs"],
     "autoReply": true,

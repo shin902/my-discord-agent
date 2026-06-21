@@ -53,8 +53,8 @@ describe("index: 起動時バリデーション", () => {
     mocks.initManager.mockResolvedValue(undefined);
     mocks.initGroupPrompts.mockResolvedValue(undefined);
     mocks.loadDefaultModel.mockResolvedValue({
-      provider: "opencode-go",
-      modelId: "kimi-k2.6",
+      provider: "zai",
+      modelId: "glm-4.7-flash",
     });
     // 実際に終了させず、呼び出し後の継続を防ぐためにスロー
     mockExit = vi.fn((code?: number) => {
@@ -101,7 +101,7 @@ describe("index: 起動時バリデーション", () => {
       {
         name: "ok-group",
         channels: [],
-        model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
       },
     ]);
 

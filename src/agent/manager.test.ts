@@ -10,10 +10,10 @@ const TEST_ATTACHMENTS_DIR = path.join(
 );
 
 vi.mock("@earendil-works/pi-ai", () => ({
-  getProviders: () => ["provider-a", "opencode-go"],
+  getProviders: () => ["provider-a", "zai"],
   getModels: (provider: string) =>
-    provider === "opencode-go"
-      ? [{ id: "kimi-k2.6", name: "Kimi K2.6" }]
+    provider === "zai"
+      ? [{ id: "glm-4.7-flash", name: "GLM-4.7-Flash" }]
       : [{ id: "model-x", name: "Model X" }],
 }));
 
@@ -30,8 +30,8 @@ vi.mock("../config/default-model.js", () => ({
         modelId?: string;
         thinkingLevel?: string;
       }) => ({
-        provider: model?.provider ?? "opencode-go",
-        modelId: model?.modelId ?? "kimi-k2.6",
+        provider: model?.provider ?? "zai",
+        modelId: model?.modelId ?? "glm-4.7-flash",
         ...(model?.thinkingLevel !== undefined
           ? { thinkingLevel: model.thinkingLevel }
           : {}),
