@@ -592,6 +592,24 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(creds[0].provider).toBe("google-calendar");
   });
 
+  it("redditCookie フィールドが JSON に含まれない", async () => {
+    const spawnMock = await setup([
+      {
+        provider: "reddit",
+        baseUrl: "https://www.reddit.com",
+        redditCookie: {
+          cookieFile: "data/reddit-cookies.json",
+          maxAgeDays: 7,
+        },
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].redditCookie).toBeUndefined();
+    expect(creds[0].provider).toBe("reddit");
+  });
+
   it("auth フィールドが JSON に含まれない", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([
