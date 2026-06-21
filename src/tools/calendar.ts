@@ -399,28 +399,58 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
         recreateBody,
       )) as CalendarEvent;
 
-      try {
-        await calendarRequest(
-          "DELETE",
-          `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-        );
-      } catch (deleteErr) {
-        const deleteMessage =
-          deleteErr instanceof Error ? deleteErr.message : String(deleteErr);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `終日↔時刻指定の変更のため新しい予定を作成しましたが、旧予定の削除に失敗しました。重複している可能性があるため旧予定の削除をご確認ください。\n- 新しいID: \`${recreated.id}\`\n- 旧ID（削除失敗）: \`${eventId}\`\n- 削除エラー: ${deleteMessage}`,
-            },
-          ],
-          details: {
-            eventId: recreated.id,
-            calendarId,
-            recreatedFrom: eventId,
-            oldEventDeleted: false,
+      const buildKeepBothNotice = (reason: string) => ({
+        content: [
+          {
+            type: "text" as const,
+            text: `終日↔時刻指定の変更のため新しい予定を作成しましたが、旧予定は削除しませんでした（${reason}）。重複している可能性があるため旧予定をご確認ください。\n- 新しいID: \`${recreated.id}\`\n- 旧ID: \`${eventId}\``,
           },
-        };
+        ],
+        details: {
+          eventId: recreated.id,
+          calendarId,
+          recreatedFrom: eventId,
+          oldEventDeleted: false,
+        },
+      });
+
+      // GET から DELETE までの間に旧イベントが別プロセスから更新されていないか etag で確認する
+      // （ETag が変わっていれば、削除すると同時編集の内容が失われるため削除を見送る）
+      let oldEventAlreadyGone = false;
+      try {
+        const latest = (await calendarFetch(
+          `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        )) as Record<string, unknown>;
+        if (current.etag !== undefined && latest.etag !== current.etag) {
+          return buildKeepBothNotice(
+            "再作成中に旧予定が別の操作で更新されたのを検知したため",
+          );
+        }
+      } catch (checkErr) {
+        const checkMessage =
+          checkErr instanceof Error ? checkErr.message : String(checkErr);
+        if (/ 404:/.test(checkMessage)) {
+          oldEventAlreadyGone = true;
+        } else {
+          return buildKeepBothNotice(
+            `旧予定の状態確認に失敗しました（${checkMessage}）`,
+          );
+        }
+      }
+
+      if (!oldEventAlreadyGone) {
+        try {
+          await calendarRequest(
+            "DELETE",
+            `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+          );
+        } catch (deleteErr) {
+          const deleteMessage =
+            deleteErr instanceof Error ? deleteErr.message : String(deleteErr);
+          return buildKeepBothNotice(
+            `削除リクエストが失敗しました（${deleteMessage}）`,
+          );
+        }
       }
 
       const attendeeNotice = finalAttendees?.length
