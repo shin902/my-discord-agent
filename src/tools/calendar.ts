@@ -17,12 +17,25 @@ type CalendarEvent = {
   attendees?: Array<{ email?: string; responseStatus?: string }>;
 };
 
+// status を持つことで、呼び出し側がエラーメッセージの文字列形式に依存せず
+// HTTPステータス（404 など）で分岐できるようにする
+class CalendarApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "CalendarApiError";
+    this.status = status;
+  }
+}
+
 async function calendarFetch(path: string): Promise<unknown> {
   const baseUrl = resolveProxyBaseUrl(PROVIDER);
   const res = await fetch(`${baseUrl}${path}`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
+    throw new CalendarApiError(
+      res.status,
       `Google Calendar API エラー ${res.status}: ${text.slice(0, 200)}`,
     );
   }
@@ -42,7 +55,8 @@ async function calendarRequest(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
+    throw new CalendarApiError(
+      res.status,
       `Google Calendar API ${method} エラー ${res.status}: ${text.slice(0, 200)}`,
     );
   }
@@ -287,6 +301,130 @@ function isDateOnly(dt: EventDateTime | undefined): boolean {
   return dt?.date !== undefined;
 }
 
+// PATCH が終日↔時刻指定の型変更で失敗した際に、予定を削除・再作成して反映するフォールバック。
+// POST(再作成)を先に行い、DELETE(旧予定削除)を後に行うことで POST 失敗時の予定消失を防ぐ。
+// さらに DELETE 直前に旧予定の etag を再確認し、再作成の間に別プロセスから旧予定が更新されていた
+// 場合は削除を見送って両方残し、エージェントに重複の可能性を伝える。
+async function recreateEventForTypeChange(params: {
+  eventId: string;
+  calendarId: string;
+  current: CalendarEvent & Record<string, unknown>;
+  finalStart: EventDateTime | undefined;
+  finalEnd: EventDateTime | undefined;
+  summary?: string;
+  description?: string;
+  location?: string;
+  attendees?: string[];
+}) {
+  const {
+    eventId,
+    calendarId,
+    current,
+    finalStart,
+    finalEnd,
+    summary,
+    description,
+    location,
+    attendees,
+  } = params;
+
+  const recreateBody: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (!EXCLUDED_RECREATE_FIELDS.has(key) && value !== undefined) {
+      recreateBody[key] = value;
+    }
+  }
+  recreateBody.summary = summary ?? current.summary;
+  recreateBody.start = finalStart;
+  recreateBody.end = finalEnd;
+  const finalDescription = description ?? current.description;
+  if (finalDescription !== undefined)
+    recreateBody.description = finalDescription;
+  const finalLocation = location ?? current.location;
+  if (finalLocation !== undefined) recreateBody.location = finalLocation;
+  const finalAttendees =
+    attendees !== undefined
+      ? attendees.map((email) => ({ email }))
+      : current.attendees
+          ?.filter((a): a is { email: string } => a.email != null)
+          .map((a) => ({ email: a.email }));
+  if (finalAttendees !== undefined) recreateBody.attendees = finalAttendees;
+
+  const recreated = (await calendarRequest(
+    "POST",
+    `/calendars/${encodeURIComponent(calendarId)}/events`,
+    recreateBody,
+  )) as CalendarEvent;
+
+  const buildKeepBothNotice = (reason: string) => ({
+    content: [
+      {
+        type: "text" as const,
+        text: `終日↔時刻指定の変更のため新しい予定を作成しましたが、旧予定は削除しませんでした（${reason}）。重複している可能性があるため旧予定をご確認ください。\n- 新しいID: \`${recreated.id}\`\n- 旧ID: \`${eventId}\``,
+      },
+    ],
+    details: {
+      eventId: recreated.id,
+      calendarId,
+      recreatedFrom: eventId,
+      oldEventDeleted: false,
+    },
+  });
+
+  // current.etag が undefined のとき（API が etag を返さない場合）は同時編集の検知ができず、
+  // 確認せずに削除へ進む。Google Calendar API は通常 etag を返すため、現状この縮退の実害は小さい想定。
+  let oldEventAlreadyGone = false;
+  try {
+    const latest = (await calendarFetch(
+      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    )) as Record<string, unknown>;
+    if (current.etag !== undefined && latest.etag !== current.etag) {
+      return buildKeepBothNotice(
+        "再作成中に旧予定が別の操作で更新されたのを検知したため",
+      );
+    }
+  } catch (checkErr) {
+    if (checkErr instanceof CalendarApiError && checkErr.status === 404) {
+      oldEventAlreadyGone = true;
+    } else {
+      const checkMessage =
+        checkErr instanceof Error ? checkErr.message : String(checkErr);
+      return buildKeepBothNotice(
+        `旧予定の状態確認に失敗しました（${checkMessage}）`,
+      );
+    }
+  }
+
+  if (!oldEventAlreadyGone) {
+    try {
+      await calendarRequest(
+        "DELETE",
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      );
+    } catch (deleteErr) {
+      const deleteMessage =
+        deleteErr instanceof Error ? deleteErr.message : String(deleteErr);
+      return buildKeepBothNotice(
+        `削除リクエストが失敗しました（${deleteMessage}）`,
+      );
+    }
+  }
+
+  const attendeeNotice = finalAttendees?.length
+    ? "\n（参加者への招待が再送される可能性があります）"
+    : "";
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: `終日↔時刻指定の変更だったため予定を再作成しました: ${recreated.summary ?? "(タイトルなし)"}\n- 新しいID: \`${recreated.id}\`（旧ID: \`${eventId}\` は削除済み）${attendeeNotice}`,
+      },
+    ],
+    details: { eventId: recreated.id, calendarId, recreatedFrom: eventId },
+  };
+}
+
 export const updateEventTool: AgentTool<typeof updateEventParameters> = {
   name: "update_event",
   label: "Update Calendar Event",
@@ -343,6 +481,8 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
         throw err;
       }
 
+      // GET と再作成(POST)の間に旧イベントが更新される可能性は残るが、再作成内容のスナップショットは
+      // ここで取得するしかなく、削除直前の etag 再確認（recreateEventForTypeChange 内）でしか検知できない。
       const current = (await calendarFetch(
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
       )) as CalendarEvent & Record<string, unknown>;
@@ -370,102 +510,17 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
         );
       }
 
-      const recreateBody: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(current)) {
-        if (!EXCLUDED_RECREATE_FIELDS.has(key) && value !== undefined) {
-          recreateBody[key] = value;
-        }
-      }
-      recreateBody.summary = summary ?? current.summary;
-      recreateBody.start = finalStart;
-      recreateBody.end = finalEnd;
-      const finalDescription = description ?? current.description;
-      if (finalDescription !== undefined)
-        recreateBody.description = finalDescription;
-      const finalLocation = location ?? current.location;
-      if (finalLocation !== undefined) recreateBody.location = finalLocation;
-      const finalAttendees =
-        attendees !== undefined
-          ? attendees.map((email) => ({ email }))
-          : current.attendees
-              ?.filter((a): a is { email: string } => a.email != null)
-              .map((a) => ({ email: a.email }));
-      if (finalAttendees !== undefined) recreateBody.attendees = finalAttendees;
-
-      // 先に新イベントを作成してから旧イベントを削除する（POST 失敗時に予定が消失しないようにするため）
-      const recreated = (await calendarRequest(
-        "POST",
-        `/calendars/${encodeURIComponent(calendarId)}/events`,
-        recreateBody,
-      )) as CalendarEvent;
-
-      const buildKeepBothNotice = (reason: string) => ({
-        content: [
-          {
-            type: "text" as const,
-            text: `終日↔時刻指定の変更のため新しい予定を作成しましたが、旧予定は削除しませんでした（${reason}）。重複している可能性があるため旧予定をご確認ください。\n- 新しいID: \`${recreated.id}\`\n- 旧ID: \`${eventId}\``,
-          },
-        ],
-        details: {
-          eventId: recreated.id,
-          calendarId,
-          recreatedFrom: eventId,
-          oldEventDeleted: false,
-        },
+      return recreateEventForTypeChange({
+        eventId,
+        calendarId,
+        current,
+        finalStart,
+        finalEnd,
+        summary,
+        description,
+        location,
+        attendees,
       });
-
-      // GET から DELETE までの間に旧イベントが別プロセスから更新されていないか etag で確認する
-      // （ETag が変わっていれば、削除すると同時編集の内容が失われるため削除を見送る）
-      let oldEventAlreadyGone = false;
-      try {
-        const latest = (await calendarFetch(
-          `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-        )) as Record<string, unknown>;
-        if (current.etag !== undefined && latest.etag !== current.etag) {
-          return buildKeepBothNotice(
-            "再作成中に旧予定が別の操作で更新されたのを検知したため",
-          );
-        }
-      } catch (checkErr) {
-        const checkMessage =
-          checkErr instanceof Error ? checkErr.message : String(checkErr);
-        if (/ 404:/.test(checkMessage)) {
-          oldEventAlreadyGone = true;
-        } else {
-          return buildKeepBothNotice(
-            `旧予定の状態確認に失敗しました（${checkMessage}）`,
-          );
-        }
-      }
-
-      if (!oldEventAlreadyGone) {
-        try {
-          await calendarRequest(
-            "DELETE",
-            `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-          );
-        } catch (deleteErr) {
-          const deleteMessage =
-            deleteErr instanceof Error ? deleteErr.message : String(deleteErr);
-          return buildKeepBothNotice(
-            `削除リクエストが失敗しました（${deleteMessage}）`,
-          );
-        }
-      }
-
-      const attendeeNotice = finalAttendees?.length
-        ? "\n（参加者への招待が再送される可能性があります）"
-        : "";
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `終日↔時刻指定の変更だったため予定を再作成しました: ${recreated.summary ?? "(タイトルなし)"}\n- 新しいID: \`${recreated.id}\`（旧ID: \`${eventId}\` は削除済み）${attendeeNotice}`,
-          },
-        ],
-        details: { eventId: recreated.id, calendarId, recreatedFrom: eventId },
-      };
     }
   },
 };
