@@ -252,6 +252,8 @@ const updateEventParameters = Type.Object({
   calendarId: calendarIdParameter,
 });
 
+const INVALID_TIME_ERROR = /Invalid (start|end) time/i;
+
 export const updateEventTool: AgentTool<typeof updateEventParameters> = {
   name: "update_event",
   label: "Update Calendar Event",
@@ -281,21 +283,74 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
       body.attendees = attendees.map((email) => ({ email }));
     }
 
-    const event = (await calendarRequest(
-      "PATCH",
-      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-      body,
-    )) as CalendarEvent;
+    try {
+      const event = (await calendarRequest(
+        "PATCH",
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        body,
+      )) as CalendarEvent;
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `予定を更新しました: ${event.summary ?? "(タイトルなし)"}\n- ID: \`${event.id}\``,
-        },
-      ],
-      details: { eventId, calendarId },
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `予定を更新しました: ${event.summary ?? "(タイトルなし)"}\n- ID: \`${event.id}\``,
+          },
+        ],
+        details: { eventId, calendarId },
+      };
+    } catch (err) {
+      // Google Calendar API は終日イベント↔時刻指定イベント間の型変更を PATCH では受け付けないため、
+      // 削除して同内容を再作成するフォールバックを行う
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        !INVALID_TIME_ERROR.test(message) ||
+        (start === undefined && end === undefined)
+      ) {
+        throw err;
+      }
+
+      const current = (await calendarFetch(
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      )) as CalendarEvent;
+
+      const recreateBody: Record<string, unknown> = {
+        summary: summary ?? current.summary,
+        start: start !== undefined ? toEventDateTime(start) : current.start,
+        end: end !== undefined ? toEventDateTime(end) : current.end,
+      };
+      const finalDescription = description ?? current.description;
+      if (finalDescription !== undefined)
+        recreateBody.description = finalDescription;
+      const finalLocation = location ?? current.location;
+      if (finalLocation !== undefined) recreateBody.location = finalLocation;
+      const finalAttendees =
+        attendees !== undefined
+          ? attendees.map((email) => ({ email }))
+          : current.attendees?.map((a) => ({ email: a.email }));
+      if (finalAttendees !== undefined)
+        recreateBody.attendees = finalAttendees;
+
+      await calendarRequest(
+        "DELETE",
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      );
+      const recreated = (await calendarRequest(
+        "POST",
+        `/calendars/${encodeURIComponent(calendarId)}/events`,
+        recreateBody,
+      )) as CalendarEvent;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `終日↔時刻指定の変更だったため予定を再作成しました: ${recreated.summary ?? "(タイトルなし)"}\n- 新しいID: \`${recreated.id}\`（旧ID: \`${eventId}\` は削除済み）`,
+          },
+        ],
+        details: { eventId: recreated.id, calendarId, recreatedFrom: eventId },
+      };
+    }
   },
 };
 
