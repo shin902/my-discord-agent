@@ -351,6 +351,86 @@ describe("update_event", () => {
     });
   });
 
+  it("再作成時に recurrence/reminders/colorId を引き継ぎ、conferenceData は引き継がない", async () => {
+    const invalidTimeError = {
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({ error: { message: "Invalid start time." } }),
+    };
+    const currentEvent = {
+      ok: true,
+      json: async () => ({
+        id: "evt-001",
+        summary: "既存タイトル",
+        start: { date: "2026-06-19" },
+        end: { date: "2026-06-20" },
+        recurrence: ["RRULE:FREQ=WEEKLY"],
+        reminders: {
+          useDefault: false,
+          overrides: [{ method: "popup", minutes: 10 }],
+        },
+        colorId: "5",
+        conferenceData: { conferenceId: "abc-defg-hij" },
+      }),
+    };
+    const created = {
+      ok: true,
+      json: async () => ({ id: "evt-new-001", summary: "既存タイトル" }),
+    };
+    const deleteOk = { ok: true, status: 204 };
+
+    fetchMock
+      .mockResolvedValueOnce(invalidTimeError) // PATCH
+      .mockResolvedValueOnce(currentEvent) // GET current
+      .mockResolvedValueOnce(created) // POST recreate
+      .mockResolvedValueOnce(deleteOk); // DELETE
+
+    const { updateEventTool } = await import("./calendar.js");
+    await updateEventTool.execute("id", {
+      eventId: "evt-001",
+      start: "2026-06-19T14:50:00+09:00",
+      end: "2026-06-19T16:50:00+09:00",
+    });
+
+    const [, createInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const createBody = JSON.parse(createInit.body as string);
+    expect(createBody.recurrence).toEqual(["RRULE:FREQ=WEEKLY"]);
+    expect(createBody.reminders).toEqual({
+      useDefault: false,
+      overrides: [{ method: "popup", minutes: 10 }],
+    });
+    expect(createBody.colorId).toBe("5");
+    expect(createBody.conferenceData).toBeUndefined();
+  });
+
+  it("終日↔時刻指定の変更で start のみ指定し end が未指定だと型混在エラーになる", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({ error: { message: "Invalid start time." } }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: "evt-001",
+        summary: "既存タイトル",
+        start: { date: "2026-06-19" },
+        end: { date: "2026-06-20" },
+      }),
+    });
+
+    const { updateEventTool } = await import("./calendar.js");
+    await expect(
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+      }),
+    ).rejects.toThrow("両方指定");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("再作成後の DELETE が失敗した場合は例外にせず、重複している旨をエージェントに伝える", async () => {
     const invalidTimeError = {
       ok: false,

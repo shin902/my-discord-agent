@@ -254,11 +254,40 @@ const updateEventParameters = Type.Object({
 
 const INVALID_TIME_ERROR = /Invalid (start|end) time/i;
 
+// 再作成時に元イベントから引き継がない項目。id/etag 等はサーバー管理のフィールドなので POST に含めない。
+// start/end/summary/description/location/attendees は個別に上書き値を計算するため除外。
+// conferenceData は conferenceDataVersion クエリパラメータが必要なため引き継がない（Meet リンクは再作成後に再設定が必要）。
+const EXCLUDED_RECREATE_FIELDS = new Set([
+  "id",
+  "etag",
+  "kind",
+  "htmlLink",
+  "created",
+  "updated",
+  "iCalUID",
+  "sequence",
+  "status",
+  "organizer",
+  "creator",
+  "hangoutLink",
+  "conferenceData",
+  "start",
+  "end",
+  "summary",
+  "description",
+  "location",
+  "attendees",
+]);
+
+function isDateOnly(dt: EventDateTime | undefined): boolean {
+  return dt?.date !== undefined;
+}
+
 export const updateEventTool: AgentTool<typeof updateEventParameters> = {
   name: "update_event",
   label: "Update Calendar Event",
   description:
-    "既存の予定を更新する。指定したフィールドのみ変更し、他は維持する",
+    "既存の予定を更新する。指定したフィールドのみ変更し、他は維持する。終日↔時刻指定の変更時は予定を削除・再作成するため eventId が変わる（繰り返し設定・通知設定は引き継ぐが、Google Meet 等の conferenceData は引き継がれない）",
   parameters: updateEventParameters,
   execute: async (
     _toolCallId,
@@ -312,13 +341,26 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
 
       const current = (await calendarFetch(
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-      )) as CalendarEvent;
+      )) as CalendarEvent & Record<string, unknown>;
 
-      const recreateBody: Record<string, unknown> = {
-        summary: summary ?? current.summary,
-        start: start !== undefined ? toEventDateTime(start) : current.start,
-        end: end !== undefined ? toEventDateTime(end) : current.end,
-      };
+      const finalStart =
+        start !== undefined ? toEventDateTime(start) : current.start;
+      const finalEnd = end !== undefined ? toEventDateTime(end) : current.end;
+      if (isDateOnly(finalStart) !== isDateOnly(finalEnd)) {
+        throw new Error(
+          "終日↔時刻指定の変更には start と end を両方指定してください（片方だけ変更すると型が混在しエラーになります）",
+        );
+      }
+
+      const recreateBody: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(current)) {
+        if (!EXCLUDED_RECREATE_FIELDS.has(key) && value !== undefined) {
+          recreateBody[key] = value;
+        }
+      }
+      recreateBody.summary = summary ?? current.summary;
+      recreateBody.start = finalStart;
+      recreateBody.end = finalEnd;
       const finalDescription = description ?? current.description;
       if (finalDescription !== undefined)
         recreateBody.description = finalDescription;
