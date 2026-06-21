@@ -254,8 +254,8 @@ const updateEventParameters = Type.Object({
 
 // issue #125 の再現時に Google Calendar API が実際に返したエラー文言は
 // `{"error":{"errors":[{"reason":"invalid","message":"Invalid start time."}],"message":"Invalid start time."}}`。
-// 他要因（日時フォーマット誤りなど）でも同文言が返ると誤って再作成フォールバックに入る可能性があるが、
-// その場合も POST が失敗すれば旧イベントは消えないため実害は小さい。
+// この文字列マッチだけでは型変更以外の原因（日時フォーマット誤り等）と区別できないため、
+// マッチした場合でも実際に GET した現在値と比較し、型が変わるリクエストかどうかを再確認してから再作成する。
 const INVALID_TIME_ERROR = /Invalid (start|end) time/i;
 
 // 再作成時に元イベントから引き継がない項目。id/etag 等はサーバー管理のフィールドなので POST に含めない。
@@ -346,6 +346,20 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
       const current = (await calendarFetch(
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
       )) as CalendarEvent & Record<string, unknown>;
+
+      // エラー文言だけでは「本当に終日↔時刻指定の変更が原因か」を判別できないため、
+      // 取得した現在値と比較し、実際に型が変わるリクエストでない場合は元のエラーを伝える。
+      // （型変更でないのに再作成してしまうと、別原因のエラーで POST だけ通った場合に
+      // 正しい元イベントを誤って削除してしまう恐れがあるため）
+      const startTypeChanges =
+        start !== undefined &&
+        isDateOnly(toEventDateTime(start)) !== isDateOnly(current.start);
+      const endTypeChanges =
+        end !== undefined &&
+        isDateOnly(toEventDateTime(end)) !== isDateOnly(current.end);
+      if (!startTypeChanges && !endTypeChanges) {
+        throw err;
+      }
 
       const finalStart =
         start !== undefined ? toEventDateTime(start) : current.start;

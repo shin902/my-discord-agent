@@ -431,6 +431,36 @@ describe("update_event", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("エラー文言が一致しても実際には型が変わっていない場合は再作成せず元のエラーを投げる", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({ error: { message: "Invalid start time." } }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: "evt-001",
+        summary: "既存タイトル",
+        start: { dateTime: "2026-06-19T10:00:00+09:00" },
+        end: { dateTime: "2026-06-19T11:00:00+09:00" },
+      }),
+    });
+
+    const { updateEventTool } = await import("./calendar.js");
+    await expect(
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        // 既存も dateTime のままなので型変更ではない（フォーマット誤り等の別原因のはず）
+        start: "invalid-date-string",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    ).rejects.toThrow("Invalid start time");
+    // GET で現在値を確認した上で再作成せず終了する（POST/DELETE は呼ばれない）
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("再作成後の DELETE が失敗した場合は例外にせず、重複している旨をエージェントに伝える", async () => {
     const invalidTimeError = {
       ok: false,
