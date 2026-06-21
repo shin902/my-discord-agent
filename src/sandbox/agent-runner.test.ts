@@ -11,10 +11,10 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 vi.mock("@earendil-works/pi-ai", () => ({
-  getProviders: () => ["provider-a", "opencode-go"],
+  getProviders: () => ["provider-a", "zai"],
   getModels: (provider: string) =>
-    provider === "opencode-go"
-      ? [{ id: "kimi-k2.6", name: "Kimi K2.6" }]
+    provider === "zai"
+      ? [{ id: "glm-4.7-flash", name: "GLM-4.7-Flash" }]
       : [{ id: "model-x", name: "Model X" }],
 }));
 
@@ -108,7 +108,7 @@ describe("runAgentLoop", () => {
     expect(lastAgentOptions).toMatchObject({
       initialState: {
         systemPrompt: `あなたは役立つDiscordアシスタントです。\n\n## 今日の日付\n\n${today} (JST)`,
-        model: { id: "kimi-k2.6", name: "Kimi K2.6" },
+        model: { id: "glm-4.7-flash", name: "GLM-4.7-Flash" },
         thinkingLevel: "off",
       },
     });

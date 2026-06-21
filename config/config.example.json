@@ -1,9 +1,14 @@
 {
   "defaultModel": {
-    "provider": "opencode-go",
-    "modelId": "kimi-k2.6"
+    "provider": "zai",
+    "modelId": "glm-4.7-flash"
   },
   "credentials": [
+    {
+      "provider": "zai",
+      "envVars": ["ZAI_API_KEY"],
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4"
+    },
     {
       "provider": "openai",
       "envVars": ["OPENAI_API_KEY"],
@@ -113,8 +118,8 @@
     {
       "name": "default",
       "model": {
-        "provider": "opencode-go",
-        "modelId": "kimi-k2.6"
+        "provider": "zai",
+        "modelId": "glm-4.7-flash"
       },
       "tools": ["tavily_search"],
       "autoReply": false,
@@ -171,6 +176,6 @@
     }
   ],
   "poller": {
-    "dispatchMode": "parallel-session"
+    "dispatchMode": "serial"
   }
 }

@@ -3,9 +3,10 @@ import { type ModelConfig, ModelConfigSchema } from "./groups.js";
 
 // サンドボックスコンテナ（config.json を読めない）で groupConfig.model が未設定の場合に使うデフォルト。agent-runner.ts を単独実行するときの安全網。
 // 通常運用では manager.ts が loadDefaultModel() の結果を必ず groupConfig.model に詰めてコンテナに渡すため、この値が使われることはない。
+// opencode-go の kimi-k2.6 は大規模なツールコールで API エラーが頻発し非推奨（#107）。GLM-4.7-flash は zai の無料枠（並列実行1まで・コンテキスト制限なし）で動かせるため後継に採用。
 export const FALLBACK_DEFAULT_MODEL: ModelConfig = {
-  provider: "opencode-go",
-  modelId: "kimi-k2.6",
+  provider: "zai",
+  modelId: "glm-4.7-flash",
 };
 
 export async function loadDefaultModel(): Promise<ModelConfig> {

@@ -58,7 +58,7 @@
 
 ```json
 {
-  "model": { "provider": "opencode-go", "modelId": "kimi-k2.6" },
+  "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
   "tools": ["bash", "read", "write"],
   "autoReply": true,
   "toolLogArgs": true

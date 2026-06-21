@@ -88,7 +88,7 @@ cron ハンドラーの置き場は `src/cron/jobs/local/` を gitignore し、�
 
 `.env.example` を `.env` にコピーして設定:
 - `DISCORD_BOT_TOKEN`: Discord Bot トークン
-- `OPENCODE_API_KEY`: OpenCode Go の API キー
+- `ZAI_API_KEY`: zAI（推奨デフォルト。glm-4.7-flash は無料枠で並列実行1まで利用可能）の API キー
 
 その他のプロバイダー環境変数は `.env.example` のコメントを参照。クレデンシャルプロキシの詳細は `docs/spec/proxy.md` を参照。
 

@@ -66,7 +66,7 @@ describe("loadGroups", () => {
       groups: [
         {
           name: "chat",
-          model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+          model: { provider: "zai", modelId: "glm-4.7-flash" },
           tools: ["tavily_search"],
           autoReply: true,
           toolLogArgs: true,
@@ -77,7 +77,7 @@ describe("loadGroups", () => {
     });
     const groups = await loadGroups();
     expect(groups[0]).toMatchObject({
-      model: { provider: "opencode-go", modelId: "kimi-k2.6" },
+      model: { provider: "zai", modelId: "glm-4.7-flash" },
       tools: ["tavily_search"],
       autoReply: true,
       toolLogArgs: true,
