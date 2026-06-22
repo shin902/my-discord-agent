@@ -289,6 +289,10 @@ const EXCLUDED_RECREATE_FIELDS = new Set([
   "creator",
   "hangoutLink",
   "conferenceData",
+  // 繰り返しイベントの単一インスタンスが持つ読み取り専用フィールド。
+  // POST(再作成)に含めると親シリーズとの紐付けが破損する/エラーになるため除外する。
+  "recurringEventId",
+  "originalStartTime",
   "start",
   "end",
   "summary",
