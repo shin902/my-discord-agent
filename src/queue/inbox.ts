@@ -1,14 +1,14 @@
 /**
  * inbox キュー — Discord から受け取ったメッセージを処理前に一時保存する。
  *
- * フロー: Discord受信 → appendInbox() → poller が peekUnclaimedInbox() で取り出して処理
+ * フロー: Discord受信 → appendInbox() → poller が peekAllUnclaimedInbox() で取り出して処理
  *  → 処理完了後に removeInboxById()、リトライ時は updateInboxById() で更新
  *
  * ファイル形式は JSONL（1行1メッセージ）。例：
  *   {"id":"msg-1234-abc","channelId":"9876","content":"こんにちは","timestamp":"2026-05-06T10:00:00.000Z","retries":0}
  *   {"id":"msg-1235-def","channelId":"9876","content":"返事して","timestamp":"2026-05-06T10:00:01.000Z","retries":0}
  *
- * peekUnclaimedInbox() は処理中（in-flight）のメッセージをファイルから削除しない。
+ * peekAllUnclaimedInbox() は処理中（in-flight）のメッセージをファイルから削除しない。
  * これにより、再起動時にも未完了のメッセージがキューに残り続ける（#69）。
  * JSONL はインプレース更新ができないため、remove/update 系はファイル全体を書き直す。
  * readFile と writeFile の間に appendInbox が割り込むとメッセージが消えるため、
@@ -84,25 +84,31 @@ export async function appendInbox(
 }
 
 /**
- * 先頭から、excludeIds に含まれない最初の1件を取り出す。ファイルからは削除しない。
+ * excludeIds に含まれない全件を、ファイル順を保ったまま取り出す。ファイルからは削除しない。
  *
  * poller はこの呼び出しで claim したメッセージを処理が完全に終わるまで
  * excludeIds（in-flight セット）に入れておくことで、同じメッセージを
  * 取り出し直してしまうのを防ぐ。実際の削除は removeInboxById() で行う。
+ *
+ * in-flight のメッセージはファイルから消えずに残るため、1件ずつ peek すると
+ * 呼び出すたびにファイル全体を読み直し、残っている in-flight 分を毎回スキップする
+ * コストがかかる（in-flight 数 × 呼び出し回数）。1回の読み込みで未claim分を
+ * まとめて返すことで、ポーラーの1ループ（tick）あたりの読み込み回数を1回に抑える。
  */
-export async function peekUnclaimedInbox(
+export async function peekAllUnclaimedInbox(
   excludeIds: ReadonlySet<string>,
-): Promise<InboxMessage | null> {
+): Promise<InboxMessage[]> {
   return withFileLock(async () => {
-    if (!existsSync(INBOX_PATH)) return null;
+    if (!existsSync(INBOX_PATH)) return [];
 
     const text = await readFile(INBOX_PATH, "utf-8");
     const lines = text.split("\n").filter((l) => l.trim());
+    const result: InboxMessage[] = [];
     for (const line of lines) {
       const msg = JSON.parse(line) as InboxMessage;
-      if (!excludeIds.has(msg.id)) return msg;
+      if (!excludeIds.has(msg.id)) result.push(msg);
     }
-    return null;
+    return result;
   });
 }
 

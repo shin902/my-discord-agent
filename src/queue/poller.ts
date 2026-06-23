@@ -11,7 +11,7 @@ import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import {
   type InboxMessage,
-  peekUnclaimedInbox,
+  peekAllUnclaimedInbox,
   removeInboxById,
   updateInboxById,
 } from "./inbox.js";
@@ -22,7 +22,7 @@ const MAX_RETRIES = 10;
 let running = false;
 
 const sessionChain = new Map<string, Promise<void>>();
-// peekUnclaimedInbox() で claim 済み（処理中 / セッションチェーンで順番待ち中）のメッセージID。
+// peekAllUnclaimedInbox() で claim 済み（処理中 / セッションチェーンで順番待ち中）のメッセージID。
 // 処理が完全に終わる（removeInboxById / updateInboxById）まで inbox.jsonl から削除しないため、
 // 同じメッセージを再度 claim しないようにここで追跡する。
 const inFlightIds = new Set<string>();
@@ -350,17 +350,22 @@ async function poll(): Promise<void> {
   const mode = await loadDispatchMode();
   while (running) {
     if (client.isReady()) {
-      const msg = await peekUnclaimedInbox(inFlightIds);
-      if (msg) {
-        // claim: 処理が完全に終わるまで inbox.jsonl から削除しない
-        // （同一セッション内で順番待ち中でも消えないようにするため）
-        inFlightIds.add(msg.id);
-        // ノンブロッキングで dispatch → 即次のメッセージを取りに行く
-        dispatch(msg.sessionId, () =>
-          processMessage(msg, mode).finally(() => {
-            inFlightIds.delete(msg.id);
-          }),
-        );
+      // in-flight のメッセージはファイルに残り続けるため、1回の読み込みで
+      // 未claim分を全部取得してまとめて dispatch する（1件ずつ読み直すと
+      // in-flight が溜まるほど無駄な読み込み・パースが増えるため）
+      const msgs = await peekAllUnclaimedInbox(inFlightIds);
+      if (msgs.length > 0) {
+        for (const msg of msgs) {
+          // claim: 処理が完全に終わるまで inbox.jsonl から削除しない
+          // （同一セッション内で順番待ち中でも消えないようにするため）
+          inFlightIds.add(msg.id);
+          dispatch(msg.sessionId, () =>
+            processMessage(msg, mode).finally(() => {
+              inFlightIds.delete(msg.id);
+            }),
+          );
+        }
+        // ノンブロッキングで dispatch 済み → 即次のバッチを取りに行く
         continue;
       }
     }

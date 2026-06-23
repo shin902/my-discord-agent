@@ -20,7 +20,7 @@ vi.mock("node:fs/promises", () => ({
   }),
 }));
 
-const { appendInbox, peekUnclaimedInbox, removeInboxById, updateInboxById } =
+const { appendInbox, peekAllUnclaimedInbox, removeInboxById, updateInboxById } =
   await import("./inbox.js");
 
 function makeMsgInput(
@@ -86,49 +86,49 @@ describe("appendInbox", () => {
   });
 });
 
-describe("peekUnclaimedInbox", () => {
-  it("ファイル未作成時に null を返す", async () => {
-    const result = await peekUnclaimedInbox(new Set());
-    expect(result).toBeNull();
+describe("peekAllUnclaimedInbox", () => {
+  it("ファイル未作成時に空配列を返す", async () => {
+    const result = await peekAllUnclaimedInbox(new Set());
+    expect(result).toEqual([]);
   });
 
-  it("空ファイルの場合 null を返す", async () => {
+  it("空ファイルの場合 空配列を返す", async () => {
     store.content = "";
-    const result = await peekUnclaimedInbox(new Set());
-    expect(result).toBeNull();
+    const result = await peekAllUnclaimedInbox(new Set());
+    expect(result).toEqual([]);
   });
 
-  it("先頭から順に見て excludeIds に含まれない最初のメッセージを返す", async () => {
+  it("excludeIds に含まれないメッセージをファイル順のまま全件返す", async () => {
     await appendInbox(makeMsgInput({ content: "first" }));
     await appendInbox(makeMsgInput({ content: "second" }));
+    await appendInbox(makeMsgInput({ content: "third" }));
     const lines = readLines();
     const firstId = lines[0].id;
-    const secondId = lines[1].id;
 
-    const result = await peekUnclaimedInbox(new Set([firstId]));
-    expect(result?.id).toBe(secondId);
-    expect(result?.content).toBe("second");
+    const result = await peekAllUnclaimedInbox(new Set([firstId]));
+    expect(result).toHaveLength(2);
+    expect(result.map((m) => m.content)).toEqual(["second", "third"]);
   });
 
   it("ファイルは変更しない（再度呼んでも同じ結果が返る）", async () => {
     await appendInbox(makeMsgInput({ content: "first" }));
     const beforeContent = store.content;
 
-    const result1 = await peekUnclaimedInbox(new Set());
-    const result2 = await peekUnclaimedInbox(new Set());
+    const result1 = await peekAllUnclaimedInbox(new Set());
+    const result2 = await peekAllUnclaimedInbox(new Set());
 
     expect(store.content).toBe(beforeContent);
     expect(result1).toEqual(result2);
   });
 
-  it("全件が excludeIds に含まれる場合 null を返す", async () => {
+  it("全件が excludeIds に含まれる場合 空配列を返す", async () => {
     await appendInbox(makeMsgInput({ content: "first" }));
     await appendInbox(makeMsgInput({ content: "second" }));
     const lines = readLines();
     const allIds = new Set(lines.map((l) => l.id));
 
-    const result = await peekUnclaimedInbox(allIds);
-    expect(result).toBeNull();
+    const result = await peekAllUnclaimedInbox(allIds);
+    expect(result).toEqual([]);
   });
 });
 
