@@ -23,10 +23,11 @@ const tick = () => new Promise<void>((r) => setTimeout(r, 20));
 
 let dispatch: (sessionId: string, fn: () => Promise<void>) => void;
 let stopPoller: () => void;
+let startPoller: () => void;
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ dispatch, stopPoller } = await import("./poller.js"));
+  ({ dispatch, stopPoller, startPoller } = await import("./poller.js"));
 });
 
 describe("stopPoller", () => {
@@ -131,4 +132,35 @@ describe("dispatch", () => {
     );
     spy.mockRestore();
   });
+});
+
+describe("poll - 例外耐性 (#152)", () => {
+  it("peekAllUnclaimedInbox が例外を投げてもポーラーは止まらず次のtickで継続する", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { client } = await import("../discord/client.js");
+    const { peekAllUnclaimedInbox } = await import("./inbox.js");
+    const { loadDispatchMode } = await import("../config/poller-config.js");
+
+    vi.mocked(client.isReady).mockReturnValue(true);
+    vi.mocked(loadDispatchMode).mockResolvedValue("parallel-session");
+    vi.mocked(peekAllUnclaimedInbox)
+      .mockRejectedValueOnce(new Error("不正なJSON行"))
+      .mockResolvedValue([]);
+
+    startPoller();
+    // 例外発生後は POLL_MS(1000ms) sleep を挟んで次のtickに進むため少し長めに待つ
+    await new Promise<void>((r) => setTimeout(r, 1100));
+
+    expect(spy).toHaveBeenCalledWith(
+      "[poller] poll ループで予期せぬエラー:",
+      expect.any(Error),
+    );
+    // 1回目の例外後も2回目の呼び出しが行われている（ループが継続している）
+    expect(vi.mocked(peekAllUnclaimedInbox).mock.calls.length).toBeGreaterThan(
+      1,
+    );
+
+    stopPoller();
+    spy.mockRestore();
+  }, 10000);
 });

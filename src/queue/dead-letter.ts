@@ -24,3 +24,18 @@ export async function appendDeadLetter(msg: InboxMessage): Promise<void> {
     await appendFile(DEAD_LETTER_PATH, `${JSON.stringify(msg)}\n`, "utf-8");
   });
 }
+
+/** inbox.jsonl 内の JSON.parse に失敗した行をそのまま dead-letter.jsonl に退避する。調査用。 */
+export async function appendCorruptedDeadLetter(
+  rawLine: string,
+): Promise<void> {
+  return withFileLock(async () => {
+    await mkdir(QUEUE_DIR, { recursive: true });
+    const entry = JSON.stringify({
+      corrupted: true,
+      raw: rawLine,
+      timestamp: new Date().toISOString(),
+    });
+    await appendFile(DEAD_LETTER_PATH, `${entry}\n`, "utf-8");
+  });
+}

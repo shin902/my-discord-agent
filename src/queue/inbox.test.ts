@@ -20,6 +20,9 @@ vi.mock("node:fs/promises", () => ({
   }),
 }));
 
+const appendCorruptedDeadLetter = vi.fn();
+vi.mock("./dead-letter.js", () => ({ appendCorruptedDeadLetter }));
+
 const { appendInbox, peekAllUnclaimedInbox, removeInboxById, updateInboxById } =
   await import("./inbox.js");
 
@@ -129,6 +132,27 @@ describe("peekAllUnclaimedInbox", () => {
 
     const result = await peekAllUnclaimedInbox(allIds);
     expect(result).toEqual([]);
+  });
+
+  it("不正なJSON行が混入していても例外を投げず、正常な行のみ返す", async () => {
+    await appendInbox(makeMsgInput({ content: "first" }));
+    store.content = `${store.content}not-valid-json\n`;
+    await appendInbox(makeMsgInput({ content: "third" }));
+
+    const result = await peekAllUnclaimedInbox(new Set());
+
+    expect(result.map((m) => m.content)).toEqual(["first", "third"]);
+  });
+
+  it("不正なJSON行は dead-letter に退避され、ファイルからは除去される", async () => {
+    await appendInbox(makeMsgInput({ content: "first" }));
+    store.content = `${store.content}not-valid-json\n`;
+
+    await peekAllUnclaimedInbox(new Set());
+
+    expect(appendCorruptedDeadLetter).toHaveBeenCalledWith("not-valid-json");
+    expect(readLines()).toHaveLength(1);
+    expect(readLines()[0].content).toBe("first");
   });
 });
 
