@@ -8,10 +8,8 @@ const mocks = vi.hoisted(() => ({
   loadGroups: vi.fn(),
   initGroupPrompts: vi.fn(),
   initManager: vi.fn(),
-  validateModel: vi.fn(),
-  buildExtraMountArgs: vi.fn(),
+  validateGroupConfig: vi.fn(),
   loadDefaultModel: vi.fn(),
-  resolveTools: vi.fn(),
 }));
 
 vi.mock("./discord/client.js", () => ({ client: { login: mocks.login } }));
@@ -29,14 +27,10 @@ vi.mock("./config/group-config.js", () => ({
 }));
 vi.mock("./agent/manager.js", () => ({
   initManager: mocks.initManager,
-  validateModel: mocks.validateModel,
-  buildExtraMountArgs: mocks.buildExtraMountArgs,
+  validateGroupConfig: mocks.validateGroupConfig,
 }));
 vi.mock("./config/default-model.js", () => ({
   loadDefaultModel: mocks.loadDefaultModel,
-}));
-vi.mock("./tools/registry.js", () => ({
-  resolveTools: mocks.resolveTools,
 }));
 vi.mock("./proxy/credential-proxy-server.js", () => ({
   initCredentialProxyServer: vi.fn().mockResolvedValue(0),
@@ -93,7 +87,7 @@ describe("index: 起動時バリデーション", () => {
         model: { provider: "unknown", modelId: "x" },
       },
     ]);
-    mocks.validateModel.mockImplementation(() => {
+    mocks.validateGroupConfig.mockImplementation(() => {
       throw new Error("不明なプロバイダ: unknown");
     });
 
@@ -111,7 +105,7 @@ describe("index: 起動時バリデーション", () => {
         tools: ["unknown_tool"],
       },
     ]);
-    mocks.resolveTools.mockImplementation(() => {
+    mocks.validateGroupConfig.mockImplementation(() => {
       throw new Error("不明なツール名: unknown_tool");
     });
 
@@ -129,7 +123,7 @@ describe("index: 起動時バリデーション", () => {
         mounts: [{ host: "../outside", container: "/workspace/x" }],
       },
     ]);
-    mocks.buildExtraMountArgs.mockImplementation(() => {
+    mocks.validateGroupConfig.mockImplementation(() => {
       throw new Error(
         "mounts.host はリポジトリルート外を指しています: ../outside",
       );
