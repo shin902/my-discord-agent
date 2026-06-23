@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
-import { loadRawConfig } from "../config/config.js";
+import { loadRawCron } from "../config/config.js";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { NonRetryableError } from "../utils/error.js";
@@ -210,10 +210,16 @@ let _jobs: CronJob[] | null = null;
 
 async function loadJobs(): Promise<CronJob[]> {
   if (_jobs !== null) return _jobs;
-  // エラー時（ENOENT 含む）は _jobs をキャッシュしない。
-  // 次の tick で再試行するため、起動後に config.json を配置すれば動き始める。
-  const raw = await loadRawConfig();
-  _jobs = CronJobsSchema.parse(raw.cron ?? []);
+  // cron.json は省略可能。エラー時（ENOENT 含む）は _jobs をキャッシュしない。
+  // 次の tick で再試行するため、起動後に cron.json を配置すれば動き始める。
+  let raw: unknown;
+  try {
+    raw = await loadRawCron();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  _jobs = CronJobsSchema.parse(raw);
   return _jobs;
 }
 

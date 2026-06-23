@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 
 function makeConfig(credentials: unknown[]) {
-  return JSON.stringify({ credentials, groups: [], cron: [] });
+  return JSON.stringify(credentials);
 }
 
 async function importFresh() {
@@ -68,15 +68,11 @@ describe("loadCredentialProxy", () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
-  it("credentials キーがない場合はエラーをスローする", async () => {
+  it("credentials が配列でない場合はエラーをスローする", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
-      JSON.stringify({ groups: [], cron: [] }),
-    );
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ foo: "bar" }));
 
-    await expect(loadCredentialProxy()).rejects.toThrow(
-      "credentials は必須項目です",
-    );
+    await expect(loadCredentialProxy()).rejects.toThrow();
   });
 
   it("ファイルが存在しない場合はエラーをスローする", async () => {
@@ -86,7 +82,7 @@ describe("loadCredentialProxy", () => {
     );
 
     await expect(loadCredentialProxy()).rejects.toThrow(
-      "config/config.json が見つかりません",
+      "config/credentials.json が見つかりません",
     );
   });
 
