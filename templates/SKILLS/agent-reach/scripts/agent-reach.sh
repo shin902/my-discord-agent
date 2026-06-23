@@ -408,19 +408,32 @@ fetch_github_repo() {
 fetch_reddit() {
   local url="$1"
   check_cmd curl
+  check_cmd jq
 
   local tmp_file
   tmp_file=$(mktemp)
   _register_cleanup "$tmp_file"
 
-  local json_url
-  if [[ "$url" == *.json ]]; then
-    json_url="$url"
-  else
-    json_url=$(echo "$url" | sed -E 's|/?(\?.*)?$|.json\1|')
+  local path_and_query
+  path_and_query=$(echo "$url" | sed -E 's|^https?://[^/]+||')
+  if [[ "$url" != *.json ]]; then
+    path_and_query=$(echo "$path_and_query" | sed -E 's|/?(\?.*)?$|.json\1|')
   fi
 
-  curl -sf "$json_url" -H "User-Agent: agent-reach-cli/1.0" > "$tmp_file"
+  # Reddit は未認証の .json アクセスを一律ブロックするため、credential-proxy 経由で
+  # ログイン済みクッキーを使って www.reddit.com にアクセスする (docs/reddit-cookie-setup.md 参照)。
+  # シークレット自体はホスト側 proxy が注入し、このスクリプトには渡らない。
+  [[ -n "${CREDENTIAL_PROXY_JSON:-}" ]] \
+    || die "CREDENTIAL_PROXY_JSON が設定されていません(reddit は credential-proxy 経由でのみアクセス可能)"
+
+  local proxy_base
+  proxy_base=$(echo "$CREDENTIAL_PROXY_JSON" | jq -r '.[] | select(.provider == "reddit") | .baseUrl' | sed -E 's|/$||')
+  [[ -n "$proxy_base" ]] \
+    || die "reddit プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません"
+
+  local ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+  curl -sf "${proxy_base}${path_and_query}" -H "User-Agent: ${ua}" > "$tmp_file"
   format_reddit "$tmp_file"
 }
 
