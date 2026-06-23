@@ -418,6 +418,9 @@ fetch_reddit() {
   # path_and_query を作る(無いと proxy_base のポート番号に直接 ".json" が連結されて
   # 不正な URL になる)。sed の /? は単体の "/" にもマッチして消費してしまうため、
   # bash のパラメータ展開で素朴に組み立てる。
+  # fragment(#...) は curl がリクエスト送信時に切り離すため、先に除去しておかないと
+  # ".json" が fragment の後ろに付いてしまい、サーバーに送られるパスに反映されない。
+  url="${url%%#*}"
   local after_scheme="${url#*://}"
   local pathname=""
   [[ "$after_scheme" == */* ]] && pathname="${after_scheme#*/}"
