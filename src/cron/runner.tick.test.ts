@@ -3,22 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // tick() のオーケストレーションテスト
 // _jobs / _state はモジュールレベルキャッシュのため vi.resetModules() + vi.doMock() パターンを使用
 
-const CRON_JSON = JSON.stringify([
-  {
-    id: "tick-job",
-    schedule: "* * * * *",
-    groupName: "g",
-    prompt: "p",
-    channelId: "c",
-    mode: "to-channel",
-  },
-]);
-
 describe("tick() orchestration", () => {
   let mockAppendInbox: ReturnType<typeof vi.fn>;
   let mockIsReady: ReturnType<typeof vi.fn>;
   let mockExistsSync: ReturnType<typeof vi.fn>;
-  let mockReadFile: ReturnType<typeof vi.fn>;
   let mockWriteFile: ReturnType<typeof vi.fn>;
   let startCron: () => void;
   let stopCron: () => void;
@@ -31,13 +19,12 @@ describe("tick() orchestration", () => {
     mockAppendInbox = vi.fn().mockResolvedValue(undefined);
     mockIsReady = vi.fn().mockReturnValue(true);
     mockExistsSync = vi.fn();
-    mockReadFile = vi.fn().mockResolvedValue(CRON_JSON);
     mockWriteFile = vi.fn().mockResolvedValue(undefined);
 
     vi.resetModules();
     vi.doMock("node:fs", () => ({ existsSync: mockExistsSync }));
     vi.doMock("node:fs/promises", () => ({
-      readFile: mockReadFile,
+      readFile: vi.fn(),
       writeFile: mockWriteFile,
       mkdir: vi.fn().mockResolvedValue(undefined),
     }));
