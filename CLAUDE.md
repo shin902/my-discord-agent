@@ -30,7 +30,7 @@ pnpm vitest run src/queue/poller.test.ts
 Discord受信
   └─ discord/handler.ts   (MessageCreateイベント)
        └─ queue/inbox.ts  (appendInbox: data/queue/inbox.jsonl へ追記)
-            └─ queue/poller.ts (1秒ごとに shiftInbox() でデキュー)
+            └─ queue/poller.ts (1秒ごとに peekAllUnclaimedInbox() で未claim分を取得)
                  ├─ agent/manager.ts  (sendMessage: サンドボックスコンテナを起動)
                  │    ├─ agent/session.ts  (会話履歴を data/sessions/{group}/{sessionId}.jsonl に JSONL 永続化)
                  │    └─ config/group-config.ts (groups/{name}/group.json + AGENTS.md をキャッシュ読み込み)
