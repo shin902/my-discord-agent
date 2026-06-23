@@ -445,10 +445,13 @@ fetch_reddit() {
   [[ -n "${CREDENTIAL_PROXY_JSON:-}" ]] \
     || die "CREDENTIAL_PROXY_JSON が設定されていません(reddit は credential-proxy 経由でのみアクセス可能)"
 
-  local proxy_base
-  proxy_base=$(echo "$CREDENTIAL_PROXY_JSON" | jq -r '[.[] | select(.provider == "reddit")] | first | .baseUrl // empty' | sed -E 's|/$||')
+  # jq が CREDENTIAL_PROXY_JSON のパースに失敗すると非ゼロ終了し、set -e の下では
+  # 直後の die に到達せず jq の生エラーでスクリプトが落ちてしまうため、ここだけ
+  # errexit を無効化して空文字列にフォールバックさせ、下の die に判定を委ねる
+  local proxy_base=""
+  proxy_base=$(echo "$CREDENTIAL_PROXY_JSON" | jq -r '[.[] | select(.provider == "reddit")] | first | .baseUrl // empty' 2>/dev/null | sed -E 's|/$||') || true
   [[ -n "$proxy_base" ]] \
-    || die "reddit プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません"
+    || die "reddit プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません(JSON が不正な可能性があります)"
 
   local ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
