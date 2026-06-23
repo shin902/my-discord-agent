@@ -175,7 +175,7 @@ async function validateHandlerPath(handlerRelPath: string): Promise<void> {
     default?: unknown;
   };
   if (typeof mod.default !== "function") {
-    throw new Error(
+    throw new NonRetryableError(
       `ハンドラー ${handlerRelPath} に default export (function) がありません`,
     );
   }
@@ -191,9 +191,10 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
     throw err;
   }
   const jobs = CronJobsSchema.parse(raw);
-  // handler 付きジョブは起動時に import 検証する
+  // enabled な handler 付きジョブのみ起動時に import 検証する（無効化ジョブは対象外）
   const handlers = jobs.filter(
-    (j): j is CronJob & { handler: string } => typeof j.handler === "string",
+    (j): j is CronJob & { handler: string } =>
+      j.enabled && typeof j.handler === "string",
   );
   await Promise.all(handlers.map((h) => validateHandlerPath(h.handler)));
   return jobs;
