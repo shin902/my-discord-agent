@@ -168,9 +168,10 @@ async function processCronThread(
   }
   // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
   let threadId: string | undefined;
+  let response: string;
+  let threadSend: (content: string) => Promise<unknown>;
   try {
     let sessionId: string;
-    let threadSend: (content: string) => Promise<unknown>;
     if (msg.cronThreadId) {
       // リトライ: スレッドは作成済み。再作成せず既存スレッドをフェッチ
       threadId = msg.cronThreadId;
@@ -209,15 +210,9 @@ async function processCronThread(
       sessionId = thread.id;
       threadSend = (content) => thread.send(content);
     }
-    const response = await withLlmLock(mode, () =>
+    response = await withLlmLock(mode, () =>
       sendMessage(msg.groupName, sessionId, msg.content),
     );
-    if (response) {
-      for (const chunk of splitMessage(response)) {
-        await threadSend(chunk);
-      }
-    }
-    await removeInboxById(msg.id);
   } catch (err) {
     if (err instanceof NonRetryableError) {
       console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
@@ -243,6 +238,21 @@ async function processCronThread(
         await removeInboxById(msg.id);
       }
     }
+    return;
+  }
+
+  // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
+  // ログのみで再実行しない（processMessage と同様、応答自体は生成済みのため）
+  await removeInboxById(msg.id);
+
+  try {
+    if (response) {
+      for (const chunk of splitMessage(response)) {
+        await threadSend(chunk);
+      }
+    }
+  } catch (err) {
+    console.error("[poller] cron-thread Discord送信エラー:", err);
   }
 }
 

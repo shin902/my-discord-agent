@@ -14,7 +14,7 @@ vi.mock("../discord/client.js", () => ({
 }));
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
 vi.mock("./inbox.js", () => ({
-  peekUnclaimedInbox: vi.fn(),
+  peekAllUnclaimedInbox: vi.fn(),
   removeInboxById: vi.fn(),
   updateInboxById: vi.fn(),
 }));
