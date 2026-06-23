@@ -1,13 +1,16 @@
 /**
  * inbox キュー — Discord から受け取ったメッセージを処理前に一時保存する。
  *
- * フロー: Discord受信 → appendInbox() → poller が shiftInbox() で取り出して処理
+ * フロー: Discord受信 → appendInbox() → poller が peekUnclaimedInbox() で取り出して処理
+ *  → 処理完了後に removeInboxById()、リトライ時は updateInboxById() で更新
  *
  * ファイル形式は JSONL（1行1メッセージ）。例：
  *   {"id":"msg-1234-abc","channelId":"9876","content":"こんにちは","timestamp":"2026-05-06T10:00:00.000Z","retries":0}
  *   {"id":"msg-1235-def","channelId":"9876","content":"返事して","timestamp":"2026-05-06T10:00:01.000Z","retries":0}
  *
- * JSONL はインプレース更新ができないため、shiftInbox / prependInbox はファイル全体を書き直す。
+ * peekUnclaimedInbox() は処理中（in-flight）のメッセージをファイルから削除しない。
+ * これにより、再起動時にも未完了のメッセージがキューに残り続ける（#69）。
+ * JSONL はインプレース更新ができないため、remove/update 系はファイル全体を書き直す。
  * readFile と writeFile の間に appendInbox が割り込むとメッセージが消えるため、
  * Promise チェーンで全ファイル操作を直列化している。
  */
@@ -81,32 +84,64 @@ export async function appendInbox(
 }
 
 /**
- * 先頭の1件を取り出してファイルから削除する。なければ null を返す。
+ * 先頭から、excludeIds に含まれない最初の1件を取り出す。ファイルからは削除しない。
  *
- * 取り出し後に失敗した場合は prependInbox() で先頭に戻す。
+ * poller はこの呼び出しで claim したメッセージを処理が完全に終わるまで
+ * excludeIds（in-flight セット）に入れておくことで、同じメッセージを
+ * 取り出し直してしまうのを防ぐ。実際の削除は removeInboxById() で行う。
  */
-export async function shiftInbox(): Promise<InboxMessage | null> {
+export async function peekUnclaimedInbox(
+  excludeIds: ReadonlySet<string>,
+): Promise<InboxMessage | null> {
   return withFileLock(async () => {
     if (!existsSync(INBOX_PATH)) return null;
 
     const text = await readFile(INBOX_PATH, "utf-8");
     const lines = text.split("\n").filter((l) => l.trim());
-    if (lines.length === 0) return null;
-
-    const msg = JSON.parse(lines[0]) as InboxMessage;
-    const remaining = lines.slice(1).join("\n");
-    await writeFile(INBOX_PATH, remaining ? `${remaining}\n` : "", "utf-8");
-    return msg;
+    for (const line of lines) {
+      const msg = JSON.parse(line) as InboxMessage;
+      if (!excludeIds.has(msg.id)) return msg;
+    }
+    return null;
   });
 }
 
-/** リトライ時にメッセージをキューの先頭に戻す。 */
-export async function prependInbox(msg: InboxMessage): Promise<void> {
+/** 処理が完全に終わった（成功 / dead-letter）メッセージをファイルから削除する。 */
+export async function removeInboxById(id: string): Promise<void> {
   return withFileLock(async () => {
-    await ensureDir();
-    const existing = existsSync(INBOX_PATH)
-      ? await readFile(INBOX_PATH, "utf-8")
-      : "";
-    await writeFile(INBOX_PATH, `${JSON.stringify(msg)}\n${existing}`);
+    if (!existsSync(INBOX_PATH)) return;
+
+    const text = await readFile(INBOX_PATH, "utf-8");
+    const lines = text.split("\n").filter((l) => l.trim());
+    const remaining = lines.filter(
+      (line) => (JSON.parse(line) as InboxMessage).id !== id,
+    );
+    await writeFile(
+      INBOX_PATH,
+      remaining.length ? `${remaining.join("\n")}\n` : "",
+      "utf-8",
+    );
+  });
+}
+
+/** リトライ時に該当メッセージのフィールドを位置を保ったまま更新する。 */
+export async function updateInboxById(
+  id: string,
+  patch: Partial<InboxMessage>,
+): Promise<void> {
+  return withFileLock(async () => {
+    if (!existsSync(INBOX_PATH)) return;
+
+    const text = await readFile(INBOX_PATH, "utf-8");
+    const lines = text.split("\n").filter((l) => l.trim());
+    const updated = lines.map((line) => {
+      const msg = JSON.parse(line) as InboxMessage;
+      return JSON.stringify(msg.id === id ? { ...msg, ...patch } : msg);
+    });
+    await writeFile(
+      INBOX_PATH,
+      updated.length ? `${updated.join("\n")}\n` : "",
+      "utf-8",
+    );
   });
 }

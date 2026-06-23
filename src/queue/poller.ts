@@ -9,7 +9,12 @@ import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { appendDeadLetter } from "./dead-letter.js";
-import { type InboxMessage, prependInbox, shiftInbox } from "./inbox.js";
+import {
+  type InboxMessage,
+  peekUnclaimedInbox,
+  removeInboxById,
+  updateInboxById,
+} from "./inbox.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 
 const POLL_MS = 1000;
@@ -17,6 +22,10 @@ const MAX_RETRIES = 10;
 let running = false;
 
 const sessionChain = new Map<string, Promise<void>>();
+// peekUnclaimedInbox() で claim 済み（処理中 / セッションチェーンで順番待ち中）のメッセージID。
+// 処理が完全に終わる（removeInboxById / updateInboxById）まで inbox.jsonl から削除しないため、
+// 同じメッセージを再度 claim しないようにここで追跡する。
+const inFlightIds = new Set<string>();
 
 export function dispatch(sessionId: string, fn: () => Promise<void>): void {
   const onError = (err: unknown) => {
@@ -39,6 +48,7 @@ export function startPoller(): void {
 export function stopPoller(): void {
   running = false;
   sessionChain.clear();
+  inFlightIds.clear();
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -152,6 +162,7 @@ async function processCronThread(
       "[poller] cronThread フラグがあるが cronJobId が未設定:",
       msg,
     );
+    await removeInboxById(msg.id);
     await appendDeadLetter(msg);
     return;
   }
@@ -206,9 +217,11 @@ async function processCronThread(
         await threadSend(chunk);
       }
     }
+    await removeInboxById(msg.id);
   } catch (err) {
     if (err instanceof NonRetryableError) {
       console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
+      await removeInboxById(msg.id);
       await appendDeadLetter(msg);
     } else {
       console.error(
@@ -217,8 +230,7 @@ async function processCronThread(
       );
       if (msg.retries + 1 < MAX_RETRIES) {
         // threadId がセット済み（スレッド作成後に失敗）なら次回リトライでスレッド再作成をスキップ
-        await prependInbox({
-          ...msg,
+        await updateInboxById(msg.id, {
           retries: msg.retries + 1,
           cronThreadId: threadId,
         });
@@ -227,6 +239,7 @@ async function processCronThread(
           "[poller] cron-thread リトライ上限。dead-letter に移動:",
           msg.id,
         );
+        await removeInboxById(msg.id);
         await appendDeadLetter(msg);
       }
     }
@@ -276,6 +289,7 @@ export async function processMessage(
     stopTyping();
     if (err instanceof NonRetryableError) {
       console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+      await removeInboxById(msg.id);
       await appendDeadLetter(msg);
       return;
     }
@@ -284,18 +298,23 @@ export async function processMessage(
       err,
     );
     if (msg.retries + 1 < MAX_RETRIES) {
-      await prependInbox({ ...msg, retries: msg.retries + 1 });
+      await updateInboxById(msg.id, { retries: msg.retries + 1 });
     } else {
       console.error(
         "[poller] リトライ上限に達しました。dead-letter に移動:",
         msg.id,
       );
+      await removeInboxById(msg.id);
       await appendDeadLetter(msg);
     }
     const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
     await sleep(retryDelay);
     return;
   }
+
+  // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
+  // ログのみで dead-letter には送らない（応答自体は生成済みのため再実行は不要）
+  await removeInboxById(msg.id);
 
   try {
     const channel = await client.channels.fetch(msg.channelId);
@@ -331,10 +350,17 @@ async function poll(): Promise<void> {
   const mode = await loadDispatchMode();
   while (running) {
     if (client.isReady()) {
-      const msg = await shiftInbox();
+      const msg = await peekUnclaimedInbox(inFlightIds);
       if (msg) {
+        // claim: 処理が完全に終わるまで inbox.jsonl から削除しない
+        // （同一セッション内で順番待ち中でも消えないようにするため）
+        inFlightIds.add(msg.id);
         // ノンブロッキングで dispatch → 即次のメッセージを取りに行く
-        dispatch(msg.sessionId, () => processMessage(msg, mode));
+        dispatch(msg.sessionId, () =>
+          processMessage(msg, mode).finally(() => {
+            inFlightIds.delete(msg.id);
+          }),
+        );
         continue;
       }
     }

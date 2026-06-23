@@ -13,7 +13,11 @@ vi.mock("../discord/client.js", () => ({
   },
 }));
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
-vi.mock("./inbox.js", () => ({ prependInbox: vi.fn(), shiftInbox: vi.fn() }));
+vi.mock("./inbox.js", () => ({
+  peekUnclaimedInbox: vi.fn(),
+  removeInboxById: vi.fn(),
+  updateInboxById: vi.fn(),
+}));
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 20));
 

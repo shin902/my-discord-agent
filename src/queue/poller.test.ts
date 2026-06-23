@@ -13,13 +13,17 @@ vi.mock("../discord/client.js", () => ({
   },
 }));
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
-vi.mock("./inbox.js", () => ({ prependInbox: vi.fn(), shiftInbox: vi.fn() }));
+vi.mock("./inbox.js", () => ({
+  peekUnclaimedInbox: vi.fn(),
+  removeInboxById: vi.fn(),
+  updateInboxById: vi.fn(),
+}));
 
 const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { client } = await import("../discord/client.js");
 const { appendDeadLetter } = await import("./dead-letter.js");
-const { prependInbox } = await import("./inbox.js");
+const { updateInboxById } = await import("./inbox.js");
 const { processMessage } = await import("./poller.js");
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
@@ -359,7 +363,7 @@ describe("processMessage - cron-thread", () => {
     mockThreadSend.mockClear();
     mockThreadsCreate.mockClear();
     vi.mocked(appendDeadLetter).mockClear();
-    vi.mocked(prependInbox).mockClear();
+    vi.mocked(updateInboxById).mockClear();
   });
 
   it("正常系: スレッドを作成して sendMessage を呼び、応答を thread.send で投稿する", async () => {
@@ -429,19 +433,20 @@ describe("processMessage - cron-thread", () => {
     await processMessage(makeCronThreadMsg(), "parallel-session");
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-    expect(vi.mocked(prependInbox)).not.toHaveBeenCalled();
+    expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
   });
 
-  it("transient error はリトライカウントを増やして prependInbox に戻す", async () => {
+  it("transient error はリトライカウントを増やして updateInboxById で更新する", async () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
 
     await processMessage(makeCronThreadMsg({ retries: 0 }), "parallel-session");
 
-    expect(vi.mocked(prependInbox)).toHaveBeenCalledOnce();
-    const retried = vi.mocked(prependInbox).mock.calls[0][0];
-    expect(retried.retries).toBe(1);
+    expect(vi.mocked(updateInboxById)).toHaveBeenCalledOnce();
+    const [id, patch] = vi.mocked(updateInboxById).mock.calls[0];
+    expect(id).toBe("inbox-1");
+    expect(patch.retries).toBe(1);
     // スレッド作成後に失敗したので thread.id を引き継ぎ、次回リトライで再作成しない
-    expect(retried.cronThreadId).toBe("thread-123");
+    expect(patch.cronThreadId).toBe("thread-123");
     expect(vi.mocked(appendDeadLetter)).not.toHaveBeenCalled();
   });
 
@@ -471,7 +476,7 @@ describe("processMessage - cron-thread", () => {
     await processMessage(makeCronThreadMsg({ retries: 9 }), "parallel-session");
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-    expect(vi.mocked(prependInbox)).not.toHaveBeenCalled();
+    expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
   });
 
   it("cronThread: true だが cronJobId が未設定の場合 appendDeadLetter に移動し通常フローに落ちない", async () => {
