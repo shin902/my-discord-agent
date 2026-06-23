@@ -50,8 +50,7 @@ def _parse_list(s: str) -> list[str]:
         if not inner:
             return []
         return [_strip_quotes(x) for x in inner.split(",") if x.strip()]
-    # 単一値をリスト扱い
-    return [_strip_quotes(s)]
+    return [_strip_quotes(x) for x in s.split(",") if x.strip()]
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:

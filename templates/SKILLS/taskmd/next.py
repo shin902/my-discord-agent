@@ -32,7 +32,6 @@ def main() -> None:
         print(f"タスクがありません: {tasks_dir}")
         return
 
-    by_id = {t.id: t for t in tasks}
     done_ids = {t.id for t in tasks if t.status == "done"}
 
     def is_unblocked(t) -> bool:
