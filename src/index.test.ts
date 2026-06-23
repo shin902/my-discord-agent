@@ -38,6 +38,8 @@ vi.mock("./proxy/credential-proxy-server.js", () => ({
 vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),
   stopCron: vi.fn(),
+  loadAndValidateCron: vi.fn().mockResolvedValue([]),
+  _setCronJobs: vi.fn(),
 }));
 vi.mock("dotenv/config", () => ({}));
 

@@ -56,6 +56,19 @@ describe("tick() orchestration", () => {
     const runner = await import("./runner.js");
     startCron = runner.startCron;
     stopCron = runner.stopCron;
+
+    // 静的ロードパターン: テストで直接 _setCronJobs を呼び出してジョブを設定
+    runner._setCronJobs([
+      {
+        id: "tick-job",
+        schedule: "* * * * *",
+        enabled: true,
+        groupName: "g",
+        prompt: "p",
+        channelId: "c",
+        mode: "to-channel",
+      },
+    ]);
   });
 
   afterEach(() => {
@@ -101,20 +114,9 @@ describe("tick() orchestration", () => {
     );
   });
 
-  it("cron.json が空配列の場合 tick は何も実行しない", async () => {
-    mockReadFile.mockResolvedValue(JSON.stringify([]));
-    startCron();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(mockAppendInbox).not.toHaveBeenCalled();
-    expect(mockWriteFile).not.toHaveBeenCalled();
-  });
-
-  it("cron.json が存在しない場合 tick は何も実行しない（cron は省略可能）", async () => {
-    // loadJobs() → loadRawCron() が ENOENT をスロー → loadJobs() が [] を返す（キャッシュしない）。
-    // 次回 cron.json を配置すれば次の tick から動き始める。
-    mockReadFile.mockRejectedValue(
-      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-    );
+  it("ジョブが空配列の場合 tick は何も実行しない", async () => {
+    const runner = await import("./runner.js");
+    runner._setCronJobs([]);
     startCron();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(mockAppendInbox).not.toHaveBeenCalled();
