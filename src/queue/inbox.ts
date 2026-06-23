@@ -53,6 +53,21 @@ async function ensureDir(): Promise<void> {
   await mkdir(QUEUE_DIR, { recursive: true });
 }
 
+// ファイルが存在しなければ空配列を返す。各行は JSON.parse 済みの InboxMessage。
+async function readMessages(): Promise<InboxMessage[]> {
+  if (!existsSync(INBOX_PATH)) return [];
+  const text = await readFile(INBOX_PATH, "utf-8");
+  return text
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((line) => JSON.parse(line) as InboxMessage);
+}
+
+async function writeMessages(messages: InboxMessage[]): Promise<void> {
+  const body = messages.map((msg) => JSON.stringify(msg)).join("\n");
+  await writeFile(INBOX_PATH, body ? `${body}\n` : "", "utf-8");
+}
+
 // ファイル操作を直列化するミューテックス。
 // Node.js は await をまたいでイベントループが切り替わるため、
 // readFile→writeFile の間に appendInbox が割り込む可能性がある。
@@ -99,16 +114,8 @@ export async function peekAllUnclaimedInbox(
   excludeIds: ReadonlySet<string>,
 ): Promise<InboxMessage[]> {
   return withFileLock(async () => {
-    if (!existsSync(INBOX_PATH)) return [];
-
-    const text = await readFile(INBOX_PATH, "utf-8");
-    const lines = text.split("\n").filter((l) => l.trim());
-    const result: InboxMessage[] = [];
-    for (const line of lines) {
-      const msg = JSON.parse(line) as InboxMessage;
-      if (!excludeIds.has(msg.id)) result.push(msg);
-    }
-    return result;
+    const messages = await readMessages();
+    return messages.filter((msg) => !excludeIds.has(msg.id));
   });
 }
 
@@ -116,17 +123,8 @@ export async function peekAllUnclaimedInbox(
 export async function removeInboxById(id: string): Promise<void> {
   return withFileLock(async () => {
     if (!existsSync(INBOX_PATH)) return;
-
-    const text = await readFile(INBOX_PATH, "utf-8");
-    const lines = text.split("\n").filter((l) => l.trim());
-    const remaining = lines.filter(
-      (line) => (JSON.parse(line) as InboxMessage).id !== id,
-    );
-    await writeFile(
-      INBOX_PATH,
-      remaining.length ? `${remaining.join("\n")}\n` : "",
-      "utf-8",
-    );
+    const messages = await readMessages();
+    await writeMessages(messages.filter((msg) => msg.id !== id));
   });
 }
 
@@ -137,17 +135,9 @@ export async function updateInboxById(
 ): Promise<void> {
   return withFileLock(async () => {
     if (!existsSync(INBOX_PATH)) return;
-
-    const text = await readFile(INBOX_PATH, "utf-8");
-    const lines = text.split("\n").filter((l) => l.trim());
-    const updated = lines.map((line) => {
-      const msg = JSON.parse(line) as InboxMessage;
-      return JSON.stringify(msg.id === id ? { ...msg, ...patch } : msg);
-    });
-    await writeFile(
-      INBOX_PATH,
-      updated.length ? `${updated.join("\n")}\n` : "",
-      "utf-8",
+    const messages = await readMessages();
+    await writeMessages(
+      messages.map((msg) => (msg.id === id ? { ...msg, ...patch } : msg)),
     );
   });
 }
