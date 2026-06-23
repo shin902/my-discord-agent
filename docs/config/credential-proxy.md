@@ -1,14 +1,14 @@
-# config/config.json の credentials 設定リファレンス
+# config/credentials.json 設定リファレンス
 
-`config/config.json` の `credentials` セクションは Discord ボットが利用する AI プロバイダーの接続設定を定義します。
+`config/credentials.json` は Discord ボットが利用する AI プロバイダーの接続設定を定義します。トップレベルは配列です。
 
-`config/config.example.json` をコピーして `config/config.json` を作成し、編集してください。
+`config/credentials.example.json` をコピーして `config/credentials.json` を作成し、編集してください。
 
 ## 必須フィールド
 
 ### `provider`
 
-プロバイダーの識別子。`config/config.json` の `groups[].model.provider` に指定する値と一致させます。
+プロバイダーの識別子。`config/groups.json` の `groups[].model.provider` に指定する値と一致させます。
 
 - `pi-ai` の **KnownProvider**（`openai`, `anthropic`, `deepseek` 等）を指定する場合：組み込みモデル一覧が使用され、モデルIDの厳密なバリデーションが行われます。
 - それ以外の任意の文字列：カスタムプロバイダーとして扱われ、モデルIDの検証はスキップされます（任意の文字列を `modelId` に指定可能）。
@@ -191,9 +191,9 @@ Browserless のように query parameter で token を要求する API では `q
 
 > **背景**: llama.cpp は Qwen3 のチャットテンプレートに従い、API リクエストに `chat_template_kwargs.enable_thinking` が含まれない場合は自動で thinking を有効にする構成がある。`thinkingFormat` を明示しないと thinking トークンが出力予算を消費してタイムアウトしやすい。
 
-## thinkingLevel の制御（config/config.json の groups[] 側）
+## thinkingLevel の制御（config/groups.json の groups[] 側）
 
-`compat.thinkingFormat` はプロバイダーが thinking をどう受け付けるかを定義する。**thinking を実際に ON にするかどうか** はグループごとの設定（`config/config.json` の `groups[].model.thinkingLevel`）で行う。
+`compat.thinkingFormat` はプロバイダーが thinking をどう受け付けるかを定義する。**thinking を実際に ON にするかどうか** はグループごとの設定（`config/groups.json` の `groups[].model.thinkingLevel`）で行う。
 
 ```json
 {
@@ -216,7 +216,7 @@ Browserless のように query parameter で token を要求する API では `q
 | `"high"` | `true` | 16,384 トークン |
 | `"xhigh"` | `true` | モデルの `thinkingLevelMap` に依存 |
 
-> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `config/config.json` の `credentials` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"openrouter"` 等の thinking 制御に対応した値である必要がある。
+> **前提**: `thinkingLevel` を `"off"` 以外にするには、対応するプロバイダーの `config/credentials.json` で `compat.thinkingFormat` が `"qwen-chat-template"` や `"openrouter"` 等の thinking 制御に対応した値である必要がある。
 
 **thinking を完全に OFF にする**（`compat.thinkingFormat` が必須）:
 
@@ -224,7 +224,7 @@ Browserless のように query parameter で token を要求する API では `q
 { "model": { "provider": "llama-cpp", "modelId": "Qwen3.6-35B-...", "thinkingLevel": "off" } }
 ```
 
-`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `config/config.json` の `credentials` の `compat.thinkingFormat` を設定していない場合、thinking OFF のフィールドはリクエストに含まれず、ローカル推論サーバー側のデフォルトに従う。
+`thinkingLevel: "off"` はデフォルト値なので省略可能。ただし `config/credentials.json` の `compat.thinkingFormat` を設定していない場合、thinking OFF のフィールドはリクエストに含まれず、ローカル推論サーバー側のデフォルトに従う。
 
 ## 具体例
 
@@ -240,7 +240,7 @@ Browserless のように query parameter で token を要求する API では `q
 
 ### カスタムプロバイダー（ローカル llama.cpp）
 
-> **プロバイダー名の使い分け**: `provider` の値は任意の文字列を指定できる。`"llama-cpp"` は単なる識別子で、`config/config.json` の `groups[].model.provider` と一致させれば何でもよい。thinking 制御が不要なモデル用と Qwen3 系モデル用を別エントリとして分けておくと管理しやすい（例: `"llama-cpp"` と `"llama-cpp-qwen3"`）。
+> **プロバイダー名の使い分け**: `provider` の値は任意の文字列を指定できる。`"llama-cpp"` は単なる識別子で、`config/groups.json` の `groups[].model.provider` と一致させれば何でもよい。thinking 制御が不要なモデル用と Qwen3 系モデル用を別エントリとして分けておくと管理しやすい（例: `"llama-cpp"` と `"llama-cpp-qwen3"`）。
 
 API Key 不要、最小構成:
 

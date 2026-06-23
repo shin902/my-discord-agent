@@ -20,7 +20,7 @@ FeedCord (別プロセス/コンテナ)
 ```
 
 `message.author.bot` は Webhook 投稿でも `true` になるため、何も設定しなければ無視される。
-このリポジトリでは `config/config.json` の `channels[].allowedWebhookIds` にこの Webhook の ID を登録することで、その Webhook からの投稿だけを例外的に処理対象にできる(`src/discord/handler.ts` 参照)。
+このリポジトリでは `config/groups.json` の `channels[].allowedWebhookIds` にこの Webhook の ID を登録することで、その Webhook からの投稿だけを例外的に処理対象にできる(`src/discord/handler.ts` 参照)。
 
 ## 手順
 
@@ -77,7 +77,7 @@ docker run -d --name feedcord-<用途> \
 
 複数フィード(用途別)を分けたい場合は `Instances` 配列に追加するか、`appsettings.json`/コンテナをフィード単位で分ける。
 
-### 3. config/config.json にチャンネルを追加
+### 3. config/groups.json にチャンネルを追加
 
 `groups[].channels[]` に `sessionMode: "auto-thread"` と `allowedWebhookIds` を設定する。
 
@@ -103,7 +103,7 @@ docker run -d --name feedcord-<用途> \
 
 ### 5. ビルド・再起動して確認
 
-`group-config.ts` は起動時にキャッシュされるため、`config/config.json` 変更後はプロセスの再起動が必要。
+`group-config.ts` は起動時にキャッシュされるため、`config/groups.json` 変更後はプロセスの再起動が必要。
 
 ```bash
 pnpm build
@@ -116,7 +116,7 @@ pnpm build
 
 - **スレッドが作られない / 反応が無い**
   - `allowedWebhookIds` の値が、Webhook URLの `<WEBHOOK_ID>` 部分(数字)と一致しているか確認
-  - `config/config.json` 変更後にプロセスを再起動したか確認(キャッシュは再起動まで更新されない)
+  - `config/groups.json` 変更後にプロセスを再起動したか確認(キャッシュは再起動まで更新されない)
   - `sessionMode` が `"auto-thread"` になっているか確認
   - FeedCord側のログでWebhook投稿自体が成功しているか確認
 - **Webhook IDが分からなくなった**

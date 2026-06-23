@@ -1,6 +1,6 @@
 # エージェントのツールとスキル
 
-エージェントが使えるツールとスキルの概要。グループ設定（`config/config.json` の `groups[]`）と `AGENTS.md` でどれを有効にするかを制御する。
+エージェントが使えるツールとスキルの概要。グループ設定（`config/groups.json` の `groups[]`）と `AGENTS.md` でどれを有効にするかを制御する。
 
 ## ツール
 
@@ -124,7 +124,7 @@ cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 
 ### 日次記録・週次MEMORY.md更新(memory-daily / memory-weekly cron)
 
-専用スキルは設けず、`config/config.json` の `cron` 配列に prompt-only ジョブを登録し、`session-logs` スキルの使い方と出力フォーマットをそのまま `prompt` に書く(`config.example.json` 参照)。出力フォーマットは個人の好みに依存するため、共有テンプレートにはしない。
+専用スキルは設けず、`config/cron.json` に prompt-only ジョブを登録し、`session-logs` スキルの使い方と出力フォーマットをそのまま `prompt` に書く(`cron.example.json` 参照)。出力フォーマットは個人の好みに依存するため、共有テンプレートにはしない。
 
 導入するグループには `session-logs` を `skills` に追加し、`bash` / `write` / `edit` ツールを有効にする。
 
