@@ -414,26 +414,46 @@ fetch_reddit() {
   tmp_file=$(mktemp)
   _register_cleanup "$tmp_file"
 
+  # ホストのみで path が無い URL (例: https://reddit.com) でも必ず先頭スラッシュ付きの
+  # path_and_query を作る(無いと proxy_base のポート番号に直接 ".json" が連結されて
+  # 不正な URL になる)。sed の /? は単体の "/" にもマッチして消費してしまうため、
+  # bash のパラメータ展開で素朴に組み立てる。
+  local after_scheme="${url#*://}"
+  local pathname=""
+  [[ "$after_scheme" == */* ]] && pathname="${after_scheme#*/}"
+
+  local query=""
+  if [[ "$pathname" == *\?* ]]; then
+    query="?${pathname#*\?}"
+    pathname="${pathname%%\?*}"
+  fi
+  pathname="${pathname%/}"
+
   local path_and_query
-  path_and_query=$(echo "$url" | sed -E 's|^https?://[^/]+||')
-  if [[ "$url" != *.json ]]; then
-    path_and_query=$(echo "$path_and_query" | sed -E 's|/?(\?.*)?$|.json\1|')
+  if [[ "$pathname" == *.json ]]; then
+    path_and_query="/${pathname}${query}"
+  else
+    path_and_query="/${pathname}.json${query}"
   fi
 
   # Reddit は未認証の .json アクセスを一律ブロックするため、credential-proxy 経由で
   # ログイン済みクッキーを使って www.reddit.com にアクセスする (docs/reddit-cookie-setup.md 参照)。
   # シークレット自体はホスト側 proxy が注入し、このスクリプトには渡らない。
+  # NOTE: resolveProxyBaseUrl 相当のロジックと UA 文字列は src/tools/proxy-url.ts /
+  # src/tools/agent-reach.ts (REDDIT_USER_AGENT) の手動コピー。あちら側を変更したら
+  # 必ずこのファイルも追従させること。
   [[ -n "${CREDENTIAL_PROXY_JSON:-}" ]] \
     || die "CREDENTIAL_PROXY_JSON が設定されていません(reddit は credential-proxy 経由でのみアクセス可能)"
 
   local proxy_base
-  proxy_base=$(echo "$CREDENTIAL_PROXY_JSON" | jq -r '.[] | select(.provider == "reddit") | .baseUrl' | sed -E 's|/$||')
+  proxy_base=$(echo "$CREDENTIAL_PROXY_JSON" | jq -r '[.[] | select(.provider == "reddit")] | first | .baseUrl // empty' | sed -E 's|/$||')
   [[ -n "$proxy_base" ]] \
     || die "reddit プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません"
 
   local ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-  curl -sf "${proxy_base}${path_and_query}" -H "User-Agent: ${ua}" > "$tmp_file"
+  curl -sf "${proxy_base}${path_and_query}" -H "User-Agent: ${ua}" > "$tmp_file" \
+    || die "reddit credential-proxy へのアクセスに失敗しました: ${proxy_base}${path_and_query}"
   format_reddit "$tmp_file"
 }
 
