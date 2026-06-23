@@ -162,8 +162,8 @@ async function processCronThread(
       "[poller] cronThread フラグがあるが cronJobId が未設定:",
       msg,
     );
-    await removeInboxById(msg.id);
     await appendDeadLetter(msg);
+    await removeInboxById(msg.id);
     return;
   }
   // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
@@ -221,8 +221,8 @@ async function processCronThread(
   } catch (err) {
     if (err instanceof NonRetryableError) {
       console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
-      await removeInboxById(msg.id);
       await appendDeadLetter(msg);
+      await removeInboxById(msg.id);
     } else {
       console.error(
         `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
@@ -239,8 +239,8 @@ async function processCronThread(
           "[poller] cron-thread リトライ上限。dead-letter に移動:",
           msg.id,
         );
-        await removeInboxById(msg.id);
         await appendDeadLetter(msg);
+        await removeInboxById(msg.id);
       }
     }
   }
@@ -289,8 +289,8 @@ export async function processMessage(
     stopTyping();
     if (err instanceof NonRetryableError) {
       console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-      await removeInboxById(msg.id);
       await appendDeadLetter(msg);
+      await removeInboxById(msg.id);
       return;
     }
     console.error(
@@ -304,8 +304,8 @@ export async function processMessage(
         "[poller] リトライ上限に達しました。dead-letter に移動:",
         msg.id,
       );
-      await removeInboxById(msg.id);
       await appendDeadLetter(msg);
+      await removeInboxById(msg.id);
     }
     const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
     await sleep(retryDelay);
