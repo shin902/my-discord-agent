@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   initManager: vi.fn(),
   validateGroupConfig: vi.fn(),
   loadDefaultModel: vi.fn(),
+  loadAndValidateCron: vi.fn(),
 }));
 
 vi.mock("./discord/client.js", () => ({ client: { login: mocks.login } }));
@@ -38,7 +39,7 @@ vi.mock("./proxy/credential-proxy-server.js", () => ({
 vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),
   stopCron: vi.fn(),
-  loadAndValidateCron: vi.fn().mockResolvedValue([]),
+  loadAndValidateCron: mocks.loadAndValidateCron,
   _setCronJobs: vi.fn(),
 }));
 vi.mock("dotenv/config", () => ({}));
@@ -58,6 +59,7 @@ describe("index: 起動時バリデーション", () => {
       provider: "zai",
       modelId: "glm-4.7-flash",
     });
+    mocks.loadAndValidateCron.mockResolvedValue([]);
     // 実際に終了させず、呼び出し後の継続を防ぐためにスロー
     mockExit = vi.fn((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -130,6 +132,23 @@ describe("index: 起動時バリデーション", () => {
         "mounts.host はリポジトリルート外を指しています: ../outside",
       );
     });
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.registerHandlers).not.toHaveBeenCalled();
+  });
+
+  it("cron.json の検証失敗は [startup] ログを出して process.exit(1) する", async () => {
+    mocks.loadGroups.mockResolvedValue([
+      {
+        name: "ok-group",
+        channels: [],
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
+      },
+    ]);
+    mocks.loadAndValidateCron.mockRejectedValue(
+      new Error("ハンドラー jobs/missing.ts が見つかりません"),
+    );
 
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
     expect(mockExit).toHaveBeenCalledWith(1);

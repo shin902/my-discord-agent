@@ -151,34 +151,31 @@ function resolveHandlerPath(handlerRelPath: string): string {
   return absPath;
 }
 
-export async function loadHandlerFn(
+async function importHandlerFn(
   handlerRelPath: string,
 ): Promise<(ctx: CronContext) => Promise<void>> {
   const absPath = resolveHandlerPath(handlerRelPath);
-  const absUrl = pathToFileURL(absPath).href;
-  const mod = (await import(absUrl)) as {
-    default?: (ctx: CronContext) => Promise<void>;
-  };
-  if (typeof mod.default !== "function") {
-    throw new NonRetryableError(
-      `ハンドラー ${handlerRelPath} に default export がありません`,
-    );
-  }
-  return mod.default;
-}
-
-// --- Startup validation ---
-
-async function validateHandlerPath(handlerRelPath: string): Promise<void> {
-  const absPath = resolveHandlerPath(handlerRelPath);
   const mod = (await import(pathToFileURL(absPath).href)) as {
-    default?: unknown;
+    default?: (ctx: CronContext) => Promise<void>;
   };
   if (typeof mod.default !== "function") {
     throw new NonRetryableError(
       `ハンドラー ${handlerRelPath} に default export (function) がありません`,
     );
   }
+  return mod.default;
+}
+
+export async function loadHandlerFn(
+  handlerRelPath: string,
+): Promise<(ctx: CronContext) => Promise<void>> {
+  return importHandlerFn(handlerRelPath);
+}
+
+// --- Startup validation ---
+
+async function validateHandlerPath(handlerRelPath: string): Promise<void> {
+  await importHandlerFn(handlerRelPath);
 }
 
 /** cron.json を読み込み・スキーマ検証・ハンドラー検証を行う（起動時1回） */
