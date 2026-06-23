@@ -1,5 +1,9 @@
 import "dotenv/config";
-import { initManager, validateModel } from "./agent/manager.js";
+import {
+  buildExtraMountArgs,
+  initManager,
+  validateModel,
+} from "./agent/manager.js";
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
@@ -8,6 +12,7 @@ import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
+import { resolveTools } from "./tools/registry.js";
 
 const token = process.env.DISCORD_BOT_TOKEN;
 if (!token) throw new Error("DISCORD_BOT_TOKEN が設定されていません");
@@ -24,6 +29,8 @@ try {
       group.model?.provider ?? defaultModel.provider,
       group.model?.modelId ?? defaultModel.modelId,
     );
+    resolveTools(group.tools ?? []);
+    buildExtraMountArgs(group.mounts ?? []);
   }
 } catch (err) {
   console.error("[startup] 設定の読み込みに失敗しました:", err);

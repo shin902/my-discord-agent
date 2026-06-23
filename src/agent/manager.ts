@@ -76,7 +76,7 @@ function buildSanitizedCredentialJson(
 
 const RESERVED_CONTAINER_PATHS = ["/workspace", "/sessions"];
 
-function buildExtraMountArgs(mounts: MountConfig[]): string[] {
+export function buildExtraMountArgs(mounts: MountConfig[]): string[] {
   const args: string[] = [];
   for (const mount of mounts) {
     if (

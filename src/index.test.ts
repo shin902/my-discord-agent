@@ -9,7 +9,9 @@ const mocks = vi.hoisted(() => ({
   initGroupPrompts: vi.fn(),
   initManager: vi.fn(),
   validateModel: vi.fn(),
+  buildExtraMountArgs: vi.fn(),
   loadDefaultModel: vi.fn(),
+  resolveTools: vi.fn(),
 }));
 
 vi.mock("./discord/client.js", () => ({ client: { login: mocks.login } }));
@@ -28,9 +30,13 @@ vi.mock("./config/group-config.js", () => ({
 vi.mock("./agent/manager.js", () => ({
   initManager: mocks.initManager,
   validateModel: mocks.validateModel,
+  buildExtraMountArgs: mocks.buildExtraMountArgs,
 }));
 vi.mock("./config/default-model.js", () => ({
   loadDefaultModel: mocks.loadDefaultModel,
+}));
+vi.mock("./tools/registry.js", () => ({
+  resolveTools: mocks.resolveTools,
 }));
 vi.mock("./proxy/credential-proxy-server.js", () => ({
   initCredentialProxyServer: vi.fn().mockResolvedValue(0),
@@ -89,6 +95,44 @@ describe("index: 起動時バリデーション", () => {
     ]);
     mocks.validateModel.mockImplementation(() => {
       throw new Error("不明なプロバイダ: unknown");
+    });
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.registerHandlers).not.toHaveBeenCalled();
+  });
+
+  it("不明なツール名は [startup] ログを出して process.exit(1) する", async () => {
+    mocks.loadGroups.mockResolvedValue([
+      {
+        name: "bad-tools-group",
+        channels: [],
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
+        tools: ["unknown_tool"],
+      },
+    ]);
+    mocks.resolveTools.mockImplementation(() => {
+      throw new Error("不明なツール名: unknown_tool");
+    });
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.registerHandlers).not.toHaveBeenCalled();
+  });
+
+  it("不正な mounts 設定は [startup] ログを出して process.exit(1) する", async () => {
+    mocks.loadGroups.mockResolvedValue([
+      {
+        name: "bad-mounts-group",
+        channels: [],
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
+        mounts: [{ host: "../outside", container: "/workspace/x" }],
+      },
+    ]);
+    mocks.buildExtraMountArgs.mockImplementation(() => {
+      throw new Error(
+        "mounts.host はリポジトリルート外を指しています: ../outside",
+      );
     });
 
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
