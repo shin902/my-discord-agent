@@ -7,6 +7,7 @@ import { resolveModelConfig } from "../config/default-model.js";
 import {
   type AgentConfig,
   findGroupByName,
+  type GroupConfig,
   type MountConfig,
 } from "../config/groups.js";
 import type { AttachmentRef } from "../queue/inbox.js";
@@ -76,7 +77,7 @@ function buildSanitizedCredentialJson(
 
 const RESERVED_CONTAINER_PATHS = ["/workspace", "/sessions"];
 
-function buildExtraMountArgs(mounts: MountConfig[]): string[] {
+export function buildExtraMountArgs(mounts: MountConfig[]): string[] {
   const args: string[] = [];
   for (const mount of mounts) {
     if (
@@ -106,6 +107,28 @@ function buildExtraMountArgs(mounts: MountConfig[]): string[] {
     args.push("-v", `${hostPath}:${mount.container}${suffix}`);
   }
   return args;
+}
+
+// groupName ごとの mounts 解決結果（docker -v 引数）のキャッシュ。
+// group-config.ts と同じ「起動時に1回だけロード、再起動まで反映されない」方針に合わせ、
+// validateGroupConfig() が起動時に一度だけ計算してここに格納する。
+const extraMountArgsCache = new Map<string, string[]>();
+
+/**
+ * 起動時バリデーション専用。グループ設定（model/tools/mounts）をまとめて検証し、
+ * 無効な設定はスローして即クラッシュさせる。mounts の解決結果はキャッシュし、
+ * sendMessage() からの再計算を避ける。
+ */
+export async function validateGroupConfig(
+  group: GroupConfig,
+  defaultModel: { provider: string; modelId: string },
+): Promise<void> {
+  await validateModel(
+    group.model?.provider ?? defaultModel.provider,
+    group.model?.modelId ?? defaultModel.modelId,
+  );
+  resolveTools(group.tools ?? []);
+  extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));
 }
 
 const MAX_ATTACHMENTS = 5;
@@ -195,11 +218,19 @@ export async function sendMessage(
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
 
+  // mounts は validateGroupConfig() が起動時に検証・キャッシュ済みならそれを使う。
+  // キャッシュに無い場合（未知のグループ名や、起動時検証を経ていない呼び出し）は
+  // その場で再計算してフォールバックする。
   let extraMountArgs: string[];
-  try {
-    extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
-  } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+  const cachedMountArgs = extraMountArgsCache.get(groupName);
+  if (cachedMountArgs !== undefined) {
+    extraMountArgs = cachedMountArgs;
+  } else {
+    try {
+      extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
+    } catch (err) {
+      return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+    }
   }
 
   await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });

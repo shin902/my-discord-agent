@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { initManager, validateModel } from "./agent/manager.js";
+import { initManager, validateGroupConfig } from "./agent/manager.js";
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
@@ -20,10 +20,7 @@ try {
   await initGroupPrompts(groups);
   const defaultModel = await loadDefaultModel();
   for (const group of groups) {
-    await validateModel(
-      group.model?.provider ?? defaultModel.provider,
-      group.model?.modelId ?? defaultModel.modelId,
-    );
+    await validateGroupConfig(group, defaultModel);
   }
 } catch (err) {
   console.error("[startup] 設定の読み込みに失敗しました:", err);
