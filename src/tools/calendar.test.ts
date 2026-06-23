@@ -406,6 +406,50 @@ describe("update_event", () => {
     expect(createBody.conferenceData).toBeUndefined();
   });
 
+  it("繰り返しイベントのインスタンスを再作成する場合、recurringEventId/originalStartTime を引き継がない", async () => {
+    const invalidTimeError = {
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({ error: { message: "Invalid start time." } }),
+    };
+    const currentEvent = {
+      ok: true,
+      json: async () => ({
+        id: "evt-001",
+        summary: "既存タイトル",
+        start: { date: "2026-06-19" },
+        end: { date: "2026-06-20" },
+        recurringEventId: "evt-parent-001",
+        originalStartTime: { date: "2026-06-19" },
+      }),
+    };
+    const created = {
+      ok: true,
+      json: async () => ({ id: "evt-new-001", summary: "既存タイトル" }),
+    };
+    const deleteOk = { ok: true, status: 204 };
+
+    fetchMock
+      .mockResolvedValueOnce(invalidTimeError) // PATCH
+      .mockResolvedValueOnce(currentEvent) // GET current
+      .mockResolvedValueOnce(created) // POST recreate
+      .mockResolvedValueOnce(currentEvent) // GET recheck (etag比較用)
+      .mockResolvedValueOnce(deleteOk); // DELETE
+
+    const { updateEventTool } = await import("./calendar.js");
+    await updateEventTool.execute("id", {
+      eventId: "evt-001",
+      start: "2026-06-19T14:50:00+09:00",
+      end: "2026-06-19T16:50:00+09:00",
+    });
+
+    const [, createInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const createBody = JSON.parse(createInit.body as string);
+    expect(createBody.recurringEventId).toBeUndefined();
+    expect(createBody.originalStartTime).toBeUndefined();
+  });
+
   it("終日↔時刻指定の変更で start のみ指定し end が未指定だと型混在エラーになる", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
