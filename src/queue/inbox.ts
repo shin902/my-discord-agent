@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendCorruptedDeadLetter } from "./dead-letter.js";
 
 // Discord メッセージに添付されたファイルの参照情報
 export interface AttachmentRef {
@@ -54,13 +55,31 @@ async function ensureDir(): Promise<void> {
 }
 
 // ファイルが存在しなければ空配列を返す。各行は JSON.parse 済みの InboxMessage。
+// クラッシュ時の書き込み途中切断などで不正なJSON行が混入していた場合、
+// その行は dead-letter.jsonl に退避し、inbox.jsonl からは除去する。
 async function readMessages(): Promise<InboxMessage[]> {
   if (!existsSync(INBOX_PATH)) return [];
   const text = await readFile(INBOX_PATH, "utf-8");
-  return text
-    .split("\n")
-    .filter((l) => l.trim())
-    .map((line) => JSON.parse(line) as InboxMessage);
+  const valid: InboxMessage[] = [];
+  let hasCorrupted = false;
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      valid.push(JSON.parse(line) as InboxMessage);
+    } catch (err) {
+      hasCorrupted = true;
+      console.error(
+        "[inbox] 不正なJSON行を検出。dead-letterへ退避:",
+        line,
+        err,
+      );
+      await appendCorruptedDeadLetter(line);
+    }
+  }
+  if (hasCorrupted) {
+    await writeMessages(valid);
+  }
+  return valid;
 }
 
 async function writeMessages(messages: InboxMessage[]): Promise<void> {

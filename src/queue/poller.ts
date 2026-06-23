@@ -359,25 +359,31 @@ export async function processMessage(
 async function poll(): Promise<void> {
   const mode = await loadDispatchMode();
   while (running) {
-    if (client.isReady()) {
-      // in-flight のメッセージはファイルに残り続けるため、1回の読み込みで
-      // 未claim分を全部取得してまとめて dispatch する（1件ずつ読み直すと
-      // in-flight が溜まるほど無駄な読み込み・パースが増えるため）
-      const msgs = await peekAllUnclaimedInbox(inFlightIds);
-      if (msgs.length > 0) {
-        for (const msg of msgs) {
-          // claim: 処理が完全に終わるまで inbox.jsonl から削除しない
-          // （同一セッション内で順番待ち中でも消えないようにするため）
-          inFlightIds.add(msg.id);
-          dispatch(msg.sessionId, () =>
-            processMessage(msg, mode).finally(() => {
-              inFlightIds.delete(msg.id);
-            }),
-          );
+    try {
+      if (client.isReady()) {
+        // in-flight のメッセージはファイルに残り続けるため、1回の読み込みで
+        // 未claim分を全部取得してまとめて dispatch する（1件ずつ読み直すと
+        // in-flight が溜まるほど無駄な読み込み・パースが増えるため）
+        const msgs = await peekAllUnclaimedInbox(inFlightIds);
+        if (msgs.length > 0) {
+          for (const msg of msgs) {
+            // claim: 処理が完全に終わるまで inbox.jsonl から削除しない
+            // （同一セッション内で順番待ち中でも消えないようにするため）
+            inFlightIds.add(msg.id);
+            dispatch(msg.sessionId, () =>
+              processMessage(msg, mode).finally(() => {
+                inFlightIds.delete(msg.id);
+              }),
+            );
+          }
+          // ノンブロッキングで dispatch 済み → 即次のバッチを取りに行く
+          continue;
         }
-        // ノンブロッキングで dispatch 済み → 即次のバッチを取りに行く
-        continue;
       }
+    } catch (err) {
+      // ここで例外を握り潰さないと poll() の Promise が reject し、
+      // fire-and-forget で呼ばれているため誰にも気づかれずポーラー全体が停止する（#152）
+      console.error("[poller] poll ループで予期せぬエラー:", err);
     }
     await sleep(POLL_MS);
   }
