@@ -1,0 +1,41 @@
+[
+  {
+    "id": "daily-report",
+    "schedule": "0 9 * * *",
+    "enabled": true,
+    "groupName": "my-group",
+    "prompt": "昨日のログを分析して日次レポートを作成してください",
+    "channelId": "YOUR_CHANNEL_ID",
+    "mode": "to-thread"
+  },
+  {
+    "id": "mail-check",
+    "schedule": "*/30 * * * *",
+    "enabled": true,
+    "handler": "jobs/mail.ts"
+  },
+  {
+    "id": "reddit-cookie-refresh",
+    "schedule": "0 4 */3 * *",
+    "enabled": true,
+    "handler": "jobs/reddit-cookie-refresh.ts"
+  },
+  {
+    "id": "memory-daily",
+    "schedule": "0 23 * * *",
+    "enabled": true,
+    "groupName": "my-group",
+    "prompt": "session-logsスキルを使って今日のセッションログを確認し、今日やったこと・決定事項・未解決事項を簡潔にまとめて memory/YYYY-MM-DD.md(今日の日付)に保存してください。今日記録対象のセッションが無ければファイルは作らず、その旨だけ報告してください。",
+    "channelId": "YOUR_CHANNEL_ID",
+    "mode": "to-channel"
+  },
+  {
+    "id": "memory-weekly",
+    "schedule": "0 23 * * 0",
+    "enabled": true,
+    "groupName": "my-group",
+    "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md と既存の MEMORY.md を読み比べ、今後も参照する価値がある情報だけを MEMORY.md に統合してください。一度きりの作業ログは反映しないこと。MEMORY.md 全体で2000字程度に収めること。",
+    "channelId": "YOUR_CHANNEL_ID",
+    "mode": "to-channel"
+  }
+]
