@@ -9,7 +9,7 @@
 ## ファイル構成
 
 ```
-config/config.json         # cron セクションにジョブ定義
+config/cron.json           # ジョブ定義（省略可。トップレベルは配列）
 src/cron/
   runner.ts                # 1分ごとのスケジューラ（薄い実行基盤）
   jobs/
@@ -21,37 +21,33 @@ data/cron/
 
 ---
 
-## ジョブ定義（config/config.json の cron セクション）
+## ジョブ定義（config/cron.json）
 
 ### 通常ジョブ（JSONだけで完結）
 
 ```json
-{
-  "cron": [
-    {
-      "id": "daily-report",
-      "schedule": "0 9 * * *",
-      "groupName": "my-group",
-      "prompt": "昨日のログを分析して日次レポートを作成してください",
-      "channelId": "12345",
-      "mode": "thread"
-    }
-  ]
-}
+[
+  {
+    "id": "daily-report",
+    "schedule": "0 9 * * *",
+    "groupName": "my-group",
+    "prompt": "昨日のログを分析して日次レポートを作成してください",
+    "channelId": "12345",
+    "mode": "thread"
+  }
+]
 ```
 
 ### カスタムジョブ（TSファイルをバインド）
 
 ```json
-{
-  "cron": [
-    {
-      "id": "mail-check",
-      "schedule": "*/30 * * * *",
-      "handler": "jobs/mail.ts"
-    }
-  ]
-}
+[
+  {
+    "id": "mail-check",
+    "schedule": "*/30 * * * *",
+    "handler": "jobs/mail.ts"
+  }
+]
 ```
 
 `handler` があるジョブは `prompt`・`channelId`・`mode` 省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される。
@@ -155,9 +151,11 @@ cron 設計とは独立した新しいセッションモード。
 
 ## 運用メモ
 
-### config/config.json の変更を反映するには再起動が必要
+### config/cron.json の変更を反映するには再起動が必要
 
-`runner.ts` はジョブ定義を起動時に一度だけ読み込んでメモリキャッシュする（`_jobs` 変数）。`config/config.json` を編集しても、プロセスを再起動するまで変更は反映されない。これは `group-config.ts` と同じキャッシュ戦略。
+`runner.ts` はジョブ定義を起動時に一度だけ読み込んでメモリキャッシュする（`_jobs` 変数）。`config/cron.json` を編集しても、プロセスを再起動するまで変更は反映されない。これは `group-config.ts` と同じキャッシュ戦略。
+
+`config/cron.json` は省略可能なため、ファイル自体が存在しない場合は ENOENT を `_jobs` にキャッシュせず空配列扱いで返す。そのため後からファイルを配置すれば再起動不要で次の tick（最大1分）から cron が動き始める。
 
 ---
 

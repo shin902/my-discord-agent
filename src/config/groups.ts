@@ -1,6 +1,6 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { loadRawConfig } from "./config.js";
+import { loadRawGroups } from "./config.js";
 
 const THINKING_LEVELS = [
   "off",
@@ -33,7 +33,7 @@ const MountConfigSchema = z.object({
 });
 
 // エージェントの挙動を決める設定。サンドボックスコンテナにそのまま渡される
-// （エージェント自身が書き換えられない config/config.json 側で管理する）
+// （エージェント自身が書き換えられない config/groups.json 側で管理する）
 export const AgentConfigSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
@@ -60,13 +60,8 @@ let _groups: GroupConfig[] | null = null;
 
 export async function loadGroups(): Promise<GroupConfig[]> {
   if (_groups !== null) return _groups;
-  const raw = await loadRawConfig();
-  if (raw.groups === undefined) {
-    throw new Error(
-      "config/config.json に groups キーがありません（groups は必須項目です）",
-    );
-  }
-  _groups = GroupsConfigSchema.parse(raw.groups);
+  const raw = await loadRawGroups();
+  _groups = GroupsConfigSchema.parse(raw);
   return _groups;
 }
 

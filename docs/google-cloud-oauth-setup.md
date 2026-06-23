@@ -37,9 +37,9 @@ Google Calendar API を `google-calendar` プロバイダー（`src/tools/calend
 
 ---
 
-## 4. `config/config.json` と `.env` への設定
+## 4. `config/credentials.json` と `.env` への設定
 
-`config/config.json` の `credentials` 配列に追加（`config.example.json` も参照）:
+`config/credentials.json` の配列に追加（`credentials.example.json` も参照）:
 
 ```json
 {
@@ -88,7 +88,7 @@ calendar 系ツール（`list_events` 等）を最初に呼んだタイミング
 data/google-token-{provider}.json
 ```
 
-`provider` は `config/config.json` で指定したプロバイダー名（例: `google-calendar` の場合は `data/google-token-google-calendar.json`）。
+`provider` は `config/credentials.json` で指定したプロバイダー名（例: `google-calendar` の場合は `data/google-token-google-calendar.json`）。
 
 以降はこのキャッシュからリフレッシュトークンでアクセストークンが自動更新されるため、再認証は不要。
 

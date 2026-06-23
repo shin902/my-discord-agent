@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadRawConfig } from "./config.js";
+import { loadRawCredentials } from "./config.js";
 
 export const MsalConfigSchema = z.object({
   tenantId: z.string(),
@@ -120,12 +120,7 @@ export async function loadCredentialProxy(): Promise<CredentialEntry[]> {
     cache = z.array(CredentialEntrySchema).parse(JSON.parse(inlineJson));
     return cache;
   }
-  const raw = await loadRawConfig();
-  if (raw.credentials === undefined) {
-    throw new Error(
-      "config/config.json に credentials キーがありません（credentials は必須項目です）",
-    );
-  }
-  cache = z.array(CredentialEntrySchema).parse(raw.credentials);
+  const raw = await loadRawCredentials();
+  cache = z.array(CredentialEntrySchema).parse(raw);
   return cache;
 }

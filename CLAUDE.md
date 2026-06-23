@@ -70,9 +70,11 @@ Discord受信
 ### ファイルシステム構造
 
 ```
-config/groups.json          # チャンネル→グループのマッピング（Zodで検証）
+config/credentials.json     # AIプロバイダー・外部サービスの接続設定（Zodで検証）
+config/groups.json          # チャンネル→グループのマッピング＋モデル・ツール・autoReply・toolLogArgs・skills（Zodで検証）
+config/cron.json            # 定期実行ジョブ定義（省略可。無ければ cron は空扱い）
+config/config.json          # defaultModel・poller など上記以外の設定
 groups/{name}/
-  group.json                # モデル・ツール・autoReply・toolLogArgs 設定（省略可）
   AGENTS.md                 # グループのシステムプロンプト（省略可）
   SKILLS/{skill}/SKILL.md   # グループ固有のスキル定義（省略可）
 src/cron/jobs/*.ts          # 共有 cron ハンドラー（コミット対象。mail.ts 等のサンプル）
@@ -81,6 +83,8 @@ data/queue/inbox.jsonl      # 処理待ちメッセージキュー（自動生�
 data/queue/dead-letter.jsonl# リトライ上限超えたメッセージ（自動生成）
 data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
 ```
+
+設定ファイルの詳細リファレンスは `docs/config.md` を参照。
 
 cron ハンドラーの置き場は `src/cron/jobs/local/` を gitignore し、機構（`src/cron/`）・共有サンプルと個人ジョブを分離している。`local/` を `src/` 配下に置くのは必須で、`tsconfig.json` の `include: ["src/**/*"]` 上 `tsc` が `src/` 外をコンパイルせず、prod（`pnpm start`）で `loadHandlerFn` が `dist/` の `.js` を import できなくなるため。ジョブ定義（`cron` 配列・`handler` パス）は gitignore 済みの `config` 側に書く。
 

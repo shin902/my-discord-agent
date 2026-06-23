@@ -49,9 +49,9 @@ pnpm reddit:login
 
 ---
 
-## 3. `config/config.json` への設定
+## 3. `config/credentials.json` への設定
 
-`config/config.json` の `credentials` 配列に追加（`config.example.json` も参照）:
+`config/credentials.json` の配列に追加（`credentials.example.json` も参照）:
 
 ```json
 {
@@ -64,7 +64,7 @@ pnpm reddit:login
 }
 ```
 
-`cron` 配列に定期延命ジョブを追加（デフォルトで3日おき。スケジュールは crontab 形式）:
+`config/cron.json` に定期延命ジョブを追加（デフォルトで3日おき。スケジュールは crontab 形式）:
 
 ```json
 {

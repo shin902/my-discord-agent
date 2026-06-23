@@ -26,7 +26,7 @@ Agent container → OneCLI proxy（シークレット注入） → 外部API
 ```
 Host
   ├─ .env                              # 環境変数（ホスト側で読み込み）
-  ├─ config/config.json                # credentials セクションにプロバイダ→envVar→baseUrl マッピング
+  ├─ config/credentials.json           # プロバイダ→envVar→baseUrl マッピング
   └─ src/proxy/credential-proxy-server.ts  # ホスト側 HTTP リバースプロキシ
        ├─ Authorization ヘッダを注入して upstream へ転送
        └─ src/agent/manager.ts         # CREDENTIAL_PROXY_JSON 環境変数でコンテナに渡す
@@ -36,26 +36,22 @@ Host
 
 コンテナには実際の API キーではなく、プロキシ URL（`http://host.docker.internal:{port}/{provider}`）を `CREDENTIAL_PROXY_JSON` 環境変数として渡す。実キーはホストプロセスのメモリにのみ存在する。
 
-### config/config.json の credentials セクション
+### config/credentials.json
 
-`config/config.example.json` をコピーして `config/config.json` を作成する。
+`config/credentials.example.json` をコピーして `config/credentials.json` を作成する。トップレベルは配列。
 
 デフォルトで有効なプロバイダ（動作確認済み）：
 
 ```json
-{
-  "credentials": [
-    { "provider": "openai",      "envVars": ["OPENAI_API_KEY"],     "baseUrl": "https://api.openai.com/v1" },
-    { "provider": "anthropic",   "envVars": ["ANTHROPIC_API_KEY"],  "baseUrl": "https://api.anthropic.com" },
-    { "provider": "deepseek",    "envVars": ["DEEPSEEK_API_KEY"],   "baseUrl": "https://api.deepseek.com" },
-    { "provider": "google",      "envVars": ["GEMINI_API_KEY"],     "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
-    { "provider": "groq",        "envVars": ["GROQ_API_KEY"],       "baseUrl": "https://api.groq.com/openai/v1" },
-    { "provider": "openrouter",  "envVars": ["OPENROUTER_API_KEY"], "baseUrl": "https://openrouter.ai/api/v1" },
-    { "provider": "opencode-go", "envVars": ["OPENCODE_API_KEY"],   "baseUrl": "https://opencode.ai/zen/go/v1" }
-  ],
-  "groups": [],
-  "cron": []
-}
+[
+  { "provider": "openai",      "envVars": ["OPENAI_API_KEY"],     "baseUrl": "https://api.openai.com/v1" },
+  { "provider": "anthropic",   "envVars": ["ANTHROPIC_API_KEY"],  "baseUrl": "https://api.anthropic.com" },
+  { "provider": "deepseek",    "envVars": ["DEEPSEEK_API_KEY"],   "baseUrl": "https://api.deepseek.com" },
+  { "provider": "google",      "envVars": ["GEMINI_API_KEY"],     "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
+  { "provider": "groq",        "envVars": ["GROQ_API_KEY"],       "baseUrl": "https://api.groq.com/openai/v1" },
+  { "provider": "openrouter",  "envVars": ["OPENROUTER_API_KEY"], "baseUrl": "https://openrouter.ai/api/v1" },
+  { "provider": "opencode-go", "envVars": ["OPENCODE_API_KEY"],   "baseUrl": "https://opencode.ai/zen/go/v1" }
+]
 ```
 
 **重要な挙動**:
@@ -129,7 +125,7 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 
 ### カスタムプロバイダー
 
-`pi-ai` の組み込みプロバイダー以外（ローカルの llama-cpp サーバーなど）も `config/config.json` の `credentials` に定義可能。
+`pi-ai` の組み込みプロバイダー以外（ローカルの llama-cpp サーバーなど）も `config/credentials.json` に定義可能。
 
 ```json
 {
@@ -139,7 +135,7 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 }
 ```
 
-- `provider` は自由な名前を指定可能。`config/config.json` の `groups[].model.provider` に同じ名前を設定する。
+- `provider` は自由な名前を指定可能。`config/groups.json` の `groups[].model.provider` に同じ名前を設定する。
 - `api` はオプション。未指定時のデフォルトは `"openai-completions"`。他に `"openai-responses"` や `"anthropic-messages"` 等が指定可能。
 - `envVars` はオプション。省略または空配列の場合、secret 注入は行われず baseUrl の解決と allowHost の登録のみ行う。これは API Key が不要なローカルサーバーに便利。
 - カスタムプロバイダーの場合、モデルIDの検証は行われず、任意の文字列を `modelId` に指定できる。

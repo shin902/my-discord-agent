@@ -6,7 +6,7 @@
 ```
 AgentGroup（エージェント設定プロファイル）
   id, name, folder
-  ← config/config.json groups[]  (モデル・ツール・autoReply・スキル設定)
+  ← config/groups.json groups[]  (モデル・ツール・autoReply・スキル設定)
   ← groups/<folder>/AGENTS.md (グループ固有の指示・メモリ)
   │
   └── [1対多] Channel（Discordチャンネル / DM）
