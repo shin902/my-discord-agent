@@ -18,8 +18,15 @@ function assertValidRepoPart(value: string, label: string): void {
   }
 }
 
-async function githubFetch(path: string): Promise<unknown> {
+async function githubFetch(
+  owner: string,
+  repo: string,
+  suffix: string,
+): Promise<unknown> {
+  assertValidRepoPart(owner, "owner");
+  assertValidRepoPart(repo, "repo");
   const baseUrl = resolveProxyBaseUrl("github");
+  const path = `/repos/${owner}/${repo}${suffix}`;
   const res = await fetch(`${baseUrl}${path}`, { headers: GITHUB_HEADERS });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -33,7 +40,7 @@ type GitHubIssue = {
   title: string;
   state: string;
   user?: { login?: string };
-  labels?: Array<string | { name?: string }>;
+  labels?: Array<{ name?: string }>;
   comments?: number;
   created_at?: string;
   updated_at?: string;
@@ -43,9 +50,7 @@ type GitHubIssue = {
 
 function formatLabels(labels: GitHubIssue["labels"]): string {
   if (!labels || labels.length === 0) return "(なし)";
-  return labels
-    .map((l) => (typeof l === "string" ? l : (l.name ?? "?")))
-    .join(", ");
+  return labels.map((l) => l.name ?? "?").join(", ");
 }
 
 const listIssuesParameters = Type.Object({
@@ -75,11 +80,11 @@ export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
     "指定リポジトリの Issue 一覧を取得する。番号・タイトル・状態・ラベル・コメント数を返す（Pull Request は除外）",
   parameters: listIssuesParameters,
   execute: async (_toolCallId, { owner, repo, state = "open", limit = 10 }) => {
-    assertValidRepoPart(owner, "owner");
-    assertValidRepoPart(repo, "repo");
     const perPage = Math.min(limit, 50);
     const issues = (await githubFetch(
-      `/repos/${owner}/${repo}/issues?state=${state}&per_page=${perPage}`,
+      owner,
+      repo,
+      `/issues?state=${state}&per_page=${perPage}`,
     )) as GitHubIssue[];
 
     const filtered = issues.filter((issue) => !issue.pull_request);
@@ -120,10 +125,10 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   description: "指定した Issue の本文全文を取得する",
   parameters: readIssueParameters,
   execute: async (_toolCallId, { owner, repo, issue_number }) => {
-    assertValidRepoPart(owner, "owner");
-    assertValidRepoPart(repo, "repo");
     const issue = (await githubFetch(
-      `/repos/${owner}/${repo}/issues/${issue_number}`,
+      owner,
+      repo,
+      `/issues/${issue_number}`,
     )) as GitHubIssue;
 
     let body = issue.body ?? "";
