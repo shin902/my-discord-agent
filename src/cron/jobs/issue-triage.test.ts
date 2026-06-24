@@ -128,7 +128,10 @@ describe("issue-triage handler", () => {
 
   it("updated_at が変化していないIssueは再処理しない", async () => {
     store.content = JSON.stringify({
-      "shin902/my-discord-agent#1": "2024-01-02T10:00:00Z",
+      "shin902/my-discord-agent#1": {
+        updatedAt: "2024-01-02T10:00:00Z",
+        commentCount: 0,
+      },
     });
     fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
     const { default: handler } = await import("./issue-triage.js");
@@ -139,9 +142,51 @@ describe("issue-triage handler", () => {
 
   it("updated_at が変化していれば再処理する", async () => {
     store.content = JSON.stringify({
-      "shin902/my-discord-agent#1": "2024-01-01T00:00:00Z",
+      "shin902/my-discord-agent#1": {
+        updatedAt: "2024-01-01T00:00:00Z",
+        commentCount: 0,
+      },
     });
     fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx();
+    await handler(ctx);
+    expect(ctx.appendInbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("updated_at は変化したがコメント数が前回投入分の+1だけなら、bot自身のコメントとみなし再処理しない", async () => {
+    store.content = JSON.stringify({
+      "shin902/my-discord-agent#1": {
+        updatedAt: "2024-01-01T00:00:00Z",
+        commentCount: 0,
+      },
+    });
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [makeIssue({ comments: 1 })],
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx();
+    await handler(ctx);
+    expect(ctx.appendInbox).not.toHaveBeenCalled();
+    const saved = JSON.parse(store.content as string);
+    expect(saved["shin902/my-discord-agent#1"]).toEqual({
+      updatedAt: "2024-01-02T10:00:00Z",
+      commentCount: 1,
+    });
+  });
+
+  it("コメント数が+2以上増えていれば再処理する（owner自身の追加コメントとみなす）", async () => {
+    store.content = JSON.stringify({
+      "shin902/my-discord-agent#1": {
+        updatedAt: "2024-01-01T00:00:00Z",
+        commentCount: 0,
+      },
+    });
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [makeIssue({ comments: 2 })],
+    });
     const { default: handler } = await import("./issue-triage.js");
     const ctx = makeCtx();
     await handler(ctx);
@@ -155,7 +200,10 @@ describe("issue-triage handler", () => {
     await handler(ctx);
     expect(store.content).not.toBeNull();
     const saved = JSON.parse(store.content as string);
-    expect(saved["shin902/my-discord-agent#1"]).toBe("2024-01-02T10:00:00Z");
+    expect(saved["shin902/my-discord-agent#1"]).toEqual({
+      updatedAt: "2024-01-02T10:00:00Z",
+      commentCount: 0,
+    });
   });
 
   it("GitHub API エラー時はエラーを投げてappendInboxを呼ばない（次tickでリトライさせる）", async () => {
@@ -249,7 +297,10 @@ describe("issue-triage handler", () => {
     expect(appendInbox).toHaveBeenCalledTimes(2);
     const saved = JSON.parse(store.content as string);
     // Issue #1 の appendInbox は成功しているため、#2 が失敗してもstateに残る
-    expect(saved["shin902/my-discord-agent#1"]).toBe("2024-01-02T10:00:00Z");
+    expect(saved["shin902/my-discord-agent#1"]).toEqual({
+      updatedAt: "2024-01-02T10:00:00Z",
+      commentCount: 0,
+    });
     expect(saved["shin902/my-discord-agent#2"]).toBeUndefined();
   });
 
@@ -283,8 +334,14 @@ describe("issue-triage handler", () => {
     });
     await Promise.all([handler(ctxA), handler(ctxB)]);
     const saved = JSON.parse(store.content as string);
-    expect(saved["shin902/repo-a#1"]).toBe("2024-01-02T10:00:00Z");
-    expect(saved["shin902/repo-b#1"]).toBe("2024-01-02T11:00:00Z");
+    expect(saved["shin902/repo-a#1"]).toEqual({
+      updatedAt: "2024-01-02T10:00:00Z",
+      commentCount: 0,
+    });
+    expect(saved["shin902/repo-b#1"]).toEqual({
+      updatedAt: "2024-01-02T11:00:00Z",
+      commentCount: 0,
+    });
   });
 
   it("GitHub API呼び出しに creator フィルタを付与する（投稿者以外の取得・ページングを避ける）", async () => {

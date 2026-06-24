@@ -20,8 +20,12 @@ const SettingsSchema = z.object({
   allowedAuthors: z.array(z.string()).optional(),
 });
 
-// issue番号 → 最後に処理した時点の updated_at。変化が無ければ再処理しない
-type TriageState = Record<string, string>;
+// issue番号 → 最後に処理した時点の updated_at / コメント数。
+// updated_at が変化していなければ再処理しない。
+// updated_at が変化していても、コメント数の増分が前回投入分の+1だけなら
+// bot自身のコメントによる更新とみなし再処理しない（gh は本人アカウントと
+// 同一なため、コメント投稿者で bot/owner を区別できない代替策）
+type TriageState = Record<string, { updatedAt: string; commentCount: number }>;
 
 function stateKey(owner: string, repo: string, issueNumber: number): string {
   return `${owner}/${repo}#${issueNumber}`;
@@ -56,10 +60,14 @@ async function saveState(state: TriageState): Promise<void> {
 const withStateLock = createFileLock();
 
 // appendInbox 成功直後に呼び、ロック内で最新状態に1キーだけ更新・書き戻す。
-async function recordProcessed(key: string, updatedAt: string): Promise<void> {
+async function recordProcessed(
+  key: string,
+  updatedAt: string,
+  commentCount: number,
+): Promise<void> {
   await withStateLock(async () => {
     const latest = await loadState();
-    latest[key] = updatedAt;
+    latest[key] = { updatedAt, commentCount };
     await saveState(latest);
   });
 }
@@ -174,10 +182,42 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
   // updated_at が前回処理時と変わっていないIssueは再処理・再コメントしない
   // (GitHub API は issue 一覧で常に updated_at を返すため、空文字フォールバックは型上の保険)
+  const absorbed: Array<{
+    key: string;
+    updatedAt: string;
+    commentCount: number;
+  }> = [];
   const targets = ownerIssues.filter((issue) => {
-    const prevUpdatedAt = state[stateKey(owner, repo, issue.number)];
-    return prevUpdatedAt !== (issue.updated_at ?? "");
+    const key = stateKey(owner, repo, issue.number);
+    const prev = state[key];
+    if (!prev) return true;
+    if (prev.updatedAt === (issue.updated_at ?? "")) return false;
+
+    // updated_at は変化しているが、コメント数の増分がちょうど+1なら
+    // 前回投入した棚卸しコメント自身による更新とみなしてスキップする。
+    // state だけ最新値に更新し、以後同じ理由で誤検知し続けないようにする。
+    const currentComments = issue.comments ?? 0;
+    if (currentComments === prev.commentCount + 1) {
+      absorbed.push({
+        key,
+        updatedAt: issue.updated_at ?? "",
+        commentCount: currentComments,
+      });
+      return false;
+    }
+    return true;
   });
+
+  // 自己コメント吸収分はロック内でまとめて永続化する
+  if (absorbed.length > 0) {
+    await withStateLock(async () => {
+      const latest = await loadState();
+      for (const { key, updatedAt, commentCount } of absorbed) {
+        latest[key] = { updatedAt, commentCount };
+      }
+      await saveState(latest);
+    });
+  }
   if (targets.length === 0) return;
 
   console.log(`[issue-triage] ${targets.length} 件のIssueを処理します`);
@@ -197,6 +237,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       await recordProcessed(
         stateKey(owner, repo, issue.number),
         issue.updated_at ?? "",
+        issue.comments ?? 0,
       );
     } catch (err) {
       console.error(`[issue-triage] Issue #${issue.number} の投入に失敗:`, err);
