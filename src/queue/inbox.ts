@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createFileLock } from "../utils/lock.js";
 import { appendCorruptedDeadLetter } from "./dead-letter.js";
 
 // Discord メッセージに添付されたファイルの参照情報
@@ -90,15 +91,7 @@ async function writeMessages(messages: InboxMessage[]): Promise<void> {
 // ファイル操作を直列化するミューテックス。
 // Node.js は await をまたいでイベントループが切り替わるため、
 // readFile→writeFile の間に appendInbox が割り込む可能性がある。
-let pendingOp = Promise.resolve<void>(undefined);
-function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
-  const result = pendingOp.then(fn);
-  pendingOp = result.then(
-    () => {},
-    () => {},
-  );
-  return result;
-}
+const withFileLock = createFileLock();
 
 /** Discord のメッセージをキューの末尾に追記する。
  * id と retries は自動で付与される。Omitは除外の意味（関数内で生成するので、引数では明示しなくていい）

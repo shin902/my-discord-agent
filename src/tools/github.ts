@@ -58,7 +58,7 @@ async function githubPost(
   return res.json();
 }
 
-type GitHubIssue = {
+export type GitHubIssue = {
   number: number;
   title: string;
   state: string;

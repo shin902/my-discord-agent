@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
-import { assertValidRepoPart } from "../../tools/github.js";
+import { assertValidRepoPart, type GitHubIssue } from "../../tools/github.js";
+import { NonRetryableError } from "../../utils/error.js";
+import { createFileLock } from "../../utils/lock.js";
 import type { CronContext } from "../runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,14 +20,6 @@ const SettingsSchema = z.object({
   allowedAuthors: z.array(z.string()).optional(),
 });
 
-type GitHubIssue = {
-  number: number;
-  title: string;
-  user?: { login?: string };
-  updated_at: string;
-  pull_request?: unknown;
-};
-
 // issue番号 → 最後に処理した時点の updated_at。変化が無ければ再処理しない
 type TriageState = Record<string, string>;
 
@@ -33,12 +27,24 @@ function stateKey(owner: string, repo: string, issueNumber: number): string {
   return `${owner}/${repo}#${issueNumber}`;
 }
 
+// runner.ts の loadState/saveState と同様にメモリキャッシュする。
+// state.json は1ファイル共有のため、複数ジョブが同一tickで並行実行されても
+// withStateLock の直列化さえ守れば、ディスクの再読込なしに同じオブジェクトを
+// 安全に読み書きできる（このプロセス内の更新は常にロック経由で同期的に反映される）。
+let cachedState: TriageState | null = null;
+
 async function loadState(): Promise<TriageState> {
-  if (!existsSync(STATE_PATH)) return {};
-  return JSON.parse(await readFile(STATE_PATH, "utf-8")) as TriageState;
+  if (cachedState !== null) return cachedState;
+  if (!existsSync(STATE_PATH)) {
+    cachedState = {};
+    return cachedState;
+  }
+  cachedState = JSON.parse(await readFile(STATE_PATH, "utf-8")) as TriageState;
+  return cachedState;
 }
 
 async function saveState(state: TriageState): Promise<void> {
+  cachedState = state;
   await mkdir(path.dirname(STATE_PATH), { recursive: true });
   await writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
 }
@@ -47,20 +53,9 @@ async function saveState(state: TriageState): Promise<void> {
 // ジョブが同一tickで並行実行されると read→write 間に割り込みが発生し、
 // 後勝ちの書き込みが他ジョブの更新を丸ごと消してしまう（inbox.ts と同じ問題）。
 // 同一プロセス内の操作をPromiseチェーンで直列化することで読み書きをアトミックにする。
-let pendingStateOp: Promise<unknown> = Promise.resolve();
+const withStateLock = createFileLock();
 
-function withStateLock<T>(fn: () => Promise<T>): Promise<T> {
-  const result = pendingStateOp.then(fn);
-  pendingStateOp = result.then(
-    () => {},
-    () => {},
-  );
-  return result;
-}
-
-// appendInbox 成功直後に呼び、ロック内でディスクから最新状態を読み直してから
-// 1キーだけ更新・書き戻す。loadState() 呼び出し時点の古いスナップショットを
-// 丸ごと書き戻すと、並行実行中の他ジョブの更新を上書きしてしまうため。
+// appendInbox 成功直後に呼び、ロック内で最新状態に1キーだけ更新・書き戻す。
 async function recordProcessed(key: string, updatedAt: string): Promise<void> {
   await withStateLock(async () => {
     const latest = await loadState();
@@ -72,19 +67,17 @@ async function recordProcessed(key: string, updatedAt: string): Promise<void> {
 const PER_PAGE = 100;
 const MAX_PAGES = 10;
 
-async function fetchOpenIssues(
+async function fetchIssuesByCreator(
   owner: string,
   repo: string,
+  creator: string,
 ): Promise<GitHubIssue[]> {
-  assertValidRepoPart(owner, "owner");
-  assertValidRepoPart(repo, "repo");
-
   const port = getProxyPort();
   const issues: GitHubIssue[] = [];
 
   for (let page = 1; page <= MAX_PAGES; page++) {
     const res = await fetch(
-      `http://localhost:${port}/github/repos/${owner}/${repo}/issues?state=open&per_page=${PER_PAGE}&page=${page}`,
+      `http://localhost:${port}/github/repos/${owner}/${repo}/issues?state=open&per_page=${PER_PAGE}&page=${page}&creator=${encodeURIComponent(creator)}`,
     );
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -93,8 +86,33 @@ async function fetchOpenIssues(
     const pageIssues = (await res.json()) as GitHubIssue[];
     issues.push(...pageIssues);
     if (pageIssues.length < PER_PAGE) break;
+    if (page === MAX_PAGES) {
+      console.warn(
+        `[issue-triage] ${owner}/${repo} creator=${creator} の Open Issue が上限(${MAX_PAGES * PER_PAGE}件)に達しました。一部のIssueが取得対象から漏れている可能性があります`,
+      );
+    }
   }
 
+  return issues;
+}
+
+// allowedAuthors（既定: owner本人）単位で creator フィルタ付きAPI呼び出しを行う。
+// 全Open Issueを取得してからクライアント側で絞り込むより、対象外の投稿者分の
+// 取得・ページングコストを避けられる。
+async function fetchOpenIssues(
+  owner: string,
+  repo: string,
+  authors: string[],
+): Promise<GitHubIssue[]> {
+  const issues: GitHubIssue[] = [];
+  const seen = new Set<number>();
+  for (const author of authors) {
+    for (const issue of await fetchIssuesByCreator(owner, repo, author)) {
+      if (seen.has(issue.number)) continue;
+      seen.add(issue.number);
+      issues.push(issue);
+    }
+  }
   return issues.filter((issue) => !issue.pull_request);
 }
 
@@ -111,35 +129,42 @@ function buildPrompt(owner: string, repo: string, issue: GitHubIssue): string {
 
 export default async function handler(ctx: CronContext): Promise<void> {
   if (!ctx.channelId) {
-    console.error("[issue-triage] channelId が設定されていません");
-    return;
+    throw new NonRetryableError(
+      "[issue-triage] channelId が設定されていません",
+    );
   }
   if (!ctx.groupName) {
-    console.error("[issue-triage] groupName が設定されていません");
-    return;
+    throw new NonRetryableError(
+      "[issue-triage] groupName が設定されていません",
+    );
   }
 
   const parsed = SettingsSchema.safeParse(ctx.settings);
   if (!parsed.success) {
-    console.error("[issue-triage] settings が不正です:", parsed.error.message);
-    return;
+    throw new NonRetryableError(
+      `[issue-triage] settings が不正です: ${parsed.error.message}`,
+    );
   }
   const { owner, repo, allowedAuthors } = parsed.data;
-  // GitHubのユーザー名は大文字小文字を区別しないため、比較前に正規化する
-  const allowed = new Set(
-    (allowedAuthors ?? [owner]).map((author) => author.toLowerCase()),
-  );
-
-  let issues: GitHubIssue[];
   try {
-    issues = await fetchOpenIssues(owner, repo);
+    assertValidRepoPart(owner, "owner");
+    assertValidRepoPart(repo, "repo");
   } catch (err) {
-    console.error("[issue-triage] Issue 一覧の取得に失敗:", err);
-    return;
+    throw new NonRetryableError(
+      `[issue-triage] owner/repo が不正です: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
-  // 投稿者がリポジトリオーナー（または allowedAuthors）でないIssueは
-  // 第三者がissue本文へ攻撃文を仕込める余地を作らないため処理対象から除外する
+  const authors = allowedAuthors ?? [owner];
+  // GitHubのユーザー名は大文字小文字を区別しないため、比較前に正規化する
+  const allowed = new Set(authors.map((author) => author.toLowerCase()));
+
+  // GitHub API/proxyの一時的な障害（ネットワーク・レート制限等）はここでは握り潰さず、
+  // そのまま呼び出し元の runner に投げて次tickでのリトライ判断に委ねる
+  const issues = await fetchOpenIssues(owner, repo, authors);
+
+  // creator フィルタはAPI側で行われるが、投稿者がリポジトリオーナー
+  // （または allowedAuthors）でないIssueが紛れ込まないよう念のため二重チェックする
   const ownerIssues = issues.filter((issue) =>
     allowed.has((issue.user?.login ?? "").toLowerCase()),
   );
@@ -148,9 +173,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const state = await loadState();
 
   // updated_at が前回処理時と変わっていないIssueは再処理・再コメントしない
+  // (GitHub API は issue 一覧で常に updated_at を返すため、空文字フォールバックは型上の保険)
   const targets = ownerIssues.filter((issue) => {
     const prevUpdatedAt = state[stateKey(owner, repo, issue.number)];
-    return prevUpdatedAt !== issue.updated_at;
+    return prevUpdatedAt !== (issue.updated_at ?? "");
   });
   if (targets.length === 0) return;
 
@@ -170,7 +196,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       // 既に投入済みのIssueが重複してinboxに投入されることを防ぐ
       await recordProcessed(
         stateKey(owner, repo, issue.number),
-        issue.updated_at,
+        issue.updated_at ?? "",
       );
     } catch (err) {
       console.error(`[issue-triage] Issue #${issue.number} の投入に失敗:`, err);

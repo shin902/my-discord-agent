@@ -54,21 +54,23 @@ describe("issue-triage handler", () => {
     vi.unstubAllGlobals();
   });
 
-  it("channelId が無ければ何もしない", async () => {
+  it("channelId が無ければ NonRetryableError を投げる", async () => {
     const { default: handler } = await import("./issue-triage.js");
-    await handler(makeCtx({ channelId: undefined }));
+    await expect(handler(makeCtx({ channelId: undefined }))).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("groupName が無ければ何もしない", async () => {
+  it("groupName が無ければ NonRetryableError を投げる", async () => {
     const { default: handler } = await import("./issue-triage.js");
-    await handler(makeCtx({ groupName: undefined }));
+    await expect(handler(makeCtx({ groupName: undefined }))).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("settings が不正なら何もしない", async () => {
+  it("settings が不正なら NonRetryableError を投げる", async () => {
     const { default: handler } = await import("./issue-triage.js");
-    await handler(makeCtx({ settings: { owner: "shin902" } }));
+    await expect(
+      handler(makeCtx({ settings: { owner: "shin902" } })),
+    ).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -156,7 +158,7 @@ describe("issue-triage handler", () => {
     expect(saved["shin902/my-discord-agent#1"]).toBe("2024-01-02T10:00:00Z");
   });
 
-  it("GitHub API エラー時は appendInbox を呼ばない", async () => {
+  it("GitHub API エラー時はエラーを投げてappendInboxを呼ばない（次tickでリトライさせる）", async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 500,
@@ -164,7 +166,7 @@ describe("issue-triage handler", () => {
     });
     const { default: handler } = await import("./issue-triage.js");
     const ctx = makeCtx();
-    await handler(ctx);
+    await expect(handler(ctx)).rejects.toThrow();
     expect(ctx.appendInbox).not.toHaveBeenCalled();
   });
 
@@ -189,12 +191,12 @@ describe("issue-triage handler", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("不正な owner/repo はエラーになり appendInbox を呼ばない", async () => {
+  it("不正な owner/repo は NonRetryableError を投げ appendInbox を呼ばない", async () => {
     const { default: handler } = await import("./issue-triage.js");
     const ctx = makeCtx({
       settings: { owner: "..", repo: "my-discord-agent" },
     });
-    await handler(ctx);
+    await expect(handler(ctx)).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(ctx.appendInbox).not.toHaveBeenCalled();
   });
@@ -283,5 +285,62 @@ describe("issue-triage handler", () => {
     const saved = JSON.parse(store.content as string);
     expect(saved["shin902/repo-a#1"]).toBe("2024-01-02T10:00:00Z");
     expect(saved["shin902/repo-b#1"]).toBe("2024-01-02T11:00:00Z");
+  });
+
+  it("GitHub API呼び出しに creator フィルタを付与する（投稿者以外の取得・ページングを避ける）", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx();
+    await handler(ctx);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("creator=shin902");
+  });
+
+  it("allowedAuthors が複数の場合は author ごとに creator フィルタ付きで取得し、重複Issueは1件にまとめる", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("creator=alice")) {
+        return {
+          ok: true,
+          json: async () => [
+            makeIssue({ number: 1, user: { login: "alice" } }),
+          ],
+        };
+      }
+      if (url.includes("creator=bob")) {
+        // bob にも #1 を重複して返すケース（実APIでは起きないが、防御的de-dupを確認する）
+        return {
+          ok: true,
+          json: async () => [
+            makeIssue({ number: 1, user: { login: "alice" } }),
+            makeIssue({ number: 2, user: { login: "bob" } }),
+          ],
+        };
+      }
+      return { ok: true, json: async () => [] };
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx({
+      settings: {
+        owner: "shin902",
+        repo: "my-discord-agent",
+        allowedAuthors: ["alice", "bob"],
+      },
+    });
+    await handler(ctx);
+    expect(ctx.appendInbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("Open Issue が MAX_PAGES の上限に達した場合は警告ログを出す", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fullPage = Array.from({ length: 100 }, (_, i) =>
+      makeIssue({ number: i + 1 }),
+    );
+    fetchMock.mockResolvedValue({ ok: true, json: async () => fullPage });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx();
+    await handler(ctx);
+    expect(warnSpy).toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+    warnSpy.mockRestore();
   });
 });
