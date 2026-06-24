@@ -65,8 +65,20 @@ data/cron/
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `mode` | handler なし時必須 | `"channel"` \| `"thread"` | 実行モード（後述） |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
+| `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |
 
 handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
+
+### settings の例
+
+```json
+{
+  "id": "some-job",
+  "schedule": "*/30 * * * *",
+  "handler": "jobs/some-job.ts",
+  "settings": { "maxResults": 10, "labelFilter": "INBOX" }
+}
+```
 
 ### mode
 
@@ -91,7 +103,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `mode?`, `handler?`）を展開して渡す
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
 ---
 

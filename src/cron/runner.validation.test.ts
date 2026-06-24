@@ -157,6 +157,22 @@ describe("loadAndValidateCron", () => {
     expect(result[0].id).toBe("group-job");
   });
 
+  it("settings フィールドは検証なしでそのまま通る", async () => {
+    const cronJson = JSON.stringify([
+      {
+        id: "with-settings",
+        schedule: "* * * * *",
+        handler: "__fixtures__/test-handler.ts",
+        settings: { maxResults: 10 },
+      },
+    ]);
+    mockReadFile.mockResolvedValueOnce(cronJson);
+
+    const result = await loadAndValidateCron();
+    expect(result).toHaveLength(1);
+    expect(result[0].settings).toEqual({ maxResults: 10 });
+  });
+
   it("空配列の cron.json は空配列を返す", async () => {
     mockReadFile.mockResolvedValueOnce("[]");
 

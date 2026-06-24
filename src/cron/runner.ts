@@ -24,6 +24,8 @@ const CronJobSchema = z
     channelId: z.string().optional(),
     mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
+    // ハンドラー固有の設定値。中身は検証せずそのまま CronContext 経由でハンドラーに渡す
+    settings: z.unknown().optional(),
   })
   .refine(
     (job) =>
