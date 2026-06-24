@@ -24,9 +24,7 @@ try {
   await initManager(proxyPort);
   await initGroupPrompts(groups);
   const defaultModel = await loadDefaultModel();
-  for (const group of groups) {
-    await validateGroupConfig(group, defaultModel);
-  }
+  await Promise.all(groups.map((g) => validateGroupConfig(g, defaultModel)));
   const cronJobs = await loadAndValidateCron();
   _setCronJobs(cronJobs);
 } catch (err) {
