@@ -167,4 +167,87 @@ describe("issue-triage handler", () => {
     await handler(ctx);
     expect(ctx.appendInbox).not.toHaveBeenCalled();
   });
+
+  it("ページネーション: per_page 件で打ち切られた場合は次ページも取得する", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) =>
+      makeIssue({ number: i + 1, updated_at: "2024-01-02T10:00:00Z" }),
+    );
+    const page2 = [
+      makeIssue({ number: 101, updated_at: "2024-01-02T10:00:00Z" }),
+    ];
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("page=2")) {
+        return { ok: true, json: async () => page2 };
+      }
+      return { ok: true, json: async () => page1 };
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx();
+    await handler(ctx);
+    expect(ctx.appendInbox).toHaveBeenCalledTimes(101);
+    // page1(100件、満杯のため継続) -> page2(1件、PER_PAGE未満のため終了)
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("不正な owner/repo はエラーになり appendInbox を呼ばない", async () => {
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx({
+      settings: { owner: "..", repo: "my-discord-agent" },
+    });
+    await handler(ctx);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(ctx.appendInbox).not.toHaveBeenCalled();
+  });
+
+  it("大文字小文字が違うユーザー名でも owner として許可される", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [makeIssue({ user: { login: "SHIN902" } })],
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx({
+      settings: { owner: "Shin902", repo: "my-discord-agent" },
+    });
+    await handler(ctx);
+    expect(ctx.appendInbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("大文字小文字が違う allowedAuthors でも許可される", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [makeIssue({ user: { login: "Bob" } })],
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx({
+      settings: {
+        owner: "shin902",
+        repo: "my-discord-agent",
+        allowedAuthors: ["bob"],
+      },
+    });
+    await handler(ctx);
+    expect(ctx.appendInbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("appendInbox 成功ごとに state.json が保存される（途中失敗時も先行分は残る）", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [
+        makeIssue({ number: 1, updated_at: "2024-01-02T10:00:00Z" }),
+        makeIssue({ number: 2, updated_at: "2024-01-02T11:00:00Z" }),
+      ],
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const appendInbox = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("fail"));
+    const ctx = makeCtx({ appendInbox });
+    await handler(ctx);
+    expect(appendInbox).toHaveBeenCalledTimes(2);
+    const saved = JSON.parse(store.content as string);
+    // Issue #1 の appendInbox は成功しているため、#2 が失敗してもstateに残る
+    expect(saved["shin902/my-discord-agent#1"]).toBe("2024-01-02T10:00:00Z");
+    expect(saved["shin902/my-discord-agent#2"]).toBeUndefined();
+  });
 });

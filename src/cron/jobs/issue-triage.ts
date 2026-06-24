@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
+import { assertValidRepoPart } from "../../tools/github.js";
 import type { CronContext } from "../runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,19 +43,32 @@ async function saveState(state: TriageState): Promise<void> {
   await writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
 }
 
+const PER_PAGE = 100;
+const MAX_PAGES = 10;
+
 async function fetchOpenIssues(
   owner: string,
   repo: string,
 ): Promise<GitHubIssue[]> {
+  assertValidRepoPart(owner, "owner");
+  assertValidRepoPart(repo, "repo");
+
   const port = getProxyPort();
-  const res = await fetch(
-    `http://localhost:${port}/github/repos/${owner}/${repo}/issues?state=open&per_page=50`,
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
+  const issues: GitHubIssue[] = [];
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await fetch(
+      `http://localhost:${port}/github/repos/${owner}/${repo}/issues?state=open&per_page=${PER_PAGE}&page=${page}`,
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const pageIssues = (await res.json()) as GitHubIssue[];
+    issues.push(...pageIssues);
+    if (pageIssues.length < PER_PAGE) break;
   }
-  const issues = (await res.json()) as GitHubIssue[];
+
   return issues.filter((issue) => !issue.pull_request);
 }
 
@@ -85,7 +99,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
     return;
   }
   const { owner, repo, allowedAuthors } = parsed.data;
-  const allowed = new Set(allowedAuthors ?? [owner]);
+  // GitHubのユーザー名は大文字小文字を区別しないため、比較前に正規化する
+  const allowed = new Set(
+    (allowedAuthors ?? [owner]).map((author) => author.toLowerCase()),
+  );
 
   let issues: GitHubIssue[];
   try {
@@ -98,7 +115,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
   // 投稿者がリポジトリオーナー（または allowedAuthors）でないIssueは
   // 第三者がissue本文へ攻撃文を仕込める余地を作らないため処理対象から除外する
   const ownerIssues = issues.filter((issue) =>
-    allowed.has(issue.user?.login ?? ""),
+    allowed.has((issue.user?.login ?? "").toLowerCase()),
   );
   if (ownerIssues.length === 0) return;
 
@@ -123,11 +140,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
         timestamp: new Date().toISOString(),
         cronJobId: ctx.id,
       });
+      // appendInbox 成功直後にstateを保存することで、途中でクラッシュしても
+      // 既に投入済みのIssueが重複してinboxに投入されることを防ぐ
       state[stateKey(owner, repo, issue.number)] = issue.updated_at;
+      await saveState(state);
     } catch (err) {
       console.error(`[issue-triage] Issue #${issue.number} の投入に失敗:`, err);
     }
   }
-
-  await saveState(state);
 }
