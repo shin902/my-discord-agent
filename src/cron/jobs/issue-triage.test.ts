@@ -250,4 +250,38 @@ describe("issue-triage handler", () => {
     expect(saved["shin902/my-discord-agent#1"]).toBe("2024-01-02T10:00:00Z");
     expect(saved["shin902/my-discord-agent#2"]).toBeUndefined();
   });
+
+  it("2つのジョブが同一tickで並行実行されても、互いの state 更新を上書きしない", async () => {
+    // owner/repo が異なる2つのジョブ（例: 別リポジトリを棚卸しする2つ目のcronジョブ）を
+    // ほぼ同時に実行し、片方の書き込みがもう片方を消さないことを確認する
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/repos/shin902/repo-a/")) {
+        return {
+          ok: true,
+          json: async () => [
+            makeIssue({ number: 1, updated_at: "2024-01-02T10:00:00Z" }),
+          ],
+        };
+      }
+      return {
+        ok: true,
+        json: async () => [
+          makeIssue({ number: 1, updated_at: "2024-01-02T11:00:00Z" }),
+        ],
+      };
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctxA = makeCtx({
+      settings: { owner: "shin902", repo: "repo-a" },
+      appendInbox: vi.fn(async () => undefined),
+    });
+    const ctxB = makeCtx({
+      settings: { owner: "shin902", repo: "repo-b" },
+      appendInbox: vi.fn(async () => undefined),
+    });
+    await Promise.all([handler(ctxA), handler(ctxB)]);
+    const saved = JSON.parse(store.content as string);
+    expect(saved["shin902/repo-a#1"]).toBe("2024-01-02T10:00:00Z");
+    expect(saved["shin902/repo-b#1"]).toBe("2024-01-02T11:00:00Z");
+  });
 });

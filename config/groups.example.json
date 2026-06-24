@@ -25,7 +25,7 @@
     "channels": [],
     "mounts": [
       {
-        "host": ".",
+        "host": "/path/to/a/clean/clone/of/this/repo",
         "container": "/repo",
         "readOnly": true
       }

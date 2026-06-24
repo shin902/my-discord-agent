@@ -43,6 +43,32 @@ async function saveState(state: TriageState): Promise<void> {
   await writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
 }
 
+// state.json は owner/repo を問わず1ファイル共有のため、複数の issue-triage
+// ジョブが同一tickで並行実行されると read→write 間に割り込みが発生し、
+// 後勝ちの書き込みが他ジョブの更新を丸ごと消してしまう（inbox.ts と同じ問題）。
+// 同一プロセス内の操作をPromiseチェーンで直列化することで読み書きをアトミックにする。
+let pendingStateOp: Promise<unknown> = Promise.resolve();
+
+function withStateLock<T>(fn: () => Promise<T>): Promise<T> {
+  const result = pendingStateOp.then(fn);
+  pendingStateOp = result.then(
+    () => {},
+    () => {},
+  );
+  return result;
+}
+
+// appendInbox 成功直後に呼び、ロック内でディスクから最新状態を読み直してから
+// 1キーだけ更新・書き戻す。loadState() 呼び出し時点の古いスナップショットを
+// 丸ごと書き戻すと、並行実行中の他ジョブの更新を上書きしてしまうため。
+async function recordProcessed(key: string, updatedAt: string): Promise<void> {
+  await withStateLock(async () => {
+    const latest = await loadState();
+    latest[key] = updatedAt;
+    await saveState(latest);
+  });
+}
+
 const PER_PAGE = 100;
 const MAX_PAGES = 10;
 
@@ -142,8 +168,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
       });
       // appendInbox 成功直後にstateを保存することで、途中でクラッシュしても
       // 既に投入済みのIssueが重複してinboxに投入されることを防ぐ
-      state[stateKey(owner, repo, issue.number)] = issue.updated_at;
-      await saveState(state);
+      await recordProcessed(
+        stateKey(owner, repo, issue.number),
+        issue.updated_at,
+      );
     } catch (err) {
       console.error(`[issue-triage] Issue #${issue.number} の投入に失敗:`, err);
     }
