@@ -65,8 +65,22 @@ data/cron/
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `mode` | handler なし時必須 | `"channel"` \| `"thread"` | 実行モード（後述） |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
+| `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |
 
 handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
+
+### settings（issue #160）
+
+固有の変数・定数をジョブ定義に安全に持たせるためのフィールド。`settings` キー以下は cron.json 全体のスキーマ検証の対象外で、値の形は自由（オブジェクト・配列・プリミティブいずれも可）。ハンドラー側で `ctx.settings as MySettings` のようにキャストするか、ハンドラー内で個別に Zod スキーマを定義してパースする。
+
+```json
+{
+  "id": "some-job",
+  "schedule": "*/30 * * * *",
+  "handler": "jobs/some-job.ts",
+  "settings": { "maxResults": 10, "labelFilter": "INBOX" }
+}
+```
 
 ### mode
 
