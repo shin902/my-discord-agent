@@ -132,9 +132,7 @@ export function shouldRun(
 
 // --- Handler loading ---
 
-export async function loadHandlerFn(
-  handlerRelPath: string,
-): Promise<(ctx: CronContext) => Promise<void>> {
+function resolveHandlerPath(handlerRelPath: string): string {
   if (/\.\.(\/|\\|$)/.test(handlerRelPath)) {
     throw new NonRetryableError(`不正なハンドラーパス: ${handlerRelPath}`);
   }
@@ -150,16 +148,47 @@ export async function loadHandlerFn(
       `ハンドラーパスがプロジェクト外を参照しています: ${handlerRelPath}`,
     );
   }
-  const absUrl = pathToFileURL(absPath).href;
-  const mod = (await import(absUrl)) as {
+  return absPath;
+}
+
+export async function loadHandlerFn(
+  handlerRelPath: string,
+): Promise<(ctx: CronContext) => Promise<void>> {
+  const absPath = resolveHandlerPath(handlerRelPath);
+  const mod = (await import(pathToFileURL(absPath).href)) as {
     default?: (ctx: CronContext) => Promise<void>;
   };
   if (typeof mod.default !== "function") {
     throw new NonRetryableError(
-      `ハンドラー ${handlerRelPath} に default export がありません`,
+      `ハンドラー ${handlerRelPath} に default export (function) がありません`,
     );
   }
   return mod.default;
+}
+
+// --- Startup validation ---
+
+async function validateHandlerPath(handlerRelPath: string): Promise<void> {
+  await loadHandlerFn(handlerRelPath);
+}
+
+/** cron.json を読み込み・スキーマ検証・ハンドラー検証を行う（起動時1回） */
+export async function loadAndValidateCron(): Promise<CronJob[]> {
+  let raw: unknown;
+  try {
+    raw = await loadRawCron();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const jobs = CronJobsSchema.parse(raw);
+  // enabled な handler 付きジョブのみ起動時に import 検証する（無効化ジョブは対象外）
+  const handlers = jobs.filter(
+    (j): j is CronJob & { handler: string } =>
+      j.enabled && typeof j.handler === "string",
+  );
+  await Promise.all(handlers.map((h) => validateHandlerPath(h.handler)));
+  return jobs;
 }
 
 // --- Job execution ---
@@ -206,21 +235,10 @@ export async function executeJob(job: CronJob): Promise<void> {
 
 // --- Scheduler ---
 
-let _jobs: CronJob[] | null = null;
+let _jobs: CronJob[] = [];
 
-async function loadJobs(): Promise<CronJob[]> {
-  if (_jobs !== null) return _jobs;
-  // cron.json は省略可能。エラー時（ENOENT 含む）は _jobs をキャッシュしない。
-  // 次の tick で再試行するため、起動後に cron.json を配置すれば動き始める。
-  let raw: unknown;
-  try {
-    raw = await loadRawCron();
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw err;
-  }
-  _jobs = CronJobsSchema.parse(raw);
-  return _jobs;
+export function _setCronJobs(jobs: CronJob[]): void {
+  _jobs = jobs;
 }
 
 async function tick(): Promise<void> {
@@ -228,14 +246,13 @@ async function tick(): Promise<void> {
   if (!client.isReady()) return;
   _isRunning = true;
   try {
-    const jobs = await loadJobs();
-    if (jobs.length === 0) return;
+    if (_jobs.length === 0) return;
 
     const now = new Date();
     const state = await loadState();
     const toRun: CronJob[] = [];
 
-    for (const job of jobs) {
+    for (const job of _jobs) {
       if (!job.enabled) continue;
       const entry = state[job.id];
       const lastRun = entry ? new Date(entry.lastRun) : null;
