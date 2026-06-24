@@ -118,6 +118,31 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 ]
 ```
 
+### jobs/issue-triage.ts
+
+GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools: ["bash", "list_issues", "read_issue", "comment_issue"]`）に判断・コメント投稿まで一貫して行わせるハンドラー。
+
+```json
+{
+  "id": "issue-triage",
+  "schedule": "0 * * * *",
+  "enabled": true,
+  "groupName": "issue-triage",
+  "channelId": "YOUR_CHANNEL_ID",
+  "handler": "jobs/issue-triage.ts",
+  "settings": {
+    "owner": "YOUR_GITHUB_USERNAME",
+    "repo": "YOUR_REPO_NAME",
+    "allowedAuthors": ["YOUR_GITHUB_USERNAME"]
+  }
+}
+```
+
+- `settings.owner`/`settings.repo`: 対象リポジトリ
+- `settings.allowedAuthors`: 処理対象とする Issue 投稿者の許可リスト（省略時は `owner` のみ）。第三者が投稿した Issue は処理対象から除外し、issue本文への攻撃文によるプロンプトインジェクションの影響範囲を限定する
+- 重複コメント防止のため、処理済み Issue 番号と `updated_at` を `data/issue-triage/state.json` に記録し、値が変化していなければ再処理しない
+- エージェントがコードを根拠付けに参照できるよう、`issue-triage` グループには `config/groups.json` の `mounts` でリポジトリ自体を読み取り専用マウントする想定（`config/groups.example.json` 参照）
+
 ## config/config.json
 
 `groups.json` / `credentials.json` / `cron.json` に分離されていない残りの設定。トップレベルはオブジェクト。
