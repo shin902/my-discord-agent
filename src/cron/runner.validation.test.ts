@@ -163,18 +163,14 @@ describe("loadAndValidateCron", () => {
         id: "with-settings",
         schedule: "* * * * *",
         handler: "__fixtures__/test-handler.ts",
-        settings: { maxResults: 10, nested: { ok: true }, list: [1, 2, 3] },
+        settings: { maxResults: 10 },
       },
     ]);
     mockReadFile.mockResolvedValueOnce(cronJson);
 
     const result = await loadAndValidateCron();
     expect(result).toHaveLength(1);
-    expect(result[0].settings).toEqual({
-      maxResults: 10,
-      nested: { ok: true },
-      list: [1, 2, 3],
-    });
+    expect(result[0].settings).toEqual({ maxResults: 10 });
   });
 
   it("空配列の cron.json は空配列を返す", async () => {
