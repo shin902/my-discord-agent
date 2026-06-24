@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const MAX_BODY_CHARS = 8000;
+const MAX_COMMENT_CHARS = 8000;
 
 const GITHUB_HEADERS = {
   Accept: "application/vnd.github+json",
@@ -28,6 +29,28 @@ async function githubFetch(
   const baseUrl = resolveProxyBaseUrl("github");
   const path = `/repos/${owner}/${repo}${suffix}`;
   const res = await fetch(`${baseUrl}${path}`, { headers: GITHUB_HEADERS });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+async function githubPost(
+  owner: string,
+  repo: string,
+  suffix: string,
+  body: unknown,
+): Promise<unknown> {
+  assertValidRepoPart(owner, "owner");
+  assertValidRepoPart(repo, "repo");
+  const baseUrl = resolveProxyBaseUrl("github");
+  const path = `/repos/${owner}/${repo}${suffix}`;
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { ...GITHUB_HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
@@ -153,6 +176,53 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
     return {
       content: [{ type: "text", text: lines.join("\n") }],
       details: { owner, repo, issue_number },
+    };
+  },
+};
+
+type GitHubComment = {
+  id: number;
+  html_url: string;
+};
+
+const commentIssueParameters = Type.Object({
+  owner: Type.String({
+    description: "リポジトリオーナー（ユーザー名/Organization名）",
+  }),
+  repo: Type.String({ description: "リポジトリ名" }),
+  issue_number: Type.Integer({ description: "Issue 番号" }),
+  body: Type.String({
+    description: `コメント本文（Markdown可、最大 ${MAX_COMMENT_CHARS} 文字）`,
+  }),
+});
+
+export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
+  name: "comment_issue",
+  label: "Comment on GitHub Issue",
+  description: "指定した Issue にコメントを投稿する",
+  parameters: commentIssueParameters,
+  execute: async (_toolCallId, { owner, repo, issue_number, body }) => {
+    if (body.length > MAX_COMMENT_CHARS) {
+      throw new Error(
+        `コメント本文が長すぎます（${body.length} 文字、最大 ${MAX_COMMENT_CHARS} 文字）`,
+      );
+    }
+
+    const comment = (await githubPost(
+      owner,
+      repo,
+      `/issues/${issue_number}/comments`,
+      { body },
+    )) as GitHubComment;
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Issue #${issue_number} にコメントを投稿しました\n- リンク: ${comment.html_url}`,
+        },
+      ],
+      details: { owner, repo, issue_number, commentId: comment.id },
     };
   },
 };

@@ -211,3 +211,81 @@ describe("read_issue", () => {
     ).rejects.toThrow("無効なrepo");
   });
 });
+
+describe("comment_issue", () => {
+  const originalEnv = process.env;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  it("指定した issue_number にコメントを POST する", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 1, html_url: "http://example.test/comment/1" }),
+    });
+    const { commentIssueTool } = await import("./github.js");
+    const result = await commentIssueTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      issue_number: 1,
+      body: "コメント本文",
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/repos/o/r/issues/1/comments");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ body: "コメント本文" });
+    expect(firstText(result)).toContain("http://example.test/comment/1");
+  });
+
+  it("本文が最大文字数を超えると例外を投げ、API を呼ばない", async () => {
+    const { commentIssueTool } = await import("./github.js");
+    await expect(
+      commentIssueTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        issue_number: 1,
+        body: "a".repeat(8001),
+      }),
+    ).rejects.toThrow("コメント本文が長すぎます");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("owner/repo に不正な文字が含まれると例外", async () => {
+    const { commentIssueTool } = await import("./github.js");
+    await expect(
+      commentIssueTool.execute("id", {
+        owner: "o",
+        repo: "../r",
+        issue_number: 1,
+        body: "本文",
+      }),
+    ).rejects.toThrow("無効なrepo");
+  });
+
+  it("GitHub API エラー時は例外を投げる", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => "Forbidden",
+    });
+    const { commentIssueTool } = await import("./github.js");
+    await expect(
+      commentIssueTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        issue_number: 1,
+        body: "本文",
+      }),
+    ).rejects.toThrow("403");
+  });
+});
