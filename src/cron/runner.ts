@@ -151,7 +151,7 @@ function resolveHandlerPath(handlerRelPath: string): string {
   return absPath;
 }
 
-async function importHandlerFn(
+export async function loadHandlerFn(
   handlerRelPath: string,
 ): Promise<(ctx: CronContext) => Promise<void>> {
   const absPath = resolveHandlerPath(handlerRelPath);
@@ -166,16 +166,10 @@ async function importHandlerFn(
   return mod.default;
 }
 
-export async function loadHandlerFn(
-  handlerRelPath: string,
-): Promise<(ctx: CronContext) => Promise<void>> {
-  return importHandlerFn(handlerRelPath);
-}
-
 // --- Startup validation ---
 
 async function validateHandlerPath(handlerRelPath: string): Promise<void> {
-  await importHandlerFn(handlerRelPath);
+  await loadHandlerFn(handlerRelPath);
 }
 
 /** cron.json を読み込み・スキーマ検証・ハンドラー検証を行う（起動時1回） */
