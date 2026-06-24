@@ -156,9 +156,9 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 
 `credentials` と `groups` は起動時に読み込みに失敗すると `process.exit(1)` するため、修正後は再起動が必要（`config/credentials.json` / `config/groups.json` 自体が存在しない場合も同様にエラーで起動失敗する）。
 
-`cron` は `loadRawCron()` → `loadJobs()` の順でキャッシュされるため、一度読み込んだ後は再起動まで変更が反映されない（`docs/spec/cron.md` と同じ）。
+`cron` は起動時に `loadAndValidateCron()` が一度だけ読み込んだ結果をメモリ上の `_jobs` にセットし、`tick()` はそれを毎分参照するだけでファイルの再読み込みは行わない。そのため一度起動した後は `config/cron.json` を変更しても再起動するまで反映されない（`docs/spec/cron.md` と同じ）。
 
-**例外（ENOENT 時の自動回復）**: `config/cron.json` は省略可能な設定のため、起動時に存在しなくてもエラーにはならず cron が空扱いで起動する。`loadJobs()` は ENOENT 時に `_jobs` をキャッシュしないため、後から `config/cron.json` を配置すれば次の tick（最大1分）で cron が動き始める。`config/credentials.json` / `config/groups.json` はこの自動回復の対象外（必須設定のため、欠落時は process.exit(1) で起動自体が止まる）。
+`config/cron.json` は省略可能な設定のため、起動時に存在しなくても `loadAndValidateCron()` はエラーにせず空配列を返し、cron が空扱いで起動する。ただしこの場合も後から `config/cron.json` を配置しても再起動しない限り反映されない。`config/credentials.json` / `config/groups.json` は必須設定のため、欠落時は process.exit(1) で起動自体が止まる点が異なる。
 
 ## 変更履歴
 
