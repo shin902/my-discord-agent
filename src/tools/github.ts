@@ -13,7 +13,7 @@ const GITHUB_HEADERS = {
 const REPO_NAME_RE = /^[a-zA-Z0-9._-]+$/;
 
 function assertValidRepoPart(value: string, label: string): void {
-  if (!REPO_NAME_RE.test(value)) {
+  if (!REPO_NAME_RE.test(value) || value.includes("..") || value === ".") {
     throw new Error(`無効な${label}: ${value}`);
   }
 }

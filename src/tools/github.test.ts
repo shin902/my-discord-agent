@@ -110,6 +110,13 @@ describe("list_issues", () => {
     ).rejects.toThrow("無効なowner");
   });
 
+  it("owner が .. のときパストラバーサルとして例外", async () => {
+    const { listIssuesTool } = await import("./github.js");
+    await expect(
+      listIssuesTool.execute("id", { owner: "..", repo: "r" }),
+    ).rejects.toThrow("無効なowner");
+  });
+
   it("GitHub API エラー時は例外を投げる", async () => {
     fetchMock.mockResolvedValue({
       ok: false,
