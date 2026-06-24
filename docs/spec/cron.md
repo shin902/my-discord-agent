@@ -69,9 +69,7 @@ data/cron/
 
 handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
 
-### settings（issue #160）
-
-固有の変数・定数をジョブ定義に安全に持たせるためのフィールド。`settings` キー以下は cron.json 全体のスキーマ検証の対象外で、値の形は自由（オブジェクト・配列・プリミティブいずれも可）。ハンドラー側で `ctx.settings as MySettings` のようにキャストするか、ハンドラー内で個別に Zod スキーマを定義してパースする。
+### settings の例
 
 ```json
 {
