@@ -19,9 +19,6 @@ const WORKSPACE = "/workspace";
 // フェッチ結果はツールコール結果に直接返すため、ここは処理後に削除する一時領域。
 const TMP_DIR = ".agent-reach-tmp";
 const TIMEOUT_MS = 120_000;
-// fs.ts の read ツールと同じ上限。ここを経由しない直接返却でも
-// コンテキスト溢れを防ぐため同じ閾値で切り詰める。
-const READ_CHAR_LIMIT = 50_000;
 
 const PRIVATE_IP = [
   /^0\.0\.0\.0$/,
@@ -671,14 +668,9 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         content = await readFile(absPath, "utf-8").catch(() => "");
       }
 
-      const truncated = content.length > READ_CHAR_LIMIT;
-      const text = truncated
-        ? `${content.slice(0, READ_CHAR_LIMIT)}\n\n[${content.length - READ_CHAR_LIMIT} 文字省略]`
-        : content;
-
       return {
-        content: [{ type: "text", text }],
-        details: { url, service, truncated },
+        content: [{ type: "text", text: content }],
+        details: { url, service },
       };
     } finally {
       await Promise.all(
