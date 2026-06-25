@@ -9,6 +9,23 @@ const TEST_ATTACHMENTS_DIR = path.join(
   "../../data/attachments/test-group",
 );
 
+// sendMessage は groupName ごとに groups/{name}, data/sessions/{name} を
+// 実ファイルシステムに mkdir する（manager.ts:236-238）。このテストファイルが
+// 使う groupName 分だけ、テスト後に削除して残留させない（issue #47）。
+const TEST_GROUP_NAMES = ["test-group", "g"];
+const TEST_GROUP_SIDE_EFFECT_DIRS = TEST_GROUP_NAMES.flatMap((name) => [
+  path.join(__dirname, "../../groups", name),
+  path.join(__dirname, "../../data/sessions", name),
+]);
+
+afterEach(async () => {
+  await Promise.all(
+    TEST_GROUP_SIDE_EFFECT_DIRS.map((dir) =>
+      rm(dir, { recursive: true, force: true }),
+    ),
+  );
+});
+
 vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: () => ["provider-a", "zai"],
   getModels: (provider: string) =>
