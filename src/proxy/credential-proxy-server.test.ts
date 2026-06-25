@@ -518,6 +518,56 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     expect(opts.path).toBe("/v1/content?existing=true&api_key=query-test-key");
   });
 
+  it("auth.type=basic はユーザー名とトークンを Base64 エンコードした Basic 認証を注入する", async () => {
+    process.env.GITHUB_CLONE_TOKEN = "ghp_test-token";
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler([
+      {
+        provider: "github-git",
+        envVars: ["GITHUB_CLONE_TOKEN"],
+        auth: { type: "basic", username: "x-access-token" },
+        baseUrl: "https://github.com",
+      },
+    ]);
+    handler(
+      makeReq("/github-git/owner/repo.git/info/refs", {
+        authorization: "Bearer fake",
+      }),
+      makeRes() as unknown as ServerResponse,
+    );
+    const opts = httpsRequestMock.mock.calls[0][0];
+    const expectedCredential = Buffer.from(
+      "x-access-token:ghp_test-token",
+    ).toString("base64");
+    expect(opts.headers.authorization).toBe(`Basic ${expectedCredential}`);
+  });
+
+  it("auth.type=basic で username を省略した場合は x-access-token を既定値に使う", async () => {
+    process.env.GITHUB_CLONE_TOKEN = "ghp_test-token";
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler([
+      {
+        provider: "github-git",
+        envVars: ["GITHUB_CLONE_TOKEN"],
+        auth: { type: "basic" },
+        baseUrl: "https://github.com",
+      },
+    ]);
+    handler(
+      makeReq("/github-git/owner/repo.git/info/refs"),
+      makeRes() as unknown as ServerResponse,
+    );
+    const opts = httpsRequestMock.mock.calls[0][0];
+    const expectedCredential = Buffer.from(
+      "x-access-token:ghp_test-token",
+    ).toString("base64");
+    expect(opts.headers.authorization).toBe(`Basic ${expectedCredential}`);
+  });
+
   it("envVars が全て未設定の場合は Authorization ヘッダを削除する", async () => {
     delete process.env.OPENAI_API_KEY;
     const { createRequestHandler } = await import(

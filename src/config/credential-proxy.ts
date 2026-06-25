@@ -45,8 +45,12 @@ export const CredentialEntrySchema = z.object({
   envVars: z.array(z.string()).optional(),
   auth: z
     .object({
-      type: z.enum(["bearer", "query-token"]),
+      type: z.enum(["bearer", "query-token", "basic"]),
       queryParam: z.string().optional(),
+      // type: "basic" 用のユーザー名。省略時は GitHub の慣習（actions/checkout 等）に
+      // 合わせて "x-access-token" を使う（git smart-HTTP は Bearer を受け付けず
+      // Basic 認証 base64("username:token") が必要なため）
+      username: z.string().optional(),
     })
     .optional(),
   msal: MsalConfigSchema.optional(),

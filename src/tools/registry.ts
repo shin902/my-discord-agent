@@ -22,6 +22,7 @@ import {
   readTool,
   writeTool,
 } from "./fs.js";
+import { cloneRepositoryTool } from "./git.js";
 import { commentIssueTool, listIssuesTool, readIssueTool } from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import {
@@ -46,6 +47,7 @@ const TOOLS: Record<string, AgentTool> = {
   list_issues: listIssuesTool,
   read_issue: readIssueTool,
   comment_issue: commentIssueTool,
+  clone_repository: cloneRepositoryTool,
   list_events: listEventsTool,
   read_event: readEventTool,
   create_event: createEventTool,
