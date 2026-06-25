@@ -109,19 +109,25 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 
 ### その他の pi-ai 対応プロバイダ
 
-以下のプロバイダも pi-ai では対応しているが、現状未検証・未使用のため `config.example.json` からは除外している。必要に応じて手動で追加可能：
+以下のプロバイダも pi-ai では対応しているが、現状未検証・未使用のため `credentials.example.json` からは除外している。必要な env var を `.env` に設定し、`config/credentials.json` に provider エントリを手動で追加すれば利用可能（`envVars` に設定した変数のうち `process.env` にあるものが secret として注入される。`baseUrl` は各プロバイダの公式エンドポイントを指定）：
 
-- Azure OpenAI (`azure-openai-responses`)
-- Google Vertex AI (`google-vertex`)
-- Cerebras, xAI, Mistral
-- Cloudflare Workers AI / AI Gateway
-- MiniMax, Moonshot AI, zAI
-- Fireworks, Hugging Face
-- Xiaomi MiMo
-- GitHub Copilot, Amazon Bedrock
-- Vercel AI Gateway
-
-`.env.example` には上記を含む全プロバイダの環境変数がコメント付きで記載されている。
+| プロバイダ | pi-ai 識別子 | 環境変数 |
+| --- | --- | --- |
+| Azure OpenAI | `azure-openai-responses` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_RESOURCE_NAME`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` |
+| Google Vertex AI | `google-vertex` | `GOOGLE_CLOUD_API_KEY`, `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS` |
+| Cerebras | `cerebras` | `CEREBRAS_API_KEY` |
+| xAI | `xai` | `XAI_API_KEY` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` |
+| Cloudflare Workers AI / AI Gateway | `cloudflare` | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID` |
+| MiniMax | `minimax` | `MINIMAX_API_KEY`, `MINIMAX_CN_API_KEY` |
+| Moonshot AI | `moonshot` | `MOONSHOT_API_KEY` |
+| Kimi For Coding | `kimi-for-coding` | `KIMI_API_KEY` |
+| Fireworks | `fireworks` | `FIREWORKS_API_KEY` |
+| Hugging Face | `huggingface` | `HF_TOKEN` |
+| Xiaomi MiMo | `xiaomi` | `XIAOMI_API_KEY`, `XIAOMI_TOKEN_PLAN_CN_API_KEY`, `XIAOMI_TOKEN_PLAN_AMS_API_KEY`, `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
+| GitHub Copilot | `copilot` | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` |
+| Amazon Bedrock | `amazon-bedrock` | `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_REGION` |
+| Vercel AI Gateway | `vercel-ai-gateway` | `AI_GATEWAY_API_KEY` |
 
 ### カスタムプロバイダー
 
