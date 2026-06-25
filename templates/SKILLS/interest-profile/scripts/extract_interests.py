@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-会話ログ (.jsonl) から未処理のユーザーメッセージを差分抽出するスクリプト。
+Discordエージェントのセッションログ (.jsonl) から未処理のユーザーメッセージを差分抽出するスクリプト。
+
+ログはサンドボックスコンテナ内の /sessions/{group}/{sessionId}.jsonl にマウントされている
+（src/agent/manager.ts の `-v data/sessions/{group}:/sessions/{group}` 参照）。
+各行は AgentMessage がラップ無しでそのまま1オブジェクト/行になっている
+（{"role": "user"|"assistant"|"toolResult", "content": [...], "timestamp": <epoch ms>}）。
 
 抽出と状態コミットを「単一実行＋成功後コミット」の2フェーズで行う:
 
@@ -10,8 +15,7 @@
         --state-out data/interests/last-sync.json.pending \
         --max-messages 500
 
-    --logs-dir を省略するとカレントディレクトリから
-    ~/.claude/projects/<エンコード済みパス> を自動推定する。
+    --logs-dir を省略すると /sessions（コンテナ内マウント先）を使う。
 
   フェーズ2（コミット）: 全処理が正常完了した後に pending を本ファイルへ原子的に昇格する。
     python3 extract_interests.py \
@@ -29,16 +33,8 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-
-NOISE_PREFIXES = (
-    "<scheduled-task",
-    "<local-command",
-    "<command-message",
-    "<task-notification",
-    "<command-name>",
-    "Base directory for this skill:",  # スキル読込時に注入される SKILL.md 本文
-)
 
 MIN_LENGTH = 20
 
@@ -46,12 +42,12 @@ MIN_LENGTH = 20
 def normalize_content(content) -> str | None:
     """user メッセージの content を平文テキストに正規化する。
 
-    content は次の形式を取りうる:
-      - str                       … ユーザーが打った素のテキスト
-      - list[{"type":"text", ...}] … 添付つき送信等で配列化されたユーザー発言
-      - list[{"type":"tool_result", ...}] … ツール実行結果（ユーザー発言ではない）
+    このプロジェクトの AgentMessage では content は次の形式を取りうる:
+      - str                          … 稀なケース。素のテキスト
+      - list[{"type":"text", ...}]   … 通常のユーザー発言
+      - list[{"type":"toolCall", ...}] … ツール呼び出し（ユーザー発言ではない）
 
-    text ブロックを連結して返す。tool_result しか含まない（=ユーザー発言でない）場合は None。
+    text ブロックを連結して返す。text ブロックを含まない場合は None。
     """
     if isinstance(content, str):
         return content
@@ -67,13 +63,16 @@ def normalize_content(content) -> str | None:
 
 
 def default_logs_dir() -> Path:
-    """カレントディレクトリに対応する Claude Code のログディレクトリを推定する。
+    """コンテナ内のセッションログマウント先を返す（グループごとに /sessions/{group} がマウントされる）。"""
+    return Path("/sessions")
 
-    Claude Code はプロジェクトの絶対パスの '/' を '-' に置換して
-    ~/.claude/projects/ 配下のディレクトリ名にしている。
-    """
-    encoded = os.getcwd().replace("/", "-")
-    return Path.home() / ".claude" / "projects" / encoded
+
+def ts_ms_to_iso(ts_ms) -> str:
+    """セッションログの timestamp（epochミリ秒）を ISO8601(UTC) に変換する。"""
+    try:
+        return datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return ""
 
 
 def load_state(state_file: Path) -> dict:
@@ -97,7 +96,7 @@ def save_state(state_file: Path, state: dict):
     os.replace(tmp, state_file)
 
 
-def extract_from_session(filepath: Path, skip_lines: int = 0):
+def extract_from_session(filepath: Path, session_id: str, skip_lines: int = 0):
     """セッションを skip_lines の続きから読み、(抽出メッセージ, 走査した総行数) を返す。
 
     総行数は「この open で実際に EOF まで読んだ行数」なので、これを lines_read に
@@ -116,22 +115,18 @@ def extract_from_session(filepath: Path, skip_lines: int = 0):
             except json.JSONDecodeError:
                 continue
 
-            if obj.get("type") != "user":
+            if obj.get("role") != "user":
                 continue
 
-            msg = obj.get("message", {})
-            content = normalize_content(msg.get("content", ""))
+            content = normalize_content(obj.get("content", ""))
             if content is None:
                 continue
             if len(content) <= MIN_LENGTH:
                 continue
-            if any(content.lstrip().startswith(p) for p in NOISE_PREFIXES):
-                continue
 
-            ts = obj.get("timestamp", "")
             messages.append({
-                "ts": ts,
-                "session_id": filepath.stem,
+                "ts": ts_ms_to_iso(obj.get("timestamp")),
+                "session_id": session_id,
                 "content": content[:2000],
             })
     return messages, lines_total
@@ -147,7 +142,7 @@ def read_recent_log(log_file: Path, days: int):
     if not log_file.exists():
         return  # ログ未作成なら何も出さない（初回sync等）
 
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = 0
@@ -185,8 +180,8 @@ def commit_state(state_file: Path, pending_file: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract user messages from Claude Code conversation logs")
-    parser.add_argument("--logs-dir", help="Path to project conversation logs directory（省略時はカレントディレクトリから自動推定）")
+    parser = argparse.ArgumentParser(description="Extract user messages from session logs")
+    parser.add_argument("--logs-dir", help="セッションログのマウント先（省略時は /sessions）")
     parser.add_argument("--state-file", help="Path to last-sync.json state file（抽出/コミット時に必須）")
     parser.add_argument("--state-out", help="抽出フェーズで算出した状態を書き出す pending ファイル（本ファイルは触らない）")
     parser.add_argument("--commit", help="pending ファイルを --state-file へ原子的に昇格する（コミットフェーズ）")
@@ -227,10 +222,12 @@ def main():
     all_messages = []
     new_state = dict(sessions_state)
 
-    jsonl_files = sorted(logs_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    # /sessions/{group}/{sessionId}.jsonl の2階層を走査する。
+    # session_id は "{group}/{ファイル名}" にして、複数グループ間でのキー衝突を避ける。
+    jsonl_files = sorted(logs_dir.glob("*/*.jsonl"), key=lambda p: p.stat().st_mtime)
 
     for filepath in jsonl_files:
-        session_id = filepath.stem
+        session_id = f"{filepath.parent.name}/{filepath.stem}"
         current_mtime = filepath.stat().st_mtime
         prev = sessions_state.get(session_id, {})
         prev_mtime = prev.get("mtime", 0)
@@ -241,12 +238,12 @@ def main():
             continue
 
         # 同一 open で得た走査行数を lines_read にする（出力範囲としおりが必ず一致）。
-        messages, total_lines = extract_from_session(filepath, skip_lines=prev_lines)
+        messages, total_lines = extract_from_session(filepath, session_id, skip_lines=prev_lines)
         if total_lines < prev_lines:
             # ファイルが短縮/書き換えされている（append-only 前提が崩れた）。
             # しおりより短いので skip 済みのまま 0 件になる。安全側に全行を読み直す
             # （二重取得は起こりうるが取りこぼしより許容できる）。
-            messages, total_lines = extract_from_session(filepath, skip_lines=0)
+            messages, total_lines = extract_from_session(filepath, session_id, skip_lines=0)
         all_messages.extend(messages)
 
         new_state[session_id] = {
@@ -261,8 +258,6 @@ def main():
     json.dump(all_messages, sys.stdout, ensure_ascii=False, indent=2)
 
     if args.state_out:
-        from datetime import datetime
-
         # 実行環境のローカルタイムゾーンで記録する（環境を問わず正しいオフセットになる）
         state["last_sync_at"] = datetime.now().astimezone().isoformat()
         state["sessions"] = new_state
