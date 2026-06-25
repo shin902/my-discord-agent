@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-会話ログ (.jsonl) から未処理のユーザーメッセージを差分抽出するスクリプト。
+Discordエージェントのセッションログ (.jsonl) から未処理のユーザーメッセージを差分抽出するスクリプト。
+
+ログはサンドボックスコンテナ内の /sessions/{group}/{sessionId}.jsonl にマウントされている
+（src/agent/manager.ts の `-v data/sessions/{group}:/sessions/{group}` 参照）。
+各行は AgentMessage がラップ無しでそのまま1オブジェクト/行になっている
+（{"role": "user"|"assistant"|"toolResult", "content": [...], "timestamp": <epoch ms>}）。
 
 抽出と状態コミットを「単一実行＋成功後コミット」の2フェーズで行う:
 
@@ -10,8 +15,7 @@
         --state-out data/interests/last-sync.json.pending \
         --max-messages 500
 
-    --logs-dir を省略するとカレントディレクトリから
-    ~/.claude/projects/<エンコード済みパス> を自動推定する。
+    --logs-dir を省略すると /sessions（コンテナ内マウント先）を使う。
 
   フェーズ2（コミット）: 全処理が正常完了した後に pending を本ファイルへ原子的に昇格する。
     python3 extract_interests.py \
@@ -29,29 +33,33 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-NOISE_PREFIXES = (
-    "<scheduled-task",
-    "<local-command",
-    "<command-message",
-    "<task-notification",
-    "<command-name>",
-    "Base directory for this skill:",  # スキル読込時に注入される SKILL.md 本文
-)
-
 MIN_LENGTH = 20
+
+# 状態ファイル (last-sync.json) のスキーマバージョン。
+# version 2: session_id を "{group}/{ファイル名}" 形式でキーイングする（現行）。
+# version 1相当（旧Claude Code会話ログ対象版）はフラットな "{ファイル名}" キーで、
+# schema_version フィールド自体を持たない。
+SCHEMA_VERSION = 2
+
+# role: "user" だが人間の発言ではない cron 合成メッセージのプレフィックス。
+# src/cron/jobs/mail.ts:215-216 でメールスレッド初期化時に、エージェントへ文脈を
+# 把握させるためメール本文を role: "user" として合成・書き込みしている
+# （`メールID: ${meta.id}\n\n${emailText}`）。これは人間の興味ではないため
+# 興味抽出の対象から除外する。
+NOISE_PREFIXES = ("メールID: ",)
 
 
 def normalize_content(content) -> str | None:
     """user メッセージの content を平文テキストに正規化する。
 
-    content は次の形式を取りうる:
-      - str                       … ユーザーが打った素のテキスト
-      - list[{"type":"text", ...}] … 添付つき送信等で配列化されたユーザー発言
-      - list[{"type":"tool_result", ...}] … ツール実行結果（ユーザー発言ではない）
+    @earendil-works/pi-ai の UserMessage["content"] は次の型を取る:
+      string | (TextContent | ImageContent)[]
+    （toolCall ブロックは AssistantMessage["content"] にのみ現れ、user content には含まれない）
 
-    text ブロックを連結して返す。tool_result しか含まない（=ユーザー発言でない）場合は None。
+    text ブロックのみを連結して返す。text ブロックを含まない場合（ImageContent のみ等）は None。
     """
     if isinstance(content, str):
         return content
@@ -67,24 +75,43 @@ def normalize_content(content) -> str | None:
 
 
 def default_logs_dir() -> Path:
-    """カレントディレクトリに対応する Claude Code のログディレクトリを推定する。
+    """コンテナ内のセッションログマウント先を返す（グループごとに /sessions/{group} がマウントされる）。"""
+    return Path("/sessions")
 
-    Claude Code はプロジェクトの絶対パスの '/' を '-' に置換して
-    ~/.claude/projects/ 配下のディレクトリ名にしている。
-    """
-    encoded = os.getcwd().replace("/", "-")
-    return Path.home() / ".claude" / "projects" / encoded
+
+def ts_ms_to_iso(ts_ms) -> str:
+    """セッションログの timestamp（epochミリ秒）を ISO8601(UTC) に変換する。"""
+    try:
+        return datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return ""
 
 
 def load_state(state_file: Path) -> dict:
     if state_file.exists():
         try:
             with open(state_file, encoding="utf-8") as f:
-                return json.load(f)
+                state = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             # 破損していても止めない（自律実行ルール: エラーは記録して継続）。
             # 空状態にフォールバックすると全再読込になり安全側（取りこぼしより重複を許容）。
             print(f"WARNING: state file unreadable, starting fresh: {e}", file=sys.stderr)
+            return {"last_sync_at": None, "sessions": {}}
+
+        # schema_version が無い、または現行と異なる状態ファイルは session_id の
+        # キー形式が噛み合わない可能性がある（例: 旧版はフラット "{ファイル名}"
+        # キー、現行は "{group}/{ファイル名}"）。サイレントに sessions_state.get()
+        # が常に {} を返す全件再走査に陥るより、検知して警告を出した上で
+        # 明示的に sessions をリセットする（last_sync_at は参考情報として残す）。
+        if state.get("schema_version") != SCHEMA_VERSION:
+            print(
+                f"WARNING: incompatible state file schema_version "
+                f"({state.get('schema_version')!r} != {SCHEMA_VERSION!r}); "
+                f"resetting sessions to re-scan all sessions safely.",
+                file=sys.stderr,
+            )
+            state["sessions"] = {}
+        return state
     return {"last_sync_at": None, "sessions": {}}
 
 
@@ -97,7 +124,7 @@ def save_state(state_file: Path, state: dict):
     os.replace(tmp, state_file)
 
 
-def extract_from_session(filepath: Path, skip_lines: int = 0):
+def extract_from_session(filepath: Path, session_id: str, skip_lines: int = 0):
     """セッションを skip_lines の続きから読み、(抽出メッセージ, 走査した総行数) を返す。
 
     総行数は「この open で実際に EOF まで読んだ行数」なので、これを lines_read に
@@ -116,22 +143,20 @@ def extract_from_session(filepath: Path, skip_lines: int = 0):
             except json.JSONDecodeError:
                 continue
 
-            if obj.get("type") != "user":
+            if obj.get("role") != "user":
                 continue
 
-            msg = obj.get("message", {})
-            content = normalize_content(msg.get("content", ""))
+            content = normalize_content(obj.get("content", ""))
             if content is None:
+                continue
+            if content.startswith(NOISE_PREFIXES):
                 continue
             if len(content) <= MIN_LENGTH:
                 continue
-            if any(content.lstrip().startswith(p) for p in NOISE_PREFIXES):
-                continue
 
-            ts = obj.get("timestamp", "")
             messages.append({
-                "ts": ts,
-                "session_id": filepath.stem,
+                "ts": ts_ms_to_iso(obj.get("timestamp")),
+                "session_id": session_id,
                 "content": content[:2000],
             })
     return messages, lines_total
@@ -142,12 +167,18 @@ def read_recent_log(log_file: Path, days: int):
 
     生ログ全体ではなく直近分だけを Claude に渡すことで、ログが何万行に
     増えても INTERESTS.md 生成時のコンテキスト量を頭打ちにする（案A）。
-    ts がパースできない行は安全側に倒して出力する（取りこぼし防止）。
+    ts がパースできない行（壊れた行・ts欠損）は直近フィルタの対象から除外する
+    （=直近として扱わない）。生ログ自体（log_file）はこの関数で変更・削除
+    されないため、ここで出力しなくても情報が永久に失われるわけではなく、
+    今回のINTERESTS.md生成での重み付けに使われないだけである。
+    逆に「念のため残す」と、ts が永久にパースできない行は毎回「直近」として
+    出力され続けてしまい、鮮度フィルタの意味を恒久的に無効化するバグになる
+    ため、除外側に倒す。
     """
     if not log_file.exists():
         return  # ログ未作成なら何も出さない（初回sync等）
 
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = 0
@@ -164,7 +195,7 @@ def read_recent_log(log_file: Path, days: int):
                 if dt < cutoff:
                     continue
             except (json.JSONDecodeError, ValueError, AttributeError):
-                pass  # 壊れた行・ts欠損は念のため残す
+                continue  # 壊れた行・ts欠損は直近フィルタから除外する（生ログ自体は無変更なので情報は失われない）
             print(line)
             kept += 1
     print(f"--- Loaded {kept} signals from last {days} days ---", file=sys.stderr)
@@ -185,8 +216,8 @@ def commit_state(state_file: Path, pending_file: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract user messages from Claude Code conversation logs")
-    parser.add_argument("--logs-dir", help="Path to project conversation logs directory（省略時はカレントディレクトリから自動推定）")
+    parser = argparse.ArgumentParser(description="Extract user messages from session logs")
+    parser.add_argument("--logs-dir", help="セッションログのマウント先（省略時は /sessions）")
     parser.add_argument("--state-file", help="Path to last-sync.json state file（抽出/コミット時に必須）")
     parser.add_argument("--state-out", help="抽出フェーズで算出した状態を書き出す pending ファイル（本ファイルは触らない）")
     parser.add_argument("--commit", help="pending ファイルを --state-file へ原子的に昇格する（コミットフェーズ）")
@@ -227,10 +258,16 @@ def main():
     all_messages = []
     new_state = dict(sessions_state)
 
-    jsonl_files = sorted(logs_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    # /sessions/{group}/{sessionId}.jsonl の2階層を走査する。
+    # session_id は "{group}/{ファイル名}" にしておく。コンテナ起動時には
+    # manager.ts がそのグループ専用ディレクトリのみを /sessions/{group} に
+    # マウントするため、1回の実行で複数グループが混在することは現状ない。
+    # ただしこの形式にしておけば last-sync.json / interest-log.jsonl 上で
+    # どのグループのログか目視で判別しやすくなる。
+    jsonl_files = sorted(logs_dir.glob("*/*.jsonl"), key=lambda p: p.stat().st_mtime)
 
     for filepath in jsonl_files:
-        session_id = filepath.stem
+        session_id = f"{filepath.parent.name}/{filepath.stem}"
         current_mtime = filepath.stat().st_mtime
         prev = sessions_state.get(session_id, {})
         prev_mtime = prev.get("mtime", 0)
@@ -241,12 +278,12 @@ def main():
             continue
 
         # 同一 open で得た走査行数を lines_read にする（出力範囲としおりが必ず一致）。
-        messages, total_lines = extract_from_session(filepath, skip_lines=prev_lines)
+        messages, total_lines = extract_from_session(filepath, session_id, skip_lines=prev_lines)
         if total_lines < prev_lines:
             # ファイルが短縮/書き換えされている（append-only 前提が崩れた）。
             # しおりより短いので skip 済みのまま 0 件になる。安全側に全行を読み直す
             # （二重取得は起こりうるが取りこぼしより許容できる）。
-            messages, total_lines = extract_from_session(filepath, skip_lines=0)
+            messages, total_lines = extract_from_session(filepath, session_id, skip_lines=0)
         all_messages.extend(messages)
 
         new_state[session_id] = {
@@ -261,9 +298,8 @@ def main():
     json.dump(all_messages, sys.stdout, ensure_ascii=False, indent=2)
 
     if args.state_out:
-        from datetime import datetime
-
         # 実行環境のローカルタイムゾーンで記録する（環境を問わず正しいオフセットになる）
+        state["schema_version"] = SCHEMA_VERSION
         state["last_sync_at"] = datetime.now().astimezone().isoformat()
         state["sessions"] = new_state
         save_state(Path(args.state_out), state)
