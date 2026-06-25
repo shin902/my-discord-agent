@@ -123,7 +123,7 @@ describe("ensureGroupDirs", () => {
 
   it("グループフォルダが既に存在する場合は cp を呼ばない", async () => {
     mockStat
-      .mockImplementationOnce(statFile) // config/prompts/AGENTS.md が存在
+      .mockImplementationOnce(statFile) // templates/group/AGENTS.md が存在
       .mockImplementationOnce(statDir); // group dir が存在
     await ensureGroupDirs(["existing-group"]);
     expect(mockCp).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe("ensureGroupDirs", () => {
 
   it("グループフォルダが存在せずテンプレートがある場合は cp を呼ぶ", async () => {
     mockStat
-      .mockImplementationOnce(statFile) // config/prompts/AGENTS.md が存在
+      .mockImplementationOnce(statFile) // templates/group/AGENTS.md が存在
       .mockImplementationOnce(statMissing); // group dir missing
     await ensureGroupDirs(["new-group"]);
     expect(mockMkdir).toHaveBeenCalledOnce();
@@ -140,7 +140,7 @@ describe("ensureGroupDirs", () => {
 
   it("テンプレートが存在しない場合は cp を呼ばない", async () => {
     mockStat
-      .mockImplementationOnce(statMissing) // config/prompts/AGENTS.md missing
+      .mockImplementationOnce(statMissing) // templates/group/AGENTS.md missing
       .mockImplementationOnce(statMissing); // group dir missing
     await ensureGroupDirs(["new-group"]);
     expect(mockCp).not.toHaveBeenCalled();
@@ -148,7 +148,7 @@ describe("ensureGroupDirs", () => {
 
   it("cp が失敗してもエラーをスローせず続行する", async () => {
     mockStat
-      .mockImplementationOnce(statFile) // config/prompts/AGENTS.md が存在
+      .mockImplementationOnce(statFile) // templates/group/AGENTS.md が存在
       .mockImplementationOnce(statMissing); // group dir missing
     mockCp.mockRejectedValueOnce(new Error("EACCES: permission denied"));
     await expect(ensureGroupDirs(["broken-group"])).resolves.toBeUndefined();
