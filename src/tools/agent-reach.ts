@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -15,7 +15,9 @@ const REDDIT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const WORKSPACE = "/workspace";
-const FETCH_DIR = "fetched";
+// 外部コマンド（curl/yt-dlp等）の出力先として使う作業ディレクトリ。
+// フェッチ結果はツールコール結果に直接返すため、ここは処理後に削除する一時領域。
+const TMP_DIR = ".agent-reach-tmp";
 const TIMEOUT_MS = 120_000;
 
 const PRIVATE_IP = [
@@ -469,8 +471,8 @@ export function buildCommand(
   switch (service) {
     case "youtube": {
       const q = shellQuote(url);
-      // outAbsPath = /workspace/fetched/youtube-xxx.md
-      // base      = /workspace/fetched/youtube-xxx  (拡張子なし)
+      // outAbsPath = /workspace/.agent-reach-tmp/youtube-xxx.md
+      // base      = /workspace/.agent-reach-tmp/youtube-xxx  (拡張子なし)
       const base = outAbsPath.replace(/\.[^.]+$/, "");
       const metaOutQ = shellQuote(`${base}.meta.json`);
       const subDirQ = shellQuote(`${base}.subs`);
@@ -566,15 +568,35 @@ export function formatHttpError(
   return truncated ? `${header}\n${truncated}` : header;
 }
 
+/**
+ * このツールコールが作成しうる中間ファイル/ディレクトリの一覧を返す。
+ * absPath は呼び出しごとに randomUUID を含み一意なので、これらを個別削除しても
+ * 並行実行中の他のツールコールには影響しない（共有ディレクトリ自体は消さない）。
+ */
+export function getCleanupPaths(
+  service: ServiceType,
+  absPath: string,
+): string[] {
+  const base = absPath.replace(/\.[^.]+$/, "");
+  switch (service) {
+    case "youtube":
+      return [absPath, `${base}.meta.json`, `${base}.subs`];
+    case "github-repo":
+      return [absPath, `${base}.repo.json`, `${base}.readme.md`];
+    default:
+      return [absPath];
+  }
+}
+
 const parameters = Type.Object({
   url: Type.String({ description: "取得するURL" }),
 });
 
 export const agentReachTool: AgentTool<typeof parameters> = {
   name: "agent-reach",
-  label: "Agent Reach to File",
+  label: "Agent Reach",
   description:
-    "youtube, github, reddit, x, rss, webページの情報をmarkdownにしてファイルに保存する。左のサービスのURLから情報を取得するときは必ず使うこと。",
+    "youtube, github, reddit, x, rss, webページの情報を取得してmarkdownとして返す。左のサービスのURLから情報を取得するときは必ず使うこと。",
   parameters,
   execute: async (_toolCallId, { url }) => {
     const parsed = new URL(url);
@@ -590,79 +612,72 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     }
 
     const service = detectService(parsed);
-    const ext = "md";
-    const filename = `${service}-${randomUUID().slice(0, 8)}.${ext}`;
-    const relPath = `${FETCH_DIR}/${filename}`;
-    const absPath = join(WORKSPACE, relPath);
+    const tmpDirAbs = join(WORKSPACE, TMP_DIR);
+    const absPath = join(
+      tmpDirAbs,
+      `${service}-${randomUUID().slice(0, 8)}.md`,
+    );
 
-    await mkdir(join(WORKSPACE, FETCH_DIR), { recursive: true });
+    await mkdir(tmpDirAbs, { recursive: true });
 
-    const cmd = buildCommand(service, url, absPath);
-    let stdout: string;
     try {
-      ({ stdout } = await execAsync(cmd, {
-        timeout: TIMEOUT_MS,
-        maxBuffer: 64 * 1024 * 1024,
-        cwd: WORKSPACE,
-      }));
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; message?: string };
-      throw new Error(
-        [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
-          "フェッチ失敗",
+      const cmd = buildCommand(service, url, absPath);
+      let stdout: string;
+      try {
+        ({ stdout } = await execAsync(cmd, {
+          timeout: TIMEOUT_MS,
+          maxBuffer: 64 * 1024 * 1024,
+          cwd: WORKSPACE,
+        }));
+      } catch (err) {
+        const e = err as { stdout?: string; stderr?: string; message?: string };
+        throw new Error(
+          [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
+            "フェッチ失敗",
+        );
+      }
+
+      if (HTTP_STATUS_SERVICES.has(service)) {
+        const status = parseHttpStatus(stdout);
+        if (status !== null && status >= 400) {
+          const bodyPath = getHttpErrorBodyPath(service, absPath);
+          const body = await readFile(bodyPath, "utf-8").catch(() => "");
+          throw new Error(formatHttpError(status, url, body));
+        }
+      }
+
+      // YouTube / GitHub / Reddit / X: 生データ → Markdown サマリーに変換
+      let content: string;
+      if (service === "youtube") {
+        const base = absPath.replace(/\.[^.]+$/, "");
+        content = await buildYouTubeMarkdown(
+          `${base}.meta.json`,
+          `${base}.subs`,
+        );
+      } else if (service === "github-repo") {
+        const base = absPath.replace(/\.[^.]+$/, "");
+        content = await buildGitHubMarkdown(
+          `${base}.repo.json`,
+          `${base}.readme.md`,
+        );
+      } else if (service === "x-twitter") {
+        content = await buildXTwitterMarkdown(absPath);
+      } else if (service === "reddit") {
+        content = await buildRedditMarkdown(absPath);
+      } else {
+        content = await readFile(absPath, "utf-8").catch(() => "");
+      }
+
+      return {
+        content: [{ type: "text", text: content }],
+        details: { url, service },
+      };
+    } finally {
+      await Promise.all(
+        getCleanupPaths(service, absPath).map((p) =>
+          rm(p, { recursive: true, force: true }),
+        ),
       );
     }
-
-    if (HTTP_STATUS_SERVICES.has(service)) {
-      const status = parseHttpStatus(stdout);
-      if (status !== null && status >= 400) {
-        const bodyPath = getHttpErrorBodyPath(service, absPath);
-        const body = await readFile(bodyPath, "utf-8").catch(() => "");
-        await rm(bodyPath, { force: true });
-        if (service === "github-repo") {
-          const base = absPath.replace(/\.[^.]+$/, "");
-          await rm(`${base}.readme.md`, { force: true });
-        }
-        throw new Error(formatHttpError(status, url, body));
-      }
-    }
-
-    // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換して保存
-    if (service === "youtube") {
-      const base = absPath.replace(/\.[^.]+$/, "");
-      const metaJson = `${base}.meta.json`;
-      const subsDir = `${base}.subs`;
-      const md = await buildYouTubeMarkdown(metaJson, subsDir);
-      await writeFile(absPath, md, "utf-8");
-      await rm(metaJson, { force: true });
-      await rm(subsDir, { recursive: true, force: true });
-    } else if (service === "github-repo") {
-      const base = absPath.replace(/\.[^.]+$/, "");
-      const repoJson = `${base}.repo.json`;
-      const readmeMd = `${base}.readme.md`;
-      const md = await buildGitHubMarkdown(repoJson, readmeMd);
-      await writeFile(absPath, md, "utf-8");
-      await rm(repoJson, { force: true });
-      await rm(readmeMd, { force: true });
-    } else if (service === "x-twitter") {
-      const md = await buildXTwitterMarkdown(absPath);
-      await writeFile(absPath, md, "utf-8");
-    } else if (service === "reddit") {
-      const md = await buildRedditMarkdown(absPath);
-      await writeFile(absPath, md, "utf-8");
-    }
-
-    const content = await readFile(absPath, "utf-8").catch(() => "");
-    const sizeKb = (Buffer.byteLength(content, "utf-8") / 1024).toFixed(1);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `保存完了\nパス: ${relPath}\nサービス: ${service}\nサイズ: ${sizeKb} KB\nread ツールで内容を確認してください`,
-        },
-      ],
-      details: { url, service, path: relPath },
-    };
   },
 };
