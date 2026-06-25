@@ -145,7 +145,13 @@ def read_recent_log(log_file: Path, days: int):
 
     生ログ全体ではなく直近分だけを Claude に渡すことで、ログが何万行に
     増えても INTERESTS.md 生成時のコンテキスト量を頭打ちにする（案A）。
-    ts がパースできない行は安全側に倒して出力する（取りこぼし防止）。
+    ts がパースできない行（壊れた行・ts欠損）は直近フィルタの対象から除外する
+    （=直近として扱わない）。生ログ自体（log_file）はこの関数で変更・削除
+    されないため、ここで出力しなくても情報が永久に失われるわけではなく、
+    今回のINTERESTS.md生成での重み付けに使われないだけである。
+    逆に「念のため残す」と、ts が永久にパースできない行は毎回「直近」として
+    出力され続けてしまい、鮮度フィルタの意味を恒久的に無効化するバグになる
+    ため、除外側に倒す。
     """
     if not log_file.exists():
         return  # ログ未作成なら何も出さない（初回sync等）
@@ -167,7 +173,7 @@ def read_recent_log(log_file: Path, days: int):
                 if dt < cutoff:
                     continue
             except (json.JSONDecodeError, ValueError, AttributeError):
-                pass  # 壊れた行・ts欠損は念のため残す
+                continue  # 壊れた行・ts欠損は直近フィルタから除外する（生ログ自体は無変更なので情報は失われない）
             print(line)
             kept += 1
     print(f"--- Loaded {kept} signals from last {days} days ---", file=sys.stderr)
