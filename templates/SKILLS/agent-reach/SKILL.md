@@ -1,6 +1,6 @@
 ---
 name: agent-reach
-description: URL からコンテンツを取得して整形するスキル。YouTube, GitHub, Reddit, RSS, X/Twitter, 一般 Web ページに対応
+description: URL からコンテンツを取得して整形するスキル。YouTube, GitHub, Reddit, RSS, X/Twitter, 一般 Web ページに対応。左のサービスのURLから情報を取得するときは必ず使うこと。
 ---
 
 ## 使い方
