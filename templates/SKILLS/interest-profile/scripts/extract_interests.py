@@ -49,12 +49,11 @@ NOISE_PREFIXES = ("メールID: ",)
 def normalize_content(content) -> str | None:
     """user メッセージの content を平文テキストに正規化する。
 
-    このプロジェクトの AgentMessage では content は次の形式を取りうる:
-      - str                          … 稀なケース。素のテキスト
-      - list[{"type":"text", ...}]   … 通常のユーザー発言
-      - list[{"type":"toolCall", ...}] … ツール呼び出し（ユーザー発言ではない）
+    @earendil-works/pi-ai の UserMessage["content"] は次の型を取る:
+      string | (TextContent | ImageContent)[]
+    （toolCall ブロックは AssistantMessage["content"] にのみ現れ、user content には含まれない）
 
-    text ブロックを連結して返す。text ブロックを含まない場合は None。
+    text ブロックのみを連結して返す。text ブロックを含まない場合（ImageContent のみ等）は None。
     """
     if isinstance(content, str):
         return content
