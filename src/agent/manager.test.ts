@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,41 @@ const TEST_ATTACHMENTS_DIR = path.join(
   __dirname,
   "../../data/attachments/test-group",
 );
+
+// sendMessage は groupName ごとに groups/{name}, data/sessions/{name} を
+// 実ファイルシステムに mkdir する（manager.ts:236-238）。このテストファイルでは
+// 任意の groupName が使われ得るため、テスト前後のディレクトリ一覧の差分から
+// 新規作成分だけを特定して削除する（groupName をハードコードしない、issue #47）。
+const GROUPS_DIR = path.join(__dirname, "../../groups");
+const SESSIONS_DIR = path.join(__dirname, "../../data/sessions");
+
+const listEntries = (dir: string) => readdir(dir).catch(() => [] as string[]);
+
+let groupsBefore: Set<string>;
+let sessionsBefore: Set<string>;
+
+beforeEach(async () => {
+  groupsBefore = new Set(await listEntries(GROUPS_DIR));
+  sessionsBefore = new Set(await listEntries(SESSIONS_DIR));
+});
+
+afterEach(async () => {
+  const [groupsAfter, sessionsAfter] = await Promise.all([
+    listEntries(GROUPS_DIR),
+    listEntries(SESSIONS_DIR),
+  ]);
+  const newDirs = [
+    ...groupsAfter
+      .filter((name) => !groupsBefore.has(name))
+      .map((name) => path.join(GROUPS_DIR, name)),
+    ...sessionsAfter
+      .filter((name) => !sessionsBefore.has(name))
+      .map((name) => path.join(SESSIONS_DIR, name)),
+  ];
+  await Promise.all(
+    newDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+});
 
 vi.mock("@earendil-works/pi-ai", () => ({
   getProviders: () => ["provider-a", "zai"],
