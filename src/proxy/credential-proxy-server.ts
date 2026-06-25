@@ -143,6 +143,15 @@ async function handleRequest(
     if (apiKey) {
       if (entry.auth?.type === "query-token") {
         parsedTarget.searchParams.set(entry.auth.queryParam ?? "token", apiKey);
+      } else if (entry.auth?.type === "basic") {
+        // git smart-HTTP（github.com への clone/fetch）は Authorization: Bearer を
+        // 受け付けず Basic 認証が必要。GitHub の慣習に合わせ username 省略時は
+        // "x-access-token" を使う（actions/checkout 等と同じ方式）
+        const username = entry.auth.username ?? "x-access-token";
+        const basicCredential = Buffer.from(`${username}:${apiKey}`).toString(
+          "base64",
+        );
+        headers.authorization = `Basic ${basicCredential}`;
       } else {
         headers.authorization = `Bearer ${apiKey}`;
       }
