@@ -38,6 +38,13 @@ from pathlib import Path
 
 MIN_LENGTH = 20
 
+# role: "user" だが人間の発言ではない cron 合成メッセージのプレフィックス。
+# src/cron/jobs/mail.ts:215-216 でメールスレッド初期化時に、エージェントへ文脈を
+# 把握させるためメール本文を role: "user" として合成・書き込みしている
+# （`メールID: ${meta.id}\n\n${emailText}`）。これは人間の興味ではないため
+# 興味抽出の対象から除外する。
+NOISE_PREFIXES = ("メールID: ",)
+
 
 def normalize_content(content) -> str | None:
     """user メッセージの content を平文テキストに正規化する。
@@ -120,6 +127,8 @@ def extract_from_session(filepath: Path, session_id: str, skip_lines: int = 0):
 
             content = normalize_content(obj.get("content", ""))
             if content is None:
+                continue
+            if content.startswith(NOISE_PREFIXES):
                 continue
             if len(content) <= MIN_LENGTH:
                 continue
