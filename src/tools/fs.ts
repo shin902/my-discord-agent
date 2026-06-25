@@ -11,6 +11,8 @@ import { dirname, extname, isAbsolute, join, normalize } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
+import { assertNoParentTraversal } from "./path-safety.js";
+
 const WORKSPACE = "/workspace";
 const READ_CHAR_LIMIT = 50_000;
 const GREP_MAX_RESULTS = 200;
@@ -34,22 +36,22 @@ function sanitizePath(raw: string): string {
   if (trimmed === WORKSPACE || trimmed.startsWith(`${WORKSPACE}/`)) {
     const stripped = trimmed.slice(WORKSPACE.length).replace(/^\/+/, "");
     const normalized = normalize(stripped);
-    if (normalized.startsWith("..")) {
-      throw new Error(
-        `アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください (${raw})`,
-      );
-    }
+    assertNoParentTraversal(
+      normalized,
+      raw,
+      "アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください",
+    );
     return normalized === "." ? "" : normalized;
   }
   if (isAbsolute(trimmed)) {
     return normalize(trimmed);
   }
   const normalized = normalize(trimmed);
-  if (normalized.startsWith("..")) {
-    throw new Error(
-      `アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください (${raw})`,
-    );
-  }
+  assertNoParentTraversal(
+    normalized,
+    raw,
+    "アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください",
+  );
   return normalized === "." ? "" : normalized;
 }
 

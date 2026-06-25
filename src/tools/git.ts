@@ -6,6 +6,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 import { assertValidRepoPart } from "./github.js";
+import { assertNoParentTraversal } from "./path-safety.js";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const WORKSPACE = "/workspace";
@@ -17,11 +18,11 @@ function resolveCloneDir(repo: string, directory?: string): string {
     throw new Error(`絶対パスは指定できません: ${raw}`);
   }
   const normalized = normalize(raw);
-  if (normalized === ".." || normalized.startsWith(`..${"/"}`)) {
-    throw new Error(
-      `アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません (${raw})`,
-    );
-  }
+  assertNoParentTraversal(
+    normalized,
+    raw,
+    "アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません",
+  );
   return join(WORKSPACE, normalized);
 }
 
