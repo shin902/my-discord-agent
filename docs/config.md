@@ -118,6 +118,33 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 ]
 ```
 
+### jobs/issue-triage.ts
+
+GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools: ["bash", "list_issues", "read_issue", "comment_issue"]`）に判断・コメント投稿まで一貫して行わせるハンドラー。
+
+```json
+{
+  "id": "issue-triage",
+  "schedule": "0 * * * *",
+  "enabled": true,
+  "groupName": "issue-triage",
+  "channelId": "YOUR_CHANNEL_ID",
+  "handler": "jobs/issue-triage.ts",
+  "settings": {
+    "owner": "YOUR_GITHUB_USERNAME",
+    "repo": "YOUR_REPO_NAME",
+    "allowedAuthors": ["YOUR_GITHUB_USERNAME"]
+  }
+}
+```
+
+- `settings.owner`/`settings.repo`: 対象リポジトリ
+- `settings.allowedAuthors`: 処理対象とする Issue 投稿者の許可リスト（省略時は `owner` のみ）。第三者が投稿した Issue は処理対象から除外し、issue本文への攻撃文によるプロンプトインジェクションの影響範囲を限定する
+- 重複コメント防止のため、処理済み Issue 番号と `updated_at` を `data/issue-triage/state.json` に記録し、値が変化していなければ再処理しない。同一プロセス内でジョブが並行実行されても読み書きが直列化されるため、別リポジトリを対象にした複数の issue-triage ジョブを同時に動かしても state が失われない
+- エージェントがコードを根拠付けに参照できるよう、`issue-triage` グループには `config/groups.json` の `mounts` でコードを読み取り専用マウントする想定（`config/groups.example.json` 参照）
+  - **`host: "."`（リポジトリルートそのもの）は絶対にマウントしないこと。** `.env`（`DISCORD_BOT_TOKEN` 等）や `config/credentials.json` は git管理外（`.gitignore`）だが実ファイルとして存在するため、読み取り専用でもエージェントの `bash` から閲覧でき、`comment_issue` で公開Issueにそのまま漏洩しうる
+  - 必ず、これらの機密ファイルを含まない別の場所（git clone した別ディレクトリ等）を用意し、その絶対パスを `mounts.host` に指定する
+
 ## config/config.json
 
 `groups.json` / `credentials.json` / `cron.json` に分離されていない残りの設定。トップレベルはオブジェクト。

@@ -5,7 +5,7 @@ import { resolveProxyBaseUrl } from "./proxy-url.js";
 const MAX_BODY_CHARS = 8000;
 const MAX_COMMENT_CHARS = 8000;
 
-const GITHUB_HEADERS = {
+export const GITHUB_HEADERS = {
   Accept: "application/vnd.github+json",
   "X-GitHub-Api-Version": "2022-11-28",
   "User-Agent": "my-discord-agent",
@@ -13,7 +13,7 @@ const GITHUB_HEADERS = {
 
 const REPO_NAME_RE = /^[a-zA-Z0-9._-]+$/;
 
-function assertValidRepoPart(value: string, label: string): void {
+export function assertValidRepoPart(value: string, label: string): void {
   if (!REPO_NAME_RE.test(value) || value.includes("..") || value === ".") {
     throw new Error(`無効な${label}: ${value}`);
   }
@@ -58,7 +58,7 @@ async function githubPost(
   return res.json();
 }
 
-type GitHubIssue = {
+export type GitHubIssue = {
   number: number;
   title: string;
   state: string;

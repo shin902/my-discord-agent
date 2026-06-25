@@ -21,6 +21,18 @@
     "handler": "jobs/reddit-cookie-refresh.ts"
   },
   {
+    "id": "issue-triage",
+    "schedule": "0 * * * *",
+    "enabled": true,
+    "groupName": "issue-triage",
+    "channelId": "YOUR_CHANNEL_ID",
+    "handler": "jobs/issue-triage.ts",
+    "settings": {
+      "owner": "YOUR_GITHUB_USERNAME",
+      "repo": "YOUR_REPO_NAME"
+    }
+  },
+  {
     "id": "memory-daily",
     "schedule": "0 23 * * *",
     "enabled": true,
