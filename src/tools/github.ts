@@ -5,7 +5,7 @@ import { resolveProxyBaseUrl } from "./proxy-url.js";
 const MAX_BODY_CHARS = 8000;
 const MAX_COMMENT_CHARS = 8000;
 
-const GITHUB_HEADERS = {
+export const GITHUB_HEADERS = {
   Accept: "application/vnd.github+json",
   "X-GitHub-Api-Version": "2022-11-28",
   "User-Agent": "my-discord-agent",

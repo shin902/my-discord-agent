@@ -4,7 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
-import { assertValidRepoPart, type GitHubIssue } from "../../tools/github.js";
+import {
+  assertValidRepoPart,
+  GITHUB_HEADERS,
+  type GitHubIssue,
+} from "../../tools/github.js";
 import { NonRetryableError } from "../../utils/error.js";
 import { createFileLock } from "../../utils/lock.js";
 import type { CronContext } from "../runner.js";
@@ -86,6 +90,7 @@ async function fetchIssuesByCreator(
   for (let page = 1; page <= MAX_PAGES; page++) {
     const res = await fetch(
       `http://localhost:${port}/github/repos/${owner}/${repo}/issues?state=open&per_page=${PER_PAGE}&page=${page}&creator=${encodeURIComponent(creator)}`,
+      { headers: GITHUB_HEADERS },
     );
     if (!res.ok) {
       const text = await res.text().catch(() => "");
