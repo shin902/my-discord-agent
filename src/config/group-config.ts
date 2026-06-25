@@ -6,7 +6,6 @@ import type { GroupConfig } from "./groups.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GROUPS_DIR = path.join(__dirname, "../../groups");
 const TEMPLATES_DIR = path.join(__dirname, "../../templates");
-const PROMPTS_DIR = path.join(__dirname, "../../config/prompts");
 
 async function _dirExists(p: string): Promise<boolean> {
   try {
@@ -26,9 +25,9 @@ async function _fileExists(p: string): Promise<boolean> {
   }
 }
 
-/** グループフォルダが存在しない場合は config/prompts/AGENTS.md をコピーして作成する */
+/** グループフォルダが存在しない場合は templates/group/AGENTS.md をコピーして作成する */
 export async function ensureGroupDirs(groupNames: string[]): Promise<void> {
-  const templatePath = path.join(PROMPTS_DIR, "AGENTS.md");
+  const templatePath = path.join(TEMPLATES_DIR, "group", "AGENTS.md");
   const hasTemplate = await _fileExists(templatePath);
 
   await Promise.all(
