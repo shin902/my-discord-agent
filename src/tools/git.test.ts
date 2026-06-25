@@ -2,10 +2,14 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
+vi.mock("node:fs/promises", () => ({ stat: vi.fn(), rm: vi.fn() }));
 
 import { execFile } from "node:child_process";
+import { rm, stat } from "node:fs/promises";
 
 const mockExecFile = vi.mocked(execFile);
+const mockStat = vi.mocked(stat);
+const mockRm = vi.mocked(rm);
 
 const PROXY_CREDS = JSON.stringify([
   { provider: "github-git", baseUrl: "http://proxy.test/github-git" },
@@ -52,6 +56,8 @@ describe("clone_repository", () => {
     vi.resetModules();
     vi.clearAllMocks();
     process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
+    mockStat.mockRejectedValue(new Error("ENOENT"));
+    mockRm.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -140,6 +146,40 @@ describe("clone_repository", () => {
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
     ).rejects.toThrow("fatal: repository not found");
+  });
+
+  it("clone失敗時、dest が呼び出し前に存在しなければ削除する", async () => {
+    mockStat.mockRejectedValue(new Error("ENOENT"));
+    mockFailure(
+      Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
+    );
+    const { cloneRepositoryTool } = await import("./git.js");
+    await expect(
+      cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
+    ).rejects.toThrow();
+    expect(mockRm).toHaveBeenCalledWith("/workspace/r", {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("clone失敗時、dest が呼び出し前から存在していれば削除しない", async () => {
+    mockStat.mockResolvedValue({} as never);
+    mockFailure(
+      Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
+    );
+    const { cloneRepositoryTool } = await import("./git.js");
+    await expect(
+      cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
+    ).rejects.toThrow();
+    expect(mockRm).not.toHaveBeenCalled();
+  });
+
+  it("clone成功時はdestを削除しない", async () => {
+    mockSuccess();
+    const { cloneRepositoryTool } = await import("./git.js");
+    await cloneRepositoryTool.execute("id", { owner: "o", repo: "r" });
+    expect(mockRm).not.toHaveBeenCalled();
   });
 
   it("github-git プロバイダーが CREDENTIAL_PROXY_JSON にない場合は例外", async () => {

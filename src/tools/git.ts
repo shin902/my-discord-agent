@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { rm, stat } from "node:fs/promises";
 import { isAbsolute, join, normalize } from "node:path";
 import { promisify } from "node:util";
 
@@ -53,6 +54,10 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
       const dest = resolveCloneDir(repo, directory);
       const baseUrl = resolveProxyBaseUrl("github-git");
       const cloneUrl = `${baseUrl}/${owner}/${repo}.git`;
+      const destExistedBefore = await stat(dest).then(
+        () => true,
+        () => false,
+      );
 
       try {
         await promisify(execFile)(
@@ -61,6 +66,12 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
           { cwd: WORKSPACE, timeout: CLONE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
         );
       } catch (err) {
+        // git が作成した dest をクリーンアップしないと、次回実行が
+        // "already exists and is not an empty directory" で失敗し続ける。
+        // dest が呼び出し前から存在していた場合は触らない。
+        if (!destExistedBefore) {
+          await rm(dest, { recursive: true, force: true }).catch(() => {});
+        }
         const e = err as { stderr?: string; message?: string };
         throw new Error(e.stderr || e.message || "git clone に失敗しました");
       }
