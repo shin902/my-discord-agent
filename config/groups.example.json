@@ -26,7 +26,7 @@
     "mounts": [
       {
         "host": "/path/to/a/clean/clone/of/this/repo",
-        "container": "/repo",
+        "container": "/repos",
         "readOnly": true
       }
     ]
