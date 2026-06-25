@@ -107,6 +107,22 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 - `redditCookie` フィールドは `msal` / `google` と同様、サンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
 - `agent-reach` ツールの reddit サービスは `resolveProxyBaseUrl("reddit")` でこのプロキシ経由のURLを構築する。
 
+### GitHub Clone（`clone_repository` ツール用）
+
+エージェントが README 以外も参照したい場合に、リポジトリを `/workspace` 配下へ shallow clone する。git の smart HTTP プロトコルは通常の HTTP リクエスト/レスポンスなので、既存の汎用リバースプロキシ（`envVars` による `Authorization: Bearer` 注入）がそのまま使える。
+
+```json
+{
+  "provider": "github-git",
+  "envVars": ["GITHUB_CLONE_TOKEN"],
+  "baseUrl": "https://github.com"
+}
+```
+
+- `list_issues`/`read_issue`/`comment_issue` が使う `github`（`api.github.com` 向け、Issues権限のみ）とは別のプロバイダー・別のトークンに分離している。Issue 操作用トークンに Contents 権限を持たせない（最小権限）ため。
+- `GITHUB_CLONE_TOKEN` は対象リポジトリ・`Contents: Read` 権限のみの fine-grained PAT を想定。
+- `clone_repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone --depth 1` を実行する。実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
+
 ### その他の pi-ai 対応プロバイダ
 
 以下のプロバイダも pi-ai では対応しているが、現状未検証・未使用のため `credentials.example.json` からは除外している。必要な env var を `.env` に設定し、`config/credentials.json` に provider エントリを手動で追加すれば利用可能（`envVars` に設定した変数のうち `process.env` にあるものが secret として注入される。`baseUrl` は各プロバイダの公式エンドポイントを指定）：

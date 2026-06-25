@@ -5,6 +5,7 @@ RUN apk add --no-cache \
     python3 \
     curl \
     jq \
+    git \
     github-cli \
     tzdata
 
