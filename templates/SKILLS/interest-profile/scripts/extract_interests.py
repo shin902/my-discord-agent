@@ -231,7 +231,11 @@ def main():
     new_state = dict(sessions_state)
 
     # /sessions/{group}/{sessionId}.jsonl の2階層を走査する。
-    # session_id は "{group}/{ファイル名}" にして、複数グループ間でのキー衝突を避ける。
+    # session_id は "{group}/{ファイル名}" にしておく。コンテナ起動時には
+    # manager.ts がそのグループ専用ディレクトリのみを /sessions/{group} に
+    # マウントするため、1回の実行で複数グループが混在することは現状ない。
+    # ただしこの形式にしておけば last-sync.json / interest-log.jsonl 上で
+    # どのグループのログか目視で判別しやすくなる。
     jsonl_files = sorted(logs_dir.glob("*/*.jsonl"), key=lambda p: p.stat().st_mtime)
 
     for filepath in jsonl_files:
