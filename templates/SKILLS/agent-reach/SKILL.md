@@ -6,7 +6,7 @@ description: URL からコンテンツを取得して整形するスキル。You
 ## 使い方
 
 ```bash
-./scripts/agent-reach.sh <URL>
+SKILLS/scripts/agent-reach.sh <URL>
 ```
 
 stdout に整形された Markdown が出力される。ファイルに保存するにはリダイレクトを使う。
