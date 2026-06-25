@@ -38,6 +38,12 @@ from pathlib import Path
 
 MIN_LENGTH = 20
 
+# 状態ファイル (last-sync.json) のスキーマバージョン。
+# version 2: session_id を "{group}/{ファイル名}" 形式でキーイングする（現行）。
+# version 1相当（旧Claude Code会話ログ対象版）はフラットな "{ファイル名}" キーで、
+# schema_version フィールド自体を持たない。
+SCHEMA_VERSION = 2
+
 # role: "user" だが人間の発言ではない cron 合成メッセージのプレフィックス。
 # src/cron/jobs/mail.ts:215-216 でメールスレッド初期化時に、エージェントへ文脈を
 # 把握させるためメール本文を role: "user" として合成・書き込みしている
@@ -85,11 +91,27 @@ def load_state(state_file: Path) -> dict:
     if state_file.exists():
         try:
             with open(state_file, encoding="utf-8") as f:
-                return json.load(f)
+                state = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             # 破損していても止めない（自律実行ルール: エラーは記録して継続）。
             # 空状態にフォールバックすると全再読込になり安全側（取りこぼしより重複を許容）。
             print(f"WARNING: state file unreadable, starting fresh: {e}", file=sys.stderr)
+            return {"last_sync_at": None, "sessions": {}}
+
+        # schema_version が無い、または現行と異なる状態ファイルは session_id の
+        # キー形式が噛み合わない可能性がある（例: 旧版はフラット "{ファイル名}"
+        # キー、現行は "{group}/{ファイル名}"）。サイレントに sessions_state.get()
+        # が常に {} を返す全件再走査に陥るより、検知して警告を出した上で
+        # 明示的に sessions をリセットする（last_sync_at は参考情報として残す）。
+        if state.get("schema_version") != SCHEMA_VERSION:
+            print(
+                f"WARNING: incompatible state file schema_version "
+                f"({state.get('schema_version')!r} != {SCHEMA_VERSION!r}); "
+                f"resetting sessions to re-scan all sessions safely.",
+                file=sys.stderr,
+            )
+            state["sessions"] = {}
+        return state
     return {"last_sync_at": None, "sessions": {}}
 
 
@@ -277,6 +299,7 @@ def main():
 
     if args.state_out:
         # 実行環境のローカルタイムゾーンで記録する（環境を問わず正しいオフセットになる）
+        state["schema_version"] = SCHEMA_VERSION
         state["last_sync_at"] = datetime.now().astimezone().isoformat()
         state["sessions"] = new_state
         save_state(Path(args.state_out), state)
