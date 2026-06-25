@@ -471,8 +471,8 @@ export function buildCommand(
   switch (service) {
     case "youtube": {
       const q = shellQuote(url);
-      // outAbsPath = /workspace/fetched/youtube-xxx.md
-      // base      = /workspace/fetched/youtube-xxx  (拡張子なし)
+      // outAbsPath = /workspace/.agent-reach-tmp/youtube-xxx.md
+      // base      = /workspace/.agent-reach-tmp/youtube-xxx  (拡張子なし)
       const base = outAbsPath.replace(/\.[^.]+$/, "");
       const metaOutQ = shellQuote(`${base}.meta.json`);
       const subDirQ = shellQuote(`${base}.subs`);
