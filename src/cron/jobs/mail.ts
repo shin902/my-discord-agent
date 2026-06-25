@@ -1,9 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { Agent } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
 import { resolveModel } from "../../agent/model.js";
 import { appendMessage } from "../../agent/session.js";
+import { runTextOnlyAgent } from "../../agent/textOnlyAgent.js";
 import { resolveModelConfig } from "../../config/default-model.js";
 import { findGroupByName, type GroupConfig } from "../../config/groups.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
@@ -128,34 +127,16 @@ async function generateSummary(
     baseUrl: `http://localhost:${port}/${providerName}`,
   };
 
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: ctx.prompt ?? DEFAULT_SUMMARY_PROMPT,
-      model: proxyModel,
-      messages: [],
-      tools: [],
-      thinkingLevel: groupConfig?.model?.thinkingLevel ?? "off",
-    },
+  const { text, agentMessage } = await runTextOnlyAgent({
+    systemPrompt: ctx.prompt ?? DEFAULT_SUMMARY_PROMPT,
+    model: proxyModel,
+    thinkingLevel: groupConfig?.model?.thinkingLevel ?? "off",
+    prompt: emailText,
     getApiKey: () => Promise.resolve("proxy"),
   });
 
-  let summary = "";
-  let agentMessage: AgentMessage | null = null;
-  agent.subscribe((event) => {
-    if (event.type === "message_end") {
-      const msg = event.message as AssistantMessage;
-      if (msg.role !== "assistant") return;
-      agentMessage = msg as AgentMessage;
-      summary = msg.content
-        .filter((c) => c.type === "text")
-        .map((c) => ("text" in c ? (c.text ?? "") : ""))
-        .join("");
-    }
-  });
-
-  await agent.prompt(emailText);
   return {
-    summary: summary || "(要約を生成できませんでした)",
+    summary: text || "(要約を生成できませんでした)",
     agentMessage,
   };
 }

@@ -14,7 +14,20 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "@earendil-works/pi-agent-core": {
+                "importNames": ["Agent"],
+                "message": "ツール付きAgentの生成はサンドボックスコンテナ内（src/sandbox/agent-runner.ts）に限定してください。ホスト側でツールなしのテキスト生成のみ行う場合は src/agent/textOnlyAgent.ts の runTextOnlyAgent を使ってください。"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "files": {
@@ -27,6 +40,16 @@
         "rules": {
           "complexity": {
             "useArrowFunction": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/sandbox/**", "src/agent/textOnlyAgent.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
           }
         }
       }
