@@ -613,7 +613,10 @@ export const agentReachTool: AgentTool<typeof parameters> = {
 
     const service = detectService(parsed);
     const tmpDirAbs = join(WORKSPACE, TMP_DIR);
-    const absPath = join(tmpDirAbs, `${service}-${randomUUID().slice(0, 8)}.md`);
+    const absPath = join(
+      tmpDirAbs,
+      `${service}-${randomUUID().slice(0, 8)}.md`,
+    );
 
     await mkdir(tmpDirAbs, { recursive: true });
 
@@ -647,7 +650,10 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       let content: string;
       if (service === "youtube") {
         const base = absPath.replace(/\.[^.]+$/, "");
-        content = await buildYouTubeMarkdown(`${base}.meta.json`, `${base}.subs`);
+        content = await buildYouTubeMarkdown(
+          `${base}.meta.json`,
+          `${base}.subs`,
+        );
       } else if (service === "github-repo") {
         const base = absPath.replace(/\.[^.]+$/, "");
         content = await buildGitHubMarkdown(
