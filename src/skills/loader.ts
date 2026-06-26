@@ -93,7 +93,6 @@ export async function loadSkills(
     );
   }
 
-  // allowlist に指定されたスキルが見つからない場合は警告
   if (allowlist) {
     for (const name of allowlist) {
       if (!loadedNames.has(name)) {
