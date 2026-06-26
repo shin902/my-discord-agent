@@ -63,4 +63,20 @@ describe("loadSkills", () => {
     const skills = await loadSkills("/tmp/nonexistent-skills-dir-12345");
     expect(skills).toEqual([]);
   });
+
+  it("allowlist 指定時にスキルディレクトリ自体が存在しない場合は throw する", async () => {
+    await expect(
+      loadSkills("/tmp/nonexistent-skills-dir-12345", ["foo"]),
+    ).rejects.toThrow("[skills]");
+  });
+
+  it("allowlist に指定したスキルのディレクトリが SKILLS 内に存在しない場合は throw する", async () => {
+    const { mkdtemp, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(`${tmpdir()}/skills-test-`);
+    await mkdir(`${dir}/existing-skill`);
+    // SKILL.md なしで allowlist に含まれていないスキルは無視されるが、
+    // allowlist に含まれていないディレクトリは存在してもロードされない
+    await expect(loadSkills(dir, ["missing-skill"])).rejects.toThrow("[skills]");
+  });
 });

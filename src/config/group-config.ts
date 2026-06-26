@@ -69,7 +69,12 @@ export async function ensureGroupSkills(
       const dest = path.join(GROUPS_DIR, groupName, "SKILLS", skill);
       if (await _dirExists(dest)) return;
       const src = path.join(skillsTemplateDir, skill);
-      if (!(await _dirExists(src))) return;
+      if (!(await _dirExists(src))) {
+        console.warn(
+          `[group-config] スキル "${skill}" は ${skillsTemplateDir} に存在しないためコピーをスキップしました (group: ${groupName})`,
+        );
+        return;
+      }
       try {
         await cp(src, dest, { recursive: true });
         console.log(
