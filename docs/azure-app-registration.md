@@ -281,7 +281,7 @@ data/graph-token-{provider}.json
 
 ### 既読マークを使わない場合
 
-メールを読むだけで既読にする必要がない場合は、`read_email` ツールに `markAsRead: false` を渡すことで `PATCH` リクエスト自体をスキップできます。この場合は `Mail.Read` 権限のみで問題なく動作します。
+メールを読むだけで既読にする必要がない場合は、`read-email` ツールに `markAsRead: false` を渡すことで `PATCH` リクエスト自体をスキップできます。この場合は `Mail.Read` 権限のみで問題なく動作します。
 
 ### Exchange Online の OData アクセスポリシーについて
 

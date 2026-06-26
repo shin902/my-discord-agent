@@ -16,12 +16,12 @@
 | `list` | ワークスペース内のディレクトリ一覧を取得する |
 | `glob` | glob パターンでファイルを検索する |
 | `grep` | 正規表現でファイル内を検索する |
-| `browserless_search` | ウェブ検索を実行して結果（JSON）を返す |
-| `browserless_function` | Puppeteer コードをブラウザで実行する |
-| `tavily_search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
-| `tavily_extract` | Tavily Extract API で指定URLのページ本文を抽出する |
-| `tavily_crawl` | Tavily Crawl API でサイト内をクロールし各ページの本文を取得する |
-| `tavily_map` | Tavily Map API でサイト内のURL構造をマッピングする |
+| `browserless-search` | ウェブ検索を実行して結果（JSON）を返す |
+| `browserless-function` | Puppeteer コードをブラウザで実行する |
+| `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
+| `tavily-extract` | Tavily Extract API で指定URLのページ本文を抽出する |
+| `tavily-crawl` | Tavily Crawl API でサイト内をクロールし各ページの本文を取得する |
+| `tavily-map` | Tavily Map API でサイト内のURL構造をマッピングする |
 
 **注意:** `webfetch` は削除済み。ウェブアクセスはすべて `agent-reach` または `bash` 経由で行う。
 
@@ -31,15 +31,15 @@
 
 | ツール | 理由 |
 |--------|------|
-| `browserless_content` | JavaScript 描画後の HTML 全文をそのままコンテキストに流し込む。重いサイトでは数十万トークン規模になりコンテキスト爆発する |
-| `browserless_smart_scrape` | JS ブロック回避の自動フォールバックが働くと内部的に `content` 相当の処理に落ちる。同様にコンテキストオーバーが発生する |
+| `browserless-content` | JavaScript 描画後の HTML 全文をそのままコンテキストに流し込む。重いサイトでは数十万トークン規模になりコンテキスト爆発する |
+| `browserless-smart-scrape` | JS ブロック回避の自動フォールバックが働くと内部的に `content` 相当の処理に落ちる。同様にコンテキストオーバーが発生する |
 
 **使って良いもの（ローカル LLM でも安全）:**
 
 | ツール | 理由 |
 |--------|------|
-| `browserless_search` | 検索結果（件数・スニペット）のみ返す。出力サイズが予測可能 |
-| `browserless_function` | Puppeteer コードで取得対象を自分で絞り込めるため、返却サイズをコントロールできる |
+| `browserless-search` | 検索結果（件数・スニペット）のみ返す。出力サイズが予測可能 |
+| `browserless-function` | Puppeteer コードで取得対象を自分で絞り込めるため、返却サイズをコントロールできる |
 
 **代替手段:** 一般的なウェブコンテンツ取得は `agent-reach` スキル（`r.jina.ai` 経由）を使う。Jina Reader はマークダウン変換済みの本文のみを返すため、HTML 全文よりも大幅にトークン数が少ない。
 
@@ -134,15 +134,15 @@ cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 
 会話履歴からユーザーの興味プロファイルを抽出・蓄積し `INTERESTS.md`（プロジェクトルート）を生成・更新するスキル。`sync`（履歴差分を分析してシグナルを `data/interests/interest-log.jsonl` に追記し再生成）と `show`（既存の `INTERESTS.md` を表示するだけ）の2モードを持つ。cron等からの自律実行時はユーザーへの確認を行わない設計。
 
-### last30days
+### last-30-days
 
-**場所:** `templates/SKILLS/last30days/SKILL.md`
+**場所:** `templates/SKILLS/last-30-days/SKILL.md`
 
 指定トピックについて、HackerNews・Reddit・GitHub（いずれもAPIキー不要）から過去30日間の議論・反応を横断的に収集し、注目トピック・プラットフォーム別サマリー・センチメント・注目リンクの形式で集約するスキル。
 
-### md2html
+### md-2-html
 
-**場所:** `templates/SKILLS/md2html/SKILL.md`
+**場所:** `templates/SKILLS/md-2-html/SKILL.md`
 
 Markdownファイルを、CDN/外部JS依存なしの単一HTMLファイルに変換するスキル。`pip install md2html-phuker` の `md2html` コマンドを使う。ダークテーマやサイドバー目次付きスタイルにも対応。
 
