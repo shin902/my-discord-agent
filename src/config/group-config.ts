@@ -71,7 +71,7 @@ export async function ensureGroupSkills(
       const src = path.join(skillsTemplateDir, skill);
       if (!(await _dirExists(src))) {
         console.warn(
-          `[group-config] スキル "${skill}" は templates/SKILLS/ に存在しないためコピーをスキップしました: ${groupName}`,
+          `[group-config] スキル "${skill}" は ${skillsTemplateDir} に存在しないためコピーをスキップしました (group: ${groupName})`,
         );
         return;
       }

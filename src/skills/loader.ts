@@ -56,7 +56,16 @@ export async function loadSkills(
   try {
     entries = (await readdir(skillsDir, { withFileTypes: true })) as Dirent[];
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (allowlist) {
+        for (const name of allowlist) {
+          console.warn(
+            `[skills] allowlist 内のスキル "${name}" が ${skillsDir} に見つかりませんでした`,
+          );
+        }
+      }
+      return [];
+    }
     throw err;
   }
 
