@@ -28,7 +28,7 @@ const makeMsgList = (overrides: Record<string, unknown>[] = []) => ({
   ],
 });
 
-describe("list_emails", () => {
+describe("list-emails", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -152,7 +152,7 @@ describe("list_emails", () => {
   });
 });
 
-describe("read_email", () => {
+describe("read-email", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;
 

@@ -67,7 +67,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "chat",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily_search"],
+    "tools": ["tavily-search"],
     "autoReply": false,
     "toolLogArgs": true,
     "channels": [
@@ -77,7 +77,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "thread",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily_search", "agent-reach", "bash", "read", "write", "edit"],
+    "tools": ["tavily-search", "agent-reach", "bash", "read", "write", "edit"],
     "skills": ["session-logs"],
     "autoReply": true,
     "toolLogArgs": true,
@@ -120,7 +120,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### jobs/issue-triage.ts
 
-GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools: ["bash", "list_issues", "read_issue", "comment_issue"]`）に判断・コメント投稿まで一貫して行わせるハンドラー。
+GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools: ["bash", "list-issues", "read-issue", "comment-issue"]`）に判断・コメント投稿まで一貫して行わせるハンドラー。
 
 ```json
 {
@@ -142,7 +142,7 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 - `settings.allowedAuthors`: 処理対象とする Issue 投稿者の許可リスト（省略時は `owner` のみ）。第三者が投稿した Issue は処理対象から除外し、issue本文への攻撃文によるプロンプトインジェクションの影響範囲を限定する
 - 重複コメント防止のため、処理済み Issue 番号と `updated_at` を `data/issue-triage/state.json` に記録し、値が変化していなければ再処理しない。同一プロセス内でジョブが並行実行されても読み書きが直列化されるため、別リポジトリを対象にした複数の issue-triage ジョブを同時に動かしても state が失われない
 - エージェントがコードを根拠付けに参照できるよう、`issue-triage` グループには `config/groups.json` の `mounts` でコードを読み取り専用マウントする想定（`config/groups.example.json` 参照）
-  - **`host: "."`（リポジトリルートそのもの）は絶対にマウントしないこと。** `.env`（`DISCORD_BOT_TOKEN` 等）や `config/credentials.json` は git管理外（`.gitignore`）だが実ファイルとして存在するため、読み取り専用でもエージェントの `bash` から閲覧でき、`comment_issue` で公開Issueにそのまま漏洩しうる
+  - **`host: "."`（リポジトリルートそのもの）は絶対にマウントしないこと。** `.env`（`DISCORD_BOT_TOKEN` 等）や `config/credentials.json` は git管理外（`.gitignore`）だが実ファイルとして存在するため、読み取り専用でもエージェントの `bash` から閲覧でき、`comment-issue` で公開Issueにそのまま漏洩しうる
   - 必ず、これらの機密ファイルを含まない別の場所（git clone した別ディレクトリ等）を用意し、その絶対パスを `mounts.host` に指定する
 
 ## config/config.json

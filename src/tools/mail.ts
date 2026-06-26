@@ -51,7 +51,7 @@ const listEmailsParameters = Type.Object({
 });
 
 export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
-  name: "list_emails",
+  name: "list-emails",
   label: "List Emails",
   description:
     "Outlook メールの一覧を取得する。件名・送信者・受信日時・本文プレビューを返す",
@@ -101,7 +101,7 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
 };
 
 const readEmailParameters = Type.Object({
-  id: Type.String({ description: "メールID（list_emails で取得した id）" }),
+  id: Type.String({ description: "メールID（list-emails で取得した id）" }),
   markAsRead: Type.Optional(
     Type.Boolean({
       description: "既読にマークするか（デフォルト: true）",
@@ -110,10 +110,10 @@ const readEmailParameters = Type.Object({
 });
 
 export const readEmailTool: AgentTool<typeof readEmailParameters> = {
-  name: "read_email",
+  name: "read-email",
   label: "Read Email",
   description:
-    "指定したメールの全文を取得する。list_emails で得た id を渡す。デフォルトで既読にマークする",
+    "指定したメールの全文を取得する。list-emails で得た id を渡す。デフォルトで既読にマークする",
   parameters: readEmailParameters,
   execute: async (_toolCallId, { id, markAsRead = true }) => {
     const select =

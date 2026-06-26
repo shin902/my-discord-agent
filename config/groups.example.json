@@ -5,7 +5,7 @@
       "provider": "zai",
       "modelId": "glm-4.7-flash"
     },
-    "tools": ["tavily_search"],
+    "tools": ["tavily-search"],
     "autoReply": false,
     "toolLogArgs": true,
     "channels": [{ "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }],
@@ -19,7 +19,7 @@
   },
   {
     "name": "issue-triage",
-    "tools": ["bash", "list_issues", "read_issue", "comment_issue"],
+    "tools": ["bash", "list-issues", "read-issue", "comment-issue"],
     "autoReply": false,
     "toolLogArgs": true,
     "channels": [],

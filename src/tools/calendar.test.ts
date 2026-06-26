@@ -29,7 +29,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("list_events", () => {
+describe("list-events", () => {
   const makeEventList = (overrides: Record<string, unknown>[] = []) => ({
     items: [
       {
@@ -137,7 +137,7 @@ describe("list_events", () => {
   });
 });
 
-describe("read_event", () => {
+describe("read-event", () => {
   const makeEvent = (overrides: Record<string, unknown> = {}) => ({
     id: "evt-001",
     summary: "テスト予定",
@@ -177,7 +177,7 @@ describe("read_event", () => {
   });
 });
 
-describe("create_event", () => {
+describe("create-event", () => {
   it("summary/start/end を Body として POST する", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
@@ -257,7 +257,7 @@ describe("create_event", () => {
   });
 });
 
-describe("update_event", () => {
+describe("update-event", () => {
   it("指定したフィールドのみ PATCH Body に含める", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
@@ -678,7 +678,7 @@ describe("update_event", () => {
   });
 });
 
-describe("delete_event", () => {
+describe("delete-event", () => {
   it("DELETE リクエストを送信する", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 204 });
     const { deleteEventTool } = await import("./calendar.js");
