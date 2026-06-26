@@ -57,7 +57,7 @@ describe("loadGroups", () => {
       {
         name: "chat",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
-        tools: ["tavily_search"],
+        tools: ["tavily-search"],
         autoReply: true,
         toolLogArgs: true,
         skills: ["session-logs"],
@@ -67,7 +67,7 @@ describe("loadGroups", () => {
     const groups = await loadGroups();
     expect(groups[0]).toMatchObject({
       model: { provider: "zai", modelId: "glm-4.7-flash" },
-      tools: ["tavily_search"],
+      tools: ["tavily-search"],
       autoReply: true,
       toolLogArgs: true,
       skills: ["session-logs"],

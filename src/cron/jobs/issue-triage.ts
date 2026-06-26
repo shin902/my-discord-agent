@@ -133,10 +133,10 @@ function buildPrompt(owner: string, repo: string, issue: GitHubIssue): string {
   return [
     `リポジトリ ${owner}/${repo} の Issue #${issue.number}「${issue.title}」を棚卸ししてください。`,
     "",
-    `1. read_issue（owner=${owner}, repo=${repo}, issue_number=${issue.number}）で本文を取得する`,
+    `1. read-issue（owner=${owner}, repo=${repo}, issue_number=${issue.number}）で本文を取得する`,
     "2. /repos 配下を bash（grep/find/cat 等）で調査し、判断の根拠となるコード上の箇所を確認する",
     "3. 分類（実装済みっぽい／古い・情報不足／重複候補／着手しやすそう、のいずれか。根拠が無ければ判断不能として何もしない）を行う",
-    "4. 根拠が示せた場合のみ comment_issue で判断結果と根拠を日本語でコメントする",
+    "4. 根拠が示せた場合のみ comment-issue で判断結果と根拠を日本語でコメントする",
   ].join("\n");
 }
 
