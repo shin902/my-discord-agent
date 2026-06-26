@@ -134,15 +134,15 @@ cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 
 会話履歴からユーザーの興味プロファイルを抽出・蓄積し `INTERESTS.md`（プロジェクトルート）を生成・更新するスキル。`sync`（履歴差分を分析してシグナルを `data/interests/interest-log.jsonl` に追記し再生成）と `show`（既存の `INTERESTS.md` を表示するだけ）の2モードを持つ。cron等からの自律実行時はユーザーへの確認を行わない設計。
 
-### last-30-days
+### last30days
 
-**場所:** `templates/SKILLS/last-30-days/SKILL.md`
+**場所:** `templates/SKILLS/last30days/SKILL.md`
 
 指定トピックについて、HackerNews・Reddit・GitHub（いずれもAPIキー不要）から過去30日間の議論・反応を横断的に収集し、注目トピック・プラットフォーム別サマリー・センチメント・注目リンクの形式で集約するスキル。
 
-### md-2-html
+### md2html
 
-**場所:** `templates/SKILLS/md-2-html/SKILL.md`
+**場所:** `templates/SKILLS/md2html/SKILL.md`
 
 Markdownファイルを、CDN/外部JS依存なしの単一HTMLファイルに変換するスキル。`pip install md2html-phuker` の `md2html` コマンドを使う。ダークテーマやサイドバー目次付きスタイルにも対応。
 
