@@ -62,6 +62,8 @@ export async function loadSkills(
 
   const skills: Skill[] = [];
 
+  const loadedNames = new Set<string>();
+
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
@@ -78,6 +80,8 @@ export async function loadSkills(
     const name = frontmatter.name || entry.name;
     const description = frontmatter.description || "";
 
+    loadedNames.add(name);
+
     if (allowlist && !allowlist.includes(name)) continue;
 
     skills.push(
@@ -87,6 +91,17 @@ export async function loadSkills(
         location: skillPath,
       }),
     );
+  }
+
+  // allowlist に指定されたスキルが見つからない場合は警告
+  if (allowlist) {
+    for (const name of allowlist) {
+      if (!loadedNames.has(name)) {
+        console.warn(
+          `[skills] allowlist 内のスキル "${name}" が ${skillsDir} に見つかりませんでした`,
+        );
+      }
+    }
   }
 
   return skills;
