@@ -23,7 +23,7 @@ const geocodingResponse = {
   ],
 };
 
-describe("get_current_weather", () => {
+describe("get-current-weather", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -110,7 +110,7 @@ describe("get_current_weather", () => {
   });
 });
 
-describe("get_weather_forecast", () => {
+describe("get-weather-forecast", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });

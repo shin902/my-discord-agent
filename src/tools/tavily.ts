@@ -45,7 +45,7 @@ type TavilyResponse = {
 };
 
 export const tavilySearchTool: AgentTool<typeof searchParams> = {
-  name: "tavily_search",
+  name: "tavily-search",
   label: "Tavily Search",
   description:
     "ウェブ検索を実行して結果を返す。最新の情報やファクトチェックに使う",
@@ -130,7 +130,7 @@ type TavilyExtractResponse = {
 };
 
 export const tavilyExtractTool: AgentTool<typeof extractParams> = {
-  name: "tavily_extract",
+  name: "tavily-extract",
   label: "Tavily Extract",
   description:
     "指定したURLのページ本文を抽出する。検索結果のページを詳しく読むときに使う",
@@ -223,7 +223,7 @@ type TavilyCrawlResponse = {
 };
 
 export const tavilyCrawlTool: AgentTool<typeof crawlParams> = {
-  name: "tavily_crawl",
+  name: "tavily-crawl",
   label: "Tavily Crawl",
   description:
     "指定URLを起点にサイト内のページをクロールし、各ページの本文を取得する",
@@ -320,7 +320,7 @@ type TavilyMapResponse = {
 };
 
 export const tavilyMapTool: AgentTool<typeof mapParams> = {
-  name: "tavily_map",
+  name: "tavily-map",
   label: "Tavily Map",
   description:
     "サイト内のURL構造をマッピングして一覧を取得する（ページ本文は取得しない）",

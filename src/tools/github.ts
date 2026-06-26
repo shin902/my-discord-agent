@@ -97,7 +97,7 @@ const listIssuesParameters = Type.Object({
 });
 
 export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
-  name: "list_issues",
+  name: "list-issues",
   label: "List GitHub Issues",
   description:
     "指定リポジトリの Issue 一覧を取得する。番号・タイトル・状態・ラベル・コメント数を返す（Pull Request は除外）",
@@ -143,7 +143,7 @@ const readIssueParameters = Type.Object({
 });
 
 export const readIssueTool: AgentTool<typeof readIssueParameters> = {
-  name: "read_issue",
+  name: "read-issue",
   label: "Read GitHub Issue",
   description: "指定した Issue の本文全文を取得する",
   parameters: readIssueParameters,
@@ -197,7 +197,7 @@ const commentIssueParameters = Type.Object({
 });
 
 export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
-  name: "comment_issue",
+  name: "comment-issue",
   label: "Comment on GitHub Issue",
   description: "指定した Issue にコメントを投稿する",
   parameters: commentIssueParameters,

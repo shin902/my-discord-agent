@@ -49,7 +49,7 @@ function firstText(result: {
   return first.text;
 }
 
-describe("clone_repository", () => {
+describe("clone-repository", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {

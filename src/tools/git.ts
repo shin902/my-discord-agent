@@ -42,7 +42,7 @@ const cloneRepositoryParameters = Type.Object({
 
 export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
   {
-    name: "clone_repository",
+    name: "clone-repository",
     label: "Clone GitHub Repository",
     description:
       "GitHub リポジトリをワークスペース内に shallow clone する（クレデンシャルプロキシ経由でトークンを安全に注入し、エージェントにトークン自体は渡さない）",

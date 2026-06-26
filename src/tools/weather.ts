@@ -94,7 +94,7 @@ type CurrentWeatherResponse = {
 };
 
 export const getCurrentWeatherTool: AgentTool<typeof currentWeatherParams> = {
-  name: "get_current_weather",
+  name: "get-current-weather",
   label: "現在の天気",
   description:
     "指定した地名の現在の天気・気温・湿度・風速を取得する。最新の天気状況を答える際に使う",
@@ -159,7 +159,7 @@ type ForecastResponse = {
 };
 
 export const getWeatherForecastTool: AgentTool<typeof forecastParams> = {
-  name: "get_weather_forecast",
+  name: "get-weather-forecast",
   label: "天気予報",
   description:
     "指定した地名の数日間の天気予報（最高/最低気温・降水確率）を取得する",

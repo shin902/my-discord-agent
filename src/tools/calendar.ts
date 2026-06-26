@@ -103,7 +103,7 @@ const listEventsParameters = Type.Object({
 });
 
 export const listEventsTool: AgentTool<typeof listEventsParameters> = {
-  name: "list_events",
+  name: "list-events",
   label: "List Calendar Events",
   description:
     "Google カレンダーの予定一覧を取得する。タイトル・開始/終了時刻・場所を返す",
@@ -143,15 +143,15 @@ export const listEventsTool: AgentTool<typeof listEventsParameters> = {
 };
 
 const readEventParameters = Type.Object({
-  eventId: Type.String({ description: "予定ID（list_events で取得した id）" }),
+  eventId: Type.String({ description: "予定ID（list-events で取得した id）" }),
   calendarId: calendarIdParameter,
 });
 
 export const readEventTool: AgentTool<typeof readEventParameters> = {
-  name: "read_event",
+  name: "read-event",
   label: "Read Calendar Event",
   description:
-    "指定した予定の詳細を取得する。list_events で得た eventId を渡す",
+    "指定した予定の詳細を取得する。list-events で得た eventId を渡す",
   parameters: readEventParameters,
   execute: async (_toolCallId, { eventId, calendarId = "primary" }) => {
     const event = (await calendarFetch(
@@ -204,7 +204,7 @@ const createEventParameters = Type.Object({
 });
 
 export const createEventTool: AgentTool<typeof createEventParameters> = {
-  name: "create_event",
+  name: "create-event",
   label: "Create Calendar Event",
   description: "Google カレンダーに新しい予定を作成する",
   parameters: createEventParameters,
@@ -430,7 +430,7 @@ async function recreateEventForTypeChange(params: {
 }
 
 export const updateEventTool: AgentTool<typeof updateEventParameters> = {
-  name: "update_event",
+  name: "update-event",
   label: "Update Calendar Event",
   description:
     "既存の予定を更新する。指定したフィールドのみ変更し、他は維持する。終日↔時刻指定の変更時は予定を削除・再作成するため eventId が変わる（繰り返し設定・通知設定は引き継ぐが、Google Meet 等の conferenceData は引き継がれない）",
@@ -535,7 +535,7 @@ const deleteEventParameters = Type.Object({
 });
 
 export const deleteEventTool: AgentTool<typeof deleteEventParameters> = {
-  name: "delete_event",
+  name: "delete-event",
   label: "Delete Calendar Event",
   description: "指定した予定を削除する",
   parameters: deleteEventParameters,

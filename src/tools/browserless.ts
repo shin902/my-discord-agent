@@ -33,7 +33,7 @@ const smartScrapeParams = Type.Object({
 });
 
 export const browserlessSmartScrapeTool: AgentTool<typeof smartScrapeParams> = {
-  name: "browserless_smart_scrape",
+  name: "browserless-smart-scrape",
   label: "Browserless Smart Scrape",
   description:
     "⚠️ローカルLLM禁止（コンテキスト爆発リスク）: URL からコンテンツをスクレイプ。JS 描画・ブロック回避の自動フォールバック付き → JSON",
@@ -67,7 +67,7 @@ const searchParams = Type.Object({
 });
 
 export const browserlessSearchTool: AgentTool<typeof searchParams> = {
-  name: "browserless_search",
+  name: "browserless-search",
   label: "Browserless Search",
   description: "ウェブ検索を実行して結果を返す → JSON",
   parameters: searchParams,
@@ -95,7 +95,7 @@ const functionParams = Type.Object({
 });
 
 export const browserlessFunctionTool: AgentTool<typeof functionParams> = {
-  name: "browserless_function",
+  name: "browserless-function",
   label: "Browserless Function",
   description: "Puppeteer コードをブラウザで実行 → JSON",
   parameters: functionParams,
@@ -113,7 +113,7 @@ const contentParams = Type.Object({
 });
 
 export const browserlessContentTool: AgentTool<typeof contentParams> = {
-  name: "browserless_content",
+  name: "browserless-content",
   label: "Browserless Content",
   description:
     "⚠️ローカルLLM禁止（コンテキスト爆発リスク）: JavaScript 描画後の HTML 全文を取得 → HTML 文字列",

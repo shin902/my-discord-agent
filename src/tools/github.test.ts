@@ -27,7 +27,7 @@ const makeIssue = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-describe("list_issues", () => {
+describe("list-issues", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -142,7 +142,7 @@ describe("list_issues", () => {
   });
 });
 
-describe("read_issue", () => {
+describe("read-issue", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -212,7 +212,7 @@ describe("read_issue", () => {
   });
 });
 
-describe("comment_issue", () => {
+describe("comment-issue", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;
 
