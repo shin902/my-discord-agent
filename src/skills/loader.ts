@@ -57,22 +57,12 @@ export async function loadSkills(
     entries = (await readdir(skillsDir, { withFileTypes: true })) as Dirent[];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      if (allowlist) {
-        for (const name of allowlist) {
-          console.warn(
-            `[skills] allowlist 内のスキル "${name}" が ${skillsDir} に見つかりませんでした`,
-          );
-        }
-      }
       return [];
     }
     throw err;
   }
 
   const skills: Skill[] = [];
-
-  const loadedNames = new Set<string>();
-  const missingSkillMdDirs = new Set<string>();
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -84,7 +74,6 @@ export async function loadSkills(
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         if (allowlist && allowlist.includes(entry.name)) {
-          missingSkillMdDirs.add(entry.name);
           console.warn(
             `[skills] ディレクトリ "${entry.name}" は存在しますが SKILL.md がありません (${skillPath})`,
           );
@@ -98,9 +87,13 @@ export async function loadSkills(
     const name = frontmatter.name || entry.name;
     const description = frontmatter.description || "";
 
-    loadedNames.add(name);
+    if (frontmatter.name && frontmatter.name !== entry.name) {
+      console.warn(
+        `[skills] スキル名不一致: ディレクトリ名 "${entry.name}" とフロントマター name "${frontmatter.name}" が異なります。allowlist はディレクトリ名で照合します`,
+      );
+    }
 
-    if (allowlist && !allowlist.includes(name)) continue;
+    if (allowlist && !allowlist.includes(entry.name)) continue;
 
     skills.push(
       SkillSchema.parse({
@@ -109,16 +102,6 @@ export async function loadSkills(
         location: skillPath,
       }),
     );
-  }
-
-  if (allowlist) {
-    for (const name of allowlist) {
-      if (!loadedNames.has(name) && !missingSkillMdDirs.has(name)) {
-        console.warn(
-          `[skills] allowlist 内のスキル "${name}" が ${skillsDir} に見つかりませんでした`,
-        );
-      }
-    }
   }
 
   return skills;
