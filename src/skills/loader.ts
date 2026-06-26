@@ -81,7 +81,7 @@ export async function loadSkills(
       content = await readFile(skillPath, "utf-8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        if (allowlist && allowlist.includes(entry.name)) {
+        if (allowlist?.includes(entry.name)) {
           throw new Error(
             `[skills] ディレクトリ "${entry.name}" は存在しますが SKILL.md がありません (${skillPath})`,
           );

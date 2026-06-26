@@ -77,6 +77,8 @@ describe("loadSkills", () => {
     await mkdir(`${dir}/existing-skill`);
     // SKILL.md なしで allowlist に含まれていないスキルは無視されるが、
     // allowlist に含まれていないディレクトリは存在してもロードされない
-    await expect(loadSkills(dir, ["missing-skill"])).rejects.toThrow("[skills]");
+    await expect(loadSkills(dir, ["missing-skill"])).rejects.toThrow(
+      "[skills]",
+    );
   });
 });
