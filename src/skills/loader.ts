@@ -57,15 +57,23 @@ export async function loadSkills(
     entries = (await readdir(skillsDir, { withFileTypes: true })) as Dirent[];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (allowlist && allowlist.length > 0) {
+        throw new Error(
+          `[skills] スキルディレクトリ "${skillsDir}" が存在しません。allowlist に指定されたスキル: ${allowlist.join(", ")}`,
+        );
+      }
       return [];
     }
     throw err;
   }
 
   const skills: Skill[] = [];
+  const foundDirs = new Set<string>();
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+
+    foundDirs.add(entry.name);
 
     const skillPath = path.join(skillsDir, entry.name, "SKILL.md");
     let content: string;
@@ -74,7 +82,7 @@ export async function loadSkills(
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         if (allowlist && allowlist.includes(entry.name)) {
-          console.warn(
+          throw new Error(
             `[skills] ディレクトリ "${entry.name}" は存在しますが SKILL.md がありません (${skillPath})`,
           );
         }
@@ -102,6 +110,15 @@ export async function loadSkills(
         location: skillPath,
       }),
     );
+  }
+
+  if (allowlist) {
+    const missing = allowlist.filter((name) => !foundDirs.has(name));
+    if (missing.length > 0) {
+      throw new Error(
+        `[skills] allowlist に指定されたスキルが "${skillsDir}" に見つかりません: ${missing.join(", ")}`,
+      );
+    }
   }
 
   return skills;
