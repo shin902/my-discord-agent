@@ -72,6 +72,7 @@ export async function loadSkills(
   const skills: Skill[] = [];
 
   const loadedNames = new Set<string>();
+  const missingSkillMdDirs = new Set<string>();
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -81,7 +82,15 @@ export async function loadSkills(
     try {
       content = await readFile(skillPath, "utf-8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        if (allowlist && allowlist.includes(entry.name)) {
+          missingSkillMdDirs.add(entry.name);
+          console.warn(
+            `[skills] ディレクトリ "${entry.name}" は存在しますが SKILL.md がありません (${skillPath})`,
+          );
+        }
+        continue;
+      }
       throw err;
     }
 
@@ -104,7 +113,7 @@ export async function loadSkills(
 
   if (allowlist) {
     for (const name of allowlist) {
-      if (!loadedNames.has(name)) {
+      if (!loadedNames.has(name) && !missingSkillMdDirs.has(name)) {
         console.warn(
           `[skills] allowlist 内のスキル "${name}" が ${skillsDir} に見つかりませんでした`,
         );
