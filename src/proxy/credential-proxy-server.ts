@@ -186,9 +186,12 @@ async function handleRequest(
       upstreamRes.pipe(res);
       upstreamRes.on("end", resolve);
       upstreamRes.on("error", (err) => {
-        // upstream.destroy() 後に upstreamRes も "error" を emit するが、その時点で
-        // Promise は upstream.on("error") により settled 済み。reject() は no-op に
-        // なるため、ここでログだけ出して握りつぶしを明示する。
+        // upstream.destroyed === false: 通常の midstream エラー。upstream.on("error") より
+        // 先に発火した場合は reject() が有効。後に発火した場合は Promise が settled 済みで
+        // no-op になるが、.catch() → res.headersSent チェック → upstream.on("error") →
+        // res.destroy(err) の順で処理されるため動作は正しい。
+        // upstream.destroyed === true: タイムアウト等で destroy() 済みのため
+        // Promise は upstream.on("error") により既に settled。reject() は no-op なのでログのみ。
         if (!upstream.destroyed) {
           reject(err);
         } else {
