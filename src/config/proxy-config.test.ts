@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./config.js", () => ({
-  loadRawConfig: vi.fn(),
-}));
+vi.mock("./config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config.js")>();
+  return { ...actual, loadRawConfig: vi.fn() };
+});
 
 describe("loadRequestTimeoutMs", () => {
   let loadRequestTimeoutMs: () => Promise<number>;

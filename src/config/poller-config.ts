@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadRawConfig } from "./config.js";
+import { loadConfigField, loadRawConfig } from "./config.js";
 
 export type DispatchMode = "serial" | "parallel-session";
 
@@ -17,18 +17,12 @@ export async function loadDispatchMode(): Promise<DispatchMode> {
   }
 
   const raw = await loadRawConfig();
-  if (raw.poller !== undefined) {
-    const result = PollerConfigSchema.safeParse(raw.poller);
-    if (result.success && result.data.dispatchMode !== undefined) {
-      return result.data.dispatchMode;
-    }
-    if (!result.success) {
-      console.warn(
-        "[poller] poller 設定が不正、デフォルト使用:",
-        result.error.message,
-      );
-    }
-  }
-
-  return "parallel-session";
+  return loadConfigField(
+    raw,
+    "poller",
+    PollerConfigSchema,
+    "dispatchMode",
+    "parallel-session",
+    "[poller]",
+  );
 }
