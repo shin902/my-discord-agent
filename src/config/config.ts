@@ -22,7 +22,6 @@ export function loadConfigField<T>(
   schema: z.ZodTypeAny,
   field: string,
   defaultValue: T,
-  logPrefix: string,
 ): T {
   if (raw[section] === undefined) return defaultValue;
   const result = schema.safeParse(raw[section]);
@@ -32,7 +31,7 @@ export function loadConfigField<T>(
     if (value !== undefined) return value as T;
   } else {
     console.warn(
-      `${logPrefix} ${section} 設定が不正、デフォルト使用:`,
+      `[${section}] 設定が不正、デフォルト使用:`,
       result.error.message,
     );
   }

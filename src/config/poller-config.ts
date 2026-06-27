@@ -23,6 +23,5 @@ export async function loadDispatchMode(): Promise<DispatchMode> {
     PollerConfigSchema,
     "dispatchMode",
     "parallel-session",
-    "[poller]",
   );
 }

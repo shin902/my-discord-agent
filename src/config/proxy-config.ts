@@ -17,6 +17,5 @@ export async function loadRequestTimeoutMs(): Promise<number> {
     ProxyConfigSchema,
     "requestTimeoutMs",
     DEFAULT_REQUEST_TIMEOUT_MS,
-    "[proxy]",
   );
 }
