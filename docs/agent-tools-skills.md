@@ -148,17 +148,19 @@ Markdownファイルを、CDN/外部JS依存なしの単一HTMLファイルに�
 
 ### wiki系スキル（wiki-setup / wiki-ingest / wiki-query / wiki-lint / wiki-search / wiki-search-fts）
 
-**場所:** `templates/SKILLS/wiki-{setup,ingest,query,lint,search,search-fts}/SKILL.md`
+LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM所有のMarkdown）の二層構造で運用するためのスキル群。
 
-LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM所有のMarkdown）→ `AGENTS.md`（スキーマ）の三層構造で運用するためのスキル群。
+#### スキルの配置方針
 
-| スキル | 役割 |
-|--------|------|
-| `wiki-setup` | wikiを初期構築する一回限りの足場作り。既存wikiの有無、目的、ディレクトリ名・ファイル名規則（英語/日本語）をユーザーにヒアリングしてから `AGENTS.md` とディレクトリ構造を作る |
-| `wiki-ingest` | 新しいソースを読み込み、要約してソースページを作成し、関連するエンティティ/コンセプトページ・`index.md`・`log.md` に反映する |
-| `wiki-query` | wikiに基づいて出典付きで質問に回答し、永続的価値のある回答は新しいページとして書き戻す |
-| `wiki-lint` | 孤立ページ・リンク切れ・frontmatter欠落・矛盾などを機械的チェック＋判断ベースのチェックで検出し、安全な修正を適用する |
-| `wiki-search` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
-| `wiki-search-fts` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が遅く/不十分になった大規模wiki向けの移行先で、ユーザーが明示的に有効化する |
+`wiki-ingest`・`wiki-query`・`wiki-lint` は `wiki-setup` にバンドルされており、`templates/SKILLS/` には独立して存在しない。`wiki-setup` 実行時のヒアリングで確定したディレクトリ名が `setup.sh` によってスキルに焼き込まれ、`/workspace/SKILLS/` へコピーされる。
 
-`wiki-ingest`/`wiki-query`はページ保存先パスを `AGENTS.md` で定義されたディレクトリ規約に従って決定する（既定値は `wiki/sources/`・`wiki/concepts/`）ため、`wiki-setup`でディレクトリ名を変更した場合もそれに追従する。
+`groups.json` には `wiki-ingest`・`wiki-query`・`wiki-lint` を記載しない。`wiki-setup` の実行後にのみ `/workspace/SKILLS/` に現れる。
+
+| スキル | 場所 | 役割 |
+|--------|------|------|
+| `wiki-setup` | `templates/SKILLS/wiki-setup/` | wikiを初期構築する一回限りの足場作り。ヒアリング後に `setup.sh` でwiki-ingest/query/lintをインストールする |
+| `wiki-ingest` | `wiki-setup/SKILLS/wiki-ingest/`（テンプレート） | 新しいソースを読み込み、要約してソースページを作成し、関連ページ・index・logに反映する |
+| `wiki-query` | `wiki-setup/SKILLS/wiki-query/`（テンプレート） | wikiに基づいて出典付きで質問に回答し、永続的価値のある回答は新しいページとして書き戻す |
+| `wiki-lint` | `wiki-setup/SKILLS/wiki-lint/`（テンプレート） | 孤立ページ・リンク切れ・frontmatter欠落・矛盾などを検出し、安全な修正を適用する |
+| `wiki-search` | `templates/SKILLS/wiki-search/` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
+| `wiki-search-fts` | `templates/SKILLS/wiki-search-fts/` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が不十分になった大規模wiki向けの移行先 |
