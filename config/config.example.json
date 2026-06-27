@@ -5,5 +5,8 @@
   },
   "poller": {
     "dispatchMode": "serial"
+  },
+  "proxy": {
+    "requestTimeoutMs": 120000
   }
 }

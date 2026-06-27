@@ -60,7 +60,7 @@ describe("createRequestHandler: エラーレスポンス", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     const req = makeReq("/unknown/endpoint");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -78,7 +78,7 @@ describe("createRequestHandler: エラーレスポンス", () => {
         baseUrl: "http://fake.test/{UNSET_VAR_XYZ}/v1" as unknown as string,
       } as CredentialEntry,
     ];
-    const handler = createRequestHandler(badCreds);
+    const handler = createRequestHandler(badCreds, 30000);
     const req = makeReq("/bad/completions");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -115,7 +115,7 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     handler(
       makeReq("/openai/chat/completions?stream=true"),
       makeRes() as unknown as ServerResponse,
@@ -128,7 +128,7 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     handler(
       makeReq("/openai/v1", {
         host: "example.com",
@@ -145,7 +145,7 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     handler(
       makeReq("/openai/v1", {}, "GET"),
       makeRes() as unknown as ServerResponse,
@@ -158,7 +158,7 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     const res = makeRes();
     handler(makeReq("/openai/v1"), res as unknown as ServerResponse);
 
@@ -167,6 +167,83 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
     errorCb(new Error("connection refused"));
     expect(res.writeHead).toHaveBeenCalledWith(502);
     expect(res.end).toHaveBeenCalledWith("Bad Gateway");
+  });
+
+  it("opts.timeout が createRequestHandler に渡した値で設定される", async () => {
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(CREDS, 5000);
+    handler(makeReq("/openai/v1"), makeRes() as unknown as ServerResponse);
+    const opts = requestMock.mock.calls[0][0];
+    expect(opts.timeout).toBe(5000);
+  });
+});
+
+describe("createRequestHandler: タイムアウト", () => {
+  let requestMock: ReturnType<typeof vi.fn>;
+  let upstreamOnMock: ReturnType<typeof vi.fn>;
+  let upstreamDestroyMock: ReturnType<typeof vi.fn>;
+
+  const CREDS: CredentialEntry[] = [
+    {
+      provider: "openai",
+      envVars: ["OPENAI_API_KEY"],
+      baseUrl: "http://fake-openai.test/v1",
+    },
+  ];
+
+  beforeEach(() => {
+    vi.resetModules();
+    upstreamDestroyMock = vi.fn();
+    upstreamOnMock = vi.fn().mockReturnThis();
+    requestMock = vi.fn(() => ({
+      on: upstreamOnMock,
+      destroy: upstreamDestroyMock,
+    }));
+    vi.doMock("node:http", () => ({ request: requestMock }));
+    vi.doMock("node:https", () => ({ request: vi.fn() }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("timeout イベントで destroy を呼ぶ", async () => {
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(CREDS, 5000);
+    handler(makeReq("/openai/v1"), makeRes() as unknown as ServerResponse);
+
+    const timeoutCb = upstreamOnMock.mock.calls.find(
+      ([e]) => e === "timeout",
+    )?.[1];
+    expect(timeoutCb).toBeDefined();
+    timeoutCb();
+    expect(upstreamDestroyMock).toHaveBeenCalled();
+  });
+
+  it("timeout 後の error イベントで 504 Gateway Timeout を返す", async () => {
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(CREDS, 5000);
+    const res = makeRes();
+    handler(makeReq("/openai/v1"), res as unknown as ServerResponse);
+
+    const timeoutCb = upstreamOnMock.mock.calls.find(
+      ([e]) => e === "timeout",
+    )?.[1];
+    timeoutCb();
+
+    const errorCb = upstreamOnMock.mock.calls.find(
+      ([e]) => e === "error",
+    )?.[1];
+    errorCb(new Error("upstream timeout for openai"));
+
+    expect(res.writeHead).toHaveBeenCalledWith(504);
+    expect(res.end).toHaveBeenCalledWith("Gateway Timeout");
   });
 });
 
@@ -208,7 +285,7 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(GRAPH_CREDS);
+    const handler = createRequestHandler(GRAPH_CREDS, 30000);
     const req = makeReq("/graph/me/messages");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -227,7 +304,7 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(GRAPH_CREDS);
+    const handler = createRequestHandler(GRAPH_CREDS, 30000);
     const req = makeReq("/graph/me/messages");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -253,7 +330,7 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(GRAPH_CREDS);
+    const handler = createRequestHandler(GRAPH_CREDS, 30000);
     const req = makeReq("/graph/me/messages");
     const res = makeRes();
 
@@ -335,7 +412,7 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(GOOGLE_CREDS);
+    const handler = createRequestHandler(GOOGLE_CREDS, 30000);
     const req = makeReq("/google-calendar/calendars/primary/events");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -354,7 +431,7 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(GOOGLE_CREDS);
+    const handler = createRequestHandler(GOOGLE_CREDS, 30000);
     const req = makeReq("/google-calendar/calendars/primary/events");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -397,7 +474,7 @@ describe("createRequestHandler: Reddit Cookie プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(REDDIT_CREDS);
+    const handler = createRequestHandler(REDDIT_CREDS, 30000);
     const req = makeReq("/reddit/r/LocalLLaMA/comments/abc.json", {}, "GET");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -419,7 +496,7 @@ describe("createRequestHandler: Reddit Cookie プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(REDDIT_CREDS);
+    const handler = createRequestHandler(REDDIT_CREDS, 30000);
     const req = makeReq("/reddit/r/LocalLLaMA/comments/abc.json", {}, "GET");
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
@@ -462,7 +539,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     handler(
       makeReq("/openai/chat/completions", { authorization: "Bearer fake" }),
       makeRes() as unknown as ServerResponse,
@@ -483,7 +560,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
         auth: { type: "query-token" },
         baseUrl: "https://production-sfo.browserless.io",
       },
-    ]);
+    ], 30000);
     handler(
       makeReq("/browserless/content?timeout=30000", {
         authorization: "Bearer fake",
@@ -509,7 +586,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
         auth: { type: "query-token", queryParam: "api_key" },
         baseUrl: "https://api.example.com/v1?existing=true",
       },
-    ]);
+    ], 30000);
     handler(
       makeReq("/query-api/content"),
       makeRes() as unknown as ServerResponse,
@@ -530,7 +607,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
         auth: { type: "basic", username: "x-access-token" },
         baseUrl: "https://github.com",
       },
-    ]);
+    ], 30000);
     handler(
       makeReq("/github-git/owner/repo.git/info/refs", {
         authorization: "Bearer fake",
@@ -556,7 +633,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
         auth: { type: "basic" },
         baseUrl: "https://github.com",
       },
-    ]);
+    ], 30000);
     handler(
       makeReq("/github-git/owner/repo.git/info/refs"),
       makeRes() as unknown as ServerResponse,
@@ -573,7 +650,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     handler(
       makeReq("/openai/chat/completions", { authorization: "Bearer fake" }),
       makeRes() as unknown as ServerResponse,
@@ -586,7 +663,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(CREDS);
+    const handler = createRequestHandler(CREDS, 30000);
     handler(
       makeReq("/local-llm/completions", {
         authorization: "Bearer pass-through",
@@ -626,6 +703,9 @@ describe("initCredentialProxyServer: Google Auth 初期化", () => {
     vi.doMock("node:https", () => ({ request: vi.fn() }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue(GOOGLE_CREDS),
+    }));
+    vi.doMock("../config/proxy-config.js", () => ({
+      loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
     }));
   });
 
@@ -740,6 +820,9 @@ describe("initCredentialProxyServer: Reddit Cookie 初期化", () => {
     vi.doMock("node:https", () => ({ request: vi.fn() }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue(REDDIT_CREDS),
+    }));
+    vi.doMock("../config/proxy-config.js", () => ({
+      loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
     }));
   });
 

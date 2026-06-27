@@ -6,6 +6,7 @@ import {
   type CredentialEntry,
   loadCredentialProxy,
 } from "../config/credential-proxy.js";
+import { loadRequestTimeoutMs } from "../config/proxy-config.js";
 import {
   GoogleAuthRequiredError,
   getGoogleAccessToken,
@@ -36,6 +37,7 @@ function appendPath(basePath: string, restPath: string): string {
 
 async function handleRequest(
   creds: CredentialEntry[],
+  timeoutMs: number,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -168,6 +170,7 @@ async function handleRequest(
     path: parsedTarget.pathname + parsedTarget.search,
     method: req.method,
     headers,
+    timeout: timeoutMs,
   };
 
   await new Promise<void>((resolve, reject) => {
@@ -178,13 +181,24 @@ async function handleRequest(
       upstreamRes.on("error", reject);
     });
 
+    let timedOut = false;
+    upstream.on("timeout", () => {
+      timedOut = true;
+      upstream.destroy(new Error(`upstream timeout for ${provider}`));
+    });
+
     upstream.on("error", (err) => {
       console.error(
         `[credential-proxy] upstream error for ${provider}: ${err.message}`,
       );
       if (!res.headersSent) {
-        res.writeHead(502);
-        res.end("Bad Gateway");
+        if (timedOut) {
+          res.writeHead(504);
+          res.end("Gateway Timeout");
+        } else {
+          res.writeHead(502);
+          res.end("Bad Gateway");
+        }
       }
       reject(err);
     });
@@ -193,9 +207,9 @@ async function handleRequest(
   });
 }
 
-export function createRequestHandler(creds: CredentialEntry[]) {
+export function createRequestHandler(creds: CredentialEntry[], timeoutMs: number) {
   return (req: IncomingMessage, res: ServerResponse) => {
-    handleRequest(creds, req, res).catch((err) => {
+    handleRequest(creds, timeoutMs, req, res).catch((err) => {
       if (!res.headersSent) {
         console.error(`[credential-proxy] unhandled error: ${err}`);
         res.writeHead(500);
@@ -206,7 +220,10 @@ export function createRequestHandler(creds: CredentialEntry[]) {
 }
 
 export async function initCredentialProxyServer(): Promise<number> {
-  const creds = await loadCredentialProxy();
+  const [creds, timeoutMs] = await Promise.all([
+    loadCredentialProxy(),
+    loadRequestTimeoutMs(),
+  ]);
 
   // MSALが必要なプロバイダーを初期化
   for (const entry of creds) {
@@ -257,7 +274,7 @@ export async function initCredentialProxyServer(): Promise<number> {
     }
   }
 
-  const server = http.createServer(createRequestHandler(creds));
+  const server = http.createServer(createRequestHandler(creds, timeoutMs));
 
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);
