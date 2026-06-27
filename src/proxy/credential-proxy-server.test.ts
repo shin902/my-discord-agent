@@ -243,6 +243,30 @@ describe("createRequestHandler: タイムアウト", () => {
     expect(res.writeHead).toHaveBeenCalledWith(504);
     expect(res.end).toHaveBeenCalledWith("Gateway Timeout");
   });
+
+  it("ヘッダ送信済みの場合は res.destroy() でソケットを切断する", async () => {
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(CREDS, 5000);
+    const res = makeRes();
+    const resDestroyMock = vi.fn();
+    (res as unknown as Record<string, unknown>).headersSent = true;
+    (res as unknown as Record<string, unknown>).destroy = resDestroyMock;
+    handler(makeReq("/openai/v1"), res as unknown as ServerResponse);
+
+    const timeoutCb = upstreamOnMock.mock.calls.find(
+      ([e]) => e === "timeout",
+    )?.[1];
+    timeoutCb();
+
+    const errorCb = upstreamOnMock.mock.calls.find(([e]) => e === "error")?.[1];
+    const err = new Error("upstream timeout for openai");
+    errorCb(err);
+
+    expect(res.writeHead).not.toHaveBeenCalledWith(504);
+    expect(resDestroyMock).toHaveBeenCalledWith(err);
+  });
 });
 
 describe("createRequestHandler: MSAL プロバイダー", () => {

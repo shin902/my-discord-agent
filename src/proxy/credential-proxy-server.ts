@@ -199,6 +199,10 @@ async function handleRequest(
           res.writeHead(502);
           res.end("Bad Gateway");
         }
+      } else {
+        // ヘッダ送信済みのため 504 を返せない。ソケットを強制切断してクライアントに
+        // 不完全なレスポンスとして通知する（無言の打ち切り 200 を防ぐ）
+        res.destroy(err);
       }
       reject(err);
     });
