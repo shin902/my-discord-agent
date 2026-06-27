@@ -6,6 +6,7 @@ vi.mock("./config.js", () => ({
 
 describe("loadRequestTimeoutMs", () => {
   let loadRequestTimeoutMs: () => Promise<number>;
+  let DEFAULT_REQUEST_TIMEOUT_MS: number;
   let mockLoadRawConfig: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -15,7 +16,9 @@ describe("loadRequestTimeoutMs", () => {
     mockLoadRawConfig = vi.mocked(configMod.loadRawConfig);
     mockLoadRawConfig.mockResolvedValue({});
 
-    ({ loadRequestTimeoutMs } = await import("./proxy-config.js"));
+    ({ loadRequestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS } = await import(
+      "./proxy-config.js"
+    ));
   });
 
   afterEach(() => {
@@ -23,7 +26,7 @@ describe("loadRequestTimeoutMs", () => {
   });
 
   it("デフォルトは 120000", async () => {
-    expect(await loadRequestTimeoutMs()).toBe(120_000);
+    expect(await loadRequestTimeoutMs()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
   });
 
   it("設定ファイルの requestTimeoutMs が読み込まれる", async () => {
@@ -35,12 +38,12 @@ describe("loadRequestTimeoutMs", () => {
 
   it("設定ファイルに proxy キーがない場合はデフォルト値を返す", async () => {
     mockLoadRawConfig.mockResolvedValue({ someOtherKey: {} });
-    expect(await loadRequestTimeoutMs()).toBe(120_000);
+    expect(await loadRequestTimeoutMs()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
   });
 
   it("設定ファイルの requestTimeoutMs が欠落していてもデフォルトを返す", async () => {
     mockLoadRawConfig.mockResolvedValue({ proxy: {} });
-    expect(await loadRequestTimeoutMs()).toBe(120_000);
+    expect(await loadRequestTimeoutMs()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
   });
 
   it("requestTimeoutMs が不正な値（文字列）は warn してデフォルトを返す", async () => {
@@ -49,7 +52,7 @@ describe("loadRequestTimeoutMs", () => {
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    expect(await loadRequestTimeoutMs()).toBe(120_000);
+    expect(await loadRequestTimeoutMs()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
     expect(warn).toHaveBeenCalledWith(
       "[proxy] proxy 設定が不正、デフォルト使用:",
       expect.any(String),
@@ -61,7 +64,7 @@ describe("loadRequestTimeoutMs", () => {
     mockLoadRawConfig.mockResolvedValue({ proxy: { requestTimeoutMs: 0 } });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    expect(await loadRequestTimeoutMs()).toBe(120_000);
+    expect(await loadRequestTimeoutMs()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
     warn.mockRestore();
   });
 });
