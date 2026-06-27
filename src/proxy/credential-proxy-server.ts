@@ -180,7 +180,18 @@ async function handleRequest(
       res.writeHead(upstreamRes.statusCode ?? 200, upstreamRes.headers);
       upstreamRes.pipe(res);
       upstreamRes.on("end", resolve);
-      upstreamRes.on("error", reject);
+      upstreamRes.on("error", (err) => {
+        // upstream.destroy() 後に upstreamRes も "error" を emit するが、その時点で
+        // Promise は upstream.on("error") により settled 済み。reject() は no-op に
+        // なるため、ここでログだけ出して握りつぶしを明示する。
+        if (!upstream.destroyed) {
+          reject(err);
+        } else {
+          console.error(
+            `[credential-proxy] upstreamRes error after upstream destroyed for ${provider}: ${err.message}`,
+          );
+        }
+      });
     });
 
     upstream.on("timeout", () => {
