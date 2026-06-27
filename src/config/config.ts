@@ -27,6 +27,7 @@ export function loadConfigField<T>(
   if (raw[section] === undefined) return defaultValue;
   const result = schema.safeParse(raw[section]);
   if (result.success) {
+    if (result.data === null || typeof result.data !== "object") return defaultValue;
     const value = (result.data as Record<string, unknown>)[field];
     if (value !== undefined) return value as T;
   } else {
