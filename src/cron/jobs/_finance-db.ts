@@ -8,10 +8,8 @@ const ROOT = path.resolve(__dirname, "../../../");
 
 export function resolveFinanceDbPath(groupName: string): string {
   // ..セグメントによるディレクトリトラバーサルを防止（runner.ts の handler ガードと同様）
-  if (/\.\.([\/\\]|$)/.test(groupName)) {
-    throw new NonRetryableError(
-      `不正な groupName です: ${groupName}`,
-    );
+  if (/\.\.([/\\]|$)/.test(groupName)) {
+    throw new NonRetryableError(`不正な groupName です: ${groupName}`);
   }
   const dbPath = path.join(ROOT, "groups", groupName, "finance.db");
   if (!existsSync(dbPath)) {
