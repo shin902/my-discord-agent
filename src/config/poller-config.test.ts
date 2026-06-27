@@ -58,7 +58,7 @@ describe("loadDispatchMode", () => {
 
     expect(await loadDispatchMode()).toBe("parallel-session");
     expect(warn).toHaveBeenCalledWith(
-      "[poller] poller 設定が不正、デフォルト使用:",
+      "[poller] 設定が不正、デフォルト使用:",
       expect.any(String),
     );
     warn.mockRestore();

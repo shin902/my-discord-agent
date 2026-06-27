@@ -55,7 +55,7 @@ describe("loadRequestTimeoutMs", () => {
 
     expect(await loadRequestTimeoutMs()).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
     expect(warn).toHaveBeenCalledWith(
-      "[proxy] proxy 設定が不正、デフォルト使用:",
+      "[proxy] 設定が不正、デフォルト使用:",
       expect.any(String),
     );
     warn.mockRestore();
