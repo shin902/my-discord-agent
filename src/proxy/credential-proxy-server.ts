@@ -207,7 +207,10 @@ async function handleRequest(
   });
 }
 
-export function createRequestHandler(creds: CredentialEntry[], timeoutMs: number) {
+export function createRequestHandler(
+  creds: CredentialEntry[],
+  timeoutMs: number,
+) {
   return (req: IncomingMessage, res: ServerResponse) => {
     handleRequest(creds, timeoutMs, req, res).catch((err) => {
       if (!res.headersSent) {

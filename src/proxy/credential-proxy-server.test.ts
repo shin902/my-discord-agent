@@ -237,9 +237,7 @@ describe("createRequestHandler: タイムアウト", () => {
     )?.[1];
     timeoutCb();
 
-    const errorCb = upstreamOnMock.mock.calls.find(
-      ([e]) => e === "error",
-    )?.[1];
+    const errorCb = upstreamOnMock.mock.calls.find(([e]) => e === "error")?.[1];
     errorCb(new Error("upstream timeout for openai"));
 
     expect(res.writeHead).toHaveBeenCalledWith(504);
@@ -553,14 +551,17 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler([
-      {
-        provider: "browserless",
-        envVars: ["BROWSERLESS_TOKEN"],
-        auth: { type: "query-token" },
-        baseUrl: "https://production-sfo.browserless.io",
-      },
-    ], 30000);
+    const handler = createRequestHandler(
+      [
+        {
+          provider: "browserless",
+          envVars: ["BROWSERLESS_TOKEN"],
+          auth: { type: "query-token" },
+          baseUrl: "https://production-sfo.browserless.io",
+        },
+      ],
+      30000,
+    );
     handler(
       makeReq("/browserless/content?timeout=30000", {
         authorization: "Bearer fake",
@@ -579,14 +580,17 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler([
-      {
-        provider: "query-api",
-        envVars: ["TEST_API_KEY"],
-        auth: { type: "query-token", queryParam: "api_key" },
-        baseUrl: "https://api.example.com/v1?existing=true",
-      },
-    ], 30000);
+    const handler = createRequestHandler(
+      [
+        {
+          provider: "query-api",
+          envVars: ["TEST_API_KEY"],
+          auth: { type: "query-token", queryParam: "api_key" },
+          baseUrl: "https://api.example.com/v1?existing=true",
+        },
+      ],
+      30000,
+    );
     handler(
       makeReq("/query-api/content"),
       makeRes() as unknown as ServerResponse,
@@ -600,14 +604,17 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler([
-      {
-        provider: "github-git",
-        envVars: ["GITHUB_CLONE_TOKEN"],
-        auth: { type: "basic", username: "x-access-token" },
-        baseUrl: "https://github.com",
-      },
-    ], 30000);
+    const handler = createRequestHandler(
+      [
+        {
+          provider: "github-git",
+          envVars: ["GITHUB_CLONE_TOKEN"],
+          auth: { type: "basic", username: "x-access-token" },
+          baseUrl: "https://github.com",
+        },
+      ],
+      30000,
+    );
     handler(
       makeReq("/github-git/owner/repo.git/info/refs", {
         authorization: "Bearer fake",
@@ -626,14 +633,17 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler([
-      {
-        provider: "github-git",
-        envVars: ["GITHUB_CLONE_TOKEN"],
-        auth: { type: "basic" },
-        baseUrl: "https://github.com",
-      },
-    ], 30000);
+    const handler = createRequestHandler(
+      [
+        {
+          provider: "github-git",
+          envVars: ["GITHUB_CLONE_TOKEN"],
+          auth: { type: "basic" },
+          baseUrl: "https://github.com",
+        },
+      ],
+      30000,
+    );
     handler(
       makeReq("/github-git/owner/repo.git/info/refs"),
       makeRes() as unknown as ServerResponse,

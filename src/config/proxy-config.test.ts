@@ -27,7 +27,9 @@ describe("loadRequestTimeoutMs", () => {
   });
 
   it("設定ファイルの requestTimeoutMs が読み込まれる", async () => {
-    mockLoadRawConfig.mockResolvedValue({ proxy: { requestTimeoutMs: 60_000 } });
+    mockLoadRawConfig.mockResolvedValue({
+      proxy: { requestTimeoutMs: 60_000 },
+    });
     expect(await loadRequestTimeoutMs()).toBe(60_000);
   });
 
