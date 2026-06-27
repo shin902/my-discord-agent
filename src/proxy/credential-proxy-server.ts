@@ -15,6 +15,8 @@ import {
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 import { getRedditCookieHeader } from "./reddit-cookie-store.js";
 
+class UpstreamTimeoutError extends Error {}
+
 let proxyPort: number | null = null;
 
 export function getProxyPort(): number {
@@ -181,10 +183,10 @@ async function handleRequest(
       upstreamRes.on("error", reject);
     });
 
-    let timedOut = false;
     upstream.on("timeout", () => {
-      timedOut = true;
-      upstream.destroy(new Error(`upstream timeout for ${provider}`));
+      upstream.destroy(
+        new UpstreamTimeoutError(`upstream timeout for ${provider}`),
+      );
     });
 
     upstream.on("error", (err) => {
@@ -192,7 +194,7 @@ async function handleRequest(
         `[credential-proxy] upstream error for ${provider}: ${err.message}`,
       );
       if (!res.headersSent) {
-        if (timedOut) {
+        if (err instanceof UpstreamTimeoutError) {
           res.writeHead(504);
           res.end("Gateway Timeout");
         } else {

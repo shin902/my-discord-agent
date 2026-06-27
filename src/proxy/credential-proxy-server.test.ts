@@ -237,8 +237,10 @@ describe("createRequestHandler: タイムアウト", () => {
     )?.[1];
     timeoutCb();
 
+    // destroy に渡された UpstreamTimeoutError インスタンスをそのまま error ハンドラへ流す
+    const destroyArg = upstreamDestroyMock.mock.calls[0]?.[0];
     const errorCb = upstreamOnMock.mock.calls.find(([e]) => e === "error")?.[1];
-    errorCb(new Error("upstream timeout for openai"));
+    errorCb(destroyArg);
 
     expect(res.writeHead).toHaveBeenCalledWith(504);
     expect(res.end).toHaveBeenCalledWith("Gateway Timeout");
