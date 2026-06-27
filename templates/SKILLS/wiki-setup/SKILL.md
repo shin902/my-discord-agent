@@ -87,6 +87,18 @@ tags: []
 
 強制せず、案として伝える: 閲覧フロントエンドとしてのObsidian（グラフビュー、ソース収集用のWeb Clipper、フロントマターを扱うBases/Dataview、スライド用のMarp）、無料でバージョン履歴を得るための `git init`、wikiがindexファイルだけでは追いつかなくなった時点での検索ツール（`wiki-search` ヘルパー、数百ページを超えたら `wiki-search-fts` への移行、さらにベクトル検索が必要になったら `qmd` のような外部ツールの検討をユーザーに相談する）。`wiki-search` と `wiki-search-fts` は同時に有効化せず、移行時は旧方を `SKILLS/` から削除すること。
 
-### 6. 引き渡し
+### 6. 関連スキルをインストールする
+
+ヒアリングで確定したディレクトリ名を引数に、以下を実行する:
+
+```bash
+bash /workspace/SKILLS/wiki-setup/setup.sh <WIKI_ROOT> <RAW_DIR> <DIGEST_DIR>
+```
+
+例: `bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest`
+
+このスクリプトは `wiki-setup/SKILLS/` にバンドルされた wiki-ingest・wiki-lint・wiki-query を `/workspace/SKILLS/` へコピーし、プレースホルダー（`{{WIKI_ROOT}}` 等）を実際のパスに一括置換する。既に存在するスキルはスキップされる（既存スキルには一切干渉しない）。
+
+### 7. 引き渡し
 
 構造が準備できたことをユーザーに伝え、ツリーを示し、運用の流れを説明する: `raw/` にソースを置く → 取り込みを実行する → 検索で質問する → 定期的にlintを実行する。完了前に、`AGENTS.md` の目的セクションがユーザーの望むものと一致しているか確認すること。
