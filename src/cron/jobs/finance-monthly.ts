@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { ChannelType } from "discord.js";
 import { z } from "zod";
+import { NonRetryableError } from "../../utils/error.js";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
 import { resolveFinanceDbPath } from "./_finance-db.js";
@@ -86,7 +87,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
           CASE
             WHEN cycle = 'monthly' THEN amount
             WHEN cycle = 'yearly'  THEN amount / 12
-            WHEN cycle = 'weekly'  THEN amount * 4
+            WHEN cycle = 'weekly'  THEN CAST(amount * 52.0 / 12 AS INTEGER)
             ELSE amount
           END
         ) AS monthly_cost
@@ -120,8 +121,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
     const channel = await ctx.client.channels.fetch(ctx.channelId);
     if (!channel || channel.type !== ChannelType.GuildText) {
-      console.error("[finance-monthly] テキストチャンネルが見つかりません");
-      return;
+      throw new NonRetryableError(
+        `[finance-monthly] テキストチャンネルが見つかりません: ${ctx.channelId}`,
+      );
     }
 
     for (const chunk of splitMessage(report)) {
