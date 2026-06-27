@@ -62,9 +62,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const settings = SettingsSchema.parse(ctx.settings ?? {});
   const dbPath = path.join(ROOT, "groups", ctx.groupName, "finance.db");
 
-  const db = new Database(dbPath, { readonly: true });
+  let db: Database.Database | undefined;
   let subs: SubscriptionRow[];
   try {
+    db = new Database(dbPath, { readonly: true });
     subs = db
       .prepare<[number], SubscriptionRow>(
         `SELECT name, amount, cycle, next_date, category
@@ -75,7 +76,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       )
       .all(settings.daysAhead);
   } finally {
-    db.close();
+    db?.close();
   }
 
   if (subs.length === 0) return;

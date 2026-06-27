@@ -51,8 +51,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const settings = SettingsSchema.parse(ctx.settings ?? {});
   const dbPath = path.join(ROOT, "groups", ctx.groupName, "finance.db");
 
-  const db = new Database(dbPath, { readonly: true });
+  let db: Database.Database | undefined;
   try {
+    db = new Database(dbPath, { readonly: true });
     const now = new Date();
     const target = new Date(
       now.getFullYear(),
@@ -131,6 +132,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
       await channel.send(chunk);
     }
   } finally {
-    db.close();
+    db?.close();
   }
 }
