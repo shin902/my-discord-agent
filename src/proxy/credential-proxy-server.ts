@@ -15,7 +15,12 @@ import {
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 import { getRedditCookieHeader } from "./reddit-cookie-store.js";
 
-class UpstreamTimeoutError extends Error {}
+class UpstreamTimeoutError extends Error {
+  constructor(message?: string) {
+    super(message);
+    this.name = "UpstreamTimeoutError";
+  }
+}
 
 let proxyPort: number | null = null;
 
