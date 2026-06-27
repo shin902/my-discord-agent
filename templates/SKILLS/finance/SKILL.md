@@ -97,8 +97,8 @@ ORDER BY next_date;
 sqlite3 /workspace/finance.db "
 SELECT
   SUM(CASE WHEN cycle = 'monthly' THEN amount
-           WHEN cycle = 'yearly'  THEN amount / 12
-           WHEN cycle = 'weekly'  THEN amount * 4
+           WHEN cycle = 'yearly'  THEN CAST(amount * 1.0 / 12 AS INTEGER)
+           WHEN cycle = 'weekly'  THEN CAST(amount * 52.0 / 12 AS INTEGER)
            ELSE amount END) AS monthly_cost
 FROM subscriptions
 WHERE active = 1;

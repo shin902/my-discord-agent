@@ -86,7 +86,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
         `SELECT SUM(
           CASE
             WHEN cycle = 'monthly' THEN amount
-            WHEN cycle = 'yearly'  THEN amount / 12
+            WHEN cycle = 'yearly'  THEN CAST(amount * 1.0 / 12 AS INTEGER)
             WHEN cycle = 'weekly'  THEN CAST(amount * 52.0 / 12 AS INTEGER)
             ELSE amount
           END
