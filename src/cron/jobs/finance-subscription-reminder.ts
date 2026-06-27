@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { ChannelType } from "discord.js";
 import { z } from "zod";
+import { NonRetryableError } from "../../utils/error.js";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
 import { resolveFinanceDbPath } from "./_finance-db.js";
@@ -42,6 +43,7 @@ function daysUntil(dateStr: string): number {
 }
 
 function daysLabel(days: number): string {
+  if (days < 0) return `${Math.abs(days)}日超過`;
   if (days === 0) return "今日";
   if (days === 1) return "明日";
   return `${days}日後`;
@@ -67,7 +69,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
         `SELECT name, amount, cycle, next_date, category
         FROM subscriptions
         WHERE active = 1
-          AND next_date BETWEEN date('now') AND date('now', ? || ' days')
+          AND next_date BETWEEN date('now', 'localtime') AND date('now', 'localtime', ? || ' days')
         ORDER BY next_date ASC`,
       )
       .all(settings.daysAhead);
@@ -96,10 +98,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
   const channel = await ctx.client.channels.fetch(ctx.channelId);
   if (!channel || channel.type !== ChannelType.GuildText) {
-    console.error(
-      "[finance-subscription-reminder] テキストチャンネルが見つかりません",
+    throw new NonRetryableError(
+      `[finance-subscription-reminder] テキストチャンネルが見つかりません: ${ctx.channelId}`,
     );
-    return;
   }
 
   for (const chunk of splitMessage(report)) {
