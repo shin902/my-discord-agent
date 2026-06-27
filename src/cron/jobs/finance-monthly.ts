@@ -1,15 +1,9 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { ChannelType } from "discord.js";
 import { z } from "zod";
-import { NonRetryableError } from "../../utils/error.js";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "../../../");
+import { resolveFinanceDbPath } from "./_finance-db.js";
 
 const SettingsSchema = z.object({
   lookbackMonths: z.number().int().positive().default(1),
@@ -51,13 +45,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
   }
 
   const settings = SettingsSchema.parse(ctx.settings ?? {});
-  const dbPath = path.join(ROOT, "groups", ctx.groupName, "finance.db");
-
-  if (!existsSync(dbPath)) {
-    throw new NonRetryableError(
-      `finance.db が見つかりません。finance-setup スキルを先に実行してください: ${dbPath}`,
-    );
-  }
+  const dbPath = resolveFinanceDbPath(ctx.groupName);
 
   let db: Database.Database | undefined;
   try {
