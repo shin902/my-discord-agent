@@ -1,7 +1,7 @@
-import Database from "better-sqlite3";
-import { ChannelType } from "discord.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
+import { ChannelType } from "discord.js";
 import { z } from "zod";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
@@ -27,10 +27,14 @@ function formatAmount(amount: number): string {
 
 function cycleLabel(cycle: string): string {
   switch (cycle) {
-    case "monthly": return "月額";
-    case "yearly":  return "年額";
-    case "weekly":  return "週額";
-    default:        return cycle;
+    case "monthly":
+      return "月額";
+    case "yearly":
+      return "年額";
+    case "weekly":
+      return "週額";
+    default:
+      return cycle;
   }
 }
 
@@ -49,7 +53,9 @@ function daysLabel(days: number): string {
 
 export default async function handler(ctx: CronContext): Promise<void> {
   if (!ctx.channelId || !ctx.groupName) {
-    console.error("[finance-subscription-reminder] channelId / groupName が未設定です");
+    console.error(
+      "[finance-subscription-reminder] channelId / groupName が未設定です",
+    );
     return;
   }
 
@@ -89,11 +95,13 @@ export default async function handler(ctx: CronContext): Promise<void> {
     lines.push(`${name} ${amount} ${cycle} ${when}`);
   }
 
-  const report = "```\n" + lines.join("\n") + "\n```";
+  const report = `\`\`\`\n${lines.join("\n")}\n\`\`\``;
 
   const channel = await ctx.client.channels.fetch(ctx.channelId);
   if (!channel || channel.type !== ChannelType.GuildText) {
-    console.error("[finance-subscription-reminder] テキストチャンネルが見つかりません");
+    console.error(
+      "[finance-subscription-reminder] テキストチャンネルが見つかりません",
+    );
     return;
   }
 

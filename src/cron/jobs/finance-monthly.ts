@@ -1,7 +1,7 @@
-import Database from "better-sqlite3";
-import { ChannelType } from "discord.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
+import { ChannelType } from "discord.js";
 import { z } from "zod";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
@@ -33,7 +33,12 @@ function formatAmount(amount: number): string {
   return `${sign}${amount.toLocaleString("ja-JP")}円`;
 }
 
-function row(label: string, amount: number, labelWidth = 10, amountWidth = 14): string {
+function row(
+  label: string,
+  amount: number,
+  labelWidth = 10,
+  amountWidth = 14,
+): string {
   return label.padEnd(labelWidth) + formatAmount(amount).padStart(amountWidth);
 }
 
@@ -49,7 +54,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const db = new Database(dbPath, { readonly: true });
   try {
     const now = new Date();
-    const target = new Date(now.getFullYear(), now.getMonth() - settings.lookbackMonths, 1);
+    const target = new Date(
+      now.getFullYear(),
+      now.getMonth() - settings.lookbackMonths,
+      1,
+    );
     const yearMonth = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}`;
     const monthLabel = `${target.getFullYear()}年${target.getMonth() + 1}月`;
 
@@ -110,7 +119,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       lines.push("", row("サブスク月額", subCost.monthly_cost));
     }
 
-    const report = "```\n" + lines.join("\n") + "\n```";
+    const report = `\`\`\`\n${lines.join("\n")}\n\`\`\``;
 
     const channel = await ctx.client.channels.fetch(ctx.channelId);
     if (!channel || channel.type !== ChannelType.GuildText) {
