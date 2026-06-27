@@ -21,7 +21,7 @@ export function loadConfigField<T>(
   section: string,
   schema: z.ZodTypeAny,
   field: string,
-  defaultValue: T,
+  defaultValue: NoInfer<T>,
 ): T {
   if (raw[section] === undefined) return defaultValue;
   const result = schema.safeParse(raw[section]);
