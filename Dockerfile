@@ -7,7 +7,8 @@ RUN apk add --no-cache \
     jq \
     git \
     github-cli \
-    tzdata
+    tzdata \
+    sqlite
 
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir \
