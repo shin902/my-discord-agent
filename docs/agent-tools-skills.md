@@ -148,7 +148,7 @@ Markdownファイルを、CDN/外部JS依存なしの単一HTMLファイルに�
 
 ### wiki系スキル（wiki-setup / wiki-ingest / wiki-query / wiki-lint / wiki-search / wiki-search-fts）
 
-LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM所有のMarkdown）の二層構造で運用するためのスキル群。
+LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM所有のMarkdown）→ `AGENTS.md`（スキーマ）の三層構造で運用するためのスキル群。
 
 #### スキルの配置方針
 
