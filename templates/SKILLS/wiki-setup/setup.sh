@@ -30,11 +30,9 @@ for skill_src in "$SRC_DIR"/*/; do
   trap 'rm -rf "$skill_dest"' ERR
   cp -r "$skill_src" "$skill_dest"
 
-  # Replace placeholders in all .md files
-  find "$skill_dest" -name "*.md" -exec sed -i \
-    -e "s|{{WIKI_ROOT}}|$WIKI_ROOT|g" \
-    -e "s|{{RAW_DIR}}|$RAW_DIR|g" \
-    -e "s|{{DIGEST_DIR}}|$DIGEST_DIR|g" \
+  # Replace placeholders in all .md files (perl -pi -e is portable across GNU/BSD)
+  find "$skill_dest" -name "*.md" -exec perl -pi -e \
+    "s|\{\{WIKI_ROOT\}\}|$WIKI_ROOT|g; s|\{\{RAW_DIR\}\}|$RAW_DIR|g; s|\{\{DIGEST_DIR\}\}|$DIGEST_DIR|g" \
     {} \;
   trap - ERR
 
