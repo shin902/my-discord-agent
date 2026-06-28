@@ -27,6 +27,7 @@ for skill_src in "$SRC_DIR"/*/; do
     continue
   fi
 
+  trap 'rm -rf "$skill_dest"' ERR
   cp -r "$skill_src" "$skill_dest"
 
   # Replace placeholders in all .md files
@@ -35,6 +36,7 @@ for skill_src in "$SRC_DIR"/*/; do
     -e "s|{{RAW_DIR}}|$RAW_DIR|g" \
     -e "s|{{DIGEST_DIR}}|$DIGEST_DIR|g" \
     {} \;
+  trap - ERR
 
   echo "installed: $skill_name"
 done
