@@ -49,5 +49,27 @@
     "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md と既存の MEMORY.md を読み比べ、今後も参照する価値がある情報だけを MEMORY.md に統合してください。一度きりの作業ログは反映しないこと。MEMORY.md 全体で2000字程度に収めること。",
     "channelId": "YOUR_CHANNEL_ID",
     "mode": "to-channel"
+  },
+  {
+    "id": "finance-monthly",
+    "schedule": "0 9 1 * *",
+    "enabled": true,
+    "groupName": "YOUR_GROUP_NAME",
+    "channelId": "YOUR_CHANNEL_ID",
+    "handler": "jobs/finance-monthly.js",
+    "settings": {
+      "lookbackMonths": 1
+    }
+  },
+  {
+    "id": "finance-subscription-reminder",
+    "schedule": "0 9 * * *",
+    "enabled": true,
+    "groupName": "YOUR_GROUP_NAME",
+    "channelId": "YOUR_CHANNEL_ID",
+    "handler": "jobs/finance-subscription-reminder.js",
+    "settings": {
+      "daysAhead": 7
+    }
   }
 ]
