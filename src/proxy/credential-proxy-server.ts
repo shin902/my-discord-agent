@@ -6,6 +6,7 @@ import {
   type CredentialEntry,
   loadCredentialProxy,
 } from "../config/credential-proxy.js";
+import { loadRequestTimeoutMs } from "../config/proxy-config.js";
 import {
   GoogleAuthRequiredError,
   getGoogleAccessToken,
@@ -13,6 +14,13 @@ import {
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 import { getRedditCookieHeader } from "./reddit-cookie-store.js";
+
+class UpstreamTimeoutError extends Error {
+  constructor(message?: string) {
+    super(message);
+    this.name = "UpstreamTimeoutError";
+  }
+}
 
 let proxyPort: number | null = null;
 
@@ -36,6 +44,7 @@ function appendPath(basePath: string, restPath: string): string {
 
 async function handleRequest(
   creds: CredentialEntry[],
+  timeoutMs: number,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -168,6 +177,7 @@ async function handleRequest(
     path: parsedTarget.pathname + parsedTarget.search,
     method: req.method,
     headers,
+    timeout: timeoutMs,
   };
 
   await new Promise<void>((resolve, reject) => {
@@ -175,7 +185,27 @@ async function handleRequest(
       res.writeHead(upstreamRes.statusCode ?? 200, upstreamRes.headers);
       upstreamRes.pipe(res);
       upstreamRes.on("end", resolve);
-      upstreamRes.on("error", reject);
+      upstreamRes.on("error", (err) => {
+        // upstream.destroyed === false: 通常の midstream エラー。upstream.on("error") より
+        // 先に発火した場合は reject() が有効。後に発火した場合は Promise が settled 済みで
+        // no-op になるが、.catch() → res.headersSent チェック → upstream.on("error") →
+        // res.destroy(err) の順で処理されるため動作は正しい。
+        // upstream.destroyed === true: タイムアウト等で destroy() 済みのため
+        // Promise は upstream.on("error") により既に settled。reject() は no-op なのでログのみ。
+        if (!upstream.destroyed) {
+          reject(err);
+        } else {
+          console.error(
+            `[credential-proxy] upstreamRes error after upstream destroyed for ${provider}: ${err.message}`,
+          );
+        }
+      });
+    });
+
+    upstream.on("timeout", () => {
+      upstream.destroy(
+        new UpstreamTimeoutError(`upstream timeout for ${provider}`),
+      );
     });
 
     upstream.on("error", (err) => {
@@ -183,19 +213,33 @@ async function handleRequest(
         `[credential-proxy] upstream error for ${provider}: ${err.message}`,
       );
       if (!res.headersSent) {
-        res.writeHead(502);
-        res.end("Bad Gateway");
+        if (err instanceof UpstreamTimeoutError) {
+          res.writeHead(504);
+          res.end("Gateway Timeout");
+        } else {
+          res.writeHead(502);
+          res.end("Bad Gateway");
+        }
+        // レスポンス書き込み済み。Promise を正常終了扱いにして outer catch に委ねない
+        resolve();
+      } else {
+        // ヘッダ送信済みのため 504 を返せない。ソケットを強制切断してクライアントに
+        // 不完全なレスポンスとして通知する（無言の打ち切り 200 を防ぐ）
+        res.destroy(err);
+        resolve();
       }
-      reject(err);
     });
 
     req.pipe(upstream);
   });
 }
 
-export function createRequestHandler(creds: CredentialEntry[]) {
+export function createRequestHandler(
+  creds: CredentialEntry[],
+  timeoutMs: number,
+) {
   return (req: IncomingMessage, res: ServerResponse) => {
-    handleRequest(creds, req, res).catch((err) => {
+    handleRequest(creds, timeoutMs, req, res).catch((err) => {
       if (!res.headersSent) {
         console.error(`[credential-proxy] unhandled error: ${err}`);
         res.writeHead(500);
@@ -206,7 +250,10 @@ export function createRequestHandler(creds: CredentialEntry[]) {
 }
 
 export async function initCredentialProxyServer(): Promise<number> {
-  const creds = await loadCredentialProxy();
+  const [creds, timeoutMs] = await Promise.all([
+    loadCredentialProxy(),
+    loadRequestTimeoutMs(),
+  ]);
 
   // MSALが必要なプロバイダーを初期化
   for (const entry of creds) {
@@ -257,7 +304,7 @@ export async function initCredentialProxyServer(): Promise<number> {
     }
   }
 
-  const server = http.createServer(createRequestHandler(creds));
+  const server = http.createServer(createRequestHandler(creds, timeoutMs));
 
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);

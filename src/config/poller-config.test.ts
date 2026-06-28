@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./config.js", () => ({
-  loadRawConfig: vi.fn(),
-}));
+vi.mock("./config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./config.js")>();
+  return { ...actual, loadRawConfig: vi.fn() };
+});
 
 describe("loadDispatchMode", () => {
   let loadDispatchMode: () => Promise<"serial" | "parallel-session">;
@@ -57,7 +58,7 @@ describe("loadDispatchMode", () => {
 
     expect(await loadDispatchMode()).toBe("parallel-session");
     expect(warn).toHaveBeenCalledWith(
-      "[poller] poller 設定が不正、デフォルト使用:",
+      "[poller] 設定が不正、デフォルト使用:",
       expect.any(String),
     );
     warn.mockRestore();

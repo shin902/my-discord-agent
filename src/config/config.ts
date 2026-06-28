@@ -16,6 +16,29 @@ export const CRON_PATH =
 
 const TopLevelSchema = z.record(z.string(), z.unknown());
 
+export function loadConfigField<T>(
+  raw: Record<string, unknown>,
+  section: string,
+  schema: z.ZodTypeAny,
+  field: string,
+  defaultValue: NoInfer<T>,
+): T {
+  if (raw[section] === undefined) return defaultValue;
+  const result = schema.safeParse(raw[section]);
+  if (result.success) {
+    if (result.data === null || typeof result.data !== "object")
+      return defaultValue;
+    const value = (result.data as Record<string, unknown>)[field];
+    if (value !== undefined) return value as T;
+  } else {
+    console.warn(
+      `[${section}] 設定が不正、デフォルト使用:`,
+      result.error.message,
+    );
+  }
+  return defaultValue;
+}
+
 let _raw: Record<string, unknown> | null = null;
 
 // config/config.json（defaultModel・poller）を読み込む

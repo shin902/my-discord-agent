@@ -152,7 +152,8 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 ```json
 {
   "defaultModel": { "provider": "zai", "modelId": "glm-4.7-flash" },
-  "poller": { "dispatchMode": "serial" }
+  "poller": { "dispatchMode": "serial" },
+  "proxy": { "requestTimeoutMs": 120000 }
 }
 ```
 
@@ -160,6 +161,7 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 |---|---|---|
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `poller` | — | `dispatchMode`（`docs/spec/poller-dispatch-mode.md` 参照） |
+| `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 
 ## 環境変数
 
