@@ -52,7 +52,9 @@ AI プロバイダーや外部サービス（Microsoft Graph・Browserless 等�
     "forceCustom": true,
     "envVars": ["CLIPROXY_API_KEY"],
     "baseUrl": "http://localhost:8317/v1",
-    "api": "openai-codex-responses"
+    "api": "openai-codex-responses",
+    "contextWindow": 192000,
+    "maxTokens": 8192
   },
   {
     "provider": "llama-cpp-qwen3",

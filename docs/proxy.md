@@ -174,7 +174,9 @@ ChatGPT/Codex OAuth はアプリ本体で扱わず、CLIProxyAPI をローカル
   "forceCustom": true,
   "envVars": ["CLIPROXY_API_KEY"],
   "baseUrl": "http://localhost:8317/v1",
-  "api": "openai-codex-responses"
+  "api": "openai-codex-responses",
+  "contextWindow": 192000,
+  "maxTokens": 8192
 }
 ```
 

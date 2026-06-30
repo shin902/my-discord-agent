@@ -162,6 +162,7 @@ describe("loadCredentialProxy", () => {
         maxTokens: 8192,
       },
     ]);
+    expect(readFile).toHaveBeenCalledTimes(1);
   });
 
   it("credentials が空配列も正常にキャッシュされる", async () => {
