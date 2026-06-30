@@ -134,6 +134,36 @@ describe("loadCredentialProxy", () => {
     );
   });
 
+  it("CLIProxyAPI 向け openai-codex-responses 設定を受け付ける", async () => {
+    const { loadCredentialProxy } = await importFresh();
+    vi.mocked(readFile).mockResolvedValue(
+      makeConfig([
+        {
+          provider: "codex-oauth",
+          forceCustom: true,
+          envVars: ["CLIPROXY_API_KEY"],
+          baseUrl: "http://localhost:8317/v1",
+          api: "openai-codex-responses",
+          contextWindow: 192000,
+          maxTokens: 8192,
+        },
+      ]),
+    );
+
+    const result = await loadCredentialProxy();
+    expect(result).toEqual([
+      {
+        provider: "codex-oauth",
+        forceCustom: true,
+        envVars: ["CLIPROXY_API_KEY"],
+        baseUrl: "http://localhost:8317/v1",
+        api: "openai-codex-responses",
+        contextWindow: 192000,
+        maxTokens: 8192,
+      },
+    ]);
+  });
+
   it("credentials が空配列も正常にキャッシュされる", async () => {
     const { loadCredentialProxy } = await importFresh();
     vi.mocked(readFile).mockResolvedValue(makeConfig([]));

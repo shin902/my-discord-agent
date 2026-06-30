@@ -48,6 +48,13 @@ AI プロバイダーや外部サービス（Microsoft Graph・Browserless 等�
     "baseUrl": "https://api.anthropic.com"
   },
   {
+    "provider": "codex-oauth",
+    "forceCustom": true,
+    "envVars": ["CLIPROXY_API_KEY"],
+    "baseUrl": "http://localhost:8317/v1",
+    "api": "openai-codex-responses"
+  },
+  {
     "provider": "llama-cpp-qwen3",
     "baseUrl": "http://localhost:8080/v1",
     "api": "openai-completions",
@@ -56,7 +63,7 @@ AI プロバイダーや外部サービス（Microsoft Graph・Browserless 等�
 ]
 ```
 
-API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。
+API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。Codex OAuth / CLIProxyAPI の詳しい構成は `docs/codex-oauth-cliproxyapi.md` を参照。
 
 ## config/groups.json
 
