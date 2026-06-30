@@ -28,23 +28,109 @@ sandbox agent
 
 ## CLIProxyAPI 側
 
-CLIProxyAPI は外部公開せず、Docker 内部ネットワークまたは loopback だけで待ち受ける。API キー認証を有効にし、その値をこのアプリの `.env` にだけ置く。
+### インストール
 
-```env
-CLIPROXY_API_KEY=your-local-cliproxy-key
+**Arch Linux (AUR)**:
+```bash
+yay -S cli-proxy-api-bin
+systemctl --user start cli-proxy-api
 ```
 
-OAuth 資格情報ディレクトリは CLIProxyAPI 専用 volume に永続化する。volume、ログ、バックアップへ access token / refresh token を出力しない。
+**Linux（ワンクリックインストーラー）**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/router-for-me/cliproxyapi-installer/refs/heads/master/cliproxyapi-installer | bash
+```
+
+**macOS**:
+```bash
+brew install cliproxyapi
+brew services start cliproxyapi
+```
+
+**Docker**:
+```bash
+docker run --rm -p 127.0.0.1:8317:8317 \
+  -v /path/to/config.yaml:/CLIProxyAPI/config.yaml \
+  eceasy/cli-proxy-api:latest
+```
 
 Docker イメージは `latest` ではなく、検証済みタグまたは digest に固定する。
+
+### config.yaml の設定
+
+`config.example.yaml` をコピーして `config.yaml` を作成する（設定ファイルパスは `~/.cli-proxy-api/config.yaml`）。
+
+**基本設定**:
+```yaml
+host: "127.0.0.1"   # loopback のみ受け付ける
+port: 8317
+
+api-keys:
+  - "your-local-cliproxy-key"   # このアプリの .env の CLIPROXY_API_KEY と合わせる
+```
+
+**Codex OAuth 設定**:
+```yaml
+oauth-model-alias:
+  codex:
+    - name: "gpt-5-codex"
+      alias: "gpt-5-codex"
+
+oauth-excluded-models:
+  codex: []
+
+codex-header-defaults:
+  user-agent: "codex_cli_rs/0.114.0"
+  beta-features: "multi_agent"
+```
+
+### ChatGPT へのログイン
+
+サービスを止めてからログインし、完了後に再起動する。
+
+```bash
+systemctl --user stop cli-proxy-api
+cli-proxy-api -codex-login          # ブラウザが開くので ChatGPT にログイン
+systemctl --user start cli-proxy-api
+```
+
+ブラウザが使えないヘッドレス環境では `-codex-device-login`（デバイスコードフロー）を使う：
+
+```bash
+cli-proxy-api -codex-device-login
+```
+
+ログイン成功後、次回起動時のログに `1 auth entries` と表示されれば認証済み：
+
+```
+server clients and configuration updated: 1 clients (1 auth entries + ...)
+```
+
+ログイン後、OAuth 資格情報ディレクトリは CLIProxyAPI 専用 volume または設定ディレクトリに永続化される。volume・ログ・バックアップへ access token / refresh token を出力しない。
+
+### Docker Compose での起動
 
 アプリをホストで起動する標準構成では、CLIProxyAPI のポートを loopback にだけ公開する。
 
 ```yaml
 services:
   cli-proxy-api:
+    image: eceasy/cli-proxy-api:v1.x.x   # latest は固定タグに置き換える
     ports:
       - "127.0.0.1:8317:8317"
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      - cliproxy-data:/CLIProxyAPI/data
+volumes:
+  cliproxy-data:
+```
+
+### .env への API キー設定
+
+CLIProxyAPI の `api-keys` に設定した値を、このアプリの `.env` に書く。
+
+```env
+CLIPROXY_API_KEY=your-local-cliproxy-key
 ```
 
 ## my-discord-agent 側
