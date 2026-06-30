@@ -103,7 +103,7 @@ git の smart-HTTP プロトコル（`git clone`/`fetch` over HTTPS）のよう�
 有効な値:
 - `"openai-completions"`（デフォルト）
 - `"openai-responses"`
-- `"openai-codex-responses"`
+- `"openai-codex-responses"`（ChatGPT OAuth credential と Codex backend を直接扱う場合）
 - `"anthropic-messages"`
 - `"mistral-conversations"`
 - `"bedrock-converse-stream"`
@@ -111,6 +111,22 @@ git の smart-HTTP プロトコル（`git clone`/`fetch` over HTTPS）のよう�
 - `"google-vertex"`
 
 省略時は `"openai-completions"` が使用されます。
+
+Codex OAuth を CLIProxyAPI サイドカー経由で使う例:
+
+```json
+{
+  "provider": "codex-oauth",
+  "forceCustom": true,
+  "envVars": ["CLIPROXY_API_KEY"],
+  "baseUrl": "http://localhost:8317/v1",
+  "api": "openai-responses",
+  "contextWindow": 192000,
+  "maxTokens": 8192
+}
+```
+
+`credential-proxy-server` が `Authorization: Bearer $CLIPROXY_API_KEY` を upstream の CLIProxyAPI へ注入するため、サンドボックスコンテナには CLIProxyAPI のローカル API キーも ChatGPT/Codex OAuth token も渡らない。詳しい手順は `docs/codex-oauth-cliproxyapi.md` を参照。
 
 ### `reasoning`
 

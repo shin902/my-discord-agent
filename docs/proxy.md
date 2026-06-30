@@ -160,9 +160,27 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 ```
 
 - `provider` は自由な名前を指定可能。`config/groups.json` の `groups[].model.provider` に同じ名前を設定する。
-- `api` はオプション。未指定時のデフォルトは `"openai-completions"`。他に `"openai-responses"` や `"anthropic-messages"` 等が指定可能。
+- `api` はオプション。未指定時のデフォルトは `"openai-completions"`。他に `"openai-responses"`、`"openai-codex-responses"`、`"anthropic-messages"` 等が指定可能。
 - `envVars` はオプション。省略または空配列の場合、secret 注入は行われず baseUrl の解決と allowHost の登録のみ行う。これは API Key が不要なローカルサーバーに便利。
 - カスタムプロバイダーの場合、モデルIDの検証は行われず、任意の文字列を `modelId` に指定できる。
+
+### CLIProxyAPI / Codex OAuth
+
+ChatGPT/Codex OAuth はアプリ本体で扱わず、CLIProxyAPI をローカルサイドカーとして使う。`config/credentials.json` には OpenAI Responses 互換 provider として登録する。
+
+```json
+{
+  "provider": "codex-oauth",
+  "forceCustom": true,
+  "envVars": ["CLIPROXY_API_KEY"],
+  "baseUrl": "http://localhost:8317/v1",
+  "api": "openai-responses",
+  "contextWindow": 192000,
+  "maxTokens": 8192
+}
+```
+
+詳細な運用条件とスモークテストは `docs/codex-oauth-cliproxyapi.md` を参照。
 
 ### 将来的な拡張
 
