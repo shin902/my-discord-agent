@@ -12,5 +12,5 @@ SKILLS/scripts/agent-reach.sh <URL>
 stdout に整形された Markdown が出力される。ファイルに保存するにはリダイレクトを使う。
 
 ```bash
-./scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > video.md
+SKILLS/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > video.md
 ```
