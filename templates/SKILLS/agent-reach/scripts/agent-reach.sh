@@ -53,11 +53,17 @@ validate_url() {
 
 detect_service() {
   local url="$1"
-  local host
-  # Strip www. and scheme
-  host=$(echo "$url" | sed -E 's|^https?://(www\.)?([^/]+).*|\2|')
-  local path
-  path=$(echo "$url" | sed -E 's|^https?://[^/]+(/[^?#]*)?.*|\1|' | tr '[:upper:]' '[:lower:]')
+  local after_scheme="${url#*://}"
+  local host="${after_scheme%%/*}"
+  host="${host#www.}"
+
+  local path=""
+  if [[ "$after_scheme" == */* ]]; then
+    path="/${after_scheme#*/}"
+    path="${path%%\#*}"
+    path="${path%%\?*}"
+  fi
+  path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
 
   case "$host" in
     youtube.com|youtu.be) echo "youtube" ;;
@@ -193,24 +199,27 @@ format_youtube() {
   sub_files=$(find "$subs_dir" -maxdepth 1 -name '*.vtt' 2>/dev/null || true)
   if [[ -n "$sub_files" ]]; then
     while IFS= read -r vtt_file; do
-      local lang
-      lang=$(basename "$vtt_file" | sed -E 's/.*\.([a-zA-Z-]+)\.vtt$/\1/')
+      local lang base_name
+      base_name=$(basename "$vtt_file")
+      lang="${base_name%.vtt}"
+      lang="${lang##*.}"
       local text
       # Parse VTT: strip timestamps, cue numbers, timing tags, deduplicate.
       # Some YouTube VTT files collapse cue timings into the text line, so
       # remove cue timing ranges wherever they appear before line-oriented parsing.
-      text=$(sed -E \
-        -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]{3}[[:space:]]*-->[[:space:]]*[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]{3}([[:space:]]+(align:[[:alpha:]-]+|position:[^[:space:]%]+%?|line:[^[:space:]%]+%?|size:[^[:space:]%]+%?|vertical:[[:alpha:]-]+))*//g' \
-        -e 's/[[:space:]]*-->[[:space:]]*[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]{3}([[:space:]]+(align:[[:alpha:]-]+|position:[^[:space:]%]+%?|line:[^[:space:]%]+%?|size:[^[:space:]%]+%?|vertical:[[:alpha:]-]+))*//g' \
-        "$vtt_file" | awk '
+      text=$(awk '
         BEGIN { seen_count = 0 }
         /^WEBVTT/ { next }
         /^Kind:/ { next }
         /^Language:/ { next }
-        /^[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]{3}\s*-->/ { next }
+        /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9][.,][0-9][0-9][0-9][[:space:]]*-->/ { next }
         /^[0-9]+$/ { next }
-        /<[0-9]{2}:[0-9]{2}:[0-9]{2}[.,][0-9]{3}>/ { next }
+        /<[0-9][0-9]:[0-9][0-9]:[0-9][0-9][.,][0-9][0-9][0-9]>/ { next }
         {
+          # Some YouTube VTT files collapse cue timings into the text line, so
+          # remove cue timing ranges wherever they appear before line-oriented parsing.
+          gsub(/[0-9][0-9]:[0-9][0-9]:[0-9][0-9][.,][0-9][0-9][0-9][[:space:]]*-->[[:space:]]*[0-9][0-9]:[0-9][0-9]:[0-9][0-9][.,][0-9][0-9][0-9]([[:space:]]+(align:[[:alpha:]-]+|position:[^[:space:]%]+%?|line:[^[:space:]%]+%?|size:[^[:space:]%]+%?|vertical:[[:alpha:]-]+))*/, "")
+          gsub(/[[:space:]]*-->[[:space:]]*[0-9][0-9]:[0-9][0-9]:[0-9][0-9][.,][0-9][0-9][0-9]([[:space:]]+(align:[[:alpha:]-]+|position:[^[:space:]%]+%?|line:[^[:space:]%]+%?|size:[^[:space:]%]+%?|vertical:[[:alpha:]-]+))*/, "")
           gsub(/<[^>]+>/, "")
           gsub(/^[[:space:]]+|[[:space:]]+$/, "")
           if (length($0) == 0) next
@@ -227,7 +236,7 @@ format_youtube() {
           gsub(/。/, "。\n", s)
           printf "%s", s
         }
-      ')
+      ' "$vtt_file")
       if [[ -n "$text" ]]; then
         echo ""
         echo "## 字幕 (${lang})"
@@ -355,8 +364,15 @@ fetch_github_repo() {
   check_cmd curl
   check_cmd jq
 
-  local repo_path
-  repo_path=$(echo "$url" | sed -E 's|^https?://github.com/([^/]+/[^/?#]+).*|\1|')
+  local repo_path after_scheme path_part owner repo
+  after_scheme="${url#*://}"
+  path_part="${after_scheme#*/}"
+  path_part="${path_part%%\#*}"
+  path_part="${path_part%%\?*}"
+  owner="${path_part%%/*}"
+  repo="${path_part#*/}"
+  repo="${repo%%/*}"
+  repo_path="${owner}/${repo}"
 
   local api_base="https://api.github.com/repos/${repo_path}"
 
@@ -452,7 +468,8 @@ fetch_reddit() {
   # 直後の die に到達せず jq の生エラーでスクリプトが落ちてしまうため、ここだけ
   # errexit を無効化して空文字列にフォールバックさせ、下の die に判定を委ねる
   local proxy_base=""
-  proxy_base=$(echo "$CREDENTIAL_PROXY_JSON" | jq -r '[.[] | select(.provider == "reddit")] | first | .baseUrl // empty' 2>/dev/null | sed -E 's|/$||') || true
+  proxy_base=$(echo "$CREDENTIAL_PROXY_JSON" | jq -r '[.[] | select(.provider == "reddit")] | first | .baseUrl // empty' 2>/dev/null) || true
+  proxy_base="${proxy_base%/}"
   [[ -n "$proxy_base" ]] \
     || die "reddit プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません(JSON が不正な可能性があります)"
 
@@ -468,16 +485,25 @@ fetch_x_twitter() {
   check_cmd curl
   check_cmd jq
 
-  local username tweetId
-  username=$(echo "$url" | sed -E 's|^https?://(www\.)?(x|twitter)\.com/([^/]+)/status/([0-9]+).*|\3|')
-  tweetId=$(echo "$url"  | sed -E 's|^https?://(www\.)?(x|twitter)\.com/([^/]+)/status/([0-9]+).*|\4|')
+  local username tweetId after_scheme path_part rest
+  after_scheme="${url#*://}"
+  path_part="${after_scheme#*/}"
+  path_part="${path_part%%\#*}"
+  path_part="${path_part%%\?*}"
+  username="${path_part%%/*}"
+  rest="${path_part#*/}"
+  if [[ "$rest" != status/* ]]; then
+    die "X/Twitter URL からツイートIDを取得できません: ${url}"
+  fi
+  tweetId="${rest#status/}"
+  tweetId="${tweetId%%/*}"
 
   local json
   json=$(curl -sf "https://api.fxtwitter.com/${username}/status/${tweetId}") \
     || die "fxtwitter API error for ${url}"
 
   local code
-  code=$(echo "$json" | jq -r '.code // 0')
+  code=$(echo "$json" | jq -r '(.code // 0) | tostring')
   [[ "$code" != "200" ]] && die "fxtwitter API returned code ${code} for ${url}"
 
   local text screen_name author_name created_at likes retweets replies views
