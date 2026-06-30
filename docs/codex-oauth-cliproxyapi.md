@@ -5,7 +5,7 @@ ChatGPT/Codex OAuth の access token / refresh token / account ID / backend API 
 ```text
 sandbox agent
   -> credential-proxy-server (this app)
-     -> http://cli-proxy-api:8317/v1/responses
+     -> http://localhost:8317/v1/responses
         -> CLIProxyAPI
            -> chatgpt.com/backend-api/codex/responses
 ```
@@ -38,6 +38,15 @@ OAuth 資格情報ディレクトリは CLIProxyAPI 専用 volume に永続化�
 
 Docker イメージは `latest` ではなく、検証済みタグまたは digest に固定する。
 
+アプリをホストで起動する標準構成では、CLIProxyAPI のポートを loopback にだけ公開する。
+
+```yaml
+services:
+  cli-proxy-api:
+    ports:
+      - "127.0.0.1:8317:8317"
+```
+
 ## my-discord-agent 側
 
 `config/credentials.json` に OpenAI互換 Responses provider として追加する。
@@ -48,17 +57,21 @@ Docker イメージは `latest` ではなく、検証済みタグまたは diges
   "forceCustom": true,
   "envVars": ["CLIPROXY_API_KEY"],
   "baseUrl": "http://localhost:8317/v1",
-  "api": "openai-codex-responses",
+  "api": "openai-responses",
   "contextWindow": 192000,
   "maxTokens": 8192
 }
 ```
 
-Docker 内部ネットワークで CLIProxyAPI を `cli-proxy-api` というサービス名で動かす場合は `baseUrl` を次のようにする。
+`openai-responses` は API キーを通常の Bearer credential として扱い、`/v1/responses` を呼び出す。`openai-codex-responses` は ChatGPT OAuth credential と Codex backend を直接扱うアダプターなので、このサイドカー構成には使用しない。
+
+アプリ本体（`credential-proxy-server` を含む）も CLIProxyAPI と同じ Docker ネットワーク内で起動する構成に限り、`baseUrl` に Docker のサービス名を使用できる。
 
 ```json
 "baseUrl": "http://cli-proxy-api:8317/v1"
 ```
+
+ホスト上でアプリを起動する場合、Docker 内部 DNS 名は解決できないため、loopback に公開した `http://localhost:8317/v1` を使用する。
 
 `config/groups.json` のモデル指定例:
 

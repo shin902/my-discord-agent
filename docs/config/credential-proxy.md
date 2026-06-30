@@ -103,7 +103,7 @@ git の smart-HTTP プロトコル（`git clone`/`fetch` over HTTPS）のよう�
 有効な値:
 - `"openai-completions"`（デフォルト）
 - `"openai-responses"`
-- `"openai-codex-responses"`（CLIProxyAPI 等の Codex Responses 互換サイドカー向け。詳細: `docs/codex-oauth-cliproxyapi.md`）
+- `"openai-codex-responses"`（ChatGPT OAuth credential と Codex backend を直接扱う場合）
 - `"anthropic-messages"`
 - `"mistral-conversations"`
 - `"bedrock-converse-stream"`
@@ -120,7 +120,7 @@ Codex OAuth を CLIProxyAPI サイドカー経由で使う例:
   "forceCustom": true,
   "envVars": ["CLIPROXY_API_KEY"],
   "baseUrl": "http://localhost:8317/v1",
-  "api": "openai-codex-responses",
+  "api": "openai-responses",
   "contextWindow": 192000,
   "maxTokens": 8192
 }
