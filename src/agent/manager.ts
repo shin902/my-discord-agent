@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
+import { ensureGroupSkills } from "../config/group-config.js";
 import {
   type AgentConfig,
   findGroupByName,
@@ -229,6 +230,7 @@ export interface SendMessageOptions {
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
   onExecutionTiming?: (timing: AgentExecutionTiming) => void;
+  configOverride?: Partial<AgentConfig>;
 }
 
 export function sendMessage(
@@ -272,9 +274,13 @@ export async function sendMessage(
   const { onDiscordEvent, attachments, onExecutionTiming } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
-  const groupConfig: AgentConfig = groupsEntry ?? {};
+  const baseConfig: AgentConfig = groupsEntry ?? {};
+  const effectiveConfig: AgentConfig = {
+    ...baseConfig,
+    ...options.configOverride,
+  };
 
-  const resolvedModel = await resolveModelConfig(groupConfig.model);
+  const resolvedModel = await resolveModelConfig(effectiveConfig.model);
 
   try {
     await validateModel(resolvedModel.provider, resolvedModel.modelId);
@@ -283,7 +289,7 @@ export async function sendMessage(
   }
 
   try {
-    resolveTools(groupConfig.tools ?? []);
+    resolveTools(effectiveConfig.tools ?? []);
   } catch (err) {
     return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
   }
@@ -304,6 +310,9 @@ export async function sendMessage(
   }
 
   await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });
+  if (options.configOverride?.skills !== undefined) {
+    await ensureGroupSkills(groupName, effectiveConfig.skills ?? []);
+  }
   await mkdir(path.join(ROOT, "data/sessions", groupName), {
     recursive: true,
   });
@@ -359,7 +368,7 @@ export async function sendMessage(
     groupName,
     sessionId,
     content: promptContent,
-    groupConfig: { ...groupConfig, model: resolvedModel },
+    groupConfig: { ...effectiveConfig, model: resolvedModel },
   });
 
   const args = [

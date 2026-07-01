@@ -906,6 +906,81 @@ describe("sendMessage: 設定バリデーション", () => {
   });
 });
 
+describe("sendMessage: configOverride", () => {
+  let spawnMock: ReturnType<typeof vi.fn>;
+  let ensureGroupSkillsMock: ReturnType<typeof vi.fn>;
+
+  const setup = async () => {
+    vi.resetModules();
+    spawnMock = vi.fn().mockReturnValue(makeProc());
+    ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../config/group-config.js", () => ({
+      ensureGroupSkills: ensureGroupSkillsMock,
+    }));
+    vi.doMock("../config/groups.js", () => ({
+      findGroupByName: vi.fn().mockResolvedValue({
+        name: "test-group",
+        channels: [],
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
+        tools: ["read"],
+        skills: ["base-skill"],
+        autoReply: true,
+      }),
+    }));
+    const { initManager, sendMessage } = await import("./manager.js");
+    await initManager(12345);
+    return sendMessage;
+  };
+
+  afterEach(() => {
+    vi.doUnmock("../config/group-config.js");
+    vi.resetModules();
+  });
+
+  it("configOverride が payload の groupConfig を上書きする", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        model: { provider: "provider-a", modelId: "model-x" },
+        tools: ["bash"],
+        skills: ["override-skill"],
+      },
+    });
+
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.groupConfig).toEqual(
+      expect.objectContaining({
+        model: { provider: "provider-a", modelId: "model-x" },
+        tools: ["bash"],
+        skills: ["override-skill"],
+        autoReply: true,
+      }),
+    );
+  });
+
+  it("configOverride.skills 指定時だけ ensureGroupSkills を呼ぶ", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { skills: ["override-skill"] },
+    });
+
+    expect(ensureGroupSkillsMock).toHaveBeenCalledWith("test-group", [
+      "override-skill",
+    ]);
+
+    ensureGroupSkillsMock.mockClear();
+    await sendMessage("test-group", "session-2", "hi");
+    expect(ensureGroupSkillsMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("sendMessage: onDiscordEvent コールバック", () => {
   const setupWithStderr = async (stderr: string, code = 0) => {
     vi.resetModules();
