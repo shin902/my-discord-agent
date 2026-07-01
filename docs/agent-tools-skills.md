@@ -164,3 +164,31 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 | `wiki-lint` | `wiki-setup/SKILLS/wiki-lint/`（テンプレート） | 孤立ページ・リンク切れ・frontmatter欠落・矛盾などを検出し、安全な修正を適用する |
 | `wiki-search` | `templates/SKILLS/wiki-search/` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
 | `wiki-search-fts` | `templates/SKILLS/wiki-search-fts/` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が不十分になった大規模wiki向けの移行先 |
+
+### finance系スキル（finance-setup / finance）
+
+`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理するスキル群。
+
+| スキル | 場所 | 役割 |
+|--------|------|------|
+| `finance-setup` | `templates/SKILLS/finance-setup/` | `transactions`（収支）・`subscriptions`（サブスク）テーブルを作成する一回限りの初期化。既存DBがあれば上書きしない |
+| `finance` | `templates/SKILLS/finance/` | 収支の記録・照会、サブスクの登録・照会・更新・解約を `sqlite3` コマンド直叩きで行う |
+
+**スキーマ:**
+
+```sql
+transactions (id, date, amount, category, description)
+subscriptions (id, name, amount, cycle, next_date, category, active)
+```
+
+`amount` は収入が正・支出が負（円の整数）。`cycle` は `monthly` / `yearly` / `weekly`。カテゴリはユーザー入力をそのまま使い正規化しない。
+
+**cron連携（`src/cron/jobs/`）:**
+
+| ジョブ | 概要 |
+|--------|------|
+| `finance-monthly.ts` | 月次の収支サマリー（収入・支出・カテゴリ別支出・サブスク月額換算）をDiscordに送信 |
+| `finance-subscription-reminder.ts` | `daysAhead`（デフォルト7日）以内に更新日を迎えるサブスクを通知 |
+| `_finance-db.ts` | 上記2ジョブが共有する `resolveFinanceDbPath(groupName)`。`groups/{groupName}/finance.db` を解決し、`groupName` のディレクトリトラバーサル防止とDB未作成時のエラー化を行う |
+
+両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、DBは読み取り専用（`readonly: true`）で開く。導入には `config/cron.json` にジョブ定義を追加し、対象グループで事前に `finance-setup` を実行しておく必要がある。
