@@ -43,6 +43,7 @@ function makeMockMessage(opts: {
   webhookId?: string | null;
   id?: string;
   startThread?: ReturnType<typeof vi.fn>;
+  channelFetch?: ReturnType<typeof vi.fn>;
 }): Message {
   return {
     author: { bot: opts.isBot ?? false },
@@ -52,6 +53,12 @@ function makeMockMessage(opts: {
     channel: {
       isThread: () => opts.isThread,
       parentId: opts.parentId ?? null,
+      fetch:
+        opts.channelFetch ??
+        vi.fn().mockResolvedValue({
+          isThread: () => opts.isThread,
+          parentId: opts.parentId ?? null,
+        }),
     },
     content: opts.content ?? "hello",
     createdAt: new Date(),
@@ -222,6 +229,35 @@ describe("registerHandlers - MessageCreate", () => {
     await getMessageHandler()(msg);
     expect(mockFindGroup).toHaveBeenCalledWith("ch-1"); // スレッドIDではなく parentId で検索
     expect(mockAppendInbox).not.toHaveBeenCalled();
+  });
+
+  it("キャッシュ未保持のスレッドは再取得した親チャンネルIDで検索する", async () => {
+    const channelFetch = vi.fn().mockResolvedValue({
+      isThread: () => true,
+      parentId: "ch-1",
+    });
+    mockFindGroup.mockResolvedValue({
+      group: { name: "support", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "thread" },
+    });
+    const msg = makeMockMessage({
+      isThread: true,
+      channelId: "thread-1",
+      parentId: null,
+      channelFetch,
+    });
+
+    await getMessageHandler()(msg);
+
+    expect(channelFetch).toHaveBeenCalledOnce();
+    expect(mockFindGroup).toHaveBeenCalledWith("ch-1");
+    expect(mockAppendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "thread-1",
+        sessionId: "thread-1",
+        groupName: "support",
+      }),
+    );
   });
 
   it("thread モード: 直接メッセージはチャンネルIDで検索し無視される", async () => {

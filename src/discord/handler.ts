@@ -28,10 +28,18 @@ export function registerHandlers(): void {
   });
 
   client.on(Events.MessageCreate, async (message: Message) => {
-    // スレッドの場合は親チャンネルIDで設定を検索する
+    // スレッドの場合は親チャンネルIDで設定を検索する。
+    // プロセス再起動直後などキャッシュ未保持のスレッドは、ゲートウェイの
+    // MESSAGE_CREATE ペイロードだけから再構築されると parentId が欠落する
+    // （discord.js が parent_id を含まない部分データでチャンネルを組み立てるため）。
+    // その場合は REST でフル情報を取得して補う。
+    let channel = message.channel;
+    if (channel.isThread() && !channel.parentId) {
+      channel = await channel.fetch().catch(() => channel);
+    }
     const lookupId =
-      message.channel.isThread() && message.channel.parentId
-        ? message.channel.parentId
+      channel.isThread() && channel.parentId
+        ? channel.parentId
         : message.channelId;
 
     const match = await findGroupByChannelId(lookupId);
