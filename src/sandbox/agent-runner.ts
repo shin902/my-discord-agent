@@ -14,6 +14,7 @@ import {
   getEnvApiKey,
   type Message,
   type TextContent,
+  type Usage,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
 
@@ -109,6 +110,21 @@ function isAssistantMessage(msg: unknown): msg is AssistantMessage {
     "role" in msg &&
     (msg as Record<string, unknown>).role === "assistant"
   );
+}
+
+type AgentTokenUsage = Pick<
+  Usage,
+  "input" | "output" | "cacheRead" | "cacheWrite" | "totalTokens"
+>;
+
+function addTokenUsage(total: AgentTokenUsage, usage: Usage): AgentTokenUsage {
+  return {
+    input: total.input + usage.input,
+    output: total.output + usage.output,
+    cacheRead: total.cacheRead + usage.cacheRead,
+    cacheWrite: total.cacheWrite + usage.cacheWrite,
+    totalTokens: total.totalTokens + usage.totalTokens,
+  };
 }
 
 function isAgentsSnapshotMessage(
@@ -406,11 +422,27 @@ export async function runAgentLoop(
 
   const pendingAppends: Promise<void>[] = [];
   let response = "";
+  let assistantTurns = 0;
+  let aggregatedUsage: AgentTokenUsage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+  };
+  let hasUsage = false;
+  let stopReason: string | undefined;
 
   agent.subscribe((event) => {
     if (event.type === "message_end") {
       pendingAppends.push(appendMessage(groupName, sessionId, event.message));
       if (isAssistantMessage(event.message)) {
+        assistantTurns++;
+        stopReason = event.message.stopReason;
+        if (event.message.usage) {
+          aggregatedUsage = addTokenUsage(aggregatedUsage, event.message.usage);
+          hasUsage = true;
+        }
         if (event.message.errorMessage) {
           process.stderr.write(
             `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: event.message.errorMessage })}\n`,
@@ -438,10 +470,22 @@ export async function runAgentLoop(
 
   // promptInput は string | AgentMessage[] のunion。Agent.prompt はオーバーロードで
   // union型を直接渡すと解決できないため、typeof で型を絞ってから呼び分けている。
-  if (typeof promptInput === "string") {
-    await agent.prompt(promptInput);
-  } else {
-    await agent.prompt(promptInput);
+  const promptStartedAt = Date.now();
+  try {
+    if (typeof promptInput === "string") {
+      await agent.prompt(promptInput);
+    } else {
+      await agent.prompt(promptInput);
+    }
+  } finally {
+    const timingEvent = {
+      type: "agent_timing",
+      promptMs: Date.now() - promptStartedAt,
+      assistantTurns,
+      ...(hasUsage ? { usage: aggregatedUsage } : {}),
+      ...(stopReason !== undefined ? { stopReason } : {}),
+    };
+    process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(timingEvent)}\n`);
   }
   await Promise.all(pendingAppends);
   return response;

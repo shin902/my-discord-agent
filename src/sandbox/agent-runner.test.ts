@@ -120,6 +120,83 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("agent.prompt の所要時間とassistant usage合計をイベント出力する", async () => {
+    const subscribers: Array<(event: unknown) => void> = [];
+    const messages = [
+      {
+        role: "assistant",
+        content: [],
+        usage: {
+          input: 100,
+          output: 10,
+          cacheRead: 80,
+          cacheWrite: 5,
+          totalTokens: 195,
+        },
+        stopReason: "toolUse",
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        usage: {
+          input: 120,
+          output: 20,
+          cacheRead: 90,
+          cacheWrite: 0,
+          totalTokens: 230,
+        },
+        stopReason: "stop",
+      },
+    ];
+    AgentMock.mockImplementation(function () {
+      return {
+        subscribe: vi.fn((cb: (event: unknown) => void) =>
+          subscribers.push(cb),
+        ),
+        prompt: vi.fn(async () => {
+          for (const message of messages) {
+            for (const cb of subscribers) {
+              cb({ type: "message_end", message });
+            }
+          }
+        }),
+      };
+    });
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const timingLine = written.find((line) =>
+      line.includes('"type":"agent_timing"'),
+    );
+    expect(timingLine).toBeDefined();
+    if (!timingLine) throw new Error("timingLine not found");
+    const event = JSON.parse(
+      timingLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(event).toEqual({
+      type: "agent_timing",
+      promptMs: expect.any(Number),
+      assistantTurns: 2,
+      usage: {
+        input: 220,
+        output: 30,
+        cacheRead: 170,
+        cacheWrite: 5,
+        totalTokens: 425,
+      },
+      stopReason: "stop",
+    });
+
+    stderrSpy.mockRestore();
+  });
+
   it("グループ設定のモデルを使用する", async () => {
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",

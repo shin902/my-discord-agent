@@ -221,11 +221,69 @@ describe("sendMessage: Docker 起動構成", () => {
     );
 
     expect(onExecutionTiming).toHaveBeenCalledWith({
+      termination: "close",
+      exitCode: 0,
       preparationMs: expect.any(Number),
       dockerRunMs: expect.any(Number),
       imagePullMs: expect.any(Number),
       containerAndAgentMs: expect.any(Number),
     });
+  });
+
+  it("prompt完了後にプロセスが閉じない場合はtimeoutとして通知する", async () => {
+    vi.useFakeTimers();
+    try {
+      const eventPayload = {
+        type: "agent_timing",
+        promptMs: 500_000,
+        assistantTurns: 1,
+        usage: {
+          input: 46_821,
+          output: 100,
+          cacheRead: 40_000,
+          cacheWrite: 0,
+          totalTokens: 86_921,
+        },
+        stopReason: "stop",
+      };
+      const proc = makeProc(
+        0,
+        "response",
+        `__DISCORD_EVENT__:${JSON.stringify(eventPayload)}\n`,
+      );
+      proc.on = vi.fn();
+      spawnMock.mockReturnValueOnce(proc);
+      const { sendMessage } = await import("./manager.js");
+      const onExecutionTiming = vi.fn();
+
+      const result = sendMessage(
+        "test-group",
+        "session-1",
+        "hi",
+        undefined,
+        undefined,
+        onExecutionTiming,
+      );
+      const rejection = expect(result).rejects.toThrow(
+        "タイムアウト（10分を超過しました）",
+      );
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+      await rejection;
+
+      expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(onExecutionTiming).toHaveBeenCalledWith(
+        expect.objectContaining({
+          termination: "timeout",
+          promptMs: 500_000,
+          postPromptMs: expect.any(Number),
+          usage: eventPayload.usage,
+          stopReason: "stop",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {
@@ -865,6 +923,49 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     await sendMessage("g", "s", "hi", onDiscordEvent);
 
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
+  });
+
+  it("agent_timing はDiscordへ転送せず実行時間へ統合する", async () => {
+    const eventPayload = {
+      type: "agent_timing",
+      promptMs: 1234,
+      assistantTurns: 2,
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 80,
+        cacheWrite: 5,
+        totalTokens: 205,
+      },
+      stopReason: "stop",
+    };
+    const sendMessage = await setupWithStderr(
+      `__DISCORD_EVENT__:${JSON.stringify(eventPayload)}\n`,
+    );
+    const onDiscordEvent = vi.fn();
+    const onExecutionTiming = vi.fn();
+
+    await sendMessage(
+      "g",
+      "s",
+      "hi",
+      onDiscordEvent,
+      undefined,
+      onExecutionTiming,
+    );
+
+    expect(onDiscordEvent).not.toHaveBeenCalled();
+    expect(onExecutionTiming).toHaveBeenCalledWith(
+      expect.objectContaining({
+        termination: "close",
+        exitCode: 0,
+        promptMs: 1234,
+        postPromptMs: expect.any(Number),
+        assistantTurns: 2,
+        usage: eventPayload.usage,
+        stopReason: "stop",
+      }),
+    );
   });
 
   it("通常の stderr はコールバックに渡されずエラー文字列に含まれる", async () => {

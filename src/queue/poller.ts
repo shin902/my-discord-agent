@@ -80,6 +80,16 @@ function logResponseTiming(
     timing.receivedAt !== undefined
       ? Math.max(0, finishedAt - timing.receivedAt)
       : processingMs;
+  const containerStartupMs =
+    timing.agentExecution?.containerAndAgentMs !== undefined &&
+    timing.agentExecution.promptMs !== undefined
+      ? Math.max(
+          0,
+          timing.agentExecution.containerAndAgentMs -
+            timing.agentExecution.promptMs -
+            (timing.agentExecution.postPromptMs ?? 0),
+        )
+      : undefined;
   const stages = [
     ["ingress", ingressMs],
     ["queue", timing.queueWaitMs],
@@ -87,13 +97,14 @@ function logResponseTiming(
     ["preparation", timing.agentExecution?.preparationMs],
     ["image-pull", timing.agentExecution?.imagePullMs],
     [
-      timing.agentExecution?.containerAndAgentMs !== undefined
-        ? "container-agent"
-        : "docker-agent",
-      timing.agentExecution?.containerAndAgentMs ??
+      containerStartupMs !== undefined ? "container-startup" : "docker-agent",
+      containerStartupMs ??
+        timing.agentExecution?.containerAndAgentMs ??
         timing.agentExecution?.dockerRunMs ??
         timing.agentTotalMs,
     ],
+    ["agent-prompt", timing.agentExecution?.promptMs],
+    ["post-prompt", timing.agentExecution?.postPromptMs],
     ["discord-send", timing.discordSendMs],
   ] as const;
   const slowestStage = stages.reduce<{ name: string; ms: number } | undefined>(
@@ -116,9 +127,17 @@ function logResponseTiming(
     llmLockWaitMs: timing.lockWaitMs,
     agentTotalMs: timing.agentTotalMs,
     preparationMs: timing.agentExecution?.preparationMs,
+    agentTermination: timing.agentExecution?.termination,
+    agentExitCode: timing.agentExecution?.exitCode,
     dockerRunMs: timing.agentExecution?.dockerRunMs,
     imagePullMs: timing.agentExecution?.imagePullMs,
     containerAndAgentMs: timing.agentExecution?.containerAndAgentMs,
+    containerStartupMs,
+    promptMs: timing.agentExecution?.promptMs,
+    postPromptMs: timing.agentExecution?.postPromptMs,
+    assistantTurns: timing.agentExecution?.assistantTurns,
+    usage: timing.agentExecution?.usage,
+    stopReason: timing.agentExecution?.stopReason,
     discordSendMs: timing.discordSendMs,
     processingMs,
     totalMs,

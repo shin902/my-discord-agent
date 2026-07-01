@@ -25,11 +25,34 @@ export type DiscordEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
   | { type: "error"; message: string };
 
+export interface AgentTokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+}
+
+interface AgentTimingEvent {
+  type: "agent_timing";
+  promptMs: number;
+  assistantTurns: number;
+  usage?: AgentTokenUsage;
+  stopReason?: string;
+}
+
 export interface AgentExecutionTiming {
+  termination: "close" | "timeout" | "spawn-error";
+  exitCode?: number | null;
   preparationMs: number;
   dockerRunMs: number;
   imagePullMs?: number;
   containerAndAgentMs?: number;
+  promptMs?: number;
+  postPromptMs?: number;
+  assistantTurns?: number;
+  usage?: AgentTokenUsage;
+  stopReason?: string;
 }
 
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
@@ -336,18 +359,42 @@ export async function sendMessage(
     let stderrTail = "";
     let plainStderr = "";
     let pullCompletedAt: number | undefined;
+    let agentTiming: AgentTimingEvent | undefined;
+    let agentTimingReceivedAt: number | undefined;
     let timingReported = false;
 
-    const reportExecutionTiming = (finishedAt: number): void => {
+    const reportExecutionTiming = (
+      finishedAt: number,
+      termination: AgentExecutionTiming["termination"],
+      exitCode?: number | null,
+    ): void => {
       if (timingReported) return;
       timingReported = true;
       const timing: AgentExecutionTiming = {
+        termination,
+        ...(exitCode !== undefined ? { exitCode } : {}),
         preparationMs: dockerStartedAt - executionStartedAt,
         dockerRunMs: finishedAt - dockerStartedAt,
         ...(pullCompletedAt !== undefined
           ? {
               imagePullMs: pullCompletedAt - dockerStartedAt,
               containerAndAgentMs: finishedAt - pullCompletedAt,
+            }
+          : {}),
+        ...(agentTiming !== undefined
+          ? {
+              promptMs: agentTiming.promptMs,
+              assistantTurns: agentTiming.assistantTurns,
+              usage: agentTiming.usage,
+              stopReason: agentTiming.stopReason,
+              ...(agentTimingReceivedAt !== undefined
+                ? {
+                    postPromptMs: Math.max(
+                      0,
+                      finishedAt - agentTimingReceivedAt,
+                    ),
+                  }
+                : {}),
             }
           : {}),
       };
@@ -361,10 +408,15 @@ export async function sendMessage(
     const processStderrLine = (line: string): void => {
       if (line.startsWith(DISCORD_EVENT_PREFIX)) {
         try {
-          const event = JSON.parse(
-            line.slice(DISCORD_EVENT_PREFIX.length),
-          ) as DiscordEvent;
-          onDiscordEvent?.(event);
+          const event = JSON.parse(line.slice(DISCORD_EVENT_PREFIX.length)) as
+            | DiscordEvent
+            | AgentTimingEvent;
+          if (event.type === "agent_timing") {
+            agentTiming = event;
+            agentTimingReceivedAt = Date.now();
+          } else {
+            onDiscordEvent?.(event);
+          }
         } catch {
           // ignore malformed events
         }
@@ -396,7 +448,7 @@ export async function sendMessage(
           processStderrLine(stderrTail);
           stderrTail = "";
         }
-        reportExecutionTiming(Date.now());
+        reportExecutionTiming(Date.now(), "timeout");
         proc.kill("SIGKILL");
         reject(new NonRetryableError("タイムアウト（10分を超過しました）"));
       },
@@ -410,7 +462,7 @@ export async function sendMessage(
         processStderrLine(stderrTail);
         stderrTail = "";
       }
-      reportExecutionTiming(Date.now());
+      reportExecutionTiming(Date.now(), "close", code);
       if (code === null) {
         // SIGKILL などシグナルで終了した場合。タイムアウト時は既に reject 済み
         return;
@@ -426,7 +478,7 @@ export async function sendMessage(
 
     proc.on("error", (err: Error) => {
       clearTimeout(timeout);
-      reportExecutionTiming(Date.now());
+      reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
     });
 

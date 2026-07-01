@@ -138,10 +138,23 @@ describe("processMessage - autoReply", () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, _onDiscordEvent, _attachments, onExecutionTiming) => {
         onExecutionTiming?.({
+          termination: "close",
+          exitCode: 0,
           preparationMs: 5,
           dockerRunMs: 35,
           imagePullMs: 10,
           containerAndAgentMs: 25,
+          promptMs: 20,
+          postPromptMs: 1,
+          assistantTurns: 1,
+          usage: {
+            input: 100,
+            output: 20,
+            cacheRead: 80,
+            cacheWrite: 0,
+            totalTokens: 120,
+          },
+          stopReason: "stop",
         });
         return "AI response";
       },
@@ -159,9 +172,23 @@ describe("processMessage - autoReply", () => {
       event: "response_timing",
       outcome: "success",
       preparationMs: 5,
+      agentTermination: "close",
+      agentExitCode: 0,
       dockerRunMs: 35,
       imagePullMs: 10,
       containerAndAgentMs: 25,
+      containerStartupMs: 4,
+      promptMs: 20,
+      postPromptMs: 1,
+      assistantTurns: 1,
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 80,
+        cacheWrite: 0,
+        totalTokens: 120,
+      },
+      stopReason: "stop",
     });
     expect(details.queueWaitMs).toEqual(expect.any(Number));
     expect(details.llmLockWaitMs).toEqual(expect.any(Number));
