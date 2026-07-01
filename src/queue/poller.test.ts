@@ -1,5 +1,6 @@
 import { ChannelType } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SendMessageOptions } from "../agent/manager.js";
 import type { InboxMessage } from "./inbox.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
@@ -26,7 +27,12 @@ const { appendDeadLetter } = await import("./dead-letter.js");
 const { removeInboxById, updateInboxById } = await import("./inbox.js");
 const { processMessage } = await import("./poller.js");
 
+beforeEach(() => {
+  vi.mocked(sendMessage).mockClear();
+});
+
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
+  const now = new Date().toISOString();
   return {
     id: "inbox-1",
     channelId: "ch-1",
@@ -34,7 +40,8 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
     sessionId: "ch-1",
     messageId: "msg-original",
     content: "hello",
-    timestamp: "2026-01-01T00:00:00.000Z",
+    timestamp: now,
+    enqueuedAt: now,
     retries: 0,
     ...overrides,
   };
@@ -121,9 +128,124 @@ describe("processMessage - autoReply", () => {
       "default",
       "ch-1",
       "hello",
-      expect.any(Function),
-      attachments,
+      expect.objectContaining({
+        onDiscordEvent: expect.any(Function),
+        attachments,
+        onExecutionTiming: expect.any(Function),
+      }),
     );
+  });
+
+  it("応答時間を区間別の構造化ログに記録する", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onExecutionTiming?.({
+          termination: "close",
+          exitCode: 0,
+          preparationMs: 5,
+          dockerRunMs: 35,
+          imagePullMs: 10,
+          containerAndAgentMs: 25,
+          promptMs: 20,
+          postPromptMs: 1,
+          assistantTurns: 1,
+          usage: {
+            input: 100,
+            output: 20,
+            cacheRead: 80,
+            cacheWrite: 0,
+            totalTokens: 120,
+          },
+          stopReason: "stop",
+        });
+        return "AI response";
+      },
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await processMessage(makeMsg(), "parallel-session");
+
+    const line = logSpy.mock.calls
+      .flat()
+      .find((value) => String(value).includes('"event":"response_timing"'));
+    expect(line).toBeDefined();
+    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
+    expect(details).toMatchObject({
+      event: "response_timing",
+      outcome: "success",
+      preparationMs: 5,
+      agentTermination: "close",
+      agentExitCode: 0,
+      dockerRunMs: 35,
+      imagePullMs: 10,
+      containerAndAgentMs: 25,
+      containerStartupMs: 4,
+      promptMs: 20,
+      postPromptMs: 1,
+      assistantTurns: 1,
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 80,
+        cacheWrite: 0,
+        totalTokens: 120,
+      },
+      stopReason: "stop",
+    });
+    expect(details.queueWaitMs).toEqual(expect.any(Number));
+    expect(details.llmLockWaitMs).toEqual(expect.any(Number));
+    expect(details.discordSendMs).toEqual(expect.any(Number));
+
+    logSpy.mockRestore();
+  });
+
+  it("空応答は success ではなく empty-response として記録する", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await processMessage(makeMsg(), "parallel-session");
+
+    expect(mockSend).not.toHaveBeenCalled();
+    const line = logSpy.mock.calls
+      .flat()
+      .find((value) => String(value).includes('"event":"response_timing"'));
+    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
+    expect(details.outcome).toBe("empty-response");
+    logSpy.mockRestore();
+  });
+
+  it("送信不能チャンネルは success ではなく discord-error として記録する", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => false,
+      isTextBased: () => false,
+    } as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await processMessage(makeMsg(), "parallel-session");
+
+    const line = logSpy.mock.calls
+      .flat()
+      .find((value) => String(value).includes('"event":"response_timing"'));
+    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
+    expect(details.outcome).toBe("discord-error");
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
   it("複数チャンク: 先頭のみ reply 形式、残りは通常送信", async () => {
@@ -170,8 +292,8 @@ describe("processMessage - Discord イベント通知", () => {
       autoReply: true,
     });
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
           type: "tool_start",
           toolName: "read_file",
           args: { path: "/workspace/foo.ts" },
@@ -199,8 +321,11 @@ describe("processMessage - Discord イベント通知", () => {
 
   it("tool_start イベント（args なし）で 🔧 ツール名のみが送信される", async () => {
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({ type: "tool_start", toolName: "bash" });
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "tool_start",
+          toolName: "bash",
+        });
         return "AI response";
       },
     );
@@ -214,8 +339,11 @@ describe("processMessage - Discord イベント通知", () => {
 
   it("cronJobId が設定されている（to-channel cron）場合、tool_start イベントは送信されない", async () => {
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({ type: "tool_start", toolName: "bash" });
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "tool_start",
+          toolName: "bash",
+        });
         return "AI response";
       },
     );
@@ -233,8 +361,11 @@ describe("processMessage - Discord イベント通知", () => {
 
   it("cronJobId が設定されていても error イベントは送信される", async () => {
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({ type: "error", message: "oops" });
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "error",
+          message: "oops",
+        });
         return "";
       },
     );
@@ -251,8 +382,11 @@ describe("processMessage - Discord イベント通知", () => {
 
   it("error イベントで ⚠️ メッセージが Discord に送信される", async () => {
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({ type: "error", message: "Context window exceeded" });
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "error",
+          message: "Context window exceeded",
+        });
         return "";
       },
     );
@@ -273,8 +407,11 @@ describe("processMessage - Discord イベント通知", () => {
       autoReply: true,
     });
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({ type: "error", message: "Context window exceeded" });
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "error",
+          message: "Context window exceeded",
+        });
         return "";
       },
     );
@@ -300,8 +437,11 @@ describe("processMessage - Discord イベント通知", () => {
       autoReply: false,
     });
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({ type: "error", message: "oops" });
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "error",
+          message: "oops",
+        });
         return "";
       },
     );
@@ -319,8 +459,11 @@ describe("processMessage - Discord イベント通知", () => {
   it("2000文字を超えるイベントテキストは先頭2000文字に切り詰められる", async () => {
     const longMessage = "x".repeat(2100);
     vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, onDiscordEvent) => {
-        onDiscordEvent?.({ type: "error", message: longMessage });
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "error",
+          message: longMessage,
+        });
         return "";
       },
     );
@@ -375,8 +518,49 @@ describe("processMessage - cron-thread", () => {
       "default",
       "thread-123",
       "hello",
+      expect.objectContaining({ onExecutionTiming: expect.any(Function) }),
     );
     expect(mockThreadSend).toHaveBeenCalledWith("AI response");
+  });
+
+  it("cron-thread も agent 実行時間を response_timing に記録する", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onExecutionTiming?.({
+          termination: "close",
+          exitCode: 0,
+          preparationMs: 5,
+          dockerRunMs: 35,
+          promptMs: 20,
+          assistantTurns: 1,
+        });
+        return "AI response";
+      },
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await processMessage(
+      makeCronThreadMsg({ timestamp: new Date().toISOString() }),
+      "parallel-session",
+    );
+
+    const line = logSpy.mock.calls
+      .flat()
+      .find((value) => String(value).includes('"event":"response_timing"'));
+    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
+    expect(details).toMatchObject({
+      outcome: "success",
+      sessionId: "thread-123",
+      agentTermination: "close",
+      agentExitCode: 0,
+      preparationMs: 5,
+      dockerRunMs: 35,
+      promptMs: 20,
+      assistantTurns: 1,
+    });
+    expect(details.llmLockWaitMs).toEqual(expect.any(Number));
+    expect(details.discordSendMs).toEqual(expect.any(Number));
+    logSpy.mockRestore();
   });
 
   it("LLM呼び出し成功時、thread.send より前に removeInboxById を呼ぶ", async () => {
@@ -483,19 +667,30 @@ describe("processMessage - cron-thread", () => {
     vi.mocked(client.channels.fetch).mockResolvedValue(
       mockSendableThread as never,
     );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await processMessage(
-      makeCronThreadMsg({ cronThreadId: "thread-123" }),
+      makeCronThreadMsg({
+        cronThreadId: "thread-existing",
+        timestamp: new Date().toISOString(),
+      }),
       "parallel-session",
     );
 
     expect(mockThreadsCreate).not.toHaveBeenCalled();
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
       "default",
-      "thread-123",
+      "thread-existing",
       "hello",
+      expect.objectContaining({ onExecutionTiming: expect.any(Function) }),
     );
     expect(mockThreadSend).toHaveBeenCalledWith("AI response");
+    const line = logSpy.mock.calls
+      .flat()
+      .find((value) => String(value).includes('"event":"response_timing"'));
+    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
+    expect(details.sessionId).toBe("thread-existing");
+    logSpy.mockRestore();
   });
 
   it("transient error でリトライ上限に達したら appendDeadLetter に移動する", async () => {

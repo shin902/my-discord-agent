@@ -25,7 +25,38 @@ export type DiscordEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
   | { type: "error"; message: string };
 
+export interface AgentTokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+}
+
+interface AgentTimingEvent {
+  type: "agent_timing";
+  promptMs: number;
+  assistantTurns: number;
+  usage?: AgentTokenUsage;
+  stopReason?: string;
+}
+
+export interface AgentExecutionTiming {
+  termination: "close" | "timeout" | "spawn-error";
+  exitCode?: number | null;
+  preparationMs: number;
+  dockerRunMs: number;
+  imagePullMs?: number;
+  containerAndAgentMs?: number;
+  promptMs?: number;
+  postPromptMs?: number;
+  assistantTurns?: number;
+  usage?: AgentTokenUsage;
+  stopReason?: string;
+}
+
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
 
 let storedProxyPort: number | null = null;
 
@@ -194,13 +225,52 @@ async function downloadAttachments(
   return saved;
 }
 
-export async function sendMessage(
+export interface SendMessageOptions {
+  onDiscordEvent?: (event: DiscordEvent) => void;
+  attachments?: AttachmentRef[];
+  onExecutionTiming?: (timing: AgentExecutionTiming) => void;
+}
+
+export function sendMessage(
+  groupName: string,
+  sessionId: string,
+  content: string,
+  options?: SendMessageOptions,
+): Promise<string>;
+export function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
   onDiscordEvent?: (event: DiscordEvent) => void,
   attachments?: AttachmentRef[],
+  onExecutionTiming?: (timing: AgentExecutionTiming) => void,
+): Promise<string>;
+export async function sendMessage(
+  groupName: string,
+  sessionId: string,
+  content: string,
+  optionsOrOnDiscordEvent?:
+    | SendMessageOptions
+    | ((event: DiscordEvent) => void),
+  legacyAttachments?: AttachmentRef[],
+  legacyOnExecutionTiming?: (timing: AgentExecutionTiming) => void,
 ): Promise<string> {
+  const isLegacyCall =
+    typeof optionsOrOnDiscordEvent === "function" ||
+    legacyAttachments !== undefined ||
+    legacyOnExecutionTiming !== undefined;
+  const options: SendMessageOptions = isLegacyCall
+    ? {
+        onDiscordEvent:
+          typeof optionsOrOnDiscordEvent === "function"
+            ? optionsOrOnDiscordEvent
+            : undefined,
+        attachments: legacyAttachments,
+        onExecutionTiming: legacyOnExecutionTiming,
+      }
+    : (optionsOrOnDiscordEvent ?? {});
+  const { onDiscordEvent, attachments, onExecutionTiming } = options;
+  const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
   const groupConfig: AgentConfig = groupsEntry ?? {};
 
@@ -314,29 +384,89 @@ export async function sendMessage(
     "HOME=/tmp",
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
-    "localhost:5050/my-discord-agent-runner:latest",
+    RUNNER_IMAGE,
     "node",
     "/app/runner.mjs",
   ];
 
+  const dockerStartedAt = Date.now();
   return new Promise((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
 
     let stdout = "";
     let stderrTail = "";
     let plainStderr = "";
+    let pullCompletedAt: number | undefined;
+    let agentTiming: AgentTimingEvent | undefined;
+    let agentTimingReceivedAt: number | undefined;
+    let timingReported = false;
+
+    const reportExecutionTiming = (
+      finishedAt: number,
+      termination: AgentExecutionTiming["termination"],
+      exitCode?: number | null,
+    ): void => {
+      if (timingReported) return;
+      timingReported = true;
+      const timing: AgentExecutionTiming = {
+        termination,
+        ...(exitCode !== undefined ? { exitCode } : {}),
+        preparationMs: dockerStartedAt - executionStartedAt,
+        dockerRunMs: finishedAt - dockerStartedAt,
+        ...(pullCompletedAt !== undefined
+          ? {
+              imagePullMs: pullCompletedAt - dockerStartedAt,
+              containerAndAgentMs: finishedAt - pullCompletedAt,
+            }
+          : {}),
+        ...(agentTiming !== undefined
+          ? {
+              promptMs: agentTiming.promptMs,
+              assistantTurns: agentTiming.assistantTurns,
+              usage: agentTiming.usage,
+              stopReason: agentTiming.stopReason,
+              ...(agentTimingReceivedAt !== undefined
+                ? {
+                    postPromptMs: Math.max(
+                      0,
+                      finishedAt - agentTimingReceivedAt,
+                    ),
+                  }
+                : {}),
+            }
+          : {}),
+      };
+      try {
+        onExecutionTiming?.(timing);
+      } catch (err) {
+        console.error("[manager] 実行時間コールバックでエラー:", err);
+      }
+    };
 
     const processStderrLine = (line: string): void => {
       if (line.startsWith(DISCORD_EVENT_PREFIX)) {
         try {
-          const event = JSON.parse(
-            line.slice(DISCORD_EVENT_PREFIX.length),
-          ) as DiscordEvent;
-          onDiscordEvent?.(event);
+          const event = JSON.parse(line.slice(DISCORD_EVENT_PREFIX.length)) as
+            | DiscordEvent
+            | AgentTimingEvent;
+          if (event.type === "agent_timing") {
+            agentTiming = event;
+            agentTimingReceivedAt = Date.now();
+          } else {
+            onDiscordEvent?.(event);
+          }
         } catch {
           // ignore malformed events
         }
       } else {
+        // docker run --pull=always は pull 完了時に Status 行を出力する。
+        // ここを境界にして、image pull とコンテナ内処理の所要時間を分離する。
+        const dockerPullCompleted =
+          line === `Status: Image is up to date for ${RUNNER_IMAGE}` ||
+          line === `Status: Downloaded newer image for ${RUNNER_IMAGE}`;
+        if (pullCompletedAt === undefined && dockerPullCompleted) {
+          pullCompletedAt = Date.now();
+        }
         plainStderr += `${line}\n`;
       }
     };
@@ -355,6 +485,11 @@ export async function sendMessage(
 
     const timeout = setTimeout(
       () => {
+        if (stderrTail) {
+          processStderrLine(stderrTail);
+          stderrTail = "";
+        }
+        reportExecutionTiming(Date.now(), "timeout");
         proc.kill("SIGKILL");
         reject(new NonRetryableError("タイムアウト（10分を超過しました）"));
       },
@@ -366,7 +501,9 @@ export async function sendMessage(
       // 残バッファをフラッシュ
       if (stderrTail) {
         processStderrLine(stderrTail);
+        stderrTail = "";
       }
+      reportExecutionTiming(Date.now(), "close", code);
       if (code === null) {
         // SIGKILL などシグナルで終了した場合。タイムアウト時は既に reject 済み
         return;
@@ -382,6 +519,7 @@ export async function sendMessage(
 
     proc.on("error", (err: Error) => {
       clearTimeout(timeout);
+      reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
     });
 
