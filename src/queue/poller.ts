@@ -28,6 +28,7 @@ let running = false;
 
 type ResponseOutcome =
   | "success"
+  | "empty-response"
   | "retry"
   | "dead-letter"
   | "discord-error"
@@ -271,15 +272,19 @@ async function sendDiscordEvent(
 }
 
 // LLM ロックを取得してから fn() を実行し、完了後に必ず解放する
+interface LlmLockOptions {
+  onAcquired?: (waitMs: number) => void;
+}
+
 async function withLlmLock<T>(
   mode: DispatchMode,
   fn: () => Promise<T>,
-  onAcquired?: (waitMs: number) => void,
+  options: LlmLockOptions = {},
 ): Promise<T> {
   const waitStartedAt = Date.now();
   const release = await acquireLlmLock(mode);
   try {
-    onAcquired?.(Date.now() - waitStartedAt);
+    options.onAcquired?.(Date.now() - waitStartedAt);
     return await fn();
   } finally {
     release();
@@ -290,102 +295,136 @@ async function processCronThread(
   msg: InboxMessage,
   mode: DispatchMode,
 ): Promise<void> {
-  if (!msg.cronJobId) {
-    console.error(
-      "[poller] cronThread フラグがあるが cronJobId が未設定:",
-      msg,
-    );
-    await appendDeadLetter(msg);
-    await removeInboxById(msg.id);
-    return;
-  }
-  // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
-  let threadId: string | undefined;
-  let response: string;
-  let threadSend: (content: string) => Promise<unknown>;
+  const timing = startResponseTiming(msg);
+  let outcome: ResponseOutcome = "unexpected-error";
+  let sessionId = msg.sessionId;
   try {
-    let sessionId: string;
-    if (msg.cronThreadId) {
-      // リトライ: スレッドは作成済み。再作成せず既存スレッドをフェッチ
-      threadId = msg.cronThreadId;
-      sessionId = threadId;
-      const fetched = await client.channels.fetch(threadId);
-      if (!fetched?.isSendable()) {
-        throw new NonRetryableError(
-          `cron-thread: スレッド ${threadId} が見つかりません`,
-        );
-      }
-      threadSend = (content) => fetched.send(content);
-    } else {
-      // 初回: チャンネルをフェッチしてスレッドを作成
-      const channel = await client.channels.fetch(msg.channelId);
-      if (
-        !channel ||
-        (channel.type !== ChannelType.GuildText &&
-          channel.type !== ChannelType.GuildAnnouncement)
-      ) {
-        throw new NonRetryableError(
-          `cron-thread: チャンネル ${msg.channelId} はスレッドをサポートしていません`,
-        );
-      }
-      const dateSuffix = new Date(msg.timestamp)
-        .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
-        .slice(0, 16)
-        .replace(" ", "-")
-        .replace(":", "-");
-      const suffix = `-${dateSuffix}`;
-      const maxIdLen = 100 - "cron-".length - suffix.length;
-      const truncatedId = msg.cronJobId.slice(0, maxIdLen);
-      const thread = await channel.threads.create({
-        name: `cron-${truncatedId}${suffix}`,
-      });
-      threadId = thread.id;
-      sessionId = thread.id;
-      threadSend = (content) => thread.send(content);
-    }
-    response = await withLlmLock(mode, () =>
-      sendMessage(msg.groupName, sessionId, msg.content),
-    );
-  } catch (err) {
-    if (err instanceof NonRetryableError) {
-      console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
+    if (!msg.cronJobId) {
+      outcome = "dead-letter";
+      console.error(
+        "[poller] cronThread フラグがあるが cronJobId が未設定:",
+        msg,
+      );
       await appendDeadLetter(msg);
       await removeInboxById(msg.id);
-    } else {
-      console.error(
-        `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
-        err,
-      );
-      if (msg.retries + 1 < MAX_RETRIES) {
-        // threadId がセット済み（スレッド作成後に失敗）なら次回リトライでスレッド再作成をスキップ
-        await updateInboxById(msg.id, {
-          retries: msg.retries + 1,
-          cronThreadId: threadId,
-        });
+      return;
+    }
+    // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
+    let threadId: string | undefined;
+    let response: string;
+    let threadSend: (content: string) => Promise<unknown>;
+    try {
+      if (msg.cronThreadId) {
+        // リトライ: スレッドは作成済み。再作成せず既存スレッドをフェッチ
+        threadId = msg.cronThreadId;
+        sessionId = threadId;
+        const fetched = await client.channels.fetch(threadId);
+        if (!fetched?.isSendable()) {
+          throw new NonRetryableError(
+            `cron-thread: スレッド ${threadId} が見つかりません`,
+          );
+        }
+        threadSend = (content) => fetched.send(content);
       } else {
-        console.error(
-          "[poller] cron-thread リトライ上限。dead-letter に移動:",
-          msg.id,
-        );
+        // 初回: チャンネルをフェッチしてスレッドを作成
+        const channel = await client.channels.fetch(msg.channelId);
+        if (
+          !channel ||
+          (channel.type !== ChannelType.GuildText &&
+            channel.type !== ChannelType.GuildAnnouncement)
+        ) {
+          throw new NonRetryableError(
+            `cron-thread: チャンネル ${msg.channelId} はスレッドをサポートしていません`,
+          );
+        }
+        const dateSuffix = new Date(msg.timestamp)
+          .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
+          .slice(0, 16)
+          .replace(" ", "-")
+          .replace(":", "-");
+        const suffix = `-${dateSuffix}`;
+        const maxIdLen = 100 - "cron-".length - suffix.length;
+        const truncatedId = msg.cronJobId.slice(0, maxIdLen);
+        const thread = await channel.threads.create({
+          name: `cron-${truncatedId}${suffix}`,
+        });
+        threadId = thread.id;
+        sessionId = thread.id;
+        threadSend = (content) => thread.send(content);
+      }
+      response = await withLlmLock(
+        mode,
+        async () => {
+          const agentStartedAt = Date.now();
+          try {
+            return await sendMessage(msg.groupName, sessionId, msg.content, {
+              onExecutionTiming: (executionTiming) => {
+                timing.agentExecution = executionTiming;
+              },
+            });
+          } finally {
+            timing.agentTotalMs = Date.now() - agentStartedAt;
+          }
+        },
+        {
+          onAcquired: (waitMs) => {
+            timing.lockWaitMs = waitMs;
+          },
+        },
+      );
+    } catch (err) {
+      if (err instanceof NonRetryableError) {
+        outcome = "dead-letter";
+        console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
         await appendDeadLetter(msg);
         await removeInboxById(msg.id);
+      } else {
+        console.error(
+          `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
+          err,
+        );
+        if (msg.retries + 1 < MAX_RETRIES) {
+          outcome = "retry";
+          // threadId がセット済み（スレッド作成後に失敗）なら次回リトライでスレッド再作成をスキップ
+          await updateInboxById(msg.id, {
+            retries: msg.retries + 1,
+            cronThreadId: threadId,
+          });
+        } else {
+          outcome = "dead-letter";
+          console.error(
+            "[poller] cron-thread リトライ上限。dead-letter に移動:",
+            msg.id,
+          );
+          await appendDeadLetter(msg);
+          await removeInboxById(msg.id);
+        }
       }
+      return;
     }
-    return;
-  }
 
-  // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
-  // ログのみで再実行しない（processMessage と同様、応答自体は生成済みのため）
-  await removeInboxById(msg.id);
+    // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
+    // ログのみで再実行しない（processMessage と同様、応答自体は生成済みのため）
+    await removeInboxById(msg.id);
 
-  try {
-    if (response) {
-      for (const chunk of splitMessage(response)) {
-        await threadSend(chunk);
+    const discordSendStartedAt = Date.now();
+    try {
+      if (response) {
+        for (const chunk of splitMessage(response)) {
+          await threadSend(chunk);
+        }
+        outcome = "success";
+      } else {
+        outcome = "empty-response";
       }
+    } catch (err) {
+      outcome = "discord-error";
+      console.error("[poller] cron-thread Discord送信エラー:", err);
+    } finally {
+      timing.discordSendMs = Date.now() - discordSendStartedAt;
     }
-  } catch (err) {
-    console.error("[poller] cron-thread Discord送信エラー:", err);
+  } finally {
+    logResponseTiming({ ...msg, sessionId }, timing, outcome);
   }
 }
 
@@ -399,6 +438,9 @@ export async function processMessage(
 
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
+  // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
+  // ここではプレースホルダを持ち、catch / finally の両方で停止できるようにする
+  let stopTyping = () => {};
   try {
     let response: string;
 
@@ -410,9 +452,6 @@ export async function processMessage(
     const replyMessageId =
       groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
-    // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
-    // ここではプレースホルダを持ち、catch / finally の両方で停止できるようにする
-    let stopTyping = () => {};
     try {
       response = await withLlmLock(
         mode,
@@ -424,25 +463,29 @@ export async function processMessage(
               msg.groupName,
               msg.sessionId,
               msg.content,
-              (event) => {
-                // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
-                // (cronThread の場合はここに到達せず processCronThread 側で処理される)
-                if (msg.cronJobId && event.type === "tool_start") {
-                  return;
-                }
-                void sendDiscordEvent(msg.channelId, event, replyMessageId);
-              },
-              msg.attachments,
-              (executionTiming) => {
-                timing.agentExecution = executionTiming;
+              {
+                onDiscordEvent: (event) => {
+                  // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
+                  // (cronThread の場合はここに到達せず processCronThread 側で処理される)
+                  if (msg.cronJobId && event.type === "tool_start") {
+                    return;
+                  }
+                  void sendDiscordEvent(msg.channelId, event, replyMessageId);
+                },
+                attachments: msg.attachments,
+                onExecutionTiming: (executionTiming) => {
+                  timing.agentExecution = executionTiming;
+                },
               },
             );
           } finally {
             timing.agentTotalMs = Date.now() - agentStartedAt;
           }
         },
-        (waitMs) => {
-          timing.lockWaitMs = waitMs;
+        {
+          onAcquired: (waitMs) => {
+            timing.lockWaitMs = waitMs;
+          },
         },
       );
     } catch (err) {
@@ -482,7 +525,14 @@ export async function processMessage(
     const discordSendStartedAt = Date.now();
     try {
       const channel = await client.channels.fetch(msg.channelId);
-      if (channel?.isSendable() && response) {
+      if (!response) {
+        outcome = "empty-response";
+      } else if (!channel?.isSendable()) {
+        outcome = "discord-error";
+        console.error(
+          `[poller] Discord送信エラー: チャンネル ${msg.channelId} は送信できません`,
+        );
+      } else {
         const chunks = splitMessage(response);
         const [firstChunk, ...restChunks] = chunks;
         if (firstChunk) {
@@ -502,8 +552,8 @@ export async function processMessage(
         for (const chunk of restChunks) {
           await channel.send(chunk);
         }
+        outcome = "success";
       }
-      outcome = "success";
     } catch (err) {
       outcome = "discord-error";
       console.error(`[poller] Discord送信エラー:`, err);
@@ -512,6 +562,7 @@ export async function processMessage(
       stopTyping();
     }
   } finally {
+    stopTyping();
     logResponseTiming(msg, timing, outcome);
   }
 }
