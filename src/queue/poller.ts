@@ -1,5 +1,9 @@
 import { ChannelType } from "discord.js";
-import { type DiscordEvent, sendMessage } from "../agent/manager.js";
+import {
+  type AgentExecutionTiming,
+  type DiscordEvent,
+  sendMessage,
+} from "../agent/manager.js";
 import { findGroupByName } from "../config/groups.js";
 import {
   type DispatchMode,
@@ -19,7 +23,114 @@ import { acquireLlmLock } from "./llm-mutex.js";
 
 const POLL_MS = 1000;
 const MAX_RETRIES = 10;
+const SLOW_RESPONSE_MS = 60_000;
 let running = false;
+
+type ResponseOutcome =
+  | "success"
+  | "retry"
+  | "dead-letter"
+  | "discord-error"
+  | "unexpected-error";
+
+interface ResponseTiming {
+  startedAt: number;
+  receivedAt?: number;
+  enqueuedAt?: number;
+  queueWaitMs: number;
+  lockWaitMs?: number;
+  agentTotalMs?: number;
+  agentExecution?: AgentExecutionTiming;
+  discordSendMs?: number;
+}
+
+function parseTimestamp(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function startResponseTiming(msg: InboxMessage): ResponseTiming {
+  const startedAt = Date.now();
+  const receivedAt = parseTimestamp(msg.timestamp);
+  const enqueuedAt = parseTimestamp(msg.enqueuedAt);
+  return {
+    startedAt,
+    receivedAt,
+    enqueuedAt,
+    queueWaitMs: Math.max(
+      0,
+      startedAt - (enqueuedAt ?? receivedAt ?? startedAt),
+    ),
+  };
+}
+
+function logResponseTiming(
+  msg: InboxMessage,
+  timing: ResponseTiming,
+  outcome: ResponseOutcome,
+): void {
+  const finishedAt = Date.now();
+  const ingressMs =
+    timing.receivedAt !== undefined && timing.enqueuedAt !== undefined
+      ? Math.max(0, timing.enqueuedAt - timing.receivedAt)
+      : undefined;
+  const processingMs = Math.max(0, finishedAt - timing.startedAt);
+  const totalMs =
+    timing.receivedAt !== undefined
+      ? Math.max(0, finishedAt - timing.receivedAt)
+      : processingMs;
+  const stages = [
+    ["ingress", ingressMs],
+    ["queue", timing.queueWaitMs],
+    ["llm-lock", timing.lockWaitMs],
+    ["preparation", timing.agentExecution?.preparationMs],
+    ["image-pull", timing.agentExecution?.imagePullMs],
+    [
+      timing.agentExecution?.containerAndAgentMs !== undefined
+        ? "container-agent"
+        : "docker-agent",
+      timing.agentExecution?.containerAndAgentMs ??
+        timing.agentExecution?.dockerRunMs ??
+        timing.agentTotalMs,
+    ],
+    ["discord-send", timing.discordSendMs],
+  ] as const;
+  const slowestStage = stages.reduce<{ name: string; ms: number } | undefined>(
+    (slowest, [name, ms]) =>
+      ms !== undefined && (slowest === undefined || ms > slowest.ms)
+        ? { name, ms }
+        : slowest,
+    undefined,
+  );
+  const details = {
+    event: "response_timing",
+    inboxId: msg.id,
+    discordMessageId: msg.messageId,
+    groupName: msg.groupName,
+    sessionId: msg.sessionId,
+    retries: msg.retries,
+    outcome,
+    ingressMs,
+    queueWaitMs: timing.queueWaitMs,
+    llmLockWaitMs: timing.lockWaitMs,
+    agentTotalMs: timing.agentTotalMs,
+    preparationMs: timing.agentExecution?.preparationMs,
+    dockerRunMs: timing.agentExecution?.dockerRunMs,
+    imagePullMs: timing.agentExecution?.imagePullMs,
+    containerAndAgentMs: timing.agentExecution?.containerAndAgentMs,
+    discordSendMs: timing.discordSendMs,
+    processingMs,
+    totalMs,
+    slowestStage: slowestStage?.name,
+  };
+  const message = JSON.stringify(details);
+  if (totalMs >= SLOW_RESPONSE_MS) {
+    console.warn(`[poller] 応答遅延を検出: ${message}`);
+  } else {
+    console.log(`[poller] 応答時間: ${message}`);
+  }
+}
 
 const sessionChain = new Map<string, Promise<void>>();
 // peekAllUnclaimedInbox() で claim 済み（処理中 / セッションチェーンで順番待ち中）のメッセージID。
@@ -144,9 +255,12 @@ async function sendDiscordEvent(
 async function withLlmLock<T>(
   mode: DispatchMode,
   fn: () => Promise<T>,
+  onAcquired?: (waitMs: number) => void,
 ): Promise<T> {
+  const waitStartedAt = Date.now();
   const release = await acquireLlmLock(mode);
   try {
+    onAcquired?.(Date.now() - waitStartedAt);
     return await fn();
   } finally {
     release();
@@ -264,95 +378,122 @@ export async function processMessage(
     return processCronThread(msg, mode);
   }
 
-  let response: string;
-
-  // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
-  const groupConfig = await findGroupByName(msg.groupName).catch((err) => {
-    console.error("[poller] グループ設定の読み込みエラー:", err);
-    return undefined;
-  });
-  const replyMessageId =
-    groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
-
-  // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
-  // ここではプレースホルダを持ち、catch / finally の両方で停止できるようにする
-  let stopTyping = () => {};
+  const timing = startResponseTiming(msg);
+  let outcome: ResponseOutcome = "unexpected-error";
   try {
-    response = await withLlmLock(mode, () => {
-      stopTyping = startTypingLoop(msg.channelId);
-      return sendMessage(
-        msg.groupName,
-        msg.sessionId,
-        msg.content,
-        (event) => {
-          // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
-          // (cronThread の場合はここに到達せず processCronThread 側で処理される)
-          if (msg.cronJobId && event.type === "tool_start") {
-            return;
-          }
-          void sendDiscordEvent(msg.channelId, event, replyMessageId);
-        },
-        msg.attachments,
-      );
+    let response: string;
+
+    // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
+    const groupConfig = await findGroupByName(msg.groupName).catch((err) => {
+      console.error("[poller] グループ設定の読み込みエラー:", err);
+      return undefined;
     });
-  } catch (err) {
-    stopTyping();
-    if (err instanceof NonRetryableError) {
-      console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-      await appendDeadLetter(msg);
-      await removeInboxById(msg.id);
+    const replyMessageId =
+      groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
+
+    // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
+    // ここではプレースホルダを持ち、catch / finally の両方で停止できるようにする
+    let stopTyping = () => {};
+    try {
+      response = await withLlmLock(
+        mode,
+        async () => {
+          stopTyping = startTypingLoop(msg.channelId);
+          const agentStartedAt = Date.now();
+          try {
+            return await sendMessage(
+              msg.groupName,
+              msg.sessionId,
+              msg.content,
+              (event) => {
+                // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
+                // (cronThread の場合はここに到達せず processCronThread 側で処理される)
+                if (msg.cronJobId && event.type === "tool_start") {
+                  return;
+                }
+                void sendDiscordEvent(msg.channelId, event, replyMessageId);
+              },
+              msg.attachments,
+              (executionTiming) => {
+                timing.agentExecution = executionTiming;
+              },
+            );
+          } finally {
+            timing.agentTotalMs = Date.now() - agentStartedAt;
+          }
+        },
+        (waitMs) => {
+          timing.lockWaitMs = waitMs;
+        },
+      );
+    } catch (err) {
+      stopTyping();
+      if (err instanceof NonRetryableError) {
+        outcome = "dead-letter";
+        console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+        await appendDeadLetter(msg);
+        await removeInboxById(msg.id);
+        return;
+      }
+      console.error(
+        `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
+        err,
+      );
+      if (msg.retries + 1 < MAX_RETRIES) {
+        outcome = "retry";
+        await updateInboxById(msg.id, { retries: msg.retries + 1 });
+      } else {
+        outcome = "dead-letter";
+        console.error(
+          "[poller] リトライ上限に達しました。dead-letter に移動:",
+          msg.id,
+        );
+        await appendDeadLetter(msg);
+        await removeInboxById(msg.id);
+      }
+      const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
+      await sleep(retryDelay);
       return;
     }
-    console.error(
-      `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
-      err,
-    );
-    if (msg.retries + 1 < MAX_RETRIES) {
-      await updateInboxById(msg.id, { retries: msg.retries + 1 });
-    } else {
-      console.error(
-        "[poller] リトライ上限に達しました。dead-letter に移動:",
-        msg.id,
-      );
-      await appendDeadLetter(msg);
-      await removeInboxById(msg.id);
-    }
-    const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
-    await sleep(retryDelay);
-    return;
-  }
 
-  // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
-  // ログのみで dead-letter には送らない（応答自体は生成済みのため再実行は不要）
-  await removeInboxById(msg.id);
+    // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
+    // ログのみで dead-letter には送らない（応答自体は生成済みのため再実行は不要）
+    await removeInboxById(msg.id);
 
-  try {
-    const channel = await client.channels.fetch(msg.channelId);
-    if (channel?.isSendable() && response) {
-      const chunks = splitMessage(response);
-      const [firstChunk, ...restChunks] = chunks;
-      if (firstChunk) {
-        await channel.send(
-          replyMessageId
-            ? {
-                content: firstChunk,
-                reply: {
-                  messageReference: replyMessageId,
-                  failIfNotExists: false,
-                },
-                allowedMentions: { repliedUser: true },
-              }
-            : firstChunk,
-        );
+    const discordSendStartedAt = Date.now();
+    try {
+      const channel = await client.channels.fetch(msg.channelId);
+      if (channel?.isSendable() && response) {
+        const chunks = splitMessage(response);
+        const [firstChunk, ...restChunks] = chunks;
+        if (firstChunk) {
+          await channel.send(
+            replyMessageId
+              ? {
+                  content: firstChunk,
+                  reply: {
+                    messageReference: replyMessageId,
+                    failIfNotExists: false,
+                  },
+                  allowedMentions: { repliedUser: true },
+                }
+              : firstChunk,
+          );
+        }
+        for (const chunk of restChunks) {
+          await channel.send(chunk);
+        }
       }
-      for (const chunk of restChunks) {
-        await channel.send(chunk);
-      }
+      outcome = "success";
+    } catch (err) {
+      outcome = "discord-error";
+      console.error(`[poller] Discord送信エラー:`, err);
+    } finally {
+      timing.discordSendMs = Date.now() - discordSendStartedAt;
+      stopTyping();
     }
-  } catch (err) {
-    console.error(`[poller] Discord送信エラー:`, err);
   } finally {
-    stopTyping();
+    logResponseTiming(msg, timing, outcome);
   }
 }
 

@@ -27,6 +27,7 @@ const { removeInboxById, updateInboxById } = await import("./inbox.js");
 const { processMessage } = await import("./poller.js");
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
+  const now = new Date().toISOString();
   return {
     id: "inbox-1",
     channelId: "ch-1",
@@ -34,7 +35,8 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
     sessionId: "ch-1",
     messageId: "msg-original",
     content: "hello",
-    timestamp: "2026-01-01T00:00:00.000Z",
+    timestamp: now,
+    enqueuedAt: now,
     retries: 0,
     ...overrides,
   };
@@ -123,7 +125,49 @@ describe("processMessage - autoReply", () => {
       "hello",
       expect.any(Function),
       attachments,
+      expect.any(Function),
     );
+  });
+
+  it("応答時間を区間別の構造化ログに記録する", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, _onDiscordEvent, _attachments, onExecutionTiming) => {
+        onExecutionTiming?.({
+          preparationMs: 5,
+          dockerRunMs: 35,
+          imagePullMs: 10,
+          containerAndAgentMs: 25,
+        });
+        return "AI response";
+      },
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await processMessage(makeMsg(), "parallel-session");
+
+    const line = logSpy.mock.calls
+      .flat()
+      .find((value) => String(value).includes('"event":"response_timing"'));
+    expect(line).toBeDefined();
+    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
+    expect(details).toMatchObject({
+      event: "response_timing",
+      outcome: "success",
+      preparationMs: 5,
+      dockerRunMs: 35,
+      imagePullMs: 10,
+      containerAndAgentMs: 25,
+    });
+    expect(details.queueWaitMs).toEqual(expect.any(Number));
+    expect(details.llmLockWaitMs).toEqual(expect.any(Number));
+    expect(details.discordSendMs).toEqual(expect.any(Number));
+
+    logSpy.mockRestore();
   });
 
   it("複数チャンク: 先頭のみ reply 形式、残りは通常送信", async () => {

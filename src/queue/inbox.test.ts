@@ -27,8 +27,8 @@ const { appendInbox, peekAllUnclaimedInbox, removeInboxById, updateInboxById } =
   await import("./inbox.js");
 
 function makeMsgInput(
-  overrides?: Partial<Omit<InboxMessage, "id" | "retries">>,
-): Omit<InboxMessage, "id" | "retries"> {
+  overrides?: Partial<Omit<InboxMessage, "id" | "retries" | "enqueuedAt">>,
+): Omit<InboxMessage, "id" | "retries" | "enqueuedAt"> {
   return {
     channelId: "ch-1",
     groupName: "default",
@@ -69,13 +69,18 @@ describe("appendInbox", () => {
     });
   });
 
-  it("id と retries が自動付与される", async () => {
+  it("id・retries・enqueuedAt が自動付与される", async () => {
+    const before = Date.now();
     await appendInbox(makeMsgInput());
+    const after = Date.now();
 
     const lines = readLines();
     expect(typeof lines[0].id).toBe("string");
     expect(lines[0].id.length).toBeGreaterThan(0);
     expect(lines[0].retries).toBe(0);
+    const enqueuedAt = Date.parse(lines[0].enqueuedAt ?? "");
+    expect(enqueuedAt).toBeGreaterThanOrEqual(before);
+    expect(enqueuedAt).toBeLessThanOrEqual(after);
   });
 
   it("複数回追記すると末尾に追加されていく", async () => {

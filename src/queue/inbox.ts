@@ -39,6 +39,7 @@ export interface InboxMessage {
   messageId?: string; // 返信引用に使う元メッセージの Discord ID。旧キュー互換のためオプショナル
   content: string;
   timestamp: string;
+  enqueuedAt?: string; // inbox.jsonl への追加時刻。旧キュー互換のためオプショナル
   retries: number; // 失敗してリトライした回数。初回は 0
   cronThread?: boolean; // cron thread モードのトリガー
   cronJobId?: string; // to-thread: スレッド名生成用（cron-${jobId}-${dateSuffix}）。to-channel: ツールコール通知抑制の判定用
@@ -97,7 +98,7 @@ const withFileLock = createFileLock();
  * id と retries は自動で付与される。Omitは除外の意味（関数内で生成するので、引数では明示しなくていい）
  */
 export async function appendInbox(
-  msg: Omit<InboxMessage, "id" | "retries">,
+  msg: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
 ): Promise<void> {
   return withFileLock(async () => {
     await ensureDir();
@@ -105,6 +106,7 @@ export async function appendInbox(
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       retries: 0,
       ...msg,
+      enqueuedAt: new Date().toISOString(),
     };
     await appendFile(INBOX_PATH, `${JSON.stringify(record)}\n`, "utf-8");
   });
