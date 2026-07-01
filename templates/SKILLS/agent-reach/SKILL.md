@@ -6,11 +6,11 @@ description: URL からコンテンツを取得して整形するスキル。You
 ## 使い方
 
 ```bash
-SKILLS/scripts/agent-reach.sh <URL>
+SKILLS/agent-reach/scripts/agent-reach.sh <URL>
 ```
 
 stdout に整形された Markdown が出力される。ファイルに保存するにはリダイレクトを使う。
 
 ```bash
-SKILLS/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > video.md
+SKILLS/agent-reach/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > video.md
 ```
