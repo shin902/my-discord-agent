@@ -196,6 +196,38 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toContain("--cpus=1");
   });
 
+  it("image pull とコンテナ内処理の所要時間を通知する", async () => {
+    spawnMock.mockReturnValueOnce(
+      makeProc(
+        0,
+        "response",
+        [
+          "latest: Pulling from my-discord-agent-runner",
+          "Status: Image is up to date for localhost:5050/my-discord-agent-runner:latest",
+          "",
+        ].join("\n"),
+      ),
+    );
+    const { sendMessage } = await import("./manager.js");
+    const onExecutionTiming = vi.fn();
+
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "hi",
+      undefined,
+      undefined,
+      onExecutionTiming,
+    );
+
+    expect(onExecutionTiming).toHaveBeenCalledWith({
+      preparationMs: expect.any(Number),
+      dockerRunMs: expect.any(Number),
+      imagePullMs: expect.any(Number),
+      containerAndAgentMs: expect.any(Number),
+    });
+  });
+
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");

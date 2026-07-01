@@ -25,6 +25,13 @@ export type DiscordEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
   | { type: "error"; message: string };
 
+export interface AgentExecutionTiming {
+  preparationMs: number;
+  dockerRunMs: number;
+  imagePullMs?: number;
+  containerAndAgentMs?: number;
+}
+
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 
 let storedProxyPort: number | null = null;
@@ -200,7 +207,9 @@ export async function sendMessage(
   content: string,
   onDiscordEvent?: (event: DiscordEvent) => void,
   attachments?: AttachmentRef[],
+  onExecutionTiming?: (timing: AgentExecutionTiming) => void,
 ): Promise<string> {
+  const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
   const groupConfig: AgentConfig = groupsEntry ?? {};
 
@@ -319,12 +328,35 @@ export async function sendMessage(
     "/app/runner.mjs",
   ];
 
+  const dockerStartedAt = Date.now();
   return new Promise((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
 
     let stdout = "";
     let stderrTail = "";
     let plainStderr = "";
+    let pullCompletedAt: number | undefined;
+    let timingReported = false;
+
+    const reportExecutionTiming = (finishedAt: number): void => {
+      if (timingReported) return;
+      timingReported = true;
+      const timing: AgentExecutionTiming = {
+        preparationMs: dockerStartedAt - executionStartedAt,
+        dockerRunMs: finishedAt - dockerStartedAt,
+        ...(pullCompletedAt !== undefined
+          ? {
+              imagePullMs: pullCompletedAt - dockerStartedAt,
+              containerAndAgentMs: finishedAt - pullCompletedAt,
+            }
+          : {}),
+      };
+      try {
+        onExecutionTiming?.(timing);
+      } catch (err) {
+        console.error("[manager] 実行時間コールバックでエラー:", err);
+      }
+    };
 
     const processStderrLine = (line: string): void => {
       if (line.startsWith(DISCORD_EVENT_PREFIX)) {
@@ -337,6 +369,11 @@ export async function sendMessage(
           // ignore malformed events
         }
       } else {
+        // docker run --pull=always は pull 完了時に Status 行を出力する。
+        // ここを境界にして、image pull とコンテナ内処理の所要時間を分離する。
+        if (line.startsWith("Status: ")) {
+          pullCompletedAt = Date.now();
+        }
         plainStderr += `${line}\n`;
       }
     };
@@ -355,6 +392,11 @@ export async function sendMessage(
 
     const timeout = setTimeout(
       () => {
+        if (stderrTail) {
+          processStderrLine(stderrTail);
+          stderrTail = "";
+        }
+        reportExecutionTiming(Date.now());
         proc.kill("SIGKILL");
         reject(new NonRetryableError("タイムアウト（10分を超過しました）"));
       },
@@ -366,7 +408,9 @@ export async function sendMessage(
       // 残バッファをフラッシュ
       if (stderrTail) {
         processStderrLine(stderrTail);
+        stderrTail = "";
       }
+      reportExecutionTiming(Date.now());
       if (code === null) {
         // SIGKILL などシグナルで終了した場合。タイムアウト時は既に reject 済み
         return;
@@ -382,6 +426,7 @@ export async function sendMessage(
 
     proc.on("error", (err: Error) => {
       clearTimeout(timeout);
+      reportExecutionTiming(Date.now());
       reject(err);
     });
 
