@@ -123,9 +123,23 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "schedule": "*/30 * * * *",
     "enabled": true,
     "handler": "jobs/mail.ts"
+  },
+  {
+    "id": "cheap-daily-summary",
+    "schedule": "0 9 * * *",
+    "enabled": true,
+    "groupName": "my-group",
+    "prompt": "昨日の要点を短くまとめてください",
+    "channelId": "YOUR_CHANNEL_ID",
+    "mode": "to-channel",
+    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "tools": ["read"],
+    "skills": ["session-logs"]
   }
 ]
 ```
+
+宣言的ジョブ（`handler` を使わず `groupName`/`prompt`/`channelId`/`mode` を指定する形式）では、`model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
 
 ### jobs/issue-triage.ts
 

@@ -6,7 +6,10 @@
     "groupName": "my-group",
     "prompt": "昨日のログを分析して日次レポートを作成してください",
     "channelId": "YOUR_CHANNEL_ID",
-    "mode": "to-thread"
+    "mode": "to-thread",
+    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "tools": ["read", "grep"],
+    "skills": ["session-logs"]
   },
   {
     "id": "mail-check",
