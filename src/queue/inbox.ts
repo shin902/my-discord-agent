@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ModelConfig } from "../config/groups.js";
 import { createFileLock } from "../utils/lock.js";
 import { appendCorruptedDeadLetter } from "./dead-letter.js";
 
@@ -44,6 +45,7 @@ export interface InboxMessage {
   cronThread?: boolean; // cron thread モードのトリガー
   cronJobId?: string; // to-thread: スレッド名生成用（cron-${jobId}-${dateSuffix}）。to-channel: ツールコール通知抑制の判定用
   cronThreadId?: string; // スレッド作成後にセット。リトライ時の再作成を防ぐ
+  configOverride?: { model?: ModelConfig; tools?: string[]; skills?: string[] }; // cronジョブ実行時だけ適用する一時的な設定上書き
   attachments?: AttachmentRef[]; // Discord メッセージに添付されたファイル
 }
 
