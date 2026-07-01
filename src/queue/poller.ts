@@ -361,6 +361,7 @@ async function processCronThread(
               onExecutionTiming: (executionTiming) => {
                 timing.agentExecution = executionTiming;
               },
+              configOverride: msg.configOverride,
             });
           } finally {
             timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -476,6 +477,7 @@ export async function processMessage(
                 onExecutionTiming: (executionTiming) => {
                   timing.agentExecution = executionTiming;
                 },
+                configOverride: msg.configOverride,
               },
             );
           } finally {

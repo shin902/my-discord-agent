@@ -107,7 +107,7 @@ describe("processMessage - autoReply", () => {
     expect(mockSend).toHaveBeenCalledWith("AI response");
   });
 
-  it("attachments を sendMessage に渡す", async () => {
+  it("attachments と configOverride を sendMessage に渡す", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
@@ -121,8 +121,12 @@ describe("processMessage - autoReply", () => {
         size: 12345,
       },
     ];
+    const configOverride = { tools: ["read"], skills: ["session-logs"] };
 
-    await processMessage(makeMsg({ attachments }), "parallel-session");
+    await processMessage(
+      makeMsg({ attachments, configOverride }),
+      "parallel-session",
+    );
 
     expect(sendMessage).toHaveBeenCalledWith(
       "default",
@@ -132,6 +136,7 @@ describe("processMessage - autoReply", () => {
         onDiscordEvent: expect.any(Function),
         attachments,
         onExecutionTiming: expect.any(Function),
+        configOverride,
       }),
     );
   });
@@ -510,15 +515,23 @@ describe("processMessage - cron-thread", () => {
     vi.mocked(removeInboxById).mockClear();
   });
 
-  it("正常系: スレッドを作成して sendMessage を呼び、応答を thread.send で投稿する", async () => {
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+  it("正常系: スレッドを作成して sendMessage に configOverride を渡し、応答を thread.send で投稿する", async () => {
+    const configOverride = { tools: ["read"], skills: ["session-logs"] };
+
+    await processMessage(
+      makeCronThreadMsg({ configOverride }),
+      "parallel-session",
+    );
 
     expect(mockThreadsCreate).toHaveBeenCalledOnce();
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
       "default",
       "thread-123",
       "hello",
-      expect.objectContaining({ onExecutionTiming: expect.any(Function) }),
+      expect.objectContaining({
+        onExecutionTiming: expect.any(Function),
+        configOverride,
+      }),
     );
     expect(mockThreadSend).toHaveBeenCalledWith("AI response");
   });
