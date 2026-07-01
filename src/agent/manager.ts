@@ -56,6 +56,7 @@ export interface AgentExecutionTiming {
 }
 
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
 
 let storedProxyPort: number | null = null;
 
@@ -224,14 +225,51 @@ async function downloadAttachments(
   return saved;
 }
 
-export async function sendMessage(
+export interface SendMessageOptions {
+  onDiscordEvent?: (event: DiscordEvent) => void;
+  attachments?: AttachmentRef[];
+  onExecutionTiming?: (timing: AgentExecutionTiming) => void;
+}
+
+export function sendMessage(
+  groupName: string,
+  sessionId: string,
+  content: string,
+  options?: SendMessageOptions,
+): Promise<string>;
+export function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
   onDiscordEvent?: (event: DiscordEvent) => void,
   attachments?: AttachmentRef[],
   onExecutionTiming?: (timing: AgentExecutionTiming) => void,
+): Promise<string>;
+export async function sendMessage(
+  groupName: string,
+  sessionId: string,
+  content: string,
+  optionsOrOnDiscordEvent?:
+    | SendMessageOptions
+    | ((event: DiscordEvent) => void),
+  legacyAttachments?: AttachmentRef[],
+  legacyOnExecutionTiming?: (timing: AgentExecutionTiming) => void,
 ): Promise<string> {
+  const isLegacyCall =
+    typeof optionsOrOnDiscordEvent === "function" ||
+    legacyAttachments !== undefined ||
+    legacyOnExecutionTiming !== undefined;
+  const options: SendMessageOptions = isLegacyCall
+    ? {
+        onDiscordEvent:
+          typeof optionsOrOnDiscordEvent === "function"
+            ? optionsOrOnDiscordEvent
+            : undefined,
+        attachments: legacyAttachments,
+        onExecutionTiming: legacyOnExecutionTiming,
+      }
+    : (optionsOrOnDiscordEvent ?? {});
+  const { onDiscordEvent, attachments, onExecutionTiming } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
   const groupConfig: AgentConfig = groupsEntry ?? {};
@@ -346,7 +384,7 @@ export async function sendMessage(
     "HOME=/tmp",
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
-    "localhost:5050/my-discord-agent-runner:latest",
+    RUNNER_IMAGE,
     "node",
     "/app/runner.mjs",
   ];
@@ -423,7 +461,10 @@ export async function sendMessage(
       } else {
         // docker run --pull=always は pull 完了時に Status 行を出力する。
         // ここを境界にして、image pull とコンテナ内処理の所要時間を分離する。
-        if (line.startsWith("Status: ")) {
+        const dockerPullCompleted =
+          line === `Status: Image is up to date for ${RUNNER_IMAGE}` ||
+          line === `Status: Downloaded newer image for ${RUNNER_IMAGE}`;
+        if (pullCompletedAt === undefined && dockerPullCompleted) {
           pullCompletedAt = Date.now();
         }
         plainStderr += `${line}\n`;

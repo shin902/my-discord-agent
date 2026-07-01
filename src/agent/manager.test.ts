@@ -230,6 +230,25 @@ describe("sendMessage: Docker 起動構成", () => {
     });
   });
 
+  it("コンテナ内 stderr の Status 行を image pull 完了として扱わない", async () => {
+    spawnMock.mockReturnValueOnce(makeProc(0, "response", "Status: 200 OK\n"));
+    const { sendMessage } = await import("./manager.js");
+    const onExecutionTiming = vi.fn();
+
+    await sendMessage(
+      "test-group",
+      "session-1",
+      "hi",
+      undefined,
+      undefined,
+      onExecutionTiming,
+    );
+
+    const timing = onExecutionTiming.mock.calls[0][0];
+    expect(timing.imagePullMs).toBeUndefined();
+    expect(timing.containerAndAgentMs).toBeUndefined();
+  });
+
   it("prompt完了後にプロセスが閉じない場合はtimeoutとして通知する", async () => {
     vi.useFakeTimers();
     try {
