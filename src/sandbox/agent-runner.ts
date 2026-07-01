@@ -485,7 +485,13 @@ export async function runAgentLoop(
       ...(hasUsage ? { usage: aggregatedUsage } : {}),
       ...(stopReason !== undefined ? { stopReason } : {}),
     };
-    process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(timingEvent)}\n`);
+    const timingLine = `__DISCORD_EVENT__:${JSON.stringify(timingEvent)}\n`;
+    const flushed = process.stderr.write(timingLine);
+    if (flushed === false) {
+      await new Promise<void>((resolve) => {
+        process.stderr.once("drain", resolve);
+      });
+    }
   }
   await Promise.all(pendingAppends);
   return response;
