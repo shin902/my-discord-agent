@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cronMatches,
   isCronExpr,
@@ -286,5 +286,126 @@ describe("shouldRun", () => {
       expect(shouldRun("invalid", null, now)).toBe(false);
       expect(shouldRun("", null, now)).toBe(false);
     });
+  });
+});
+
+describe("cronジョブの configOverride", () => {
+  afterEach(() => {
+    vi.doUnmock("../config/config.js");
+    vi.doUnmock("../discord/client.js");
+    vi.doUnmock("../queue/inbox.js");
+    vi.resetModules();
+  });
+
+  async function importRunnerWithMocks(rawCron: unknown[] = []) {
+    const appendInboxMock = vi.fn().mockResolvedValue(undefined);
+    vi.resetModules();
+    vi.doMock("../config/config.js", () => ({
+      loadRawCron: vi.fn().mockResolvedValue(rawCron),
+    }));
+    vi.doMock("../discord/client.js", () => ({ client: {} }));
+    vi.doMock("../queue/inbox.js", () => ({ appendInbox: appendInboxMock }));
+    const mod = await import("./runner.js");
+    return { mod, appendInboxMock };
+  }
+
+  it("model/tools/skills 付きジョブをスキーマで受理する", async () => {
+    const raw = [
+      {
+        id: "cheap-summary",
+        schedule: "0 9 * * *",
+        enabled: true,
+        groupName: "g",
+        prompt: "summarize",
+        channelId: "ch",
+        mode: "to-channel",
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
+        tools: ["read"],
+        skills: ["session-logs"],
+      },
+    ];
+    const { mod } = await importRunnerWithMocks(raw);
+
+    await expect(mod.loadAndValidateCron()).resolves.toEqual([
+      expect.objectContaining({
+        id: "cheap-summary",
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
+        tools: ["read"],
+        skills: ["session-logs"],
+      }),
+    ]);
+  });
+
+  it("executeJob は上書きがあると appendInbox に configOverride を渡す", async () => {
+    const { mod, appendInboxMock } = await importRunnerWithMocks();
+
+    await mod.executeJob({
+      id: "cheap-summary",
+      schedule: "0 9 * * *",
+      enabled: true,
+      groupName: "g",
+      prompt: "summarize",
+      channelId: "ch",
+      mode: "to-channel",
+      model: { provider: "zai", modelId: "glm-4.7-flash" },
+      tools: ["read"],
+      skills: ["session-logs"],
+    });
+
+    expect(appendInboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "ch",
+        groupName: "g",
+        content: "summarize",
+        cronJobId: "cheap-summary",
+        configOverride: {
+          model: { provider: "zai", modelId: "glm-4.7-flash" },
+          tools: ["read"],
+          skills: ["session-logs"],
+        },
+      }),
+    );
+  });
+
+  it("executeJob は to-thread でも configOverride を渡す", async () => {
+    const { mod, appendInboxMock } = await importRunnerWithMocks();
+
+    await mod.executeJob({
+      id: "thread-summary",
+      schedule: "0 9 * * *",
+      enabled: true,
+      groupName: "g",
+      prompt: "summarize",
+      channelId: "ch",
+      mode: "to-thread",
+      tools: ["read"],
+    });
+
+    expect(appendInboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cronThread: true,
+        cronJobId: "thread-summary",
+        configOverride: { tools: ["read"] },
+      }),
+    );
+  });
+
+  it("executeJob は上書きが無ければ configOverride を含めない", async () => {
+    const { mod, appendInboxMock } = await importRunnerWithMocks();
+
+    await mod.executeJob({
+      id: "plain",
+      schedule: "0 9 * * *",
+      enabled: true,
+      groupName: "g",
+      prompt: "hello",
+      channelId: "ch",
+      mode: "to-channel",
+    });
+
+    expect(appendInboxMock).toHaveBeenCalledOnce();
+    expect(appendInboxMock.mock.calls[0][0]).not.toHaveProperty(
+      "configOverride",
+    );
   });
 });

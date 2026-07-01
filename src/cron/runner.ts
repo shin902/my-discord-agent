@@ -4,8 +4,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
+import { type AgentConfig, ModelConfigSchema } from "../config/groups.js";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
+import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +26,9 @@ const CronJobSchema = z
     channelId: z.string().optional(),
     mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
+    model: ModelConfigSchema.optional(),
+    tools: z.array(z.string()).optional(),
+    skills: z.array(z.string()).optional(),
     // ハンドラー固有の設定値。中身は検証せずそのまま CronContext 経由でハンドラーに渡す
     settings: z.unknown().optional(),
   })
@@ -190,10 +195,23 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
       j.enabled && typeof j.handler === "string",
   );
   await Promise.all(handlers.map((h) => validateHandlerPath(h.handler)));
+  for (const job of jobs) {
+    if (job.enabled && !job.handler && job.tools !== undefined) {
+      resolveTools(job.tools);
+    }
+  }
   return jobs;
 }
 
 // --- Job execution ---
+
+function buildConfigOverride(job: CronJob): Partial<AgentConfig> | undefined {
+  const configOverride: Partial<AgentConfig> = {};
+  if (job.model !== undefined) configOverride.model = job.model;
+  if (job.tools !== undefined) configOverride.tools = job.tools;
+  if (job.skills !== undefined) configOverride.skills = job.skills;
+  return Object.keys(configOverride).length > 0 ? configOverride : undefined;
+}
 
 export async function executeJob(job: CronJob): Promise<void> {
   const ctx: CronContext = { client, appendInbox, ...job };
@@ -210,6 +228,7 @@ export async function executeJob(job: CronJob): Promise<void> {
   > &
     CronJob;
   const timestamp = new Date().toISOString();
+  const configOverride = buildConfigOverride(job);
 
   if (mode === "to-channel") {
     // 毎回独立したセッション
@@ -220,6 +239,7 @@ export async function executeJob(job: CronJob): Promise<void> {
       content: prompt,
       timestamp,
       cronJobId: job.id,
+      ...(configOverride !== undefined ? { configOverride } : {}),
     });
   } else {
     // mode === "to-thread": poller 経由でスレッドを作成・投稿する
@@ -231,6 +251,7 @@ export async function executeJob(job: CronJob): Promise<void> {
       timestamp,
       cronThread: true,
       cronJobId: job.id,
+      ...(configOverride !== undefined ? { configOverride } : {}),
     });
   }
 }
