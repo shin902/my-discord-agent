@@ -1,39 +1,33 @@
+import type { Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createXArticleReaderServer } from "./x-article-reader.js";
 
 const TOKEN = "test-token-0123456789";
 
-let server;
-let baseUrl;
-let tmpDir;
+let server: Server | undefined;
+let baseUrl: string;
+let tmpDir: string | undefined;
 
-/**
- * env を差し替えてモジュールを新規ロードし、エフェメラルポートで起動する。
- * server.mjs はモジュールロード時に環境変数を読むため、テストごとに
- * vi.resetModules() + 動的 import で分離する。
- */
-async function startServer(env) {
-  vi.resetModules();
-  vi.unstubAllEnvs();
-  vi.stubEnv("X_ARTICLE_READER_TOKEN", TOKEN);
-  for (const [key, value] of Object.entries(env ?? {})) {
-    vi.stubEnv(key, value);
-  }
-  const mod = await import("./server.mjs");
-  server = mod.createXArticleReaderServer();
-  await new Promise((resolve, reject) => {
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+async function startServer(
+  options: { token?: string; mock?: boolean; fixturePath?: string } = {},
+) {
+  server = createXArticleReaderServer({ token: TOKEN, ...options });
+  await new Promise<void>((resolve, reject) => {
+    server?.on("error", reject);
+    server?.listen(0, "127.0.0.1", () => resolve());
   });
-  const { port } = server.address();
-  baseUrl = `http://127.0.0.1:${port}`;
-  return mod;
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("server address is unavailable");
+  }
+  baseUrl = `http://127.0.0.1:${address.port}`;
 }
 
-function postArticle(body, headers = {}) {
+function postArticle(body: unknown, headers: Record<string, string> = {}) {
   return fetch(`${baseUrl}/v1/article`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
@@ -42,9 +36,8 @@ function postArticle(body, headers = {}) {
 }
 
 afterEach(async () => {
-  vi.unstubAllEnvs();
   if (server) {
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
     server = undefined;
   }
   if (tmpDir) {
@@ -55,15 +48,15 @@ afterEach(async () => {
 
 describe("認証", () => {
   it("Authorization ヘッダがないと 401 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle({ articleId: "123", format: "plain" });
     expect(res.status).toBe(401);
-    const json = await res.json();
+    const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe("INVALID_REQUEST");
   });
 
   it("Bearer token が一致しないと 401 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "123", format: "plain" },
       { authorization: "Bearer wrong-token" },
@@ -71,18 +64,8 @@ describe("認証", () => {
     expect(res.status).toBe(401);
   });
 
-  it("TOKEN が未設定のときは常に 401 を返す", async () => {
-    vi.resetModules();
-    vi.unstubAllEnvs();
-    vi.stubEnv("X_ARTICLE_READER_TOKEN", "");
-    vi.stubEnv("X_ARTICLE_READER_MOCK", "1");
-    const mod = await import("./server.mjs");
-    server = mod.createXArticleReaderServer();
-    await new Promise((resolve, reject) => {
-      server.on("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    baseUrl = `http://127.0.0.1:${server.address().port}`;
+  it("token が未設定のときは常に 401 を返す", async () => {
+    await startServer({ token: "", mock: true });
     const res = await postArticle(
       { articleId: "123", format: "plain" },
       { authorization: "Bearer anything" },
@@ -93,14 +76,14 @@ describe("認証", () => {
 
 describe("routing", () => {
   it("GET /healthz は 200 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await fetch(`${baseUrl}/healthz`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });
 
   it("POST /v1/article 以外の path は 404 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await fetch(`${baseUrl}/v1/other`, {
       method: "POST",
       headers: { authorization: `Bearer ${TOKEN}` },
@@ -109,7 +92,7 @@ describe("routing", () => {
   });
 
   it("/v1/article への GET は 405 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await fetch(`${baseUrl}/v1/article`, {
       method: "GET",
       headers: { authorization: `Bearer ${TOKEN}` },
@@ -120,7 +103,7 @@ describe("routing", () => {
 
 describe("request 検証", () => {
   it("Content-Type が application/json でないと 415 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       JSON.stringify({ articleId: "123", format: "plain" }),
       { authorization: `Bearer ${TOKEN}`, "content-type": "text/plain" },
@@ -129,7 +112,7 @@ describe("request 検証", () => {
   });
 
   it("body が 4 KiB を超えると 413 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "123", format: "plain", padding: "x".repeat(5 * 1024) },
       { authorization: `Bearer ${TOKEN}` },
@@ -138,7 +121,7 @@ describe("request 検証", () => {
   });
 
   it("articleId が非数値だと 400 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "not-a-number", format: "plain" },
       { authorization: `Bearer ${TOKEN}` },
@@ -147,7 +130,7 @@ describe("request 検証", () => {
   });
 
   it("articleId が33桁以上だと 400 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "1".repeat(33), format: "plain" },
       { authorization: `Bearer ${TOKEN}` },
@@ -156,7 +139,7 @@ describe("request 検証", () => {
   });
 
   it("articleId が欠落していると 400 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { format: "plain" },
       { authorization: `Bearer ${TOKEN}` },
@@ -165,7 +148,7 @@ describe("request 検証", () => {
   });
 
   it("format が preview/plain 以外だと 400 を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "123", format: "full" },
       { authorization: `Bearer ${TOKEN}` },
@@ -176,13 +159,13 @@ describe("request 検証", () => {
 
 describe("mock モード", () => {
   it("正常な Article JSON を返す", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "123456789", format: "plain" },
       { authorization: `Bearer ${TOKEN}` },
     );
     expect(res.status).toBe(200);
-    const article = await res.json();
+    const article = (await res.json()) as Record<string, unknown>;
     expect(article.articleId).toBe("123456789");
     expect(article.source).toBe("x-internal-graphql");
     expect(article.canonicalUrl).toBe("https://x.com/i/article/123456789");
@@ -192,13 +175,13 @@ describe("mock モード", () => {
   });
 
   it("format=preview では plainText を含まない", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "123456789", format: "preview" },
       { authorization: `Bearer ${TOKEN}` },
     );
     expect(res.status).toBe(200);
-    const article = await res.json();
+    const article = (await res.json()) as Record<string, unknown>;
     expect(article.plainText).toBeUndefined();
     expect(typeof article.previewText).toBe("string");
   });
@@ -210,6 +193,7 @@ describe("fixture モード", () => {
   });
 
   it("plainText が 120,000 文字超なら切り詰めて contentTruncated: true を返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
     const fixturePath = join(tmpDir, `fixture-${randomUUID()}.json`);
     await writeFile(
       fixturePath,
@@ -220,13 +204,16 @@ describe("fixture モード", () => {
         plainText: "a".repeat(130_000),
       }),
     );
-    await startServer({ X_ARTICLE_READER_FIXTURE: fixturePath });
+    await startServer({ fixturePath });
     const res = await postArticle(
       { articleId: "999", format: "plain" },
       { authorization: `Bearer ${TOKEN}` },
     );
     expect(res.status).toBe(200);
-    const article = await res.json();
+    const article = (await res.json()) as {
+      plainText: string;
+      contentTruncated: boolean;
+    };
     expect(article.plainText.length).toBe(120_000);
     expect(article.contentTruncated).toBe(true);
   });
@@ -234,20 +221,20 @@ describe("fixture モード", () => {
 
 describe("upstream 未設定", () => {
   it("mock も fixture もないと UPSTREAM_CHANGED を返す", async () => {
-    await startServer({});
+    await startServer();
     const res = await postArticle(
       { articleId: "123", format: "plain" },
       { authorization: `Bearer ${TOKEN}` },
     );
     expect(res.status).toBe(502);
-    const json = await res.json();
+    const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe("UPSTREAM_CHANGED");
   });
 });
 
 describe("エラーレスポンスの安全性", () => {
   it("エラー response に X Cookie や生 header が含まれない", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "not-a-number", format: "plain" },
       {
@@ -270,7 +257,7 @@ describe("エラーレスポンスの安全性", () => {
   });
 
   it("401 response に token 情報が含まれない", async () => {
-    await startServer({ X_ARTICLE_READER_MOCK: "1" });
+    await startServer({ mock: true });
     const res = await postArticle(
       { articleId: "123", format: "plain" },
       { authorization: "Bearer wrong-token" },

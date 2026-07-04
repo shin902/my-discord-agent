@@ -118,7 +118,9 @@ groups/<target-group>/SKILLS/agent-reach/SKILL.md
 config/credentials.example.json
 config/groups.example.json
 config/groups.json
-services/x-article-reader/                 # 新規 host-only service
+src/proxy/x-article-reader.ts              # host-only reader
+src/proxy/x-article-reader.test.ts
+src/proxy/x-article-reader.integration.test.ts
 ```
 
 追加しないもの:
@@ -499,6 +501,17 @@ GET  /healthz
 Credential Proxy 側にも provider ごとの method/path allowlist を実装する。
 
 ## host-only x-article-reader
+
+### 起動
+
+reader は `src/proxy/x-article-reader.ts` として実装し、ビルド後は host 側で起動する。
+
+```bash
+X_ARTICLE_READER_TOKEN=<十分に長いランダム値> node dist/proxy/x-article-reader.js
+X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 node dist/proxy/x-article-reader.js
+```
+
+初期版は interface / mock / fixture のみを同梱し、実 X 内部 GraphQL upstream adapter は意図的に同梱しない。未設定時は `UPSTREAM_CHANGED` を返す。
 
 ### API
 
