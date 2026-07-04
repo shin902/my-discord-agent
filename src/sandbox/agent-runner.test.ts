@@ -36,13 +36,23 @@ vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn(),
 }));
 
-const { runAgentLoop, waitForNetwork } = await import("./agent-runner.js");
+const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
+  "./agent-runner.js"
+);
 const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
 function todayJST(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" });
+}
+
+function datePromptJST(): string {
+  const weekday = new Date().toLocaleDateString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    weekday: "short",
+  });
+  return `## 今日の日付\n\n${todayJST()} (${weekday}) JST`;
 }
 
 function createMockAgent(deltas: string[], endMessage: unknown) {
@@ -103,11 +113,10 @@ describe("runAgentLoop", () => {
       {},
     );
 
-    const today = todayJST();
     expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
     expect(lastAgentOptions).toMatchObject({
       initialState: {
-        systemPrompt: `あなたは役立つDiscordアシスタントです。\n\n## 今日の日付\n\n${today} (JST)`,
+        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}`,
         model: { id: "glm-4.7-flash", name: "GLM-4.7-Flash" },
         thinkingLevel: "off",
       },
@@ -239,13 +248,12 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    const today = todayJST();
     expect(readFile).toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
     expect(lastAgentOptions).toEqual(
       expect.objectContaining({
         initialState: expect.objectContaining({
           // AGENTS.md がある場合は DEFAULT_SYSTEM_PROMPT を完全に置き換える
-          systemPrompt: `カスタムプロンプト\n\n## 今日の日付\n\n${today} (JST)`,
+          systemPrompt: `カスタムプロンプト\n\n${datePromptJST()}`,
         }),
       }),
     );
@@ -789,9 +797,7 @@ describe("runAgentLoop", () => {
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).not.toContain(
-      "あなたは役立つDiscordアシスタントです。",
-    );
+    expect(systemPrompt).not.toContain(DEFAULT_SYSTEM_PROMPT);
     expect(systemPrompt).toContain("カスタムプロンプト");
     expect(systemPrompt).toContain("<available_skills>");
     expect(systemPrompt).toContain("<name>review</name>");
