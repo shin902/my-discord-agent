@@ -24,7 +24,7 @@ describe("formatSkillsForPrompt", () => {
     expect(result).toContain(
       "<location>/workspace/skills/code-review/SKILL.md</location>",
     );
-    expect(result).toContain("`read` ツール");
+    expect(result).toContain("SKILL.md を `read` で読み");
   });
 
   it("複数のスキルを含める", () => {
