@@ -1,0 +1,13 @@
+{
+  "name": "x-article-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "mock": "X_ARTICLE_READER_MOCK=1 node server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
