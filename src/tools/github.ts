@@ -199,7 +199,8 @@ const commentIssueParameters = Type.Object({
 export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
   name: "comment-issue",
   label: "Comment on GitHub Issue",
-  description: "指定した Issue にコメントを投稿する",
+  description:
+    "指定した Issue にコメントを投稿する。GitHub 上に公開される書き込み操作のため、明示的に指示された Issue 以外には投稿しないこと",
   parameters: commentIssueParameters,
   execute: async (_toolCallId, { owner, repo, issue_number, body }) => {
     if (body.length > MAX_COMMENT_CHARS) {

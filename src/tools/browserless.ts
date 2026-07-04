@@ -36,7 +36,7 @@ export const browserlessSmartScrapeTool: AgentTool<typeof smartScrapeParams> = {
   name: "browserless-smart-scrape",
   label: "Browserless Smart Scrape",
   description:
-    "⚠️ローカルLLM禁止（コンテキスト爆発リスク）: URL からコンテンツをスクレイプ。JS 描画・ブロック回避の自動フォールバック付き → JSON",
+    "URL からコンテンツをスクレイプする。JS 描画・ブロック回避の自動フォールバック付き → JSON。⚠️出力が数万トークン級になりうるため、コンテキストの小さいモデル（ローカルLLM等）では使用禁止",
   parameters: smartScrapeParams,
   execute: async (_id, { url, formats }) => {
     const text = await post("/smart-scrape", {
@@ -116,7 +116,7 @@ export const browserlessContentTool: AgentTool<typeof contentParams> = {
   name: "browserless-content",
   label: "Browserless Content",
   description:
-    "⚠️ローカルLLM禁止（コンテキスト爆発リスク）: JavaScript 描画後の HTML 全文を取得 → HTML 文字列",
+    "JavaScript 描画後の HTML 全文を取得 → HTML 文字列。⚠️出力が数万トークン級になりうるため、コンテキストの小さいモデル（ローカルLLM等）では使用禁止",
   parameters: contentParams,
   execute: async (_id, { url }) => {
     const html = await post("/content", { url });

@@ -537,7 +537,8 @@ const deleteEventParameters = Type.Object({
 export const deleteEventTool: AgentTool<typeof deleteEventParameters> = {
   name: "delete-event",
   label: "Delete Calendar Event",
-  description: "指定した予定を削除する",
+  description:
+    "指定した予定を削除する。取り消しできないため、実行前に必ず対象の予定名・日時をユーザーに示して最終確認すること",
   parameters: deleteEventParameters,
   execute: async (_toolCallId, { eventId, calendarId = "primary" }) => {
     await calendarRequest(

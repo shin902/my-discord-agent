@@ -16,5 +16,5 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
       `  <skill>\n    <name>${escapeXml(s.name)}</name>\n    <description>${escapeXml(s.description)}</description>\n    <location>${escapeXml(s.location)}</location>\n  </skill>`,
   );
 
-  return `<available_skills>\n${lines.join("\n")}\n</available_skills>\n\n必要に応じて \`read\` ツールを使って SKILL.md の内容を読み取ってください。`;
+  return `<available_skills>\n${lines.join("\n")}\n</available_skills>\n\nユーザーの依頼が description に合致するスキルがある場合は、回答の前に必ず location の SKILL.md を \`read\` で読み、その手順に従うこと。合致しないスキルは読まない。`;
 }
