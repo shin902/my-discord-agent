@@ -24,6 +24,16 @@
     "handler": "jobs/reddit-cookie-refresh.ts"
   },
   {
+    "id": "x-cookie-refresh",
+    "schedule": "0 4 */3 * *",
+    "enabled": false,
+    "handler": "jobs/x-cookie-refresh.ts",
+    "settings": {
+      "profileDir": "data/x-browser-profile",
+      "cookieFile": "data/x-cookies.json"
+    }
+  },
+  {
     "id": "issue-triage",
     "schedule": "0 * * * *",
     "enabled": true,
