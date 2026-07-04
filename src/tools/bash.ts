@@ -13,7 +13,7 @@ export const bashTool: AgentTool<typeof parameters> = {
   name: "bash",
   label: "Bash",
   description:
-    "シェルコマンドを実行する。curl・yt-dlp・gh 等の CLI ツールも使用可",
+    "シェルコマンドを実行する（タイムアウト30秒・出力上限1MB）。出力が大きくなるコマンドはファイルへリダイレクトし、read で必要な部分だけ読むこと。URL からのコンテンツ取得は、agent-reach 等の専用手段があればそちらを優先する",
   parameters,
   execute: async (_toolCallId, { command }) => {
     try {
