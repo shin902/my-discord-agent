@@ -111,6 +111,14 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 `sessionMode` の詳細は `CLAUDE.md` を参照。エージェント設定（`model`/`tools`/`autoReply`/`toolLogArgs`/`skills`）はサンドボックスコンテナにマウントされない `config/groups.json` 側で管理しており、エージェント自身が自分の設定を書き換えることはできない。
 
+## groups/{name}/AGENTS.md
+
+グループのシステムプロンプト。新しいグループフォルダが存在しない場合、`ensureGroupDirs`（`src/config/group-config.ts`）が起動時に `templates/group/AGENTS.md` を `groups/{name}/AGENTS.md` としてコピーして作成する。
+
+- `templates/group/AGENTS.md` にはこの自動コピーの都合上、汎用的な共通ルールのみを書く。グループ固有のチューニング（役割説明・固有ルール・出力フォーマット等）はコピー後に各グループの `AGENTS.md` へ追記する
+- AGENTS.md を置くと組み込みのデフォルトシステムプロンプトは完全に置き換えられるため、共通ルールはテンプレート側にも持たせている
+- 利用可能なツール一覧は API 経由で自動注入されるため、テンプレートやグループ側の AGENTS.md にツール名を列挙しない（`config/groups.json` の変更やツール改名で内容が嘘になるため）。書くのは「どう振る舞うか」だけにする
+
 ## config/cron.json
 
 定期実行ジョブの定義。トップレベルは配列。ファイル自体が存在しない場合も cron は空扱いで起動する（空配列の場合と同じ挙動）。
