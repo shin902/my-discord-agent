@@ -133,6 +133,7 @@ function buildPrompt(owner: string, repo: string, issue: GitHubIssue): string {
   return [
     `リポジトリ ${owner}/${repo} の Issue #${issue.number}「${issue.title}」を棚卸ししてください。`,
     "",
+    `0. 最初に対象リポジトリで \`git pull\` を実行し、最新のコードを取得する`,
     `1. read-issue（owner=${owner}, repo=${repo}, issue_number=${issue.number}）で本文を取得する`,
     "2. /repo 配下を bash（grep/find/cat 等）で調査し、判断の根拠となるコード上の箇所を確認する",
     "3. 分類（実装済みっぽい／古い・情報不足／重複候補／着手しやすそう、のいずれか。根拠が無ければ判断不能として何もしない）を行う",
