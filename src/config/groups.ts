@@ -17,6 +17,12 @@ export const ModelConfigSchema = z.object({
   thinkingLevel: z.enum(THINKING_LEVELS).optional(),
 });
 
+// skills 未指定は「スキルなし」。全スキルを読み込む場合は "*" を明示する。
+export const SkillSelectionSchema = z.union([
+  z.array(z.string()),
+  z.literal("*"),
+]);
+
 const ChannelConfigSchema = z.object({
   channelId: z.string(),
   sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
@@ -39,7 +45,7 @@ export const AgentConfigSchema = z.object({
   tools: z.array(z.string()).optional(),
   autoReply: z.boolean().optional(),
   toolLogArgs: z.boolean().optional(),
-  skills: z.array(z.string()).optional(),
+  skills: SkillSelectionSchema.optional(),
 });
 
 const GroupConfigSchema = AgentConfigSchema.extend({
@@ -52,6 +58,7 @@ const GroupsConfigSchema = z.array(GroupConfigSchema);
 
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
 export type MountConfig = z.infer<typeof MountConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;

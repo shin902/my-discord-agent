@@ -154,7 +154,7 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 
 `wiki-ingest`・`wiki-query`・`wiki-lint` は `wiki-setup` にバンドルされており、`templates/SKILLS/` には独立して存在しない。`wiki-setup` 実行時のヒアリングで確定したディレクトリ名が `setup.sh` によってスキルに焼き込まれ、`/workspace/SKILLS/` へコピーされる。
 
-`wiki-ingest`・`wiki-query`・`wiki-lint` は `wiki-setup` 実行後に `/workspace/SKILLS/` へ配置される。`groups.json` の `skills` フィールドを**省略**しているグループでは自動でロードされる。`skills` フィールドを明示しているグループでは `"wiki-ingest"` 等を追加する必要がある（`skills: []` のままでは読み込まれない）。
+`wiki-ingest`・`wiki-query`・`wiki-lint` は `wiki-setup` 実行後に `/workspace/SKILLS/` へ配置される。`groups.json` の `skills` フィールドを**省略**しているグループではロードされない。利用するには `"wiki-ingest"` 等を明示的に追加するか、全スキルを許可する場合だけ `"skills": "*"` を指定する（`skills: []` のままでは読み込まれない）。
 
 | スキル | 場所 | 役割 |
 |--------|------|------|

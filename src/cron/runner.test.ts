@@ -336,6 +336,29 @@ describe("cronジョブの configOverride", () => {
     ]);
   });
 
+  it('skills: "*" 付きジョブをスキーマで受理する', async () => {
+    const raw = [
+      {
+        id: "all-skills-summary",
+        schedule: "0 9 * * *",
+        enabled: true,
+        groupName: "g",
+        prompt: "summarize",
+        channelId: "ch",
+        mode: "to-channel",
+        skills: "*",
+      },
+    ];
+    const { mod } = await importRunnerWithMocks(raw);
+
+    await expect(mod.loadAndValidateCron()).resolves.toEqual([
+      expect.objectContaining({
+        id: "all-skills-summary",
+        skills: "*",
+      }),
+    ]);
+  });
+
   it("executeJob は上書きがあると appendInbox に configOverride を渡す", async () => {
     const { mod, appendInboxMock } = await importRunnerWithMocks();
 

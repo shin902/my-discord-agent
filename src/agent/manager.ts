@@ -310,8 +310,11 @@ export async function sendMessage(
   }
 
   await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });
-  if (options.configOverride?.skills !== undefined) {
-    await ensureGroupSkills(groupName, effectiveConfig.skills ?? []);
+  if (
+    options.configOverride?.skills !== undefined &&
+    Array.isArray(effectiveConfig.skills)
+  ) {
+    await ensureGroupSkills(groupName, effectiveConfig.skills);
   }
   await mkdir(path.join(ROOT, "data/sessions", groupName), {
     recursive: true,

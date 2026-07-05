@@ -4,7 +4,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
-import { type AgentConfig, ModelConfigSchema } from "../config/groups.js";
+import {
+  type AgentConfig,
+  ModelConfigSchema,
+  SkillSelectionSchema,
+} from "../config/groups.js";
 import { client } from "../discord/client.js";
 import { appendInbox } from "../queue/inbox.js";
 import { resolveTools } from "../tools/registry.js";
@@ -28,7 +32,7 @@ const CronJobSchema = z
     handler: z.string().optional(),
     model: ModelConfigSchema.optional(),
     tools: z.array(z.string()).optional(),
-    skills: z.array(z.string()).optional(),
+    skills: SkillSelectionSchema.optional(),
     // ハンドラー固有の設定値。中身は検証せずそのまま CronContext 経由でハンドラーに渡す
     settings: z.unknown().optional(),
   })

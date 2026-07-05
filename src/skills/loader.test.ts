@@ -59,8 +59,13 @@ body`;
 });
 
 describe("loadSkills", () => {
-  it("スキルディレクトリが存在しない場合は空配列を返す", async () => {
+  it("selection 未指定の場合はスキルディレクトリを読まずに空配列を返す", async () => {
     const skills = await loadSkills("/tmp/nonexistent-skills-dir-12345");
+    expect(skills).toEqual([]);
+  });
+
+  it('"*" 指定時にスキルディレクトリが存在しない場合は空配列を返す', async () => {
+    const skills = await loadSkills("/tmp/nonexistent-skills-dir-12345", "*");
     expect(skills).toEqual([]);
   });
 
@@ -80,5 +85,24 @@ describe("loadSkills", () => {
     await expect(loadSkills(dir, ["missing-skill"])).rejects.toThrow(
       "[skills]",
     );
+  });
+
+  it('"*" 指定時は SKILLS 配下の全スキルをロードする', async () => {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(`${tmpdir()}/skills-test-`);
+    await mkdir(`${dir}/skill-a`);
+    await mkdir(`${dir}/skill-b`);
+    await writeFile(
+      `${dir}/skill-a/SKILL.md`,
+      "---\nname: skill-a\ndescription: A\n---\n",
+    );
+    await writeFile(
+      `${dir}/skill-b/SKILL.md`,
+      "---\nname: skill-b\ndescription: B\n---\n",
+    );
+
+    const skills = await loadSkills(dir, "*");
+    expect(skills.map((s) => s.name).sort()).toEqual(["skill-a", "skill-b"]);
   });
 });

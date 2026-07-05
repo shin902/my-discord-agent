@@ -117,10 +117,12 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
 | `tools` | — | エージェントに渡す MCP ツール名の配列 |
 | `autoReply` | — | Discord メッセージへの返信時に元メッセージへの reply 形式にするか |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
-| `skills` | — | `groups/{name}/SKILLS/` にロードするスキル名の配列 |
+| `skills` | — | `groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル |
 | `mounts` | — | コンテナへの追加マウント設定 |
 
 `sessionMode` の詳細は `CLAUDE.md` を参照。エージェント設定（`model`/`tools`/`autoReply`/`toolLogArgs`/`skills`）はサンドボックスコンテナにマウントされない `config/groups.json` 側で管理しており、エージェント自身が自分の設定を書き換えることはできない。
+
+`skills` は安全側に倒し、キー自体を省略した場合もスキルはロードしない。`groups/{name}/SKILLS/` 配下の全スキルをロードしたい場合だけ `"skills": "*"` を明示する。
 
 ## groups/{name}/AGENTS.md
 
@@ -158,7 +160,7 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
 ]
 ```
 
-宣言的ジョブ（`handler` を使わず `groupName`/`prompt`/`channelId`/`mode` を指定する形式）では、`model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
+宣言的ジョブ（`handler` を使わず `groupName`/`prompt`/`channelId`/`mode` を指定する形式）では、`model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
 
 ### jobs/issue-triage.ts
 

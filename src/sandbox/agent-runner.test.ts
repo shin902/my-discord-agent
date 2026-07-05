@@ -767,7 +767,44 @@ describe("runAgentLoop", () => {
     ).rejects.toThrow("session write error");
   });
 
-  it("スキルがある場合は systemPrompt にスキル一覧を追加する", async () => {
+  it('skills: "*" の場合は systemPrompt にスキル一覧を追加する', async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      { name: "review", isDirectory: () => true } as unknown as Awaited<
+        ReturnType<typeof readdir>
+      >[number],
+    ]);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/AGENTS.md") {
+        return "カスタムプロンプト" as never;
+      }
+      if (String(filePath) === "/workspace/SKILLS/review/SKILL.md") {
+        return "---\nname: review\ndescription: レビュースキル\n---\n" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", { skills: "*" });
+
+    const systemPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(systemPrompt).not.toContain(DEFAULT_SYSTEM_PROMPT);
+    expect(systemPrompt).toContain("カスタムプロンプト");
+    expect(systemPrompt).toContain("<available_skills>");
+    expect(systemPrompt).toContain("<name>review</name>");
+    expect(systemPrompt).toContain("<description>レビュースキル</description>");
+  });
+
+  it("skills 未指定の場合は SKILLS 配下があってもスキル一覧を追加しない", async () => {
     vi.mocked(readdir).mockResolvedValue([
       { name: "review", isDirectory: () => true } as unknown as Awaited<
         ReturnType<typeof readdir>
@@ -797,11 +834,9 @@ describe("runAgentLoop", () => {
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).not.toContain(DEFAULT_SYSTEM_PROMPT);
     expect(systemPrompt).toContain("カスタムプロンプト");
-    expect(systemPrompt).toContain("<available_skills>");
-    expect(systemPrompt).toContain("<name>review</name>");
-    expect(systemPrompt).toContain("<description>レビュースキル</description>");
+    expect(systemPrompt).not.toContain("<available_skills>");
+    expect(systemPrompt).not.toContain("<name>review</name>");
   });
 
   it("非 assistant メッセージ（user・tool-result）は appendMessage される", async () => {
@@ -894,7 +929,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       "./command review 追加指示だよ",
-      {},
+      { skills: ["review"] },
     );
 
     expect(mockAgent.prompt).toHaveBeenCalledWith([
