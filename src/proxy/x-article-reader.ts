@@ -8,6 +8,7 @@ import {
 import { fileURLToPath } from "node:url";
 import {
   fetchXArticleFromGraphql,
+  fetchXPostFromGraphql,
   XArticleUpstreamError,
   type XArticleUpstreamOptions,
 } from "./x-article-upstream.js";
@@ -45,6 +46,16 @@ type RawArticle = {
   contentTruncated?: unknown;
 };
 
+type RawPost = {
+  postId?: unknown;
+  canonicalUrl?: unknown;
+  author?: unknown;
+  text?: unknown;
+  media?: unknown;
+  publishedAt?: unknown;
+  contentTruncated?: unknown;
+};
+
 type NormalizedArticle = {
   articleId: string;
   postId?: string;
@@ -56,6 +67,20 @@ type NormalizedArticle = {
   };
   previewText?: string;
   plainText?: string;
+  media: Array<{ url: string; alt?: string }>;
+  publishedAt?: string;
+  source: "x-internal-graphql";
+  contentTruncated: boolean;
+};
+
+type NormalizedPost = {
+  postId: string;
+  canonicalUrl: string;
+  author?: {
+    name?: string;
+    username?: string;
+  };
+  text: string;
   media: Array<{ url: string; alt?: string }>;
   publishedAt?: string;
   source: "x-internal-graphql";
@@ -159,6 +184,36 @@ function safeReaderMessage(code: ReaderErrorCode): string {
   }
 }
 
+function normalizeMedia(input: unknown): Array<{ url: string; alt?: string }> {
+  return Array.isArray(input)
+    ? input
+        .filter(
+          (m): m is Record<string, unknown> =>
+            isObject(m) && typeof m.url === "string",
+        )
+        .slice(0, MAX_MEDIA)
+        .map((m) => ({
+          url: m.url as string,
+          ...(typeof m.alt === "string" ? { alt: m.alt.slice(0, 2000) } : {}),
+        }))
+    : [];
+}
+
+function normalizeAuthor(
+  input: unknown,
+): { name?: string; username?: string } | undefined {
+  return isObject(input)
+    ? {
+        ...(typeof input.name === "string"
+          ? { name: input.name.slice(0, 200) }
+          : {}),
+        ...(typeof input.username === "string"
+          ? { username: input.username.slice(0, 64) }
+          : {}),
+      }
+    : undefined;
+}
+
 export function normalizeXArticle(
   input: unknown,
   articleId: string,
@@ -170,29 +225,8 @@ export function normalizeXArticle(
   const raw = input as RawArticle;
   const preview = truncateText(raw.previewText, MAX_PREVIEW_CHARS);
   const plain = truncateText(raw.plainText, MAX_PLAIN_CHARS);
-  const media = Array.isArray(raw.media)
-    ? raw.media
-        .filter(
-          (m): m is Record<string, unknown> =>
-            isObject(m) && typeof m.url === "string",
-        )
-        .slice(0, MAX_MEDIA)
-        .map((m) => ({
-          url: m.url as string,
-          ...(typeof m.alt === "string" ? { alt: m.alt.slice(0, 2000) } : {}),
-        }))
-    : [];
-
-  const author = isObject(raw.author)
-    ? {
-        ...(typeof raw.author.name === "string"
-          ? { name: raw.author.name.slice(0, 200) }
-          : {}),
-        ...(typeof raw.author.username === "string"
-          ? { username: raw.author.username.slice(0, 64) }
-          : {}),
-      }
-    : undefined;
+  const media = normalizeMedia(raw.media);
+  const author = normalizeAuthor(raw.author);
 
   const article: NormalizedArticle = {
     articleId,
@@ -223,6 +257,40 @@ export function normalizeXArticle(
     throw new Error("RESPONSE_TOO_LARGE");
   }
   return article;
+}
+
+export function normalizeXPost(input: unknown, postId: string): NormalizedPost {
+  if (!isObject(input)) {
+    throw new Error("UPSTREAM_CHANGED");
+  }
+
+  const raw = input as RawPost;
+  const text = truncateText(raw.text, MAX_PLAIN_CHARS);
+  if (text.value === undefined) {
+    throw new Error("UPSTREAM_CHANGED");
+  }
+  const author = normalizeAuthor(raw.author);
+  const post: NormalizedPost = {
+    postId,
+    canonicalUrl:
+      typeof raw.canonicalUrl === "string"
+        ? raw.canonicalUrl
+        : `https://x.com/i/status/${postId}`,
+    ...(author && Object.keys(author).length > 0 ? { author } : {}),
+    text: text.value,
+    media: normalizeMedia(raw.media),
+    ...(typeof raw.publishedAt === "string"
+      ? { publishedAt: raw.publishedAt }
+      : {}),
+    source: "x-internal-graphql",
+    contentTruncated: Boolean(raw.contentTruncated) || text.truncated,
+  };
+
+  const encoded = Buffer.from(JSON.stringify(post));
+  if (encoded.byteLength > MAX_RESPONSE_BYTES) {
+    throw new Error("RESPONSE_TOO_LARGE");
+  }
+  return post;
 }
 
 async function loadArticle(
@@ -265,6 +333,45 @@ async function loadArticle(
     nowMs: options.nowMs,
   });
   return normalizeXArticle(upstream, articleId);
+}
+
+async function loadPost(
+  postId: string,
+  options: Required<Pick<XArticleReaderOptions, "mock">> &
+    Omit<XArticleReaderOptions, "mock">,
+): Promise<NormalizedPost> {
+  if (options.mock) {
+    return normalizeXPost(
+      {
+        postId,
+        canonicalUrl: `https://x.com/mock_reader/status/${postId}`,
+        author: { name: "Mock Reader", username: "mock_reader" },
+        text: "Mock X post text for local integration tests.",
+        media: [],
+        publishedAt: "2026-07-01T00:00:00Z",
+      },
+      postId,
+    );
+  }
+
+  if (options.fixturePath) {
+    const raw = JSON.parse(await readFile(options.fixturePath, "utf8"));
+    const candidate =
+      isObject(raw) && isObject(raw.posts) ? raw.posts[postId] : raw;
+    return normalizeXPost(candidate, postId);
+  }
+
+  const upstream = await fetchXPostFromGraphql(postId, {
+    cookieFile: options.cookieFile,
+    maxCookieAgeDays: options.maxCookieAgeDays,
+    graphqlBaseUrl: options.graphqlBaseUrl,
+    tweetResultQueryId: options.tweetResultQueryId,
+    bearerToken: options.bearerToken,
+    timeoutMs: options.upstreamTimeoutMs,
+    fetchImpl: options.upstreamFetchImpl,
+    nowMs: options.nowMs,
+  });
+  return normalizeXPost(upstream, postId);
 }
 
 async function handleArticle(
@@ -378,6 +485,100 @@ async function handleArticle(
   }
 }
 
+async function handlePost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: Required<Pick<XArticleReaderOptions, "token" | "mock">> &
+    Omit<XArticleReaderOptions, "token" | "mock">,
+): Promise<void> {
+  const auth = req.headers.authorization ?? "";
+  const bearer =
+    typeof auth === "string" && auth.startsWith("Bearer ")
+      ? auth.slice("Bearer ".length)
+      : "";
+  if (!tokenMatches(options.token, bearer)) {
+    sendReaderError(res, 401, "INVALID_REQUEST", "Invalid reader token.");
+    return;
+  }
+
+  const contentType = req.headers["content-type"] ?? "";
+  if (!String(contentType).toLowerCase().startsWith("application/json")) {
+    sendReaderError(
+      res,
+      415,
+      "INVALID_REQUEST",
+      "Content-Type must be application/json.",
+    );
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(await readLimitedBody(req));
+  } catch (err) {
+    if (err instanceof Error && err.message === "REQUEST_TOO_LARGE") {
+      sendReaderError(
+        res,
+        413,
+        "INVALID_REQUEST",
+        "Request body is too large.",
+      );
+      return;
+    }
+    sendReaderError(res, 400, "INVALID_REQUEST", "Request JSON is invalid.");
+    return;
+  }
+
+  const postId = isObject(body) ? body.postId : undefined;
+  if (typeof postId !== "string" || !/^\d{1,32}$/.test(postId)) {
+    sendReaderError(res, 400, "INVALID_REQUEST", "postId must be 1-32 digits.");
+    return;
+  }
+
+  try {
+    sendJson(res, 200, await loadPost(postId, options));
+  } catch (err) {
+    if (err instanceof XArticleUpstreamError) {
+      const status =
+        err.code === "AUTH_EXPIRED"
+          ? 401
+          : err.code === "RATE_LIMITED"
+            ? 429
+            : err.code === "ARTICLE_NOT_FOUND"
+              ? 404
+              : 502;
+      sendReaderError(
+        res,
+        status,
+        err.code,
+        safeReaderMessage(err.code),
+        err.retryable,
+      );
+      return;
+    }
+
+    const code = err instanceof Error ? err.message : "INTERNAL_ERROR";
+    if (code === "RESPONSE_TOO_LARGE") {
+      sendReaderError(
+        res,
+        502,
+        "RESPONSE_TOO_LARGE",
+        "Reader response is too large.",
+      );
+    } else if (code === "UPSTREAM_CHANGED") {
+      sendReaderError(
+        res,
+        502,
+        "UPSTREAM_CHANGED",
+        "Upstream response shape changed.",
+      );
+    } else {
+      console.error("[x-article-reader] internal error");
+      sendReaderError(res, 500, "INTERNAL_ERROR", "Internal reader error.");
+    }
+  }
+}
+
 export function createXArticleReaderRequestHandler(
   options: XArticleReaderOptions = {},
 ): (req: IncomingMessage, res: ServerResponse) => void {
@@ -418,7 +619,8 @@ export function createXArticleReaderRequestHandler(
       return;
     }
 
-    if (url.pathname !== "/v1/article") {
+    const route = url.pathname;
+    if (route !== "/v1/article" && route !== "/v1/post") {
       sendJson(res, 404, {
         error: {
           code: "INVALID_REQUEST",
@@ -440,7 +642,8 @@ export function createXArticleReaderRequestHandler(
       return;
     }
 
-    handleArticle(req, res, resolved).catch(() => {
+    const handler = route === "/v1/post" ? handlePost : handleArticle;
+    handler(req, res, resolved).catch(() => {
       if (!res.headersSent) {
         sendReaderError(res, 500, "INTERNAL_ERROR", "Internal reader error.");
       } else {
