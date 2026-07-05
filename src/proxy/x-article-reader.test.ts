@@ -1,0 +1,453 @@
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  createXArticleReaderServer,
+  type XArticleReaderOptions,
+} from "./x-article-reader.js";
+
+const TOKEN = "test-token-0123456789";
+
+let server: Server | undefined;
+let baseUrl: string;
+let tmpDir: string | undefined;
+
+async function startServer(options: XArticleReaderOptions = {}) {
+  server = createXArticleReaderServer({ token: TOKEN, ...options });
+  await new Promise<void>((resolve, reject) => {
+    server?.on("error", reject);
+    server?.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("server address is unavailable");
+  }
+  baseUrl = `http://127.0.0.1:${address.port}`;
+}
+
+function postArticle(body: unknown, headers: Record<string, string> = {}) {
+  return fetch(`${baseUrl}/v1/article`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+}
+
+function postPost(body: unknown, headers: Record<string, string> = {}) {
+  return fetch(`${baseUrl}/v1/post`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+}
+
+afterEach(async () => {
+  if (server) {
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = undefined;
+  }
+  if (tmpDir) {
+    await rm(tmpDir, { recursive: true, force: true });
+    tmpDir = undefined;
+  }
+});
+
+describe("認証", () => {
+  it("Authorization ヘッダがないと 401 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle({ articleId: "123", format: "plain" });
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe("INVALID_REQUEST");
+  });
+
+  it("Bearer token が一致しないと 401 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "123", format: "plain" },
+      { authorization: "Bearer wrong-token" },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("token が未設定のときは常に 401 を返す", async () => {
+    await startServer({ token: "", mock: true });
+    const res = await postArticle(
+      { articleId: "123", format: "plain" },
+      { authorization: "Bearer anything" },
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("routing", () => {
+  it("GET /healthz は 200 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await fetch(`${baseUrl}/healthz`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("POST /v1/article 以外の path は 404 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await fetch(`${baseUrl}/v1/other`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("/v1/article への GET は 405 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await fetch(`${baseUrl}/v1/article`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(405);
+  });
+});
+
+describe("request 検証", () => {
+  it("Content-Type が application/json でないと 415 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      JSON.stringify({ articleId: "123", format: "plain" }),
+      { authorization: `Bearer ${TOKEN}`, "content-type": "text/plain" },
+    );
+    expect(res.status).toBe(415);
+  });
+
+  it("body が 4 KiB を超えると 413 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "123", format: "plain", padding: "x".repeat(5 * 1024) },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(413);
+  });
+
+  it("articleId が非数値だと 400 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "not-a-number", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("articleId が33桁以上だと 400 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "1".repeat(33), format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("articleId が欠落していると 400 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("format が preview/plain 以外だと 400 を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "123", format: "full" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("mock モード", () => {
+  it("正常な Article JSON を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "123456789", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const article = (await res.json()) as Record<string, unknown>;
+    expect(article.articleId).toBe("123456789");
+    expect(article.source).toBe("x-internal-graphql");
+    expect(article.canonicalUrl).toBe("https://x.com/i/article/123456789");
+    expect(article.title).toContain("123456789");
+    expect(typeof article.plainText).toBe("string");
+    expect(article.contentTruncated).toBe(false);
+  });
+
+  it("format=preview では plainText を含まない", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "123456789", format: "preview" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const article = (await res.json()) as Record<string, unknown>;
+    expect(article.plainText).toBeUndefined();
+    expect(typeof article.previewText).toBe("string");
+  });
+
+  it("POST /v1/post は正常な Post JSON を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postPost(
+      { postId: "123456789" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const post = (await res.json()) as Record<string, unknown>;
+    expect(post.postId).toBe("123456789");
+    expect(post.source).toBe("x-internal-graphql");
+    expect(post.canonicalUrl).toBe(
+      "https://x.com/mock_reader/status/123456789",
+    );
+    expect(typeof post.text).toBe("string");
+    expect(post.contentTruncated).toBe(false);
+  });
+});
+
+describe("fixture モード", () => {
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "x-article-reader-test-"));
+  });
+
+  it("plainText が 120,000 文字超なら切り詰めて contentTruncated: true を返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
+    const fixturePath = join(tmpDir, `fixture-${randomUUID()}.json`);
+    await writeFile(
+      fixturePath,
+      JSON.stringify({
+        articleId: "999",
+        canonicalUrl: "https://x.com/i/article/999",
+        title: "Long Article",
+        plainText: "a".repeat(130_000),
+      }),
+    );
+    await startServer({ fixturePath });
+    const res = await postArticle(
+      { articleId: "999", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const article = (await res.json()) as {
+      plainText: string;
+      contentTruncated: boolean;
+    };
+    expect(article.plainText.length).toBe(120_000);
+    expect(article.contentTruncated).toBe(true);
+  });
+
+  it("preview は除外する plainText のサイズに影響されず返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
+    const fixturePath = join(tmpDir, `fixture-${randomUUID()}.json`);
+    await writeFile(
+      fixturePath,
+      JSON.stringify({
+        articleId: "999",
+        canonicalUrl: "https://x.com/i/article/999",
+        previewText: "Preview text",
+        plainText: "あ".repeat(120_000),
+      }),
+    );
+    await startServer({ fixturePath });
+
+    const previewRes = await postArticle(
+      { articleId: "999", format: "preview" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(previewRes.status).toBe(200);
+    const article = (await previewRes.json()) as Record<string, unknown>;
+    expect(article.previewText).toBe("Preview text");
+    expect(article.plainText).toBeUndefined();
+
+    const plainRes = await postArticle(
+      { articleId: "999", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(plainRes.status).toBe(502);
+    const error = (await plainRes.json()) as { error: { code: string } };
+    expect(error.error.code).toBe("RESPONSE_TOO_LARGE");
+  });
+});
+
+describe("upstream モード", () => {
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "x-article-reader-test-"));
+  });
+
+  it("mock も fixture もなく cookie file もないと AUTH_EXPIRED を返す", async () => {
+    await startServer({ cookieFile: join(tmpDir ?? "", "missing.json") });
+    const res = await postArticle(
+      { articleId: "123", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(json.error.code).toBe("AUTH_EXPIRED");
+    expect(json.error.message).not.toContain("missing.json");
+  });
+
+  it("GraphQL adapter の結果を reader response として返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
+    const cookieFile = join(tmpDir, "x-cookies.json");
+    await writeFile(
+      cookieFile,
+      JSON.stringify({
+        cookieHeader: "auth_token=super-secret; ct0=csrf-secret",
+        csrfToken: "csrf-secret",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      }),
+    );
+
+    const upstreamFetchImpl = async (url: string | URL) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/ArticleRedirectScreenQuery")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              article_result_by_rest_id: {
+                result: {
+                  metadata: { tweet_results: { rest_id: "456" } },
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          data: {
+            tweetResult: {
+              result: {
+                article: {
+                  article_results: {
+                    result: {
+                      title: "GraphQL Article",
+                      preview_text: "GraphQL preview",
+                      plain_text: "GraphQL plain body",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    await startServer({
+      cookieFile,
+      upstreamFetchImpl,
+      nowMs: Date.parse("2026-07-01T00:00:00.000Z"),
+    });
+    const res = await postArticle(
+      { articleId: "123", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const article = (await res.json()) as Record<string, unknown>;
+    expect(article.articleId).toBe("123");
+    expect(article.postId).toBe("456");
+    expect(article.title).toBe("GraphQL Article");
+    expect(article.plainText).toBe("GraphQL plain body");
+  });
+
+  it("POST /v1/post は GraphQL TweetResult から投稿本文を返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
+    const cookieFile = join(tmpDir, "x-cookies.json");
+    await writeFile(
+      cookieFile,
+      JSON.stringify({
+        cookieHeader: "auth_token=super-secret; ct0=csrf-secret",
+        csrfToken: "csrf-secret",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      }),
+    );
+
+    const upstreamFetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            tweetResult: {
+              result: {
+                core: {
+                  user_results: {
+                    result: {
+                      legacy: { name: "Example", screen_name: "example" },
+                    },
+                  },
+                },
+                legacy: {
+                  full_text: "GraphQL post body",
+                  created_at: "Wed Jul 01 00:00:00 +0000 2026",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    await startServer({
+      cookieFile,
+      upstreamFetchImpl,
+      nowMs: Date.parse("2026-07-01T00:00:00.000Z"),
+    });
+    const res = await postPost(
+      { postId: "123" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const post = (await res.json()) as Record<string, unknown>;
+    expect(post.postId).toBe("123");
+    expect(post.text).toBe("GraphQL post body");
+    expect(post.canonicalUrl).toBe("https://x.com/example/status/123");
+  });
+});
+
+describe("エラーレスポンスの安全性", () => {
+  it("エラー response に X Cookie や生 header が含まれない", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "not-a-number", format: "plain" },
+      {
+        authorization: `Bearer ${TOKEN}`,
+        cookie: "auth_token=super-secret-x-cookie; ct0=csrf-secret",
+      },
+    );
+    const text = await res.text();
+    expect(text).not.toContain("super-secret-x-cookie");
+    expect(text).not.toContain("csrf-secret");
+    expect(text).not.toContain("cookie");
+    expect(text).not.toContain("authorization");
+    const json = JSON.parse(text);
+    expect(Object.keys(json)).toEqual(["error"]);
+    expect(Object.keys(json.error).sort()).toEqual([
+      "code",
+      "message",
+      "retryable",
+    ]);
+  });
+
+  it("401 response に token 情報が含まれない", async () => {
+    await startServer({ mock: true });
+    const res = await postArticle(
+      { articleId: "123", format: "plain" },
+      { authorization: "Bearer wrong-token" },
+    );
+    const text = await res.text();
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain("wrong-token");
+  });
+});
