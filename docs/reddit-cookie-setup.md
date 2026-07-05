@@ -1,6 +1,6 @@
 # Reddit クッキー認証 設定手順（agent-reach の reddit サービス）
 
-`agent-reach` ツールの reddit サービス（`src/tools/agent-reach.ts`）が `www.reddit.com` にアクセスするための設定手順です。
+`agent-reach` スキル（`templates/SKILLS/agent-reach/scripts/agent-reach.sh`）の reddit サービスが `www.reddit.com` にアクセスするための設定手順です。
 
 > [!NOTE]
 > 当初は `client_credentials` グラント(OAuth)での実装を検討していたが、2025年11月の Responsible Builder Policy 改定以降、個人が client_id/client_secret を新規取得することが事実上不可能になっている（詳細は [`docs/reddit-oauth-setup.md`](./reddit-oauth-setup.md) 参照）。本ドキュメントは、ログイン済みブラウザのクッキーを使う代替実装の手順。

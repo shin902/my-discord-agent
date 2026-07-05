@@ -105,7 +105,7 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 - `pnpm reddit:login` で初回ログイン（Playwright永続プロファイル: `data/reddit-browser-profile/`）。以後は `cron`(`jobs/reddit-cookie-refresh.ts`)が定期的にセッション延命＋クッキー再抽出を行う。
 - `cookieFile` の内容が `maxAgeDays`(デフォルト7日)より古い場合、そのプロバイダーへのリクエストは 502 になる。
 - `redditCookie` フィールドは `msal` / `google` と同様、サンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
-- `agent-reach` ツールの reddit サービスは `resolveProxyBaseUrl("reddit")` でこのプロキシ経由のURLを構築する。
+- `agent-reach` スキル（`agent-reach.sh` の reddit サービス）は `CREDENTIAL_PROXY_JSON` からプロキシ URL を解決してアクセスする。
 
 ### GitHub Clone（`clone-repository` ツール用）
 

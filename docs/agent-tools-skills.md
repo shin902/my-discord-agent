@@ -9,7 +9,6 @@
 | ツール名 | 概要 |
 |---------|------|
 | `bash` | サンドボックス内でシェルコマンドを実行。`agent-reach` スキルで使う CLI ツール群はここ経由で動く |
-| `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・一般ウェブに対応。取得したコンテンツ（Markdown）はツールコール結果として直接返される（ファイル保存はしない） |
 | `read` | ワークスペース内のファイルを読み込む |
 | `write` | ワークスペース内にファイルを書き込む |
 | `edit` | ワークスペース内のファイルを文字列置換で編集する |
@@ -23,7 +22,7 @@
 | `tavily-crawl` | Tavily Crawl API でサイト内をクロールし各ページの本文を取得する |
 | `tavily-map` | Tavily Map API でサイト内のURL構造をマッピングする |
 
-**注意:** `webfetch` は削除済み。ウェブアクセスはすべて `agent-reach` または `bash` 経由で行う。
+**注意:** `webfetch` は削除済み。ウェブアクセスはすべて `agent-reach` スキル（bash 経由）を使う。
 
 ### Browserless ツールの使用制限
 
