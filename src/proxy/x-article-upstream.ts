@@ -359,10 +359,12 @@ function mapCookieError(err: unknown): never {
   throw err;
 }
 
-export async function fetchXArticleFromGraphql(
-  articleId: string,
-  options: XArticleUpstreamOptions = {},
-): Promise<Record<string, unknown>> {
+async function buildGraphqlContext(options: XArticleUpstreamOptions): Promise<{
+  graphqlBaseUrl: string;
+  fetchImpl: FetchImpl;
+  timeoutMs: number;
+  headers: Record<string, string>;
+}> {
   let storedCookies: Awaited<ReturnType<typeof readXCookieStore>>;
   try {
     storedCookies = await readXCookieStore({
@@ -374,22 +376,32 @@ export async function fetchXArticleFromGraphql(
     mapCookieError(err);
   }
 
-  const graphqlBaseUrl = options.graphqlBaseUrl ?? GRAPHQL_BASE;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? UPSTREAM_TIMEOUT_MS;
-  const headers = {
-    authorization: `Bearer ${options.bearerToken ?? X_WEB_BEARER_TOKEN}`,
-    "content-type": "application/json",
-    accept: "application/json, text/plain, */*",
-    "accept-language": "en-US,en;q=0.9",
-    referer: "https://x.com/",
-    "user-agent": USER_AGENT,
-    "x-csrf-token": storedCookies.csrfToken,
-    "x-twitter-active-user": "yes",
-    "x-twitter-auth-type": "OAuth2Session",
-    "x-twitter-client-language": "en",
-    cookie: storedCookies.cookieHeader,
-  } satisfies Record<string, string>;
+  return {
+    graphqlBaseUrl: options.graphqlBaseUrl ?? GRAPHQL_BASE,
+    fetchImpl: options.fetchImpl ?? fetch,
+    timeoutMs: options.timeoutMs ?? UPSTREAM_TIMEOUT_MS,
+    headers: {
+      authorization: `Bearer ${options.bearerToken ?? X_WEB_BEARER_TOKEN}`,
+      "content-type": "application/json",
+      accept: "application/json, text/plain, */*",
+      "accept-language": "en-US,en;q=0.9",
+      referer: "https://x.com/",
+      "user-agent": USER_AGENT,
+      "x-csrf-token": storedCookies.csrfToken,
+      "x-twitter-active-user": "yes",
+      "x-twitter-auth-type": "OAuth2Session",
+      "x-twitter-client-language": "en",
+      cookie: storedCookies.cookieHeader,
+    },
+  };
+}
+
+export async function fetchXArticleFromGraphql(
+  articleId: string,
+  options: XArticleUpstreamOptions = {},
+): Promise<Record<string, unknown>> {
+  const { graphqlBaseUrl, fetchImpl, timeoutMs, headers } =
+    await buildGraphqlContext(options);
 
   const redirectUrl = buildGraphqlUrl(
     graphqlBaseUrl,
@@ -432,4 +444,140 @@ export async function fetchXArticleFromGraphql(
   const { tweetResult, article } = extractArticle(tweetResponse);
 
   return normalizeUpstreamArticle(articleId, tweetId, tweetResult, article);
+}
+
+function extractTweetResult(tweetResponse: unknown): Record<string, unknown> {
+  const tweetResult = getObject(tweetResponse, [
+    "data",
+    "tweetResult",
+    "result",
+  ]);
+  if (!tweetResult) {
+    throw new XArticleUpstreamError(
+      "UPSTREAM_CHANGED",
+      "X TweetResult response shape changed.",
+    );
+  }
+  return tweetResult;
+}
+
+function extractTweetMedia(
+  tweetResult: Record<string, unknown>,
+): Array<{ url: string; alt?: string }> {
+  const legacy = getObject(tweetResult, ["legacy"]);
+  const extendedEntities = legacy?.extended_entities;
+  const entities = legacy?.entities;
+  const mediaEntries =
+    isObject(extendedEntities) && Array.isArray(extendedEntities.media)
+      ? extendedEntities.media
+      : isObject(entities) && Array.isArray(entities.media)
+        ? entities.media
+        : [];
+
+  const media: Array<{ url: string; alt?: string }> = [];
+  for (const entry of mediaEntries) {
+    if (!isObject(entry)) continue;
+    const url =
+      getString(entry, ["media_url_https"]) ?? getString(entry, ["media_url"]);
+    if (!url) continue;
+    const alt = getString(entry, ["ext_alt_text"]);
+    media.push({ url, ...(alt ? { alt } : {}) });
+  }
+
+  return media.filter(
+    (item, index) => media.findIndex((m) => m.url === item.url) === index,
+  );
+}
+
+function normalizeUpstreamPost(
+  tweetId: string,
+  tweetResult: Record<string, unknown>,
+): Record<string, unknown> {
+  const userLegacy = getObject(tweetResult, [
+    "core",
+    "user_results",
+    "result",
+    "legacy",
+  ]);
+  const tweetLegacy = getObject(tweetResult, ["legacy"]);
+  if (!tweetLegacy) {
+    throw new XArticleUpstreamError(
+      "UPSTREAM_CHANGED",
+      "X TweetResult legacy payload is missing.",
+    );
+  }
+
+  const noteTweetText = getString(tweetResult, [
+    "note_tweet",
+    "note_tweet_results",
+    "result",
+    "text",
+  ]);
+  const text =
+    noteTweetText ??
+    (typeof tweetLegacy.full_text === "string"
+      ? tweetLegacy.full_text
+      : typeof tweetLegacy.text === "string"
+        ? tweetLegacy.text
+        : undefined);
+  if (!text) {
+    throw new XArticleUpstreamError(
+      "UPSTREAM_CHANGED",
+      "X TweetResult text payload is missing.",
+    );
+  }
+
+  const username =
+    typeof userLegacy?.screen_name === "string"
+      ? userLegacy.screen_name
+      : undefined;
+  const author = {
+    ...(typeof userLegacy?.name === "string" ? { name: userLegacy.name } : {}),
+    ...(username ? { username } : {}),
+  };
+
+  return {
+    postId: tweetId,
+    canonicalUrl: `https://x.com/${username ?? "i"}/status/${tweetId}`,
+    ...(Object.keys(author).length > 0 ? { author } : {}),
+    text,
+    media: extractTweetMedia(tweetResult),
+    ...(typeof tweetLegacy.created_at === "string"
+      ? { publishedAt: parsePublishedAt(tweetLegacy.created_at) }
+      : {}),
+    contentTruncated: false,
+  };
+}
+
+export async function fetchXPostFromGraphql(
+  tweetId: string,
+  options: XArticleUpstreamOptions = {},
+): Promise<Record<string, unknown>> {
+  const { graphqlBaseUrl, fetchImpl, timeoutMs, headers } =
+    await buildGraphqlContext(options);
+
+  const tweetUrl = buildGraphqlUrl(
+    graphqlBaseUrl,
+    options.tweetResultQueryId ?? TWEET_RESULT_QUERY_ID,
+    TWEET_RESULT_OP_NAME,
+    {
+      variables: {
+        tweetId,
+        withCommunity: false,
+        includePromotedContent: false,
+        withVoice: false,
+      },
+      features: TWEET_RESULT_BY_REST_ID_FEATURES,
+      fieldToggles: {
+        withArticleRichContentState: true,
+        withArticlePlainText: true,
+        withGrokAnalyze: false,
+      },
+    },
+  );
+  const tweetResponse = await graphqlGet(tweetUrl, headers, {
+    fetchImpl,
+    timeoutMs,
+  });
+  return normalizeUpstreamPost(tweetId, extractTweetResult(tweetResponse));
 }
