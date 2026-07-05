@@ -6,6 +6,11 @@ import {
   type ServerResponse,
 } from "node:http";
 import { fileURLToPath } from "node:url";
+import {
+  fetchXArticleFromGraphql,
+  XArticleUpstreamError,
+  type XArticleUpstreamOptions,
+} from "./x-article-upstream.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8788;
@@ -61,6 +66,15 @@ export type XArticleReaderOptions = {
   token?: string;
   mock?: boolean;
   fixturePath?: string;
+  cookieFile?: string;
+  maxCookieAgeDays?: number;
+  graphqlBaseUrl?: string;
+  articleRedirectQueryId?: string;
+  tweetResultQueryId?: string;
+  bearerToken?: string;
+  upstreamTimeoutMs?: number;
+  upstreamFetchImpl?: XArticleUpstreamOptions["fetchImpl"];
+  nowMs?: number;
 };
 
 function sha256(value: string): Buffer {
@@ -122,6 +136,27 @@ function truncateText(
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
+}
+
+function safeReaderMessage(code: ReaderErrorCode): string {
+  switch (code) {
+    case "ARTICLE_NOT_FOUND":
+      return "The requested X Article was not found.";
+    case "AUTH_EXPIRED":
+      return "The host-side X session has expired.";
+    case "RATE_LIMITED":
+      return "The X Article reader is rate limited.";
+    case "UPSTREAM_TIMEOUT":
+      return "The X Article upstream request timed out.";
+    case "RESPONSE_TOO_LARGE":
+      return "Reader response is too large.";
+    case "UPSTREAM_CHANGED":
+      return "Upstream response shape changed.";
+    case "INVALID_REQUEST":
+      return "Invalid reader request.";
+    case "INTERNAL_ERROR":
+      return "Internal reader error.";
+  }
 }
 
 export function normalizeXArticle(
@@ -194,7 +229,7 @@ async function loadArticle(
   articleId: string,
   options: Required<Pick<XArticleReaderOptions, "mock">> &
     Omit<XArticleReaderOptions, "mock">,
-): Promise<NormalizedArticle | null> {
+): Promise<NormalizedArticle> {
   if (options.mock) {
     return normalizeXArticle(
       {
@@ -211,11 +246,25 @@ async function loadArticle(
     );
   }
 
-  if (!options.fixturePath) return null;
-  const raw = JSON.parse(await readFile(options.fixturePath, "utf8"));
-  const candidate =
-    isObject(raw) && isObject(raw.articles) ? raw.articles[articleId] : raw;
-  return normalizeXArticle(candidate, articleId);
+  if (options.fixturePath) {
+    const raw = JSON.parse(await readFile(options.fixturePath, "utf8"));
+    const candidate =
+      isObject(raw) && isObject(raw.articles) ? raw.articles[articleId] : raw;
+    return normalizeXArticle(candidate, articleId);
+  }
+
+  const upstream = await fetchXArticleFromGraphql(articleId, {
+    cookieFile: options.cookieFile,
+    maxCookieAgeDays: options.maxCookieAgeDays,
+    graphqlBaseUrl: options.graphqlBaseUrl,
+    articleRedirectQueryId: options.articleRedirectQueryId,
+    tweetResultQueryId: options.tweetResultQueryId,
+    bearerToken: options.bearerToken,
+    timeoutMs: options.upstreamTimeoutMs,
+    fetchImpl: options.upstreamFetchImpl,
+    nowMs: options.nowMs,
+  });
+  return normalizeXArticle(upstream, articleId);
 }
 
 async function handleArticle(
@@ -285,18 +334,28 @@ async function handleArticle(
 
   try {
     const article = await loadArticle(articleId, options);
-    if (!article) {
-      sendReaderError(
-        res,
-        502,
-        "UPSTREAM_CHANGED",
-        "No host-side X Article upstream adapter is configured.",
-      );
-      return;
-    }
     if (format === "preview") delete article.plainText;
     sendJson(res, 200, article);
   } catch (err) {
+    if (err instanceof XArticleUpstreamError) {
+      const status =
+        err.code === "AUTH_EXPIRED"
+          ? 401
+          : err.code === "RATE_LIMITED"
+            ? 429
+            : err.code === "ARTICLE_NOT_FOUND"
+              ? 404
+              : 502;
+      sendReaderError(
+        res,
+        status,
+        err.code,
+        safeReaderMessage(err.code),
+        err.retryable,
+      );
+      return;
+    }
+
     const code = err instanceof Error ? err.message : "INTERNAL_ERROR";
     if (code === "RESPONSE_TOO_LARGE") {
       sendReaderError(
@@ -326,6 +385,29 @@ export function createXArticleReaderRequestHandler(
     token: options.token ?? process.env.X_ARTICLE_READER_TOKEN ?? "",
     mock: options.mock ?? process.env.X_ARTICLE_READER_MOCK === "1",
     fixturePath: options.fixturePath ?? process.env.X_ARTICLE_READER_FIXTURE,
+    cookieFile:
+      options.cookieFile ??
+      process.env.X_ARTICLE_COOKIE_FILE ??
+      process.env.X_COOKIE_FILE,
+    maxCookieAgeDays:
+      options.maxCookieAgeDays ??
+      (process.env.X_ARTICLE_COOKIE_MAX_AGE_DAYS
+        ? Number(process.env.X_ARTICLE_COOKIE_MAX_AGE_DAYS)
+        : undefined),
+    graphqlBaseUrl:
+      options.graphqlBaseUrl ?? process.env.X_ARTICLE_GRAPHQL_BASE_URL,
+    articleRedirectQueryId:
+      options.articleRedirectQueryId ?? process.env.X_ARTICLE_REDIRECT_QUERY_ID,
+    tweetResultQueryId:
+      options.tweetResultQueryId ?? process.env.X_ARTICLE_TWEET_RESULT_QUERY_ID,
+    bearerToken: options.bearerToken ?? process.env.X_WEB_BEARER_TOKEN,
+    upstreamTimeoutMs:
+      options.upstreamTimeoutMs ??
+      (process.env.X_ARTICLE_UPSTREAM_TIMEOUT_MS
+        ? Number(process.env.X_ARTICLE_UPSTREAM_TIMEOUT_MS)
+        : undefined),
+    upstreamFetchImpl: options.upstreamFetchImpl,
+    nowMs: options.nowMs,
   };
 
   return (req: IncomingMessage, res: ServerResponse) => {

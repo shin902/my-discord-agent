@@ -67,6 +67,17 @@ AI プロバイダーや外部サービス（Microsoft Graph・Browserless 等�
 
 API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。Codex OAuth / CLIProxyAPI の詳しい構成は `docs/codex-oauth-cliproxyapi.md` を参照。
 
+### X Article Reader
+
+`agent-reach` で X Article を読む場合は、host 側で reader を起動し、Credential Proxy の `x-article` provider から Bearer token を注入する。
+
+```bash
+X_ARTICLE_READER_TOKEN=<十分に長いランダム値> node dist/proxy/x-article-reader.js
+X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 node dist/proxy/x-article-reader.js
+```
+
+通常モードの reader は `data/x-cookies.json`（または `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`）を読み、X 内部 GraphQL を呼ぶ。cookie は `x-cookie-refresh` cron job で更新する。
+
 ## config/groups.json
 
 チャンネル ID とグループ名・セッションモードのマッピングに加えて、グループごとのエージェント設定（モデル・ツール・autoReply 等）。トップレベルは配列。

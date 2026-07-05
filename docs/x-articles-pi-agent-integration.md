@@ -504,14 +504,21 @@ Credential Proxy 側にも provider ごとの method/path allowlist を実装す
 
 ### 起動
 
-reader は `src/proxy/x-article-reader.ts` として実装し、ビルド後は host 側で起動する。
+reader は `src/proxy/x-article-reader.ts` として実装し、ビルド後は host 側で起動する。通常モードでは `data/x-cookies.json` を使用する。
 
 ```bash
 X_ARTICLE_READER_TOKEN=<十分に長いランダム値> node dist/proxy/x-article-reader.js
 X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 node dist/proxy/x-article-reader.js
 ```
 
-初期版は interface / mock / fixture のみを同梱し、実 X 内部 GraphQL upstream adapter は意図的に同梱しない。未設定時は `UPSTREAM_CHANGED` を返す。
+通常モードでは `data/x-cookies.json`（または `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`）を読み、X 内部 GraphQL の `ArticleRedirectScreenQuery` → `TweetResultByRestId` の2段階 reader flow を実行する。`X_ARTICLE_READER_MOCK=1` は Credential Proxy 結合テスト用の mock 応答に切り替える。
+
+主な運用環境変数:
+
+- `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`: cookie refresh job が書いた cookie JSON（既定: `data/x-cookies.json`）
+- `X_ARTICLE_COOKIE_MAX_AGE_DAYS`: cookie freshness 上限（既定: 7日）
+- `X_ARTICLE_UPSTREAM_TIMEOUT_MS`: upstream GraphQL timeout（既定: 15000ms）
+- `X_ARTICLE_REDIRECT_QUERY_ID` / `X_ARTICLE_TWEET_RESULT_QUERY_ID`: X が query hash を rotate した場合の上書き
 
 ### API
 
@@ -623,9 +630,7 @@ INTERNAL_ERROR
 
 ### upstream 実装
 
-初期版は host 側で `twikit-mcp` の
-`get_article(format="preview" | "plain")` 相当をラップしてよい。ただし MCP server
-自体を sandbox へ公開せず、reader から Article 取得機能だけを呼ぶ。
+host 側の adapter は `data/x-cookies.json` の `cookieHeader` / `csrfToken` を読み、X web client Bearer token と合わせて X 内部 GraphQL を呼ぶ。flow は `twikit-mcp` の `get_article(format="preview" | "plain")` 相当で、`ArticleRedirectScreenQuery` により Article ID から Tweet ID を解決し、`TweetResultByRestId` で `fieldToggles.withArticlePlainText=true` を指定して本文を取得する。MCP server 自体は sandbox へ公開しない。
 
 次の X 操作は reader から到達不能にする。
 

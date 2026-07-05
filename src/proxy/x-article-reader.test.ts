@@ -4,7 +4,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createXArticleReaderServer } from "./x-article-reader.js";
+import {
+  createXArticleReaderServer,
+  type XArticleReaderOptions,
+} from "./x-article-reader.js";
 
 const TOKEN = "test-token-0123456789";
 
@@ -12,9 +15,7 @@ let server: Server | undefined;
 let baseUrl: string;
 let tmpDir: string | undefined;
 
-async function startServer(
-  options: { token?: string; mock?: boolean; fixturePath?: string } = {},
-) {
+async function startServer(options: XArticleReaderOptions = {}) {
   server = createXArticleReaderServer({ token: TOKEN, ...options });
   await new Promise<void>((resolve, reject) => {
     server?.on("error", reject);
@@ -219,16 +220,90 @@ describe("fixture モード", () => {
   });
 });
 
-describe("upstream 未設定", () => {
-  it("mock も fixture もないと UPSTREAM_CHANGED を返す", async () => {
-    await startServer();
+describe("upstream モード", () => {
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "x-article-reader-test-"));
+  });
+
+  it("mock も fixture もなく cookie file もないと AUTH_EXPIRED を返す", async () => {
+    await startServer({ cookieFile: join(tmpDir ?? "", "missing.json") });
     const res = await postArticle(
       { articleId: "123", format: "plain" },
       { authorization: `Bearer ${TOKEN}` },
     );
-    expect(res.status).toBe(502);
-    const json = (await res.json()) as { error: { code: string } };
-    expect(json.error.code).toBe("UPSTREAM_CHANGED");
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(json.error.code).toBe("AUTH_EXPIRED");
+    expect(json.error.message).not.toContain("missing.json");
+  });
+
+  it("GraphQL adapter の結果を reader response として返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
+    const cookieFile = join(tmpDir, "x-cookies.json");
+    await writeFile(
+      cookieFile,
+      JSON.stringify({
+        cookieHeader: "auth_token=super-secret; ct0=csrf-secret",
+        csrfToken: "csrf-secret",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      }),
+    );
+
+    const upstreamFetchImpl = async (url: string | URL) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/ArticleRedirectScreenQuery")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              article_result_by_rest_id: {
+                result: {
+                  metadata: { tweet_results: { rest_id: "456" } },
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          data: {
+            tweetResult: {
+              result: {
+                article: {
+                  article_results: {
+                    result: {
+                      title: "GraphQL Article",
+                      preview_text: "GraphQL preview",
+                      plain_text: "GraphQL plain body",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    await startServer({
+      cookieFile,
+      upstreamFetchImpl,
+      nowMs: Date.parse("2026-07-01T00:00:00.000Z"),
+    });
+    const res = await postArticle(
+      { articleId: "123", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const article = (await res.json()) as Record<string, unknown>;
+    expect(article.articleId).toBe("123");
+    expect(article.postId).toBe("456");
+    expect(article.title).toBe("GraphQL Article");
+    expect(article.plainText).toBe("GraphQL plain body");
   });
 });
 

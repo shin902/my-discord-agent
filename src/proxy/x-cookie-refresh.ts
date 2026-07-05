@@ -82,14 +82,14 @@ export function extractXCookies(
   const authToken = cookies.find((c) => c.name === "auth_token")?.value;
   if (!authToken) {
     throw new Error(
-      "x.com の auth_token cookie が取得できませんでした。取得専用アカウントで初回ログインしてください",
+      "x.com の auth_token cookie が取得できませんでした。取得専用アカウントの cookie を用意してください",
     );
   }
 
   const csrfToken = cookies.find((c) => c.name === "ct0")?.value;
   if (!csrfToken) {
     throw new Error(
-      "x.com の ct0 cookie (CSRF token) が取得できませんでした。取得専用アカウントで再ログインしてください",
+      "x.com の ct0 cookie (CSRF token) が取得できませんでした。取得専用アカウントの cookie を更新してください",
     );
   }
 
@@ -124,7 +124,7 @@ export async function refreshXCookies(
 
       if (/\/i\/flow\/login|\/login/.test(page.url())) {
         throw new Error(
-          "x.com のセッションが失効し、ログイン画面にリダイレクトされました。取得専用アカウントで再ログインしてください",
+          "x.com のセッションが失効し、ログイン画面にリダイレクトされました。取得専用アカウントの cookie を更新してください",
         );
       }
 

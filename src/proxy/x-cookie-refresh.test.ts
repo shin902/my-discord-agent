@@ -14,13 +14,13 @@ describe("extractXCookies", () => {
     expect(result.cookieHeader).toContain("ct0=csrf-secret");
   });
 
-  it("auth_token がなければ初回ログインを促す", () => {
+  it("auth_token がなければ cookie の用意を促す", () => {
     expect(() => extractXCookies([{ name: "ct0", value: "csrf" }])).toThrow(
       "auth_token",
     );
   });
 
-  it("ct0 がなければ再ログインを促す", () => {
+  it("ct0 がなければ cookie の更新を促す", () => {
     expect(() =>
       extractXCookies([{ name: "auth_token", value: "auth" }]),
     ).toThrow("ct0");
