@@ -31,23 +31,10 @@ for h in data.get('hits', []):
 "
 ```
 
-### 2. Reddit（APIキー不要）
+### 2. Reddit（クレデンシャルプロキシ経由）
 
 ```bash
-# Reddit 検索（JSON API）
-curl -sG "https://www.reddit.com/search.json" \
-  -H "User-Agent: research-bot/1.0" \
-  --data-urlencode "q=TOPIC" \
-  --data-urlencode "sort=top" \
-  --data-urlencode "t=month" \
-  --data-urlencode "limit=10" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for p in data.get('data', {}).get('children', []):
-    d = p['data']
-    print(f\"[{d.get('score',0)}] r/{d['subreddit']}: {d['title']}\")
-    print(f\"  https://reddit.com{d.get('permalink','')}\")
-"
+bash /workspace/SKILLS/last30days/scripts/reddit-search.sh "TOPIC"
 ```
 
 ### 3. GitHub（APIキー不要）
@@ -90,5 +77,5 @@ for i in data.get('items', []):
 
 ## 注意事項
 
-- Reddit API は未認証では rate limit が厳しい。失敗したら間隔を置いて再試行
+- Reddit は `credentials.json` の `reddit` プロバイダー設定が必要。未設定時はスキップされる
 - 結果が少ない場合は英語クエリも併用する
