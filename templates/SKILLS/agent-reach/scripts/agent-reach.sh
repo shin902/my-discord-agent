@@ -480,6 +480,11 @@ fetch_reddit() {
 }
 
 fetch_x_twitter() {
+  # NOTE: このスクリプトは fx (api.fxtwitter.com) のみを叩く。
+  # src/tools/agent-reach.ts 側は fx が死んでいる/本文を返さない場合に認証済み
+  # host reader (fetchXPost) へフォールバックするが、このスクリプトは手動コピー
+  # (クッキー無しで完結させたいため) であり reader フォールバックを持たない。
+  # あちら側 (fetchFxPost/formatFxPost) を変更したら必ずこのファイルも追従させること。
   local url="$1"
   check_cmd curl
   check_cmd jq
@@ -524,6 +529,22 @@ fetch_x_twitter() {
   [[ -n "$retweets"   ]] && echo "**リツイート**: ${retweets}"
   [[ -n "$replies"    ]] && echo "**返信**: ${replies}"
   [[ -n "$views"      ]] && echo "**表示回数**: ${views}"
+
+  # X Article 付きポスト: atomic (画像埋め込み) は除外し、header-one は見出しへ変換
+  local has_article
+  has_article=$(echo "$json" | jq -r '.tweet.article // empty')
+  if [[ -n "$has_article" ]]; then
+    local title body
+    title=$(echo "$json" | jq -r '.tweet.article.title // "(タイトル不明)"')
+    body=$(echo "$json" | jq -r '
+      [.tweet.article.content.blocks[]? | select(.type != "atomic" and ((.text // "") | test("\\S"))) |
+        if .type == "header-one" then "### " + .text else .text end] | join("\n\n")
+    ')
+    echo ""
+    echo "## X Article: ${title}"
+    echo ""
+    echo "${body}"
+  fi
 }
 
 fetch_rss() {
