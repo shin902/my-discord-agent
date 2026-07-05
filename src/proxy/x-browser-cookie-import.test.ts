@@ -1,7 +1,7 @@
-import Database from "better-sqlite3";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   importXCookiesFromBrowserDb,
@@ -71,10 +71,30 @@ function createChromiumCookieDb(rows: Array<Record<string, unknown>>): string {
 describe("readXCookieHeaderFromBrowserDb", () => {
   it("Firefox cookies.sqlite から X Cookie header を作る", () => {
     const dbPath = createFirefoxCookieDb([
-      { host: ".x.com", name: "auth_token", value: "auth-secret", expiry: 1_900_000_000 },
-      { host: ".x.com", name: "ct0", value: "csrf-secret", expiry: 1_900_000_000 },
-      { host: ".example.com", name: "auth_token", value: "ignore", expiry: 1_900_000_000 },
-      { host: ".twitter.com", name: "guest_id", value: "guest", expiry: 1_900_000_000 },
+      {
+        host: ".x.com",
+        name: "auth_token",
+        value: "auth-secret",
+        expiry: 1_900_000_000,
+      },
+      {
+        host: ".x.com",
+        name: "ct0",
+        value: "csrf-secret",
+        expiry: 1_900_000_000,
+      },
+      {
+        host: ".example.com",
+        name: "auth_token",
+        value: "ignore",
+        expiry: 1_900_000_000,
+      },
+      {
+        host: ".twitter.com",
+        name: "guest_id",
+        value: "guest",
+        expiry: 1_900_000_000,
+      },
     ]);
 
     const header = readXCookieHeaderFromBrowserDb({
@@ -91,8 +111,18 @@ describe("readXCookieHeaderFromBrowserDb", () => {
 
   it("db schema から Firefox を auto detect する", () => {
     const dbPath = createFirefoxCookieDb([
-      { host: ".x.com", name: "auth_token", value: "auth-secret", expiry: 1_900_000_000 },
-      { host: ".x.com", name: "ct0", value: "csrf-secret", expiry: 1_900_000_000 },
+      {
+        host: ".x.com",
+        name: "auth_token",
+        value: "auth-secret",
+        expiry: 1_900_000_000,
+      },
+      {
+        host: ".x.com",
+        name: "ct0",
+        value: "csrf-secret",
+        expiry: 1_900_000_000,
+      },
     ]);
 
     expect(readXCookieHeaderFromBrowserDb({ dbPath })).toContain(
@@ -154,7 +184,12 @@ describe("readXCookieHeaderFromBrowserDb", () => {
   it("期限切れ cookie は使わない", () => {
     const dbPath = createFirefoxCookieDb([
       { host: ".x.com", name: "auth_token", value: "auth-secret", expiry: 1 },
-      { host: ".x.com", name: "ct0", value: "csrf-secret", expiry: 1_900_000_000 },
+      {
+        host: ".x.com",
+        name: "ct0",
+        value: "csrf-secret",
+        expiry: 1_900_000_000,
+      },
     ]);
 
     expect(() =>
@@ -170,8 +205,18 @@ describe("readXCookieHeaderFromBrowserDb", () => {
 describe("importXCookiesFromBrowserDb", () => {
   it("ブラウザDBから data/x-cookies.json 形式で保存する", async () => {
     const dbPath = createFirefoxCookieDb([
-      { host: ".x.com", name: "auth_token", value: "auth-secret", expiry: 1_900_000_000 },
-      { host: ".x.com", name: "ct0", value: "csrf-secret", expiry: 1_900_000_000 },
+      {
+        host: ".x.com",
+        name: "auth_token",
+        value: "auth-secret",
+        expiry: 1_900_000_000,
+      },
+      {
+        host: ".x.com",
+        name: "ct0",
+        value: "csrf-secret",
+        expiry: 1_900_000_000,
+      },
     ]);
     const cookieFile = join(tmpDir, "x-cookies.json");
 

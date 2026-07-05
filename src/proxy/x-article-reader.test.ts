@@ -1,6 +1,6 @@
-import type { Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -30,6 +30,14 @@ async function startServer(options: XArticleReaderOptions = {}) {
 
 function postArticle(body: unknown, headers: Record<string, string> = {}) {
   return fetch(`${baseUrl}/v1/article`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+}
+
+function postPost(body: unknown, headers: Record<string, string> = {}) {
+  return fetch(`${baseUrl}/v1/post`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: typeof body === "string" ? body : JSON.stringify(body),
@@ -186,6 +194,23 @@ describe("mock モード", () => {
     expect(article.plainText).toBeUndefined();
     expect(typeof article.previewText).toBe("string");
   });
+
+  it("POST /v1/post は正常な Post JSON を返す", async () => {
+    await startServer({ mock: true });
+    const res = await postPost(
+      { postId: "123456789" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const post = (await res.json()) as Record<string, unknown>;
+    expect(post.postId).toBe("123456789");
+    expect(post.source).toBe("x-internal-graphql");
+    expect(post.canonicalUrl).toBe(
+      "https://x.com/mock_reader/status/123456789",
+    );
+    expect(typeof post.text).toBe("string");
+    expect(post.contentTruncated).toBe(false);
+  });
 });
 
 describe("fixture モード", () => {
@@ -304,6 +329,58 @@ describe("upstream モード", () => {
     expect(article.postId).toBe("456");
     expect(article.title).toBe("GraphQL Article");
     expect(article.plainText).toBe("GraphQL plain body");
+  });
+
+  it("POST /v1/post は GraphQL TweetResult から投稿本文を返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
+    const cookieFile = join(tmpDir, "x-cookies.json");
+    await writeFile(
+      cookieFile,
+      JSON.stringify({
+        cookieHeader: "auth_token=super-secret; ct0=csrf-secret",
+        csrfToken: "csrf-secret",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      }),
+    );
+
+    const upstreamFetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            tweetResult: {
+              result: {
+                core: {
+                  user_results: {
+                    result: {
+                      legacy: { name: "Example", screen_name: "example" },
+                    },
+                  },
+                },
+                legacy: {
+                  full_text: "GraphQL post body",
+                  created_at: "Wed Jul 01 00:00:00 +0000 2026",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    await startServer({
+      cookieFile,
+      upstreamFetchImpl,
+      nowMs: Date.parse("2026-07-01T00:00:00.000Z"),
+    });
+    const res = await postPost(
+      { postId: "123" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(res.status).toBe(200);
+    const post = (await res.json()) as Record<string, unknown>;
+    expect(post.postId).toBe("123");
+    expect(post.text).toBe("GraphQL post body");
+    expect(post.canonicalUrl).toBe("https://x.com/example/status/123");
   });
 });
 

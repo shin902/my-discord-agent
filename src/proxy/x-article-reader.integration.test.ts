@@ -1,5 +1,5 @@
-import * as http from "node:http";
 import type { Server } from "node:http";
+import * as http from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRequestHandler } from "./credential-proxy-server.js";
 import { createXArticleReaderServer } from "./x-article-reader.js";
@@ -95,6 +95,29 @@ describe("agent-reach → Credential Proxy → mock x-article-reader", () => {
     expect(result.details.articleId).toBe("123456789012345");
     expect(result.details.service).toBe("x-article");
     expect(result.details.contentTruncated).toBe(false);
+  });
+
+  it("agentReachTool.execute() が Credential Proxy 経由で mock post を取得する", async () => {
+    vi.resetModules();
+    vi.doMock("node:dns/promises", () => ({
+      lookup: vi
+        .fn()
+        .mockResolvedValue([{ address: "104.244.42.129", family: 4 }]),
+    }));
+    const { agentReachTool } = await import("../tools/agent-reach.js");
+    const result = await agentReachTool.execute(
+      "call-2",
+      { url: "https://x.com/mock_reader/status/123456789012345?s=20" },
+      undefined,
+    );
+
+    const firstContent = result.content[0];
+    expect(firstContent.type).toBe("text");
+    const text = firstContent.type === "text" ? firstContent.text : "";
+    expect(text).toContain("信頼できない外部コンテンツ");
+    expect(text).toContain("Mock X post text for local integration tests.");
+    expect(result.details.postId).toBe("123456789012345");
+    expect(result.details.service).toBe("x-twitter");
   });
 
   it("sandbox から誤った Bearer を送っても Credential Proxy が正しい token へ上書きする", async () => {
