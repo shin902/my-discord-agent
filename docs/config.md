@@ -76,7 +76,7 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> node dist/proxy/x-articl
 X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 node dist/proxy/x-article-reader.js
 ```
 
-通常モードの reader は `data/x-cookies.json`（または `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`）を読み、X 内部 GraphQL を呼ぶ。cookie は `x-cookie-refresh` cron job で更新する。
+通常モードの reader は `data/x-cookies.json`（または `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`）を読み、X 内部 GraphQL を呼ぶ。cookie は外部同期などで用意する。
 
 ## config/groups.json
 
