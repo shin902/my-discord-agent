@@ -76,7 +76,7 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> node dist/proxy/x-articl
 X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 node dist/proxy/x-article-reader.js
 ```
 
-通常モードの reader は `data/x-cookies.json`（または `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`）を読み、X 内部 GraphQL を呼ぶ。cookie は外部同期などで用意する。
+通常モードの reader は `data/x-cookies.json`（または `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`）を読み、X 内部 GraphQL を呼ぶ。初回の cookie ファイルはブラウザ Cookie DB から `pnpm x:cookie:from-browser --source firefox --profile-dir ~/.mozilla/firefox/xxxx.default-release` で作る。DevTools 等で取得した X の Cookie request header を `pbpaste | pnpm x:cookie:import` で保存することもできる。
 
 ## config/groups.json
 

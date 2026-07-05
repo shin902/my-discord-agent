@@ -504,7 +504,7 @@ Credential Proxy 側にも provider ごとの method/path allowlist を実装す
 
 ### 起動
 
-reader は `src/proxy/x-article-reader.ts` として実装し、ビルド後は host 側で起動する。通常モードでは `data/x-cookies.json` を使用する。
+reader は `src/proxy/x-article-reader.ts` として実装し、ビルド後は host 側で起動する。通常モードでは `data/x-cookies.json` を使用する。初回はブラウザ Cookie DB から `pnpm x:cookie:from-browser --source firefox --profile-dir ~/.mozilla/firefox/xxxx.default-release` で保存する。DevTools 等で取得した X の Cookie request header を `pbpaste | pnpm x:cookie:import` で保存することもできる。
 
 ```bash
 X_ARTICLE_READER_TOKEN=<十分に長いランダム値> node dist/proxy/x-article-reader.js
@@ -515,7 +515,7 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
 
 主な運用環境変数:
 
-- `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`: cookie refresh job が書いた cookie JSON（既定: `data/x-cookies.json`）
+- `X_ARTICLE_COOKIE_FILE` / `X_COOKIE_FILE`: `pnpm x:cookie:from-browser` / `pnpm x:cookie:import` / 外部同期が書いた cookie JSON（既定: `data/x-cookies.json`）
 - `X_ARTICLE_COOKIE_MAX_AGE_DAYS`: cookie freshness 上限（既定: 7日）
 - `X_ARTICLE_UPSTREAM_TIMEOUT_MS`: upstream GraphQL timeout（既定: 15000ms）
 - `X_ARTICLE_REDIRECT_QUERY_ID` / `X_ARTICLE_TWEET_RESULT_QUERY_ID`: X が query hash を rotate した場合の上書き
