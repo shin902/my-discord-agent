@@ -1,7 +1,10 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_X_COOKIE_FILE, type StoredXCookies } from "./x-cookie-store.js";
+import {
+  DEFAULT_X_COOKIE_FILE,
+  type StoredXCookies,
+} from "./x-cookie-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
@@ -24,7 +27,11 @@ function resolveDataPath(input: string | undefined): string {
 }
 
 function normalizeCookieHeader(input: string): string {
-  return input.trim().replace(/^cookie\s*:\s*/i, "").replace(/[\r\n]+/g, "").trim();
+  return input
+    .trim()
+    .replace(/^cookie\s*:\s*/i, "")
+    .replace(/[\r\n]+/g, "")
+    .trim();
 }
 
 function parseCookieHeader(cookieHeader: string): Map<string, string> {

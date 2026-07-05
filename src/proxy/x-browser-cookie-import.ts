@@ -1,6 +1,6 @@
-import Database from "better-sqlite3";
 import { homedir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { saveXCookieHeader } from "./x-cookie-import.js";
 
 export type BrowserCookieSource = "firefox" | "chromium" | "auto";
@@ -47,17 +47,26 @@ function isExpired(cookie: BrowserCookie, nowMs: number): boolean {
   return cookie.expiresAtMs !== null && cookie.expiresAtMs <= nowMs;
 }
 
-function cookieHeaderFromCookies(cookies: BrowserCookie[], nowMs: number): string {
+function cookieHeaderFromCookies(
+  cookies: BrowserCookie[],
+  nowMs: number,
+): string {
   const currentCookies = cookies.filter(
     (cookie) => isXCookieHost(cookie.host) && !isExpired(cookie, nowMs),
   );
-  const authToken = currentCookies.find((cookie) => cookie.name === "auth_token");
+  const authToken = currentCookies.find(
+    (cookie) => cookie.name === "auth_token",
+  );
   if (!authToken) {
-    throw new XBrowserCookieImportError("X auth_token cookie was not found in browser DB.");
+    throw new XBrowserCookieImportError(
+      "X auth_token cookie was not found in browser DB.",
+    );
   }
   const csrfToken = currentCookies.find((cookie) => cookie.name === "ct0");
   if (!csrfToken) {
-    throw new XBrowserCookieImportError("X ct0 cookie was not found in browser DB.");
+    throw new XBrowserCookieImportError(
+      "X ct0 cookie was not found in browser DB.",
+    );
   }
 
   return currentCookies
@@ -145,7 +154,9 @@ function detectDbKind(dbPath: string): Exclude<BrowserCookieSource, "auto"> {
       .map((row) => String((row as Record<string, unknown>).name));
     if (tables.includes("moz_cookies")) return "firefox";
     if (tables.includes("cookies")) return "chromium";
-    throw new XBrowserCookieImportError("Unsupported browser cookie DB schema.");
+    throw new XBrowserCookieImportError(
+      "Unsupported browser cookie DB schema.",
+    );
   } finally {
     db.close();
   }
@@ -171,7 +182,9 @@ export function resolveBrowserCookieDbPath(
 
   const source = options.source ?? "auto";
   if (source === "auto") {
-    throw new XBrowserCookieImportError("--source is required when using --profile-dir.");
+    throw new XBrowserCookieImportError(
+      "--source is required when using --profile-dir.",
+    );
   }
 
   const profileDir = resolvePath(options.profileDir);
@@ -192,7 +205,10 @@ export function readXCookieHeaderFromBrowserDb(
     resolved.source === "firefox"
       ? readFirefoxCookies(resolved.dbPath)
       : readChromiumCookies(resolved.dbPath);
-  return cookieHeaderFromCookies(cookies, (options.now ?? new Date()).getTime());
+  return cookieHeaderFromCookies(
+    cookies,
+    (options.now ?? new Date()).getTime(),
+  );
 }
 
 export async function importXCookiesFromBrowserDb(
