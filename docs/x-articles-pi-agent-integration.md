@@ -10,7 +10,10 @@ X Articles 専用の公開 tool と skill は新設せず、既存の `agent-rea
   ↓
 agent-reach
   ├─ /<username>/status/<post-id>
-  │    └─ 既存 FxTwitter 経路
+  │    ↓
+  │  FxTwitter (api.fxtwitter.com) を優先取得（クッキー不要、Article本文も取得可）
+  │    └─ 失敗 or 本文なしの場合のみ既存 Credential Proxy
+  │         └─ host-only x-article-reader /v1/post で通常ポスト本文を取得
   │
   └─ /i/article/<article-id>
        または /<username>/article/<article-id>
@@ -21,7 +24,7 @@ agent-reach
               ↓
             host-only x-article-reader
               ├─ X Cookie を保持
-              ├─ X Article 本文を取得
+              ├─ X 通常ポスト / Article 本文を取得
               ├─ preview / plain に正規化
               └─ サイズ制限済み JSON を返す
 ```
@@ -73,13 +76,17 @@ X の Developer Guidelines は、公式 API のみを使い、scraping、browser
 
 ## 既存 agent-reach との関係
 
-`agent-reach` は既に通常の X post を FxTwitter で取得している。
+`agent-reach` は通常の X post をまず FxTwitter 経由で取得し、失敗時のみ host reader
+へフォールバックする。
 
 ```text
 https://x.com/<username>/status/<post-id>
   ↓ detectService(): "x-twitter"
-  ↓ https://api.fxtwitter.com/<username>/status/<post-id>
-  ↓ buildXTwitterMarkdown()
+  ↓ fetchFxPost(): api.fxtwitter.com へ直接 GET（クッキー不要）
+  ↓ 本文（text or article）が取れれば Markdown 化して返す
+  ↓ 失敗 or 本文なしの場合のみ:
+  ↓   Credential Proxy の x-article provider 経由で host-only reader /v1/post
+  ↓   JSON を Markdown 化
 ```
 
 X Articles は同じ X URL でも ID namespace と取得経路が異なる。現在の
@@ -103,8 +110,9 @@ article.article_results.result
 
 - [twikit-mcp: X Articles support](https://github.com/tangivis/twitter-mcp)
 
-通常 post は既存 FxTwitter 経路を維持し、Article だけを host-only reader
-へ振り分ける。
+通常 post はまず FxTwitter（クッキー不要）へ振り分け、Article は host-only reader
+へ振り分ける。post が FxTwitter で取得できない場合のみ host-only reader へ落ちる。
+いずれの経路でも sandbox には Cookie を渡さない。
 
 ## このリポジトリへの組み込み場所
 
@@ -414,7 +422,7 @@ URLの内容を取得するときは`agent-reach` toolへURLを渡す。
 
 X URLはtoolが自動分類する。
 
-- `/<username>/status/<post-id>`: FxTwitter経由で通常ポストを取得
+- `/<username>/status/<post-id>`: FxTwitter経由で取得（Article付きポストはArticle本文も含む）。取得できない場合は認証済みhost readerへフォールバック
 - `/i/article/<article-id>`: 認証済みhost reader経由でArticle本文を取得
 - `/<username>/article/<article-id>`: 認証済みhost reader経由でArticle本文を取得
 
@@ -665,15 +673,16 @@ post / delete / like / repost / DM / follow / block / mute
 初期版:
 
 ```text
-1. 通常postは既存FxTwitter経路で取得
-2. ArticleはCredential Proxy経由でreaderからplainを取得
-3. AUTH_EXPIRED / RATE_LIMITEDは自動retryしない
-4. UPSTREAM_CHANGEDは運用アラートを出す
-5. 本文を取得できなければ、その事実をユーザーへ明示する
+1. 通常postはFxTwitter（クッキー不要）を優先取得
+2. FxTwitterが失敗/本文なしの場合のみ認証済みhost reader経路へフォールバック
+3. ArticleはCredential Proxy経由でreaderからplainを取得
+4. AUTH_EXPIRED / RATE_LIMITEDは自動retryしない
+5. UPSTREAM_CHANGEDは運用アラートを出す
+6. 本文を取得できなければ、その事実をユーザーへ明示する
 ```
 
-Article URL を FxTwitter や `r.jina.ai` へ自動フォールバックしない。
-認証なし preview endpoint や DOM scraping も初期版へ入れない。
+Article URL（`/i/article/<id>` 等）は FxTwitter や `r.jina.ai` へ自動フォールバック
+しない。認証なし preview endpoint や DOM scraping も初期版へ入れない。
 
 ## テスト
 
