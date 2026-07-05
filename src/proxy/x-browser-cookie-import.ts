@@ -15,6 +15,7 @@ export type BrowserCookieImportOptions = {
 
 type BrowserCookie = {
   host: string;
+  path: string;
   name: string;
   value: string;
   expiresAtMs: number | null;
@@ -33,14 +34,36 @@ function resolvePath(input: string): string {
   return path.resolve(input);
 }
 
-function isXCookieHost(host: string): boolean {
-  const normalized = host.toLowerCase().replace(/^\./, "");
+const X_REQUEST_HOST = "x.com";
+const X_REQUEST_PATH = "/";
+
+function normalizedCookieDomain(host: string): string {
+  return host.toLowerCase().replace(/^\./, "");
+}
+
+function effectiveCookiePath(cookiePath: string): string {
+  return cookiePath.startsWith("/") ? cookiePath : "/";
+}
+
+function cookieMatchesXRequest(cookie: BrowserCookie): boolean {
+  if (normalizedCookieDomain(cookie.host) !== X_REQUEST_HOST) return false;
+
+  const cookiePath = effectiveCookiePath(cookie.path);
   return (
-    normalized === "x.com" ||
-    normalized.endsWith(".x.com") ||
-    normalized === "twitter.com" ||
-    normalized.endsWith(".twitter.com")
+    X_REQUEST_PATH === cookiePath ||
+    (X_REQUEST_PATH.startsWith(cookiePath) &&
+      (cookiePath.endsWith("/") ||
+        X_REQUEST_PATH.charAt(cookiePath.length) === "/"))
   );
+}
+
+function cookieScopeKey(cookie: BrowserCookie): string {
+  const hostOnly = cookie.host.startsWith(".") ? "domain" : "host";
+  return `${hostOnly}:${normalizedCookieDomain(cookie.host)}:${effectiveCookiePath(cookie.path)}`;
+}
+
+function credentialScopePriority(cookie: BrowserCookie): number {
+  return cookie.host.startsWith(".") ? 1 : 0;
 }
 
 function isExpired(cookie: BrowserCookie, nowMs: number): boolean {
@@ -52,25 +75,85 @@ function cookieHeaderFromCookies(
   nowMs: number,
 ): string {
   const currentCookies = cookies.filter(
-    (cookie) => isXCookieHost(cookie.host) && !isExpired(cookie, nowMs),
+    (cookie) => cookieMatchesXRequest(cookie) && !isExpired(cookie, nowMs),
   );
-  const authToken = currentCookies.find(
+  const authTokens = currentCookies.filter(
     (cookie) => cookie.name === "auth_token",
   );
-  if (!authToken) {
+  if (authTokens.length === 0) {
     throw new XBrowserCookieImportError(
       "X auth_token cookie was not found in browser DB.",
     );
   }
-  const csrfToken = currentCookies.find((cookie) => cookie.name === "ct0");
-  if (!csrfToken) {
+  const csrfTokens = currentCookies.filter((cookie) => cookie.name === "ct0");
+  if (csrfTokens.length === 0) {
     throw new XBrowserCookieImportError(
       "X ct0 cookie was not found in browser DB.",
     );
   }
 
+  const credentialScopes = new Map<
+    string,
+    { authTokens: BrowserCookie[]; csrfTokens: BrowserCookie[] }
+  >();
+  for (const authToken of authTokens) {
+    const key = cookieScopeKey(authToken);
+    const scope = credentialScopes.get(key) ?? {
+      authTokens: [],
+      csrfTokens: [],
+    };
+    scope.authTokens.push(authToken);
+    credentialScopes.set(key, scope);
+  }
+  for (const csrfToken of csrfTokens) {
+    const key = cookieScopeKey(csrfToken);
+    const scope = credentialScopes.get(key) ?? {
+      authTokens: [],
+      csrfTokens: [],
+    };
+    scope.csrfTokens.push(csrfToken);
+    credentialScopes.set(key, scope);
+  }
+
+  const credentialPair = [...credentialScopes.values()]
+    .filter(
+      (scope) => scope.authTokens.length > 0 && scope.csrfTokens.length > 0,
+    )
+    .sort(
+      (a, b) =>
+        credentialScopePriority(a.authTokens[0]) -
+        credentialScopePriority(b.authTokens[0]),
+    )[0];
+  if (!credentialPair) {
+    throw new XBrowserCookieImportError(
+      "X auth_token and ct0 cookies were not found in the same request scope.",
+    );
+  }
+
+  const uniqueAuthValues = new Set(
+    credentialPair.authTokens.map((cookie) => cookie.value),
+  );
+  const uniqueCsrfValues = new Set(
+    credentialPair.csrfTokens.map((cookie) => cookie.value),
+  );
+  if (uniqueAuthValues.size > 1 || uniqueCsrfValues.size > 1) {
+    throw new XBrowserCookieImportError(
+      "Multiple X authentication cookie values were found in the same request scope.",
+    );
+  }
+
+  const selectedCredentials = [
+    credentialPair.authTokens[0],
+    credentialPair.csrfTokens[0],
+  ];
   return currentCookies
-    .sort((a, b) => `${a.host}:${a.name}`.localeCompare(`${b.host}:${b.name}`))
+    .filter((cookie) => cookie.name !== "auth_token" && cookie.name !== "ct0")
+    .concat(selectedCredentials)
+    .sort((a, b) =>
+      `${a.host}:${a.path}:${a.name}`.localeCompare(
+        `${b.host}:${b.path}:${b.name}`,
+      ),
+    )
     .map((cookie) => `${cookie.name}=${cookie.value}`)
     .join("; ");
 }
@@ -80,15 +163,16 @@ function readFirefoxCookies(dbPath: string): BrowserCookie[] {
   try {
     return db
       .prepare(
-        `SELECT host, name, value, expiry
+        `SELECT host, path, name, value, expiry
          FROM moz_cookies
-         WHERE host LIKE '%x.com' OR host LIKE '%twitter.com'`,
+         WHERE lower(host) IN ('x.com', '.x.com')`,
       )
       .all()
       .map((row) => {
         const record = row as Record<string, unknown>;
         return {
           host: String(record.host ?? ""),
+          path: String(record.path ?? ""),
           name: String(record.name ?? ""),
           value: String(record.value ?? ""),
           expiresAtMs:
@@ -111,9 +195,9 @@ function readChromiumCookies(dbPath: string): BrowserCookie[] {
   try {
     const rows = db
       .prepare(
-        `SELECT host_key, name, value, encrypted_value, expires_utc
+        `SELECT host_key, path, name, value, encrypted_value, expires_utc
          FROM cookies
-         WHERE host_key LIKE '%x.com' OR host_key LIKE '%twitter.com'`,
+         WHERE lower(host_key) IN ('x.com', '.x.com')`,
       )
       .all();
 
@@ -135,6 +219,7 @@ function readChromiumCookies(dbPath: string): BrowserCookie[] {
       }
       return {
         host: String(record.host_key ?? ""),
+        path: String(record.path ?? ""),
         name,
         value,
         expiresAtMs: chromiumExpiresAtMs(record.expires_utc),
