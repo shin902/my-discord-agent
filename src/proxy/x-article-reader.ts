@@ -131,6 +131,13 @@ function sendReaderError(
   sendJson(res, status, { error: { code, message, retryable } });
 }
 
+function enforceResponseSize(value: unknown): void {
+  const encoded = Buffer.from(JSON.stringify(value));
+  if (encoded.byteLength > MAX_RESPONSE_BYTES) {
+    throw new Error("RESPONSE_TOO_LARGE");
+  }
+}
+
 async function readLimitedBody(req: IncomingMessage): Promise<string> {
   const contentLength = req.headers["content-length"];
   if (contentLength && Number(contentLength) > MAX_REQUEST_BYTES) {
@@ -252,10 +259,6 @@ export function normalizeXArticle(
       Boolean(raw.contentTruncated) || preview.truncated || plain.truncated,
   };
 
-  const encoded = Buffer.from(JSON.stringify(article));
-  if (encoded.byteLength > MAX_RESPONSE_BYTES) {
-    throw new Error("RESPONSE_TOO_LARGE");
-  }
   return article;
 }
 
@@ -286,10 +289,7 @@ export function normalizeXPost(input: unknown, postId: string): NormalizedPost {
     contentTruncated: Boolean(raw.contentTruncated) || text.truncated,
   };
 
-  const encoded = Buffer.from(JSON.stringify(post));
-  if (encoded.byteLength > MAX_RESPONSE_BYTES) {
-    throw new Error("RESPONSE_TOO_LARGE");
-  }
+  enforceResponseSize(post);
   return post;
 }
 
@@ -440,8 +440,9 @@ async function handleArticle(
   }
 
   try {
-    const article = await loadArticle(articleId, options);
+    const article = { ...(await loadArticle(articleId, options)) };
     if (format === "preview") delete article.plainText;
+    enforceResponseSize(article);
     sendJson(res, 200, article);
   } catch (err) {
     if (err instanceof XArticleUpstreamError) {

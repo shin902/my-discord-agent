@@ -243,6 +243,38 @@ describe("fixture モード", () => {
     expect(article.plainText.length).toBe(120_000);
     expect(article.contentTruncated).toBe(true);
   });
+
+  it("preview は除外する plainText のサイズに影響されず返す", async () => {
+    if (!tmpDir) throw new Error("tmpDir is missing");
+    const fixturePath = join(tmpDir, `fixture-${randomUUID()}.json`);
+    await writeFile(
+      fixturePath,
+      JSON.stringify({
+        articleId: "999",
+        canonicalUrl: "https://x.com/i/article/999",
+        previewText: "Preview text",
+        plainText: "あ".repeat(120_000),
+      }),
+    );
+    await startServer({ fixturePath });
+
+    const previewRes = await postArticle(
+      { articleId: "999", format: "preview" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(previewRes.status).toBe(200);
+    const article = (await previewRes.json()) as Record<string, unknown>;
+    expect(article.previewText).toBe("Preview text");
+    expect(article.plainText).toBeUndefined();
+
+    const plainRes = await postArticle(
+      { articleId: "999", format: "plain" },
+      { authorization: `Bearer ${TOKEN}` },
+    );
+    expect(plainRes.status).toBe(502);
+    const error = (await plainRes.json()) as { error: { code: string } };
+    expect(error.error.code).toBe("RESPONSE_TOO_LARGE");
+  });
 });
 
 describe("upstream モード", () => {
