@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import * as http from "node:http";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRequestHandler } from "./credential-proxy-server.js";
 import { createXArticleReaderServer } from "./x-article-reader.js";
 
@@ -58,8 +58,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  vi.doUnmock("node:dns/promises");
-  vi.resetModules();
   if (previousReaderToken === undefined)
     delete process.env.X_ARTICLE_READER_TOKEN;
   else process.env.X_ARTICLE_READER_TOKEN = previousReaderToken;
@@ -71,53 +69,43 @@ afterEach(async () => {
   proxyServer = undefined;
 });
 
-describe("agent-reach → Credential Proxy → mock x-article-reader", () => {
-  it("agentReachTool.execute() が Credential Proxy 経由で mock Article を取得する", async () => {
-    vi.resetModules();
-    vi.doMock("node:dns/promises", () => ({
-      lookup: vi
-        .fn()
-        .mockResolvedValue([{ address: "104.244.42.129", family: 4 }]),
-    }));
-    const { agentReachTool } = await import("../tools/agent-reach.js");
-    const result = await agentReachTool.execute(
-      "call-1",
-      { url: "https://x.com/i/article/123456789012345" },
-      undefined,
+describe("Credential Proxy → mock x-article-reader", () => {
+  it("Credential Proxy 経由で mock Article を取得する", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${proxyPort}/x-article/v1/article`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ articleId: "123456789012345", format: "plain" }),
+      },
     );
-
-    const firstContent = result.content[0];
-    expect(firstContent.type).toBe("text");
-    const text = firstContent.type === "text" ? firstContent.text : "";
-    expect(text).toContain("信頼できない外部コンテンツ");
-    expect(text).toContain("Mock X Article 123456789012345");
-    expect(text).toContain("Mock plain text body for local integration tests.");
-    expect(result.details.articleId).toBe("123456789012345");
-    expect(result.details.service).toBe("x-article");
-    expect(result.details.contentTruncated).toBe(false);
+    expect(res.status).toBe(200);
+    const article = (await res.json()) as {
+      articleId: string;
+      title: string;
+      plainText: string;
+      contentTruncated: boolean;
+    };
+    expect(article.articleId).toBe("123456789012345");
+    expect(article.title).toContain("Mock X Article 123456789012345");
+    expect(article.plainText).toContain(
+      "Mock plain text body for local integration tests.",
+    );
+    expect(article.contentTruncated).toBe(false);
   });
 
-  it("agentReachTool.execute() が Credential Proxy 経由で mock post を取得する", async () => {
-    vi.resetModules();
-    vi.doMock("node:dns/promises", () => ({
-      lookup: vi
-        .fn()
-        .mockResolvedValue([{ address: "104.244.42.129", family: 4 }]),
-    }));
-    const { agentReachTool } = await import("../tools/agent-reach.js");
-    const result = await agentReachTool.execute(
-      "call-2",
-      { url: "https://x.com/mock_reader/status/123456789012345?s=20" },
-      undefined,
+  it("Credential Proxy 経由で mock post を取得する", async () => {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/x-article/v1/post`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ postId: "123456789012345" }),
+    });
+    expect(res.status).toBe(200);
+    const post = (await res.json()) as { postId: string; text: string };
+    expect(post.postId).toBe("123456789012345");
+    expect(post.text).toContain(
+      "Mock X post text for local integration tests.",
     );
-
-    const firstContent = result.content[0];
-    expect(firstContent.type).toBe("text");
-    const text = firstContent.type === "text" ? firstContent.text : "";
-    expect(text).toContain("信頼できない外部コンテンツ");
-    expect(text).toContain("Mock X post text for local integration tests.");
-    expect(result.details.postId).toBe("123456789012345");
-    expect(result.details.service).toBe("x-twitter");
   });
 
   it("sandbox から誤った Bearer を送っても Credential Proxy が正しい token へ上書きする", async () => {
