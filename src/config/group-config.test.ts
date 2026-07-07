@@ -112,6 +112,18 @@ describe("initGroupPrompts", () => {
 
     expect(mockCp).toHaveBeenCalledOnce();
   });
+
+  it('skills が "*" の場合はテンプレートコピーしない', async () => {
+    mockReadFile.mockRejectedValueOnce(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+
+    await initGroupPrompts([
+      { name: "init-all-skills", channels: [], skills: "*" },
+    ]);
+
+    expect(mockCp).not.toHaveBeenCalled();
+  });
 });
 
 describe("ensureGroupDirs", () => {

@@ -74,6 +74,14 @@ describe("loadGroups", () => {
     });
   });
 
+  it('skills は全ロードを示す "*" もパースできる', async () => {
+    const { loadGroups } = await setupRawGroups([
+      { name: "chat", channels: [], skills: "*" },
+    ]);
+    const groups = await loadGroups();
+    expect(groups[0].skills).toBe("*");
+  });
+
   it("エージェント設定フィールドは省略可能", async () => {
     const { loadGroups } = await setupRawGroups([
       { name: "chat", channels: [] },

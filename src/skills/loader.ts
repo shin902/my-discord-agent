@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import type { SkillSelection } from "../config/groups.js";
 
 export const SkillSchema = z.object({
   name: z.string(),
@@ -50,8 +51,17 @@ export function parseYamlFrontmatter(content: string): {
 
 export async function loadSkills(
   skillsDir: string,
-  allowlist?: string[],
+  selection?: SkillSelection,
 ): Promise<Skill[]> {
+  // 未指定または [] は「スキルなし」。全スキルを読み込む場合は "*" を明示する。
+  if (
+    selection === undefined ||
+    (Array.isArray(selection) && selection.length === 0)
+  ) {
+    return [];
+  }
+
+  const allowlist = Array.isArray(selection) ? selection : undefined;
   let entries: Dirent[];
   try {
     entries = (await readdir(skillsDir, { withFileTypes: true })) as Dirent[];
