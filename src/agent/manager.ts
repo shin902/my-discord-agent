@@ -95,7 +95,13 @@ export function killAllRunningContainers(): Promise<void> {
         killProc.on("error", () => resolve());
       });
     }),
-  ).then(() => undefined);
+  ).then(() => {
+    // proc の close イベントでも削除されるが、呼び出し元から見て
+    // 「killAllRunningContainers 完了時点で registry が空」を保証するため明示的に消す
+    for (const [name] of entries) {
+      runningContainers.delete(name);
+    }
+  });
 }
 
 export async function initManager(proxyPort: number): Promise<void> {
