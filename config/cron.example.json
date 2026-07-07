@@ -54,6 +54,28 @@
     "mode": "to-channel"
   },
   {
+    "_comment": "自己成長型ペルソナ（docs/todo/issue-persona-growth.md）の日次ジョブ例。memory-daily と土台は同じだが、事実日報に加えて一人称の日記を書かせる",
+    "id": "persona-diary-daily",
+    "schedule": "0 23 * * *",
+    "enabled": true,
+    "groupName": "my-group",
+    "prompt": "session-logsスキルを使って今日のセッションログを確認し、今日やったこと・決定事項・未解決事項を簡潔にまとめて memory/YYYY-MM-DD.md(今日の日付)に保存してください。今日記録対象のセッションが無ければファイルは作らず、その旨だけ報告してください。\n\nあわせて、一人称の日記を memory/diary/YYYY-MM-DD.md に書いてください。事実の要約ではなく、感想・気づき・詰まった点を含めること。チャンネルへの投稿の最後には、今日詰まった点について一言質問を添えてください（ユーザーが返信すれば翌日の日記の材料になりますが、返信が無くてもループは壊れません）。",
+    "channelId": "YOUR_CHANNEL_ID",
+    "mode": "to-channel",
+    "model": { "provider": "YOUR_PROVIDER", "modelId": "YOUR_MODEL_ID" }
+  },
+  {
+    "_comment": "自己成長型ペルソナの週次ジョブ例。memory-weekly と土台は同じだが、日記7日分から傾向を抽出して SELF.md を更新する。失敗の記録は「〜は使えない」という恒久ルール形式を禁止し、日付つきの事象形式で書かせること",
+    "id": "persona-self-weekly",
+    "schedule": "0 23 * * 0",
+    "enabled": true,
+    "groupName": "my-group",
+    "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md と既存の MEMORY.md を読み比べ、今後も参照する価値がある情報だけを MEMORY.md に統合してください。一度きりの作業ログは反映しないこと。MEMORY.md 全体で2000字程度に収めること。失敗の記録を残す場合は「〜は使えない」という恒久ルール形式を禁止し、必ず「YYYY-MM-DD時点で〜が失敗した」という日付つきの事象形式で書くこと。\n\nあわせて、memory/diary/ 配下の直近7日分の日記を読み、繰り返し現れる傾向・口癖・感じ方のパターンを抽出して memory/SELF.md を更新してください。SELF.md は2000字以内(`wc -m`で確認)に収め、AGENTS.md のコア人格と矛盾する内容を書かないこと。",
+    "channelId": "YOUR_CHANNEL_ID",
+    "mode": "to-channel",
+    "model": { "provider": "YOUR_PROVIDER", "modelId": "YOUR_MODEL_ID" }
+  },
+  {
     "id": "finance-monthly",
     "schedule": "0 9 1 * *",
     "enabled": true,

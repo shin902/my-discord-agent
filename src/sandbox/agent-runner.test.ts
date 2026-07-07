@@ -316,6 +316,60 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("新規セッションでは SELF.md も memory-bootstrap と同様に self-bootstrap として保存する（agents-snapshot・memory-bootstrap に続いて3番目）", async () => {
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/AGENTS.md") {
+        return "カスタムプロンプト" as never;
+      }
+      if (String(filePath) === "/workspace/MEMORY.md") {
+        return "ユーザーは猫が好き" as never;
+      }
+      if (String(filePath) === "/workspace/memory/SELF.md") {
+        return "一人称は「僕」" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    // self-bootstrap が appendMessage で保存される
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        role: "custom",
+        customType: "self-bootstrap",
+        content: expect.stringContaining("一人称は「僕」"),
+      }),
+    );
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        role: "custom",
+        customType: "self-bootstrap",
+        content: expect.stringContaining("## 人格 (SELF.md)"),
+      }),
+    );
+
+    // messages 配列は agents-snapshot → memory-bootstrap → self-bootstrap の順で並ぶ
+    const messages = (
+      lastAgentOptions as { initialState: { messages: unknown[] } }
+    ).initialState.messages;
+    expect(messages[0]).toMatchObject({ customType: "agents-snapshot" });
+    expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
+    expect(messages[2]).toMatchObject({ customType: "self-bootstrap" });
+  });
+
   it("新規セッションで AGENTS.md はあるが MEMORY.md がない場合は agents-snapshot のみ保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
@@ -467,6 +521,102 @@ describe("runAgentLoop", () => {
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
     expect(systemPrompt).toContain("古いプロンプト");
+  });
+
+  it("既存セッションに memory-bootstrap と self-bootstrap が両方あれば MEMORY.md / SELF.md どちらも読み込まない", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      {
+        role: "custom",
+        customType: "memory-bootstrap",
+        content: "## 記憶 (MEMORY.md)\n\n古い記憶",
+        timestamp: Date.now() - 2000,
+      },
+      {
+        role: "custom",
+        customType: "self-bootstrap",
+        content: "## 人格 (SELF.md)\n\n古い人格",
+        timestamp: Date.now() - 1000,
+      },
+    ] as never);
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
+    expect(readFile).not.toHaveBeenCalledWith(
+      "/workspace/memory/SELF.md",
+      "utf-8",
+    );
+    const promptAppends = vi
+      .mocked(appendMessage)
+      .mock.calls.filter(
+        (call) =>
+          call[2] &&
+          typeof call[2] === "object" &&
+          "role" in call[2] &&
+          (call[2] as { role: string }).role === "custom",
+      );
+    expect(promptAppends).toHaveLength(0);
+  });
+
+  it("memory-bootstrap のみ既存で self-bootstrap がない場合、SELF.md だけ移行対象になる（チャンネルごとに独立判定）", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      {
+        role: "custom",
+        customType: "memory-bootstrap",
+        content: "## 記憶 (MEMORY.md)\n\n古い記憶",
+        timestamp: Date.now() - 1000,
+      },
+    ] as never);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/memory/SELF.md") {
+        return "後から生えた人格" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    // MEMORY.md は既存の bootstrap があるため再読み込みしない
+    expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
+    // SELF.md は bootstrap がまだ無いため読み込んで移行する
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        role: "custom",
+        customType: "self-bootstrap",
+        content: expect.stringContaining("後から生えた人格"),
+      }),
+    );
+    // memory-bootstrap は再書き込みされない
+    const memoryAppends = vi
+      .mocked(appendMessage)
+      .mock.calls.filter(
+        (call) =>
+          call[2] &&
+          typeof call[2] === "object" &&
+          "customType" in call[2] &&
+          (call[2] as { customType: string }).customType === "memory-bootstrap",
+      );
+    expect(memoryAppends).toHaveLength(0);
   });
 
   it("既存セッション（スナップショットなし・旧形式）は AGENTS.md をスナップショット化し、MEMORY.md を memory-bootstrap に移行する", async () => {
@@ -662,6 +812,43 @@ describe("runAgentLoop", () => {
       .content;
     expect(bootstrapContent).toContain("あ".repeat(2000));
     expect(bootstrapContent).not.toContain("あ".repeat(2001));
+    expect(bootstrapContent).toContain("上限(2000字)を超えています");
+  });
+
+  it("SELF.md が文字数上限を超える場合は切り詰めて警告を注入する（新規セッションの bootstrap メッセージ）", async () => {
+    const longSelf = "い".repeat(3000);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/memory/SELF.md") {
+        return longSelf as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    const bootstrapCall = vi
+      .mocked(appendMessage)
+      .mock.calls.find(
+        (call) =>
+          call[2] &&
+          typeof call[2] === "object" &&
+          "customType" in call[2] &&
+          (call[2] as { customType: string }).customType === "self-bootstrap",
+      );
+    expect(bootstrapCall).toBeDefined();
+    const bootstrapContent = (bootstrapCall?.[2] as { content: string })
+      .content;
+    expect(bootstrapContent).toContain("い".repeat(2000));
+    expect(bootstrapContent).not.toContain("い".repeat(2001));
     expect(bootstrapContent).toContain("上限(2000字)を超えています");
   });
 
@@ -1199,6 +1386,12 @@ describe("defaultConvertToLlm", () => {
     content: "## 記憶 (MEMORY.md)\n\nテスト",
     timestamp: 1000,
   };
+  const selfBootstrapMsg = {
+    role: "custom" as const,
+    customType: "self-bootstrap" as const,
+    content: "## 人格 (SELF.md)\n\nテスト",
+    timestamp: 1500,
+  };
   const userMsg = { role: "user" as const, content: "hi", timestamp: 2000 };
   const assistantMsg = {
     role: "assistant" as const,
@@ -1236,6 +1429,40 @@ describe("defaultConvertToLlm", () => {
     ] as never);
     expect(result).toHaveLength(1);
     expect(result[0].role).toBe("user");
+  });
+
+  it("self-bootstrap メッセージを user ロールに変換する", () => {
+    const result = defaultConvertToLlm([selfBootstrapMsg] as never);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      role: "user",
+      content: selfBootstrapMsg.content,
+    });
+  });
+
+  it("2件目以降の self-bootstrap メッセージはスキップする", () => {
+    const result = defaultConvertToLlm([
+      selfBootstrapMsg,
+      selfBootstrapMsg,
+    ] as never);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+  });
+
+  it("memory-bootstrap と self-bootstrap は customType ごとに独立して重複排除する（互いを抑制しない）", () => {
+    const result = defaultConvertToLlm([
+      memoryBootstrapMsg,
+      selfBootstrapMsg,
+    ] as never);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      role: "user",
+      content: memoryBootstrapMsg.content,
+    });
+    expect(result[1]).toMatchObject({
+      role: "user",
+      content: selfBootstrapMsg.content,
+    });
   });
 
   it("agents-snapshot は除外し、memory-bootstrap と通常メッセージはそのまま通す", () => {
