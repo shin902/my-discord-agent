@@ -321,6 +321,10 @@ describe("sendMessage: Docker 起動構成", () => {
 
       await killAllRunningContainers();
 
+      // image pull 中（コンテナ未作成）でも docker run クライアント自体を
+      // 直接 kill することで孤立を防ぐ
+      expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+
       expect(spawnMock).toHaveBeenCalledTimes(2);
       const runArgs = spawnMock.mock.calls[0][1] as string[];
       const killArgs = spawnMock.mock.calls[1][1] as string[];

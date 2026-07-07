@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,31 +63,38 @@ let storedProxyPort: number | null = null;
 
 // Bot プロセス自体の再起動・停止時、実行中の docker run 子プロセスは自動では
 // kill されず孤立しうる（Linux では init に reparent されて動き続ける）。
-// シャットダウンハンドラーから確実に停止できるよう、稼働中のコンテナ名を保持する。
-const runningContainers = new Set<string>();
+// シャットダウンハンドラーから確実に停止できるよう、コンテナ名と対応する
+// docker run クライアントプロセスの両方を保持する。
+// `--pull=always` によるイメージ pull 中はコンテナがまだ作られていないため
+// `docker kill <name>` だけでは何も止められない。クライアントプロセス自体も
+// 直接 kill することで、pull 中・コンテナ起動後どちらのフェーズでも確実に止める。
+const runningContainers = new Map<string, ChildProcess>();
 
 /**
- * 実行中の全エージェントコンテナを docker kill で停止する。
- * SIGTERM/SIGINT 受信時に index.ts から呼び出される想定。
+ * 実行中の全エージェントコンテナ（および対応する docker run クライアント
+ * プロセス）を停止する。SIGTERM/SIGINT 受信時に index.ts から呼び出される想定。
  */
 export function killAllRunningContainers(): Promise<void> {
-  const names = [...runningContainers];
-  if (names.length === 0) return Promise.resolve();
+  const entries = [...runningContainers.entries()];
+  if (entries.length === 0) return Promise.resolve();
   console.error(
-    `[manager] シャットダウン: 実行中のコンテナ ${names.length} 件を停止します`,
-    names,
+    `[manager] シャットダウン: 実行中のコンテナ ${entries.length} 件を停止します`,
+    entries.map(([name]) => name),
   );
   return Promise.all(
-    names.map(
-      (name) =>
-        new Promise<void>((resolve) => {
-          const killProc = spawn("docker", ["kill", name], {
-            stdio: "ignore",
-          });
-          killProc.on("close", () => resolve());
-          killProc.on("error", () => resolve());
-        }),
-    ),
+    entries.map(([name, proc]) => {
+      // pull 中でコンテナがまだ存在しない場合に備え、クライアントプロセスも直接殺す。
+      // コンテナが既に起動済みの場合はクライアント kill だけでは止まらないため
+      // docker kill も併用する（無関係な場合は失敗するだけで無害）。
+      proc.kill("SIGKILL");
+      return new Promise<void>((resolve) => {
+        const killProc = spawn("docker", ["kill", name], {
+          stdio: "ignore",
+        });
+        killProc.on("close", () => resolve());
+        killProc.on("error", () => resolve());
+      });
+    }),
   ).then(() => undefined);
 }
 
@@ -443,9 +450,9 @@ export async function sendMessage(
   ];
 
   const dockerStartedAt = Date.now();
-  runningContainers.add(containerName);
   return new Promise((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
+    runningContainers.set(containerName, proc);
 
     let stdout = "";
     let stderrTail = "";
