@@ -305,6 +305,38 @@ describe("sendMessage: Docker 起動構成", () => {
     }
   });
 
+  it("killAllRunningContainers は実行中のコンテナ名を docker kill する", async () => {
+    vi.useFakeTimers();
+    try {
+      const { sendMessage, killAllRunningContainers } = await import(
+        "./manager.js"
+      );
+      const proc = makeProc();
+      proc.on = vi.fn(); // close イベントを発火させず「実行中」の状態を維持する
+      spawnMock.mockReturnValueOnce(proc);
+
+      const sendPromise = sendMessage("test-group", "session-1", "hi");
+      sendPromise.catch(() => {});
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+
+      await killAllRunningContainers();
+
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      const runArgs = spawnMock.mock.calls[0][1] as string[];
+      const killArgs = spawnMock.mock.calls[1][1] as string[];
+      const nameIndex = runArgs.indexOf("--name");
+      expect(killArgs).toEqual(["kill", runArgs[nameIndex + 1]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("実行中のコンテナが無ければ killAllRunningContainers は何もしない", async () => {
+    const { killAllRunningContainers } = await import("./manager.js");
+    await killAllRunningContainers();
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");

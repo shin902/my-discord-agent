@@ -61,6 +61,36 @@ const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
 
 let storedProxyPort: number | null = null;
 
+// Bot プロセス自体の再起動・停止時、実行中の docker run 子プロセスは自動では
+// kill されず孤立しうる（Linux では init に reparent されて動き続ける）。
+// シャットダウンハンドラーから確実に停止できるよう、稼働中のコンテナ名を保持する。
+const runningContainers = new Set<string>();
+
+/**
+ * 実行中の全エージェントコンテナを docker kill で停止する。
+ * SIGTERM/SIGINT 受信時に index.ts から呼び出される想定。
+ */
+export function killAllRunningContainers(): Promise<void> {
+  const names = [...runningContainers];
+  if (names.length === 0) return Promise.resolve();
+  console.error(
+    `[manager] シャットダウン: 実行中のコンテナ ${names.length} 件を停止します`,
+    names,
+  );
+  return Promise.all(
+    names.map(
+      (name) =>
+        new Promise<void>((resolve) => {
+          const killProc = spawn("docker", ["kill", name], {
+            stdio: "ignore",
+          });
+          killProc.on("close", () => resolve());
+          killProc.on("error", () => resolve());
+        }),
+    ),
+  ).then(() => undefined);
+}
+
 export async function initManager(proxyPort: number): Promise<void> {
   storedProxyPort = proxyPort;
 }
@@ -413,6 +443,7 @@ export async function sendMessage(
   ];
 
   const dockerStartedAt = Date.now();
+  runningContainers.add(containerName);
   return new Promise((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
 
@@ -530,6 +561,7 @@ export async function sendMessage(
 
     proc.on("close", (code: number | null) => {
       clearTimeout(timeout);
+      runningContainers.delete(containerName);
       // 残バッファをフラッシュ
       if (stderrTail) {
         processStderrLine(stderrTail);
@@ -551,6 +583,7 @@ export async function sendMessage(
 
     proc.on("error", (err: Error) => {
       clearTimeout(timeout);
+      runningContainers.delete(containerName);
       reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
     });

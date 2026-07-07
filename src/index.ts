@@ -1,5 +1,9 @@
 import "dotenv/config";
-import { initManager, validateGroupConfig } from "./agent/manager.js";
+import {
+  initManager,
+  killAllRunningContainers,
+  validateGroupConfig,
+} from "./agent/manager.js";
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
@@ -37,13 +41,17 @@ startPoller();
 startCron();
 client.login(token);
 
-process.on("SIGTERM", () => {
+// spawn した docker run 子プロセス（ひいてはコンテナ本体）は process.exit() しても
+// 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。
+const shutdown = async (): Promise<void> => {
   stopPoller();
   stopCron();
+  await killAllRunningContainers();
   process.exit(0);
+};
+process.on("SIGTERM", () => {
+  void shutdown();
 });
 process.on("SIGINT", () => {
-  stopPoller();
-  stopCron();
-  process.exit(0);
+  void shutdown();
 });
