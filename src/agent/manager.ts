@@ -374,11 +374,22 @@ export async function sendMessage(
     groupConfig: { ...effectiveConfig, model: resolvedModel },
   });
 
+  // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない
+  // （デーモンが管理しているため）。タイムアウト時に `docker kill` で実体を止められるよう
+  // 一意なコンテナ名を明示的に付与する。
+  const containerName =
+    `my-discord-agent-${groupName}-${sessionId}-${executionStartedAt}`.replace(
+      /[^a-zA-Z0-9_.-]/g,
+      "-",
+    );
+
   const args = [
     "run",
     "--rm",
     "-i",
     "--pull=always",
+    "--name",
+    containerName,
     "--memory=512m",
     "--cpus=1",
     "--user",
@@ -503,6 +514,15 @@ export async function sendMessage(
         }
         reportExecutionTiming(Date.now(), "timeout");
         proc.kill("SIGKILL");
+        // docker run クライアントを殺してもコンテナ本体（デーモン管理）は生き続けるため、
+        // --name で付与した一意な名前を使い docker kill でコンテナ本体を止める。
+        // --rm 済みなので kill が通れば自動的に削除される。
+        spawn("docker", ["kill", containerName], { stdio: "ignore" }).on(
+          "error",
+          () => {
+            // 既にコンテナが終了している場合などは無視する
+          },
+        );
         reject(new NonRetryableError("タイムアウト（10分を超過しました）"));
       },
       10 * 60 * 1000,
