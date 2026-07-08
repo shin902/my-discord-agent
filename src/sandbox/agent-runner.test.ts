@@ -619,6 +619,43 @@ describe("runAgentLoop", () => {
     expect(memoryAppends).toHaveLength(0);
   });
 
+  it("memory-bootstrap のみ既存で self-bootstrap を移行するターンでも、LLM へ渡す順序は memory-bootstrap → self-bootstrap になる", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      {
+        role: "custom",
+        customType: "memory-bootstrap",
+        content: "## 記憶 (MEMORY.md)\n\n古い記憶",
+        timestamp: Date.now() - 1000,
+      },
+    ] as never);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/memory/SELF.md") {
+        return "後から生えた人格" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {});
+
+    // 移行ターンでも self-bootstrap が memory-bootstrap より前に来てはいけない
+    // （次ターン以降は JSONL の定義順ロードで memory-bootstrap → self-bootstrap になるため、
+    // 移行ターンだけ逆転するとプロンプトキャッシュが不安定になる）
+    const messages = (
+      lastAgentOptions as { initialState: { messages: unknown[] } }
+    ).initialState.messages;
+    expect(messages[0]).toMatchObject({ customType: "memory-bootstrap" });
+    expect(messages[1]).toMatchObject({ customType: "self-bootstrap" });
+  });
+
   it("既存セッション（スナップショットなし・旧形式）は AGENTS.md をスナップショット化し、MEMORY.md を memory-bootstrap に移行する", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },

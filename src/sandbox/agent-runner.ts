@@ -442,8 +442,25 @@ export async function runAgentLoop(
     newBootstrapMessages.push(bootstrapMessage);
   }
 
+  // newBootstrapMessages を先頭へ丸ごと prepend すると、移行ターン（例: memory-bootstrap は
+  // 既存であり self-bootstrap のみ新規追加される場合）で self-bootstrap が memory-bootstrap より
+  // 前に来てしまい、次ターン以降（JSONL 再ロード時は定義順に並ぶ）と順序が食い違う。
+  // bootstrap 種別の正規順序（agents-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージし、
+  // 移行ターンでも安定した順序を保つ。
   if (newBootstrapMessages.length > 0) {
-    messages = [...newBootstrapMessages, ...messages];
+    const bootstrapOrder = [
+      AGENTS_SNAPSHOT_TYPE as string,
+      ...CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
+    ];
+    const orderIndex = (m: AgentMessage) =>
+      bootstrapOrder.indexOf(getCustomType(m) ?? "");
+    const boundary = messages.findIndex((m) => !isBootstrapMessage(m));
+    const existingBootstrapCount = boundary === -1 ? messages.length : boundary;
+    const mergedBootstraps = [
+      ...messages.slice(0, existingBootstrapCount),
+      ...newBootstrapMessages,
+    ].sort((a, b) => orderIndex(a) - orderIndex(b));
+    messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
   }
 
   const agent = new Agent({
