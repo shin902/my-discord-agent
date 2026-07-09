@@ -9,6 +9,8 @@ import {
 
 type FetchCall = { url: string; init?: RequestInit };
 
+const FIXED_NOW_MS = Date.parse("2026-07-01T00:00:00.000Z");
+
 let tmpDir: string;
 let cookieFile: string;
 
@@ -124,7 +126,7 @@ describe("fetchXArticleFromGraphql", () => {
       cookieFile,
       graphqlBaseUrl: "https://x.example/i/api/graphql",
       fetchImpl,
-      nowMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      nowMs: FIXED_NOW_MS,
     });
 
     expect(article).toEqual({
@@ -196,7 +198,11 @@ describe("fetchXArticleFromGraphql", () => {
     ]);
 
     await expect(
-      fetchXArticleFromGraphql("123", { cookieFile, fetchImpl }),
+      fetchXArticleFromGraphql("123", {
+        cookieFile,
+        fetchImpl,
+        nowMs: FIXED_NOW_MS,
+      }),
     ).rejects.toMatchObject({ code: "RATE_LIMITED", retryable: true });
   });
 
@@ -204,7 +210,11 @@ describe("fetchXArticleFromGraphql", () => {
     const { fetchImpl } = createMockFetch([jsonResponse({ data: {} })]);
 
     await expect(
-      fetchXArticleFromGraphql("123", { cookieFile, fetchImpl }),
+      fetchXArticleFromGraphql("123", {
+        cookieFile,
+        fetchImpl,
+        nowMs: FIXED_NOW_MS,
+      }),
     ).rejects.toMatchObject({ code: "UPSTREAM_CHANGED" });
   });
 
@@ -214,7 +224,11 @@ describe("fetchXArticleFromGraphql", () => {
     ]);
 
     await expect(
-      fetchXArticleFromGraphql("123", { cookieFile, fetchImpl }),
+      fetchXArticleFromGraphql("123", {
+        cookieFile,
+        fetchImpl,
+        nowMs: FIXED_NOW_MS,
+      }),
     ).rejects.toMatchObject({ code: "ARTICLE_NOT_FOUND" });
   });
 
@@ -225,7 +239,11 @@ describe("fetchXArticleFromGraphql", () => {
     ]);
 
     await expect(
-      fetchXArticleFromGraphql("123", { cookieFile, fetchImpl }),
+      fetchXArticleFromGraphql("123", {
+        cookieFile,
+        fetchImpl,
+        nowMs: FIXED_NOW_MS,
+      }),
     ).rejects.toMatchObject({ code: "ARTICLE_NOT_FOUND" });
   });
 
@@ -242,7 +260,12 @@ describe("fetchXArticleFromGraphql", () => {
     );
 
     await expect(
-      fetchXArticleFromGraphql("123", { cookieFile, fetchImpl, timeoutMs: 1 }),
+      fetchXArticleFromGraphql("123", {
+        cookieFile,
+        fetchImpl,
+        timeoutMs: 1,
+        nowMs: FIXED_NOW_MS,
+      }),
     ).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT", retryable: true });
   });
 
@@ -252,7 +275,11 @@ describe("fetchXArticleFromGraphql", () => {
     ]);
 
     try {
-      await fetchXArticleFromGraphql("123", { cookieFile, fetchImpl });
+      await fetchXArticleFromGraphql("123", {
+        cookieFile,
+        fetchImpl,
+        nowMs: FIXED_NOW_MS,
+      });
       throw new Error("expected failure");
     } catch (err) {
       expect(err).toBeInstanceOf(XArticleUpstreamError);
