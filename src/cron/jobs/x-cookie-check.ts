@@ -6,6 +6,7 @@ import {
   XCookieMissingError,
   XCookieStaleError,
 } from "../../proxy/x-cookie-store.js";
+import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 
 const SettingsSchema = z.object({
@@ -15,7 +16,13 @@ const SettingsSchema = z.object({
 });
 
 export default async function handler(ctx: CronContext): Promise<void> {
-  const settings = SettingsSchema.parse(ctx.settings ?? {});
+  const parsed = SettingsSchema.safeParse(ctx.settings ?? {});
+  if (!parsed.success) {
+    throw new NonRetryableError(
+      `[x-cookie-check] settings が不正です: ${parsed.error.message}`,
+    );
+  }
+  const settings = parsed.data;
 
   try {
     const stored = await readXCookieStore({
