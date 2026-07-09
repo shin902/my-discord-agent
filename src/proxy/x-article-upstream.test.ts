@@ -9,7 +9,8 @@ import {
 
 type FetchCall = { url: string; init?: RequestInit };
 
-const FIXED_NOW_MS = Date.parse("2026-07-01T00:00:00.000Z");
+const FIXED_NOW_ISO = "2026-07-01T00:00:00.000Z";
+const FIXED_NOW_MS = Date.parse(FIXED_NOW_ISO);
 
 let tmpDir: string;
 let cookieFile: string;
@@ -22,7 +23,7 @@ beforeEach(async () => {
     JSON.stringify({
       cookieHeader: "auth_token=super-secret; ct0=csrf-secret",
       csrfToken: "csrf-secret",
-      updatedAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: FIXED_NOW_ISO,
     }),
     "utf-8",
   );
