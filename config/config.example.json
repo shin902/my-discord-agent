@@ -8,5 +8,8 @@
   },
   "proxy": {
     "requestTimeoutMs": 120000
+  },
+  "agent": {
+    "timeoutMs": 600000
   }
 }

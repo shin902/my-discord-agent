@@ -56,6 +56,10 @@ vi.mock("../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../config/agent-config.js", () => ({
+  loadAgentTimeoutMs: vi.fn().mockResolvedValue(10 * 60 * 1000),
+}));
+
 vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi
     .fn()
