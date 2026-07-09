@@ -61,7 +61,9 @@ const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
 
 function formatTimeoutLabel(ms: number): string {
-  return ms % 60_000 === 0 ? `${ms / 60_000}分` : `${ms / 1000}秒`;
+  if (ms % 60_000 === 0) return `${ms / 60_000}分`;
+  if (ms % 1000 === 0) return `${ms / 1000}秒`;
+  return `${ms}ms`;
 }
 
 let storedProxyPort: number | null = null;
