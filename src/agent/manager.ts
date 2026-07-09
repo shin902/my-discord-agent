@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -58,6 +59,10 @@ export interface AgentExecutionTiming {
 
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
+
+function formatTimeoutLabel(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000}分` : `${ms / 1000}秒`;
+}
 
 let storedProxyPort: number | null = null;
 
@@ -455,6 +460,7 @@ export async function sendMessage(
     "/app/runner.mjs",
   ];
 
+  const agentTimeoutMs = await loadAgentTimeoutMs();
   const dockerStartedAt = Date.now();
   return new Promise((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -550,27 +556,28 @@ export async function sendMessage(
       }
     });
 
-    const timeout = setTimeout(
-      () => {
-        if (stderrTail) {
-          processStderrLine(stderrTail);
-          stderrTail = "";
-        }
-        reportExecutionTiming(Date.now(), "timeout");
-        proc.kill("SIGKILL");
-        // docker run クライアントを殺してもコンテナ本体（デーモン管理）は生き続けるため、
-        // --name で付与した一意な名前を使い docker kill でコンテナ本体を止める。
-        // --rm 済みなので kill が通れば自動的に削除される。
-        spawn("docker", ["kill", containerName], { stdio: "ignore" }).on(
-          "error",
-          () => {
-            // 既にコンテナが終了している場合などは無視する
-          },
-        );
-        reject(new NonRetryableError("タイムアウト（10分を超過しました）"));
-      },
-      10 * 60 * 1000,
-    );
+    const timeout = setTimeout(() => {
+      if (stderrTail) {
+        processStderrLine(stderrTail);
+        stderrTail = "";
+      }
+      reportExecutionTiming(Date.now(), "timeout");
+      proc.kill("SIGKILL");
+      // docker run クライアントを殺してもコンテナ本体（デーモン管理）は生き続けるため、
+      // --name で付与した一意な名前を使い docker kill でコンテナ本体を止める。
+      // --rm 済みなので kill が通れば自動的に削除される。
+      spawn("docker", ["kill", containerName], { stdio: "ignore" }).on(
+        "error",
+        () => {
+          // 既にコンテナが終了している場合などは無視する
+        },
+      );
+      reject(
+        new NonRetryableError(
+          `タイムアウト（${formatTimeoutLabel(agentTimeoutMs)}を超過しました）`,
+        ),
+      );
+    }, agentTimeoutMs);
 
     proc.on("close", (code: number | null) => {
       clearTimeout(timeout);
