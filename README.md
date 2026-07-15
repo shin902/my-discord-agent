@@ -4,7 +4,7 @@ Discord上で動作するAIエージェントボット。
 
 ## 概要
 
-my-nanoclawプロジェクトの失敗を教訓に、"確実に動く"ことを保証しながら実装を進めています。E2Eテストを含めた堅実な開発アプローチを取っています。
+my-nanoclawプロジェクトの失敗を教訓に、自動テストと型チェックを重ねながら実装を進めています。
 
 ## 主な機能
 
@@ -44,19 +44,20 @@ sandbox/agent-runner.ts → Agent ループ → tools/（bash など）を実行
 ### ローカルレジストリの起動（初回のみ）
 
 agent-runner イメージは `localhost:5050` のローカル OCI レジストリ経由で配布されます。
-microsandbox は Docker のローカルイメージストアを参照できないため、このレジストリが必須です。
+エージェントは起動時に、このイメージを `docker run --pull=always` で取得して使い捨てコンテナとして実行するため、ローカルレジストリが必要です。
 
 ```bash
-docker run -d -p 5050:5000 --name local-registry registry:2
+pnpm sandbox registry start
 ```
 
-### agent-runner イメージのビルド・push
+### サンドボックスイメージのビルド・push
 
-agent-runner のソースを変更した際は以下を実行してください。
+`src/sandbox/` 以下など、サンドボックス側のコードを変更した際は以下を実行してください。
 
 ```bash
-pnpm runner:image:build
+pnpm sandbox build
 # esbuild バンドル → docker build → localhost:5050 へ push まで一括実行
+# ローカルレジストリが停止中の場合は自動で起動
 ```
 
 ### 通常の起動

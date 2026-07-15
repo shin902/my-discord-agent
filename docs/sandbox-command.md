@@ -1,13 +1,13 @@
 # Sandbox 管理ガイド
 
-エージェントは microsandbox の microVM 内で実行される。VM が使うコンテナイメージ（Runner イメージ）とローカルレジストリの管理を `pnpm sandbox` で行う。
+エージェントは1メッセージごとに使い捨ての Docker コンテナ内で実行される。コンテナが使う Runner イメージとローカルレジストリの管理を `pnpm sandbox` で行う。
 
 ## 構成
 
 ```
 ローカルレジストリ (localhost:5050)
   └─ my-discord-agent-runner:latest   ← Dockerfile + agent-runner.ts のバンドル
-       └─ microsandbox が VM 起動時に pull して使う
+       └─ manager.ts が docker run --pull=always で取得・実行する
 ```
 
 Runner イメージの中身は `src/sandbox/agent-runner.ts` を esbuild でバンドルしたもの（`dist/sandbox/runner.bundle.mjs`）。`agent-runner.ts` を変更したらイメージを再ビルドする必要がある。
@@ -71,4 +71,5 @@ pnpm sandbox status
 - スクリプト: `scripts/sandbox.sh`
 - レジストリコンテナ名: `my-discord-agent-registry`
 - イメージ名: `localhost:5050/my-discord-agent-runner:latest`
-- レジストリは insecure（TLS なし）。microsandbox 側も `.insecure()` で対応済み（`src/agent/manager.ts`）
+- エージェント実行: `src/agent/manager.ts` から Docker CLI の `docker run` を直接起動
+- レジストリは insecure（TLS なし）のため、信頼できるローカル環境でのみ使用する
