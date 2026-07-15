@@ -23,6 +23,9 @@ import type { ModelConfig, SkillSelection } from "../config/groups.js";
 import { createFileLock } from "../utils/lock.js";
 import { appendCorruptedDeadLetter } from "./dead-letter.js";
 
+export type CronDeliveryMode = "direct" | "new-thread";
+export type CronSessionMode = "per-run" | "destination";
+
 // Discord メッセージに添付されたファイルの参照情報
 export interface AttachmentRef {
   url: string;
@@ -42,8 +45,10 @@ export interface InboxMessage {
   timestamp: string;
   enqueuedAt?: string; // inbox.jsonl への追加時刻。旧キュー互換のためオプショナル
   retries: number; // 失敗してリトライした回数。初回は 0
-  cronThread?: boolean; // cron thread モードのトリガー
-  cronJobId?: string; // to-thread: スレッド名生成用（cron-${jobId}-${dateSuffix}）。to-channel: ツールコール通知抑制の判定用
+  cronDeliveryMode?: CronDeliveryMode; // cron の投稿方法。旧キューでは未設定
+  cronSessionMode?: CronSessionMode; // cron のセッションID戦略。旧キューでは未設定
+  cronThread?: boolean; // 旧キュー互換: 旧 to-thread モードのトリガー
+  cronJobId?: string; // スレッド名生成とツールコール通知抑制の判定用
   cronThreadId?: string; // スレッド作成後にセット。リトライ時の再作成を防ぐ
   configOverride?: {
     model?: ModelConfig;

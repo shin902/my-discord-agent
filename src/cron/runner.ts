@@ -10,7 +10,11 @@ import {
   SkillSelectionSchema,
 } from "../config/groups.js";
 import { client } from "../discord/client.js";
-import { appendInbox } from "../queue/inbox.js";
+import {
+  appendInbox,
+  type CronDeliveryMode,
+  type CronSessionMode,
+} from "../queue/inbox.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
 
@@ -28,6 +32,9 @@ const CronJobSchema = z
     groupName: z.string().optional(),
     prompt: z.string().optional(),
     channelId: z.string().optional(),
+    deliveryMode: z.enum(["direct", "new-thread"]).optional(),
+    sessionMode: z.enum(["per-run", "destination"]).optional(),
+    // 後方互換。新規設定では deliveryMode/sessionMode を使用する。
     mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
     model: ModelConfigSchema.optional(),
@@ -36,17 +43,31 @@ const CronJobSchema = z
     // ハンドラー固有の設定値。中身は検証せずそのまま CronContext 経由でハンドラーに渡す
     settings: z.unknown().optional(),
   })
-  .refine(
-    (job) =>
-      job.handler != null ||
-      (job.groupName != null &&
-        job.prompt != null &&
-        job.channelId != null &&
-        job.mode != null),
-    {
-      message: "handler なし時は groupName, prompt, channelId, mode が必須です",
-    },
-  );
+  .superRefine((job, ctx) => {
+    if (job.handler != null) return;
+    if (job.groupName == null || job.prompt == null || job.channelId == null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "handler なし時は groupName, prompt, channelId が必須です",
+      });
+    }
+
+    const hasLegacyMode = job.mode != null;
+    const hasDeliveryMode = job.deliveryMode != null;
+    const hasSessionMode = job.sessionMode != null;
+    if (hasLegacyMode && (hasDeliveryMode || hasSessionMode)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "mode と deliveryMode/sessionMode は同時に指定できません",
+      });
+    } else if (!hasLegacyMode && (!hasDeliveryMode || !hasSessionMode)) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "handler なし時は deliveryMode, sessionMode が必須です（旧 mode も互換目的で利用可能）",
+      });
+    }
+  });
 
 const CronJobsSchema = z
   .array(CronJobSchema)
@@ -217,6 +238,22 @@ function buildConfigOverride(job: CronJob): Partial<AgentConfig> | undefined {
   return Object.keys(configOverride).length > 0 ? configOverride : undefined;
 }
 
+function resolveCronModes(job: CronJob): {
+  deliveryMode: CronDeliveryMode;
+  sessionMode: CronSessionMode;
+} {
+  if (job.deliveryMode && job.sessionMode) {
+    return {
+      deliveryMode: job.deliveryMode,
+      sessionMode: job.sessionMode,
+    };
+  }
+  if (job.mode === "to-thread") {
+    return { deliveryMode: "new-thread", sessionMode: "destination" };
+  }
+  return { deliveryMode: "direct", sessionMode: "per-run" };
+}
+
 export async function executeJob(job: CronJob): Promise<void> {
   const ctx: CronContext = { client, appendInbox, ...job };
 
@@ -226,38 +263,32 @@ export async function executeJob(job: CronJob): Promise<void> {
     return;
   }
 
-  // groupName, prompt, channelId, mode は Zod refine で保証済み
-  const { groupName, prompt, channelId, mode } = job as Required<
-    Pick<CronJob, "groupName" | "prompt" | "channelId" | "mode">
+  // groupName, prompt, channelId と各モードは Zod superRefine で保証済み
+  const { groupName, prompt, channelId } = job as Required<
+    Pick<CronJob, "groupName" | "prompt" | "channelId">
   > &
     CronJob;
+  const { deliveryMode, sessionMode } = resolveCronModes(job);
   const timestamp = new Date().toISOString();
   const configOverride = buildConfigOverride(job);
+  const sessionId =
+    sessionMode === "per-run"
+      ? `cron-${job.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      : deliveryMode === "direct"
+        ? channelId
+        : `cron-${job.id}`;
 
-  if (mode === "to-channel") {
-    // 毎回独立したセッション
-    await appendInbox({
-      channelId,
-      groupName,
-      sessionId: `cron-${job.id}-${Date.now()}`,
-      content: prompt,
-      timestamp,
-      cronJobId: job.id,
-      ...(configOverride !== undefined ? { configOverride } : {}),
-    });
-  } else {
-    // mode === "to-thread": poller 経由でスレッドを作成・投稿する
-    await appendInbox({
-      channelId,
-      groupName,
-      sessionId: `cron-${job.id}`, // スレッド作成前の placeholder。poller は thread.id をセッション ID として使用する
-      content: prompt,
-      timestamp,
-      cronThread: true,
-      cronJobId: job.id,
-      ...(configOverride !== undefined ? { configOverride } : {}),
-    });
-  }
+  await appendInbox({
+    channelId,
+    groupName,
+    sessionId,
+    content: prompt,
+    timestamp,
+    cronDeliveryMode: deliveryMode,
+    cronSessionMode: sessionMode,
+    cronJobId: job.id,
+    ...(configOverride !== undefined ? { configOverride } : {}),
+  });
 }
 
 // --- Scheduler ---

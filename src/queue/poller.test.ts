@@ -342,7 +342,7 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 
-  it("cronJobId が設定されている（to-channel cron）場合、tool_start イベントは送信されない", async () => {
+  it("cronJobId が設定されている（direct cron）場合、tool_start イベントは送信されない", async () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
         (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
@@ -495,7 +495,8 @@ describe("processMessage - cron-thread", () => {
 
   function makeCronThreadMsg(overrides?: Partial<InboxMessage>): InboxMessage {
     return makeMsg({
-      cronThread: true,
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
       cronJobId: "daily-report",
       // 2026-06-04T10:30:00.000Z → JST 2026-06-04 19:30
       timestamp: "2026-06-04T10:30:00.000Z",
@@ -534,6 +535,41 @@ describe("processMessage - cron-thread", () => {
       }),
     );
     expect(mockThreadSend).toHaveBeenCalledWith("AI response");
+  });
+
+  it("per-run は新規スレッドIDへ切り替えず独立セッションを維持する", async () => {
+    await processMessage(
+      makeCronThreadMsg({
+        sessionId: "cron-daily-report-run-1",
+        cronSessionMode: "per-run",
+      }),
+      "parallel-session",
+    );
+
+    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
+      "default",
+      "cron-daily-report-run-1",
+      "hello",
+      expect.any(Object),
+    );
+  });
+
+  it("旧 cronThread メッセージはスレッドIDをセッションIDとして処理する", async () => {
+    await processMessage(
+      makeCronThreadMsg({
+        cronDeliveryMode: undefined,
+        cronSessionMode: undefined,
+        cronThread: true,
+      }),
+      "parallel-session",
+    );
+
+    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
+      "default",
+      "thread-123",
+      "hello",
+      expect.any(Object),
+    );
   });
 
   it("cron-thread も agent 実行時間を response_timing に記録する", async () => {
@@ -715,7 +751,7 @@ describe("processMessage - cron-thread", () => {
     expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
   });
 
-  it("cronThread: true だが cronJobId が未設定の場合 appendDeadLetter に移動し通常フローに落ちない", async () => {
+  it("new-thread だが cronJobId が未設定の場合 appendDeadLetter に移動し通常フローに落ちない", async () => {
     const getCacheSpy = vi.mocked(client.channels.cache.get);
     getCacheSpy.mockClear();
 

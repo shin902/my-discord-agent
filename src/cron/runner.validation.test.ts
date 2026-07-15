@@ -64,7 +64,7 @@ describe("loadAndValidateCron", () => {
       {
         id: "missing-fields",
         schedule: "* * * * *",
-        // groupName, prompt, channelId, mode がすべて不足
+        // groupName, prompt, channelId, deliveryMode, sessionMode がすべて不足
       },
     ]);
     mockReadFile.mockResolvedValueOnce(cronJson);
@@ -147,7 +147,8 @@ describe("loadAndValidateCron", () => {
         groupName: "my-group",
         prompt: "do something",
         channelId: "ch-123",
-        mode: "to-channel",
+        deliveryMode: "direct",
+        sessionMode: "per-run",
       },
     ]);
     mockReadFile.mockResolvedValueOnce(cronJson);
@@ -155,6 +156,59 @@ describe("loadAndValidateCron", () => {
     const result = await loadAndValidateCron();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("group-job");
+  });
+
+  it("deliveryMode/sessionMode の片方だけではエラーになる", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "missing-session-mode",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "do something",
+          channelId: "ch-123",
+          deliveryMode: "direct",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).rejects.toThrow();
+  });
+
+  it("旧 mode と新しいモードの混在はエラーになる", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "mixed-mode",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "do something",
+          channelId: "ch-123",
+          mode: "to-channel",
+          deliveryMode: "direct",
+          sessionMode: "per-run",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).rejects.toThrow();
+  });
+
+  it("後方互換として旧 mode も受理する", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "legacy-mode",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "do something",
+          channelId: "ch-123",
+          mode: "to-channel",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).resolves.toHaveLength(1);
   });
 
   it("settings フィールドは検証なしでそのまま通る", async () => {
