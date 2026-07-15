@@ -318,7 +318,8 @@ describe("cronジョブの configOverride", () => {
         groupName: "g",
         prompt: "summarize",
         channelId: "ch",
-        mode: "to-channel",
+        deliveryMode: "direct",
+        sessionMode: "per-run",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["read"],
         skills: ["session-logs"],
@@ -345,7 +346,8 @@ describe("cronジョブの configOverride", () => {
         groupName: "g",
         prompt: "summarize",
         channelId: "ch",
-        mode: "to-channel",
+        deliveryMode: "direct",
+        sessionMode: "per-run",
         skills: "*",
       },
     ];
@@ -369,7 +371,8 @@ describe("cronジョブの configOverride", () => {
       groupName: "g",
       prompt: "summarize",
       channelId: "ch",
-      mode: "to-channel",
+      deliveryMode: "direct",
+      sessionMode: "per-run",
       model: { provider: "zai", modelId: "glm-4.7-flash" },
       tools: ["read"],
       skills: ["session-logs"],
@@ -390,7 +393,7 @@ describe("cronジョブの configOverride", () => {
     );
   });
 
-  it("executeJob は to-thread でも configOverride を渡す", async () => {
+  it("executeJob は new-thread でも configOverride を渡す", async () => {
     const { mod, appendInboxMock } = await importRunnerWithMocks();
 
     await mod.executeJob({
@@ -400,13 +403,15 @@ describe("cronジョブの configOverride", () => {
       groupName: "g",
       prompt: "summarize",
       channelId: "ch",
-      mode: "to-thread",
+      deliveryMode: "new-thread",
+      sessionMode: "destination",
       tools: ["read"],
     });
 
     expect(appendInboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        cronThread: true,
+        cronDeliveryMode: "new-thread",
+        cronSessionMode: "destination",
         cronJobId: "thread-summary",
         configOverride: { tools: ["read"] },
       }),
@@ -423,7 +428,8 @@ describe("cronジョブの configOverride", () => {
       groupName: "g",
       prompt: "hello",
       channelId: "ch",
-      mode: "to-channel",
+      deliveryMode: "direct",
+      sessionMode: "per-run",
     });
 
     expect(appendInboxMock).toHaveBeenCalledOnce();

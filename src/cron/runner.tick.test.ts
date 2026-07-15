@@ -53,7 +53,8 @@ describe("tick() orchestration", () => {
         groupName: "g",
         prompt: "p",
         channelId: "c",
-        mode: "to-channel",
+        deliveryMode: "direct",
+        sessionMode: "per-run",
       },
     ]);
   });

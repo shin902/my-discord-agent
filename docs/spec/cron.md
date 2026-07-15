@@ -33,7 +33,8 @@ data/cron/
     "groupName": "my-group",
     "prompt": "昨日のログを分析して日次レポートを作成してください",
     "channelId": "12345",
-    "mode": "thread"
+    "deliveryMode": "new-thread",
+    "sessionMode": "destination"
   }
 ]
 ```
@@ -50,7 +51,7 @@ data/cron/
 ]
 ```
 
-`handler` があるジョブは `prompt`・`channelId`・`mode` 省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される。
+`handler` があるジョブは `prompt`・`channelId`・`deliveryMode`・`sessionMode` を省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される。
 
 ---
 
@@ -63,7 +64,9 @@ data/cron/
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
-| `mode` | handler なし時必須 | `"channel"` \| `"thread"` | 実行モード（後述） |
+| `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` | Discordへの投稿方法（後述） |
+| `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
+| `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
 | `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |
 
@@ -80,14 +83,27 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 }
 ```
 
-### mode
+### deliveryMode / sessionMode
 
-| 値 | 動作 |
-|----|------|
-| `"channel"` | `appendInbox()` 経由でキューに積む。tick は即座に返る（非ブロッキング）。毎回独立したセッション |
-| `"thread"` | スレッドを作成し `sendMessage()` でエージェント実行を直接 await する。エージェントが応答するまで tick が完了しない（ブロッキング）。スレッド ID を sessionId として使うため後続のスレッド会話でコンテキストが引き継がれる |
+投稿方法とセッションID戦略は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、cron tick はキューへの追加後に返る。
 
-**`channel` vs `thread` の非対称性**: `channel` はキュー経由で即時返却、`thread` はエージェント完了まで await する。複数の `thread` ジョブが同一 tick で起動すると `Promise.allSettled` で並走し、全ジョブ完了まで tick がブロックされる。エージェント実行が長い場合（数分〜）は `channel` モードを検討すること。`_isRunning` フラグにより次の tick は前の tick が完了するまでスキップされる。
+| フィールド | 値 | 動作 |
+|---|---|---|
+| `deliveryMode` | `direct` | `channelId` が指すチャンネルまたは既存スレッドへ直接投稿する |
+| `deliveryMode` | `new-thread` | `channelId` を親チャンネルとして毎回新規スレッドを作成し、そこへ投稿する |
+| `sessionMode` | `per-run` | 実行ごとに一意なセッションIDを生成する |
+| `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドIDをセッションIDとして使う |
+
+代表的な組み合わせ:
+
+| 設定 | 用途 |
+|---|---|
+| `direct` + `per-run` | 同じチャンネルまたは既存スレッドへ投稿するが、実行ごとの履歴は分離する |
+| `direct` + `destination` | 投稿先単位で履歴を継続する |
+| `new-thread` + `destination` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
+| `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
+
+旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。
 
 ---
 

@@ -51,7 +51,7 @@ describe("executeJob", () => {
     vi.clearAllMocks();
   });
 
-  it("channel mode: calls appendInbox with correct args", async () => {
+  it("direct + per-run: 指定先へ毎回独立したセッションで送る", async () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
@@ -59,7 +59,8 @@ describe("executeJob", () => {
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
-      mode: "to-channel",
+      deliveryMode: "direct",
+      sessionMode: "per-run",
     });
 
     expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
@@ -68,10 +69,12 @@ describe("executeJob", () => {
     expect(arg.groupName).toBe("my-group");
     expect(arg.content).toBe("do something");
     expect(arg.sessionId).toMatch(/^cron-test-job-/);
+    expect(arg.cronDeliveryMode).toBe("direct");
+    expect(arg.cronSessionMode).toBe("per-run");
     expect(arg.cronJobId).toBe("test-job");
   });
 
-  it("to-thread mode: appendInbox に cronThread フラグとジョブIDを渡す", async () => {
+  it("new-thread + destination: 新規スレッド用の設定をキューへ渡す", async () => {
     await executeJob({
       id: "test-job",
       schedule: "* * * * *",
@@ -79,7 +82,8 @@ describe("executeJob", () => {
       groupName: "my-group",
       prompt: "do something",
       channelId: "ch-123",
-      mode: "to-thread",
+      deliveryMode: "new-thread",
+      sessionMode: "destination",
     });
 
     expect(vi.mocked(appendInbox)).toHaveBeenCalledOnce();
@@ -88,8 +92,44 @@ describe("executeJob", () => {
     expect(arg.groupName).toBe("my-group");
     expect(arg.content).toBe("do something");
     expect(arg.sessionId).toBe("cron-test-job");
-    expect(arg.cronThread).toBe(true);
+    expect(arg.cronDeliveryMode).toBe("new-thread");
+    expect(arg.cronSessionMode).toBe("destination");
     expect(arg.cronJobId).toBe("test-job");
+  });
+
+  it("direct + destination: 指定先IDをセッションIDとして使う", async () => {
+    await executeJob({
+      id: "test-job",
+      schedule: "* * * * *",
+      enabled: true,
+      groupName: "my-group",
+      prompt: "do something",
+      channelId: "thread-123",
+      deliveryMode: "direct",
+      sessionMode: "destination",
+    });
+
+    const arg = vi.mocked(appendInbox).mock.calls[0][0];
+    expect(arg.sessionId).toBe("thread-123");
+  });
+
+  it("旧 mode を新しい2軸へ変換する", async () => {
+    await executeJob({
+      id: "legacy-job",
+      schedule: "* * * * *",
+      enabled: true,
+      groupName: "my-group",
+      prompt: "do something",
+      channelId: "ch-123",
+      mode: "to-thread",
+    });
+
+    expect(vi.mocked(appendInbox)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cronDeliveryMode: "new-thread",
+        cronSessionMode: "destination",
+      }),
+    );
   });
 });
 

@@ -152,7 +152,8 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
     "groupName": "my-group",
     "prompt": "昨日の要点を短くまとめてください",
     "channelId": "YOUR_CHANNEL_ID",
-    "mode": "to-channel",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["read"],
     "skills": ["session-logs"]
@@ -160,7 +161,18 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
 ]
 ```
 
-宣言的ジョブ（`handler` を使わず `groupName`/`prompt`/`channelId`/`mode` を指定する形式）では、`model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
+宣言的ジョブ（`handler` を使わず `groupName`/`prompt`/`channelId`/`deliveryMode`/`sessionMode` を指定する形式）では、投稿方法とセッションの扱いを別々に設定する。
+
+| フィールド | 値 | 動作 |
+|---|---|---|
+| `deliveryMode` | `direct` | `channelId` へ直接投稿する。通常チャンネルだけでなく既存スレッドのIDも指定可能 |
+| `deliveryMode` | `new-thread` | `channelId` を親として実行ごとに新しいスレッドを作成する |
+| `sessionMode` | `per-run` | cron実行ごとに独立したセッションIDを生成する |
+| `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドのIDをセッションIDにする |
+
+既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
+
+`model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
 
 ### jobs/issue-triage.ts
 

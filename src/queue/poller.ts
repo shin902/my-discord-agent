@@ -291,13 +291,15 @@ async function withLlmLock<T>(
   }
 }
 
-async function processCronThread(
+async function processCronNewThread(
   msg: InboxMessage,
   mode: DispatchMode,
 ): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = msg.sessionId;
+  // cronSessionMode がない旧 cronThread メッセージは従来どおりスレッドIDを使う。
+  const sessionMode = msg.cronSessionMode ?? "destination";
   try {
     if (!msg.cronJobId) {
       outcome = "dead-letter";
@@ -317,7 +319,7 @@ async function processCronThread(
       if (msg.cronThreadId) {
         // リトライ: スレッドは作成済み。再作成せず既存スレッドをフェッチ
         threadId = msg.cronThreadId;
-        sessionId = threadId;
+        if (sessionMode === "destination") sessionId = threadId;
         const fetched = await client.channels.fetch(threadId);
         if (!fetched?.isSendable()) {
           throw new NonRetryableError(
@@ -349,7 +351,7 @@ async function processCronThread(
           name: `cron-${truncatedId}${suffix}`,
         });
         threadId = thread.id;
-        sessionId = thread.id;
+        if (sessionMode === "destination") sessionId = thread.id;
         threadSend = (content) => thread.send(content);
       }
       response = await withLlmLock(
@@ -433,8 +435,8 @@ export async function processMessage(
   msg: InboxMessage,
   mode: DispatchMode,
 ): Promise<void> {
-  if (msg.cronThread) {
-    return processCronThread(msg, mode);
+  if (msg.cronDeliveryMode === "new-thread" || msg.cronThread) {
+    return processCronNewThread(msg, mode);
   }
 
   const timing = startResponseTiming(msg);
@@ -466,8 +468,8 @@ export async function processMessage(
               msg.content,
               {
                 onDiscordEvent: (event) => {
-                  // cron (to-channel) のツールコール通知はチャットが溜まるため抑制する
-                  // (cronThread の場合はここに到達せず processCronThread 側で処理される)
+                  // cron direct のツールコール通知はチャットが溜まるため抑制する
+                  // (new-thread の場合はここに到達せず専用フローで処理される)
                   if (msg.cronJobId && event.type === "tool_start") {
                     return;
                   }
