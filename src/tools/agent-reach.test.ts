@@ -114,6 +114,12 @@ describe("detectService", () => {
     ).toBe("reddit");
   });
 
+  it("old.reddit.com → reddit", () => {
+    expect(
+      detectService(parse("https://old.reddit.com/r/programming/")),
+    ).toBe("reddit");
+  });
+
   it(".xml URL → rss", () => {
     expect(detectService(parse("https://example.com/atom.xml"))).toBe("rss");
   });

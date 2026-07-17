@@ -70,7 +70,7 @@ export function detectService(parsed: URL): ServiceType {
   if (host === "youtube.com" || host === "youtu.be") return "youtube";
   if (host === "github.com" && /^\/[^/]+\/[^/?#]+\/?$/.test(parsed.pathname))
     return "github-repo";
-  if (host === "reddit.com") return "reddit";
+  if (host === "reddit.com" || host === "old.reddit.com") return "reddit";
   const p = parsed.pathname.toLowerCase();
   if (
     p.endsWith(".xml") ||
