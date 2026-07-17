@@ -5,6 +5,7 @@ import { createRequestHandler } from "./credential-proxy-server.js";
 import { createXArticleReaderServer } from "./x-article-reader.js";
 
 const READER_TOKEN = "reader-shared-secret-0123456789";
+const nativeFetch = globalThis.fetch;
 
 let readerServer: Server | undefined;
 let readerPort: number;
@@ -59,6 +60,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.doUnmock("node:dns/promises");
+  vi.unstubAllGlobals();
   vi.resetModules();
   if (previousReaderToken === undefined)
     delete process.env.X_ARTICLE_READER_TOKEN;
@@ -104,6 +106,20 @@ describe("agent-reach → Credential Proxy → mock x-article-reader", () => {
         .fn()
         .mockResolvedValue([{ address: "104.244.42.129", family: 4 }]),
     }));
+    const fetchMock = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const requestUrl = input instanceof Request ? input.url : String(input);
+        if (requestUrl.startsWith("https://api.fxtwitter.com/")) {
+          return new Response(JSON.stringify({ message: "stubbed" }), {
+            status: 503,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return nativeFetch(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
     const { agentReachTool } = await import("../tools/agent-reach.js");
     const result = await agentReachTool.execute(
       "call-2",
@@ -118,6 +134,10 @@ describe("agent-reach → Credential Proxy → mock x-article-reader", () => {
     expect(text).toContain("Mock X post text for local integration tests.");
     expect(result.details.postId).toBe("123456789012345");
     expect(result.details.service).toBe("x-twitter");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.fxtwitter.com/mock_reader/status/123456789012345",
+      expect.objectContaining({ method: "GET", redirect: "error" }),
+    );
   });
 
   it("sandbox から誤った Bearer を送っても Credential Proxy が正しい token へ上書きする", async () => {
