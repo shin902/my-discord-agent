@@ -435,6 +435,12 @@ describe("buildCommand シェルエスケープ", () => {
       expect(cmd).toContain("-w '%{http_code}'");
     });
 
+    it("ルートURL → /.json を付与し credential-proxy のパスを維持", () => {
+      const cmd = buildCommand("reddit", "https://reddit.com/", out);
+      expect(cmd).toContain("http://localhost:12345/reddit/.json");
+      expect(cmd).not.toContain("http://localhost:12345/reddit.json");
+    });
+
     it("既に .json で終わるURLは二重に付与しない", () => {
       const cmd = buildCommand(
         "reddit",

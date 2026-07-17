@@ -920,9 +920,10 @@ export function buildCommand(
       // ログイン済みクッキー(www.reddit.com)を使ってアクセスする
       // (docs/reddit-cookie-setup.md 参照)
       const parsed = new URL(url);
-      const jsonPath = parsed.pathname.endsWith(".json")
-        ? parsed.pathname
-        : `${parsed.pathname.replace(/\/+$/, "")}.json`;
+      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+      const jsonPath = pathname.endsWith(".json")
+        ? pathname
+        : `${pathname}.json`;
       const proxyUrl = `${resolveProxyBaseUrl("reddit")}${jsonPath}${parsed.search}`;
       return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(proxyUrl)} -H "User-Agent: ${REDDIT_USER_AGENT}"`;
     }
