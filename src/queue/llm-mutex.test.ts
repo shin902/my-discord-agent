@@ -4,17 +4,17 @@ type LlmMutexModule = typeof import("./llm-mutex.js");
 
 let acquireLlmLock: LlmMutexModule["acquireLlmLock"];
 
-const tick = () => new Promise<void>((r) => setTimeout(r, 20));
+const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
 
 beforeEach(async () => {
   vi.resetModules();
   ({ acquireLlmLock } = await import("./llm-mutex.js"));
 });
 
-describe("acquireLlmLock - parallel-session モード", () => {
-  it("即座に release を返す（待機なし）", async () => {
-    const release1 = await acquireLlmLock("parallel-session");
-    const release2 = await acquireLlmLock("parallel-session");
+describe("acquireLlmLock", () => {
+  it("parallel provider は同時に複数取得できる", async () => {
+    const release1 = await acquireLlmLock("provider-a", "parallel");
+    const release2 = await acquireLlmLock("provider-a", "parallel");
 
     expect(typeof release1).toBe("function");
     expect(typeof release2).toBe("function");
@@ -22,53 +22,31 @@ describe("acquireLlmLock - parallel-session モード", () => {
     release2();
   });
 
-  it("同時に複数取得しても待機しない", async () => {
-    const order: number[] = [];
-
-    const release1 = await acquireLlmLock("parallel-session");
-    order.push(1);
-    const release2 = await acquireLlmLock("parallel-session");
-    order.push(2);
-
-    expect(order).toEqual([1, 2]);
-    release1();
-    release2();
-  });
-});
-
-describe("acquireLlmLock - serial モード", () => {
-  it("1つ目が release されるまで2つ目は待機する", async () => {
-    const order: number[] = [];
-
-    const release1 = await acquireLlmLock("serial");
-    order.push("acquired-1" as unknown as number);
-
-    let release2Resolved = false;
-    const p2 = acquireLlmLock("serial").then((release2) => {
-      release2Resolved = true;
-      order.push("acquired-2" as unknown as number);
-      release2();
+  it("同じ serial provider は release まで待機する", async () => {
+    const release1 = await acquireLlmLock("provider-a", "serial");
+    let acquired2 = false;
+    const second = acquireLlmLock("provider-a", "serial").then((release) => {
+      acquired2 = true;
+      release();
     });
 
     await tick();
-    expect(release2Resolved).toBe(false);
+    expect(acquired2).toBe(false);
 
     release1();
-    await p2;
-    expect(release2Resolved).toBe(true);
+    await second;
+    expect(acquired2).toBe(true);
   });
 
-  it("待機中の複数タスクは FIFO 順で acquire される", async () => {
+  it("同じ serial provider の待機タスクは FIFO 順で取得する", async () => {
+    const release1 = await acquireLlmLock("provider-a", "serial");
     const order: string[] = [];
-
-    const release1 = await acquireLlmLock("serial");
-
-    const p2 = acquireLlmLock("serial").then((release) => {
-      order.push("s2");
+    const second = acquireLlmLock("provider-a", "serial").then((release) => {
+      order.push("second");
       release();
     });
-    const p3 = acquireLlmLock("serial").then((release) => {
-      order.push("s3");
+    const third = acquireLlmLock("provider-a", "serial").then((release) => {
+      order.push("third");
       release();
     });
 
@@ -76,36 +54,44 @@ describe("acquireLlmLock - serial モード", () => {
     expect(order).toEqual([]);
 
     release1();
-    await Promise.all([p2, p3]);
-    expect(order).toEqual(["s2", "s3"]);
+    await Promise.all([second, third]);
+    expect(order).toEqual(["second", "third"]);
   });
 
-  it("異なる sessionId でも concurrency=1 で直列化される", async () => {
-    const order: number[] = [];
-    let resolveSlow!: () => void;
-    const slow = new Promise<void>((r) => {
-      resolveSlow = r;
+  it("異なる serial provider は同時に取得できる", async () => {
+    const releaseA = await acquireLlmLock("provider-a", "serial");
+    const releaseB = await acquireLlmLock("provider-b", "serial");
+
+    expect(typeof releaseA).toBe("function");
+    expect(typeof releaseB).toBe("function");
+    releaseA();
+    releaseB();
+  });
+
+  it("release は複数回呼んでも次の待機タスクを飛ばさない", async () => {
+    const release1 = await acquireLlmLock("provider-a", "serial");
+    const order: string[] = [];
+    const second = acquireLlmLock("provider-a", "serial").then((release) => {
+      order.push("second");
+      release();
+    });
+    const third = acquireLlmLock("provider-a", "serial").then((release) => {
+      order.push("third");
+      release();
     });
 
-    const release1 = await acquireLlmLock("serial");
-    const task1 = (async () => {
-      await slow;
-      order.push(1);
-      release1();
-    })();
+    release1();
+    release1();
+    await Promise.all([second, third]);
+    expect(order).toEqual(["second", "third"]);
+  });
 
-    let started2 = false;
-    const task2 = acquireLlmLock("serial").then((release2) => {
-      started2 = true;
-      order.push(2);
-      release2();
-    });
+  it("idle 後に同じ provider の mutex を再作成できる", async () => {
+    const release1 = await acquireLlmLock("provider-a", "serial");
+    release1();
 
-    await tick();
-    expect(started2).toBe(false);
-
-    resolveSlow();
-    await Promise.all([task1, task2]);
-    expect(order).toEqual([1, 2]);
+    const release2 = await acquireLlmLock("provider-a", "serial");
+    expect(typeof release2).toBe("function");
+    release2();
   });
 });

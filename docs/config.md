@@ -6,8 +6,10 @@
 
 ```
 config/
-  config.json              # defaultModel・poller など上記以外の設定
+  config.json              # defaultModel・proxy・agent などの設定
   config.example.json
+  providers.json           # AI プロバイダーごとの実行ポリシー（省略可）
+  providers.example.json
   credentials.json         # AI プロバイダー・外部サービスの接続設定
   credentials.example.json
   groups.json              # チャンネル→グループのマッピング＋エージェント設定
@@ -23,12 +25,30 @@ groups/{name}/
 
 | ファイル | 必須 | トップレベル形式 | 内容 |
 |---|---|---|---|
+| `config/providers.json` | — | 配列（省略時は全 provider が `serial`） | AI プロバイダーごとの同時実行ポリシー |
 | `config/credentials.json` | ✓ | 配列 | AI プロバイダー・外部サービスの接続設定 |
 | `config/groups.json` | ✓ | 配列 | チャンネル → グループのマッピング |
 | `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義 |
-| `config/config.json` | ✓ | オブジェクト | `defaultModel`（必須）・`poller`（省略可） |
+| `config/config.json` | ✓ | オブジェクト | `defaultModel`（必須）・proxy・agent 設定 |
 
-> **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動くため、`poller.dispatchMode: "serial"`（`docs/spec/poller-dispatch-mode.md` 参照）と組み合わせて使うことを推奨する。
+> **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
+
+## config/providers.json
+
+AI プロバイダーごとの同時実行ポリシー。ファイルを省略した場合や provider のエントリがない場合は、安全側の `serial` を使う。複数実行できる provider だけ `parallel` を明示する。
+
+```json
+[
+  { "provider": "zai", "concurrency": "serial" },
+  { "provider": "codex-oauth", "concurrency": "parallel" },
+  { "provider": "llama-cpp", "concurrency": "serial" }
+]
+```
+
+- `serial`: 同じ provider の実行を FIFO で1件ずつ処理する
+- `parallel`: 同じ provider でも並列実行を許可する
+
+`serial` のロックは provider ごとに独立する。たとえば `local-a` と `local-b` がどちらも `serial` でも、両者は同時に実行できる。同じセッションのメッセージはこの設定とは別のセッションチェーンで常に受信順に処理される。
 
 ## config/credentials.json
 
@@ -208,7 +228,6 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 ```json
 {
   "defaultModel": { "provider": "zai", "modelId": "glm-4.7-flash" },
-  "poller": { "dispatchMode": "serial" },
   "proxy": { "requestTimeoutMs": 120000 },
   "agent": { "timeoutMs": 600000 }
 }
@@ -217,7 +236,6 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 | キー | 必須 | 内容 |
 |---|---|---|
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
-| `poller` | — | `dispatchMode`（`docs/spec/poller-dispatch-mode.md` 参照） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 
@@ -227,6 +245,7 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 |---|---|
 | `DISCORD_BOT_TOKEN` | Discord Bot トークン（必須） |
 | `CONFIG_PATH` | `config/config.json` のパスを上書きする（省略時はプロジェクトルートの `config/config.json`） |
+| `PROVIDERS_PATH` | `config/providers.json` のパスを上書きする |
 | `CREDENTIALS_PATH` | `config/credentials.json` のパスを上書きする |
 | `GROUPS_PATH` | `config/groups.json` のパスを上書きする |
 | `CRON_PATH` | `config/cron.json` のパスを上書きする |
@@ -266,7 +285,7 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 ### config ファイルの再分割（#137）
 
 旧: `config/config.json` 1ファイルに `defaultModel` / `credentials` / `groups` / `cron` / `poller` を統合
-新: `config/credentials.json` / `config/groups.json` / `config/cron.json` を独立ファイルに再分割し、`config/config.json` には `defaultModel` / `poller` のみ残す
+新: `config/credentials.json` / `config/groups.json` / `config/cron.json` を独立ファイルに再分割し、`config/config.json` には共通設定のみ残す。その後、provider 実行ポリシーは `config/providers.json` に分離した
 
 **理由**: 単一ファイルに役割の異なる設定（機密情報の `credentials`、人手で頻繁に編集する `groups`、運用上省略可能な `cron`）が混在しており、ファイル単位での差分管理・パス上書きがしづらかった。
 

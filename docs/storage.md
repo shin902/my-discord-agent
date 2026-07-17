@@ -6,7 +6,8 @@
 
 ```
 config/
-  config.json           # defaultModel / poller などの残りの設定（人が直接編集する）
+  config.json           # defaultModel / proxy / agent 設定（人が直接編集する）
+  providers.json        # AI provider ごとの同時実行ポリシー（省略可）
   credentials.json      # AI プロバイダー・外部サービスの接続設定
   groups.json           # チャンネル→グループのマッピング＋エージェント設定
   cron.json             # 定期実行ジョブ定義（省略可）

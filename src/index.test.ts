@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   registerHandlers: vi.fn(),
   startPoller: vi.fn(),
   loadGroups: vi.fn(),
+  loadProviders: vi.fn(),
   initGroupPrompts: vi.fn(),
   initManager: vi.fn(),
   validateGroupConfig: vi.fn(),
@@ -22,6 +23,9 @@ vi.mock("./queue/poller.js", () => ({
   stopPoller: vi.fn(),
 }));
 vi.mock("./config/groups.js", () => ({ loadGroups: mocks.loadGroups }));
+vi.mock("./config/providers.js", () => ({
+  loadProviders: mocks.loadProviders,
+}));
 vi.mock("./config/group-config.js", () => ({
   ensureGroupDirs: vi.fn().mockResolvedValue(undefined),
   initGroupPrompts: mocks.initGroupPrompts,
@@ -53,6 +57,7 @@ describe("index: 起動時バリデーション", () => {
     vi.resetAllMocks();
     process.env.DISCORD_BOT_TOKEN = "test-token";
     mocks.loadGroups.mockResolvedValue([]);
+    mocks.loadProviders.mockResolvedValue([]);
     mocks.initManager.mockResolvedValue(undefined);
     mocks.initGroupPrompts.mockResolvedValue(undefined);
     mocks.loadDefaultModel.mockResolvedValue({
@@ -148,6 +153,16 @@ describe("index: 起動時バリデーション", () => {
     ]);
     mocks.loadAndValidateCron.mockRejectedValue(
       new Error("ハンドラー jobs/missing.ts が見つかりません"),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.registerHandlers).not.toHaveBeenCalled();
+  });
+
+  it("providers.json の検証失敗は [startup] ログを出して process.exit(1) する", async () => {
+    mocks.loadProviders.mockRejectedValue(
+      new Error("provider が重複しています: zai"),
     );
 
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");

@@ -4,11 +4,12 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
-import { findGroupByName } from "../config/groups.js";
+import { resolveModelConfig } from "../config/default-model.js";
+import { findGroupByName, type ModelConfig } from "../config/groups.js";
 import {
-  type DispatchMode,
-  loadDispatchMode,
-} from "../config/poller-config.js";
+  type ProviderConcurrency,
+  resolveProviderConcurrency,
+} from "../config/providers.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
@@ -276,13 +277,31 @@ interface LlmLockOptions {
   onAcquired?: (waitMs: number) => void;
 }
 
+interface LlmLockTarget {
+  provider: string;
+  concurrency: ProviderConcurrency;
+}
+
+async function resolveLlmLockTarget(
+  msg: InboxMessage,
+  groupModel?: ModelConfig,
+): Promise<LlmLockTarget> {
+  const model = await resolveModelConfig(
+    msg.configOverride?.model ?? groupModel,
+  );
+  return {
+    provider: model.provider,
+    concurrency: await resolveProviderConcurrency(model.provider),
+  };
+}
+
 async function withLlmLock<T>(
-  mode: DispatchMode,
+  target: LlmLockTarget,
   fn: () => Promise<T>,
   options: LlmLockOptions = {},
 ): Promise<T> {
   const waitStartedAt = Date.now();
-  const release = await acquireLlmLock(mode);
+  const release = await acquireLlmLock(target.provider, target.concurrency);
   try {
     options.onAcquired?.(Date.now() - waitStartedAt);
     return await fn();
@@ -291,10 +310,7 @@ async function withLlmLock<T>(
   }
 }
 
-async function processCronNewThread(
-  msg: InboxMessage,
-  mode: DispatchMode,
-): Promise<void> {
+async function processCronNewThread(msg: InboxMessage): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = msg.sessionId;
@@ -354,8 +370,10 @@ async function processCronNewThread(
         if (sessionMode === "destination") sessionId = thread.id;
         threadSend = (content) => thread.send(content);
       }
+      const groupConfig = await findGroupByName(msg.groupName);
+      const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
       response = await withLlmLock(
-        mode,
+        lockTarget,
         async () => {
           const agentStartedAt = Date.now();
           try {
@@ -431,12 +449,9 @@ async function processCronNewThread(
   }
 }
 
-export async function processMessage(
-  msg: InboxMessage,
-  mode: DispatchMode,
-): Promise<void> {
+export async function processMessage(msg: InboxMessage): Promise<void> {
   if (msg.cronDeliveryMode === "new-thread" || msg.cronThread) {
-    return processCronNewThread(msg, mode);
+    return processCronNewThread(msg);
   }
 
   const timing = startResponseTiming(msg);
@@ -456,8 +471,9 @@ export async function processMessage(
       groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
     try {
+      const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
       response = await withLlmLock(
-        mode,
+        lockTarget,
         async () => {
           stopTyping = startTypingLoop(msg.channelId);
           const agentStartedAt = Date.now();
@@ -572,7 +588,6 @@ export async function processMessage(
 }
 
 async function poll(): Promise<void> {
-  const mode = await loadDispatchMode();
   while (running) {
     try {
       if (client.isReady()) {
@@ -586,7 +601,7 @@ async function poll(): Promise<void> {
             // （同一セッション内で順番待ち中でも消えないようにするため）
             inFlightIds.add(msg.id);
             dispatch(msg.sessionId, () =>
-              processMessage(msg, mode).finally(() => {
+              processMessage(msg).finally(() => {
                 inFlightIds.delete(msg.id);
               }),
             );

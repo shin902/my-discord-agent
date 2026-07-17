@@ -7,6 +7,7 @@ import {
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
+import { loadProviders } from "./config/providers.js";
 import {
   _setCronJobs,
   loadAndValidateCron,
@@ -27,6 +28,7 @@ try {
   const proxyPort = await initCredentialProxyServer();
   await initManager(proxyPort);
   await initGroupPrompts(groups);
+  await loadProviders();
   const defaultModel = await loadDefaultModel();
   await Promise.all(groups.map((g) => validateGroupConfig(g, defaultModel)));
   const cronJobs = await loadAndValidateCron();

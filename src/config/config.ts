@@ -11,6 +11,9 @@ export const GROUPS_PATH =
 export const CREDENTIALS_PATH =
   process.env.CREDENTIALS_PATH ??
   path.join(__dirname, "../../config/credentials.json");
+export const PROVIDERS_PATH =
+  process.env.PROVIDERS_PATH ??
+  path.join(__dirname, "../../config/providers.json");
 export const CRON_PATH =
   process.env.CRON_PATH ?? path.join(__dirname, "../../config/cron.json");
 
@@ -41,7 +44,7 @@ export function loadConfigField<T>(
 
 let _raw: Record<string, unknown> | null = null;
 
-// config/config.json（defaultModel・poller）を読み込む
+// config/config.json（defaultModel・proxy・agent）を読み込む
 export async function loadRawConfig(): Promise<Record<string, unknown>> {
   if (_raw !== null) return _raw;
   try {
@@ -87,6 +90,16 @@ export async function loadRawCredentials(): Promise<unknown> {
     CREDENTIALS_PATH,
     "config/credentials.json が見つかりません。config/credentials.example.json をコピーして作成してください",
   );
+}
+
+// config/providers.json を読み込む（省略時は安全なデフォルト設定を使うため空配列）
+export async function loadRawProviders(): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(PROVIDERS_PATH, "utf-8"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
 }
 
 // config/cron.json を読み込む（cron は省略可能なため、ENOENT は呼び出し側で処理する）

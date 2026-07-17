@@ -1,0 +1,9 @@
+[
+  { "provider": "zai", "concurrency": "serial" },
+  { "provider": "codex-oauth", "concurrency": "parallel" },
+  { "provider": "openai", "concurrency": "parallel" },
+  { "provider": "anthropic", "concurrency": "parallel" },
+  { "provider": "llama-cpp", "concurrency": "serial" },
+  { "provider": "llama-cpp-qwen3", "concurrency": "serial" },
+  { "provider": "ollama-qwen3", "concurrency": "serial" }
+]
