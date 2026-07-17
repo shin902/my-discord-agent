@@ -1,6 +1,6 @@
 # Reddit OAuth が使えない理由（調査記録）
 
-`agent-reach` の reddit サービス（`templates/SKILLS/agent-reach/scripts/agent-reach.sh`）の実装を検討する過程で、Reddit の `client_credentials` グラント（アプリ単位の読み取り専用トークン）による OAuth 認証を最初に試みたが、実装には至らなかった。その理由をここに記録する。実際に採用した方式は [`docs/reddit-cookie-setup.md`](./reddit-cookie-setup.md) を参照。
+`agent-reach` のredditサービス（`src/tools/agent-reach.ts`と互換用スクリプト）の実装を検討する過程で、Reddit の `client_credentials` グラント（アプリ単位の読み取り専用トークン）による OAuth 認証を最初に試みたが、実装には至らなかった。その理由をここに記録する。実際に採用した方式は [`docs/reddit-cookie-setup.md`](./reddit-cookie-setup.md) を参照。
 
 > [!WARNING]
 > **現状: 新規ユーザーが個人で client_id / client_secret を取得すること自体が難しい。**

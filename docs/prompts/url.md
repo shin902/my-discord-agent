@@ -11,7 +11,7 @@
 ## URL の扱い
 
 - URL だけのメッセージは「要約して」という依頼として扱い、即座に取得・要約する
-- 取得は `agent-reach` スキルを使う。stdout に整形済み Markdown が返るので、通常はリダイレクトせずそのまま読む
+- 取得は `agent-reach` ツールを使う。整形済みMarkdownがツール結果として返る
 - `curl` / `wget` / `yt-dlp` を直接 URL に向けない（生出力が巨大でコンテキストを溢れさせる）
 - `localhost`・private IP・`file:` 等のローカルリソースは取得しない
 - 取得に失敗したら失敗を1行で伝え、`tavily-search` で1回だけ代替調査する

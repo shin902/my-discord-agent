@@ -5,16 +5,10 @@ description: URL からコンテンツを取得して整形するスキル。You
 
 ## 使い方
 
-stdout に整形された Markdown が出力される。
+`agent-reach` ツールへURLを渡す。整形されたMarkdownがツール結果として返る。
 
-### ファイル出力が必要ない場合は、リダイレクトを使用せずにそのまま実行すること
-
-```bash
-SKILLS/agent-reach/scripts/agent-reach.sh <URL>
+```json
+{"url":"https://example.com/article"}
 ```
 
-### ファイル保存が明確に必要な場合のみ、リダイレクトを使用する
-
-```bash
-SKILLS/agent-reach/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > video.md
-```
+URL取得のために`bash`や`curl`を使わないこと。取得結果は通常そのまま読み、明確に必要な場合だけ別のファイルツールで保存する。

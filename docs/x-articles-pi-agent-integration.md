@@ -1,8 +1,7 @@
 # agent-reach で X Articles を取得する設計
 
-> **注意（2026-07-05）:** `src/tools/agent-reach.ts`（TypeScript ツール実装）は削除済み。
-> agent-reach はスキル（`templates/SKILLS/agent-reach/scripts/agent-reach.sh`）のみ。
-> このドキュメントは統合設計の経緯を記録した歴史的資料として残す。
+> **更新（2026-07-17）:** `src/tools/agent-reach.ts`（TypeScriptツール実装）は復元済み。
+> シェルスクリプトは互換用途として残し、スキルは`agent-reach`ツールを使用する。
 
 ## 結論
 
