@@ -182,8 +182,8 @@ export function parseVtt(content: string): string {
   );
 
   for (const line of content
-    .replace(cueTiming, "\n")
-    .replace(orphanCueEnd, "\n")
+    .replace(cueTiming, "")
+    .replace(orphanCueEnd, "")
     .split("\n")) {
     const t = line.trim();
     if (!t) continue;
@@ -206,8 +206,8 @@ export function parseVtt(content: string): string {
       out.push(clean);
     }
   }
-  // 全セグメントを連結し、。区切りで改行する
-  return out.join("").replace(/。/g, "。\n").trim();
+  // セグメント間の単語境界を保ち、。区切りで改行する
+  return out.join(" ").replace(/。/g, "。\n").trim();
 }
 
 /** yt-dlp の巨大 JSON を Markdown サマリーに変換する */

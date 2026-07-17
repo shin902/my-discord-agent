@@ -620,8 +620,23 @@ IOのイベント、え、そうまとめみたいな
     expect(lines.every((l) => !/<c>/.test(l))).toBe(true);
     // 。の後で改行されていること
     expect(result).toContain("おスマです。\n");
-    // 行結合されていること（GoogleIO がくっついて一行になる）
-    expect(result).toContain("GoogleIOのイベント、え、そうまとめみたいな");
+    // cue 間に区切りを保って行結合されていること
+    expect(result).toContain("Google IOのイベント、え、そうまとめみたいな");
+  });
+
+  it("英語字幕の cue 間にスペースを保持する", () => {
+    const vtt = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+
+Hello world
+
+00:00:02.000 --> 00:00:04.000
+
+This continues
+`;
+
+    expect(parseVtt(vtt)).toBe("Hello world This continues");
   });
 
   it("WEBVTT ヘッダーと空行は除外する", () => {
@@ -662,7 +677,7 @@ Language: ja
     const result = parseVtt(vtt);
 
     expect(result).toContain(
-      "ところを抽出すればどういったことを学習してるのかというところも抽出できるかと思います。",
+      "ところを抽出すればどういったことを学習してるのかというところも抽出できるかと 思います。",
     );
     expect(result).not.toContain("-->");
     expect(result).not.toContain("align:start");
