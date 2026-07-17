@@ -5,7 +5,7 @@
       "provider": "zai",
       "modelId": "glm-4.7-flash"
     },
-    "tools": ["tavily-search"],
+    "tools": ["tavily-search", "agent-reach"],
     "autoReply": false,
     "toolLogArgs": true,
     "channels": [{ "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }],

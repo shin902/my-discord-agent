@@ -69,7 +69,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### X Article Reader
 
-`agent-reach` スキルで X Article を読む場合は、host 側で reader を起動し、Credential Proxy の `x-article` provider から Bearer token を注入する。
+`agent-reach` で X Article を読む場合は、host 側で reader を起動し、Credential Proxy の `x-article` provider から Bearer token を注入する。
 
 ```bash
 X_ARTICLE_READER_TOKEN=<十分に長いランダム値> node dist/proxy/x-article-reader.js
@@ -97,7 +97,7 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
   {
     "name": "thread",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily-search", "bash", "read", "write", "edit"],
+    "tools": ["tavily-search", "agent-reach", "bash", "read", "write", "edit"],
     "skills": ["session-logs"],
     "autoReply": true,
     "toolLogArgs": true,

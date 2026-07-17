@@ -8,7 +8,8 @@
 
 | ツール名 | 概要 |
 |---------|------|
-| `bash` | サンドボックス内でシェルコマンドを実行。`agent-reach` スキルで使う CLI ツール群はここ経由で動く |
+| `bash` | サンドボックス内でシェルコマンドを実行 |
+| `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。Markdownをツール結果として直接返す |
 | `read` | ワークスペース内のファイルを読み込む |
 | `write` | ワークスペース内にファイルを書き込む |
 | `edit` | ワークスペース内のファイルを文字列置換で編集する |
@@ -22,7 +23,7 @@
 | `tavily-crawl` | Tavily Crawl API でサイト内をクロールし各ページの本文を取得する |
 | `tavily-map` | Tavily Map API でサイト内のURL構造をマッピングする |
 
-**注意:** `webfetch` は削除済み。ウェブアクセスはすべて `agent-reach` スキル（bash 経由）を使う。
+**注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
 
 ### Browserless ツールの使用制限
 
@@ -40,7 +41,7 @@
 | `browserless-search` | 検索結果（件数・スニペット）のみ返す。出力サイズが予測可能 |
 | `browserless-function` | Puppeteer コードで取得対象を自分で絞り込めるため、返却サイズをコントロールできる |
 
-**代替手段:** 一般的なウェブコンテンツ取得は `agent-reach` スキル（`r.jina.ai` 経由）を使う。Jina Reader はマークダウン変換済みの本文のみを返すため、HTML 全文よりも大幅にトークン数が少ない。
+**代替手段:** 一般的なウェブコンテンツ取得は `agent-reach` ツール（`r.jina.ai` 経由）を使う。Jina Reader はマークダウン変換済みの本文のみを返すため、HTML 全文よりも大幅にトークン数が少ない。
 
 ## Discord へのツールコール通知
 
@@ -96,17 +97,18 @@ LLM の自律判断を待たず、ユーザーが特定のスキルを確実に�
 
 **場所:** `templates/SKILLS/agent-reach/SKILL.md`
 
-インターネット情報収集スキル。サンドボックスの bash ツール経由で以下の CLI を使う。
+インターネット情報収集スキル。`agent-reach`ツールへURLを渡す手順をエージェントへ指示する。URL取得だけを許可したいグループでは、`bash`を有効にせず`agent-reach`だけを`groups[].tools`へ追加できる。
 
-| 対象 | ツール | 備考 |
-|------|--------|------|
-| ウェブページ | `curl` + Jina Reader (`r.jina.ai`) | JS依存サイトも対応 |
-| YouTube | `curl` (oEmbed) / `yt-dlp` | 基本情報は oEmbed、詳細・字幕は yt-dlp |
-| GitHub | `gh` CLI | public リポジトリは認証不要 |
-| Reddit | `curl` (JSON API) | 認証不要 |
-| RSS | `feedparser` (Python) | 認証不要 |
+| 対象 | 内部の取得経路 |
+|------|----------------|
+| ウェブページ | Jina Reader (`r.jina.ai`) |
+| YouTube | `yt-dlp` |
+| GitHub | GitHub REST API |
+| Reddit | Credential Proxy経由のJSON API |
+| RSS | `feedparser` |
+| X/Twitter | FxTwitter、またはCredential Proxy経由のhost reader |
 
-これらの CLI はサンドボックスの Docker イメージ（`Dockerfile`）に焼き込まれている。
+互換用途としてシェルスクリプトも残しているが、スキルからは使用しない。
 
 **テンプレートを更新した場合の注意:** `templates/SKILLS/` を変更しても、すでに各グループにコピーされた `groups/{name}/SKILLS/` は自動更新されない。テンプレートの変更を反映するには、対象グループの古いスキルフォルダを削除してから再コピーすること。
 
