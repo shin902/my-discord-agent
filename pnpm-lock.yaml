@@ -26,6 +26,9 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
+      fast-xml-parser:
+        specifier: ^5.7.2
+        version: 5.7.2
       playwright:
         specifier: ^1.61.0
         version: 1.61.0

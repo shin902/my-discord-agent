@@ -174,6 +174,45 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
 
 `model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
 
+### jobs/rss-collect.ts / jobs/rss-dispatch.ts
+
+RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` はLLMを使わずRSS/Atomフィードの記事を `data/rss.sqlite3` に保存し、`rss-dispatch.ts` は未読記事をまとめて通常のエージェントinboxへ投入する。
+
+```json
+[
+  {
+    "id": "rss-collect",
+    "schedule": "*/15 * * * *",
+    "handler": "jobs/rss-collect.ts",
+    "settings": {
+      "feeds": ["https://example.com/feed.xml"],
+      "bootstrap": "mark-seen"
+    }
+  },
+  {
+    "id": "rss-dispatch",
+    "schedule": "5,20,35,50 * * * *",
+    "groupName": "rss",
+    "channelId": "YOUR_CHANNEL_ID",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
+    "handler": "jobs/rss-dispatch.ts",
+    "tools": ["bash"],
+    "skills": ["agent-reach"],
+    "settings": {
+      "maxItemsPerRun": 10,
+      "maxSummaryChars": 4000
+    }
+  }
+]
+```
+
+Collectorの`feeds`にはURL文字列、または `{ "name": "表示名", "url": "URL" }` を指定できる。ETagとLast-Modifiedが返るフィードでは条件付き取得を使用する。`bootstrap`の既定値は`mark-seen`で、初回に掲載されていた記事を既読として保存する。`process`にすると初回記事も未読で保存する。
+
+Dispatcherは`maxItemsPerRun`件の未読記事を1つのinboxメッセージへまとめる。`appendInbox`が成功した直後に、今回投入した記事だけを既読にする。この既読は「Discord配信済み」ではなく「エージェントへ引き渡し済み」を意味する。エージェント処理やDiscord配信が後から失敗してもRSS側からは再投入しない。inbox投入自体が失敗した場合は未読のまま残る。
+
+`maxSummaryChars`は記事ごとにinboxへ含めるRSS概要の最大文字数。ジョブ直下の`prompt`で既定の要約指示を置き換えられ、`model`、`tools`、`skills`も通常の宣言的cronと同じようにエージェント実行へ引き継がれる。CollectorとDispatcherが同時実行にならないよう、設定例では5分ずらしている。未読を処理するDispatcherは1つだけにする。
+
 ### jobs/issue-triage.ts
 
 GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools: ["bash", "list-issues", "read-issue", "comment-issue"]`）に判断・コメント投稿まで一貫して行わせるハンドラー。
