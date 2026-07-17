@@ -1,42 +1,63 @@
-import type { DispatchMode } from "../config/poller-config.js";
+import type { ProviderConcurrency } from "../config/providers.js";
 
-// グローバルミューテックス（concurrency=1）。serial モードで sendMessage() の同時実行を 1 つに絞る。
-let locked = false;
-const waiters: Array<() => void> = [];
+interface MutexState {
+  locked: boolean;
+  waiters: Array<() => void>;
+}
+
+// serial provider ごとに独立したミューテックスを持つ。
+// serial provider A と serial provider B は互いをブロックしない。
+const providerMutexes = new Map<string, MutexState>();
 
 const noopRelease = () => {};
 
-function acquire(): Promise<() => void> {
+function acquire(state: MutexState, onIdle?: () => void): Promise<() => void> {
   return new Promise((resolve) => {
     const tryAcquire = () => {
-      locked = true;
-      resolve(release);
+      state.locked = true;
+      let released = false;
+      resolve(() => {
+        if (released) return;
+        released = true;
+        const next = state.waiters.shift();
+        if (next) {
+          next();
+        } else {
+          state.locked = false;
+          onIdle?.();
+        }
+      });
     };
-    if (!locked) {
+    if (!state.locked) {
       tryAcquire();
       return;
     }
-    waiters.push(tryAcquire);
+    state.waiters.push(tryAcquire);
   });
 }
 
-function release(): void {
-  const next = waiters.shift();
-  if (next) {
-    next();
-  } else {
-    locked = false;
-  }
+function acquireProvider(provider: string): Promise<() => void> {
+  const state = providerMutexes.get(provider) ?? {
+    locked: false,
+    waiters: [],
+  };
+  providerMutexes.set(provider, state);
+  return acquire(state, () => {
+    if (providerMutexes.get(provider) === state) {
+      providerMutexes.delete(provider);
+    }
+  });
 }
 
 /**
  * LLM 呼び出し（sendMessage()）の前後で取得するロック。
- * - serial モード: グローバルなミューテックス（concurrency=1）で待機し、release 関数を返す
- * - parallel-session モード: ロックなし。即座に no-op の release を返す
+ * - provider concurrency が serial: provider 単位のミューテックスで待機
+ * - provider concurrency が parallel: ロックなし
  */
-export async function acquireLlmLock(mode: DispatchMode): Promise<() => void> {
-  if (mode !== "serial") {
-    return noopRelease;
-  }
-  return acquire();
+export async function acquireLlmLock(
+  provider: string,
+  concurrency: ProviderConcurrency,
+): Promise<() => void> {
+  if (concurrency === "serial") return acquireProvider(provider);
+  return noopRelease;
 }
