@@ -74,3 +74,44 @@ VTT
     expect(stdout).not.toContain("-->");
   });
 });
+
+describe("agent-reach.sh URL 正規化", () => {
+  let testDir: string;
+  let binDir: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "agent-reach-shell-test-"));
+    binDir = join(testDir, "bin");
+    await mkdir(binDir);
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("YouTube 以外の URL では ? 以降を取得先へ渡さない", async () => {
+    const curl = join(binDir, "curl");
+    await writeFile(
+      curl,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "\${!#}"
+`,
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    const { stdout } = await execFileAsync(
+      "bash",
+      [agentReachScript, "https://example.com/article?utm_source=discord"],
+      {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        },
+      },
+    );
+
+    expect(stdout.trim()).toBe("https://r.jina.ai/https://example.com/article");
+  });
+});
