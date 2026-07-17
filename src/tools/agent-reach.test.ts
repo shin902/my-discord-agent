@@ -15,9 +15,7 @@ import {
   formatXArticle,
   formatXPost,
   getHttpErrorBodyPath,
-  getLookupHostname,
   hasFxContent,
-  isPrivateAddress,
   normalizeUrl,
   parseHttpStatus,
   parseVtt,
@@ -41,54 +39,6 @@ describe("normalizeUrl", () => {
     expect(
       normalizeUrl("https://www.youtube.com/watch?v=abc&utm_source=x#chapter"),
     ).toBe("https://www.youtube.com/watch?v=abc&utm_source=x");
-  });
-});
-
-describe("getLookupHostname", () => {
-  it("IPv6リテラルの角括弧を除去する", () => {
-    expect(getLookupHostname(new URL("https://[2606:4700:4700::1111]/"))).toBe(
-      "2606:4700:4700::1111",
-    );
-  });
-
-  it("通常のホスト名は変更しない", () => {
-    expect(getLookupHostname(new URL("https://example.com/"))).toBe(
-      "example.com",
-    );
-  });
-});
-
-describe("isPrivateAddress", () => {
-  it.each([
-    "127.0.0.1",
-    "127.255.255.255",
-    "0.0.0.0",
-    "10.0.0.1",
-    "172.16.0.1",
-    "172.31.255.255",
-    "192.168.1.1",
-    "169.254.0.1",
-    "::1",
-    "fc00::1",
-    "fd00::1",
-    "fdff::1",
-    "fe80::1",
-    "::ffff:127.0.0.1",
-    "::ffff:10.0.0.1",
-    "::ffff:192.168.0.1",
-  ])("%s → true（ブロック）", (ip) => {
-    expect(isPrivateAddress(ip)).toBe(true);
-  });
-
-  it.each([
-    "8.8.8.8",
-    "1.1.1.1",
-    "172.15.255.255",
-    "172.32.0.0",
-    "2001:db8::1",
-    "::ffff:8.8.8.8",
-  ])("%s → false（許可）", (ip) => {
-    expect(isPrivateAddress(ip)).toBe(false);
   });
 });
 
@@ -620,8 +570,23 @@ IOのイベント、え、そうまとめみたいな
     expect(lines.every((l) => !/<c>/.test(l))).toBe(true);
     // 。の後で改行されていること
     expect(result).toContain("おスマです。\n");
-    // 行結合されていること（GoogleIO がくっついて一行になる）
-    expect(result).toContain("GoogleIOのイベント、え、そうまとめみたいな");
+    // cue 間に区切りを保って行結合されていること
+    expect(result).toContain("Google IOのイベント、え、そうまとめみたいな");
+  });
+
+  it("英語字幕の cue 間にスペースを保持する", () => {
+    const vtt = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+
+Hello world
+
+00:00:02.000 --> 00:00:04.000
+
+This continues
+`;
+
+    expect(parseVtt(vtt)).toBe("Hello world This continues");
   });
 
   it("WEBVTT ヘッダーと空行は除外する", () => {
@@ -662,7 +627,7 @@ Language: ja
     const result = parseVtt(vtt);
 
     expect(result).toContain(
-      "ところを抽出すればどういったことを学習してるのかというところも抽出できるかと思います。",
+      "ところを抽出すればどういったことを学習してるのかというところも抽出できるかと 思います。",
     );
     expect(result).not.toContain("-->");
     expect(result).not.toContain("align:start");

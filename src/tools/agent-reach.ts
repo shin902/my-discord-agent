@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -20,23 +19,6 @@ const WORKSPACE = "/workspace";
 // フェッチ結果はツールコール結果に直接返すため、ここは処理後に削除する一時領域。
 const TMP_DIR = ".agent-reach-tmp";
 const TIMEOUT_MS = 120_000;
-
-const PRIVATE_IP = [
-  /^0\.0\.0\.0$/,
-  /^127\./,
-  /^169\.254\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^::1$/,
-  /^f[cd][0-9a-f]{2}:/i, // fc00::/7 (fc00:: と fd00:: の両方)
-  /^fe80:/i,
-  /^::ffff:(127\.|10\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i, // IPv4マップドアドレス
-];
-
-export function isPrivateAddress(ip: string): boolean {
-  return PRIVATE_IP.some((r) => r.test(ip));
-}
 
 function shellQuote(str: string): string {
   return `'${str.replace(/'/g, "'\\''")}'`;
@@ -96,14 +78,6 @@ export function normalizeUrl(raw: string): string {
   }
 
   return parsed.toString();
-}
-
-/** WHATWG URL が IPv6 リテラルの hostname に付ける角括弧を DNS 検索用に除去する。 */
-export function getLookupHostname(parsed: URL): string {
-  const { hostname } = parsed;
-  return hostname.startsWith("[") && hostname.endsWith("]")
-    ? hostname.slice(1, -1)
-    : hostname;
 }
 
 function assertSafeXUrl(raw: string, label: string): URL {
@@ -182,8 +156,8 @@ export function parseVtt(content: string): string {
   );
 
   for (const line of content
-    .replace(cueTiming, "\n")
-    .replace(orphanCueEnd, "\n")
+    .replace(cueTiming, "")
+    .replace(orphanCueEnd, "")
     .split("\n")) {
     const t = line.trim();
     if (!t) continue;
@@ -206,8 +180,8 @@ export function parseVtt(content: string): string {
       out.push(clean);
     }
   }
-  // 全セグメントを連結し、。区切りで改行する
-  return out.join("").replace(/。/g, "。\n").trim();
+  // セグメント間の単語境界を保ち、。区切りで改行する
+  return out.join(" ").replace(/。/g, "。\n").trim();
 }
 
 /** yt-dlp の巨大 JSON を Markdown サマリーに変換する */
@@ -1023,14 +997,6 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
     }
-    // TOCTOU: ここで解決したIPと curl/yt-dlp が実際に接続するIPは異なる可能性がある
-    // （DNS リバインディング）。サンドボックス内実行のため影響は限定的だが既知のリスク。
-    const addresses = await lookup(getLookupHostname(parsed), { all: true });
-    const blocked = addresses.find((a) => isPrivateAddress(a.address));
-    if (blocked) {
-      throw new Error(`内部アドレスへのアクセスは禁止: ${blocked.address}`);
-    }
-
     const service = detectService(parsed);
     if (service === "x-article") {
       const article = await fetchXArticle(normalizedUrl, signal);
