@@ -15,6 +15,7 @@ import {
   formatXArticle,
   formatXPost,
   getHttpErrorBodyPath,
+  getLookupHostname,
   hasFxContent,
   isPrivateAddress,
   normalizeUrl,
@@ -40,6 +41,20 @@ describe("normalizeUrl", () => {
     expect(
       normalizeUrl("https://www.youtube.com/watch?v=abc&utm_source=x#chapter"),
     ).toBe("https://www.youtube.com/watch?v=abc&utm_source=x");
+  });
+});
+
+describe("getLookupHostname", () => {
+  it("IPv6リテラルの角括弧を除去する", () => {
+    expect(
+      getLookupHostname(new URL("https://[2606:4700:4700::1111]/")),
+    ).toBe("2606:4700:4700::1111");
+  });
+
+  it("通常のホスト名は変更しない", () => {
+    expect(getLookupHostname(new URL("https://example.com/"))).toBe(
+      "example.com",
+    );
   });
 });
 

@@ -98,6 +98,14 @@ export function normalizeUrl(raw: string): string {
   return parsed.toString();
 }
 
+/** WHATWG URL が IPv6 リテラルの hostname に付ける角括弧を DNS 検索用に除去する。 */
+export function getLookupHostname(parsed: URL): string {
+  const { hostname } = parsed;
+  return hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+}
+
 function assertSafeXUrl(raw: string, label: string): URL {
   if (raw.length > 2048) throw new Error(`${label} URL is too long`);
 
@@ -1017,7 +1025,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     }
     // TOCTOU: ここで解決したIPと curl/yt-dlp が実際に接続するIPは異なる可能性がある
     // （DNS リバインディング）。サンドボックス内実行のため影響は限定的だが既知のリスク。
-    const addresses = await lookup(parsed.hostname, { all: true });
+    const addresses = await lookup(getLookupHostname(parsed), { all: true });
     const blocked = addresses.find((a) => isPrivateAddress(a.address));
     if (blocked) {
       throw new Error(`内部アドレスへのアクセスは禁止: ${blocked.address}`);
