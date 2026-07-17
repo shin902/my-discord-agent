@@ -46,9 +46,9 @@ describe("normalizeUrl", () => {
 
 describe("getLookupHostname", () => {
   it("IPv6リテラルの角括弧を除去する", () => {
-    expect(
-      getLookupHostname(new URL("https://[2606:4700:4700::1111]/")),
-    ).toBe("2606:4700:4700::1111");
+    expect(getLookupHostname(new URL("https://[2606:4700:4700::1111]/"))).toBe(
+      "2606:4700:4700::1111",
+    );
   });
 
   it("通常のホスト名は変更しない", () => {
@@ -130,9 +130,9 @@ describe("detectService", () => {
   });
 
   it("old.reddit.com → reddit", () => {
-    expect(
-      detectService(parse("https://old.reddit.com/r/programming/")),
-    ).toBe("reddit");
+    expect(detectService(parse("https://old.reddit.com/r/programming/"))).toBe(
+      "reddit",
+    );
   });
 
   it(".xml URL → rss", () => {
