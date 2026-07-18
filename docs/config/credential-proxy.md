@@ -126,7 +126,7 @@ Codex OAuth を CLIProxyAPI サイドカー経由で使う例:
 }
 ```
 
-`credential-proxy-server` が `Authorization: Bearer $CLIPROXY_API_KEY` を upstream の CLIProxyAPI へ注入するため、サンドボックスコンテナには CLIProxyAPI のローカル API キーも ChatGPT/Codex OAuth token も渡らない。詳しい手順は `docs/codex-oauth-cliproxyapi.md` を参照。
+`credential-proxy-server` が `Authorization: Bearer $CLIPROXY_API_KEY` を upstream の CLIProxyAPI へ注入するため、サンドボックスコンテナには CLIProxyAPI のローカル API キーも ChatGPT/Codex OAuth token も渡らない。詳しい手順は `docs/guides/codex-oauth-cliproxyapi.md` を参照。
 
 ### `reasoning`
 

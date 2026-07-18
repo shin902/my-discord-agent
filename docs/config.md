@@ -85,7 +85,7 @@ AI プロバイダーや外部サービス（Microsoft Graph・Browserless 等�
 ]
 ```
 
-API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。Codex OAuth / CLIProxyAPI の詳しい構成は `docs/codex-oauth-cliproxyapi.md` を参照。
+API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。Codex OAuth / CLIProxyAPI の詳しい構成は `docs/guides/codex-oauth-cliproxyapi.md` を参照。
 
 ### X Article Reader
 

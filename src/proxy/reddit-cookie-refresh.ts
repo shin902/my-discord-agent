@@ -14,7 +14,7 @@ const SETTLE_MS = 4_000;
 
 // ヘッドレス Chromium (chrome-headless-shell) は Reddit の bot 対策に検知され
 // ブロックされるが、Xvfb 上でフルChromiumを headless:false 起動すると通過する
-// ことを実機検証で確認済み(docs/reddit-cookie-setup.md 参照)。
+// ことを実機検証で確認済み(docs/guides/reddit-cookie-setup.md 参照)。
 function startXvfb(display: string): ChildProcess {
   const proc = spawn(
     "Xvfb",

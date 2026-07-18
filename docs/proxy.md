@@ -77,7 +77,7 @@ Host
 }
 ```
 
-Google Cloud Console での OAuth クライアント作成手順（OAuth 同意画面のテストユーザー登録を含む）は [`docs/google-cloud-oauth-setup.md`](./google-cloud-oauth-setup.md) を参照。
+Google Cloud Console での OAuth クライアント作成手順（OAuth 同意画面のテストユーザー登録を含む）は [`docs/guides/google-cloud-oauth-setup.md`](./guides/google-cloud-oauth-setup.md) を参照。
 
 **重要な挙動**:
 - `clientSecretEnvVar` が指す環境変数が未設定の場合、そのプロバイダーの Google Auth 初期化はスキップされ、警告ログが出る（リクエストは 502 になる）。
@@ -87,9 +87,9 @@ Google Cloud Console での OAuth クライアント作成手順（OAuth 同意�
 
 ### Reddit クッキー認証（agent-reach の reddit サービス用）
 
-Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月のポリシー改定以降事実上ブロックしているため（詳細は [`docs/reddit-oauth-setup.md`](./reddit-oauth-setup.md)）、ログイン済みブラウザの永続プロファイルから定期的に抽出したクッキーで `www.reddit.com` にアクセスする。
+Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月のポリシー改定以降事実上ブロックしているため（詳細は [`docs/guides/reddit-oauth-setup.md`](./guides/reddit-oauth-setup.md)）、ログイン済みブラウザの永続プロファイルから定期的に抽出したクッキーで `www.reddit.com` にアクセスする。
 
-初回ログイン手順・定期延命の仕組みは [`docs/reddit-cookie-setup.md`](./reddit-cookie-setup.md) を参照。
+初回ログイン手順・定期延命の仕組みは [`docs/guides/reddit-cookie-setup.md`](./guides/reddit-cookie-setup.md) を参照。
 
 ```json
 {
@@ -180,7 +180,7 @@ ChatGPT/Codex OAuth はアプリ本体で扱わず、CLIProxyAPI をローカル
 }
 ```
 
-詳細な運用条件とスモークテストは `docs/codex-oauth-cliproxyapi.md` を参照。
+詳細な運用条件とスモークテストは `docs/guides/codex-oauth-cliproxyapi.md` を参照。
 
 ### 将来的な拡張
 
