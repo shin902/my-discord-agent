@@ -165,6 +165,30 @@ export function parseFeedXml(xml: string): ParsedFeed {
   };
 }
 
+async function readFeedBody(response: Response, url: string): Promise<string> {
+  if (!response.body) {
+    throw new Error(`RSSのレスポンス本文がありません: ${url}`);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+
+    total += value.byteLength;
+    if (total > MAX_FEED_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`RSSがサイズ上限を超えています: ${url}`);
+    }
+    chunks.push(value);
+  }
+
+  return Buffer.concat(chunks, total).toString("utf-8");
+}
+
 export async function fetchFeed(
   url: string,
   conditional?: { etag: string | null; lastModified: string | null },
@@ -191,10 +215,7 @@ export async function fetchFeed(
   if (contentLength > MAX_FEED_BYTES) {
     throw new Error(`RSSがサイズ上限を超えています: ${contentLength} bytes`);
   }
-  const xml = await response.text();
-  if (Buffer.byteLength(xml, "utf-8") > MAX_FEED_BYTES) {
-    throw new Error(`RSSがサイズ上限を超えています: ${url}`);
-  }
+  const xml = await readFeedBody(response, url);
   return {
     notModified: false,
     feed: parseFeedXml(xml),

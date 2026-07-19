@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { parseFeedXml } from "./feed.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchFeed, parseFeedXml } from "./feed.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("parseFeedXml", () => {
   it("RSS 2.0のCDATA概要をテキストへ変換する", () => {
@@ -43,5 +47,39 @@ describe("parseFeedXml", () => {
         <item><guid>00123</guid><title>記事</title></item>
       </channel></rss>`);
     expect(feed.entries[0]?.entryId).toBe("guid:00123");
+  });
+});
+
+describe("fetchFeed", () => {
+  it("Content-Lengthが実際より小さくても5 MiB超過時点で本文の読み取りを中断する", async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++;
+        controller.enqueue(chunk);
+        if (pulls === 10) controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(body, {
+            status: 200,
+            headers: { "content-length": "1" },
+          }),
+      ),
+    );
+
+    await expect(fetchFeed("https://example.com/feed.xml")).rejects.toThrow(
+      "RSSがサイズ上限を超えています",
+    );
+    expect(cancelled).toBe(true);
+    expect(pulls).toBeLessThan(10);
   });
 });
