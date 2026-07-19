@@ -40,6 +40,7 @@
     "enabled": false,
     "groupName": "rss",
     "channelId": "YOUR_CHANNEL_ID",
+    "prompt": "各記事のURLをagent-reachで取得し、日本語で要約してください",
     "deliveryMode": "direct",
     "sessionMode": "per-run",
     "handler": "jobs/rss-dispatch.ts",
