@@ -194,6 +194,7 @@ RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` 
     "schedule": "5,20,35,50 * * * *",
     "groupName": "rss",
     "channelId": "YOUR_CHANNEL_ID",
+    "prompt": "各記事のURLをagent-reachで取得し、日本語で要約してください",
     "deliveryMode": "direct",
     "sessionMode": "per-run",
     "handler": "jobs/rss-dispatch.ts",
@@ -217,11 +218,11 @@ Collectorが取得するRSS本文の上限は5 MiBで、現在は設定から変
 
 選定時には`feedsmith`、`@rowanmanning/feed-parser`、`feedparser`を同じAtom入力で比較した。`feedsmith`は相対URLとXHTMLマークアップを保持したまま返し、`@rowanmanning/feed-parser`はXHTMLをテキスト化できるが最終レスポンスURLを解析時のベースURLとして渡せなかった。`feedparser`は`feedurl`オプションと階層的`xml:base`処理によって両方を満たすため採用した。ライブラリ自身はHTTP取得を行わず、Collectorが上限内で取得した本文だけを渡す。
 
-Dispatcherは`maxItemsPerRun`件の未読記事を1つのinboxメッセージへまとめる。各記事のURLは`agent-reach`で取得し、通常のWeb記事に加えてYouTube URLでは動画情報や利用可能な字幕を要約に使用する。RSS概要はURLがない場合、または取得に失敗した場合のフォールバックとして扱う。この処理にはジョブまたは対象グループで`tools`に`bash`、`skills`に`agent-reach`を許可する必要がある。ジョブ直下の`prompt`を指定して要約形式を変更しても、この取得ルールは維持される。
+Dispatcherは`maxItemsPerRun`件の未読記事を1つのinboxメッセージへまとめる。`prompt`は必須で、記事の取得方法や要約形式もここに指定する。inboxにはこの`prompt`と記事情報だけを渡す。
 
 `appendInbox`が成功した直後に、今回投入した記事だけを既読にする。この既読は「Discord配信済み」ではなく「エージェントへ引き渡し済み」を意味する。エージェント処理やDiscord配信が後から失敗してもRSS側からは再投入しない。inbox投入自体が失敗した場合は未読のまま残る。
 
-`maxSummaryChars`は記事ごとにinboxへ含めるRSS概要の最大文字数。ジョブ直下の`prompt`で既定の要約指示を置き換えられ、`model`、`tools`、`skills`も通常の宣言的cronと同じようにエージェント実行へ引き継がれる。CollectorとDispatcherが同時実行にならないよう、設定例では5分ずらしている。未読を処理するDispatcherは1つだけにする。
+`maxSummaryChars`は記事ごとにinboxへ含めるRSS概要の最大文字数。`model`、`tools`、`skills`も通常の宣言的cronと同じようにエージェント実行へ引き継がれる。CollectorとDispatcherが同時実行にならないよう、設定例では5分ずらしている。未読を処理するDispatcherは1つだけにする。
 
 ### jobs/issue-triage.ts
 

@@ -81,6 +81,7 @@ function makeDispatchCtx(
     enabled: true,
     handler: "jobs/rss-dispatch.ts",
     groupName: "rss",
+    prompt: "RSS記事を日本語で要約してください",
     channelId: "channel-1",
     deliveryMode: "direct",
     sessionMode: "per-run",
@@ -166,8 +167,8 @@ describe("RSS collect / dispatch", () => {
     );
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
-    expect(content).toContain("必ず agent-reach を使って内容を取得");
-    expect(content).toContain("RSS概要（URL取得失敗時のフォールバック）");
+    expect(content).toContain("RSS記事を日本語で要約してください");
+    expect(content).toContain("RSS概要:");
     expect(unreadTitles()).toEqual([]);
   });
 
@@ -192,7 +193,7 @@ describe("RSS collect / dispatch", () => {
     }
   });
 
-  it("promptを上書きしてもagent-reachによる取得ルールを維持する", async () => {
+  it("ユーザー指定のpromptへ固定の取得指示を追加しない", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx("process"));
     const appendInbox = vi.fn(async () => undefined);
@@ -204,7 +205,26 @@ describe("RSS collect / dispatch", () => {
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
     expect(content).toContain("独自の形式で要約してください");
-    expect(content).toContain("必ず agent-reach を使って内容を取得");
+    expect(content).not.toContain("必ず agent-reach を使って内容を取得");
+    expect(content).not.toContain("信頼できない外部コンテンツ");
+  });
+
+  it.each([
+    undefined,
+    "",
+    "   ",
+  ])("promptが未指定または空の場合はinbox投入せず未読のまま残す: %s", async (prompt) => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.prompt = prompt;
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow(
+      "promptが設定されていません",
+    );
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
   it("inbox投入に失敗した記事は未読のまま残す", async () => {
@@ -398,5 +418,54 @@ describe("RSS collect / dispatch", () => {
     expect(queuedCount).toBeGreaterThan(0);
     expect(queuedCount).toBeLessThan(10);
     expect(unreadTitles()).toHaveLength(10 - queuedCount);
+  });
+
+  it("先頭記事が入らなくても容量内の後続記事を投入する", async () => {
+    saveUnreadFeed("https://example.com/mixed-feed.xml", "Mixed Feed", [
+      {
+        entryId: "large",
+        title: "大きい記事",
+        link: "https://example.com/large",
+        publishedAt: "",
+        summary: "s".repeat(12_000),
+      },
+      {
+        entryId: "small",
+        title: "小さい記事",
+        link: "https://example.com/small",
+        publishedAt: "",
+        summary: "短い概要",
+      },
+    ]);
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.prompt = "p".repeat(55_000);
+    ctx.settings = {
+      statePath,
+      maxItemsPerRun: 10,
+      maxSummaryChars: 12_000,
+    };
+
+    await dispatchHandler(ctx);
+
+    const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      .content;
+    expect(content).not.toContain("大きい記事");
+    expect(content).toContain("小さい記事");
+    expect(unreadTitles()).toEqual(["大きい記事"]);
+  });
+
+  it("promptが長すぎて1件も入らない場合は未読のまま設定エラーにする", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.prompt = "p".repeat(64_000);
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow(
+      "promptが長すぎてinboxの文字数上限内に記事を追加できません",
+    );
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(unreadTitles()).toEqual(["既存記事"]);
   });
 });
