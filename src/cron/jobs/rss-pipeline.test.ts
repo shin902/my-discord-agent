@@ -75,7 +75,7 @@ function makeDispatchCtx(
     channelId: "channel-1",
     deliveryMode: "direct",
     sessionMode: "per-run",
-    tools: ["tavily-extract"],
+    tools: ["bash"],
     skills: ["agent-reach"],
     settings: { statePath, maxItemsPerRun },
     appendInbox,
@@ -129,12 +129,31 @@ describe("RSS collect / dispatch", () => {
         groupName: "rss",
         content: expect.stringContaining("新着記事"),
         configOverride: {
-          tools: ["tavily-extract"],
+          tools: ["bash"],
           skills: ["agent-reach"],
         },
       }),
     );
+    const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      .content;
+    expect(content).toContain("必ず agent-reach を使って内容を取得");
+    expect(content).toContain("RSS概要（URL取得失敗時のフォールバック）");
     expect(unreadTitles()).toEqual([]);
+  });
+
+  it("promptを上書きしてもagent-reachによる取得ルールを維持する", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.prompt = "独自の形式で要約してください";
+
+    await dispatchHandler(ctx);
+
+    const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      .content;
+    expect(content).toContain("独自の形式で要約してください");
+    expect(content).toContain("必ず agent-reach を使って内容を取得");
   });
 
   it("inbox投入に失敗した記事は未読のまま残す", async () => {
