@@ -171,6 +171,27 @@ describe("RSS collect / dispatch", () => {
     expect(unreadTitles()).toEqual([]);
   });
 
+  it("多数の記事を件数で切り捨てず保存する", async () => {
+    const itemCount = 205;
+    const items = Array.from(
+      { length: itemCount },
+      (_, index) =>
+        `<item><guid>item-${index}</guid><title>記事${index}</title></item>`,
+    ).join("");
+    mockFeed(
+      `<?xml version="1.0"?><rss version="2.0"><channel><title>Many Items</title>${items}</channel></rss>`,
+    );
+
+    await collectHandler(makeCollectCtx("process"));
+
+    const db = openRssDb(statePath);
+    try {
+      expect(listUnreadArticles(db, itemCount + 1)).toHaveLength(itemCount);
+    } finally {
+      db.close();
+    }
+  });
+
   it("promptを上書きしてもagent-reachによる取得ルールを維持する", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx("process"));

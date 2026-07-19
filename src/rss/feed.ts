@@ -20,6 +20,10 @@ export interface ParsedFeed {
   entries: RssEntry[];
 }
 
+export interface ParsedFeedMetadata {
+  title: string;
+}
+
 export type FetchFeedResult =
   | { notModified: true }
   | {
@@ -30,6 +34,10 @@ export type FetchFeedResult =
     };
 
 type ParseFeedOptions = { baseUrl: string; contentType?: string | null };
+type EntryBatchHandler = (entries: RssEntry[]) => void;
+type ConditionalHeaders = { etag: string | null; lastModified: string | null };
+
+const ENTRY_BATCH_SIZE = 100;
 
 function stableEntryId(
   guid: string,
@@ -49,10 +57,37 @@ function summaryText(value: string | null): string {
   return value ? convert(value, { wordwrap: false }).trim() : "";
 }
 
-export async function parseFeedBytes(
+function normalizeItem(item: FeedParser.Item): RssEntry {
+  const title = item.title?.trim() || "(タイトルなし)";
+  const link = item.link?.trim() ?? "";
+  const guid = item.guid?.trim() ?? "";
+  const date = item.pubdate ?? item.date;
+  const publishedAt =
+    date && Number.isFinite(date.getTime()) ? date.toISOString() : "";
+  const summary = summaryText(item.summary ?? item.description).slice(
+    0,
+    MAX_ENTRY_SUMMARY_CHARS,
+  );
+  return {
+    entryId: stableEntryId(
+      guid === link ? "" : guid,
+      link,
+      title,
+      publishedAt,
+      summary,
+    ),
+    title,
+    link,
+    publishedAt,
+    summary,
+  };
+}
+
+async function parseFeed(
   body: Uint8Array,
   options: ParseFeedOptions,
-): Promise<ParsedFeed> {
+  onBatch: EntryBatchHandler,
+): Promise<ParsedFeedMetadata> {
   let charset: string | undefined;
   try {
     charset = options.contentType
@@ -66,43 +101,43 @@ export async function parseFeedBytes(
     transportLayerEncodingLabel: charset,
   });
   const parser = new FeedParser({ feedurl: options.baseUrl });
-  const items: FeedParser.Item[] = [];
-  const collectItems = (async () => {
-    for await (const item of parser) items.push(item);
-  })();
-  parser.end(xml);
-  await collectItems;
-
-  const entries = items.map((item): RssEntry => {
-    const title = item.title?.trim() || "(タイトルなし)";
-    const link = item.link?.trim() ?? "";
-    const guid = item.guid?.trim() ?? "";
-    const date = item.pubdate ?? item.date;
-    const publishedAt =
-      date && Number.isFinite(date.getTime()) ? date.toISOString() : "";
-    const summary = summaryText(item.summary ?? item.description).slice(
-      0,
-      MAX_ENTRY_SUMMARY_CHARS,
-    );
-    return {
-      entryId: stableEntryId(
-        guid === link ? "" : guid,
-        link,
-        title,
-        publishedAt,
-        summary,
-      ),
-      title,
-      link,
-      publishedAt,
-      summary,
-    };
+  let batch: RssEntry[] = [];
+  await new Promise<void>((resolve, reject) => {
+    parser.on("data", (item: FeedParser.Item) => {
+      batch.push(normalizeItem(item));
+      if (batch.length < ENTRY_BATCH_SIZE) return;
+      const entries = batch;
+      batch = [];
+      onBatch(entries);
+    });
+    parser.once("error", reject);
+    parser.once("end", () => {
+      if (batch.length > 0) onBatch(batch);
+      resolve();
+    });
+    parser.end(xml);
   });
 
-  return {
-    title: parser.meta.title?.trim() ?? "",
-    entries,
-  };
+  return { title: parser.meta.title?.trim() ?? "" };
+}
+
+export async function parseFeedBytes(
+  body: Uint8Array,
+  options: ParseFeedOptions,
+): Promise<ParsedFeed> {
+  const entries: RssEntry[] = [];
+  const metadata = await parseFeed(body, options, (batch) => {
+    entries.push(...batch);
+  });
+  return { ...metadata, entries };
+}
+
+export function parseFeedBytesInBatches(
+  body: Uint8Array,
+  options: ParseFeedOptions,
+  onBatch: EntryBatchHandler,
+): Promise<ParsedFeedMetadata> {
+  return parseFeed(body, options, onBatch);
 }
 
 async function readFeedBody(response: Response, url: string): Promise<Buffer> {
@@ -131,8 +166,24 @@ async function readFeedBody(response: Response, url: string): Promise<Buffer> {
 
 export async function fetchFeed(
   url: string,
-  conditional?: { etag: string | null; lastModified: string | null },
+  conditional?: ConditionalHeaders,
 ): Promise<FetchFeedResult> {
+  return fetchAndParseFeed(url, parseFeedBytes, conditional);
+}
+
+async function fetchAndParseFeed<T>(
+  url: string,
+  parse: (body: Uint8Array, options: ParseFeedOptions) => Promise<T>,
+  conditional?: ConditionalHeaders,
+): Promise<
+  | { notModified: true }
+  | {
+      notModified: false;
+      feed: T;
+      etag: string | null;
+      lastModified: string | null;
+    }
+> {
   const headers: Record<string, string> = {
     Accept:
       "application/rss+xml, application/atom+xml, application/xml, text/xml",
@@ -159,11 +210,31 @@ export async function fetchFeed(
   const body = await readFeedBody(response, url);
   return {
     notModified: false,
-    feed: await parseFeedBytes(body, {
+    feed: await parse(body, {
       baseUrl: response.url || url,
       contentType: response.headers.get("content-type"),
     }),
     etag: response.headers.get("etag"),
     lastModified: response.headers.get("last-modified"),
   };
+}
+
+export async function fetchFeedInBatches(
+  url: string,
+  onBatch: EntryBatchHandler,
+  conditional?: ConditionalHeaders,
+): Promise<
+  | { notModified: true }
+  | {
+      notModified: false;
+      feed: ParsedFeedMetadata;
+      etag: string | null;
+      lastModified: string | null;
+    }
+> {
+  return fetchAndParseFeed(
+    url,
+    (body, options) => parseFeedBytesInBatches(body, options, onBatch),
+    conditional,
+  );
 }

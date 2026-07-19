@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { fetchFeed } from "../../rss/feed.js";
+import { fetchFeedInBatches } from "../../rss/feed.js";
 import {
+  discardStagedFeedEntries,
   getFeedState,
   openRssDb,
-  saveFeedEntries,
+  saveStagedFeedEntries,
+  stageFeedEntries,
   touchFeed,
 } from "../../rss/store.js";
 import type { CronContext } from "../runner.js";
@@ -40,10 +43,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
         settings.feeds
           .slice(start, start + MAX_CONCURRENT_FEEDS)
           .map(async (configuredFeed) => {
+            const collectionId = randomUUID();
             try {
               const previous = getFeedState(db, configuredFeed.url);
-              const result = await fetchFeed(
+              const result = await fetchFeedInBatches(
                 configuredFeed.url,
+                (entries) => stageFeedEntries(db, collectionId, entries),
                 previous
                   ? {
                       etag: previous.etag,
@@ -52,23 +57,25 @@ export default async function handler(ctx: CronContext): Promise<void> {
                   : undefined,
               );
               if (result.notModified) {
+                discardStagedFeedEntries(db, collectionId);
                 if (previous) touchFeed(db, previous.id, configuredFeed.name);
                 return;
               }
 
-              const inserted = saveFeedEntries(db, {
+              const inserted = saveStagedFeedEntries(db, {
+                collectionId,
                 url: configuredFeed.url,
                 configuredName: configuredFeed.name,
                 parsedName: result.feed.title,
                 etag: result.etag,
                 lastModified: result.lastModified,
-                entries: result.feed.entries,
                 markInitialAsRead: settings.bootstrap === "mark-seen",
               });
               console.log(
                 `[rss-collect] ${configuredFeed.name ?? result.feed.title ?? configuredFeed.url}: ${inserted}件を新規保存`,
               );
             } catch (err) {
+              discardStagedFeedEntries(db, collectionId);
               console.error(
                 `[rss-collect] フィードの収集に失敗: ${configuredFeed.url}`,
                 err,
