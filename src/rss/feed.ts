@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { XMLParser, XMLValidator } from "fast-xml-parser";
+import { parse as parseContentType } from "content-type";
+import { decodeBuffer } from "encoding-sniffer";
+import FeedParser from "feedparser";
+import { convert } from "html-to-text";
 
 const MAX_FEED_BYTES = 5 * 1024 * 1024;
 const MAX_ENTRY_SUMMARY_CHARS = 12_000;
@@ -26,67 +29,7 @@ export type FetchFeedResult =
       lastModified: string | null;
     };
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function asArray(value: unknown): unknown[] {
-  if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function xmlText(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number") {
-    return String(value).trim();
-  }
-  if (Array.isArray(value)) {
-    return value.map(xmlText).find(Boolean) ?? "";
-  }
-  const record = asRecord(value);
-  if (!record) return "";
-  return xmlText(record["#text"] ?? record.__cdata);
-}
-
-function entryLink(value: unknown): string {
-  for (const candidate of asArray(value)) {
-    if (typeof candidate === "string") return candidate.trim();
-    const record = asRecord(candidate);
-    if (!record) continue;
-    const rel = xmlText(record["@_rel"]);
-    const href = xmlText(record["@_href"]);
-    if (href && (!rel || rel === "alternate")) return href;
-    const text = xmlText(record);
-    if (text) return text;
-  }
-  return "";
-}
-
-function plainText(value: string): string {
-  return value
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/?(p|div|li|h[1-6]|blockquote)[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&#(\d+);/g, (_, n: string) =>
-      String.fromCodePoint(Number.parseInt(n, 10)),
-    )
-    .replace(/&#x([\da-f]+);/gi, (_, n: string) =>
-      String.fromCodePoint(Number.parseInt(n, 16)),
-    )
-    .replace(/\r/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
+type ParseFeedOptions = { baseUrl: string; contentType?: string | null };
 
 function stableEntryId(
   guid: string,
@@ -102,70 +45,67 @@ function stableEntryId(
     .digest("hex")}`;
 }
 
-function normalizeDate(value: string): string {
-  if (!value) return "";
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : value;
+function summaryText(value: string | null): string {
+  return value ? convert(value, { wordwrap: false }).trim() : "";
 }
 
-export function parseFeedXml(xml: string): ParsedFeed {
-  const validation = XMLValidator.validate(xml);
-  if (validation !== true) {
-    throw new Error(`RSS XMLが不正です: ${validation.err.msg}`);
+export async function parseFeedBytes(
+  body: Uint8Array,
+  options: ParseFeedOptions,
+): Promise<ParsedFeed> {
+  let charset: string | undefined;
+  try {
+    charset = options.contentType
+      ? parseContentType(options.contentType).parameters.charset
+      : undefined;
+  } catch {
+    charset = undefined;
   }
-
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: "@_",
-    textNodeName: "#text",
-    removeNSPrefix: true,
-    parseTagValue: false,
-    trimValues: true,
+  const xml = decodeBuffer(Buffer.from(body), {
+    defaultEncoding: "utf-8",
+    transportLayerEncodingLabel: charset,
   });
-  const parsed = asRecord(parser.parse(xml));
-  const rssChannel = asRecord(asRecord(parsed?.rss)?.channel);
-  const atomFeed = asRecord(parsed?.feed);
-  const rdfFeed = asRecord(parsed?.RDF);
-  const container = rssChannel ?? atomFeed ?? rdfFeed;
-  if (!container) throw new Error("RSSまたはAtomフィードとして認識できません");
+  const parser = new FeedParser({ feedurl: options.baseUrl });
+  const items: FeedParser.Item[] = [];
+  const collectItems = (async () => {
+    for await (const item of parser) items.push(item);
+  })();
+  parser.end(xml);
+  await collectItems;
 
-  const rawEntries = rssChannel
-    ? asArray(rssChannel.item)
-    : atomFeed
-      ? asArray(atomFeed.entry)
-      : asArray(rdfFeed?.item);
-  const entries: RssEntry[] = [];
-
-  for (const rawEntry of rawEntries) {
-    const entry = asRecord(rawEntry);
-    if (!entry) continue;
-    const title = plainText(xmlText(entry.title)) || "(タイトルなし)";
-    const link = entryLink(entry.link);
-    const guid = xmlText(entry.guid ?? entry.id);
-    const publishedAt = normalizeDate(
-      xmlText(entry.pubDate ?? entry.published ?? entry.updated ?? entry.date),
+  const entries = items.map((item): RssEntry => {
+    const title = item.title?.trim() || "(タイトルなし)";
+    const link = item.link?.trim() ?? "";
+    const guid = item.guid?.trim() ?? "";
+    const date = item.pubdate ?? item.date;
+    const publishedAt =
+      date && Number.isFinite(date.getTime()) ? date.toISOString() : "";
+    const summary = summaryText(item.summary ?? item.description).slice(
+      0,
+      MAX_ENTRY_SUMMARY_CHARS,
     );
-    const summary = plainText(
-      xmlText(
-        entry.description ?? entry.summary ?? entry.content ?? entry.encoded,
+    return {
+      entryId: stableEntryId(
+        guid === link ? "" : guid,
+        link,
+        title,
+        publishedAt,
+        summary,
       ),
-    ).slice(0, MAX_ENTRY_SUMMARY_CHARS);
-    entries.push({
-      entryId: stableEntryId(guid, link, title, publishedAt, summary),
       title,
       link,
       publishedAt,
       summary,
-    });
-  }
+    };
+  });
 
   return {
-    title: plainText(xmlText(container.title)),
+    title: parser.meta.title?.trim() ?? "",
     entries,
   };
 }
 
-async function readFeedBody(response: Response, url: string): Promise<string> {
+async function readFeedBody(response: Response, url: string): Promise<Buffer> {
   if (!response.body) {
     throw new Error(`RSSのレスポンス本文がありません: ${url}`);
   }
@@ -186,7 +126,7 @@ async function readFeedBody(response: Response, url: string): Promise<string> {
     chunks.push(value);
   }
 
-  return Buffer.concat(chunks, total).toString("utf-8");
+  return Buffer.concat(chunks, total);
 }
 
 export async function fetchFeed(
@@ -215,10 +155,13 @@ export async function fetchFeed(
   if (contentLength > MAX_FEED_BYTES) {
     throw new Error(`RSSがサイズ上限を超えています: ${contentLength} bytes`);
   }
-  const xml = await readFeedBody(response, url);
+  const body = await readFeedBody(response, url);
   return {
     notModified: false,
-    feed: parseFeedXml(xml),
+    feed: await parseFeedBytes(body, {
+      baseUrl: response.url || url,
+      contentType: response.headers.get("content-type"),
+    }),
     etag: response.headers.get("etag"),
     lastModified: response.headers.get("last-modified"),
   };

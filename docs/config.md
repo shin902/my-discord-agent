@@ -211,6 +211,10 @@ Collectorの`feeds`にはURL文字列、または `{ "name": "表示名", "url":
 
 Collectorが取得するRSS本文の上限は5 MiBで、現在は設定から変更できない。これはRSS/Atomとしての妥当性ではなく、取得先の誤設定や侵害による過大なメモリ消費を防ぐための運用上限である。`Content-Length`がない場合や実際より小さい場合も、本文を読みながら上限を検査し、超過した時点で取得を中断する。正当なフィードであっても5 MiBを超えるものは収集対象にできない。
 
+フィード形式の解釈には、RSS/RDF/Atomの正規化、`xml:base`を含む相対URL解決、Atom XHTML処理を備えた`feedparser`を使用する。文字コード判定は`encoding-sniffer`へ委譲し、BOM、XML宣言、HTTP `Content-Type`の`charset`を反映する。汎用XMLパーサー上でこれらのフィード仕様を独自に実装しない方針とし、UTF-16、Shift_JIS、HTTP charset、相対URL、階層的`xml:base`、Atom XHTMLを回帰テストで固定する。
+
+選定時には`feedsmith`、`@rowanmanning/feed-parser`、`feedparser`を同じAtom入力で比較した。`feedsmith`は相対URLとXHTMLマークアップを保持したまま返し、`@rowanmanning/feed-parser`はXHTMLをテキスト化できるが最終レスポンスURLを解析時のベースURLとして渡せなかった。`feedparser`は`feedurl`オプションと階層的`xml:base`処理によって両方を満たすため採用した。ライブラリ自身はHTTP取得を行わず、Collectorが上限内で取得した本文だけを渡す。
+
 Dispatcherは`maxItemsPerRun`件の未読記事を1つのinboxメッセージへまとめる。各記事のURLは`agent-reach`で取得し、通常のWeb記事に加えてYouTube URLでは動画情報や利用可能な字幕を要約に使用する。RSS概要はURLがない場合、または取得に失敗した場合のフォールバックとして扱う。この処理にはジョブまたは対象グループで`tools`に`bash`、`skills`に`agent-reach`を許可する必要がある。ジョブ直下の`prompt`を指定して要約形式を変更しても、この取得ルールは維持される。
 
 `appendInbox`が成功した直後に、今回投入した記事だけを既読にする。この既読は「Discord配信済み」ではなく「エージェントへ引き渡し済み」を意味する。エージェント処理やDiscord配信が後から失敗してもRSS側からは再投入しない。inbox投入自体が失敗した場合は未読のまま残る。
