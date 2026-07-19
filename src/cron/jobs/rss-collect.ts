@@ -25,45 +25,57 @@ const SettingsSchema = z.object({
   statePath: z.string().min(1).optional(),
 });
 
+const MAX_CONCURRENT_FEEDS = 4;
+
 export default async function handler(ctx: CronContext): Promise<void> {
   const settings = SettingsSchema.parse(ctx.settings ?? {});
   const db = openRssDb(settings.statePath);
   try {
-    for (const configuredFeed of settings.feeds) {
-      try {
-        const previous = getFeedState(db, configuredFeed.url);
-        const result = await fetchFeed(
-          configuredFeed.url,
-          previous
-            ? {
-                etag: previous.etag,
-                lastModified: previous.lastModified,
+    for (
+      let start = 0;
+      start < settings.feeds.length;
+      start += MAX_CONCURRENT_FEEDS
+    ) {
+      await Promise.all(
+        settings.feeds
+          .slice(start, start + MAX_CONCURRENT_FEEDS)
+          .map(async (configuredFeed) => {
+            try {
+              const previous = getFeedState(db, configuredFeed.url);
+              const result = await fetchFeed(
+                configuredFeed.url,
+                previous
+                  ? {
+                      etag: previous.etag,
+                      lastModified: previous.lastModified,
+                    }
+                  : undefined,
+              );
+              if (result.notModified) {
+                if (previous) touchFeed(db, previous.id, configuredFeed.name);
+                return;
               }
-            : undefined,
-        );
-        if (result.notModified) {
-          if (previous) touchFeed(db, previous.id, configuredFeed.name);
-          continue;
-        }
 
-        const inserted = saveFeedEntries(db, {
-          url: configuredFeed.url,
-          configuredName: configuredFeed.name,
-          parsedName: result.feed.title,
-          etag: result.etag,
-          lastModified: result.lastModified,
-          entries: result.feed.entries,
-          markInitialAsRead: settings.bootstrap === "mark-seen",
-        });
-        console.log(
-          `[rss-collect] ${configuredFeed.name ?? result.feed.title ?? configuredFeed.url}: ${inserted}件を新規保存`,
-        );
-      } catch (err) {
-        console.error(
-          `[rss-collect] フィードの収集に失敗: ${configuredFeed.url}`,
-          err,
-        );
-      }
+              const inserted = saveFeedEntries(db, {
+                url: configuredFeed.url,
+                configuredName: configuredFeed.name,
+                parsedName: result.feed.title,
+                etag: result.etag,
+                lastModified: result.lastModified,
+                entries: result.feed.entries,
+                markInitialAsRead: settings.bootstrap === "mark-seen",
+              });
+              console.log(
+                `[rss-collect] ${configuredFeed.name ?? result.feed.title ?? configuredFeed.url}: ${inserted}件を新規保存`,
+              );
+            } catch (err) {
+              console.error(
+                `[rss-collect] フィードの収集に失敗: ${configuredFeed.url}`,
+                err,
+              );
+            }
+          }),
+      );
     }
   } finally {
     db.close();

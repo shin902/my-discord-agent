@@ -2,7 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listUnreadArticles, openRssDb } from "../../rss/store.js";
+import {
+  listUnreadArticles,
+  openRssDb,
+  saveFeedEntries,
+} from "../../rss/store.js";
 import type { CronContext } from "../runner.js";
 import collectHandler from "./rss-collect.js";
 import dispatchHandler from "./rss-dispatch.js";
@@ -92,6 +96,27 @@ function unreadTitles(): string[] {
   const db = openRssDb(statePath);
   try {
     return listUnreadArticles(db, 100).map((article) => article.title);
+  } finally {
+    db.close();
+  }
+}
+
+function saveUnreadFeed(
+  url: string,
+  configuredName: string,
+  entries: Parameters<typeof saveFeedEntries>[1]["entries"],
+): void {
+  const db = openRssDb(statePath);
+  try {
+    saveFeedEntries(db, {
+      url,
+      configuredName,
+      parsedName: "",
+      etag: null,
+      lastModified: null,
+      entries,
+      markInitialAsRead: false,
+    });
   } finally {
     db.close();
   }
@@ -254,5 +279,103 @@ describe("RSS collect / dispatch", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("フィード取得を最大4件まで並列実行する", async () => {
+    const urls = Array.from(
+      { length: 5 },
+      (_, index) => `https://example.com/feed-${index}.xml`,
+    );
+    const pending: Array<() => void> = [];
+    let active = 0;
+    let maxActive = 0;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          pending.push(() => {
+            active--;
+            resolve(
+              new Response(initialXml, {
+                headers: { "content-type": "application/rss+xml" },
+              }),
+            );
+          });
+        }),
+    );
+    const ctx = makeCollectCtx("process");
+    ctx.settings = { feeds: urls, statePath, bootstrap: "process" };
+
+    const collecting = collectHandler(ctx);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(maxActive).toBe(4);
+
+    for (const release of pending.splice(0)) release();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    expect(maxActive).toBe(4);
+    pending.shift()?.();
+    await collecting;
+  });
+
+  it("inboxへ追加する外部フィールドをそれぞれ切り詰める", async () => {
+    saveUnreadFeed(
+      `https://feed.example/${"u".repeat(5_000)}`,
+      "f".repeat(1_000),
+      [
+        {
+          entryId: "large-fields",
+          title: "t".repeat(1_000),
+          link: `https://article.example/${"l".repeat(5_000)}`,
+          publishedAt: "p".repeat(1_000),
+          summary: "概要",
+        },
+      ],
+    );
+    const appendInbox = vi.fn(async () => undefined);
+
+    await dispatchHandler(makeDispatchCtx(appendInbox));
+
+    const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      .content;
+    expect(content).toContain(`フィード: ${"f".repeat(200)} (`);
+    expect(content).not.toContain("f".repeat(201));
+    expect(content).toContain(`タイトル: ${"t".repeat(500)}`);
+    expect(content).not.toContain("t".repeat(501));
+    expect(content).not.toContain("u".repeat(2_049));
+    expect(content).not.toContain("l".repeat(2_049));
+    expect(content).not.toContain("p".repeat(101));
+    expect(content.length).toBeLessThanOrEqual(64_000);
+  });
+
+  it("inboxの総量上限に入った記事だけを既読にする", async () => {
+    saveUnreadFeed(
+      "https://example.com/large-feed.xml",
+      "Large Feed",
+      Array.from({ length: 10 }, (_, index) => ({
+        entryId: `large-${index}`,
+        title: `記事${index}`,
+        link: `https://example.com/articles/${index}`,
+        publishedAt: "",
+        summary: "s".repeat(12_000),
+      })),
+    );
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox, 10);
+    ctx.settings = {
+      statePath,
+      maxItemsPerRun: 10,
+      maxSummaryChars: 12_000,
+    };
+
+    await dispatchHandler(ctx);
+
+    const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      .content;
+    const queuedCount = content.match(/^## RSS記事 /gm)?.length ?? 0;
+    expect(content.length).toBeLessThanOrEqual(64_000);
+    expect(queuedCount).toBeGreaterThan(0);
+    expect(queuedCount).toBeLessThan(10);
+    expect(unreadTitles()).toHaveLength(10 - queuedCount);
   });
 });
