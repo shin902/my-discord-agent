@@ -42,7 +42,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
             : undefined,
         );
         if (result.notModified) {
-          if (previous) touchFeed(db, previous.id);
+          if (previous) touchFeed(db, previous.id, configuredFeed.name);
           continue;
         }
 

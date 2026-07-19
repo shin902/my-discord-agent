@@ -198,6 +198,30 @@ describe("parseFeedBytes", () => {
 });
 
 describe("fetchFeed", () => {
+  it("Content-Lengthが5 MiBを超える場合は本文をキャンセルする", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(body, {
+            status: 200,
+            headers: { "content-length": String(5 * 1024 * 1024 + 1) },
+          }),
+      ),
+    );
+
+    await expect(fetchFeed(BASE_URL)).rejects.toThrow(
+      "RSSがサイズ上限を超えています",
+    );
+    expect(cancelled).toBe(true);
+  });
+
   it("Content-Lengthが実際より小さくても5 MiB超過時点で本文の読み取りを中断する", async () => {
     const chunk = new Uint8Array(1024 * 1024);
     let pulls = 0;

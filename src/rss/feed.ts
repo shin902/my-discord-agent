@@ -153,6 +153,7 @@ export async function fetchFeed(
   }
   const contentLength = Number(response.headers.get("content-length") ?? "0");
   if (contentLength > MAX_FEED_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
     throw new Error(`RSSがサイズ上限を超えています: ${contentLength} bytes`);
   }
   const body = await readFeedBody(response, url);

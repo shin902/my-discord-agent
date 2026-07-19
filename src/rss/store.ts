@@ -99,11 +99,16 @@ export function getFeedState(
   };
 }
 
-export function touchFeed(db: Database.Database, feedId: number): void {
-  db.prepare("UPDATE rss_feeds SET last_fetched_at = ? WHERE id = ?").run(
-    new Date().toISOString(),
-    feedId,
-  );
+export function touchFeed(
+  db: Database.Database,
+  feedId: number,
+  configuredName?: string,
+): void {
+  db.prepare(`
+    UPDATE rss_feeds
+    SET name = COALESCE(?, name), last_fetched_at = ?
+    WHERE id = ?
+  `).run(configuredName ?? null, new Date().toISOString(), feedId);
 }
 
 export function saveFeedEntries(

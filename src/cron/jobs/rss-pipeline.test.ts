@@ -46,6 +46,7 @@ function mockFeed(xml: string): void {
 
 function makeCollectCtx(
   bootstrap: "mark-seen" | "process" = "mark-seen",
+  feedName?: string,
 ): CronContext {
   return {
     id: "rss-collect",
@@ -53,7 +54,11 @@ function makeCollectCtx(
     enabled: true,
     handler: "jobs/rss-collect.ts",
     settings: {
-      feeds: ["https://example.com/feed.xml"],
+      feeds: [
+        feedName
+          ? { url: "https://example.com/feed.xml", name: feedName }
+          : "https://example.com/feed.xml",
+      ],
       statePath,
       bootstrap,
     },
@@ -234,5 +239,20 @@ describe("RSS collect / dispatch", () => {
         headers: expect.objectContaining({ "If-None-Match": '"feed-v1"' }),
       }),
     );
+  });
+
+  it("304でも変更した設定名を保存する", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process", "旧フィード名"));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 304 }));
+
+    await collectHandler(makeCollectCtx("process", "新フィード名"));
+
+    const db = openRssDb(statePath);
+    try {
+      expect(listUnreadArticles(db, 1)[0]?.feedName).toBe("新フィード名");
+    } finally {
+      db.close();
+    }
   });
 });

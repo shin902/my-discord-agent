@@ -44,14 +44,6 @@ const CronJobSchema = z
     settings: z.unknown().optional(),
   })
   .superRefine((job, ctx) => {
-    if (job.handler != null) return;
-    if (job.groupName == null || job.prompt == null || job.channelId == null) {
-      ctx.addIssue({
-        code: "custom",
-        message: "handler なし時は groupName, prompt, channelId が必須です",
-      });
-    }
-
     const hasLegacyMode = job.mode != null;
     const hasDeliveryMode = job.deliveryMode != null;
     const hasSessionMode = job.sessionMode != null;
@@ -60,7 +52,21 @@ const CronJobSchema = z
         code: "custom",
         message: "mode と deliveryMode/sessionMode は同時に指定できません",
       });
-    } else if (!hasLegacyMode && (!hasDeliveryMode || !hasSessionMode)) {
+    } else if (hasDeliveryMode !== hasSessionMode) {
+      ctx.addIssue({
+        code: "custom",
+        message: "deliveryMode と sessionMode は両方指定してください",
+      });
+    }
+
+    if (job.handler != null) return;
+    if (job.groupName == null || job.prompt == null || job.channelId == null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "handler なし時は groupName, prompt, channelId が必須です",
+      });
+    }
+    if (!hasLegacyMode && !hasDeliveryMode && !hasSessionMode) {
       ctx.addIssue({
         code: "custom",
         message:

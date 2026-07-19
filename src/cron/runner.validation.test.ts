@@ -175,6 +175,23 @@ describe("loadAndValidateCron", () => {
     await expect(loadAndValidateCron()).rejects.toThrow();
   });
 
+  it("handler付きジョブでもdeliveryMode/sessionModeの片方だけではエラーになる", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "handler-missing-session-mode",
+          schedule: "5m",
+          handler: "jobs/rss-dispatch.ts",
+          deliveryMode: "new-thread",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).rejects.toThrow(
+      "deliveryMode と sessionMode は両方指定してください",
+    );
+  });
+
   it("旧 mode と新しいモードの混在はエラーになる", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([
@@ -192,6 +209,25 @@ describe("loadAndValidateCron", () => {
     );
 
     await expect(loadAndValidateCron()).rejects.toThrow();
+  });
+
+  it("handler付きジョブでも旧modeと新しいモードの混在はエラーになる", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "handler-mixed-mode",
+          schedule: "5m",
+          handler: "jobs/rss-dispatch.ts",
+          mode: "to-thread",
+          deliveryMode: "new-thread",
+          sessionMode: "destination",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).rejects.toThrow(
+      "mode と deliveryMode/sessionMode は同時に指定できません",
+    );
   });
 
   it("後方互換として旧 mode も受理する", async () => {
