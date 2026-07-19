@@ -3,9 +3,6 @@
     "provider": "zai",
     "modelId": "glm-4.7-flash"
   },
-  "poller": {
-    "dispatchMode": "serial"
-  },
   "proxy": {
     "requestTimeoutMs": 120000
   },

@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../config/groups.js", () => ({ findGroupByName: vi.fn() }));
-vi.mock("../config/poller-config.js", () => ({ loadDispatchMode: vi.fn() }));
 vi.mock("../discord/client.js", () => ({
   client: {
     channels: {
@@ -139,10 +138,7 @@ describe("poll - 例外耐性 (#152)", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { client } = await import("../discord/client.js");
     const { peekAllUnclaimedInbox } = await import("./inbox.js");
-    const { loadDispatchMode } = await import("../config/poller-config.js");
-
     vi.mocked(client.isReady).mockReturnValue(true);
-    vi.mocked(loadDispatchMode).mockResolvedValue("parallel-session");
     vi.mocked(peekAllUnclaimedInbox)
       .mockRejectedValueOnce(new Error("不正なJSON行"))
       .mockResolvedValue([]);

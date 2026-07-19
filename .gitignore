@@ -6,6 +6,7 @@ data/
 
 config/*
 !config/config.example.json
+!config/providers.example.json
 !config/credentials.example.json
 !config/groups.example.json
 !config/cron.example.json

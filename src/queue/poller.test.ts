@@ -4,7 +4,16 @@ import type { SendMessageOptions } from "../agent/manager.js";
 import type { InboxMessage } from "./inbox.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+vi.mock("../config/default-model.js", () => ({
+  resolveModelConfig: vi.fn().mockImplementation(async (model) => ({
+    provider: model?.provider ?? "zai",
+    modelId: model?.modelId ?? "glm-4.7-flash",
+  })),
+}));
 vi.mock("../config/groups.js", () => ({ findGroupByName: vi.fn() }));
+vi.mock("../config/providers.js", () => ({
+  resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
+}));
 vi.mock("../discord/client.js", () => ({
   client: {
     channels: {
@@ -22,6 +31,7 @@ vi.mock("./inbox.js", () => ({
 
 const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
+const { resolveProviderConcurrency } = await import("../config/providers.js");
 const { client } = await import("../discord/client.js");
 const { appendDeadLetter } = await import("./dead-letter.js");
 const { removeInboxById, updateInboxById } = await import("./inbox.js");
@@ -29,6 +39,7 @@ const { processMessage } = await import("./poller.js");
 
 beforeEach(() => {
   vi.mocked(sendMessage).mockClear();
+  vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
 });
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
@@ -68,10 +79,7 @@ describe("processMessage - autoReply", () => {
       autoReply: true,
     });
 
-    await processMessage(
-      makeMsg({ messageId: "msg-original" }),
-      "parallel-session",
-    );
+    await processMessage(makeMsg({ messageId: "msg-original" }));
 
     expect(mockSend).toHaveBeenCalledOnce();
     expect(mockSend).toHaveBeenCalledWith({
@@ -88,7 +96,7 @@ describe("processMessage - autoReply", () => {
       autoReply: true,
     });
 
-    await processMessage(makeMsg({ messageId: undefined }), "parallel-session");
+    await processMessage(makeMsg({ messageId: undefined }));
 
     expect(mockSend).toHaveBeenCalledOnce();
     expect(mockSend).toHaveBeenCalledWith("AI response");
@@ -101,7 +109,7 @@ describe("processMessage - autoReply", () => {
       autoReply: false,
     });
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     expect(mockSend).toHaveBeenCalledOnce();
     expect(mockSend).toHaveBeenCalledWith("AI response");
@@ -123,10 +131,7 @@ describe("processMessage - autoReply", () => {
     ];
     const configOverride = { tools: ["read"], skills: ["session-logs"] };
 
-    await processMessage(
-      makeMsg({ attachments, configOverride }),
-      "parallel-session",
-    );
+    await processMessage(makeMsg({ attachments, configOverride }));
 
     expect(sendMessage).toHaveBeenCalledWith(
       "default",
@@ -173,7 +178,7 @@ describe("processMessage - autoReply", () => {
     );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     const line = logSpy.mock.calls
       .flat()
@@ -218,7 +223,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(sendMessage).mockResolvedValue("");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     expect(mockSend).not.toHaveBeenCalled();
     const line = logSpy.mock.calls
@@ -242,7 +247,7 @@ describe("processMessage - autoReply", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     const line = logSpy.mock.calls
       .flat()
@@ -261,7 +266,7 @@ describe("processMessage - autoReply", () => {
     });
     vi.mocked(sendMessage).mockResolvedValue("A".repeat(2001));
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     expect(mockSend).toHaveBeenCalledTimes(2);
     expect(mockSend).toHaveBeenNthCalledWith(1, {
@@ -307,10 +312,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(
-      makeMsg({ messageId: "msg-original" }),
-      "parallel-session",
-    );
+    await processMessage(makeMsg({ messageId: "msg-original" }));
 
     await vi.waitFor(() => {
       // autoReply が true でもツールコールはリプライしない
@@ -335,7 +337,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith("🔧 `bash`");
@@ -353,10 +355,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(
-      makeMsg({ cronJobId: "daily-report" }),
-      "parallel-session",
-    );
+    await processMessage(makeMsg({ cronJobId: "daily-report" }));
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledOnce();
@@ -375,10 +374,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(
-      makeMsg({ cronJobId: "daily-report" }),
-      "parallel-session",
-    );
+    await processMessage(makeMsg({ cronJobId: "daily-report" }));
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
@@ -396,7 +392,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith(
@@ -421,10 +417,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(
-      makeMsg({ messageId: "msg-original" }),
-      "parallel-session",
-    );
+    await processMessage(makeMsg({ messageId: "msg-original" }));
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith({
@@ -451,10 +444,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(
-      makeMsg({ messageId: "msg-original" }),
-      "parallel-session",
-    );
+    await processMessage(makeMsg({ messageId: "msg-original" }));
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
@@ -473,7 +463,7 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg(), "parallel-session");
+    await processMessage(makeMsg());
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledOnce();
@@ -505,6 +495,10 @@ describe("processMessage - cron-thread", () => {
   }
 
   beforeEach(() => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
     vi.mocked(client.channels.fetch).mockResolvedValue(
       mockGuildTextChannel as never,
     );
@@ -519,10 +513,7 @@ describe("processMessage - cron-thread", () => {
   it("正常系: スレッドを作成して sendMessage に configOverride を渡し、応答を thread.send で投稿する", async () => {
     const configOverride = { tools: ["read"], skills: ["session-logs"] };
 
-    await processMessage(
-      makeCronThreadMsg({ configOverride }),
-      "parallel-session",
-    );
+    await processMessage(makeCronThreadMsg({ configOverride }));
 
     expect(mockThreadsCreate).toHaveBeenCalledOnce();
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
@@ -537,13 +528,24 @@ describe("processMessage - cron-thread", () => {
     expect(mockThreadSend).toHaveBeenCalledWith("AI response");
   });
 
+  it("cron-thread でもグループの provider concurrency を使う", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      model: { provider: "cron-provider", modelId: "cron-model" },
+    });
+
+    await processMessage(makeCronThreadMsg());
+
+    expect(resolveProviderConcurrency).toHaveBeenCalledWith("cron-provider");
+  });
+
   it("per-run は新規スレッドIDへ切り替えず独立セッションを維持する", async () => {
     await processMessage(
       makeCronThreadMsg({
         sessionId: "cron-daily-report-run-1",
         cronSessionMode: "per-run",
       }),
-      "parallel-session",
     );
 
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
@@ -561,7 +563,6 @@ describe("processMessage - cron-thread", () => {
         cronSessionMode: undefined,
         cronThread: true,
       }),
-      "parallel-session",
     );
 
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
@@ -590,7 +591,6 @@ describe("processMessage - cron-thread", () => {
 
     await processMessage(
       makeCronThreadMsg({ timestamp: new Date().toISOString() }),
-      "parallel-session",
     );
 
     const line = logSpy.mock.calls
@@ -621,7 +621,7 @@ describe("processMessage - cron-thread", () => {
       callOrder.push("removeInboxById");
     });
 
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(callOrder).toEqual(["removeInboxById", "threadSend"]);
   });
@@ -632,7 +632,7 @@ describe("processMessage - cron-thread", () => {
       .mockResolvedValueOnce(undefined) // 1チャンク目は成功
       .mockRejectedValueOnce(new Error("discord send failed")); // 2チャンク目で失敗
 
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(vi.mocked(removeInboxById)).toHaveBeenCalledOnce();
     expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
@@ -642,14 +642,14 @@ describe("processMessage - cron-thread", () => {
   it("sendMessage が空文字を返した場合 thread.send を呼ばない", async () => {
     vi.mocked(sendMessage).mockResolvedValue("");
 
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(mockThreadsCreate).toHaveBeenCalledOnce();
     expect(mockThreadSend).not.toHaveBeenCalled();
   });
 
   it("スレッド名は cron-{jobId}-{YYYY-MM-DD-HH-MM}（JST）の形式", async () => {
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(mockThreadsCreate).toHaveBeenCalledWith({
       name: "cron-daily-report-2026-06-04-19-30",
@@ -657,10 +657,7 @@ describe("processMessage - cron-thread", () => {
   });
 
   it("ジョブID が長い場合はスレッド名が100文字を超えないよう切り詰める", async () => {
-    await processMessage(
-      makeCronThreadMsg({ cronJobId: "a".repeat(100) }),
-      "parallel-session",
-    );
+    await processMessage(makeCronThreadMsg({ cronJobId: "a".repeat(100) }));
 
     const { name } = mockThreadsCreate.mock.calls[0][0] as { name: string };
     expect(name.length).toBeLessThanOrEqual(100);
@@ -671,7 +668,7 @@ describe("processMessage - cron-thread", () => {
       type: ChannelType.GuildVoice,
     } as never);
 
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(mockThreadsCreate).not.toHaveBeenCalled();
@@ -680,7 +677,7 @@ describe("processMessage - cron-thread", () => {
   it("チャンネル fetch が null を返した場合 appendDeadLetter に移動する", async () => {
     vi.mocked(client.channels.fetch).mockResolvedValue(null as never);
 
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
   });
@@ -691,7 +688,7 @@ describe("processMessage - cron-thread", () => {
       new NonRetryableError("context window exceeded"),
     );
 
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
@@ -700,7 +697,7 @@ describe("processMessage - cron-thread", () => {
   it("transient error はリトライカウントを増やして updateInboxById で更新する", async () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
 
-    await processMessage(makeCronThreadMsg({ retries: 0 }), "parallel-session");
+    await processMessage(makeCronThreadMsg({ retries: 0 }));
 
     expect(vi.mocked(updateInboxById)).toHaveBeenCalledOnce();
     const [id, patch] = vi.mocked(updateInboxById).mock.calls[0];
@@ -723,7 +720,6 @@ describe("processMessage - cron-thread", () => {
         cronThreadId: "thread-existing",
         timestamp: new Date().toISOString(),
       }),
-      "parallel-session",
     );
 
     expect(mockThreadsCreate).not.toHaveBeenCalled();
@@ -745,7 +741,7 @@ describe("processMessage - cron-thread", () => {
   it("transient error でリトライ上限に達したら appendDeadLetter に移動する", async () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
 
-    await processMessage(makeCronThreadMsg({ retries: 9 }), "parallel-session");
+    await processMessage(makeCronThreadMsg({ retries: 9 }));
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
@@ -755,10 +751,7 @@ describe("processMessage - cron-thread", () => {
     const getCacheSpy = vi.mocked(client.channels.cache.get);
     getCacheSpy.mockClear();
 
-    await processMessage(
-      makeCronThreadMsg({ cronJobId: undefined }),
-      "parallel-session",
-    );
+    await processMessage(makeCronThreadMsg({ cronJobId: undefined }));
 
     expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
     expect(mockThreadsCreate).not.toHaveBeenCalled();
@@ -769,13 +762,13 @@ describe("processMessage - cron-thread", () => {
     const getCacheSpy = vi.mocked(client.channels.cache.get);
     getCacheSpy.mockClear();
 
-    await processMessage(makeCronThreadMsg(), "parallel-session");
+    await processMessage(makeCronThreadMsg());
 
     expect(getCacheSpy).not.toHaveBeenCalled();
   });
 });
 
-describe("processMessage - serial モードの LLM ロック", () => {
+describe("processMessage - provider ごとの LLM ロック", () => {
   const mockSend = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
@@ -792,7 +785,7 @@ describe("processMessage - serial モードの LLM ロック", () => {
     mockSend.mockClear();
   });
 
-  it("serial モードでは sendMessage の実行が重複しない", async () => {
+  it("同じデフォルト serial provider は sendMessage の実行が重複しない", async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     let resolveFirst!: (value: string) => void;
@@ -808,14 +801,119 @@ describe("processMessage - serial モードの LLM ロック", () => {
       return result;
     });
 
-    const p1 = processMessage(makeMsg({ sessionId: "s1" }), "serial");
-    const p2 = processMessage(makeMsg({ sessionId: "s2" }), "serial");
+    const p1 = processMessage(makeMsg({ sessionId: "s1" }));
+    const p2 = processMessage(makeMsg({ sessionId: "s2" }));
 
     await new Promise((r) => setTimeout(r, 20));
     // 1つ目が解決するまで2つ目の sendMessage は開始されない
     expect(maxInFlight).toBe(1);
 
     resolveFirst("first");
+    await Promise.all([p1, p2]);
+    expect(maxInFlight).toBe(1);
+  });
+
+  it("parallel provider は同じ provider でも並列に sendMessage を実行する", async () => {
+    vi.mocked(resolveProviderConcurrency).mockResolvedValue("parallel");
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let releaseBoth!: () => void;
+    const blocker = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    vi.mocked(sendMessage).mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await blocker;
+      inFlight--;
+      return "response";
+    });
+
+    const model = { provider: "codex-oauth", modelId: "gpt-5.2-codex" };
+    const p1 = processMessage(
+      makeMsg({ id: "first", sessionId: "s1", configOverride: { model } }),
+    );
+    const p2 = processMessage(
+      makeMsg({ id: "second", sessionId: "s2", configOverride: { model } }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(maxInFlight).toBe(2);
+
+    releaseBoth();
+    await Promise.all([p1, p2]);
+  });
+
+  it("異なる serial provider は並列に sendMessage を実行する", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let releaseBoth!: () => void;
+    const blocker = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    vi.mocked(sendMessage).mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await blocker;
+      inFlight--;
+      return "response";
+    });
+
+    const p1 = processMessage(
+      makeMsg({
+        id: "provider-a-message",
+        sessionId: "s1",
+        configOverride: {
+          model: { provider: "provider-a", modelId: "model-a" },
+        },
+      }),
+    );
+    const p2 = processMessage(
+      makeMsg({
+        id: "provider-b-message",
+        sessionId: "s2",
+        configOverride: {
+          model: { provider: "provider-b", modelId: "model-b" },
+        },
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(maxInFlight).toBe(2);
+
+    releaseBoth();
+    await Promise.all([p1, p2]);
+  });
+
+  it("同じ serial provider は異なる session でも直列化する", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let resolveFirst!: () => void;
+    const first = new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    });
+    let invocation = 0;
+    vi.mocked(sendMessage).mockImplementation(async () => {
+      invocation++;
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (invocation === 1) await first;
+      inFlight--;
+      return "response";
+    });
+
+    const model = { provider: "provider-a", modelId: "model-a" };
+    const p1 = processMessage(
+      makeMsg({ id: "first", sessionId: "s1", configOverride: { model } }),
+    );
+    const p2 = processMessage(
+      makeMsg({ id: "second", sessionId: "s2", configOverride: { model } }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(maxInFlight).toBe(1);
+
+    resolveFirst();
     await Promise.all([p1, p2]);
     expect(maxInFlight).toBe(1);
   });

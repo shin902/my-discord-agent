@@ -107,6 +107,27 @@ validate_url() {
   fi
 }
 
+# URL の追跡用パラメータや fragment は取得先に渡さない。
+# YouTube の watch?v=... だけは動画 ID の指定に必要なので保持する。
+normalize_url() {
+  local url="$1"
+  local after_scheme host
+
+  url="${url%%#*}"
+  after_scheme="${url#*://}"
+  host="${after_scheme%%/*}"
+  host="${host#www.}"
+
+  case "$host" in
+    youtube.com|youtu.be)
+      printf '%s' "$url"
+      ;;
+    *)
+      printf '%s' "${url%%\?*}"
+      ;;
+  esac
+}
+
 # ── Service detection ────────────────────────────────────────────────────────
 
 detect_service() {
@@ -726,6 +747,8 @@ main() {
   local url="$1"
 
   validate_url "$url"
+
+  url=$(normalize_url "$url")
 
   local service
   service=$(detect_service "$url")
