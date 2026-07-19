@@ -1,13 +1,24 @@
+import { stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { AgentConfig } from "../../config/groups.js";
+import { validateModel } from "../../agent/model.js";
+import type { AgentConfig, SkillSelection } from "../../config/groups.js";
 import {
   listUnreadArticles,
   markArticlesRead,
   openRssDb,
   type UnreadArticle,
 } from "../../rss/store.js";
+import { loadSkills } from "../../skills/loader.js";
+import { resolveTools } from "../../tools/registry.js";
 import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, "../../..");
+const GROUPS_DIR = path.join(ROOT, "groups");
+const TEMPLATE_SKILLS_DIR = path.join(ROOT, "templates/SKILLS");
 
 const DEFAULT_PROMPT = `以下のRSS新着記事を日本語で要約し、そのままDiscordに投稿できる形で出力してください。
 
@@ -63,6 +74,53 @@ function configOverride(ctx: CronContext): Partial<AgentConfig> | undefined {
   return Object.keys(override).length > 0 ? override : undefined;
 }
 
+async function isDirectory(targetPath: string): Promise<boolean> {
+  try {
+    return (await stat(targetPath)).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+async function validateSkills(
+  groupName: string,
+  selection: SkillSelection,
+): Promise<void> {
+  if (!Array.isArray(selection)) return;
+  if (!/^[a-zA-Z0-9_-]+$/.test(groupName)) {
+    throw new Error(`不正なグループ名: ${groupName}`);
+  }
+
+  const groupSkillsDir = path.join(GROUPS_DIR, groupName, "SKILLS");
+  for (const skill of selection) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(skill)) {
+      throw new Error(`不正なスキル名: ${skill}`);
+    }
+    const skillsDir = (await isDirectory(path.join(groupSkillsDir, skill)))
+      ? groupSkillsDir
+      : TEMPLATE_SKILLS_DIR;
+    await loadSkills(skillsDir, [skill]);
+  }
+}
+
+async function validateConfigOverride(ctx: CronContext): Promise<void> {
+  try {
+    if (ctx.model !== undefined) {
+      await validateModel(ctx.model.provider, ctx.model.modelId);
+    }
+    if (ctx.tools !== undefined) resolveTools(ctx.tools);
+    if (ctx.skills !== undefined && ctx.groupName !== undefined) {
+      await validateSkills(ctx.groupName, ctx.skills);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new NonRetryableError(
+      `[rss-dispatch] model/tools/skills の設定が不正です: ${message}`,
+    );
+  }
+}
+
 export default async function handler(ctx: CronContext): Promise<void> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
@@ -95,6 +153,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
           : `cron-${ctx.id}`;
     const override = configOverride(ctx);
 
+    await validateConfigOverride(ctx);
     await ctx.appendInbox({
       channelId: ctx.channelId,
       groupName: ctx.groupName,

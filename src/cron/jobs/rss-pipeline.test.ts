@@ -7,6 +7,14 @@ import type { CronContext } from "../runner.js";
 import collectHandler from "./rss-collect.js";
 import dispatchHandler from "./rss-dispatch.js";
 
+const { validateModelMock } = vi.hoisted(() => ({
+  validateModelMock: vi.fn(async () => undefined),
+}));
+
+vi.mock("../../agent/model.js", () => ({
+  validateModel: validateModelMock,
+}));
+
 let tmpDir: string;
 let statePath: string;
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -91,6 +99,7 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", fetchMock);
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  validateModelMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(async () => {
@@ -138,6 +147,45 @@ describe("RSS collect / dispatch", () => {
     await expect(dispatchHandler(makeDispatchCtx(appendInbox))).rejects.toThrow(
       "inbox unavailable",
     );
+    expect(unreadTitles()).toEqual(["既存記事"]);
+  });
+
+  it("不明なツールが指定されている場合はinbox投入せず未読のまま残す", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.tools = ["unknown-tool"];
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow("不明なツール名");
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(unreadTitles()).toEqual(["既存記事"]);
+  });
+
+  it("不明なモデルが指定されている場合はinbox投入せず未読のまま残す", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    validateModelMock.mockRejectedValueOnce(new Error("不明なモデル"));
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.model = { provider: "unknown-provider", modelId: "unknown-model" };
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow("不明なモデル");
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(unreadTitles()).toEqual(["既存記事"]);
+  });
+
+  it("不明なスキルが指定されている場合はinbox投入せず未読のまま残す", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.skills = ["unknown-skill"];
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow(
+      "allowlist に指定されたスキル",
+    );
+    expect(appendInbox).not.toHaveBeenCalled();
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
