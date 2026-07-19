@@ -324,6 +324,7 @@ describe("fetchFeed", () => {
     });
 
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("accept")).toContain("application/rdf+xml");
     expect(headers.get("if-none-match")).toBe('"old"');
     expect(headers.get("if-modified-since")).toBe(
       "Sat, 18 Jul 2026 00:00:00 GMT",

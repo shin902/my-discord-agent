@@ -186,7 +186,7 @@ async function fetchAndParseFeed<T>(
 > {
   const headers: Record<string, string> = {
     Accept:
-      "application/rss+xml, application/atom+xml, application/xml, text/xml",
+      "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml, text/xml",
     "User-Agent": "my-discord-agent/rss-collector",
   };
   if (conditional?.etag) headers["If-None-Match"] = conditional.etag;
