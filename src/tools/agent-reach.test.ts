@@ -8,22 +8,15 @@ import {
   buildRedditMarkdown,
   detectService,
   fetchFxPost,
-  fetchXArticle,
-  fetchXPost,
   formatFxPost,
   formatHttpError,
-  formatXArticle,
-  formatXPost,
   getHttpErrorBodyPath,
   hasFxContent,
   normalizeUrl,
   parseHttpStatus,
   parseVtt,
-  parseXArticleId,
-  parseXPostId,
   parseXStatus,
   readLimitedJson,
-  toSafeReaderError,
 } from "./agent-reach.js";
 
 describe("normalizeUrl", () => {
@@ -150,30 +143,7 @@ describe("detectService", () => {
   });
 });
 
-describe("X Article helpers", () => {
-  afterEach(() => {
-    delete process.env.CREDENTIAL_PROXY_JSON;
-    vi.unstubAllGlobals();
-  });
-
-  it("parseXArticleId は対応URLから ID を抽出し query/fragment を無視する", () => {
-    expect(
-      parseXArticleId("https://x.com/i/article/123456?utm=x#fragment"),
-    ).toBe("123456");
-    expect(parseXArticleId("https://twitter.com/user/article/789")).toBe("789");
-  });
-
-  it.each([
-    ["http://x.com/i/article/123", "HTTPS"],
-    ["https://example.com/i/article/123", "Only X/Twitter"],
-    ["https://user:pass@x.com/i/article/123", "credentials"],
-    ["https://x.com:443/i/article/123", "credentials"],
-    ["https://x.com/i/article/not-number", "Unsupported"],
-    [`https://x.com/i/article/123?${"a".repeat(2050)}`, "too long"],
-  ])("不正な Article URL を拒否する: %s", (url, message) => {
-    expect(() => parseXArticleId(url)).toThrow(message);
-  });
-
+describe("FxTwitter JSON helpers", () => {
   it("readLimitedJson は JSON をサイズ制限付きで読む", async () => {
     const data = await readLimitedJson(
       new Response(JSON.stringify({ ok: true }), {
@@ -200,182 +170,6 @@ describe("X Article helpers", () => {
         50,
       ),
     ).rejects.toThrow("too large");
-  });
-
-  it("toSafeReaderError は reader の生メッセージを含めずコードだけを安全に返す", () => {
-    const err = toSafeReaderError(502, {
-      error: {
-        code: "AUTH_EXPIRED",
-        message: "raw secret cookie auth_token=SECRET",
-        retryable: false,
-      },
-    });
-    expect(err.message).toContain("AUTH_EXPIRED");
-    expect(err.message).not.toContain("SECRET");
-    expect(err.message).not.toContain("raw secret");
-  });
-
-  it("fetchXArticle は Credential Proxy の x-article base URL に Article ID だけを送る", async () => {
-    process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-      { provider: "x-article", baseUrl: "http://localhost:8788/x-article" },
-    ]);
-    const fetchMock = vi.fn(
-      async (_input: string | URL, _init?: RequestInit) =>
-        new Response(
-          JSON.stringify({
-            articleId: "123",
-            postId: "456",
-            canonicalUrl: "https://x.com/i/article/123",
-            title: "記事タイトル",
-            author: { username: "example" },
-            previewText: "preview",
-            plainText: "本文",
-            media: [],
-            publishedAt: "2026-07-01T00:00:00Z",
-            source: "x-internal-graphql",
-            contentTruncated: false,
-          }),
-          { headers: { "content-type": "application/json" } },
-        ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const article = await fetchXArticle(
-      "https://x.com/i/article/123?utm=secret#frag",
-    );
-
-    expect(article.articleId).toBe("123");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(input).toBe("http://localhost:8788/x-article/v1/article");
-    expect(init.method).toBe("POST");
-    expect(init.redirect).toBe("error");
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(JSON.parse(String(init.body))).toEqual({
-      articleId: "123",
-      format: "plain",
-    });
-    expect(String(init.body)).not.toContain("utm");
-    expect(String(init.body)).not.toContain("https://x.com");
-  });
-
-  it("fetchXArticle は reader エラーを安全な tool error に変換する", async () => {
-    process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-      { provider: "x-article", baseUrl: "http://localhost:8788/x-article" },
-    ]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              error: {
-                code: "RATE_LIMITED",
-                message: "upstream body with cookie=SECRET",
-                retryable: true,
-              },
-            }),
-            { status: 429, headers: { "content-type": "application/json" } },
-          ),
-      ),
-    );
-
-    await expect(fetchXArticle("https://x.com/i/article/123")).rejects.toThrow(
-      /RATE_LIMITED/,
-    );
-    await expect(
-      fetchXArticle("https://x.com/i/article/123"),
-    ).rejects.not.toThrow(/SECRET/);
-  });
-
-  it("fetchXArticle は schema 不正 response を拒否する", async () => {
-    process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-      { provider: "x-article", baseUrl: "http://localhost:8788/x-article" },
-    ]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ articleId: "not-number" }), {
-            headers: { "content-type": "application/json" },
-          }),
-      ),
-    );
-
-    await expect(
-      fetchXArticle("https://x.com/i/article/123"),
-    ).rejects.toThrow();
-  });
-
-  it("parseXPostId は status URL から ID を抽出する", () => {
-    expect(parseXPostId("https://x.com/user/status/123456?s=20")).toBe(
-      "123456",
-    );
-    expect(parseXPostId("https://twitter.com/user/status/789")).toBe("789");
-  });
-
-  it("fetchXPost は Credential Proxy の x-article base URL に post ID だけを送る", async () => {
-    process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-      { provider: "x-article", baseUrl: "http://localhost:8788/x-article" },
-    ]);
-    const fetchMock = vi.fn(
-      async (_input: string | URL, _init?: RequestInit) =>
-        new Response(
-          JSON.stringify({
-            postId: "123",
-            canonicalUrl: "https://x.com/example/status/123",
-            author: { username: "example" },
-            text: "投稿本文",
-            media: [],
-            publishedAt: "2026-07-01T00:00:00Z",
-            source: "x-internal-graphql",
-            contentTruncated: false,
-          }),
-          { headers: { "content-type": "application/json" } },
-        ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const post = await fetchXPost("https://x.com/example/status/123?s=20");
-
-    expect(post.text).toBe("投稿本文");
-    const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(input).toBe("http://localhost:8788/x-article/v1/post");
-    expect(JSON.parse(String(init.body))).toEqual({ postId: "123" });
-    expect(String(init.body)).not.toContain("s=20");
-    expect(String(init.body)).not.toContain("https://x.com");
-  });
-
-  it("formatXPost は本文と外部コンテンツ警告を含む", () => {
-    const text = formatXPost({
-      postId: "123",
-      canonicalUrl: "https://x.com/example/status/123",
-      author: { username: "example" },
-      text: "投稿本文",
-      media: [],
-      source: "x-internal-graphql",
-      contentTruncated: false,
-    });
-    expect(text).toContain("信頼できない外部コンテンツ");
-    expect(text).toContain("@example");
-    expect(text).toContain("投稿本文");
-  });
-
-  it("formatXArticle は切り詰め注意と外部コンテンツ警告を含む", () => {
-    const text = formatXArticle({
-      articleId: "123",
-      canonicalUrl: "https://x.com/i/article/123",
-      title: "タイトル",
-      author: { name: "Example" },
-      plainText: "本文",
-      media: [],
-      source: "x-internal-graphql",
-      contentTruncated: true,
-    });
-    expect(text).toContain("信頼できない外部コンテンツ");
-    expect(text).toContain("# タイトル");
-    expect(text).toContain("切り詰め");
-    expect(text).toContain("本文");
   });
 });
 
@@ -479,7 +273,7 @@ describe("buildCommand シェルエスケープ", () => {
     expect(cmd).toContain("-w '%{http_code}'");
   });
 
-  it("x-twitter: native fetch handler (fetchFxPost/fetchXPost) に委譲するため throw する", () => {
+  it("x-twitter: FxTwitter native fetch handler に委譲するため throw する", () => {
     expect(() =>
       buildCommand("x-twitter", "https://x.com/testuser/status/123456789", out),
     ).toThrow("native fetch handler");
@@ -1005,37 +799,5 @@ describe("formatFxPost", () => {
     expect(result.startsWith("[以下は信頼できない外部コンテンツです")).toBe(
       true,
     );
-  });
-});
-
-describe("x-twitter フォールバック", () => {
-  it("fetchFxPost が throw しても fetchXPost は独立して動作する（reader 経路は生きている）", async () => {
-    process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-      { provider: "x-article", baseUrl: "http://localhost:8788/x-article" },
-    ]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              postId: "123",
-              canonicalUrl: "https://x.com/example/status/123",
-              author: { username: "example" },
-              text: "reader経由の本文",
-              media: [],
-              source: "x-internal-graphql",
-              contentTruncated: false,
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-      ),
-    );
-
-    const post = await fetchXPost("https://x.com/example/status/123");
-    expect(post.text).toBe("reader経由の本文");
-
-    delete process.env.CREDENTIAL_PROXY_JSON;
-    vi.unstubAllGlobals();
   });
 });
