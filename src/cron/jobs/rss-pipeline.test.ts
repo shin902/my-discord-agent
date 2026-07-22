@@ -292,6 +292,51 @@ describe("RSS collect / dispatch", () => {
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
+  it("settings.feedsで指定したフィードの記事だけを並列dispatchする", async () => {
+    saveUnreadFeed("https://example.com/note.xml", "ゆいまる", [
+      {
+        entryId: "note-1",
+        title: "note記事",
+        link: "https://example.com/note/1",
+        publishedAt: "2026-07-22T00:00:00.000Z",
+        summary: "note概要",
+      },
+    ]);
+    saveUnreadFeed("https://example.com/youtube.xml", "AI整体師", [
+      {
+        entryId: "youtube-1",
+        title: "YouTube動画",
+        link: "https://example.com/youtube/1",
+        publishedAt: "2026-07-22T01:00:00.000Z",
+        summary: "動画概要",
+      },
+    ]);
+    const noteInbox = vi.fn(async () => undefined);
+    const youtubeInbox = vi.fn(async () => undefined);
+    const noteCtx = makeDispatchCtx(noteInbox);
+    noteCtx.settings = {
+      statePath,
+      feeds: [{ name: "ゆいまる", url: "https://example.com/note.xml" }],
+    };
+    const youtubeCtx = makeDispatchCtx(youtubeInbox);
+    youtubeCtx.settings = {
+      statePath,
+      feeds: ["https://example.com/youtube.xml"],
+    };
+
+    await Promise.all([dispatchHandler(noteCtx), dispatchHandler(youtubeCtx)]);
+
+    const noteContent = (noteInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      .content;
+    const youtubeContent = (youtubeInbox as ReturnType<typeof vi.fn>).mock
+      .calls[0][0].content;
+    expect(noteContent).toContain("note記事");
+    expect(noteContent).not.toContain("YouTube動画");
+    expect(youtubeContent).toContain("YouTube動画");
+    expect(youtubeContent).not.toContain("note記事");
+    expect(unreadTitles()).toEqual([]);
+  });
+
   it("ETag取得後は条件付きリクエストを送る", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx());

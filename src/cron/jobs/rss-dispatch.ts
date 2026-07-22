@@ -20,7 +20,19 @@ const ROOT = path.resolve(__dirname, "../../..");
 const GROUPS_DIR = path.join(ROOT, "groups");
 const TEMPLATE_SKILLS_DIR = path.join(ROOT, "templates/SKILLS");
 
+const FeedSchema = z.union([
+  z
+    .string()
+    .url()
+    .transform((url) => ({ url, name: undefined })),
+  z.object({
+    url: z.string().url(),
+    name: z.string().min(1).optional(),
+  }),
+]);
+
 const SettingsSchema = z.object({
+  feeds: z.array(FeedSchema).min(1).optional(),
   maxItemsPerRun: z.number().int().min(1).max(50).default(10),
   maxSummaryChars: z.number().int().min(0).max(12_000).default(4_000),
   statePath: z.string().min(1).optional(),
@@ -160,9 +172,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
     throw new NonRetryableError("[rss-dispatch] promptが設定されていません");
   }
   const settings = SettingsSchema.parse(ctx.settings ?? {});
+  const feedUrls = settings.feeds
+    ? [...new Set(settings.feeds.map((feed) => feed.url))]
+    : undefined;
   const db = openRssDb(settings.statePath);
   try {
-    const articles = listUnreadArticles(db, settings.maxItemsPerRun);
+    const articles = listUnreadArticles(db, settings.maxItemsPerRun, feedUrls);
     if (articles.length === 0) return;
 
     const { content, queuedArticles } = buildContent(

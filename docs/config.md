@@ -221,6 +221,7 @@ RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` 
     "tools": ["bash"],
     "skills": ["agent-reach"],
     "settings": {
+      "feeds": ["https://example.com/feed.xml"],
       "maxItemsPerRun": 10,
       "maxSummaryChars": 4000
     }
@@ -240,9 +241,11 @@ Collectorが取得するRSS本文の上限は5 MiBで、現在は設定から変
 
 Dispatcherは`maxItemsPerRun`件の未読記事を1つのinboxメッセージへまとめる。`prompt`は必須で、記事の取得方法や要約形式もここに指定する。inboxにはこの`prompt`と記事情報だけを渡す。
 
+Dispatcherの`settings.feeds`にはCollectorと同じURL文字列、または`{ "name": "表示名", "url": "URL" }`を指定でき、指定したフィードの未読記事だけを処理する。省略時は後方互換のため全フィードを処理する。複数Dispatcherを使う場合は全ジョブで`feeds`を指定し、対象URLが重複しないようにする。全件Dispatcherとフィード指定Dispatcherを同時に有効化すると、cronの並列実行時に同じ未読記事を重複投入する可能性がある。
+
 `appendInbox`が成功した直後に、今回投入した記事だけを既読にする。この既読は「Discord配信済み」ではなく「エージェントへ引き渡し済み」を意味する。エージェント処理やDiscord配信が後から失敗してもRSS側からは再投入しない。inbox投入自体が失敗した場合は未読のまま残る。
 
-`maxSummaryChars`は記事ごとにinboxへ含めるRSS概要の最大文字数。`model`、`tools`、`skills`も通常の宣言的cronと同じようにエージェント実行へ引き継がれる。CollectorとDispatcherが同時実行にならないよう、設定例では5分ずらしている。未読を処理するDispatcherは1つだけにする。
+`maxSummaryChars`は記事ごとにinboxへ含めるRSS概要の最大文字数。`model`、`tools`、`skills`も通常の宣言的cronと同じようにエージェント実行へ引き継がれる。CollectorとDispatcherが同時実行にならないよう、設定例では5分ずらしている。
 
 ### jobs/issue-triage.ts
 

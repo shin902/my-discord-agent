@@ -47,6 +47,7 @@
     "tools": ["bash"],
     "skills": ["agent-reach"],
     "settings": {
+      "feeds": ["https://example.com/feed.xml"],
       "maxItemsPerRun": 10,
       "maxSummaryChars": 4000
     }

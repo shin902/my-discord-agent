@@ -253,7 +253,12 @@ export function saveFeedEntries(
 export function listUnreadArticles(
   db: Database.Database,
   limit: number,
+  feedUrls?: readonly string[],
 ): UnreadArticle[] {
+  if (feedUrls?.length === 0) return [];
+  const feedFilter = feedUrls
+    ? `AND f.url IN (${feedUrls.map(() => "?").join(", ")})`
+    : "";
   const rows = db
     .prepare(`
       SELECT
@@ -267,10 +272,11 @@ export function listUnreadArticles(
       FROM rss_articles a
       JOIN rss_feeds f ON f.id = a.feed_id
       WHERE a.read_at IS NULL
+      ${feedFilter}
       ORDER BY a.id ASC
       LIMIT ?
     `)
-    .all(limit) as ArticleRow[];
+    .all(...(feedUrls ?? []), limit) as ArticleRow[];
   return rows.map((row) => ({
     id: row.id,
     feedName: row.feed_name,
