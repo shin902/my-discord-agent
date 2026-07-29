@@ -1,24 +1,13 @@
-import { stat } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { validateModel } from "../../agent/model.js";
-import type { AgentConfig, SkillSelection } from "../../config/groups.js";
 import {
   listUnreadArticles,
   markArticlesRead,
   openRssDb,
   type UnreadArticle,
 } from "../../rss/store.js";
-import { loadSkills } from "../../skills/loader.js";
-import { resolveTools } from "../../tools/registry.js";
 import { NonRetryableError } from "../../utils/error.js";
+import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "../../..");
-const GROUPS_DIR = path.join(ROOT, "groups");
-const TEMPLATE_SKILLS_DIR = path.join(ROOT, "templates/SKILLS");
 
 const FeedSchema = z.union([
   z
@@ -90,83 +79,7 @@ function buildContent(
   return { content, queuedArticles };
 }
 
-function resolveModes(ctx: CronContext): {
-  deliveryMode: "direct" | "new-thread";
-  sessionMode: "per-run" | "destination";
-} {
-  if (ctx.deliveryMode && ctx.sessionMode) {
-    return {
-      deliveryMode: ctx.deliveryMode,
-      sessionMode: ctx.sessionMode,
-    };
-  }
-  if (ctx.mode === "to-thread") {
-    return { deliveryMode: "new-thread", sessionMode: "destination" };
-  }
-  return { deliveryMode: "direct", sessionMode: "per-run" };
-}
-
-function configOverride(ctx: CronContext): Partial<AgentConfig> | undefined {
-  const override: Partial<AgentConfig> = {};
-  if (ctx.model !== undefined) override.model = ctx.model;
-  if (ctx.tools !== undefined) override.tools = ctx.tools;
-  if (ctx.skills !== undefined) override.skills = ctx.skills;
-  return Object.keys(override).length > 0 ? override : undefined;
-}
-
-async function isDirectory(targetPath: string): Promise<boolean> {
-  try {
-    return (await stat(targetPath)).isDirectory();
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw err;
-  }
-}
-
-async function validateSkills(
-  groupName: string,
-  selection: SkillSelection,
-): Promise<void> {
-  if (!Array.isArray(selection)) return;
-  if (!/^[a-zA-Z0-9_-]+$/.test(groupName)) {
-    throw new Error(`不正なグループ名: ${groupName}`);
-  }
-
-  const groupSkillsDir = path.join(GROUPS_DIR, groupName, "SKILLS");
-  for (const skill of selection) {
-    if (!/^[a-zA-Z0-9_-]+$/.test(skill)) {
-      throw new Error(`不正なスキル名: ${skill}`);
-    }
-    const skillsDir = (await isDirectory(path.join(groupSkillsDir, skill)))
-      ? groupSkillsDir
-      : TEMPLATE_SKILLS_DIR;
-    await loadSkills(skillsDir, [skill]);
-  }
-}
-
-async function validateConfigOverride(ctx: CronContext): Promise<void> {
-  try {
-    if (ctx.model !== undefined) {
-      await validateModel(ctx.model.provider, ctx.model.modelId);
-    }
-    if (ctx.tools !== undefined) resolveTools(ctx.tools);
-    if (ctx.skills !== undefined && ctx.groupName !== undefined) {
-      await validateSkills(ctx.groupName, ctx.skills);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new NonRetryableError(
-      `[rss-dispatch] model/tools/skills の設定が不正です: ${message}`,
-    );
-  }
-}
-
 export default async function handler(ctx: CronContext): Promise<void> {
-  if (!ctx.groupName || !ctx.channelId) {
-    throw new NonRetryableError(
-      "[rss-dispatch] groupName / channelId が設定されていません",
-    );
-  }
   const instructions = ctx.prompt?.trim();
   if (!instructions) {
     throw new NonRetryableError("[rss-dispatch] promptが設定されていません");
@@ -185,28 +98,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
       articles,
       settings.maxSummaryChars,
     );
-    const { deliveryMode, sessionMode } = resolveModes(ctx);
-    const timestamp = new Date().toISOString();
-    const sessionId =
-      sessionMode === "per-run"
-        ? `cron-${ctx.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        : deliveryMode === "direct"
-          ? ctx.channelId
-          : `cron-${ctx.id}`;
-    const override = configOverride(ctx);
 
-    await validateConfigOverride(ctx);
-    await ctx.appendInbox({
-      channelId: ctx.channelId,
-      groupName: ctx.groupName,
-      sessionId,
-      content,
-      timestamp,
-      cronDeliveryMode: deliveryMode,
-      cronSessionMode: sessionMode,
-      cronJobId: ctx.id,
-      ...(override !== undefined ? { configOverride: override } : {}),
-    });
+    await enqueueCronInbox(ctx, content);
     markArticlesRead(
       db,
       queuedArticles.map((article) => article.id),

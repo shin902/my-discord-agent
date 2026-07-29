@@ -291,6 +291,7 @@ describe("shouldRun", () => {
 
 describe("cronジョブの configOverride", () => {
   afterEach(() => {
+    vi.doUnmock("../agent/model.js");
     vi.doUnmock("../config/config.js");
     vi.doUnmock("../discord/client.js");
     vi.doUnmock("../queue/inbox.js");
@@ -305,6 +306,9 @@ describe("cronジョブの configOverride", () => {
     }));
     vi.doMock("../discord/client.js", () => ({ client: {} }));
     vi.doMock("../queue/inbox.js", () => ({ appendInbox: appendInboxMock }));
+    vi.doMock("../agent/model.js", () => ({
+      validateModel: vi.fn().mockResolvedValue(undefined),
+    }));
     const mod = await import("./runner.js");
     return { mod, appendInboxMock };
   }
