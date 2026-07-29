@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchFeed, parseFeedBytes, parseFeedBytesInBatches } from "./feed.js";
+import { fetchFeed, parseFeedBytes } from "./feed.js";
 
 const BASE_URL = "https://example.com/feeds/latest.xml";
 
@@ -16,27 +16,23 @@ afterEach(() => {
 });
 
 describe("parseFeedBytes", () => {
-  it("件数を切り捨てず100件ずつ処理する", async () => {
+  it("フィード内の全記事を切り捨てず返す", async () => {
     const itemCount = 205;
     const items = Array.from(
       { length: itemCount },
       (_, index) =>
         `<item><guid>item-${index}</guid><title>記事${index}</title></item>`,
     ).join("");
-    const batches: string[][] = [];
-
-    const metadata = await parseFeedBytesInBatches(
+    const feed = await parseFeedBytes(
       utf8(
         `<?xml version="1.0"?><rss version="2.0"><channel><title>Many Items</title>${items}</channel></rss>`,
       ),
       { baseUrl: BASE_URL },
-      (entries) => batches.push(entries.map((entry) => entry.entryId)),
     );
 
-    expect(metadata.title).toBe("Many Items");
-    expect(batches.map((batch) => batch.length)).toEqual([100, 100, 5]);
-    expect(batches.flat()).toHaveLength(itemCount);
-    expect(batches.flat().at(-1)).toBe("guid:item-204");
+    expect(feed.title).toBe("Many Items");
+    expect(feed.entries).toHaveLength(itemCount);
+    expect(feed.entries.at(-1)?.entryId).toBe("guid:item-204");
   });
 
   it("RSS 2.0のCDATA概要をテキストへ変換する", async () => {

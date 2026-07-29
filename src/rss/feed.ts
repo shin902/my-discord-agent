@@ -20,10 +20,6 @@ export interface ParsedFeed {
   entries: RssEntry[];
 }
 
-export interface ParsedFeedMetadata {
-  title: string;
-}
-
 export type FetchFeedResult =
   | { notModified: true }
   | {
@@ -34,10 +30,7 @@ export type FetchFeedResult =
     };
 
 type ParseFeedOptions = { baseUrl: string; contentType?: string | null };
-type EntryBatchHandler = (entries: RssEntry[]) => void;
 type ConditionalHeaders = { etag: string | null; lastModified: string | null };
-
-const ENTRY_BATCH_SIZE = 100;
 
 function stableEntryId(
   guid: string,
@@ -86,8 +79,7 @@ function normalizeItem(item: FeedParser.Item): RssEntry {
 async function parseFeed(
   body: Uint8Array,
   options: ParseFeedOptions,
-  onBatch: EntryBatchHandler,
-): Promise<ParsedFeedMetadata> {
+): Promise<ParsedFeed> {
   let charset: string | undefined;
   try {
     charset = options.contentType
@@ -101,43 +93,27 @@ async function parseFeed(
     transportLayerEncodingLabel: charset,
   });
   const parser = new FeedParser({ feedurl: options.baseUrl });
-  let batch: RssEntry[] = [];
+  const entries: RssEntry[] = [];
   await new Promise<void>((resolve, reject) => {
     parser.on("data", (item: FeedParser.Item) => {
-      batch.push(normalizeItem(item));
-      if (batch.length < ENTRY_BATCH_SIZE) return;
-      const entries = batch;
-      batch = [];
-      onBatch(entries);
+      entries.push(normalizeItem(item));
     });
     parser.once("error", reject);
-    parser.once("end", () => {
-      if (batch.length > 0) onBatch(batch);
-      resolve();
-    });
+    parser.once("end", resolve);
     parser.end(xml);
   });
 
-  return { title: parser.meta.title?.trim() ?? "" };
+  return {
+    title: parser.meta.title?.trim() ?? "",
+    entries,
+  };
 }
 
 export async function parseFeedBytes(
   body: Uint8Array,
   options: ParseFeedOptions,
 ): Promise<ParsedFeed> {
-  const entries: RssEntry[] = [];
-  const metadata = await parseFeed(body, options, (batch) => {
-    entries.push(...batch);
-  });
-  return { ...metadata, entries };
-}
-
-export function parseFeedBytesInBatches(
-  body: Uint8Array,
-  options: ParseFeedOptions,
-  onBatch: EntryBatchHandler,
-): Promise<ParsedFeedMetadata> {
-  return parseFeed(body, options, onBatch);
+  return parseFeed(body, options);
 }
 
 async function readFeedBody(response: Response, url: string): Promise<Buffer> {
@@ -168,22 +144,6 @@ export async function fetchFeed(
   url: string,
   conditional?: ConditionalHeaders,
 ): Promise<FetchFeedResult> {
-  return fetchAndParseFeed(url, parseFeedBytes, conditional);
-}
-
-async function fetchAndParseFeed<T>(
-  url: string,
-  parse: (body: Uint8Array, options: ParseFeedOptions) => Promise<T>,
-  conditional?: ConditionalHeaders,
-): Promise<
-  | { notModified: true }
-  | {
-      notModified: false;
-      feed: T;
-      etag: string | null;
-      lastModified: string | null;
-    }
-> {
   const headers: Record<string, string> = {
     Accept:
       "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml, text/xml",
@@ -210,31 +170,11 @@ async function fetchAndParseFeed<T>(
   const body = await readFeedBody(response, url);
   return {
     notModified: false,
-    feed: await parse(body, {
+    feed: await parseFeedBytes(body, {
       baseUrl: response.url || url,
       contentType: response.headers.get("content-type"),
     }),
     etag: response.headers.get("etag"),
     lastModified: response.headers.get("last-modified"),
   };
-}
-
-export async function fetchFeedInBatches(
-  url: string,
-  onBatch: EntryBatchHandler,
-  conditional?: ConditionalHeaders,
-): Promise<
-  | { notModified: true }
-  | {
-      notModified: false;
-      feed: ParsedFeedMetadata;
-      etag: string | null;
-      lastModified: string | null;
-    }
-> {
-  return fetchAndParseFeed(
-    url,
-    (body, options) => parseFeedBytesInBatches(body, options, onBatch),
-    conditional,
-  );
 }

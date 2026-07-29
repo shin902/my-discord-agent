@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getFeedState,
   listUnreadArticles,
   openRssDb,
   saveFeedEntries,
@@ -188,6 +189,52 @@ describe("RSS collect / dispatch", () => {
     const db = openRssDb(statePath);
     try {
       expect(listUnreadArticles(db, itemCount + 1)).toHaveLength(itemCount);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("記事保存の途中で失敗した場合はフィードを含めて全件ロールバックする", () => {
+    const feedUrl = "https://example.com/atomic.xml";
+    const db = openRssDb(statePath);
+    try {
+      db.exec(`
+        CREATE TEMP TRIGGER fail_second_article
+        BEFORE INSERT ON rss_articles
+        WHEN NEW.entry_id = 'fail'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced test failure');
+        END
+      `);
+
+      expect(() =>
+        saveFeedEntries(db, {
+          url: feedUrl,
+          parsedName: "Atomic Feed",
+          etag: '"atomic-v1"',
+          lastModified: null,
+          entries: [
+            {
+              entryId: "first",
+              title: "先に保存される記事",
+              link: "https://example.com/first",
+              publishedAt: "",
+              summary: "",
+            },
+            {
+              entryId: "fail",
+              title: "保存に失敗する記事",
+              link: "https://example.com/fail",
+              publishedAt: "",
+              summary: "",
+            },
+          ],
+          markInitialAsRead: false,
+        }),
+      ).toThrow("forced test failure");
+
+      expect(getFeedState(db, feedUrl)).toBeUndefined();
+      expect(listUnreadArticles(db, 10)).toEqual([]);
     } finally {
       db.close();
     }

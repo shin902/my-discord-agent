@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,10 +42,6 @@ interface ArticleRow {
   summary: string;
 }
 
-interface CountRow {
-  count: number;
-}
-
 export function resolveRssDbPath(configuredPath?: string): string {
   if (!configuredPath) return DEFAULT_DB_PATH;
   return path.isAbsolute(configuredPath)
@@ -84,121 +79,8 @@ export function openRssDb(configuredPath?: string): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS rss_articles_unread
       ON rss_articles(read_at, id);
-    CREATE TEMP TABLE IF NOT EXISTS rss_entry_staging (
-      collection_id TEXT NOT NULL,
-      entry_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      link TEXT NOT NULL,
-      published_at TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      PRIMARY KEY(collection_id, entry_id)
-    );
   `);
   return db;
-}
-
-export function stageFeedEntries(
-  db: Database.Database,
-  collectionId: string,
-  entries: RssEntry[],
-): void {
-  const insert = db.prepare(`
-    INSERT INTO rss_entry_staging
-      (collection_id, entry_id, title, link, published_at, summary)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(collection_id, entry_id) DO UPDATE SET
-      title = excluded.title,
-      link = excluded.link,
-      published_at = excluded.published_at,
-      summary = excluded.summary
-  `);
-  db.transaction(() => {
-    for (const entry of entries) {
-      insert.run(
-        collectionId,
-        entry.entryId,
-        entry.title,
-        entry.link,
-        entry.publishedAt,
-        entry.summary,
-      );
-    }
-  })();
-}
-
-export function discardStagedFeedEntries(
-  db: Database.Database,
-  collectionId: string,
-): void {
-  db.prepare("DELETE FROM rss_entry_staging WHERE collection_id = ?").run(
-    collectionId,
-  );
-}
-
-export function saveStagedFeedEntries(
-  db: Database.Database,
-  input: {
-    collectionId: string;
-    url: string;
-    configuredName?: string;
-    parsedName: string;
-    etag: string | null;
-    lastModified: string | null;
-    markInitialAsRead: boolean;
-  },
-): number {
-  const fetchedAt = new Date().toISOString();
-  const existing = getFeedState(db, input.url);
-  return db.transaction(() => {
-    db.prepare(`
-      INSERT INTO rss_feeds
-        (url, name, etag, last_modified, initialized_at, last_fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(url) DO UPDATE SET
-        name = excluded.name,
-        etag = excluded.etag,
-        last_modified = excluded.last_modified,
-        last_fetched_at = excluded.last_fetched_at
-    `).run(
-      input.url,
-      (input.configuredName ?? input.parsedName) || null,
-      input.etag,
-      input.lastModified,
-      fetchedAt,
-      fetchedAt,
-    );
-    const feed = getFeedState(db, input.url);
-    if (!feed)
-      throw new Error(`RSSフィードを保存できませんでした: ${input.url}`);
-
-    const inserted = (
-      db
-        .prepare(`
-          SELECT COUNT(*) AS count
-          FROM rss_entry_staging staged
-          LEFT JOIN rss_articles article
-            ON article.feed_id = ? AND article.entry_id = staged.entry_id
-          WHERE staged.collection_id = ? AND article.id IS NULL
-        `)
-        .get(feed.id, input.collectionId) as CountRow
-    ).count;
-    const initialReadAt =
-      !existing && input.markInitialAsRead ? fetchedAt : null;
-    db.prepare(`
-      INSERT INTO rss_articles
-        (feed_id, entry_id, title, link, published_at, summary, collected_at, read_at)
-      SELECT ?, entry_id, title, link, published_at, summary, ?, ?
-      FROM rss_entry_staging
-      WHERE collection_id = ?
-      ON CONFLICT(feed_id, entry_id) DO UPDATE SET
-        title = excluded.title,
-        link = excluded.link,
-        published_at = excluded.published_at,
-        summary = excluded.summary
-    `).run(feed.id, fetchedAt, initialReadAt, input.collectionId);
-    discardStagedFeedEntries(db, input.collectionId);
-    return inserted;
-  })();
 }
 
 export function getFeedState(
@@ -241,13 +123,75 @@ export function saveFeedEntries(
     markInitialAsRead: boolean;
   },
 ): number {
-  const collectionId = randomUUID();
-  try {
-    stageFeedEntries(db, collectionId, input.entries);
-    return saveStagedFeedEntries(db, { collectionId, ...input });
-  } finally {
-    discardStagedFeedEntries(db, collectionId);
-  }
+  const fetchedAt = new Date().toISOString();
+
+  return db.transaction(() => {
+    const existing = getFeedState(db, input.url);
+    db.prepare(`
+      INSERT INTO rss_feeds
+        (url, name, etag, last_modified, initialized_at, last_fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(url) DO UPDATE SET
+        name = excluded.name,
+        etag = excluded.etag,
+        last_modified = excluded.last_modified,
+        last_fetched_at = excluded.last_fetched_at
+    `).run(
+      input.url,
+      (input.configuredName ?? input.parsedName) || null,
+      input.etag,
+      input.lastModified,
+      fetchedAt,
+      fetchedAt,
+    );
+
+    const feed = getFeedState(db, input.url);
+    if (!feed) {
+      throw new Error(`RSSフィードを保存できませんでした: ${input.url}`);
+    }
+
+    const initialReadAt =
+      !existing && input.markInitialAsRead ? fetchedAt : null;
+    const insert = db.prepare(`
+      INSERT INTO rss_articles
+        (feed_id, entry_id, title, link, published_at, summary, collected_at, read_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(feed_id, entry_id) DO NOTHING
+    `);
+    const update = db.prepare(`
+      UPDATE rss_articles
+      SET title = ?, link = ?, published_at = ?, summary = ?
+      WHERE feed_id = ? AND entry_id = ?
+    `);
+
+    let inserted = 0;
+    for (const entry of input.entries) {
+      const result = insert.run(
+        feed.id,
+        entry.entryId,
+        entry.title,
+        entry.link,
+        entry.publishedAt,
+        entry.summary,
+        fetchedAt,
+        initialReadAt,
+      );
+      if (result.changes > 0) {
+        inserted++;
+      } else {
+        update.run(
+          entry.title,
+          entry.link,
+          entry.publishedAt,
+          entry.summary,
+          feed.id,
+          entry.entryId,
+        );
+      }
+    }
+
+    return inserted;
+  })();
 }
 
 export function listUnreadArticles(
