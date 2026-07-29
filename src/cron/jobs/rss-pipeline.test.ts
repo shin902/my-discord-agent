@@ -8,6 +8,7 @@ import {
   openRssDb,
   saveFeedEntries,
 } from "../../rss/store.js";
+import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 import collectHandler from "./rss-collect.js";
 import dispatchHandler from "./rss-dispatch.js";
@@ -142,6 +143,25 @@ afterEach(async () => {
 });
 
 describe("RSS collect / dispatch", () => {
+  it("collectのsettingsが不正ならNonRetryableErrorを投げる", async () => {
+    const ctx = makeCollectCtx();
+    ctx.settings = { statePath };
+
+    await expect(collectHandler(ctx)).rejects.toBeInstanceOf(NonRetryableError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatchのsettingsが不正ならNonRetryableErrorを投げる", async () => {
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.settings = { statePath, maxItemsPerRun: 0 };
+
+    await expect(dispatchHandler(ctx)).rejects.toBeInstanceOf(
+      NonRetryableError,
+    );
+    expect(appendInbox).not.toHaveBeenCalled();
+  });
+
   it("初回を既読で保存し、新着だけをinbox投入後に既読化する", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx());

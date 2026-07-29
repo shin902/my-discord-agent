@@ -6,6 +6,7 @@ import {
   saveFeedEntries,
   touchFeed,
 } from "../../rss/store.js";
+import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 
 const FeedSchema = z.union([
@@ -28,7 +29,13 @@ const SettingsSchema = z.object({
 const MAX_CONCURRENT_FEEDS = 4;
 
 export default async function handler(ctx: CronContext): Promise<void> {
-  const settings = SettingsSchema.parse(ctx.settings ?? {});
+  const parsed = SettingsSchema.safeParse(ctx.settings ?? {});
+  if (!parsed.success) {
+    throw new NonRetryableError(
+      `[rss-collect] settings が不正です: ${parsed.error.message}`,
+    );
+  }
+  const settings = parsed.data;
   const db = openRssDb(settings.statePath);
   try {
     for (

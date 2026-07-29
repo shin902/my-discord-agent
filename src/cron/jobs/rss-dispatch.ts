@@ -84,7 +84,13 @@ export default async function handler(ctx: CronContext): Promise<void> {
   if (!instructions) {
     throw new NonRetryableError("[rss-dispatch] promptが設定されていません");
   }
-  const settings = SettingsSchema.parse(ctx.settings ?? {});
+  const parsed = SettingsSchema.safeParse(ctx.settings ?? {});
+  if (!parsed.success) {
+    throw new NonRetryableError(
+      `[rss-dispatch] settings が不正です: ${parsed.error.message}`,
+    );
+  }
+  const settings = parsed.data;
   const feedUrls = settings.feeds
     ? [...new Set(settings.feeds.map((feed) => feed.url))]
     : undefined;
