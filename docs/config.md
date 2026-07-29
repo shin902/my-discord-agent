@@ -198,6 +198,8 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
 
 RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` はLLMを使わずRSS/Atomフィードの記事を `data/rss.sqlite3` に保存し、`rss-dispatch.ts` は未読記事をまとめて通常のエージェントinboxへ投入する。
 
+対応形式をRSS 2.0とAtom 1.0へ絞る判断、公開フィード20件の実測結果、RSS 1.0 / RDFと非UTF-8の扱いは [RSSフィード形式の対応範囲調査](research/rss-format-support-audit.md) に記録している。以下は絞り込み前の現行実装について説明する。
+
 ```json
 [
   {
