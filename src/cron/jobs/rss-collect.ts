@@ -37,6 +37,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
   }
   const settings = parsed.data;
   const db = openRssDb(settings.statePath);
+  const failures: unknown[] = [];
   try {
     for (
       let start = 0;
@@ -76,12 +77,19 @@ export default async function handler(ctx: CronContext): Promise<void> {
                 `[rss-collect] ${configuredFeed.name ?? result.feed.title ?? configuredFeed.url}: ${inserted}件を新規保存`,
               );
             } catch (err) {
+              failures.push(err);
               console.error(
                 `[rss-collect] フィードの収集に失敗: ${configuredFeed.url}`,
                 err,
               );
             }
           }),
+      );
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `[rss-collect] ${failures.length}件のフィード収集に失敗しました`,
       );
     }
   } finally {

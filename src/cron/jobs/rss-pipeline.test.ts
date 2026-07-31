@@ -151,6 +151,37 @@ describe("RSS collect / dispatch", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("失敗したフィードがあっても残りを収集し、最後に集約エラーを投げる", async () => {
+    const failedUrl = "https://example.com/failed.xml";
+    const successfulUrl = "https://example.com/successful.xml";
+    const fetchError = new Error("fetch failed");
+    fetchMock.mockRejectedValueOnce(fetchError).mockResolvedValueOnce(
+      new Response(initialXml, {
+        status: 200,
+        headers: { "content-type": "application/rss+xml" },
+      }),
+    );
+    const ctx = makeCollectCtx();
+    ctx.settings = {
+      feeds: [failedUrl, successfulUrl],
+      statePath,
+      bootstrap: "process",
+    };
+
+    await expect(collectHandler(ctx)).rejects.toMatchObject({
+      errors: [fetchError],
+      message: "[rss-collect] 1件のフィード収集に失敗しました",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const db = openRssDb(statePath);
+    try {
+      expect(getFeedState(db, successfulUrl)).not.toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   it("dispatchのsettingsが不正ならNonRetryableErrorを投げる", async () => {
     const appendInbox = vi.fn(async () => undefined);
     const ctx = makeDispatchCtx(appendInbox);
