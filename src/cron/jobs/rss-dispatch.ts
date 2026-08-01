@@ -1,8 +1,9 @@
 import { z } from "zod";
 import {
-  listUnreadArticles,
+  claimUnreadArticles,
   markArticlesRead,
   openRssDb,
+  releaseDispatchArticles,
   type UnreadArticle,
 } from "../../rss/store.js";
 import { NonRetryableError } from "../../utils/error.js";
@@ -96,16 +97,30 @@ export default async function handler(ctx: CronContext): Promise<void> {
     : undefined;
   const db = openRssDb(settings.statePath);
   try {
-    const articles = listUnreadArticles(db, settings.maxItemsPerRun, feedUrls);
-    if (articles.length === 0) return;
+    const dispatch = claimUnreadArticles(
+      db,
+      `${ctx.id}:${JSON.stringify(feedUrls ? [...feedUrls].sort() : null)}`,
+      settings.maxItemsPerRun,
+      feedUrls,
+    );
+    if (!dispatch) return;
 
     const { content, queuedArticles } = buildContent(
       instructions,
-      articles,
+      dispatch.articles,
       settings.maxSummaryChars,
     );
 
-    await enqueueCronInbox(ctx, content);
+    const queuedIds = new Set(queuedArticles.map((article) => article.id));
+    releaseDispatchArticles(
+      db,
+      dispatch.id,
+      dispatch.articles
+        .filter((article) => !queuedIds.has(article.id))
+        .map((article) => article.id),
+    );
+
+    await enqueueCronInbox({ ...ctx, idempotencyKey: dispatch.id }, content);
     markArticlesRead(
       db,
       queuedArticles.map((article) => article.id),

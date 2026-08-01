@@ -31,6 +31,7 @@ export interface CronEnqueueContext {
   model?: ModelConfig;
   tools?: string[];
   skills?: SkillSelection;
+  idempotencyKey?: string;
   appendInbox: typeof appendInbox;
 }
 
@@ -137,6 +138,7 @@ export async function enqueueCronInbox(
     cronDeliveryMode: deliveryMode,
     cronSessionMode: sessionMode,
     cronJobId: ctx.id,
+    ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
 }

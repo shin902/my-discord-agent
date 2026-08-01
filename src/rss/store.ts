@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +26,11 @@ export interface UnreadArticle {
   summary: string;
 }
 
+export interface ArticleDispatch {
+  id: string;
+  articles: UnreadArticle[];
+}
+
 interface FeedRow {
   id: number;
   url: string;
@@ -40,6 +46,10 @@ interface ArticleRow {
   link: string;
   published_at: string;
   summary: string;
+}
+
+interface DispatchArticleRow extends ArticleRow {
+  dispatch_id: string;
 }
 
 export function resolveRssDbPath(configuredPath?: string): string {
@@ -79,6 +89,19 @@ export function openRssDb(configuredPath?: string): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS rss_articles_unread
       ON rss_articles(read_at, id);
+  `);
+  const articleColumns = db
+    .prepare("PRAGMA table_info(rss_articles)")
+    .all() as Array<{ name: string }>;
+  if (!articleColumns.some((column) => column.name === "dispatch_id")) {
+    db.exec("ALTER TABLE rss_articles ADD COLUMN dispatch_id TEXT");
+  }
+  if (!articleColumns.some((column) => column.name === "dispatch_job_id")) {
+    db.exec("ALTER TABLE rss_articles ADD COLUMN dispatch_job_id TEXT");
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS rss_articles_dispatch
+      ON rss_articles(dispatch_job_id, dispatch_id, id);
   `);
   return db;
 }
@@ -232,6 +255,76 @@ export function listUnreadArticles(
   }));
 }
 
+function mapArticle(row: ArticleRow): UnreadArticle {
+  return {
+    id: row.id,
+    feedName: row.feed_name,
+    feedUrl: row.feed_url,
+    title: row.title,
+    link: row.link,
+    publishedAt: row.published_at,
+    summary: row.summary,
+  };
+}
+
+export function claimUnreadArticles(
+  db: Database.Database,
+  jobId: string,
+  limit: number,
+  feedUrls?: readonly string[],
+): ArticleDispatch | undefined {
+  if (feedUrls?.length === 0) return undefined;
+  return db.transaction(() => {
+    const pending = db
+      .prepare(`
+        SELECT a.id, a.dispatch_id, COALESCE(f.name, f.url) AS feed_name,
+          f.url AS feed_url, a.title, a.link, a.published_at, a.summary
+        FROM rss_articles a JOIN rss_feeds f ON f.id = a.feed_id
+        WHERE a.read_at IS NULL AND a.dispatch_job_id = ?
+        ORDER BY a.id ASC
+      `)
+      .all(jobId) as DispatchArticleRow[];
+    if (pending.length > 0) {
+      return { id: pending[0].dispatch_id, articles: pending.map(mapArticle) };
+    }
+
+    const feedFilter = feedUrls
+      ? `AND f.url IN (${feedUrls.map(() => "?").join(", ")})`
+      : "";
+    const rows = db
+      .prepare(`
+        SELECT a.id, COALESCE(f.name, f.url) AS feed_name,
+          f.url AS feed_url, a.title, a.link, a.published_at, a.summary
+        FROM rss_articles a JOIN rss_feeds f ON f.id = a.feed_id
+        WHERE a.read_at IS NULL AND a.dispatch_id IS NULL ${feedFilter}
+        ORDER BY a.id ASC LIMIT ?
+      `)
+      .all(...(feedUrls ?? []), limit) as ArticleRow[];
+    if (rows.length === 0) return undefined;
+
+    const dispatchId = randomUUID();
+    const placeholders = rows.map(() => "?").join(", ");
+    db.prepare(`
+      UPDATE rss_articles SET dispatch_id = ?, dispatch_job_id = ?
+      WHERE dispatch_id IS NULL AND id IN (${placeholders})
+    `).run(dispatchId, jobId, ...rows.map((row) => row.id));
+    return { id: dispatchId, articles: rows.map(mapArticle) };
+  })();
+}
+
+export function releaseDispatchArticles(
+  db: Database.Database,
+  dispatchId: string,
+  articleIds: readonly number[],
+): void {
+  if (articleIds.length === 0) return;
+  const placeholders = articleIds.map(() => "?").join(", ");
+  db.prepare(`
+    UPDATE rss_articles SET dispatch_id = NULL, dispatch_job_id = NULL
+    WHERE dispatch_id = ? AND id IN (${placeholders})
+  `).run(dispatchId, ...articleIds);
+}
+
 export function markArticlesRead(
   db: Database.Database,
   articleIds: number[],
@@ -240,7 +333,7 @@ export function markArticlesRead(
   const placeholders = articleIds.map(() => "?").join(", ");
   db.prepare(`
     UPDATE rss_articles
-    SET read_at = ?
+    SET read_at = ?, dispatch_id = NULL, dispatch_job_id = NULL
     WHERE read_at IS NULL AND id IN (${placeholders})
   `).run(new Date().toISOString(), ...articleIds);
 }

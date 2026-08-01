@@ -338,6 +338,44 @@ describe("RSS collect / dispatch", () => {
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
+  it("inbox投入後の状態更新前に失敗しても同じ冪等キーで再開する", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const keys: string[] = [];
+    const appendInbox = vi.fn(async (message) => {
+      keys.push(message.idempotencyKey ?? "");
+      if (keys.length === 1) throw new Error("crash after persistence");
+    });
+    const ctx = makeDispatchCtx(appendInbox);
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow(
+      "crash after persistence",
+    );
+    await dispatchHandler(ctx);
+
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe("");
+    expect(keys[1]).toBe(keys[0]);
+    expect(unreadTitles()).toEqual([]);
+  });
+
+  it("対象フィードが重なる並列dispatchでは記事を一度だけ投入する", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const firstInbox = vi.fn(async () => undefined);
+    const secondInbox = vi.fn(async () => undefined);
+    const first = makeDispatchCtx(firstInbox);
+    const second = makeDispatchCtx(secondInbox);
+    second.id = "rss-dispatch-overlap";
+
+    await Promise.all([dispatchHandler(first), dispatchHandler(second)]);
+
+    expect(firstInbox.mock.calls.length + secondInbox.mock.calls.length).toBe(
+      1,
+    );
+    expect(unreadTitles()).toEqual([]);
+  });
+
   it("不明なツールが指定されている場合はinbox投入せず未読のまま残す", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx("process"));

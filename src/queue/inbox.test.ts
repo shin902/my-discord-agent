@@ -92,6 +92,25 @@ describe("appendInbox", () => {
     expect(lines[0].content).toBe("first");
     expect(lines[1].content).toBe("second");
   });
+
+  it("同じ冪等キーは処理完了後も再追加しない", async () => {
+    const input = makeMsgInput({ idempotencyKey: "rss-dispatch-1" });
+    await appendInbox(input);
+    const id = readLines()[0].id;
+
+    await removeInboxById(id);
+    await appendInbox(input);
+
+    const lines = readLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      id,
+      idempotencyKey: "rss-dispatch-1",
+      content: "",
+    });
+    expect(lines[0].completedAt).toBeDefined();
+    expect(await peekAllUnclaimedInbox(new Set())).toEqual([]);
+  });
 });
 
 describe("peekAllUnclaimedInbox", () => {
