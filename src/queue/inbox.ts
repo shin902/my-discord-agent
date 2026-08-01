@@ -45,6 +45,8 @@ export interface InboxMessage {
   timestamp: string;
   enqueuedAt?: string; // inbox.jsonl への追加時刻。旧キュー互換のためオプショナル
   retries: number; // 失敗してリトライした回数。初回は 0
+  idempotencyKey?: string; // 外部状態と連携する投入の重複防止キー
+  completedAt?: string; // 冪等キーを保持するための処理済みtombstone
   cronDeliveryMode?: CronDeliveryMode; // cron の投稿方法。旧キューでは未設定
   cronSessionMode?: CronSessionMode; // cron のセッションID戦略。旧キューでは未設定
   cronThread?: boolean; // 旧キュー互換: 旧 to-thread モードのトリガー
@@ -113,6 +115,16 @@ export async function appendInbox(
 ): Promise<void> {
   return withFileLock(async () => {
     await ensureDir();
+    if (msg.idempotencyKey) {
+      const messages = await readMessages();
+      if (
+        messages.some(
+          (existing) => existing.idempotencyKey === msg.idempotencyKey,
+        )
+      ) {
+        return;
+      }
+    }
     const record: InboxMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       retries: 0,
@@ -140,7 +152,9 @@ export async function peekAllUnclaimedInbox(
 ): Promise<InboxMessage[]> {
   return withFileLock(async () => {
     const messages = await readMessages();
-    return messages.filter((msg) => !excludeIds.has(msg.id));
+    return messages.filter(
+      (msg) => !msg.completedAt && !excludeIds.has(msg.id),
+    );
   });
 }
 
@@ -149,7 +163,20 @@ export async function removeInboxById(id: string): Promise<void> {
   return withFileLock(async () => {
     if (!existsSync(INBOX_PATH)) return;
     const messages = await readMessages();
-    await writeMessages(messages.filter((msg) => msg.id !== id));
+    await writeMessages(
+      messages.flatMap((msg) => {
+        if (msg.id !== id) return [msg];
+        if (!msg.idempotencyKey) return [];
+        return [
+          {
+            ...msg,
+            content: "",
+            attachments: undefined,
+            completedAt: new Date().toISOString(),
+          },
+        ];
+      }),
+    );
   });
 }
 

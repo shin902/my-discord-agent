@@ -194,6 +194,61 @@ X_ARTICLE_READER_TOKEN=<十分に長いランダム値> X_ARTICLE_READER_MOCK=1 
 
 `model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
 
+### jobs/rss-collect.ts / jobs/rss-dispatch.ts
+
+RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` はLLMを使わずRSS/Atomフィードの記事を `data/rss.sqlite3` に保存し、`rss-dispatch.ts` は未読記事をまとめて通常のエージェントinboxへ投入する。
+
+対応形式をRSS 2.0とAtom 1.0へ絞る判断、公開フィード20件の実測結果、RSS 1.0 / RDFと非UTF-8の扱いは [RSSフィード形式の対応範囲調査](research/rss-format-support-audit.md) に記録している。以下は絞り込み前の現行実装について説明する。
+
+```json
+[
+  {
+    "id": "rss-collect",
+    "schedule": "*/15 * * * *",
+    "handler": "jobs/rss-collect.ts",
+    "settings": {
+      "feeds": ["https://example.com/feed.xml"],
+      "bootstrap": "mark-seen"
+    }
+  },
+  {
+    "id": "rss-dispatch",
+    "schedule": "5,20,35,50 * * * *",
+    "groupName": "rss",
+    "channelId": "YOUR_CHANNEL_ID",
+    "prompt": "各記事のURLをagent-reachで取得し、日本語で要約してください",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
+    "handler": "jobs/rss-dispatch.ts",
+    "tools": ["bash"],
+    "skills": ["agent-reach"],
+    "settings": {
+      "feeds": ["https://example.com/feed.xml"],
+      "maxItemsPerRun": 10,
+      "maxSummaryChars": 4000
+    }
+  }
+]
+```
+
+Collectorの`feeds`にはURL文字列、または `{ "name": "表示名", "url": "URL" }` を指定できる。ETagとLast-Modifiedが返るフィードでは条件付き取得を使用する。`bootstrap`の既定値は`mark-seen`で、初回に掲載されていた記事を既読として保存する。`process`にすると初回記事も未読で保存する。
+
+Collectorが取得するRSS本文の上限は5 MiBで、現在は設定から変更できない。これはRSS/Atomとしての妥当性ではなく、取得先の誤設定や侵害による過大なメモリ消費を防ぐための運用上限である。`Content-Length`がない場合や実際より小さい場合も、本文を読みながら上限を検査し、超過した時点で取得を中断する。正当なフィードであっても5 MiBを超えるものは収集対象にできない。
+
+記事数には上限を設けず、解析した全記事を1トランザクションでSQLiteへ保存する。
+
+フィード形式の解釈には、RSS/RDF/Atomの正規化、`xml:base`を含む相対URL解決、Atom XHTML処理を備えた`feedparser`を使用する。文字コード判定は`encoding-sniffer`へ委譲し、BOM、XML宣言、HTTP `Content-Type`の`charset`を反映する。汎用XMLパーサー上でこれらのフィード仕様を独自に実装しない方針とし、UTF-16、Shift_JIS、HTTP charset、相対URL、階層的`xml:base`、Atom XHTMLを回帰テストで固定する。
+
+選定時には`feedsmith`、`@rowanmanning/feed-parser`、`feedparser`を同じAtom入力で比較した。`feedsmith`は相対URLとXHTMLマークアップを保持したまま返し、`@rowanmanning/feed-parser`はXHTMLをテキスト化できるが最終レスポンスURLを解析時のベースURLとして渡せなかった。`feedparser`は`feedurl`オプションと階層的`xml:base`処理によって両方を満たすため採用した。ライブラリ自身はHTTP取得を行わず、Collectorが上限内で取得した本文だけを渡す。
+
+Dispatcherは`maxItemsPerRun`件の未読記事を1つのinboxメッセージへまとめる。`prompt`は必須で、記事の取得方法や要約形式もここに指定する。inboxにはこの`prompt`と記事情報だけを渡す。
+
+Dispatcherの`settings.feeds`にはCollectorと同じURL文字列、または`{ "name": "表示名", "url": "URL" }`を指定でき、指定したフィードの未読記事だけを処理する。省略時は後方互換のため全フィードを処理する。複数Dispatcherを使う場合は全ジョブで`feeds`を指定し、対象URLが重複しないようにする。全件Dispatcherとフィード指定Dispatcherを同時に有効化すると、cronの並列実行時に同じ未読記事を重複投入する可能性がある。
+
+`appendInbox`が成功した直後に、今回投入した記事だけを既読にする。この既読は「Discord配信済み」ではなく「エージェントへ引き渡し済み」を意味する。エージェント処理やDiscord配信が後から失敗してもRSS側からは再投入しない。inbox投入自体が失敗した場合は未読のまま残る。
+
+`maxSummaryChars`は記事ごとにinboxへ含めるRSS概要の最大文字数。`model`、`tools`、`skills`も通常の宣言的cronと同じようにエージェント実行へ引き継がれる。CollectorとDispatcherが同時実行にならないよう、設定例では5分ずらしている。
+
 ### jobs/issue-triage.ts
 
 GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools: ["bash", "list-issues", "read-issue", "comment-issue"]`）に判断・コメント投稿まで一貫して行わせるハンドラー。

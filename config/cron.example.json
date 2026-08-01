@@ -19,6 +19,40 @@
     "handler": "jobs/mail.ts"
   },
   {
+    "id": "rss-collect",
+    "schedule": "*/15 * * * *",
+    "enabled": false,
+    "handler": "jobs/rss-collect.ts",
+    "settings": {
+      "feeds": [
+        "https://example.com/feed.xml",
+        {
+          "name": "Example Atom",
+          "url": "https://example.com/atom.xml"
+        }
+      ],
+      "bootstrap": "mark-seen"
+    }
+  },
+  {
+    "id": "rss-dispatch",
+    "schedule": "5,20,35,50 * * * *",
+    "enabled": false,
+    "groupName": "rss",
+    "channelId": "YOUR_CHANNEL_ID",
+    "prompt": "各記事のURLをagent-reachで取得し、日本語で要約してください",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
+    "handler": "jobs/rss-dispatch.ts",
+    "tools": ["bash"],
+    "skills": ["agent-reach"],
+    "settings": {
+      "feeds": ["https://example.com/feed.xml"],
+      "maxItemsPerRun": 10,
+      "maxSummaryChars": 4000
+    }
+  },
+  {
     "id": "reddit-cookie-refresh",
     "schedule": "0 4 */3 * *",
     "enabled": true,

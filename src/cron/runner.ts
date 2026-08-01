@@ -4,19 +4,12 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
-import {
-  type AgentConfig,
-  ModelConfigSchema,
-  SkillSelectionSchema,
-} from "../config/groups.js";
+import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
 import { client } from "../discord/client.js";
-import {
-  appendInbox,
-  type CronDeliveryMode,
-  type CronSessionMode,
-} from "../queue/inbox.js";
+import { appendInbox } from "../queue/inbox.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
+import { enqueueCronInbox } from "./enqueue.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
@@ -44,14 +37,6 @@ const CronJobSchema = z
     settings: z.unknown().optional(),
   })
   .superRefine((job, ctx) => {
-    if (job.handler != null) return;
-    if (job.groupName == null || job.prompt == null || job.channelId == null) {
-      ctx.addIssue({
-        code: "custom",
-        message: "handler なし時は groupName, prompt, channelId が必須です",
-      });
-    }
-
     const hasLegacyMode = job.mode != null;
     const hasDeliveryMode = job.deliveryMode != null;
     const hasSessionMode = job.sessionMode != null;
@@ -60,7 +45,21 @@ const CronJobSchema = z
         code: "custom",
         message: "mode と deliveryMode/sessionMode は同時に指定できません",
       });
-    } else if (!hasLegacyMode && (!hasDeliveryMode || !hasSessionMode)) {
+    } else if (hasDeliveryMode !== hasSessionMode) {
+      ctx.addIssue({
+        code: "custom",
+        message: "deliveryMode と sessionMode は両方指定してください",
+      });
+    }
+
+    if (job.handler != null) return;
+    if (job.groupName == null || job.prompt == null || job.channelId == null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "handler なし時は groupName, prompt, channelId が必須です",
+      });
+    }
+    if (!hasLegacyMode && !hasDeliveryMode && !hasSessionMode) {
       ctx.addIssue({
         code: "custom",
         message:
@@ -230,30 +229,6 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
 
 // --- Job execution ---
 
-function buildConfigOverride(job: CronJob): Partial<AgentConfig> | undefined {
-  const configOverride: Partial<AgentConfig> = {};
-  if (job.model !== undefined) configOverride.model = job.model;
-  if (job.tools !== undefined) configOverride.tools = job.tools;
-  if (job.skills !== undefined) configOverride.skills = job.skills;
-  return Object.keys(configOverride).length > 0 ? configOverride : undefined;
-}
-
-function resolveCronModes(job: CronJob): {
-  deliveryMode: CronDeliveryMode;
-  sessionMode: CronSessionMode;
-} {
-  if (job.deliveryMode && job.sessionMode) {
-    return {
-      deliveryMode: job.deliveryMode,
-      sessionMode: job.sessionMode,
-    };
-  }
-  if (job.mode === "to-thread") {
-    return { deliveryMode: "new-thread", sessionMode: "destination" };
-  }
-  return { deliveryMode: "direct", sessionMode: "per-run" };
-}
-
 export async function executeJob(job: CronJob): Promise<void> {
   const ctx: CronContext = { client, appendInbox, ...job };
 
@@ -263,32 +238,10 @@ export async function executeJob(job: CronJob): Promise<void> {
     return;
   }
 
-  // groupName, prompt, channelId と各モードは Zod superRefine で保証済み
-  const { groupName, prompt, channelId } = job as Required<
-    Pick<CronJob, "groupName" | "prompt" | "channelId">
-  > &
-    CronJob;
-  const { deliveryMode, sessionMode } = resolveCronModes(job);
-  const timestamp = new Date().toISOString();
-  const configOverride = buildConfigOverride(job);
-  const sessionId =
-    sessionMode === "per-run"
-      ? `cron-${job.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      : deliveryMode === "direct"
-        ? channelId
-        : `cron-${job.id}`;
-
-  await appendInbox({
-    channelId,
-    groupName,
-    sessionId,
-    content: prompt,
-    timestamp,
-    cronDeliveryMode: deliveryMode,
-    cronSessionMode: sessionMode,
-    cronJobId: job.id,
-    ...(configOverride !== undefined ? { configOverride } : {}),
-  });
+  if (job.prompt === undefined) {
+    throw new NonRetryableError("[cron-enqueue] prompt が設定されていません");
+  }
+  await enqueueCronInbox(ctx, job.prompt);
 }
 
 // --- Scheduler ---
