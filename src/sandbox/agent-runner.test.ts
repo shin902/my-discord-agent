@@ -48,11 +48,11 @@ function todayJST(): string {
 }
 
 function datePromptJST(): string {
-  const weekday = new Date().toLocaleDateString("ja-JP", {
+  const weekday = new Date().toLocaleDateString("en-US", {
     timeZone: "Asia/Tokyo",
     weekday: "short",
   });
-  return `## 今日の日付\n\n${todayJST()} (${weekday}) JST`;
+  return `## Today's date\n\n${todayJST()} (${weekday}) JST`;
 }
 
 function createMockAgent(deltas: string[], endMessage: unknown) {
@@ -357,7 +357,7 @@ describe("runAgentLoop", () => {
       expect.objectContaining({
         role: "custom",
         customType: "self-bootstrap",
-        content: expect.stringContaining("## 人格 (SELF.md)"),
+        content: expect.stringContaining("## Persona (SELF.md)"),
       }),
     );
 
@@ -481,7 +481,7 @@ describe("runAgentLoop", () => {
     const memoryBootstrapMsg = {
       role: "custom",
       customType: "memory-bootstrap",
-      content: "## 記憶 (MEMORY.md)\n\n古い記憶",
+      content: "## Memory (MEMORY.md)\n\n古い記憶",
       timestamp: Date.now() - 1000,
     };
     vi.mocked(loadMessages).mockResolvedValue([
@@ -528,13 +528,13 @@ describe("runAgentLoop", () => {
       {
         role: "custom",
         customType: "memory-bootstrap",
-        content: "## 記憶 (MEMORY.md)\n\n古い記憶",
+        content: "## Memory (MEMORY.md)\n\n古い記憶",
         timestamp: Date.now() - 2000,
       },
       {
         role: "custom",
         customType: "self-bootstrap",
-        content: "## 人格 (SELF.md)\n\n古い人格",
+        content: "## Persona (SELF.md)\n\n古い人格",
         timestamp: Date.now() - 1000,
       },
     ] as never);
@@ -572,7 +572,7 @@ describe("runAgentLoop", () => {
       {
         role: "custom",
         customType: "memory-bootstrap",
-        content: "## 記憶 (MEMORY.md)\n\n古い記憶",
+        content: "## Memory (MEMORY.md)\n\n古い記憶",
         timestamp: Date.now() - 1000,
       },
     ] as never);
@@ -624,7 +624,7 @@ describe("runAgentLoop", () => {
       {
         role: "custom",
         customType: "memory-bootstrap",
-        content: "## 記憶 (MEMORY.md)\n\n古い記憶",
+        content: "## Memory (MEMORY.md)\n\n古い記憶",
         timestamp: Date.now() - 1000,
       },
     ] as never);
@@ -690,7 +690,7 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).toContain("旧形式プロンプト");
     // MEMORY.md は systemPrompt には含めない（memory-bootstrap 経由で user role として渡す）
     expect(systemPrompt).not.toContain("旧記憶");
-    expect(systemPrompt).not.toContain("## 記憶 (MEMORY.md)");
+    expect(systemPrompt).not.toContain("## Memory (MEMORY.md)");
 
     // agents-snapshot として JSONL に書き込まれ、次回以降は再読み込みされない
     expect(appendMessage).toHaveBeenCalledWith(
@@ -735,7 +735,7 @@ describe("runAgentLoop", () => {
     const memoryBootstrapMsg = {
       role: "custom",
       customType: "memory-bootstrap",
-      content: "## 記憶 (MEMORY.md)\n\n保存済み記憶",
+      content: "## Memory (MEMORY.md)\n\n保存済み記憶",
       timestamp: 1001,
     };
     vi.mocked(loadMessages).mockResolvedValue([
@@ -849,7 +849,7 @@ describe("runAgentLoop", () => {
       .content;
     expect(bootstrapContent).toContain("あ".repeat(2000));
     expect(bootstrapContent).not.toContain("あ".repeat(2001));
-    expect(bootstrapContent).toContain("上限(2000字)を超えています");
+    expect(bootstrapContent).toContain("exceeds the limit (2000 characters)");
   });
 
   it("SELF.md が文字数上限を超える場合は切り詰めて警告を注入する（新規セッションの bootstrap メッセージ）", async () => {
@@ -886,7 +886,7 @@ describe("runAgentLoop", () => {
       .content;
     expect(bootstrapContent).toContain("い".repeat(2000));
     expect(bootstrapContent).not.toContain("い".repeat(2001));
-    expect(bootstrapContent).toContain("上限(2000字)を超えています");
+    expect(bootstrapContent).toContain("exceeds the limit (2000 characters)");
   });
 
   it("不明なプロバイダはエラーをスロー", async () => {
@@ -1420,13 +1420,13 @@ describe("defaultConvertToLlm", () => {
   const memoryBootstrapMsg = {
     role: "custom" as const,
     customType: "memory-bootstrap" as const,
-    content: "## 記憶 (MEMORY.md)\n\nテスト",
+    content: "## Memory (MEMORY.md)\n\nテスト",
     timestamp: 1000,
   };
   const selfBootstrapMsg = {
     role: "custom" as const,
     customType: "self-bootstrap" as const,
-    content: "## 人格 (SELF.md)\n\nテスト",
+    content: "## Persona (SELF.md)\n\nテスト",
     timestamp: 1500,
   };
   const userMsg = { role: "user" as const, content: "hi", timestamp: 2000 };
