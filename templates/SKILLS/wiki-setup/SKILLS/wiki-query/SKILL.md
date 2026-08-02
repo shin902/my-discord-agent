@@ -1,51 +1,51 @@
 ---
 name: "wiki-query"
-description: "LLMが管理するwikiに対して出典付きで質問に回答し、永続的な価値のある回答は新しいwikiページとして書き戻すことで調査結果を蓄積させる。ユーザーが知識ベースについて質問したとき、「wikiには〜について何が書いてある？」「自分のノートからXとYを比較して」「〜を統合して」と言ったとき、または蓄積した情報源に基づく回答を求めているときに使う。"
+description: "Answer questions about an LLM-managed wiki with citations, and write answers with lasting value back as new wiki pages so the research accumulates. Use this when the user asks about the knowledge base, says 「wikiには〜について何が書いてある？」, 「自分のノートからXとYを比較して」, or 「〜を統合して」, or requests an answer based on accumulated sources."
 ---
 
 # wiki-query
 
-wikiに基づいてユーザーの質問に出典付きで回答する。そして回答が永続的な価値を持つ場合は、それを書き戻して、調査結果がチャット履歴の中に消えてしまうのではなく知識ベースの一部になるようにする。
+Answer the user's questions with citations based on the wiki. When an answer has lasting value, write it back so the result becomes part of the knowledge base instead of disappearing into the chat history.
 
-最初にルートの `AGENTS.md` を読み、その規約に従うこと。
+First read the root `AGENTS.md` and follow its conventions.
 
-## 手順
+## Procedure
 
-### 1. 関連ページを見つける
+### 1. Find relevant pages
 
-まず `{{WIKI_ROOT}}/index.md` を読んで候補ページを特定し、そこから深く掘っていく。大規模なwikiでは、インデックスだけに頼るのではなく `wiki-search` ヘルパー（数百ページを超える規模では `wiki-search-fts`、ユーザーが有効化していれば）を実行してランク付けされた全文検索を行う。最も関連性の高いページから `[[wikilinks]]` をたどっていく — つながりの中に答えがあることが多い。ベクトル検索やLLM再ランキングが必要なほど高度な検索が求められる場合は、`qmd` のような外部ツールの導入をユーザーに相談する。
+Read `{{WIKI_ROOT}}/index.md` first to identify candidate pages, then dig deeper from there. For a large wiki, do not rely on the index alone: run the `wiki-search` helper (for wikis with hundreds of pages, `wiki-search-fts` if the user has enabled it) to perform a ranked full-text search. Follow `[[wikilinks]]` from the most relevant pages — the answer is often found in the connections. If the search is advanced enough to require vector search or LLM reranking, ask the user about installing an external tool such as `qmd`.
 
-### 2. 回答を統合する
+### 2. Synthesize the answer
 
-ページに書かれている内容から回答を組み立てる。参照したページは `[[page]]` として引用する（そしてそのページを通じて、元となる情報源も示す）。wikiが質問に部分的にしか答えられない場合は、その旨を明確に述べ、出典に基づく部分と推論部分を区別する。関連するギャップがあれば、web検索や新しい情報源で埋めることを提案する。
+Build the answer from the contents of the pages. Cite referenced pages as `[[page]]` (and thereby show the underlying sources through those pages). If the wiki only partially answers the question, state that clearly and distinguish source-backed portions from inferences. If relevant gaps remain, propose filling them with web searches or new sources.
 
-### 3. 回答の形式を選ぶ
+### 3. Choose the answer format
 
-質問に合わせて形式を選択する。
+Choose a format that matches the question.
 
-- 単純な質問には短い文章での回答
-- 「XとYの比較」にはMarkdownの比較表
-- プレゼンテーション形式の依頼にはMarpスライドデック
-- 量的なものにはmatplotlibのチャート
-- 広範な「まとめて」という依頼には新しい統合ページ
+- For a simple question, answer in a short paragraph.
+- For 「XとYの比較」, use a Markdown comparison table.
+- For a presentation-format request, use a Marp slide deck.
+- For quantitative material, use a matplotlib chart.
+- For a broad 「まとめて」 request, create a new synthesis page.
 
-### 4. 永続的な回答を書き戻す
+### 4. Write back lasting answers
 
-これがwikiを蓄積させる仕組みだ。回答が単純な検索以上のもの — 比較、分析、発見したつながり、統合 — であれば、新しいページとして書き戻す。
+This is how the wiki accumulates knowledge. If the answer is more than a simple lookup — a comparison, analysis, discovered connection, or synthesis — write it back as a new page.
 
-- コンセプトページ用ディレクトリ（`AGENTS.md` で定義された規約に従う。既定では `{{WIKI_ROOT}}/concepts/`。または `{{WIKI_ROOT}}/syntheses/` ページ）に `<slug>.md` を通常のフロントマター付きで作成し、`tags` に派生/回答ページであることを示すマークを付ける。
-- そのページが参照しているすべてのページへ `[[wikilinks]]` を追加し、それらのページからも相互リンクを追加する。
-- `{{WIKI_ROOT}}/index.md` に追加する。
-- ログエントリを追記する。
+- Create `<slug>.md` with standard frontmatter in the concept-page directory (following the conventions defined in `AGENTS.md`; by default `{{WIKI_ROOT}}/concepts/`, or as a page under `{{WIKI_ROOT}}/syntheses/`), and mark `tags` to show that it is a derived/answer page.
+- Add `[[wikilinks]]` to every page referenced by the new page, and add reciprocal links from those pages.
+- Add it to `{{WIKI_ROOT}}/index.md`.
+- Append a log entry.
   `## [YYYY-MM-DD] query | <question> → filed as [[page]]`
 
-回答を残す価値があるか曖昧な場合はユーザーに確認してから書き戻す。明らかに永続的な価値がある結果については、書き戻してからその旨を伝える。一時的な検索（「Xが出版されたのは何年？」など）は書き戻さない — それらはノイズになる。
+If it is unclear whether an answer is worth preserving, ask the user before writing it back. For results with clear lasting value, write them back first and then tell the user. Do not write back temporary lookups (such as 「Xが出版されたのは何年？」) — they add noise.
 
-### 5. 報告
+### 5. Report
 
-ユーザーに回答と出典を提示し、何かを書き戻した場合は新しいページ名も伝えて、後から参照できるようにする。
+Present the answer and sources to the user. If anything was written back, also provide the new page name for future reference.
 
-## 補足
+## Additional notes
 
-- 出典を絶対に偽造しない。あるページに書かれていない主張は、自分自身の推論であると明示する。
-- 回答中に矛盾を見つけた場合は、黙ってどちらかの説を採用するのではなく明示する — それらはしばしば最も興味深い部分であり、`wiki-lint` のフォローアップが必要になることもある。
+- Never fabricate citations. Explicitly identify claims that are not written on a page as your own inferences.
+- If you find a contradiction in the answer, state it rather than silently choosing one account — contradictions are often the most interesting part and may require a `wiki-lint` follow-up.

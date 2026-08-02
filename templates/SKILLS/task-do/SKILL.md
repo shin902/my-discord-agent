@@ -1,62 +1,57 @@
 ---
 name: task-do
-description: "既存のタスクを実行する運用プロトコル。ユーザーが「このタスクをやって」「task 003 を進めて」「次のタスクに着手して」と言ったときに使う。タスクを in_progress に上げ、受け入れ条件を1つずつ消化し、完了したら done に更新する。タスクの状態は必ずファイルに書き戻す。"
+description: "Operational protocol for executing an existing task. Use this when the user says 「このタスクをやって」, 「task 003 を進めて」, or 「次のタスクに着手して」. Move the task to in_progress, work through acceptance criteria one by one, then update it to done. Always write the task status back to the file."
 ---
 
 # task-do
 
-タスクを着手から完了まで進めるプロトコル。エージェントは使い捨てなので、
-進捗は会話ではなく**必ずタスクファイルに書き戻す**。これが次の起動への引き継ぎになる。
+Protocol for carrying a task from start to completion. Because agents are ephemeral,
+**always write progress back to the task file**, not only to the conversation. This is what carries the work into the next run.
 
-対象タスク: $ARGUMENTS$
+Target task: $ARGUMENTS$
 
-## 手順
+## Procedure
 
-### 1. 対象を特定する
-id が指定されていれば `/workspace/tasks/` から `{id}-*.md` を読む。指定が無ければ
-推奨から選ぶ:
+### 1. Identify the target
+If an id is specified, read `{id}-*.md` from `/workspace/tasks/`. If none is specified, choose from the recommendations:
 
 ```bash
-python3 /workspace/SKILLS/taskmd/next.py   # taskmd が有効なら
+python3 /workspace/SKILLS/taskmd/next.py   # if taskmd is enabled
 ```
 
-着手前に依存を確認する。`dependencies` に done でないものがあれば着手せず、その旨を
-報告する（`next.py` は依存未解決を着手候補から外している）。
+Check dependencies before starting. If any entry in `dependencies` is not `done`, do not start the task and report that fact (`next.py` excludes tasks with unresolved dependencies from its candidates).
 
-### 2. in_progress に上げる
-作業を始める前に frontmatter の `status` を `in_progress` に更新する（`edit`）。
-これで他セッションや次の起動から「誰かが触っている」と分かる。
+### 2. Set the task to in progress
+Before beginning work, update the frontmatter `status` to `in_progress` (using `edit`).
+This lets other sessions and the next run know that someone is working on it.
 
-### 3. 受け入れ条件を1つずつ消化する
-本文の `## Acceptance Criteria` を満たす実装を進める。条件を1つ満たすたびに、本文の
-チェックボックスを `- [ ]` → `- [x]` に更新する。
+### 3. Work through the acceptance criteria one by one
+Implement the work needed to satisfy the body’s `## Acceptance Criteria`. Each time a criterion is met, update its checkbox in the body from `- [ ]` to `- [x]`.
 
-- 途中で詰まった・設計判断が必要になったら、`## Notes` に経緯を追記してから止まる。
-  次の起動が文脈ゼロから再開できるようにする。
-- 着手して初めて依存や別タスクが必要と分かったら、task-add で新しいタスクを起こし、
-  このタスクの `dependencies` に追加して `status` を `blocked` にする。
+- If you get stuck or a design decision is needed, add the context to `## Notes` and stop.
+  This lets the next run resume with no conversational context.
+- If you discover only after starting that a dependency or another task is needed, create a new task with task-add, add it to this task’s `dependencies`, and set `status` to `blocked`.
 
-### 4. 完了させる
-全チェックボックスが `- [x]` になったら `status` を `done` に更新する。
-受け入れ条件を満たしていないのに done にはしない。テストがあれば通してから。
+### 4. Complete the task
+Once every checkbox is `- [x]`, update `status` to `done`.
+Do not mark the task done before the acceptance criteria are satisfied; run any available tests first.
 
-### 5. 検証して次へ
+### 5. Validate and move on
 ```bash
-python3 /workspace/SKILLS/taskmd/validate.py   # 整合性確認
-python3 /workspace/SKILLS/taskmd/next.py       # 次の候補
+python3 /workspace/SKILLS/taskmd/validate.py   # check consistency
+python3 /workspace/SKILLS/taskmd/next.py       # next candidate
 ```
 
-完了した id・title と、次の候補を一言で報告する。
+Report the completed id and title, along with the next candidate, in one sentence.
 
-## 状態の2層管理（重要）
+## Two-layer state management (important)
 
-- `status` フィールド = タスク全体の状態（pending / in_progress / blocked / done）。
-- 本文の `- [ ]` = 受け入れ条件のサブ項目。
-- 「全チェックが付く → status を done に上げる」という一方向の流れにすると、
-  チェックボックスと status がずれて混乱する事故を防げる。
+- The `status` field = the overall task state (pending / in_progress / blocked / done).
+- A body `- [ ]` = a sub-item of the acceptance criteria.
+- Keep the flow one-way — “all checks become marked → raise status to done” — to prevent the checkboxes and status from drifting out of sync and causing confusion.
 
-## やってはいけないこと
+## Do not
 
-- 進捗をファイルに書かずに会話だけで進める（次の起動で全部消える）。
-- 依存が未解決のまま着手する。
-- 受け入れ条件を満たさずに done にする。
+- Proceed only in conversation without writing progress to the file (it will all be lost on the next run).
+- Start with unresolved dependencies.
+- Mark a task done without satisfying its acceptance criteria.

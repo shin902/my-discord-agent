@@ -1,19 +1,19 @@
 ---
 name: agent-reach
-description: URL からコンテンツを取得して整形するスキル。YouTube, GitHub, Reddit, RSS, X/Twitter, 一般 Web ページに対応。これらのサービスのURLから情報を取得するときは必ず使うこと。
+description: Fetch and format content from URLs. Supports YouTube, GitHub, Reddit, RSS, X/Twitter, and general web pages. Always use it when retrieving information from one of these service URLs.
 ---
 
-## 使い方
+## Usage
 
-stdout に整形された Markdown が出力される。
+Formatted Markdown is written to stdout.
 
-### ファイル出力が必要ない場合は、リダイレクトを使用せずにそのまま実行すること
+### When no file output is needed, run it directly without redirection
 
 ```bash
 SKILLS/agent-reach/scripts/agent-reach.sh <URL>
 ```
 
-### ファイル保存が明確に必要な場合のみ、リダイレクトを使用する
+### Use redirection only when saving to a file is explicitly required
 
 ```bash
 SKILLS/agent-reach/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > video.md

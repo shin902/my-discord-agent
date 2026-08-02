@@ -1,22 +1,22 @@
 ---
 name: last30days
-description: "トピックについて過去30日間に人々が実際に語ったことを、Reddit・HackerNews・GitHub・YouTube など複数ソースから横断的に調査・集約するスキル。"
+description: "Research and aggregate what people have actually said about a topic during the last 30 days across multiple sources such as Reddit, HackerNews, GitHub, and YouTube."
 ---
 
-# last30days スキル
+# last30days skill
 
-任意のトピックについて、過去30日間のリアルな議論・反応・動向を複数プラットフォームから収集してまとめる。
+Collect and summarize real discussions, reactions, and trends about any topic from multiple platforms over the past 30 days.
 
-## 使い方
+## Usage
 
-ユーザーが「`/last30days <トピック>`」または「過去30日の〜を調べて」と言ったらこのスキルを起動する。
+Trigger this skill when the user says 「`/last30days <トピック>`」 or 「過去30日の〜を調べて」.
 
-## 調査手順
+## Research procedure
 
-### 1. HackerNews（APIキー不要）
+### 1. HackerNews (no API key required)
 
 ```bash
-# Algolia API で過去30日分を検索
+# Search the past 30 days with the Algolia API
 curl -sG "https://hn.algolia.com/api/v1/search" \
   --data-urlencode "query=TOPIC" \
   --data-urlencode "tags=story" \
@@ -31,16 +31,16 @@ for h in data.get('hits', []):
 "
 ```
 
-### 2. Reddit（クレデンシャルプロキシ経由）
+### 2. Reddit (via the credential proxy)
 
 ```bash
 bash /workspace/SKILLS/last30days/scripts/reddit-search.sh "TOPIC"
 ```
 
-### 3. GitHub（APIキー不要）
+### 3. GitHub (no API key required)
 
 ```bash
-# GitHub Issues/Discussions 検索
+# Search GitHub Issues/Discussions
 SINCE=$(date -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
 curl -s "https://api.github.com/search/issues?q=TOPIC+updated:>$SINCE&sort=reactions&per_page=5" \
   -H "Accept: application/vnd.github.v3+json" | python3 -c "
@@ -53,9 +53,9 @@ for i in data.get('items', []):
 ```
 
 
-## 集約と出力
+## Aggregation and output
 
-各ソースから収集したデータを以下の形式でまとめる：
+Summarize the data collected from each source in the following format. The headings and labels in this template are fixed output labels and must remain unchanged:
 
 ```
 ## 「TOPIC」過去30日の動向
@@ -75,7 +75,7 @@ for i in data.get('items', []):
 実際に役立つURLを3〜5件
 ```
 
-## 注意事項
+## Notes
 
-- Reddit は `credentials.json` の `reddit` プロバイダー設定が必要。未設定時はスキップされる
-- 結果が少ない場合は英語クエリも併用する
+- Reddit requires the `reddit` provider configuration in `credentials.json`; skip it when the configuration is missing.
+- If there are too few results, also use an English query.

@@ -1,40 +1,40 @@
 ---
 name: interest-profile
-description: "会話履歴からユーザーの興味プロファイルを生成・更新するスキル。「/interest-profile sync」「プロファイル更新」「興味プロファイル」「/interest-profile show」「興味を見せて」等でトリガーする。"
+description: "Generate and update a user interest profile from conversation history. Trigger on 「/interest-profile sync」, 「プロファイル更新」, 「興味プロファイル」, 「/interest-profile show」, or 「興味を見せて」."
 ---
 
-# 興味プロファイル生成スキル
+# Interest profile generation skill
 
-このグループの Discord セッションログ（`/sessions/{group}/{sessionId}.jsonl`）を分析し、ユーザーの興味プロファイルを `INTERESTS.md`（プロジェクトルート）に蓄積・更新する。
+Analyze this group's Discord session logs (`/sessions/{group}/{sessionId}.jsonl`) and accumulate or update the user's interest profile in `INTERESTS.md` (the project root).
 
-このスキルの責務は **「会話履歴から興味を抽出して蓄積する」ことだけ** に絞られている。
-普段どおり Discord でこのエージェントと会話を重ねるほど、その履歴からプロファイルが自動的に育っていく。記事を読んで質問する、調べ物をする、意見を述べる——そうした日常の会話がそのままシグナルになる。
+The sole responsibility of this skill is **to extract and accumulate interests from conversation history**.
+As the user continues ordinary conversations with this agent on Discord, the profile grows automatically from that history. Asking about an article, researching a topic, or expressing an opinion—these everyday conversations become signals directly.
 
-ログの場所・フォーマットは [session-logs](../session-logs/SKILL.md) スキルと同じ前提（`/sessions/{group}/{sessionId}.jsonl`、1行1メッセージ、ラップ無しの `{"role", "content", "timestamp"}`）に依拠している。
+The log location and format follow the same assumptions as the [session-logs](../session-logs/SKILL.md) skill (`/sessions/{group}/{sessionId}.jsonl`, one message per line, and unwrapped `{"role", "content", "timestamp"}`).
 
-このスキルには2つのモードがあります：
+This skill has two modes:
 
-- **syncモード**: 「sync」「更新」「プロファイル更新」等で実行 → Section 1〜5を実行
-- **showモード**: 「show」「見せて」「表示」等で実行 → Section 6を実行
+- **sync mode**: Run on triggers such as 「sync」「更新」「プロファイル更新」 → run Sections 1–5.
+- **show mode**: Run on triggers such as 「show」「見せて」「表示」 → run Section 6.
 
-データ保存先: `data/interests/`
-
----
-
-## 重要: 自律実行ルール
-
-cron や `/loop` からの自動実行時は以下を厳守する：
-- ユーザーへの確認・質問は一切行わない
-- 全ての処理を即座に自律的に実行する
-- エラー発生時はログに記録して処理を継続する
+Data directory: `data/interests/`
 
 ---
 
-## syncモード
+## Important: autonomous execution rules
 
-### Section 1: 会話ログからユーザーメッセージを差分抽出
+When run automatically by cron or `/loop`, follow these rules strictly:
+- Never ask the user for confirmation or questions.
+- Execute all processing autonomously and immediately.
+- If an error occurs, record it in the log and continue processing.
 
-Pythonスクリプトで会話ログの差分抽出を行う。
+---
+
+## sync mode
+
+### Section 1: Extract new user messages from conversation logs
+
+Use the Python script to extract the new portion of the conversation logs.
 
 ```bash
 python3 SKILLS/interest-profile/scripts/extract_interests.py \
@@ -43,17 +43,17 @@ python3 SKILLS/interest-profile/scripts/extract_interests.py \
   --max-messages 500
 ```
 
-**注意:**
-- `--logs-dir` は省略可。省略時はコンテナ内マウント先 `/sessions`（`/sessions/{group}/{sessionId}.jsonl`）を見る。
-- この段階では本ファイル `last-sync.json` は更新しない。`--state-out` で「進めるべき状態」を pending ファイル（`last-sync.json.pending`）に書き出すだけにとどめ、全処理が正常完了した後に Section 5 で原子的に昇格（commit）する。これによりトランザクション境界が保たれ、途中で失敗してもしおりは進まない。
+**Note:**
+- `--logs-dir` is optional. When omitted, inspect the container mount at `/sessions` (`/sessions/{group}/{sessionId}.jsonl`).
+- Do not update `last-sync.json` at this stage. Use `--state-out` only to write the "state to advance" to the pending file (`last-sync.json.pending`), then promote it atomically (commit) in Section 5 after all processing completes successfully. This preserves the transaction boundary, so the cursor does not advance if an intermediate step fails.
 
-スクリプトの出力（JSON配列）を受け取る。抽出メッセージが0件の場合は、新規シグナルなしとしてSection 5の状態更新のみ行い終了してよい。
+Consume the script's output (a JSON array). If zero messages are extracted, you may finish after performing only the Section 5 state update, since there are no new signals.
 
-### Section 2: 既存の蓄積データの読み込み（直近分のみ）
+### Section 2: Load existing accumulated data (recent entries only)
 
-`data/interests/interest-log.jsonl` から**直近90日分のシグナルだけ**を読み込む。全行は読まない（ログは無限に増えるため、全部読むとコンテキストが際限なく膨らむ。時間重み上、30日超の古いシグナルはほぼ効かないので直近分で十分）。
+Load **only the signals from the most recent 90 days** from `data/interests/interest-log.jsonl`. Do not read every line (the log grows without bound, and reading it all would expand the context indefinitely; because of time weighting, signals older than 30 days have little effect, so recent entries are sufficient).
 
-スクリプトに直近分だけを出力させ、その出力を読む：
+Have the script output only recent entries, then read that output:
 
 ```bash
 python3 SKILLS/interest-profile/scripts/extract_interests.py \
@@ -61,81 +61,81 @@ python3 SKILLS/interest-profile/scripts/extract_interests.py \
   --recent-days 90
 ```
 
-このコマンドは ts が直近90日以内の行だけを stdout に出す（ファイルが無ければ何も出さない）。これが過去の蓄積データとなり、今回の新規シグナルと合算してプロファイルを再構成する。生ログ自体は削除せず、全履歴がファイルに残り続ける（読み込む範囲だけを絞っている）。
+This command writes to stdout only rows whose `ts` is within the most recent 90 days (and writes nothing if the file does not exist). Treat this as the accumulated historical data and combine it with the new signals to rebuild the profile. Do not delete the raw log; the full history remains in the file, while only the loaded range is narrowed.
 
-### Section 3: 興味シグナルの分類
+### Section 3: Classify interest signals
 
-Section 1で抽出した新規ユーザーメッセージを分類する。
+Classify the new user messages extracted in Section 1.
 
-#### 3a. ノイズ判定
+#### 3a. Identify noise
 
-以下はノイズとして除外する（interest-log.jsonlに記録しない）：
-- 純粋な操作指示: 「最後に確認して」「チェックして」「コミットして」
-- ファイル操作: 「mkdir」「移動して」「削除して」
-- 設定変更: 「permissions」「bypass」「設定を変えて」
-- スキル起動のみ: `/email check` 等（追加のコメントなし）
-- 挨拶・短い返答: 「はい」「OK」「ありがとう」
-- cron合成メッセージ（`メールID: ` プレフィックス）: extract_interests.py が自動で除外するため、ここでも興味として扱わない
+Exclude the following as noise (do not record them in `interest-log.jsonl`):
+- Pure operational instructions: 「最後に確認して」「チェックして」「コミットして」
+- File operations: 「mkdir」「移動して」「削除して」
+- Configuration changes: 「permissions」「bypass」「設定を変えて」
+- Skill invocation alone: `/email check`, etc. (with no additional comment)
+- Greetings and short replies: 「はい」「OK」「ありがとう」
+- Cron-generated messages (the `メールID: ` prefix): `extract_interests.py` excludes these automatically, so do not treat them as interests here either.
 
-#### 3b. シグナル分類
+#### 3b. Classify signals
 
-ノイズでないメッセージを以下のカテゴリに分類する。`intensity` は「その1メッセージが示す興味の強さ」を表す：
+Classify non-noise messages into the categories below. `intensity` represents the strength of interest indicated by that single message:
 
-| category | 判定基準 | intensity |
+| category | Criteria | intensity |
 |----------|---------|-----------|
-| `question` | 「〜とは？」「教えて」「どういうこと？」等の質問 | 1-2 |
-| `deep-dive` | 同一セッション内で同トピックに3回以上質問 | 3 |
-| `creation-intent` | 「作りたい」「試したい」「書きたい」「やってみたい」等、能動的に手を動かす意図 | 3 |
-| `topic-exploration` | トピックについての意見表明、比較検討 | 1-2 |
-| `opinion` | 明確な好み・評価の表明 | 2 |
+| `question` | Questions such as 「〜とは？」「教えて」「どういうこと？」 | 1-2 |
+| `deep-dive` | Three or more questions about the same topic in one session | 3 |
+| `creation-intent` | An active intention to make or do something, such as 「作りたい」「試したい」「書きたい」「やってみたい」 | 3 |
+| `topic-exploration` | An opinion about or comparison of a topic | 1-2 |
+| `opinion` | An explicit statement of preference or evaluation | 2 |
 
-#### 3c. トピックとキーワードの付与
+#### 3c. Assign topics and keywords
 
-各シグナルに以下を付与する：
-- **topic**: 簡潔なトピック名（日本語、20文字以内）
-- **keywords**: マッチング用キーワード配列（英語小文字、3-8個）
-- **raw_excerpt**: 元メッセージの先頭200文字（スクリプトが渡す `content` フィールドは最大2000文字だが、記録するのは先頭200文字のみ）
+Attach the following to each signal:
+- **topic**: A concise topic name (in Japanese, no more than 20 characters).
+- **keywords**: An array of matching keywords (lowercase English, 3–8 items).
+- **raw_excerpt**: The first 200 characters of the original message (the `content` field supplied by the script is at most 2,000 characters, but record only its first 200).
 
-各シグナルのJSON形式（interest-log.jsonl に1行1JSONで記録する）：
+JSON format for each signal (record one JSON object per line in `interest-log.jsonl`):
 
 ```json
 {"ts": "<ISO8601>", "session_id": "<セッションID>", "source": "conversation", "category": "<カテゴリ>", "intensity": <1-3>, "topic": "<トピック名>", "keywords": ["..."], "raw_excerpt": "<先頭200文字>"}
 ```
 
-### Section 4: INTERESTS.md の生成
+### Section 4: Generate INTERESTS.md
 
-Section 2で読み込んだ直近90日分のシグナル + 今回の新規シグナルから `INTERESTS.md` を生成する。
+Generate `INTERESTS.md` from the recent 90-day signals loaded in Section 2 plus the new signals from this run.
 
-#### 4a. 興味スコアの算出
+#### 4a. Calculate interest scores
 
-各トピックの「関心の強さ」を次の式で算出し、これを「今の関心」の並び順の根拠とする：
+Calculate each topic's "interest strength" with the formula below and use it to order the "current interests":
 
 ```
-トピックのスコア = Σ (intensity × 時間重み)   ※そのトピックに属する全シグナルを合計
+Topic score = Σ (intensity × time weight)   [sum all signals belonging to the topic]
 
-時間重み:
-  - 直近14日 : 1.0
-  - 15〜30日 : 0.5
-  - 30日超   : 0.25
+Time weights:
+  - Last 14 days : 1.0
+  - 15–30 days : 0.5
+  - More than 30 days old : 0.25
 ```
 
-この合計式により、次の2つが自然に反映される：
-- **直近の関心ほど重い**: 時間重みで最近のシグナルが優先される。
-- **質問・言及が多いほど強い**: 同じトピックに繰り返し触れるたびシグナルが増え、スコアが伸びる。さらに同一セッションで3回以上掘り下げたものは `deep-dive`（intensity 3）に昇格し、一気に重くなる。
+This sum naturally reflects two factors:
+- **More recent interest carries more weight**: Time weighting prioritizes recent signals.
+- **More questions and mentions indicate stronger interest**: Each repeated touch on the same topic adds a signal and raises its score. A topic explored three or more times in one session is also promoted to `deep-dive` (`intensity` 3), giving it a substantial boost.
 
-スコア上位を「今の関心」、時間幅をまたいで継続的にスコアが付いているものを「継続的な関心」として扱う。
+Treat the highest-scoring topics as "current interests" and topics with scores sustained across time windows as "ongoing interests".
 
-#### 4b. 文章スタイルのガイドライン
+#### 4b. Writing style guidelines
 
-INTERESTS.md は**自然言語の文章**で書く。テーブル形式は使わない。
+Write INTERESTS.md in **natural-language prose**. Do not use a table.
 
-以下の原則に従う：
-- **人物像が伝わる文章にする**: この人がどういう興味を持ち、何を目指しているかが、初めて読む人にも伝わるように。
-- **具体的に書く**: 「設計に関心がある」ではなく「Anthropicのハーネス設計記事を精読し、木構造探索の挙動まで掘り下げて質問していた」のように、行動の証拠を添える。
-- **コンパクトに**: 全体で80行以内。
-- **意思決定や深掘りに役立つ情報を優先**: 単なる操作への興味（権限設定、cron設定等）は省略してよい。
+Follow these principles:
+- **Write a profile that conveys the person's character**: Make the person's interests and goals clear even to a first-time reader.
+- **Be specific**: Include evidence of behavior—for example, write 「Anthropicのハーネス設計記事を精読し、木構造探索の挙動まで掘り下げて質問していた」 rather than just 「設計に関心がある」.
+- **Keep it compact**: No more than 80 lines in total.
+- **Prioritize information useful for decisions and deeper exploration**: You may omit mere operational interests (such as permission or cron configuration).
 
-#### 4c. INTERESTS.md テンプレート
+#### 4c. INTERESTS.md template
 
 ```markdown
 ---
@@ -170,14 +170,14 @@ signals_total: {総シグナル数}
 それぞれ1-2文で、なぜこの人に刺さりそうかの理由を添える。}
 ```
 
-INTERESTS.md は `INTERESTS.md`（プロジェクトルート）に保存する。
+Save INTERESTS.md to `INTERESTS.md` (the project root).
 
-### Section 5: 状態の更新
+### Section 5: Update state
 
-全処理が正常完了した後、以下を**この順序で**実行する。**順序を守ること**（逆順だと部分コミットになり、しおりだけ進んで新規シグナルが未記録になる）：
+After all processing completes successfully, perform the following **in this order**. **Keep this order** (reversing it creates a partial commit in which the cursor advances while new signals remain unrecorded):
 
-1. 新規シグナルを `data/interests/interest-log.jsonl` に追記（1行1JSON）
-2. pending ファイル（`last-sync.json.pending`）を本ファイルへ昇格（commit）する：
+1. Append the new signals to `data/interests/interest-log.jsonl` (one JSON object per line).
+2. Promote the pending file (`last-sync.json.pending`) to the main file (commit):
 
 ```bash
 python3 SKILLS/interest-profile/scripts/extract_interests.py \
@@ -185,11 +185,11 @@ python3 SKILLS/interest-profile/scripts/extract_interests.py \
   --commit "data/interests/last-sync.json.pending"
 ```
 
-- このコマンドは pending を読み、`os.replace` で `last-sync.json` を原子的に差し替えた後、pending ファイルを削除する。
-- commit 成功後は `.pending` ファイルは存在しない（昇格済み）。次回 sync で `.pending` が残っていればそれは前回の中断状態の残骸であり、Section 1 の `--state-out` が無条件で上書きするため放置してよい。
-- **重複についての注意**: この順序は「しおりだけ進んで新規シグナルが失われる」取りこぼしを防ぐ代わりに、手順1と2の間で中断すると次回 sync が同じメッセージを再抽出し、同じシグナルが interest-log.jsonl に二重記録されうる（取りこぼしより重複を許容する設計）。重複はスコアに二重計上されるため、追記前に `ts`＋`raw_excerpt` が既存行と一致するシグナルはスキップすること。
+- This command reads the pending file, atomically replaces `last-sync.json` with `os.replace`, and then deletes the pending file.
+- After a successful commit, no `.pending` file exists (it has been promoted). If `.pending` remains during the next sync, it is residue from the previous interruption; Section 1's `--state-out` unconditionally overwrites it, so it may be left alone.
+- **Duplicate warning**: This order prevents the cursor from advancing while new signals are lost, but if execution is interrupted between steps 1 and 2, the next sync may extract the same messages again and record duplicate signals in `interest-log.jsonl` (the design accepts duplicates rather than dropped signals). Duplicates are counted twice in scores, so before appending, skip any signal whose `ts` + `raw_excerpt` matches an existing row.
 
-3. 完了報告：
+3. Report completion:
 ```
 興味プロファイルを更新しました。
 - 新規メッセージ: {N}件分析
@@ -199,10 +199,10 @@ python3 SKILLS/interest-profile/scripts/extract_interests.py \
 
 ---
 
-## showモード
+## show mode
 
-### Section 6: プロファイル表示
+### Section 6: Display the profile
 
-`INTERESTS.md`（プロジェクトルート）を読み込んで表示する。
+Read and display `INTERESTS.md` (the project root).
 
-ファイルが存在しない場合は「まだプロファイルが生成されていません。`/interest-profile sync` を実行してください」と案内する。
+If the file does not exist, tell the user 「まだプロファイルが生成されていません。`/interest-profile sync` を実行してください」.
