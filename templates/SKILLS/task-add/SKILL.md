@@ -1,41 +1,39 @@
 ---
 name: task-add
-description: "新しいタスクを taskmd 形式で /workspace/tasks/ に作成する。ユーザーが「タスクを追加して」「これをタスクにして」「TODOに入れて」と言ったとき、または会話の中で後でやるべき作業が出てきたときに使う。プロジェクトの文脈から目的・受け入れ条件・優先度・依存を埋める。"
+description: "Create a new task in taskmd format under /workspace/tasks/. Use this when the user says 「タスクを追加して」, 「これをタスクにして」, or 「TODOに入れて」, or when conversation reveals work to do later. Fill in purpose, acceptance criteria, priority, and dependencies from project context."
 ---
 
 # task-add
 
-新しいタスクを taskmd 形式の Markdown ファイルとして作成する。
-フォーマットの詳細は taskmd スキルの `spec.md` を参照（有効な場合）。
+Create a new task as a Markdown file in taskmd format.
+See the taskmd skill's `spec.md` for format details (when enabled).
 
-依頼内容: $ARGUMENTS$
+Request: $ARGUMENTS$
 
-## 手順
+## Procedure
 
-### 1. 既存タスクを確認して id を決める
-`/workspace/tasks/` を `glob` して既存ファイルを見る。最大の id +1 をゼロ埋め3桁で
-採番する（最初のタスクなら `001`）。タスクが無ければディレクトリごと作る。
+### 1. Inspect existing tasks and determine the id
+Use `glob` on `/workspace/tasks/` to inspect existing files. Assign the maximum id + 1,
+zero-padded to three digits (use `001` for the first task). If there are no tasks, create the directory as well.
 
 ```bash
-python3 /workspace/SKILLS/taskmd/next.py --all   # 既存の全体像（taskmd が有効なら）
+python3 /workspace/SKILLS/taskmd/next.py --all   # Overview of all existing tasks (if taskmd is enabled)
 ```
 
-### 2. 内容を組み立てる
-依頼とプロジェクトの文脈（`AGENTS.md`・関連コード）から以下を埋める。曖昧な点は
-勝手に決めつけず、重要なものだけユーザーに1つ確認する。
+### 2. Assemble the content
+Fill in the following from the request and project context (`AGENTS.md` and related code). Do not make assumptions about ambiguous points; ask the user one question only when the ambiguity is important.
 
-- **title**: 命令形で簡潔に
-- **priority**: high / medium / low（不明なら medium）
-- **effort**: small / medium / large（任意）
-- **type**: feature / bug / chore / docs / refactor（任意）
-- **dependencies**: 先に終わっているべき既存タスクの id（あれば）
-- **files**: 主に触るファイルパス（分かれば。並列作業の衝突検出に使う）
-- **Objective**: 何を・なぜやるか 1〜3文
-- **Acceptance Criteria**: 「何をもって完了か」をチェックボックスで列挙
+- **title**: concise and imperative
+- **priority**: high / medium / low (use medium if unknown)
+- **effort**: small / medium / large (optional)
+- **type**: feature / bug / chore / docs / refactor (optional)
+- **dependencies**: ids of existing tasks that must be completed first (if any)
+- **files**: main file paths to touch, if known (used to detect conflicts in parallel work)
+- **Objective**: what to do and why, in 1–3 sentences
+- **Acceptance Criteria**: list checkboxes defining what counts as complete
 
-### 3. ファイルを書く
-`/workspace/tasks/{id}-{slug}.md` に `write` で作成する。`slug` は title を
-小文字ハイフン化したもの。
+### 3. Write the file
+Create `/workspace/tasks/{id}-{slug}.md` with `write`. Make `slug` the title converted to lowercase hyphenated form.
 
 ```markdown
 ---
@@ -63,17 +61,16 @@ APIレイヤーに JWT 認証を実装する。
 ## Notes
 ```
 
-`created` の日付は `date +%Y-%m-%d` で取得する。
+Obtain the `created` date with `date +%Y-%m-%d`.
 
-### 4. 検証して報告
-作成後に検証し、作った id・title・優先度を一言で報告する。
+### 4. Validate and report
+After creating the file, validate it and briefly report the created id, title, and priority.
 
 ```bash
 python3 /workspace/SKILLS/taskmd/validate.py
 ```
 
-## 注意
+## Notes
 
-- 大きすぎる依頼は、1つのタスクに押し込めず複数タスクに分割し、`dependencies` で
-  順序を表現する。
-- 受け入れ条件のないタスクは作らない。最低1つは書く。
+- If a request is too large, split it into multiple tasks instead of forcing it into one, and express their order with `dependencies`.
+- Never create a task without acceptance criteria; include at least one.

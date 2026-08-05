@@ -1,39 +1,39 @@
 ---
 name: "wiki-search-fts"
-description: "LLMが管理するwikiのページ全体を検索する。ingest時（あるエンティティについて新規作成するか既存ページを編集するか判断する前に、すでにそのエンティティに言及しているページを探すため）、query時（関連ページを特定するため）、lint時（あるコンセプトに言及している全ページを特定し相互参照漏れをチェックするため）に使用する。"
+description: "Search the full contents of an LLM-managed wiki. Use this during ingest (before deciding whether to create or edit an entity page, to find pages that already mention it), query (to identify relevant pages), or lint (to find every page mentioning a concept and check missing cross-references)."
 ---
 
 # wiki-search-fts
 
-`wiki-search` の自前TFスコアリングでは追いつかなくなった大規模wiki向けの全文検索。SQLite標準搭載の **FTS5**（全文検索用VIRTUAL TABLE機能）を使い、BM25ランキングをSQLite組み込みの `bm25()` 関数で計算する。外部パッケージは一切使わず、Python標準ライブラリの `sqlite3` のみで動く（`node-llama-cpp` や `sqlite-vec` のようなネイティブ依存は不要）。
+Full-text search for large wikis where `wiki-search`'s custom TF scoring is no longer sufficient. It uses SQLite's built-in **FTS5** (the VIRTUAL TABLE feature for full-text search) and calculates BM25 rankings with SQLite's built-in `bm25()` function. It uses no external packages and runs with only Python's standard-library `sqlite3` module (native dependencies such as `node-llama-cpp` and `sqlite-vec` are unnecessary).
 
-`wiki-search` と同時に有効化しないこと。両方のdescriptionは互いを区別しない共通の文言になっているため、両方を `SKILLS/` 配下に置くとどちらが選ばれるか不定になる。このスキルを有効化する際は `wiki-search` を `SKILLS/` から削除する。
+Do not enable this at the same time as `wiki-search`. Both descriptions use the same wording without distinguishing the two, so placing both under `SKILLS/` makes skill selection nondeterministic. When enabling this skill, remove `wiki-search` from `SKILLS/`.
 
-## 使い方
+## Usage
 
 ```
-python3 SKILLS/wiki-search-fts/scripts/search.py "<query>" [WIKI_DIR]      # WIKI_DIRを省略した場合は ./wiki が使われる
+python3 SKILLS/wiki-search-fts/scripts/search.py "<query>" [WIKI_DIR]      # ./wiki is used when WIKI_DIR is omitted
 ```
 
-初回実行時に `WIKI_DIR` 直下へインデックスDBファイル `.wiki-search-fts.sqlite3` を作成する。以降の実行ではこのDBファイルを再利用し、各 `.md` ファイルの mtime とサイズから変更を検知して、変更があったファイルのみを再インデックスする（毎回フルスキャンしない）。削除されたファイルもインデックスから自動的に取り除かれる。
+On the first run, create the index database file `.wiki-search-fts.sqlite3` directly under `WIKI_DIR`. Later runs reuse this database, detect changes from each `.md` file's mtime and size, and re-index only files that changed (there is no full scan on every run). Deleted files are also automatically removed from the index.
 
-検索結果はFTS5の `MATCH` 演算子とBM25スコア（`bm25()`、値が小さい=良いスコアなのでスコアを反転して表示）でランキングし、上位ページをファイルパスとマッチ度の高い行（抜粋）とともに表示する。
+Results are ranked with FTS5's `MATCH` operator and BM25 scores (`bm25()` returns smaller values for better matches, so the displayed score is sign-inverted), then the top pages are shown with their file paths and the lines with the strongest matches (excerpts).
 
-## 使用するタイミング
+## When to use it
 
-- **Ingest（取り込み）** — あるエンティティについて新規作成するか既存ページを編集するか判断する前に、その名前を検索し、既存のどのページがすでに言及しているかを確認する。
-- **Query（検索）** — インデックスを見ても答えが明らかでない場合に候補ページを探す。その後、上位の検索結果から `[[wikilinks]]` を読みながらたどっていく。
-- **Lint（検証）** — あるコンセプトに言及しているすべてのページを特定し、相互参照の欠落をチェックする。
-- **wiki-searchから移行する場合** — `wiki-search` のSKILL.mdが「文書が多くなったら移行を検討するよう伝えてください」と案内してきた場合、ユーザーに本スキルへの切り替えを提案し、合意が得られたらこちらを使う。
+- **Ingest** — Before deciding whether to create a new page or edit an existing page for an entity, search for its name and check which existing pages already mention it.
+- **Query** — Find candidate pages when the answer is not obvious from the index. Then follow `[[wikilinks]]` from the top search results.
+- **Lint** — Identify every page that mentions a concept and check for missing cross-references.
+- **Migrating from wiki-search** — If `wiki-search`'s SKILL.md advises that migration should be considered as the number of documents grows, propose switching to this skill and use it once the user agrees.
 
-## FTS5特有の仕組み
+## FTS5-specific behavior
 
-- **VIRTUAL TABLE**: `path` / `title` / `body` の3カラムを持つFTS5仮想テーブルとしてページ本文をインデックスする（`raw_body` は抜粋表示専用の非インデックス列）。SQLが直接全文検索のインデックス構造を管理してくれるため、自前のTF計算ロジックが不要になる。
-- **MATCH演算子**: `WHERE pages MATCH ?` という形でクエリを渡す。クエリ語は1語ずつ二重引用符で囲んだフレーズトークンにしてOR結合しており、`*` や `^` などFTS5の予約文字がそのまま構文として解釈されることを防いでいる。SQL文自体は常にパラメータバインディング（`?`）で渡しており、SQLインジェクションの余地はない。
-- **BM25のrank**: SQLiteの `bm25(pages)` 組み込み関数でBM25スコアを計算する。値は小さい（より負）ほど関連度が高いという仕様なので、表示時には符号を反転している。
-- **日本語トークナイズの注意点**: `tokenize = 'porter unicode61'` を使っているが、`unicode61` は空白・記号で分割する単純なトークナイザで、日本語のような分かち書きしない言語では文全体が1トークンになってしまい検索が機能しない。これを避けるため、インデックス登録前とクエリ実行前の両方で、CJK文字（ひらがな・カタカナ・漢字）の連続部分を文字バイグラム（2文字ずつの重複ウィンドウ、例: 「東京都」→「東京」「京都」）に展開する前処理を `search.py` 内で行っている。これは形態素解析ではないため、英語ほどの精度は出ない点を理解しておくこと。
-- **語順依存の取りこぼし**: スペースなしの複合語（例:「東京情報」）はバイグラム展開後も1つのフレーズトークンとしてOR結合の一単位になるため、文書内で「東京」と「情報」が隣接していないと一致しない（離れて出現するケースは拾えない）。逆にスペースで区切って複数語にすると単語単位のOR検索になり、どちらか一方だけ含むページもヒットするようになる（AND条件はない）。複合語をどう書くかでこの精度/再現率のトレードオフが変わる点を理解しておくこと。
+- **VIRTUAL TABLE**: Index page content as an FTS5 virtual table with three columns, `path`, `title`, and `body` (`raw_body` is a non-indexed column used only for displaying excerpts). SQL manages the full-text index structure directly, so custom TF-calculation logic is unnecessary.
+- **MATCH operator**: Pass the query as `WHERE pages MATCH ?`. Each query term is wrapped in double quotes as a phrase token and OR-joined, preventing FTS5 reserved characters such as `*` and `^` from being interpreted as syntax. The SQL statement itself is always passed with parameter binding (`?`), leaving no opportunity for SQL injection.
+- **BM25 rank**: Calculate the BM25 score with SQLite's built-in `bm25(pages)` function. By design, smaller (more negative) values indicate higher relevance, so the sign is reversed for display.
+- **Japanese tokenization caveat**: Although the tokenizer is `tokenize = 'porter unicode61'`, `unicode61` is a simple tokenizer that splits on whitespace and punctuation. In languages without spaces, such as Japanese, an entire sentence would become one token and searches would fail. To avoid this, `search.py` preprocesses both indexing and query input by expanding runs of CJK characters (hiragana, katakana, and kanji) into character bigrams (overlapping two-character windows; for example, 「東京都」→「東京」「京都」). This is not morphological analysis, so accuracy will be lower than for English.
+- **Misses caused by word order**: A compound without spaces (for example, 「東京情報」) remains one phrase token after bigram expansion and one OR-search unit, so it matches only when 「東京」 and 「情報」 are adjacent in the document (separate occurrences are missed). Conversely, separating multiple terms with spaces produces a word-level OR search, so pages containing either term will also match (there is no AND condition). Be aware that how a compound is written changes the precision/recall trade-off.
 
-## さらに規模が大きくなった場合
+## If the wiki grows further
 
-FTS5のBM25はキーワード一致ベースであり、意味的な類似性（言い換え・同義語）までは捉えられない。ベクトル検索やLLMによる再ランキングが必要になってきたと感じたら、無理にこのスキルやAlpineコンテナ上でネイティブ依存の重いツールを動かそうとせず、**[qmd](https://github.com/tobi/qmd)** のような外部ツールの導入をユーザーに相談すること。qmdはハイブリッドBM25＋ベクトル検索とLLM再ランキングをオンデバイスで行うローカルmarkdown検索エンジンだが、`sqlite-vec`（glibc専用プリビルドバイナリでmusl/Alpine非対応）と `node-llama-cpp`（重量級ネイティブビルド）に依存するため、このリポジトリのサンドボックスコンテナ（`node:22-alpine`）には簡単に追加できない。導入する場合はホスト側で動かす、別途glibc環境を用意するなどの構成変更が必要になる旨もあわせて伝えること。
+FTS5 BM25 is based on keyword matches and cannot capture semantic similarity (paraphrases or synonyms). If vector search or LLM re-ranking becomes necessary, consult the user about introducing an external tool such as **[qmd](https://github.com/tobi/qmd)** instead of forcing a heavy native dependency onto this skill or an Alpine container. qmd is a local Markdown search engine that performs hybrid BM25 + vector search and LLM re-ranking on-device, but it depends on `sqlite-vec` (a glibc-only prebuilt binary that does not support musl/Alpine) and `node-llama-cpp` (a heavyweight native build), so it cannot be added easily to this repository's sandbox container (`node:22-alpine`). Also explain that using it requires a configuration change such as running it on the host or preparing a separate glibc environment.

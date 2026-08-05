@@ -1,28 +1,28 @@
 ---
 name: "wiki-search"
-description: "LLMが管理するwikiのページ全体を検索する。ingest時（あるエンティティについて新規作成するか既存ページを編集するか判断する前に、すでにそのエンティティに言及しているページを探すため）、query時（関連ページを特定するため）、lint時（あるコンセプトに言及している全ページを特定し相互参照漏れをチェックするため）に使用する。wikiが数百ページを超えたらwiki-search-ftsへの移行をユーザーに提案すること。"
+description: "Search the full contents of an LLM-managed wiki. Use this during ingest (before deciding whether to create or edit an entity page, to find pages that already mention it), query (to identify relevant pages), or lint (to find every page mentioning a concept and check missing cross-references). When the wiki exceeds a few hundred pages, suggest migrating to wiki-search-fts."
 ---
 
 # wiki-search
 
-`index.md` を読むだけでは不十分なほどwikiが大きくなった場合のための、軽量なフルテキスト検索。wikiのmarkdownファイルを対象とする。外部依存なし — 純粋なPythonでファイルを処理する。
+Lightweight full-text search for cases where the wiki has grown too large for reading only `index.md`. It searches the wiki’s Markdown files. There are no external dependencies — files are processed with pure Python.
 
-## 使い方
+## Usage
 
 ```
-python3 SKILLS/wiki-search/scripts/search.py "<query>" [WIKI_DIR]      # WIKI_DIRを省略した場合は ./wiki が使われる
+python3 SKILLS/wiki-search/scripts/search.py "<query>" [WIKI_DIR]      # If WIKI_DIR is omitted, ./wiki is used
 ```
 
-空白/単語トークンに対する単純なTFスコア（大小文字を区別しない）でページをランク付けし、タイトル/フロントマターや見出しにマッチした場合にはボーナスを加算する。各ページについて最もマッチ度の高い行とともに、上位のページを表示する。複数語のクエリはOR検索となり、クエリ中の何語がマッチしたかでスコアが決まる。
+Rank pages with a simple TF score over whitespace/word tokens (case-insensitive), adding a bonus when a match occurs in the title/frontmatter or a heading. Display the top pages together with each page’s highest-scoring matching line. Multi-word queries use OR search, and the score reflects how many query terms matched.
 
-## 使用するタイミング
+## When to use it
 
-- **Ingest（取り込み）** — あるエンティティについて新規作成するか既存ページを編集するか判断する前に、その名前を検索し、既存のどのページがすでに言及しているかを確認する。
-- **Query（検索）** — インデックスを見ても答えが明らかでない場合に候補ページを探す。その後、上位の検索結果から `[[wikilinks]]` を読みながらたどっていく。
-- **Lint（検証）** — あるコンセプトに言及しているすべてのページを特定し、相互参照の欠落をチェックする。
+- **Ingest** — Before deciding whether to create a new page or edit an existing page for an entity, search for its name and check which existing pages already mention it.
+- **Query** — Find candidate pages when the answer is not clear from the index. Then follow `[[wikilinks]]` from the top search results.
+- **Lint** — Identify every page that mentions a concept and check for missing cross-references.
 
-## 規模が大きくなった場合
+## When the wiki grows larger
 
-このヘルパーは意図的に単純な実装になっている（キーワードTF、ステミングなし、ベクトルなし）。数百ページ程度までは問題ない。wikiがこの規模を超えてきたら、SQLiteのFTS5（BM25ランキング内蔵の全文検索）を使う **`wiki-search-fts`** スキルへの移行をユーザーに提案すること。このスキルはユーザーが明示的に有効化する形式のため、エージェントが自動で切り替えることはできない — 「wikiが大きくなってきたので、より高速・高精度な検索のために `wiki-search-fts` への移行を検討してみてください」のように伝える。移行が決まった場合は、今後のセッションがどちらの検索ツールを使うべきかを示すため、ルートの `AGENTS.md` を更新すること。さらにベクトル検索やLLM再ランキングまで必要になった場合は、**[qmd](https://github.com/tobi/qmd)** のような外部ツールの導入をユーザーと相談する（ただしqmdは `sqlite-vec`/`node-llama-cpp` というネイティブ依存を持ち、Alpine/muslベースの環境では動かしにくい点に注意）。
+This helper is intentionally simple (keyword TF, no stemming, no vectors). It works well up to a few hundred pages. Once the wiki grows beyond that, suggest that the user migrate to **`wiki-search-fts`**, which uses SQLite FTS5 (full-text search with built-in BM25 ranking). The user must explicitly enable this skill, so the agent cannot switch automatically — say something like 「wikiが大きくなってきたので、より高速・高精度な検索のために `wiki-search-fts` への移行を検討してみてください」. If migration is approved, update the root `AGENTS.md` so future sessions know which search tool to use. If vector search or LLM reranking becomes necessary as well, discuss introducing an external tool such as **[qmd](https://github.com/tobi/qmd)** with the user (note that qmd has native `sqlite-vec`/`node-llama-cpp` dependencies and can be difficult to run in an Alpine/musl-based environment).
 
-`wiki-search` と `wiki-search-fts` を同時に有効化しないこと。両方のdescriptionは互いを区別しない共通の文言になっているため、両方を `SKILLS/` 配下に置くとどちらが選ばれるか不定になる。移行が完了したら、`wiki-search` を `SKILLS/` から削除する。
+Do not enable `wiki-search` and `wiki-search-fts` at the same time. Their descriptions use the same wording without distinguishing the two, so placing both under `SKILLS/` makes the selected skill nondeterministic. Once migration is complete, remove `wiki-search` from `SKILLS/`.

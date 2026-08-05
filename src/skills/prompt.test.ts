@@ -10,7 +10,7 @@ describe("formatSkillsForPrompt", () => {
     const skills = [
       {
         name: "code-review",
-        description: "コードレビューを実行する",
+        description: "Run code review",
         location: "/workspace/skills/code-review/SKILL.md",
       },
     ];
@@ -18,13 +18,13 @@ describe("formatSkillsForPrompt", () => {
     expect(result).toContain("<available_skills>");
     expect(result).toContain("</available_skills>");
     expect(result).toContain("<name>code-review</name>");
-    expect(result).toContain(
-      "<description>コードレビューを実行する</description>",
-    );
+    expect(result).toContain("<description>Run code review</description>");
     expect(result).toContain(
       "<location>/workspace/skills/code-review/SKILL.md</location>",
     );
-    expect(result).toContain("SKILL.md を読み込み");
+    expect(result).toContain(
+      "read the SKILL.md at its location before answering",
+    );
   });
 
   it("複数のスキルを含める", () => {

@@ -1,66 +1,60 @@
 ---
 name: taskmd
-description: "コーディングエージェント向けの Markdown ベースのタスク管理。タスクは /workspace/tasks/ に1ファイル1タスクで永続化され、frontmatter に構造（status・priority・依存）、本文に文脈（目的・受け入れ条件）を持つ。ユーザーが「タスク一覧」「次に何をやる」「タスクの状況」「やることを整理して」と言ったとき、または複数ステップの作業を継続管理したいときに使う。タスクの新規作成は task-add、個別タスクの実行は task-do スキルを併用する。"
+description: "Markdown-based task management for coding agents. Tasks persist as one file per task under /workspace/tasks/, with structure (status, priority, dependencies) in frontmatter and context (purpose, acceptance criteria) in the body. Use this when the user asks 「タスク一覧」, 「次に何をやる」, 「タスクの状況」, or 「やることを整理して」, or wants to manage multi-step work over time. Combine task-add for creating tasks and task-do for executing individual tasks."
 ---
 
 # taskmd
 
-[taskmd](https://github.com/driangle/taskmd) 互換の軽量タスク管理。タスクは
-`/workspace/tasks/` に Markdown ファイルとして永続化され、コンテナを跨いで残る。
-MCP もプラグインも使わず、ファイルと Python ヘルパーだけで完結する。
+[taskmd](https://github.com/driangle/taskmd)-compatible lightweight task management. Tasks are
+persisted as Markdown files under `/workspace/tasks/` and survive across containers.
+It uses no MCP or plugin; everything is handled with files and Python helpers.
 
-フォーマットの詳細は同ディレクトリの `spec.md` を `read` で参照すること。
+For format details, use `read` to consult `spec.md` in the same directory.
 
-## いつ何をするか
+## When to do what
 
-### 状況を把握する
-作業を始める前に、まず全体像を見る。
+### Understand the current state
+Before starting work, first inspect the overall picture.
 
 ```bash
 python3 /workspace/SKILLS/taskmd/next.py --all
 ```
 
-進行中・未着手・依存待ち・完了がステータス別に並ぶ。
+This lists in-progress, not-started, dependency-blocked, and completed tasks by status.
 
-### 次のタスクを選ぶ
-「次は何をやるべき？」と聞かれたら、推奨を出す。
+### Choose the next task
+When asked 「次は何をやるべき？」, provide a recommendation.
 
 ```bash
 python3 /workspace/SKILLS/taskmd/next.py
 ```
 
-`pending` かつ依存がすべて `done` のタスクを、優先度→id 順に並べる。進行中タスクが
-あれば先に提示する。この出力をそのまま鵜呑みにせず、ユーザーの文脈（直近の会話・
-緊急度）と突き合わせて最終判断する — 決定的な並びは出発点であって絶対ではない。
+It orders tasks that are `pending` and whose dependencies are all `done` by priority, then id. If any task is in progress, present it first. Do not take this output at face value; reconcile it with the user’s context (the recent conversation and urgency) to make the final decision — the deterministic ordering is a starting point, not an absolute rule.
 
-### タスクを作る
-新規タスクは `task-add` スキルの手順に従う（同スキルが有効なら）。手動なら
-`spec.md` のスキーマどおりに `/workspace/tasks/{id}-{slug}.md` を作る。
+### Create a task
+For a new task, follow the `task-add` skill procedure when that skill is enabled. Otherwise, create `/workspace/tasks/{id}-{slug}.md` manually according to the schema in `spec.md`.
 
-### タスクを実行する
-個別タスクの着手→完了は `task-do` スキルの手順に従う。要点は2層管理:
-`status` フィールドがタスク全体の状態、本文の `- [ ]` は受け入れ条件のサブ項目。
+### Execute a task
+For starting and completing an individual task, follow the `task-do` skill procedure. The key is two-layer management:
+the `status` field is the overall task state, and body `- [ ]` items are acceptance-criteria sub-items.
 
-### 整合性を確認する
-タスクを編集したら検証する。frontmatter の必須欠落・不正値・存在しない依存先・
-循環依存・id 重複を検出する。
+### Check consistency
+Validate after editing tasks. Detect missing required frontmatter, invalid values, nonexistent dependencies,
+cyclic dependencies, and duplicate ids.
 
 ```bash
 python3 /workspace/SKILLS/taskmd/validate.py
 ```
 
-## 原則
+## Principles
 
-- **ファイルが正。** タスクの状態は会話履歴ではなくファイルに書く。エージェントは
-  使い捨てなので、次の起動で読めるのはファイルだけ。
-- **小さく割る。** 1タスクは1まとまりの作業。大きすぎるものは依存付きで分割する。
-- **受け入れ条件を必ず書く。** 「何をもって完了か」が無いタスクは着手しない。
-- **依存は id で繋ぐ。** `dependencies: ["002"]` のように書けば、`next.py` が
-  自動で着手可否を判定する。
-- **タスクはグループ単位。** `/workspace` はチャンネルごとに分離されているため、
-  タスクボードもグループごとに独立する。
+- **The file is authoritative.** Write task state to the file, not the conversation history. Agents are ephemeral, so the file is all the next run can read.
+- **Keep tasks small.** One task should be one cohesive unit of work. Split oversized work with dependencies.
+- **Always write acceptance criteria.** Do not start a task that has no definition of done.
+- **Connect dependencies by id.** For example, `dependencies: ["002"]` lets `next.py` determine automatically whether a task can start.
+- **Tasks are grouped.** Because `/workspace` is separated by channel, each group has an independent task board.
 
-## 制約
+## Constraints
 
-- Python 3 が必要（サンドボックスに同梱済み）。ヘルパーは標準ライブラリのみで動く。
-- bash は約30秒でタイムアウトするが、ローカルファイル相手の処理なので問題にならない。
+- Python 3 is required (it is included in the sandbox). The helpers use only the standard library.
+- bash times out after about 30 seconds, but this is fine because the operations target local files.

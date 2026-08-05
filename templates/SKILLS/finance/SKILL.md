@@ -1,42 +1,42 @@
 ---
 name: "finance"
-description: "収支・サブスクリプションの記録・照会・管理を行う。「〇〇円使った」「収入があった」「今月いくら使った？」「サブスクを登録して」「サブスク一覧」「来週更新があるサブスクは？」のように言われたとき使う。DBは /workspace/finance.db（未作成なら finance-setup を先に実行）。"
+description: "Record, query, and manage expenses, income, and subscriptions. Use this when the user says 「〇〇円使った」, 「収入があった」, 「今月いくら使った？」, 「サブスクを登録して」, 「サブスク一覧」, or 「来週更新があるサブスクは？」. The database is /workspace/finance.db; if it does not exist, run finance-setup first."
 ---
 
 # finance
 
-`/workspace/finance.db` のSQLiteを直接操作して収支・サブスクを管理する。
+Manage income, expenses, and subscriptions by operating the SQLite database at `/workspace/finance.db` directly.
 
-DBパス: `/workspace/finance.db`
+Database path: `/workspace/finance.db`
 
-## 操作リファレンス
+## Operation reference
 
-### 収支を記録する
+### Record income and expenses
 
 ```bash
-# 支出（負の値）
+# Expense (negative value)
 sqlite3 /workspace/finance.db "
 INSERT INTO transactions (date, amount, category, description)
 VALUES ('2026-06-27', -800, '食費', 'コンビニ');
 "
 
-# 収入（正の値）
+# Income (positive value)
 sqlite3 /workspace/finance.db "
 INSERT INTO transactions (date, amount, category, description)
 VALUES ('2026-06-27', 250000, '給与', '6月分');
 "
 ```
 
-日付はユーザーが「今日」「昨日」等と言った場合は `date +%Y-%m-%d` で取得する。
+When the user says 「今日」, 「昨日」, or similar, obtain the date with `date +%Y-%m-%d`.
 
 ```bash
 date +%Y-%m-%d
 ```
 
-### 収支を照会する
+### Query income and expenses
 
 ```bash
-# 今月の合計（収支）
+# This month's total (income and expenses)
 sqlite3 /workspace/finance.db "
 SELECT
   SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS income,
@@ -46,7 +46,7 @@ FROM transactions
 WHERE date LIKE '$(date +%Y-%m)%';
 "
 
-# カテゴリ別集計
+# Totals by category
 sqlite3 /workspace/finance.db "
 SELECT category, SUM(amount) AS total
 FROM transactions
@@ -55,7 +55,7 @@ GROUP BY category
 ORDER BY total;
 "
 
-# 直近N件
+# Most recent N entries
 sqlite3 /workspace/finance.db "
 SELECT date, amount, category, description
 FROM transactions
@@ -64,7 +64,7 @@ LIMIT 10;
 "
 ```
 
-### サブスクを登録する
+### Register a subscription
 
 ```bash
 sqlite3 /workspace/finance.db "
@@ -73,10 +73,10 @@ VALUES ('Netflix', -1490, 'monthly', '2026-07-15', 'エンタメ');
 "
 ```
 
-### サブスクを照会する
+### Query subscriptions
 
 ```bash
-# アクティブなサブスク一覧
+# List active subscriptions
 sqlite3 /workspace/finance.db "
 SELECT name, amount, cycle, next_date, category
 FROM subscriptions
@@ -84,7 +84,7 @@ WHERE active = 1
 ORDER BY next_date;
 "
 
-# 今後7日以内に更新があるサブスク
+# Subscriptions renewing within the next 7 days
 sqlite3 /workspace/finance.db "
 SELECT name, amount, next_date
 FROM subscriptions
@@ -93,7 +93,7 @@ WHERE active = 1
 ORDER BY next_date;
 "
 
-# 月額換算の合計コスト
+# Total monthly-equivalent cost
 sqlite3 /workspace/finance.db "
 SELECT
   SUM(CASE WHEN cycle = 'monthly' THEN amount
@@ -105,7 +105,7 @@ WHERE active = 1;
 "
 ```
 
-### サブスクの next_date を更新する（更新後）
+### Update a subscription's next_date (after renewal)
 
 ```bash
 sqlite3 /workspace/finance.db "
@@ -115,9 +115,9 @@ WHERE name = 'Netflix';
 "
 ```
 
-`cycle` に応じて `'+1 month'` / `'+1 year'` / `'+7 days'` を使い分ける。
+Choose `'+1 month'`, `'+1 year'`, or `'+7 days'` according to `cycle`.
 
-### サブスクを解約する
+### Cancel a subscription
 
 ```bash
 sqlite3 /workspace/finance.db "
@@ -125,8 +125,8 @@ UPDATE subscriptions SET active = 0 WHERE name = 'Netflix';
 "
 ```
 
-## 注意
+## Notes
 
-- カテゴリはユーザーが指定した文字列をそのまま使う。正規化しない。
-- 金額の単位は常に円（整数）。
-- スキーマが足りない場合は `ALTER TABLE` で列を追加してよい。
+- Use the category string exactly as specified by the user; do not normalize it.
+- Monetary amounts are always integers in yen.
+- If the schema is missing columns, you may add them with `ALTER TABLE`.

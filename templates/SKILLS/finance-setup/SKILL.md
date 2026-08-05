@@ -1,35 +1,35 @@
 ---
 name: "finance-setup"
-description: "収支・サブスク管理用のSQLiteデータベースを初期構築する。「家計管理を始めたい」「収支を記録したい」「finance をセットアップして」と言われたとき、または finance スキルを使う前に一度だけ実行する。"
+description: "Initialize the SQLite database for expense and subscription management. Use this when the user says 「家計管理を始めたい」, 「収支を記録したい」, or 「finance をセットアップして」, or once before using the finance skill. Run only once."
 ---
 
 # finance-setup
 
-`/workspace/finance.db` に収支管理用のSQLiteデータベースを作成する。一回限りの初期化処理。日常の記録・照会は `finance` スキルを使う。
+Create the SQLite database for income and expense management at `/workspace/finance.db`. This is a one-time initialization. Use the `finance` skill for routine recording and queries.
 
-## 手順
+## Procedure
 
-### 1. 既存DBを確認する
+### 1. Check for an existing database
 
 ```bash
 ls /workspace/finance.db 2>/dev/null && echo "exists" || echo "not found"
 ```
 
-既に存在する場合はセットアップ済みとしてユーザーに伝え、上書きしない。
-テーブル構造を確認したい場合は `.schema` で確認する。
+If it already exists, tell the user that setup is complete and do not overwrite it.
+To inspect the table structure, use `.schema`.
 
 ```bash
 sqlite3 /workspace/finance.db ".schema"
 ```
 
-### 2. DBとテーブルを作成する
+### 2. Create the database and tables
 
 ```bash
 sqlite3 /workspace/finance.db "
 CREATE TABLE IF NOT EXISTS transactions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   date        TEXT    NOT NULL,  -- YYYY-MM-DD
-  amount      INTEGER NOT NULL,  -- 収入: 正、支出: 負（円）
+  amount      INTEGER NOT NULL,  -- Income: positive; expense: negative (yen)
   category    TEXT,
   description TEXT
 );
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS subscriptions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT    NOT NULL,
-  amount      INTEGER NOT NULL,  -- 収入: 正、支出: 負（円）
+  amount      INTEGER NOT NULL,  -- Income: positive; expense: negative (yen)
   cycle       TEXT    NOT NULL,  -- 'monthly' | 'yearly' | 'weekly'
   next_date   TEXT    NOT NULL,  -- YYYY-MM-DD
   category    TEXT,
@@ -46,10 +46,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 "
 ```
 
-### 3. 確認して報告する
+### 3. Verify and report
 
 ```bash
 sqlite3 /workspace/finance.db ".tables"
 ```
 
-作成したテーブルの一覧をユーザーに伝える。次のステップとして `finance` スキルの使い方を簡単に案内する。
+Tell the user which tables were created. As the next step, briefly explain how to use the `finance` skill.

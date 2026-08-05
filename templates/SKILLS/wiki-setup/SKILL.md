@@ -1,65 +1,65 @@
 ---
 name: "wiki-setup"
-description: "LLMが維持する個人用wiki（raw → wiki → schemaの三層構造パターン）を初期構築する。ユーザーが新しいナレッジベースを始めたい、wikiを構築したい、エージェント用のObsidian vaultを足場として作りたい場合、または「wikiを初期化して」「ナレッジベースをセットアップして」「wiki構造を作って」のように言われた場合に使う。"
+description: "Initialize a personal wiki maintained by an LLM using a three-layer raw → wiki → schema pattern. Use this when the user wants to start a knowledge base, build a wiki, or create an Obsidian vault for an agent, or says 「wikiを初期化して」, 「ナレッジベースをセットアップして」, or 「wiki構造を作って」."
 ---
 
 # wiki-setup
 
-新しいLLM管理wikiを足場から構築する。これはあなた（エージェント）が構築し、ユーザーがソースを追加するたびに最新の状態に保つ、永続的で相互リンクされたMarkdownナレッジベースである。これは一回限りの初期化処理である。セットアップ後の日常的な作業は `wiki-ingest`・`wiki-query`・`wiki-lint` を使う。
+Build a new LLM-managed wiki from the ground up. This is a persistent, cross-linked Markdown knowledge base that you (the agent) build and keep current whenever the user adds sources. It is a one-time initialization process. After setup, use `wiki-ingest`, `wiki-query`, and `wiki-lint` for daily work.
 
-## モデルの概要（一段落で）
+## Model overview (one paragraph)
 
-三層構造になっている。**生ソース**（`raw/`）はユーザーが整理する不変の入力データ — 記事、PDF、ノート、画像など。**wiki**（`wiki/`）はあなたが完全に所有するMarkdown — 要約、エンティティページ、コンセプトページ、インデックス、ログ。**スキーマ**（ルートの `AGENTS.md`）は、あなたを汎用チャットボットから規律あるwikiメンテナーへと変えるルールブックである。ユーザーは整理して質問し、あなたが要約・相互参照・整理・記録のすべてを行う。
+The model has three layers. **Raw sources** (`raw/`) are immutable input data organized by the user — articles, PDFs, notes, images, and so on. The **wiki** (`wiki/`) is Markdown fully owned by you — summaries, entity pages, concept pages, an index, and a log. The **schema** (the root `AGENTS.md`) is the rulebook that turns you from a general-purpose chatbot into a disciplined wiki maintainer. The user organizes and asks questions; you handle all summarization, cross-referencing, organization, and recording.
 
-## 手順
+## Procedure
 
-### 1. 場所と目的を確認する
+### 1. Confirm the location and purpose
 
-ユーザーが選択したフォルダで作業する。まず、対象フォルダに既存の `AGENTS.md`・`wiki/`・`raw/` がすでに存在するか確認する（`ls` などで実際に見る。推測しない）。既に存在する場合は新規セットアップではなく既存wikiへの追記・移行になるため、上書きせずユーザーに「既存wikiがあるようだが、再構築か、別フォルダへの新規構築か、既存構造への追加か」を確認する。
+Work in the folder selected by the user. First, actually check (for example with `ls`; do not guess) whether the target folder already contains `AGENTS.md`, `wiki/`, or `raw/`. If any already exists, this is an addition or migration to an existing wiki rather than a new setup. Do not overwrite it; ask the user whether they want a rebuild, a new setup in another folder, or additions to the existing structure.
 
-存在しない（新規構築）と分かったら、何かを構築する前に、wikiが何のためのものかをユーザーに直接尋ねる（推測だけで済ませず、普通の会話の中で聞く）— これがスキーマの形を決める。最低限、以下を確認する:
+Once you have confirmed that none exists (a new build), ask the user directly what the wiki is for before constructing anything (do not settle for guesses; ask in ordinary conversation) — this determines the schema. At minimum, confirm the following:
 
-- **主な目的**: 個人的な知識管理 / 研究の深掘り / 読書記録 / チームやドメイン向けwiki / その他。
-- **どんな種類のソース**を入れていくか（記事、PDF、会議メモ、論文、画像など）— `raw/` の運用規則やOCR・画像要約処理が必要かどうかに影響する。
-- **更新の頻度と規模**: 週に数件程度か、毎日大量に取り込むか — 初日から `wiki-search` で十分か、数百ページを超える見込みなら早めに `wiki-search-fts`（SQLite FTS5ベース、ユーザーが有効化すれば使える）への移行を見据えておくべきかに影響する。
-- **ディレクトリ名・見出し語彙・ファイル名規則を英語のままにするか日本語にするか**: 既定では `sources/`・`entities/`・`concepts/` という英語ディレクトリ名とkebab-caseファイル名を使うが、日本語のみで運用したい場合はディレクトリ名・`index.md`の見出し・ファイル名のローマ字化方針（日本語タイトルをローマ字化する／英訳する／日本語のままハイフン区切りにする、のいずれか）をここで確認する。Obsidianのファイル名・リンクの扱いに制約があるため、思いつきで選ばせず軽くトレードオフ（英語名は他のObsidianプラグイン例との互換性が高い、日本語名は読みやすい）を提示してから選んでもらう。
+- **Primary purpose**: personal knowledge management / deep research / reading log / a team- or domain-focused wiki / other.
+- **What kinds of sources** will be added (articles, PDFs, meeting notes, papers, images, and so on) — this affects the operating rules for `raw/` and whether OCR or image-summarization processing is needed.
+- **Update frequency and scale**: a few items per week or large daily ingests — this determines whether `wiki-search` is sufficient from day one or whether to plan an early migration to `wiki-search-fts` (SQLite FTS5-based and available when the user enables it) if the wiki is expected to exceed a few hundred pages.
+- **Whether directory names, heading vocabulary, and filename conventions should remain in English or use Japanese**: by default, use the English directory names `sources/`, `entities/`, and `concepts/` and kebab-case filenames. If the user wants to operate entirely in Japanese, confirm here which naming policy to use for directory names, `index.md` headings, and filenames (romanize Japanese titles / translate them into English / keep Japanese and separate words with hyphens). Because Obsidian has constraints around filenames and links, do not ask them to choose without context; briefly explain the trade-off (English names are more compatible with examples for other Obsidian plugins, while Japanese names are easier to read) before they choose.
 
-推測ではなく実際の回答を得るまで、構築作業に進まないこと — ページができてしまった後にこれらの判断を覆すのはコストが高い。ユーザーの回答が曖昧な場合は、黙って既定値を採用するのではなく、追加で質問すること。
+Do not proceed with construction until you have real answers rather than assumptions — reversing these decisions after pages exist is costly. If the user’s answers are ambiguous, ask follow-up questions instead of silently adopting the defaults.
 
-### 2. ディレクトリ構造を作成する
+### 2. Create the directory structure
 
 ```
 <root>/
-  AGENTS.md          # スキーマ（ルールブック） — 手順3を参照
-  raw/               # 不変のソースファイル（ユーザー所有）
-    assets/          # ソースから参照されるダウンロード画像
-  wiki/              # LLMが所有するMarkdown
-    index.md         # 全ページのカタログ（コンテンツ中心の一覧）
-    log.md           # 追記専用の時系列記録
-    overview.md      # トップレベルの統合ページ／入口
-    sources/         # 取り込んだソースごとの要約ページ
-    entities/        # 人物・組織・製品・場所など
-    concepts/        # アイデア・テーマ・トピック
+  AGENTS.md          # Schema (rulebook) — see step 3
+  raw/               # Immutable source files (user-owned)
+    assets/          # Downloaded images referenced by sources
+  wiki/              # Markdown owned by the LLM
+    index.md         # Catalog of all pages (content-oriented listing)
+    log.md           # Append-only chronological record
+    overview.md      # Top-level synthesis page / entry point
+    sources/         # Summary pages for ingested sources
+    entities/        # People, organizations, products, places, and so on
+    concepts/        # Ideas, themes, and topics
 ```
 
-上記は既定（英語）のディレクトリ名。手順1で日本語運用を選んだ場合は `sources/`→`出典/`、`entities/`→`エンティティ/`、`concepts/`→`コンセプト/` のように、ヒアリングで決めた語彙に置き換える。どちらを選んだかはこの後のAGENTS.mdにも明記すること。
+The names above are the defaults (English). If Japanese operation was chosen in step 1, replace them with the vocabulary agreed during the interview, such as `sources/`→`出典/`, `entities/`→`エンティティ/`, and `concepts/`→`コンセプト/`. Record the choice in `AGENTS.md` below as well.
 
-フォルダを作成し、`index.md`・`log.md`・`overview.md` を初期化する（手順4を参照）。内容を創作しないこと — 構造と空のプレースホルダーページのみを用意する。
+Create the folders and initialize `index.md`, `log.md`, and `overview.md` (see step 4). Do not invent content — provide only the structure and empty placeholder pages.
 
-`index.md` と `log.md` は `wiki/` 直下にそれぞれ一つだけ存在しなければならない — サブディレクトリ内に同名のページ（例: `sources/index.md`）を作らないこと。`wiki-lint` はwikiルート直下のものだけを特別扱いするためである。
+There must be exactly one `index.md` and one `log.md`, each directly under `wiki/` — do not create same-named pages in subdirectories (for example, `sources/index.md`). `wiki-lint` treats only the files at the wiki root specially.
 
-### 3. AGENTS.md（スキーマ）を書く
+### 3. Write `AGENTS.md` (the schema)
 
-これが最も重要なファイルである。今後のすべてのセッション開始時に読み込まれ、wikiの一貫性を保つ役割を担う。選択された目的に合わせて書くこと。以下を必ず含めること:
+This is the most important file. It is loaded at the start of every future session and keeps the wiki consistent. Write it for the selected purpose. It must include the following:
 
-- **層とルール**: `raw/` は読み取り専用の正データ、`wiki/` はあなたが書き込む領域、`raw/` は絶対に編集しないこと。
-- **ページの規則**: ファイル名（kebab-case。手順1で日本語運用を選んだ場合は、決めたローマ字化・英訳・日本語ハイフン区切りの方針をここに明記する）、1ページにエンティティ／コンセプトを1つだけ、すべてのwikiページにYAMLフロントマター（後述）、Obsidianのグラフビューが機能するように相互参照には `[[wikilinks]]` 記法を使うこと。
-- **新規ページを作るか既存ページを編集するかの判断基準**: 複数のソースに渡って繰り返し登場する、あるいは独立した識別性を持つエンティティ／コンセプトには新規ページを作る。それ以外は既存ページに詳細を統合し、相互参照を追加する。最初は少数の充実したページを優先し、セクションが肥大化したら分割する。
-- **ワークフロー**: 取り込み／検索／lintの手順（対になるスキル群）を参照し、スキルが読み込まれていない場合でもエージェントが従えるように、それぞれを一文で要約しておく。
-- **インデックスとログの規律**: 取り込みごとに `index.md` を更新する。取り込み・検索結果の反映・lintの実行ごとに `log.md` に追記し、`## [YYYY-MM-DD] <op> | <title>` という接頭フォーマットを使う。
-- **引用**: wiki内の主張は元のソースページを引用する。ソースページは `raw/` 内のファイルへリンクし返す。
+- **Layers and rules**: `raw/` is the read-only source of truth, and `wiki/` is the area you write. Never edit `raw/`.
+- **Page rules**: filenames (kebab-case; if Japanese operation was chosen in step 1, state the agreed romanization, English-translation, or Japanese-hyphenation policy here), one entity/concept per page, YAML frontmatter on every wiki page (see below), and `[[wikilinks]]` for cross-references so that Obsidian’s graph view works.
+- **Criteria for creating a new page versus editing an existing one**: create a new page for an entity/concept that recurs across multiple sources or has an independent identity. Otherwise, integrate details into an existing page and add cross-references. Start with a small number of substantial pages and split sections when they become unwieldy.
+- **Workflow**: refer to the ingest/search/lint procedures (the companion skills) and summarize each in one sentence so the agent can follow them even when the skills are not loaded.
+- **Index and log discipline**: update `index.md` on every ingest. Append to `log.md` for every ingest, incorporation of search results, and lint run, using the prefix format `## [YYYY-MM-DD] <op> | <title>`.
+- **Citations**: cite the original source page for claims in the wiki. Source pages must link back to files under `raw/`.
 
-すべてのwikiページで以下のフロントマター規則を使う（Dataview/Bases対応）:
+Use the following frontmatter rules on every wiki page (Dataview/Bases-compatible):
 
 ```yaml
 ---
@@ -72,31 +72,31 @@ tags: []
 ---
 ```
 
-### 4. ナビゲーションファイルを初期化する
+### 4. Initialize navigation files
 
-`index.md` — 見出し付きカタログとし、カテゴリーごとの空セクション（既定では Overview、Sources、Entities、Concepts。手順1で日本語運用を選んだ場合は概要・出典・エンティティ・コンセプトなど決めた語彙を使う）を用意する。各セクションは `[[page]] — 一行要約` の箇条書きとする。
+`index.md` — make this a catalog with headings and empty sections for each category (by default, Overview, Sources, Entities, and Concepts; if Japanese operation was chosen in step 1, use the agreed vocabulary such as 概要・出典・エンティティ・コンセプト). Under each section, use bullet points in the form `[[page]] — 一行要約`.
 
-`log.md` — 単一の見出しと最初のエントリのみ:
+`log.md` — include only one heading and the first entry:
 `## [<today>] setup | wiki initialized`
 
-`overview.md` — wikiの目的と、ソースが取り込まれるにつれて成長していくことを述べる短いスタブ。`[[index]]` へリンクする。
+`overview.md` — a short stub stating the wiki’s purpose and that it will grow as sources are ingested. Link to `[[index]]`.
 
-### 5. 任意のツール
+### 5. Optional tools
 
-強制せず、案として伝える: 閲覧フロントエンドとしてのObsidian（グラフビュー、ソース収集用のWeb Clipper、フロントマターを扱うBases/Dataview、スライド用のMarp）、無料でバージョン履歴を得るための `git init`、wikiがindexファイルだけでは追いつかなくなった時点での検索ツール（`wiki-search` ヘルパー、数百ページを超えたら `wiki-search-fts` への移行、さらにベクトル検索が必要になったら `qmd` のような外部ツールの検討をユーザーに相談する）。`wiki-search` と `wiki-search-fts` は同時に有効化せず、移行時は旧方を `SKILLS/` から削除すること。
+Present these as suggestions, not requirements: Obsidian as a viewing frontend (graph view, Web Clipper for collecting sources, Bases/Dataview for frontmatter, and Marp for slides); `git init` for free version history; and search tooling once the wiki outgrows what the index file can handle (the `wiki-search` helper, migration to `wiki-search-fts` after a few hundred pages, and, if vector search is later needed, discussing an external tool such as `qmd` with the user). Do not enable `wiki-search` and `wiki-search-fts` simultaneously; when migrating, remove the former from `SKILLS/`.
 
-### 6. 関連スキルをインストールする
+### 6. Install related skills
 
-ヒアリングで確定したディレクトリ名を引数に、以下を実行する:
+Run the following with the directory names finalized during the interview as arguments:
 
 ```bash
 bash /workspace/SKILLS/wiki-setup/setup.sh <WIKI_ROOT> <RAW_DIR> <DIGEST_DIR>
 ```
 
-例: `bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest`
+Example: `bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest`
 
-このスクリプトは `wiki-setup/SKILLS/` にバンドルされた wiki-ingest・wiki-lint・wiki-query を `/workspace/SKILLS/` へコピーし、プレースホルダー（`{{WIKI_ROOT}}` 等）を実際のパスに一括置換する。既に存在するスキルはスキップされる（既存スキルには一切干渉しない）。
+This script copies the bundled wiki-ingest, wiki-lint, and wiki-query from `wiki-setup/SKILLS/` to `/workspace/SKILLS/`, then replaces placeholders (such as `{{WIKI_ROOT}}`) with the actual paths in one pass. Existing skills are skipped (existing skills are never touched).
 
-### 7. 引き渡し
+### 7. Hand off
 
-構造が準備できたことをユーザーに伝え、ツリーを示し、運用の流れを説明する: `raw/` にソースを置く → 取り込みを実行する → 検索で質問する → 定期的にlintを実行する。完了前に、`AGENTS.md` の目的セクションがユーザーの望むものと一致しているか確認すること。
+Tell the user that the structure is ready, show the tree, and explain the operating flow: place sources in `raw/` → run ingest → ask questions through search → run lint regularly. Before finishing, verify that the purpose section of `AGENTS.md` matches what the user wants.

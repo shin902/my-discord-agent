@@ -1,43 +1,43 @@
 ---
 name: session-logs
-description: "自分自身の過去の会話ログ(セッションJSONL)をjq/grepで検索・集計するスキル。「前に話したこと覚えてる?」「先週何の話した?」など、MEMORY.mdに無い過去の文脈を聞かれたら使う。"
+description: "Search and aggregate your past conversation logs (session JSONL) with jq/grep. Use this when asked about past context not in MEMORY.md, such as 「前に話したこと覚えてる?」 or 「先週何の話した?」."
 ---
 
 # session-logs
 
-このグループの過去のセッション(会話履歴)を、jq/grep で検索・集計する。
+Search and aggregate this group's past sessions (conversation history) with jq/grep.
 
-## いつ使うか
+## When to use
 
-- ユーザーが過去の会話・以前のやり取りについて聞いてきたが、`MEMORY.md` に該当する記載がない
-- 「先週」「前に」「過去ログ」「何回くらいやり取りした?」のような問いかけ
-- 自分の発言・ツール使用履歴を振り返る必要があるとき
+- The user asks about past conversations or previous exchanges, but there is no corresponding entry in `MEMORY.md`.
+- Prompts such as 「先週」, 「前に」, 「過去ログ」, or 「何回くらいやり取りした?」.
+- You need to review your own messages or tool-usage history.
 
-## ログの場所
+## Log location
 
 `/sessions/*/*.jsonl`
 
-- 1ファイル = 1セッション(Discordのチャンネル/スレッドID = ファイル名)
-- 各行 = 1メッセージ(JSON、1行1オブジェクト)
-- 自分のグループのディレクトリだけがマウントされているため、他グループのログは見えない
+- One file = one session (the Discord channel/thread ID is the filename).
+- Each line = one message (JSON, one object per line).
+- Only your own group's directory is mounted, so logs from other groups are not visible.
 
-## 各行の構造
+## Structure of each line
 
-ラップ構造はなく、メッセージオブジェクトが直接1行になっている。
+There is no wrapper structure; each message object is directly one line.
 
 ```json
 {"role": "user", "content": [{"type": "text", "text": "..."}], "timestamp": 1780531201389}
 ```
 
 - `role`: `"user"` | `"assistant"` | `"toolResult"`
-- `content[]`: `type` が `"text"`(本文) または `"toolCall"`(ツール呼び出し、`name`/`arguments` を持つ)
-- `timestamp`: Unixエポックミリ秒(ISO文字列ではない)
-- `assistant` の行には `usage.cost.total` / `usage.totalTokens` / `model` / `provider` / `stopReason` も入る
-- `toolResult` の行は `toolName` / `toolCallId` / `isError` を持ち、`content[]` に結果テキストが入る
+- `content[]`: `type` is `"text"` (the message body) or `"toolCall"` (a tool invocation with `name`/`arguments`).
+- `timestamp`: Unix epoch milliseconds (not an ISO string).
+- `assistant` lines also include `usage.cost.total` / `usage.totalTokens` / `model` / `provider` / `stopReason`.
+- `toolResult` lines contain `toolName` / `toolCallId` / `isError`, and the result text is in `content[]`.
 
-## よく使うクエリ
+## Common queries
 
-### セッション一覧(日付・サイズ)
+### List sessions (date and size)
 
 ```bash
 for f in /sessions/*/*.jsonl; do
@@ -48,7 +48,7 @@ for f in /sessions/*/*.jsonl; do
 done | sort -r
 ```
 
-### 特定の日のセッションを探す
+### Find sessions on a specific date
 
 ```bash
 for f in /sessions/*/*.jsonl; do
@@ -57,34 +57,34 @@ for f in /sessions/*/*.jsonl; do
 done
 ```
 
-### あるセッションのユーザー発言だけ抜き出す
+### Extract only user messages from a session
 
 ```bash
 jq -r 'select(.role == "user") | .content[]? | select(.type == "text") | .text' <session>.jsonl
 ```
 
-### あるセッションのassistant発言だけ抜き出す
+### Extract only assistant messages from a session
 
 ```bash
 jq -r 'select(.role == "assistant") | .content[]? | select(.type == "text") | .text' <session>.jsonl
 ```
 
-### キーワードで全セッションを横断検索
+### Search all sessions by keyword
 
 ```bash
 grep -li "キーワード" /sessions/*/*.jsonl
-# マッチした行の本文だけ見たい場合
+# To view only the body of matched lines
 grep -h "キーワード" /sessions/*/*.jsonl | jq -r '.content[]?.text? // empty'
 ```
 
-### ツール使用回数の集計
+### Count tool usage
 
 ```bash
 jq -r 'select(.role == "assistant") | .content[]? | select(.type == "toolCall") | .name' <session>.jsonl \
   | sort | uniq -c | sort -rn
 ```
 
-### セッションの概要(メッセージ数・開始/終了時刻)
+### Summarize a session (message count and start/end times)
 
 ```bash
 jq -s '{
@@ -96,14 +96,14 @@ jq -s '{
 }' <session>.jsonl
 ```
 
-### トークン/コストの集計
+### Aggregate tokens and cost
 
 ```bash
 jq -s '[.[] | select(.role == "assistant") | .usage.totalTokens // 0] | add' <session>.jsonl
 ```
 
-## 注意
+## Notes
 
-- セッションファイルは大きくなることがある。まず `head -1` でタイムスタンプを確認してから絞り込み、全文を読むのは対象を絞ったあとにする
-- `content` が無い行(`toolResult` の `details` のみ等)もあるため、`.content[]?` のように `?` を付けて空配列/nullを吸収する
-- 検索結果は要約して回答する。ログそのものを大量に貼り付けない
+- Session files can be large. First check the timestamp with `head -1` and narrow the candidates; read the full contents only after narrowing the target.
+- Some lines may have no `content` (for example, a `toolResult` with only `details`), so append `?`, as in `.content[]?`, to absorb empty arrays or nulls.
+- Summarize search results in your answer; do not paste large amounts of the raw logs.
