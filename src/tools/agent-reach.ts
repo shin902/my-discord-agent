@@ -685,7 +685,7 @@ export function buildCommand(
     case "reddit": {
       // Reddit は未認証アクセスを一律ブロックするため、credential-proxy 経由で
       // ログイン済みクッキー(www.reddit.com)を使ってアクセスする
-      // (docs/reddit-cookie-setup.md 参照)
+      // (docs/guides/reddit-cookie-setup.md 参照)
       const parsed = new URL(url);
       const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
       const jsonPath = pathname.endsWith(".json")

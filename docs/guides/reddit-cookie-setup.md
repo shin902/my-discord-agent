@@ -3,7 +3,7 @@
 `agent-reach` ツール（`src/tools/agent-reach.ts`）と互換用スクリプトのredditサービスが`www.reddit.com`にアクセスするための設定手順です。
 
 > [!NOTE]
-> 当初は `client_credentials` グラント(OAuth)での実装を検討していたが、2025年11月の Responsible Builder Policy 改定以降、個人が client_id/client_secret を新規取得することが事実上不可能になっている（詳細は [`docs/reddit-oauth-setup.md`](./reddit-oauth-setup.md) 参照）。本ドキュメントは、ログイン済みブラウザのクッキーを使う代替実装の手順。
+> 当初は `client_credentials` グラント(OAuth)での実装を検討していたが、2025年11月の Responsible Builder Policy 改定以降、個人が client_id/client_secret を新規取得することが事実上不可能になっている（詳細は [`docs/guides/reddit-oauth-setup.md`](./reddit-oauth-setup.md) 参照）。本ドキュメントは、ログイン済みブラウザのクッキーを使う代替実装の手順。
 
 ## 仕組み
 

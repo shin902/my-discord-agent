@@ -22,7 +22,7 @@ export type GoogleOAuthConfig = z.infer<typeof GoogleOAuthConfigSchema>;
 
 // Reddit は OAuth (client_credentials) の新規アプリ申請を事実上ブロックしているため、
 // ログイン済みブラウザの永続プロファイルから定期的に抽出したクッキーを使う
-// (docs/reddit-cookie-setup.md 参照)。cookieFile は reddit-cookie-refresh ジョブが書き込む。
+// (docs/guides/reddit-cookie-setup.md 参照)。cookieFile は reddit-cookie-refresh ジョブが書き込む。
 export const RedditCookieConfigSchema = z.object({
   cookieFile: z.string().default("data/reddit-cookies.json"),
   maxAgeDays: z.number().int().min(1).default(7),

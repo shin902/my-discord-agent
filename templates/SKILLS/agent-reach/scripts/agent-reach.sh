@@ -499,7 +499,7 @@ fetch_reddit() {
   fi
 
   # Reddit は未認証の .json アクセスを一律ブロックするため、credential-proxy 経由で
-  # ログイン済みクッキーを使って www.reddit.com にアクセスする (docs/reddit-cookie-setup.md 参照)。
+  # ログイン済みクッキーを使って www.reddit.com にアクセスする (docs/guides/reddit-cookie-setup.md 参照)。
   # シークレット自体はホスト側 proxy が注入し、このスクリプトには渡らない。
   # NOTE: UA 文字列は src/tools/agent-reach.ts (REDDIT_USER_AGENT) の手動コピー。
   # あちら側を変更したら必ずこのファイルも追従させること。
