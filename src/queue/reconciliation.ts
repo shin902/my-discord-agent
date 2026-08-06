@@ -1,4 +1,5 @@
-import { listDispatchClaims, markArticlesRead, openRssDb, releaseDispatchArticles } from "../rss/store.js";
+import { existsSync } from "node:fs";
+import { listDispatchClaims, markArticlesRead, openRssDb, releaseDispatchArticles, resolveRssDbPath } from "../rss/store.js";
 import { getQueueRepository, type QueueRepository } from "./repository.js";
 
 /**
@@ -15,7 +16,14 @@ export function reconcileRssDispatches(
   const paths = new Set<string | undefined>([undefined, ...configuredPaths, ...repo.listRssStatePaths()]);
   let resolved = 0;
   for (const rssDbPath of paths) {
-    const db = openRssDb(rssDbPath);
+    const resolvedPath = resolveRssDbPath(rssDbPath);
+    if (!existsSync(resolvedPath)) continue;
+    let db;
+    try {
+      db = openRssDb(resolvedPath);
+    } catch {
+      continue;
+    }
     try {
       for (const claim of listDispatchClaims(db)) {
         const job = repo.findByIdempotencyKey(claim.dispatchJobId);
@@ -28,6 +36,8 @@ export function reconcileRssDispatches(
           resolved++;
         }
       }
+    } catch {
+      // A malformed RSS schema must not prevent unrelated startup paths.
     } finally {
       db.close();
     }

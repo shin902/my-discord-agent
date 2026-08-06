@@ -20,6 +20,7 @@ import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
 import { getQueueRepository } from "./queue/repository.js";
 import { initializeQueue } from "./queue/migration.js";
 import { reconcileRssDispatches } from "./queue/reconciliation.js";
+import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 const token = process.env.DISCORD_BOT_TOKEN;
@@ -37,14 +38,27 @@ try {
   const queueRepository = getQueueRepository();
   await initializeQueue(queueRepository);
   const cronJobs = await loadAndValidateCron();
-  const rssStatePaths = cronJobs.flatMap((job) => {
-    if (typeof job.handler !== "string" || !job.handler.endsWith("rss-dispatch.ts")) return [];
-    const settings = job.settings;
-    if (!settings || typeof settings !== "object" || Array.isArray(settings) || !("statePath" in settings)) return [];
-    const statePath = settings.statePath;
-    return typeof statePath === "string" && statePath.length > 0 ? [statePath] : [];
-  });
+  const rssStatePaths = [
+    ...queueRepository.listRssStatePaths(),
+    ...cronJobs.flatMap((job) => {
+      if (typeof job.handler !== "string" || !job.handler.endsWith("rss-dispatch.ts")) return [];
+      const settings = job.settings;
+      if (!settings || typeof settings !== "object" || Array.isArray(settings) || !("statePath" in settings)) return [];
+      const statePath = settings.statePath;
+      return typeof statePath === "string" && statePath.length > 0 ? [statePath] : [];
+    }),
+  ];
+  // Reconcile before collecting startup metrics so crash-window claims do not
+  // produce transient orphan/tombstone alerts.
   reconcileRssDispatches(queueRepository, rssStatePaths);
+  const staleAfterMs = Number(process.env.RUNTIME_STALE_AFTER_MS);
+  const runtimeOperator = await runRuntimeOperator(queueRepository.db, {
+    rssDbPaths: rssStatePaths,
+    staleAfterMs: Number.isFinite(staleAfterMs) ? staleAfterMs : undefined,
+    backupPath: process.env.RUNTIME_BACKUP_PATH,
+  });
+  if (!runtimeOperator.health.ok) console.warn("[startup] runtime database health check failed", runtimeOperator.health);
+  for (const alert of runtimeOperator.observability.alerts) console.warn(`[startup] ${alert}`);
   _setCronJobs(cronJobs);
 } catch (err) {
   console.error("[startup] 設定の読み込みに失敗しました:", err);

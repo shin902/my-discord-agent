@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   validateGroupConfig: vi.fn(),
   loadDefaultModel: vi.fn(),
   loadAndValidateCron: vi.fn(),
+  queueRepository: { db: {}, listRssStatePaths: vi.fn() },
+  initializeQueue: vi.fn(),
+  reconcileRssDispatches: vi.fn(),
+  runRuntimeOperator: vi.fn(),
 }));
 
 vi.mock("./discord/client.js", () => ({ client: { login: mocks.login } }));
@@ -52,6 +56,10 @@ vi.mock("./cron/runner.js", () => ({
   loadAndValidateCron: mocks.loadAndValidateCron,
   _setCronJobs: vi.fn(),
 }));
+vi.mock("./queue/repository.js", () => ({ getQueueRepository: () => mocks.queueRepository }));
+vi.mock("./queue/migration.js", () => ({ initializeQueue: mocks.initializeQueue }));
+vi.mock("./queue/reconciliation.js", () => ({ reconcileRssDispatches: mocks.reconcileRssDispatches }));
+vi.mock("./queue/operator.js", () => ({ runRuntimeOperator: mocks.runRuntimeOperator }));
 vi.mock("dotenv/config", () => ({}));
 
 describe("index: 起動時バリデーション", () => {
@@ -71,6 +79,8 @@ describe("index: 起動時バリデーション", () => {
       modelId: "glm-4.7-flash",
     });
     mocks.loadAndValidateCron.mockResolvedValue([]);
+    mocks.queueRepository.listRssStatePaths.mockReturnValue([]);
+    mocks.runRuntimeOperator.mockResolvedValue({ health: { ok: true }, observability: { alerts: [] } });
     // 実際に終了させず、呼び出し後の継続を防ぐためにスロー
     mockExit = vi.fn((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -190,5 +200,25 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.startPoller).toHaveBeenCalledOnce();
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.login).toHaveBeenCalledWith("test-token");
+  });
+  it("reconciles repository and cron RSS paths before final startup observability", async () => {
+    mocks.queueRepository.listRssStatePaths.mockReturnValue(["runtime.sqlite"]);
+    mocks.loadAndValidateCron.mockResolvedValue([
+      { handler: "jobs/rss-dispatch.ts", settings: { statePath: "cron.sqlite" } },
+    ]);
+
+    await import("./index.js");
+
+    expect(mocks.reconcileRssDispatches).toHaveBeenCalledWith(
+      mocks.queueRepository,
+      ["runtime.sqlite", "cron.sqlite"],
+    );
+    expect(mocks.runRuntimeOperator).toHaveBeenCalledWith(
+      mocks.queueRepository.db,
+      expect.objectContaining({ rssDbPaths: ["runtime.sqlite", "cron.sqlite"] }),
+    );
+    expect(mocks.reconcileRssDispatches.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runRuntimeOperator.mock.invocationCallOrder[0],
+    );
   });
 });
