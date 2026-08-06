@@ -1,195 +1,82 @@
-/**
- * inbox キュー — Discord から受け取ったメッセージを処理前に一時保存する。
- *
- * フロー: Discord受信 → appendInbox() → poller が peekAllUnclaimedInbox() で取り出して処理
- *  → 処理完了後に removeInboxById()、リトライ時は updateInboxById() で更新
- *
- * ファイル形式は JSONL（1行1メッセージ）。例：
- *   {"id":"msg-1234-abc","channelId":"9876","content":"こんにちは","timestamp":"2026-05-06T10:00:00.000Z","retries":0}
- *   {"id":"msg-1235-def","channelId":"9876","content":"返事して","timestamp":"2026-05-06T10:00:01.000Z","retries":0}
- *
- * peekAllUnclaimedInbox() は処理中（in-flight）のメッセージをファイルから削除しない。
- * これにより、再起動時にも未完了のメッセージがキューに残り続ける（#69）。
- * JSONL はインプレース更新ができないため、remove/update 系はファイル全体を書き直す。
- * readFile と writeFile の間に appendInbox が割り込むとメッセージが消えるため、
- * Promise チェーンで全ファイル操作を直列化している。
- */
-
-import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ModelConfig, SkillSelection } from "../config/groups.js";
-import { createFileLock } from "../utils/lock.js";
-import { appendCorruptedDeadLetter } from "./dead-letter.js";
+import { getQueueRepository, type QueueRepository } from "./repository.js";
 
+function resolveRepository(repository?: QueueRepository): QueueRepository {
+  return repository ?? getQueueRepository();
+}
 export type CronDeliveryMode = "direct" | "new-thread";
 export type CronSessionMode = "per-run" | "destination";
-
-// Discord メッセージに添付されたファイルの参照情報
-export interface AttachmentRef {
-  url: string;
-  name: string;
-  contentType: string | null;
-  size: number;
-}
-
-// InboxMessage は JSONL の 1行 = 1レコードに対応する型
+export interface AttachmentRef { url: string; name: string; contentType: string | null; size: number }
 export interface InboxMessage {
   id: string;
   channelId: string;
   groupName: string;
-  sessionId: string; // shared: channelId, thread/auto-thread: スレッドの channelId
-  messageId?: string; // 返信引用に使う元メッセージの Discord ID。旧キュー互換のためオプショナル
+  sessionId: string;
+  messageId?: string;
   content: string;
   timestamp: string;
-  enqueuedAt?: string; // inbox.jsonl への追加時刻。旧キュー互換のためオプショナル
-  retries: number; // 失敗してリトライした回数。初回は 0
-  idempotencyKey?: string; // 外部状態と連携する投入の重複防止キー
-  completedAt?: string; // 冪等キーを保持するための処理済みtombstone
-  cronDeliveryMode?: CronDeliveryMode; // cron の投稿方法。旧キューでは未設定
-  cronSessionMode?: CronSessionMode; // cron のセッションID戦略。旧キューでは未設定
-  cronThread?: boolean; // 旧キュー互換: 旧 to-thread モードのトリガー
-  cronJobId?: string; // スレッド名生成とツールコール通知抑制の判定用
-  cronThreadId?: string; // スレッド作成後にセット。リトライ時の再作成を防ぐ
-  configOverride?: {
-    model?: ModelConfig;
-    tools?: string[];
-    skills?: SkillSelection;
-  }; // cronジョブ実行時だけ適用する一時的な設定上書き
-  attachments?: AttachmentRef[]; // Discord メッセージに添付されたファイル
+  enqueuedAt?: string;
+  retries: number;
+  idempotencyKey?: string;
+  completedAt?: string;
+  cronDeliveryMode?: CronDeliveryMode;
+  cronSessionMode?: CronSessionMode;
+  cronThread?: boolean;
+  cronJobId?: string;
+  cronThreadId?: string;
+  rssDispatchId?: string;
+  rssStatePath?: string;
+  configOverride?: { model?: ModelConfig; tools?: string[]; skills?: SkillSelection };
+  attachments?: AttachmentRef[];
+  /** Runtime lease metadata, populated only after a durable claim. */
+  fencingToken?: number;
+  workerId?: string;
+  lastError?: string;
+}
+export type QueueInput = Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
+
+/** Compatibility producer API; SQLite is the only active queue writer. */
+export async function appendInbox(msg: QueueInput, repository?: QueueRepository): Promise<void> {
+  resolveRepository(repository).enqueue(msg, { idempotencyKey: msg.idempotencyKey });
 }
 
-// process.cwd() は起動ディレクトリに依存するため、ファイルの場所を基準にパスを解決する
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const QUEUE_DIR = path.join(__dirname, "../../data/queue");
-const INBOX_PATH = path.join(QUEUE_DIR, "inbox.jsonl");
-
-async function ensureDir(): Promise<void> {
-  await mkdir(QUEUE_DIR, { recursive: true });
+export async function peekAllUnclaimedInbox(excludeIds: ReadonlySet<string> = new Set(), repository?: QueueRepository): Promise<InboxMessage[]> {
+  return resolveRepository(repository).list().filter((job) =>
+    (job.status === "queued" || job.status === "retry_wait") && !excludeIds.has(job.id),
+  );
 }
 
-// ファイルが存在しなければ空配列を返す。各行は JSON.parse 済みの InboxMessage。
-// クラッシュ時の書き込み途中切断などで不正なJSON行が混入していた場合、
-// その行は dead-letter.jsonl に退避し、inbox.jsonl からは除去する。
-async function readMessages(): Promise<InboxMessage[]> {
-  if (!existsSync(INBOX_PATH)) return [];
-  const text = await readFile(INBOX_PATH, "utf-8");
-  const valid: InboxMessage[] = [];
-  let hasCorrupted = false;
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      valid.push(JSON.parse(line) as InboxMessage);
-    } catch (err) {
-      hasCorrupted = true;
-      console.error(
-        "[inbox] 不正なJSON行を検出。dead-letterへ退避:",
-        line,
-        err,
-      );
-      await appendCorruptedDeadLetter(line);
-    }
+export async function claimInbox(workerId: string, leaseMs: number, excludeIds: ReadonlySet<string> = new Set(), repository?: QueueRepository): Promise<InboxMessage | undefined> {
+  return resolveRepository(repository).claim(workerId, leaseMs, new Date(), excludeIds)?.job;
+}
+export async function renewInboxLease(id: string, fencingToken: number, leaseMs = 60_000, repository?: QueueRepository): Promise<void> {
+  resolveRepository(repository).renew(id, fencingToken, leaseMs);
+}
+
+export async function removeInboxById(id: string, fencingToken?: number, repository?: QueueRepository): Promise<void> {
+  const repo = resolveRepository(repository);
+  const job = repo.get(id);
+  if (!job || job.status === "completed" || job.status === "dead_letter") return;
+  repo.complete(id, fencingToken ?? job.fencingToken);
+}
+
+export async function updateInboxById(id: string, patch: Partial<InboxMessage>, fencingToken?: number, repository?: QueueRepository): Promise<void> {
+  const repo = resolveRepository(repository);
+  const job = repo.get(id);
+  if (!job) return;
+  if (job.status !== "running") return;
+  const token = fencingToken ?? job.fencingToken;
+  if (patch.retries !== undefined && patch.retries > job.retries) {
+    const delay = Math.min(1000 * 2 ** job.retries, 60_000);
+    repo.retry(id, token, patch.lastError ?? "retry", delay, patch);
+  } else {
+    repo.updateRunning(id, token, patch);
   }
-  if (hasCorrupted) {
-    await writeMessages(valid);
-  }
-  return valid;
 }
 
-async function writeMessages(messages: InboxMessage[]): Promise<void> {
-  const body = messages.map((msg) => JSON.stringify(msg)).join("\n");
-  await writeFile(INBOX_PATH, body ? `${body}\n` : "", "utf-8");
-}
-
-// ファイル操作を直列化するミューテックス。
-// Node.js は await をまたいでイベントループが切り替わるため、
-// readFile→writeFile の間に appendInbox が割り込む可能性がある。
-const withFileLock = createFileLock();
-
-/** Discord のメッセージをキューの末尾に追記する。
- * id と retries は自動で付与される。Omitは除外の意味（関数内で生成するので、引数では明示しなくていい）
- */
-export async function appendInbox(
-  msg: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
-): Promise<void> {
-  return withFileLock(async () => {
-    await ensureDir();
-    if (msg.idempotencyKey) {
-      const messages = await readMessages();
-      if (
-        messages.some(
-          (existing) => existing.idempotencyKey === msg.idempotencyKey,
-        )
-      ) {
-        return;
-      }
-    }
-    const record: InboxMessage = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      retries: 0,
-      ...msg,
-      enqueuedAt: new Date().toISOString(),
-    };
-    await appendFile(INBOX_PATH, `${JSON.stringify(record)}\n`, "utf-8");
-  });
-}
-
-/**
- * excludeIds に含まれない全件を、ファイル順を保ったまま取り出す。ファイルからは削除しない。
- *
- * poller はこの呼び出しで claim したメッセージを処理が完全に終わるまで
- * excludeIds（in-flight セット）に入れておくことで、同じメッセージを
- * 取り出し直してしまうのを防ぐ。実際の削除は removeInboxById() で行う。
- *
- * in-flight のメッセージはファイルから消えずに残るため、1件ずつ peek すると
- * 呼び出すたびにファイル全体を読み直し、残っている in-flight 分を毎回スキップする
- * コストがかかる（in-flight 数 × 呼び出し回数）。1回の読み込みで未claim分を
- * まとめて返すことで、ポーラーの1ループ（tick）あたりの読み込み回数を1回に抑える。
- */
-export async function peekAllUnclaimedInbox(
-  excludeIds: ReadonlySet<string>,
-): Promise<InboxMessage[]> {
-  return withFileLock(async () => {
-    const messages = await readMessages();
-    return messages.filter(
-      (msg) => !msg.completedAt && !excludeIds.has(msg.id),
-    );
-  });
-}
-
-/** 処理が完全に終わった（成功 / dead-letter）メッセージをファイルから削除する。 */
-export async function removeInboxById(id: string): Promise<void> {
-  return withFileLock(async () => {
-    if (!existsSync(INBOX_PATH)) return;
-    const messages = await readMessages();
-    await writeMessages(
-      messages.flatMap((msg) => {
-        if (msg.id !== id) return [msg];
-        if (!msg.idempotencyKey) return [];
-        return [
-          {
-            ...msg,
-            content: "",
-            attachments: undefined,
-            completedAt: new Date().toISOString(),
-          },
-        ];
-      }),
-    );
-  });
-}
-
-/** リトライ時に該当メッセージのフィールドを位置を保ったまま更新する。 */
-export async function updateInboxById(
-  id: string,
-  patch: Partial<InboxMessage>,
-): Promise<void> {
-  return withFileLock(async () => {
-    if (!existsSync(INBOX_PATH)) return;
-    const messages = await readMessages();
-    await writeMessages(
-      messages.map((msg) => (msg.id === id ? { ...msg, ...patch } : msg)),
-    );
-  });
+export async function deadLetterInbox(id: string, reason: string, error?: string, fencingToken?: number, repository?: QueueRepository): Promise<void> {
+  const repo = resolveRepository(repository);
+  const job = repo.get(id);
+  if (!job || job.status === "dead_letter" || job.status === "completed") return;
+  repo.deadLetter(id, fencingToken ?? job.fencingToken, reason, error);
 }

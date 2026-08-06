@@ -13,13 +13,13 @@ import {
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
-import { appendDeadLetter } from "./dead-letter.js";
+import * as inboxStore from "./inbox.js";
 import {
   type InboxMessage,
-  peekAllUnclaimedInbox,
   removeInboxById,
   updateInboxById,
 } from "./inbox.js";
+import { appendDeadLetter } from "./dead-letter.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 
 const POLL_MS = 1000;
@@ -184,6 +184,24 @@ export function stopPoller(): void {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const LEASE_MS = 60_000;
+const LEASE_RENEWAL_MS = 20_000;
+
+function dispatchClaimedMessage(msg: InboxMessage): void {
+  const renewal = setInterval(() => {
+    void inboxStore.renewInboxLease(msg.id, msg.fencingToken ?? 0, LEASE_MS).catch((error) => {
+      console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
+    });
+  }, LEASE_RENEWAL_MS);
+  renewal.unref?.();
+  inFlightIds.add(msg.id);
+  dispatch(msg.sessionId, () =>
+    processMessage(msg).finally(() => {
+      clearInterval(renewal);
+      inFlightIds.delete(msg.id);
+    }),
+  );
+}
 
 const TYPING_INTERVAL_MS = 8_000;
 
@@ -323,8 +341,8 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
         "[poller] cronThread フラグがあるが cronJobId が未設定:",
         msg,
       );
-      await appendDeadLetter(msg);
-      await removeInboxById(msg.id);
+      await appendDeadLetter(msg, "invalid_cron_job");
+      await removeInboxById(msg.id, msg.fencingToken);
       return;
     }
     // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
@@ -397,8 +415,8 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
       if (err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
-        await appendDeadLetter(msg);
-        await removeInboxById(msg.id);
+        await appendDeadLetter(msg, "non_retryable");
+        await removeInboxById(msg.id, msg.fencingToken);
       } else {
         console.error(
           `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
@@ -407,18 +425,19 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
         if (msg.retries + 1 < MAX_RETRIES) {
           outcome = "retry";
           // threadId がセット済み（スレッド作成後に失敗）なら次回リトライでスレッド再作成をスキップ
-          await updateInboxById(msg.id, {
-            retries: msg.retries + 1,
-            cronThreadId: threadId,
-          });
+          await updateInboxById(
+            msg.id,
+            { retries: msg.retries + 1, cronThreadId: threadId },
+            msg.fencingToken,
+          );
         } else {
           outcome = "dead-letter";
           console.error(
             "[poller] cron-thread リトライ上限。dead-letter に移動:",
             msg.id,
           );
-          await appendDeadLetter(msg);
-          await removeInboxById(msg.id);
+          await appendDeadLetter(msg, "max_attempts");
+          await removeInboxById(msg.id, msg.fencingToken);
         }
       }
       return;
@@ -426,8 +445,7 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
 
     // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
     // ログのみで再実行しない（processMessage と同様、応答自体は生成済みのため）
-    await removeInboxById(msg.id);
-
+    await removeInboxById(msg.id, msg.fencingToken);
     const discordSendStartedAt = Date.now();
     try {
       if (response) {
@@ -513,8 +531,8 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
       if (err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-        await appendDeadLetter(msg);
-        await removeInboxById(msg.id);
+        await appendDeadLetter(msg, "non_retryable");
+        await removeInboxById(msg.id, msg.fencingToken);
         return;
       }
       console.error(
@@ -523,15 +541,15 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
       );
       if (msg.retries + 1 < MAX_RETRIES) {
         outcome = "retry";
-        await updateInboxById(msg.id, { retries: msg.retries + 1 });
+        await updateInboxById(msg.id, { retries: msg.retries + 1 }, msg.fencingToken);
       } else {
         outcome = "dead-letter";
         console.error(
           "[poller] リトライ上限に達しました。dead-letter に移動:",
           msg.id,
         );
-        await appendDeadLetter(msg);
-        await removeInboxById(msg.id);
+        await appendDeadLetter(msg, "max_attempts");
+        await removeInboxById(msg.id, msg.fencingToken);
       }
       const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
       await sleep(retryDelay);
@@ -540,7 +558,7 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
 
     // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
     // ログのみで dead-letter には送らない（応答自体は生成済みのため再実行は不要）
-    await removeInboxById(msg.id);
+    await removeInboxById(msg.id, msg.fencingToken);
 
     const discordSendStartedAt = Date.now();
     try {
@@ -586,19 +604,13 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
     logResponseTiming(msg, timing, outcome);
   }
 }
-
 async function poll(): Promise<void> {
   while (running) {
     try {
       if (client.isReady()) {
-        // in-flight のメッセージはファイルに残り続けるため、1回の読み込みで
-        // 未claim分を全部取得してまとめて dispatch する（1件ずつ読み直すと
-        // in-flight が溜まるほど無駄な読み込み・パースが増えるため）
-        const msgs = await peekAllUnclaimedInbox(inFlightIds);
-        if (msgs.length > 0) {
-          for (const msg of msgs) {
-            // claim: 処理が完全に終わるまで inbox.jsonl から削除しない
-            // （同一セッション内で順番待ち中でも消えないようにするため）
+        const candidates = await inboxStore.peekAllUnclaimedInbox(inFlightIds);
+        if (candidates.length > 0 && typeof inboxStore.claimInbox !== "function") {
+          for (const msg of candidates) {
             inFlightIds.add(msg.id);
             dispatch(msg.sessionId, () =>
               processMessage(msg).finally(() => {
@@ -606,8 +618,14 @@ async function poll(): Promise<void> {
               }),
             );
           }
-          // ノンブロッキングで dispatch 済み → 即次のバッチを取りに行く
           continue;
+        }
+        if (typeof inboxStore.claimInbox === "function") {
+          const msg = await inboxStore.claimInbox(`poller-${process.pid}`, LEASE_MS, inFlightIds);
+          if (msg) {
+            dispatchClaimedMessage(msg);
+            continue;
+          }
         }
       }
     } catch (err) {
