@@ -27,6 +27,7 @@ vi.mock("./inbox.js", () => ({
   peekAllUnclaimedInbox: vi.fn(),
   removeInboxById: vi.fn(),
   updateInboxById: vi.fn(),
+  deadLetterInbox: vi.fn(),
 }));
 
 const { sendMessage } = await import("../agent/manager.js");

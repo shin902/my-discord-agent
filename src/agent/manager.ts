@@ -41,6 +41,10 @@ interface AgentTimingEvent {
   assistantTurns: number;
   usage?: AgentTokenUsage;
   stopReason?: string;
+  agentsSnapshotHash?: string;
+  memorySnapshotHash?: string;
+  snapshotHash?: string;
+  toolCallKey?: string;
 }
 
 export interface AgentExecutionTiming {
@@ -55,9 +59,47 @@ export interface AgentExecutionTiming {
   assistantTurns?: number;
   usage?: AgentTokenUsage;
   stopReason?: string;
+  agentsSnapshotHash?: string;
+  memorySnapshotHash?: string;
+  snapshotHash?: string;
+  toolCallKey?: string;
 }
 
+declare global {
+  interface PromiseConstructor {
+    withResolvers<T>(): {
+      promise: Promise<T>;
+      resolve: (value?: T | PromiseLike<T>) => void;
+    };
+  }
+}
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+async function stopContainer(name: string): Promise<void> {
+  const killResult = await new Promise<number>((resolve) => {
+    const kill = spawn("docker", ["kill", name], { stdio: "ignore" });
+    if (typeof kill.once !== "function") return resolve(0);
+    kill.once("close", (code: number | null) => resolve(code ?? 1));
+    kill.once("error", () => resolve(1));
+  });
+  const inspect = await new Promise<{ code: number; output: string }>((resolve) => {
+    const child = spawn("docker", ["inspect", name], { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    if (typeof child.once !== "function") return resolve({ code: 1, output });
+    child.once("close", (code: number | null) => resolve({ code: code ?? 1, output }));
+    child.once("error", () => resolve({ code: 1, output }));
+  });
+  if (inspect.code !== 0 && !/no such (?:object|container)|not found/i.test(inspect.output)) {
+    throw new Error(`container cleanup inspect failed: ${name}: ${inspect.output.trim()}`);
+  }
+  if (inspect.code === 0 && inspect.output.trim() !== "") {
+    throw new Error(`container cleanup failed: ${name} still exists (kill=${killResult})`);
+  }
+  if (killResult !== 0 && inspect.code === 0) {
+    throw new Error(`container cleanup failed: ${name} kill=${killResult}`);
+  }
+}
 const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
 
 function formatTimeoutLabel(ms: number): string {
@@ -274,12 +316,19 @@ async function downloadAttachments(
   }
   return saved;
 }
-
 export interface SendMessageOptions {
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
   onExecutionTiming?: (timing: AgentExecutionTiming) => void;
+  onContainerStarted?: () => void | Promise<void>;
+  signal?: AbortSignal;
   configOverride?: Partial<AgentConfig>;
+  agentsSnapshotContent?: string;
+  agentsSnapshotPresent?: boolean;
+  memorySnapshotPresent?: boolean;
+  memorySnapshotContent?: string;
+  snapshotHash?: string;
+  toolCallKey?: string;
 }
 
 export function sendMessage(
@@ -320,7 +369,19 @@ export async function sendMessage(
         onExecutionTiming: legacyOnExecutionTiming,
       }
     : (optionsOrOnDiscordEvent ?? {});
-  const { onDiscordEvent, attachments, onExecutionTiming } = options;
+  const {
+    onDiscordEvent,
+    attachments,
+    onExecutionTiming,
+    onContainerStarted,
+    signal,
+    agentsSnapshotContent,
+    agentsSnapshotPresent,
+    memorySnapshotPresent,
+    memorySnapshotContent,
+    snapshotHash,
+    toolCallKey,
+  } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
   const baseConfig: AgentConfig = groupsEntry ?? {};
@@ -407,10 +468,7 @@ export async function sendMessage(
   try {
     const entries = await readdir(attachmentsDir);
     if (entries.length > 0) {
-      attachmentMountArgs = [
-        "-v",
-        `${attachmentsDir}:/workspace/attachments:ro`,
-      ];
+      attachmentMountArgs = ["-v", `${attachmentsDir}:/workspace/attachments:ro`];
     }
   } catch {
     // ディレクトリが存在しない場合はマウントしない
@@ -421,6 +479,12 @@ export async function sendMessage(
     sessionId,
     content: promptContent,
     groupConfig: { ...effectiveConfig, model: resolvedModel },
+    ...(agentsSnapshotContent !== undefined ? { agentsSnapshotContent } : {}),
+    ...(agentsSnapshotPresent !== undefined ? { agentsSnapshotPresent } : {}),
+    ...(memorySnapshotPresent !== undefined ? { memorySnapshotPresent } : {}),
+    ...(memorySnapshotContent !== undefined ? { memorySnapshotContent } : {}),
+    ...(snapshotHash !== undefined ? { snapshotHash } : {}),
+    ...(toolCallKey !== undefined ? { toolCallKey } : {}),
   });
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない
@@ -466,11 +530,37 @@ export async function sendMessage(
   return new Promise((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    const cancelActiveRun = () => {
+      if (cleanupActive) return;
+      cleanupActive = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      signal?.removeEventListener("abort", cancelActiveRun);
+      runningContainers.delete(containerName);
+      proc.kill("SIGKILL");
+      void stopContainer(containerName).then(
+        () => reject(new TransientError("実行がキャンセルされました")),
+        (error) => reject(new NonRetryableError(`キャンセル後の後始末に失敗しました: ${String(error)}`)),
+      );
+    };
+    let cleanupActive = false;
+    if (signal) signal.addEventListener("abort", cancelActiveRun, { once: true });
+    if (signal?.aborted) cancelActiveRun();
 
     let stdout = "";
-    let stderrTail = "";
     let plainStderr = "";
+    let stderrTail = "";
     let pullCompletedAt: number | undefined;
+    let containerStartedReported = false;
+    const requiresReadyHandshake = onContainerStarted !== undefined;
+    let readySettled = !requiresReadyHandshake;
+    let readyResolve!: () => void;
+    let readyReject!: (error: unknown) => void;
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    if (!requiresReadyHandshake) readyResolve();
     let agentTiming: AgentTimingEvent | undefined;
     let agentTimingReceivedAt: number | undefined;
     let timingReported = false;
@@ -499,6 +589,18 @@ export async function sendMessage(
               assistantTurns: agentTiming.assistantTurns,
               usage: agentTiming.usage,
               stopReason: agentTiming.stopReason,
+              ...(agentTiming.agentsSnapshotHash !== undefined
+                ? { agentsSnapshotHash: agentTiming.agentsSnapshotHash }
+                : {}),
+              ...(agentTiming.memorySnapshotHash !== undefined
+                ? { memorySnapshotHash: agentTiming.memorySnapshotHash }
+                : {}),
+              ...(agentTiming.snapshotHash !== undefined
+                ? { snapshotHash: agentTiming.snapshotHash }
+                : {}),
+              ...(agentTiming.toolCallKey !== undefined
+                ? { toolCallKey: agentTiming.toolCallKey }
+                : {}),
               ...(agentTimingReceivedAt !== undefined
                 ? {
                     postPromptMs: Math.max(
@@ -518,6 +620,18 @@ export async function sendMessage(
     };
 
     const processStderrLine = (line: string): void => {
+      if (line === "__AGENT_READY__") {
+        if (!readySettled) {
+          Promise.resolve(onContainerStarted?.()).then(() => {
+            if (cleanupActive) return;
+            containerStartedReported = true;
+            readyResolve();
+          }).catch((error) => {
+            readyReject(error);
+          });
+        }
+        return;
+      }
       if (line.startsWith(DISCORD_EVENT_PREFIX)) {
         try {
           const event = JSON.parse(line.slice(DISCORD_EVENT_PREFIX.length)) as
@@ -552,64 +666,85 @@ export async function sendMessage(
       stderrTail += chunk.toString();
       const lines = stderrTail.split("\n");
       stderrTail = lines.pop() ?? "";
-      for (const line of lines) {
-        processStderrLine(line);
-      }
+      for (const line of lines) processStderrLine(line);
     });
-
-    const timeout = setTimeout(() => {
+    if (!cleanupActive) {
+      timeoutHandle = setTimeout(async () => {
       if (stderrTail) {
         processStderrLine(stderrTail);
         stderrTail = "";
       }
       reportExecutionTiming(Date.now(), "timeout");
+      cleanupActive = true;
       proc.kill("SIGKILL");
-      // docker run クライアントを殺してもコンテナ本体（デーモン管理）は生き続けるため、
-      // --name で付与した一意な名前を使い docker kill でコンテナ本体を止める。
-      // --rm 済みなので kill が通れば自動的に削除される。
-      spawn("docker", ["kill", containerName], { stdio: "ignore" }).on(
-        "error",
-        () => {
-          // 既にコンテナが終了している場合などは無視する
-        },
-      );
+      signal?.removeEventListener("abort", cancelActiveRun);
+      try {
+        await stopContainer(containerName);
+      } catch (cleanupError) {
+        runningContainers.delete(containerName);
+        signal?.removeEventListener("abort", cancelActiveRun);
+        reject(new NonRetryableError(`タイムアウト後のコンテナ後始末に失敗しました: ${String(cleanupError)}`));
+        return;
+      }
+      runningContainers.delete(containerName);
+      signal?.removeEventListener("abort", cancelActiveRun);
       reject(
-        new NonRetryableError(
+        new TransientError(
           `タイムアウト（${formatTimeoutLabel(agentTimeoutMs)}を超過しました）`,
         ),
       );
     }, agentTimeoutMs);
+    }
 
     proc.on("close", (code: number | null) => {
-      clearTimeout(timeout);
+      if (cleanupActive) return;
+      if (requiresReadyHandshake) cleanupActive = true;
+      signal?.removeEventListener("abort", cancelActiveRun);
+      clearTimeout(timeoutHandle);
       runningContainers.delete(containerName);
-      // 残バッファをフラッシュ
       if (stderrTail) {
         processStderrLine(stderrTail);
         stderrTail = "";
       }
       reportExecutionTiming(Date.now(), "close", code);
-      if (code === null) {
-        // SIGKILL などシグナルで終了した場合。タイムアウト時は既に reject 済み
+      if (requiresReadyHandshake && !containerStartedReported) {
+        if (!readySettled) readyReject(new Error("runner exited before ready"));
+        reject(new TransientError("runner exited before ready"));
         return;
       }
-      if (code === 0) {
-        resolve(stdout.trim());
-      } else if (code === 2) {
-        reject(new TransientError(plainStderr.trim()));
-      } else {
-        resolve(`エージェント実行エラー: ${plainStderr.trim()}`);
-      }
+      if (code === 0) resolve(stdout.trim());
+      else if (code === 2) reject(new TransientError(plainStderr.trim()));
+      else resolve(`エージェント実行エラー: ${plainStderr.trim()}`);
     });
 
     proc.on("error", (err: Error) => {
-      clearTimeout(timeout);
+      if (cleanupActive) return;
+      cleanupActive = true;
+      signal?.removeEventListener("abort", cancelActiveRun);
+      clearTimeout(timeoutHandle);
       runningContainers.delete(containerName);
       reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
     });
-
-    proc.stdin.write(payload);
-    proc.stdin.end();
+    readyPromise.then(() => {
+      if (cleanupActive) return;
+      if (signal?.aborted) {
+        cancelActiveRun();
+        return;
+      }
+      proc.stdin.write(payload);
+      proc.stdin.end();
+    }).catch((error) => {
+      if (cleanupActive) return;
+      cleanupActive = true;
+      clearTimeout(timeoutHandle);
+      signal?.removeEventListener("abort", cancelActiveRun);
+      runningContainers.delete(containerName);
+      proc.kill("SIGKILL");
+      void stopContainer(containerName).then(
+        () => reject(error),
+        (cleanupError) => reject(new NonRetryableError(`起動後の後始末に失敗しました: ${String(cleanupError)}`)),
+      );
+    });
   });
 }

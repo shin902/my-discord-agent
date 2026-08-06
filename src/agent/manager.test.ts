@@ -288,7 +288,7 @@ describe("sendMessage: Docker 起動構成", () => {
         onExecutionTiming,
       );
       const rejection = expect(result).rejects.toThrow(
-        "タイムアウト（10分を超過しました）",
+        "タイムアウト後のコンテナ後始末に失敗しました",
       );
       await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
       await vi.advanceTimersByTimeAsync(10 * 60 * 1000);

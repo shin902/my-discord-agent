@@ -118,6 +118,33 @@ export async function migrateLegacyQueue(repo: QueueRepository = new QueueReposi
           result.malformed++;
           continue;
         }
+        const identity = value as Partial<InboxMessage>;
+        const identityFields: Array<[string, unknown, string]> = [
+          ["agentsSnapshotContent", identity.agentsSnapshotContent, "string"],
+          ["memorySnapshotContent", identity.memorySnapshotContent, "string"],
+          ["snapshotHash", identity.snapshotHash, "string"],
+          ["toolCallKey", identity.toolCallKey, "string"],
+          ["agentsSnapshotPresent", identity.agentsSnapshotPresent, "boolean"],
+          ["memorySnapshotPresent", identity.memorySnapshotPresent, "boolean"],
+          ["snapshotPresent", identity.snapshotPresent, "boolean"],
+        ];
+        const hasIdentity = identityFields.some(([, field]) => field !== undefined);
+        const invalidIdentityTypes = identityFields.some(([, field, type]) => field !== undefined && typeof field !== type);
+        const incoherentIdentity =
+          (hasIdentity && (identity.agentsSnapshotPresent === undefined || identity.memorySnapshotPresent === undefined)) ||
+          (identity.agentsSnapshotContent !== undefined && identity.agentsSnapshotPresent !== true) ||
+          (identity.memorySnapshotContent !== undefined && identity.memorySnapshotPresent !== true) ||
+          (identity.agentsSnapshotPresent === true && identity.agentsSnapshotContent === undefined) ||
+          (identity.memorySnapshotPresent === true && identity.memorySnapshotContent === undefined) ||
+          (identity.snapshotPresent !== undefined && (identity.snapshotHash === undefined || identity.snapshotHash.length === 0)) ||
+          (identity.snapshotPresent !== undefined && identity.snapshotPresent !== (identity.agentsSnapshotPresent === true || identity.memorySnapshotPresent === true)) ||
+          (identity.snapshotHash !== undefined && identity.snapshotPresent === undefined) ||
+          (identity.toolCallKey !== undefined && identity.toolCallKey.length === 0);
+        if (invalidIdentityTypes || incoherentIdentity) {
+          repo.recordDeadLetter({ reason: invalidIdentityTypes ? "invalid_execution_identity" : "incoherent_execution_identity", payloadJson: raw, source: "migration" });
+          result.malformed++;
+          continue;
+        }
         const message = value;
         if (message.completedAt) {
           if (message.idempotencyKey) {
@@ -134,8 +161,25 @@ export async function migrateLegacyQueue(repo: QueueRepository = new QueueReposi
           const duplicate = key ? repo.findByIdempotencyKey(key) : undefined;
           if (!duplicate) {
             const timestamp = message.enqueuedAt ?? message.timestamp;
-            repo.db.prepare("INSERT INTO jobs(id,idempotency_key,payload_json,status,attempts,max_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(message.id, key ?? null, JSON.stringify({ ...message, retries: message.retries ?? 0 }), "queued", message.retries ?? 0, 10, timestamp, timestamp);
-            if (key) repo.db.prepare("INSERT OR IGNORE INTO idempotency_keys(key,job_id,status,created_at) VALUES(?,?,?,?)").run(key, message.id, "active", timestamp);
+            const sequenceRow = repo.db.prepare(
+              "SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM jobs WHERE session_id=?",
+            ).get(message.sessionId) as { sequence: number };
+            repo.db.prepare("INSERT INTO jobs(id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(
+              message.id,
+              key ?? null,
+              JSON.stringify({ ...message, retries: message.retries ?? 0 }),
+              message.sessionId,
+              sequenceRow.sequence,
+              "queued",
+              message.retries ?? 0,
+              10,
+              timestamp,
+              timestamp,
+            );
+            if (key) {
+              repo.db.prepare("INSERT OR IGNORE INTO idempotency_keys(key,job_id,status,created_at) VALUES(?,?,?,?)")
+                .run(key, message.id, "active", timestamp);
+            }
             result.migrated++;
           }
         }

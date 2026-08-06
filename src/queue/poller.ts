@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { ChannelType } from "discord.js";
 import {
   type AgentExecutionTiming,
@@ -15,10 +18,16 @@ import { NonRetryableError } from "../utils/error.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import * as inboxStore from "./inbox.js";
 import {
+  commitInboxResult,
+  deadLetterInbox,
+  failInboxAttempt,
+  freezeInboxExecutionIdentity,
   type InboxMessage,
+  markInboxRunning,
   removeInboxById,
   updateInboxById,
 } from "./inbox.js";
+import type { ExecutionMetadata } from "./repository.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 
@@ -65,6 +74,22 @@ function startResponseTiming(msg: InboxMessage): ResponseTiming {
       startedAt - (enqueuedAt ?? receivedAt ?? startedAt),
     ),
   };
+}
+function executionMetadata(timing: ResponseTiming): ExecutionMetadata {
+  const execution = timing.agentExecution;
+  return execution
+    ? {
+        exitCode: execution.exitCode,
+        termination: execution.termination,
+        stopReason: execution.stopReason,
+        usage: execution.usage,
+        timing: execution,
+        agentsSnapshotHash: execution.agentsSnapshotHash,
+        memorySnapshotHash: execution.memorySnapshotHash,
+        snapshotHash: execution.snapshotHash,
+        toolCallKey: execution.toolCallKey,
+      }
+    : {};
 }
 
 function logResponseTiming(
@@ -170,11 +195,10 @@ export function dispatch(sessionId: string, fn: () => Promise<void>): void {
     if (sessionChain.get(sessionId) === next) sessionChain.delete(sessionId);
   });
 }
-
 export function startPoller(): void {
   if (running) return;
   running = true;
-  poll();
+  void poll();
 }
 
 export function stopPoller(): void {
@@ -188,15 +212,17 @@ const LEASE_MS = 60_000;
 const LEASE_RENEWAL_MS = 20_000;
 
 function dispatchClaimedMessage(msg: InboxMessage): void {
+  const controller = new AbortController();
   const renewal = setInterval(() => {
     void inboxStore.renewInboxLease(msg.id, msg.fencingToken ?? 0, LEASE_MS).catch((error) => {
       console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
+      controller.abort(error);
     });
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
   dispatch(msg.sessionId, () =>
-    processMessage(msg).finally(() => {
+    processMessage(msg, controller.signal).finally(() => {
       clearInterval(renewal);
       inFlightIds.delete(msg.id);
     }),
@@ -293,6 +319,7 @@ async function sendDiscordEvent(
 // LLM ロックを取得してから fn() を実行し、完了後に必ず解放する
 interface LlmLockOptions {
   onAcquired?: (waitMs: number) => void;
+  signal?: AbortSignal;
 }
 
 interface LlmLockTarget {
@@ -319,7 +346,7 @@ async function withLlmLock<T>(
   options: LlmLockOptions = {},
 ): Promise<T> {
   const waitStartedAt = Date.now();
-  const release = await acquireLlmLock(target.provider, target.concurrency);
+  const release = await acquireLlmLock(target.provider, target.concurrency, options.signal);
   try {
     options.onAcquired?.(Date.now() - waitStartedAt);
     return await fn();
@@ -328,7 +355,7 @@ async function withLlmLock<T>(
   }
 }
 
-async function processCronNewThread(msg: InboxMessage): Promise<void> {
+async function processCronNewThread(msg: InboxMessage, signal?: AbortSignal): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = msg.sessionId;
@@ -342,7 +369,7 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
         msg,
       );
       await appendDeadLetter(msg, "invalid_cron_job");
-      await removeInboxById(msg.id, msg.fencingToken);
+      await deadLetterInbox(msg.id, "invalid_cron_job", undefined, msg.fencingToken);
       return;
     }
     // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
@@ -399,7 +426,22 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
               onExecutionTiming: (executionTiming) => {
                 timing.agentExecution = executionTiming;
               },
+              onContainerStarted: () =>
+                msg.fencingToken === undefined
+                  ? undefined
+                  : markInboxRunning(msg.id, msg.fencingToken, {
+                      startedAt: new Date().toISOString(),
+                      workspacePath: `groups/${msg.groupName}`,
+                      conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl`,
+                    }),
+              signal,
               configOverride: msg.configOverride,
+              agentsSnapshotContent: msg.agentsSnapshotContent,
+              agentsSnapshotPresent: msg.agentsSnapshotPresent,
+              memorySnapshotPresent: msg.memorySnapshotPresent,
+              memorySnapshotContent: msg.memorySnapshotContent,
+              snapshotHash: msg.snapshotHash,
+              toolCallKey: msg.toolCallKey,
             });
           } finally {
             timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -409,6 +451,7 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
           onAcquired: (waitMs) => {
             timing.lockWaitMs = waitMs;
           },
+          signal,
         },
       );
     } catch (err) {
@@ -416,7 +459,17 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
         outcome = "dead-letter";
         console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
         await appendDeadLetter(msg, "non_retryable");
-        await removeInboxById(msg.id, msg.fencingToken);
+        if (msg.fencingToken !== undefined) {
+          await inboxStore.deadLetterInbox(
+            msg.id,
+            "non_retryable",
+            String(err),
+            msg.fencingToken,
+            undefined,
+            executionMetadata(timing),
+          );
+        }
+        return;
       } else {
         console.error(
           `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
@@ -427,8 +480,10 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
           // threadId がセット済み（スレッド作成後に失敗）なら次回リトライでスレッド再作成をスキップ
           await updateInboxById(
             msg.id,
-            { retries: msg.retries + 1, cronThreadId: threadId },
+            { retries: msg.retries + 1, cronThreadId: threadId, lastError: String(err) },
             msg.fencingToken,
+            undefined,
+            executionMetadata(timing),
           );
         } else {
           outcome = "dead-letter";
@@ -437,15 +492,55 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
             msg.id,
           );
           await appendDeadLetter(msg, "max_attempts");
-          await removeInboxById(msg.id, msg.fencingToken);
+          if (msg.fencingToken !== undefined) {
+            await inboxStore.deadLetterInbox(
+              msg.id,
+              "max_attempts",
+              String(err),
+              msg.fencingToken,
+              undefined,
+              executionMetadata(timing),
+            );
+          }
         }
       }
       return;
     }
+    if (
+      timing.agentExecution?.exitCode !== undefined &&
+      timing.agentExecution.exitCode !== null &&
+      timing.agentExecution.exitCode !== 0
+    ) {
+      await failInboxAttempt(
+        msg.id,
+        new Error(response || `agent exited with code ${timing.agentExecution.exitCode}`),
+        msg.fencingToken,
+        executionMetadata(timing),
+      );
+      return;
+    }
 
-    // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
-    // ログのみで再実行しない（processMessage と同様、応答自体は生成済みのため）
-    await removeInboxById(msg.id, msg.fencingToken);
+    // canonical result と delivery row は Discord 送信から独立して確定する。
+    if (msg.fencingToken !== undefined) {
+      await commitInboxResult(msg.id, msg.fencingToken, response, {
+        empty: !response,
+        metadata: timing.agentExecution
+          ? {
+              exitCode: timing.agentExecution.exitCode,
+              termination: timing.agentExecution.termination,
+              stopReason: timing.agentExecution.stopReason,
+              usage: timing.agentExecution.usage,
+              timing: timing.agentExecution,
+              agentsSnapshotHash: timing.agentExecution.agentsSnapshotHash,
+              memorySnapshotHash: timing.agentExecution.memorySnapshotHash,
+              snapshotHash: timing.agentExecution.snapshotHash,
+              toolCallKey: timing.agentExecution.toolCallKey,
+            }
+          : undefined,
+      });
+    } else {
+      await removeInboxById(msg.id, msg.fencingToken);
+    }
     const discordSendStartedAt = Date.now();
     try {
       if (response) {
@@ -466,12 +561,71 @@ async function processCronNewThread(msg: InboxMessage): Promise<void> {
     logResponseTiming({ ...msg, sessionId }, timing, outcome);
   }
 }
-
-export async function processMessage(msg: InboxMessage): Promise<void> {
-  if (msg.cronDeliveryMode === "new-thread" || msg.cronThread) {
-    return processCronNewThread(msg);
+async function captureFrozenIdentity(msg: InboxMessage): Promise<{
+  agentsSnapshotContent?: string;
+  memorySnapshotContent?: string;
+  agentsSnapshotPresent: boolean;
+  memorySnapshotPresent: boolean;
+  snapshotPresent: boolean;
+  snapshotHash: string;
+  toolCallKey: string;
+}> {
+  const base = path.resolve("groups", msg.groupName);
+  const readOptional = async (file: string) => readFile(file, "utf8").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  let agentsSnapshotContent = await readOptional(path.join(base, "AGENTS.md"));
+  let memorySnapshotContent = await readOptional(path.join(base, "memory", "MEMORY.md"));
+  const sessionRaw = await readOptional(path.resolve("data", "sessions", msg.groupName, `${msg.sessionId}.jsonl`));
+  if (sessionRaw) {
+    for (const line of sessionRaw.split(/\r?\n/)) {
+      try {
+        const entry = JSON.parse(line) as { customType?: string; content?: unknown };
+        if (entry.customType === "agents-snapshot") agentsSnapshotContent = String(entry.content ?? "");
+        if (entry.customType === "memory-bootstrap") memorySnapshotContent = String(entry.content ?? "");
+      } catch { /* ignore malformed historical lines */ }
+    }
   }
-
+  const agentsSnapshotPresent = agentsSnapshotContent !== undefined;
+  const memorySnapshotPresent = memorySnapshotContent !== undefined;
+  const snapshotPresent = agentsSnapshotPresent || memorySnapshotPresent;
+  const canonicalMemory = memorySnapshotContent === undefined ? "" : memorySnapshotContent.startsWith("## Memory (MEMORY.md)\n\n")
+    ? memorySnapshotContent
+    : `## Memory (MEMORY.md)\n\n${Array.from(memorySnapshotContent).slice(0, 2000).join("")}${Array.from(memorySnapshotContent).length > 2000 ? "\n\n[Warning: Memory (MEMORY.md) exceeds the limit (2000 characters). Delete or summarize old content to keep it organized]" : ""}`;
+  const snapshotHash = createHash("sha256").update(`${agentsSnapshotPresent ? "1" : "0"}:${agentsSnapshotContent ?? ""}:${memorySnapshotPresent ? "1" : "0"}:${canonicalMemory}`).digest("hex");
+  const toolCallKey = createHash("sha256").update(`${msg.id}:${msg.groupName}:${msg.sessionId}:${snapshotHash}`).digest("hex");
+  return { agentsSnapshotContent, memorySnapshotContent, agentsSnapshotPresent, memorySnapshotPresent, snapshotPresent, snapshotHash, toolCallKey };
+}
+export async function processMessage(msg: InboxMessage, signal?: AbortSignal): Promise<void> {
+  if (msg.fencingToken !== undefined) {
+    try {
+      const identity = msg.snapshotHash && msg.toolCallKey && msg.agentsSnapshotPresent !== undefined
+        ? {
+            agentsSnapshotContent: msg.agentsSnapshotContent,
+            memorySnapshotContent: msg.memorySnapshotContent,
+            agentsSnapshotPresent: msg.agentsSnapshotPresent,
+            memorySnapshotPresent: msg.memorySnapshotPresent ?? false,
+            snapshotPresent: msg.snapshotPresent ?? false,
+            snapshotHash: msg.snapshotHash,
+            toolCallKey: msg.toolCallKey,
+          }
+        : await captureFrozenIdentity(msg);
+      await freezeInboxExecutionIdentity(msg.id, msg.fencingToken, identity);
+      Object.assign(msg, identity);
+    } catch (error) {
+      console.error(`[poller] 実行 identity の保存に失敗しました (${msg.id}):`, error);
+      await failInboxAttempt(msg.id, error, msg.fencingToken, {
+        termination: "spawn-error",
+        stopReason: "identity-capture",
+        error,
+      });
+      return;
+    }
+  }
+  if (msg.cronDeliveryMode === "new-thread" || msg.cronThread) {
+    return processCronNewThread(msg, signal);
+  }
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
   // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
@@ -485,6 +639,14 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
       console.error("[poller] グループ設定の読み込みエラー:", err);
       return undefined;
     });
+    if (!groupConfig) {
+      outcome = "dead-letter";
+      await deadLetterInbox(msg.id, "config-unavailable", "group config unavailable", msg.fencingToken, undefined, {
+        termination: "spawn-error",
+        stopReason: "config-unavailable",
+      });
+      return;
+    }
     const replyMessageId =
       groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
 
@@ -513,6 +675,21 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
                 onExecutionTiming: (executionTiming) => {
                   timing.agentExecution = executionTiming;
                 },
+                onContainerStarted: () =>
+                  msg.fencingToken === undefined
+                    ? undefined
+                    : markInboxRunning(msg.id, msg.fencingToken, {
+                        startedAt: new Date().toISOString(),
+                        workspacePath: `groups/${msg.groupName}`,
+                        conversationPath: `data/sessions/${msg.groupName}/${msg.sessionId}.jsonl`,
+                      }),
+                agentsSnapshotContent: msg.agentsSnapshotContent,
+                agentsSnapshotPresent: msg.agentsSnapshotPresent,
+                memorySnapshotPresent: msg.memorySnapshotPresent,
+                memorySnapshotContent: msg.memorySnapshotContent,
+                snapshotHash: msg.snapshotHash,
+                toolCallKey: msg.toolCallKey,
+                signal,
                 configOverride: msg.configOverride,
               },
             );
@@ -524,6 +701,7 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
           onAcquired: (waitMs) => {
             timing.lockWaitMs = waitMs;
           },
+          signal,
         },
       );
     } catch (err) {
@@ -532,7 +710,16 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
         await appendDeadLetter(msg, "non_retryable");
-        await removeInboxById(msg.id, msg.fencingToken);
+        if (msg.fencingToken !== undefined) {
+          await inboxStore.deadLetterInbox(
+            msg.id,
+            "non_retryable",
+            String(err),
+            msg.fencingToken,
+            undefined,
+            executionMetadata(timing),
+          );
+        }
         return;
       }
       console.error(
@@ -541,7 +728,13 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
       );
       if (msg.retries + 1 < MAX_RETRIES) {
         outcome = "retry";
-        await updateInboxById(msg.id, { retries: msg.retries + 1 }, msg.fencingToken);
+        await updateInboxById(
+          msg.id,
+          { retries: msg.retries + 1, lastError: String(err) },
+          msg.fencingToken,
+          undefined,
+          executionMetadata(timing),
+        );
       } else {
         outcome = "dead-letter";
         console.error(
@@ -549,16 +742,56 @@ export async function processMessage(msg: InboxMessage): Promise<void> {
           msg.id,
         );
         await appendDeadLetter(msg, "max_attempts");
-        await removeInboxById(msg.id, msg.fencingToken);
+        if (msg.fencingToken !== undefined) {
+          await inboxStore.deadLetterInbox(
+            msg.id,
+            "max_attempts",
+            String(err),
+            msg.fencingToken,
+            undefined,
+            executionMetadata(timing),
+          );
+        }
       }
       const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
       await sleep(retryDelay);
       return;
     }
 
-    // LLM 呼び出しが成功した時点で inbox から削除する。以降の Discord 送信失敗は
-    // ログのみで dead-letter には送らない（応答自体は生成済みのため再実行は不要）
-    await removeInboxById(msg.id, msg.fencingToken);
+    if (
+      timing.agentExecution?.exitCode !== undefined &&
+      timing.agentExecution.exitCode !== null &&
+      timing.agentExecution.exitCode !== 0
+    ) {
+      await failInboxAttempt(
+        msg.id,
+        new Error(response || `agent exited with code ${timing.agentExecution.exitCode}`),
+        msg.fencingToken,
+        executionMetadata(timing),
+      );
+      return;
+    }
+    // canonical result と delivery row を Discord 送信より先に同一 transaction で確定する。
+    if (msg.fencingToken !== undefined) {
+      await commitInboxResult(msg.id, msg.fencingToken, response, {
+        empty: !response,
+        metadata: timing.agentExecution
+          ? {
+              exitCode: timing.agentExecution.exitCode,
+              termination: timing.agentExecution.termination,
+              stopReason: timing.agentExecution.stopReason,
+              usage: timing.agentExecution.usage,
+              timing: timing.agentExecution,
+              agentsSnapshotHash: timing.agentExecution.agentsSnapshotHash,
+              memorySnapshotHash: timing.agentExecution.memorySnapshotHash,
+              snapshotHash: timing.agentExecution.snapshotHash,
+              toolCallKey: timing.agentExecution.toolCallKey,
+            }
+          : undefined,
+      });
+    } else {
+      await removeInboxById(msg.id, msg.fencingToken);
+    }
 
     const discordSendStartedAt = Date.now();
     try {
