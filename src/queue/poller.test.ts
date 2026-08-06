@@ -1,4 +1,3 @@
-import { ChannelType } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SendMessageOptions } from "../agent/manager.js";
 import type { InboxMessage } from "./inbox.js";
@@ -25,6 +24,10 @@ vi.mock("../discord/client.js", () => ({
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
 vi.mock("./inbox.js", () => ({
   peekAllUnclaimedInbox: vi.fn(),
+  commitInboxResult: vi.fn(),
+  failInboxAttempt: vi.fn(),
+  freezeInboxExecutionIdentity: vi.fn(),
+  markInboxRunning: vi.fn(),
   removeInboxById: vi.fn(),
   updateInboxById: vi.fn(),
   deadLetterInbox: vi.fn(),
@@ -35,7 +38,7 @@ const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const { client } = await import("../discord/client.js");
 const { appendDeadLetter } = await import("./dead-letter.js");
-const { removeInboxById, updateInboxById } = await import("./inbox.js");
+const { removeInboxById, updateInboxById, commitInboxResult } = await import("./inbox.js");
 const { processMessage } = await import("./poller.js");
 
 beforeEach(() => {
@@ -70,10 +73,11 @@ describe("processMessage - autoReply", () => {
       isTextBased: () => false,
       send: mockSend,
     } as never);
+    vi.mocked(removeInboxById).mockClear();
     mockSend.mockClear();
   });
 
-  it("autoReply: true かつ messageId あり → reply 形式で送信", async () => {
+  it("autoReply metadata is handled without a final Discord send", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
@@ -82,15 +86,11 @@ describe("processMessage - autoReply", () => {
 
     await processMessage(makeMsg({ messageId: "msg-original" }));
 
-    expect(mockSend).toHaveBeenCalledOnce();
-    expect(mockSend).toHaveBeenCalledWith({
-      content: "AI response",
-      reply: { messageReference: "msg-original", failIfNotExists: false },
-      allowedMentions: { repliedUser: true },
-    });
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(removeInboxById).toHaveBeenCalledOnce();
   });
 
-  it("autoReply: true かつ messageId なし → 通常送信にフォールバック", async () => {
+  it("missing messageId does not trigger a final Discord send", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
@@ -99,11 +99,11 @@ describe("processMessage - autoReply", () => {
 
     await processMessage(makeMsg({ messageId: undefined }));
 
-    expect(mockSend).toHaveBeenCalledOnce();
-    expect(mockSend).toHaveBeenCalledWith("AI response");
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(removeInboxById).toHaveBeenCalledOnce();
   });
 
-  it("autoReply: false → 通常送信", async () => {
+  it("autoReply false does not trigger a final Discord send", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
@@ -112,8 +112,8 @@ describe("processMessage - autoReply", () => {
 
     await processMessage(makeMsg());
 
-    expect(mockSend).toHaveBeenCalledOnce();
-    expect(mockSend).toHaveBeenCalledWith("AI response");
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(removeInboxById).toHaveBeenCalledOnce();
   });
 
   it("attachments と configOverride を sendMessage に渡す", async () => {
@@ -210,7 +210,6 @@ describe("processMessage - autoReply", () => {
     });
     expect(details.queueWaitMs).toEqual(expect.any(Number));
     expect(details.llmLockWaitMs).toEqual(expect.any(Number));
-    expect(details.discordSendMs).toEqual(expect.any(Number));
 
     logSpy.mockRestore();
   });
@@ -235,7 +234,7 @@ describe("processMessage - autoReply", () => {
     logSpy.mockRestore();
   });
 
-  it("送信不能チャンネルは success ではなく discord-error として記録する", async () => {
+  it("送信不能チャンネルでも agent 結果は Discord 送信なしで完了する", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
@@ -245,21 +244,14 @@ describe("processMessage - autoReply", () => {
       isSendable: () => false,
       isTextBased: () => false,
     } as never);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await processMessage(makeMsg());
 
-    const line = logSpy.mock.calls
-      .flat()
-      .find((value) => String(value).includes('"event":"response_timing"'));
-    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
-    expect(details.outcome).toBe("discord-error");
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(removeInboxById).toHaveBeenCalledOnce();
   });
 
-  it("複数チャンク: 先頭のみ reply 形式、残りは通常送信", async () => {
+  it("複数チャンクも agent 結果として一度だけ確定する", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
@@ -269,13 +261,8 @@ describe("processMessage - autoReply", () => {
 
     await processMessage(makeMsg());
 
-    expect(mockSend).toHaveBeenCalledTimes(2);
-    expect(mockSend).toHaveBeenNthCalledWith(1, {
-      content: "A".repeat(2000),
-      reply: { messageReference: "msg-original", failIfNotExists: false },
-      allowedMentions: { repliedUser: true },
-    });
-    expect(mockSend).toHaveBeenNthCalledWith(2, "A");
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(removeInboxById).toHaveBeenCalledOnce();
   });
 });
 
@@ -358,10 +345,7 @@ describe("processMessage - Discord イベント通知", () => {
 
     await processMessage(makeMsg({ cronJobId: "daily-report" }));
 
-    await vi.waitFor(() => {
-      expect(mockSend).toHaveBeenCalledOnce();
-    });
-    expect(mockSend).not.toHaveBeenCalledWith(expect.stringMatching(/^🔧/));
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("cronJobId が設定されていても error イベントは送信される", async () => {
@@ -474,298 +458,64 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 });
-
-describe("processMessage - cron-thread", () => {
-  const mockThreadSend = vi.fn().mockResolvedValue(undefined);
-  const mockThread = { id: "thread-123", send: mockThreadSend };
-  const mockThreadsCreate = vi.fn().mockResolvedValue(mockThread);
-  const mockGuildTextChannel = {
-    type: ChannelType.GuildText,
-    threads: { create: mockThreadsCreate },
-  };
-
-  function makeCronThreadMsg(overrides?: Partial<InboxMessage>): InboxMessage {
-    return makeMsg({
-      cronDeliveryMode: "new-thread",
-      cronSessionMode: "destination",
-      cronJobId: "daily-report",
-      // 2026-06-04T10:30:00.000Z → JST 2026-06-04 19:30
-      timestamp: "2026-06-04T10:30:00.000Z",
-      ...overrides,
-    });
-  }
-
+describe("processMessage - durable result", () => {
   beforeEach(() => {
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "default",
-      channels: [],
-    });
-    vi.mocked(client.channels.fetch).mockResolvedValue(
-      mockGuildTextChannel as never,
-    );
+    vi.mocked(sendMessage).mockReset();
     vi.mocked(sendMessage).mockResolvedValue("AI response");
-    mockThreadSend.mockClear();
-    mockThreadsCreate.mockClear();
-    vi.mocked(appendDeadLetter).mockClear();
-    vi.mocked(updateInboxById).mockClear();
+    vi.mocked(commitInboxResult).mockClear();
     vi.mocked(removeInboxById).mockClear();
+    vi.mocked(client.channels.fetch).mockClear();
   });
 
-  it("正常系: スレッドを作成して sendMessage に configOverride を渡し、応答を thread.send で投稿する", async () => {
-    const configOverride = { tools: ["read"], skills: ["session-logs"] };
+  it("commits the agent result and queues delivery metadata without Discord sends", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({ name: "default", channels: [], autoReply: true });
+    const msg = makeMsg({ fencingToken: 4, messageId: "msg-original" });
 
-    await processMessage(makeCronThreadMsg({ configOverride }));
+    await processMessage(msg);
 
-    expect(mockThreadsCreate).toHaveBeenCalledOnce();
-    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
-      "default",
-      "thread-123",
-      "hello",
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      4,
+      "AI response",
       expect.objectContaining({
-        onExecutionTiming: expect.any(Function),
-        configOverride,
+        empty: false,
+        deliveryPayload: {
+          destinationType: "channel",
+          destinationId: "ch-1",
+          replyMessageId: "msg-original",
+        },
       }),
     );
-    expect(mockThreadSend).toHaveBeenCalledWith("AI response");
   });
-
-  it("cron-thread でもグループの provider concurrency を使う", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "default",
-      channels: [],
-      model: { provider: "cron-provider", modelId: "cron-model" },
-    });
-
-    await processMessage(makeCronThreadMsg());
-
-    expect(resolveProviderConcurrency).toHaveBeenCalledWith("cron-provider");
-  });
-
-  it("per-run は新規スレッドIDへ切り替えず独立セッションを維持する", async () => {
-    await processMessage(
-      makeCronThreadMsg({
-        sessionId: "cron-daily-report-run-1",
-        cronSessionMode: "per-run",
-      }),
-    );
-
-    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
-      "default",
-      "cron-daily-report-run-1",
-      "hello",
-      expect.any(Object),
-    );
-  });
-
-  it("旧 cronThread メッセージはスレッドIDをセッションIDとして処理する", async () => {
-    await processMessage(
-      makeCronThreadMsg({
-        cronDeliveryMode: undefined,
-        cronSessionMode: undefined,
-        cronThread: true,
-      }),
-    );
-
-    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
-      "default",
-      "thread-123",
-      "hello",
-      expect.any(Object),
-    );
-  });
-
-  it("cron-thread も agent 実行時間を response_timing に記録する", async () => {
-    vi.mocked(sendMessage).mockImplementation(
-      async (_g, _s, _c, options: unknown) => {
-        (options as SendMessageOptions | undefined)?.onExecutionTiming?.({
-          termination: "close",
-          exitCode: 0,
-          preparationMs: 5,
-          dockerRunMs: 35,
-          promptMs: 20,
-          assistantTurns: 1,
-        });
-        return "AI response";
-      },
-    );
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    await processMessage(
-      makeCronThreadMsg({ timestamp: new Date().toISOString() }),
-    );
-
-    const line = logSpy.mock.calls
-      .flat()
-      .find((value) => String(value).includes('"event":"response_timing"'));
-    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
-    expect(details).toMatchObject({
-      outcome: "success",
-      sessionId: "thread-123",
-      agentTermination: "close",
-      agentExitCode: 0,
-      preparationMs: 5,
-      dockerRunMs: 35,
-      promptMs: 20,
-      assistantTurns: 1,
-    });
-    expect(details.llmLockWaitMs).toEqual(expect.any(Number));
-    expect(details.discordSendMs).toEqual(expect.any(Number));
-    logSpy.mockRestore();
-  });
-
-  it("LLM呼び出し成功時、thread.send より前に removeInboxById を呼ぶ", async () => {
-    const callOrder: string[] = [];
-    mockThreadSend.mockImplementationOnce(async () => {
-      callOrder.push("threadSend");
-    });
-    vi.mocked(removeInboxById).mockImplementationOnce(async () => {
-      callOrder.push("removeInboxById");
-    });
-
-    await processMessage(makeCronThreadMsg());
-
-    expect(callOrder).toEqual(["removeInboxById", "threadSend"]);
-  });
-
-  it("thread.send が途中のチャンクで失敗しても、リトライ（sendMessage再実行）に回さない", async () => {
-    vi.mocked(sendMessage).mockResolvedValue("A".repeat(2001)); // 複数チャンクになる
-    mockThreadSend
-      .mockResolvedValueOnce(undefined) // 1チャンク目は成功
-      .mockRejectedValueOnce(new Error("discord send failed")); // 2チャンク目で失敗
-
-    await processMessage(makeCronThreadMsg());
-
-    expect(vi.mocked(removeInboxById)).toHaveBeenCalledOnce();
-    expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
-    expect(vi.mocked(appendDeadLetter)).not.toHaveBeenCalled();
-  });
-
-  it("sendMessage が空文字を返した場合 thread.send を呼ばない", async () => {
-    vi.mocked(sendMessage).mockResolvedValue("");
-
-    await processMessage(makeCronThreadMsg());
-
-    expect(mockThreadsCreate).toHaveBeenCalledOnce();
-    expect(mockThreadSend).not.toHaveBeenCalled();
-  });
-
-  it("スレッド名は cron-{jobId}-{YYYY-MM-DD-HH-MM}（JST）の形式", async () => {
-    await processMessage(makeCronThreadMsg());
-
-    expect(mockThreadsCreate).toHaveBeenCalledWith({
-      name: "cron-daily-report-2026-06-04-19-30",
-    });
-  });
-
-  it("ジョブID が長い場合はスレッド名が100文字を超えないよう切り詰める", async () => {
-    await processMessage(makeCronThreadMsg({ cronJobId: "a".repeat(100) }));
-
-    const { name } = mockThreadsCreate.mock.calls[0][0] as { name: string };
-    expect(name.length).toBeLessThanOrEqual(100);
-  });
-
-  it("GuildText/GuildAnnouncement 以外のチャンネルは appendDeadLetter に移動する", async () => {
-    vi.mocked(client.channels.fetch).mockResolvedValue({
-      type: ChannelType.GuildVoice,
+  it("keeps typing progress independent from final result delivery", async () => {
+    const sendTyping = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(client.channels.cache.get).mockReturnValue({
+      isTextBased: () => true,
+      sendTyping,
     } as never);
+    vi.mocked(findGroupByName).mockResolvedValue({ name: "default", channels: [] });
+    const msg = makeMsg();
 
-    await processMessage(makeCronThreadMsg());
+    await processMessage(msg);
 
-    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-    expect(mockThreadsCreate).not.toHaveBeenCalled();
+    expect(sendTyping).toHaveBeenCalled();
+    expect(removeInboxById).toHaveBeenCalledOnce();
+    expect(commitInboxResult).not.toHaveBeenCalled();
   });
 
-  it("チャンネル fetch が null を返した場合 appendDeadLetter に移動する", async () => {
-    vi.mocked(client.channels.fetch).mockResolvedValue(null as never);
+  it("does not create a delivery for an empty agent result", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({ name: "default", channels: [] });
+    vi.mocked(sendMessage).mockResolvedValue("");
+    const msg = makeMsg({ fencingToken: 4 });
 
-    await processMessage(makeCronThreadMsg());
+    await processMessage(msg);
 
-    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-  });
-
-  it("NonRetryableError は即 appendDeadLetter に移動する", async () => {
-    const { NonRetryableError } = await import("../utils/error.js");
-    vi.mocked(sendMessage).mockRejectedValue(
-      new NonRetryableError("context window exceeded"),
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      4,
+      "",
+      expect.objectContaining({ empty: true }),
     );
-
-    await processMessage(makeCronThreadMsg());
-
-    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-    expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
-  });
-
-  it("transient error はリトライカウントを増やして updateInboxById で更新する", async () => {
-    vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
-
-    await processMessage(makeCronThreadMsg({ retries: 0 }));
-
-    expect(vi.mocked(updateInboxById)).toHaveBeenCalledOnce();
-    const [id, patch] = vi.mocked(updateInboxById).mock.calls[0];
-    expect(id).toBe("inbox-1");
-    expect(patch.retries).toBe(1);
-    // スレッド作成後に失敗したので thread.id を引き継ぎ、次回リトライで再作成しない
-    expect(patch.cronThreadId).toBe("thread-123");
-    expect(vi.mocked(appendDeadLetter)).not.toHaveBeenCalled();
-  });
-
-  it("cronThreadId が設定されている場合はスレッド作成をスキップして既存スレッドに送る", async () => {
-    const mockSendableThread = { isSendable: () => true, send: mockThreadSend };
-    vi.mocked(client.channels.fetch).mockResolvedValue(
-      mockSendableThread as never,
-    );
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    await processMessage(
-      makeCronThreadMsg({
-        cronThreadId: "thread-existing",
-        timestamp: new Date().toISOString(),
-      }),
-    );
-
-    expect(mockThreadsCreate).not.toHaveBeenCalled();
-    expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
-      "default",
-      "thread-existing",
-      "hello",
-      expect.objectContaining({ onExecutionTiming: expect.any(Function) }),
-    );
-    expect(mockThreadSend).toHaveBeenCalledWith("AI response");
-    const line = logSpy.mock.calls
-      .flat()
-      .find((value) => String(value).includes('"event":"response_timing"'));
-    const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
-    expect(details.sessionId).toBe("thread-existing");
-    logSpy.mockRestore();
-  });
-
-  it("transient error でリトライ上限に達したら appendDeadLetter に移動する", async () => {
-    vi.mocked(sendMessage).mockRejectedValue(new Error("network error"));
-
-    await processMessage(makeCronThreadMsg({ retries: 9 }));
-
-    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-    expect(vi.mocked(updateInboxById)).not.toHaveBeenCalled();
-  });
-
-  it("new-thread だが cronJobId が未設定の場合 appendDeadLetter に移動し通常フローに落ちない", async () => {
-    const getCacheSpy = vi.mocked(client.channels.cache.get);
-    getCacheSpy.mockClear();
-
-    await processMessage(makeCronThreadMsg({ cronJobId: undefined }));
-
-    expect(vi.mocked(appendDeadLetter)).toHaveBeenCalledOnce();
-    expect(mockThreadsCreate).not.toHaveBeenCalled();
-    expect(getCacheSpy).not.toHaveBeenCalled(); // typing loop に入っていない
-  });
-
-  it("cron-thread は typing indicator を開始しない", async () => {
-    const getCacheSpy = vi.mocked(client.channels.cache.get);
-    getCacheSpy.mockClear();
-
-    await processMessage(makeCronThreadMsg());
-
-    expect(getCacheSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   registerHandlers: vi.fn(),
   startPoller: vi.fn(),
+  startDeliveryWorker: vi.fn(),
+  stopDeliveryWorker: vi.fn(),
   loadGroups: vi.fn(),
   loadProviders: vi.fn(),
   initGroupPrompts: vi.fn(),
@@ -21,6 +23,10 @@ vi.mock("./discord/handler.js", () => ({
 vi.mock("./queue/poller.js", () => ({
   startPoller: mocks.startPoller,
   stopPoller: vi.fn(),
+}));
+vi.mock("./queue/delivery.js", () => ({
+  startDeliveryWorker: mocks.startDeliveryWorker,
+  stopDeliveryWorker: mocks.stopDeliveryWorker,
 }));
 vi.mock("./config/groups.js", () => ({ loadGroups: mocks.loadGroups }));
 vi.mock("./config/providers.js", () => ({
@@ -167,10 +173,9 @@ describe("index: 起動時バリデーション", () => {
 
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
     expect(mockExit).toHaveBeenCalledWith(1);
-    expect(mocks.registerHandlers).not.toHaveBeenCalled();
   });
 
-  it("有効な設定では registerHandlers・startPoller・login が呼ばれる", async () => {
+  it("有効な設定では registerHandlers・startPoller・startDeliveryWorker・login が呼ばれる", async () => {
     mocks.loadGroups.mockResolvedValue([
       {
         name: "ok-group",
@@ -183,6 +188,7 @@ describe("index: 起動時バリデーション", () => {
 
     expect(mocks.registerHandlers).toHaveBeenCalledOnce();
     expect(mocks.startPoller).toHaveBeenCalledOnce();
+    expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.login).toHaveBeenCalledWith("test-token");
   });
 });

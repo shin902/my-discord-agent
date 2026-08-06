@@ -96,6 +96,72 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("claims only the lowest eligible chunk per job while allowing other jobs to proceed", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const firstJob = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session-a",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const firstClaim = repo.claim("worker-a", 1_000);
+      const firstDelivery = repo.commitResult(firstJob.job.id, firstClaim!.fencingToken, "a".repeat(2_001), {
+        deliveryPayload: { destinationType: "channel", destinationId: "channel" },
+      });
+      const firstChunks = repo.listDeliveries().filter((row) => row.jobId === firstJob.job.id);
+      expect(firstChunks).toHaveLength(2);
+      repo.db.prepare("UPDATE deliveries SET status='retry_wait',next_attempt_at=?,lease_until=?,worker_id=? WHERE id=?").run(new Date(0).toISOString(), new Date(0).toISOString(), "stale-worker", firstDelivery.id);
+
+      const secondJob = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session-b",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const secondClaim = repo.claim("worker-b", 1_000);
+      const secondDelivery = repo.commitResult(secondJob.job.id, secondClaim!.fencingToken, "second", {
+        deliveryPayload: { destinationType: "channel", destinationId: "channel" },
+      });
+      const claimed = repo.claimDelivery("delivery-worker", 1_000, new Date());
+      expect(claimed?.row.id).toBe(firstDelivery.id);
+      expect(claimed?.row.responseIndex).toBe(0);
+      expect(repo.listDeliveries().find((row) => row.id === firstChunks[1]!.id)?.status).toBe("pending");
+      expect(repo.listDeliveries().find((row) => row.id === secondDelivery.id)?.status).toBe("pending");
+      expect(repo.claimDelivery("delivery-worker-2", 1_000, new Date())?.row.id).toBe(secondDelivery.id);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("clears delivery lease metadata when retrying with an explicit retry time", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const job = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimedJob = repo.claim("worker-a", 1_000);
+      const delivery = repo.commitResult(job.job.id, claimedJob!.fencingToken, "response", {
+        deliveryPayload: { destinationType: "channel", destinationId: "channel" },
+      });
+      const claimedDelivery = repo.claimDelivery("worker-a", 1_000)!;
+      repo.updateDelivery(delivery.id, claimedDelivery.fencingToken, "retry_wait", {
+        error: "temporary",
+        retryAt: new Date(Date.now() + 10_000).toISOString(),
+      });
+      const row = repo.db.prepare("SELECT status,lease_until,worker_id,next_attempt_at FROM deliveries WHERE id=?").get(delivery.id) as Record<string, unknown>;
+      expect(row).toMatchObject({ status: "retry_wait", lease_until: null, worker_id: null });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("enforces session ordering while allowing another session to claim", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

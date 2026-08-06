@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { ChannelType } from "discord.js";
 import {
   type AgentExecutionTiming,
   type DiscordEvent,
@@ -15,7 +14,6 @@ import {
 } from "../config/providers.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
-import { splitMessage } from "../utils/splitMessage.js";
 import * as inboxStore from "./inbox.js";
 import {
   commitInboxResult,
@@ -358,208 +356,39 @@ async function withLlmLock<T>(
 async function processCronNewThread(msg: InboxMessage, signal?: AbortSignal): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
-  let sessionId = msg.sessionId;
-  // cronSessionMode がない旧 cronThread メッセージは従来どおりスレッドIDを使う。
-  const sessionMode = msg.cronSessionMode ?? "destination";
+  const sessionId = msg.cronThreadId ?? (msg.cronThread ? msg.channelId : msg.sessionId);
   try {
     if (!msg.cronJobId) {
       outcome = "dead-letter";
-      console.error(
-        "[poller] cronThread フラグがあるが cronJobId が未設定:",
-        msg,
-      );
       await appendDeadLetter(msg, "invalid_cron_job");
       await deadLetterInbox(msg.id, "invalid_cron_job", undefined, msg.fencingToken);
       return;
     }
-    // try の外で宣言: catch ブロックで cronThreadId として引き継ぐため
-    let threadId: string | undefined;
-    let response: string;
-    let threadSend: (content: string) => Promise<unknown>;
-    try {
-      if (msg.cronThreadId) {
-        // リトライ: スレッドは作成済み。再作成せず既存スレッドをフェッチ
-        threadId = msg.cronThreadId;
-        if (sessionMode === "destination") sessionId = threadId;
-        const fetched = await client.channels.fetch(threadId);
-        if (!fetched?.isSendable()) {
-          throw new NonRetryableError(
-            `cron-thread: スレッド ${threadId} が見つかりません`,
-          );
-        }
-        threadSend = (content) => fetched.send(content);
-      } else {
-        // 初回: チャンネルをフェッチしてスレッドを作成
-        const channel = await client.channels.fetch(msg.channelId);
-        if (
-          !channel ||
-          (channel.type !== ChannelType.GuildText &&
-            channel.type !== ChannelType.GuildAnnouncement)
-        ) {
-          throw new NonRetryableError(
-            `cron-thread: チャンネル ${msg.channelId} はスレッドをサポートしていません`,
-          );
-        }
-        const dateSuffix = new Date(msg.timestamp)
-          .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
-          .slice(0, 16)
-          .replace(" ", "-")
-          .replace(":", "-");
-        const suffix = `-${dateSuffix}`;
-        const maxIdLen = 100 - "cron-".length - suffix.length;
-        const truncatedId = msg.cronJobId.slice(0, maxIdLen);
-        const thread = await channel.threads.create({
-          name: `cron-${truncatedId}${suffix}`,
+    const groupConfig = await findGroupByName(msg.groupName);
+    const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
+    const response = await withLlmLock(lockTarget, async () => {
+      const agentStartedAt = Date.now();
+      try {
+        return await sendMessage(msg.groupName, sessionId, msg.content, {
+          onExecutionTiming: (executionTiming) => { timing.agentExecution = executionTiming; },
+          onContainerStarted: () => msg.fencingToken === undefined ? undefined : markInboxRunning(msg.id, msg.fencingToken, { startedAt: new Date().toISOString(), workspacePath: `groups/${msg.groupName}`, conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl` }),
+          signal, configOverride: msg.configOverride, agentsSnapshotContent: msg.agentsSnapshotContent, agentsSnapshotPresent: msg.agentsSnapshotPresent, memorySnapshotPresent: msg.memorySnapshotPresent, memorySnapshotContent: msg.memorySnapshotContent, snapshotHash: msg.snapshotHash, toolCallKey: msg.toolCallKey,
         });
-        threadId = thread.id;
-        if (sessionMode === "destination") sessionId = thread.id;
-        threadSend = (content) => thread.send(content);
-      }
-      const groupConfig = await findGroupByName(msg.groupName);
-      const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
-      response = await withLlmLock(
-        lockTarget,
-        async () => {
-          const agentStartedAt = Date.now();
-          try {
-            return await sendMessage(msg.groupName, sessionId, msg.content, {
-              onExecutionTiming: (executionTiming) => {
-                timing.agentExecution = executionTiming;
-              },
-              onContainerStarted: () =>
-                msg.fencingToken === undefined
-                  ? undefined
-                  : markInboxRunning(msg.id, msg.fencingToken, {
-                      startedAt: new Date().toISOString(),
-                      workspacePath: `groups/${msg.groupName}`,
-                      conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl`,
-                    }),
-              signal,
-              configOverride: msg.configOverride,
-              agentsSnapshotContent: msg.agentsSnapshotContent,
-              agentsSnapshotPresent: msg.agentsSnapshotPresent,
-              memorySnapshotPresent: msg.memorySnapshotPresent,
-              memorySnapshotContent: msg.memorySnapshotContent,
-              snapshotHash: msg.snapshotHash,
-              toolCallKey: msg.toolCallKey,
-            });
-          } finally {
-            timing.agentTotalMs = Date.now() - agentStartedAt;
-          }
-        },
-        {
-          onAcquired: (waitMs) => {
-            timing.lockWaitMs = waitMs;
-          },
-          signal,
-        },
-      );
-    } catch (err) {
-      if (err instanceof NonRetryableError) {
-        outcome = "dead-letter";
-        console.error("[poller] cron-thread 処理失敗（非リトライ可能）:", err);
-        await appendDeadLetter(msg, "non_retryable");
-        if (msg.fencingToken !== undefined) {
-          await inboxStore.deadLetterInbox(
-            msg.id,
-            "non_retryable",
-            String(err),
-            msg.fencingToken,
-            undefined,
-            executionMetadata(timing),
-          );
-        }
-        return;
-      } else {
-        console.error(
-          `[poller] cron-thread 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
-          err,
-        );
-        if (msg.retries + 1 < MAX_RETRIES) {
-          outcome = "retry";
-          // threadId がセット済み（スレッド作成後に失敗）なら次回リトライでスレッド再作成をスキップ
-          await updateInboxById(
-            msg.id,
-            { retries: msg.retries + 1, cronThreadId: threadId, lastError: String(err) },
-            msg.fencingToken,
-            undefined,
-            executionMetadata(timing),
-          );
-        } else {
-          outcome = "dead-letter";
-          console.error(
-            "[poller] cron-thread リトライ上限。dead-letter に移動:",
-            msg.id,
-          );
-          await appendDeadLetter(msg, "max_attempts");
-          if (msg.fencingToken !== undefined) {
-            await inboxStore.deadLetterInbox(
-              msg.id,
-              "max_attempts",
-              String(err),
-              msg.fencingToken,
-              undefined,
-              executionMetadata(timing),
-            );
-          }
-        }
-      }
-      return;
-    }
-    if (
-      timing.agentExecution?.exitCode !== undefined &&
-      timing.agentExecution.exitCode !== null &&
-      timing.agentExecution.exitCode !== 0
-    ) {
-      await failInboxAttempt(
-        msg.id,
-        new Error(response || `agent exited with code ${timing.agentExecution.exitCode}`),
-        msg.fencingToken,
-        executionMetadata(timing),
-      );
-      return;
-    }
-
-    // canonical result と delivery row は Discord 送信から独立して確定する。
-    if (msg.fencingToken !== undefined) {
-      await commitInboxResult(msg.id, msg.fencingToken, response, {
-        empty: !response,
-        metadata: timing.agentExecution
-          ? {
-              exitCode: timing.agentExecution.exitCode,
-              termination: timing.agentExecution.termination,
-              stopReason: timing.agentExecution.stopReason,
-              usage: timing.agentExecution.usage,
-              timing: timing.agentExecution,
-              agentsSnapshotHash: timing.agentExecution.agentsSnapshotHash,
-              memorySnapshotHash: timing.agentExecution.memorySnapshotHash,
-              snapshotHash: timing.agentExecution.snapshotHash,
-              toolCallKey: timing.agentExecution.toolCallKey,
-            }
-          : undefined,
-      });
+      } finally { timing.agentTotalMs = Date.now() - agentStartedAt; }
+    }, { onAcquired: (waitMs) => { timing.lockWaitMs = waitMs; }, signal });
+    if (timing.agentExecution?.exitCode !== undefined && timing.agentExecution.exitCode !== null && timing.agentExecution.exitCode !== 0) { await failInboxAttempt(msg.id, new Error(response || `agent exited with code ${timing.agentExecution.exitCode}`), msg.fencingToken, executionMetadata(timing)); return; }
+    if (msg.fencingToken !== undefined) await commitInboxResult(msg.id, msg.fencingToken, response, { empty: !response, metadata: executionMetadata(timing), deliveryPayload: { destinationType: "new-thread", destinationId: msg.channelId, cronJobId: msg.cronJobId, cronThreadId: msg.cronThreadId } });
+    outcome = response ? "success" : "empty-response";
+  } catch (error) {
+    if (error instanceof NonRetryableError) {
+      outcome = "dead-letter";
+      await appendDeadLetter(msg, "non_retryable");
+      if (msg.fencingToken !== undefined) await deadLetterInbox(msg.id, "non_retryable", String(error), msg.fencingToken, undefined, executionMetadata(timing));
     } else {
-      await removeInboxById(msg.id, msg.fencingToken);
+      outcome = "retry";
+      if (msg.fencingToken !== undefined) await failInboxAttempt(msg.id, error, msg.fencingToken, executionMetadata(timing));
     }
-    const discordSendStartedAt = Date.now();
-    try {
-      if (response) {
-        for (const chunk of splitMessage(response)) {
-          await threadSend(chunk);
-        }
-        outcome = "success";
-      } else {
-        outcome = "empty-response";
-      }
-    } catch (err) {
-      outcome = "discord-error";
-      console.error("[poller] cron-thread Discord送信エラー:", err);
-    } finally {
-      timing.discordSendMs = Date.now() - discordSendStartedAt;
-    }
-  } finally {
-    logResponseTiming({ ...msg, sessionId }, timing, outcome);
-  }
+  } finally { logResponseTiming({ ...msg, sessionId }, timing, outcome); }
 }
 async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   agentsSnapshotContent?: string;
@@ -771,67 +600,22 @@ export async function processMessage(msg: InboxMessage, signal?: AbortSignal): P
       );
       return;
     }
-    // canonical result と delivery row を Discord 送信より先に同一 transaction で確定する。
+    // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
     if (msg.fencingToken !== undefined) {
       await commitInboxResult(msg.id, msg.fencingToken, response, {
         empty: !response,
-        metadata: timing.agentExecution
-          ? {
-              exitCode: timing.agentExecution.exitCode,
-              termination: timing.agentExecution.termination,
-              stopReason: timing.agentExecution.stopReason,
-              usage: timing.agentExecution.usage,
-              timing: timing.agentExecution,
-              agentsSnapshotHash: timing.agentExecution.agentsSnapshotHash,
-              memorySnapshotHash: timing.agentExecution.memorySnapshotHash,
-              snapshotHash: timing.agentExecution.snapshotHash,
-              toolCallKey: timing.agentExecution.toolCallKey,
-            }
-          : undefined,
+        metadata: executionMetadata(timing),
+        deliveryPayload: {
+          destinationType: "channel",
+          destinationId: msg.channelId,
+          replyMessageId,
+        },
       });
     } else {
       await removeInboxById(msg.id, msg.fencingToken);
     }
-
-    const discordSendStartedAt = Date.now();
-    try {
-      const channel = await client.channels.fetch(msg.channelId);
-      if (!response) {
-        outcome = "empty-response";
-      } else if (!channel?.isSendable()) {
-        outcome = "discord-error";
-        console.error(
-          `[poller] Discord送信エラー: チャンネル ${msg.channelId} は送信できません`,
-        );
-      } else {
-        const chunks = splitMessage(response);
-        const [firstChunk, ...restChunks] = chunks;
-        if (firstChunk) {
-          await channel.send(
-            replyMessageId
-              ? {
-                  content: firstChunk,
-                  reply: {
-                    messageReference: replyMessageId,
-                    failIfNotExists: false,
-                  },
-                  allowedMentions: { repliedUser: true },
-                }
-              : firstChunk,
-          );
-        }
-        for (const chunk of restChunks) {
-          await channel.send(chunk);
-        }
-        outcome = "success";
-      }
-    } catch (err) {
-      outcome = "discord-error";
-      console.error(`[poller] Discord送信エラー:`, err);
-    } finally {
-      timing.discordSendMs = Date.now() - discordSendStartedAt;
-      stopTyping();
-    }
+    outcome = response ? "success" : "empty-response";
+    stopTyping();
   } finally {
     stopTyping();
     logResponseTiming(msg, timing, outcome);
