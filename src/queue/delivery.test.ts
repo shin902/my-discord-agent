@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { expectDefined } from "../test-utils.js";
 import { client } from "../discord/client.js";
 import {
   DeliveryError,
@@ -24,7 +25,7 @@ function completed(
     content: "prompt",
     timestamp: new Date().toISOString(),
   });
-  const claim = repo.claim("agent", 1000)!;
+  const claim = expectDefined(repo.claim("agent", 1000));
   repo.commitResult(item.job.id, claim.fencingToken, response, {
     deliveryPayload: {
       destinationType: "channel",
@@ -155,7 +156,7 @@ describe("durable delivery worker", () => {
       expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
       expect(send).toHaveBeenCalledTimes(1);
       repo.resolveAmbiguousDelivery(
-        repo.getDelivery(jobId)!.id,
+        expectDefined(repo.getDelivery(jobId)).id,
         "sent",
         "operator-confirmed",
       );
@@ -221,7 +222,7 @@ describe("durable delivery worker", () => {
         retryDelayMs: 0,
       });
       await worker.runOnce();
-      const afterFailure = repo.getDelivery(jobId)!;
+      const afterFailure = expectDefined(repo.getDelivery(jobId));
       expect(afterFailure.status).toBe("retry_wait");
       expect(afterFailure.cronThreadId).toBe("thread-1");
       repo.db

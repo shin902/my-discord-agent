@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { inspectRssReconciliation } from "../rss/observability.js";
 import { runtimeHealthCheck, type RuntimeHealth } from "./backup.js";
 export interface LatencyPercentiles {
@@ -81,7 +81,7 @@ function percentiles(values: number[]): LatencyPercentiles {
     p99: pick(0.99),
   };
 }
-function ageValues(db: Database.Database, sql: string, at: number): number[] {
+function ageValues(db: Database.Database, sql: string): number[] {
   return (
     db.prepare(sql).all() as Array<{ start: string; finish: string | null }>
   ).flatMap((row) => {
@@ -172,7 +172,6 @@ export function collectObservability(
       ageValues(
         runtimeDb,
         "SELECT created_at AS start,completed_at AS finish FROM jobs WHERE completed_at IS NOT NULL",
-        now,
       ),
     ),
     staleClaims: Number(
@@ -191,7 +190,6 @@ export function collectObservability(
       ageValues(
         runtimeDb,
         "SELECT created_at AS start,updated_at AS finish FROM deliveries WHERE status IN ('sent','failed')",
-        now,
       ),
     ),
     ambiguous: Number(

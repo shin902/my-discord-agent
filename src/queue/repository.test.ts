@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { expectDefined } from "../test-utils.js";
 import { QueueRepository, openRuntimeDb } from "./repository.js";
 
 describe("QueueRepository lease renewal", () => {
@@ -14,7 +15,7 @@ describe("QueueRepository lease renewal", () => {
       });
       const claimed = repo.claim("worker-a", 100);
       expect(claimed).toBeDefined();
-      repo.renew(enqueued.job.id, claimed!.fencingToken, 10_000);
+      repo.renew(enqueued.job.id, expectDefined(claimed).fencingToken, 10_000);
       const later = new Date(Date.now() + 500).toISOString();
       expect(repo.claim("worker-b", 100, new Date(later))).toBeUndefined();
     } finally {
@@ -79,7 +80,7 @@ describe("durable Phase 2 result state", () => {
         timestamp: new Date().toISOString(),
       });
       const claimed = repo.claim("worker-a", 1_000);
-      repo.markRunning(enqueued.job.id, claimed!.fencingToken, {
+      repo.markRunning(enqueued.job.id, expectDefined(claimed).fencingToken, {
         termination: "close",
         exitCode: 0,
         agentsSnapshotHash: "agents-hash",
@@ -88,7 +89,7 @@ describe("durable Phase 2 result state", () => {
       });
       const delivery = repo.commitResult(
         enqueued.job.id,
-        claimed!.fencingToken,
+        expectDefined(claimed).fencingToken,
         "canonical",
         {
           metadata: { timing: { promptMs: 10 } },
@@ -125,7 +126,7 @@ describe("durable Phase 2 result state", () => {
       const firstClaim = repo.claim("worker-a", 1_000);
       const firstDelivery = repo.commitResult(
         firstJob.job.id,
-        firstClaim!.fencingToken,
+        expectDefined(firstClaim).fencingToken,
         "a".repeat(2_001),
         {
           deliveryPayload: {
@@ -159,7 +160,7 @@ describe("durable Phase 2 result state", () => {
       const secondClaim = repo.claim("worker-b", 1_000);
       const secondDelivery = repo.commitResult(
         secondJob.job.id,
-        secondClaim!.fencingToken,
+        expectDefined(secondClaim).fencingToken,
         "second",
         {
           deliveryPayload: {
@@ -172,8 +173,9 @@ describe("durable Phase 2 result state", () => {
       expect(claimed?.row.id).toBe(firstDelivery.id);
       expect(claimed?.row.responseIndex).toBe(0);
       expect(
-        repo.listDeliveries().find((row) => row.id === firstChunks[1]!.id)
-          ?.status,
+        repo
+          .listDeliveries()
+          .find((row) => row.id === expectDefined(firstChunks[1]).id)?.status,
       ).toBe("pending");
       expect(
         repo.listDeliveries().find((row) => row.id === secondDelivery.id)
@@ -200,7 +202,7 @@ describe("durable Phase 2 result state", () => {
       const claimedJob = repo.claim("worker-a", 1_000);
       const delivery = repo.commitResult(
         job.job.id,
-        claimedJob!.fencingToken,
+        expectDefined(claimedJob).fencingToken,
         "response",
         {
           deliveryPayload: {
@@ -209,7 +211,9 @@ describe("durable Phase 2 result state", () => {
           },
         },
       );
-      const claimedDelivery = repo.claimDelivery("worker-a", 1_000)!;
+      const claimedDelivery = expectDefined(
+        repo.claimDelivery("worker-a", 1_000),
+      );
       repo.updateDelivery(
         delivery.id,
         claimedDelivery.fencingToken,
@@ -281,7 +285,11 @@ describe("durable Phase 2 result state", () => {
       const second = repo.claim("worker-b", 1, new Date(Date.now() + 10));
       expect(second).toBeDefined();
       expect(() =>
-        repo.commitResult(job.job.id, first!.fencingToken, "stale"),
+        repo.commitResult(
+          job.job.id,
+          expectDefined(first).fencingToken,
+          "stale",
+        ),
       ).toThrow(/stale fencing/);
     } finally {
       repo.close();

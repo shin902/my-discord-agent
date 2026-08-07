@@ -482,7 +482,10 @@ export class QueueRepository {
             "INSERT INTO idempotency_keys(key,job_id,status,created_at) VALUES(?,?,?,?)",
           )
           .run(key, id, "active", timestamp);
-      const result = { job: this.get(id)!, inserted: true };
+      const job = this.get(id);
+      if (job === undefined)
+        throw new Error(`failed to read back enqueued job ${id}`);
+      const result = { job, inserted: true };
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
@@ -776,8 +779,7 @@ export class QueueRepository {
       if (changed.changes !== 1)
         throw new Error(`stale fencing token for job ${id}`);
       let first: DeliveryRow | undefined;
-      for (let index = 0; index < chunks.length; index += 1) {
-        const content = chunks[index]!;
+      for (const [index, content] of chunks.entries()) {
         const payload = hasDeliveryMeta
           ? JSON.stringify({ ...deliveryMeta, content, responseIndex: index })
           : resultJson;
@@ -1340,7 +1342,10 @@ export class QueueRepository {
 }
 let defaultRepository: QueueRepository | undefined;
 export function getQueueRepository(): QueueRepository {
-  return (defaultRepository ??= new QueueRepository());
+  if (defaultRepository === undefined) {
+    defaultRepository = new QueueRepository();
+  }
+  return defaultRepository;
 }
 export function closeQueueRepository(): void {
   defaultRepository?.close();

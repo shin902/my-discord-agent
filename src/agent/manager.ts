@@ -579,7 +579,7 @@ export async function sendMessage(
     let pullCompletedAt: number | undefined;
     let containerStartedReported = false;
     const requiresReadyHandshake = onContainerStarted !== undefined;
-    let readySettled = !requiresReadyHandshake;
+    const readySettled = !requiresReadyHandshake;
     let readyResolve!: () => void;
     let readyReject!: (error: unknown) => void;
     const readyPromise = new Promise<void>((resolve, reject) => {

@@ -67,6 +67,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       if (typeof client.isReady === "function" && !client.isReady())
         throw new DeliveryError("retryable", "Discord client is not ready");
       let threadId = row.cronThreadId ?? payload.cronThreadId;
+      const destinationId = payload.destinationId ?? row.destinationId;
       let target: DeliveryTarget | undefined;
       if (
         payload.destinationType === "new-thread" ||
@@ -77,8 +78,13 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
             threadId,
           )) as unknown as DeliveryTarget;
         } else {
+          if (!destinationId)
+            throw new DeliveryError(
+              "non-retryable",
+              "delivery has no destinationId",
+            );
           const channel = (await client.channels.fetch(
-            payload.destinationId ?? row.destinationId!,
+            destinationId,
           )) as unknown as DeliveryTarget | null;
           if (!channel)
             throw new DeliveryError(
@@ -105,11 +111,14 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           }
         }
       } else {
-        target = (client.channels.cache.get(
-          payload.destinationId ?? row.destinationId!,
-        ) ??
+        if (!destinationId)
+          throw new DeliveryError(
+            "non-retryable",
+            "delivery has no destinationId",
+          );
+        target = (client.channels.cache.get(destinationId) ??
           (await client.channels.fetch(
-            payload.destinationId ?? row.destinationId!,
+            destinationId,
           ))) as unknown as DeliveryTarget;
       }
       if (!target)

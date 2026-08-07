@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import type { DeliveryStatus, JobStatus } from "./repository.js";
 
 export type RetentionStatus =

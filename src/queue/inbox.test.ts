@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { expectDefined } from "../test-utils.js";
 import {
   appendInbox,
   claimInbox,
@@ -67,8 +68,10 @@ describe("SQLite-backed inbox compatibility API", () => {
 
   it("claims, renews, and removes only the fenced running job", async () => {
     await appendInbox(makeMessage(), repository);
-    const claimed = await claimInbox("worker-1", 1_000, new Set(), repository);
-    const claimedJob = repository.get(claimed!.id)!;
+    const claimed = expectDefined(
+      await claimInbox("worker-1", 1_000, new Set(), repository),
+    );
+    const claimedJob = expectDefined(repository.get(claimed.id));
     expect(claimedJob.status).toBe("running");
     expect(claimedJob.workerId).toBe("worker-1");
 
@@ -88,8 +91,10 @@ describe("SQLite-backed inbox compatibility API", () => {
     const input = makeMessage({ idempotencyKey: "rss-dispatch-1" });
     await appendInbox(input, repository);
     const first = repository.list()[0];
-    const claimed = await claimInbox("worker-1", 1_000, new Set(), repository);
-    const claimedJob = repository.get(claimed!.id)!;
+    const claimed = expectDefined(
+      await claimInbox("worker-1", 1_000, new Set(), repository),
+    );
+    const claimedJob = expectDefined(repository.get(claimed.id));
     await removeInboxById(first.id, claimedJob.fencingToken, repository);
 
     await appendInbox(input, repository);
@@ -102,8 +107,10 @@ describe("SQLite-backed inbox compatibility API", () => {
   });
   it("updates a running job through retry state and retains its payload", async () => {
     await appendInbox(makeMessage(), repository);
-    const claimed = await claimInbox("worker-1", 1_000, new Set(), repository);
-    const claimedJob = repository.get(claimed!.id)!;
+    const claimed = expectDefined(
+      await claimInbox("worker-1", 1_000, new Set(), repository),
+    );
+    const claimedJob = expectDefined(repository.get(claimed.id));
 
     await updateInboxById(
       claimedJob.id,
@@ -112,7 +119,7 @@ describe("SQLite-backed inbox compatibility API", () => {
       repository,
     );
 
-    expect(repository.get(claimed!.id)).toMatchObject({
+    expect(repository.get(claimed.id)).toMatchObject({
       content: "updated",
       retries: 1,
       status: "retry_wait",
@@ -121,8 +128,10 @@ describe("SQLite-backed inbox compatibility API", () => {
   });
   it("dead-letters a claimed job and makes it invisible to peek", async () => {
     await appendInbox(makeMessage(), repository);
-    const claimed = await claimInbox("worker-1", 1_000, new Set(), repository);
-    const claimedJob = repository.get(claimed!.id)!;
+    const claimed = expectDefined(
+      await claimInbox("worker-1", 1_000, new Set(), repository),
+    );
+    const claimedJob = expectDefined(repository.get(claimed.id));
 
     await deadLetterInbox(
       claimedJob.id,
@@ -132,12 +141,12 @@ describe("SQLite-backed inbox compatibility API", () => {
       repository,
     );
 
-    expect(repository.get(claimed!.id)?.status).toBe("dead_letter");
+    expect(repository.get(claimed.id)?.status).toBe("dead_letter");
     expect(await peekAllUnclaimedInbox(new Set(), repository)).toEqual([]);
     expect(
       repository.db
         .prepare("SELECT reason,error FROM dead_letters WHERE job_id=?")
-        .get(claimed!.id),
+        .get(claimed.id),
     ).toEqual({
       reason: "invalid",
       error: "bad payload",

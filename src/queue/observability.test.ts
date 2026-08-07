@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { expectDefined } from "../test-utils.js";
 import { collectObservability } from "./observability.js";
 import { QueueRepository, openRuntimeDb } from "./repository.js";
 
@@ -16,7 +17,7 @@ describe("queue observability", () => {
       }).job;
       const claim = repo.claim("worker", 60_000, at);
       expect(claim?.job.id).toBe(job.id);
-      repo.commitResult(job.id, claim!.fencingToken, "done");
+      repo.commitResult(job.id, expectDefined(claim).fencingToken, "done");
       repo.db
         .prepare("UPDATE jobs SET status='running',lease_until=? WHERE id=?")
         .run("2024-12-31T23:59:59.000Z", job.id);

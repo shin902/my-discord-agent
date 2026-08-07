@@ -1,3 +1,4 @@
+import type Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import {
   listDispatchClaims,
@@ -27,7 +28,7 @@ export function reconcileRssDispatches(
   for (const rssDbPath of paths) {
     const resolvedPath = resolveRssDbPath(rssDbPath);
     if (!existsSync(resolvedPath)) continue;
-    let db;
+    let db: Database.Database;
     try {
       db = openRssDb(resolvedPath);
     } catch {

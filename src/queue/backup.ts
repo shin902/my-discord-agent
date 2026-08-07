@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -100,7 +101,7 @@ export async function backupRuntimeDatabase(
 export async function validateRuntimeBackup(
   backupPath: string,
 ): Promise<BackupValidation> {
-  let info;
+  let info: Stats;
   try {
     info = await stat(backupPath);
   } catch (error) {

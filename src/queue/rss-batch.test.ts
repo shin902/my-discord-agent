@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { expectDefined } from "../test-utils.js";
 import {
   claimUnreadArticles,
   markArticlesRead,
@@ -37,7 +38,7 @@ describe("RSS dispatch batch idempotency", () => {
       expect(first).toBeDefined();
       markArticlesRead(
         db,
-        first!.articles.map((article) => article.id),
+        expectDefined(first).articles.map((article) => article.id),
       );
       saveFeedEntries(db, {
         ...input,
@@ -99,7 +100,9 @@ describe("RSS dispatch batch idempotency", () => {
       });
       const first = claimUnreadArticles(db, "a", 10);
       expect(first).toBeDefined();
-      expect(claimUnreadArticles(db, first!.jobId, 10)).toBeUndefined();
+      expect(
+        claimUnreadArticles(db, expectDefined(first).jobId, 10),
+      ).toBeUndefined();
       expect(claimUnreadArticles(db, "cron%", 10)).toBeUndefined();
       expect(claimUnreadArticles(db, "cron_", 10)).toBeUndefined();
     } finally {

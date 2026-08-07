@@ -2,6 +2,7 @@ import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
+import { expectDefined } from "../test-utils.js";
 import { QueueRepository, openRuntimeDb } from "./repository.js";
 import { planRetention, pruneRetention } from "./retention.js";
 
@@ -296,7 +297,7 @@ describe("runtime retention", () => {
     try {
       const first = repo.enqueue(payload, { idempotencyKey: "dedupe-key" }).job;
       const claim = repo.claim("worker");
-      repo.commitResult(first.id, claim!.fencingToken, "done");
+      repo.commitResult(first.id, expectDefined(claim).fencingToken, "done");
       repo.db
         .prepare("UPDATE jobs SET updated_at=?,completed_at=? WHERE id=?")
         .run("2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z", first.id);

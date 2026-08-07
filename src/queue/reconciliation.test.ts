@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { expectDefined } from "../test-utils.js";
 import {
   claimUnreadArticles,
   listUnreadArticles,
@@ -66,13 +67,13 @@ describe("reconcileRssDispatches", () => {
           sessionId: "session",
           content: "content",
           timestamp: new Date().toISOString(),
-          rssDispatchId: dispatch!.id,
+          rssDispatchId: expectDefined(dispatch).id,
           rssStatePath: rssPath,
         },
-        { idempotencyKey: dispatch!.jobId },
+        { idempotencyKey: expectDefined(dispatch).jobId },
       );
       const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, claimed!.fencingToken);
+      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
 
       expect(reconcileRssDispatches(repo)).toBe(1);
       const check = openRssDb(rssPath);
@@ -99,7 +100,13 @@ describe("reconcileRssDispatches", () => {
         .prepare(
           "INSERT INTO idempotency_keys(key,job_id,status,created_at,completed_at) VALUES(?,?,?,?,?)",
         )
-        .run(dispatch!.jobId, null, "completed", completedAt, completedAt);
+        .run(
+          expectDefined(dispatch).jobId,
+          null,
+          "completed",
+          completedAt,
+          completedAt,
+        );
 
       expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
       const check = openRssDb(rssPath);

@@ -8,12 +8,7 @@ import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { loadProviders } from "./config/providers.js";
-import {
-  _setCronJobs,
-  loadAndValidateCron,
-  startCron,
-  stopCron,
-} from "./cron/runner.js";
+import { _setCronJobs, loadAndValidateCron, startCron } from "./cron/runner.js";
 import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
