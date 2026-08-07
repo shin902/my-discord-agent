@@ -2,13 +2,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { claimUnreadArticles, listUnreadArticles, openRssDb, saveFeedEntries } from "../rss/store.js";
+import {
+  claimUnreadArticles,
+  listUnreadArticles,
+  openRssDb,
+  saveFeedEntries,
+} from "../rss/store.js";
 import { reconcileRssDispatches } from "./reconciliation.js";
 import { QueueRepository, openRuntimeDb } from "./repository.js";
 
 let tempDirs: string[] = [];
 afterEach(async () => {
-  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+  );
   tempDirs = [];
 });
 
@@ -26,7 +33,15 @@ function seedUnread(path: string): void {
       parsedName: "Feed",
       etag: null,
       lastModified: null,
-      entries: [{ entryId: "article-1", title: "Article", link: "https://example.com/article", publishedAt: "2026-08-01", summary: "Summary" }],
+      entries: [
+        {
+          entryId: "article-1",
+          title: "Article",
+          link: "https://example.com/article",
+          publishedAt: "2026-08-01",
+          summary: "Summary",
+        },
+      ],
       markInitialAsRead: false,
     });
   } finally {
@@ -44,15 +59,18 @@ describe("reconcileRssDispatches", () => {
       const dispatch = claimUnreadArticles(rssDb, "cron-rss", 10);
       expect(dispatch).toBeDefined();
       rssDb.close();
-      const queued = repo.enqueue({
-        channelId: "channel",
-        groupName: "rss",
-        sessionId: "session",
-        content: "content",
-        timestamp: new Date().toISOString(),
-        rssDispatchId: dispatch!.id,
-        rssStatePath: rssPath,
-      }, { idempotencyKey: dispatch!.jobId });
+      const queued = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "rss",
+          sessionId: "session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+          rssDispatchId: dispatch!.id,
+          rssStatePath: rssPath,
+        },
+        { idempotencyKey: dispatch!.jobId },
+      );
       const claimed = repo.claim("worker", 60_000);
       repo.complete(queued.job.id, claimed!.fencingToken);
 
@@ -77,7 +95,11 @@ describe("reconcileRssDispatches", () => {
       const dispatch = claimUnreadArticles(rssDb, "cron-rss", 10);
       rssDb.close();
       const completedAt = new Date().toISOString();
-      repo.db.prepare("INSERT INTO idempotency_keys(key,job_id,status,created_at,completed_at) VALUES(?,?,?,?,?)").run(dispatch!.jobId, null, "completed", completedAt, completedAt);
+      repo.db
+        .prepare(
+          "INSERT INTO idempotency_keys(key,job_id,status,created_at,completed_at) VALUES(?,?,?,?,?)",
+        )
+        .run(dispatch!.jobId, null, "completed", completedAt, completedAt);
 
       expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
       const check = openRssDb(rssPath);

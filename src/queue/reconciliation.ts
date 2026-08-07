@@ -1,5 +1,11 @@
 import { existsSync } from "node:fs";
-import { listDispatchClaims, markArticlesRead, openRssDb, releaseDispatchArticles, resolveRssDbPath } from "../rss/store.js";
+import {
+  listDispatchClaims,
+  markArticlesRead,
+  openRssDb,
+  releaseDispatchArticles,
+  resolveRssDbPath,
+} from "../rss/store.js";
 import { getQueueRepository, type QueueRepository } from "./repository.js";
 
 /**
@@ -10,10 +16,13 @@ export function reconcileRssDispatches(
   repo: QueueRepository = getQueueRepository(),
   rssDbPaths?: string | readonly string[],
 ): number {
-  const configuredPaths = typeof rssDbPaths === "string"
-    ? [rssDbPaths]
-    : rssDbPaths ?? [];
-  const paths = new Set<string | undefined>([undefined, ...configuredPaths, ...repo.listRssStatePaths()]);
+  const configuredPaths =
+    typeof rssDbPaths === "string" ? [rssDbPaths] : (rssDbPaths ?? []);
+  const paths = new Set<string | undefined>([
+    undefined,
+    ...configuredPaths,
+    ...repo.listRssStatePaths(),
+  ]);
   let resolved = 0;
   for (const rssDbPath of paths) {
     const resolvedPath = resolveRssDbPath(rssDbPath);
@@ -31,7 +40,11 @@ export function reconcileRssDispatches(
         if (job?.status === "completed" || record?.status === "completed") {
           markArticlesRead(db, claim.articleIds);
           resolved++;
-        } else if (job?.status === "dead_letter" || record?.status === "dead_letter" || !record) {
+        } else if (
+          job?.status === "dead_letter" ||
+          record?.status === "dead_letter" ||
+          !record
+        ) {
           releaseDispatchArticles(db, claim.dispatchId, claim.articleIds);
           resolved++;
         }

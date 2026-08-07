@@ -38,7 +38,9 @@ const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const { client } = await import("../discord/client.js");
 const { appendDeadLetter } = await import("./dead-letter.js");
-const { removeInboxById, updateInboxById, commitInboxResult } = await import("./inbox.js");
+const { removeInboxById, updateInboxById, commitInboxResult } = await import(
+  "./inbox.js"
+);
 const { processMessage } = await import("./poller.js");
 
 beforeEach(() => {
@@ -468,7 +470,11 @@ describe("processMessage - durable result", () => {
   });
 
   it("commits the agent result and queues delivery metadata without Discord sends", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({ name: "default", channels: [], autoReply: true });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      autoReply: true,
+    });
     const msg = makeMsg({ fencingToken: 4, messageId: "msg-original" });
 
     await processMessage(msg);
@@ -493,7 +499,10 @@ describe("processMessage - durable result", () => {
       isTextBased: () => true,
       sendTyping,
     } as never);
-    vi.mocked(findGroupByName).mockResolvedValue({ name: "default", channels: [] });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
     const msg = makeMsg();
 
     await processMessage(msg);
@@ -504,7 +513,10 @@ describe("processMessage - durable result", () => {
   });
 
   it("does not create a delivery for an empty agent result", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({ name: "default", channels: [] });
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
     vi.mocked(sendMessage).mockResolvedValue("");
     const msg = makeMsg({ fencingToken: 4 });
 

@@ -121,7 +121,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
     );
 
     await enqueueCronInbox(
-      { ...ctx, idempotencyKey: dispatch.jobId, rssDispatchId: dispatch.id, rssStatePath: settings.statePath },
+      {
+        ...ctx,
+        idempotencyKey: dispatch.jobId,
+        rssDispatchId: dispatch.id,
+        rssStatePath: settings.statePath,
+      },
       content,
     );
     markArticlesRead(

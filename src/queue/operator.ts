@@ -1,8 +1,21 @@
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
-import { backupRuntimeDatabase, type BackupValidation, runtimeHealthCheck, type RuntimeHealth } from "./backup.js";
-import { collectObservability, type ObservabilitySnapshot, type RssDbInspection } from "./observability.js";
-import { pruneRuntimeRetention, type RetentionPolicy, type RetentionResult } from "./retention.js";
+import {
+  backupRuntimeDatabase,
+  type BackupValidation,
+  runtimeHealthCheck,
+  type RuntimeHealth,
+} from "./backup.js";
+import {
+  collectObservability,
+  type ObservabilitySnapshot,
+  type RssDbInspection,
+} from "./observability.js";
+import {
+  pruneRuntimeRetention,
+  type RetentionPolicy,
+  type RetentionResult,
+} from "./retention.js";
 import { openRssDb, resolveRssDbPath } from "../rss/store.js";
 
 export interface RuntimeOperatorOptions {
@@ -31,15 +44,25 @@ export interface RuntimeOperatorReport {
  * Run non-mutating runtime inspection and explicitly requested maintenance.
  * The default path only reads queue state; pruning and backup creation are opt-in.
  */
-export async function runRuntimeOperator(db: Database.Database, options: RuntimeOperatorOptions = {}): Promise<RuntimeOperatorReport> {
-  const backup = options.backupDestination ? await backupRuntimeDatabase(db, options.backupDestination) : null;
-  const health = await runtimeHealthCheck(db, { backupPath: options.backupPath ?? options.backupDestination });
-  const rssEntries: RssDbInspection[] = options.rssDb ? [{ path: "provided", db: options.rssDb }] : [];
+export async function runRuntimeOperator(
+  db: Database.Database,
+  options: RuntimeOperatorOptions = {},
+): Promise<RuntimeOperatorReport> {
+  const backup = options.backupDestination
+    ? await backupRuntimeDatabase(db, options.backupDestination)
+    : null;
+  const health = await runtimeHealthCheck(db, {
+    backupPath: options.backupPath ?? options.backupDestination,
+  });
+  const rssEntries: RssDbInspection[] = options.rssDb
+    ? [{ path: "provided", db: options.rssDb }]
+    : [];
   const rssErrors: Array<{ path: string; error: string }> = [];
   const paths = new Set<string>();
   if (options.rssDbPaths) {
     paths.add(resolveRssDbPath());
-    for (const configuredPath of options.rssDbPaths) paths.add(resolveRssDbPath(configuredPath));
+    for (const configuredPath of options.rssDbPaths)
+      paths.add(resolveRssDbPath(configuredPath));
   } else if (!options.rssDb) {
     paths.add(resolveRssDbPath());
   }
@@ -54,7 +77,10 @@ export async function runRuntimeOperator(db: Database.Database, options: Runtime
       opened.push(rssDb);
       rssEntries.push({ path: rssPath, db: rssDb });
     } catch (error) {
-      rssErrors.push({ path: rssPath, error: error instanceof Error ? error.message : String(error) });
+      rssErrors.push({
+        path: rssPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
   let observability: ObservabilitySnapshot;
@@ -68,6 +94,11 @@ export async function runRuntimeOperator(db: Database.Database, options: Runtime
   } finally {
     for (const rssDb of opened) rssDb.close();
   }
-  const retention = options.retention ? await pruneRuntimeRetention(db, options.retention.policy, { at: options.at, dryRun: options.retention.dryRun ?? true }) : null;
+  const retention = options.retention
+    ? await pruneRuntimeRetention(db, options.retention.policy, {
+        at: options.at,
+        dryRun: options.retention.dryRun ?? true,
+      })
+    : null;
   return { health, observability, backup, retention };
 }

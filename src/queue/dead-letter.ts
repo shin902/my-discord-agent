@@ -9,12 +9,15 @@ export async function appendDeadLetter(
 ): Promise<void> {
   const repo = getQueueRepository();
   const job = repo.get(msg.id);
-  if (!job || job.status === "completed" || job.status === "dead_letter") return;
+  if (!job || job.status === "completed" || job.status === "dead_letter")
+    return;
   repo.deadLetter(msg.id, msg.fencingToken ?? job.fencingToken, reason, error);
 }
 
 /** Preserve malformed legacy input as an audit row without replaying it. */
-export async function appendCorruptedDeadLetter(rawLine: string): Promise<void> {
+export async function appendCorruptedDeadLetter(
+  rawLine: string,
+): Promise<void> {
   getQueueRepository().recordDeadLetter({
     reason: "malformed_jsonl",
     error: rawLine,

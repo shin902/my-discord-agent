@@ -105,12 +105,20 @@ export function openRssDb(configuredPath?: string): Database.Database {
   if (!articleColumns.some((column) => column.name === "dispatch_owner_key")) {
     db.exec("ALTER TABLE rss_articles ADD COLUMN dispatch_owner_key TEXT");
   }
-  const legacyDispatches = db.prepare(`
+  const legacyDispatches = db
+    .prepare(`
     SELECT id, dispatch_id, dispatch_job_id
     FROM rss_articles
     WHERE dispatch_owner_key IS NULL AND dispatch_id IS NOT NULL AND dispatch_job_id IS NOT NULL
-  `).all() as Array<{ id: number; dispatch_id: string; dispatch_job_id: string }>;
-  const backfillOwner = db.prepare("UPDATE rss_articles SET dispatch_owner_key=? WHERE id=?");
+  `)
+    .all() as Array<{
+    id: number;
+    dispatch_id: string;
+    dispatch_job_id: string;
+  }>;
+  const backfillOwner = db.prepare(
+    "UPDATE rss_articles SET dispatch_owner_key=? WHERE id=?",
+  );
   for (const row of legacyDispatches) {
     const suffix = `:${row.dispatch_id}`;
     if (row.dispatch_job_id.endsWith(suffix)) {
@@ -306,7 +314,11 @@ export function claimUnreadArticles(
       `)
       .all(jobId, jobId) as DispatchArticleRow[];
     if (pending.length > 0) {
-      return { id: pending[0].dispatch_id, jobId: pending[0].dispatch_job_id, articles: pending.map(mapArticle) };
+      return {
+        id: pending[0].dispatch_id,
+        jobId: pending[0].dispatch_job_id,
+        articles: pending.map(mapArticle),
+      };
     }
 
     const feedFilter = feedUrls
@@ -332,7 +344,11 @@ export function claimUnreadArticles(
       UPDATE rss_articles SET dispatch_id = ?, dispatch_job_id = ?, dispatch_owner_key = ?
       WHERE dispatch_id IS NULL AND id IN (${placeholders})
     `).run(dispatchId, dispatchJobId, jobId, ...rows.map((row) => row.id));
-    return { id: dispatchId, jobId: dispatchJobId, articles: rows.map(mapArticle) };
+    return {
+      id: dispatchId,
+      jobId: dispatchJobId,
+      articles: rows.map(mapArticle),
+    };
   })();
 }
 
@@ -355,12 +371,18 @@ export interface DispatchClaim {
 }
 
 export function listDispatchClaims(db: Database.Database): DispatchClaim[] {
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(`
     SELECT dispatch_id, dispatch_job_id, GROUP_CONCAT(id) AS article_ids
     FROM rss_articles
     WHERE read_at IS NULL AND dispatch_id IS NOT NULL AND dispatch_job_id IS NOT NULL
     GROUP BY dispatch_id, dispatch_job_id
-  `).all() as Array<{ dispatch_id: string; dispatch_job_id: string; article_ids: string }>;
+  `)
+    .all() as Array<{
+    dispatch_id: string;
+    dispatch_job_id: string;
+    article_ids: string;
+  }>;
   return rows.map((row) => ({
     dispatchId: row.dispatch_id,
     dispatchJobId: row.dispatch_job_id,

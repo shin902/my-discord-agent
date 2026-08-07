@@ -26,12 +26,27 @@ function createRssOnlyDb(): Database.Database {
   return db;
 }
 
-function insertArticle(db: Database.Database, id: number, readAt: string | null, dispatchId: string | null = null): void {
+function insertArticle(
+  db: Database.Database,
+  id: number,
+  readAt: string | null,
+  dispatchId: string | null = null,
+): void {
   db.prepare(`
     INSERT INTO rss_articles
       (id, entry_id, title, link, published_at, summary, collected_at, read_at, dispatch_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, `entry-${id}`, `Article ${id}`, `https://example.test/${id}`, "2020-01-01T00:00:00.000Z", "summary", "2020-01-01T00:00:00.000Z", readAt, dispatchId);
+  `).run(
+    id,
+    `entry-${id}`,
+    `Article ${id}`,
+    `https://example.test/${id}`,
+    "2020-01-01T00:00:00.000Z",
+    "summary",
+    "2020-01-01T00:00:00.000Z",
+    readAt,
+    dispatchId,
+  );
 }
 
 describe("RSS retention", () => {
@@ -44,11 +59,17 @@ describe("RSS retention", () => {
       const plan = planRssRetention(db, { rssArticlesMs: 1 }, at);
       expect(plan.items.map((item) => item.id)).toEqual(["1"]);
 
-      const result = await pruneRssRetention(db, { rssArticlesMs: 1, archiveDir }, { at });
+      const result = await pruneRssRetention(
+        db,
+        { rssArticlesMs: 1, archiveDir },
+        { at },
+      );
       expect(result.planned).toBe(1);
       expect(result.archived).toBe(1);
       expect(result.deleted).toBe(1);
-      expect(db.prepare("SELECT id FROM rss_articles WHERE id=1").get()).toBeUndefined();
+      expect(
+        db.prepare("SELECT id FROM rss_articles WHERE id=1").get(),
+      ).toBeUndefined();
     } finally {
       db.close();
     }
@@ -56,7 +77,9 @@ describe("RSS retention", () => {
 
   it("protects unread and dispatched articles", async () => {
     const db = createRssOnlyDb();
-    const archiveDir = await mkdtemp(join(tmpdir(), "rss-retention-protected-"));
+    const archiveDir = await mkdtemp(
+      join(tmpdir(), "rss-retention-protected-"),
+    );
     try {
       insertArticle(db, 1, "2020-01-01T00:00:00.000Z");
       insertArticle(db, 2, null);
@@ -66,9 +89,17 @@ describe("RSS retention", () => {
       expect(plan.items.map((item) => item.id)).toEqual(["1"]);
       expect(plan.protected).toBe(2);
 
-      const result = await pruneRssRetention(db, { rssArticlesMs: 1, archiveDir }, { at });
+      const result = await pruneRssRetention(
+        db,
+        { rssArticlesMs: 1, archiveDir },
+        { at },
+      );
       expect(result.deleted).toBe(1);
-      expect(db.prepare("SELECT id FROM rss_articles WHERE id IN (2, 3) ORDER BY id").all()).toEqual([{ id: 2 }, { id: 3 }]);
+      expect(
+        db
+          .prepare("SELECT id FROM rss_articles WHERE id IN (2, 3) ORDER BY id")
+          .all(),
+      ).toEqual([{ id: 2 }, { id: 3 }]);
     } finally {
       db.close();
     }
@@ -82,8 +113,12 @@ describe("RSS retention", () => {
     try {
       insertArticle(db, 1, "2020-01-01T00:00:00.000Z");
 
-      await expect(pruneRssRetention(db, { rssArticlesMs: 1, archiveDir }, { at })).rejects.toThrow();
-      expect(db.prepare("SELECT id FROM rss_articles WHERE id=1").get()).toEqual({ id: 1 });
+      await expect(
+        pruneRssRetention(db, { rssArticlesMs: 1, archiveDir }, { at }),
+      ).rejects.toThrow();
+      expect(
+        db.prepare("SELECT id FROM rss_articles WHERE id=1").get(),
+      ).toEqual({ id: 1 });
     } finally {
       db.close();
     }

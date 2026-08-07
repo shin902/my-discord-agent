@@ -58,10 +58,11 @@ describe("SQLite-backed inbox compatibility API", () => {
     await appendInbox(makeMessage({ content: "third" }), repository);
     const jobs = repository.list();
 
-    expect((await peekAllUnclaimedInbox(new Set([jobs[0].id]), repository)).map((job) => job.content)).toEqual([
-      "second",
-      "third",
-    ]);
+    expect(
+      (await peekAllUnclaimedInbox(new Set([jobs[0].id]), repository)).map(
+        (job) => job.content,
+      ),
+    ).toEqual(["second", "third"]);
   });
 
   it("claims, renews, and removes only the fenced running job", async () => {
@@ -71,7 +72,12 @@ describe("SQLite-backed inbox compatibility API", () => {
     expect(claimedJob.status).toBe("running");
     expect(claimedJob.workerId).toBe("worker-1");
 
-    await renewInboxLease(claimedJob.id, claimedJob.fencingToken, 2_000, repository);
+    await renewInboxLease(
+      claimedJob.id,
+      claimedJob.fencingToken,
+      2_000,
+      repository,
+    );
     await removeInboxById(claimedJob.id, claimedJob.fencingToken, repository);
 
     expect(repository.get(claimedJob.id)?.status).toBe("completed");
@@ -99,7 +105,12 @@ describe("SQLite-backed inbox compatibility API", () => {
     const claimed = await claimInbox("worker-1", 1_000, new Set(), repository);
     const claimedJob = repository.get(claimed!.id)!;
 
-    await updateInboxById(claimedJob.id, { content: "updated", retries: 1, lastError: "temporary" }, claimedJob.fencingToken, repository);
+    await updateInboxById(
+      claimedJob.id,
+      { content: "updated", retries: 1, lastError: "temporary" },
+      claimedJob.fencingToken,
+      repository,
+    );
 
     expect(repository.get(claimed!.id)).toMatchObject({
       content: "updated",
@@ -113,11 +124,21 @@ describe("SQLite-backed inbox compatibility API", () => {
     const claimed = await claimInbox("worker-1", 1_000, new Set(), repository);
     const claimedJob = repository.get(claimed!.id)!;
 
-    await deadLetterInbox(claimedJob.id, "invalid", "bad payload", claimedJob.fencingToken, repository);
+    await deadLetterInbox(
+      claimedJob.id,
+      "invalid",
+      "bad payload",
+      claimedJob.fencingToken,
+      repository,
+    );
 
     expect(repository.get(claimed!.id)?.status).toBe("dead_letter");
     expect(await peekAllUnclaimedInbox(new Set(), repository)).toEqual([]);
-    expect(repository.db.prepare("SELECT reason,error FROM dead_letters WHERE job_id=?").get(claimed!.id)).toEqual({
+    expect(
+      repository.db
+        .prepare("SELECT reason,error FROM dead_letters WHERE job_id=?")
+        .get(claimed!.id),
+    ).toEqual({
       reason: "invalid",
       error: "bad payload",
     });

@@ -81,20 +81,37 @@ async function stopContainer(name: string): Promise<void> {
     kill.once("close", (code: number | null) => resolve(code ?? 1));
     kill.once("error", () => resolve(1));
   });
-  const inspect = await new Promise<{ code: number; output: string }>((resolve) => {
-    const child = spawn("docker", ["inspect", name], { stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-    child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    if (typeof child.once !== "function") return resolve({ code: 1, output });
-    child.once("close", (code: number | null) => resolve({ code: code ?? 1, output }));
-    child.once("error", () => resolve({ code: 1, output }));
-  });
-  if (inspect.code !== 0 && !/no such (?:object|container)|not found/i.test(inspect.output)) {
-    throw new Error(`container cleanup inspect failed: ${name}: ${inspect.output.trim()}`);
+  const inspect = await new Promise<{ code: number; output: string }>(
+    (resolve) => {
+      const child = spawn("docker", ["inspect", name], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      if (typeof child.once !== "function") return resolve({ code: 1, output });
+      child.once("close", (code: number | null) =>
+        resolve({ code: code ?? 1, output }),
+      );
+      child.once("error", () => resolve({ code: 1, output }));
+    },
+  );
+  if (
+    inspect.code !== 0 &&
+    !/no such (?:object|container)|not found/i.test(inspect.output)
+  ) {
+    throw new Error(
+      `container cleanup inspect failed: ${name}: ${inspect.output.trim()}`,
+    );
   }
   if (inspect.code === 0 && inspect.output.trim() !== "") {
-    throw new Error(`container cleanup failed: ${name} still exists (kill=${killResult})`);
+    throw new Error(
+      `container cleanup failed: ${name} still exists (kill=${killResult})`,
+    );
   }
   if (killResult !== 0 && inspect.code === 0) {
     throw new Error(`container cleanup failed: ${name} kill=${killResult}`);
@@ -468,7 +485,10 @@ export async function sendMessage(
   try {
     const entries = await readdir(attachmentsDir);
     if (entries.length > 0) {
-      attachmentMountArgs = ["-v", `${attachmentsDir}:/workspace/attachments:ro`];
+      attachmentMountArgs = [
+        "-v",
+        `${attachmentsDir}:/workspace/attachments:ro`,
+      ];
     }
   } catch {
     // ディレクトリが存在しない場合はマウントしない
@@ -540,11 +560,17 @@ export async function sendMessage(
       proc.kill("SIGKILL");
       void stopContainer(containerName).then(
         () => reject(new TransientError("実行がキャンセルされました")),
-        (error) => reject(new NonRetryableError(`キャンセル後の後始末に失敗しました: ${String(error)}`)),
+        (error) =>
+          reject(
+            new NonRetryableError(
+              `キャンセル後の後始末に失敗しました: ${String(error)}`,
+            ),
+          ),
       );
     };
     let cleanupActive = false;
-    if (signal) signal.addEventListener("abort", cancelActiveRun, { once: true });
+    if (signal)
+      signal.addEventListener("abort", cancelActiveRun, { once: true });
     if (signal?.aborted) cancelActiveRun();
 
     let stdout = "";
@@ -622,13 +648,15 @@ export async function sendMessage(
     const processStderrLine = (line: string): void => {
       if (line === "__AGENT_READY__") {
         if (!readySettled) {
-          Promise.resolve(onContainerStarted?.()).then(() => {
-            if (cleanupActive) return;
-            containerStartedReported = true;
-            readyResolve();
-          }).catch((error) => {
-            readyReject(error);
-          });
+          Promise.resolve(onContainerStarted?.())
+            .then(() => {
+              if (cleanupActive) return;
+              containerStartedReported = true;
+              readyResolve();
+            })
+            .catch((error) => {
+              readyReject(error);
+            });
         }
         return;
       }
@@ -670,30 +698,34 @@ export async function sendMessage(
     });
     if (!cleanupActive) {
       timeoutHandle = setTimeout(async () => {
-      if (stderrTail) {
-        processStderrLine(stderrTail);
-        stderrTail = "";
-      }
-      reportExecutionTiming(Date.now(), "timeout");
-      cleanupActive = true;
-      proc.kill("SIGKILL");
-      signal?.removeEventListener("abort", cancelActiveRun);
-      try {
-        await stopContainer(containerName);
-      } catch (cleanupError) {
+        if (stderrTail) {
+          processStderrLine(stderrTail);
+          stderrTail = "";
+        }
+        reportExecutionTiming(Date.now(), "timeout");
+        cleanupActive = true;
+        proc.kill("SIGKILL");
+        signal?.removeEventListener("abort", cancelActiveRun);
+        try {
+          await stopContainer(containerName);
+        } catch (cleanupError) {
+          runningContainers.delete(containerName);
+          signal?.removeEventListener("abort", cancelActiveRun);
+          reject(
+            new NonRetryableError(
+              `タイムアウト後のコンテナ後始末に失敗しました: ${String(cleanupError)}`,
+            ),
+          );
+          return;
+        }
         runningContainers.delete(containerName);
         signal?.removeEventListener("abort", cancelActiveRun);
-        reject(new NonRetryableError(`タイムアウト後のコンテナ後始末に失敗しました: ${String(cleanupError)}`));
-        return;
-      }
-      runningContainers.delete(containerName);
-      signal?.removeEventListener("abort", cancelActiveRun);
-      reject(
-        new TransientError(
-          `タイムアウト（${formatTimeoutLabel(agentTimeoutMs)}を超過しました）`,
-        ),
-      );
-    }, agentTimeoutMs);
+        reject(
+          new TransientError(
+            `タイムアウト（${formatTimeoutLabel(agentTimeoutMs)}を超過しました）`,
+          ),
+        );
+      }, agentTimeoutMs);
     }
 
     proc.on("close", (code: number | null) => {
@@ -726,25 +758,32 @@ export async function sendMessage(
       reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
     });
-    readyPromise.then(() => {
-      if (cleanupActive) return;
-      if (signal?.aborted) {
-        cancelActiveRun();
-        return;
-      }
-      proc.stdin.write(payload);
-      proc.stdin.end();
-    }).catch((error) => {
-      if (cleanupActive) return;
-      cleanupActive = true;
-      clearTimeout(timeoutHandle);
-      signal?.removeEventListener("abort", cancelActiveRun);
-      runningContainers.delete(containerName);
-      proc.kill("SIGKILL");
-      void stopContainer(containerName).then(
-        () => reject(error),
-        (cleanupError) => reject(new NonRetryableError(`起動後の後始末に失敗しました: ${String(cleanupError)}`)),
-      );
-    });
+    readyPromise
+      .then(() => {
+        if (cleanupActive) return;
+        if (signal?.aborted) {
+          cancelActiveRun();
+          return;
+        }
+        proc.stdin.write(payload);
+        proc.stdin.end();
+      })
+      .catch((error) => {
+        if (cleanupActive) return;
+        cleanupActive = true;
+        clearTimeout(timeoutHandle);
+        signal?.removeEventListener("abort", cancelActiveRun);
+        runningContainers.delete(containerName);
+        proc.kill("SIGKILL");
+        void stopContainer(containerName).then(
+          () => reject(error),
+          (cleanupError) =>
+            reject(
+              new NonRetryableError(
+                `起動後の後始末に失敗しました: ${String(cleanupError)}`,
+              ),
+            ),
+        );
+      });
   });
 }

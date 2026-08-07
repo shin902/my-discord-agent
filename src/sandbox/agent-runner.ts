@@ -225,7 +225,9 @@ async function loadWorkspaceFile(path: string): Promise<string | null> {
   }
 }
 function snapshotHash(content: string | null): string | undefined {
-  return content === null ? undefined : createHash("sha256").update(content).digest("hex");
+  return content === null
+    ? undefined
+    : createHash("sha256").update(content).digest("hex");
 }
 
 function loadSystemPromptFromWorkspace(): Promise<string | null> {
@@ -336,20 +338,32 @@ export async function runAgentLoop(
 
   const [systemPromptFile, skills, channelFileContents] = await Promise.all([
     identity?.agentsSnapshotPresent !== undefined
-      ? Promise.resolve(identity.agentsSnapshotPresent ? (identity.agentsSnapshotContent ?? "") : null)
+      ? Promise.resolve(
+          identity.agentsSnapshotPresent
+            ? (identity.agentsSnapshotContent ?? "")
+            : null,
+        )
       : needsAgentsSnapshot
-        ? (identity?.agentsSnapshotContent ?? await loadSystemPromptFromWorkspace())
+        ? (identity?.agentsSnapshotContent ??
+          (await loadSystemPromptFromWorkspace()))
         : Promise.resolve(null),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
-    Promise.all(channelsNeedingBootstrap.map((c) =>
-      c.customType === MEMORY_BOOTSTRAP_TYPE && identity?.memorySnapshotPresent !== undefined
-        ? Promise.resolve(identity.memorySnapshotPresent ? (identity.memorySnapshotContent ?? "") : null)
-        : c.customType === MEMORY_BOOTSTRAP_TYPE && identity?.memorySnapshotContent !== undefined
-          ? Promise.resolve(identity.memorySnapshotContent)
-          : loadWorkspaceFile(c.path),
-    )),
+    Promise.all(
+      channelsNeedingBootstrap.map((c) =>
+        c.customType === MEMORY_BOOTSTRAP_TYPE &&
+        identity?.memorySnapshotPresent !== undefined
+          ? Promise.resolve(
+              identity.memorySnapshotPresent
+                ? (identity.memorySnapshotContent ?? "")
+                : null,
+            )
+          : c.customType === MEMORY_BOOTSTRAP_TYPE &&
+              identity?.memorySnapshotContent !== undefined
+            ? Promise.resolve(identity.memorySnapshotContent)
+            : loadWorkspaceFile(c.path),
+      ),
+    ),
   ]);
-
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
   // 指定スキルのSKILL.md本文をそのままプロンプトへ強制注入して実行させる。
@@ -401,12 +415,13 @@ export async function runAgentLoop(
 
   const agentsSnapshotHash = snapshotHash(
     identity?.agentsSnapshotPresent !== undefined
-      ? (identity.agentsSnapshotPresent ? (identity.agentsSnapshotContent ?? "") : null)
-      : (
-        identity?.agentsSnapshotContent ?? (
-          needsAgentsSnapshot ? systemPromptFile : (existingAgentsSnapshot?.content ?? null)
-        )
-      ),
+      ? identity.agentsSnapshotPresent
+        ? (identity.agentsSnapshotContent ?? "")
+        : null
+      : (identity?.agentsSnapshotContent ??
+          (needsAgentsSnapshot
+            ? systemPromptFile
+            : (existingAgentsSnapshot?.content ?? null))),
   );
   const existingMemorySnapshot = messages.find(
     (message) => getCustomType(message) === MEMORY_BOOTSTRAP_TYPE,
@@ -414,17 +429,17 @@ export async function runAgentLoop(
   const memoryBootstrapIndex = channelsNeedingBootstrap.findIndex(
     (channel) => channel.customType === MEMORY_BOOTSTRAP_TYPE,
   );
-  const memoryContent = identity?.memorySnapshotPresent !== undefined
-    ? (identity.memorySnapshotPresent ? (identity.memorySnapshotContent ?? "") : null)
-    : (
-      identity?.memorySnapshotContent ?? (
-        existingMemorySnapshot && "content" in existingMemorySnapshot
+  const memoryContent =
+    identity?.memorySnapshotPresent !== undefined
+      ? identity.memorySnapshotPresent
+        ? (identity.memorySnapshotContent ?? "")
+        : null
+      : (identity?.memorySnapshotContent ??
+        (existingMemorySnapshot && "content" in existingMemorySnapshot
           ? String(existingMemorySnapshot.content)
           : memoryBootstrapIndex >= 0
-            ? channelFileContents[memoryBootstrapIndex] ?? null
-            : null
-      )
-    );
+            ? (channelFileContents[memoryBootstrapIndex] ?? null)
+            : null));
   const memorySnapshotHash = snapshotHash(memoryContent);
   const computedSnapshotHash =
     agentsSnapshotHash === undefined && memorySnapshotHash === undefined
@@ -433,13 +448,13 @@ export async function runAgentLoop(
           .update(`${agentsSnapshotHash ?? ""}:${memorySnapshotHash ?? ""}`)
           .digest("hex");
   const snapshotHashValue = identity?.snapshotHash ?? computedSnapshotHash;
-  const toolCallKey = identity?.toolCallKey ?? (
-    snapshotHashValue
+  const toolCallKey =
+    identity?.toolCallKey ??
+    (snapshotHashValue
       ? createHash("sha256")
           .update(`${groupName}:${sessionId}:${content}:${snapshotHashValue}`)
           .digest("hex")
-      : undefined
-  );
+      : undefined);
 
   // AGENTS.md の内容: 新規読み込み分があればそれを、なければ既存スナップショットを使う
   // AGENTS.md は system role の systemPrompt に固定で含める（指示遵守の優先度を維持するため）。
@@ -454,13 +469,15 @@ export async function runAgentLoop(
   //
   // MEMORY.md / SELF.md は下の context-bootstrap 注入によって会話履歴経由で LLM に届く
   // （user role に変換されるため、AGENTS.md と二重注入にはならない）。
-  const agentsContent = identity?.agentsSnapshotPresent !== undefined
-    ? (identity.agentsSnapshotPresent ? (identity.agentsSnapshotContent ?? "") : null)
-    : (
-      identity?.agentsSnapshotContent ?? (
-        needsAgentsSnapshot ? systemPromptFile : (existingAgentsSnapshot?.content ?? null)
-      )
-    );
+  const agentsContent =
+    identity?.agentsSnapshotPresent !== undefined
+      ? identity.agentsSnapshotPresent
+        ? (identity.agentsSnapshotContent ?? "")
+        : null
+      : (identity?.agentsSnapshotContent ??
+        (needsAgentsSnapshot
+          ? systemPromptFile
+          : (existingAgentsSnapshot?.content ?? null)));
   const fullSystemPrompt = [
     agentsContent ?? DEFAULT_SYSTEM_PROMPT,
     skillPrompt,

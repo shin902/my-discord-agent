@@ -2,7 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { claimUnreadArticles, markArticlesRead, openRssDb, saveFeedEntries } from "../rss/store.js";
+import {
+  claimUnreadArticles,
+  markArticlesRead,
+  openRssDb,
+  saveFeedEntries,
+} from "../rss/store.js";
 
 describe("RSS dispatch batch idempotency", () => {
   it("assigns a fresh queue key to each later batch for the same cron", async () => {
@@ -16,11 +21,36 @@ describe("RSS dispatch batch idempotency", () => {
         lastModified: null,
         markInitialAsRead: false,
       } as const;
-      saveFeedEntries(db, { ...input, entries: [{ entryId: "one", title: "One", link: "https://example.com/one", publishedAt: "", summary: "" }] });
+      saveFeedEntries(db, {
+        ...input,
+        entries: [
+          {
+            entryId: "one",
+            title: "One",
+            link: "https://example.com/one",
+            publishedAt: "",
+            summary: "",
+          },
+        ],
+      });
       const first = claimUnreadArticles(db, "cron-rss", 10);
       expect(first).toBeDefined();
-      markArticlesRead(db, first!.articles.map((article) => article.id));
-      saveFeedEntries(db, { ...input, entries: [{ entryId: "two", title: "Two", link: "https://example.com/two", publishedAt: "", summary: "" }] });
+      markArticlesRead(
+        db,
+        first!.articles.map((article) => article.id),
+      );
+      saveFeedEntries(db, {
+        ...input,
+        entries: [
+          {
+            entryId: "two",
+            title: "Two",
+            link: "https://example.com/two",
+            publishedAt: "",
+            summary: "",
+          },
+        ],
+      });
       const second = claimUnreadArticles(db, "cron-rss", 10);
       expect(second?.articles.map((article) => article.title)).toEqual(["Two"]);
       expect(second?.jobId).not.toBe(first?.jobId);
@@ -43,13 +73,29 @@ describe("RSS dispatch batch idempotency", () => {
       } as const;
       saveFeedEntries(db, {
         ...input,
-        entries: [{ entryId: "one", title: "One", link: "https://example.com/one", publishedAt: "", summary: "" }],
+        entries: [
+          {
+            entryId: "one",
+            title: "One",
+            link: "https://example.com/one",
+            publishedAt: "",
+            summary: "",
+          },
+        ],
       });
 
       expect(claimUnreadArticles(db, "cronA", 10)).toBeDefined();
       saveFeedEntries(db, {
         ...input,
-        entries: [{ entryId: "two", title: "Two", link: "https://example.com/two", publishedAt: "", summary: "" }],
+        entries: [
+          {
+            entryId: "two",
+            title: "Two",
+            link: "https://example.com/two",
+            publishedAt: "",
+            summary: "",
+          },
+        ],
       });
       const first = claimUnreadArticles(db, "a", 10);
       expect(first).toBeDefined();
@@ -75,7 +121,15 @@ describe("RSS dispatch batch idempotency", () => {
       } as const;
       saveFeedEntries(db, {
         ...input,
-        entries: [{ entryId: "one", title: "One", link: "https://example.com/one", publishedAt: "", summary: "" }],
+        entries: [
+          {
+            entryId: "one",
+            title: "One",
+            link: "https://example.com/one",
+            publishedAt: "",
+            summary: "",
+          },
+        ],
       });
       const dispatch = claimUnreadArticles(db, "legacy:cron", 10);
       expect(dispatch).toBeDefined();
@@ -86,8 +140,12 @@ describe("RSS dispatch batch idempotency", () => {
 
     const reopened = openRssDb(dbPath);
     try {
-      expect(claimUnreadArticles(reopened, "legacy:cron", 10)?.jobId).toBeDefined();
-      expect(reopened.prepare("SELECT dispatch_owner_key FROM rss_articles").get()).toEqual({
+      expect(
+        claimUnreadArticles(reopened, "legacy:cron", 10)?.jobId,
+      ).toBeDefined();
+      expect(
+        reopened.prepare("SELECT dispatch_owner_key FROM rss_articles").get(),
+      ).toEqual({
         dispatch_owner_key: "legacy:cron",
       });
     } finally {

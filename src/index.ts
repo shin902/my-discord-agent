@@ -41,11 +41,23 @@ try {
   const rssStatePaths = [
     ...queueRepository.listRssStatePaths(),
     ...cronJobs.flatMap((job) => {
-      if (typeof job.handler !== "string" || !job.handler.endsWith("rss-dispatch.ts")) return [];
+      if (
+        typeof job.handler !== "string" ||
+        !job.handler.endsWith("rss-dispatch.ts")
+      )
+        return [];
       const settings = job.settings;
-      if (!settings || typeof settings !== "object" || Array.isArray(settings) || !("statePath" in settings)) return [];
+      if (
+        !settings ||
+        typeof settings !== "object" ||
+        Array.isArray(settings) ||
+        !("statePath" in settings)
+      )
+        return [];
       const statePath = settings.statePath;
-      return typeof statePath === "string" && statePath.length > 0 ? [statePath] : [];
+      return typeof statePath === "string" && statePath.length > 0
+        ? [statePath]
+        : [];
     }),
   ];
   // Reconcile before collecting startup metrics so crash-window claims do not
@@ -57,8 +69,13 @@ try {
     staleAfterMs: Number.isFinite(staleAfterMs) ? staleAfterMs : undefined,
     backupPath: process.env.RUNTIME_BACKUP_PATH,
   });
-  if (!runtimeOperator.health.ok) console.warn("[startup] runtime database health check failed", runtimeOperator.health);
-  for (const alert of runtimeOperator.observability.alerts) console.warn(`[startup] ${alert}`);
+  if (!runtimeOperator.health.ok)
+    console.warn(
+      "[startup] runtime database health check failed",
+      runtimeOperator.health,
+    );
+  for (const alert of runtimeOperator.observability.alerts)
+    console.warn(`[startup] ${alert}`);
   _setCronJobs(cronJobs);
 } catch (err) {
   console.error("[startup] 設定の読み込みに失敗しました:", err);

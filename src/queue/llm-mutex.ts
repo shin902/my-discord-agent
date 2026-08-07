@@ -11,7 +11,11 @@ const providerMutexes = new Map<string, MutexState>();
 
 const noopRelease = () => {};
 
-function acquire(state: MutexState, onIdle?: () => void, signal?: AbortSignal): Promise<() => void> {
+function acquire(
+  state: MutexState,
+  onIdle?: () => void,
+  signal?: AbortSignal,
+): Promise<() => void> {
   return new Promise((resolve, reject) => {
     let queued = false;
     let settled = false;
@@ -52,17 +56,24 @@ function acquire(state: MutexState, onIdle?: () => void, signal?: AbortSignal): 
     signal?.addEventListener("abort", abort, { once: true });
   });
 }
-function acquireProvider(provider: string, signal?: AbortSignal): Promise<() => void> {
+function acquireProvider(
+  provider: string,
+  signal?: AbortSignal,
+): Promise<() => void> {
   const state = providerMutexes.get(provider) ?? {
     locked: false,
     waiters: [],
   };
   providerMutexes.set(provider, state);
-  return acquire(state, () => {
-    if (providerMutexes.get(provider) === state) {
-      providerMutexes.delete(provider);
-    }
-  }, signal);
+  return acquire(
+    state,
+    () => {
+      if (providerMutexes.get(provider) === state) {
+        providerMutexes.delete(provider);
+      }
+    },
+    signal,
+  );
 }
 
 /**

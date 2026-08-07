@@ -7,11 +7,15 @@ import { QueueRepository, openRuntimeDb } from "./repository.js";
 
 let tempDirs: string[] = [];
 afterEach(async () => {
-  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+  );
   tempDirs = [];
 });
 
-async function makePaths(content: string): Promise<{ inbox: string; dead: string; archive: string }> {
+async function makePaths(
+  content: string,
+): Promise<{ inbox: string; dead: string; archive: string }> {
   const dir = await mkdtemp(join(tmpdir(), "queue-migration-test-"));
   tempDirs.push(dir);
   const inbox = join(dir, "inbox.jsonl");
@@ -20,7 +24,9 @@ async function makePaths(content: string): Promise<{ inbox: string; dead: string
   return { inbox, dead, archive: join(dir, "archive") };
 }
 
-function message(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function message(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     id: "legacy-1",
     channelId: "channel",
@@ -35,14 +41,22 @@ function message(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 describe("migrateLegacyQueue", () => {
   it("classifies malformed optional fields as dead letters without aborting", async () => {
-    const paths = await makePaths(`${JSON.stringify(message({ retries: "not-a-number" }))}\n${JSON.stringify(message({ id: "valid" }))}\n`);
+    const paths = await makePaths(
+      `${JSON.stringify(message({ retries: "not-a-number" }))}\n${JSON.stringify(message({ id: "valid" }))}\n`,
+    );
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const result = await migrateLegacyQueue(repo, { inboxPath: paths.inbox, deadLetterPath: paths.dead, archiveDir: paths.archive });
+      const result = await migrateLegacyQueue(repo, {
+        inboxPath: paths.inbox,
+        deadLetterPath: paths.dead,
+        archiveDir: paths.archive,
+      });
       expect(result.malformed).toBe(1);
       expect(result.migrated).toBe(1);
       expect(repo.list()).toHaveLength(1);
-      expect(repo.db.prepare("SELECT reason FROM dead_letters").all()).toEqual([{ reason: "invalid_inbox_row" }]);
+      expect(repo.db.prepare("SELECT reason FROM dead_letters").all()).toEqual([
+        { reason: "invalid_inbox_row" },
+      ]);
     } finally {
       repo.close();
     }
@@ -52,18 +66,46 @@ describe("migrateLegacyQueue", () => {
     const paths = await makePaths(`${JSON.stringify(message())}\n`);
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      repo.db.exec("CREATE TEMP TRIGGER fail_migration BEFORE INSERT ON jobs BEGIN SELECT RAISE(ABORT, 'forced migration failure'); END");
-      await expect(migrateLegacyQueue(repo, { inboxPath: paths.inbox, deadLetterPath: paths.dead, archiveDir: paths.archive })).rejects.toThrow("forced migration failure");
+      repo.db.exec(
+        "CREATE TEMP TRIGGER fail_migration BEFORE INSERT ON jobs BEGIN SELECT RAISE(ABORT, 'forced migration failure'); END",
+      );
+      await expect(
+        migrateLegacyQueue(repo, {
+          inboxPath: paths.inbox,
+          deadLetterPath: paths.dead,
+          archiveDir: paths.archive,
+        }),
+      ).rejects.toThrow("forced migration failure");
       const archives = await readdir(paths.archive);
       expect(archives).toHaveLength(1);
-      expect(await readFile(join(paths.archive, archives[0]))).toEqual(Buffer.from(`${JSON.stringify(message())}\n`));
+      expect(await readFile(join(paths.archive, archives[0]))).toEqual(
+        Buffer.from(`${JSON.stringify(message())}\n`),
+      );
       expect(repo.list()).toEqual([]);
-      expect(repo.db.prepare("SELECT COUNT(*) AS count FROM schema_meta WHERE key LIKE 'legacy_migration:%'").get()).toEqual({ count: 0 });
+      expect(
+        repo.db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM schema_meta WHERE key LIKE 'legacy_migration:%'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
       repo.db.exec("DROP TRIGGER fail_migration");
-      const result = await migrateLegacyQueue(repo, { inboxPath: paths.inbox, deadLetterPath: paths.dead, archiveDir: paths.archive });
+      const result = await migrateLegacyQueue(repo, {
+        inboxPath: paths.inbox,
+        deadLetterPath: paths.dead,
+        archiveDir: paths.archive,
+      });
       expect(result.migrated).toBe(1);
       expect(result.backupPaths).toHaveLength(1);
-      expect((await migrateLegacyQueue(repo, { inboxPath: paths.inbox, deadLetterPath: paths.dead, archiveDir: paths.archive })).migrated).toBe(0);
+      expect(
+        (
+          await migrateLegacyQueue(repo, {
+            inboxPath: paths.inbox,
+            deadLetterPath: paths.dead,
+            archiveDir: paths.archive,
+          })
+        ).migrated,
+      ).toBe(0);
     } finally {
       repo.close();
     }

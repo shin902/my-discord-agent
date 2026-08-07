@@ -212,10 +212,12 @@ const LEASE_RENEWAL_MS = 20_000;
 function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
-    void inboxStore.renewInboxLease(msg.id, msg.fencingToken ?? 0, LEASE_MS).catch((error) => {
-      console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
-      controller.abort(error);
-    });
+    void inboxStore
+      .renewInboxLease(msg.id, msg.fencingToken ?? 0, LEASE_MS)
+      .catch((error) => {
+        console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
+        controller.abort(error);
+      });
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
@@ -344,7 +346,11 @@ async function withLlmLock<T>(
   options: LlmLockOptions = {},
 ): Promise<T> {
   const waitStartedAt = Date.now();
-  const release = await acquireLlmLock(target.provider, target.concurrency, options.signal);
+  const release = await acquireLlmLock(
+    target.provider,
+    target.concurrency,
+    options.signal,
+  );
   try {
     options.onAcquired?.(Date.now() - waitStartedAt);
     return await fn();
@@ -353,42 +359,119 @@ async function withLlmLock<T>(
   }
 }
 
-async function processCronNewThread(msg: InboxMessage, signal?: AbortSignal): Promise<void> {
+async function processCronNewThread(
+  msg: InboxMessage,
+  signal?: AbortSignal,
+): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
-  const sessionId = msg.cronThreadId ?? (msg.cronThread ? msg.channelId : msg.sessionId);
+  const sessionId =
+    msg.cronThreadId ?? (msg.cronThread ? msg.channelId : msg.sessionId);
   try {
     if (!msg.cronJobId) {
       outcome = "dead-letter";
       await appendDeadLetter(msg, "invalid_cron_job");
-      await deadLetterInbox(msg.id, "invalid_cron_job", undefined, msg.fencingToken);
+      await deadLetterInbox(
+        msg.id,
+        "invalid_cron_job",
+        undefined,
+        msg.fencingToken,
+      );
       return;
     }
     const groupConfig = await findGroupByName(msg.groupName);
     const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
-    const response = await withLlmLock(lockTarget, async () => {
-      const agentStartedAt = Date.now();
-      try {
-        return await sendMessage(msg.groupName, sessionId, msg.content, {
-          onExecutionTiming: (executionTiming) => { timing.agentExecution = executionTiming; },
-          onContainerStarted: () => msg.fencingToken === undefined ? undefined : markInboxRunning(msg.id, msg.fencingToken, { startedAt: new Date().toISOString(), workspacePath: `groups/${msg.groupName}`, conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl` }),
-          signal, configOverride: msg.configOverride, agentsSnapshotContent: msg.agentsSnapshotContent, agentsSnapshotPresent: msg.agentsSnapshotPresent, memorySnapshotPresent: msg.memorySnapshotPresent, memorySnapshotContent: msg.memorySnapshotContent, snapshotHash: msg.snapshotHash, toolCallKey: msg.toolCallKey,
-        });
-      } finally { timing.agentTotalMs = Date.now() - agentStartedAt; }
-    }, { onAcquired: (waitMs) => { timing.lockWaitMs = waitMs; }, signal });
-    if (timing.agentExecution?.exitCode !== undefined && timing.agentExecution.exitCode !== null && timing.agentExecution.exitCode !== 0) { await failInboxAttempt(msg.id, new Error(response || `agent exited with code ${timing.agentExecution.exitCode}`), msg.fencingToken, executionMetadata(timing)); return; }
-    if (msg.fencingToken !== undefined) await commitInboxResult(msg.id, msg.fencingToken, response, { empty: !response, metadata: executionMetadata(timing), deliveryPayload: { destinationType: "new-thread", destinationId: msg.channelId, cronJobId: msg.cronJobId, cronThreadId: msg.cronThreadId } });
+    const response = await withLlmLock(
+      lockTarget,
+      async () => {
+        const agentStartedAt = Date.now();
+        try {
+          return await sendMessage(msg.groupName, sessionId, msg.content, {
+            onExecutionTiming: (executionTiming) => {
+              timing.agentExecution = executionTiming;
+            },
+            onContainerStarted: () =>
+              msg.fencingToken === undefined
+                ? undefined
+                : markInboxRunning(msg.id, msg.fencingToken, {
+                    startedAt: new Date().toISOString(),
+                    workspacePath: `groups/${msg.groupName}`,
+                    conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl`,
+                  }),
+            signal,
+            configOverride: msg.configOverride,
+            agentsSnapshotContent: msg.agentsSnapshotContent,
+            agentsSnapshotPresent: msg.agentsSnapshotPresent,
+            memorySnapshotPresent: msg.memorySnapshotPresent,
+            memorySnapshotContent: msg.memorySnapshotContent,
+            snapshotHash: msg.snapshotHash,
+            toolCallKey: msg.toolCallKey,
+          });
+        } finally {
+          timing.agentTotalMs = Date.now() - agentStartedAt;
+        }
+      },
+      {
+        onAcquired: (waitMs) => {
+          timing.lockWaitMs = waitMs;
+        },
+        signal,
+      },
+    );
+    if (
+      timing.agentExecution?.exitCode !== undefined &&
+      timing.agentExecution.exitCode !== null &&
+      timing.agentExecution.exitCode !== 0
+    ) {
+      await failInboxAttempt(
+        msg.id,
+        new Error(
+          response ||
+            `agent exited with code ${timing.agentExecution.exitCode}`,
+        ),
+        msg.fencingToken,
+        executionMetadata(timing),
+      );
+      return;
+    }
+    if (msg.fencingToken !== undefined)
+      await commitInboxResult(msg.id, msg.fencingToken, response, {
+        empty: !response,
+        metadata: executionMetadata(timing),
+        deliveryPayload: {
+          destinationType: "new-thread",
+          destinationId: msg.channelId,
+          cronJobId: msg.cronJobId,
+          cronThreadId: msg.cronThreadId,
+        },
+      });
     outcome = response ? "success" : "empty-response";
   } catch (error) {
     if (error instanceof NonRetryableError) {
       outcome = "dead-letter";
       await appendDeadLetter(msg, "non_retryable");
-      if (msg.fencingToken !== undefined) await deadLetterInbox(msg.id, "non_retryable", String(error), msg.fencingToken, undefined, executionMetadata(timing));
+      if (msg.fencingToken !== undefined)
+        await deadLetterInbox(
+          msg.id,
+          "non_retryable",
+          String(error),
+          msg.fencingToken,
+          undefined,
+          executionMetadata(timing),
+        );
     } else {
       outcome = "retry";
-      if (msg.fencingToken !== undefined) await failInboxAttempt(msg.id, error, msg.fencingToken, executionMetadata(timing));
+      if (msg.fencingToken !== undefined)
+        await failInboxAttempt(
+          msg.id,
+          error,
+          msg.fencingToken,
+          executionMetadata(timing),
+        );
     }
-  } finally { logResponseTiming({ ...msg, sessionId }, timing, outcome); }
+  } finally {
+    logResponseTiming({ ...msg, sessionId }, timing, outcome);
+  }
 }
 async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   agentsSnapshotContent?: string;
@@ -400,50 +483,88 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   toolCallKey: string;
 }> {
   const base = path.resolve("groups", msg.groupName);
-  const readOptional = async (file: string) => readFile(file, "utf8").catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
+  const readOptional = async (file: string) =>
+    readFile(file, "utf8").catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
   let agentsSnapshotContent = await readOptional(path.join(base, "AGENTS.md"));
-  let memorySnapshotContent = await readOptional(path.join(base, "memory", "MEMORY.md"));
-  const sessionRaw = await readOptional(path.resolve("data", "sessions", msg.groupName, `${msg.sessionId}.jsonl`));
+  let memorySnapshotContent = await readOptional(
+    path.join(base, "memory", "MEMORY.md"),
+  );
+  const sessionRaw = await readOptional(
+    path.resolve("data", "sessions", msg.groupName, `${msg.sessionId}.jsonl`),
+  );
   if (sessionRaw) {
     for (const line of sessionRaw.split(/\r?\n/)) {
       try {
-        const entry = JSON.parse(line) as { customType?: string; content?: unknown };
-        if (entry.customType === "agents-snapshot") agentsSnapshotContent = String(entry.content ?? "");
-        if (entry.customType === "memory-bootstrap") memorySnapshotContent = String(entry.content ?? "");
-      } catch { /* ignore malformed historical lines */ }
+        const entry = JSON.parse(line) as {
+          customType?: string;
+          content?: unknown;
+        };
+        if (entry.customType === "agents-snapshot")
+          agentsSnapshotContent = String(entry.content ?? "");
+        if (entry.customType === "memory-bootstrap")
+          memorySnapshotContent = String(entry.content ?? "");
+      } catch {
+        /* ignore malformed historical lines */
+      }
     }
   }
   const agentsSnapshotPresent = agentsSnapshotContent !== undefined;
   const memorySnapshotPresent = memorySnapshotContent !== undefined;
   const snapshotPresent = agentsSnapshotPresent || memorySnapshotPresent;
-  const canonicalMemory = memorySnapshotContent === undefined ? "" : memorySnapshotContent.startsWith("## Memory (MEMORY.md)\n\n")
-    ? memorySnapshotContent
-    : `## Memory (MEMORY.md)\n\n${Array.from(memorySnapshotContent).slice(0, 2000).join("")}${Array.from(memorySnapshotContent).length > 2000 ? "\n\n[Warning: Memory (MEMORY.md) exceeds the limit (2000 characters). Delete or summarize old content to keep it organized]" : ""}`;
-  const snapshotHash = createHash("sha256").update(`${agentsSnapshotPresent ? "1" : "0"}:${agentsSnapshotContent ?? ""}:${memorySnapshotPresent ? "1" : "0"}:${canonicalMemory}`).digest("hex");
-  const toolCallKey = createHash("sha256").update(`${msg.id}:${msg.groupName}:${msg.sessionId}:${snapshotHash}`).digest("hex");
-  return { agentsSnapshotContent, memorySnapshotContent, agentsSnapshotPresent, memorySnapshotPresent, snapshotPresent, snapshotHash, toolCallKey };
+  const canonicalMemory =
+    memorySnapshotContent === undefined
+      ? ""
+      : memorySnapshotContent.startsWith("## Memory (MEMORY.md)\n\n")
+        ? memorySnapshotContent
+        : `## Memory (MEMORY.md)\n\n${Array.from(memorySnapshotContent).slice(0, 2000).join("")}${Array.from(memorySnapshotContent).length > 2000 ? "\n\n[Warning: Memory (MEMORY.md) exceeds the limit (2000 characters). Delete or summarize old content to keep it organized]" : ""}`;
+  const snapshotHash = createHash("sha256")
+    .update(
+      `${agentsSnapshotPresent ? "1" : "0"}:${agentsSnapshotContent ?? ""}:${memorySnapshotPresent ? "1" : "0"}:${canonicalMemory}`,
+    )
+    .digest("hex");
+  const toolCallKey = createHash("sha256")
+    .update(`${msg.id}:${msg.groupName}:${msg.sessionId}:${snapshotHash}`)
+    .digest("hex");
+  return {
+    agentsSnapshotContent,
+    memorySnapshotContent,
+    agentsSnapshotPresent,
+    memorySnapshotPresent,
+    snapshotPresent,
+    snapshotHash,
+    toolCallKey,
+  };
 }
-export async function processMessage(msg: InboxMessage, signal?: AbortSignal): Promise<void> {
+export async function processMessage(
+  msg: InboxMessage,
+  signal?: AbortSignal,
+): Promise<void> {
   if (msg.fencingToken !== undefined) {
     try {
-      const identity = msg.snapshotHash && msg.toolCallKey && msg.agentsSnapshotPresent !== undefined
-        ? {
-            agentsSnapshotContent: msg.agentsSnapshotContent,
-            memorySnapshotContent: msg.memorySnapshotContent,
-            agentsSnapshotPresent: msg.agentsSnapshotPresent,
-            memorySnapshotPresent: msg.memorySnapshotPresent ?? false,
-            snapshotPresent: msg.snapshotPresent ?? false,
-            snapshotHash: msg.snapshotHash,
-            toolCallKey: msg.toolCallKey,
-          }
-        : await captureFrozenIdentity(msg);
+      const identity =
+        msg.snapshotHash &&
+        msg.toolCallKey &&
+        msg.agentsSnapshotPresent !== undefined
+          ? {
+              agentsSnapshotContent: msg.agentsSnapshotContent,
+              memorySnapshotContent: msg.memorySnapshotContent,
+              agentsSnapshotPresent: msg.agentsSnapshotPresent,
+              memorySnapshotPresent: msg.memorySnapshotPresent ?? false,
+              snapshotPresent: msg.snapshotPresent ?? false,
+              snapshotHash: msg.snapshotHash,
+              toolCallKey: msg.toolCallKey,
+            }
+          : await captureFrozenIdentity(msg);
       await freezeInboxExecutionIdentity(msg.id, msg.fencingToken, identity);
       Object.assign(msg, identity);
     } catch (error) {
-      console.error(`[poller] 実行 identity の保存に失敗しました (${msg.id}):`, error);
+      console.error(
+        `[poller] 実行 identity の保存に失敗しました (${msg.id}):`,
+        error,
+      );
       await failInboxAttempt(msg.id, error, msg.fencingToken, {
         termination: "spawn-error",
         stopReason: "identity-capture",
@@ -470,10 +591,17 @@ export async function processMessage(msg: InboxMessage, signal?: AbortSignal): P
     });
     if (!groupConfig) {
       outcome = "dead-letter";
-      await deadLetterInbox(msg.id, "config-unavailable", "group config unavailable", msg.fencingToken, undefined, {
-        termination: "spawn-error",
-        stopReason: "config-unavailable",
-      });
+      await deadLetterInbox(
+        msg.id,
+        "config-unavailable",
+        "group config unavailable",
+        msg.fencingToken,
+        undefined,
+        {
+          termination: "spawn-error",
+          stopReason: "config-unavailable",
+        },
+      );
       return;
     }
     const replyMessageId =
@@ -594,7 +722,10 @@ export async function processMessage(msg: InboxMessage, signal?: AbortSignal): P
     ) {
       await failInboxAttempt(
         msg.id,
-        new Error(response || `agent exited with code ${timing.agentExecution.exitCode}`),
+        new Error(
+          response ||
+            `agent exited with code ${timing.agentExecution.exitCode}`,
+        ),
         msg.fencingToken,
         executionMetadata(timing),
       );
@@ -626,7 +757,10 @@ async function poll(): Promise<void> {
     try {
       if (client.isReady()) {
         const candidates = await inboxStore.peekAllUnclaimedInbox(inFlightIds);
-        if (candidates.length > 0 && typeof inboxStore.claimInbox !== "function") {
+        if (
+          candidates.length > 0 &&
+          typeof inboxStore.claimInbox !== "function"
+        ) {
           for (const msg of candidates) {
             inFlightIds.add(msg.id);
             dispatch(msg.sessionId, () =>
@@ -638,7 +772,11 @@ async function poll(): Promise<void> {
           continue;
         }
         if (typeof inboxStore.claimInbox === "function") {
-          const msg = await inboxStore.claimInbox(`poller-${process.pid}`, LEASE_MS, inFlightIds);
+          const msg = await inboxStore.claimInbox(
+            `poller-${process.pid}`,
+            LEASE_MS,
+            inFlightIds,
+          );
           if (msg) {
             dispatchClaimedMessage(msg);
             continue;

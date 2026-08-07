@@ -25,23 +25,34 @@ describe("QueueRepository lease renewal", () => {
   it("dead-letters an expired lease at max attempts before reclaiming it", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const enqueued = repo.enqueue({
-        channelId: "channel",
-        groupName: "group",
-        sessionId: "session",
-        content: "content",
-        timestamp: new Date().toISOString(),
-      }, { idempotencyKey: "crash-reclaim", maxAttempts: 1 });
+      const enqueued = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "crash-reclaim", maxAttempts: 1 },
+      );
       const claimed = repo.claim("worker-a", 1);
       expect(claimed?.job.attempts).toBe(1);
 
-      expect(repo.claim("worker-b", 1, new Date(Date.now() + 100))).toBeUndefined();
+      expect(
+        repo.claim("worker-b", 1, new Date(Date.now() + 100)),
+      ).toBeUndefined();
       expect(repo.get(enqueued.job.id)).toMatchObject({
         status: "dead_letter",
         attempts: 1,
         maxAttempts: 1,
       });
-      expect(repo.db.prepare("SELECT reason,error,source FROM dead_letters WHERE job_id=?").get(enqueued.job.id)).toMatchObject({
+      expect(
+        repo.db
+          .prepare(
+            "SELECT reason,error,source FROM dead_letters WHERE job_id=?",
+          )
+          .get(enqueued.job.id),
+      ).toMatchObject({
         reason: "max_attempts",
         error: "max_attempts",
         source: "queue",
@@ -75,9 +86,14 @@ describe("durable Phase 2 result state", () => {
         memorySnapshotHash: "memory-hash",
         toolCallKey: "tool-key",
       });
-      const delivery = repo.commitResult(enqueued.job.id, claimed!.fencingToken, "canonical", {
-        metadata: { timing: { promptMs: 10 } },
-      });
+      const delivery = repo.commitResult(
+        enqueued.job.id,
+        claimed!.fencingToken,
+        "canonical",
+        {
+          metadata: { timing: { promptMs: 10 } },
+        },
+      );
       expect(repo.get(enqueued.job.id)).toMatchObject({
         status: "completed",
         resultJson: JSON.stringify("canonical"),
@@ -107,12 +123,31 @@ describe("durable Phase 2 result state", () => {
         timestamp: new Date().toISOString(),
       });
       const firstClaim = repo.claim("worker-a", 1_000);
-      const firstDelivery = repo.commitResult(firstJob.job.id, firstClaim!.fencingToken, "a".repeat(2_001), {
-        deliveryPayload: { destinationType: "channel", destinationId: "channel" },
-      });
-      const firstChunks = repo.listDeliveries().filter((row) => row.jobId === firstJob.job.id);
+      const firstDelivery = repo.commitResult(
+        firstJob.job.id,
+        firstClaim!.fencingToken,
+        "a".repeat(2_001),
+        {
+          deliveryPayload: {
+            destinationType: "channel",
+            destinationId: "channel",
+          },
+        },
+      );
+      const firstChunks = repo
+        .listDeliveries()
+        .filter((row) => row.jobId === firstJob.job.id);
       expect(firstChunks).toHaveLength(2);
-      repo.db.prepare("UPDATE deliveries SET status='retry_wait',next_attempt_at=?,lease_until=?,worker_id=? WHERE id=?").run(new Date(0).toISOString(), new Date(0).toISOString(), "stale-worker", firstDelivery.id);
+      repo.db
+        .prepare(
+          "UPDATE deliveries SET status='retry_wait',next_attempt_at=?,lease_until=?,worker_id=? WHERE id=?",
+        )
+        .run(
+          new Date(0).toISOString(),
+          new Date(0).toISOString(),
+          "stale-worker",
+          firstDelivery.id,
+        );
 
       const secondJob = repo.enqueue({
         channelId: "channel",
@@ -122,15 +157,31 @@ describe("durable Phase 2 result state", () => {
         timestamp: new Date().toISOString(),
       });
       const secondClaim = repo.claim("worker-b", 1_000);
-      const secondDelivery = repo.commitResult(secondJob.job.id, secondClaim!.fencingToken, "second", {
-        deliveryPayload: { destinationType: "channel", destinationId: "channel" },
-      });
+      const secondDelivery = repo.commitResult(
+        secondJob.job.id,
+        secondClaim!.fencingToken,
+        "second",
+        {
+          deliveryPayload: {
+            destinationType: "channel",
+            destinationId: "channel",
+          },
+        },
+      );
       const claimed = repo.claimDelivery("delivery-worker", 1_000, new Date());
       expect(claimed?.row.id).toBe(firstDelivery.id);
       expect(claimed?.row.responseIndex).toBe(0);
-      expect(repo.listDeliveries().find((row) => row.id === firstChunks[1]!.id)?.status).toBe("pending");
-      expect(repo.listDeliveries().find((row) => row.id === secondDelivery.id)?.status).toBe("pending");
-      expect(repo.claimDelivery("delivery-worker-2", 1_000, new Date())?.row.id).toBe(secondDelivery.id);
+      expect(
+        repo.listDeliveries().find((row) => row.id === firstChunks[1]!.id)
+          ?.status,
+      ).toBe("pending");
+      expect(
+        repo.listDeliveries().find((row) => row.id === secondDelivery.id)
+          ?.status,
+      ).toBe("pending");
+      expect(
+        repo.claimDelivery("delivery-worker-2", 1_000, new Date())?.row.id,
+      ).toBe(secondDelivery.id);
     } finally {
       repo.close();
     }
@@ -147,16 +198,37 @@ describe("durable Phase 2 result state", () => {
         timestamp: new Date().toISOString(),
       });
       const claimedJob = repo.claim("worker-a", 1_000);
-      const delivery = repo.commitResult(job.job.id, claimedJob!.fencingToken, "response", {
-        deliveryPayload: { destinationType: "channel", destinationId: "channel" },
-      });
+      const delivery = repo.commitResult(
+        job.job.id,
+        claimedJob!.fencingToken,
+        "response",
+        {
+          deliveryPayload: {
+            destinationType: "channel",
+            destinationId: "channel",
+          },
+        },
+      );
       const claimedDelivery = repo.claimDelivery("worker-a", 1_000)!;
-      repo.updateDelivery(delivery.id, claimedDelivery.fencingToken, "retry_wait", {
-        error: "temporary",
-        retryAt: new Date(Date.now() + 10_000).toISOString(),
+      repo.updateDelivery(
+        delivery.id,
+        claimedDelivery.fencingToken,
+        "retry_wait",
+        {
+          error: "temporary",
+          retryAt: new Date(Date.now() + 10_000).toISOString(),
+        },
+      );
+      const row = repo.db
+        .prepare(
+          "SELECT status,lease_until,worker_id,next_attempt_at FROM deliveries WHERE id=?",
+        )
+        .get(delivery.id) as Record<string, unknown>;
+      expect(row).toMatchObject({
+        status: "retry_wait",
+        lease_until: null,
+        worker_id: null,
       });
-      const row = repo.db.prepare("SELECT status,lease_until,worker_id,next_attempt_at FROM deliveries WHERE id=?").get(delivery.id) as Record<string, unknown>;
-      expect(row).toMatchObject({ status: "retry_wait", lease_until: null, worker_id: null });
     } finally {
       repo.close();
     }
@@ -208,7 +280,9 @@ describe("durable Phase 2 result state", () => {
       const first = repo.claim("worker-a", 1);
       const second = repo.claim("worker-b", 1, new Date(Date.now() + 10));
       expect(second).toBeDefined();
-      expect(() => repo.commitResult(job.job.id, first!.fencingToken, "stale")).toThrow(/stale fencing/);
+      expect(() =>
+        repo.commitResult(job.job.id, first!.fencingToken, "stale"),
+      ).toThrow(/stale fencing/);
     } finally {
       repo.close();
     }

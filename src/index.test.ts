@@ -56,10 +56,18 @@ vi.mock("./cron/runner.js", () => ({
   loadAndValidateCron: mocks.loadAndValidateCron,
   _setCronJobs: vi.fn(),
 }));
-vi.mock("./queue/repository.js", () => ({ getQueueRepository: () => mocks.queueRepository }));
-vi.mock("./queue/migration.js", () => ({ initializeQueue: mocks.initializeQueue }));
-vi.mock("./queue/reconciliation.js", () => ({ reconcileRssDispatches: mocks.reconcileRssDispatches }));
-vi.mock("./queue/operator.js", () => ({ runRuntimeOperator: mocks.runRuntimeOperator }));
+vi.mock("./queue/repository.js", () => ({
+  getQueueRepository: () => mocks.queueRepository,
+}));
+vi.mock("./queue/migration.js", () => ({
+  initializeQueue: mocks.initializeQueue,
+}));
+vi.mock("./queue/reconciliation.js", () => ({
+  reconcileRssDispatches: mocks.reconcileRssDispatches,
+}));
+vi.mock("./queue/operator.js", () => ({
+  runRuntimeOperator: mocks.runRuntimeOperator,
+}));
 vi.mock("dotenv/config", () => ({}));
 
 describe("index: 起動時バリデーション", () => {
@@ -80,7 +88,10 @@ describe("index: 起動時バリデーション", () => {
     });
     mocks.loadAndValidateCron.mockResolvedValue([]);
     mocks.queueRepository.listRssStatePaths.mockReturnValue([]);
-    mocks.runRuntimeOperator.mockResolvedValue({ health: { ok: true }, observability: { alerts: [] } });
+    mocks.runRuntimeOperator.mockResolvedValue({
+      health: { ok: true },
+      observability: { alerts: [] },
+    });
     // 実際に終了させず、呼び出し後の継続を防ぐためにスロー
     mockExit = vi.fn((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -204,7 +215,10 @@ describe("index: 起動時バリデーション", () => {
   it("reconciles repository and cron RSS paths before final startup observability", async () => {
     mocks.queueRepository.listRssStatePaths.mockReturnValue(["runtime.sqlite"]);
     mocks.loadAndValidateCron.mockResolvedValue([
-      { handler: "jobs/rss-dispatch.ts", settings: { statePath: "cron.sqlite" } },
+      {
+        handler: "jobs/rss-dispatch.ts",
+        settings: { statePath: "cron.sqlite" },
+      },
     ]);
 
     await import("./index.js");
@@ -215,10 +229,12 @@ describe("index: 起動時バリデーション", () => {
     );
     expect(mocks.runRuntimeOperator).toHaveBeenCalledWith(
       mocks.queueRepository.db,
-      expect.objectContaining({ rssDbPaths: ["runtime.sqlite", "cron.sqlite"] }),
+      expect.objectContaining({
+        rssDbPaths: ["runtime.sqlite", "cron.sqlite"],
+      }),
     );
-    expect(mocks.reconcileRssDispatches.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.runRuntimeOperator.mock.invocationCallOrder[0],
-    );
+    expect(
+      mocks.reconcileRssDispatches.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.runRuntimeOperator.mock.invocationCallOrder[0]);
   });
 });
