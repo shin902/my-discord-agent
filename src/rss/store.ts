@@ -296,15 +296,7 @@ export function listUnreadArticles(
       LIMIT ?
     `)
     .all(...(feedUrls ?? []), limit) as ArticleRow[];
-  return rows.map((row) => ({
-    id: row.id,
-    feedName: row.feed_name,
-    feedUrl: row.feed_url,
-    title: row.title,
-    link: row.link,
-    publishedAt: row.published_at,
-    summary: row.summary,
-  }));
+  return rows.map(mapArticle);
 }
 
 function mapArticle(row: ArticleRow): UnreadArticle {
