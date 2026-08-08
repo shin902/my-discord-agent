@@ -27,7 +27,6 @@ type ResponseOutcome =
   | "empty-response"
   | "retry"
   | "dead-letter"
-  | "discord-error"
   | "unexpected-error";
 
 interface ResponseTiming {
@@ -38,7 +37,6 @@ interface ResponseTiming {
   lockWaitMs?: number;
   agentTotalMs?: number;
   agentExecution?: AgentExecutionTiming;
-  discordSendMs?: number;
 }
 
 function parseTimestamp(value: string | undefined): number | undefined {
@@ -118,7 +116,6 @@ function logResponseTiming(
     ],
     ["agent-prompt", timing.agentExecution?.promptMs],
     ["post-prompt", timing.agentExecution?.postPromptMs],
-    ["discord-send", timing.discordSendMs],
   ] as const;
   const slowestStage = stages.reduce<{ name: string; ms: number } | undefined>(
     (slowest, [name, ms]) =>
@@ -151,7 +148,6 @@ function logResponseTiming(
     assistantTurns: timing.agentExecution?.assistantTurns,
     usage: timing.agentExecution?.usage,
     stopReason: timing.agentExecution?.stopReason,
-    discordSendMs: timing.discordSendMs,
     processingMs,
     totalMs,
     slowestStage: slowestStage?.name,
@@ -167,11 +163,6 @@ function logResponseTiming(
 // Durable claims provide session ordering; this set only prevents duplicate in-process dispatch.
 const inFlightIds = new Set<string>();
 
-export function dispatch(sessionId: string, fn: () => Promise<void>): void {
-  void fn().catch((err) =>
-    console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err),
-  );
-}
 export function startPoller(): void {
   if (running) return;
   running = true;
@@ -199,12 +190,19 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
-  dispatch(msg.sessionId, () =>
-    processMessage(msg, controller.signal).finally(() => {
+  void processMessage(msg, controller.signal)
+    .finally(() => {
       clearInterval(renewal);
       inFlightIds.delete(msg.id);
-    }),
-  );
+    })
+    .catch((error) =>
+      console.error(
+        "[poller] 予期せぬエラー (sessionId:",
+        msg.sessionId,
+        "):",
+        error,
+      ),
+    );
 }
 
 const TYPING_INTERVAL_MS = 8_000;
