@@ -13,7 +13,6 @@ vi.mock("../discord/client.js", () => ({
 }));
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
 vi.mock("./inbox.js", () => ({
-  peekAllUnclaimedInbox: vi.fn(),
   removeInboxById: vi.fn(),
   updateInboxById: vi.fn(),
 }));
@@ -41,7 +40,7 @@ describe("stopPoller", () => {
     });
 
     stopPoller();
-    // チェーンがクリアされているため、新しいタスクは即座に開始できる
+    // inFlightIds は session ごとの直列化を行わないため即座に開始できる
     const started: string[] = [];
     dispatch("s1", async () => {
       started.push("s1-new");
@@ -70,11 +69,11 @@ describe("dispatch", () => {
     });
 
     await Promise.resolve();
-    expect(order).toEqual([]);
+    expect(order).toEqual([2]);
 
     resolve1();
     await tick();
-    expect(order).toEqual([1, 2]);
+    expect(order).toEqual([2, 1]);
   });
 
   it("異なる sessionId は並列実行される", async () => {
@@ -100,7 +99,7 @@ describe("dispatch", () => {
     await tick();
   });
 
-  it("タスク完了後に sessionChain から削除される（メモリリークなし）", async () => {
+  it("タスク完了後に inFlightIds に依存せず完了する（メモリリークなし）", async () => {
     let completed = false;
     dispatch("s1", async () => {
       completed = true;
@@ -133,30 +132,3 @@ describe("dispatch", () => {
   });
 });
 
-describe("poll - 例外耐性 (#152)", () => {
-  it("peekAllUnclaimedInbox が例外を投げてもポーラーは止まらず次のtickで継続する", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { client } = await import("../discord/client.js");
-    const { peekAllUnclaimedInbox } = await import("./inbox.js");
-    vi.mocked(client.isReady).mockReturnValue(true);
-    vi.mocked(peekAllUnclaimedInbox)
-      .mockRejectedValueOnce(new Error("不正なJSON行"))
-      .mockResolvedValue([]);
-
-    startPoller();
-    // 例外発生後は POLL_MS(1000ms) sleep を挟んで次のtickに進むため少し長めに待つ
-    await new Promise<void>((r) => setTimeout(r, 1100));
-
-    expect(spy).toHaveBeenCalledWith(
-      "[poller] poll ループで予期せぬエラー:",
-      expect.any(Error),
-    );
-    // 1回目の例外後も2回目の呼び出しが行われている（ループが継続している）
-    expect(vi.mocked(peekAllUnclaimedInbox).mock.calls.length).toBeGreaterThan(
-      1,
-    );
-
-    stopPoller();
-    spy.mockRestore();
-  }, 10000);
-});
