@@ -14,17 +14,8 @@ import {
 } from "../config/providers.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
-import * as inboxStore from "./inbox.js";
-import {
-  commitInboxResult,
-  deadLetterInbox,
-  failInboxAttempt,
-  freezeInboxExecutionIdentity,
-  type InboxMessage,
-  markInboxRunning,
-  updateInboxById,
-} from "./inbox.js";
-import type { ExecutionMetadata } from "./repository.js";
+import { getQueueRepository, type ExecutionMetadata } from "./repository.js";
+import type { InboxMessage } from "./types.js";
 import { appendDeadLetter } from "./dead-letter.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 
@@ -201,8 +192,7 @@ const LEASE_RENEWAL_MS = 20_000;
 function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
-    void inboxStore
-      .renewInboxLease(msg.id, msg.fencingToken ?? 0, LEASE_MS)
+    void Promise.resolve(getQueueRepository().heartbeat(msg.id, msg.fencingToken ?? 0, LEASE_MS))
       .catch((error) => {
         console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
         controller.abort(error);
@@ -360,11 +350,8 @@ async function processCronNewThread(
     if (!msg.cronJobId) {
       outcome = "dead-letter";
       await appendDeadLetter(msg, "invalid_cron_job");
-      await deadLetterInbox(
-        msg.id,
-        "invalid_cron_job",
-        undefined,
-        msg.fencingToken,
+      await getQueueRepository().deadLetter(
+        msg.id, msg.fencingToken!, "invalid_cron_job",
       );
       return;
     }
@@ -382,7 +369,7 @@ async function processCronNewThread(
             onContainerStarted: () =>
               msg.fencingToken === undefined
                 ? undefined
-                : markInboxRunning(msg.id, msg.fencingToken, {
+                : getQueueRepository().markRunning(msg.id, msg.fencingToken, {
                     startedAt: new Date().toISOString(),
                     workspacePath: `groups/${msg.groupName}`,
                     conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl`,
@@ -412,7 +399,7 @@ async function processCronNewThread(
       timing.agentExecution.exitCode !== null &&
       timing.agentExecution.exitCode !== 0
     ) {
-      await failInboxAttempt(
+      await getQueueRepository().failAttempt(
         msg.id,
         new Error(
           response ||
@@ -424,7 +411,7 @@ async function processCronNewThread(
       return;
     }
     if (msg.fencingToken !== undefined)
-      await commitInboxResult(msg.id, msg.fencingToken, response, {
+      await getQueueRepository().commitResult(msg.id, msg.fencingToken, response, {
         empty: !response,
         metadata: executionMetadata(timing),
         deliveryPayload: {
@@ -440,18 +427,13 @@ async function processCronNewThread(
       outcome = "dead-letter";
       await appendDeadLetter(msg, "non_retryable");
       if (msg.fencingToken !== undefined)
-        await deadLetterInbox(
-          msg.id,
-          "non_retryable",
-          String(error),
-          msg.fencingToken,
-          undefined,
-          executionMetadata(timing),
-        );
+        await getQueueRepository().deadLetter(
+            msg.id, msg.fencingToken, "non_retryable", String(error), executionMetadata(timing),
+          );
     } else {
       outcome = "retry";
       if (msg.fencingToken !== undefined)
-        await failInboxAttempt(
+        await getQueueRepository().failAttempt(
           msg.id,
           error,
           msg.fencingToken,
@@ -547,18 +529,14 @@ export async function processMessage(
               toolCallKey: msg.toolCallKey,
             }
           : await captureFrozenIdentity(msg);
-      await freezeInboxExecutionIdentity(msg.id, msg.fencingToken, identity);
+      await getQueueRepository().freezeExecutionIdentity(msg.id, msg.fencingToken, identity);
       Object.assign(msg, identity);
     } catch (error) {
       console.error(
         `[poller] 実行 identity の保存に失敗しました (${msg.id}):`,
         error,
       );
-      await failInboxAttempt(msg.id, error, msg.fencingToken, {
-        termination: "spawn-error",
-        stopReason: "identity-capture",
-        error,
-      });
+      await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {}, { error });
       return;
     }
   }
@@ -580,16 +558,9 @@ export async function processMessage(
     });
     if (!groupConfig) {
       outcome = "dead-letter";
-      await deadLetterInbox(
-        msg.id,
-        "config-unavailable",
-        "group config unavailable",
-        msg.fencingToken,
-        undefined,
-        {
-          termination: "spawn-error",
-          stopReason: "config-unavailable",
-        },
+      await getQueueRepository().deadLetter(
+        msg.id, msg.fencingToken!, "config-unavailable", "group config unavailable",
+        { termination: "spawn-error", stopReason: "config-unavailable" },
       );
       return;
     }
@@ -624,7 +595,7 @@ export async function processMessage(
                 onContainerStarted: () =>
                   msg.fencingToken === undefined
                     ? undefined
-                    : markInboxRunning(msg.id, msg.fencingToken, {
+                    : getQueueRepository().markRunning(msg.id, msg.fencingToken, {
                         startedAt: new Date().toISOString(),
                         workspacePath: `groups/${msg.groupName}`,
                         conversationPath: `data/sessions/${msg.groupName}/${msg.sessionId}.jsonl`,
@@ -657,13 +628,8 @@ export async function processMessage(
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
         await appendDeadLetter(msg, "non_retryable");
         if (msg.fencingToken !== undefined) {
-          await inboxStore.deadLetterInbox(
-            msg.id,
-            "non_retryable",
-            String(err),
-            msg.fencingToken,
-            undefined,
-            executionMetadata(timing),
+          await getQueueRepository().deadLetter(
+            msg.id, msg.fencingToken, "non_retryable", String(err), executionMetadata(timing),
           );
         }
         return;
@@ -674,11 +640,11 @@ export async function processMessage(
       );
       if (msg.retries + 1 < MAX_RETRIES) {
         outcome = "retry";
-        await updateInboxById(
-          msg.id,
+        if (msg.fencingToken !== undefined)
+          getQueueRepository().retry(
+          msg.id, msg.fencingToken, err,
+          Math.min(1000 * 2 ** msg.retries, 60000),
           { retries: msg.retries + 1, lastError: String(err) },
-          msg.fencingToken,
-          undefined,
           executionMetadata(timing),
         );
       } else {
@@ -689,13 +655,8 @@ export async function processMessage(
         );
         await appendDeadLetter(msg, "max_attempts");
         if (msg.fencingToken !== undefined) {
-          await inboxStore.deadLetterInbox(
-            msg.id,
-            "max_attempts",
-            String(err),
-            msg.fencingToken,
-            undefined,
-            executionMetadata(timing),
+          await getQueueRepository().deadLetter(
+            msg.id, msg.fencingToken, "max_attempts", String(err), executionMetadata(timing),
           );
         }
       }
@@ -709,7 +670,7 @@ export async function processMessage(
       timing.agentExecution.exitCode !== null &&
       timing.agentExecution.exitCode !== 0
     ) {
-      await failInboxAttempt(
+      await getQueueRepository().failAttempt(
         msg.id,
         new Error(
           response ||
@@ -724,7 +685,7 @@ export async function processMessage(
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
     }
-    await commitInboxResult(msg.id, msg.fencingToken, response, {
+    await getQueueRepository().commitResult(msg.id, msg.fencingToken, response, {
       empty: !response,
       metadata: executionMetadata(timing),
       deliveryPayload: {
@@ -744,11 +705,12 @@ async function poll(): Promise<void> {
   while (running) {
     try {
       if (client.isReady()) {
-        const msg = await inboxStore.claimInbox(
+        const msg = await getQueueRepository().claim(
           "poller-single-host",
           LEASE_MS,
+          new Date(),
           inFlightIds,
-        );
+        )?.job;
         if (msg) {
           dispatchClaimedMessage(msg);
           continue;

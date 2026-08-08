@@ -8,10 +8,10 @@ import type {
   SkillSelection,
 } from "../config/groups.js";
 import type {
-  appendInbox,
   CronDeliveryMode,
   CronSessionMode,
-} from "../queue/inbox.js";
+  QueueProducer,
+} from "../queue/types.js";
 import { loadSkills } from "../skills/loader.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
@@ -34,7 +34,7 @@ export interface CronEnqueueContext {
   idempotencyKey?: string;
   rssDispatchId?: string;
   rssStatePath?: string;
-  appendInbox: typeof appendInbox;
+  appendInbox: QueueProducer;
 }
 
 function resolveModes(ctx: CronEnqueueContext): {
