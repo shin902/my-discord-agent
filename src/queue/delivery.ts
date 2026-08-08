@@ -209,12 +209,12 @@ export class DeliveryWorker {
             threadId,
           ),
       });
-      if (sent.cronThreadId && !claim.row.cronThreadId)
-        this.repository.setDeliveryThread(
-          claim.row.id,
-          claim.fencingToken,
-          sent.cronThreadId,
-        );
+      // The final updateDelivery below already persists cronThreadId in the
+      // same fenced write that moves the row to 'sent', so the separate
+      // send-success setDeliveryThread above would only duplicate that write.
+      // The pre-send persistCronThread path (invoked by the adapter right after
+      // Discord thread creation and before the message send) remains the
+      // crash-safety boundary that survives ambiguous/failed outcomes.
       this.repository.updateDelivery(claim.row.id, claim.fencingToken, "sent", {
         externalMessageId: sent.externalMessageId,
         ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),

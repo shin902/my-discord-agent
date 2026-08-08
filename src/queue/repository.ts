@@ -645,6 +645,10 @@ function syntheticCompleted(
     succeeded: true,
   };
 }
+/** Column projection shared by delivery reads (getDelivery / listDeliveries). */
+const DELIVERY_SELECT_COLUMNS =
+  "id,job_id,status,payload_json,created_at,response_index,payload_hash,host_unique_key,destination_type,destination_id,reply_message_id,cron_thread_id,external_message_id,lease_until,worker_id,fencing_token,attempts,next_attempt_at,last_error";
+
 export class QueueRepository {
   readonly db: Database.Database;
   readonly workerId: string;
@@ -995,7 +999,7 @@ export class QueueRepository {
       metadata?: ExecutionMetadata;
       deliveryPayload?: unknown;
     } = {},
-  ): DeliveryRow {
+  ): DeliveryRow | undefined {
     const at = nowIso();
     const resultJson =
       typeof result === "string"
@@ -1086,15 +1090,10 @@ export class QueueRepository {
           )
           .run(at, row.idempotency_key);
       this.db.exec("COMMIT");
-      return (
-        first ?? {
-          id: "",
-          jobId: id,
-          status: "sent",
-          payloadJson: null,
-          createdAt: at,
-        }
-      );
+      // An empty response enqueues no delivery chunks, so no DeliveryRow is
+      // created. Return undefined instead of a fabricated "sent" row; every
+      // caller either ignores the return value or only forwards real rows.
+      return first;
     } catch (error) {
       try {
         this.db.exec("ROLLBACK");
@@ -1290,7 +1289,7 @@ export class QueueRepository {
   getDelivery(jobId: string): DeliveryRow | undefined {
     const row = this.db
       .prepare(
-        "SELECT id,job_id,status,payload_json,created_at,response_index,payload_hash,host_unique_key,destination_type,destination_id,reply_message_id,cron_thread_id,external_message_id,lease_until,worker_id,fencing_token,attempts,next_attempt_at,last_error FROM deliveries WHERE job_id=? ORDER BY response_index LIMIT 1",
+        `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries WHERE job_id=? ORDER BY response_index LIMIT 1`,
       )
       .get(jobId) as Record<string, unknown> | undefined;
     return row ? this.parseDelivery(row) : undefined;
@@ -1300,12 +1299,12 @@ export class QueueRepository {
       status
         ? this.db
             .prepare(
-              "SELECT id,job_id,status,payload_json,created_at,response_index,payload_hash,host_unique_key,destination_type,destination_id,reply_message_id,cron_thread_id,external_message_id,lease_until,worker_id,fencing_token,attempts,next_attempt_at,last_error FROM deliveries WHERE status=? ORDER BY job_id,response_index",
+              `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries WHERE status=? ORDER BY job_id,response_index`,
             )
             .all(status)
         : this.db
             .prepare(
-              "SELECT id,job_id,status,payload_json,created_at,response_index,payload_hash,host_unique_key,destination_type,destination_id,reply_message_id,cron_thread_id,external_message_id,lease_until,worker_id,fencing_token,attempts,next_attempt_at,last_error FROM deliveries ORDER BY job_id,response_index",
+              `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries ORDER BY job_id,response_index`,
             )
             .all()
     ) as Array<Record<string, unknown>>;

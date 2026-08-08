@@ -251,6 +251,36 @@ describe("failAttempt - options object", () => {
 });
 
 describe("durable Phase 2 result state", () => {
+  it("creates no delivery and returns undefined for an empty response", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = repo.claim("worker-a", 1_000);
+      const delivery = repo.commitResult(
+        enqueued.job.id,
+        expectDefined(claimed).fencingToken,
+        "",
+        { empty: true },
+      );
+      expect(delivery).toBeUndefined();
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        status: "completed",
+        terminalState: "empty_response",
+        succeeded: false,
+      });
+      expect(repo.getDelivery(enqueued.job.id)).toBeUndefined();
+      expect(repo.listDeliveries()).toHaveLength(0);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("commits canonical result and pending delivery atomically", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
@@ -269,13 +299,15 @@ describe("durable Phase 2 result state", () => {
         memorySnapshotHash: "memory-hash",
         toolCallKey: "tool-key",
       });
-      const delivery = repo.commitResult(
-        enqueued.job.id,
-        expectDefined(claimed).fencingToken,
-        "canonical",
-        {
-          metadata: { timing: { promptMs: 10 } },
-        },
+      const delivery = expectDefined(
+        repo.commitResult(
+          enqueued.job.id,
+          expectDefined(claimed).fencingToken,
+          "canonical",
+          {
+            metadata: { timing: { promptMs: 10 } },
+          },
+        ),
       );
       expect(repo.get(enqueued.job.id)).toMatchObject({
         status: "completed",
@@ -306,16 +338,18 @@ describe("durable Phase 2 result state", () => {
         timestamp: new Date().toISOString(),
       });
       const firstClaim = repo.claim("worker-a", 1_000);
-      const firstDelivery = repo.commitResult(
-        firstJob.job.id,
-        expectDefined(firstClaim).fencingToken,
-        "a".repeat(2_001),
-        {
-          deliveryPayload: {
-            destinationType: "channel",
-            destinationId: "channel",
+      const firstDelivery = expectDefined(
+        repo.commitResult(
+          firstJob.job.id,
+          expectDefined(firstClaim).fencingToken,
+          "a".repeat(2_001),
+          {
+            deliveryPayload: {
+              destinationType: "channel",
+              destinationId: "channel",
+            },
           },
-        },
+        ),
       );
       const firstChunks = repo
         .listDeliveries()
@@ -340,16 +374,18 @@ describe("durable Phase 2 result state", () => {
         timestamp: new Date().toISOString(),
       });
       const secondClaim = repo.claim("worker-b", 1_000);
-      const secondDelivery = repo.commitResult(
-        secondJob.job.id,
-        expectDefined(secondClaim).fencingToken,
-        "second",
-        {
-          deliveryPayload: {
-            destinationType: "channel",
-            destinationId: "channel",
+      const secondDelivery = expectDefined(
+        repo.commitResult(
+          secondJob.job.id,
+          expectDefined(secondClaim).fencingToken,
+          "second",
+          {
+            deliveryPayload: {
+              destinationType: "channel",
+              destinationId: "channel",
+            },
           },
-        },
+        ),
       );
       const claimed = repo.claimDelivery("delivery-worker", 1_000, new Date());
       expect(claimed?.row.id).toBe(firstDelivery.id);
@@ -382,16 +418,18 @@ describe("durable Phase 2 result state", () => {
         timestamp: new Date().toISOString(),
       });
       const claimedJob = repo.claim("worker-a", 1_000);
-      const delivery = repo.commitResult(
-        job.job.id,
-        expectDefined(claimedJob).fencingToken,
-        "response",
-        {
-          deliveryPayload: {
-            destinationType: "channel",
-            destinationId: "channel",
+      const delivery = expectDefined(
+        repo.commitResult(
+          job.job.id,
+          expectDefined(claimedJob).fencingToken,
+          "response",
+          {
+            deliveryPayload: {
+              destinationType: "channel",
+              destinationId: "channel",
+            },
           },
-        },
+        ),
       );
       const claimedDelivery = expectDefined(
         repo.claimDelivery("worker-a", 1_000),

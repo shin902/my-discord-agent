@@ -1,17 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { expectDefined } from "../test-utils.js";
 import { client } from "../discord/client.js";
+import { expectDefined } from "../test-utils.js";
 import {
+  type DeliveryAdapter,
   DeliveryError,
   DeliveryWorker,
   DiscordDeliveryAdapter,
-  type DeliveryAdapter,
 } from "./delivery.js";
-import {
-  QueueRepository,
-  openRuntimeDb,
-  type DeliveryRow,
-} from "./repository.js";
+import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 function completed(
   repo: QueueRepository,
@@ -35,9 +31,20 @@ function completed(
   });
   return item.job.id;
 }
-it("persists a created thread before invoking its first message send", async () => {
+it("durably persists the created thread before its first message send", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const jobId = completed(repo, "response", {
+    destinationType: "new-thread",
+    destinationId: "channel",
+    cronJobId: "daily",
+  });
   const send = vi.fn(async () => {
-    expect(persisted).toEqual(["thread-1"]);
+    // The message send must only be invoked after the thread id is already
+    // durable in the delivery row (pre-send crash-safety boundary).
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      cronThreadId: "thread-1",
+      status: "sending",
+    });
     return { id: "message-1" };
   });
   const thread = { id: "thread-1", isSendable: () => true, send };
@@ -46,30 +53,21 @@ it("persists a created thread before invoking its first message send", async () 
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
     .mockResolvedValue(channel as never);
-  const persisted: string[] = [];
-  const row: DeliveryRow = {
-    id: "delivery-1",
-    jobId: "job-1",
-    status: "sending",
-    payloadJson: JSON.stringify({
-      destinationType: "new-thread",
-      destinationId: "channel",
-      content: "hello",
-      cronJobId: "daily",
-    }),
-    createdAt: new Date().toISOString(),
-  };
   try {
-    await new DiscordDeliveryAdapter().send(row, {
-      persistCronThread: (id) => {
-        persisted.push(id);
-      },
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-a",
     });
-    expect(persisted).toEqual(["thread-1"]);
+    await worker.runOnce();
     expect(send).toHaveBeenCalledOnce();
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      status: "sent",
+      cronThreadId: "thread-1",
+      externalMessageId: "message-1",
+    });
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();
+    repo.close();
   }
 });
 it("marks thread persistence failures ambiguous without creating a duplicate thread", async () => {
