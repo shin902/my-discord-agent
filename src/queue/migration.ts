@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { InboxMessage } from "./inbox.js";
+import type { InboxMessage } from "./types.js";
 import { QueueRepository, type LegacyMigrationResult } from "./repository.js";
 
 const ROOT = path.resolve(

@@ -1,5 +1,5 @@
 import { getQueueRepository } from "./repository.js";
-import type { InboxMessage } from "./inbox.js";
+import type { InboxMessage } from "./types.js";
 
 /** Dead-letter rows are durable SQLite records; JSONL is no longer an active writer. */
 export async function appendDeadLetter(

@@ -12,7 +12,7 @@ import {
   type GroupConfig,
   type MountConfig,
 } from "../config/groups.js";
-import type { AttachmentRef } from "../queue/inbox.js";
+import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
