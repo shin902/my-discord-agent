@@ -192,11 +192,12 @@ const LEASE_RENEWAL_MS = 20_000;
 function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
-    void Promise.resolve(getQueueRepository().heartbeat(msg.id, msg.fencingToken ?? 0, LEASE_MS))
-      .catch((error) => {
-        console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
-        controller.abort(error);
-      });
+    void Promise.resolve(
+      getQueueRepository().heartbeat(msg.id, msg.fencingToken ?? 0, LEASE_MS),
+    ).catch((error) => {
+      console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
+      controller.abort(error);
+    });
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
@@ -352,7 +353,9 @@ async function processCronNewThread(
       await appendDeadLetter(msg, "invalid_cron_job");
       if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
-          msg.id, msg.fencingToken, "invalid_cron_job",
+          msg.id,
+          msg.fencingToken,
+          "invalid_cron_job",
         );
       }
       return;
@@ -413,16 +416,21 @@ async function processCronNewThread(
       return;
     }
     if (msg.fencingToken !== undefined)
-      await getQueueRepository().commitResult(msg.id, msg.fencingToken, response, {
-        empty: !response,
-        metadata: executionMetadata(timing),
-        deliveryPayload: {
-          destinationType: "new-thread",
-          destinationId: msg.channelId,
-          cronJobId: msg.cronJobId,
-          cronThreadId: msg.cronThreadId,
+      await getQueueRepository().commitResult(
+        msg.id,
+        msg.fencingToken,
+        response,
+        {
+          empty: !response,
+          metadata: executionMetadata(timing),
+          deliveryPayload: {
+            destinationType: "new-thread",
+            destinationId: msg.channelId,
+            cronJobId: msg.cronJobId,
+            cronThreadId: msg.cronThreadId,
+          },
         },
-      });
+      );
     outcome = response ? "success" : "empty-response";
   } catch (error) {
     if (error instanceof NonRetryableError) {
@@ -430,8 +438,12 @@ async function processCronNewThread(
       await appendDeadLetter(msg, "non_retryable");
       if (msg.fencingToken !== undefined)
         await getQueueRepository().deadLetter(
-            msg.id, msg.fencingToken, "non_retryable", String(error), executionMetadata(timing),
-          );
+          msg.id,
+          msg.fencingToken,
+          "non_retryable",
+          String(error),
+          executionMetadata(timing),
+        );
     } else {
       outcome = "retry";
       if (msg.fencingToken !== undefined)
@@ -531,14 +543,24 @@ export async function processMessage(
               toolCallKey: msg.toolCallKey,
             }
           : await captureFrozenIdentity(msg);
-      await getQueueRepository().freezeExecutionIdentity(msg.id, msg.fencingToken, identity);
+      await getQueueRepository().freezeExecutionIdentity(
+        msg.id,
+        msg.fencingToken,
+        identity,
+      );
       Object.assign(msg, identity);
     } catch (error) {
       console.error(
         `[poller] 実行 identity の保存に失敗しました (${msg.id}):`,
         error,
       );
-      await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {}, { error });
+      await getQueueRepository().failAttempt(
+        msg.id,
+        error,
+        msg.fencingToken,
+        {},
+        { error },
+      );
       return;
     }
   }
@@ -562,7 +584,10 @@ export async function processMessage(
       outcome = "dead-letter";
       if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
-          msg.id, msg.fencingToken, "config-unavailable", "group config unavailable",
+          msg.id,
+          msg.fencingToken,
+          "config-unavailable",
+          "group config unavailable",
           { termination: "spawn-error", stopReason: "config-unavailable" },
         );
       }
@@ -599,11 +624,15 @@ export async function processMessage(
                 onContainerStarted: () =>
                   msg.fencingToken === undefined
                     ? undefined
-                    : getQueueRepository().markRunning(msg.id, msg.fencingToken, {
-                        startedAt: new Date().toISOString(),
-                        workspacePath: `groups/${msg.groupName}`,
-                        conversationPath: `data/sessions/${msg.groupName}/${msg.sessionId}.jsonl`,
-                      }),
+                    : getQueueRepository().markRunning(
+                        msg.id,
+                        msg.fencingToken,
+                        {
+                          startedAt: new Date().toISOString(),
+                          workspacePath: `groups/${msg.groupName}`,
+                          conversationPath: `data/sessions/${msg.groupName}/${msg.sessionId}.jsonl`,
+                        },
+                      ),
                 agentsSnapshotContent: msg.agentsSnapshotContent,
                 agentsSnapshotPresent: msg.agentsSnapshotPresent,
                 memorySnapshotPresent: msg.memorySnapshotPresent,
@@ -633,7 +662,11 @@ export async function processMessage(
         await appendDeadLetter(msg, "non_retryable");
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().deadLetter(
-            msg.id, msg.fencingToken, "non_retryable", String(err), executionMetadata(timing),
+            msg.id,
+            msg.fencingToken,
+            "non_retryable",
+            String(err),
+            executionMetadata(timing),
           );
         }
         return;
@@ -646,11 +679,13 @@ export async function processMessage(
         outcome = "retry";
         if (msg.fencingToken !== undefined)
           getQueueRepository().retry(
-          msg.id, msg.fencingToken, err,
-          Math.min(1000 * 2 ** msg.retries, 60000),
-          { retries: msg.retries + 1, lastError: String(err) },
-          executionMetadata(timing),
-        );
+            msg.id,
+            msg.fencingToken,
+            err,
+            Math.min(1000 * 2 ** msg.retries, 60000),
+            { retries: msg.retries + 1, lastError: String(err) },
+            executionMetadata(timing),
+          );
       } else {
         outcome = "dead-letter";
         console.error(
@@ -660,7 +695,11 @@ export async function processMessage(
         await appendDeadLetter(msg, "max_attempts");
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().deadLetter(
-            msg.id, msg.fencingToken, "max_attempts", String(err), executionMetadata(timing),
+            msg.id,
+            msg.fencingToken,
+            "max_attempts",
+            String(err),
+            executionMetadata(timing),
           );
         }
       }
@@ -689,15 +728,20 @@ export async function processMessage(
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
     }
-    await getQueueRepository().commitResult(msg.id, msg.fencingToken, response, {
-      empty: !response,
-      metadata: executionMetadata(timing),
-      deliveryPayload: {
-        destinationType: "channel",
-        destinationId: msg.channelId,
-        replyMessageId,
+    await getQueueRepository().commitResult(
+      msg.id,
+      msg.fencingToken,
+      response,
+      {
+        empty: !response,
+        metadata: executionMetadata(timing),
+        deliveryPayload: {
+          destinationType: "channel",
+          destinationId: msg.channelId,
+          replyMessageId,
+        },
       },
-    });
+    );
     outcome = response ? "success" : "empty-response";
     stopTyping();
   } finally {

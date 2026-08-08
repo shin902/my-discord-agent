@@ -7,7 +7,9 @@ vi.mock("../discord/client.js", () => ({
   },
 }));
 const appendInboxMock = vi.hoisted(() => vi.fn());
-vi.mock("../queue/repository.js", () => ({ getQueueRepository: () => ({ enqueue: appendInboxMock }) }));
+vi.mock("../queue/repository.js", () => ({
+  getQueueRepository: () => ({ enqueue: appendInboxMock }),
+}));
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../utils/splitMessage.js", () => ({
   splitMessage: (s: string) => [s],

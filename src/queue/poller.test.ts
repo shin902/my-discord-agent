@@ -22,7 +22,9 @@ vi.mock("../discord/client.js", () => ({
   },
 }));
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
-const { commitInboxResult } = vi.hoisted(() => ({ commitInboxResult: vi.fn() }));
+const { commitInboxResult } = vi.hoisted(() => ({
+  commitInboxResult: vi.fn(),
+}));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
     commitResult: commitInboxResult,

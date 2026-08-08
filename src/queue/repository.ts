@@ -869,7 +869,8 @@ export class QueueRepository {
     if (job.status !== "running" && job.status !== "claimed")
       throw new Error(`job ${id} is not active`);
     const token = fencingToken ?? job.fencingToken;
-    if (token !== job.fencingToken) throw new Error(`stale fencing token for ${id}`);
+    if (token !== job.fencingToken)
+      throw new Error(`stale fencing token for ${id}`);
     const delayMs = Math.min(1000 * 2 ** job.retries, 60_000);
     this.retry(id, token, error, delayMs, payloadPatch, metadata);
   }
