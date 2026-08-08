@@ -4,7 +4,6 @@ import {
   appendInbox,
   claimInbox,
   deadLetterInbox,
-  peekAllUnclaimedInbox,
   removeInboxById,
   renewInboxLease,
   updateInboxById,
@@ -53,19 +52,6 @@ describe("SQLite-backed inbox compatibility API", () => {
     expect(job.enqueuedAt).toBeDefined();
   });
 
-  it("peeks queued jobs in creation order and honors exclusions", async () => {
-    await appendInbox(makeMessage({ content: "first" }), repository);
-    await appendInbox(makeMessage({ content: "second" }), repository);
-    await appendInbox(makeMessage({ content: "third" }), repository);
-    const jobs = repository.list();
-
-    expect(
-      (await peekAllUnclaimedInbox(new Set([jobs[0].id]), repository)).map(
-        (job) => job.content,
-      ),
-    ).toEqual(["second", "third"]);
-  });
-
   it("claims, renews, and removes only the fenced running job", async () => {
     await appendInbox(makeMessage(), repository);
     const claimed = expectDefined(
@@ -84,7 +70,6 @@ describe("SQLite-backed inbox compatibility API", () => {
     await removeInboxById(claimedJob.id, claimedJob.fencingToken, repository);
 
     expect(repository.get(claimedJob.id)?.status).toBe("completed");
-    expect(await peekAllUnclaimedInbox(new Set(), repository)).toEqual([]);
   });
 
   it("does not enqueue a completed idempotency key twice", async () => {
@@ -142,7 +127,6 @@ describe("SQLite-backed inbox compatibility API", () => {
     );
 
     expect(repository.get(claimed.id)?.status).toBe("dead_letter");
-    expect(await peekAllUnclaimedInbox(new Set(), repository)).toEqual([]);
     expect(
       repository.db
         .prepare("SELECT reason,error FROM dead_letters WHERE job_id=?")

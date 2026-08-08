@@ -15,12 +15,3 @@ export async function appendDeadLetter(
 }
 
 /** Preserve malformed legacy input as an audit row without replaying it. */
-export async function appendCorruptedDeadLetter(
-  rawLine: string,
-): Promise<void> {
-  getQueueRepository().recordDeadLetter({
-    reason: "malformed_jsonl",
-    error: rawLine,
-    source: "migration",
-  });
-}

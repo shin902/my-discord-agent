@@ -61,19 +61,6 @@ export async function appendInbox(
   });
 }
 
-export async function peekAllUnclaimedInbox(
-  excludeIds: ReadonlySet<string> = new Set(),
-  repository?: QueueRepository,
-): Promise<InboxMessage[]> {
-  return resolveRepository(repository)
-    .list()
-    .filter(
-      (job) =>
-        (job.status === "queued" || job.status === "retry_wait") &&
-        !excludeIds.has(job.id),
-    );
-}
-
 export async function claimInbox(
   workerId: string,
   leaseMs: number,
@@ -103,15 +90,6 @@ export async function markInboxRunning(
   repository?: QueueRepository,
 ): Promise<void> {
   resolveRepository(repository).markRunning(id, fencingToken, metadata);
-}
-
-export async function heartbeatInbox(
-  id: string,
-  fencingToken: number,
-  leaseMs = 60_000,
-  repository?: QueueRepository,
-): Promise<void> {
-  resolveRepository(repository).heartbeat(id, fencingToken, leaseMs);
 }
 
 export async function freezeInboxExecutionIdentity(
