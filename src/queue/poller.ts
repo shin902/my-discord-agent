@@ -22,7 +22,6 @@ import {
   freezeInboxExecutionIdentity,
   type InboxMessage,
   markInboxRunning,
-  removeInboxById,
   updateInboxById,
 } from "./inbox.js";
 import type { ExecutionMetadata } from "./repository.js";
@@ -201,7 +200,7 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
     void inboxStore
-      .renewInboxLease(msg.id, msg.fencingToken!, LEASE_MS)
+      .renewInboxLease(msg.id, msg.fencingToken ?? 0, LEASE_MS)
       .catch((error) => {
         console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
         controller.abort(error);
@@ -423,7 +422,7 @@ async function processCronNewThread(
       return;
     }
     if (msg.fencingToken !== undefined)
-      await commitInboxResult(msg.id, msg.fencingToken!, response, {
+      await commitInboxResult(msg.id, msg.fencingToken, response, {
         empty: !response,
         metadata: executionMetadata(timing),
         deliveryPayload: {
@@ -720,7 +719,10 @@ export async function processMessage(
       return;
     }
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
-    await commitInboxResult(msg.id, msg.fencingToken!, response, {
+    if (msg.fencingToken === undefined) {
+      throw new Error(`fenced inbox message required: ${msg.id}`);
+    }
+    await commitInboxResult(msg.id, msg.fencingToken, response, {
         empty: !response,
         metadata: executionMetadata(timing),
         deliveryPayload: {

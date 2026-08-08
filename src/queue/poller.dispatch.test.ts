@@ -21,11 +21,11 @@ const tick = () => new Promise<void>((r) => setTimeout(r, 20));
 
 let dispatch: (sessionId: string, fn: () => Promise<void>) => void;
 let stopPoller: () => void;
-let startPoller: () => void;
+
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ dispatch, stopPoller, startPoller } = await import("./poller.js"));
+  ({ dispatch, stopPoller } = await import("./poller.js"));
 });
 
 describe("stopPoller", () => {

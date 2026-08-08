@@ -37,7 +37,7 @@ const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const { client } = await import("../discord/client.js");
-const { removeInboxById, commitInboxResult } = await import("./inbox.js");
+const { commitInboxResult } = await import("./inbox.js");
 const { processMessage } = await import("./poller.js");
 
 beforeEach(() => {
