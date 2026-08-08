@@ -37,6 +37,7 @@ vi.mock("./repository.js", () => ({
     markRunning: vi.fn(),
     deadLetter,
     updateRunning: vi.fn(),
+    get: vi.fn(),
   }),
 }));
 
@@ -138,27 +139,22 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
-  it("max-attempt errors are dead-lettered once", async () => {
-    vi.useFakeTimers();
-    try {
-      const error = new Error("temporary failure");
-      vi.mocked(sendMessage).mockRejectedValue(error);
-      const msg = makeMsg({ retries: 9 });
-      const processing = processMessage(msg);
+  it("retryable errors are delegated to the repository failAttempt, never decided in the poller", async () => {
+    const error = new Error("temporary failure");
+    vi.mocked(sendMessage).mockRejectedValue(error);
+    const msg = makeMsg();
 
-      await vi.waitFor(() => expect(deadLetter).toHaveBeenCalledOnce());
-      expect(deadLetter).toHaveBeenCalledWith(
-        msg.id,
-        msg.fencingToken,
-        "max_attempts",
-        String(error),
-        expect.any(Object),
-      );
-      await vi.advanceTimersByTimeAsync(60_000);
-      await processing;
-    } finally {
-      vi.useRealTimers();
-    }
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledOnce();
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      error,
+      msg.fencingToken,
+      expect.objectContaining({ metadata: expect.any(Object) }),
+    );
+    // the poller no longer makes retry-count / max-attempt dead-letter decisions
+    expect(deadLetter).not.toHaveBeenCalled();
   });
 
   it("non-zero exit fails the attempt with execution metadata in an options object", async () => {

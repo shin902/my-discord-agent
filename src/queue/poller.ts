@@ -19,7 +19,6 @@ import type { InboxMessage } from "./types.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 
 const POLL_MS = 1000;
-const MAX_RETRIES = 10;
 const SLOW_RESPONSE_MS = 60_000;
 let running = false;
 
@@ -663,39 +662,19 @@ export async function processMessage(
         }
         return;
       }
-      console.error(
-        `[poller] 処理失敗 (リトライ ${msg.retries}/${MAX_RETRIES}):`,
-        err,
-      );
-      if (msg.retries + 1 < MAX_RETRIES) {
-        outcome = "retry";
-        if (msg.fencingToken !== undefined)
-          getQueueRepository().retry(
-            msg.id,
-            msg.fencingToken,
-            err,
-            Math.min(1000 * 2 ** msg.retries, 60000),
-            { retries: msg.retries + 1, lastError: String(err) },
-            executionMetadata(timing),
-          );
-      } else {
-        outcome = "dead-letter";
-        console.error(
-          "[poller] リトライ上限に達しました。dead-letter に移動:",
-          msg.id,
-        );
-        if (msg.fencingToken !== undefined) {
-          await getQueueRepository().deadLetter(
-            msg.id,
-            msg.fencingToken,
-            "max_attempts",
-            String(err),
-            executionMetadata(timing),
-          );
-        }
+      // リトライ方針（maxAttempts・指数バックオフ・retry_wait・dead-letter 遷移）は
+      // QueueRepository が一括で所有する。poller は失敗を記録するだけで、リトライ戦略や
+      // スリープは行わない（next_attempt_at が再 claim を制御する）。
+      console.error(`[poller] 処理失敗:`, err);
+      outcome = "retry";
+      if (msg.fencingToken !== undefined) {
+        await getQueueRepository().failAttempt(msg.id, err, msg.fencingToken, {
+          metadata: executionMetadata(timing),
+        });
+        // 実行後の実際の遷移を観測してログのみを確定する（方針決定は repository 側）。
+        const after = getQueueRepository().get(msg.id);
+        if (after?.status === "dead_letter") outcome = "dead-letter";
       }
-      const retryDelay = Math.min(1000 * 2 ** msg.retries, 60000);
-      await sleep(retryDelay);
       return;
     }
 

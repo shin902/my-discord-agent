@@ -478,3 +478,224 @@ describe("durable Phase 2 result state", () => {
     }
   });
 });
+
+describe("QueueRepository - single-owner retry policy", () => {
+  it("drives retries with exponential backoff and dead-letters exactly once at maxAttempts", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "repo-retry-policy", maxAttempts: 3 },
+      );
+
+      // attempt 1 -> retry_wait with 2^0 = 1s backoff
+      const first = expectDefined(repo.claim("worker-a", 1_000));
+      const attemptStart1 = Date.now();
+      repo.failAttempt(
+        enqueued.job.id,
+        new Error("boom-1"),
+        first.fencingToken,
+      );
+      let job = expectDefined(repo.get(enqueued.job.id));
+      expect(job.status).toBe("retry_wait");
+      // DB attempts and payload retries are distinct counters: attempts counts claims,
+      // retries counts recorded failures
+      expect(job.attempts).toBe(1);
+      expect(job.retries).toBe(1);
+      const nextAttemptAt1 = Date.parse(expectDefined(job.nextAttemptAt));
+      expect(nextAttemptAt1 - attemptStart1).toBeGreaterThanOrEqual(900);
+      expect(nextAttemptAt1 - attemptStart1).toBeLessThanOrEqual(1_500);
+
+      // attempt 2 -> retry_wait with 2^1 = 2s backoff
+      const second = repo.claim(
+        "worker-b",
+        1_000,
+        new Date(attemptStart1 + 1_500),
+      );
+      expect(second).toBeDefined();
+      expect(second?.job.attempts).toBe(2);
+      // a fresh claim does not by itself bump the recorded failure counter
+      expect(second?.job.retries).toBe(1);
+      const attemptStart2 = Date.now();
+      repo.failAttempt(
+        enqueued.job.id,
+        new Error("boom-2"),
+        expectDefined(second).fencingToken,
+      );
+      job = expectDefined(repo.get(enqueued.job.id));
+      expect(job.status).toBe("retry_wait");
+      const nextAttemptAt2 = Date.parse(expectDefined(job.nextAttemptAt));
+      expect(nextAttemptAt2 - attemptStart2).toBeGreaterThanOrEqual(1_900);
+      expect(nextAttemptAt2 - attemptStart2).toBeLessThanOrEqual(2_500);
+
+      // attempt 3 exhausts maxAttempts -> exactly one dead-letter transition + record
+      const third = repo.claim(
+        "worker-c",
+        1_000,
+        new Date(attemptStart2 + 2_500),
+      );
+      expect(third).toBeDefined();
+      expect(third?.job.attempts).toBe(3);
+      repo.failAttempt(
+        enqueued.job.id,
+        new Error("boom-3"),
+        expectDefined(third).fencingToken,
+      );
+      job = expectDefined(repo.get(enqueued.job.id));
+      expect(job.status).toBe("dead_letter");
+      expect(job.terminalState).toBe("max_retries");
+      expect(job.attempts).toBe(3);
+      const records = repo.db
+        .prepare("SELECT reason,error,source FROM dead_letters WHERE job_id=?")
+        .all(enqueued.job.id) as Array<{
+        reason: string;
+        error: string;
+        source: string;
+      }>;
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        reason: "max_attempts",
+        error: "boom-3",
+        source: "queue",
+      });
+      expect(repo.getIdempotencyRecord("repo-retry-policy")).toMatchObject({
+        status: "dead_letter",
+        jobId: enqueued.job.id,
+      });
+      // the terminal job is never reclaimed and no further dead-letter rows appear
+      expect(
+        repo.claim("worker-d", 1_000, new Date(Date.now() + 60_000)),
+      ).toBeUndefined();
+      expect(
+        repo.db
+          .prepare("SELECT COUNT(*) AS n FROM dead_letters WHERE job_id=?")
+          .get(enqueued.job.id),
+      ).toMatchObject({ n: 1 });
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("refuses commit, retry, and dead-letter with a stale fencing token", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const first = expectDefined(repo.claim("worker-a", 1));
+      const second = expectDefined(
+        repo.claim("worker-b", 1, new Date(Date.now() + 10)),
+      );
+      expect(second.job.attempts).toBe(2);
+
+      expect(() =>
+        repo.failAttempt(
+          enqueued.job.id,
+          new Error("boom"),
+          first.fencingToken,
+        ),
+      ).toThrow(/stale fencing/);
+      expect(() =>
+        repo.deadLetter(
+          enqueued.job.id,
+          first.fencingToken,
+          "non_retryable",
+          "boom",
+        ),
+      ).toThrow(/stale fencing/);
+      expect(() =>
+        repo.commitResult(enqueued.job.id, first.fencingToken, "stale"),
+      ).toThrow(/stale fencing/);
+      // the rejected transitions left no dead-letter fallout behind
+      expect(
+        repo.db
+          .prepare("SELECT COUNT(*) AS n FROM dead_letters WHERE job_id=?")
+          .get(enqueued.job.id),
+      ).toMatchObject({ n: 0 });
+      // the current lease owner can still commit normally
+      repo.commitResult(enqueued.job.id, second.fencingToken, "fresh");
+      expect(repo.get(enqueued.job.id)?.status).toBe("completed");
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("keeps commitResult execution metadata out of payload_json", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = expectDefined(repo.claim("worker-a", 1_000));
+      const timing = { promptMs: 10, dockerRunMs: 20, assistantTurns: 1 };
+      repo.commitResult(enqueued.job.id, claimed.fencingToken, "done", {
+        metadata: {
+          exitCode: 0,
+          termination: "close",
+          stopReason: "stop",
+          timing,
+          snapshotHash: "snap",
+          memorySnapshotHash: "mem",
+          agentsSnapshotHash: "agents",
+          toolCallKey: "tool",
+        },
+      });
+      const row = repo.db
+        .prepare(
+          "SELECT payload_json,exit_code,termination,stop_reason,timing_json,snapshot_hash,tool_call_key FROM jobs WHERE id=?",
+        )
+        .get(enqueued.job.id) as {
+        payload_json: string;
+        exit_code: number | null;
+        termination: string | null;
+        stop_reason: string | null;
+        timing_json: string | null;
+        snapshot_hash: string | null;
+        tool_call_key: string | null;
+      };
+      // metadata lands in dedicated SQL columns ...
+      expect(row.exit_code).toBe(0);
+      expect(row.termination).toBe("close");
+      expect(row.stop_reason).toBe("stop");
+      expect(row.timing_json).toBe(JSON.stringify(timing));
+      expect(row.snapshot_hash).toBe("snap");
+      expect(row.tool_call_key).toBe("tool");
+      // ... and never leaks into the persisted payload_json
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      for (const key of [
+        "exitCode",
+        "termination",
+        "stopReason",
+        "timing",
+        "agentsSnapshotHash",
+        "memorySnapshotHash",
+        "snapshotHash",
+        "toolCallKey",
+        "claimedAt",
+        "startedAt",
+        "heartbeatAt",
+        "workspacePath",
+        "conversationPath",
+      ]) {
+        expect(payload).not.toHaveProperty(key);
+      }
+      expect(payload.content).toBe("content");
+    } finally {
+      repo.close();
+    }
+  });
+});
