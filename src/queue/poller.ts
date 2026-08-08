@@ -350,9 +350,11 @@ async function processCronNewThread(
     if (!msg.cronJobId) {
       outcome = "dead-letter";
       await appendDeadLetter(msg, "invalid_cron_job");
-      await getQueueRepository().deadLetter(
-        msg.id, msg.fencingToken!, "invalid_cron_job",
-      );
+      if (msg.fencingToken !== undefined) {
+        await getQueueRepository().deadLetter(
+          msg.id, msg.fencingToken, "invalid_cron_job",
+        );
+      }
       return;
     }
     const groupConfig = await findGroupByName(msg.groupName);
@@ -558,10 +560,12 @@ export async function processMessage(
     });
     if (!groupConfig) {
       outcome = "dead-letter";
-      await getQueueRepository().deadLetter(
-        msg.id, msg.fencingToken!, "config-unavailable", "group config unavailable",
-        { termination: "spawn-error", stopReason: "config-unavailable" },
-      );
+      if (msg.fencingToken !== undefined) {
+        await getQueueRepository().deadLetter(
+          msg.id, msg.fencingToken, "config-unavailable", "group config unavailable",
+          { termination: "spawn-error", stopReason: "config-unavailable" },
+        );
+      }
       return;
     }
     const replyMessageId =
