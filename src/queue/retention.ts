@@ -175,11 +175,7 @@ export function planRetention(
   const rssCutoff = cutoff(nowMs, policy.rssArticlesMs);
   cutoffs.rss_article = rssCutoff ?? null;
   if (rssCutoff && hasTable(db, "rss_articles"))
-    for (const row of rows(
-      db,
-      "SELECT * FROM rss_articles WHERE read_at IS NOT NULL AND dispatch_id IS NULL AND read_at<? ORDER BY read_at,id",
-      rssCutoff,
-    ))
+    for (const row of staleRssArticleRows(db, rssCutoff))
       items.push(asItem("rss_article", row, String(row.read_at)));
   const protectedCounts = {
     activeJobs: rows(
@@ -196,12 +192,7 @@ export function planRetention(
       db,
       "SELECT key FROM idempotency_keys WHERE status='active'",
     ).length,
-    rssUnsettled: hasTable(db, "rss_articles")
-      ? rows(
-          db,
-          "SELECT id FROM rss_articles WHERE read_at IS NULL OR dispatch_id IS NOT NULL",
-        ).length
-      : 0,
+    rssUnsettled: countUnsettledRssArticles(db),
   };
   return {
     now: at.toISOString(),
@@ -216,6 +207,27 @@ function hasTable(db: Database.Database, table: string): boolean {
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
       .get(table),
   );
+}
+
+/** Rows eligible for RSS article pruning; unread or undispatched rows are always excluded. */
+function staleRssArticleRows(
+  db: Database.Database,
+  cutoffAt: string,
+): Record<string, unknown>[] {
+  return rows(
+    db,
+    "SELECT * FROM rss_articles WHERE read_at IS NOT NULL AND dispatch_id IS NULL AND read_at<? ORDER BY read_at,id",
+    cutoffAt,
+  );
+}
+/** RSS articles protected from pruning: unread, or dispatched while delivery is still pending. */
+function countUnsettledRssArticles(db: Database.Database): number {
+  return hasTable(db, "rss_articles")
+    ? rows(
+        db,
+        "SELECT id FROM rss_articles WHERE read_at IS NULL OR dispatch_id IS NOT NULL",
+      ).length
+    : 0;
 }
 
 async function archiveItems(
@@ -258,13 +270,58 @@ async function archiveItems(
   return paths;
 }
 
+function deleteRssArticleRow(
+  db: Database.Database,
+  item: RetentionPlanItem,
+): number {
+  return db
+    .prepare(
+      "DELETE FROM rss_articles WHERE id=? AND read_at IS NOT NULL AND dispatch_id IS NULL",
+    )
+    .run(Number(item.id)).changes;
+}
+function deleteRetentionItem(
+  db: Database.Database,
+  kind: RetentionPlanItem["kind"],
+  item: RetentionPlanItem,
+): number {
+  if (kind === "job")
+    return db
+      .prepare(
+        "DELETE FROM jobs WHERE id=? AND status IN ('completed','dead_letter') AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.job_id=jobs.id)",
+      )
+      .run(item.id).changes;
+  if (kind === "delivery")
+    return db
+      .prepare(
+        "DELETE FROM deliveries WHERE id=? AND status IN ('sent','failed')",
+      )
+      .run(item.id).changes;
+  if (kind === "idempotency_key")
+    return db
+      .prepare(
+        "DELETE FROM idempotency_keys WHERE key=? AND status IN ('completed','dead_letter') AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.idempotency_key=idempotency_keys.key)",
+      )
+      .run(item.id).changes;
+  if (kind === "dead_letter")
+    return db
+      .prepare("DELETE FROM dead_letters WHERE id=?")
+      .run(Number(item.id)).changes;
+  return deleteRssArticleRow(db, item);
+}
+
+/**
+ * Delete each batch transactionally, children before parents so a job is never
+ * removed while a newer, active, or non-retained delivery could cascade. RSS
+ * plans only ever carry rss_article items, so this single loop also covers the
+ * RSS path without duplicating per-kind SQL.
+ */
 function deleteRetentionBatch(
   db: Database.Database,
   items: RetentionPlanItem[],
 ): number {
   return db.transaction(() => {
     let count = 0;
-    // Children first prevents FK cascade from deleting an unexported delivery.
     for (const kind of [
       "delivery",
       "rss_article",
@@ -273,67 +330,34 @@ function deleteRetentionBatch(
       "job",
     ] as const) {
       for (const item of items.filter((entry) => entry.kind === kind)) {
-        let result: Database.RunResult;
-        if (kind === "job")
-          result = db
-            .prepare(
-              "DELETE FROM jobs WHERE id=? AND status IN ('completed','dead_letter') AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.job_id=jobs.id)",
-            )
-            .run(item.id);
-        else if (kind === "delivery")
-          result = db
-            .prepare(
-              "DELETE FROM deliveries WHERE id=? AND status IN ('sent','failed')",
-            )
-            .run(item.id);
-        else if (kind === "idempotency_key")
-          result = db
-            .prepare(
-              "DELETE FROM idempotency_keys WHERE key=? AND status IN ('completed','dead_letter') AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.idempotency_key=idempotency_keys.key)",
-            )
-            .run(item.id);
-        else if (kind === "dead_letter")
-          result = db
-            .prepare("DELETE FROM dead_letters WHERE id=?")
-            .run(Number(item.id));
-        else
-          result = db
-            .prepare(
-              "DELETE FROM rss_articles WHERE id=? AND read_at IS NOT NULL AND dispatch_id IS NULL",
-            )
-            .run(Number(item.id));
-        count += result.changes;
+        count += deleteRetentionItem(db, kind, item);
       }
     }
     return count;
   })();
 }
-function deleteRssRetentionBatch(
-  db: Database.Database,
-  items: RetentionPlanItem[],
-): number {
-  return db.transaction(() => {
-    let count = 0;
-    for (const item of items) {
-      if (item.kind !== "rss_article") continue;
-      const result = db
-        .prepare(
-          "DELETE FROM rss_articles WHERE id=? AND read_at IS NOT NULL AND dispatch_id IS NULL",
-        )
-        .run(Number(item.id));
-      count += result.changes;
-    }
-    return count;
-  })();
+
+interface PrunePlan {
+  now: string;
+  items: RetentionPlanItem[];
+  protected: RetentionPlan["protected"];
 }
 
-/** Export all batches first, then delete each bounded batch in its own transaction. */
-export async function pruneRetention(
+/**
+ * Shared retire-and-prune orchestration for the runtime and RSS stores:
+ * dry-run reporting, archive-dir preflight, empty-plan short-circuit, the
+ * archive-first invariant, bounded per-batch deletes, and result composition.
+ */
+async function runRetentionPrune(
   db: Database.Database,
   policy: RetentionPolicy,
-  options: { at?: Date; dryRun?: boolean } = {},
+  options: { at?: Date; dryRun?: boolean },
+  plan: PrunePlan,
+  deleteBatch: (
+    db: Database.Database,
+    items: RetentionPlanItem[],
+  ) => number,
 ): Promise<RetentionResult> {
-  const plan = planRetention(db, policy, options.at ?? new Date());
   if (options.dryRun)
     return {
       dryRun: true,
@@ -355,8 +379,9 @@ export async function pruneRetention(
       protected: plan.protected,
     };
   const batchSize = Math.max(1, Math.floor(policy.batchSize ?? 100));
-  // Preflight every export before the first delete. If a later batch fails,
-  // archiveItems removes earlier exports and all rows remain untouched.
+  // Invariant: archive and verify ALL batches before the FIRST delete. If a
+  // later batch fails, archiveItems removes every earlier export and all rows
+  // remain untouched, so the audit trail always covers the data being removed.
   const archivePaths = await archiveItems(
     plan.items,
     policy.archiveDir,
@@ -365,10 +390,7 @@ export async function pruneRetention(
   );
   let deleted = 0;
   for (let offset = 0; offset < plan.items.length; offset += batchSize) {
-    deleted += deleteRetentionBatch(
-      db,
-      plan.items.slice(offset, offset + batchSize),
-    );
+    deleted += deleteBatch(db, plan.items.slice(offset, offset + batchSize));
   }
   return {
     dryRun: false,
@@ -378,6 +400,16 @@ export async function pruneRetention(
     archivePaths,
     protected: plan.protected,
   };
+}
+
+/** Export all batches first, then delete each bounded batch in its own transaction. */
+export async function pruneRetention(
+  db: Database.Database,
+  policy: RetentionPolicy,
+  options: { at?: Date; dryRun?: boolean } = {},
+): Promise<RetentionResult> {
+  const plan = planRetention(db, policy, options.at ?? new Date());
+  return runRetentionPrune(db, policy, options, plan, deleteRetentionBatch);
 }
 
 export const pruneRuntimeRetention = pruneRetention;
@@ -399,22 +431,12 @@ export function planRssRetention(
     return {
       now: at.toISOString(),
       items: [],
-      protected: hasTable(db, "rss_articles")
-        ? rows(
-            db,
-            "SELECT id FROM rss_articles WHERE read_at IS NULL OR dispatch_id IS NOT NULL",
-          ).length
-        : 0,
+      protected: countUnsettledRssArticles(db),
     };
-  const items = rows(
-    db,
-    "SELECT * FROM rss_articles WHERE read_at IS NOT NULL AND dispatch_id IS NULL AND read_at<? ORDER BY read_at,id",
-    age,
-  ).map((row) => asItem("rss_article", row, String(row.read_at)));
-  const protectedCount = rows(
-    db,
-    "SELECT id FROM rss_articles WHERE read_at IS NULL OR dispatch_id IS NOT NULL",
-  ).length;
+  const items = staleRssArticleRows(db, age).map((row) =>
+    asItem("rss_article", row, String(row.read_at)),
+  );
+  const protectedCount = countUnsettledRssArticles(db);
   return { now: at.toISOString(), items, protected: protectedCount };
 }
 
@@ -424,63 +446,20 @@ export async function pruneRssRetention(
   options: { at?: Date; dryRun?: boolean } = {},
 ): Promise<RetentionResult> {
   const plan = planRssRetention(db, policy, options.at ?? new Date());
-  if (options.dryRun)
-    return {
-      dryRun: true,
-      planned: plan.items.length,
-      archived: 0,
-      deleted: 0,
-      archivePaths: [],
+  return runRetentionPrune(
+    db,
+    policy,
+    options,
+    {
+      now: plan.now,
+      items: plan.items,
       protected: {
         activeJobs: 0,
         activeDeliveries: 0,
         activeIdempotencyKeys: 0,
         rssUnsettled: plan.protected,
       },
-    };
-  if (!policy.archiveDir)
-    throw new Error("retention archiveDir is required for pruning");
-  if (plan.items.length === 0)
-    return {
-      dryRun: false,
-      planned: 0,
-      archived: 0,
-      deleted: 0,
-      archivePaths: [],
-      protected: {
-        activeJobs: 0,
-        activeDeliveries: 0,
-        activeIdempotencyKeys: 0,
-        rssUnsettled: plan.protected,
-      },
-    };
-  const batchSize = Math.max(1, Math.floor(policy.batchSize ?? 100));
-  // Preflight every export before the first delete so a later archive failure
-  // cannot leave an earlier batch committed.
-  const archivePaths = await archiveItems(
-    plan.items,
-    policy.archiveDir,
-    plan.now,
-    batchSize,
-  );
-  let deleted = 0;
-  for (let offset = 0; offset < plan.items.length; offset += batchSize) {
-    deleted += deleteRssRetentionBatch(
-      db,
-      plan.items.slice(offset, offset + batchSize),
-    );
-  }
-  return {
-    dryRun: false,
-    planned: plan.items.length,
-    archived: plan.items.length,
-    deleted,
-    archivePaths,
-    protected: {
-      activeJobs: 0,
-      activeDeliveries: 0,
-      activeIdempotencyKeys: 0,
-      rssUnsettled: plan.protected,
     },
-  };
+    deleteRetentionBatch,
+  );
 }
