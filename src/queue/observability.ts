@@ -1,6 +1,5 @@
 import type Database from "better-sqlite3";
 import { inspectRssReconciliation } from "../rss/observability.js";
-import { runtimeHealthCheck, type RuntimeHealth } from "./backup.js";
 export interface LatencyPercentiles {
   count: number;
   p50: number | null;
@@ -291,13 +290,6 @@ export function inspectRuntime(
     rss: snapshot.rss,
     alerts: snapshot.alerts,
   };
-}
-
-export async function healthCheck(
-  runtimeDb: Database.Database,
-  options: { backupPath?: string } = {},
-): Promise<RuntimeHealth> {
-  return runtimeHealthCheck(runtimeDb, options);
 }
 
 export interface StructuredLog {

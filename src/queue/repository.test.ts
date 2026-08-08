@@ -407,6 +407,93 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("rolls back the whole delivery claim when the claim update loses its race", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const firstJob = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session-a",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const firstClaim = repo.claim("worker-a", 1_000);
+      const stale = expectDefined(
+        repo.commitResult(
+          firstJob.job.id,
+          expectDefined(firstClaim).fencingToken,
+          "stale-sending",
+          {
+            deliveryPayload: {
+              destinationType: "channel",
+              destinationId: "channel",
+            },
+          },
+        ),
+      );
+      // A lease-expired 'sending' row: the sweep inside claimDelivery would
+      // normally flip it to 'ambiguous' inside the same transaction.
+      repo.db
+        .prepare(
+          "UPDATE deliveries SET status='sending',lease_until=?,updated_at=? WHERE id=?",
+        )
+        .run(new Date(0).toISOString(), new Date(0).toISOString(), stale.id);
+
+      const secondJob = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session-b",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const secondClaim = repo.claim("worker-b", 1_000);
+      const pending = expectDefined(
+        repo.commitResult(
+          secondJob.job.id,
+          expectDefined(secondClaim).fencingToken,
+          "candidate",
+          {
+            deliveryPayload: {
+              destinationType: "channel",
+              destinationId: "channel",
+            },
+          },
+        ),
+      );
+      // Force the claim UPDATE to affect zero rows even though the candidate
+      // SELECT just picked this pending delivery, exactly like a concurrent
+      // claim stealing the row between the read and the write.
+      repo.db.exec(
+        "CREATE TEMP TRIGGER force_delivery_claim_race BEFORE UPDATE OF status ON deliveries WHEN OLD.status='pending' BEGIN SELECT RAISE(IGNORE); END",
+      );
+      expect(
+        repo.claimDelivery("delivery-worker", 1_000, new Date()),
+      ).toBeUndefined();
+      // The rollback-without-throw path must undo BOTH writes of the attempt:
+      // the ambiguous sweep of the stale row and the claim of the candidate.
+      const rows = repo.db
+        .prepare("SELECT id,status,fencing_token FROM deliveries")
+        .all() as Array<{ id: string; status: string; fencing_token: number }>;
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      expect(byId.get(pending.id)).toMatchObject({
+        status: "pending",
+        fencing_token: 0,
+      });
+      expect(byId.get(stale.id)).toMatchObject({
+        status: "sending",
+        fencing_token: 0,
+      });
+      // No dangling transaction: once the injected race is removed the next
+      // claim succeeds on the untouched candidate.
+      repo.db.exec("DROP TRIGGER force_delivery_claim_race");
+      expect(
+        repo.claimDelivery("delivery-worker", 1_000, new Date())?.row.id,
+      ).toBe(pending.id);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("clears delivery lease metadata when retrying with an explicit retry time", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

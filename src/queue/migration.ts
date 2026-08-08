@@ -3,8 +3,8 @@ import { constants } from "node:fs";
 import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { type LegacyMigrationResult, QueueRepository } from "./repository.js";
 import type { InboxMessage } from "./types.js";
-import { QueueRepository, type LegacyMigrationResult } from "./repository.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -294,9 +294,11 @@ export async function migrateLegacyQueue(
           const duplicate = key ? repo.findByIdempotencyKey(key) : undefined;
           if (!duplicate) {
             const timestamp = message.enqueuedAt ?? message.timestamp;
+            // Normal enqueue numbers the first row of an empty session 0; mirror
+            // that exactly so migrated and enqueued sessions share one ordering.
             const sequenceRow = repo.db
               .prepare(
-                "SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM jobs WHERE session_id=?",
+                "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
               )
               .get(message.sessionId) as { sequence: number };
             repo.db
@@ -339,6 +341,6 @@ export async function migrateLegacyQueue(
 export async function initializeQueue(
   repo: QueueRepository,
 ): Promise<LegacyMigrationResult> {
-  repo.requeueExpired();
+  repo.recoverExpired();
   return migrateLegacyQueue(repo);
 }

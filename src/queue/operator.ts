@@ -12,7 +12,7 @@ import {
   type RssDbInspection,
 } from "./observability.js";
 import {
-  pruneRuntimeRetention,
+  pruneRetention,
   type RetentionPolicy,
   type RetentionResult,
 } from "./retention.js";
@@ -87,7 +87,7 @@ export async function runRuntimeOperator(
     for (const rssDb of opened) rssDb.close();
   }
   const retention = options.retention
-    ? await pruneRuntimeRetention(db, options.retention.policy, {
+    ? await pruneRetention(db, options.retention.policy, {
         at: options.at,
         dryRun: options.retention.dryRun ?? true,
       })

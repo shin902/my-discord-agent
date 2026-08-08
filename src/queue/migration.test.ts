@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { migrateLegacyQueue } from "./migration.js";
-import { QueueRepository, openRuntimeDb } from "./repository.js";
+import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 let tempDirs: string[] = [];
 afterEach(async () => {
@@ -56,6 +56,37 @@ describe("migrateLegacyQueue", () => {
       expect(repo.list()).toHaveLength(1);
       expect(repo.db.prepare("SELECT reason FROM dead_letters").all()).toEqual([
         { reason: "invalid_inbox_row" },
+      ]);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("numbers each migrated session from sequence zero like normal enqueue", async () => {
+    const paths = await makePaths(
+      `${JSON.stringify(message({ id: "legacy-first", content: "one" }))}\n${JSON.stringify(message({ id: "legacy-second", content: "two" }))}\n${JSON.stringify(message({ id: "legacy-other", sessionId: "other", content: "three" }))}\n`,
+    );
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const result = await migrateLegacyQueue(repo, {
+        inboxPath: paths.inbox,
+        deadLetterPath: paths.dead,
+        archiveDir: paths.archive,
+      });
+      expect(result.migrated).toBe(3);
+      const rows = repo.db
+        .prepare("SELECT id,session_id,sequence FROM jobs ORDER BY id")
+        .all() as Array<{
+        id: string;
+        session_id: string;
+        sequence: number;
+      }>;
+      // Empty sessions start at 0 (COALESCE(MAX(sequence),-1)+1) exactly like
+      // QueueRepository.enqueue, so migrated and enqueued rows share ordering.
+      expect(rows).toEqual([
+        { id: "legacy-first", session_id: "session", sequence: 0 },
+        { id: "legacy-other", session_id: "other", sequence: 0 },
+        { id: "legacy-second", session_id: "session", sequence: 1 },
       ]);
     } finally {
       repo.close();

@@ -97,5 +97,3 @@ export function inspectRssReconciliation(
     migrationAnomalies,
   };
 }
-
-export const reconcileRssState = inspectRssReconciliation;

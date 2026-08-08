@@ -353,10 +353,7 @@ async function runRetentionPrune(
   policy: RetentionPolicy,
   options: { at?: Date; dryRun?: boolean },
   plan: PrunePlan,
-  deleteBatch: (
-    db: Database.Database,
-    items: RetentionPlanItem[],
-  ) => number,
+  deleteBatch: (db: Database.Database, items: RetentionPlanItem[]) => number,
 ): Promise<RetentionResult> {
   if (options.dryRun)
     return {
@@ -412,8 +409,6 @@ export async function pruneRetention(
   return runRetentionPrune(db, policy, options, plan, deleteRetentionBatch);
 }
 
-export const pruneRuntimeRetention = pruneRetention;
-export const planRuntimeRetention = planRetention;
 export interface RssRetentionPlan {
   now: string;
   items: RetentionPlanItem[];

@@ -216,6 +216,11 @@ function metadataCoalesceValues(metadata: ExecutionMetadata): unknown[] {
   );
 }
 
+// Rollback sentinel for the write-transaction helper below. claimDelivery uses
+// it to undo a transaction whose claim lost the race *without* treating that as
+// an application error (the historical `ROLLBACK; return undefined` path).
+const TRANSACTION_ROLLBACK = Symbol("queue.transaction.rollback");
+
 export interface EnqueueResult {
   job: QueueJob;
   inserted: boolean;
@@ -689,8 +694,7 @@ export class QueueRepository {
     options: { idempotencyKey?: string; maxAttempts?: number } = {},
   ): EnqueueResult {
     const key = options.idempotencyKey ?? payload.idempotencyKey;
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
+    return this.inImmediateTransaction<EnqueueResult>(() => {
       if (key) {
         const idem = this.db
           .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
@@ -699,7 +703,6 @@ export class QueueRepository {
           | undefined;
         if (idem) {
           const existing = idem.job_id ? this.get(idem.job_id) : undefined;
-          this.db.exec("COMMIT");
           return {
             job: existing ?? syntheticCompleted(payload, key),
             inserted: false,
@@ -745,7 +748,30 @@ export class QueueRepository {
       const job = this.get(id);
       if (job === undefined)
         throw new Error(`failed to read back enqueued job ${id}`);
-      const result = { job, inserted: true };
+      return { job, inserted: true };
+    });
+  }
+  /**
+   * Run one queue write as a BEGIN IMMEDIATE transaction with the historical
+   * commit/rollback contract: each normal return value is committed, a thrown
+   * error rolls back and rethrows, and the ROLLBACK sentinel rolls back and
+   * yields undefined (claimDelivery's lost-race path). BEGIN IMMEDIATE takes
+   * the write lock up front so two repository instances serialize exactly as
+   * before, and nesting fails with the same "cannot start a transaction within
+   * a transaction" error as the historical explicit exec-based blocks.
+   */
+  private inImmediateTransaction<T>(
+    run: () => T | typeof TRANSACTION_ROLLBACK,
+  ): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = run();
+      if (result === TRANSACTION_ROLLBACK) {
+        try {
+          this.db.exec("ROLLBACK");
+        } catch {}
+        return undefined as never;
+      }
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
@@ -762,8 +788,7 @@ export class QueueRepository {
     excludeIds: ReadonlySet<string> = new Set(),
   ): ClaimedJob | undefined {
     const now = at.toISOString();
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
+    return this.inImmediateTransaction<ClaimedJob | undefined>(() => {
       const excluded = [...excludeIds];
       const excludedSql = excluded.length
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
@@ -781,10 +806,7 @@ export class QueueRepository {
           `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
         )
         .get(now, now, ...excluded) as JobRow | undefined;
-      if (!row) {
-        this.db.exec("COMMIT");
-        return undefined;
-      }
+      if (!row) return undefined;
       const token = row.fencing_token + 1;
       const leaseUntil = new Date(
         at.getTime() + Math.max(1, leaseMs),
@@ -805,15 +827,9 @@ export class QueueRepository {
           now,
         );
       if (result.changes !== 1) throw new Error(`claim race for job ${row.id}`);
-      this.db.exec("COMMIT");
       const claimed = this.get(row.id);
       return claimed ? { job: claimed, fencingToken: token } : undefined;
-    } catch (error) {
-      try {
-        this.db.exec("ROLLBACK");
-      } catch {}
-      throw error;
-    }
+    });
   }
   private fenced(
     id: string,
@@ -1018,8 +1034,7 @@ export class QueueRepository {
       : splitMessage(
           typeof result === "string" ? result : JSON.stringify(result ?? null),
         );
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
+    return this.inImmediateTransaction<DeliveryRow | undefined>(() => {
       const row = this.db
         .prepare(
           "SELECT idempotency_key FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
@@ -1089,17 +1104,11 @@ export class QueueRepository {
             "UPDATE idempotency_keys SET status='completed',completed_at=? WHERE key=?",
           )
           .run(at, row.idempotency_key);
-      this.db.exec("COMMIT");
       // An empty response enqueues no delivery chunks, so no DeliveryRow is
       // created. Return undefined instead of a fabricated "sent" row; every
       // caller either ignores the return value or only forwards real rows.
       return first;
-    } catch (error) {
-      try {
-        this.db.exec("ROLLBACK");
-      } catch {}
-      throw error;
-    }
+    });
   }
   heartbeat(id: string, token: number, leaseMs = 60_000): void {
     this.fenced(id, token, {
@@ -1283,9 +1292,6 @@ export class QueueRepository {
     })();
     return count;
   }
-  requeueExpired(at = new Date()): number {
-    return this.recoverExpired(at);
-  }
   getDelivery(jobId: string): DeliveryRow | undefined {
     const row = this.db
       .prepare(
@@ -1353,8 +1359,7 @@ export class QueueRepository {
     at = new Date(),
   ): DeliveryClaim | undefined {
     const now = at.toISOString();
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
+    return this.inImmediateTransaction<DeliveryClaim | undefined>(() => {
       this.db
         .prepare(
           "UPDATE deliveries SET status='ambiguous',lease_until=NULL,worker_id=NULL,last_error=COALESCE(last_error,'sending lease expired'),updated_at=? WHERE status='sending' AND lease_until<=?",
@@ -1365,10 +1370,7 @@ export class QueueRepository {
           "SELECT candidate.* FROM deliveries AS candidate WHERE candidate.status IN ('pending','retry_wait') AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at<=?) AND NOT EXISTS (SELECT 1 FROM deliveries AS predecessor WHERE predecessor.job_id=candidate.job_id AND predecessor.response_index<candidate.response_index AND predecessor.status NOT IN ('sent','failed','ambiguous')) ORDER BY candidate.created_at,candidate.response_index LIMIT 1",
         )
         .get(now) as Record<string, unknown> | undefined;
-      if (!row) {
-        this.db.exec("COMMIT");
-        return undefined;
-      }
+      if (!row) return undefined;
       const token = Number(row.fencing_token ?? 0) + 1;
       const changed = this.db
         .prepare(
@@ -1381,10 +1383,7 @@ export class QueueRepository {
           now,
           row.id,
         );
-      if (changed.changes !== 1) {
-        this.db.exec("ROLLBACK");
-        return undefined;
-      }
+      if (changed.changes !== 1) return TRANSACTION_ROLLBACK;
       const claimed = {
         ...row,
         status: "sending",
@@ -1395,14 +1394,8 @@ export class QueueRepository {
         fencing_token: token,
         attempts: Number(row.attempts ?? 0) + 1,
       };
-      this.db.exec("COMMIT");
       return { row: this.parseDelivery(claimed), fencingToken: token };
-    } catch (error) {
-      try {
-        this.db.exec("ROLLBACK");
-      } catch {}
-      throw error;
-    }
+    });
   }
   updateDelivery(
     id: string,
@@ -1472,26 +1465,12 @@ export class QueueRepository {
         id,
       );
   }
-  setDeliveryThread(id: string, cronThreadId: string): void;
-  setDeliveryThread(id: string, token: number, cronThreadId: string): void;
-  setDeliveryThread(
-    id: string,
-    tokenOrThread: number | string,
-    maybeThread?: string,
-  ): void {
-    if (typeof tokenOrThread === "string") {
-      this.db
-        .prepare(
-          "UPDATE deliveries SET cron_thread_id=?,updated_at=? WHERE job_id=? AND status IN ('pending','retry_wait','sending')",
-        )
-        .run(tokenOrThread, nowIso(), id);
-      return;
-    }
+  setDeliveryThread(id: string, token: number, cronThreadId: string): void {
     const changed = this.db
       .prepare(
         "UPDATE deliveries SET cron_thread_id=?,updated_at=? WHERE id=? AND status='sending' AND fencing_token=?",
       )
-      .run(maybeThread, nowIso(), id, tokenOrThread);
+      .run(cronThreadId, nowIso(), id, token);
     if (changed.changes !== 1)
       throw new Error(`stale fencing token for delivery ${id}`);
   }

@@ -174,5 +174,3 @@ export async function runtimeHealthCheck(
     backup,
   };
 }
-
-export const healthCheckRuntimeDb = runtimeHealthCheck;
