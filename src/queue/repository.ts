@@ -400,7 +400,7 @@ export class QueueRepository {
   readonly workerId: string;
   constructor(
     dbOrPath?: Database.Database | string,
-    workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`,
+    workerId = "queue-single-host",
   ) {
     this.db =
       typeof dbOrPath === "string" || dbOrPath === undefined
@@ -848,9 +848,6 @@ export class QueueRepository {
       lease_until: new Date(Date.now() + Math.max(1, leaseMs)).toISOString(),
       heartbeat_at: nowIso(),
     });
-  }
-  renew(id: string, token: number, leaseMs = 60_000): void {
-    this.heartbeat(id, token, leaseMs);
   }
   complete(id: string, token: number): void {
     const job = this.get(id);

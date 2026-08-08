@@ -172,7 +172,7 @@ export class DeliveryWorker {
     private readonly options: DeliveryWorkerOptions = {},
   ) {
     this.workerId =
-      options.workerId ?? `delivery-${process.pid}-${randomUUID().slice(0, 8)}`;
+      options.workerId ?? "delivery-single-host";
   }
   start(): void {
     if (this.running) return;
