@@ -3,8 +3,8 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import type { InboxMessage } from "./types.js";
 import { splitMessage } from "../utils/splitMessage.js";
+import type { InboxMessage } from "./types.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -220,109 +220,236 @@ function parsePayload(row: JobRow): QueueJob {
       : {}),
   } as QueueJob;
 }
-function createTables(db: Database.Database): void {
+interface SchemaMigration {
+  version: number;
+  summary: string;
+  up: (db: Database.Database) => void;
+}
+
+/** Columns the durable delivery schema needs beyond the legacy deliveries table. */
+const DELIVERY_UPGRADE_COLUMNS: ReadonlyArray<{ name: string; ddl: string }> = [
+  { name: "response_index", ddl: "response_index INTEGER NOT NULL DEFAULT 0" },
+  { name: "payload_hash", ddl: "payload_hash TEXT" },
+  { name: "host_unique_key", ddl: "host_unique_key TEXT" },
+  { name: "destination_type", ddl: "destination_type TEXT" },
+  { name: "destination_id", ddl: "destination_id TEXT" },
+  { name: "reply_message_id", ddl: "reply_message_id TEXT" },
+  { name: "cron_thread_id", ddl: "cron_thread_id TEXT" },
+  { name: "external_message_id", ddl: "external_message_id TEXT" },
+];
+
+function createBaseTables(db: Database.Database): void {
   db.exec(
-    `CREATE TABLE IF NOT EXISTS jobs (${JOB_COLUMNS}); CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','retry_wait','sending','sent','failed','ambiguous')), payload_json TEXT, response_index INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, host_unique_key TEXT, destination_type TEXT, destination_id TEXT, reply_message_id TEXT, cron_thread_id TEXT, external_message_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); DROP INDEX IF EXISTS deliveries_job; CREATE UNIQUE INDEX IF NOT EXISTS deliveries_host_unique ON deliveries(host_unique_key) WHERE host_unique_key IS NOT NULL; CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, status TEXT NOT NULL CHECK(status IN ('active','completed','dead_letter')), created_at TEXT NOT NULL, completed_at TEXT); CREATE TABLE IF NOT EXISTS dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, reason TEXT NOT NULL, payload_json TEXT, error TEXT, source TEXT NOT NULL, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS jobs_claim ON jobs(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS jobs_session_order ON jobs(session_id, sequence, status); CREATE INDEX IF NOT EXISTS deliveries_claim ON deliveries(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS dead_letters_job ON dead_letters(job_id, created_at);`,
+    `CREATE TABLE IF NOT EXISTS jobs (${JOB_COLUMNS}); CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','retry_wait','sending','sent','failed','ambiguous')), payload_json TEXT, response_index INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, host_unique_key TEXT, destination_type TEXT, destination_id TEXT, reply_message_id TEXT, cron_thread_id TEXT, external_message_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, status TEXT NOT NULL CHECK(status IN ('active','completed','dead_letter')), created_at TEXT NOT NULL, completed_at TEXT); CREATE TABLE IF NOT EXISTS dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, reason TEXT NOT NULL, payload_json TEXT, error TEXT, source TEXT NOT NULL, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS jobs_claim ON jobs(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS jobs_session_order ON jobs(session_id, sequence, status); CREATE INDEX IF NOT EXISTS deliveries_claim ON deliveries(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS dead_letters_job ON dead_letters(job_id, created_at);`,
   );
 }
 const JOB_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_json TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK(status IN ('queued','retry_wait','claimed','running','completed','dead_letter')), claimed INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 10, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, claimed_at TEXT, started_at TEXT, heartbeat_at TEXT, exit_code INTEGER, termination TEXT, stop_reason TEXT, usage_json TEXT, timing_json TEXT, error_json TEXT, result_json TEXT, result_state TEXT CHECK(result_state IN ('succeeded','empty_response','non_retryable','max_retries','dead_letter')), terminal_reason TEXT, succeeded INTEGER NOT NULL DEFAULT 0, delivery_id TEXT, agents_snapshot_hash TEXT, memory_snapshot_hash TEXT, snapshot_hash TEXT, tool_call_key TEXT, workspace_path TEXT, conversation_path TEXT`;
-function migrateOldJobs(db: Database.Database): void {
+
+function tableColumnNames(db: Database.Database, table: string): Set<string> {
+  return new Set(
+    (
+      db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    ).map((column) => column.name),
+  );
+}
+function addMissingColumns(
+  db: Database.Database,
+  table: string,
+  definitions: ReadonlyArray<{ name: string; ddl: string }>,
+): void {
+  const existing = tableColumnNames(db, table);
+  for (const column of definitions) {
+    if (!existing.has(column.name)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column.ddl}`);
+    }
+  }
+}
+/** Legacy pre-durable jobs tables lack either result_json or claimed. */
+function jobsTableIsLegacy(db: Database.Database): boolean {
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'")
     .get() as { sql?: string } | undefined;
-  if (!row || (row.sql?.includes("result_json") && row.sql.includes("claimed")))
-    return;
+  if (!row) return false;
+  return !(row.sql?.includes("result_json") && row.sql.includes("claimed"));
+}
+function rebuildLegacyQueueSchema(db: Database.Database): void {
+  // Rename legacy-era tables aside, rebuild the modern base schema and copy all
+  // business data across with the historical status/state mapping. Runs inside the
+  // migration driver's single IMMEDIATE transaction (foreign keys are disabled by
+  // the driver for the rename/rebuild window), so a failure rolls the whole store
+  // back and nothing is left half-migrated.
   const tables = ["deliveries", "idempotency_keys", "dead_letters"];
+  db.exec("ALTER TABLE jobs RENAME TO jobs_legacy");
+  for (const table of tables) {
+    if (
+      db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+        .get(table)
+    ) {
+      db.exec(`ALTER TABLE ${table} RENAME TO ${table}_legacy`);
+    }
+  }
+  for (const index of [
+    "jobs_claim",
+    "jobs_idempotency",
+    "deliveries_claim",
+    "dead_letters_job",
+  ]) {
+    db.exec(`DROP INDEX IF EXISTS ${index}`);
+  }
+  createBaseTables(db);
+  db.exec(`INSERT INTO jobs(id,idempotency_key,payload_json,status,attempts,max_attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at,completed_at,session_id,sequence,result_state,succeeded,terminal_reason)
+    SELECT id,idempotency_key,payload_json,
+      CASE WHEN status='running' THEN 'queued' ELSE status END,
+      attempts,max_attempts,next_attempt_at,NULL,NULL,fencing_token,last_error,created_at,updated_at,completed_at,
+      COALESCE(json_extract(payload_json,'$.sessionId'),''),
+      ROW_NUMBER() OVER (PARTITION BY COALESCE(json_extract(payload_json,'$.sessionId'),'') ORDER BY created_at,id)-1,
+      CASE WHEN status='completed' THEN 'succeeded' WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END,
+      CASE WHEN status='completed' THEN 1 ELSE 0 END,
+      CASE WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END
+    FROM jobs_legacy`);
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='deliveries_legacy'",
+      )
+      .get()
+  ) {
+    db.exec(`INSERT INTO deliveries(id,job_id,status,payload_json,attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at)
+      SELECT id,job_id,status,payload_json,attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at FROM deliveries_legacy`);
+  }
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='idempotency_keys_legacy'",
+      )
+      .get()
+  ) {
+    const columns = db
+      .prepare("PRAGMA table_info(idempotency_keys_legacy)")
+      .all() as Array<{ name: string }>;
+    const completed = columns.some((column) => column.name === "completed_at")
+      ? "completed_at"
+      : "NULL";
+    db.exec(
+      `INSERT INTO idempotency_keys(key,job_id,status,created_at,completed_at) SELECT key,job_id,status,created_at,${completed} FROM idempotency_keys_legacy`,
+    );
+  }
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dead_letters_legacy'",
+      )
+      .get()
+  ) {
+    db.exec(`INSERT INTO dead_letters(job_id,reason,payload_json,error,source,created_at)
+      SELECT job_id,reason,payload_json,error,source,created_at FROM dead_letters_legacy`);
+  }
+  for (const table of [
+    "jobs_legacy",
+    "deliveries_legacy",
+    "idempotency_keys_legacy",
+    "dead_letters_legacy",
+  ]) {
+    db.exec(`DROP TABLE IF EXISTS ${table}`);
+  }
+  const foreignKeys = db.prepare("PRAGMA foreign_key_check").all();
+  if (foreignKeys.length > 0)
+    throw new Error("queue migration foreign-key check failed");
+}
+function applyDurableRuntimeColumns(db: Database.Database): void {
+  addMissingColumns(db, "deliveries", DELIVERY_UPGRADE_COLUMNS);
+  addMissingColumns(db, "jobs", [
+    { name: "claimed", ddl: "claimed INTEGER NOT NULL DEFAULT 0" },
+  ]);
+  addMissingColumns(db, "idempotency_keys", [
+    { name: "completed_at", ddl: "completed_at TEXT" },
+  ]);
+  db.exec(
+    "DROP INDEX IF EXISTS deliveries_job; CREATE UNIQUE INDEX IF NOT EXISTS deliveries_host_unique ON deliveries(host_unique_key) WHERE host_unique_key IS NOT NULL; UPDATE deliveries SET response_index=0 WHERE response_index IS NULL; UPDATE deliveries SET host_unique_key=job_id || ':0' WHERE host_unique_key IS NULL;",
+  );
+}
+function repairRuntimeSchema(db: Database.Database): void {
+  if (jobsTableIsLegacy(db)) rebuildLegacyQueueSchema(db);
+  applyDurableRuntimeColumns(db);
+}
+// Versioned schema migrations. Every step is idempotent; the value recorded in
+// schema_meta('schema_version') gates which steps still need to run. Stores stamped
+// at the current version still receive a shape-driven repair pass because the
+// historical best-effort initializers stamped version 2 even when individual ALTER
+// statements had silently failed.
+const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
+  {
+    version: 1,
+    summary:
+      "replace the legacy queue tables with the modern base runtime schema",
+    up(db) {
+      if (jobsTableIsLegacy(db)) rebuildLegacyQueueSchema(db);
+      createBaseTables(db);
+    },
+  },
+  {
+    version: 2,
+    summary: "apply the durable delivery and execution-state columns",
+    up(db) {
+      repairRuntimeSchema(db);
+    },
+  },
+];
+// Fail fast when the versioned migration list and QUEUE_SCHEMA_VERSION drift
+// apart (e.g. a future version bump without an appended migration step).
+// Otherwise writeSchemaVersion would stamp stores at a version whose upgrade
+// steps never ran, silently defeating the version gate.
+if (
+  SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]?.version !==
+  QUEUE_SCHEMA_VERSION
+) {
+  throw new Error(
+    `schema migration list out of sync: last step v${SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]?.version} vs QUEUE_SCHEMA_VERSION ${QUEUE_SCHEMA_VERSION}`,
+  );
+}
+function readSchemaVersion(db: Database.Database): number {
+  const row = db
+    .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
+    .get() as { value: string } | undefined;
+  if (!row) return 0;
+  const version = Number.parseInt(row.value, 10);
+  return Number.isNaN(version) ? 0 : version;
+}
+function writeSchemaVersion(db: Database.Database): void {
+  db.prepare(
+    "INSERT INTO schema_meta(key,value) VALUES ('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+  ).run(String(QUEUE_SCHEMA_VERSION));
+}
+function migrateRuntimeSchema(db: Database.Database): void {
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+  );
+  const from = readSchemaVersion(db);
+  if (from > QUEUE_SCHEMA_VERSION) {
+    throw new Error(
+      `runtime database schema version ${from} exceeds supported version ${QUEUE_SCHEMA_VERSION}; refusing to migrate a newer store`,
+    );
+  }
+  const pending = SCHEMA_MIGRATIONS.filter(
+    (migration) => migration.version > from,
+  );
+  // All pending migrations plus the shape repairs run inside one IMMEDIATE
+  // transaction so an interrupted or failing migration can never leave a
+  // half-migrated store, and repeated initialization stays idempotent.
+  // BEGIN IMMEDIATE is issued inside the guarded block: even when the write
+  // lock cannot be acquired (another connection holds it past busy_timeout),
+  // the finally clause below re-enables foreign_keys, so an injected database
+  // is never left with FK enforcement disabled after a failed migration.
   db.pragma("foreign_keys = OFF");
-  let began = false;
   try {
     db.exec("BEGIN IMMEDIATE");
-    began = true;
-  } catch (error) {
-    db.pragma("foreign_keys = ON");
-    throw error;
-  }
-  try {
-    db.exec("ALTER TABLE jobs RENAME TO jobs_legacy");
-    for (const table of tables) {
-      if (
-        db
-          .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
-          .get(table)
-      ) {
-        db.exec(`ALTER TABLE ${table} RENAME TO ${table}_legacy`);
-      }
-    }
-    for (const index of [
-      "jobs_claim",
-      "jobs_idempotency",
-      "deliveries_claim",
-      "dead_letters_job",
-    ]) {
-      db.exec(`DROP INDEX IF EXISTS ${index}`);
-    }
-    createTables(db);
-    db.exec(`INSERT INTO jobs(id,idempotency_key,payload_json,status,attempts,max_attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at,completed_at,session_id,sequence,result_state,succeeded,terminal_reason)
-      SELECT id,idempotency_key,payload_json,
-        CASE WHEN status='running' THEN 'queued' ELSE status END,
-        attempts,max_attempts,next_attempt_at,NULL,NULL,fencing_token,last_error,created_at,updated_at,completed_at,
-        COALESCE(json_extract(payload_json,'$.sessionId'),''),
-        ROW_NUMBER() OVER (PARTITION BY COALESCE(json_extract(payload_json,'$.sessionId'),'') ORDER BY created_at,id)-1,
-        CASE WHEN status='completed' THEN 'succeeded' WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END,
-        CASE WHEN status='completed' THEN 1 ELSE 0 END,
-        CASE WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END
-      FROM jobs_legacy`);
-    if (
-      db
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='deliveries_legacy'",
-        )
-        .get()
-    ) {
-      db.exec(`INSERT INTO deliveries(id,job_id,status,payload_json,attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at)
-        SELECT id,job_id,status,payload_json,attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at FROM deliveries_legacy`);
-    }
-    if (
-      db
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='idempotency_keys_legacy'",
-        )
-        .get()
-    ) {
-      const columns = db
-        .prepare("PRAGMA table_info(idempotency_keys_legacy)")
-        .all() as Array<{ name: string }>;
-      const completed = columns.some((column) => column.name === "completed_at")
-        ? "completed_at"
-        : "NULL";
-      db.exec(
-        `INSERT INTO idempotency_keys(key,job_id,status,created_at,completed_at) SELECT key,job_id,status,created_at,${completed} FROM idempotency_keys_legacy`,
-      );
-    }
-    if (
-      db
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dead_letters_legacy'",
-        )
-        .get()
-    ) {
-      db.exec(`INSERT INTO dead_letters(job_id,reason,payload_json,error,source,created_at)
-        SELECT job_id,reason,payload_json,error,source,created_at FROM dead_letters_legacy`);
-    }
-    for (const table of [
-      "jobs_legacy",
-      "deliveries_legacy",
-      "idempotency_keys_legacy",
-      "dead_letters_legacy",
-    ]) {
-      db.exec(`DROP TABLE IF EXISTS ${table}`);
-    }
-    const foreignKeys = db.prepare("PRAGMA foreign_key_check").all();
-    if (foreignKeys.length > 0)
-      throw new Error("queue migration foreign-key check failed");
+    for (const migration of pending) migration.up(db);
+    if (pending.length === 0) repairRuntimeSchema(db);
+    writeSchemaVersion(db);
     db.exec("COMMIT");
   } catch (error) {
-    if (began) {
+    if (db.inTransaction) {
       try {
         db.exec("ROLLBACK");
       } catch {}
@@ -336,37 +463,7 @@ export function configureRuntimeDb(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-  );
-  migrateOldJobs(db);
-  createTables(db);
-  for (const column of [
-    "response_index INTEGER NOT NULL DEFAULT 0",
-    "payload_hash TEXT",
-    "host_unique_key TEXT",
-    "destination_type TEXT",
-    "destination_id TEXT",
-    "reply_message_id TEXT",
-    "cron_thread_id TEXT",
-    "external_message_id TEXT",
-  ]) {
-    try {
-      db.exec(`ALTER TABLE deliveries ADD COLUMN ${column}`);
-    } catch {}
-  }
-  db.exec(
-    "DROP INDEX IF EXISTS deliveries_job; CREATE UNIQUE INDEX IF NOT EXISTS deliveries_host_unique ON deliveries(host_unique_key) WHERE host_unique_key IS NOT NULL; UPDATE deliveries SET response_index=0 WHERE response_index IS NULL; UPDATE deliveries SET host_unique_key=job_id || ':0' WHERE host_unique_key IS NULL;",
-  );
-  try {
-    db.exec("ALTER TABLE jobs ADD COLUMN claimed INTEGER NOT NULL DEFAULT 0");
-  } catch {}
-  try {
-    db.exec("ALTER TABLE idempotency_keys ADD COLUMN completed_at TEXT");
-  } catch {}
-  db.prepare(
-    "INSERT INTO schema_meta(key,value) VALUES ('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-  ).run(String(QUEUE_SCHEMA_VERSION));
+  migrateRuntimeSchema(db);
 }
 export function openRuntimeDb(configuredPath?: string): Database.Database {
   if (configuredPath === ":memory:") {
@@ -408,11 +505,17 @@ export class QueueRepository {
     dbOrPath?: Database.Database | string,
     workerId = "queue-single-host",
   ) {
-    this.db =
-      typeof dbOrPath === "string" || dbOrPath === undefined
-        ? openRuntimeDb(dbOrPath)
-        : dbOrPath;
-    configureRuntimeDb(this.db);
+    if (typeof dbOrPath === "string" || dbOrPath === undefined) {
+      // openRuntimeDb opens AND configures the store: the schema migration runs
+      // exactly once for path/:memory:/default construction.
+      this.db = openRuntimeDb(dbOrPath);
+    } else {
+      this.db = dbOrPath;
+      // An injected Database is not assumed to be configured; (re)run the
+      // idempotent schema migration so callers can pass a raw better-sqlite3
+      // connection, while already-initialized stores remain safe to reopen.
+      configureRuntimeDb(this.db);
+    }
     this.workerId = workerId;
   }
   close(): void {
