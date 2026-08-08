@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import type { InboxMessage } from "./inbox.js";
+import type { InboxMessage } from "./types.js";
 import { splitMessage } from "../utils/splitMessage.js";
 
 const ROOT = path.resolve(
@@ -856,6 +856,24 @@ export class QueueRepository {
     if (job.resultJson === undefined)
       this.commitResult(id, token, "", { empty: true });
   }
+  /** Record a failed execution attempt, applying durable retry policy. */
+  failAttempt(
+    id: string,
+    error: unknown,
+    fencingToken: number | undefined,
+    payloadPatch?: Partial<InboxMessage>,
+    metadata: ExecutionMetadata = {},
+  ): void {
+    const job = this.get(id);
+    if (!job) throw new Error(`unknown job ${id}`);
+    if (job.status !== "running" && job.status !== "claimed")
+      throw new Error(`job ${id} is not active`);
+    const token = fencingToken ?? job.fencingToken;
+    if (token !== job.fencingToken) throw new Error(`stale fencing token for ${id}`);
+    const delayMs = Math.min(1000 * 2 ** job.retries, 60_000);
+    this.retry(id, token, error, delayMs, payloadPatch, metadata);
+  }
+
   retry(
     id: string,
     token: number,
