@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SendMessageOptions } from "../agent/manager.js";
+import { NonRetryableError } from "../utils/error.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
@@ -21,9 +22,9 @@ vi.mock("../discord/client.js", () => ({
     },
   },
 }));
-vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
-const { commitInboxResult } = vi.hoisted(() => ({
+const { commitInboxResult, deadLetter } = vi.hoisted(() => ({
   commitInboxResult: vi.fn(),
+  deadLetter: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -31,7 +32,7 @@ vi.mock("./repository.js", () => ({
     failAttempt: vi.fn(),
     freezeExecutionIdentity: vi.fn(),
     markRunning: vi.fn(),
-    deadLetter: vi.fn(),
+    deadLetter,
     updateRunning: vi.fn(),
   }),
 }));
@@ -44,6 +45,7 @@ const { processMessage } = await import("./poller.js");
 
 beforeEach(() => {
   vi.mocked(sendMessage).mockClear();
+  deadLetter.mockClear();
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
 });
 
@@ -63,6 +65,96 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
     ...overrides,
   };
 }
+
+describe("processMessage - terminal queue transitions", () => {
+  beforeEach(() => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => false,
+      isTextBased: () => false,
+    } as never);
+    deadLetter.mockClear();
+  });
+
+  it("invalid cron jobs are dead-lettered with one fenced transition", async () => {
+    const msg = makeMsg({
+      cronDeliveryMode: "new-thread",
+      cronJobId: undefined,
+    });
+
+    await processMessage(msg);
+
+    expect(deadLetter).toHaveBeenCalledOnce();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "invalid_cron_job",
+    );
+  });
+
+  it("non-retryable errors are dead-lettered once with execution metadata", async () => {
+    const error = new NonRetryableError("invalid input");
+    const executionTiming = {
+      termination: "close" as const,
+      exitCode: 23,
+      preparationMs: 1,
+      dockerRunMs: 2,
+      assistantTurns: 1,
+    };
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onExecutionTiming?.(
+          executionTiming,
+        );
+        throw error;
+      },
+    );
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(deadLetter).toHaveBeenCalledOnce();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "non_retryable",
+      String(error),
+      expect.objectContaining({
+        exitCode: 23,
+        termination: "close",
+        timing: executionTiming,
+      }),
+    );
+  });
+
+  it("max-attempt errors are dead-lettered once", async () => {
+    vi.useFakeTimers();
+    try {
+      const error = new Error("temporary failure");
+      vi.mocked(sendMessage).mockRejectedValue(error);
+      const msg = makeMsg({ retries: 9 });
+      const processing = processMessage(msg);
+
+      await vi.waitFor(() => expect(deadLetter).toHaveBeenCalledOnce());
+      expect(deadLetter).toHaveBeenCalledWith(
+        msg.id,
+        msg.fencingToken,
+        "max_attempts",
+        String(error),
+        expect.any(Object),
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      await processing;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("processMessage - autoReply", () => {
   const mockSend = vi.fn().mockResolvedValue(undefined);

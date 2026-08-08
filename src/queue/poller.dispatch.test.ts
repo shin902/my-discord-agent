@@ -11,7 +11,6 @@ vi.mock("../discord/client.js", () => ({
     isReady: vi.fn().mockReturnValue(false),
   },
 }));
-vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
 vi.mock("./repository.js", () => ({
   removeInboxById: vi.fn(),
   updateInboxById: vi.fn(),

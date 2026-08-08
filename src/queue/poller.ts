@@ -16,7 +16,6 @@ import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { getQueueRepository, type ExecutionMetadata } from "./repository.js";
 import type { InboxMessage } from "./types.js";
-import { appendDeadLetter } from "./dead-letter.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 
 const POLL_MS = 1000;
@@ -350,7 +349,6 @@ async function processCronNewThread(
   try {
     if (!msg.cronJobId) {
       outcome = "dead-letter";
-      await appendDeadLetter(msg, "invalid_cron_job");
       if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
           msg.id,
@@ -435,7 +433,6 @@ async function processCronNewThread(
   } catch (error) {
     if (error instanceof NonRetryableError) {
       outcome = "dead-letter";
-      await appendDeadLetter(msg, "non_retryable");
       if (msg.fencingToken !== undefined)
         await getQueueRepository().deadLetter(
           msg.id,
@@ -659,7 +656,6 @@ export async function processMessage(
       if (err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-        await appendDeadLetter(msg, "non_retryable");
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().deadLetter(
             msg.id,
@@ -692,7 +688,6 @@ export async function processMessage(
           "[poller] リトライ上限に達しました。dead-letter に移動:",
           msg.id,
         );
-        await appendDeadLetter(msg, "max_attempts");
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().deadLetter(
             msg.id,
