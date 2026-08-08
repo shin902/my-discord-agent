@@ -5,8 +5,9 @@ vi.mock("./client.js", () => ({
   client: { once: vi.fn(), on: vi.fn() },
 }));
 
-vi.mock("../queue/inbox.js", () => ({
-  appendInbox: vi.fn(),
+const mockAppendInbox = vi.hoisted(() => vi.fn());
+vi.mock("../queue/repository.js", () => ({
+  getQueueRepository: () => ({ enqueue: mockAppendInbox }),
 }));
 
 vi.mock("../config/groups.js", () => ({
@@ -14,11 +15,9 @@ vi.mock("../config/groups.js", () => ({
 }));
 
 const { client } = await import("./client.js");
-const { appendInbox } = await import("../queue/inbox.js");
 const { findGroupByChannelId } = await import("../config/groups.js");
 const { registerHandlers } = await import("./handler.js");
 
-const mockAppendInbox = vi.mocked(appendInbox);
 const mockFindGroup = vi.mocked(findGroupByChannelId);
 
 // ハンドラーを一度だけ登録し、以降はコールバックを取り出して直接呼ぶ

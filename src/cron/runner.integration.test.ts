@@ -6,13 +6,14 @@ vi.mock("../discord/client.js", () => ({
     channels: { fetch: vi.fn() },
   },
 }));
-vi.mock("../queue/inbox.js", () => ({ appendInbox: vi.fn() }));
+const appendInboxMock = vi.hoisted(() => vi.fn());
+vi.mock("../queue/repository.js", () => ({ getQueueRepository: () => ({ enqueue: appendInboxMock }) }));
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../utils/splitMessage.js", () => ({
   splitMessage: (s: string) => [s],
 }));
 
-import { appendInbox } from "../queue/inbox.js";
+const appendInbox = appendInboxMock;
 import { NonRetryableError } from "../utils/error.js";
 import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
 

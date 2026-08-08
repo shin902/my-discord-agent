@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SendMessageOptions } from "../agent/manager.js";
-import type { InboxMessage } from "./inbox.js";
+import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../config/default-model.js", () => ({
@@ -22,22 +22,22 @@ vi.mock("../discord/client.js", () => ({
   },
 }));
 vi.mock("./dead-letter.js", () => ({ appendDeadLetter: vi.fn() }));
-vi.mock("./inbox.js", () => ({
-  peekAllUnclaimedInbox: vi.fn(),
-  commitInboxResult: vi.fn(),
-  failInboxAttempt: vi.fn(),
-  freezeInboxExecutionIdentity: vi.fn(),
-  markInboxRunning: vi.fn(),
-  removeInboxById: vi.fn(),
-  updateInboxById: vi.fn(),
-  deadLetterInbox: vi.fn(),
+const { commitInboxResult } = vi.hoisted(() => ({ commitInboxResult: vi.fn() }));
+vi.mock("./repository.js", () => ({
+  getQueueRepository: () => ({
+    commitResult: commitInboxResult,
+    failAttempt: vi.fn(),
+    freezeExecutionIdentity: vi.fn(),
+    markRunning: vi.fn(),
+    deadLetter: vi.fn(),
+    updateRunning: vi.fn(),
+  }),
 }));
 
 const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const { client } = await import("../discord/client.js");
-const { commitInboxResult } = await import("./inbox.js");
 const { processMessage } = await import("./poller.js");
 
 beforeEach(() => {
