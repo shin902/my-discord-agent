@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -60,6 +60,31 @@ export function resolveRssDbPath(configuredPath?: string): string {
   return path.isAbsolute(configuredPath)
     ? configuredPath
     : path.resolve(ROOT, configuredPath);
+}
+
+export type TryOpenRssDbResult =
+  | { ok: true; path: string; db: Database.Database }
+  | { ok: false; path: string; error: string };
+
+/**
+ * Resolve, check existence of, and open an RSS state database without touching
+ * the queue. Callers decide how to surface a failure: reconciliation skips
+ * missing/unopenable stores best-effort, while the operator records an
+ * observability error with the same message.
+ */
+export function tryOpenRssDb(configuredPath?: string): TryOpenRssDbResult {
+  const dbPath = resolveRssDbPath(configuredPath);
+  if (!existsSync(dbPath))
+    return { ok: false, path: dbPath, error: "database file does not exist" };
+  try {
+    return { ok: true, path: dbPath, db: openRssDb(dbPath) };
+  } catch (error) {
+    return {
+      ok: false,
+      path: dbPath,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export function openRssDb(configuredPath?: string): Database.Database {

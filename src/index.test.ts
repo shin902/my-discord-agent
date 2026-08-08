@@ -223,6 +223,10 @@ describe("index: 起動時バリデーション", () => {
 
     await import("./index.js");
 
+    // RSS state path discovery parses every job payload; startup must run it
+    // exactly once and hand the resolved list to both reconciliation and the
+    // runtime operator.
+    expect(mocks.queueRepository.listRssStatePaths).toHaveBeenCalledOnce();
     expect(mocks.reconcileRssDispatches).toHaveBeenCalledWith(
       mocks.queueRepository,
       ["runtime.sqlite", "cron.sqlite"],

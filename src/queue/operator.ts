@@ -1,10 +1,10 @@
 import type Database from "better-sqlite3";
-import { existsSync } from "node:fs";
+import { resolveRssDbPath, tryOpenRssDb } from "../rss/store.js";
 import {
-  backupRuntimeDatabase,
   type BackupValidation,
-  runtimeHealthCheck,
+  backupRuntimeDatabase,
   type RuntimeHealth,
+  runtimeHealthCheck,
 } from "./backup.js";
 import {
   collectObservability,
@@ -16,7 +16,6 @@ import {
   type RetentionPolicy,
   type RetentionResult,
 } from "./retention.js";
-import { openRssDb, resolveRssDbPath } from "../rss/store.js";
 
 export interface RuntimeOperatorOptions {
   at?: Date;
@@ -68,20 +67,13 @@ export async function runRuntimeOperator(
   }
   const opened: Database.Database[] = [];
   for (const rssPath of paths) {
-    if (!existsSync(rssPath)) {
-      rssErrors.push({ path: rssPath, error: "database file does not exist" });
+    const result = tryOpenRssDb(rssPath);
+    if (!result.ok) {
+      rssErrors.push({ path: result.path, error: result.error });
       continue;
     }
-    try {
-      const rssDb = openRssDb(rssPath);
-      opened.push(rssDb);
-      rssEntries.push({ path: rssPath, db: rssDb });
-    } catch (error) {
-      rssErrors.push({
-        path: rssPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    opened.push(result.db);
+    rssEntries.push({ path: result.path, db: result.db });
   }
   let observability: ObservabilitySnapshot;
   try {

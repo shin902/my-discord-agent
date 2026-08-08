@@ -1,16 +1,17 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { expectDefined } from "../test-utils.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  type ArticleDispatch,
   claimUnreadArticles,
   listUnreadArticles,
   openRssDb,
   saveFeedEntries,
 } from "../rss/store.js";
+import { expectDefined } from "../test-utils.js";
 import { reconcileRssDispatches } from "./reconciliation.js";
-import { QueueRepository, openRuntimeDb } from "./repository.js";
+import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 let tempDirs: string[] = [];
 afterEach(async () => {
@@ -48,6 +49,59 @@ function seedUnread(path: string): void {
   } finally {
     db.close();
   }
+}
+
+function claimOne(path: string, owner: string): ArticleDispatch {
+  const db = openRssDb(path);
+  try {
+    const dispatch = claimUnreadArticles(db, owner, 10);
+    expect(dispatch).toBeDefined();
+    return expectDefined(dispatch);
+  } finally {
+    db.close();
+  }
+}
+
+function dispatchColumns(path: string): Array<{
+  dispatch_id: string | null;
+  dispatch_job_id: string | null;
+}> {
+  const db = openRssDb(path);
+  try {
+    return db
+      .prepare(
+        "SELECT dispatch_id, dispatch_job_id FROM rss_articles ORDER BY id",
+      )
+      .all() as Array<{
+      dispatch_id: string | null;
+      dispatch_job_id: string | null;
+    }>;
+  } finally {
+    db.close();
+  }
+}
+
+function queuePayload(
+  rssPath: string,
+  dispatchId: string,
+): {
+  channelId: string;
+  groupName: string;
+  sessionId: string;
+  content: string;
+  timestamp: string;
+  rssDispatchId: string;
+  rssStatePath: string;
+} {
+  return {
+    channelId: "channel",
+    groupName: "rss",
+    sessionId: "session",
+    content: "content",
+    timestamp: new Date().toISOString(),
+    rssDispatchId: dispatchId,
+    rssStatePath: rssPath,
+  };
 }
 
 describe("reconcileRssDispatches", () => {
@@ -115,6 +169,163 @@ describe("reconcileRssDispatches", () => {
       } finally {
         check.close();
       }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("does not re-scan queue payloads when the caller supplies paths", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    claimOne(rssPath, "cron-supplied");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
+      expect(reconcileRssDispatches(repo, [rssPath])).toBe(1);
+      expect(discoverySpy).not.toHaveBeenCalled();
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("uses caller-supplied paths as authoritative (same path, deduplicated)", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      // The same path is passed twice; it must be opened and reconciled exactly once.
+      expect(reconcileRssDispatches(repo, [rssPath, rssPath])).toBe(1);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("releases claims whose job never reached the queue", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
+      } finally {
+        check.close();
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("releases claims for dead-lettered jobs", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.deadLetter(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "non_retryable",
+      );
+
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("reconciles completed, dead-lettered, and missing jobs across multiple databases", async () => {
+    const completedPath = await makeRssPath();
+    const deadLetterPath = await makeRssPath();
+    const missingPath = await makeRssPath();
+    seedUnread(completedPath);
+    seedUnread(deadLetterPath);
+    seedUnread(missingPath);
+    const completedDispatch = claimOne(completedPath, "cron-rss");
+    const deadDispatch = claimOne(deadLetterPath, "cron-rss");
+    claimOne(missingPath, "cron-rss"); // never enqueued
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const completedQueued = repo.enqueue(
+        queuePayload(completedPath, completedDispatch.id),
+        { idempotencyKey: completedDispatch.jobId },
+      );
+      const completedClaimed = repo.claim("worker", 60_000);
+      repo.complete(
+        completedQueued.job.id,
+        expectDefined(completedClaimed).fencingToken,
+      );
+
+      const deadQueued = repo.enqueue(
+        queuePayload(deadLetterPath, deadDispatch.id),
+        {
+          idempotencyKey: deadDispatch.jobId,
+        },
+      );
+      const deadClaimed = repo.claim("worker", 60_000);
+      repo.deadLetter(
+        deadQueued.job.id,
+        expectDefined(deadClaimed).fencingToken,
+        "non_retryable",
+      );
+
+      expect(
+        reconcileRssDispatches(repo, [
+          completedPath,
+          deadLetterPath,
+          missingPath,
+        ]),
+      ).toBe(3);
+      const completedCheck = openRssDb(completedPath);
+      try {
+        expect(listUnreadArticles(completedCheck, 10)).toEqual([]);
+      } finally {
+        completedCheck.close();
+      }
+      expect(dispatchColumns(deadLetterPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+      expect(dispatchColumns(missingPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("keeps standalone queue-payload discovery when no paths are supplied", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+
+      const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
+      expect(reconcileRssDispatches(repo)).toBe(1);
+      expect(discoverySpy).toHaveBeenCalledTimes(1);
     } finally {
       repo.close();
     }

@@ -1,11 +1,11 @@
 import { mkdtemp } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openRssDb, resolveRssDbPath } from "../rss/store.js";
-import { reconcileRssDispatches } from "./reconciliation.js";
 import { runRuntimeOperator } from "./operator.js";
-import { QueueRepository, openRuntimeDb } from "./repository.js";
+import { reconcileRssDispatches } from "./reconciliation.js";
+import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("runtime operator", () => {
   it("runs health and metrics while keeping retention opt-in and dry-run by default", async () => {
@@ -184,6 +184,26 @@ describe("runtime operator", () => {
       expect(report.observability.alerts).toContain("RSS orphan dispatches: 1");
     } finally {
       rssDb.close();
+      repo.close();
+    }
+  });
+
+  it("records observability errors for unavailable RSS state databases", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const dir = await mkdtemp(join(tmpdir(), "operator-rss-missing-"));
+    const missingPath = join(dir, "does-not-exist.sqlite3");
+    try {
+      const report = await runRuntimeOperator(repo.db, {
+        rssDbPaths: [missingPath],
+      });
+      expect(report.observability.rss?.errors).toContainEqual({
+        path: resolveRssDbPath(missingPath),
+        error: "database file does not exist",
+      });
+      expect(report.observability.alerts).toContain(
+        `RSS state database unavailable (${resolveRssDbPath(missingPath)}): database file does not exist`,
+      );
+    } finally {
       repo.close();
     }
   });

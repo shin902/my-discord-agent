@@ -1,11 +1,8 @@
-import type Database from "better-sqlite3";
-import { existsSync } from "node:fs";
 import {
   listDispatchClaims,
   markArticlesRead,
-  openRssDb,
   releaseDispatchArticles,
-  resolveRssDbPath,
+  tryOpenRssDb,
 } from "../rss/store.js";
 import { getQueueRepository, type QueueRepository } from "./repository.js";
 
@@ -17,23 +14,19 @@ export function reconcileRssDispatches(
   repo: QueueRepository = getQueueRepository(),
   rssDbPaths?: string | readonly string[],
 ): number {
-  const configuredPaths =
-    typeof rssDbPaths === "string" ? [rssDbPaths] : (rssDbPaths ?? []);
-  const paths = new Set<string | undefined>([
-    undefined,
-    ...configuredPaths,
-    ...repo.listRssStatePaths(),
-  ]);
+  const configured = typeof rssDbPaths === "string" ? [rssDbPaths] : rssDbPaths;
+  // Caller-supplied paths (startup passes the merged repository + cron path
+  // list) are authoritative: listRssStatePaths() parses every job payload, so
+  // discovering it again here would duplicate that full scan. Only standalone
+  // callers that pass no path argument fall back to queue-payload discovery.
+  const discovered =
+    configured === undefined ? repo.listRssStatePaths() : configured;
+  const paths = new Set<string | undefined>([undefined, ...discovered]);
   let resolved = 0;
   for (const rssDbPath of paths) {
-    const resolvedPath = resolveRssDbPath(rssDbPath);
-    if (!existsSync(resolvedPath)) continue;
-    let db: Database.Database;
-    try {
-      db = openRssDb(resolvedPath);
-    } catch {
-      continue;
-    }
+    const result = tryOpenRssDb(rssDbPath);
+    if (!result.ok) continue; // Skips the default/missing DB best-effort.
+    const db = result.db;
     try {
       for (const claim of listDispatchClaims(db)) {
         const job = repo.findByIdempotencyKey(claim.dispatchJobId);
