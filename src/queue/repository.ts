@@ -65,10 +65,157 @@ export interface QueueJob extends InboxMessage, ExecutionMetadata {
   deliveryId?: string;
 }
 export type ExecutionState = "claimed" | "running";
+//
+// Claimed-state semantics.
+//
+// Three representations coexist and are intentionally kept consistent:
+//
+// 1. DB status='claimed' is the canonical, behavior-driving state. claim()
+//    moves queued/retry_wait rows here; markRunning() advances the row to
+//    'running' and completion/retry/dead-letter/fencing/recovery predicates
+//    all key off `status IN ('claimed','running')`.
+// 2. DB `claimed` INTEGER is a legacy duplicate column from the pre-durable
+//    schema. It is written in lock-step with the state machine (claim -> 1,
+//    markRunning/recoverExpired -> 0) but is never read for behavior.
+//    jobsTableIsLegacy() detects pre-durable tables by the presence of this
+//    column, and removing it would require a schema-version bump plus a table
+//    rebuild for stores already stamped at the current version, so it is
+//    retained as a write-compatible legacy mirror.
+// 3. TS executionState/status is a read-only projection computed inside
+//    parsePayload: DB 'claimed' surfaces as status 'running' with
+//    executionState 'claimed'; DB 'running' surfaces as status 'running' with
+//    executionState 'running'. It is never persisted; complete() consumes it
+//    to decide whether a freshly claimed job still needs markRunning().
+//
+// DB status is therefore the single canonical persisted state; executionState
+// is a derived view; the `claimed` integer is a legacy duplicate that remains
+// only for migration-shape compatibility.
+
 export interface ClaimedJob {
   job: QueueJob;
   fencingToken: number;
 }
+interface ExecutionMetadataField {
+  /** ExecutionMetadata field. */
+  field: keyof ExecutionMetadata;
+  /** SQL column that durably persists the field. */
+  column: string;
+  /** fenced() SET-clause value: undefined means "omit" so undefined never overwrites. */
+  setValue: (metadata: ExecutionMetadata) => unknown;
+  /** commitResult COALESCE value; NULL degrades to "keep the stored value". */
+  coalesceValue: (metadata: ExecutionMetadata) => unknown;
+}
+// The single ExecutionMetadata -> SQL-column mapping shared by markRunning,
+// commitResult, retry and deadLetterInTransaction. The two emitters below
+// reproduce the historical per-method semantics without per-method duplication:
+//
+// - metadataSetColumns (fenced() SET clauses): undefined fields are omitted
+//   entirely so a partial metadata object cannot clobber what the previous
+//   attempt stored; an explicit null is still written for exitCode and the
+//   usage/timing JSON literals; string destinations update only on truthy
+//   values (historical truthiness checks).
+// - metadataCoalesceValues/Assignments (commitResult): every field degrades to
+//   COALESCE(?,column), i.e. both undefined and explicit null preserve the
+//   stored value, except usage/timing which keep writing the JSON literal
+//   "null" for an explicit null exactly as before.
+const EXECUTION_METADATA_FIELDS: readonly ExecutionMetadataField[] = [
+  {
+    field: "exitCode",
+    column: "exit_code",
+    setValue: (m) => (m.exitCode !== undefined ? m.exitCode : undefined),
+    coalesceValue: (m) => m.exitCode ?? null,
+  },
+  {
+    field: "termination",
+    column: "termination",
+    setValue: (m) => m.termination || undefined,
+    coalesceValue: (m) => m.termination ?? null,
+  },
+  {
+    field: "stopReason",
+    column: "stop_reason",
+    setValue: (m) => m.stopReason || undefined,
+    coalesceValue: (m) => m.stopReason ?? null,
+  },
+  {
+    field: "usage",
+    column: "usage_json",
+    setValue: (m) =>
+      m.usage !== undefined ? JSON.stringify(m.usage) : undefined,
+    coalesceValue: (m) =>
+      m.usage === undefined ? null : JSON.stringify(m.usage),
+  },
+  {
+    field: "timing",
+    column: "timing_json",
+    setValue: (m) =>
+      m.timing !== undefined ? JSON.stringify(m.timing) : undefined,
+    coalesceValue: (m) =>
+      m.timing === undefined ? null : JSON.stringify(m.timing),
+  },
+  {
+    field: "agentsSnapshotHash",
+    column: "agents_snapshot_hash",
+    setValue: (m) => m.agentsSnapshotHash || undefined,
+    // commitResult historically fell back from agentsSnapshotHash to
+    // snapshotHash; keep that method-specific collapse here.
+    coalesceValue: (m) => m.agentsSnapshotHash ?? m.snapshotHash ?? null,
+  },
+  {
+    field: "memorySnapshotHash",
+    column: "memory_snapshot_hash",
+    setValue: (m) => m.memorySnapshotHash || undefined,
+    coalesceValue: (m) => m.memorySnapshotHash ?? null,
+  },
+  {
+    field: "snapshotHash",
+    column: "snapshot_hash",
+    setValue: (m) => m.snapshotHash || undefined,
+    coalesceValue: (m) => m.snapshotHash ?? null,
+  },
+  {
+    field: "toolCallKey",
+    column: "tool_call_key",
+    setValue: (m) => m.toolCallKey || undefined,
+    coalesceValue: (m) => m.toolCallKey ?? null,
+  },
+  {
+    field: "workspacePath",
+    column: "workspace_path",
+    setValue: (m) => m.workspacePath || undefined,
+    coalesceValue: (m) => m.workspacePath ?? null,
+  },
+  {
+    field: "conversationPath",
+    column: "conversation_path",
+    setValue: (m) => m.conversationPath || undefined,
+    coalesceValue: (m) => m.conversationPath ?? null,
+  },
+];
+/** fenced() SET-clause entries; undefined/empty entries are omitted so a partial metadata object never overwrites previously stored columns. */
+function metadataSetColumns(
+  metadata: ExecutionMetadata,
+): Record<string, unknown> {
+  const updates: Record<string, unknown> = {};
+  for (const mapping of EXECUTION_METADATA_FIELDS) {
+    const value = mapping.setValue(metadata);
+    if (value !== undefined) updates[mapping.column] = value;
+  }
+  return updates;
+}
+/** `column=COALESCE(?,column)` assignment list in canonical metadata column order. */
+function metadataCoalesceAssignments(): string {
+  return EXECUTION_METADATA_FIELDS.map(
+    (mapping) => `${mapping.column}=COALESCE(?,${mapping.column})`,
+  ).join(",");
+}
+/** commitResult positional values aligned with metadataCoalesceAssignments(). */
+function metadataCoalesceValues(metadata: ExecutionMetadata): unknown[] {
+  return EXECUTION_METADATA_FIELDS.map((mapping) =>
+    mapping.coalesceValue(metadata),
+  );
+}
+
 export interface EnqueueResult {
   job: QueueJob;
   inserted: boolean;
@@ -773,38 +920,14 @@ export class QueueRepository {
     token: number,
     metadata: ExecutionMetadata = {},
   ): void {
+    // status/`claimed` mirror plus attempt timestamps are markRunning-specific;
+    // the remaining execution metadata columns come from the shared mapping.
     this.fenced(id, token, {
       status: "running",
       claimed: 0,
       started_at: metadata.startedAt ?? nowIso(),
       heartbeat_at: nowIso(),
-      ...(metadata.exitCode !== undefined
-        ? { exit_code: metadata.exitCode }
-        : {}),
-      ...(metadata.termination ? { termination: metadata.termination } : {}),
-      ...(metadata.stopReason ? { stop_reason: metadata.stopReason } : {}),
-      ...(metadata.timing !== undefined
-        ? { timing_json: JSON.stringify(metadata.timing) }
-        : {}),
-      ...(metadata.usage !== undefined
-        ? { usage_json: JSON.stringify(metadata.usage) }
-        : {}),
-      ...(metadata.agentsSnapshotHash
-        ? { agents_snapshot_hash: metadata.agentsSnapshotHash }
-        : {}),
-      ...(metadata.memorySnapshotHash
-        ? { memory_snapshot_hash: metadata.memorySnapshotHash }
-        : {}),
-      ...(metadata.snapshotHash
-        ? { snapshot_hash: metadata.snapshotHash }
-        : {}),
-      ...(metadata.toolCallKey ? { tool_call_key: metadata.toolCallKey } : {}),
-      ...(metadata.workspacePath
-        ? { workspace_path: metadata.workspacePath }
-        : {}),
-      ...(metadata.conversationPath
-        ? { conversation_path: metadata.conversationPath }
-        : {}),
+      ...metadataSetColumns(metadata),
     });
   }
   freezeExecutionIdentity(
@@ -901,24 +1024,14 @@ export class QueueRepository {
       if (!row) throw new Error(`stale fencing token for job ${id}`);
       const changed = this.db
         .prepare(
-          `UPDATE jobs SET status='completed',lease_until=NULL,worker_id=NULL,completed_at=?,result_json=?,result_state=?,succeeded=?,delivery_id=NULL,exit_code=COALESCE(?,exit_code),termination=COALESCE(?,termination),stop_reason=COALESCE(?,stop_reason),usage_json=COALESCE(?,usage_json),timing_json=COALESCE(?,timing_json),agents_snapshot_hash=COALESCE(?,agents_snapshot_hash),memory_snapshot_hash=COALESCE(?,memory_snapshot_hash),snapshot_hash=COALESCE(?,snapshot_hash),tool_call_key=COALESCE(?,tool_call_key),workspace_path=COALESCE(?,workspace_path),conversation_path=COALESCE(?,conversation_path) WHERE id=? AND status IN ('claimed','running') AND fencing_token=?`,
+          `UPDATE jobs SET status='completed',lease_until=NULL,worker_id=NULL,completed_at=?,result_json=?,result_state=?,succeeded=?,delivery_id=NULL,${metadataCoalesceAssignments()} WHERE id=? AND status IN ('claimed','running') AND fencing_token=?`,
         )
         .run(
           at,
           resultJson,
           state,
           options.empty ? 0 : 1,
-          m.exitCode ?? null,
-          m.termination ?? null,
-          m.stopReason ?? null,
-          m.usage === undefined ? null : JSON.stringify(m.usage),
-          m.timing === undefined ? null : JSON.stringify(m.timing),
-          m.agentsSnapshotHash ?? m.snapshotHash ?? null,
-          m.memorySnapshotHash ?? null,
-          m.snapshotHash ?? null,
-          m.toolCallKey ?? null,
-          m.workspacePath ?? null,
-          m.conversationPath ?? null,
+          ...metadataCoalesceValues(m),
           id,
           token,
         );
@@ -1076,35 +1189,7 @@ export class QueueRepository {
         worker_id: null,
         last_error: message,
         error_json: JSON.stringify({ message, error }),
-        ...(metadata.exitCode !== undefined
-          ? { exit_code: metadata.exitCode }
-          : {}),
-        ...(metadata.termination ? { termination: metadata.termination } : {}),
-        ...(metadata.stopReason ? { stop_reason: metadata.stopReason } : {}),
-        ...(metadata.usage !== undefined
-          ? { usage_json: JSON.stringify(metadata.usage) }
-          : {}),
-        ...(metadata.timing !== undefined
-          ? { timing_json: JSON.stringify(metadata.timing) }
-          : {}),
-        ...(metadata.agentsSnapshotHash
-          ? { agents_snapshot_hash: metadata.agentsSnapshotHash }
-          : {}),
-        ...(metadata.memorySnapshotHash
-          ? { memory_snapshot_hash: metadata.memorySnapshotHash }
-          : {}),
-        ...(metadata.snapshotHash
-          ? { snapshot_hash: metadata.snapshotHash }
-          : {}),
-        ...(metadata.toolCallKey
-          ? { tool_call_key: metadata.toolCallKey }
-          : {}),
-        ...(metadata.workspacePath
-          ? { workspace_path: metadata.workspacePath }
-          : {}),
-        ...(metadata.conversationPath
-          ? { conversation_path: metadata.conversationPath }
-          : {}),
+        ...metadataSetColumns(metadata),
       });
     })();
   }
@@ -1130,33 +1215,7 @@ export class QueueRepository {
       terminal_reason: reason,
       result_state: reason === "max_attempts" ? "max_retries" : "non_retryable",
       error_json: JSON.stringify({ message: error ?? reason, error }),
-      ...(metadata.exitCode !== undefined
-        ? { exit_code: metadata.exitCode }
-        : {}),
-      ...(metadata.termination ? { termination: metadata.termination } : {}),
-      ...(metadata.stopReason ? { stop_reason: metadata.stopReason } : {}),
-      ...(metadata.usage !== undefined
-        ? { usage_json: JSON.stringify(metadata.usage) }
-        : {}),
-      ...(metadata.timing !== undefined
-        ? { timing_json: JSON.stringify(metadata.timing) }
-        : {}),
-      ...(metadata.agentsSnapshotHash
-        ? { agents_snapshot_hash: metadata.agentsSnapshotHash }
-        : {}),
-      ...(metadata.memorySnapshotHash
-        ? { memory_snapshot_hash: metadata.memorySnapshotHash }
-        : {}),
-      ...(metadata.snapshotHash
-        ? { snapshot_hash: metadata.snapshotHash }
-        : {}),
-      ...(metadata.toolCallKey ? { tool_call_key: metadata.toolCallKey } : {}),
-      ...(metadata.workspacePath
-        ? { workspace_path: metadata.workspacePath }
-        : {}),
-      ...(metadata.conversationPath
-        ? { conversation_path: metadata.conversationPath }
-        : {}),
+      ...metadataSetColumns(metadata),
     });
     this.db
       .prepare(

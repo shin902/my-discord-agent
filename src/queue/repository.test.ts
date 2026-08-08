@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
-import { QueueRepository, openRuntimeDb } from "./repository.js";
+import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("QueueRepository lease renewal", () => {
   it("extends a claimed lease with its fencing token", () => {
@@ -694,6 +694,252 @@ describe("QueueRepository - single-owner retry policy", () => {
         expect(payload).not.toHaveProperty(key);
       }
       expect(payload.content).toBe("content");
+    } finally {
+      repo.close();
+    }
+  });
+});
+
+describe("QueueRepository - execution metadata mapping semantics", () => {
+  const baseMessage = {
+    channelId: "channel",
+    groupName: "group",
+    content: "content",
+    timestamp: new Date().toISOString(),
+  };
+
+  it("markRunning never overwrites stored columns on absent fields; explicit null still writes", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        ...baseMessage,
+        sessionId: "metadata-non-clobber",
+      });
+      const claim = expectDefined(repo.claim("worker-a", 1_000));
+      const id = enqueued.job.id;
+      const token = claim.fencingToken;
+      const timing = { promptMs: 1 };
+      repo.markRunning(id, token, {
+        exitCode: 7,
+        termination: "close",
+        stopReason: "stop",
+        timing,
+        snapshotHash: "snap-1",
+        workspacePath: "/ws/1",
+        conversationPath: "/conv/1",
+      });
+      // A later call that omits those fields must preserve what the first
+      // attempt stored (undefined must never overwrite a metadata column).
+      repo.markRunning(id, token, { startedAt: "2025-02-02T00:00:00.000Z" });
+      let row = repo.db
+        .prepare(
+          "SELECT exit_code,termination,stop_reason,timing_json,snapshot_hash,workspace_path,conversation_path,started_at FROM jobs WHERE id=?",
+        )
+        .get(id) as Record<string, unknown>;
+      expect(row).toMatchObject({
+        exit_code: 7,
+        termination: "close",
+        stop_reason: "stop",
+        timing_json: JSON.stringify(timing),
+        snapshot_hash: "snap-1",
+        workspace_path: "/ws/1",
+        conversation_path: "/conv/1",
+        started_at: "2025-02-02T00:00:00.000Z",
+      });
+      // An explicit null is still a legal value: markRunning writes NULL into
+      // exit_code while every other column remains untouched.
+      repo.markRunning(id, token, { exitCode: null });
+      row = repo.db
+        .prepare(
+          "SELECT exit_code,snapshot_hash,workspace_path FROM jobs WHERE id=?",
+        )
+        .get(id) as Record<string, unknown>;
+      expect(row.exit_code).toBeNull();
+      expect(row.snapshot_hash).toBe("snap-1");
+      expect(row.workspace_path).toBe("/ws/1");
+      // and none of it ever leaks into the durable payload_json
+      const payloadRow = repo.db
+        .prepare("SELECT payload_json FROM jobs WHERE id=?")
+        .get(id) as { payload_json: string };
+      const payload = JSON.parse(payloadRow.payload_json) as Record<
+        string,
+        unknown
+      >;
+      for (const key of [
+        "executionState",
+        "claimedAt",
+        "startedAt",
+        "exitCode",
+        "termination",
+        "stopReason",
+        "timing",
+        "snapshotHash",
+        "workspacePath",
+        "conversationPath",
+      ]) {
+        expect(payload).not.toHaveProperty(key);
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("retry and commitResult preserve stored metadata when a follow-up carries only a subset", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        ...baseMessage,
+        sessionId: "metadata-retry",
+      });
+      const first = expectDefined(repo.claim("worker-a", 1_000));
+      const id = enqueued.job.id;
+      repo.markRunning(id, first.fencingToken, {
+        exitCode: 3,
+        snapshotHash: "snap-pre",
+        workspacePath: "/ws/pre",
+      });
+      // the retry only carries timing: exit_code/snapshot_hash/workspace persist
+      repo.failAttempt(id, new Error("boom"), first.fencingToken, {
+        metadata: { timing: { promptMs: 2 } },
+      });
+      let row = repo.db
+        .prepare(
+          "SELECT status,exit_code,snapshot_hash,workspace_path,timing_json FROM jobs WHERE id=?",
+        )
+        .get(id) as Record<string, unknown>;
+      expect(row).toMatchObject({
+        status: "retry_wait",
+        exit_code: 3,
+        snapshot_hash: "snap-pre",
+        workspace_path: "/ws/pre",
+        timing_json: JSON.stringify({ promptMs: 2 }),
+      });
+      // commitResult COALESCE positions degrade untouched fields to "keep the
+      // stored value", while an explicit null for usage writes the JSON literal.
+      const second = expectDefined(
+        repo.claim("worker-b", 1_000, new Date(Date.now() + 60_000)),
+      );
+      expect(second.job.id).toBe(id);
+      repo.commitResult(id, second.fencingToken, "done", {
+        metadata: { usage: null },
+      });
+      row = repo.db
+        .prepare(
+          "SELECT exit_code,snapshot_hash,workspace_path,usage_json FROM jobs WHERE id=?",
+        )
+        .get(id) as Record<string, unknown>;
+      expect(row.exit_code).toBe(3);
+      expect(row.snapshot_hash).toBe("snap-pre");
+      expect(row.workspace_path).toBe("/ws/pre");
+      expect(row.usage_json).toBe("null");
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("rejects markRunning with a stale fencing token without touching the row", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        ...baseMessage,
+        sessionId: "metadata-fencing",
+      });
+      const first = expectDefined(repo.claim("worker-a", 1));
+      const second = expectDefined(
+        repo.claim("worker-b", 1, new Date(Date.now() + 10)),
+      );
+      expect(() =>
+        repo.markRunning(enqueued.job.id, first.fencingToken, {
+          termination: "close",
+        }),
+      ).toThrow(/stale fencing/);
+      // the rejected metadata write left the lease owned by worker-b untouched
+      const row = repo.db
+        .prepare(
+          "SELECT status,claimed,worker_id,lease_until,termination FROM jobs WHERE id=?",
+        )
+        .get(enqueued.job.id) as Record<string, unknown>;
+      expect(row).toMatchObject({
+        status: "claimed",
+        claimed: 1,
+        worker_id: "worker-b",
+      });
+      expect(row.termination).toBeNull();
+      // the current owner can still advance to running
+      repo.markRunning(enqueued.job.id, second.fencingToken, {
+        termination: "close",
+      });
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        status: "running",
+        executionState: "running",
+        termination: "close",
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("recoverExpired returns a running job to its session slot and keeps the claimed mirror in sync", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const first = repo.enqueue({
+        ...baseMessage,
+        sessionId: "serial",
+        content: "first",
+      });
+      // distinct created_at avoids the claim ORDER BY (created_at,sequence)
+      // tie-breaker between different sessions when millisecond resolution
+      // collapses the inserts; the recovered job must be re-picked first.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      repo.enqueue({ ...baseMessage, sessionId: "serial", content: "second" });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const other = repo.enqueue({
+        ...baseMessage,
+        sessionId: "parallel",
+        content: "other",
+      });
+      const claim = expectDefined(repo.claim("worker-a", 1));
+      expect(claim.job.id).toBe(first.job.id);
+      expect(claim.job.executionState).toBe("claimed");
+      repo.markRunning(first.job.id, claim.fencingToken, {
+        termination: "close",
+      });
+
+      expect(repo.recoverExpired(new Date(Date.now() + 100))).toBe(1);
+      const recovered = expectDefined(repo.get(first.job.id));
+      expect(recovered).toMatchObject({
+        status: "retry_wait",
+        termination: "close",
+      });
+      expect(recovered.executionState).toBeUndefined();
+      // the legacy claimed mirror is written in lock-step with the state machine
+      expect(
+        repo.db
+          .prepare("SELECT claimed FROM jobs WHERE id=?")
+          .get(first.job.id),
+      ).toMatchObject({ claimed: 0 });
+      // the recovered row's old fence is dead
+      expect(repo.isFenced(first.job.id, claim.fencingToken)).toBe(false);
+      expect(() =>
+        repo.markRunning(first.job.id, claim.fencingToken, {}),
+      ).toThrow(/stale fencing/);
+
+      // session order re-claims the recovered sequence-0 row before later ones
+      // (claim at-or-after the recovery timestamp so next_attempt_at is due)
+      const reClaimed = expectDefined(
+        repo.claim("worker-a", 1_000, new Date(Date.now() + 200)),
+      );
+      expect(reClaimed.job.id).toBe(first.job.id);
+      expect(reClaimed.job.executionState).toBe("claimed");
+      expect(reClaimed.job.sequence).toBe(0);
+      expect(
+        repo.db
+          .prepare("SELECT claimed FROM jobs WHERE id=?")
+          .get(first.job.id),
+      ).toMatchObject({ claimed: 1 });
+      // the same-session successor stays blocked while the other session's
+      // queued row can proceed in parallel
+      expect(repo.claim("worker-d", 1_000)?.job.id).toBe(other.job.id);
     } finally {
       repo.close();
     }
