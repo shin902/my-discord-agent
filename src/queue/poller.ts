@@ -14,9 +14,9 @@ import {
 } from "../config/providers.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
-import { getQueueRepository, type ExecutionMetadata } from "./repository.js";
-import type { InboxMessage } from "./types.js";
 import { acquireLlmLock } from "./llm-mutex.js";
+import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
+import type { InboxMessage } from "./types.js";
 
 const POLL_MS = 1000;
 const SLOW_RESPONSE_MS = 60_000;
@@ -337,6 +337,43 @@ async function withLlmLock<T>(
   }
 }
 
+// 非ゼロ終了コードの扱いは通常メッセージと cron new-thread で同一のため共通化する。
+// リトライ方針の決定は QueueRepository が所有するため、poller は記録するだけ。
+async function failAttemptIfNonZeroExitCode(
+  msg: InboxMessage,
+  response: string,
+  timing: ResponseTiming,
+): Promise<boolean> {
+  const exitCode = timing.agentExecution?.exitCode;
+  if (exitCode === undefined || exitCode === null || exitCode === 0) {
+    return false;
+  }
+  await getQueueRepository().failAttempt(
+    msg.id,
+    new Error(response || `agent exited with code ${exitCode}`),
+    msg.fencingToken,
+    { metadata: executionMetadata(timing) },
+  );
+  return true;
+}
+
+// コンテナ起動を running 状態として記録する onContainerStarted ハンドラを生成する。
+// 通常メッセージ（sessionId=msg.sessionId）と cron new-thread（導出 sessionId）で同一。
+function markRunningWhenContainerStarted(
+  msg: InboxMessage,
+  sessionId: string,
+): () => void {
+  return () => {
+    if (msg.fencingToken !== undefined) {
+      getQueueRepository().markRunning(msg.id, msg.fencingToken, {
+        startedAt: new Date().toISOString(),
+        workspacePath: `groups/${msg.groupName}`,
+        conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl`,
+      });
+    }
+  };
+}
+
 async function processCronNewThread(
   msg: InboxMessage,
   signal?: AbortSignal,
@@ -368,14 +405,7 @@ async function processCronNewThread(
             onExecutionTiming: (executionTiming) => {
               timing.agentExecution = executionTiming;
             },
-            onContainerStarted: () =>
-              msg.fencingToken === undefined
-                ? undefined
-                : getQueueRepository().markRunning(msg.id, msg.fencingToken, {
-                    startedAt: new Date().toISOString(),
-                    workspacePath: `groups/${msg.groupName}`,
-                    conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl`,
-                  }),
+            onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
             signal,
             configOverride: msg.configOverride,
             agentsSnapshotContent: msg.agentsSnapshotContent,
@@ -396,22 +426,7 @@ async function processCronNewThread(
         signal,
       },
     );
-    if (
-      timing.agentExecution?.exitCode !== undefined &&
-      timing.agentExecution.exitCode !== null &&
-      timing.agentExecution.exitCode !== 0
-    ) {
-      await getQueueRepository().failAttempt(
-        msg.id,
-        new Error(
-          response ||
-            `agent exited with code ${timing.agentExecution.exitCode}`,
-        ),
-        msg.fencingToken,
-        { metadata: executionMetadata(timing) },
-      );
-      return;
-    }
+    if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
         msg.id,
@@ -613,18 +628,10 @@ export async function processMessage(
                 onExecutionTiming: (executionTiming) => {
                   timing.agentExecution = executionTiming;
                 },
-                onContainerStarted: () =>
-                  msg.fencingToken === undefined
-                    ? undefined
-                    : getQueueRepository().markRunning(
-                        msg.id,
-                        msg.fencingToken,
-                        {
-                          startedAt: new Date().toISOString(),
-                          workspacePath: `groups/${msg.groupName}`,
-                          conversationPath: `data/sessions/${msg.groupName}/${msg.sessionId}.jsonl`,
-                        },
-                      ),
+                onContainerStarted: markRunningWhenContainerStarted(
+                  msg,
+                  msg.sessionId,
+                ),
                 agentsSnapshotContent: msg.agentsSnapshotContent,
                 agentsSnapshotPresent: msg.agentsSnapshotPresent,
                 memorySnapshotPresent: msg.memorySnapshotPresent,
@@ -678,22 +685,7 @@ export async function processMessage(
       return;
     }
 
-    if (
-      timing.agentExecution?.exitCode !== undefined &&
-      timing.agentExecution.exitCode !== null &&
-      timing.agentExecution.exitCode !== 0
-    ) {
-      await getQueueRepository().failAttempt(
-        msg.id,
-        new Error(
-          response ||
-            `agent exited with code ${timing.agentExecution.exitCode}`,
-        ),
-        msg.fencingToken,
-        { metadata: executionMetadata(timing) },
-      );
-      return;
-    }
+    if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);

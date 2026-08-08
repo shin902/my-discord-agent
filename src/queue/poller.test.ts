@@ -192,6 +192,46 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
+  it("cron new-thread の非ゼロ終了コードは failAttempt に記録され commit されない", async () => {
+    const executionTiming = {
+      termination: "close" as const,
+      exitCode: 9,
+      preparationMs: 1,
+      dockerRunMs: 2,
+      assistantTurns: 1,
+    };
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onExecutionTiming?.(
+          executionTiming,
+        );
+        return "partial response";
+      },
+    );
+    const msg = makeMsg({
+      cronDeliveryMode: "new-thread",
+      cronJobId: "daily",
+      cronThreadId: "thread-1",
+    });
+
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledOnce();
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      expect.any(Error),
+      msg.fencingToken,
+      {
+        metadata: expect.objectContaining({
+          exitCode: 9,
+          termination: "close",
+          timing: executionTiming,
+        }),
+      },
+    );
+    expect(commitInboxResult).not.toHaveBeenCalled();
+  });
+
   it("identity capture failure fails the attempt with error metadata", async () => {
     vi.mocked(freezeExecutionIdentity).mockRejectedValueOnce(
       new Error("identity boom"),
