@@ -15,7 +15,7 @@ describe("QueueRepository lease renewal", () => {
       });
       const claimed = repo.claim("worker-a", 100);
       expect(claimed).toBeDefined();
-      repo.renew(enqueued.job.id, expectDefined(claimed).fencingToken, 10_000);
+      repo.heartbeat(enqueued.job.id, expectDefined(claimed).fencingToken, 10_000);
       const later = new Date(Date.now() + 500).toISOString();
       expect(repo.claim("worker-b", 100, new Date(later))).toBeUndefined();
     } finally {
