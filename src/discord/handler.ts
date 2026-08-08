@@ -6,6 +6,7 @@ import type { QueueInput } from "../queue/types.js";
 const enqueue = async (payload: QueueInput): Promise<void> => {
   await getQueueRepository().enqueue(payload);
 };
+
 import { client } from "./client.js";
 
 // URL あり → "{hostname}-{messageId末尾6文字}", URL なし → "thread-{messageId末尾6文字}", 最大100文字

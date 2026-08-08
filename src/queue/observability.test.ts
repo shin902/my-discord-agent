@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
 import { collectObservability } from "./observability.js";
-import { QueueRepository, openRuntimeDb } from "./repository.js";
+import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("queue observability", () => {
   it("counts only claims older than the requested stale threshold and reports it", () => {

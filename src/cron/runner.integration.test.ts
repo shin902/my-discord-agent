@@ -16,6 +16,7 @@ vi.mock("../utils/splitMessage.js", () => ({
 }));
 
 const appendInbox = appendInboxMock;
+
 import { NonRetryableError } from "../utils/error.js";
 import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
 

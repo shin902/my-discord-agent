@@ -2,13 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { expectDefined } from "../test-utils.js";
 import {
   claimUnreadArticles,
   markArticlesRead,
   openRssDb,
   saveFeedEntries,
 } from "../rss/store.js";
+import { expectDefined } from "../test-utils.js";
 
 describe("RSS dispatch batch idempotency", () => {
   it("assigns a fresh queue key to each later batch for the same cron", async () => {

@@ -1,13 +1,13 @@
 import { mkdtemp, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { QueueRepository, openRuntimeDb } from "./repository.js";
 import {
   backupRuntimeDatabase,
   runtimeHealthCheck,
   validateRuntimeBackup,
 } from "./backup.js";
+import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("runtime SQLite backup health", () => {
   it("backs up, restores, and validates integrity", async () => {

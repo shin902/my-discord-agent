@@ -12,12 +12,13 @@ import { _setCronJobs, loadAndValidateCron, startCron } from "./cron/runner.js";
 import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
-import { getQueueRepository } from "./queue/repository.js";
+import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 import { initializeQueue } from "./queue/migration.js";
-import { reconcileRssDispatches } from "./queue/reconciliation.js";
 import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
-import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
+import { reconcileRssDispatches } from "./queue/reconciliation.js";
+import { getQueueRepository } from "./queue/repository.js";
+
 const token = process.env.DISCORD_BOT_TOKEN;
 if (!token) throw new Error("DISCORD_BOT_TOKEN が設定されていません");
 

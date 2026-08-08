@@ -1,6 +1,6 @@
 import { mkdtemp, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
 import { planRssRetention, pruneRssRetention } from "./retention.js";
