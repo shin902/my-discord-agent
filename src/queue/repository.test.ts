@@ -72,6 +72,184 @@ describe("QueueRepository lease renewal", () => {
   });
 });
 
+describe("failAttempt - options object", () => {
+  it("writes execution metadata to dedicated SQL columns instead of payload_json", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = repo.claim("worker-a", 1_000);
+      const timing = { promptMs: 10, dockerRunMs: 20, assistantTurns: 1 };
+      repo.failAttempt(
+        enqueued.job.id,
+        new Error("boom"),
+        expectDefined(claimed).fencingToken,
+        {
+          metadata: {
+            exitCode: 1,
+            termination: "close",
+            stopReason: "error",
+            timing,
+          },
+        },
+      );
+      const row = repo.db
+        .prepare(
+          "SELECT payload_json,exit_code,termination,stop_reason,timing_json FROM jobs WHERE id=?",
+        )
+        .get(enqueued.job.id) as {
+        payload_json: string;
+        exit_code: number | null;
+        termination: string | null;
+        stop_reason: string | null;
+        timing_json: string | null;
+      };
+      // metadata lands in the execution-metadata columns, not in the payload
+      expect(row.exit_code).toBe(1);
+      expect(row.termination).toBe("close");
+      expect(row.stop_reason).toBe("error");
+      expect(row.timing_json).toBe(JSON.stringify(timing));
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      expect(payload).not.toHaveProperty("exitCode");
+      expect(payload).not.toHaveProperty("termination");
+      expect(payload).not.toHaveProperty("timing");
+      expect(payload.retries).toBe(1);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("never folds markRunning execution metadata into payload_json on failAttempt", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = repo.claim("worker-a", 1_000);
+      const token = expectDefined(claimed).fencingToken;
+      const timing = { promptMs: 10, dockerRunMs: 20, assistantTurns: 1 };
+      repo.markRunning(enqueued.job.id, token, {
+        startedAt: "2025-01-01T00:00:00.000Z",
+        workspacePath: "groups/group",
+        conversationPath: "data/sessions/group/session.jsonl",
+      });
+      repo.failAttempt(enqueued.job.id, new Error("boom"), token, {
+        metadata: {
+          exitCode: 7,
+          termination: "close",
+          stopReason: "error",
+          timing,
+        },
+      });
+      const row = repo.db
+        .prepare(
+          "SELECT payload_json,claimed_at,started_at,heartbeat_at,workspace_path,conversation_path,exit_code,termination,stop_reason,timing_json FROM jobs WHERE id=?",
+        )
+        .get(enqueued.job.id) as {
+        payload_json: string;
+        claimed_at: string | null;
+        started_at: string | null;
+        heartbeat_at: string | null;
+        workspace_path: string | null;
+        conversation_path: string | null;
+        exit_code: number | null;
+        termination: string | null;
+        stop_reason: string | null;
+        timing_json: string | null;
+      };
+      // the running-attempt metadata lands in dedicated SQL columns ...
+      expect(row.claimed_at).not.toBeNull();
+      expect(row.started_at).toBe("2025-01-01T00:00:00.000Z");
+      expect(row.heartbeat_at).not.toBeNull();
+      expect(row.workspace_path).toBe("groups/group");
+      expect(row.conversation_path).toBe("data/sessions/group/session.jsonl");
+      expect(row.exit_code).toBe(7);
+      expect(row.termination).toBe("close");
+      expect(row.stop_reason).toBe("error");
+      expect(row.timing_json).toBe(JSON.stringify(timing));
+      // ... and none of it leaks into the persisted payload_json
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      for (const key of [
+        "executionState",
+        "claimedAt",
+        "startedAt",
+        "heartbeatAt",
+        "workspacePath",
+        "conversationPath",
+        "exitCode",
+        "termination",
+        "stopReason",
+        "timing",
+      ]) {
+        expect(payload).not.toHaveProperty(key);
+      }
+      // the domain payload survives intact
+      expect(payload.id).toBe(enqueued.job.id);
+      expect(payload.content).toBe("content");
+      expect(payload.retries).toBe(1);
+      // re-claimed job still surfaces metadata from the columns, not the payload
+      const reClaimed = repo.claim(
+        "worker-b",
+        1_000,
+        new Date(Date.now() + 100_000),
+      );
+      expect(reClaimed?.job.id).toBe(enqueued.job.id);
+      expect(reClaimed?.job.workspacePath).toBe("groups/group");
+      expect(reClaimed?.job.timing).toEqual(timing);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("applies payloadPatch while keeping metadata out of payload_json", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "original",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = repo.claim("worker-a", 1_000);
+      const token = expectDefined(claimed).fencingToken;
+      repo.failAttempt(enqueued.job.id, new Error("boom"), token, {
+        payloadPatch: { content: "patched" },
+        metadata: { timing: { promptMs: 5 } },
+      });
+      const row = repo.db
+        .prepare("SELECT payload_json,timing_json FROM jobs WHERE id=?")
+        .get(enqueued.job.id) as {
+        payload_json: string;
+        timing_json: string | null;
+      };
+      const payload = JSON.parse(row.payload_json) as { content?: string };
+      expect(payload.content).toBe("patched");
+      expect(row.timing_json).toBe(JSON.stringify({ promptMs: 5 }));
+      // re-claim after the retry wait to confirm both patch and metadata survive
+      const reClaimed = repo.claim(
+        "worker-b",
+        1_000,
+        new Date(Date.now() + 100_000),
+      );
+      expect(reClaimed?.job.id).toBe(enqueued.job.id);
+      expect(reClaimed?.job.content).toBe("patched");
+      expect(reClaimed?.job.timing).toEqual({ promptMs: 5 });
+    } finally {
+      repo.close();
+    }
+  });
+});
+
 describe("durable Phase 2 result state", () => {
   it("commits canonical result and pending delivery atomically", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));

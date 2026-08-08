@@ -409,7 +409,7 @@ async function processCronNewThread(
             `agent exited with code ${timing.agentExecution.exitCode}`,
         ),
         msg.fencingToken,
-        executionMetadata(timing),
+        { metadata: executionMetadata(timing) },
       );
       return;
     }
@@ -448,7 +448,7 @@ async function processCronNewThread(
           msg.id,
           error,
           msg.fencingToken,
-          executionMetadata(timing),
+          { metadata: executionMetadata(timing) },
         );
     }
   } finally {
@@ -551,13 +551,9 @@ export async function processMessage(
         `[poller] 実行 identity の保存に失敗しました (${msg.id}):`,
         error,
       );
-      await getQueueRepository().failAttempt(
-        msg.id,
-        error,
-        msg.fencingToken,
-        {},
-        { error },
-      );
+      await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {
+        metadata: { error },
+      });
       return;
     }
   }
@@ -715,7 +711,7 @@ export async function processMessage(
             `agent exited with code ${timing.agentExecution.exitCode}`,
         ),
         msg.fencingToken,
-        executionMetadata(timing),
+        { metadata: executionMetadata(timing) },
       );
       return;
     }

@@ -25,6 +25,12 @@ export type TerminalState =
   | "non_retryable"
   | "max_retries"
   | "dead_letter";
+export interface FailAttemptOptions {
+  /** Optional patch merged into the job's payload_json before the retry is scheduled. */
+  payloadPatch?: Partial<InboxMessage>;
+  /** Optional execution metadata written to dedicated SQL columns (exit_code, timing_json, ...). */
+  metadata?: ExecutionMetadata;
+}
 export interface ExecutionMetadata {
   claimedAt?: string;
   startedAt?: string;
@@ -585,10 +591,33 @@ export class QueueRepository {
     token: number,
     patch: Partial<InboxMessage>,
   ): void {
-    const job = this.get(id);
-    if (!job) throw new Error(`unknown job ${id}`);
-    const payload = { ...job } as Record<string, unknown>;
+    const row = this.db
+      .prepare("SELECT payload_json FROM jobs WHERE id=?")
+      .get(id) as { payload_json: string } | undefined;
+    if (!row) throw new Error(`unknown job ${id}`);
+    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    // payload_json holds the durable InboxMessage domain payload only. Execution
+    // metadata (claim/lease timestamps, exit info, timings, snapshot hashes,
+    // workspace paths, ...) lives in dedicated SQL columns; never fold the
+    // get()-merged QueueJob view or SQL columns back into payload_json. Strip
+    // pure metadata keys so previously leaked rows are also cleaned up, while
+    // legitimate InboxMessage fields (snapshotHash, toolCallKey, completedAt, ...)
+    // pass through untouched.
     for (const key of [
+      "executionState",
+      "claimedAt",
+      "startedAt",
+      "heartbeatAt",
+      "exitCode",
+      "termination",
+      "stopReason",
+      "usage",
+      "timing",
+      "error",
+      "agentsSnapshotHash",
+      "memorySnapshotHash",
+      "workspacePath",
+      "conversationPath",
       "status",
       "attempts",
       "maxAttempts",
@@ -614,6 +643,20 @@ export class QueueRepository {
       "maxAttempts",
       "nextAttemptAt",
       "leaseUntil",
+      "executionState",
+      "claimedAt",
+      "startedAt",
+      "heartbeatAt",
+      "exitCode",
+      "termination",
+      "stopReason",
+      "usage",
+      "timing",
+      "error",
+      "agentsSnapshotHash",
+      "memorySnapshotHash",
+      "workspacePath",
+      "conversationPath",
     ])
       delete sanitizedPatch[key];
     Object.assign(payload, sanitizedPatch);
@@ -861,8 +904,7 @@ export class QueueRepository {
     id: string,
     error: unknown,
     fencingToken: number | undefined,
-    payloadPatch?: Partial<InboxMessage>,
-    metadata: ExecutionMetadata = {},
+    options: FailAttemptOptions = {},
   ): void {
     const job = this.get(id);
     if (!job) throw new Error(`unknown job ${id}`);
@@ -872,7 +914,14 @@ export class QueueRepository {
     if (token !== job.fencingToken)
       throw new Error(`stale fencing token for ${id}`);
     const delayMs = Math.min(1000 * 2 ** job.retries, 60_000);
-    this.retry(id, token, error, delayMs, payloadPatch, metadata);
+    this.retry(
+      id,
+      token,
+      error,
+      delayMs,
+      options.payloadPatch,
+      options.metadata,
+    );
   }
 
   retry(

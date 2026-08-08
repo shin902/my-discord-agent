@@ -22,15 +22,18 @@ vi.mock("../discord/client.js", () => ({
     },
   },
 }));
-const { commitInboxResult, deadLetter } = vi.hoisted(() => ({
-  commitInboxResult: vi.fn(),
-  deadLetter: vi.fn(),
-}));
+const { commitInboxResult, deadLetter, failAttempt, freezeExecutionIdentity } =
+  vi.hoisted(() => ({
+    commitInboxResult: vi.fn(),
+    deadLetter: vi.fn(),
+    failAttempt: vi.fn(),
+    freezeExecutionIdentity: vi.fn(),
+  }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
     commitResult: commitInboxResult,
-    failAttempt: vi.fn(),
-    freezeExecutionIdentity: vi.fn(),
+    failAttempt,
+    freezeExecutionIdentity,
     markRunning: vi.fn(),
     deadLetter,
     updateRunning: vi.fn(),
@@ -79,6 +82,9 @@ describe("processMessage - terminal queue transitions", () => {
       isTextBased: () => false,
     } as never);
     deadLetter.mockClear();
+    failAttempt.mockClear();
+    freezeExecutionIdentity.mockClear();
+    vi.mocked(freezeExecutionIdentity).mockResolvedValue(undefined);
   });
 
   it("invalid cron jobs are dead-lettered with one fenced transition", async () => {
@@ -153,6 +159,58 @@ describe("processMessage - terminal queue transitions", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("non-zero exit fails the attempt with execution metadata in an options object", async () => {
+    const executionTiming = {
+      termination: "close" as const,
+      exitCode: 7,
+      preparationMs: 1,
+      dockerRunMs: 2,
+      assistantTurns: 1,
+    };
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onExecutionTiming?.(
+          executionTiming,
+        );
+        return "partial response";
+      },
+    );
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledOnce();
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      expect.any(Error),
+      msg.fencingToken,
+      {
+        metadata: expect.objectContaining({
+          exitCode: 7,
+          termination: "close",
+          timing: executionTiming,
+        }),
+      },
+    );
+  });
+
+  it("identity capture failure fails the attempt with error metadata", async () => {
+    vi.mocked(freezeExecutionIdentity).mockRejectedValueOnce(
+      new Error("identity boom"),
+    );
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledOnce();
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      expect.any(Error),
+      msg.fencingToken,
+      { metadata: { error: expect.any(Error) } },
+    );
   });
 });
 
