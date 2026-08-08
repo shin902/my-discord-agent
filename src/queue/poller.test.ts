@@ -22,19 +22,25 @@ vi.mock("../discord/client.js", () => ({
     },
   },
 }));
-const { commitInboxResult, deadLetter, failAttempt, freezeExecutionIdentity } =
-  vi.hoisted(() => ({
-    commitInboxResult: vi.fn(),
-    deadLetter: vi.fn(),
-    failAttempt: vi.fn(),
-    freezeExecutionIdentity: vi.fn(),
-  }));
+const {
+  commitInboxResult,
+  deadLetter,
+  failAttempt,
+  freezeExecutionIdentity,
+  markRunning,
+} = vi.hoisted(() => ({
+  commitInboxResult: vi.fn(),
+  deadLetter: vi.fn(),
+  failAttempt: vi.fn(),
+  freezeExecutionIdentity: vi.fn(),
+  markRunning: vi.fn(),
+}));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
     commitResult: commitInboxResult,
     failAttempt,
     freezeExecutionIdentity,
-    markRunning: vi.fn(),
+    markRunning,
     deadLetter,
     updateRunning: vi.fn(),
     get: vi.fn(),
@@ -84,6 +90,8 @@ describe("processMessage - terminal queue transitions", () => {
     } as never);
     deadLetter.mockClear();
     failAttempt.mockClear();
+    markRunning.mockClear();
+    commitInboxResult.mockClear();
     freezeExecutionIdentity.mockClear();
     vi.mocked(freezeExecutionIdentity).mockResolvedValue(undefined);
   });
@@ -190,6 +198,72 @@ describe("processMessage - terminal queue transitions", () => {
         }),
       },
     );
+    expect(commitInboxResult).not.toHaveBeenCalled();
+  });
+
+  it("通常ルートの onContainerStarted は sessionId の conversationPath で running を記録する", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onContainerStarted?.();
+        return "AI response";
+      },
+    );
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(markRunning).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      expect.objectContaining({
+        startedAt: expect.any(String),
+        workspacePath: `groups/${msg.groupName}`,
+        conversationPath: `data/sessions/${msg.groupName}/${msg.sessionId}.jsonl`,
+      }),
+    );
+  });
+
+  it("cron new-thread の onContainerStarted は導出 sessionId の conversationPath で running を記録する", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onContainerStarted?.();
+        return "AI response";
+      },
+    );
+    const msg = makeMsg({
+      cronDeliveryMode: "new-thread",
+      cronJobId: "daily",
+      cronThreadId: "thread-1",
+    });
+
+    await processMessage(msg);
+
+    expect(markRunning).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      expect.objectContaining({
+        workspacePath: `groups/${msg.groupName}`,
+        conversationPath: `data/sessions/${msg.groupName}/thread-1.jsonl`,
+      }),
+    );
+  });
+
+  it("fencingToken 未設定の cron new-thread は running を記録しない", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onContainerStarted?.();
+        return "AI response";
+      },
+    );
+    const msg = makeMsg({
+      cronDeliveryMode: "new-thread",
+      cronJobId: "daily",
+      fencingToken: undefined,
+    });
+
+    await processMessage(msg);
+
+    expect(markRunning).not.toHaveBeenCalled();
   });
 
   it("cron new-thread の非ゼロ終了コードは failAttempt に記録され commit されない", async () => {
