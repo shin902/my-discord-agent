@@ -26,12 +26,8 @@ const ProvidersConfigSchema = z
     }
   });
 
-let cache: ProviderConfig[] | null = null;
-
 export async function loadProviders(): Promise<ProviderConfig[]> {
-  if (cache !== null) return cache;
-  cache = ProvidersConfigSchema.parse(await loadRawProviders());
-  return cache;
+  return ProvidersConfigSchema.parse(await loadRawProviders());
 }
 
 /** 未設定 provider は安全側に倒して直列実行する。 */

@@ -27,6 +27,21 @@ describe("provider concurrency config", () => {
     ]);
   });
 
+  it("同一 import でも毎回最新の concurrency を読み込む", async () => {
+    vi.mocked(loadRawProviders)
+      .mockResolvedValueOnce([{ provider: "zai", concurrency: "serial" }])
+      .mockResolvedValueOnce([{ provider: "zai", concurrency: "parallel" }]);
+    const { loadProviders } = await importFresh();
+
+    await expect(loadProviders()).resolves.toEqual([
+      { provider: "zai", concurrency: "serial" },
+    ]);
+    await expect(loadProviders()).resolves.toEqual([
+      { provider: "zai", concurrency: "parallel" },
+    ]);
+    expect(loadRawProviders).toHaveBeenCalledTimes(2);
+  });
+
   it("未設定 provider は安全側の serial にする", async () => {
     vi.mocked(loadRawProviders).mockResolvedValue([]);
     const { resolveProviderConcurrency } = await importFresh();
