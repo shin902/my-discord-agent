@@ -179,7 +179,9 @@ function logResponseTiming(
 const inFlightIds = new Set<string>();
 
 export function dispatch(sessionId: string, fn: () => Promise<void>): void {
-  void fn().catch((err) => console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err));
+  void fn().catch((err) =>
+    console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err),
+  );
 }
 export function startPoller(): void {
   if (running) return;
@@ -723,14 +725,14 @@ export async function processMessage(
       throw new Error(`fenced inbox message required: ${msg.id}`);
     }
     await commitInboxResult(msg.id, msg.fencingToken, response, {
-        empty: !response,
-        metadata: executionMetadata(timing),
-        deliveryPayload: {
-          destinationType: "channel",
-          destinationId: msg.channelId,
-          replyMessageId,
-        },
-      });
+      empty: !response,
+      metadata: executionMetadata(timing),
+      deliveryPayload: {
+        destinationType: "channel",
+        destinationId: msg.channelId,
+        replyMessageId,
+      },
+    });
     outcome = response ? "success" : "empty-response";
     stopTyping();
   } finally {
@@ -743,12 +745,14 @@ async function poll(): Promise<void> {
     try {
       if (client.isReady()) {
         const msg = await inboxStore.claimInbox(
-            "poller-single-host", LEASE_MS, inFlightIds,
-          );
-          if (msg) {
-            dispatchClaimedMessage(msg);
-            continue;
-          }
+          "poller-single-host",
+          LEASE_MS,
+          inFlightIds,
+        );
+        if (msg) {
+          dispatchClaimedMessage(msg);
+          continue;
+        }
       }
     } catch (err) {
       // ここで例外を握り潰さないと poll() の Promise が reject し、

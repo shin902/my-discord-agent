@@ -171,8 +171,7 @@ export class DeliveryWorker {
     private readonly adapter: DeliveryAdapter = new DiscordDeliveryAdapter(),
     private readonly options: DeliveryWorkerOptions = {},
   ) {
-    this.workerId =
-      options.workerId ?? "delivery-single-host";
+    this.workerId = options.workerId ?? "delivery-single-host";
   }
   start(): void {
     if (this.running) return;

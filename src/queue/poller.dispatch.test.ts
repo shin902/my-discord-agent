@@ -22,7 +22,6 @@ const tick = () => new Promise<void>((r) => setTimeout(r, 20));
 let dispatch: (sessionId: string, fn: () => Promise<void>) => void;
 let stopPoller: () => void;
 
-
 beforeEach(async () => {
   vi.resetModules();
   ({ dispatch, stopPoller } = await import("./poller.js"));
@@ -131,4 +130,3 @@ describe("dispatch", () => {
     spy.mockRestore();
   });
 });
-

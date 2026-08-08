@@ -507,7 +507,6 @@ describe("processMessage - durable result", () => {
 
     expect(sendTyping).toHaveBeenCalled();
     expect(commitInboxResult).toHaveBeenCalledOnce();
-
   });
 
   it("does not create a delivery for an empty agent result", async () => {
