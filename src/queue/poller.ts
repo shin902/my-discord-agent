@@ -176,22 +176,11 @@ function logResponseTiming(
   }
 }
 
-const sessionChain = new Map<string, Promise<void>>();
-// peekAllUnclaimedInbox() で claim 済み（処理中 / セッションチェーンで順番待ち中）のメッセージID。
-// 処理が完全に終わる（removeInboxById / updateInboxById）まで inbox.jsonl から削除しないため、
-// 同じメッセージを再度 claim しないようにここで追跡する。
+// Durable claims provide session ordering; this set only prevents duplicate in-process dispatch.
 const inFlightIds = new Set<string>();
 
 export function dispatch(sessionId: string, fn: () => Promise<void>): void {
-  const onError = (err: unknown) => {
-    console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err);
-  };
-  const prev = sessionChain.get(sessionId) ?? Promise.resolve();
-  const next = prev.then(fn).catch(onError);
-  sessionChain.set(sessionId, next);
-  next.finally(() => {
-    if (sessionChain.get(sessionId) === next) sessionChain.delete(sessionId);
-  });
+  void fn().catch((err) => console.error("[poller] 予期せぬエラー (sessionId:", sessionId, "):", err));
 }
 export function startPoller(): void {
   if (running) return;
@@ -201,7 +190,6 @@ export function startPoller(): void {
 
 export function stopPoller(): void {
   running = false;
-  sessionChain.clear();
   inFlightIds.clear();
 }
 
@@ -213,7 +201,7 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
     void inboxStore
-      .renewInboxLease(msg.id, msg.fencingToken ?? 0, LEASE_MS)
+      .renewInboxLease(msg.id, msg.fencingToken!, LEASE_MS)
       .catch((error) => {
         console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
         controller.abort(error);
@@ -435,7 +423,7 @@ async function processCronNewThread(
       return;
     }
     if (msg.fencingToken !== undefined)
-      await commitInboxResult(msg.id, msg.fencingToken, response, {
+      await commitInboxResult(msg.id, msg.fencingToken!, response, {
         empty: !response,
         metadata: executionMetadata(timing),
         deliveryPayload: {
@@ -732,8 +720,7 @@ export async function processMessage(
       return;
     }
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
-    if (msg.fencingToken !== undefined) {
-      await commitInboxResult(msg.id, msg.fencingToken, response, {
+    await commitInboxResult(msg.id, msg.fencingToken!, response, {
         empty: !response,
         metadata: executionMetadata(timing),
         deliveryPayload: {
@@ -742,9 +729,6 @@ export async function processMessage(
           replyMessageId,
         },
       });
-    } else {
-      await removeInboxById(msg.id, msg.fencingToken);
-    }
     outcome = response ? "success" : "empty-response";
     stopTyping();
   } finally {
@@ -756,32 +740,13 @@ async function poll(): Promise<void> {
   while (running) {
     try {
       if (client.isReady()) {
-        const candidates = await inboxStore.peekAllUnclaimedInbox(inFlightIds);
-        if (
-          candidates.length > 0 &&
-          typeof inboxStore.claimInbox !== "function"
-        ) {
-          for (const msg of candidates) {
-            inFlightIds.add(msg.id);
-            dispatch(msg.sessionId, () =>
-              processMessage(msg).finally(() => {
-                inFlightIds.delete(msg.id);
-              }),
-            );
-          }
-          continue;
-        }
-        if (typeof inboxStore.claimInbox === "function") {
-          const msg = await inboxStore.claimInbox(
-            `poller-${process.pid}`,
-            LEASE_MS,
-            inFlightIds,
+        const msg = await inboxStore.claimInbox(
+            "poller-single-host", LEASE_MS, inFlightIds,
           );
           if (msg) {
             dispatchClaimedMessage(msg);
             continue;
           }
-        }
       }
     } catch (err) {
       // ここで例外を握り潰さないと poll() の Promise が reject し、

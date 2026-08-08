@@ -56,6 +56,7 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
     content: "hello",
     timestamp: now,
     enqueuedAt: now,
+    fencingToken: 4,
     retries: 0,
     ...overrides,
   };
@@ -72,7 +73,7 @@ describe("processMessage - autoReply", () => {
       isTextBased: () => false,
       send: mockSend,
     } as never);
-    vi.mocked(removeInboxById).mockClear();
+    vi.mocked(commitInboxResult).mockClear();
     mockSend.mockClear();
   });
 
@@ -86,7 +87,7 @@ describe("processMessage - autoReply", () => {
     await processMessage(makeMsg({ messageId: "msg-original" }));
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(removeInboxById).toHaveBeenCalledOnce();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 
   it("missing messageId does not trigger a final Discord send", async () => {
@@ -99,7 +100,7 @@ describe("processMessage - autoReply", () => {
     await processMessage(makeMsg({ messageId: undefined }));
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(removeInboxById).toHaveBeenCalledOnce();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 
   it("autoReply false does not trigger a final Discord send", async () => {
@@ -112,7 +113,7 @@ describe("processMessage - autoReply", () => {
     await processMessage(makeMsg());
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(removeInboxById).toHaveBeenCalledOnce();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 
   it("attachments と configOverride を sendMessage に渡す", async () => {
@@ -247,7 +248,7 @@ describe("processMessage - autoReply", () => {
     await processMessage(makeMsg());
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(removeInboxById).toHaveBeenCalledOnce();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 
   it("複数チャンクも agent 結果として一度だけ確定する", async () => {
@@ -261,7 +262,7 @@ describe("processMessage - autoReply", () => {
     await processMessage(makeMsg());
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(removeInboxById).toHaveBeenCalledOnce();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 });
 
@@ -462,7 +463,7 @@ describe("processMessage - durable result", () => {
     vi.mocked(sendMessage).mockReset();
     vi.mocked(sendMessage).mockResolvedValue("AI response");
     vi.mocked(commitInboxResult).mockClear();
-    vi.mocked(removeInboxById).mockClear();
+    vi.mocked(commitInboxResult).mockClear();
     vi.mocked(client.channels.fetch).mockClear();
   });
 
@@ -505,8 +506,8 @@ describe("processMessage - durable result", () => {
     await processMessage(msg);
 
     expect(sendTyping).toHaveBeenCalled();
-    expect(removeInboxById).toHaveBeenCalledOnce();
-    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
+
   });
 
   it("does not create a delivery for an empty agent result", async () => {
