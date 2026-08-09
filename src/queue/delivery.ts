@@ -62,7 +62,10 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     context: DeliverySendContext = {},
   ): Promise<{ externalMessageId: string; cronThreadId?: string }> {
     const payload = JSON.parse(row.payloadJson ?? "{}") as DeliveryPayload;
-    let sendAttempted = false;
+    // Discord's create/send calls are mutations whose response can be lost
+    // after the server has applied the change. Transport/unknown failures
+    // after either call therefore must not be retried automatically.
+    let mutationAttempted = false;
     try {
       if (typeof client.isReady === "function" && !client.isReady())
         throw new DeliveryError("retryable", "Discord client is not ready");
@@ -96,6 +99,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
               "non-retryable",
               "destination does not support threads",
             );
+          mutationAttempted = true;
           target = await channel.threads.create({
             name: `cron-${String(payload.cronJobId ?? row.jobId).slice(0, 90)}`,
           });
@@ -129,7 +133,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       if (typeof target.isSendable !== "function" || !target.isSendable())
         throw new DeliveryError("non-retryable", "destination is not sendable");
       const content = String(payload.content ?? "");
-      sendAttempted = true;
+      mutationAttempted = true;
       const value =
         payload.replyMessageId && !threadId
           ? await target.send({
@@ -148,8 +152,20 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     } catch (error) {
       if (error instanceof DeliveryError) throw error;
       const kind = classifyDiscordError(error);
+      // A status-bearing Discord response is a known API outcome; transport
+      // failures and otherwise unclassified errors have an unknown mutation
+      // outcome once create/send has been invoked.
+      const postMutationTransportFailure =
+        mutationAttempted &&
+        statusCode(error) === undefined &&
+        (kind === "retryable" || kind === "unknown");
+      const effectiveKind = postMutationTransportFailure
+        ? "unknown"
+        : kind === "unknown"
+          ? "retryable"
+          : kind;
       throw new DeliveryError(
-        !sendAttempted && kind === "unknown" ? "retryable" : kind,
+        effectiveKind,
         error instanceof Error ? error.message : String(error),
         error,
       );

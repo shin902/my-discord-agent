@@ -1058,8 +1058,16 @@ export class QueueRepository {
         throw new Error(`stale fencing token for job ${id}`);
       let first: DeliveryRow | undefined;
       for (const [index, content] of chunks.entries()) {
+        const replyMessageId =
+          index === 0 ? deliveryMeta.replyMessageId : undefined;
+        const payloadMetadata = { ...deliveryMeta };
+        if (index > 0) delete payloadMetadata.replyMessageId;
         const payload = hasDeliveryMeta
-          ? JSON.stringify({ ...deliveryMeta, content, responseIndex: index })
+          ? JSON.stringify({
+              ...payloadMetadata,
+              content,
+              responseIndex: index,
+            })
           : resultJson;
         const payloadHash = createHash("sha256").update(payload).digest("hex");
         const deliveryId = `delivery-${randomUUID()}`;
@@ -1078,7 +1086,7 @@ export class QueueRepository {
             hostKey,
             deliveryMeta.destinationType ?? "channel",
             deliveryMeta.destinationId ?? null,
-            deliveryMeta.replyMessageId ?? null,
+            replyMessageId ?? null,
             deliveryMeta.cronThreadId ?? null,
             at,
             at,
@@ -1367,7 +1375,7 @@ export class QueueRepository {
         .run(now, now);
       const row = this.db
         .prepare(
-          "SELECT candidate.* FROM deliveries AS candidate WHERE candidate.status IN ('pending','retry_wait') AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at<=?) AND NOT EXISTS (SELECT 1 FROM deliveries AS predecessor WHERE predecessor.job_id=candidate.job_id AND predecessor.response_index<candidate.response_index AND predecessor.status NOT IN ('sent','failed','ambiguous')) ORDER BY candidate.created_at,candidate.response_index LIMIT 1",
+          "SELECT candidate.* FROM deliveries AS candidate WHERE candidate.status IN ('pending','retry_wait') AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at<=?) AND NOT EXISTS (SELECT 1 FROM deliveries AS predecessor WHERE predecessor.job_id=candidate.job_id AND predecessor.response_index<candidate.response_index AND predecessor.status NOT IN ('sent','failed')) ORDER BY candidate.created_at,candidate.response_index LIMIT 1",
         )
         .get(now) as Record<string, unknown> | undefined;
       if (!row) return undefined;
@@ -1466,13 +1474,28 @@ export class QueueRepository {
       );
   }
   setDeliveryThread(id: string, token: number, cronThreadId: string): void {
-    const changed = this.db
-      .prepare(
-        "UPDATE deliveries SET cron_thread_id=?,updated_at=? WHERE id=? AND status='sending' AND fencing_token=?",
-      )
-      .run(cronThreadId, nowIso(), id, token);
-    if (changed.changes !== 1)
-      throw new Error(`stale fencing token for delivery ${id}`);
+    this.inImmediateTransaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT job_id FROM deliveries WHERE id=? AND status='sending' AND fencing_token=?",
+        )
+        .get(id, token) as { job_id: string } | undefined;
+      if (!row) throw new Error(`stale fencing token for delivery ${id}`);
+      const at = nowIso();
+      this.db
+        .prepare(
+          "UPDATE deliveries SET cron_thread_id=?,updated_at=? WHERE id=? AND status='sending' AND fencing_token=?",
+        )
+        .run(cronThreadId, at, id, token);
+      // A response is split into ordered delivery rows. Once the first row
+      // creates its thread, every still-unsent row for that job must target
+      // the same thread rather than creating another one.
+      this.db
+        .prepare(
+          "UPDATE deliveries SET cron_thread_id=?,updated_at=? WHERE job_id=? AND id<>? AND status IN ('pending','retry_wait') AND cron_thread_id IS NULL",
+        )
+        .run(cronThreadId, at, row.job_id, id);
+    });
   }
   getIdempotencyRecord(key: string): IdempotencyRecord | undefined {
     return this.db

@@ -407,6 +407,44 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("blocks split successors behind an ambiguous predecessor until operator resolution", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const job = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimedJob = expectDefined(repo.claim("agent", 1_000));
+      repo.commitResult(job.job.id, claimedJob.fencingToken, "x".repeat(2_001), {
+        deliveryPayload: {
+          destinationType: "new-thread",
+          destinationId: "channel",
+          cronJobId: "daily",
+        },
+      });
+      const deliveries = repo.listDeliveries();
+      expect(deliveries).toHaveLength(2);
+      const firstClaim = expectDefined(repo.claimDelivery("delivery-a"));
+      expect(firstClaim.row.responseIndex).toBe(0);
+
+      // The remote thread may have been created while its response was lost;
+      // without an ID, the successor must not create another thread.
+      repo.updateDelivery(firstClaim.row.id, firstClaim.fencingToken, "ambiguous", {
+        error: "thread creation outcome unknown",
+      });
+      expect(repo.claimDelivery("delivery-b")).toBeUndefined();
+      expect(repo.listDeliveries()[1]?.status).toBe("pending");
+
+      repo.resolveAmbiguousDelivery(firstClaim.row.id, "sent", "operator-confirmed");
+      expect(repo.claimDelivery("delivery-b")?.row.responseIndex).toBe(1);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("rolls back the whole delivery claim when the claim update loses its race", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

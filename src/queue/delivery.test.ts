@@ -70,6 +70,65 @@ it("durably persists the created thread before its first message send", async ()
     repo.close();
   }
 });
+it("marks transport failure during thread creation ambiguous without retrying", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const create = vi.fn(async () => {
+    throw new TypeError("network timeout");
+  });
+  const channel = { threads: { create } };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockResolvedValue(channel as never);
+  try {
+    const jobId = completed(repo, "response", {
+      destinationType: "new-thread",
+      destinationId: "channel",
+      cronJobId: "daily",
+    });
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-a",
+    });
+    await worker.runOnce();
+    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    await worker.runOnce();
+    expect(create).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+it("marks transport failure during message send ambiguous without retrying", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const send = vi.fn(async () => {
+    throw new TypeError("socket closed");
+  });
+  const thread = { id: "thread-1", isSendable: () => true, send };
+  const channel = { threads: { create: vi.fn(async () => thread) } };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockResolvedValue(channel as never);
+  try {
+    const jobId = completed(repo, "response", {
+      destinationType: "new-thread",
+      destinationId: "channel",
+      cronJobId: "daily",
+    });
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-a",
+    });
+    await worker.runOnce();
+    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    await worker.runOnce();
+    expect(send).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
 it("marks thread persistence failures ambiguous without creating a duplicate thread", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const thread = {
@@ -193,6 +252,86 @@ describe("durable delivery worker", () => {
       repo.close();
     }
   });
+  it("propagates a newly created thread to every unsent split chunk", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const send = vi.fn(async () => ({
+      id: `message-${send.mock.calls.length}`,
+    }));
+    const thread = { id: "thread-1", isSendable: () => true, send };
+    const create = vi.fn(async () => thread);
+    const channel = { threads: { create } };
+    const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+    const fetchSpy = vi
+      .spyOn(client.channels, "fetch")
+      .mockImplementation(
+        async (id) => (id === "channel" ? channel : thread) as never,
+      );
+    try {
+      const jobId = completed(repo, "x".repeat(4001), {
+        destinationType: "new-thread",
+        destinationId: "channel",
+        cronJobId: "daily",
+      });
+      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+        workerId: "delivery-a",
+      });
+      while (await worker.runOnce()) {}
+      const deliveries = repo.listDeliveries();
+      expect(deliveries).toHaveLength(3);
+      expect(deliveries.every((row) => row.cronThreadId === "thread-1")).toBe(
+        true,
+      );
+      expect(create).toHaveBeenCalledOnce();
+      expect(send).toHaveBeenCalledTimes(3);
+      expect(repo.get(jobId)?.succeeded).toBe(true);
+    } finally {
+      readySpy.mockRestore();
+      fetchSpy.mockRestore();
+      repo.close();
+    }
+  });
+
+  it("only replies to the original message for the first split chunk", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const send = vi.fn(async (_payload: unknown) => ({ id: "message" }));
+    const channel = { isSendable: () => true, send };
+    const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+    const fetchSpy = vi
+      .spyOn(client.channels, "fetch")
+      .mockResolvedValue(channel as never);
+    try {
+      const jobId = completed(repo, "x".repeat(4001), {
+        destinationType: "channel",
+        destinationId: "channel",
+        replyMessageId: "original-message",
+      });
+      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+        workerId: "delivery-a",
+      });
+      while (await worker.runOnce()) {}
+      const deliveries = repo.listDeliveries();
+      expect(deliveries).toHaveLength(3);
+      expect(deliveries[0]?.replyMessageId).toBe("original-message");
+      expect(deliveries.slice(1).every((row) => !row.replyMessageId)).toBe(
+        true,
+      );
+      expect(send).toHaveBeenCalledTimes(3);
+      expect(send.mock.calls[0]?.[0]).toMatchObject({
+        reply: { messageReference: "original-message" },
+      });
+      expect(
+        send.mock.calls
+          .slice(1)
+          .every(([content]) => typeof content === "string"),
+      ).toBe(true);
+      expect(repo.get(jobId)?.succeeded).toBe(true);
+    } finally {
+      readySpy.mockRestore();
+      fetchSpy.mockRestore();
+      repo.close();
+    }
+  });
+
   it("persists a newly created thread before retrying the same delivery", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const jobId = completed(repo, "response", {
