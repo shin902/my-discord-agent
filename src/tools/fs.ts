@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import {
   glob,
   mkdir,
@@ -14,7 +15,6 @@ import { Type } from "typebox";
 import { assertNoParentTraversal } from "./path-safety.js";
 
 const WORKSPACE = "/workspace";
-const READ_CHAR_LIMIT = 50_000;
 const GREP_MAX_RESULTS = 200;
 const READ_IMAGE_BYTE_LIMIT = 10 * 1024 * 1024; // 10MB
 
@@ -65,19 +65,227 @@ const readParameters = Type.Object({
     description:
       "読み込むファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
   }),
+  startLine: Type.Optional(
+    Type.Integer({
+      description: "読み始める行番号（1始まり。指定した行から末尾まで）",
+      minimum: 1,
+    }),
+  ),
+  lineCount: Type.Optional(
+    Type.Integer({
+      description: "返す行数（1以上。startLine 省略時は先頭から）",
+      minimum: 1,
+    }),
+  ),
+  tailCount: Type.Optional(
+    Type.Integer({
+      description: "末尾から返す行数（1以上。startLine/lineCount と併用不可）",
+      minimum: 1,
+    }),
+  ),
 });
+
+type ReadRange = {
+  startLine?: number;
+  lineCount?: number;
+  tailCount?: number;
+};
+
+type SelectedLines = {
+  text: string;
+  startLine: number;
+  endLine: number;
+  returnedLineCount: number;
+  totalLines: number;
+  eof: boolean;
+};
+
+type StreamSelectedLines = SelectedLines & {
+  size: number;
+};
+
+function validatePositiveInteger(
+  name: string,
+  value: number | undefined,
+): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error(`${name} は正の整数で指定してください`);
+  }
+}
+
+function validateReadRange({
+  startLine,
+  lineCount,
+  tailCount,
+}: ReadRange): boolean {
+  validatePositiveInteger("startLine", startLine);
+  validatePositiveInteger("lineCount", lineCount);
+  validatePositiveInteger("tailCount", tailCount);
+  if (
+    tailCount !== undefined &&
+    (startLine !== undefined || lineCount !== undefined)
+  ) {
+    throw new Error("tailCount は startLine/lineCount と併用できません");
+  }
+  return (
+    startLine !== undefined ||
+    lineCount !== undefined ||
+    tailCount !== undefined
+  );
+}
+
+function splitLines(raw: string): string[] {
+  if (raw === "") return [];
+  const lines = raw.split("\n");
+  if (raw.endsWith("\n")) lines.pop();
+  return lines;
+}
+
+function selectLines(raw: string, range: ReadRange): SelectedLines {
+  const lines = splitLines(raw);
+  const totalLines = lines.length;
+  const { startLine, lineCount, tailCount } = range;
+
+  if (startLine !== undefined && startLine > totalLines) {
+    throw new Error(
+      `startLine ${startLine} は EOF を超えています（全 ${totalLines} 行）`,
+    );
+  }
+
+  let first = 0;
+  let last = totalLines;
+  if (tailCount !== undefined) {
+    first = Math.max(0, totalLines - tailCount);
+  } else if (startLine !== undefined) {
+    first = startLine - 1;
+    if (lineCount !== undefined) {
+      last = Math.min(totalLines, first + lineCount);
+    }
+  } else if (lineCount !== undefined) {
+    last = Math.min(totalLines, lineCount);
+  }
+
+  const selected = lines.slice(first, last);
+  const returnedLineCount = selected.length;
+  const actualStartLine = returnedLineCount === 0 ? 0 : first + 1;
+  const actualEndLine = returnedLineCount === 0 ? 0 : first + returnedLineCount;
+
+  return {
+    text: selected.join("\n"),
+    startLine: actualStartLine,
+    endLine: actualEndLine,
+    returnedLineCount,
+    totalLines,
+    eof: actualEndLine === totalLines,
+  };
+}
+
+/**
+ * Read a ranged text result incrementally so source-file size does not affect
+ * memory usage. The requested output is necessarily retained; an unbounded
+ * startLine-only range therefore retains its full suffix. A very long line
+ * being scanned is also necessarily retained while its LF is located.
+ */
+async function selectLinesFromStream(
+  fp: string,
+  range: ReadRange,
+): Promise<StreamSelectedLines> {
+  const { startLine, lineCount, tailCount } = range;
+  const selectionStart = startLine ?? 1;
+  const selectedLines: string[] = [];
+  const tailLines: string[] = [];
+  let tailStart = 0;
+  let totalLines = 0;
+  let size = 0;
+
+  const addLine = (line: string): void => {
+    totalLines += 1;
+    if (tailCount !== undefined) {
+      if (tailLines.length < tailCount) {
+        tailLines.push(line);
+      } else {
+        tailLines[tailStart] = line;
+        tailStart = (tailStart + 1) % tailCount;
+      }
+      return;
+    }
+
+    if (
+      totalLines >= selectionStart &&
+      (lineCount === undefined || totalLines - selectionStart < lineCount)
+    ) {
+      selectedLines.push(line);
+    }
+  };
+
+  const stream = createReadStream(fp, { encoding: "utf8" });
+  let remainder = "";
+  for await (const chunk of stream) {
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    size += text.length;
+    const data = remainder + text;
+    let lineStart = 0;
+    while (true) {
+      const newline = data.indexOf("\n", lineStart);
+      if (newline === -1) break;
+      addLine(data.slice(lineStart, newline));
+      lineStart = newline + 1;
+    }
+    remainder = data.slice(lineStart);
+  }
+  if (remainder !== "") {
+    addLine(remainder);
+  }
+
+  if (startLine !== undefined && startLine > totalLines) {
+    throw new Error(
+      `startLine ${startLine} は EOF を超えています（全 ${totalLines} 行）`,
+    );
+  }
+
+  let first = 0;
+  let returnedLines = selectedLines;
+  if (tailCount !== undefined) {
+    first = Math.max(0, totalLines - tailCount);
+    returnedLines =
+      tailStart === 0
+        ? tailLines
+        : [...tailLines.slice(tailStart), ...tailLines.slice(0, tailStart)];
+  } else if (startLine !== undefined) {
+    first = startLine - 1;
+  }
+
+  const returnedLineCount = returnedLines.length;
+  const actualStartLine = returnedLineCount === 0 ? 0 : first + 1;
+  const actualEndLine = returnedLineCount === 0 ? 0 : first + returnedLineCount;
+
+  return {
+    text: returnedLines.join("\n"),
+    startLine: actualStartLine,
+    endLine: actualEndLine,
+    returnedLineCount,
+    totalLines,
+    eof: actualEndLine === totalLines,
+    size,
+  };
+}
 
 export const readTool: AgentTool<typeof readParameters> = {
   name: "read",
   label: "Read File",
-  description: "ワークスペース内のファイル内容を読み込む",
+  description:
+    "ワークスペース内のファイル内容を読み込む。startLine（1始まり）とlineCountで行範囲を指定でき、lineCountだけなら先頭から、startLineだけなら指定行から末尾までを返す。tailCountで末尾から読めるが、startLine/lineCountとは併用できない。大きなファイルは先頭から順番に範囲を指定して読み進める",
   parameters: readParameters,
-  execute: async (_toolCallId, { path }) => {
+  execute: async (_toolCallId, { path, startLine, lineCount, tailCount }) => {
     const safePath = sanitizePath(path);
     const fp = fullPath(safePath);
+    const hasRange = validateReadRange({ startLine, lineCount, tailCount });
 
     const mimeType = IMAGE_MIME_TYPES[extname(safePath).toLowerCase()];
     if (mimeType) {
+      if (hasRange) {
+        throw new Error("画像ファイルでは行範囲を指定できません");
+      }
       const { size } = await stat(fp);
       if (size > READ_IMAGE_BYTE_LIMIT) {
         throw new Error(
@@ -91,14 +299,40 @@ export const readTool: AgentTool<typeof readParameters> = {
       };
     }
 
+    if (hasRange) {
+      const selected = await selectLinesFromStream(fp, {
+        startLine,
+        lineCount,
+        tailCount,
+      });
+      return {
+        content: [{ type: "text", text: selected.text }],
+        details: {
+          path: safePath,
+          size: selected.size,
+          startLine: selected.startLine,
+          endLine: selected.endLine,
+          returnedLineCount: selected.returnedLineCount,
+          totalLines: selected.totalLines,
+          eof: selected.eof,
+        },
+      };
+    }
+
+    // Unbounded reads retain the existing full-output behavior.
     const raw = await readFile(fp, "utf-8");
-    const truncated = raw.length > READ_CHAR_LIMIT;
-    const text = truncated
-      ? `${raw.slice(0, READ_CHAR_LIMIT)}\n\n[${raw.length - READ_CHAR_LIMIT} 文字省略。grep で範囲を絞ってから再度読み込んでください]`
-      : raw;
+    const selected = selectLines(raw, {});
     return {
-      content: [{ type: "text", text }],
-      details: { path: safePath, size: raw.length, truncated },
+      content: [{ type: "text", text: raw }],
+      details: {
+        path: safePath,
+        size: raw.length,
+        startLine: selected.startLine,
+        endLine: selected.endLine,
+        returnedLineCount: selected.returnedLineCount,
+        totalLines: selected.totalLines,
+        eof: selected.eof,
+      },
     };
   },
 };

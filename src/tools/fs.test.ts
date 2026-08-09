@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("node:fs", () => ({
+  createReadStream: vi.fn(),
+}));
+
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
@@ -9,6 +13,7 @@ vi.mock("node:fs/promises", () => ({
   stat: vi.fn(),
 }));
 
+import { createReadStream } from "node:fs";
 import {
   glob,
   mkdir,
@@ -42,6 +47,30 @@ function firstText(result: {
   return first.text;
 }
 
+function mockReadStream(...chunks: string[]): void {
+  async function* stream() {
+    yield* chunks;
+  }
+  vi.mocked(createReadStream).mockReturnValue(stream() as never);
+}
+
+function mockGeneratedReadStream(lineCount: number): void {
+  async function* stream() {
+    for (let line = 1; line <= lineCount; line += 1) {
+      yield `line ${line}\n`;
+    }
+  }
+  vi.mocked(createReadStream).mockReturnValue(stream() as never);
+}
+
+function generatedReadSize(lineCount: number): number {
+  let size = 0;
+  for (let line = 1; line <= lineCount; line += 1) {
+    size += `line ${line}\n`.length;
+  }
+  return size;
+}
+
 describe("read", () => {
   it("ファイル内容を読み込む", async () => {
     vi.mocked(readFile).mockResolvedValue("hello world" as never);
@@ -51,10 +80,270 @@ describe("read", () => {
   });
 
   it("長い内容も省略せずそのまま返す", async () => {
-    const big = "a".repeat(9000);
+    const big = "a".repeat(50_001);
     vi.mocked(readFile).mockResolvedValue(big as never);
     const result = await readTool.execute("call-1", { path: "long.txt" });
     expect(firstText(result)).toBe(big);
+  });
+
+  it("lineCount だけなら先頭から指定行数を返す", async () => {
+    const raw = "line 1\nline 2\nline 3\nline 4";
+    mockReadStream(raw);
+
+    const result = await readTool.execute("call-1", {
+      path: "notes.txt",
+      lineCount: 2,
+    });
+
+    expect(firstText(result)).toBe("line 1\nline 2");
+    expect(result.details).toMatchObject({
+      path: "notes.txt",
+      startLine: 1,
+      endLine: 2,
+      returnedLineCount: 2,
+      totalLines: 4,
+      eof: false,
+    });
+  });
+
+  it("startLine だけなら指定行から EOF までを返す", async () => {
+    mockReadStream("line 1\nline 2\nline 3\nline 4");
+
+    const result = await readTool.execute("call-1", {
+      path: "notes.txt",
+      startLine: 3,
+    });
+
+    expect(firstText(result)).toBe("line 3\nline 4");
+    expect(result.details).toMatchObject({
+      startLine: 3,
+      endLine: 4,
+      returnedLineCount: 2,
+      totalLines: 4,
+      eof: true,
+    });
+  });
+
+  it("大きな改行密集ストリームでも先頭の要求行だけを保持する", async () => {
+    const totalLines = 20_000;
+    mockGeneratedReadStream(totalLines);
+
+    const result = await readTool.execute("call-1", {
+      path: "large.txt",
+      lineCount: 3,
+    });
+
+    expect(firstText(result)).toBe("line 1\nline 2\nline 3");
+    expect(readFile).not.toHaveBeenCalled();
+    expect(createReadStream).toHaveBeenCalledWith("/workspace/large.txt", {
+      encoding: "utf8",
+    });
+    expect(result.details).toMatchObject({
+      size: generatedReadSize(totalLines),
+      totalLines,
+      startLine: 1,
+      endLine: 3,
+      returnedLineCount: 3,
+      eof: false,
+    });
+  });
+
+  it("大きな改行密集ストリームでも中間の限定範囲だけを保持する", async () => {
+    const totalLines = 20_000;
+    const startLine = 12_345;
+    mockGeneratedReadStream(totalLines);
+
+    const result = await readTool.execute("call-1", {
+      path: "large.txt",
+      startLine,
+      lineCount: 2,
+    });
+
+    expect(firstText(result)).toBe("line 12345\nline 12346");
+    expect(readFile).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      size: generatedReadSize(totalLines),
+      totalLines,
+      startLine,
+      endLine: startLine + 1,
+      returnedLineCount: 2,
+      eof: false,
+    });
+  });
+
+  it("startLine と lineCount で範囲を指定する", async () => {
+    mockReadStream("line 1\nline 2\nline 3\nline 4");
+
+    const result = await readTool.execute("call-1", {
+      path: "notes.txt",
+      startLine: 2,
+      lineCount: 2,
+    });
+
+    expect(firstText(result)).toBe("line 2\nline 3");
+    expect(result.details).toMatchObject({
+      startLine: 2,
+      endLine: 3,
+      returnedLineCount: 2,
+      totalLines: 4,
+      eof: false,
+    });
+  });
+
+  it("tailCount なら末尾から指定行数を返す", async () => {
+    mockReadStream("line 1\nline 2\nline 3\nline 4");
+
+    const result = await readTool.execute("call-1", {
+      path: "notes.txt",
+      tailCount: 2,
+    });
+
+    expect(firstText(result)).toBe("line 3\nline 4");
+    expect(result.details).toMatchObject({
+      startLine: 3,
+      endLine: 4,
+      returnedLineCount: 2,
+      totalLines: 4,
+      eof: true,
+    });
+  });
+
+  it("大きな改行密集ストリームでも末尾の要求行だけを保持する", async () => {
+    const totalLines = 20_000;
+    mockGeneratedReadStream(totalLines);
+
+    const result = await readTool.execute("call-1", {
+      path: "large.txt",
+      tailCount: 3,
+    });
+
+    expect(firstText(result)).toBe("line 19998\nline 19999\nline 20000");
+    expect(readFile).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      size: generatedReadSize(totalLines),
+      totalLines,
+      startLine: totalLines - 2,
+      endLine: totalLines,
+      returnedLineCount: 3,
+      eof: true,
+    });
+  });
+
+  it("tailCount は startLine/lineCount と併用できない", async () => {
+    vi.mocked(readFile).mockResolvedValue("line 1\nline 2" as never);
+
+    await expect(
+      readTool.execute("call-1", {
+        path: "notes.txt",
+        startLine: 1,
+        tailCount: 1,
+      }),
+    ).rejects.toThrow("tailCount");
+    await expect(
+      readTool.execute("call-1", {
+        path: "notes.txt",
+        lineCount: 1,
+        tailCount: 1,
+      }),
+    ).rejects.toThrow("tailCount");
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("行範囲の値は正の整数でなければならない", async () => {
+    const invalidValues = [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
+    for (const field of ["startLine", "lineCount", "tailCount"] as const) {
+      for (const value of invalidValues) {
+        await expect(
+          readTool.execute("call-1", {
+            path: "notes.txt",
+            [field]: value,
+          }),
+        ).rejects.toThrow(`${field} は正の整数`);
+      }
+    }
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("startLine が EOF を超える場合は明示的にエラーになる", async () => {
+    mockReadStream("line 1\nline 2");
+
+    await expect(
+      readTool.execute("call-1", { path: "notes.txt", startLine: 3 }),
+    ).rejects.toThrow("startLine 3 は EOF を超えています");
+  });
+
+  it("空ファイルは0行として扱う", async () => {
+    mockReadStream("");
+
+    const result = await readTool.execute("call-1", {
+      path: "empty.txt",
+      lineCount: 10,
+    });
+
+    expect(firstText(result)).toBe("");
+    expect(result.details).toMatchObject({
+      startLine: 0,
+      endLine: 0,
+      returnedLineCount: 0,
+      totalLines: 0,
+      eof: true,
+    });
+  });
+
+  it("空行を数え、末尾の改行を余分な行として数えない", async () => {
+    const raw = "line 1\n\nline 3\n";
+    mockReadStream(raw);
+
+    const result = await readTool.execute("call-1", {
+      path: "notes.txt",
+      lineCount: 10,
+    });
+
+    expect(firstText(result)).toBe("line 1\n\nline 3");
+    expect(result.details).toMatchObject({
+      startLine: 1,
+      endLine: 3,
+      returnedLineCount: 3,
+      totalLines: 3,
+      eof: true,
+    });
+  });
+
+  it("行範囲でも Unicode をそのまま返す", async () => {
+    mockReadStream("日本語\n😀 café\n終わり");
+    const result = await readTool.execute("call-1", {
+      path: "unicode.txt",
+      startLine: 2,
+      lineCount: 1,
+    });
+
+    expect(firstText(result)).toBe("😀 café");
+    expect(result.details).toMatchObject({
+      startLine: 2,
+      endLine: 2,
+      returnedLineCount: 1,
+      totalLines: 3,
+      eof: false,
+    });
+  });
+
+  it("画像の行範囲指定は拒否する", async () => {
+    await expect(
+      readTool.execute("call-1", {
+        path: "photo.png",
+        startLine: 1,
+        lineCount: 1,
+      }),
+    ).rejects.toThrow("画像ファイルでは行範囲を指定できません");
+    expect(stat).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("read の説明に行範囲と順次読み込みの指示が含まれる", () => {
+    expect(readTool.description).toContain("startLine");
+    expect(readTool.description).toContain("lineCount");
+    expect(readTool.description).toContain("tailCount");
+    expect(readTool.description).toContain("順番");
   });
 
   it("パストラバーサルを拒否", async () => {
