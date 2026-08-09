@@ -99,7 +99,7 @@ describe("agent-reach.sh URL 正規化", () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  it("YouTube 以外の URL では ? 以降を取得先へ渡さない", async () => {
+  it("意味のある query を保持し fragment だけを除去する", async () => {
     const curl = join(binDir, "curl");
     await writeFile(
       curl,
@@ -113,7 +113,10 @@ printf '%s\\n' "\${!#}"
 
     const { stdout } = await execFileAsync(
       "bash",
-      [agentReachScript, "https://example.com/article?utm_source=discord"],
+      [
+        agentReachScript,
+        "https://example.com/article?id=42&utm_source=discord#section",
+      ],
       {
         env: {
           ...process.env,
@@ -122,7 +125,9 @@ printf '%s\\n' "\${!#}"
       },
     );
 
-    expect(stdout.trim()).toBe("https://r.jina.ai/https://example.com/article");
+    expect(stdout.trim()).toBe(
+      "https://r.jina.ai/https://example.com/article?id=42&utm_source=discord",
+    );
   });
 });
 
@@ -435,7 +440,7 @@ printf '%s\\n' '[]'
         break;
       case "reddit": {
         const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
-        expectedRequest = `http://localhost:12345/reddit${pathname.endsWith(".json") ? pathname : `${pathname}.json`}`;
+        expectedRequest = `http://localhost:12345/reddit${pathname.endsWith(".json") ? pathname : `${pathname}.json`}${parsed.search}`;
         break;
       }
       case "x-twitter": {

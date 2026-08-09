@@ -25,18 +25,18 @@ import {
 } from "./agent-reach.js";
 
 describe("normalizeUrl", () => {
-  it("YouTube 以外では query と fragment を除去する", () => {
+  it("意味のある query を保持し fragment だけを除去する", () => {
     expect(
       normalizeUrl(
-        "https://example.com/article?utm_source=discord&ref=test#section",
+        "https://example.com/article?id=42&utm_source=discord#section",
       ),
-    ).toBe("https://example.com/article");
+    ).toBe("https://example.com/article?id=42&utm_source=discord");
   });
 
-  it("YouTube では query を保持し fragment だけ除去する", () => {
+  it("YouTube の query も保持し fragment だけを除去する", () => {
     expect(
-      normalizeUrl("https://www.youtube.com/watch?v=abc&utm_source=x#chapter"),
-    ).toBe("https://www.youtube.com/watch?v=abc&utm_source=x");
+      normalizeUrl("https://www.youtube.com/watch?v=abc&t=30#chapter"),
+    ).toBe("https://www.youtube.com/watch?v=abc&t=30");
   });
 });
 
@@ -264,7 +264,9 @@ describe("buildCommand シェルエスケープ", () => {
     it("クエリ文字列を維持する", () => {
       const cmd = buildCommand(
         "reddit",
-        "https://www.reddit.com/r/programming/comments/abc/?sort=top",
+        normalizeUrl(
+          "https://www.reddit.com/r/programming/comments/abc/?sort=top#comments",
+        ),
         out,
       );
       expect(cmd).toContain(
@@ -309,9 +311,15 @@ describe("buildCommand シェルエスケープ", () => {
     ).toThrow("GitHub URL からリポジトリを取得できません");
   });
 
-  it("web: jina.ai 経由でcurl", () => {
-    const cmd = buildCommand("web", "https://example.com/article", out);
-    expect(cmd).toContain("r.jina.ai");
+  it("web: 意味のある query を jina.ai への初回取得に渡す", () => {
+    const cmd = buildCommand(
+      "web",
+      normalizeUrl("https://example.com/article?id=42#section"),
+      out,
+    );
+    expect(cmd).toContain(
+      "https://r.jina.ai/https://example.com/article?id=42",
+    );
     expect(cmd).toContain("curl -sS");
     expect(cmd).toContain("-w '%{http_code}'");
   });

@@ -70,15 +70,15 @@ validate_url() {
   fi
 }
 
-# URL の追跡用パラメータや fragment は取得先に渡さない。
-# YouTube の watch?v=... だけは動画 ID の指定に必要なので保持する。
+# URL の fragment は取得先へ渡さないが、query はリソース指定や署名に
+# 使われる可能性があるため保持する。
 #
 # `new URL()` が正規化する hostname は大文字を小文字に変換する一方、www.
 # 自体は保持する。Bash には URL parser がないため、ここでは authority の
 # hostname 部分だけを同じ規則で正規化し、path/query の文字大小は変更しない。
 normalize_url() {
   local url="$1"
-  local scheme after_scheme authority rest userinfo host host_without_www
+  local scheme after_scheme authority rest userinfo host
 
   url="${url%%#*}"
   scheme="${url%%://*}"
@@ -96,17 +96,9 @@ normalize_url() {
     host="${host##*@}"
   fi
   host="${host,,}"
-  host_without_www="${host#www.}"
   url="${scheme}://${userinfo}${host}${rest}"
 
-  case "$host_without_www" in
-    youtube.com|youtu.be)
-      printf '%s' "$url"
-      ;;
-    *)
-      printf '%s' "${url%%\?*}"
-      ;;
-  esac
+  printf '%s' "$url"
 }
 
 # ── Service detection ────────────────────────────────────────────────────────

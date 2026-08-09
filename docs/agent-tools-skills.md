@@ -118,7 +118,7 @@ LLM の自律判断を待たず、ユーザーが特定のスキルを確実に�
 
 これは2つの実装を同じコードにするための契約ではなく、利用者から見える挙動を揃えるための基準である。
 
-- **入力:** どちらも1つの絶対URLを受け取り、`http` / `https` 以外は拒否する。fragment は取得先へ渡さず、YouTube（`youtube.com` / `youtu.be`）だけは動画指定に必要な query を保持する。それ以外の query は正規化時に除去する。正規化後のURLを同じサービス判定表（Web、YouTube、GitHub repository、Reddit、RSS、X post）で分類する。X Article の直リンクは、記事付き post の `/status/...` URLを案内する入力エラーとする。
+- **入力:** どちらも1つの絶対URLを受け取り、`http` / `https` 以外は拒否する。fragment は取得先へ渡さず、リソース指定や署名に使われる可能性がある query は正規化時に削除せず、サービス固有の取得処理で扱う。正規化後のURLを同じサービス判定表（Web、YouTube、GitHub repository、Reddit、RSS、X post）で分類する。X Article の直リンクは、記事付き post の `/status/...` URLを案内する入力エラーとする。
 - **整形済み出力:** 取得本文の意味とサービス別フォーマットを共通契約とする。Web は reader 本文、YouTube・GitHub・Reddit・X は Markdown、RSS は feedparser が生成する最大20件の JSON 配列テキストを返す。X の出力には外部コンテンツへの注意書きを含める。スキルは整形済みテキストだけを stdout に出し、必要なら呼び出し側が `>` で保存できる。ツールは同じ本文を `content[0].text` に返し、正規化済みURLとサービス名を `details` に付ける（ツールはワークスペースへ結果ファイルを残さない）。決定的な入力の本文は、共有 fixture で両経路の内容一致を固定する（スクリプトの stdout に付く transport 用の末尾改行は除く）。
 - **エラー:** 入力拒否・依存コマンド不足・Credential Proxy 設定不足・上流HTTP/JSON/取得失敗は、本文として成功扱いにせずエラーにする。ツールは例外を throw し、スキルは非0終了して診断を stderr に出す。インターフェース上の envelope（例外と終了コード/stderr）は異なるが、エラーのカテゴリと機密情報を漏らさない診断内容は共通に保つ。
 

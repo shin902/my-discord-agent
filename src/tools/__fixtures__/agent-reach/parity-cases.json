@@ -1,51 +1,57 @@
 {
   "urlCases": [
     {
-      "name": "web tracking parameters and fragment",
-      "input": "https://example.com/article?utm_source=discord#section",
-      "normalized": "https://example.com/article",
+      "name": "web meaningful query and fragment",
+      "input": "https://example.com/article?id=42#section",
+      "normalized": "https://example.com/article?id=42",
       "service": "web"
     },
     {
       "name": "youtube keeps query and removes fragment",
-      "input": "https://www.youtube.com/watch?v=fixture&utm_source=test#chapter",
-      "normalized": "https://www.youtube.com/watch?v=fixture&utm_source=test",
+      "input": "https://www.youtube.com/watch?v=fixture&t=30#chapter",
+      "normalized": "https://www.youtube.com/watch?v=fixture&t=30",
       "service": "youtube"
     },
     {
       "name": "github repository",
       "input": "https://github.com/owner/repo?tab=readme#readme",
-      "normalized": "https://github.com/owner/repo",
+      "normalized": "https://github.com/owner/repo?tab=readme",
       "service": "github-repo"
     },
     {
-      "name": "reddit thread",
-      "input": "https://www.reddit.com/r/fixture/comments/abc123/?sort=top#comment",
-      "normalized": "https://www.reddit.com/r/fixture/comments/abc123/",
+      "name": "reddit sort query and fragment",
+      "input": "https://www.reddit.com/r/fixture/comments/abc123/?sort=new#comment",
+      "normalized": "https://www.reddit.com/r/fixture/comments/abc123/?sort=new",
       "service": "reddit"
     },
     {
       "name": "rss feed",
-      "input": "https://example.com/feed.xml?utm_source=test#latest",
-      "normalized": "https://example.com/feed.xml",
+      "input": "https://example.com/feed.xml?category=tech#latest",
+      "normalized": "https://example.com/feed.xml?category=tech",
       "service": "rss"
     },
     {
       "name": "x post",
-      "input": "https://x.com/fixture_user/status/123456789?utm_source=test#post",
-      "normalized": "https://x.com/fixture_user/status/123456789",
+      "input": "https://x.com/fixture_user/status/123456789?lang=en#post",
+      "normalized": "https://x.com/fixture_user/status/123456789?lang=en",
       "service": "x-twitter"
     },
     {
       "name": "uppercase WWW X post follows X path",
-      "input": "https://WWW.X.COM/fixture_user/status/123456790?utm_source=test#post",
-      "normalized": "https://www.x.com/fixture_user/status/123456790",
+      "input": "https://WWW.X.COM/fixture_user/status/123456790?lang=ja#post",
+      "normalized": "https://www.x.com/fixture_user/status/123456790?lang=ja",
       "service": "x-twitter"
+    },
+    {
+      "name": "signed URL query and fragment",
+      "input": "https://cdn.example.com/file?Expires=1700000000&Signature=abc123&Key-Pair-Id=key#download",
+      "normalized": "https://cdn.example.com/file?Expires=1700000000&Signature=abc123&Key-Pair-Id=key",
+      "service": "web"
     }
   ],
   "xPost": {
-    "url": "https://x.com/fixture_user/status/123456789?utm_source=test#post",
-    "normalized": "https://x.com/fixture_user/status/123456789",
+    "url": "https://x.com/fixture_user/status/123456789?lang=en#post",
+    "normalized": "https://x.com/fixture_user/status/123456789?lang=en",
     "service": "x-twitter",
     "payload": {
       "code": 200,

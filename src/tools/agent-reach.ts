@@ -65,18 +65,12 @@ export function detectService(parsed: URL): ServiceType {
 }
 
 /**
- * 取得先へ渡す前に追跡用 query と fragment を除去する。
- * YouTube は動画 ID の指定に query (`watch?v=...`) が必要なため query を保持する。
+ * 取得先へ渡す前に fragment だけを除去する。
+ * query はリソース指定や署名に使われる可能性があるため保持する。
  */
 export function normalizeUrl(raw: string): string {
   const parsed = new URL(raw);
-  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
-
   parsed.hash = "";
-  if (host !== "youtube.com" && host !== "youtu.be") {
-    parsed.search = "";
-  }
-
   return parsed.toString();
 }
 
