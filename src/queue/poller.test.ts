@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SendMessageOptions } from "../agent/manager.js";
 import { NonRetryableError } from "../utils/error.js";
 import type { InboxMessage } from "./types.js";
@@ -16,6 +16,7 @@ vi.mock("../config/providers.js", () => ({
 }));
 vi.mock("../discord/client.js", () => ({
   client: {
+    isReady: vi.fn().mockReturnValue(false),
     channels: {
       cache: { get: vi.fn().mockReturnValue(undefined) },
       fetch: vi.fn(),
@@ -23,25 +24,31 @@ vi.mock("../discord/client.js", () => ({
   },
 }));
 const {
+  claim,
   commitInboxResult,
   deadLetter,
   failAttempt,
   freezeExecutionIdentity,
+  heartbeat,
   markRunning,
   updateRunning,
 } = vi.hoisted(() => ({
+  claim: vi.fn(),
   commitInboxResult: vi.fn(),
   deadLetter: vi.fn(),
   failAttempt: vi.fn(),
   freezeExecutionIdentity: vi.fn(),
+  heartbeat: vi.fn(),
   markRunning: vi.fn(),
   updateRunning: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
+    claim,
     commitResult: commitInboxResult,
     failAttempt,
     freezeExecutionIdentity,
+    heartbeat,
     markRunning,
     deadLetter,
     updateRunning,
@@ -53,13 +60,23 @@ const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const { client } = await import("../discord/client.js");
-const { processMessage } = await import("./poller.js");
+const { processMessage, startPoller, stopPoller } = await import("./poller.js");
 
 beforeEach(() => {
   vi.mocked(sendMessage).mockClear();
+  claim.mockReset();
+  claim.mockReturnValue(undefined);
   deadLetter.mockClear();
+  heartbeat.mockReset();
+  markRunning.mockReset();
   updateRunning.mockClear();
+  vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
+});
+
+afterEach(() => {
+  stopPoller();
+  vi.useRealTimers();
 });
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
@@ -252,6 +269,41 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
+  it("onContainerStarted の同期的な queue 例外は callback の外へ throw せず失敗扱いになる", async () => {
+    const error = new Error("mark running failed");
+    markRunning.mockImplementation(() => {
+      throw error;
+    });
+    let synchronousError: unknown;
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        const callback = (options as SendMessageOptions | undefined)
+          ?.onContainerStarted;
+        let result: void | Promise<void>;
+        try {
+          result = callback?.();
+        } catch (callbackError) {
+          synchronousError = callbackError;
+          return "AI response";
+        }
+        await result;
+        return "AI response";
+      },
+    );
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(synchronousError).toBeUndefined();
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      error,
+      msg.fencingToken,
+      expect.objectContaining({ metadata: expect.any(Object) }),
+    );
+    expect(commitInboxResult).not.toHaveBeenCalled();
+  });
+
   it("cron new-thread destination persists the created thread before using it as the session", async () => {
     const msg = makeMsg({
       sessionId: "cron-daily-run-placeholder",
@@ -436,6 +488,61 @@ describe("processMessage - terminal queue transitions", () => {
       msg.fencingToken,
       { metadata: { error: expect.any(Error) } },
     );
+  });
+});
+
+describe("poller lease renewal", () => {
+  it("heartbeat の同期的な queue 例外は lease callback の外へ throw せず abort する", async () => {
+    vi.useFakeTimers();
+    const error = new Error("heartbeat failed");
+    heartbeat.mockImplementation(() => {
+      throw error;
+    });
+    commitInboxResult.mockClear();
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => false,
+      isTextBased: () => false,
+    } as never);
+    const msg = makeMsg({
+      agentsSnapshotPresent: false,
+      memorySnapshotPresent: false,
+      snapshotPresent: false,
+      snapshotHash: "snapshot",
+      toolCallKey: "tool-call",
+    });
+    claim.mockReturnValueOnce({ job: msg }).mockReturnValue(undefined);
+    vi.mocked(client.isReady).mockReturnValue(true);
+
+    let signal: AbortSignal | undefined;
+    let releaseAgent!: (response: string) => void;
+    const agentResult = new Promise<string>((resolve) => {
+      releaseAgent = resolve;
+    });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        signal = (options as SendMessageOptions | undefined)?.signal;
+        return agentResult;
+      },
+    );
+
+    startPoller();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sendMessage).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(heartbeat).toHaveBeenCalledWith(msg.id, msg.fencingToken, 60_000);
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe(error);
+
+    releaseAgent("AI response");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 });
 

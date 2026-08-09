@@ -182,12 +182,14 @@ const LEASE_RENEWAL_MS = 20_000;
 function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
-    void Promise.resolve(
-      getQueueRepository().heartbeat(msg.id, msg.fencingToken ?? 0, LEASE_MS),
-    ).catch((error) => {
-      console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
-      controller.abort(error);
-    });
+    void Promise.resolve()
+      .then(() =>
+        getQueueRepository().heartbeat(msg.id, msg.fencingToken ?? 0, LEASE_MS),
+      )
+      .catch((error) => {
+        console.error(`[poller] lease更新に失敗しました (${msg.id}):`, error);
+        controller.abort(error);
+      });
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
@@ -361,8 +363,11 @@ async function failAttemptIfNonZeroExitCode(
 function markRunningWhenContainerStarted(
   msg: InboxMessage,
   sessionId: string,
-): () => void {
-  return () => {
+): () => Promise<void> {
+  // The manager consumes this callback through a promise chain. Returning an
+  // async function keeps synchronous repository failures in that chain instead
+  // of letting an event-emitter callback throw into the host process.
+  return async () => {
     if (msg.fencingToken !== undefined) {
       getQueueRepository().markRunning(msg.id, msg.fencingToken, {
         startedAt: new Date().toISOString(),
