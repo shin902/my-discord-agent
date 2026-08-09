@@ -893,6 +893,23 @@ describe("fetchFxPost", () => {
     ).rejects.toThrow(fixture.expectedError);
   });
 
+  it.each(
+    parityCases.malformedOptionalCases,
+  )("$name: malformed optional fields are treated as absent", async (fixture) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(fixture.payload), {
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+
+    const post = await fetchFxPost("https://x.com/testuser/status/123");
+    expect(formatFxPost(post)).toBe(fixture.expectedOutput);
+  });
+
   it("記事ブロック上限を拒否する", async () => {
     const blocks = Array.from({ length: 2001 }, () => ({
       type: "unstyled",

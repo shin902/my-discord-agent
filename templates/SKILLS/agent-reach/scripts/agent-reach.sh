@@ -1091,9 +1091,62 @@ fetch_x_twitter() {
   (( status_number >= 200 && status_number < 300 )) \
     || die "FxTwitter API error: HTTP ${status_number}"
 
-  # The root fields are required by FxPostSchema. Optional fields mirror the
-  # TypeScript schema: null/missing values are ignored, but wrong types and an
-  # excessive Article block array are rejected before formatting.
+  # The root fields are required by FxPostSchema. Normalize malformed optional
+  # fields to null, matching z.string()/z.number().optional().catch(undefined)
+  # in the TypeScript path. Keep required shape and block-count validation
+  # below so malformed optional fields do not make an otherwise usable post
+  # fail before formatting.
+  local normalized_file="${tmp_dir}/fxtwitter-normalized.json"
+  if ! jq '
+    def as_optional_string:
+      if type == "string" then . else null end;
+    def as_optional_number:
+      if type == "number" then . else null end;
+    if type != "object" then .
+    else
+      .message = (.message | as_optional_string)
+      | if (.tweet | type) != "object" then .
+        else
+          .tweet = {
+            text: (.tweet.text | as_optional_string),
+            created_at: (.tweet.created_at | as_optional_string),
+            likes: (.tweet.likes | as_optional_number),
+            retweets: (.tweet.retweets | as_optional_number),
+            replies: (.tweet.replies | as_optional_number),
+            views: (.tweet.views | as_optional_number),
+            author: (
+              if (.tweet.author | type) == "object" then {
+                name: (.tweet.author.name | as_optional_string),
+                screen_name: (.tweet.author.screen_name | as_optional_string)
+              } else null end
+            ),
+            article: (
+              if (.tweet.article | type) == "object" then {
+                title: (.tweet.article.title | as_optional_string),
+                preview_text: (.tweet.article.preview_text | as_optional_string),
+                content: (
+                  if (.tweet.article.content | type) == "object" then {
+                    blocks: (
+                      if (.tweet.article.content.blocks | type) == "array" then
+                        [.tweet.article.content.blocks[] |
+                          if type == "object" then {
+                            type: (.type | as_optional_string),
+                            text: (.text | as_optional_string)
+                          } else {} end]
+                      else null end
+                    )
+                  } else null end
+                )
+              } else null end
+            )
+          }
+        end
+    end
+  ' "$response_file" > "$normalized_file"; then
+    die "FxTwitter API returned an invalid response schema"
+  fi
+  mv "$normalized_file" "$response_file"
+
   if ! jq -e '
     def optional_string: . == null or (type == "string");
     def optional_number: . == null or (type == "number");

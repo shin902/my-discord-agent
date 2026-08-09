@@ -812,6 +812,10 @@ describe("agent-reach.sh shared parity fixtures", () => {
       expectedOutput: parityCases.previewOnly.expectedOutput,
     },
     ...parityCases.formattedCases,
+    ...parityCases.malformedOptionalCases.map((fixture) => ({
+      url: parityCases.xPost.url,
+      ...fixture,
+    })),
   ])("$name has the canonical formatted stdout", async (fixture) => {
     const payloadPath = join(testDir, "x-post.json");
     const requestLogPath = join(testDir, "request-url");
