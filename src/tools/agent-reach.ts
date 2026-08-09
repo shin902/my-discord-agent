@@ -983,6 +983,26 @@ const FxPostSchema = z.object({
 
 export type FxPost = z.infer<typeof FxPostSchema>;
 
+function hasInvalidFxSuccessShape(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.code !== 200) return false;
+  const tweet = record.tweet;
+  return tweet === null || typeof tweet !== "object" || Array.isArray(tweet);
+}
+
+function hasTooManyFxArticleBlocks(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const tweet = (value as Record<string, unknown>).tweet;
+  if (tweet === null || typeof tweet !== "object") return false;
+  const article = (tweet as Record<string, unknown>).article;
+  if (article === null || typeof article !== "object") return false;
+  const content = (article as Record<string, unknown>).content;
+  if (content === null || typeof content !== "object") return false;
+  const blocks = (content as Record<string, unknown>).blocks;
+  return Array.isArray(blocks) && blocks.length > 2000;
+}
+
 /**
  * FxTwitter (api.fxtwitter.com) から X post を取得する。クッキー不要の非公式 API。
  * host reader と違い Credential Proxy を経由せず native fetch で直接叩く。
@@ -1006,6 +1026,10 @@ export async function fetchFxPost(
 
   if (!response.ok) {
     throw new Error(`FxTwitter API error: HTTP ${response.status}`);
+  }
+
+  if (hasInvalidFxSuccessShape(raw) || hasTooManyFxArticleBlocks(raw)) {
+    throw new Error("FxTwitter API returned an invalid response schema");
   }
 
   const parsed = FxPostSchema.safeParse(raw);

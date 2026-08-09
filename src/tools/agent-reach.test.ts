@@ -182,6 +182,8 @@ describe("shared agent-reach parity fixtures", () => {
       payload: parityCases.xPost.payload,
       expectedOutput: parityCases.xPost.expectedOutput,
     },
+    parityCases.xArticle,
+    parityCases.previewOnly,
     ...parityCases.formattedCases,
   ])("$name formatter matches the shared fixture", ({
     payload,
@@ -868,6 +870,52 @@ describe("fetchFxPost", () => {
       fetchFxPost("https://x.com/testuser/status/123"),
     ).rejects.toThrow(/HTTP 500/);
   });
+
+  it.each(
+    parityCases.responseCases,
+  )("$name: malformed, oversized, and invalid responses are rejected", async (fixture) => {
+    const body =
+      fixture.kind === "oversized"
+        ? "x".repeat(fixture.bodyBytes ?? 0)
+        : (fixture.body ?? "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(body, {
+            headers: { "content-type": fixture.contentType },
+          }),
+      ),
+    );
+
+    await expect(
+      fetchFxPost("https://x.com/testuser/status/123"),
+    ).rejects.toThrow(fixture.expectedError);
+  });
+
+  it("記事ブロック上限を拒否する", async () => {
+    const blocks = Array.from({ length: 2001 }, () => ({
+      type: "unstyled",
+      text: "block",
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: 200,
+              tweet: { article: { content: { blocks } } },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+
+    await expect(
+      fetchFxPost("https://x.com/testuser/status/123"),
+    ).rejects.toThrow("invalid response schema");
+  });
 });
 
 describe("hasFxContent", () => {
@@ -974,6 +1022,30 @@ describe("formatFxPost", () => {
     });
     expect(result).toContain("プレビュー本文");
     expect(result).toContain("previewのみ取得できました");
+  });
+
+  it("記事本文を120,000文字で切り詰め、注記を付ける", () => {
+    const fixture = parityCases.articleTruncation;
+    const result = formatFxPost({
+      code: 200,
+      tweet: {
+        text: "",
+        article: {
+          title: fixture.title,
+          content: {
+            blocks: [
+              {
+                type: fixture.blockType,
+                text: "x".repeat(fixture.bodyLength),
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(result).toContain(fixture.expectedNotice);
+    expect(result).toContain("x".repeat(120000));
+    expect(result).not.toContain("x".repeat(120001));
   });
 
   it("注意書き行を常に含む", () => {

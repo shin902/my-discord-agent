@@ -110,7 +110,7 @@ LLM の自律判断を待たず、ユーザーが特定のスキルを確実に�
 | GitHub | GitHub REST API |
 | Reddit | Credential Proxy経由のJSON API |
 | RSS | `feedparser` |
-| X/Twitter | FxTwitter、またはCredential Proxy経由のhost reader |
+| X/Twitter | FxTwitter (`api.fxtwitter.com`) のみ（Credential Proxy へのフォールバックなし） |
 
 スキルは同梱のシェルスクリプトを使用する。専用ツール側はシェルスクリプトに依存せず、`bash`を許可しない構成でも単独で動作する。両者の用途と実行経路は独立している。
 

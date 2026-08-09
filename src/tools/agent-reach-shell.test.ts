@@ -799,6 +799,18 @@ describe("agent-reach.sh shared parity fixtures", () => {
       payload: parityCases.xPost.payload,
       expectedOutput: parityCases.xPost.expectedOutput,
     },
+    {
+      name: parityCases.xArticle.name,
+      url: parityCases.xPost.url,
+      payload: parityCases.xArticle.payload,
+      expectedOutput: parityCases.xArticle.expectedOutput,
+    },
+    {
+      name: parityCases.previewOnly.name,
+      url: parityCases.xPost.url,
+      payload: parityCases.previewOnly.payload,
+      expectedOutput: parityCases.previewOnly.expectedOutput,
+    },
     ...parityCases.formattedCases,
   ])("$name has the canonical formatted stdout", async (fixture) => {
     const payloadPath = join(testDir, "x-post.json");
@@ -809,8 +821,22 @@ describe("agent-reach.sh shared parity fixtures", () => {
       curl,
       `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s' "\${!#}" > "$AGENT_REACH_REQUEST_LOG"
-cat "$AGENT_REACH_FIXTURE"
+output=""
+url=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$url" > "$AGENT_REACH_REQUEST_LOG"
+if [[ -n "$output" ]]; then
+  cat "$AGENT_REACH_FIXTURE" > "$output"
+  printf '200\\napplication/json'
+else
+  cat "$AGENT_REACH_FIXTURE"
+fi
 `,
       "utf8",
     );
@@ -837,6 +863,299 @@ cat "$AGENT_REACH_FIXTURE"
     );
   });
 
+  it("FxTwitter fetch has timeout, redirect, and response-size bounds", async () => {
+    const payloadPath = join(testDir, "bounded-response.json");
+    const argsLogPath = join(testDir, "fxtwitter-args.log");
+    const curl = join(binDir, "curl");
+    await writeFile(
+      payloadPath,
+      JSON.stringify(parityCases.xPost.payload),
+      "utf8",
+    );
+    await writeFile(
+      curl,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" > "$AGENT_REACH_CURL_ARGS"
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat "$AGENT_REACH_FIXTURE" > "$output"
+printf '200\\napplication/json'
+`,
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, parityCases.xPost.url], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          AGENT_REACH_FIXTURE: payloadPath,
+          AGENT_REACH_CURL_ARGS: argsLogPath,
+        },
+      }),
+    ).resolves.toBeDefined();
+
+    const args = await readFile(argsLogPath, "utf8");
+    expect(args).toContain("--max-time 20");
+    expect(args).toContain("--connect-timeout 20");
+    expect(args).toContain("--max-redirs 0");
+    expect(args).toContain("--max-filesize 2097152");
+  });
+
+  it("Article blocks の上限を拒否する", async () => {
+    const payloadPath = join(testDir, "too-many-blocks.json");
+    const curl = join(binDir, "curl");
+    await writeFile(
+      payloadPath,
+      JSON.stringify({
+        code: 200,
+        tweet: {
+          article: {
+            content: {
+              blocks: Array.from({ length: 2001 }, () => ({
+                type: "unstyled",
+                text: "block",
+              })),
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      curl,
+      `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat "$AGENT_REACH_FIXTURE" > "$output"
+printf '200\\napplication/json'
+`,
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, parityCases.xPost.url], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          AGENT_REACH_FIXTURE: payloadPath,
+        },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("invalid response schema"),
+    });
+  });
+
+  it("Article本文を120,000文字で切り詰め、共通注記を出力する", async () => {
+    const fixture = parityCases.articleTruncation;
+    const payloadPath = join(testDir, "long-article.json");
+    const curl = join(binDir, "curl");
+    await writeFile(
+      payloadPath,
+      JSON.stringify({
+        code: 200,
+        tweet: {
+          text: "",
+          author: { screen_name: "long_article" },
+          article: {
+            title: fixture.title,
+            content: {
+              blocks: [
+                {
+                  type: fixture.blockType,
+                  text: "x".repeat(fixture.bodyLength),
+                },
+              ],
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      curl,
+      `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat "$AGENT_REACH_FIXTURE" > "$output"
+printf '200\\napplication/json'
+`,
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    const { stdout } = await execFileAsync(
+      "bash",
+      [agentReachScript, parityCases.xPost.url],
+      {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          AGENT_REACH_FIXTURE: payloadPath,
+        },
+      },
+    );
+
+    const output = stdout.replace(/\\n$/, "");
+    expect(output).toContain(fixture.expectedNotice);
+    expect(output).toContain("x".repeat(120000));
+    expect(output).not.toContain("x".repeat(120001));
+  });
+
+  it.each([
+    ["http://x.com/fixture_user/status/123", "must use HTTPS"],
+    ["https://user:pass@x.com/fixture_user/status/123", "credentials"],
+    ["https://x.com:443/fixture_user/status/123", "credentials"],
+  ])("rejects unsafe X URL %s", async (url, message) => {
+    const curl = join(binDir, "curl");
+    await writeFile(
+      curl,
+      "#!/usr/bin/env bash\nset -euo pipefail\nexit 1\n",
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, url], {
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      }),
+    ).rejects.toMatchObject({ stderr: expect.stringContaining(message) });
+  });
+
+  it("preserves HTTP status evidence instead of formatting an error body", async () => {
+    const payloadPath = join(testDir, "http-error.json");
+    const curl = join(binDir, "curl");
+    await writeFile(payloadPath, '{"code":500}', "utf8");
+    await writeFile(
+      curl,
+      `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat "$AGENT_REACH_FIXTURE" > "$output"
+printf '500\\napplication/json'
+`,
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, parityCases.xPost.url], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          AGENT_REACH_FIXTURE: payloadPath,
+        },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("HTTP 500"),
+    });
+  });
+
+  it("FxTwitter failure does not consult Credential Proxy", async () => {
+    const requestLogPath = join(testDir, "fx-failure-requests.log");
+    const curl = join(binDir, "curl");
+    await writeFile(
+      curl,
+      `#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  case "$arg" in
+    http://*|https://*) printf '%s\\n' "$arg" >> "$AGENT_REACH_REQUEST_LOG" ;;
+  esac
+done
+exit 1
+`,
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, parityCases.xPost.url], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          AGENT_REACH_REQUEST_LOG: requestLogPath,
+          CREDENTIAL_PROXY_JSON: JSON.stringify([
+            { provider: "x-article", baseUrl: "http://proxy.invalid/x" },
+          ]),
+        },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("FxTwitter API"),
+    });
+    await expect(readFile(requestLogPath, "utf8")).resolves.toBe(
+      "https://api.fxtwitter.com/fixture_user/status/123456789\n",
+    );
+  });
+
+  it.each(
+    parityCases.responseCases,
+  )("$name: malformed, oversized, and invalid responses are rejected", async (fixture) => {
+    const payloadPath = join(testDir, "response-fixture");
+    const curl = join(binDir, "curl");
+    const body =
+      fixture.kind === "oversized"
+        ? "x".repeat(fixture.bodyBytes ?? 0)
+        : (fixture.body ?? "");
+    await writeFile(payloadPath, body, "utf8");
+    await writeFile(
+      curl,
+      `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat "$AGENT_REACH_FIXTURE" > "$output"
+printf '200\\n%s' "$AGENT_REACH_CONTENT_TYPE"
+`,
+      "utf8",
+    );
+    await chmod(curl, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, parityCases.xPost.url], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          AGENT_REACH_FIXTURE: payloadPath,
+          AGENT_REACH_CONTENT_TYPE: fixture.contentType,
+        },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining(fixture.expectedError),
+    });
+  });
+
   it.each(
     parityCases.urlCases,
   )("$name executes through the shell with the canonical normalized URL", async ({
@@ -860,14 +1179,24 @@ cat "$AGENT_REACH_FIXTURE"
       `#!/usr/bin/env bash
 set -euo pipefail
 url=""
-for arg in "$@"; do
-  case "$arg" in
-    http://*|https://*) url="$arg" ;;
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
   esac
 done
 printf '%s\\n' "$url" >> "$AGENT_REACH_REQUEST_LOG"
 case "$url" in
-  https://api.fxtwitter.com/*) cat "$AGENT_REACH_FIXTURE" ;;
+  https://api.fxtwitter.com/*)
+    if [[ -n "$output" ]]; then
+      cat "$AGENT_REACH_FIXTURE" > "$output"
+      printf '200\\napplication/json'
+    else
+      cat "$AGENT_REACH_FIXTURE"
+    fi
+    ;;
   https://api.github.com/repos/*/readme) : ;;
   https://api.github.com/repos/*) printf '%s\\n' '{"full_name":"owner/repo"}' ;;
   http://localhost:12345/reddit/*) printf '%s\\n' '{"data":{"children":[]}}' ;;
