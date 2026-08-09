@@ -13,6 +13,7 @@ die() { echo "error: $*" >&2; exit 1; }
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 _cleanup_paths=()
+_agent_reach_tmp_dir=""
 _register_cleanup() { _cleanup_paths+=("$@"); }
 _cleanup() {
   for p in "${_cleanup_paths[@]+"${_cleanup_paths[@]}"}"; do
@@ -402,9 +403,8 @@ fetch_youtube() {
   local url="$1"
   check_cmd yt-dlp
 
-  local tmp_dir
-  tmp_dir=$(mktemp -d)
-  _register_cleanup "$tmp_dir"
+  local tmp_dir="${_agent_reach_tmp_dir}"
+  [[ -n "$tmp_dir" ]] || die "一時ディレクトリが初期化されていません"
 
   local base="${tmp_dir}/yt"
   local meta_out="${base}.meta.json"
@@ -488,9 +488,9 @@ fetch_reddit() {
   check_cmd curl
   check_cmd jq
 
-  local tmp_file
-  tmp_file=$(mktemp)
-  _register_cleanup "$tmp_file"
+  local tmp_dir="${_agent_reach_tmp_dir}"
+  [[ -n "$tmp_dir" ]] || die "一時ディレクトリが初期化されていません"
+  local tmp_file="${tmp_dir}/reddit.json"
 
   # ホストのみで path が無い URL (例: https://reddit.com) でも必ず先頭スラッシュ付きの
   # path_and_query を作る(無いと proxy_base のポート番号に直接 ".json" が連結されて
@@ -668,6 +668,10 @@ main() {
 
   local service
   service=$(detect_service "$url")
+
+  _agent_reach_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/agent-reach-XXXXXX") \
+    || die "一時ディレクトリを作成できませんでした"
+  _register_cleanup "$_agent_reach_tmp_dir"
 
   case "$service" in
     youtube)      fetch_youtube "$url" ;;

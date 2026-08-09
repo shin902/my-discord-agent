@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -15,9 +15,9 @@ const REDDIT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const WORKSPACE = "/workspace";
-// 外部コマンド（curl/yt-dlp等）の出力先として使う作業ディレクトリ。
-// フェッチ結果はツールコール結果に直接返すため、ここは処理後に削除する一時領域。
-const TMP_DIR = ".agent-reach-tmp";
+// 外部コマンド（curl/yt-dlp等）の出力先として使う一時領域は、呼び出しごとに
+// システム一時ディレクトリの下へ独立して作成する。フェッチ結果はツールコール結果に
+// 直接返すため、呼び出し終了時にディレクトリごと削除する。
 const TIMEOUT_MS = 120_000;
 
 function shellQuote(str: string): string {
@@ -652,8 +652,8 @@ export function buildCommand(
   switch (service) {
     case "youtube": {
       const q = shellQuote(url);
-      // outAbsPath = /workspace/.agent-reach-tmp/youtube-xxx.md
-      // base      = /workspace/.agent-reach-tmp/youtube-xxx  (拡張子なし)
+      // outAbsPath = <system-temp>/agent-reach-XXXXXX/youtube.md
+      // base      = <system-temp>/agent-reach-XXXXXX/youtube  (拡張子なし)
       const base = outAbsPath.replace(/\.[^.]+$/, "");
       const metaOutQ = shellQuote(`${base}.meta.json`);
       const subDirQ = shellQuote(`${base}.subs`);
@@ -748,8 +748,8 @@ export function formatHttpError(
 
 /**
  * このツールコールが作成しうる中間ファイル/ディレクトリの一覧を返す。
- * absPath は呼び出しごとに randomUUID を含み一意なので、これらを個別削除しても
- * 並行実行中の他のツールコールには影響しない（共有ディレクトリ自体は消さない）。
+ * 実際の実行時には、呼び出しごとの一時ディレクトリを後処理で丸ごと削除する。
+ * この関数は生成されるパスを確認したい呼び出し元向けに維持している。
  */
 export function getCleanupPaths(
   service: ServiceType,
@@ -806,13 +806,8 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       };
     }
 
-    const tmpDirAbs = join(WORKSPACE, TMP_DIR);
-    const absPath = join(
-      tmpDirAbs,
-      `${service}-${randomUUID().slice(0, 8)}.md`,
-    );
-
-    await mkdir(tmpDirAbs, { recursive: true });
+    const tmpDirAbs = await mkdtemp(join(tmpdir(), "agent-reach-"));
+    const absPath = join(tmpDirAbs, `${service}.md`);
 
     try {
       const cmd = buildCommand(service, normalizedUrl, absPath);
@@ -865,11 +860,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         details: { url: normalizedUrl, service },
       };
     } finally {
-      await Promise.all(
-        getCleanupPaths(service, absPath).map((p) =>
-          rm(p, { recursive: true, force: true }),
-        ),
-      );
+      await rm(tmpDirAbs, { recursive: true, force: true });
     }
   },
 };

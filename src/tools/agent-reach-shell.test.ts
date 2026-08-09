@@ -3,12 +3,13 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
@@ -122,6 +123,154 @@ printf '%s\\n' "\${!#}"
     );
 
     expect(stdout.trim()).toBe("https://r.jina.ai/https://example.com/article");
+  });
+});
+
+describe("agent-reach.sh temporary directories", () => {
+  let testDir: string;
+  let binDir: string;
+  let tempRoot: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "agent-reach-shell-temp-"));
+    binDir = join(testDir, "bin");
+    tempRoot = join(testDir, "tmp");
+    await mkdir(binDir);
+    await mkdir(tempRoot);
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("uses an isolated system-temp directory and cleans it after success", async () => {
+    const requestLogPath = join(testDir, "output-paths.log");
+    const ytDlp = join(binDir, "yt-dlp");
+    await writeFile(
+      ytDlp,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"test","chapters":[]}'
+  exit 0
+fi
+output=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-o" ]]; then
+    output="$2"
+    break
+  fi
+  shift
+done
+printf '%s\\n' "$output" >> "$AGENT_REACH_OUTPUT_PATHS"
+`,
+      "utf8",
+    );
+    await chmod(ytDlp, 0o755);
+
+    await execFileAsync(
+      "bash",
+      [agentReachScript, "https://www.youtube.com/watch?v=test"],
+      {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          TMPDIR: tempRoot,
+          AGENT_REACH_OUTPUT_PATHS: requestLogPath,
+        },
+      },
+    );
+
+    const outputPath = (await readFile(requestLogPath, "utf8")).trim();
+    const callDir = dirname(dirname(outputPath));
+    expect(callDir.startsWith(`${tempRoot}/agent-reach-`)).toBe(true);
+    expect(await readdir(tempRoot)).toEqual([]);
+  });
+
+  it("isolates concurrent calls and cleans both directories on success", async () => {
+    const requestLogPath = join(testDir, "output-paths.log");
+    const ytDlp = join(binDir, "yt-dlp");
+    await writeFile(
+      ytDlp,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"test","chapters":[]}'
+  exit 0
+fi
+output=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-o" ]]; then
+    output="$2"
+    break
+  fi
+  shift
+done
+printf '%s\\n' "$output" >> "$AGENT_REACH_OUTPUT_PATHS"
+sleep 0.05
+`,
+      "utf8",
+    );
+    await chmod(ytDlp, 0o755);
+
+    const env = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      TMPDIR: tempRoot,
+      AGENT_REACH_OUTPUT_PATHS: requestLogPath,
+    };
+    await Promise.all([
+      execFileAsync(
+        "bash",
+        [agentReachScript, "https://www.youtube.com/watch?v=one"],
+        { env },
+      ),
+      execFileAsync(
+        "bash",
+        [agentReachScript, "https://www.youtube.com/watch?v=two"],
+        { env },
+      ),
+    ]);
+
+    const outputPaths = (await readFile(requestLogPath, "utf8"))
+      .trim()
+      .split("\n");
+    const callDirs = outputPaths.map((path) => dirname(dirname(path)));
+    expect(callDirs).toHaveLength(2);
+    expect(new Set(callDirs).size).toBe(2);
+    expect(
+      callDirs.every((path) => path.startsWith(`${tempRoot}/agent-reach-`)),
+    ).toBe(true);
+    expect(await readdir(tempRoot)).toEqual([]);
+  });
+
+  it("cleans the call-scoped directory after a fetch failure", async () => {
+    const ytDlp = join(binDir, "yt-dlp");
+    await writeFile(
+      ytDlp,
+      `#!/usr/bin/env bash
+set -euo pipefail
+exit 1
+`,
+      "utf8",
+    );
+    await chmod(ytDlp, 0o755);
+
+    await expect(
+      execFileAsync(
+        "bash",
+        [agentReachScript, "https://www.youtube.com/watch?v=failure"],
+        {
+          env: {
+            ...process.env,
+            PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            TMPDIR: tempRoot,
+          },
+        },
+      ),
+    ).rejects.toBeDefined();
+
+    expect(await readdir(tempRoot)).toEqual([]);
   });
 });
 
