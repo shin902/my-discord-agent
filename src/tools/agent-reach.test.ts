@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
-import type { FxPost } from "./agent-reach.js";
 import {
   agentReachTool,
   buildCommand,
@@ -23,6 +22,12 @@ import {
   parseXStatus,
   readLimitedJson,
 } from "./agent-reach.js";
+import type { FxPost } from "./agent-reach.js";
+
+const dnsLookupMock = vi.hoisted(() =>
+  vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
+);
+vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
 
 describe("normalizeUrl", () => {
   it("意味のある query を保持し fragment だけを除去する", () => {

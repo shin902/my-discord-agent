@@ -7,6 +7,9 @@ import { execAsync } from "./exec.js";
 import { agentReachTool } from "./agent-reach.js";
 
 vi.mock("./exec.js", () => ({ execAsync: vi.fn() }));
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
+}));
 
 function outputPathFromCommand(command: string): string {
   const match = /-o '([^']+)'/.exec(command);

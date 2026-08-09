@@ -70,6 +70,409 @@ validate_url() {
   fi
 }
 
+# Python's urllib/feedparser and yt-dlp each perform their own DNS lookups.
+# Install this as sitecustomize.py for those child processes so redirects and
+# secondary requests are checked as well. Returning the checked getaddrinfo
+# tuples also avoids a second hostname lookup between validation and connect.
+_network_policy_python() {
+  cat <<'PY'
+import ipaddress
+import socket
+
+_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    "::/96",
+    "::1/128",
+    "100::/64",
+    "2001::/23",
+    "2001:db8::/32",
+    "2002::/16",
+    "3fff::/20",
+    "5f00::/16",
+    "64:ff9b:1::/48",
+    "100:0:0:1::/64",
+    "fc00::/7",
+    "fe80::/10",
+    "fec0::/10",
+    "ff00::/8",
+))
+
+def _is_public(value):
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return not any(address in network for network in _NETWORKS)
+
+def _check_address(value):
+    if not _is_public(value):
+        raise OSError("non-public destination rejected: %s" % value)
+
+def _guarded_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host is None or host == "":
+        return _ORIGINAL_GETADDRINFO(host, port, family, type, proto, flags)
+
+    # Resolve with AF_UNSPEC first so an answer hidden by a caller's family
+    # preference cannot bypass the all-addresses policy.
+    all_answers = _ORIGINAL_GETADDRINFO(host, port, socket.AF_UNSPEC, 0, 0, flags)
+    if not all_answers:
+        raise OSError("DNS returned no addresses: %s" % host)
+    for answer in all_answers:
+        if len(answer) < 5 or not answer[4]:
+            raise OSError("malformed DNS answer: %s" % host)
+        _check_address(answer[4][0])
+
+    answers = _ORIGINAL_GETADDRINFO(host, port, family, type, proto, flags)
+    if not answers:
+        raise OSError("DNS returned no usable addresses: %s" % host)
+    for answer in answers:
+        if len(answer) < 5 or not answer[4]:
+            raise OSError("malformed DNS answer: %s" % host)
+        _check_address(answer[4][0])
+    return answers
+
+def _guarded_connect(sock, address):
+    if isinstance(address, tuple) and address:
+        _check_address(address[0])
+    return _ORIGINAL_CONNECT(sock, address)
+
+def _guarded_connect_ex(sock, address):
+    if isinstance(address, tuple) and address:
+        _check_address(address[0])
+    return _ORIGINAL_CONNECT_EX(sock, address)
+
+_ORIGINAL_GETADDRINFO = socket.getaddrinfo
+_ORIGINAL_CONNECT = socket.socket.connect
+_ORIGINAL_CONNECT_EX = socket.socket.connect_ex
+socket.getaddrinfo = _guarded_getaddrinfo
+socket.socket.connect = _guarded_connect
+socket.socket.connect_ex = _guarded_connect_ex
+PY
+}
+
+install_network_policy() {
+  local policy_dir="$1"
+  mkdir -p "$policy_dir"
+  _network_policy_python > "$policy_dir/sitecustomize.py"
+}
+
+# ── Destination/IP validation ───────────────────────────────────────────────
+#
+# This is intentionally kept in the shell entry point instead of calling the
+# TypeScript implementation. Both entry points have the same policy, but the
+# skill must remain usable as an independent executable in a sandbox.
+
+# Set IPV4_VALUE (0..4294967295) when $1 is a valid dotted-quad address.
+parse_ipv4() {
+  local address="$1" octet value
+  local -a octets
+  IFS=. read -r -a octets <<< "$address"
+  [[ ${#octets[@]} -eq 4 ]] || return 1
+
+  IPV4_VALUE=0
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+    value=$((10#$octet))
+    (( value <= 255 )) || return 1
+    IPV4_VALUE=$((IPV4_VALUE * 256 + value))
+  done
+}
+
+ipv4_in_cidr() {
+  local address="$1" network="$2" prefix="$3"
+  local size=$((2 ** (32 - prefix)))
+  (( address >= network && address < network + size ))
+}
+
+is_non_public_ipv4() {
+  local address="$1"
+  parse_ipv4 "$address" || return 1
+
+  ipv4_in_cidr "$IPV4_VALUE" 0x00000000 8 && return 0 # unspecified / this network
+  ipv4_in_cidr "$IPV4_VALUE" 0x0a000000 8 && return 0 # RFC 1918
+  ipv4_in_cidr "$IPV4_VALUE" 0x64400000 10 && return 0 # CGNAT / Tailscale
+  ipv4_in_cidr "$IPV4_VALUE" 0x7f000000 8 && return 0 # loopback
+  ipv4_in_cidr "$IPV4_VALUE" 0xa9fe0000 16 && return 0 # link-local
+  ipv4_in_cidr "$IPV4_VALUE" 0xac100000 12 && return 0 # RFC 1918
+  ipv4_in_cidr "$IPV4_VALUE" 0xc0000000 24 && return 0 # IETF assignments
+  ipv4_in_cidr "$IPV4_VALUE" 0xc0000200 24 && return 0 # documentation
+  ipv4_in_cidr "$IPV4_VALUE" 0xc0a80000 16 && return 0 # RFC 1918
+  ipv4_in_cidr "$IPV4_VALUE" 0xc6120000 15 && return 0 # benchmarking
+  ipv4_in_cidr "$IPV4_VALUE" 0xc6336400 24 && return 0 # documentation
+  ipv4_in_cidr "$IPV4_VALUE" 0xcb007100 24 && return 0 # documentation
+  ipv4_in_cidr "$IPV4_VALUE" 0xe0000000 4 && return 0 # multicast
+  ipv4_in_cidr "$IPV4_VALUE" 0xf0000000 4 && return 0 # reserved
+  return 1
+}
+
+# Set IPV6_GROUPS[0..7] for a valid IPv6 address. Embedded IPv4 is accepted
+# because IPv4-mapped IPv6 answers must receive the IPv4 policy as well.
+parse_ipv6() {
+  local address="$1" normalized="$1" prefix suffix ipv4 high low
+  local left_count right_count zeros group
+  local -a left_groups=() right_groups=()
+  IPV6_GROUPS=()
+
+  [[ "$address" != *%* ]] || return 1 # zone identifiers are not URL hosts
+
+  if [[ "$normalized" == *.* ]]; then
+    [[ "$normalized" == *:* ]] || return 1
+    prefix="${normalized%:*}"
+    ipv4="${normalized##*:}"
+    parse_ipv4 "$ipv4" || return 1
+    high=$((IPV4_VALUE / 65536))
+    low=$((IPV4_VALUE % 65536))
+    printf -v high '%x' "$high"
+    printf -v low '%x' "$low"
+    normalized="${prefix}:${high}:${low}"
+  fi
+
+  [[ "$normalized" != *::*::* ]] || return 1
+  if [[ "$normalized" == *::* ]]; then
+    prefix="${normalized%%::*}"
+    suffix="${normalized#*::}"
+    if [[ -n "$prefix" ]]; then
+      IFS=: read -r -a left_groups <<< "$prefix"
+    fi
+    if [[ -n "$suffix" ]]; then
+      IFS=: read -r -a right_groups <<< "$suffix"
+    fi
+    left_count=${#left_groups[@]}
+    right_count=${#right_groups[@]}
+    (( left_count + right_count < 8 )) || return 1
+    zeros=$((8 - left_count - right_count))
+    for group in "${left_groups[@]}"; do
+      [[ "$group" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+      IPV6_GROUPS+=("$((16#$group))")
+    done
+    for ((group = 0; group < zeros; group++)); do
+      IPV6_GROUPS+=(0)
+    done
+    for group in "${right_groups[@]}"; do
+      [[ "$group" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+      IPV6_GROUPS+=("$((16#$group))")
+    done
+  else
+    IFS=: read -r -a right_groups <<< "$normalized"
+    (( ${#right_groups[@]} == 8 )) || return 1
+    for group in "${right_groups[@]}"; do
+      [[ "$group" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+      IPV6_GROUPS+=("$((16#$group))")
+    done
+  fi
+
+  (( ${#IPV6_GROUPS[@]} == 8 ))
+}
+
+is_non_public_ipv6() {
+  local address="$1" group all_zero=1
+  parse_ipv6 "$address" || return 1
+
+  for group in "${IPV6_GROUPS[@]}"; do
+    if (( group != 0 )); then
+      all_zero=0
+      break
+    fi
+  done
+  (( all_zero == 1 )) && return 0 # unspecified
+  if (( IPV6_GROUPS[0] == 0 && IPV6_GROUPS[1] == 0 && IPV6_GROUPS[2] == 0 && IPV6_GROUPS[3] == 0 && IPV6_GROUPS[4] == 0 && IPV6_GROUPS[5] == 0 && IPV6_GROUPS[6] == 0 && IPV6_GROUPS[7] == 1 )); then
+    return 0 # loopback
+  fi
+
+  # IPv4-mapped IPv6 (::ffff/96) inherits the IPv4 policy.
+  if (( IPV6_GROUPS[0] == 0 && IPV6_GROUPS[1] == 0 && IPV6_GROUPS[2] == 0 && IPV6_GROUPS[3] == 0 && IPV6_GROUPS[4] == 0 && IPV6_GROUPS[5] == 65535 )); then
+    local mapped_ipv4=$((IPV6_GROUPS[6] * 65536 + IPV6_GROUPS[7]))
+    local mapped_address
+    printf -v mapped_address '%d.%d.%d.%d' \
+      "$((mapped_ipv4 >> 24 & 255))" "$((mapped_ipv4 >> 16 & 255))" \
+      "$((mapped_ipv4 >> 8 & 255))" "$((mapped_ipv4 & 255))"
+    is_non_public_ipv4 "$mapped_address"
+    return $?
+  fi
+
+  # IPv6 special-purpose ranges that are not globally reachable.
+  (( IPV6_GROUPS[0] == 0x0100 && IPV6_GROUPS[1] == 0 && IPV6_GROUPS[2] == 0 && IPV6_GROUPS[3] == 0 )) && return 0 # discard-only
+  (( IPV6_GROUPS[0] == 0x2001 && (IPV6_GROUPS[1] & 0xfe00) == 0 )) && return 0 # IETF protocol assignments
+  (( IPV6_GROUPS[0] == 0x2001 && IPV6_GROUPS[1] == 0x0db8 )) && return 0 # documentation
+  (( IPV6_GROUPS[0] == 0x2002 )) && return 0 # 6to4
+  (( IPV6_GROUPS[0] == 0x3fff && (IPV6_GROUPS[1] & 0xf000) == 0 )) && return 0 # documentation
+  (( IPV6_GROUPS[0] == 0x5f00 )) && return 0 # SRv6 SIDs
+  (( IPV6_GROUPS[0] == 0x0064 && IPV6_GROUPS[1] == 0xff9b && IPV6_GROUPS[2] == 1 )) && return 0 # non-global IPv4-IPv6 translation
+  (( IPV6_GROUPS[0] == 0x0100 && IPV6_GROUPS[1] == 0 && IPV6_GROUPS[2] == 0 && IPV6_GROUPS[3] == 1 )) && return 0 # dummy prefix
+
+  # fc00::/7 ULA, fe80::/10 link-local, fec0::/10 deprecated site-local.
+  (( (IPV6_GROUPS[0] & 0xfe00) == 0xfc00 )) && return 0
+  (( (IPV6_GROUPS[0] & 0xffc0) == 0xfe80 )) && return 0
+  (( (IPV6_GROUPS[0] & 0xffc0) == 0xfec0 )) && return 0
+  (( (IPV6_GROUPS[0] & 0xff00) == 0xff00 )) && return 0 # multicast
+
+  # IPv4-compatible and other ::/96 forms are not globally routable.
+  if (( IPV6_GROUPS[0] == 0 && IPV6_GROUPS[1] == 0 && IPV6_GROUPS[2] == 0 && IPV6_GROUPS[3] == 0 && IPV6_GROUPS[4] == 0 && IPV6_GROUPS[5] == 0 )); then
+    return 0
+  fi
+  return 1
+}
+
+is_non_public_ip() {
+  local address="$1"
+  if [[ "$address" == *:* ]]; then
+    is_non_public_ipv6 "$address"
+  else
+    is_non_public_ipv4 "$address"
+  fi
+}
+
+extract_hostname() {
+  local url="$1" after_scheme authority host remainder
+  after_scheme="${url#*://}"
+  authority="${after_scheme%%[/?#]*}"
+  [[ -n "$authority" ]] || die "URL にホスト名がありません: $url"
+
+  # Userinfo is not a destination; use the final @ as URL parsers do.
+  [[ "$authority" != *@* ]] || authority="${authority##*@}"
+  if [[ "$authority" == \[* ]]; then
+    [[ "$authority" == *\]* ]] || die "不正なIPv6ホスト名です: $url"
+    host="${authority#\[}"
+    host="${host%%\]*}"
+    remainder="${authority#*\]}"
+    [[ -z "$remainder" || "$remainder" =~ ^:[0-9]+$ ]] || die "不正なポートです: $url"
+  else
+    [[ "$authority" != *:*:* ]] || die "IPv6ホスト名は角括弧で囲んでください: $url"
+    if [[ "$authority" == *:* ]]; then
+      host="${authority%%:*}"
+      remainder="${authority#*:}"
+      [[ "$remainder" =~ ^[0-9]+$ ]] || die "不正なポートです: $url"
+    else
+      host="$authority"
+    fi
+  fi
+  [[ -n "$host" ]] || die "URL にホスト名がありません: $url"
+  printf '%s' "${host,,}"
+}
+
+# Resolve and validate one address family with `dig`. Unlike getent's
+# family-specific exit status, the DNS response status lets us distinguish a
+# successful NODATA/NXDOMAIN response from SERVFAIL, timeout, and other errors.
+# DNS_FOUND is deliberately global so this helper can accumulate addresses from
+# both family queries without combining the shell path with the TypeScript path.
+validate_dns_family() {
+  local host="$1" record_type="$2" response line status="" status_count=0
+  local owner ttl class answer_type address extra
+
+  if ! response=$(dig +noall +comments +answer +tcp +time=5 +tries=1 \
+    -q "$host" "$record_type" 2>/dev/null); then
+    die "DNS resolution failed for destination ($record_type): $host"
+  fi
+
+  # A successful `dig` process is not enough: SERVFAIL, REFUSED, and timeout
+  # responses can still be represented in its output. Require one parseable
+  # DNS header and accept only NOERROR/NXDOMAIN. NXDOMAIN and NOERROR without
+  # this record type are valid absent-family responses; the caller rejects a
+  # name for which both families have no address.
+  while IFS= read -r line; do
+    if [[ "$line" == ';; ->>HEADER<<-'* ]]; then
+      [[ "$line" == *" status: "* ]] \
+        || die "DNS response status unavailable for destination ($record_type): $host"
+      status="${line#* status: }"
+      status="${status%%,*}"
+      [[ "$status" =~ ^[A-Z]+$ ]] \
+        || die "DNS response status malformed for destination ($record_type): $host"
+      status_count=$((status_count + 1))
+    fi
+  done <<< "$response"
+  if (( status_count != 1 )) || [[ -z "$status" ]]; then
+    die "DNS response status unavailable for destination ($record_type): $host"
+  fi
+
+  case "$status" in
+    NOERROR|NXDOMAIN) ;;
+    *) die "DNS resolution failed for destination ($record_type, status $status): $host" ;;
+  esac
+
+  if [[ "$status" == NXDOMAIN ]]; then
+    # An NXDOMAIN response cannot legitimately contain an address answer. Do
+    # not let a malformed resolver response turn the absent-family result into
+    # an accepted public answer.
+    while IFS= read -r line; do
+      [[ -n "${line//[[:space:]]/}" ]] || continue
+      [[ "$line" == \;* ]] && continue
+      read -r owner ttl class answer_type address extra <<< "$line"
+      [[ "$answer_type" != "$record_type" ]] \
+        || die "DNS response contains an address with NXDOMAIN: $host"
+    done <<< "$response"
+    return
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "${line//[[:space:]]/}" ]] || continue
+    [[ "$line" == \;\;* ]] && continue
+
+    # +answer emits owner, TTL, class, type, and RDATA. Only the requested
+    # address type is relevant; CNAME/SOA and other records are not addresses.
+    read -r owner ttl class answer_type address extra <<< "$line"
+    [[ "$answer_type" == "$record_type" ]] || continue
+    [[ -n "$owner" && "$ttl" =~ ^[0-9]+$ && "$class" == IN && \
+      -n "$address" && -z "${extra:-}" ]] \
+      || die "DNS validation returned a malformed address: $host"
+
+    DNS_FOUND=1
+    if is_non_public_ip "$address"; then
+      die "internal destination is not allowed: $address"
+    fi
+    # Unknown/malformed resolver output is never treated as public.
+    if [[ "$record_type" == A ]]; then
+      parse_ipv4 "$address" \
+        || die "DNS validation returned an invalid address: $address"
+    else
+      parse_ipv6 "$address" \
+        || die "DNS validation returned an invalid address: $address"
+    fi
+  done <<< "$response"
+}
+
+validate_public_destination() {
+  local host="$1"
+
+  # Literal addresses are already fully resolved and must not be sent through a
+  # second resolver that might canonicalize or reinterpret them.
+  if [[ "$host" == *:* ]] || parse_ipv4 "$host"; then
+    if is_non_public_ip "$host"; then
+      die "internal destination is not allowed: $host"
+    fi
+    # A colon denotes IPv6; parse failure is a fail-closed error.
+    [[ "$host" != *:* ]] || parse_ipv6 "$host" || die "invalid destination address: $host"
+    return
+  fi
+
+  # getent's ahostsv4/ahostsv6 status 2 conflates absent records with resolver
+  # failures on several NSS configurations. Require dig, whose response RCODE
+  # distinguishes successful NODATA/NXDOMAIN from genuine DNS errors. If this
+  # reliable interface is unavailable, fail closed rather than guess.
+  command -v dig >/dev/null 2>&1 \
+    || die "DNS validation unavailable (dig is not installed)"
+
+  DNS_FOUND=0
+  validate_dns_family "$host" A
+  validate_dns_family "$host" AAAA
+  (( DNS_FOUND == 1 )) || die "DNS resolution returned no addresses: $host"
+}
+
 # URL の fragment は取得先へ渡さないが、query はリソース指定や署名に
 # 使われる可能性があるため保持する。
 #
@@ -397,17 +800,21 @@ fetch_youtube() {
 
   local tmp_dir="${_agent_reach_tmp_dir}"
   [[ -n "$tmp_dir" ]] || die "一時ディレクトリが初期化されていません"
+  local policy_dir="${tmp_dir}/network-policy"
+  install_network_policy "$policy_dir"
+  local policy_pythonpath="${policy_dir}${PYTHONPATH:+:${PYTHONPATH}}"
 
   local base="${tmp_dir}/yt"
   local meta_out="${base}.meta.json"
   local subs_dir="${base}.subs"
   mkdir -p "$subs_dir"
 
-  # Fetch metadata JSON
-  yt-dlp --no-check-certificate --dump-json "$url" > "$meta_out" 2>&1
+  # Fetch metadata JSON. sitecustomize guards every DNS lookup made by yt-dlp,
+  # including redirects and extractor/subtitle URLs.
+  PYTHONPATH="$policy_pythonpath" yt-dlp --no-check-certificate --dump-json "$url" > "$meta_out" 2>&1
 
   # Fetch subtitles (best effort)
-  yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download \
+  PYTHONPATH="$policy_pythonpath" yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download \
     -o "${subs_dir}/%(id)s" "$url" > /dev/null 2>&1 || true
 
   format_youtube "$meta_out" "$subs_dir"
@@ -627,9 +1034,14 @@ fetch_x_twitter() {
 fetch_rss() {
   local url="$1"
   check_cmd python3
-  python3 -c "import feedparser" 2>/dev/null || die "'feedparser' Python package is not installed (pip install feedparser)"
 
-  python3 -c "
+  local policy_dir="${_agent_reach_tmp_dir}/network-policy"
+  install_network_policy "$policy_dir"
+  local policy_pythonpath="${policy_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+  PYTHONPATH="$policy_pythonpath" python3 -c "import feedparser" 2>/dev/null \
+    || die "'feedparser' Python package is not installed (pip install feedparser)"
+
+  PYTHONPATH="$policy_pythonpath" python3 -c "
 import feedparser, json, sys
 f = feedparser.parse(sys.argv[1])
 entries = [{'title': e.title, 'link': e.link, 'summary': getattr(e, 'summary', '')} for e in f.entries[:20]]
@@ -657,6 +1069,9 @@ main() {
   validate_url "$url"
 
   url=$(normalize_url "$url")
+  local hostname
+  hostname=$(extract_hostname "$url")
+  validate_public_destination "$hostname"
 
   local service
   service=$(detect_service "$url")

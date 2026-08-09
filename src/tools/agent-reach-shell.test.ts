@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import networkCases from "./__fixtures__/agent-reach/network-cases.json" with {
+  type: "json",
+};
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
@@ -21,6 +24,32 @@ const agentReachScript = join(
   import.meta.dirname,
   "../../templates/SKILLS/agent-reach/scripts/agent-reach.sh",
 );
+
+async function installPublicDig(binDir: string): Promise<void> {
+  const dig = join(binDir, "dig");
+  await writeFile(
+    dig,
+    `#!/usr/bin/env bash
+set -euo pipefail
+record_type=""
+for arg in "$@"; do
+  case "$arg" in
+    A|AAAA) record_type="$arg" ;;
+  esac
+done
+host="\${@: -2:1}"
+printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+case "$record_type" in
+  A) printf '%s\\n' "$host 60 IN A 8.8.8.8" ;;
+  AAAA) printf '%s\\n' "$host 60 IN AAAA 2001:4860:4860::8888" ;;
+  *) exit 2 ;;
+esac
+`,
+    "utf8",
+  );
+  await chmod(dig, 0o755);
+}
+
 describe("agent-reach.sh YouTube字幕", () => {
   let testDir: string;
   let binDir: string;
@@ -29,6 +58,7 @@ describe("agent-reach.sh YouTube字幕", () => {
     testDir = await mkdtemp(join(tmpdir(), "agent-reach-shell-test-"));
     binDir = join(testDir, "bin");
     await mkdir(binDir);
+    await installPublicDig(binDir);
   });
 
   afterEach(async () => {
@@ -93,6 +123,7 @@ describe("agent-reach.sh URL 正規化", () => {
     testDir = await mkdtemp(join(tmpdir(), "agent-reach-shell-test-"));
     binDir = join(testDir, "bin");
     await mkdir(binDir);
+    await installPublicDig(binDir);
   });
 
   afterEach(async () => {
@@ -131,6 +162,364 @@ printf '%s\\n' "\${!#}"
   });
 });
 
+describe("agent-reach.sh destination/IP validation", () => {
+  let testDir: string;
+  let binDir: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "agent-reach-shell-network-"));
+    binDir = join(testDir, "bin");
+    await mkdir(binDir);
+    await writeFile(
+      join(binDir, "curl"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'fixture response\\n'
+`,
+      "utf8",
+    );
+    await chmod(join(binDir, "curl"), 0o755);
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it.each(networkCases)("$name: $address", async ({
+    address,
+    public: expected,
+  }) => {
+    const host = address.includes(":") ? `[${address}]` : address;
+    const result = execFileAsync(
+      "bash",
+      [agentReachScript, `https://${host}/article`],
+      { env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` } },
+    );
+
+    if (expected) {
+      await expect(result).resolves.toBeDefined();
+    } else {
+      await expect(result).rejects.toMatchObject({
+        stderr: expect.stringContaining("internal destination is not allowed"),
+      });
+    }
+  });
+
+  it("checks every DNS answer and rejects a mixed public/private result", async () => {
+    const dig = join(binDir, "dig");
+    await writeFile(
+      dig,
+      `#!/usr/bin/env bash
+set -euo pipefail
+record_type="\${@: -1}"
+printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+if [[ "$record_type" == A ]]; then
+  printf '%s\\n' 'mixed.example. 60 IN A 8.8.8.8' 'mixed.example. 60 IN A 100.127.255.255'
+fi
+`,
+      "utf8",
+    );
+    await chmod(dig, 0o755);
+
+    await expect(
+      execFileAsync(
+        "bash",
+        [agentReachScript, "https://mixed.example/feed.xml"],
+        {
+          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        },
+      ),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("100.127.255.255"),
+    });
+  });
+
+  it("queries A and AAAA and rejects a prohibited AAAA answer", async () => {
+    const dig = join(binDir, "dig");
+    const callLog = join(testDir, "dig-calls.log");
+    await writeFile(
+      dig,
+      `#!/usr/bin/env bash
+set -euo pipefail
+record_type="\${@: -1}"
+host="\${@: -2:1}"
+printf '%s %s\\n' "$record_type" "$host" >> "$AGENT_REACH_DIG_CALLS"
+printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+case "$record_type" in
+  A) printf '%s\\n' 'mixed-family.example. 60 IN A 8.8.8.8' ;;
+  AAAA) printf '%s\\n' 'mixed-family.example. 60 IN AAAA fc00::1' ;;
+  *) exit 1 ;;
+esac
+`,
+      "utf8",
+    );
+    await chmod(dig, 0o755);
+
+    await expect(
+      execFileAsync(
+        "bash",
+        [agentReachScript, "https://mixed-family.example/feed.xml"],
+        {
+          env: {
+            ...process.env,
+            AGENT_REACH_DIG_CALLS: callLog,
+            PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("fc00::1"),
+    });
+
+    await expect(readFile(callLog, "utf8")).resolves.toEqual(
+      "A mixed-family.example\nAAAA mixed-family.example\n",
+    );
+  });
+
+  it.each([
+    {
+      name: "IPv4-only host with successful AAAA NODATA",
+      host: "ipv4-only.example",
+      recordType: "A",
+      absentType: "AAAA",
+      absentStatus: "NOERROR",
+      address: "8.8.8.8",
+    },
+    {
+      name: "IPv6-only host with successful A NODATA",
+      host: "ipv6-only.example",
+      recordType: "AAAA",
+      absentType: "A",
+      absentStatus: "NOERROR",
+      address: "2001:4860:4860::8888",
+    },
+    {
+      name: "public family with successful NXDOMAIN on the other query",
+      host: "nxdomain-family.example",
+      recordType: "A",
+      absentType: "AAAA",
+      absentStatus: "NXDOMAIN",
+      address: "8.8.4.4",
+    },
+  ])("allows a valid $name when the other family is absent", async ({
+    host,
+    recordType,
+    absentType,
+    absentStatus,
+    address,
+  }) => {
+    const dig = join(binDir, "dig");
+    await writeFile(
+      dig,
+      `#!/usr/bin/env bash
+set -euo pipefail
+record_type="\${@: -1}"
+case "$record_type" in
+  ${recordType})
+    printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+    printf '%s\\n' '${host}. 60 IN ${recordType} ${address}'
+    ;;
+  ${absentType})
+    printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: ${absentStatus}, id: 1'
+    ;;
+  *) exit 1 ;;
+esac
+`,
+      "utf8",
+    );
+    await chmod(dig, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, `https://${host}/article`], {
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("fails closed when one address family resolver query exits unsuccessfully", async () => {
+    const dig = join(binDir, "dig");
+    await writeFile(
+      dig,
+      `#!/usr/bin/env bash
+set -euo pipefail
+record_type="\${@: -1}"
+case "$record_type" in
+  A)
+    printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+    printf '%s\\n' 'family-error.example. 60 IN A 8.8.8.8'
+    ;;
+  AAAA) exit 1 ;;
+  *) exit 1 ;;
+esac
+`,
+      "utf8",
+    );
+    await chmod(dig, 0o755);
+
+    await expect(
+      execFileAsync(
+        "bash",
+        [agentReachScript, "https://family-error.example/feed.xml"],
+        {
+          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        },
+      ),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("DNS resolution failed"),
+    });
+  });
+
+  it("fails closed when dig is unavailable", async () => {
+    await expect(
+      execFileAsync(
+        "/bin/bash",
+        [agentReachScript, "https://missing-dig.example/feed.xml"],
+        { env: { ...process.env, PATH: binDir } },
+      ),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("DNS validation unavailable"),
+    });
+  });
+
+  it("fails closed when DNS resolution exits unsuccessfully or returns no addresses", async () => {
+    const dig = join(binDir, "dig");
+    await writeFile(
+      dig,
+      `#!/usr/bin/env bash
+set -euo pipefail
+host="\${@: -2:1}"
+record_type="\${@: -1}"
+case "$host" in
+  broken.example) exit 2 ;;
+  empty.example)
+    printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+    exit 0
+    ;;
+esac
+printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+case "$record_type" in
+  A) printf '%s\\n' 'public.example. 60 IN A 8.8.8.8' ;;
+  AAAA) printf '%s\\n' 'public.example. 60 IN AAAA 2001:4860:4860::8888' ;;
+  *) exit 1 ;;
+esac
+`,
+      "utf8",
+    );
+    await chmod(dig, 0o755);
+
+    for (const host of ["broken.example", "empty.example"]) {
+      await expect(
+        execFileAsync("bash", [agentReachScript, `https://${host}/feed.xml`], {
+          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        }),
+      ).rejects.toBeDefined();
+    }
+  });
+
+  it("fails closed when one address family returns SERVFAIL", async () => {
+    const dig = join(binDir, "dig");
+    await writeFile(
+      dig,
+      `#!/usr/bin/env bash
+set -euo pipefail
+record_type="\${@: -1}"
+case "$record_type" in
+  A)
+    printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1'
+    printf '%s\\n' 'status-error.example. 60 IN A 8.8.8.8'
+    ;;
+  AAAA) printf '%s\\n' ';; ->>HEADER<<- opcode: QUERY, status: SERVFAIL, id: 1' ;;
+  *) exit 1 ;;
+esac
+`,
+      "utf8",
+    );
+    await chmod(dig, 0o755);
+
+    await expect(
+      execFileAsync(
+        "bash",
+        [agentReachScript, "https://status-error.example/feed.xml"],
+        {
+          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        },
+      ),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("status SERVFAIL"),
+    });
+  });
+
+  it("guards RSS redirect DNS lookups in feedparser", async () => {
+    await installPublicDig(binDir);
+    const marker = join(testDir, "rss-guard-marker");
+    const feedparser = join(testDir, "feedparser.py");
+
+    for (const destination of [
+      "http://localhost:9/private",
+      "http://[2001:db8::1]/private",
+    ]) {
+      await writeFile(
+        feedparser,
+        `import os\nimport urllib.request\n\ndef parse(_url):\n    try:\n        urllib.request.urlopen("${destination}")\n    except Exception as error:\n        with open(os.environ["AGENT_REACH_GUARD_MARKER"], "w") as output:\n            output.write(str(error))\n        raise\n`,
+        "utf8",
+      );
+
+      await expect(
+        execFileAsync(
+          "bash",
+          [agentReachScript, "https://fixture.example/feed.xml"],
+          {
+            env: {
+              ...process.env,
+              AGENT_REACH_GUARD_MARKER: marker,
+              PATH: `${binDir}:${process.env.PATH ?? ""}`,
+              PYTHONPATH: testDir,
+            },
+          },
+        ),
+      ).rejects.toBeDefined();
+      await expect(readFile(marker, "utf8")).resolves.toContain(
+        "non-public destination rejected",
+      );
+    }
+  });
+
+  it("guards yt-dlp secondary DNS lookups", async () => {
+    await installPublicDig(binDir);
+    const marker = join(testDir, "yt-dlp-guard-marker");
+    const ytDlp = join(binDir, "yt-dlp");
+
+    for (const destination of [
+      "http://localhost:9/private",
+      "http://[2001:db8::1]/private",
+    ]) {
+      await writeFile(
+        ytDlp,
+        `#!/usr/bin/env python3\nimport os\nimport urllib.request\n\ntry:\n    urllib.request.urlopen("${destination}")\nexcept Exception as error:\n    with open(os.environ["AGENT_REACH_GUARD_MARKER"], "w") as output:\n        output.write(str(error))\n    raise\n`,
+        "utf8",
+      );
+      await chmod(ytDlp, 0o755);
+
+      await expect(
+        execFileAsync(
+          "bash",
+          [agentReachScript, "https://www.youtube.com/watch?v=fixture"],
+          {
+            env: {
+              ...process.env,
+              AGENT_REACH_GUARD_MARKER: marker,
+              PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            },
+          },
+        ),
+      ).rejects.toBeDefined();
+      await expect(readFile(marker, "utf8")).resolves.toContain(
+        "non-public destination rejected",
+      );
+    }
+  });
+});
+
 describe("agent-reach.sh temporary directories", () => {
   let testDir: string;
   let binDir: string;
@@ -142,6 +531,7 @@ describe("agent-reach.sh temporary directories", () => {
     tempRoot = join(testDir, "tmp");
     await mkdir(binDir);
     await mkdir(tempRoot);
+    await installPublicDig(binDir);
   });
 
   afterEach(async () => {
@@ -287,6 +677,7 @@ describe("agent-reach.sh shared parity fixtures", () => {
     testDir = await mkdtemp(join(tmpdir(), "agent-reach-shell-parity-"));
     binDir = join(testDir, "bin");
     await mkdir(binDir);
+    await installPublicDig(binDir);
   });
 
   afterEach(async () => {
