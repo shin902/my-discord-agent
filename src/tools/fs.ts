@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import {
   glob,
   mkdir,
@@ -99,6 +100,10 @@ type SelectedLines = {
   eof: boolean;
 };
 
+type StreamSelectedLines = SelectedLines & {
+  size: number;
+};
+
 function validatePositiveInteger(
   name: string,
   value: number | undefined,
@@ -175,6 +180,96 @@ function selectLines(raw: string, range: ReadRange): SelectedLines {
   };
 }
 
+/**
+ * Read a ranged text result incrementally so source-file size does not affect
+ * memory usage. The requested output is necessarily retained; an unbounded
+ * startLine-only range therefore retains its full suffix. A very long line
+ * being scanned is also necessarily retained while its LF is located.
+ */
+async function selectLinesFromStream(
+  fp: string,
+  range: ReadRange,
+): Promise<StreamSelectedLines> {
+  const { startLine, lineCount, tailCount } = range;
+  const selectionStart = startLine ?? 1;
+  const selectedLines: string[] = [];
+  const tailLines: string[] = [];
+  let tailStart = 0;
+  let totalLines = 0;
+  let size = 0;
+
+  const addLine = (line: string): void => {
+    totalLines += 1;
+    if (tailCount !== undefined) {
+      if (tailLines.length < tailCount) {
+        tailLines.push(line);
+      } else {
+        tailLines[tailStart] = line;
+        tailStart = (tailStart + 1) % tailCount;
+      }
+      return;
+    }
+
+    if (
+      totalLines >= selectionStart &&
+      (lineCount === undefined || totalLines - selectionStart < lineCount)
+    ) {
+      selectedLines.push(line);
+    }
+  };
+
+  const stream = createReadStream(fp, { encoding: "utf8" });
+  let remainder = "";
+  for await (const chunk of stream) {
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    size += text.length;
+    const data = remainder + text;
+    let lineStart = 0;
+    while (true) {
+      const newline = data.indexOf("\n", lineStart);
+      if (newline === -1) break;
+      addLine(data.slice(lineStart, newline));
+      lineStart = newline + 1;
+    }
+    remainder = data.slice(lineStart);
+  }
+  if (remainder !== "") {
+    addLine(remainder);
+  }
+
+  if (startLine !== undefined && startLine > totalLines) {
+    throw new Error(
+      `startLine ${startLine} は EOF を超えています（全 ${totalLines} 行）`,
+    );
+  }
+
+  let first = 0;
+  let returnedLines = selectedLines;
+  if (tailCount !== undefined) {
+    first = Math.max(0, totalLines - tailCount);
+    returnedLines =
+      tailStart === 0
+        ? tailLines
+        : [...tailLines.slice(tailStart), ...tailLines.slice(0, tailStart)];
+  } else if (startLine !== undefined) {
+    first = startLine - 1;
+  }
+
+  const returnedLineCount = returnedLines.length;
+  const actualStartLine = returnedLineCount === 0 ? 0 : first + 1;
+  const actualEndLine = returnedLineCount === 0 ? 0 : first + returnedLineCount;
+
+  return {
+    text: returnedLines.join("\n"),
+    startLine: actualStartLine,
+    endLine: actualEndLine,
+    returnedLineCount,
+    totalLines,
+    eof: actualEndLine === totalLines,
+    size,
+  };
+}
+
 export const readTool: AgentTool<typeof readParameters> = {
   name: "read",
   label: "Read File",
@@ -204,11 +299,31 @@ export const readTool: AgentTool<typeof readParameters> = {
       };
     }
 
+    if (hasRange) {
+      const selected = await selectLinesFromStream(fp, {
+        startLine,
+        lineCount,
+        tailCount,
+      });
+      return {
+        content: [{ type: "text", text: selected.text }],
+        details: {
+          path: safePath,
+          size: selected.size,
+          startLine: selected.startLine,
+          endLine: selected.endLine,
+          returnedLineCount: selected.returnedLineCount,
+          totalLines: selected.totalLines,
+          eof: selected.eof,
+        },
+      };
+    }
+
+    // Unbounded reads retain the existing full-output behavior.
     const raw = await readFile(fp, "utf-8");
-    const selected = selectLines(raw, { startLine, lineCount, tailCount });
-    const text = hasRange ? selected.text : raw;
+    const selected = selectLines(raw, {});
     return {
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: raw }],
       details: {
         path: safePath,
         size: raw.length,
