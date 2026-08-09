@@ -18,6 +18,7 @@ import networkCases from "./__fixtures__/agent-reach/network-cases.json" with {
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
+import { installRssPythonFixtures } from "./agent-reach-rss-test-utils.js";
 
 const execFileAsync = promisify(execFile);
 const agentReachScript = join(
@@ -449,39 +450,77 @@ esac
     });
   });
 
-  it("guards RSS redirect DNS lookups in feedparser", async () => {
-    await installPublicDig(binDir);
-    const marker = join(testDir, "rss-guard-marker");
-    const feedparser = join(testDir, "feedparser.py");
+  it("fetches a public RSS feed through multiple validated redirects", async () => {
+    const requestLog = join(testDir, "rss-requests.log");
+    const parseMarker = join(testDir, "rss-parse-marker");
+    await installRssPythonFixtures(testDir, {
+      "https://8.8.8.8/feed.xml": {
+        status: 302,
+        location: "https://8.8.4.4/step.xml",
+      },
+      "https://8.8.4.4/step.xml": {
+        status: 301,
+        location: "https://1.1.1.1/final.xml",
+      },
+      "https://1.1.1.1/final.xml": {
+        status: 200,
+        body: "<rss><channel><title>fixture</title></channel></rss>",
+      },
+    });
 
-    for (const destination of [
-      "http://localhost:9/private",
-      "http://[2001:db8::1]/private",
-    ]) {
-      await writeFile(
-        feedparser,
-        `import os\nimport urllib.request\n\ndef parse(_url):\n    try:\n        urllib.request.urlopen("${destination}")\n    except Exception as error:\n        with open(os.environ["AGENT_REACH_GUARD_MARKER"], "w") as output:\n            output.write(str(error))\n        raise\n`,
-        "utf8",
-      );
+    const { stdout } = await execFileAsync(
+      "bash",
+      [agentReachScript, "https://8.8.8.8/feed.xml"],
+      {
+        env: {
+          ...process.env,
+          AGENT_REACH_RSS_REQUEST_LOG: requestLog,
+          AGENT_REACH_RSS_PARSE_MARKER: parseMarker,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          PYTHONPATH: testDir,
+        },
+      },
+    );
 
-      await expect(
-        execFileAsync(
-          "bash",
-          [agentReachScript, "https://fixture.example/feed.xml"],
-          {
-            env: {
-              ...process.env,
-              AGENT_REACH_GUARD_MARKER: marker,
-              PATH: `${binDir}:${process.env.PATH ?? ""}`,
-              PYTHONPATH: testDir,
-            },
-          },
-        ),
-      ).rejects.toBeDefined();
-      await expect(readFile(marker, "utf8")).resolves.toContain(
-        "non-public destination rejected",
-      );
-    }
+    await expect(readFile(requestLog, "utf8")).resolves.toBe(
+      "https://8.8.8.8/feed.xml\nhttps://8.8.4.4/step.xml\nhttps://1.1.1.1/final.xml\n",
+    );
+    await expect(readFile(parseMarker, "utf8")).resolves.toBe("bytes");
+    expect(stdout).toContain('"title": "validated RSS"');
+  });
+
+  it("rejects private RSS destinations before opening initial or redirect URLs", async () => {
+    const requestLog = join(testDir, "rss-private-requests.log");
+    await installRssPythonFixtures(testDir, {
+      "https://8.8.8.8/feed.xml": {
+        status: 302,
+        location: "http://127.0.0.1/private.xml",
+      },
+    });
+    const env = {
+      ...process.env,
+      AGENT_REACH_RSS_REQUEST_LOG: requestLog,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      PYTHONPATH: testDir,
+    };
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, "https://8.8.8.8/feed.xml"], {
+        env,
+      }),
+    ).rejects.toBeDefined();
+    await expect(readFile(requestLog, "utf8")).resolves.toBe(
+      "https://8.8.8.8/feed.xml\n",
+    );
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, "http://127.0.0.1/feed.xml"], {
+        env,
+      }),
+    ).rejects.toBeDefined();
+    await expect(readFile(requestLog, "utf8")).resolves.toBe(
+      "https://8.8.8.8/feed.xml\n",
+    );
   });
 
   it("guards yt-dlp secondary DNS lookups", async () => {

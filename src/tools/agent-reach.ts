@@ -375,6 +375,148 @@ function networkPolicyCommands(outAbsPath: string): {
   };
 }
 
+/**
+ * RSS must not be handed to feedparser as a URL: feedparser follows redirects
+ * itself and has no hook for checking each destination. Fetch the bytes with a
+ * redirect-disabled urllib opener, validate every hop through the injected
+ * network policy, then parse only the already-fetched response body.
+ */
+const RSS_FETCH_PYTHON = `import feedparser
+import json
+import socket
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+MAX_REDIRECTS = 5
+MAX_FEED_BYTES = 5 * 1024 * 1024
+REQUEST_TIMEOUT_SECONDS = 30.0
+MAX_FETCH_SECONDS = 30.0
+REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, message, headers, new_url):
+        return None
+
+def _validate_url(url):
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as error:
+        raise RuntimeError("invalid RSS URL: %s" % url) from error
+    if parsed.scheme not in ("http", "https"):
+        raise RuntimeError("RSS URL must use HTTP or HTTPS: %s" % url)
+    if not hostname:
+        raise RuntimeError("RSS URL has no hostname: %s" % url)
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    try:
+        answers = socket.getaddrinfo(
+            hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
+    except OSError as error:
+        raise RuntimeError("RSS destination validation failed: %s" % url) from error
+    if not answers:
+        raise RuntimeError("RSS destination has no addresses: %s" % url)
+    # sitecustomize rejects every non-public answer and returns the checked
+    # resolver results. Keep this loop explicit so malformed resolver output is
+    # rejected even if a Python runtime changes the socket policy behavior.
+    for answer in answers:
+        if len(answer) < 5 or not answer[4]:
+            raise RuntimeError("RSS destination returned a malformed address: %s" % url)
+
+def _read_limited(response, url, deadline):
+    content_length = response.headers.get("Content-Length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as error:
+            raise RuntimeError("RSS Content-Length is invalid: %s" % url) from error
+        if declared_length < 0 or declared_length > MAX_FEED_BYTES:
+            raise RuntimeError("RSS response is too large: %s" % url)
+
+    chunks = []
+    total = 0
+    while True:
+        remaining_time = deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise RuntimeError("RSS fetch timed out: %s" % url)
+        chunk = response.read(min(65536, MAX_FEED_BYTES - total + 1))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_FEED_BYTES:
+            raise RuntimeError("RSS response is too large: %s" % url)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+def _fetch_body(initial_url):
+    current_url = initial_url
+    redirects = 0
+    deadline = time.monotonic() + MAX_FETCH_SECONDS
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect
+    )
+
+    while True:
+        _validate_url(current_url)
+        remaining_time = deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise RuntimeError("RSS fetch timed out: %s" % current_url)
+
+        request = urllib.request.Request(
+            current_url,
+            headers={
+                "Accept": "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml, text/xml",
+                "User-Agent": "my-discord-agent/agent-reach-rss",
+            },
+        )
+        response = None
+        try:
+            try:
+                response = opener.open(
+                    request,
+                    timeout=min(REQUEST_TIMEOUT_SECONDS, remaining_time),
+                )
+            except urllib.error.HTTPError as error:
+                response = error
+
+            status = getattr(response, "status", getattr(response, "code", 0))
+            if status in REDIRECT_STATUSES:
+                location = response.headers.get("Location")
+                if not location:
+                    raise RuntimeError("RSS redirect has no Location: %s" % current_url)
+                if redirects >= MAX_REDIRECTS:
+                    raise RuntimeError("RSS redirect limit exceeded: %s" % current_url)
+                redirects += 1
+                current_url = urllib.parse.urljoin(current_url, location)
+                continue
+            if status < 200 or status >= 300:
+                raise RuntimeError("RSS fetch returned HTTP %s: %s" % (status, current_url))
+            return _read_limited(response, current_url, deadline)
+        finally:
+            if response is not None:
+                response.close()
+
+def main():
+    body = _fetch_body(sys.argv[1])
+    parsed = feedparser.parse(body)
+    entries = [
+        {
+            "title": getattr(entry, "title", ""),
+            "link": getattr(entry, "link", ""),
+            "summary": getattr(entry, "summary", ""),
+        }
+        for entry in parsed.entries[:20]
+    ]
+    print(json.dumps(entries, ensure_ascii=False, indent=2))
+
+main()
+`;
+
 type ServiceType =
   | "youtube"
   | "github-repo"
@@ -1046,10 +1188,7 @@ export function buildCommand(
       return (
         `${policy.setup} && ` +
         `${policy.env} python3 -c ` +
-        shellQuote(
-          `import feedparser,json,sys; f=feedparser.parse(sys.argv[1]); ` +
-            `print(json.dumps([{'title':e.title,'link':e.link,'summary':getattr(e,'summary','')} for e in f.entries[:20]], ensure_ascii=False, indent=2))`,
-        ) +
+        shellQuote(RSS_FETCH_PYTHON) +
         ` ${shellQuote(url)} > ${out}`
       );
     }

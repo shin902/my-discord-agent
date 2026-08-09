@@ -13,6 +13,7 @@ import {
   isPublicIpAddress,
   validatePublicDestination,
 } from "./agent-reach.js";
+import { installRssPythonFixtures } from "./agent-reach-rss-test-utils.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -63,40 +64,90 @@ describe("agent-reach destination policy", () => {
     }
   });
 
-  it("guards RSS redirect DNS lookups in the child process", async () => {
-    const testDir = await mkdtemp(join(tmpdir(), "agent-reach-rss-guard-"));
+  it("fetches a public RSS feed through multiple validated redirects", async () => {
+    const testDir = await mkdtemp(join(tmpdir(), "agent-reach-rss-redirect-"));
     try {
-      const marker = join(testDir, "marker");
       const output = join(testDir, "rss.md");
-      const command = buildCommand(
-        "rss",
-        "https://fixture.example/feed.xml",
-        output,
+      const requestLog = join(testDir, "requests.log");
+      const parseMarker = join(testDir, "parse-marker");
+      await installRssPythonFixtures(testDir, {
+        "https://8.8.8.8/feed.xml": {
+          status: 302,
+          location: "https://8.8.4.4/step.xml",
+        },
+        "https://8.8.4.4/step.xml": {
+          status: 301,
+          location: "https://1.1.1.1/final.xml",
+        },
+        "https://1.1.1.1/final.xml": {
+          status: 200,
+          body: "<rss><channel><title>fixture</title></channel></rss>",
+        },
+      });
+
+      await execFileAsync(
+        "bash",
+        ["-c", buildCommand("rss", "https://8.8.8.8/feed.xml", output)],
+        {
+          env: {
+            ...process.env,
+            AGENT_REACH_RSS_REQUEST_LOG: requestLog,
+            AGENT_REACH_RSS_PARSE_MARKER: parseMarker,
+            PYTHONPATH: testDir,
+          },
+        },
       );
 
-      for (const destination of [
-        "http://localhost:9/private",
-        "http://[2001:db8::1]/private",
-      ]) {
-        await writeFile(
-          join(testDir, "feedparser.py"),
-          `import os\nimport urllib.request\n\ndef parse(_url):\n    try:\n        urllib.request.urlopen("${destination}")\n    except Exception as error:\n        with open(os.environ["AGENT_REACH_GUARD_MARKER"], "w") as output:\n            output.write(str(error))\n        raise\n`,
-          "utf8",
-        );
+      await expect(readFile(requestLog, "utf8")).resolves.toBe(
+        "https://8.8.8.8/feed.xml\nhttps://8.8.4.4/step.xml\nhttps://1.1.1.1/final.xml\n",
+      );
+      await expect(readFile(parseMarker, "utf8")).resolves.toBe("bytes");
+      await expect(readFile(output, "utf8")).resolves.toContain(
+        '"title": "validated RSS"',
+      );
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
 
-        await expect(
-          execFileAsync("bash", ["-c", command], {
-            env: {
-              ...process.env,
-              AGENT_REACH_GUARD_MARKER: marker,
-              PYTHONPATH: testDir,
-            },
-          }),
-        ).rejects.toBeDefined();
-        await expect(readFile(marker, "utf8")).resolves.toContain(
-          "non-public destination rejected",
-        );
-      }
+  it("rejects private RSS destinations before opening initial or redirect URLs", async () => {
+    const testDir = await mkdtemp(join(tmpdir(), "agent-reach-rss-private-"));
+    try {
+      const output = join(testDir, "rss.md");
+      const requestLog = join(testDir, "requests.log");
+      await installRssPythonFixtures(testDir, {
+        "https://8.8.8.8/feed.xml": {
+          status: 302,
+          location: "http://127.0.0.1/private.xml",
+        },
+      });
+      const env = {
+        ...process.env,
+        PYTHONPATH: testDir,
+        AGENT_REACH_RSS_REQUEST_LOG: requestLog,
+      };
+
+      await expect(
+        execFileAsync(
+          "bash",
+          ["-c", buildCommand("rss", "https://8.8.8.8/feed.xml", output)],
+          { env },
+        ),
+      ).rejects.toThrow();
+      await expect(readFile(requestLog, "utf8")).resolves.toBe(
+        "https://8.8.8.8/feed.xml\n",
+      );
+
+      await expect(
+        execFileAsync(
+          "bash",
+          ["-c", buildCommand("rss", "http://127.0.0.1/feed.xml", output)],
+          { env },
+        ),
+      ).rejects.toThrow();
+      await expect(readFile(requestLog, "utf8")).resolves.toBe(
+        "https://8.8.8.8/feed.xml\n",
+      );
     } finally {
       await rm(testDir, { recursive: true, force: true });
     }
