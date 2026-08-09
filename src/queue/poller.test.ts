@@ -1,5 +1,16 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SendMessageOptions } from "../agent/manager.js";
+import {
+  type ArticleDispatch,
+  claimUnreadArticles,
+  listDispatchClaims,
+  listUnreadArticles,
+  openRssDb,
+  saveFeedEntries,
+} from "../rss/store.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 import type { InboxMessage } from "./types.js";
 
@@ -32,6 +43,7 @@ const {
   heartbeat,
   markRunning,
   updateRunning,
+  getJob,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
   commitInboxResult: vi.fn(),
@@ -41,6 +53,7 @@ const {
   heartbeat: vi.fn(),
   markRunning: vi.fn(),
   updateRunning: vi.fn(),
+  getJob: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -52,7 +65,7 @@ vi.mock("./repository.js", () => ({
     markRunning,
     deadLetter,
     updateRunning,
-    get: vi.fn(),
+    get: getJob,
   }),
 }));
 
@@ -62,6 +75,8 @@ const { resolveProviderConcurrency } = await import("../config/providers.js");
 const { client } = await import("../discord/client.js");
 const { processMessage, startPoller, stopPoller } = await import("./poller.js");
 
+let tempDirs: string[] = [];
+
 beforeEach(() => {
   vi.mocked(sendMessage).mockClear();
   claim.mockReset();
@@ -70,14 +85,63 @@ beforeEach(() => {
   heartbeat.mockReset();
   markRunning.mockReset();
   updateRunning.mockClear();
+  getJob.mockReset();
+  getJob.mockReturnValue(undefined);
   vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
 });
 
-afterEach(() => {
+afterEach(async () => {
   stopPoller();
   vi.useRealTimers();
+  await Promise.all(
+    tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+  tempDirs = [];
 });
+
+async function makeRssPath(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "poller-rss-test-"));
+  tempDirs.push(dir);
+  return join(dir, "rss.sqlite3");
+}
+
+function seedUnreadArticles(path: string, count: number): void {
+  const db = openRssDb(path);
+  try {
+    saveFeedEntries(db, {
+      url: "https://example.com/feed.xml",
+      parsedName: "Feed",
+      etag: null,
+      lastModified: null,
+      entries: Array.from({ length: count }, (_, index) => ({
+        entryId: `article-${index + 1}`,
+        title: `Article ${index + 1}`,
+        link: `https://example.com/article-${index + 1}`,
+        publishedAt: `2026-08-0${index + 1}`,
+        summary: `Summary ${index + 1}`,
+      })),
+      markInitialAsRead: false,
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function claimRssArticles(
+  path: string,
+  owner: string,
+  limit: number,
+): ArticleDispatch {
+  const db = openRssDb(path);
+  try {
+    const dispatch = claimUnreadArticles(db, owner, limit);
+    if (!dispatch) throw new Error("expected RSS dispatch");
+    return dispatch;
+  } finally {
+    db.close();
+  }
+}
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
   const now = new Date().toISOString();
@@ -524,6 +588,127 @@ describe("processMessage - terminal queue transitions", () => {
       msg.fencingToken,
       { metadata: { error: expect.any(Error) } },
     );
+  });
+});
+
+describe("processMessage - RSS dispatch settlement wiring", () => {
+  beforeEach(() => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      autoReply: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("AI response");
+    commitInboxResult.mockClear();
+    failAttempt.mockClear();
+    deadLetter.mockClear();
+    freezeExecutionIdentity.mockResolvedValue(undefined);
+  });
+
+  it("marks only the claimed RSS articles read after successful processing", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 2);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    const msg = makeMsg({
+      id: "rss-success",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+    getJob.mockReturnValue({
+      status: "completed",
+      idempotencyKey: dispatch.jobId,
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledOnce();
+    expect(getJob).toHaveBeenCalledWith(msg.id);
+    const db = openRssDb(rssPath);
+    try {
+      expect(
+        listUnreadArticles(db, 10).map((article) => article.title),
+      ).toEqual(["Article 2"]);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("retains the RSS claim after a retryable processing failure", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    const error = new Error("temporary failure");
+    vi.mocked(sendMessage).mockRejectedValue(error);
+    const msg = makeMsg({
+      id: "rss-retry",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+    getJob.mockReturnValue({
+      status: "retry_wait",
+      idempotencyKey: dispatch.jobId,
+    });
+
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      error,
+      msg.fencingToken,
+      expect.objectContaining({ metadata: expect.any(Object) }),
+    );
+    expect(deadLetter).not.toHaveBeenCalled();
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(1);
+      expect(listDispatchClaims(db)).toEqual([
+        {
+          dispatchId: dispatch.id,
+          dispatchJobId: dispatch.jobId,
+          articleIds: dispatch.articles.map((article) => article.id),
+        },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("releases the RSS claim after a terminal dead-letter failure", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    const error = new NonRetryableError("invalid input");
+    vi.mocked(sendMessage).mockRejectedValue(error);
+    const msg = makeMsg({
+      id: "rss-dead-letter",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+    getJob.mockReturnValue({
+      status: "dead_letter",
+      idempotencyKey: dispatch.jobId,
+    });
+
+    await processMessage(msg);
+
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "non_retryable",
+      String(error),
+      expect.any(Object),
+    );
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(1);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 });
 

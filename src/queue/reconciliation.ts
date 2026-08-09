@@ -6,6 +6,40 @@ import {
 } from "../rss/store.js";
 import { getQueueRepository, type QueueRepository } from "./repository.js";
 
+export type RssDispatchResolution = "completed" | "dead_letter";
+
+/**
+ * Settle one RSS dispatch after its associated queue job reaches a terminal
+ * state. This is deliberately targeted: a live queue transition must not
+ * release another dispatch that is still between claim and queue admission.
+ */
+export function settleRssDispatch(
+  rssDbPath: string | undefined,
+  dispatchId: string,
+  dispatchJobId: string | undefined,
+  resolution: RssDispatchResolution,
+): number {
+  const result = tryOpenRssDb(rssDbPath);
+  if (!result.ok) return 0;
+  try {
+    const claim = listDispatchClaims(result.db).find(
+      (candidate) =>
+        candidate.dispatchId === dispatchId &&
+        (dispatchJobId === undefined ||
+          candidate.dispatchJobId === dispatchJobId),
+    );
+    if (!claim) return 0;
+    if (resolution === "completed") {
+      markArticlesRead(result.db, claim.articleIds);
+    } else {
+      releaseDispatchArticles(result.db, claim.dispatchId, claim.articleIds);
+    }
+    return 1;
+  } finally {
+    result.db.close();
+  }
+}
+
 /**
  * Resolve the two crash windows between RSS claiming, queue insertion, and read marking.
  * A completed queue job makes its articles read; a missing/failed job releases its claim.

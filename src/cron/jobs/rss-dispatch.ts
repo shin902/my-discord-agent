@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   claimUnreadArticles,
-  markArticlesRead,
   openRssDb,
   releaseDispatchArticles,
   type UnreadArticle,
@@ -129,12 +128,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
       },
       content,
     );
-    markArticlesRead(
-      db,
-      queuedArticles.map((article) => article.id),
-    );
     console.log(
-      `[rss-dispatch] ${queuedArticles.length}件をinboxへ投入し、既読にしました`,
+      `[rss-dispatch] ${queuedArticles.length}件をinboxへ投入しました（ジョブ成功後に既読化します）`,
     );
   } finally {
     db.close();

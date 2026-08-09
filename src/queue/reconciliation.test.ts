@@ -10,7 +10,7 @@ import {
   saveFeedEntries,
 } from "../rss/store.js";
 import { expectDefined } from "../test-utils.js";
-import { reconcileRssDispatches } from "./reconciliation.js";
+import { reconcileRssDispatches, settleRssDispatch } from "./reconciliation.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 let tempDirs: string[] = [];
@@ -105,7 +105,7 @@ function queuePayload(
 }
 
 describe("reconcileRssDispatches", () => {
-  it("uses stored dispatch_job_id and discovers custom paths from queue payloads", async () => {
+  it("startup recovery marks articles after the associated job completed", async () => {
     const rssPath = await makeRssPath();
     seedUnread(rssPath);
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
@@ -129,6 +129,12 @@ describe("reconcileRssDispatches", () => {
       const claimed = repo.claim("worker", 60_000);
       repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
 
+      const beforeRecovery = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(beforeRecovery, 10)).toHaveLength(1);
+      } finally {
+        beforeRecovery.close();
+      }
       expect(reconcileRssDispatches(repo)).toBe(1);
       const check = openRssDb(rssPath);
       try {
@@ -139,6 +145,34 @@ describe("reconcileRssDispatches", () => {
     } finally {
       repo.close();
     }
+  });
+
+  it("settles only the targeted RSS dispatch", async () => {
+    const completedPath = await makeRssPath();
+    const pendingPath = await makeRssPath();
+    seedUnread(completedPath);
+    seedUnread(pendingPath);
+    const completedDispatch = claimOne(completedPath, "completed");
+    const pendingDispatch = claimOne(pendingPath, "pending");
+
+    expect(
+      settleRssDispatch(
+        completedPath,
+        completedDispatch.id,
+        completedDispatch.jobId,
+        "completed",
+      ),
+    ).toBe(1);
+    const completedCheck = openRssDb(completedPath);
+    const pendingCheck = openRssDb(pendingPath);
+    try {
+      expect(listUnreadArticles(completedCheck, 10)).toEqual([]);
+      expect(listUnreadArticles(pendingCheck, 10)).toHaveLength(1);
+    } finally {
+      completedCheck.close();
+      pendingCheck.close();
+    }
+    expect(pendingDispatch.articles).toHaveLength(1);
   });
 
   it("converges reads from a completed idempotency tombstone without a jobs row", async () => {
@@ -222,6 +256,59 @@ describe("reconcileRssDispatches", () => {
       } finally {
         check.close();
       }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("keeps claims during retry failure and releases them after dead-letter", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+        maxAttempts: 2,
+      });
+      const firstClaimed = repo.claim("worker", 60_000);
+      repo.failAttempt(
+        queued.job.id,
+        new Error("temporary failure"),
+        expectDefined(firstClaimed).fencingToken,
+      );
+
+      expect(repo.get(queued.job.id)).toMatchObject({ status: "retry_wait" });
+      expect(dispatchColumns(rssPath)).toEqual([
+        {
+          dispatch_id: dispatch.id,
+          dispatch_job_id: dispatch.jobId,
+        },
+      ]);
+      const duringRetry = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(duringRetry, 10)).toHaveLength(1);
+      } finally {
+        duringRetry.close();
+      }
+
+      const secondClaimed = repo.claim(
+        "worker",
+        60_000,
+        new Date(Date.now() + 120_000),
+      );
+      repo.deadLetter(
+        queued.job.id,
+        expectDefined(secondClaimed).fencingToken,
+        "non_retryable",
+      );
+      expect(repo.get(queued.job.id)).toMatchObject({ status: "dead_letter" });
+      expect(
+        settleRssDispatch(rssPath, dispatch.id, dispatch.jobId, "dead_letter"),
+      ).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
     } finally {
       repo.close();
     }

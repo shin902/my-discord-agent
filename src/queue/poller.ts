@@ -16,6 +16,7 @@ import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
+import { settleRssDispatch } from "./reconciliation.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
 import type { InboxMessage } from "./types.js";
 
@@ -158,6 +159,34 @@ function logResponseTiming(
     console.warn(`[poller] 応答遅延を検出: ${message}`);
   } else {
     console.log(`[poller] 応答時間: ${message}`);
+  }
+}
+
+function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
+  if (!msg.rssDispatchId) return;
+  try {
+    const job = getQueueRepository().get(msg.id);
+    if (!job) return;
+    const resolution =
+      job.status === "completed"
+        ? "completed"
+        : job.status === "dead_letter"
+          ? "dead_letter"
+          : undefined;
+    if (!resolution) return;
+    settleRssDispatch(
+      msg.rssStatePath,
+      msg.rssDispatchId,
+      job.idempotencyKey ?? msg.idempotencyKey,
+      resolution,
+    );
+  } catch (error) {
+    // Queue terminal state is already durable; startup reconciliation can
+    // retry this cross-database update if the RSS store is unavailable.
+    console.error(
+      `[poller] RSS dispatch状態の収束に失敗しました (${msg.id}):`,
+      error,
+    );
   }
 }
 
@@ -689,11 +718,16 @@ export async function processMessage(
       await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {
         metadata: { error },
       });
+      settleRssDispatchAfterQueueTransition(msg);
       return;
     }
   }
   if (msg.cronDeliveryMode === "new-thread" || msg.cronThread) {
-    return processCronNewThread(msg, signal);
+    try {
+      return await processCronNewThread(msg, signal);
+    } finally {
+      settleRssDispatchAfterQueueTransition(msg);
+    }
   }
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
@@ -829,6 +863,7 @@ export async function processMessage(
     stopTyping();
   } finally {
     stopTyping();
+    settleRssDispatchAfterQueueTransition(msg);
     logResponseTiming(msg, timing, outcome);
   }
 }
