@@ -2,7 +2,12 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
+  type: "json",
+};
+import type { FxPost } from "./agent-reach.js";
 import {
+  agentReachTool,
   buildCommand,
   buildGitHubMarkdown,
   buildRedditMarkdown,
@@ -140,6 +145,44 @@ describe("detectService", () => {
 
   it("x.com/user（statusなし）→ web", () => {
     expect(detectService(parse("https://x.com/user"))).toBe("web");
+  });
+});
+
+describe("shared agent-reach parity fixtures", () => {
+  it.each(
+    parityCases.urlCases,
+  )("$name: URL normalization and service detection agree", ({
+    input,
+    normalized,
+    service,
+  }) => {
+    expect(normalizeUrl(input)).toBe(normalized);
+    expect(detectService(new URL(normalized))).toBe(service);
+  });
+
+  it.each([
+    {
+      name: "X post",
+      payload: parityCases.xPost.payload,
+      expectedOutput: parityCases.xPost.expectedOutput,
+    },
+    ...parityCases.formattedCases,
+  ])("$name formatter matches the shared fixture", ({
+    payload,
+    expectedOutput,
+  }) => {
+    expect(formatFxPost(payload as unknown as FxPost)).toBe(expectedOutput);
+  });
+
+  it.each(
+    parityCases.errorCases,
+  )("$name: tool exposes the canonical error category", async ({
+    url,
+    toolMessage,
+  }) => {
+    await expect(
+      agentReachTool.execute("parity", { url }, undefined, undefined),
+    ).rejects.toThrow(toolMessage);
   });
 });
 

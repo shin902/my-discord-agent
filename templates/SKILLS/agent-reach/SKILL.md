@@ -5,7 +5,7 @@ description: Fetch and format content from URLs. Supports YouTube, GitHub, Reddi
 
 ## Usage
 
-Formatted Markdown is written to stdout.
+Formatted text is written to stdout (Markdown for web, YouTube, GitHub, Reddit, and X; feedparser JSON for RSS).
 
 ### When no file output is needed, run it directly without redirection
 
