@@ -70,6 +70,39 @@ it("durably persists the created thread before its first message send", async ()
     repo.close();
   }
 });
+it("reuses the durably persisted cron thread for delivery", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const send = vi.fn(async () => ({ id: "message-1" }));
+  const thread = { id: "thread-actual", isSendable: () => true, send };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockImplementation(async (id) => {
+      expect(id).toBe("thread-actual");
+      return thread as never;
+    });
+  try {
+    const jobId = completed(repo, "response", {
+      destinationType: "new-thread",
+      destinationId: "channel",
+      cronJobId: "daily",
+      cronThreadId: "thread-actual",
+    });
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-a",
+    });
+    await worker.runOnce();
+    expect(send).toHaveBeenCalledWith("response");
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      status: "sent",
+      cronThreadId: "thread-actual",
+    });
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
 it("marks transport failure during thread creation ambiguous without retrying", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const create = vi.fn(async () => {

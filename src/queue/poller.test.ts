@@ -28,12 +28,14 @@ const {
   failAttempt,
   freezeExecutionIdentity,
   markRunning,
+  updateRunning,
 } = vi.hoisted(() => ({
   commitInboxResult: vi.fn(),
   deadLetter: vi.fn(),
   failAttempt: vi.fn(),
   freezeExecutionIdentity: vi.fn(),
   markRunning: vi.fn(),
+  updateRunning: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -42,7 +44,7 @@ vi.mock("./repository.js", () => ({
     freezeExecutionIdentity,
     markRunning,
     deadLetter,
-    updateRunning: vi.fn(),
+    updateRunning,
     get: vi.fn(),
   }),
 }));
@@ -56,6 +58,7 @@ const { processMessage } = await import("./poller.js");
 beforeEach(() => {
   vi.mocked(sendMessage).mockClear();
   deadLetter.mockClear();
+  updateRunning.mockClear();
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
 });
 
@@ -91,6 +94,7 @@ describe("processMessage - terminal queue transitions", () => {
     deadLetter.mockClear();
     failAttempt.mockClear();
     markRunning.mockClear();
+    updateRunning.mockClear();
     commitInboxResult.mockClear();
     freezeExecutionIdentity.mockClear();
     vi.mocked(freezeExecutionIdentity).mockResolvedValue(undefined);
@@ -245,6 +249,117 @@ describe("processMessage - terminal queue transitions", () => {
         workspacePath: `groups/${msg.groupName}`,
         conversationPath: `data/sessions/${msg.groupName}/thread-1.jsonl`,
       }),
+    );
+  });
+
+  it("cron new-thread destination persists the created thread before using it as the session", async () => {
+    const msg = makeMsg({
+      sessionId: "cron-daily-run-placeholder",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronJobId: "daily",
+      timestamp: "2026-06-04T10:30:00.000Z",
+    });
+    const create = vi.fn(async () => ({ id: "thread-actual" }));
+    vi.mocked(client.channels.fetch).mockResolvedValueOnce({
+      threads: { create },
+    } as never);
+    updateRunning.mockImplementation((_id, _token, patch) => {
+      Object.assign(msg, patch);
+    });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, session, _content, options: unknown) => {
+        expect(session).toBe("thread-actual");
+        (options as SendMessageOptions | undefined)?.onContainerStarted?.();
+        return "AI response";
+      },
+    );
+
+    await processMessage(msg);
+
+    expect(create).toHaveBeenCalledWith({
+      name: "cron-daily-2026-06-04-19-30",
+    });
+    expect(updateRunning).toHaveBeenCalledWith(msg.id, msg.fencingToken, {
+      cronThreadId: "thread-actual",
+      sessionId: "thread-actual",
+    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      "default",
+      "thread-actual",
+      "hello",
+      expect.any(Object),
+    );
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "AI response",
+      expect.objectContaining({
+        deliveryPayload: expect.objectContaining({
+          cronThreadId: "thread-actual",
+        }),
+      }),
+    );
+  });
+
+  it("cron new-thread per-run はスレッド作成前の仮セッションを維持する", async () => {
+    const msg = makeMsg({
+      sessionId: "cron-daily-run-placeholder",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "per-run",
+      cronJobId: "daily",
+    });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, session, _content, options: unknown) => {
+        expect(session).toBe("cron-daily-run-placeholder");
+        (options as SendMessageOptions | undefined)?.onContainerStarted?.();
+        return "AI response";
+      },
+    );
+
+    await processMessage(msg);
+
+    expect(updateRunning).not.toHaveBeenCalled();
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "AI response",
+      expect.objectContaining({
+        deliveryPayload: expect.objectContaining({
+          destinationType: "new-thread",
+          cronThreadId: undefined,
+        }),
+      }),
+    );
+  });
+
+  it("cron new-thread のリモート作成後の transport failure は再試行せず ambiguous として終了する", async () => {
+    const msg = makeMsg({
+      sessionId: "cron-daily-run-placeholder",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronJobId: "daily",
+    });
+    const create = vi.fn(async () => {
+      // Discord may have created the thread before the response was lost.
+      throw new TypeError("network timeout after remote create");
+    });
+    vi.mocked(client.channels.fetch).mockResolvedValueOnce({
+      threads: { create },
+    } as never);
+
+    await processMessage(msg);
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(updateRunning).not.toHaveBeenCalled();
+    expect(failAttempt).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "ambiguous_cron_thread",
+      expect.stringContaining("network timeout after remote create"),
+      expect.any(Object),
     );
   });
 

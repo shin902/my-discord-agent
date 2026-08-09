@@ -124,11 +124,9 @@ export async function enqueueCronInbox(
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
   const sessionId =
-    sessionMode === "per-run"
+    sessionMode === "per-run" || deliveryMode === "new-thread"
       ? `cron-${ctx.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      : deliveryMode === "direct"
-        ? ctx.channelId
-        : `cron-${ctx.id}`;
+      : ctx.channelId;
   const configOverride = buildConfigOverride(ctx);
 
   await ctx.appendInbox({

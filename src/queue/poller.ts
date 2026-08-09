@@ -14,6 +14,7 @@ import {
 } from "../config/providers.js";
 import { client } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
+import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
 import type { InboxMessage } from "./types.js";
@@ -372,14 +373,122 @@ function markRunningWhenContainerStarted(
   };
 }
 
+function usesCronDestinationSession(msg: InboxMessage): boolean {
+  // Legacy cronThread payloads predate the explicit sessionMode and always
+  // used the created thread as their conversation identity.
+  return (
+    msg.cronSessionMode === "destination" ||
+    (msg.cronSessionMode === undefined &&
+      (msg.cronThread === true || msg.cronDeliveryMode === "new-thread"))
+  );
+}
+
+function cronSessionId(msg: InboxMessage): string {
+  return usesCronDestinationSession(msg)
+    ? (msg.cronThreadId ?? msg.sessionId)
+    : msg.sessionId;
+}
+
+type CronThreadParent = {
+  threads?: {
+    create: (options: { name: string }) => Promise<{ id?: unknown }>;
+  };
+};
+
+function discordStatusCode(error: unknown): number | undefined {
+  const value = error as { status?: unknown; statusCode?: unknown };
+  const code = value?.status ?? value?.statusCode;
+  return typeof code === "number" ? code : undefined;
+}
+
+async function createCronThread(msg: InboxMessage): Promise<string> {
+  let mutationAttempted = false;
+  try {
+    const channel = (await client.channels.fetch(
+      msg.channelId,
+    )) as unknown as CronThreadParent | null;
+    if (!channel) {
+      throw new NonRetryableError(
+        `cron-thread: チャンネル ${msg.channelId} が見つかりません`,
+      );
+    }
+    if (typeof channel.threads?.create !== "function") {
+      throw new NonRetryableError(
+        `cron-thread: チャンネル ${msg.channelId} はスレッドをサポートしていません`,
+      );
+    }
+    const dateSuffix = new Date(msg.timestamp)
+      .toLocaleString("sv-SE", { timeZone: "Asia/Tokyo" })
+      .slice(0, 16)
+      .replace(" ", "-")
+      .replace(":", "-");
+    const suffix = `-${dateSuffix}`;
+    const maxIdLength = 100 - "cron-".length - suffix.length;
+    const jobId = String(msg.cronJobId ?? msg.id).slice(0, maxIdLength);
+    mutationAttempted = true;
+    const thread = await channel.threads.create({
+      name: `cron-${jobId}${suffix}`,
+    });
+    const threadId = String(thread.id ?? "");
+    if (!threadId) {
+      throw new NonRetryableError("cron-thread: Discord thread ID が空です");
+    }
+    return threadId;
+  } catch (error) {
+    if (error instanceof NonRetryableError) throw error;
+    if (error instanceof DeliveryError) throw error;
+    const kind = classifyDiscordError(error);
+    // Match the delivery adapter: once Discord was asked to mutate state,
+    // transport/unknown failures are ambiguous and must never be retried.
+    const postMutationTransportFailure =
+      mutationAttempted &&
+      discordStatusCode(error) === undefined &&
+      (kind === "retryable" || kind === "unknown");
+    const effectiveKind = postMutationTransportFailure
+      ? "unknown"
+      : kind === "unknown"
+        ? "retryable"
+        : kind;
+    throw new DeliveryError(
+      effectiveKind,
+      error instanceof Error ? error.message : String(error),
+      error,
+    );
+  }
+}
+
+async function ensureCronThread(msg: InboxMessage): Promise<void> {
+  if (msg.cronThreadId || msg.fencingToken === undefined) return;
+  const threadId = await createCronThread(msg);
+  try {
+    // The thread is an external mutation. Persist its ID before the agent can
+    // run so the destination session and the later delivery both use the same
+    // durable identity. A claimed job is eligible for updateRunning here.
+    getQueueRepository().updateRunning(msg.id, msg.fencingToken, {
+      cronThreadId: threadId,
+      sessionId: threadId,
+    });
+  } catch (_error) {
+    // Do not blindly create another thread if a local persistence call reports
+    // an error after its write may have committed.
+    const persisted = getQueueRepository().get(msg.id)?.cronThreadId;
+    if (persisted !== threadId) {
+      throw new NonRetryableError(
+        `cron-thread: スレッドID ${threadId} の永続化に失敗しました`,
+      );
+    }
+  }
+  msg.cronThreadId = threadId;
+  msg.sessionId = threadId;
+}
+
 async function processCronNewThread(
   msg: InboxMessage,
   signal?: AbortSignal,
 ): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
-  const sessionId =
-    msg.cronThreadId ?? (msg.cronThread ? msg.channelId : msg.sessionId);
+  let sessionId = cronSessionId(msg);
   try {
     if (!msg.cronJobId) {
       outcome = "dead-letter";
@@ -391,6 +500,10 @@ async function processCronNewThread(
         );
       }
       return;
+    }
+    if (usesCronDestinationSession(msg)) {
+      await ensureCronThread(msg);
+      sessionId = cronSessionId(msg);
     }
     const groupConfig = await findGroupByName(msg.groupName);
     const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
@@ -443,13 +556,18 @@ async function processCronNewThread(
       );
     outcome = response ? "success" : "empty-response";
   } catch (error) {
-    if (error instanceof NonRetryableError) {
+    const ambiguousMutation =
+      error instanceof DeliveryError && error.kind === "unknown";
+    const nonRetryable =
+      error instanceof NonRetryableError ||
+      (error instanceof DeliveryError && error.kind === "non-retryable");
+    if (ambiguousMutation || nonRetryable) {
       outcome = "dead-letter";
       if (msg.fencingToken !== undefined)
         await getQueueRepository().deadLetter(
           msg.id,
           msg.fencingToken,
-          "non_retryable",
+          ambiguousMutation ? "ambiguous_cron_thread" : "non_retryable",
           String(error),
           executionMetadata(timing),
         );
