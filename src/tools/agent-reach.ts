@@ -1,5 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { isIP } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -15,14 +17,504 @@ const REDDIT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const WORKSPACE = "/workspace";
-// 外部コマンド（curl/yt-dlp等）の出力先として使う作業ディレクトリ。
-// フェッチ結果はツールコール結果に直接返すため、ここは処理後に削除する一時領域。
-const TMP_DIR = ".agent-reach-tmp";
+// 外部コマンド（curl/yt-dlp等）の出力先として使う一時領域は、呼び出しごとに
+// システム一時ディレクトリの下へ独立して作成する。フェッチ結果はツールコール結果に
+// 直接返すため、呼び出し終了時にディレクトリごと削除する。
 const TIMEOUT_MS = 120_000;
+
+const IPV4_NON_PUBLIC_CIDRS: ReadonlyArray<readonly [number, number]> = [
+  [0x00000000, 8], // "this" network / unspecified
+  [0x0a000000, 8], // RFC 1918
+  [0x64400000, 10], // RFC 6598 shared address space (CGNAT/Tailscale)
+  [0x7f000000, 8], // loopback
+  [0xa9fe0000, 16], // link-local
+  [0xac100000, 12], // RFC 1918
+  [0xc0000000, 24], // IETF protocol assignments
+  [0xc0000200, 24], // documentation
+  [0xc0a80000, 16], // RFC 1918
+  [0xc6120000, 15], // benchmarking
+  [0xc6336400, 24], // documentation
+  [0xcb007100, 24], // documentation
+  [0xe0000000, 4], // multicast
+  [0xf0000000, 4], // reserved
+];
+
+const IPV6_ALL_ZERO = 0n;
+const IPV6_LOOPBACK = 1n;
+const IPV6_MAPPED_PREFIX = 0xffffn;
+const IPV6_ULA_PREFIX = 0x7en; // fc00::/7
+const IPV6_LINK_LOCAL_PREFIX = 0x3fan; // fe80::/10
+const IPV6_SITE_LOCAL_PREFIX = 0x3fbn; // fec0::/10 (deprecated, non-public)
+
+// IPv6 special-purpose ranges which are not globally reachable. Keep these
+// explicit instead of relying on a runtime's address classification tables so
+// the TypeScript and injected-Python policies remain stable across versions.
+const IPV6_NON_PUBLIC_CIDRS: ReadonlyArray<readonly [bigint, number]> = [
+  [0x01000000000000000000000000000000n, 64], // discard-only
+  [0x20010000000000000000000000000000n, 23], // IETF protocol assignments
+  [0x20010db8000000000000000000000000n, 32], // documentation
+  [0x20020000000000000000000000000000n, 16], // 6to4
+  [0x3fff0000000000000000000000000000n, 20], // documentation
+  [0x5f000000000000000000000000000000n, 16], // SRv6 SIDs
+  [0x0064ff9b000100000000000000000000n, 48], // non-global IPv4-IPv6 translation
+  [0x01000000000000010000000000000000n, 64], // dummy prefix
+];
+
+function ipv4ToNumber(address: string): number | null {
+  const octets = address.split(".");
+  if (octets.length !== 4) return null;
+
+  let result = 0;
+  for (const octet of octets) {
+    if (!/^(?:0|[1-9]\d{0,2})$/.test(octet)) return null;
+    const value = Number(octet);
+    if (value > 255) return null;
+    result = result * 256 + value;
+  }
+  return result;
+}
+
+function isInIpv4Cidr(
+  address: number,
+  network: number,
+  prefix: number,
+): boolean {
+  const size = 2 ** (32 - prefix);
+  return address >= network && address < network + size;
+}
+
+function isNonPublicIpv4Number(address: number): boolean {
+  return IPV4_NON_PUBLIC_CIDRS.some(([network, prefix]) =>
+    isInIpv4Cidr(address, network, prefix),
+  );
+}
+
+/** Return whether an IPv6 integer falls within a CIDR range. */
+function isInIpv6Cidr(
+  address: bigint,
+  network: bigint,
+  prefix: number,
+): boolean {
+  const shift = 128n - BigInt(prefix);
+  return address >> shift === network >> shift;
+}
+
+/** Parse an IPv6 address into its 128-bit integer representation. */
+function ipv6ToBigInt(address: string): bigint | null {
+  if (address.includes("%")) return null;
+
+  let normalized = address;
+  if (normalized.includes(".")) {
+    const separator = normalized.lastIndexOf(":");
+    if (separator < 0) return null;
+    const ipv4 = ipv4ToNumber(normalized.slice(separator + 1));
+    if (ipv4 === null) return null;
+    const high = Math.floor(ipv4 / 65536).toString(16);
+    const low = (ipv4 % 65536).toString(16);
+    normalized = `${normalized.slice(0, separator)}:${high}:${low}`;
+  }
+
+  const doubleColon = normalized.indexOf("::");
+  if (doubleColon !== -1 && normalized.indexOf("::", doubleColon + 2) !== -1)
+    return null;
+
+  const groups: string[] = [];
+  const appendGroups = (part: string): boolean => {
+    if (!part) return true;
+    const entries = part.split(":");
+    if (entries.some((entry) => !/^[0-9a-f]{1,4}$/i.test(entry))) return false;
+    groups.push(...entries);
+    return true;
+  };
+
+  if (doubleColon === -1) {
+    if (!appendGroups(normalized) || groups.length !== 8) return null;
+  } else {
+    const left = normalized.slice(0, doubleColon);
+    const right = normalized.slice(doubleColon + 2);
+    const leftGroups = left ? left.split(":") : [];
+    const rightGroups = right ? right.split(":") : [];
+    if (
+      leftGroups.some((entry) => !/^[0-9a-f]{1,4}$/i.test(entry)) ||
+      rightGroups.some((entry) => !/^[0-9a-f]{1,4}$/i.test(entry)) ||
+      leftGroups.length + rightGroups.length >= 8
+    )
+      return null;
+    groups.push(
+      ...leftGroups,
+      ...Array(8 - leftGroups.length - rightGroups.length).fill("0"),
+      ...rightGroups,
+    );
+  }
+
+  return groups.reduce(
+    (result, group) => (result << 16n) | BigInt(Number.parseInt(group, 16)),
+    0n,
+  );
+}
+
+/** Return true only for globally routable IPv4/IPv6 addresses. */
+export function isPublicIpAddress(address: string): boolean {
+  const normalized = address.trim();
+  const version = isIP(normalized);
+
+  if (version === 4) {
+    const value = ipv4ToNumber(normalized);
+    return value !== null && !isNonPublicIpv4Number(value);
+  }
+  if (version !== 6) return false;
+
+  const value = ipv6ToBigInt(normalized);
+  if (value === null) return false;
+
+  // IPv4-mapped addresses inherit the policy of their IPv4 payload. Check
+  // this before the ::/96 guard below so mapped public addresses remain valid.
+  if (value >> 32n === IPV6_MAPPED_PREFIX) {
+    const ipv4 = Number(value & 0xffffffffn);
+    return !isNonPublicIpv4Number(ipv4);
+  }
+
+  if (value === IPV6_ALL_ZERO || value === IPV6_LOOPBACK) return false;
+  if (value >> 121n === IPV6_ULA_PREFIX) return false;
+  if (value >> 118n === IPV6_LINK_LOCAL_PREFIX) return false;
+  if (value >> 118n === IPV6_SITE_LOCAL_PREFIX) return false;
+  if (value >> 120n === 0xffn) return false; // multicast
+  if (value >> 32n === 0n) return false; // IPv4-compatible and other ::/96 forms
+  if (
+    IPV6_NON_PUBLIC_CIDRS.some(([network, prefix]) =>
+      isInIpv6Cidr(value, network, prefix),
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/** Compatibility name retained for callers that used the former predicate. */
+export function isPrivateAddress(address: string): boolean {
+  return !isPublicIpAddress(address);
+}
+
+/** WHATWG URL puts brackets around IPv6 hostnames; DNS APIs do not. */
+export function getLookupHostname(parsed: URL): string {
+  return parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+}
+
+type LookupAddress = { address: string; family: number };
+type LookupAll = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+) => Promise<LookupAddress[]>;
+
+/**
+ * Resolve every address for a destination and reject unless every answer is
+ * public. DNS errors, empty answers, and malformed resolver output fail closed.
+ * A resolver argument keeps the CIDR policy testable without network access.
+ */
+export async function validatePublicDestination(
+  hostname: string,
+  resolve: LookupAll = dnsLookup as LookupAll,
+): Promise<void> {
+  const lookupHostname =
+    hostname.startsWith("[") && hostname.endsWith("]")
+      ? hostname.slice(1, -1)
+      : hostname;
+
+  if (isIP(lookupHostname)) {
+    if (!isPublicIpAddress(lookupHostname)) {
+      throw new Error(`内部アドレスへのアクセスは禁止: ${lookupHostname}`);
+    }
+    return;
+  }
+
+  let addresses: LookupAddress[];
+  try {
+    addresses = await resolve(lookupHostname, { all: true, verbatim: true });
+  } catch {
+    throw new Error(`宛先ホスト名のDNS解決に失敗しました: ${lookupHostname}`);
+  }
+
+  if (!Array.isArray(addresses) || addresses.length === 0) {
+    throw new Error(`宛先ホスト名のDNS解決結果が空です: ${lookupHostname}`);
+  }
+
+  for (const result of addresses) {
+    if (
+      !result ||
+      typeof result.address !== "string" ||
+      !isPublicIpAddress(result.address)
+    ) {
+      const address =
+        result && typeof result.address === "string"
+          ? result.address
+          : "不正なアドレス";
+      throw new Error(`内部アドレスへのアクセスは禁止: ${address}`);
+    }
+  }
+}
 
 function shellQuote(str: string): string {
   return `'${str.replace(/'/g, "'\\''")}'`;
 }
+
+/**
+ * Python's urllib/feedparser and yt-dlp each perform their own DNS lookups.
+ * Install this as sitecustomize.py for those child processes so every lookup
+ * is checked (and the exact checked sockaddr is used for the connection).
+ * The policy intentionally mirrors isPublicIpAddress above.
+ */
+const NETWORK_POLICY_PYTHON = `import ipaddress
+import socket
+
+_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    "::/96",
+    "::1/128",
+    "100::/64",
+    "2001::/23",
+    "2001:db8::/32",
+    "2002::/16",
+    "3fff::/20",
+    "5f00::/16",
+    "64:ff9b:1::/48",
+    "100:0:0:1::/64",
+    "fc00::/7",
+    "fe80::/10",
+    "fec0::/10",
+    "ff00::/8",
+))
+
+def _is_public(value):
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return not any(address in network for network in _NETWORKS)
+
+def _check_address(value):
+    if not _is_public(value):
+        raise OSError("non-public destination rejected: %s" % value)
+
+def _guarded_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host is None or host == "":
+        return _ORIGINAL_GETADDRINFO(host, port, family, type, proto, flags)
+
+    # Resolve with AF_UNSPEC first so an answer hidden by a caller's family
+    # preference cannot bypass the all-addresses policy.
+    all_answers = _ORIGINAL_GETADDRINFO(host, port, socket.AF_UNSPEC, 0, 0, flags)
+    if not all_answers:
+        raise OSError("DNS returned no addresses: %s" % host)
+    for answer in all_answers:
+        if len(answer) < 5 or not answer[4]:
+            raise OSError("malformed DNS answer: %s" % host)
+        _check_address(answer[4][0])
+
+    answers = _ORIGINAL_GETADDRINFO(host, port, family, type, proto, flags)
+    if not answers:
+        raise OSError("DNS returned no usable addresses: %s" % host)
+    for answer in answers:
+        if len(answer) < 5 or not answer[4]:
+            raise OSError("malformed DNS answer: %s" % host)
+        _check_address(answer[4][0])
+    # Returning these exact resolver results avoids a second hostname lookup
+    # between validation and socket.connect().
+    return answers
+
+def _guarded_connect(sock, address):
+    if isinstance(address, tuple) and address:
+        _check_address(address[0])
+    return _ORIGINAL_CONNECT(sock, address)
+
+def _guarded_connect_ex(sock, address):
+    if isinstance(address, tuple) and address:
+        _check_address(address[0])
+    return _ORIGINAL_CONNECT_EX(sock, address)
+
+_ORIGINAL_GETADDRINFO = socket.getaddrinfo
+_ORIGINAL_CONNECT = socket.socket.connect
+_ORIGINAL_CONNECT_EX = socket.socket.connect_ex
+socket.getaddrinfo = _guarded_getaddrinfo
+socket.socket.connect = _guarded_connect
+socket.socket.connect_ex = _guarded_connect_ex
+`;
+
+function networkPolicyCommands(outAbsPath: string): {
+  setup: string;
+  env: string;
+  dir: string;
+} {
+  const base = outAbsPath.replace(/\.[^.]+$/, "");
+  const dir = `${base}.network-policy`;
+  const quotedDir = shellQuote(dir);
+  return {
+    dir,
+    setup:
+      `mkdir -p ${quotedDir} && ` +
+      `printf %s ${shellQuote(NETWORK_POLICY_PYTHON)} > ${shellQuote(`${dir}/sitecustomize.py`)}`,
+    // Prepend the policy directory while preserving a caller-provided path.
+    env: `PYTHONPATH=${quotedDir}\${PYTHONPATH:+:$PYTHONPATH}`,
+  };
+}
+
+/**
+ * RSS must not be handed to feedparser as a URL: feedparser follows redirects
+ * itself and has no hook for checking each destination. Fetch the bytes with a
+ * redirect-disabled urllib opener, validate every hop through the injected
+ * network policy, then parse only the already-fetched response body.
+ */
+const RSS_FETCH_PYTHON = `import feedparser
+import json
+import socket
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+MAX_REDIRECTS = 5
+MAX_FEED_BYTES = 5 * 1024 * 1024
+MAX_FETCH_SECONDS = 30.0
+REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, message, headers, new_url):
+        return None
+
+def _validate_url(url):
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as error:
+        raise RuntimeError("invalid RSS URL: %s" % url) from error
+    if parsed.scheme not in ("http", "https"):
+        raise RuntimeError("RSS URL must use HTTP or HTTPS: %s" % url)
+    if not hostname:
+        raise RuntimeError("RSS URL has no hostname: %s" % url)
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    try:
+        answers = socket.getaddrinfo(
+            hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
+    except OSError as error:
+        raise RuntimeError("RSS destination validation failed: %s" % url) from error
+    if not answers:
+        raise RuntimeError("RSS destination has no addresses: %s" % url)
+    # sitecustomize rejects every non-public answer and returns the checked
+    # resolver results. Keep this loop explicit so malformed resolver output is
+    # rejected even if a Python runtime changes the socket policy behavior.
+    for answer in answers:
+        if len(answer) < 5 or not answer[4]:
+            raise RuntimeError("RSS destination returned a malformed address: %s" % url)
+
+def _read_limited(response, url, deadline):
+    content_length = response.headers.get("Content-Length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as error:
+            raise RuntimeError("RSS Content-Length is invalid: %s" % url) from error
+        if declared_length < 0 or declared_length > MAX_FEED_BYTES:
+            raise RuntimeError("RSS response is too large: %s" % url)
+
+    chunks = []
+    total = 0
+    while True:
+        remaining_time = deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise RuntimeError("RSS fetch timed out: %s" % url)
+        chunk = response.read(min(65536, MAX_FEED_BYTES - total + 1))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_FEED_BYTES:
+            raise RuntimeError("RSS response is too large: %s" % url)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+def _fetch_body(initial_url):
+    current_url = initial_url
+    redirects = 0
+    deadline = time.monotonic() + MAX_FETCH_SECONDS
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect
+    )
+
+    while True:
+        _validate_url(current_url)
+        remaining_time = deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise RuntimeError("RSS fetch timed out: %s" % current_url)
+
+        request = urllib.request.Request(
+            current_url,
+            headers={
+                "Accept": "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml, text/xml",
+                "User-Agent": "my-discord-agent/agent-reach-rss",
+            },
+        )
+        response = None
+        try:
+            try:
+                response = opener.open(
+                    request,
+                    timeout=remaining_time,
+                )
+            except urllib.error.HTTPError as error:
+                response = error
+
+            status = getattr(response, "status", getattr(response, "code", 0))
+            if status in REDIRECT_STATUSES:
+                location = response.headers.get("Location")
+                if not location:
+                    raise RuntimeError("RSS redirect has no Location: %s" % current_url)
+                if redirects >= MAX_REDIRECTS:
+                    raise RuntimeError("RSS redirect limit exceeded: %s" % current_url)
+                redirects += 1
+                current_url = urllib.parse.urljoin(current_url, location)
+                continue
+            if status < 200 or status >= 300:
+                raise RuntimeError("RSS fetch returned HTTP %s: %s" % (status, current_url))
+            return _read_limited(response, current_url, deadline)
+        finally:
+            if response is not None:
+                response.close()
+
+def main():
+    body = _fetch_body(sys.argv[1])
+    parsed = feedparser.parse(body)
+    entries = [
+        {
+            "title": getattr(entry, "title", ""),
+            "link": getattr(entry, "link", ""),
+            "summary": getattr(entry, "summary", ""),
+        }
+        for entry in parsed.entries[:20]
+    ]
+    print(json.dumps(entries, ensure_ascii=False, indent=2))
+
+main()
+`;
 
 type ServiceType =
   | "youtube"
@@ -65,18 +557,12 @@ export function detectService(parsed: URL): ServiceType {
 }
 
 /**
- * 取得先へ渡す前に追跡用 query と fragment を除去する。
- * YouTube は動画 ID の指定に query (`watch?v=...`) が必要なため query を保持する。
+ * 取得先へ渡す前に fragment だけを除去する。
+ * query はリソース指定や署名に使われる可能性があるため保持する。
  */
 export function normalizeUrl(raw: string): string {
   const parsed = new URL(raw);
-  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
-
   parsed.hash = "";
-  if (host !== "youtube.com" && host !== "youtu.be") {
-    parsed.search = "";
-  }
-
   return parsed.toString();
 }
 
@@ -496,6 +982,26 @@ const FxPostSchema = z.object({
 
 export type FxPost = z.infer<typeof FxPostSchema>;
 
+function hasInvalidFxSuccessShape(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.code !== 200) return false;
+  const tweet = record.tweet;
+  return tweet === null || typeof tweet !== "object" || Array.isArray(tweet);
+}
+
+function hasTooManyFxArticleBlocks(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const tweet = (value as Record<string, unknown>).tweet;
+  if (tweet === null || typeof tweet !== "object") return false;
+  const article = (tweet as Record<string, unknown>).article;
+  if (article === null || typeof article !== "object") return false;
+  const content = (article as Record<string, unknown>).content;
+  if (content === null || typeof content !== "object") return false;
+  const blocks = (content as Record<string, unknown>).blocks;
+  return Array.isArray(blocks) && blocks.length > 2000;
+}
+
 /**
  * FxTwitter (api.fxtwitter.com) から X post を取得する。クッキー不要の非公式 API。
  * host reader と違い Credential Proxy を経由せず native fetch で直接叩く。
@@ -519,6 +1025,10 @@ export async function fetchFxPost(
 
   if (!response.ok) {
     throw new Error(`FxTwitter API error: HTTP ${response.status}`);
+  }
+
+  if (hasInvalidFxSuccessShape(raw) || hasTooManyFxArticleBlocks(raw)) {
+    throw new Error("FxTwitter API returned an invalid response schema");
   }
 
   const parsed = FxPostSchema.safeParse(raw);
@@ -652,15 +1162,20 @@ export function buildCommand(
   switch (service) {
     case "youtube": {
       const q = shellQuote(url);
-      // outAbsPath = /workspace/.agent-reach-tmp/youtube-xxx.md
-      // base      = /workspace/.agent-reach-tmp/youtube-xxx  (拡張子なし)
+      // outAbsPath = <system-temp>/agent-reach-XXXXXX/youtube.md
+      // base      = <system-temp>/agent-reach-XXXXXX/youtube  (拡張子なし)
       const base = outAbsPath.replace(/\.[^.]+$/, "");
       const metaOutQ = shellQuote(`${base}.meta.json`);
       const subDirQ = shellQuote(`${base}.subs`);
+      const policy = networkPolicyCommands(outAbsPath);
       return (
+        `${policy.setup} && ` +
         `mkdir -p ${subDirQ} && ` +
-        `yt-dlp --no-check-certificate --dump-json ${q} > ${metaOutQ} 2>&1 && ` +
-        `(yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download -o ${shellQuote(`${base}.subs/%(id)s`)} ${q} > /dev/null 2>&1 || true)`
+        `${policy.env} yt-dlp --no-check-certificate --dump-json ${q} > ${metaOutQ} 2>&1 && ` +
+        // yt-dlp labels the original automatic-caption track with the -orig suffix.
+        // Request only that regex: translated tracks (such as ja/en) are deliberately
+        // not a fallback, and a failed subtitle request must reach the caller via stderr.
+        `${policy.env} yt-dlp --no-check-certificate --write-auto-subs --sub-langs ${shellQuote(".*-orig")} --skip-download -o ${shellQuote(`${base}.subs/%(id)s`)} ${q} > /dev/null`
       );
     }
     case "github-repo": {
@@ -694,15 +1209,15 @@ export function buildCommand(
       const proxyUrl = `${resolveProxyBaseUrl("reddit")}${jsonPath}${parsed.search}`;
       return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(proxyUrl)} -H "User-Agent: ${REDDIT_USER_AGENT}"`;
     }
-    case "rss":
+    case "rss": {
+      const policy = networkPolicyCommands(outAbsPath);
       return (
-        `python3 -c ` +
-        shellQuote(
-          `import feedparser,json,sys; f=feedparser.parse(sys.argv[1]); ` +
-            `print(json.dumps([{'title':e.title,'link':e.link,'summary':getattr(e,'summary','')} for e in f.entries[:20]], ensure_ascii=False, indent=2))`,
-        ) +
+        `${policy.setup} && ` +
+        `${policy.env} python3 -c ` +
+        shellQuote(RSS_FETCH_PYTHON) +
         ` ${shellQuote(url)} > ${out}`
       );
+    }
     default:
       return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(`https://r.jina.ai/${url}`)}`;
   }
@@ -748,8 +1263,8 @@ export function formatHttpError(
 
 /**
  * このツールコールが作成しうる中間ファイル/ディレクトリの一覧を返す。
- * absPath は呼び出しごとに randomUUID を含み一意なので、これらを個別削除しても
- * 並行実行中の他のツールコールには影響しない（共有ディレクトリ自体は消さない）。
+ * 実際の実行時には、呼び出しごとの一時ディレクトリを後処理で丸ごと削除する。
+ * この関数は生成されるパスを確認したい呼び出し元向けに維持している。
  */
 export function getCleanupPaths(
   service: ServiceType,
@@ -758,7 +1273,14 @@ export function getCleanupPaths(
   const base = absPath.replace(/\.[^.]+$/, "");
   switch (service) {
     case "youtube":
-      return [absPath, `${base}.meta.json`, `${base}.subs`];
+      return [
+        absPath,
+        `${base}.meta.json`,
+        `${base}.subs`,
+        `${base}.network-policy`,
+      ];
+    case "rss":
+      return [absPath, `${base}.network-policy`];
     case "github-repo":
       return [absPath, `${base}.repo.json`, `${base}.readme.md`];
     default:
@@ -782,6 +1304,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
     }
+    await validatePublicDestination(getLookupHostname(parsed));
     const service = detectService(parsed);
     if (service === "x-article") {
       throw new Error(
@@ -806,13 +1329,8 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       };
     }
 
-    const tmpDirAbs = join(WORKSPACE, TMP_DIR);
-    const absPath = join(
-      tmpDirAbs,
-      `${service}-${randomUUID().slice(0, 8)}.md`,
-    );
-
-    await mkdir(tmpDirAbs, { recursive: true });
+    const tmpDirAbs = await mkdtemp(join(tmpdir(), "agent-reach-"));
+    const absPath = join(tmpDirAbs, `${service}.md`);
 
     try {
       const cmd = buildCommand(service, normalizedUrl, absPath);
@@ -865,11 +1383,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         details: { url: normalizedUrl, service },
       };
     } finally {
-      await Promise.all(
-        getCleanupPaths(service, absPath).map((p) =>
-          rm(p, { recursive: true, force: true }),
-        ),
-      );
+      await rm(tmpDirAbs, { recursive: true, force: true });
     }
   },
 };

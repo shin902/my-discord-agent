@@ -1,8 +1,22 @@
-import { writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
+  type: "json",
+};
+import type { FxPost } from "./agent-reach.js";
 import {
+  agentReachTool,
   buildCommand,
   buildGitHubMarkdown,
   buildRedditMarkdown,
@@ -19,19 +33,26 @@ import {
   readLimitedJson,
 } from "./agent-reach.js";
 
+const dnsLookupMock = vi.hoisted(() =>
+  vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
+);
+vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
+
+const execFileAsync = promisify(execFile);
+
 describe("normalizeUrl", () => {
-  it("YouTube 以外では query と fragment を除去する", () => {
+  it("意味のある query を保持し fragment だけを除去する", () => {
     expect(
       normalizeUrl(
-        "https://example.com/article?utm_source=discord&ref=test#section",
+        "https://example.com/article?id=42&utm_source=discord#section",
       ),
-    ).toBe("https://example.com/article");
+    ).toBe("https://example.com/article?id=42&utm_source=discord");
   });
 
-  it("YouTube では query を保持し fragment だけ除去する", () => {
+  it("YouTube の query も保持し fragment だけを除去する", () => {
     expect(
-      normalizeUrl("https://www.youtube.com/watch?v=abc&utm_source=x#chapter"),
-    ).toBe("https://www.youtube.com/watch?v=abc&utm_source=x");
+      normalizeUrl("https://www.youtube.com/watch?v=abc&t=30#chapter"),
+    ).toBe("https://www.youtube.com/watch?v=abc&t=30");
   });
 });
 
@@ -143,6 +164,46 @@ describe("detectService", () => {
   });
 });
 
+describe("shared agent-reach parity fixtures", () => {
+  it.each(
+    parityCases.urlCases,
+  )("$name: URL normalization and service detection agree", ({
+    input,
+    normalized,
+    service,
+  }) => {
+    expect(normalizeUrl(input)).toBe(normalized);
+    expect(detectService(new URL(normalized))).toBe(service);
+  });
+
+  it.each([
+    {
+      name: "X post",
+      payload: parityCases.xPost.payload,
+      expectedOutput: parityCases.xPost.expectedOutput,
+    },
+    parityCases.xArticle,
+    parityCases.previewOnly,
+    ...parityCases.formattedCases,
+  ])("$name formatter matches the shared fixture", ({
+    payload,
+    expectedOutput,
+  }) => {
+    expect(formatFxPost(payload as unknown as FxPost)).toBe(expectedOutput);
+  });
+
+  it.each(
+    parityCases.errorCases,
+  )("$name: tool exposes the canonical error category", async ({
+    url,
+    toolMessage,
+  }) => {
+    await expect(
+      agentReachTool.execute("parity", { url }, undefined, undefined),
+    ).rejects.toThrow(toolMessage);
+  });
+});
+
 describe("FxTwitter JSON helpers", () => {
   it("readLimitedJson は JSON をサイズ制限付きで読む", async () => {
     const data = await readLimitedJson(
@@ -221,7 +282,9 @@ describe("buildCommand シェルエスケープ", () => {
     it("クエリ文字列を維持する", () => {
       const cmd = buildCommand(
         "reddit",
-        "https://www.reddit.com/r/programming/comments/abc/?sort=top",
+        normalizeUrl(
+          "https://www.reddit.com/r/programming/comments/abc/?sort=top#comments",
+        ),
         out,
       );
       expect(cmd).toContain(
@@ -247,6 +310,19 @@ describe("buildCommand シェルエスケープ", () => {
     });
   });
 
+  it("youtube: 原語字幕だけを要求し、字幕取得失敗を握りつぶさない", () => {
+    const cmd = buildCommand("youtube", parityCases.youtube.url, out);
+    expect(cmd).toContain(
+      `--write-auto-subs --sub-langs '${parityCases.youtube.originalSubtitleSelector}' --skip-download`,
+    );
+    expect(cmd).not.toContain(
+      `--sub-langs '${parityCases.youtube.translatedSubtitleSelector}'`,
+    );
+    expect(cmd).not.toContain("--sub-lang ja,en");
+    expect(cmd).not.toContain("2>&1 || true");
+    expect(cmd).toContain("> /dev/null");
+  });
+
   it("github-repo: GitHub API への curl コマンドを生成する", () => {
     const cmd = buildCommand(
       "github-repo",
@@ -266,9 +342,15 @@ describe("buildCommand シェルエスケープ", () => {
     ).toThrow("GitHub URL からリポジトリを取得できません");
   });
 
-  it("web: jina.ai 経由でcurl", () => {
-    const cmd = buildCommand("web", "https://example.com/article", out);
-    expect(cmd).toContain("r.jina.ai");
+  it("web: 意味のある query を jina.ai への初回取得に渡す", () => {
+    const cmd = buildCommand(
+      "web",
+      normalizeUrl("https://example.com/article?id=42#section"),
+      out,
+    );
+    expect(cmd).toContain(
+      "https://r.jina.ai/https://example.com/article?id=42",
+    );
     expect(cmd).toContain("curl -sS");
     expect(cmd).toContain("-w '%{http_code}'");
   });
@@ -277,6 +359,111 @@ describe("buildCommand シェルエスケープ", () => {
     expect(() =>
       buildCommand("x-twitter", "https://x.com/testuser/status/123456789", out),
     ).toThrow("native fetch handler");
+  });
+});
+
+describe("YouTube yt-dlp字幕取得", () => {
+  it("fake yt-dlp に原語セレクターを渡し、字幕なしは成功扱いにする", async () => {
+    const testDir = await mkdtemp(join(tmpdir(), "agent-reach-ts-ytdlp-"));
+    try {
+      const binDir = join(testDir, "bin");
+      const argsLog = join(testDir, "yt-dlp-args.log");
+      const ytDlp = join(binDir, "yt-dlp");
+      await mkdir(binDir);
+      await writeFile(
+        ytDlp,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$AGENT_REACH_YTDLP_ARGS"
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"fixture","chapters":[]}'
+fi
+`,
+        "utf8",
+      );
+      await chmod(ytDlp, 0o755);
+
+      await expect(
+        execFileAsync(
+          "bash",
+          [
+            "-c",
+            buildCommand(
+              "youtube",
+              parityCases.youtube.url,
+              join(testDir, "youtube.md"),
+            ),
+          ],
+          {
+            env: {
+              ...process.env,
+              AGENT_REACH_YTDLP_ARGS: argsLog,
+              PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            },
+          },
+        ),
+      ).resolves.toBeDefined();
+
+      const invocations = (await readFile(argsLog, "utf8")).trim().split("\n");
+      expect(invocations).toHaveLength(2);
+      expect(invocations[1]).toContain(
+        `--write-auto-subs --sub-langs ${parityCases.youtube.originalSubtitleSelector}`,
+      );
+      expect(invocations[1]).not.toContain(
+        parityCases.youtube.translatedSubtitleSelector,
+      );
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("字幕取得のstderrと終了失敗を呼び出し元へ伝える", async () => {
+    const testDir = await mkdtemp(
+      join(tmpdir(), "agent-reach-ts-ytdlp-error-"),
+    );
+    try {
+      const binDir = join(testDir, "bin");
+      const ytDlp = join(binDir, "yt-dlp");
+      await mkdir(binDir);
+      await writeFile(
+        ytDlp,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"fixture","chapters":[]}'
+  exit 0
+fi
+printf '%s\\n' '${parityCases.youtube.retrievalError}' >&2
+exit 1
+`,
+        "utf8",
+      );
+      await chmod(ytDlp, 0o755);
+
+      await expect(
+        execFileAsync(
+          "bash",
+          [
+            "-c",
+            buildCommand(
+              "youtube",
+              parityCases.youtube.url,
+              join(testDir, "youtube.md"),
+            ),
+          ],
+          {
+            env: {
+              ...process.env,
+              PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            },
+          },
+        ),
+      ).rejects.toMatchObject({
+        stderr: expect.stringContaining(parityCases.youtube.retrievalError),
+      });
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -683,6 +870,69 @@ describe("fetchFxPost", () => {
       fetchFxPost("https://x.com/testuser/status/123"),
     ).rejects.toThrow(/HTTP 500/);
   });
+
+  it.each(
+    parityCases.responseCases,
+  )("$name: malformed, oversized, and invalid responses are rejected", async (fixture) => {
+    const body =
+      fixture.kind === "oversized"
+        ? "x".repeat(fixture.bodyBytes ?? 0)
+        : (fixture.body ?? "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(body, {
+            headers: { "content-type": fixture.contentType },
+          }),
+      ),
+    );
+
+    await expect(
+      fetchFxPost("https://x.com/testuser/status/123"),
+    ).rejects.toThrow(fixture.expectedError);
+  });
+
+  it.each(
+    parityCases.malformedOptionalCases,
+  )("$name: malformed optional fields are treated as absent", async (fixture) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(fixture.payload), {
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+
+    const post = await fetchFxPost("https://x.com/testuser/status/123");
+    expect(formatFxPost(post)).toBe(fixture.expectedOutput);
+  });
+
+  it("記事ブロック上限を拒否する", async () => {
+    const blocks = Array.from({ length: 2001 }, () => ({
+      type: "unstyled",
+      text: "block",
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: 200,
+              tweet: { article: { content: { blocks } } },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+
+    await expect(
+      fetchFxPost("https://x.com/testuser/status/123"),
+    ).rejects.toThrow("invalid response schema");
+  });
 });
 
 describe("hasFxContent", () => {
@@ -789,6 +1039,30 @@ describe("formatFxPost", () => {
     });
     expect(result).toContain("プレビュー本文");
     expect(result).toContain("previewのみ取得できました");
+  });
+
+  it("記事本文を120,000文字で切り詰め、注記を付ける", () => {
+    const fixture = parityCases.articleTruncation;
+    const result = formatFxPost({
+      code: 200,
+      tweet: {
+        text: "",
+        article: {
+          title: fixture.title,
+          content: {
+            blocks: [
+              {
+                type: fixture.blockType,
+                text: "x".repeat(fixture.bodyLength),
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(result).toContain(fixture.expectedNotice);
+    expect(result).toContain("x".repeat(120000));
+    expect(result).not.toContain("x".repeat(120001));
   });
 
   it("注意書き行を常に含む", () => {

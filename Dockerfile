@@ -4,6 +4,7 @@ RUN apk add --no-cache \
     bash \
     python3 \
     curl \
+    bind-tools \
     jq \
     git \
     github-cli \

@@ -1,0 +1,301 @@
+[
+  {
+    "name": "IPv4 unspecified lower boundary",
+    "address": "0.0.0.0",
+    "public": false
+  },
+  {
+    "name": "IPv4 unspecified upper boundary",
+    "address": "0.255.255.255",
+    "public": false
+  },
+  {
+    "name": "IPv4 unspecified boundary after",
+    "address": "1.0.0.0",
+    "public": true
+  },
+  {
+    "name": "IPv4 loopback lower boundary",
+    "address": "127.0.0.0",
+    "public": false
+  },
+  {
+    "name": "IPv4 loopback upper boundary",
+    "address": "127.255.255.255",
+    "public": false
+  },
+  {
+    "name": "IPv4 loopback boundary after",
+    "address": "128.0.0.0",
+    "public": true
+  },
+  {
+    "name": "IPv4 RFC1918 10 lower boundary",
+    "address": "10.0.0.0",
+    "public": false
+  },
+  {
+    "name": "IPv4 RFC1918 10 upper boundary",
+    "address": "10.255.255.255",
+    "public": false
+  },
+  {
+    "name": "IPv4 RFC1918 10 boundary after",
+    "address": "11.0.0.0",
+    "public": true
+  },
+  {
+    "name": "IPv4 RFC1918 172 boundary before",
+    "address": "172.15.255.255",
+    "public": true
+  },
+  {
+    "name": "IPv4 RFC1918 172 lower boundary",
+    "address": "172.16.0.0",
+    "public": false
+  },
+  {
+    "name": "IPv4 RFC1918 172 upper boundary",
+    "address": "172.31.255.255",
+    "public": false
+  },
+  {
+    "name": "IPv4 RFC1918 172 boundary after",
+    "address": "172.32.0.0",
+    "public": true
+  },
+  {
+    "name": "IPv4 RFC1918 192 boundary before",
+    "address": "192.167.255.255",
+    "public": true
+  },
+  {
+    "name": "IPv4 RFC1918 192 lower boundary",
+    "address": "192.168.0.0",
+    "public": false
+  },
+  {
+    "name": "IPv4 RFC1918 192 upper boundary",
+    "address": "192.168.255.255",
+    "public": false
+  },
+  {
+    "name": "IPv4 RFC1918 192 boundary after",
+    "address": "192.169.0.0",
+    "public": true
+  },
+  {
+    "name": "IPv4 link-local boundary before",
+    "address": "169.253.255.255",
+    "public": true
+  },
+  {
+    "name": "IPv4 link-local lower boundary",
+    "address": "169.254.0.0",
+    "public": false
+  },
+  {
+    "name": "IPv4 link-local upper boundary",
+    "address": "169.254.255.255",
+    "public": false
+  },
+  {
+    "name": "IPv4 link-local boundary after",
+    "address": "169.255.0.0",
+    "public": true
+  },
+  {
+    "name": "CGNAT boundary before",
+    "address": "100.63.255.255",
+    "public": true
+  },
+  { "name": "CGNAT lower boundary", "address": "100.64.0.0", "public": false },
+  {
+    "name": "CGNAT upper boundary",
+    "address": "100.127.255.255",
+    "public": false
+  },
+  { "name": "CGNAT boundary after", "address": "100.128.0.0", "public": true },
+  { "name": "IPv6 unspecified", "address": "::", "public": false },
+  { "name": "IPv6 loopback", "address": "::1", "public": false },
+  {
+    "name": "IPv6 discard-only boundary before",
+    "address": "ff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": true
+  },
+  {
+    "name": "IPv6 discard-only lower boundary",
+    "address": "100::",
+    "public": false
+  },
+  {
+    "name": "IPv6 discard-only upper boundary",
+    "address": "100:0:0:0:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv6 dummy-prefix upper boundary",
+    "address": "100:0:0:1:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv6 dummy-prefix boundary after",
+    "address": "100:0:0:2::",
+    "public": true
+  },
+  {
+    "name": "IPv6 IETF assignment boundary before",
+    "address": "2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": true
+  },
+  {
+    "name": "IPv6 IETF assignment lower boundary",
+    "address": "2001::",
+    "public": false
+  },
+  {
+    "name": "IPv6 IETF assignment upper boundary",
+    "address": "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv6 IETF assignment boundary after",
+    "address": "2001:200::",
+    "public": true
+  },
+  {
+    "name": "IPv6 documentation 2001:db8 boundary before",
+    "address": "2001:db7:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": true
+  },
+  {
+    "name": "IPv6 documentation 2001:db8 lower boundary",
+    "address": "2001:db8::",
+    "public": false
+  },
+  {
+    "name": "IPv6 documentation 2001:db8 upper boundary",
+    "address": "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv6 documentation 2001:db8 boundary after",
+    "address": "2001:db9::",
+    "public": true
+  },
+  {
+    "name": "IPv6 6to4 boundary before",
+    "address": "2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": true
+  },
+  { "name": "IPv6 6to4 lower boundary", "address": "2002::", "public": false },
+  {
+    "name": "IPv6 6to4 upper boundary",
+    "address": "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  { "name": "IPv6 6to4 boundary after", "address": "2003::", "public": true },
+  {
+    "name": "IPv6 documentation 3fff boundary before",
+    "address": "3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": true
+  },
+  {
+    "name": "IPv6 documentation 3fff lower boundary",
+    "address": "3fff::",
+    "public": false
+  },
+  {
+    "name": "IPv6 documentation 3fff upper boundary",
+    "address": "3fff:0fff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv6 documentation 3fff boundary after",
+    "address": "3fff:1000::",
+    "public": true
+  },
+  {
+    "name": "IPv6 SRv6 boundary before",
+    "address": "5eff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": true
+  },
+  { "name": "IPv6 SRv6 lower boundary", "address": "5f00::", "public": false },
+  {
+    "name": "IPv6 SRv6 upper boundary",
+    "address": "5f00:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  { "name": "IPv6 SRv6 boundary after", "address": "5f01::", "public": true },
+  {
+    "name": "IPv6 non-global translation boundary before",
+    "address": "64:ff9b::ffff:ffff",
+    "public": true
+  },
+  {
+    "name": "IPv6 non-global translation lower boundary",
+    "address": "64:ff9b:1::",
+    "public": false
+  },
+  {
+    "name": "IPv6 non-global translation upper boundary",
+    "address": "64:ff9b:1:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv6 non-global translation boundary after",
+    "address": "64:ff9b:2::",
+    "public": true
+  },
+  { "name": "IPv6 ULA lower boundary", "address": "fc00::", "public": false },
+  {
+    "name": "IPv6 ULA upper boundary",
+    "address": "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  { "name": "IPv6 ULA boundary after", "address": "fe00::", "public": true },
+  {
+    "name": "IPv6 link-local boundary before",
+    "address": "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": true
+  },
+  {
+    "name": "IPv6 link-local lower boundary",
+    "address": "fe80::",
+    "public": false
+  },
+  {
+    "name": "IPv6 link-local upper boundary",
+    "address": "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv6 deprecated site-local lower boundary",
+    "address": "fec0::",
+    "public": false
+  },
+  {
+    "name": "IPv6 deprecated site-local upper boundary",
+    "address": "feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    "public": false
+  },
+  {
+    "name": "IPv4-mapped loopback",
+    "address": "::ffff:127.0.0.1",
+    "public": false
+  },
+  {
+    "name": "IPv4-mapped CGNAT lower boundary",
+    "address": "::ffff:100.64.0.0",
+    "public": false
+  },
+  {
+    "name": "IPv4-mapped CGNAT upper boundary",
+    "address": "::ffff:100.127.255.255",
+    "public": false
+  },
+  { "name": "IPv4-mapped public", "address": "::ffff:8.8.8.8", "public": true },
+  { "name": "IPv6 multicast", "address": "ff00::", "public": false },
+  { "name": "public IPv4", "address": "8.8.8.8", "public": true },
+  { "name": "public IPv6", "address": "2001:4860:4860::8888", "public": true }
+]
