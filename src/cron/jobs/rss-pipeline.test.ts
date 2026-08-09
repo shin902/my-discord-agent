@@ -193,7 +193,7 @@ describe("RSS collect / dispatch", () => {
     expect(appendInbox).not.toHaveBeenCalled();
   });
 
-  it("初回を既読で保存し、新着だけをinbox投入後に既読化する", async () => {
+  it("初回を既読で保存し、新着はinbox投入後もジョブ成功まで未読にする", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx());
     expect(unreadTitles()).toEqual([]);
@@ -221,7 +221,7 @@ describe("RSS collect / dispatch", () => {
       .content;
     expect(content).toContain("RSS記事を日本語で要約してください");
     expect(content).toContain("RSS概要:");
-    expect(unreadTitles()).toEqual([]);
+    expect(unreadTitles()).toEqual(["新着記事"]);
   });
 
   it("多数の記事を件数で切り捨てず保存する", async () => {
@@ -356,7 +356,7 @@ describe("RSS collect / dispatch", () => {
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe("");
     expect(keys[1]).toBe(keys[0]);
-    expect(unreadTitles()).toEqual([]);
+    expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
   it("対象フィードが重なる並列dispatchでは記事を一度だけ投入する", async () => {
@@ -373,7 +373,7 @@ describe("RSS collect / dispatch", () => {
     expect(firstInbox.mock.calls.length + secondInbox.mock.calls.length).toBe(
       1,
     );
-    expect(unreadTitles()).toEqual([]);
+    expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
   it("不明なツールが指定されている場合はinbox投入せず未読のまま残す", async () => {
@@ -415,7 +415,7 @@ describe("RSS collect / dispatch", () => {
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
-  it("今回inboxへ投入した件数だけを既読にする", async () => {
+  it("今回inboxへ投入した件数だけをdispatch claimする", async () => {
     mockFeed(updatedXml);
     await collectHandler(makeCollectCtx("process"));
     const appendInbox = vi.fn(async () => undefined);
@@ -425,7 +425,7 @@ describe("RSS collect / dispatch", () => {
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining("新着記事") }),
     );
-    expect(unreadTitles()).toEqual(["既存記事"]);
+    expect(unreadTitles()).toEqual(["新着記事", "既存記事"]);
   });
 
   it("settings.feedsで指定したフィードの記事だけを並列dispatchする", async () => {
@@ -470,7 +470,7 @@ describe("RSS collect / dispatch", () => {
     expect(noteContent).not.toContain("YouTube動画");
     expect(youtubeContent).toContain("YouTube動画");
     expect(youtubeContent).not.toContain("note記事");
-    expect(unreadTitles()).toEqual([]);
+    expect(unreadTitles()).toEqual(["note記事", "YouTube動画"]);
   });
 
   it("ETag取得後は条件付きリクエストを送る", async () => {
@@ -570,7 +570,7 @@ describe("RSS collect / dispatch", () => {
     expect(content.length).toBeLessThanOrEqual(64_000);
   });
 
-  it("inboxの総量上限に入った記事だけを既読にする", async () => {
+  it("inboxの総量上限に入った記事だけをdispatch claimする", async () => {
     saveUnreadFeed(
       "https://example.com/large-feed.xml",
       "Large Feed",
@@ -598,7 +598,7 @@ describe("RSS collect / dispatch", () => {
     expect(content.length).toBeLessThanOrEqual(64_000);
     expect(queuedCount).toBeGreaterThan(0);
     expect(queuedCount).toBeLessThan(10);
-    expect(unreadTitles()).toHaveLength(10 - queuedCount);
+    expect(unreadTitles()).toHaveLength(10);
   });
 
   it("先頭記事が入らなくても容量内の後続記事を投入する", async () => {
@@ -633,7 +633,7 @@ describe("RSS collect / dispatch", () => {
       .content;
     expect(content).not.toContain("大きい記事");
     expect(content).toContain("小さい記事");
-    expect(unreadTitles()).toEqual(["大きい記事"]);
+    expect(unreadTitles()).toEqual(["大きい記事", "小さい記事"]);
   });
 
   it("promptが長すぎて1件も入らない場合は未読のまま設定エラーにする", async () => {

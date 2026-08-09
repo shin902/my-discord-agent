@@ -1,8 +1,8 @@
+import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
-
 import {
   Agent,
   type AgentMessage,
@@ -224,6 +224,11 @@ async function loadWorkspaceFile(path: string): Promise<string | null> {
     throw err;
   }
 }
+function snapshotHash(content: string | null): string | undefined {
+  return content === null
+    ? undefined
+    : createHash("sha256").update(content).digest("hex");
+}
 
 function loadSystemPromptFromWorkspace(): Promise<string | null> {
   return loadWorkspaceFile("/workspace/AGENTS.md");
@@ -286,11 +291,20 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   });
 }
 
+export interface FrozenExecutionIdentity {
+  agentsSnapshotContent?: string;
+  memorySnapshotContent?: string;
+  agentsSnapshotPresent?: boolean;
+  memorySnapshotPresent?: boolean;
+  snapshotHash?: string;
+  toolCallKey?: string;
+}
 export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
   groupConfig: AgentConfig,
+  identity?: FrozenExecutionIdentity,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
 
@@ -318,21 +332,37 @@ export async function runAgentLoop(
   // 新規セッション（messages が空）では必然的に見つからず needsAgentsSnapshot は true になる
   const existingAgentsSnapshot = messages.find(isAgentsSnapshotMessage);
   const needsAgentsSnapshot = !existingAgentsSnapshot;
-
-  // MEMORY.md / SELF.md（context-bootstrap）: 既存セッションに該当 customType の bootstrap
-  // メッセージがあれば新方式セッションとみなしてスキップする。フォールバック: bootstrap がない
-  // 既存セッション（旧形式）は次回以降のため移行する。新規セッションでは必然的に全チャンネルが
-  // 注入対象になる
   const channelsNeedingBootstrap = CONTEXT_BOOTSTRAP_CHANNELS.filter(
     (channel) => !messages.some((m) => getCustomType(m) === channel.customType),
   );
 
   const [systemPromptFile, skills, channelFileContents] = await Promise.all([
-    needsAgentsSnapshot
-      ? loadSystemPromptFromWorkspace()
-      : Promise.resolve(null),
+    identity?.agentsSnapshotPresent !== undefined
+      ? Promise.resolve(
+          identity.agentsSnapshotPresent
+            ? (identity.agentsSnapshotContent ?? "")
+            : null,
+        )
+      : needsAgentsSnapshot
+        ? (identity?.agentsSnapshotContent ??
+          (await loadSystemPromptFromWorkspace()))
+        : Promise.resolve(null),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
-    Promise.all(channelsNeedingBootstrap.map((c) => loadWorkspaceFile(c.path))),
+    Promise.all(
+      channelsNeedingBootstrap.map((c) =>
+        c.customType === MEMORY_BOOTSTRAP_TYPE &&
+        identity?.memorySnapshotPresent !== undefined
+          ? Promise.resolve(
+              identity.memorySnapshotPresent
+                ? (identity.memorySnapshotContent ?? "")
+                : null,
+            )
+          : c.customType === MEMORY_BOOTSTRAP_TYPE &&
+              identity?.memorySnapshotContent !== undefined
+            ? Promise.resolve(identity.memorySnapshotContent)
+            : loadWorkspaceFile(c.path),
+      ),
+    ),
   ]);
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
@@ -383,11 +413,50 @@ export async function runAgentLoop(
   const skillPrompt = formatSkillsForPrompt(skills);
   const datePrompt = formatDateForPrompt();
 
-  // AGENTS.md の内容: 新規読み込み分があればそれを、なければ既存スナップショットを使う
-  const agentsContent = needsAgentsSnapshot
-    ? systemPromptFile
-    : (existingAgentsSnapshot?.content ?? null);
+  const agentsSnapshotHash = snapshotHash(
+    identity?.agentsSnapshotPresent !== undefined
+      ? identity.agentsSnapshotPresent
+        ? (identity.agentsSnapshotContent ?? "")
+        : null
+      : (identity?.agentsSnapshotContent ??
+          (needsAgentsSnapshot
+            ? systemPromptFile
+            : (existingAgentsSnapshot?.content ?? null))),
+  );
+  const existingMemorySnapshot = messages.find(
+    (message) => getCustomType(message) === MEMORY_BOOTSTRAP_TYPE,
+  );
+  const memoryBootstrapIndex = channelsNeedingBootstrap.findIndex(
+    (channel) => channel.customType === MEMORY_BOOTSTRAP_TYPE,
+  );
+  const memoryContent =
+    identity?.memorySnapshotPresent !== undefined
+      ? identity.memorySnapshotPresent
+        ? (identity.memorySnapshotContent ?? "")
+        : null
+      : (identity?.memorySnapshotContent ??
+        (existingMemorySnapshot && "content" in existingMemorySnapshot
+          ? String(existingMemorySnapshot.content)
+          : memoryBootstrapIndex >= 0
+            ? (channelFileContents[memoryBootstrapIndex] ?? null)
+            : null));
+  const memorySnapshotHash = snapshotHash(memoryContent);
+  const computedSnapshotHash =
+    agentsSnapshotHash === undefined && memorySnapshotHash === undefined
+      ? undefined
+      : createHash("sha256")
+          .update(`${agentsSnapshotHash ?? ""}:${memorySnapshotHash ?? ""}`)
+          .digest("hex");
+  const snapshotHashValue = identity?.snapshotHash ?? computedSnapshotHash;
+  const toolCallKey =
+    identity?.toolCallKey ??
+    (snapshotHashValue
+      ? createHash("sha256")
+          .update(`${groupName}:${sessionId}:${content}:${snapshotHashValue}`)
+          .digest("hex")
+      : undefined);
 
+  // AGENTS.md の内容: 新規読み込み分があればそれを、なければ既存スナップショットを使う
   // AGENTS.md は system role の systemPrompt に固定で含める（指示遵守の優先度を維持するため）。
   // AGENTS.md が存在する場合はそれが DEFAULT_SYSTEM_PROMPT を完全に置き換える
   // （グループ独自のペルソナ定義と汎用文言が矛盾しないようにするため）。
@@ -400,6 +469,15 @@ export async function runAgentLoop(
   //
   // MEMORY.md / SELF.md は下の context-bootstrap 注入によって会話履歴経由で LLM に届く
   // （user role に変換されるため、AGENTS.md と二重注入にはならない）。
+  const agentsContent =
+    identity?.agentsSnapshotPresent !== undefined
+      ? identity.agentsSnapshotPresent
+        ? (identity.agentsSnapshotContent ?? "")
+        : null
+      : (identity?.agentsSnapshotContent ??
+        (needsAgentsSnapshot
+          ? systemPromptFile
+          : (existingAgentsSnapshot?.content ?? null)));
   const fullSystemPrompt = [
     agentsContent ?? DEFAULT_SYSTEM_PROMPT,
     skillPrompt,
@@ -548,6 +626,10 @@ export async function runAgentLoop(
       assistantTurns,
       ...(hasUsage ? { usage: aggregatedUsage } : {}),
       ...(stopReason !== undefined ? { stopReason } : {}),
+      agentsSnapshotHash,
+      memorySnapshotHash,
+      snapshotHash: snapshotHashValue,
+      toolCallKey,
     };
     const timingLine = `__DISCORD_EVENT__:${JSON.stringify(timingEvent)}\n`;
     const flushed = process.stderr.write(timingLine);
@@ -566,20 +648,27 @@ const PayloadSchema = z.object({
   sessionId: z.string(),
   content: z.string(),
   groupConfig: AgentConfigSchema,
+  agentsSnapshotContent: z.string().optional(),
+  agentsSnapshotPresent: z.boolean().optional(),
+  memorySnapshotPresent: z.boolean().optional(),
+  memorySnapshotContent: z.string().optional(),
+  snapshotHash: z.string().optional(),
+  toolCallKey: z.string().optional(),
 });
 
 // CLIエントリポイント（import時は実行しない）
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   (async () => {
     await waitForNetwork();
+    process.stderr.write("__AGENT_READY__\n");
     const raw = await text(process.stdin);
     const payload = PayloadSchema.parse(JSON.parse(raw || "{}"));
-
     const response = await runAgentLoop(
       payload.groupName,
       payload.sessionId,
       payload.content,
       payload.groupConfig,
+      payload,
     );
     // pi-agent-core/pi-ai 側がHTTPクライアントのkeep-aliveソケット等を残し、
     // イベントループが自然に空にならずプロセスがexitしないケースがある。

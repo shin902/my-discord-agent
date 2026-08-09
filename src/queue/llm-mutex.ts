@@ -11,18 +11,37 @@ const providerMutexes = new Map<string, MutexState>();
 
 const noopRelease = () => {};
 
-function acquire(state: MutexState, onIdle?: () => void): Promise<() => void> {
-  return new Promise((resolve) => {
+function acquire(
+  state: MutexState,
+  onIdle?: () => void,
+  signal?: AbortSignal,
+): Promise<() => void> {
+  return new Promise((resolve, reject) => {
+    let queued = false;
+    let settled = false;
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      if (queued) {
+        const index = state.waiters.indexOf(tryAcquire);
+        if (index >= 0) state.waiters.splice(index, 1);
+      }
+      reject(new Error("provider lock aborted"));
+    };
     const tryAcquire = () => {
+      queued = false;
+      if (settled || signal?.aborted) {
+        abort();
+        return;
+      }
       state.locked = true;
       let released = false;
       resolve(() => {
         if (released) return;
         released = true;
         const next = state.waiters.shift();
-        if (next) {
-          next();
-        } else {
+        if (next) next();
+        else {
           state.locked = false;
           onIdle?.();
         }
@@ -32,21 +51,29 @@ function acquire(state: MutexState, onIdle?: () => void): Promise<() => void> {
       tryAcquire();
       return;
     }
+    queued = true;
     state.waiters.push(tryAcquire);
+    signal?.addEventListener("abort", abort, { once: true });
   });
 }
-
-function acquireProvider(provider: string): Promise<() => void> {
+function acquireProvider(
+  provider: string,
+  signal?: AbortSignal,
+): Promise<() => void> {
   const state = providerMutexes.get(provider) ?? {
     locked: false,
     waiters: [],
   };
   providerMutexes.set(provider, state);
-  return acquire(state, () => {
-    if (providerMutexes.get(provider) === state) {
-      providerMutexes.delete(provider);
-    }
-  });
+  return acquire(
+    state,
+    () => {
+      if (providerMutexes.get(provider) === state) {
+        providerMutexes.delete(provider);
+      }
+    },
+    signal,
+  );
 }
 
 /**
@@ -57,7 +84,9 @@ function acquireProvider(provider: string): Promise<() => void> {
 export async function acquireLlmLock(
   provider: string,
   concurrency: ProviderConcurrency,
+  signal?: AbortSignal,
 ): Promise<() => void> {
-  if (concurrency === "serial") return acquireProvider(provider);
+  if (signal?.aborted) throw new Error("provider lock aborted");
+  if (concurrency === "serial") return acquireProvider(provider, signal);
   return noopRelease;
 }

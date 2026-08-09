@@ -21,7 +21,9 @@ describe("loadAndValidateCron", () => {
     vi.doMock("../discord/client.js", () => ({
       client: { isReady: vi.fn(), channels: { fetch: vi.fn() } },
     }));
-    vi.doMock("../queue/inbox.js", () => ({ appendInbox: vi.fn() }));
+    vi.doMock("../queue/repository.js", () => ({
+      getQueueRepository: () => ({ enqueue: vi.fn() }),
+    }));
 
     const runner = await import("./runner.js");
     loadAndValidateCron = runner.loadAndValidateCron;
@@ -298,7 +300,9 @@ describe("loadHandlerFn — resolveHandlerPath", () => {
     vi.doMock("../discord/client.js", () => ({
       client: { isReady: vi.fn(), channels: { fetch: vi.fn() } },
     }));
-    vi.doMock("../queue/inbox.js", () => ({ appendInbox: vi.fn() }));
+    vi.doMock("../queue/repository.js", () => ({
+      getQueueRepository: () => ({ enqueue: vi.fn() }),
+    }));
 
     const runner = await import("./runner.js");
     loadHandlerFn = runner.loadHandlerFn;

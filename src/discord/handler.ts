@@ -1,6 +1,12 @@
 import { Events, type Message, ThreadAutoArchiveDuration } from "discord.js";
 import { findGroupByChannelId } from "../config/groups.js";
-import { appendInbox } from "../queue/inbox.js";
+import { getQueueRepository } from "../queue/repository.js";
+import type { QueueInput } from "../queue/types.js";
+
+const enqueue = async (payload: QueueInput): Promise<void> => {
+  await getQueueRepository().enqueue(payload);
+};
+
 import { client } from "./client.js";
 
 // URL あり → "{hostname}-{messageId末尾6文字}", URL なし → "thread-{messageId末尾6文字}", 最大100文字
@@ -131,7 +137,7 @@ export function registerHandlers(): void {
     console.log(
       `[handler] inbox に積みます: ${inboxChannelId} "${message.content}"`,
     );
-    await appendInbox({
+    await enqueue({
       channelId: inboxChannelId,
       groupName: match.group.name,
       sessionId,
@@ -139,7 +145,7 @@ export function registerHandlers(): void {
       content: message.content,
       timestamp: message.createdAt.toISOString(),
       attachments,
-    }).catch(async (err) => {
+    }).catch(async (err: unknown) => {
       console.error("[handler] appendInbox 失敗:", err);
       await message.reply(
         "メッセージの受信に失敗しました。もう一度送ってください。",

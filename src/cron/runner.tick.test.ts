@@ -31,7 +31,9 @@ describe("tick() orchestration", () => {
     vi.doMock("../discord/client.js", () => ({
       client: { isReady: mockIsReady, channels: { fetch: vi.fn() } },
     }));
-    vi.doMock("../queue/inbox.js", () => ({ appendInbox: mockAppendInbox }));
+    vi.doMock("../queue/repository.js", () => ({
+      getQueueRepository: () => ({ enqueue: mockAppendInbox }),
+    }));
     vi.doMock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
     vi.doMock("../utils/splitMessage.js", () => ({
       splitMessage: (s: string) => [s],

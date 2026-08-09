@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -28,6 +28,7 @@ export interface UnreadArticle {
 
 export interface ArticleDispatch {
   id: string;
+  jobId: string;
   articles: UnreadArticle[];
 }
 
@@ -50,6 +51,8 @@ interface ArticleRow {
 
 interface DispatchArticleRow extends ArticleRow {
   dispatch_id: string;
+  dispatch_job_id: string;
+  dispatch_owner_key: string | null;
 }
 
 export function resolveRssDbPath(configuredPath?: string): string {
@@ -57,6 +60,31 @@ export function resolveRssDbPath(configuredPath?: string): string {
   return path.isAbsolute(configuredPath)
     ? configuredPath
     : path.resolve(ROOT, configuredPath);
+}
+
+export type TryOpenRssDbResult =
+  | { ok: true; path: string; db: Database.Database }
+  | { ok: false; path: string; error: string };
+
+/**
+ * Resolve, check existence of, and open an RSS state database without touching
+ * the queue. Callers decide how to surface a failure: reconciliation skips
+ * missing/unopenable stores best-effort, while the operator records an
+ * observability error with the same message.
+ */
+export function tryOpenRssDb(configuredPath?: string): TryOpenRssDbResult {
+  const dbPath = resolveRssDbPath(configuredPath);
+  if (!existsSync(dbPath))
+    return { ok: false, path: dbPath, error: "database file does not exist" };
+  try {
+    return { ok: true, path: dbPath, db: openRssDb(dbPath) };
+  } catch (error) {
+    return {
+      ok: false,
+      path: dbPath,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export function openRssDb(configuredPath?: string): Database.Database {
@@ -99,9 +127,33 @@ export function openRssDb(configuredPath?: string): Database.Database {
   if (!articleColumns.some((column) => column.name === "dispatch_job_id")) {
     db.exec("ALTER TABLE rss_articles ADD COLUMN dispatch_job_id TEXT");
   }
+  if (!articleColumns.some((column) => column.name === "dispatch_owner_key")) {
+    db.exec("ALTER TABLE rss_articles ADD COLUMN dispatch_owner_key TEXT");
+  }
+  const legacyDispatches = db
+    .prepare(`
+    SELECT id, dispatch_id, dispatch_job_id
+    FROM rss_articles
+    WHERE dispatch_owner_key IS NULL AND dispatch_id IS NOT NULL AND dispatch_job_id IS NOT NULL
+  `)
+    .all() as Array<{
+    id: number;
+    dispatch_id: string;
+    dispatch_job_id: string;
+  }>;
+  const backfillOwner = db.prepare(
+    "UPDATE rss_articles SET dispatch_owner_key=? WHERE id=?",
+  );
+  for (const row of legacyDispatches) {
+    const suffix = `:${row.dispatch_id}`;
+    if (row.dispatch_job_id.endsWith(suffix)) {
+      const owner = row.dispatch_job_id.slice(0, -suffix.length);
+      if (owner.length > 0) backfillOwner.run(owner, row.id);
+    }
+  }
   db.exec(`
-    CREATE INDEX IF NOT EXISTS rss_articles_dispatch
-      ON rss_articles(dispatch_job_id, dispatch_id, id);
+    CREATE INDEX IF NOT EXISTS rss_articles_owner_dispatch
+      ON rss_articles(dispatch_owner_key, dispatch_id, id);
   `);
   return db;
 }
@@ -244,15 +296,7 @@ export function listUnreadArticles(
       LIMIT ?
     `)
     .all(...(feedUrls ?? []), limit) as ArticleRow[];
-  return rows.map((row) => ({
-    id: row.id,
-    feedName: row.feed_name,
-    feedUrl: row.feed_url,
-    title: row.title,
-    link: row.link,
-    publishedAt: row.published_at,
-    summary: row.summary,
-  }));
+  return rows.map(mapArticle);
 }
 
 function mapArticle(row: ArticleRow): UnreadArticle {
@@ -277,15 +321,21 @@ export function claimUnreadArticles(
   return db.transaction(() => {
     const pending = db
       .prepare(`
-        SELECT a.id, a.dispatch_id, COALESCE(f.name, f.url) AS feed_name,
+        SELECT a.id, a.dispatch_id, a.dispatch_job_id, a.dispatch_owner_key,
+          COALESCE(f.name, f.url) AS feed_name,
           f.url AS feed_url, a.title, a.link, a.published_at, a.summary
         FROM rss_articles a JOIN rss_feeds f ON f.id = a.feed_id
-        WHERE a.read_at IS NULL AND a.dispatch_job_id = ?
+        WHERE a.read_at IS NULL
+          AND (a.dispatch_owner_key = ? OR (a.dispatch_owner_key IS NULL AND a.dispatch_job_id = ?))
         ORDER BY a.id ASC
       `)
-      .all(jobId) as DispatchArticleRow[];
+      .all(jobId, jobId) as DispatchArticleRow[];
     if (pending.length > 0) {
-      return { id: pending[0].dispatch_id, articles: pending.map(mapArticle) };
+      return {
+        id: pending[0].dispatch_id,
+        jobId: pending[0].dispatch_job_id,
+        articles: pending.map(mapArticle),
+      };
     }
 
     const feedFilter = feedUrls
@@ -303,12 +353,19 @@ export function claimUnreadArticles(
     if (rows.length === 0) return undefined;
 
     const dispatchId = randomUUID();
+    // `jobId` is the stable cron-run recovery key. A new batch must get its
+    // own queue idempotency key so later cron runs are not deduplicated against
+    const dispatchJobId = `${jobId}:${dispatchId}`;
     const placeholders = rows.map(() => "?").join(", ");
     db.prepare(`
-      UPDATE rss_articles SET dispatch_id = ?, dispatch_job_id = ?
+      UPDATE rss_articles SET dispatch_id = ?, dispatch_job_id = ?, dispatch_owner_key = ?
       WHERE dispatch_id IS NULL AND id IN (${placeholders})
-    `).run(dispatchId, jobId, ...rows.map((row) => row.id));
-    return { id: dispatchId, articles: rows.map(mapArticle) };
+    `).run(dispatchId, dispatchJobId, jobId, ...rows.map((row) => row.id));
+    return {
+      id: dispatchId,
+      jobId: dispatchJobId,
+      articles: rows.map(mapArticle),
+    };
   })();
 }
 
@@ -320,9 +377,34 @@ export function releaseDispatchArticles(
   if (articleIds.length === 0) return;
   const placeholders = articleIds.map(() => "?").join(", ");
   db.prepare(`
-    UPDATE rss_articles SET dispatch_id = NULL, dispatch_job_id = NULL
+    UPDATE rss_articles SET dispatch_id = NULL, dispatch_job_id = NULL, dispatch_owner_key = NULL
     WHERE dispatch_id = ? AND id IN (${placeholders})
   `).run(dispatchId, ...articleIds);
+}
+export interface DispatchClaim {
+  dispatchId: string;
+  dispatchJobId: string;
+  articleIds: number[];
+}
+
+export function listDispatchClaims(db: Database.Database): DispatchClaim[] {
+  const rows = db
+    .prepare(`
+    SELECT dispatch_id, dispatch_job_id, GROUP_CONCAT(id) AS article_ids
+    FROM rss_articles
+    WHERE read_at IS NULL AND dispatch_id IS NOT NULL AND dispatch_job_id IS NOT NULL
+    GROUP BY dispatch_id, dispatch_job_id
+  `)
+    .all() as Array<{
+    dispatch_id: string;
+    dispatch_job_id: string;
+    article_ids: string;
+  }>;
+  return rows.map((row) => ({
+    dispatchId: row.dispatch_id,
+    dispatchJobId: row.dispatch_job_id,
+    articleIds: row.article_ids.split(",").map(Number),
+  }));
 }
 
 export function markArticlesRead(
@@ -333,7 +415,7 @@ export function markArticlesRead(
   const placeholders = articleIds.map(() => "?").join(", ");
   db.prepare(`
     UPDATE rss_articles
-    SET read_at = ?, dispatch_id = NULL, dispatch_job_id = NULL
+    SET read_at = ?, dispatch_id = NULL, dispatch_job_id = NULL, dispatch_owner_key = NULL
     WHERE read_at IS NULL AND id IN (${placeholders})
   `).run(new Date().toISOString(), ...articleIds);
 }

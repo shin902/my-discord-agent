@@ -8,10 +8,10 @@ import type {
   SkillSelection,
 } from "../config/groups.js";
 import type {
-  appendInbox,
   CronDeliveryMode,
   CronSessionMode,
-} from "../queue/inbox.js";
+  QueueProducer,
+} from "../queue/types.js";
 import { loadSkills } from "../skills/loader.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
@@ -32,7 +32,9 @@ export interface CronEnqueueContext {
   tools?: string[];
   skills?: SkillSelection;
   idempotencyKey?: string;
-  appendInbox: typeof appendInbox;
+  rssDispatchId?: string;
+  rssStatePath?: string;
+  appendInbox: QueueProducer;
 }
 
 function resolveModes(ctx: CronEnqueueContext): {
@@ -122,11 +124,9 @@ export async function enqueueCronInbox(
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
   const sessionId =
-    sessionMode === "per-run"
+    sessionMode === "per-run" || deliveryMode === "new-thread"
       ? `cron-${ctx.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      : deliveryMode === "direct"
-        ? ctx.channelId
-        : `cron-${ctx.id}`;
+      : ctx.channelId;
   const configOverride = buildConfigOverride(ctx);
 
   await ctx.appendInbox({
@@ -139,6 +139,8 @@ export async function enqueueCronInbox(
     cronSessionMode: sessionMode,
     cronJobId: ctx.id,
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
+    ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
+    ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
 }

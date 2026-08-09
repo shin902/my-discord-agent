@@ -6,13 +6,17 @@ vi.mock("../discord/client.js", () => ({
     channels: { fetch: vi.fn() },
   },
 }));
-vi.mock("../queue/inbox.js", () => ({ appendInbox: vi.fn() }));
+const appendInboxMock = vi.hoisted(() => vi.fn());
+vi.mock("../queue/repository.js", () => ({
+  getQueueRepository: () => ({ enqueue: appendInboxMock }),
+}));
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../utils/splitMessage.js", () => ({
   splitMessage: (s: string) => [s],
 }));
 
-import { appendInbox } from "../queue/inbox.js";
+const appendInbox = appendInboxMock;
+
 import { NonRetryableError } from "../utils/error.js";
 import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
 
@@ -91,10 +95,34 @@ describe("executeJob", () => {
     expect(arg.channelId).toBe("ch-123");
     expect(arg.groupName).toBe("my-group");
     expect(arg.content).toBe("do something");
-    expect(arg.sessionId).toBe("cron-test-job");
+    expect(arg.sessionId).toMatch(/^cron-test-job-/);
     expect(arg.cronDeliveryMode).toBe("new-thread");
     expect(arg.cronSessionMode).toBe("destination");
     expect(arg.cronJobId).toBe("test-job");
+  });
+
+  it("new-thread + destination: 実行ごとに異なる仮セッションをキューへ渡す", async () => {
+    const job = {
+      id: "repeated-job",
+      schedule: "5m",
+      enabled: true,
+      groupName: "my-group",
+      prompt: "do something",
+      channelId: "ch-123",
+      deliveryMode: "new-thread" as const,
+      sessionMode: "destination" as const,
+    };
+
+    await executeJob(job);
+    await executeJob(job);
+
+    const sessionIds = vi
+      .mocked(appendInbox)
+      .mock.calls.map(([arg]) => arg.sessionId);
+    expect(sessionIds).toHaveLength(2);
+    expect(sessionIds[0]).toMatch(/^cron-repeated-job-/);
+    expect(sessionIds[1]).toMatch(/^cron-repeated-job-/);
+    expect(sessionIds[0]).not.toBe(sessionIds[1]);
   });
 
   it("direct + destination: 指定先IDをセッションIDとして使う", async () => {

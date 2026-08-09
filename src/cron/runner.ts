@@ -6,7 +6,13 @@ import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
 import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
 import { client } from "../discord/client.js";
-import { appendInbox } from "../queue/inbox.js";
+import { getQueueRepository } from "../queue/repository.js";
+import type { QueueProducer } from "../queue/types.js";
+
+const appendInbox: QueueProducer = async (payload) => {
+  await getQueueRepository().enqueue(payload);
+};
+
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
 import { enqueueCronInbox } from "./enqueue.js";
