@@ -1,10 +1,20 @@
-import { writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
+import type { FxPost } from "./agent-reach.js";
 import {
   agentReachTool,
   buildCommand,
@@ -22,12 +32,13 @@ import {
   parseXStatus,
   readLimitedJson,
 } from "./agent-reach.js";
-import type { FxPost } from "./agent-reach.js";
 
 const dnsLookupMock = vi.hoisted(() =>
   vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
 );
 vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
+
+const execFileAsync = promisify(execFile);
 
 describe("normalizeUrl", () => {
   it("意味のある query を保持し fragment だけを除去する", () => {
@@ -297,6 +308,19 @@ describe("buildCommand シェルエスケープ", () => {
     });
   });
 
+  it("youtube: 原語字幕だけを要求し、字幕取得失敗を握りつぶさない", () => {
+    const cmd = buildCommand("youtube", parityCases.youtube.url, out);
+    expect(cmd).toContain(
+      `--write-auto-subs --sub-langs '${parityCases.youtube.originalSubtitleSelector}' --skip-download`,
+    );
+    expect(cmd).not.toContain(
+      `--sub-langs '${parityCases.youtube.translatedSubtitleSelector}'`,
+    );
+    expect(cmd).not.toContain("--sub-lang ja,en");
+    expect(cmd).not.toContain("2>&1 || true");
+    expect(cmd).toContain("> /dev/null");
+  });
+
   it("github-repo: GitHub API への curl コマンドを生成する", () => {
     const cmd = buildCommand(
       "github-repo",
@@ -333,6 +357,111 @@ describe("buildCommand シェルエスケープ", () => {
     expect(() =>
       buildCommand("x-twitter", "https://x.com/testuser/status/123456789", out),
     ).toThrow("native fetch handler");
+  });
+});
+
+describe("YouTube yt-dlp字幕取得", () => {
+  it("fake yt-dlp に原語セレクターを渡し、字幕なしは成功扱いにする", async () => {
+    const testDir = await mkdtemp(join(tmpdir(), "agent-reach-ts-ytdlp-"));
+    try {
+      const binDir = join(testDir, "bin");
+      const argsLog = join(testDir, "yt-dlp-args.log");
+      const ytDlp = join(binDir, "yt-dlp");
+      await mkdir(binDir);
+      await writeFile(
+        ytDlp,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$AGENT_REACH_YTDLP_ARGS"
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"fixture","chapters":[]}'
+fi
+`,
+        "utf8",
+      );
+      await chmod(ytDlp, 0o755);
+
+      await expect(
+        execFileAsync(
+          "bash",
+          [
+            "-c",
+            buildCommand(
+              "youtube",
+              parityCases.youtube.url,
+              join(testDir, "youtube.md"),
+            ),
+          ],
+          {
+            env: {
+              ...process.env,
+              AGENT_REACH_YTDLP_ARGS: argsLog,
+              PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            },
+          },
+        ),
+      ).resolves.toBeDefined();
+
+      const invocations = (await readFile(argsLog, "utf8")).trim().split("\n");
+      expect(invocations).toHaveLength(2);
+      expect(invocations[1]).toContain(
+        `--write-auto-subs --sub-langs ${parityCases.youtube.originalSubtitleSelector}`,
+      );
+      expect(invocations[1]).not.toContain(
+        parityCases.youtube.translatedSubtitleSelector,
+      );
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("字幕取得のstderrと終了失敗を呼び出し元へ伝える", async () => {
+    const testDir = await mkdtemp(
+      join(tmpdir(), "agent-reach-ts-ytdlp-error-"),
+    );
+    try {
+      const binDir = join(testDir, "bin");
+      const ytDlp = join(binDir, "yt-dlp");
+      await mkdir(binDir);
+      await writeFile(
+        ytDlp,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"fixture","chapters":[]}'
+  exit 0
+fi
+printf '%s\\n' '${parityCases.youtube.retrievalError}' >&2
+exit 1
+`,
+        "utf8",
+      );
+      await chmod(ytDlp, 0o755);
+
+      await expect(
+        execFileAsync(
+          "bash",
+          [
+            "-c",
+            buildCommand(
+              "youtube",
+              parityCases.youtube.url,
+              join(testDir, "youtube.md"),
+            ),
+          ],
+          {
+            env: {
+              ...process.env,
+              PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            },
+          },
+        ),
+      ).rejects.toMatchObject({
+        stderr: expect.stringContaining(parityCases.youtube.retrievalError),
+      });
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
   });
 });
 

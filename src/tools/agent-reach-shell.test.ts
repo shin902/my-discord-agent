@@ -87,10 +87,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 subs_dir="$(dirname "$output")"
-cat > "$subs_dir/video.ja.vtt" <<'VTT'
+cat > "$subs_dir/video.en-orig.vtt" <<'VTT'
 WEBVTT
 Kind: captions
-Language: ja
+Language: en
 
 00:00:00.000 --> 00:00:01.000 align:start position:0% Hello
 VTT
@@ -110,9 +110,78 @@ VTT
       },
     );
 
-    expect(stdout).toContain("## 字幕 (ja)");
+    expect(stdout).toContain("## 字幕 (en-orig)");
     expect(stdout).toContain("Hello");
     expect(stdout).not.toContain("-->");
+  });
+
+  it("fake yt-dlp に原語セレクターだけを渡し、字幕なしは明示する", async () => {
+    const ytDlp = join(binDir, "yt-dlp");
+    const argsLog = join(testDir, "yt-dlp-args.log");
+    await writeFile(
+      ytDlp,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$AGENT_REACH_YTDLP_ARGS"
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"fixture","chapters":[]}'
+fi
+`,
+      "utf8",
+    );
+    await chmod(ytDlp, 0o755);
+
+    const { stdout } = await execFileAsync(
+      "bash",
+      [agentReachScript, parityCases.youtube.url],
+      {
+        env: {
+          ...process.env,
+          AGENT_REACH_YTDLP_ARGS: argsLog,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        },
+      },
+    );
+
+    const invocations = (await readFile(argsLog, "utf8")).trim().split("\n");
+    expect(invocations).toHaveLength(2);
+    expect(invocations[1]).toContain(
+      `--write-auto-subs --sub-langs ${parityCases.youtube.originalSubtitleSelector}`,
+    );
+    expect(invocations[1]).not.toContain(
+      parityCases.youtube.translatedSubtitleSelector,
+    );
+    expect(stdout).toContain("## 字幕");
+    expect(stdout).toContain("(取得できませんでした)");
+  });
+
+  it("字幕取得のstderrと終了失敗をエージェントへ伝える", async () => {
+    const ytDlp = join(binDir, "yt-dlp");
+    await writeFile(
+      ytDlp,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" --dump-json "* ]]; then
+  printf '%s\\n' '{"title":"fixture","chapters":[]}'
+  exit 0
+fi
+printf '%s\\n' '${parityCases.youtube.retrievalError}' >&2
+exit 1
+`,
+      "utf8",
+    );
+    await chmod(ytDlp, 0o755);
+
+    await expect(
+      execFileAsync("bash", [agentReachScript, parityCases.youtube.url], {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining(parityCases.youtube.retrievalError),
+    });
   });
 });
 

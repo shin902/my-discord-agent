@@ -813,9 +813,12 @@ fetch_youtube() {
   # including redirects and extractor/subtitle URLs.
   PYTHONPATH="$policy_pythonpath" yt-dlp --no-check-certificate --dump-json "$url" > "$meta_out" 2>&1
 
-  # Fetch subtitles (best effort)
-  PYTHONPATH="$policy_pythonpath" yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download \
-    -o "${subs_dir}/%(id)s" "$url" > /dev/null 2>&1 || true
+  # yt-dlp labels the original automatic-caption track with the -orig suffix.
+  # Request only that regex: translated tracks (such as ja/en) are deliberately
+  # not a fallback. Keep stderr visible so subtitle retrieval failures reach the
+  # agent; a successful no-subtitle response still renders the no-subtitles note.
+  PYTHONPATH="$policy_pythonpath" yt-dlp --no-check-certificate --write-auto-subs --sub-langs '.*-orig' --skip-download \
+    -o "${subs_dir}/%(id)s" "$url" > /dev/null
 
   format_youtube "$meta_out" "$subs_dir"
 }

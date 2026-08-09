@@ -49,6 +49,12 @@
       "service": "web"
     }
   ],
+  "youtube": {
+    "url": "https://www.youtube.com/watch?v=fixture",
+    "originalSubtitleSelector": ".*-orig",
+    "translatedSubtitleSelector": "ja,en",
+    "retrievalError": "HTTP Error 429: Too Many Requests"
+  },
   "xPost": {
     "url": "https://x.com/fixture_user/status/123456789?lang=en#post",
     "normalized": "https://x.com/fixture_user/status/123456789?lang=en",

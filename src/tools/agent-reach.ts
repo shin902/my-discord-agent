@@ -1149,7 +1149,10 @@ export function buildCommand(
         `${policy.setup} && ` +
         `mkdir -p ${subDirQ} && ` +
         `${policy.env} yt-dlp --no-check-certificate --dump-json ${q} > ${metaOutQ} 2>&1 && ` +
-        `(${policy.env} yt-dlp --no-check-certificate --write-auto-subs --sub-lang ja,en --skip-download -o ${shellQuote(`${base}.subs/%(id)s`)} ${q} > /dev/null 2>&1 || true)`
+        // yt-dlp labels the original automatic-caption track with the -orig suffix.
+        // Request only that regex: translated tracks (such as ja/en) are deliberately
+        // not a fallback, and a failed subtitle request must reach the caller via stderr.
+        `${policy.env} yt-dlp --no-check-certificate --write-auto-subs --sub-langs ${shellQuote(".*-orig")} --skip-download -o ${shellQuote(`${base}.subs/%(id)s`)} ${q} > /dev/null`
       );
     }
     case "github-repo": {
