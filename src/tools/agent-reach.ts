@@ -392,7 +392,6 @@ import urllib.request
 
 MAX_REDIRECTS = 5
 MAX_FEED_BYTES = 5 * 1024 * 1024
-REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_FETCH_SECONDS = 30.0
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
@@ -479,7 +478,7 @@ def _fetch_body(initial_url):
             try:
                 response = opener.open(
                     request,
-                    timeout=min(REQUEST_TIMEOUT_SECONDS, remaining_time),
+                    timeout=remaining_time,
                 )
             except urllib.error.HTTPError as error:
                 response = error
