@@ -152,14 +152,17 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     } catch (error) {
       if (error instanceof DeliveryError) throw error;
       const kind = classifyDiscordError(error);
-      // A status-bearing Discord response is a known API outcome; transport
-      // failures and otherwise unclassified errors have an unknown mutation
-      // outcome once create/send has been invoked.
-      const postMutationTransportFailure =
+      const status = statusCode(error);
+      // After create/send starts, a 5xx response does not prove that Discord
+      // rejected the mutation. Treat it like a lost transport response rather
+      // than retrying and potentially duplicating a thread or message. A 429 is
+      // safe to retry because it explicitly reports rate-limit rejection.
+      const postMutationAmbiguous =
         mutationAttempted &&
-        statusCode(error) === undefined &&
-        (kind === "retryable" || kind === "unknown");
-      const effectiveKind = postMutationTransportFailure
+        (status !== undefined
+          ? status >= 500
+          : kind === "retryable" || kind === "unknown");
+      const effectiveKind = postMutationAmbiguous
         ? "unknown"
         : kind === "unknown"
           ? "retryable"

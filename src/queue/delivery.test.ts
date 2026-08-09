@@ -132,6 +132,37 @@ it("marks transport failure during thread creation ambiguous without retrying", 
     repo.close();
   }
 });
+it("marks a 500 during thread creation ambiguous without retrying", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const create = vi.fn(async () => {
+    throw Object.assign(new Error("Discord internal error after create"), {
+      status: 500,
+    });
+  });
+  const channel = { threads: { create } };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockResolvedValue(channel as never);
+  try {
+    const jobId = completed(repo, "response", {
+      destinationType: "new-thread",
+      destinationId: "channel",
+      cronJobId: "daily",
+    });
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-a",
+    });
+    await worker.runOnce();
+    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    await worker.runOnce();
+    expect(create).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
 it("marks transport failure during message send ambiguous without retrying", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const send = vi.fn(async () => {
@@ -159,6 +190,33 @@ it("marks transport failure during message send ambiguous without retrying", asy
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+it("marks a 502 during message send ambiguous without retrying", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const send = vi.fn(async () => {
+    throw Object.assign(new Error("Discord bad gateway after send"), {
+      statusCode: 502,
+    });
+  });
+  const channel = { isSendable: () => true, send };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const cacheSpy = vi
+    .spyOn(client.channels.cache, "get")
+    .mockReturnValue(channel as never);
+  try {
+    const jobId = completed(repo, "response");
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-a",
+    });
+    await worker.runOnce();
+    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    await worker.runOnce();
+    expect(send).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    cacheSpy.mockRestore();
     repo.close();
   }
 });
