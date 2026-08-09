@@ -25,6 +25,7 @@ import {
 import { cloneRepositoryTool } from "./git.js";
 import { commentIssueTool, listIssuesTool, readIssueTool } from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
+import { wrapToolOutput } from "./output.js";
 import {
   tavilyCrawlTool,
   tavilyExtractTool,
@@ -69,6 +70,6 @@ export function resolveTools(toolNames: string[]): AgentTool[] {
   return toolNames.flatMap((name) => {
     const tool = TOOLS[name];
     if (!tool) throw new Error(`不明なツール名: ${name}`);
-    return [tool];
+    return [wrapToolOutput(tool)];
   });
 }
