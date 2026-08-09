@@ -5,15 +5,18 @@ const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   registerHandlers: vi.fn(),
   startPoller: vi.fn(),
+  stopPoller: vi.fn(),
   startDeliveryWorker: vi.fn(),
   stopDeliveryWorker: vi.fn(),
   loadGroups: vi.fn(),
   loadProviders: vi.fn(),
   initGroupPrompts: vi.fn(),
   initManager: vi.fn(),
+  killAllRunningContainers: vi.fn(),
   validateGroupConfig: vi.fn(),
   loadDefaultModel: vi.fn(),
   loadAndValidateCron: vi.fn(),
+  stopCron: vi.fn(),
   queueRepository: { db: {}, listRssStatePaths: vi.fn() },
   initializeQueue: vi.fn(),
   reconcileRssDispatches: vi.fn(),
@@ -26,7 +29,7 @@ vi.mock("./discord/handler.js", () => ({
 }));
 vi.mock("./queue/poller.js", () => ({
   startPoller: mocks.startPoller,
-  stopPoller: vi.fn(),
+  stopPoller: mocks.stopPoller,
 }));
 vi.mock("./queue/delivery.js", () => ({
   startDeliveryWorker: mocks.startDeliveryWorker,
@@ -42,6 +45,7 @@ vi.mock("./config/group-config.js", () => ({
 }));
 vi.mock("./agent/manager.js", () => ({
   initManager: mocks.initManager,
+  killAllRunningContainers: mocks.killAllRunningContainers,
   validateGroupConfig: mocks.validateGroupConfig,
 }));
 vi.mock("./config/default-model.js", () => ({
@@ -52,7 +56,7 @@ vi.mock("./proxy/credential-proxy-server.js", () => ({
 }));
 vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),
-  stopCron: vi.fn(),
+  stopCron: mocks.stopCron,
   loadAndValidateCron: mocks.loadAndValidateCron,
   _setCronJobs: vi.fn(),
 }));
@@ -87,6 +91,7 @@ describe("index: 起動時バリデーション", () => {
       modelId: "glm-4.7-flash",
     });
     mocks.loadAndValidateCron.mockResolvedValue([]);
+    mocks.killAllRunningContainers.mockResolvedValue(undefined);
     mocks.queueRepository.listRssStatePaths.mockReturnValue([]);
     mocks.runRuntimeOperator.mockResolvedValue({
       health: { ok: true },
@@ -212,6 +217,36 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.login).toHaveBeenCalledWith("test-token");
   });
+  it("shutdown は cron のタイマーを queue worker より先に停止する", async () => {
+    const listenersBefore = process.listeners("SIGTERM");
+    await import("./index.js");
+    const shutdownHandler = process
+      .listeners("SIGTERM")
+      .find((listener) => !listenersBefore.includes(listener)) as
+      | (() => void)
+      | undefined;
+    if (!shutdownHandler)
+      throw new Error("shutdown handler was not registered");
+
+    mockExit.mockImplementation(() => undefined);
+    shutdownHandler();
+    await vi.waitFor(() => expect(mockExit).toHaveBeenCalledWith(0));
+
+    expect(mocks.stopCron).toHaveBeenCalledOnce();
+    expect(mocks.stopPoller).toHaveBeenCalledOnce();
+    expect(mocks.stopDeliveryWorker).toHaveBeenCalledOnce();
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledOnce();
+    expect(mocks.stopCron.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.stopPoller.mock.invocationCallOrder[0],
+    );
+    expect(mocks.stopCron.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.stopDeliveryWorker.mock.invocationCallOrder[0],
+    );
+    expect(mocks.stopDeliveryWorker.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+    );
+  });
+
   it("reconciles repository and cron RSS paths before final startup observability", async () => {
     mocks.queueRepository.listRssStatePaths.mockReturnValue(["runtime.sqlite"]);
     mocks.loadAndValidateCron.mockResolvedValue([

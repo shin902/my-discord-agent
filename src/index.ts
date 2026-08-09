@@ -8,7 +8,12 @@ import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { loadProviders } from "./config/providers.js";
-import { _setCronJobs, loadAndValidateCron, startCron } from "./cron/runner.js";
+import {
+  _setCronJobs,
+  loadAndValidateCron,
+  startCron,
+  stopCron,
+} from "./cron/runner.js";
 import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
@@ -87,6 +92,7 @@ void client.login(token);
 // spawn した docker run 子プロセス（ひいてはコンテナ本体）は process.exit() しても
 // 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。
 const shutdown = async (): Promise<void> => {
+  stopCron();
   stopPoller();
   stopDeliveryWorker();
   await killAllRunningContainers();

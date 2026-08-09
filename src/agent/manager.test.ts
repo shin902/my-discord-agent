@@ -150,7 +150,11 @@ describe("resolveModel", () => {
   });
 });
 
-const makeProc = (code = 0, stdout = "mocked response", stderr = "") => ({
+const makeProc = (
+  code: number | null = 0,
+  stdout = "mocked response",
+  stderr = "",
+) => ({
   stdin: { write: vi.fn(), end: vi.fn() },
   stdout: {
     on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
@@ -162,7 +166,7 @@ const makeProc = (code = 0, stdout = "mocked response", stderr = "") => ({
       if (event === "data" && stderr) cb(Buffer.from(stderr));
     }),
   },
-  on: vi.fn((event: string, cb: (code: number) => void) => {
+  on: vi.fn((event: string, cb: (code: number | null) => void) => {
     if (event === "close") cb(code);
   }),
   kill: vi.fn(),
@@ -198,6 +202,15 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toContain("--pull=always");
     expect(args).toContain("--memory=512m");
     expect(args).toContain("--cpus=1");
+  });
+
+  it("SIGKILL などで null 終了したコンテナは成功レスポンスにせず再試行可能なエラーにする", async () => {
+    spawnMock.mockReturnValueOnce(makeProc(null));
+    const { sendMessage } = await import("./manager.js");
+
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
+      "コンテナがシグナルで終了しました",
+    );
   });
 
   it("image pull とコンテナ内処理の所要時間を通知する", async () => {

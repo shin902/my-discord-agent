@@ -746,6 +746,8 @@ export async function sendMessage(
       }
       if (code === 0) resolve(stdout.trim());
       else if (code === 2) reject(new TransientError(plainStderr.trim()));
+      else if (code === null)
+        reject(new TransientError("コンテナがシグナルで終了しました"));
       else resolve(`エージェント実行エラー: ${plainStderr.trim()}`);
     });
 

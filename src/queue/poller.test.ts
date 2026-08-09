@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SendMessageOptions } from "../agent/manager.js";
-import { NonRetryableError } from "../utils/error.js";
+import { NonRetryableError, TransientError } from "../utils/error.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
@@ -220,6 +220,42 @@ describe("processMessage - terminal queue transitions", () => {
       },
     );
     expect(commitInboxResult).not.toHaveBeenCalled();
+  });
+
+  it("null 終了コードのキャンセルは成功レスポンスにせず再試行へ回す", async () => {
+    const executionTiming = {
+      termination: "close" as const,
+      exitCode: null,
+      preparationMs: 1,
+      dockerRunMs: 2,
+    };
+    const error = new TransientError("コンテナがシグナルで終了しました");
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onExecutionTiming?.(
+          executionTiming,
+        );
+        throw error;
+      },
+    );
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      error,
+      msg.fencingToken,
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          exitCode: null,
+          termination: "close",
+          timing: executionTiming,
+        }),
+      }),
+    );
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(deadLetter).not.toHaveBeenCalled();
   });
 
   it("通常ルートの onContainerStarted は sessionId の conversationPath で running を記録する", async () => {
