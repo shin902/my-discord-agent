@@ -24,56 +24,41 @@ const EMPTY_SCOPE_AFTER_MESSAGE_ID = "5956206959001600000";
 type RootChannel = TextChannel | NewsChannel | ForumChannel;
 type MessageChannel = TextChannel | NewsChannel | AnyThreadChannel;
 
-interface BackfillTarget {
-  group: GroupConfig;
-  channel: ChannelConfig;
-}
-
 /** Recover Discord messages that arrived while the gateway was disconnected. */
 export async function backfillDiscordMessages(
   groups: readonly GroupConfig[],
   repo: QueueRepository = getQueueRepository(),
 ): Promise<void> {
-  const targets = collectTargets(groups);
-  for (const target of targets) {
-    try {
-      await backfillTarget(target, repo);
-    } catch (error) {
-      // A single inaccessible channel must not prevent other configured
-      // channels from recovering their histories.
-      console.error(
-        `[discord-backfill] チャンネル ${target.channel.channelId} の復旧に失敗しました:`,
-        error,
-      );
-    }
-  }
-}
-
-function collectTargets(groups: readonly GroupConfig[]): BackfillTarget[] {
-  const targets = new Map<string, BackfillTarget>();
   for (const group of groups) {
     for (const channel of group.channels) {
-      if (!targets.has(channel.channelId))
-        targets.set(channel.channelId, { group, channel });
+      try {
+        await backfillTarget(channel, repo);
+      } catch (error) {
+        // A single inaccessible channel must not prevent other configured
+        // channels from recovering their histories.
+        console.error(
+          `[discord-backfill] チャンネル ${channel.channelId} の復旧に失敗しました:`,
+          error,
+        );
+      }
     }
   }
-  return [...targets.values()];
 }
 
 async function backfillTarget(
-  target: BackfillTarget,
+  channel: ChannelConfig,
   repo: QueueRepository,
 ): Promise<void> {
-  const root = await client.channels.fetch(target.channel.channelId);
+  const root = await client.channels.fetch(channel.channelId);
   if (!isRootChannel(root)) {
     console.warn(
-      `[discord-backfill] 対象チャンネルを取得できないか、履歴復旧に対応していません: ${target.channel.channelId}`,
+      `[discord-backfill] 対象チャンネルを取得できないか、履歴復旧に対応していません: ${channel.channelId}`,
     );
     return;
   }
 
   if (isForumChannel(root)) {
-    if (target.channel.sessionMode === "shared") return;
+    if (channel.sessionMode === "shared") return;
 
     const threads = await fetchThreads(root);
     await backfillForumThreads(threads, repo);
@@ -82,14 +67,13 @@ async function backfillTarget(
 
   const rootCursor = await ensureRootCursor(root, repo);
   const shouldReplayRoot =
-    target.channel.sessionMode !== "thread" &&
-    target.channel.sessionMode !== "email-mode";
+    channel.sessionMode !== "thread" && channel.sessionMode !== "email-mode";
 
   if (shouldReplayRoot && rootCursor && isMessageChannel(root)) {
     await recoverMessages(root, rootCursor, repo);
   }
 
-  if (target.channel.sessionMode === "shared") return;
+  if (channel.sessionMode === "shared") return;
 
   const threads = await fetchThreads(root);
   const threadFallbackCursor = repo.getDiscordCursor(root.id);
