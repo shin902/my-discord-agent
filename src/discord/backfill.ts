@@ -256,17 +256,25 @@ async function fetchThreads(
 
   if (!includeArchived) return [...threads.values()];
 
-  for (const type of ["public", "private"] as const) {
+  const archivedTypes =
+    root.type === ChannelType.GuildText
+      ? (["public", "private"] as const)
+      : (["public"] as const);
+  for (const type of archivedTypes) {
     try {
       const archived = await root.threads.fetchArchived(
-        { type, fetchAll: true },
+        { type, fetchAll: type === "public" },
         false,
       );
       for (const thread of archived.threads.values())
         threads.set(thread.id, thread);
     } catch (error) {
-      // Private archived threads may be unavailable even when public history is
-      // readable. Keep recovering the threads Discord exposes to this bot.
+      if (type === "private" && isMissingAccessError(error)) {
+        console.warn(
+          `[discord-backfill] private archived threadの取得権限がありません: channel=${root.id}`,
+        );
+        continue;
+      }
       console.warn(
         `[discord-backfill] ${type} archived threadの取得に失敗しました:`,
         error,
@@ -274,6 +282,15 @@ async function fetchThreads(
     }
   }
   return [...threads.values()];
+}
+
+function isMissingAccessError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === 50001
+  );
 }
 
 function compareMessagesAscending(

@@ -21,10 +21,12 @@ const { backfillDiscordMessages } = await import("./backfill.js");
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: ReturnType<typeof vi.spyOn>;
 
 afterEach(() => {
   logSpy?.mockRestore();
   errorSpy?.mockRestore();
+  warnSpy?.mockRestore();
 });
 
 function message(id: string, channelId: string): Record<string, unknown> {
@@ -90,6 +92,7 @@ describe("backfillDiscordMessages", () => {
     vi.clearAllMocks();
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.ingest.mockImplementation(async (input: { channelId: string }) => ({
       status: "enqueued",
       cursorScope: input.channelId,
@@ -356,7 +359,8 @@ describe("backfillDiscordMessages", () => {
       },
     };
     mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(forumRoot(thread));
+    const root = forumRoot(thread);
+    mocks.fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -389,6 +393,45 @@ describe("backfillDiscordMessages", () => {
       "thread-1",
       "3001",
     );
+    expect(root.threads.fetchArchived).toHaveBeenCalledTimes(1);
+    expect(root.threads.fetchArchived).toHaveBeenCalledWith(
+      { type: "public", fetchAll: true },
+      false,
+    );
+  });
+
+  it("private archived threadは参加済み取得を使い、権限不足をスタックなしで扱う", async () => {
+    const repo = repoWithCursors({ "root-1": "1000" });
+    const root = rootChannel();
+    root.threads.fetchArchived
+      .mockResolvedValueOnce({ threads: new Map(), hasMore: false })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Missing Access"), { code: 50001 }),
+      );
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+
+    await backfillDiscordMessages([
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "thread" }],
+      },
+    ]);
+
+    expect(root.threads.fetchArchived).toHaveBeenNthCalledWith(
+      1,
+      { type: "public", fetchAll: true },
+      false,
+    );
+    expect(root.threads.fetchArchived).toHaveBeenNthCalledWith(
+      2,
+      { type: "private", fetchAll: false },
+      false,
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[discord-backfill] private archived threadの取得権限がありません: channel=root-1",
+    );
+    expect(warnSpy.mock.calls[0]?.[0]).not.toContain("Error");
   });
 
   it("Forumの空threadを初期化し、次回起動で新規投稿を取得する", async () => {
