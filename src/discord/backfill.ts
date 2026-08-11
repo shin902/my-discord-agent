@@ -34,7 +34,6 @@ export async function backfillDiscordMessages(
   groups: readonly GroupConfig[],
   repo: QueueRepository = getQueueRepository(),
 ): Promise<void> {
-  logStartupBackfillStatus(groups);
   const targets = collectTargets(groups);
   for (const target of targets) {
     try {
@@ -45,16 +44,6 @@ export async function backfillDiscordMessages(
       console.error(
         `[discord-backfill] チャンネル ${target.channel.channelId} の復旧に失敗しました:`,
         error,
-      );
-    }
-  }
-}
-
-function logStartupBackfillStatus(groups: readonly GroupConfig[]): void {
-  for (const group of groups) {
-    for (const channel of group.channels) {
-      console.log(
-        `[discord-backfill] channel=${channel.channelId} group=${group.name} startupBackfill.enabled=true source=default`,
       );
     }
   }

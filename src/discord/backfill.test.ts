@@ -19,12 +19,10 @@ vi.mock("../queue/repository.js", () => ({
 
 const { backfillDiscordMessages } = await import("./backfill.js");
 
-let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
 let warnSpy: ReturnType<typeof vi.spyOn>;
 
 afterEach(() => {
-  logSpy?.mockRestore();
   errorSpy?.mockRestore();
   warnSpy?.mockRestore();
 });
@@ -90,7 +88,6 @@ function repoWithCursors(cursors: Record<string, string>) {
 describe("backfillDiscordMessages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.ingest.mockImplementation(async (input: { channelId: string }) => ({
@@ -127,9 +124,6 @@ describe("backfillDiscordMessages", () => {
       cache: false,
     });
     expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith("root-1", "1002");
-    expect(logSpy).toHaveBeenCalledWith(
-      "[discord-backfill] channel=root-1 group=group startupBackfill.enabled=true source=default",
-    );
   });
 
   it.each([
