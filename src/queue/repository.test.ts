@@ -1134,4 +1134,21 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       repo.close();
     }
   });
+
+  it("distinguishes an initialized empty Discord scope from an unseen scope", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      expect(repo.isDiscordCursorInitialized("empty-channel")).toBe(false);
+      repo.initializeDiscordCursor("empty-channel");
+      expect(repo.isDiscordCursorInitialized("empty-channel")).toBe(true);
+      expect(repo.getDiscordCursor("empty-channel")).toBeUndefined();
+
+      repo.upsertDiscordCursor("empty-channel", "2000");
+      repo.upsertDiscordCursor("empty-channel", "1000");
+      expect(repo.getDiscordCursor("empty-channel")).toBe("2000");
+      expect(repo.isDiscordCursorInitialized("empty-channel")).toBe(true);
+    } finally {
+      repo.close();
+    }
+  });
 });

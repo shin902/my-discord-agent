@@ -180,6 +180,9 @@ describe("runtime schema migration", () => {
       expect(columnsOf(db, "deliveries")).toEqual(
         expect.arrayContaining(deliveryColumns),
       );
+      expect(columnsOf(db, "discord_sync_cursors")).toEqual(
+        expect.arrayContaining(["initialized"]),
+      );
       enqueueSample(db);
     } finally {
       db.close();

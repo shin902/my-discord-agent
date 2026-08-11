@@ -30,9 +30,11 @@ function message(id: string, channelId: string): Record<string, unknown> {
 }
 
 function page(messages: Record<string, unknown>[]) {
+  const first = messages[0];
   return {
     size: messages.length,
     values: () => messages[Symbol.iterator](),
+    first: () => first,
   };
 }
 
@@ -58,6 +60,8 @@ function repoWithCursors(cursors: Record<string, string>) {
   const state = new Map(Object.entries(cursors));
   return {
     getDiscordCursor: vi.fn((scope: string) => state.get(scope)),
+    isDiscordCursorInitialized: vi.fn((scope: string) => state.has(scope)),
+    initializeDiscordCursor: vi.fn((scope: string) => state.set(scope, "")),
     upsertDiscordCursor: vi.fn((scope: string, id: string) => {
       state.set(scope, id);
     }),
@@ -128,6 +132,28 @@ describe("backfillDiscordMessages", () => {
     expect(logSpy).toHaveBeenCalledWith(
       "[discord-backfill] channel=disabled-channel group=disabled-group startupBackfill.enabled=false source=config",
     );
+  });
+
+  it.each([
+    ["Text", ChannelType.GuildText],
+    ["News", ChannelType.GuildAnnouncement],
+  ])("空の%sチャンネルを履歴なしの初期化済みとして記録する", async (_name, type) => {
+    const repo = repoWithCursors({});
+    const root = rootChannel({ type });
+    root.messages.fetch.mockResolvedValueOnce(page([]));
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+
+    await backfillDiscordMessages([
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "shared" }],
+      },
+    ]);
+
+    expect(repo.initializeDiscordCursor).toHaveBeenCalledWith("root-1");
+    expect(repo.upsertDiscordCursor).not.toHaveBeenCalled();
+    expect(mocks.ingest).not.toHaveBeenCalled();
   });
 
   it("threadモードは新規を含むスレッド履歴をスレッドカーソルから復旧する", async () => {

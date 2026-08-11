@@ -1,16 +1,16 @@
 import {
-  ChannelType,
   type AnyThreadChannel,
   type Channel,
+  ChannelType,
   type ForumChannel,
   type Message,
   type NewsChannel,
   type TextChannel,
 } from "discord.js";
 import {
-  isStartupBackfillEnabled,
   type ChannelConfig,
   type GroupConfig,
+  isStartupBackfillEnabled,
 } from "../config/groups.js";
 import {
   getQueueRepository,
@@ -128,7 +128,10 @@ async function ensureRootCursor(
   if (!isMessageChannel(root)) return undefined;
   const latest = await root.messages.fetch({ limit: 1, cache: false });
   const latestMessage = latest.first();
-  if (!latestMessage) return undefined;
+  if (!latestMessage) {
+    repo.initializeDiscordCursor(root.id);
+    return undefined;
+  }
 
   // On the first deployment there is no reliable way to distinguish old
   // history from the downtime period. Seed at the current tip; users that
