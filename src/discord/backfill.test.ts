@@ -20,9 +20,11 @@ vi.mock("../queue/repository.js", () => ({
 const { backfillDiscordMessages } = await import("./backfill.js");
 
 let logSpy: ReturnType<typeof vi.spyOn>;
+let errorSpy: ReturnType<typeof vi.spyOn>;
 
 afterEach(() => {
   logSpy?.mockRestore();
+  errorSpy?.mockRestore();
 });
 
 function message(id: string, channelId: string): Record<string, unknown> {
@@ -87,6 +89,7 @@ describe("backfillDiscordMessages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.ingest.mockImplementation(async (input: { channelId: string }) => ({
       status: "enqueued",
       cursorScope: input.channelId,
@@ -124,6 +127,63 @@ describe("backfillDiscordMessages", () => {
     expect(logSpy).toHaveBeenCalledWith(
       "[discord-backfill] channel=root-1 group=group startupBackfill.enabled=true source=default",
     );
+  });
+
+  it.each([
+    ["Text", ChannelType.GuildText],
+    ["News", ChannelType.GuildAnnouncement],
+  ])("%sチャンネルの100件境界をまたぐページを継続して取得する", async (_name, type) => {
+    const repo = repoWithCursors({ "root-1": "1000" });
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      message(String(1001 + index), "root-1"),
+    );
+    const root = rootChannel({ type });
+    root.messages.fetch
+      .mockResolvedValueOnce(page(firstPage))
+      .mockResolvedValueOnce(page([message("1101", "root-1")]));
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+
+    await backfillDiscordMessages([
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "shared" }],
+      },
+    ]);
+
+    expect(mocks.ingest).toHaveBeenCalledTimes(101);
+    expect(root.messages.fetch).toHaveBeenNthCalledWith(1, {
+      after: "1000",
+      limit: 100,
+      cache: false,
+    });
+    expect(root.messages.fetch).toHaveBeenNthCalledWith(2, {
+      after: "1100",
+      limit: 100,
+      cache: false,
+    });
+    expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith("root-1", "1101");
+  });
+
+  it("バックフィル取り込み失敗時は失敗したメッセージのカーソルを進めない", async () => {
+    const repo = repoWithCursors({ "root-1": "1000" });
+    const root = rootChannel();
+    root.messages.fetch.mockResolvedValueOnce(
+      page([message("1001", "root-1")]),
+    );
+    mocks.ingest.mockRejectedValueOnce(new Error("enqueue failed"));
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+
+    await backfillDiscordMessages([
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "shared" }],
+      },
+    ]);
+
+    expect(repo.getDiscordCursor("root-1")).toBe("1000");
+    expect(repo.upsertDiscordCursor).not.toHaveBeenCalled();
   });
 
   it("enabled=false はチャンネル単位で復旧を無効化し、判定結果をログに出す", async () => {

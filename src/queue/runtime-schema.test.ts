@@ -189,6 +189,33 @@ describe("runtime schema migration", () => {
     }
   });
 
+  it("migrates a v2 store to v3 Discord cursors and supports cursor I/O", () => {
+    const db = openRuntimeDb(":memory:");
+    try {
+      db.exec(
+        "DROP TABLE discord_sync_cursors; UPDATE schema_meta SET value='2' WHERE key='schema_version';",
+      );
+
+      configureRuntimeDb(db);
+
+      expect(schemaVersion(db)).toBe(QUEUE_SCHEMA_VERSION);
+      expect(
+        db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='discord_sync_cursors'",
+          )
+          .get(),
+      ).toBeDefined();
+
+      const repo = new QueueRepository(db);
+      repo.upsertDiscordCursor("channel-v3", "2000");
+      expect(repo.getDiscordCursor("channel-v3")).toBe("2000");
+      repo.close();
+    } finally {
+      if (db.open) db.close();
+    }
+  });
+
   it("migrates a legacy v1 store, preserving jobs, deliveries, idempotency keys and dead letters", () => {
     const db = new Database(":memory:");
     try {
