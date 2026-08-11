@@ -128,35 +128,18 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
 | `skills` | — | `groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル |
 | `mounts` | — | コンテナへの追加マウント設定 |
-| `channels[].startupBackfill` | — | ボット停止中にDiscordへ届いた履歴を起動時に復旧する設定 |
 
 `sessionMode` の詳細は `CLAUDE.md` を参照。エージェント設定（`model`/`tools`/`autoReply`/`toolLogArgs`/`skills`）はサンドボックスコンテナにマウントされない `config/groups.json` 側で管理しており、エージェント自身が自分の設定を書き換えることはできない。
 
 ### 起動時Discord履歴バックフィル
 
-設定済みの全チャンネルで、ボット停止中にDiscordへ届いたメッセージを起動時にDiscord APIから取得し、通常のinboxへ投入する。`channels[].startupBackfill` を省略した場合も有効（既定値は `true`）で、`enabled: false` を明示したチャンネルだけ無効になる。cronではなく、`MessageCreate` と同じ取り込み処理を通る。
+設定済みの全チャンネルで、ボット停止中にDiscordへ届いたメッセージを起動時にDiscord APIから取得し、通常のinboxへ投入する。バックフィルは常に有効で、`MessageCreate` と同じ取り込み処理を通る。
+
+初回起動時は現在の最新メッセージをカーソルとして登録するため、既存履歴を遡らない。以降は `data/runtime.sqlite` の `discord_sync_cursors` に保存したカーソルより後を取得する。既存スレッドの復旧ではアーカイブ済みスレッドも対象に含める。
 
 起動時には設定済みチャンネルごとに `startupBackfill.enabled=true/false` の判定結果をログへ出力する。設定を省略したチャンネルは `source=default` と表示されるため、実際に有効かどうかを確認できる。
 
-```json
-{
-  "channelId": "222",
-  "sessionMode": "auto-thread",
-  "startupBackfill": {
-    "enabled": true,
-    "initialAfterMessageId": "123456789012345678",
-    "archivedThreads": true
-  }
-}
-```
-
-| キー | 必須 | 内容 |
-|---|---|---|
-| `enabled` | — | `false` の場合はそのチャンネルの起動時復旧を無効化。既定は `true` |
-| `initialAfterMessageId` | — | 初回だけ、このメッセージIDより後を取得する。未指定時は初回起動時点の最新メッセージをカーソルにして、既存履歴を遡らない |
-| `archivedThreads` | — | `thread` / `auto-thread` / `email-mode` の既存スレッド復旧でアーカイブ済みスレッドも取得する。既定は `true` |
-
-カーソルは `data/runtime.sqlite` の `discord_sync_cursors` に保存される。ライブ受信とバックフィルの両方でDiscordメッセージIDを冪等キーに使うため、起動処理と通常イベントが競合しても二重投入されない。バックフィルではbot/Webhookメッセージを対象外とし、過去RSSの再処理は行わない。
+ライブ受信とバックフィルの両方でDiscordメッセージIDを冪等キーに使うため、起動処理と通常イベントが競合しても二重投入されない。バックフィルではbot/Webhookメッセージを対象外とし、過去RSSの再処理は行わない。
 
 `shared` は親チャンネル、`thread` は既存スレッド、`auto-thread` は親メッセージごとのスレッド作成・再利用を対象にする。スレッド作成にはDiscord側のスレッド作成権限、履歴取得にはメッセージ履歴の閲覧権限が必要。
 

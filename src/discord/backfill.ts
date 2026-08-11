@@ -7,11 +7,7 @@ import {
   type NewsChannel,
   type TextChannel,
 } from "discord.js";
-import {
-  type ChannelConfig,
-  type GroupConfig,
-  isStartupBackfillEnabled,
-} from "../config/groups.js";
+import type { ChannelConfig, GroupConfig } from "../config/groups.js";
 import {
   getQueueRepository,
   type QueueRepository,
@@ -41,7 +37,6 @@ export async function backfillDiscordMessages(
   logStartupBackfillStatus(groups);
   const targets = collectTargets(groups);
   for (const target of targets) {
-    if (!isStartupBackfillEnabled(target.channel)) continue;
     try {
       await backfillTarget(target, repo);
     } catch (error) {
@@ -58,11 +53,8 @@ export async function backfillDiscordMessages(
 function logStartupBackfillStatus(groups: readonly GroupConfig[]): void {
   for (const group of groups) {
     for (const channel of group.channels) {
-      const enabled = isStartupBackfillEnabled(channel);
-      const source =
-        channel.startupBackfill?.enabled === undefined ? "default" : "config";
       console.log(
-        `[discord-backfill] channel=${channel.channelId} group=${group.name} startupBackfill.enabled=${enabled} source=${source}`,
+        `[discord-backfill] channel=${channel.channelId} group=${group.name} startupBackfill.enabled=true source=default`,
       );
     }
   }
@@ -94,19 +86,12 @@ async function backfillTarget(
   if (isForumChannel(root)) {
     if (target.channel.sessionMode === "shared") return;
 
-    const threads = await fetchThreads(
-      root,
-      target.channel.startupBackfill?.archivedThreads ?? true,
-    );
-    await backfillForumThreads(
-      threads,
-      target.channel.startupBackfill?.initialAfterMessageId,
-      repo,
-    );
+    const threads = await fetchThreads(root);
+    await backfillForumThreads(threads, repo);
     return;
   }
 
-  const rootCursor = await ensureRootCursor(root, target.channel, repo);
+  const rootCursor = await ensureRootCursor(root, repo);
   const shouldReplayRoot =
     target.channel.sessionMode !== "thread" &&
     target.channel.sessionMode !== "email-mode";
@@ -117,10 +102,7 @@ async function backfillTarget(
 
   if (target.channel.sessionMode === "shared") return;
 
-  const threads = await fetchThreads(
-    root,
-    target.channel.startupBackfill?.archivedThreads ?? true,
-  );
+  const threads = await fetchThreads(root);
   const threadFallbackCursor = repo.getDiscordCursor(root.id);
   for (const thread of threads) {
     const threadCursor =
@@ -132,33 +114,22 @@ async function backfillTarget(
 
 async function backfillForumThreads(
   threads: readonly AnyThreadChannel[],
-  initialAfterMessageId: string | undefined,
   repo: QueueRepository,
 ): Promise<void> {
   for (const thread of threads) {
-    const threadCursor = await ensureForumThreadCursor(
-      thread,
-      initialAfterMessageId,
-      repo,
-    );
+    const threadCursor = await ensureForumThreadCursor(thread, repo);
     if (threadCursor) await recoverMessages(thread, threadCursor, repo);
   }
 }
 
 async function ensureForumThreadCursor(
   thread: AnyThreadChannel,
-  initialAfterMessageId: string | undefined,
   repo: QueueRepository,
 ): Promise<string | undefined> {
   const existing = repo.getDiscordCursor(thread.id);
   if (existing) return existing;
   if (repo.isDiscordCursorInitialized(thread.id))
     return EMPTY_SCOPE_AFTER_MESSAGE_ID;
-
-  if (initialAfterMessageId) {
-    repo.upsertDiscordCursor(thread.id, initialAfterMessageId);
-    return initialAfterMessageId;
-  }
 
   const latest = await thread.messages.fetch({ limit: 1, cache: false });
   const latestMessage = latest.first();
@@ -173,7 +144,6 @@ async function ensureForumThreadCursor(
 
 async function ensureRootCursor(
   root: RootChannel,
-  config: ChannelConfig,
   repo: QueueRepository,
 ): Promise<string | undefined> {
   const existing = repo.getDiscordCursor(root.id);
@@ -186,12 +156,6 @@ async function ensureRootCursor(
     return isMessageChannel(root) ? EMPTY_SCOPE_AFTER_MESSAGE_ID : undefined;
   }
 
-  const initial = config.startupBackfill?.initialAfterMessageId;
-  if (initial) {
-    repo.upsertDiscordCursor(root.id, initial);
-    return initial;
-  }
-
   if (!isMessageChannel(root)) return undefined;
   const latest = await root.messages.fetch({ limit: 1, cache: false });
   const latestMessage = latest.first();
@@ -201,8 +165,7 @@ async function ensureRootCursor(
   }
 
   // On the first deployment there is no reliable way to distinguish old
-  // history from the downtime period. Seed at the current tip; users that
-  // need an older starting point can set initialAfterMessageId explicitly.
+  // history from the downtime period, so seed at the current tip.
   repo.upsertDiscordCursor(root.id, latestMessage.id);
   return latestMessage.id;
 }
@@ -240,7 +203,6 @@ async function recoverMessages(
 
 async function fetchThreads(
   root: RootChannel,
-  includeArchived: boolean,
 ): Promise<AnyThreadChannel[]> {
   const threads = new Map<string, AnyThreadChannel>();
   try {
@@ -253,8 +215,6 @@ async function fetchThreads(
       error,
     );
   }
-
-  if (!includeArchived) return [...threads.values()];
 
   const archivedTypes =
     root.type === ChannelType.GuildText

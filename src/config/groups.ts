@@ -23,21 +23,11 @@ export const SkillSelectionSchema = z.union([
   z.literal("*"),
 ]);
 
-const StartupBackfillSchema = z.object({
-  enabled: z.boolean().default(true),
-  // 初回バックフィルで、このIDより後のメッセージを対象にする。
-  // 未指定時は初回起動時点の最新メッセージをカーソルとして登録する。
-  initialAfterMessageId: z.string().regex(/^\d+$/).optional(),
-  archivedThreads: z.boolean().default(true),
-});
-
 const ChannelConfigSchema = z.object({
   channelId: z.string(),
   sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
   // feedcord 等、Webhook経由でこのチャンネルに投稿するメッセージを許可するWebhook IDのリスト
   allowedWebhookIds: z.array(z.string()).optional(),
-  // ボット停止中のDiscord履歴を起動時にinboxへ復旧する設定
-  startupBackfill: StartupBackfillSchema.optional(),
 });
 
 const MountConfigSchema = z.object({
@@ -72,13 +62,6 @@ export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
 export type MountConfig = z.infer<typeof MountConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;
-
-/** startupBackfill を省略したチャンネルは、起動時履歴復旧を有効とする。 */
-export function isStartupBackfillEnabled(
-  channel: Pick<ChannelConfig, "startupBackfill">,
-): boolean {
-  return channel.startupBackfill?.enabled ?? true;
-}
 
 let _groups: GroupConfig[] | null = null;
 

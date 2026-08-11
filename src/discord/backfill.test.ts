@@ -189,29 +189,6 @@ describe("backfillDiscordMessages", () => {
     expect(repo.upsertDiscordCursor).not.toHaveBeenCalled();
   });
 
-  it("enabled=false はチャンネル単位で復旧を無効化し、判定結果をログに出す", async () => {
-    const repo = repoWithCursors({});
-    mocks.getRepo.mockReturnValue(repo);
-
-    await backfillDiscordMessages([
-      {
-        name: "disabled-group",
-        channels: [
-          {
-            channelId: "disabled-channel",
-            sessionMode: "shared",
-            startupBackfill: { enabled: false, archivedThreads: true },
-          },
-        ],
-      },
-    ]);
-
-    expect(mocks.fetchChannel).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
-      "[discord-backfill] channel=disabled-channel group=disabled-group startupBackfill.enabled=false source=config",
-    );
-  });
-
   it.each([
     ["Text", ChannelType.GuildText],
     ["News", ChannelType.GuildAnnouncement],
@@ -345,58 +322,6 @@ describe("backfillDiscordMessages", () => {
     expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith(
       "thread-1",
       "2200",
-    );
-  });
-
-  it("Forumの未初期化threadはinitialAfterMessageIdから復旧する", async () => {
-    const repo = repoWithCursors({});
-    const thread = {
-      id: "thread-1",
-      messages: {
-        fetch: vi
-          .fn()
-          .mockResolvedValueOnce(page([message("3001", "thread-1")])),
-      },
-    };
-    mocks.getRepo.mockReturnValue(repo);
-    const root = forumRoot(thread);
-    mocks.fetchChannel.mockResolvedValue(root);
-
-    await backfillDiscordMessages([
-      {
-        name: "group",
-        channels: [
-          {
-            channelId: "root-1",
-            sessionMode: "thread",
-            startupBackfill: {
-              enabled: true,
-              archivedThreads: true,
-              initialAfterMessageId: "3000",
-            },
-          },
-        ],
-      },
-    ]);
-
-    expect(thread.messages.fetch).toHaveBeenCalledWith({
-      after: "3000",
-      limit: 100,
-      cache: false,
-    });
-    expect(repo.upsertDiscordCursor).toHaveBeenNthCalledWith(
-      1,
-      "thread-1",
-      "3000",
-    );
-    expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith(
-      "thread-1",
-      "3001",
-    );
-    expect(root.threads.fetchArchived).toHaveBeenCalledTimes(1);
-    expect(root.threads.fetchArchived).toHaveBeenCalledWith(
-      { type: "public", fetchAll: true },
-      false,
     );
   });
 
