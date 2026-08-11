@@ -350,11 +350,12 @@ describe("runtime schema migration", () => {
   it("reports current-version stores without silently downgrading a newer schema", () => {
     const db = new Database(":memory:");
     try {
+      const newerVersion = QUEUE_SCHEMA_VERSION + 1;
       db.exec(
-        "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO schema_meta VALUES ('schema_version','3');",
+        `CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO schema_meta VALUES ('schema_version','${newerVersion}');`,
       );
       expect(() => configureRuntimeDb(db)).toThrow(/newer|exceeds/i);
-      expect(schemaVersion(db)).toBe(3);
+      expect(schemaVersion(db)).toBe(newerVersion);
     } finally {
       db.close();
     }
@@ -386,7 +387,7 @@ describe("runtime schema migration", () => {
 
       expect(() => configureRuntimeDb(db)).toThrow();
       // nothing was committed: no durable columns, no schema stamp
-      expect(schemaVersion(db)).toBe(QUEUE_SCHEMA_VERSION);
+      expect(schemaVersion(db)).toBe(2);
       expect(columnsOf(db, "deliveries")).not.toContain("response_index");
       expect(db.prepare("SELECT id FROM deliveries ORDER BY id").all()).toEqual(
         [{ id: "a" }, { id: "b" }],

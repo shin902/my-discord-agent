@@ -11,7 +11,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 2;
+export const QUEUE_SCHEMA_VERSION = 3;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -315,6 +315,11 @@ export function resolveRuntimeDbPath(configured?: string): string {
 function nowIso(): string {
   return new Date().toISOString();
 }
+function compareSnowflakeIds(left: string, right: string): number {
+  const leftValue = BigInt(left);
+  const rightValue = BigInt(right);
+  return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -524,6 +529,9 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
 function repairRuntimeSchema(db: Database.Database): void {
   if (jobsTableIsLegacy(db)) rebuildLegacyQueueSchema(db);
   applyDurableRuntimeColumns(db);
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS discord_sync_cursors (scope_id TEXT PRIMARY KEY, last_message_id TEXT NOT NULL, updated_at TEXT NOT NULL)",
+  );
 }
 // Versioned schema migrations. Every step is idempotent; the value recorded in
 // schema_meta('schema_version') gates which steps still need to run. Stores stamped
@@ -543,6 +551,13 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 2,
     summary: "apply the durable delivery and execution-state columns",
+    up(db) {
+      repairRuntimeSchema(db);
+    },
+  },
+  {
+    version: 3,
+    summary: "add Discord history backfill cursors",
     up(db) {
       repairRuntimeSchema(db);
     },
@@ -1299,6 +1314,24 @@ export class QueueRepository {
       }
     })();
     return count;
+  }
+  getDiscordCursor(scopeId: string): string | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT last_message_id FROM discord_sync_cursors WHERE scope_id=?",
+      )
+      .get(scopeId) as { last_message_id?: string } | undefined;
+    return row?.last_message_id;
+  }
+  upsertDiscordCursor(scopeId: string, messageId: string): void {
+    const current = this.getDiscordCursor(scopeId);
+    if (current !== undefined && compareSnowflakeIds(messageId, current) <= 0)
+      return;
+    this.db
+      .prepare(
+        "INSERT INTO discord_sync_cursors(scope_id,last_message_id,updated_at) VALUES(?,?,?) ON CONFLICT(scope_id) DO UPDATE SET last_message_id=excluded.last_message_id,updated_at=excluded.updated_at",
+      )
+      .run(scopeId, messageId, nowIso());
   }
   getDelivery(jobId: string): DeliveryRow | undefined {
     const row = this.db

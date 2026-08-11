@@ -1121,4 +1121,17 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       repo.close();
     }
   });
+
+  it("persists Discord backfill cursors monotonically", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      repo.upsertDiscordCursor("channel-1", "2000");
+      repo.upsertDiscordCursor("channel-1", "1000");
+      expect(repo.getDiscordCursor("channel-1")).toBe("2000");
+      repo.upsertDiscordCursor("channel-1", "3000");
+      expect(repo.getDiscordCursor("channel-1")).toBe("3000");
+    } finally {
+      repo.close();
+    }
+  });
 });

@@ -14,6 +14,7 @@ import {
   startCron,
   stopCron,
 } from "./cron/runner.js";
+import { backfillDiscordMessages } from "./discord/backfill.js";
 import { client } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
@@ -83,7 +84,7 @@ try {
   process.exit(1);
 }
 
-registerHandlers();
+registerHandlers(() => backfillDiscordMessages(groups));
 startPoller();
 startDeliveryWorker(getQueueRepository());
 startCron();
