@@ -348,9 +348,9 @@ describe("backfillDiscordMessages", () => {
       false,
     );
     expect(warnSpy).toHaveBeenCalledWith(
-      "[discord-backfill] private archived threadの取得権限がありません: channel=root-1",
+      "[discord-backfill] private archived threadの取得に失敗しました:",
+      expect.objectContaining({ code: 50001 }),
     );
-    expect(warnSpy.mock.calls[0]?.[0]).not.toContain("Error");
   });
 
   it("Forumの空threadを初期化し、次回起動で新規投稿を取得する", async () => {

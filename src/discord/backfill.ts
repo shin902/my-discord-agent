@@ -202,12 +202,6 @@ async function fetchThreads(
       for (const thread of archived.threads.values())
         threads.set(thread.id, thread);
     } catch (error) {
-      if (type === "private" && isMissingAccessError(error)) {
-        console.warn(
-          `[discord-backfill] private archived threadの取得権限がありません: channel=${root.id}`,
-        );
-        continue;
-      }
       console.warn(
         `[discord-backfill] ${type} archived threadの取得に失敗しました:`,
         error,
@@ -215,15 +209,6 @@ async function fetchThreads(
     }
   }
   return [...threads.values()];
-}
-
-function isMissingAccessError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === 50001
-  );
 }
 
 function compareMessagesAscending(
