@@ -156,6 +156,40 @@ describe("backfillDiscordMessages", () => {
     expect(mocks.ingest).not.toHaveBeenCalled();
   });
 
+  it("初回空チャンネルの次回起動では新規メッセージを取得する", async () => {
+    const repo = repoWithCursors({});
+    const root = rootChannel();
+    root.messages.fetch
+      .mockResolvedValueOnce(page([]))
+      .mockResolvedValueOnce(page([message("1001", "root-1")]));
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+
+    const groups = [
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "shared" as const }],
+      },
+    ];
+    await backfillDiscordMessages(groups);
+    await backfillDiscordMessages(groups);
+
+    expect(root.messages.fetch).toHaveBeenNthCalledWith(1, {
+      limit: 1,
+      cache: false,
+    });
+    expect(root.messages.fetch).toHaveBeenNthCalledWith(2, {
+      after: "5956206959001600000",
+      limit: 100,
+      cache: false,
+    });
+    expect(mocks.ingest).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "1001" }),
+      { source: "backfill", replyOnFailure: false },
+    );
+    expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith("root-1", "1001");
+  });
+
   it("threadモードは新規を含むスレッド履歴をスレッドカーソルから復旧する", async () => {
     const repo = repoWithCursors({ "root-1": "1000", "thread-1": "2000" });
     const thread = {

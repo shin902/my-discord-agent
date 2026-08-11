@@ -20,6 +20,10 @@ import { client } from "./client.js";
 import { ingestDiscordMessage } from "./intake.js";
 
 const DISCORD_MESSAGE_PAGE_SIZE = 100;
+// A synthetic snowflake at Discord's epoch is a valid lower bound for every
+// message ID Discord can issue, so an empty scope can resume from its first
+// message without treating the current tip as an initialization cursor.
+const EMPTY_SCOPE_AFTER_MESSAGE_ID = "5956206959001600000";
 
 type RootChannel = TextChannel | NewsChannel | ForumChannel;
 type MessageChannel = TextChannel | NewsChannel | AnyThreadChannel;
@@ -118,6 +122,13 @@ async function ensureRootCursor(
 ): Promise<string | undefined> {
   const existing = repo.getDiscordCursor(root.id);
   if (existing) return existing;
+
+  // An initialized scope with no message cursor was previously observed to be
+  // empty. Do not probe the current tip and seed from it: messages posted after
+  // that empty observation must remain eligible for backfill.
+  if (repo.isDiscordCursorInitialized(root.id)) {
+    return isMessageChannel(root) ? EMPTY_SCOPE_AFTER_MESSAGE_ID : undefined;
+  }
 
   const initial = config.startupBackfill?.initialAfterMessageId;
   if (initial) {
