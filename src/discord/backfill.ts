@@ -91,6 +91,21 @@ async function backfillTarget(
     return;
   }
 
+  if (isForumChannel(root)) {
+    if (target.channel.sessionMode === "shared") return;
+
+    const threads = await fetchThreads(
+      root,
+      target.channel.startupBackfill?.archivedThreads ?? true,
+    );
+    await backfillForumThreads(
+      threads,
+      target.channel.startupBackfill?.initialAfterMessageId,
+      repo,
+    );
+    return;
+  }
+
   const rootCursor = await ensureRootCursor(root, target.channel, repo);
   const shouldReplayRoot =
     target.channel.sessionMode !== "thread" &&
@@ -113,6 +128,47 @@ async function backfillTarget(
     if (!threadCursor) continue;
     await recoverMessages(thread, threadCursor, repo);
   }
+}
+
+async function backfillForumThreads(
+  threads: readonly AnyThreadChannel[],
+  initialAfterMessageId: string | undefined,
+  repo: QueueRepository,
+): Promise<void> {
+  for (const thread of threads) {
+    const threadCursor = await ensureForumThreadCursor(
+      thread,
+      initialAfterMessageId,
+      repo,
+    );
+    if (threadCursor) await recoverMessages(thread, threadCursor, repo);
+  }
+}
+
+async function ensureForumThreadCursor(
+  thread: AnyThreadChannel,
+  initialAfterMessageId: string | undefined,
+  repo: QueueRepository,
+): Promise<string | undefined> {
+  const existing = repo.getDiscordCursor(thread.id);
+  if (existing) return existing;
+  if (repo.isDiscordCursorInitialized(thread.id))
+    return EMPTY_SCOPE_AFTER_MESSAGE_ID;
+
+  if (initialAfterMessageId) {
+    repo.upsertDiscordCursor(thread.id, initialAfterMessageId);
+    return initialAfterMessageId;
+  }
+
+  const latest = await thread.messages.fetch({ limit: 1, cache: false });
+  const latestMessage = latest.first();
+  if (!latestMessage) {
+    repo.initializeDiscordCursor(thread.id);
+    return undefined;
+  }
+
+  repo.upsertDiscordCursor(thread.id, latestMessage.id);
+  return latestMessage.id;
 }
 
 async function ensureRootCursor(
@@ -237,6 +293,10 @@ function isRootChannel(channel: Channel | null): channel is RootChannel {
     channel?.type === ChannelType.GuildAnnouncement ||
     channel?.type === ChannelType.GuildForum
   );
+}
+
+function isForumChannel(channel: RootChannel): channel is ForumChannel {
+  return channel.type === ChannelType.GuildForum;
 }
 
 function isMessageChannel(
