@@ -1121,4 +1121,34 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       repo.close();
     }
   });
+
+  it("persists Discord backfill cursors monotonically", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      repo.upsertDiscordCursor("channel-1", "2000");
+      repo.upsertDiscordCursor("channel-1", "1000");
+      expect(repo.getDiscordCursor("channel-1")).toBe("2000");
+      repo.upsertDiscordCursor("channel-1", "3000");
+      expect(repo.getDiscordCursor("channel-1")).toBe("3000");
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("distinguishes an initialized empty Discord scope from an unseen scope", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      expect(repo.isDiscordCursorInitialized("empty-channel")).toBe(false);
+      repo.initializeDiscordCursor("empty-channel");
+      expect(repo.isDiscordCursorInitialized("empty-channel")).toBe(true);
+      expect(repo.getDiscordCursor("empty-channel")).toBeUndefined();
+
+      repo.upsertDiscordCursor("empty-channel", "2000");
+      repo.upsertDiscordCursor("empty-channel", "1000");
+      expect(repo.getDiscordCursor("empty-channel")).toBe("2000");
+      expect(repo.isDiscordCursorInitialized("empty-channel")).toBe(true);
+    } finally {
+      repo.close();
+    }
+  });
 });

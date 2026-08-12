@@ -180,9 +180,39 @@ describe("runtime schema migration", () => {
       expect(columnsOf(db, "deliveries")).toEqual(
         expect.arrayContaining(deliveryColumns),
       );
+      expect(columnsOf(db, "discord_sync_cursors")).toEqual(
+        expect.arrayContaining(["initialized"]),
+      );
       enqueueSample(db);
     } finally {
       db.close();
+    }
+  });
+
+  it("migrates a v2 store to v3 Discord cursors and supports cursor I/O", () => {
+    const db = openRuntimeDb(":memory:");
+    try {
+      db.exec(
+        "DROP TABLE discord_sync_cursors; UPDATE schema_meta SET value='2' WHERE key='schema_version';",
+      );
+
+      configureRuntimeDb(db);
+
+      expect(schemaVersion(db)).toBe(QUEUE_SCHEMA_VERSION);
+      expect(
+        db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='discord_sync_cursors'",
+          )
+          .get(),
+      ).toBeDefined();
+
+      const repo = new QueueRepository(db);
+      repo.upsertDiscordCursor("channel-v3", "2000");
+      expect(repo.getDiscordCursor("channel-v3")).toBe("2000");
+      repo.close();
+    } finally {
+      if (db.open) db.close();
     }
   });
 
@@ -350,11 +380,12 @@ describe("runtime schema migration", () => {
   it("reports current-version stores without silently downgrading a newer schema", () => {
     const db = new Database(":memory:");
     try {
+      const newerVersion = QUEUE_SCHEMA_VERSION + 1;
       db.exec(
-        "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO schema_meta VALUES ('schema_version','3');",
+        `CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO schema_meta VALUES ('schema_version','${newerVersion}');`,
       );
       expect(() => configureRuntimeDb(db)).toThrow(/newer|exceeds/i);
-      expect(schemaVersion(db)).toBe(3);
+      expect(schemaVersion(db)).toBe(newerVersion);
     } finally {
       db.close();
     }
@@ -386,7 +417,7 @@ describe("runtime schema migration", () => {
 
       expect(() => configureRuntimeDb(db)).toThrow();
       // nothing was committed: no durable columns, no schema stamp
-      expect(schemaVersion(db)).toBe(QUEUE_SCHEMA_VERSION);
+      expect(schemaVersion(db)).toBe(2);
       expect(columnsOf(db, "deliveries")).not.toContain("response_index");
       expect(db.prepare("SELECT id FROM deliveries ORDER BY id").all()).toEqual(
         [{ id: "a" }, { id: "b" }],
