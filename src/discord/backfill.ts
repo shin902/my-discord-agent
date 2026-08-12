@@ -174,9 +174,7 @@ async function recoverMessages(
   }
 }
 
-async function fetchThreads(
-  root: RootChannel,
-): Promise<AnyThreadChannel[]> {
+async function fetchThreads(root: RootChannel): Promise<AnyThreadChannel[]> {
   const threads = new Map<string, AnyThreadChannel>();
   try {
     const active = await root.threads.fetchActive(false);
