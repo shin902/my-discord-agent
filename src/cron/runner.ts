@@ -5,7 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
 import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
-import { client } from "../discord/client.js";
+import {
+  client as defaultClient,
+  getDiscordClientForChannel,
+  getDiscordClients,
+} from "../discord/client.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueProducer } from "../queue/types.js";
 
@@ -83,7 +87,7 @@ const CronJobsSchema = z
 export type CronJob = z.infer<typeof CronJobSchema>;
 
 export type CronContext = {
-  client: typeof client;
+  client: typeof defaultClient;
   appendInbox: typeof appendInbox;
 } & CronJob;
 
@@ -236,7 +240,19 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
 // --- Job execution ---
 
 export async function executeJob(job: CronJob): Promise<void> {
-  const ctx: CronContext = { client, appendInbox, ...job };
+  const settingsChannelId =
+    job.settings &&
+    typeof job.settings === "object" &&
+    !Array.isArray(job.settings)
+      ? (job.settings as Record<string, unknown>).channelId
+      : undefined;
+  const channelId =
+    job.channelId ??
+    (typeof settingsChannelId === "string" ? settingsChannelId : undefined);
+  const discordClient = channelId
+    ? await getDiscordClientForChannel(channelId)
+    : defaultClient;
+  const ctx: CronContext = { client: discordClient, appendInbox, ...job };
 
   if (job.handler) {
     const fn = await loadHandlerFn(job.handler);
@@ -260,7 +276,13 @@ export function _setCronJobs(jobs: CronJob[]): void {
 
 async function tick(): Promise<void> {
   if (_isRunning) return;
-  if (!client.isReady()) return;
+  const clients = getDiscordClients();
+  if (
+    clients.size > 0 &&
+    ![...clients.values()].some((value) => value.isReady())
+  )
+    return;
+  if (clients.size === 0 && !defaultClient.isReady()) return;
   _isRunning = true;
   try {
     if (_jobs.length === 0) return;

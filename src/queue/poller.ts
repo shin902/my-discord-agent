@@ -12,7 +12,7 @@ import {
   type ProviderConcurrency,
   resolveProviderConcurrency,
 } from "../config/providers.js";
-import { client } from "../discord/client.js";
+import * as discordClients from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
@@ -208,6 +208,41 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LEASE_MS = 60_000;
 const LEASE_RENEWAL_MS = 20_000;
 
+function discordReady(): boolean {
+  try {
+    if (discordClients.getDiscordClients) {
+      const values = [...discordClients.getDiscordClients().values()];
+      if (values.length > 0) return values.some((value) => value.isReady());
+    }
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !error.message.includes('No "getDiscordClients" export')
+    )
+      throw error;
+  }
+  return discordClients.client?.isReady() ?? false;
+}
+
+async function resolveDiscordClient(channelId: string) {
+  try {
+    if (
+      discordClients.getDiscordClients &&
+      discordClients.getDiscordClients().size === 0
+    )
+      return discordClients.client;
+    if (discordClients.getDiscordClientForChannel)
+      return await discordClients.getDiscordClientForChannel(channelId);
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !error.message.includes('No "getDiscordClientForChannel" export')
+    )
+      throw error;
+  }
+  return discordClients.client;
+}
+
 function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
@@ -244,6 +279,7 @@ function startTypingLoop(channelId: string): () => void {
   let cancelSleep: (() => void) | null = null;
 
   const loop = async () => {
+    const client = await resolveDiscordClient(channelId);
     const channel =
       client.channels.cache.get(channelId) ??
       (await client.channels.fetch(channelId).catch(() => null));
@@ -283,6 +319,7 @@ async function sendDiscordEvent(
   replyMessageId?: string,
 ): Promise<void> {
   try {
+    const client = await resolveDiscordClient(channelId);
     const channel =
       client.channels.cache.get(channelId) ??
       (await client.channels.fetch(channelId).catch(() => null));
@@ -438,6 +475,7 @@ function discordStatusCode(error: unknown): number | undefined {
 async function createCronThread(msg: InboxMessage): Promise<string> {
   let mutationAttempted = false;
   try {
+    const client = await resolveDiscordClient(msg.channelId);
     const channel = (await client.channels.fetch(
       msg.channelId,
     )) as unknown as CronThreadParent | null;
@@ -870,7 +908,7 @@ export async function processMessage(
 async function poll(): Promise<void> {
   while (running) {
     try {
-      if (client.isReady()) {
+      if (discordReady()) {
         const msg = await getQueueRepository().claim(
           "poller-single-host",
           LEASE_MS,
