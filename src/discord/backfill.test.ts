@@ -228,7 +228,7 @@ describe("backfillDiscordMessages", () => {
       cache: false,
     });
     expect(root.messages.fetch).toHaveBeenNthCalledWith(2, {
-      after: "5956206959001600000",
+      after: "0",
       limit: 100,
       cache: false,
     });
@@ -380,7 +380,7 @@ describe("backfillDiscordMessages", () => {
 
     await backfillDiscordMessages(groups);
     expect(thread.messages.fetch).toHaveBeenNthCalledWith(2, {
-      after: "5956206959001600000",
+      after: "0",
       limit: 100,
       cache: false,
     });
