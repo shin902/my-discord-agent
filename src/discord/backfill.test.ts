@@ -661,4 +661,58 @@ describe("backfillDiscordMessages", () => {
       { source: "backfill", replyOnFailure: false },
     );
   });
+
+  it("auto-threadのカーソルなしthreadは親チャンネル復旧前のカーソルから復旧する", async () => {
+    const repo = repoWithCursors({ "root-1": "1000" });
+    const thread = {
+      id: "thread-1",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("2000", "thread-1")]))
+          .mockResolvedValueOnce(page([])),
+      },
+    };
+    const root = rootChannel({
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("3000", "root-1")]))
+          .mockResolvedValueOnce(page([])),
+      },
+      threads: {
+        fetchActive: vi.fn().mockResolvedValue({
+          threads: new Map([[thread.id, thread]]),
+        }),
+        fetchArchived: vi.fn().mockResolvedValue({
+          threads: new Map(),
+          hasMore: false,
+        }),
+      },
+    });
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+
+    await backfillDiscordMessages([
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "auto-thread" }],
+      },
+    ]);
+
+    expect(root.messages.fetch).toHaveBeenNthCalledWith(1, {
+      after: "1000",
+      limit: 100,
+      cache: false,
+    });
+    expect(thread.messages.fetch).toHaveBeenNthCalledWith(1, {
+      after: "1000",
+      limit: 100,
+      cache: false,
+    });
+    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+      "3000",
+      "2000",
+    ]);
+  });
 });

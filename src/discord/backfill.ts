@@ -94,7 +94,7 @@ async function backfillTarget(
   if (channel.sessionMode === "shared") return;
 
   const { threads } = await fetchThreads(root);
-  const threadFallbackCursor = repo.getDiscordCursor(root.id);
+  const threadFallbackCursor = rootCursor;
   for (const thread of threads) {
     const threadCursor =
       repo.getDiscordCursor(thread.id) ?? threadFallbackCursor;
