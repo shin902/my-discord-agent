@@ -1,4 +1,0 @@
-interface:
-  display_name: "Recover Failed Session"
-  short_description: "壊れたセッションターンを特定・除去して安全に再投入"
-  default_prompt: "Use $recover-failed-session to identify and recover the latest failed session, then enqueue a safe continuation."
