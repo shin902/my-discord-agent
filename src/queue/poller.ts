@@ -210,7 +210,7 @@ const LEASE_RENEWAL_MS = 20_000;
 
 function discordReady(): boolean {
   try {
-    if (discordClients.getDiscordClients) {
+    if ("getDiscordClients" in discordClients) {
       const values = [...discordClients.getDiscordClients().values()];
       if (values.length > 0) return values.some((value) => value.isReady());
     }
@@ -227,11 +227,11 @@ function discordReady(): boolean {
 async function resolveDiscordClient(channelId: string) {
   try {
     if (
-      discordClients.getDiscordClients &&
+      "getDiscordClients" in discordClients &&
       discordClients.getDiscordClients().size === 0
     )
       return discordClients.client;
-    if (discordClients.getDiscordClientForChannel)
+    if ("getDiscordClientForChannel" in discordClients)
       return await discordClients.getDiscordClientForChannel(channelId);
   } catch (error) {
     if (

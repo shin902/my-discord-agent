@@ -18,11 +18,11 @@ import { ingestDiscordMessage } from "./intake.js";
 function resolveGroupClient(group: GroupConfig) {
   try {
     if (
-      discordClients.getDiscordClients &&
+      "getDiscordClients" in discordClients &&
       discordClients.getDiscordClients().size === 0
     )
       return discordClients.client;
-    if (discordClients.getDiscordClient)
+    if ("getDiscordClient" in discordClients)
       return discordClients.getDiscordClient(
         group.bot ?? discordClients.getDefaultDiscordBot(),
       );
