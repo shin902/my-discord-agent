@@ -59,8 +59,27 @@ async function backfillTarget(
   if (isForumChannel(root)) {
     if (channel.sessionMode === "shared") return;
 
-    const threads = await fetchThreads(root);
-    await backfillForumThreads(threads, repo);
+    // Forum threads have no parent-channel message history to use as a
+    // fallback cursor. Persist the first complete thread enumeration as the
+    // forum's initialization boundary so a thread discovered on a later run
+    // is known to be new, while threads already present at initialization
+    // retain the initial-history behavior of starting at their current tip.
+    const forumWasInitialized = repo.isDiscordCursorInitialized(root.id);
+    const { threads, complete } = await fetchThreads(root);
+    const seededCursors = forumWasInitialized
+      ? undefined
+      : await seedForumThreadCursors(threads, repo);
+    if (!forumWasInitialized && complete) {
+      // Persist the forum boundary before recovery. A recovery failure must
+      // not make a thread discovered on the next run look pre-existing.
+      repo.initializeDiscordCursor(root.id);
+    }
+    await backfillForumThreads(
+      threads,
+      repo,
+      forumWasInitialized,
+      seededCursors,
+    );
     return;
   }
 
@@ -74,7 +93,7 @@ async function backfillTarget(
 
   if (channel.sessionMode === "shared") return;
 
-  const threads = await fetchThreads(root);
+  const { threads } = await fetchThreads(root);
   const threadFallbackCursor = repo.getDiscordCursor(root.id);
   for (const thread of threads) {
     const threadCursor =
@@ -84,12 +103,27 @@ async function backfillTarget(
   }
 }
 
+async function seedForumThreadCursors(
+  threads: readonly AnyThreadChannel[],
+  repo: QueueRepository,
+): Promise<Map<string, string | undefined>> {
+  const cursors = new Map<string, string | undefined>();
+  for (const thread of threads) {
+    cursors.set(thread.id, await ensureForumThreadCursor(thread, repo, false));
+  }
+  return cursors;
+}
+
 async function backfillForumThreads(
   threads: readonly AnyThreadChannel[],
   repo: QueueRepository,
+  forumWasInitialized: boolean,
+  seededCursors?: ReadonlyMap<string, string | undefined>,
 ): Promise<void> {
   for (const thread of threads) {
-    const threadCursor = await ensureForumThreadCursor(thread, repo);
+    const threadCursor = seededCursors?.has(thread.id)
+      ? seededCursors.get(thread.id)
+      : await ensureForumThreadCursor(thread, repo, forumWasInitialized);
     if (threadCursor) await recoverMessages(thread, threadCursor, repo);
   }
 }
@@ -97,11 +131,17 @@ async function backfillForumThreads(
 async function ensureForumThreadCursor(
   thread: AnyThreadChannel,
   repo: QueueRepository,
+  forumWasInitialized: boolean,
 ): Promise<string | undefined> {
   const existing = repo.getDiscordCursor(thread.id);
   if (existing) return existing;
   if (repo.isDiscordCursorInitialized(thread.id))
     return EMPTY_SCOPE_AFTER_MESSAGE_ID;
+
+  // A thread first enumerated after the forum boundary was persisted is new
+  // to the backfill. Start at Discord's lower bound so its post and any
+  // replies that arrived during downtime are replayed.
+  if (forumWasInitialized) return EMPTY_SCOPE_AFTER_MESSAGE_ID;
 
   const latest = await thread.messages.fetch({ limit: 1, cache: false });
   const latestMessage = latest.first();
@@ -173,13 +213,20 @@ async function recoverMessages(
   }
 }
 
-async function fetchThreads(root: RootChannel): Promise<AnyThreadChannel[]> {
+interface ThreadFetchResult {
+  threads: AnyThreadChannel[];
+  complete: boolean;
+}
+
+async function fetchThreads(root: RootChannel): Promise<ThreadFetchResult> {
   const threads = new Map<string, AnyThreadChannel>();
+  let complete = true;
   try {
     const active = await root.threads.fetchActive(false);
     for (const thread of active.threads.values())
       threads.set(thread.id, thread);
   } catch (error) {
+    complete = false;
     console.warn(
       `[discord-backfill] active threadの取得に失敗しました:`,
       error,
@@ -199,13 +246,14 @@ async function fetchThreads(root: RootChannel): Promise<AnyThreadChannel[]> {
       for (const thread of archived.threads.values())
         threads.set(thread.id, thread);
     } catch (error) {
+      complete = false;
       console.warn(
         `[discord-backfill] ${type} archived threadの取得に失敗しました:`,
         error,
       );
     }
   }
-  return [...threads.values()];
+  return { threads: [...threads.values()], complete };
 }
 
 function compareMessagesAscending(

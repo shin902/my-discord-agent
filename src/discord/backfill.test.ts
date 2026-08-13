@@ -58,12 +58,12 @@ function rootChannel(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function forumRoot(thread: Record<string, unknown>) {
+function forumRoot(...threads: Record<string, unknown>[]) {
   return rootChannel({
     type: ChannelType.GuildForum,
     threads: {
       fetchActive: vi.fn().mockResolvedValue({
-        threads: new Map([[thread.id, thread]]),
+        threads: new Map(threads.map((thread) => [thread.id, thread])),
       }),
       fetchArchived: vi.fn().mockResolvedValue({
         threads: new Map(),
@@ -316,6 +316,235 @@ describe("backfillDiscordMessages", () => {
     expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith(
       "thread-1",
       "2200",
+    );
+  });
+
+  it("Forumの初期化後に作成されたthreadは投稿と返信を下限から復旧する", async () => {
+    const repo = repoWithCursors({});
+    const existingThread = {
+      id: "existing-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("2000", "existing-thread")]))
+          .mockResolvedValueOnce(page([]))
+          .mockResolvedValue(page([])),
+      },
+    };
+    const newThread = {
+      id: "new-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(
+            page([
+              message("3001", "new-thread"),
+              message("3002", "new-thread"),
+            ]),
+          )
+          .mockResolvedValueOnce(page([])),
+      },
+    };
+    const firstRoot = forumRoot(existingThread);
+    const secondRoot = forumRoot(existingThread, newThread);
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel
+      .mockResolvedValueOnce(firstRoot)
+      .mockResolvedValueOnce(secondRoot);
+    const groups = [
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "thread" as const }],
+      },
+    ];
+
+    await backfillDiscordMessages(groups);
+    expect(repo.isDiscordCursorInitialized("root-1")).toBe(true);
+    expect(mocks.ingest).not.toHaveBeenCalled();
+
+    await backfillDiscordMessages(groups);
+
+    expect(newThread.messages.fetch).toHaveBeenNthCalledWith(1, {
+      after: "0",
+      limit: 100,
+      cache: false,
+    });
+    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+      "3001",
+      "3002",
+    ]);
+    expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith(
+      "new-thread",
+      "3002",
+    );
+  });
+
+  it("Forumのthread復旧に失敗しても種まき後に境界を保存し、再試行時の新規threadを下限から復旧する", async () => {
+    const repo = repoWithCursors({});
+    const existingThread = {
+      id: "existing-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("2000", "existing-thread")]))
+          .mockRejectedValueOnce(new Error("temporary recovery failure"))
+          .mockResolvedValueOnce(page([])),
+      },
+    };
+    const newThread = {
+      id: "new-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(
+            page([
+              message("3001", "new-thread"),
+              message("3002", "new-thread"),
+            ]),
+          )
+          .mockResolvedValueOnce(page([])),
+      },
+    };
+    const firstRoot = forumRoot(existingThread);
+    const secondRoot = forumRoot(existingThread, newThread);
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel
+      .mockResolvedValueOnce(firstRoot)
+      .mockResolvedValueOnce(secondRoot);
+    const groups = [
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "thread" as const }],
+      },
+    ];
+
+    await backfillDiscordMessages(groups);
+
+    expect(repo.isDiscordCursorInitialized("root-1")).toBe(true);
+    expect(repo.initializeDiscordCursor).toHaveBeenCalledWith("root-1");
+    expect(
+      repo.initializeDiscordCursor.mock.invocationCallOrder[0],
+    ).toBeLessThan(existingThread.messages.fetch.mock.invocationCallOrder[1]);
+
+    await backfillDiscordMessages(groups);
+
+    expect(newThread.messages.fetch).toHaveBeenNthCalledWith(1, {
+      after: "0",
+      limit: 100,
+      cache: false,
+    });
+    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+      "3001",
+      "3002",
+    ]);
+  });
+
+  it("Forumの初回thread列挙が部分的なら境界を保存せず、後から見つかった既存threadを新規扱いしない", async () => {
+    const repo = repoWithCursors({});
+    const firstThread = {
+      id: "first-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("2000", "first-thread")]))
+          .mockResolvedValue(page([])),
+      },
+    };
+    const omittedThread = {
+      id: "omitted-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("3000", "omitted-thread")]))
+          .mockResolvedValueOnce(page([])),
+      },
+    };
+    const firstRoot = forumRoot(firstThread);
+    firstRoot.threads.fetchArchived.mockRejectedValueOnce(
+      new Error("temporary enumeration failure"),
+    );
+    const secondRoot = forumRoot(firstThread);
+    secondRoot.threads.fetchArchived.mockResolvedValueOnce({
+      threads: new Map([[omittedThread.id, omittedThread]]),
+      hasMore: false,
+    });
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel
+      .mockResolvedValueOnce(firstRoot)
+      .mockResolvedValueOnce(secondRoot);
+    const groups = [
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "thread" as const }],
+      },
+    ];
+
+    await backfillDiscordMessages(groups);
+
+    expect(repo.isDiscordCursorInitialized("root-1")).toBe(false);
+    expect(repo.initializeDiscordCursor).not.toHaveBeenCalledWith("root-1");
+
+    await backfillDiscordMessages(groups);
+
+    expect(repo.isDiscordCursorInitialized("root-1")).toBe(true);
+    expect(omittedThread.messages.fetch).toHaveBeenNthCalledWith(1, {
+      limit: 1,
+      cache: false,
+    });
+    expect(omittedThread.messages.fetch).not.toHaveBeenCalledWith({
+      after: "0",
+      limit: 100,
+      cache: false,
+    });
+    expect(mocks.ingest).not.toHaveBeenCalled();
+  });
+
+  it("Forumのthreadカーソル種まきに失敗したら境界を保存せず、完了後に保存する", async () => {
+    const repo = repoWithCursors({});
+    const firstThread = {
+      id: "first-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("2000", "first-thread")]))
+          .mockResolvedValue(page([])),
+      },
+    };
+    const failedThread = {
+      id: "failed-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("temporary cursor failure"))
+          .mockResolvedValueOnce(page([message("3000", "failed-thread")]))
+          .mockResolvedValue(page([])),
+      },
+    };
+    const root = forumRoot(firstThread, failedThread);
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+    const groups = [
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "thread" as const }],
+      },
+    ];
+
+    await backfillDiscordMessages(groups);
+
+    expect(repo.isDiscordCursorInitialized("root-1")).toBe(false);
+    expect(repo.initializeDiscordCursor).not.toHaveBeenCalledWith("root-1");
+
+    await backfillDiscordMessages(groups);
+
+    expect(repo.isDiscordCursorInitialized("root-1")).toBe(true);
+    const rootInitializationOrder =
+      repo.initializeDiscordCursor.mock.invocationCallOrder.find(
+        (order) => order > 0,
+      );
+    expect(rootInitializationOrder).toBeDefined();
+    expect(rootInitializationOrder).toBeGreaterThan(
+      Math.max(...repo.upsertDiscordCursor.mock.invocationCallOrder),
     );
   });
 
