@@ -50,6 +50,7 @@ export const AgentConfigSchema = z.object({
 
 const GroupConfigSchema = AgentConfigSchema.extend({
   name: z.string(),
+  bot: z.string().optional(),
   channels: z.array(ChannelConfigSchema),
   mounts: z.array(MountConfigSchema).optional(),
 });

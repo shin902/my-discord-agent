@@ -1,4 +1,11 @@
 {
+  "discord": {
+    "defaultBot": "personal",
+    "bots": {
+      "personal": { "tokenEnv": "DISCORD_BOT_TOKEN" },
+      "public": { "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN" }
+    }
+  },
   "defaultModel": {
     "provider": "zai",
     "modelId": "glm-4.7-flash"

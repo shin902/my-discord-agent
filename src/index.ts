@@ -4,6 +4,7 @@ import {
   killAllRunningContainers,
   validateGroupConfig,
 } from "./agent/manager.js";
+import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
@@ -15,7 +16,12 @@ import {
   stopCron,
 } from "./cron/runner.js";
 import { backfillDiscordMessages } from "./discord/backfill.js";
-import { client } from "./discord/client.js";
+import {
+  destroyDiscordClients,
+  getDiscordClients,
+  initDiscordClients,
+  loginDiscordClients,
+} from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
@@ -25,11 +31,17 @@ import { startPoller, stopPoller } from "./queue/poller.js";
 import { reconcileRssDispatches } from "./queue/reconciliation.js";
 import { getQueueRepository } from "./queue/repository.js";
 
-const token = process.env.DISCORD_BOT_TOKEN;
-if (!token) throw new Error("DISCORD_BOT_TOKEN が設定されていません");
-
 const groups = await loadGroups();
 try {
+  const discordConfig = await loadDiscordConfig();
+  for (const group of groups) {
+    const botId = group.bot ?? discordConfig.defaultBot;
+    if (!(botId in discordConfig.bots))
+      throw new Error(
+        `Group ${group.name} のDiscord Botが未定義です: ${botId}`,
+      );
+  }
+  await initDiscordClients();
   await ensureGroupDirs(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
   await initManager(proxyPort);
@@ -84,11 +96,22 @@ try {
   process.exit(1);
 }
 
-registerHandlers(() => backfillDiscordMessages(groups));
+let backfillStarted = false;
+for (const discordClient of getDiscordClients().values()) {
+  registerHandlers(
+    discordClient,
+    !backfillStarted
+      ? () => {
+          backfillStarted = true;
+          return backfillDiscordMessages(groups);
+        }
+      : undefined,
+  );
+}
 startPoller();
 startDeliveryWorker(getQueueRepository());
 startCron();
-void client.login(token);
+void loginDiscordClients();
 
 // spawn した docker run 子プロセス（ひいてはコンテナ本体）は process.exit() しても
 // 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。
@@ -97,6 +120,7 @@ const shutdown = async (): Promise<void> => {
   stopPoller();
   stopDeliveryWorker();
   await killAllRunningContainers();
+  await destroyDiscordClients();
   process.exit(0);
 };
 process.on("SIGTERM", () => {

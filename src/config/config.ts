@@ -19,6 +19,12 @@ export const CRON_PATH =
 
 const TopLevelSchema = z.record(z.string(), z.unknown());
 
+export const DiscordConfigSchema = z.object({
+  defaultBot: z.string().min(1),
+  bots: z.record(z.string().min(1), z.object({ tokenEnv: z.string().min(1) })),
+});
+export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
+
 export function loadConfigField<T>(
   raw: Record<string, unknown>,
   section: string,
@@ -43,6 +49,24 @@ export function loadConfigField<T>(
 }
 
 let _raw: Record<string, unknown> | null = null;
+
+export async function loadDiscordConfig(): Promise<DiscordConfig> {
+  const raw = await loadRawConfig();
+  const config = DiscordConfigSchema.parse(raw.discord);
+  if (!(config.defaultBot in config.bots)) {
+    throw new Error(`discord.defaultBot が未定義です: ${config.defaultBot}`);
+  }
+  for (const [botId, bot] of Object.entries(config.bots)) {
+    if (!process.env[bot.tokenEnv]) {
+      if (bot.tokenEnv === "DISCORD_BOT_TOKEN")
+        throw new Error("DISCORD_BOT_TOKEN が設定されていません");
+      throw new Error(
+        `Discord Bot "${botId}" の環境変数 ${bot.tokenEnv} が設定されていません`,
+      );
+    }
+  }
+  return config;
+}
 
 // config/config.json（defaultModel・proxy・agent）を読み込む
 export async function loadRawConfig(): Promise<Record<string, unknown>> {
