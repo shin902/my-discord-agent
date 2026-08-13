@@ -5,11 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
 import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
-import {
-  client as defaultClient,
-  getDiscordClientForChannel,
-  getDiscordClients,
-} from "../discord/client.js";
+import * as discordClients from "../discord/client.js";
+
+const defaultClient = discordClients.client;
+
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueProducer } from "../queue/types.js";
 
@@ -249,9 +248,10 @@ export async function executeJob(job: CronJob): Promise<void> {
   const channelId =
     job.channelId ??
     (typeof settingsChannelId === "string" ? settingsChannelId : undefined);
-  const discordClient = channelId
-    ? await getDiscordClientForChannel(channelId)
-    : defaultClient;
+  const discordClient =
+    channelId && "getDiscordClientForChannel" in discordClients
+      ? await discordClients.getDiscordClientForChannel(channelId)
+      : defaultClient;
   const ctx: CronContext = { client: discordClient, appendInbox, ...job };
 
   if (job.handler) {
@@ -276,13 +276,11 @@ export function _setCronJobs(jobs: CronJob[]): void {
 
 async function tick(): Promise<void> {
   if (_isRunning) return;
-  const clients = getDiscordClients();
-  if (
-    clients.size > 0 &&
-    ![...clients.values()].some((value) => value.isReady())
-  )
-    return;
-  if (clients.size === 0 && !defaultClient.isReady()) return;
+  const clients =
+    "getDiscordClients" in discordClients
+      ? discordClients.getDiscordClients()
+      : new Map([["default", defaultClient]]);
+  if (![...clients.values()].some((value) => value.isReady())) return;
   _isRunning = true;
   try {
     if (_jobs.length === 0) return;
