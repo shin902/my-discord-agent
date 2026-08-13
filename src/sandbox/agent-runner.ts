@@ -264,6 +264,69 @@ const CONTEXT_BOOTSTRAP_TYPES = new Set(
   CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
 );
 
+type ReadToolDetails = {
+  path?: unknown;
+  size?: unknown;
+  characters?: unknown;
+  returnedCharacters?: unknown;
+  startLine?: unknown;
+  endLine?: unknown;
+  returnedLineCount?: unknown;
+  totalLines?: unknown;
+  eof?: unknown;
+};
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** read の行位置・総量を details から LLM が読めるテキストへ変換する。 */
+function formatReadToolDetails(msg: AgentMessage): string | undefined {
+  if (msg.role !== "toolResult" || msg.toolName !== "read") return undefined;
+  if (typeof msg.details !== "object" || msg.details === null) return undefined;
+
+  const details = msg.details as ReadToolDetails;
+  if (
+    typeof details.path !== "string" ||
+    !isFiniteNumber(details.size) ||
+    !isFiniteNumber(details.totalLines) ||
+    !isFiniteNumber(details.startLine) ||
+    !isFiniteNumber(details.endLine) ||
+    !isFiniteNumber(details.returnedLineCount) ||
+    typeof details.eof !== "boolean"
+  ) {
+    return undefined;
+  }
+
+  const returnedCharacters = isFiniteNumber(details.returnedCharacters)
+    ? `、今回の返却は ${details.returnedCharacters} 文字`
+    : "";
+  const range =
+    details.returnedLineCount === 0
+      ? "0 行"
+      : `${details.startLine}〜${details.endLine} 行（${details.returnedLineCount} 行）`;
+  const continuation = details.eof
+    ? "EOFまで読み込み済み"
+    : `続きは ${details.endLine + 1} 行目から`;
+
+  return [
+    "",
+    `[read メタデータ: ${details.path}]`,
+    `ファイル全体: ${details.size} 文字、${details.totalLines} 行`,
+    `今回の読み込み: ${range}${returnedCharacters}`,
+    continuation,
+  ].join("\n");
+}
+
+function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
+  const metadata = formatReadToolDetails(msg);
+  if (!metadata || msg.role !== "toolResult") return msg;
+  return {
+    ...msg,
+    content: [...msg.content, { type: "text", text: metadata }],
+  };
+}
+
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
  * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
  * - contextBootstrap（memoryBootstrap / selfBootstrap）: customType ごとに最初の1件のみ
@@ -287,7 +350,7 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
     if (isSkillInvocationMessage(msg)) {
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
     }
-    return libraryConvertToLlm([msg]);
+    return libraryConvertToLlm([decorateToolResultForLlm(msg)]);
   });
 }
 

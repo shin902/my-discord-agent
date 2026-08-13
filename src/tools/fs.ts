@@ -104,6 +104,11 @@ type StreamSelectedLines = SelectedLines & {
   size: number;
 };
 
+function countLines(raw: string): number {
+  if (raw === "") return 0;
+  return raw.split("\n").length - (raw.endsWith("\n") ? 1 : 0);
+}
+
 function validatePositiveInteger(
   name: string,
   value: number | undefined,
@@ -274,7 +279,7 @@ export const readTool: AgentTool<typeof readParameters> = {
   name: "read",
   label: "Read File",
   description:
-    "ワークスペース内のファイル内容を読み込む。startLine（1始まり）とlineCountで行範囲を指定でき、lineCountだけなら先頭から、startLineだけなら指定行から末尾までを返す。tailCountで末尾から読めるが、startLine/lineCountとは併用できない。大きなファイルは先頭から順番に範囲を指定して読み進める",
+    "ワークスペース内のファイル内容を読み込む。startLine（1始まり）とlineCountで行範囲を指定でき、lineCountだけなら先頭から、startLineだけなら指定行から末尾までを返す。tailCountで末尾から読めるが、startLine/lineCountとは併用できない。結果にはファイル全体の文字数・行数と今回の読み込み範囲が含まれる。大きなファイルは先頭から順番に範囲を指定して読み進める",
   parameters: readParameters,
   execute: async (_toolCallId, { path, startLine, lineCount, tailCount }) => {
     const safePath = sanitizePath(path);
@@ -310,6 +315,8 @@ export const readTool: AgentTool<typeof readParameters> = {
         details: {
           path: safePath,
           size: selected.size,
+          characters: selected.size,
+          returnedCharacters: selected.text.length,
           startLine: selected.startLine,
           endLine: selected.endLine,
           returnedLineCount: selected.returnedLineCount,
@@ -327,6 +334,8 @@ export const readTool: AgentTool<typeof readParameters> = {
       details: {
         path: safePath,
         size: raw.length,
+        characters: raw.length,
+        returnedCharacters: raw.length,
         startLine: selected.startLine,
         endLine: selected.endLine,
         returnedLineCount: selected.returnedLineCount,
@@ -355,9 +364,20 @@ export const writeTool: AgentTool<typeof writeParameters> = {
     const fp = fullPath(safePath);
     await mkdir(dirname(fp), { recursive: true });
     await writeFile(fp, content, "utf-8");
+    const lines = countLines(content);
     return {
-      content: [{ type: "text", text: `書き込み完了: ${safePath}` }],
-      details: { path: safePath, size: content.length },
+      content: [
+        {
+          type: "text",
+          text: `書き込み完了: ${safePath} (${content.length} 文字, ${lines} 行)`,
+        },
+      ],
+      details: {
+        path: safePath,
+        size: content.length,
+        characters: content.length,
+        lines,
+      },
     };
   },
 };
@@ -419,11 +439,21 @@ export const editTool: AgentTool<typeof editParameters> = {
     const updated = original.replaceAll(oldString, newString);
     await writeFile(fp, updated, "utf-8");
     const count = original.split(oldString).length - 1;
+    const lines = countLines(updated);
     return {
       content: [
-        { type: "text", text: `編集完了: ${safePath} (${count} 箇所置換)` },
+        {
+          type: "text",
+          text: `編集完了: ${safePath} (${count} 箇所置換, ${updated.length} 文字, ${lines} 行)`,
+        },
       ],
-      details: { path: safePath, replacements: count },
+      details: {
+        path: safePath,
+        replacements: count,
+        size: updated.length,
+        characters: updated.length,
+        lines,
+      },
     };
   },
 };

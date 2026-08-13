@@ -98,6 +98,8 @@ describe("read", () => {
     expect(firstText(result)).toBe("line 1\nline 2");
     expect(result.details).toMatchObject({
       path: "notes.txt",
+      characters: raw.length,
+      returnedCharacters: "line 1\nline 2".length,
       startLine: 1,
       endLine: 2,
       returnedLineCount: 2,
@@ -116,6 +118,8 @@ describe("read", () => {
 
     expect(firstText(result)).toBe("line 3\nline 4");
     expect(result.details).toMatchObject({
+      characters: "line 1\nline 2\nline 3\nline 4".length,
+      returnedCharacters: "line 3\nline 4".length,
       startLine: 3,
       endLine: 4,
       returnedLineCount: 2,
@@ -422,7 +426,7 @@ describe("write", () => {
       path: "out.txt",
       content: "hello",
     });
-    expect(firstText(result)).toBe("書き込み完了: out.txt");
+    expect(firstText(result)).toBe("書き込み完了: out.txt (5 文字, 1 行)");
     expect(writeFile).toHaveBeenCalledWith(
       "/workspace/out.txt",
       "hello",
@@ -498,7 +502,9 @@ describe("edit", () => {
       "hello sandbox",
       "utf-8",
     );
-    expect(firstText(result)).toBe("編集完了: test.txt (1 箇所置換)");
+    expect(firstText(result)).toBe(
+      "編集完了: test.txt (1 箇所置換, 13 文字, 1 行)",
+    );
   });
 
   it("置換対象がないとエラー", async () => {

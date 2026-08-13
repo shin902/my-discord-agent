@@ -1525,6 +1525,41 @@ describe("defaultConvertToLlm", () => {
     expect(result[1].role).toBe("assistant");
   });
 
+  it("read の総文字数・総行数と次の読み込み位置を LLM に伝える", () => {
+    const readResult = {
+      role: "toolResult" as const,
+      toolCallId: "call-1",
+      toolName: "read",
+      content: [{ type: "text" as const, text: "line 1\nline 2" }],
+      details: {
+        path: "notes.txt",
+        size: 23,
+        characters: 23,
+        returnedCharacters: 13,
+        startLine: 1,
+        endLine: 2,
+        returnedLineCount: 2,
+        totalLines: 4,
+        eof: false,
+      },
+      isError: false,
+      timestamp: 4000,
+    };
+
+    const result = defaultConvertToLlm([readResult] as never);
+    expect(result[0]).toMatchObject({ role: "toolResult" });
+    expect(result[0].content).toEqual([
+      { type: "text", text: "line 1\nline 2" },
+      {
+        type: "text",
+        text: expect.stringContaining("ファイル全体: 23 文字、4 行"),
+      },
+    ]);
+    expect(result[0].content[1]).toMatchObject({
+      text: expect.stringContaining("続きは 3 行目から"),
+    });
+  });
+
   it("skill-invocation メッセージを user ロールに変換する", () => {
     const skillInvocationMsg = {
       role: "custom" as const,
