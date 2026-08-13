@@ -36,6 +36,8 @@ First run the `SKILLS/wiki-lint/scripts/lint.py` helper for mechanical checks (o
 4. Apply safe, unambiguous fixes (adding missing backlinks, registering pages in the index, and adding frontmatter). Always ask for confirmation before operations that could lose information (merging pages, deleting orphan pages, or resolving a contradiction by choosing one side).
 5. Append a log entry:
    `## [YYYY-MM-DD] lint | <N issues found, M fixed, K need decisions>`
+
+   Treat `log.md` as append-only. Do not read it in full; use the `read` tool with `offset` and `limit` to inspect only the last 10–20 lines (use `wc -l` only to determine the offset if needed). Append with `printf ... >> log.md` or `cat >> log.md`, never with full-file `edit`/`write`, `sed -i`, or a read-and-write-back script.
 6. Finally, provide a brief list of questions to investigate or sources to find next — lint also tells you what to read next in the wiki.
 
 ## Notes
