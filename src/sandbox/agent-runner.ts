@@ -274,7 +274,22 @@ type ReadToolDetails = {
   returnedLineCount?: unknown;
   totalLines?: unknown;
   eof?: unknown;
+  truncated?: unknown;
+  externalizedOutput?: unknown;
 };
+
+function isExternalizedReadDetails(details: ReadToolDetails): boolean {
+  if (details.truncated === true) return true;
+  if (
+    typeof details.externalizedOutput === "object" &&
+    details.externalizedOutput !== null
+  ) {
+    return (
+      (details.externalizedOutput as { truncated?: unknown }).truncated === true
+    );
+  }
+  return false;
+}
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -286,6 +301,11 @@ function formatReadToolDetails(msg: AgentMessage): string | undefined {
   if (typeof msg.details !== "object" || msg.details === null) return undefined;
 
   const details = msg.details as ReadToolDetails;
+  // The common output wrapper may preserve the original read range in details
+  // while replacing the actual content with a temporary-file notice. Do not
+  // claim that the range was delivered (especially EOF) in that case; the
+  // notice itself tells the model to read the externalized file.
+  if (isExternalizedReadDetails(details)) return undefined;
   if (
     typeof details.path !== "string" ||
     !isFiniteNumber(details.size) ||

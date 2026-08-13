@@ -1560,6 +1560,63 @@ describe("defaultConvertToLlm", () => {
     });
   });
 
+  it("外部化された read 結果には完了済みメタデータを追加しない", () => {
+    const readResult = {
+      role: "toolResult" as const,
+      toolCallId: "call-1",
+      toolName: "read",
+      content: [
+        {
+          type: "text" as const,
+          text: "ツール出力が大きいため、全文は一時ファイルに保存されました。",
+        },
+      ],
+      details: {
+        path: "notes.txt",
+        size: 100_001,
+        returnedCharacters: 100_001,
+        startLine: 1,
+        endLine: 10_000,
+        returnedLineCount: 10_000,
+        totalLines: 10_000,
+        eof: true,
+        truncated: true,
+        fullOutputPath: "/tmp/my-discord-agent-tool-test/output.txt",
+      },
+      isError: false,
+      timestamp: 4000,
+    };
+
+    const result = defaultConvertToLlm([readResult] as never);
+    expect(result[0].content).toEqual(readResult.content);
+    expect(JSON.stringify(result[0])).not.toContain("EOFまで読み込み済み");
+    expect(JSON.stringify(result[0])).not.toContain("今回の返却は");
+  });
+
+  it("nested externalizedOutput の read 結果にも完了済みメタデータを追加しない", () => {
+    const readResult = {
+      role: "toolResult" as const,
+      toolCallId: "call-1",
+      toolName: "read",
+      content: [{ type: "text" as const, text: "temporary notice" }],
+      details: {
+        path: "notes.txt",
+        size: 100_001,
+        startLine: 1,
+        endLine: 10_000,
+        returnedLineCount: 10_000,
+        totalLines: 10_000,
+        eof: true,
+        externalizedOutput: { truncated: true },
+      },
+      isError: false,
+      timestamp: 4000,
+    };
+
+    const result = defaultConvertToLlm([readResult] as never);
+    expect(result[0].content).toEqual(readResult.content);
+  });
+
   it("skill-invocation メッセージを user ロールに変換する", () => {
     const skillInvocationMsg = {
       role: "custom" as const,
