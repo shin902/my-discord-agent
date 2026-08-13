@@ -94,7 +94,7 @@ function buildNotice(output: ExternalizedToolOutput): string {
   return [
     "ツール出力が大きいため、全文をモデルへ返さずコンテナ内の一時ファイルへ保存しました。",
     `保存先: ${output.fullOutputPath}`,
-    `元サイズ: ${output.truncation.totalCharacters} 文字 (${output.truncation.totalBytes} bytes)`,
+    `元サイズ: ${output.truncation.totalCharacters} 文字 / ${output.truncation.totalLines} 行 (${output.truncation.totalBytes} bytes)`,
     `切り詰め理由: テキスト出力が上限 ${output.truncation.inlineCharacterLimit} 文字を超えたため（全文は保存済み）`,
     "このパスは現在のコンテナ実行中（current container run）のみ有効です。",
     "",

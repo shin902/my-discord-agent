@@ -103,6 +103,9 @@ describe("common tool output boundary", () => {
     expect(result.content).toHaveLength(1);
     expect(firstText(result)).toContain("ツール出力が大きいため");
     expect(firstText(result)).toContain(`保存先: ${path}`);
+    expect(firstText(result)).toContain(
+      `元サイズ: ${text.length} 文字 / 5001 行`,
+    );
     expect(details).toMatchObject({
       source: "test",
       requestId: "user-secret",
