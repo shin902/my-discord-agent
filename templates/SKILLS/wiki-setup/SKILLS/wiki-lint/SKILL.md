@@ -37,7 +37,7 @@ First run the `SKILLS/wiki-lint/scripts/lint.py` helper for mechanical checks (o
 5. Append a log entry:
    `## [YYYY-MM-DD] lint | <N issues found, M fixed, K need decisions>`
 
-   Treat `log.md` as append-only. Do not read it in full; use the `read` tool with `offset` and `limit` to inspect only the last 10–20 lines (use `wc -l` only to determine the offset if needed). Append with `printf ... >> log.md` or `cat >> log.md`, never with full-file `edit`/`write`, `sed -i`, or a read-and-write-back script.
+   Treat `log.md` as append-only. Do not read it in full; call the `read` tool with its actual `tailCount` parameter, for example `tailCount: 20` (or `tailCount: 10`), to inspect only the last lines. Use `tailCount` for this tail-only read. Append with `printf ... >> log.md` or `cat >> log.md`, never with full-file `edit`/`write`, `sed -i`, or a read-and-write-back script.
 6. Finally, provide a brief list of questions to investigate or sources to find next — lint also tells you what to read next in the wiki.
 
 ## Notes

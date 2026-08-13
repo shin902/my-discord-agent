@@ -39,7 +39,7 @@ This is how the wiki accumulates knowledge. If the answer is more than a simple 
 - Append a log entry.
   `## [YYYY-MM-DD] query | <question> → filed as [[page]]`
 
-  `log.md` is append-only and may be too large to read in full. Before appending, use the `read` tool with `offset` and `limit` to inspect only its last 10–20 lines; if necessary, get the line count with `wc -l` only. Append with `printf ... >> log.md` or `cat >> log.md`. Never use full-file `edit`/`write` or read-and-write-back scripts.
+  `log.md` is append-only and may be too large to read in full. Before appending, call the `read` tool with its actual `tailCount` parameter, for example `tailCount: 20` (or `tailCount: 10`), to inspect only its last lines. Use `tailCount` for this tail-only read. Append with `printf ... >> log.md` or `cat >> log.md`. Never use full-file `edit`/`write` or read-and-write-back scripts.
 
 If it is unclear whether an answer is worth preserving, ask the user before writing it back. For results with clear lasting value, write them back first and then tell the user. Do not write back temporary lookups (such as 「Xが出版されたのは何年？」) — they add noise.
 

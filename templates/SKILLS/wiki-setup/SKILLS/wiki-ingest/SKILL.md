@@ -38,7 +38,7 @@ Add the new source page (and any newly created entity/concept pages) to `{{WIKI_
 
 ### 6. Append to the log (never rewrite it)
 
-`{{WIKI_ROOT}}/log.md` is an append-only chronological record and may grow beyond the context window. Before adding an entry, do not read the whole file: use the `read` tool with `offset` and `limit` to inspect only the last 10–20 lines. If the offset is unknown, first get only the line count with `wc -l`; do not use that command to dump the file. Add the entry with an append-only operation such as `printf ... >> {{WIKI_ROOT}}/log.md` or `cat >> {{WIKI_ROOT}}/log.md`. Never use full-file `edit`/`write`, `sed -i`, or a read-and-write-back script for `log.md`; preserve every existing entry.
+`{{WIKI_ROOT}}/log.md` is an append-only chronological record and may grow beyond the context window. Before adding an entry, do not read the whole file: call the `read` tool with its actual `tailCount` parameter, for example `tailCount: 20` (or `tailCount: 10`), to inspect only the last lines. Use `tailCount` for this tail-only read. Add the entry with an append-only operation such as `printf ... >> {{WIKI_ROOT}}/log.md` or `cat >> {{WIKI_ROOT}}/log.md`. Never use full-file `edit`/`write`, `sed -i`, or a read-and-write-back script for `log.md`; preserve every existing entry.
 
 ```
 ## [YYYY-MM-DD] ingest | <source title>
