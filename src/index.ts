@@ -97,16 +97,15 @@ try {
 }
 
 let backfillStarted = false;
+const runStartupBackfillOnce = async (): Promise<void> => {
+  if (backfillStarted) return;
+  backfillStarted = true;
+  console.log("[discord-backfill] 起動時履歴復旧を開始します");
+  await backfillDiscordMessages(groups);
+  console.log("[discord-backfill] 起動時履歴復旧が完了しました");
+};
 for (const discordClient of getDiscordClients().values()) {
-  registerHandlers(
-    discordClient,
-    !backfillStarted
-      ? () => {
-          backfillStarted = true;
-          return backfillDiscordMessages(groups);
-        }
-      : undefined,
-  );
+  registerHandlers(discordClient, runStartupBackfillOnce);
 }
 startPoller();
 startDeliveryWorker(getQueueRepository());

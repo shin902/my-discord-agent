@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
     ["personal", { login: vi.fn(), isReady: vi.fn().mockReturnValue(true) }],
   ]),
   registerHandlers: vi.fn(),
+  backfillDiscordMessages: vi.fn(),
+  loadDiscordConfig: vi.fn(),
   startPoller: vi.fn(),
   stopPoller: vi.fn(),
   startDeliveryWorker: vi.fn(),
@@ -38,6 +40,12 @@ vi.mock("./discord/client.js", () => ({
 }));
 vi.mock("./discord/handler.js", () => ({
   registerHandlers: mocks.registerHandlers,
+}));
+vi.mock("./discord/backfill.js", () => ({
+  backfillDiscordMessages: mocks.backfillDiscordMessages,
+}));
+vi.mock("./config/config.js", () => ({
+  loadDiscordConfig: mocks.loadDiscordConfig,
 }));
 vi.mock("./queue/poller.js", () => ({
   startPoller: mocks.startPoller,
@@ -94,6 +102,16 @@ describe("index: 起動時バリデーション", () => {
     vi.resetModules();
     vi.resetAllMocks();
     process.env.DISCORD_BOT_TOKEN = "test-token";
+    mocks.discordClients.clear();
+    mocks.discordClients.set("personal", {
+      login: vi.fn(),
+      isReady: vi.fn().mockReturnValue(true),
+    });
+    mocks.loadDiscordConfig.mockResolvedValue({
+      defaultBot: "personal",
+      bots: { personal: { tokenEnv: "DISCORD_BOT_TOKEN" } },
+    });
+    mocks.backfillDiscordMessages.mockResolvedValue(undefined);
     mocks.loadGroups.mockResolvedValue([]);
     mocks.loadProviders.mockResolvedValue([]);
     mocks.initManager.mockResolvedValue(undefined);
@@ -127,6 +145,9 @@ describe("index: 起動時バリデーション", () => {
 
   it("DISCORD_BOT_TOKEN 未設定は起動時にスロー", async () => {
     delete process.env.DISCORD_BOT_TOKEN;
+    mocks.loadDiscordConfig.mockRejectedValue(
+      new Error("DISCORD_BOT_TOKEN が設定されていません"),
+    );
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
     expect(mockExit).toHaveBeenCalledWith(1);
   });
@@ -228,6 +249,30 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.loginDiscordClients).toHaveBeenCalledOnce();
   });
+
+  it("複数Botがreadyになっても起動時バックフィルは一度だけ実行する", async () => {
+    mocks.discordClients.set("secondary", {
+      login: vi.fn(),
+      isReady: vi.fn().mockReturnValue(true),
+    });
+
+    await import("./index.js");
+
+    expect(mocks.registerHandlers).toHaveBeenCalledTimes(2);
+    const firstReady = mocks.registerHandlers.mock
+      .calls[0]?.[1] as () => Promise<void>;
+    const secondReady = mocks.registerHandlers.mock
+      .calls[1]?.[1] as () => Promise<void>;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await Promise.all([firstReady(), secondReady()]);
+
+    expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(
+      "[discord-backfill] 起動時履歴復旧が完了しました",
+    );
+    log.mockRestore();
+  });
+
   it("shutdown は cron のタイマーを queue worker より先に停止する", async () => {
     const listenersBefore = process.listeners("SIGTERM");
     await import("./index.js");
