@@ -35,10 +35,9 @@ const groups = await loadGroups();
 try {
   const discordConfig = await loadDiscordConfig();
   for (const group of groups) {
-    const botId = group.bot ?? discordConfig.defaultBot;
-    if (!(botId in discordConfig.bots))
+    if (group.bot && !(group.bot in discordConfig.bots))
       throw new Error(
-        `Group ${group.name} のDiscord Botが未定義です: ${botId}`,
+        `Group ${group.name} のDiscord Botが未定義です: ${group.bot}`,
       );
   }
   await initDiscordClients();

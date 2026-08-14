@@ -12,29 +12,8 @@ import {
   getQueueRepository,
   type QueueRepository,
 } from "../queue/repository.js";
-import * as discordClients from "./client.js";
+import { getDiscordClientForGroup } from "./client.js";
 import { ingestDiscordMessage } from "./intake.js";
-
-function resolveGroupClient(group: GroupConfig) {
-  try {
-    if (
-      "getDiscordClients" in discordClients &&
-      discordClients.getDiscordClients().size === 0
-    )
-      return discordClients.client;
-    if ("getDiscordClient" in discordClients)
-      return discordClients.getDiscordClient(
-        group.bot ?? discordClients.getDefaultDiscordBot(),
-      );
-  } catch (error) {
-    if (
-      !(error instanceof Error) ||
-      !error.message.includes('No "getDiscordClient" export')
-    )
-      throw error;
-  }
-  return discordClients.client;
-}
 
 const DISCORD_MESSAGE_PAGE_SIZE = 100;
 // Use Discord's lower bound so an empty scope can resume from its first
@@ -50,7 +29,7 @@ export async function backfillDiscordMessages(
   repo: QueueRepository = getQueueRepository(),
 ): Promise<void> {
   for (const group of groups) {
-    const discordClient = resolveGroupClient(group);
+    const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {
       try {
         await backfillTarget(discordClient, channel, repo);

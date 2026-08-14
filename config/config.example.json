@@ -1,8 +1,6 @@
 {
   "discord": {
-    "defaultBot": "personal",
     "bots": {
-      "personal": { "tokenEnv": "DISCORD_BOT_TOKEN" },
       "public": { "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN" }
     }
   },

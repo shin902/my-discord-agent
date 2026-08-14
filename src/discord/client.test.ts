@@ -1,71 +1,39 @@
-import type { Client } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   loadDiscordConfig: vi.fn(),
-  findGroupByChannelId: vi.fn(),
+  findGroupByName: vi.fn(),
 }));
 
 vi.mock("../config/config.js", () => ({
   loadDiscordConfig: mocks.loadDiscordConfig,
 }));
 vi.mock("../config/groups.js", () => ({
-  findGroupByChannelId: mocks.findGroupByChannelId,
+  findGroupByName: mocks.findGroupByName,
 }));
 
 const {
+  DEFAULT_DISCORD_BOT_ID,
   destroyDiscordClients,
+  getDefaultDiscordClient,
   getDiscordClient,
-  getDiscordClientForChannel,
+  getDiscordClientForGroup,
+  getDiscordClientForGroupName,
+  getDiscordClients,
   initDiscordClients,
 } = await import("./client.js");
 
-function groupForChannel(channelId: string) {
-  if (channelId !== "configured-root") return null;
-  return {
-    group: {
-      name: "takop",
-      bot: "takop",
-      channels: [],
-    },
-    channel: {
-      channelId,
-      sessionMode: "auto-thread" as const,
-    },
-  };
-}
-
-function replaceFetch(
-  discordClient: Client,
-  result: unknown,
-): ReturnType<typeof vi.spyOn> {
-  return vi
-    .spyOn(discordClient.channels, "fetch")
-    .mockImplementation(async () => result as never);
-}
-
-function rejectFetch(
-  discordClient: Client,
-  error: Error,
-): ReturnType<typeof vi.spyOn> {
-  return vi
-    .spyOn(discordClient.channels, "fetch")
-    .mockImplementation(async () => {
-      throw error;
-    });
-}
-
-describe("getDiscordClientForChannel", () => {
+describe("Discord client registry", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mocks.loadDiscordConfig.mockResolvedValue({
-      defaultBot: "personal",
-      bots: {
-        personal: { tokenEnv: "DISCORD_BOT_TOKEN" },
-        takop: { tokenEnv: "TAKOP_BOT_TOKEN" },
-      },
+      bots: { takop: { tokenEnv: "TAKOP_BOT_TOKEN" } },
     });
-    mocks.findGroupByChannelId.mockImplementation(groupForChannel);
+    mocks.findGroupByName.mockResolvedValue({
+      name: "takop",
+      bot: "takop",
+      channels: [],
+    });
     await initDiscordClients();
   });
 
@@ -73,70 +41,35 @@ describe("getDiscordClientForChannel", () => {
     await destroyDiscordClients();
   });
 
-  it("設定済みの直接チャンネルはそのグループのBotへ解決する", async () => {
-    const personal = getDiscordClient("personal");
-    const fetch = replaceFetch(personal, null);
+  it("implicit default bot and additional bots are both registered", () => {
+    expect(getDiscordClients().size).toBe(2);
+    expect(getDiscordClient(DEFAULT_DISCORD_BOT_ID)).toBe(
+      getDefaultDiscordClient(),
+    );
+    expect(getDiscordClient("takop")).not.toBe(getDefaultDiscordClient());
+  });
 
-    await expect(getDiscordClientForChannel("configured-root")).resolves.toBe(
+  it("group bot selects the additional bot and omission selects default", () => {
+    const defaultClient = getDefaultDiscordClient();
+    expect(getDiscordClientForGroup({ name: "default" })).toBe(defaultClient);
+    expect(
+      getDiscordClientForGroup({ name: "takop", bot: "takop" }),
+    ).toBe(getDiscordClient("takop"));
+  });
+
+  it("group name resolves through group configuration", async () => {
+    await expect(getDiscordClientForGroupName("takop")).resolves.toBe(
       getDiscordClient("takop"),
     );
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("キャッシュ済みスレッドは親チャンネルのグループBotへ解決する", async () => {
-    const personal = getDiscordClient("personal");
-    const takop = getDiscordClient("takop");
-    const personalFetch = replaceFetch(personal, null);
-    const takopFetch = replaceFetch(takop, null);
-    personal.channels.cache.set("thread-1", {
-      parentId: "configured-root",
-    } as never);
-
-    await expect(getDiscordClientForChannel("thread-1")).resolves.toBe(takop);
-    expect(personalFetch).not.toHaveBeenCalled();
-    expect(takopFetch).not.toHaveBeenCalled();
-  });
-
-  it("キャッシュにないスレッドはDiscordから取得して親を解決する", async () => {
-    const personal = getDiscordClient("personal");
-    const takop = getDiscordClient("takop");
-    const personalFetch = replaceFetch(personal, {
-      parentId: "configured-root",
-    });
-    const takopFetch = replaceFetch(takop, null);
-
-    await expect(
-      getDiscordClientForChannel("thread-after-restart"),
-    ).resolves.toBe(takop);
-    expect(personalFetch).toHaveBeenCalledWith("thread-after-restart");
-    expect(takopFetch).not.toHaveBeenCalled();
-  });
-
-  it("デフォルトBotがスレッドを取得できなくても割り当てBotまで試す", async () => {
-    const personal = getDiscordClient("personal");
-    const takop = getDiscordClient("takop");
-    const personalFetch = rejectFetch(personal, new Error("forbidden"));
-    const takopFetch = replaceFetch(takop, {
-      parentId: "configured-root",
-    });
-
-    await expect(
-      getDiscordClientForChannel("thread-visible-to-takop"),
-    ).resolves.toBe(takop);
-    expect(personalFetch).toHaveBeenCalledWith("thread-visible-to-takop");
-    expect(takopFetch).toHaveBeenCalledWith("thread-visible-to-takop");
-  });
-
-  it("未知のチャンネルはデフォルトBotへフォールバックする", async () => {
-    const personal = getDiscordClient("personal");
-    const takop = getDiscordClient("takop");
-    const personalFetch = replaceFetch(personal, null);
-    const takopFetch = replaceFetch(takop, null);
-
-    await expect(getDiscordClientForChannel("unknown-channel")).resolves.toBe(
-      personal,
+    mocks.findGroupByName.mockResolvedValue(undefined);
+    await expect(getDiscordClientForGroupName("missing")).rejects.toThrow(
+      "グループが未定義です: missing",
     );
-    expect(personalFetch).toHaveBeenCalledWith("unknown-channel");
-    expect(takopFetch).toHaveBeenCalledWith("unknown-channel");
+  });
+
+  it("unknown named bot fails instead of falling back", () => {
+    expect(() =>
+      getDiscordClientForGroup({ name: "unknown", bot: "missing" }),
+    ).toThrow("Discord Bot が未定義です: missing");
   });
 });

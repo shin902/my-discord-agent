@@ -1,6 +1,9 @@
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 import { loadDiscordConfig } from "../config/config.js";
-import { findGroupByChannelId } from "../config/groups.js";
+import type { GroupConfig } from "../config/groups.js";
+import { findGroupByName } from "../config/groups.js";
+
+export const DEFAULT_DISCORD_BOT_ID = "personal";
 
 export function createDiscordClient(): Client {
   return new Client({
@@ -15,18 +18,18 @@ export function createDiscordClient(): Client {
 }
 
 const clients = new Map<string, Client>();
-// Backward-compatible default export for cron integrations and consumers that
-// do not perform channel I/O. Runtime Discord I/O uses the registry helpers.
-export const client = createDiscordClient();
-
-let defaultBot: string | undefined;
 
 export async function initDiscordClients(): Promise<void> {
   const config = await loadDiscordConfig();
   for (const existing of clients.values()) existing.destroy();
   clients.clear();
-  defaultBot = config.defaultBot;
+  clients.set(DEFAULT_DISCORD_BOT_ID, createDiscordClient());
   for (const [botId] of Object.entries(config.bots)) {
+    if (botId === DEFAULT_DISCORD_BOT_ID) {
+      throw new Error(
+        `Discord Bot ID は予約されています: ${DEFAULT_DISCORD_BOT_ID}`,
+      );
+    }
     clients.set(botId, createDiscordClient());
   }
 }
@@ -37,76 +40,37 @@ export function getDiscordClient(botId: string): Client {
   return value;
 }
 
+export function getDefaultDiscordClient(): Client {
+  return getDiscordClient(DEFAULT_DISCORD_BOT_ID);
+}
+
 export function getDiscordClients(): ReadonlyMap<string, Client> {
   return clients;
 }
 
-export function getDefaultDiscordBot(): string {
-  if (!defaultBot) throw new Error("Discord Client が初期化されていません");
-  return defaultBot;
+export function getDiscordClientForGroup(group: Pick<GroupConfig, "name" | "bot">): Client {
+  return group.bot ? getDiscordClient(group.bot) : getDefaultDiscordClient();
 }
 
-function parentChannelId(channel: unknown): string | undefined {
-  if (!channel || typeof channel !== "object") return undefined;
-  const parentId = (channel as { parentId?: unknown }).parentId;
-  return typeof parentId === "string" ? parentId : undefined;
-}
-
-async function findDiscordClientForThread(
-  channelId: string,
-): Promise<Client | undefined> {
-  // A live event or a startup backfill normally leaves the thread in the
-  // receiving client's cache. Resolve from its parent without an API call.
-  for (const discordClient of clients.values()) {
-    const cached = discordClient.channels.cache.get(channelId);
-    const parentId = parentChannelId(cached);
-    if (!parentId) continue;
-    const resolved = await findGroupByChannelId(parentId);
-    if (resolved) {
-      return getDiscordClient(resolved.group.bot ?? getDefaultDiscordBot());
-    }
-  }
-
-  // Caches are empty after a restart, so fetch the thread metadata from each
-  // connected client. Fetching the thread is safe and does not mutate Discord;
-  // an inaccessible channel simply means this client cannot resolve it.
-  for (const discordClient of clients.values()) {
-    const fetched = await discordClient.channels
-      .fetch(channelId)
-      .catch(() => null);
-    const parentId = parentChannelId(fetched);
-    if (!parentId) continue;
-    const resolved = await findGroupByChannelId(parentId);
-    if (resolved) {
-      return getDiscordClient(resolved.group.bot ?? getDefaultDiscordBot());
-    }
-  }
-
-  return undefined;
-}
-
-export async function getDiscordClientForChannel(
-  channelId: string,
+export async function getDiscordClientForGroupName(
+  groupName: string,
 ): Promise<Client> {
-  const resolved = await findGroupByChannelId(channelId);
-  if (resolved)
-    return getDiscordClient(resolved.group.bot ?? getDefaultDiscordBot());
-
-  const threadClient = await findDiscordClientForThread(channelId);
-  return threadClient ?? getDiscordClient(getDefaultDiscordBot());
+  const group = await findGroupByName(groupName);
+  if (!group) throw new Error(`グループが未定義です: ${groupName}`);
+  return getDiscordClientForGroup(group);
 }
 
 export async function loginDiscordClients(): Promise<void> {
   const config = await loadDiscordConfig();
-  await Promise.all(
-    Object.entries(config.bots).map(([botId, bot]) =>
+  await Promise.all([
+    getDefaultDiscordClient().login(process.env.DISCORD_BOT_TOKEN),
+    ...Object.entries(config.bots).map(([botId, bot]) =>
       getDiscordClient(botId).login(process.env[bot.tokenEnv]),
     ),
-  );
+  ]);
 }
 
 export async function destroyDiscordClients(): Promise<void> {
   for (const value of clients.values()) value.destroy();
   clients.clear();
-  defaultBot = undefined;
 }

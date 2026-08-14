@@ -1,10 +1,9 @@
 import { type Client, Events, type Message } from "discord.js";
-import { client as defaultClient } from "./client.js";
 import { handleLiveDiscordMessage, setStartupBackfillGate } from "./intake.js";
 
 /** Discordイベントハンドラーを指定したClientへ登録する。 */
 export function registerHandlers(
-  client: Client = defaultClient,
+  client: Client,
   onReady?: () => Promise<void> | void,
 ): void {
   client.once(Events.ClientReady, (c) => {

@@ -20,8 +20,9 @@ export const CRON_PATH =
 const TopLevelSchema = z.record(z.string(), z.unknown());
 
 export const DiscordConfigSchema = z.object({
-  defaultBot: z.string().min(1),
-  bots: z.record(z.string().min(1), z.object({ tokenEnv: z.string().min(1) })),
+  bots: z
+    .record(z.string().min(1), z.object({ tokenEnv: z.string().min(1) }))
+    .default({}),
 });
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
 
@@ -51,40 +52,12 @@ export function loadConfigField<T>(
 let _raw: Record<string, unknown> | null = null;
 
 export async function loadDiscordConfig(): Promise<DiscordConfig> {
-  let raw: Record<string, unknown>;
-  try {
-    raw = await loadRawConfig();
-  } catch (error) {
-    if (
-      (error as NodeJS.ErrnoException).code !== "ENOENT" &&
-      !(
-        error instanceof Error &&
-        error.message.includes("config/config.json が見つかりません")
-      )
-    )
-      throw error;
-    // Keep the historical single-bot setup usable when config.json has not
-    // been created yet; configured deployments use the schema below.
-    if (!process.env.DISCORD_BOT_TOKEN)
-      throw new Error("DISCORD_BOT_TOKEN が設定されていません");
-    return {
-      defaultBot: "personal",
-      bots: { personal: { tokenEnv: "DISCORD_BOT_TOKEN" } },
-    };
-  }
-  const config = DiscordConfigSchema.parse(
-    raw.discord ?? {
-      defaultBot: "personal",
-      bots: { personal: { tokenEnv: "DISCORD_BOT_TOKEN" } },
-    },
-  );
-  if (!(config.defaultBot in config.bots)) {
-    throw new Error(`discord.defaultBot が未定義です: ${config.defaultBot}`);
-  }
+  const raw = await loadRawConfig();
+  const config = DiscordConfigSchema.parse(raw.discord ?? {});
+  if (!process.env.DISCORD_BOT_TOKEN)
+    throw new Error("DISCORD_BOT_TOKEN が設定されていません");
   for (const [botId, bot] of Object.entries(config.bots)) {
     if (!process.env[bot.tokenEnv]) {
-      if (bot.tokenEnv === "DISCORD_BOT_TOKEN")
-        throw new Error("DISCORD_BOT_TOKEN が設定されていません");
       throw new Error(
         `Discord Bot "${botId}" の環境変数 ${bot.tokenEnv} が設定されていません`,
       );

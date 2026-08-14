@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // vi.resetModules() 後も同じ関数参照を保つためにホイスト
 const mocks = vi.hoisted(() => ({
-  login: vi.fn(),
   initDiscordClients: vi.fn(),
   loginDiscordClients: vi.fn(),
   destroyDiscordClients: vi.fn(),
@@ -32,7 +31,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./discord/client.js", () => ({
-  client: { login: mocks.login },
   initDiscordClients: mocks.initDiscordClients,
   loginDiscordClients: mocks.loginDiscordClients,
   destroyDiscordClients: mocks.destroyDiscordClients,
@@ -107,10 +105,7 @@ describe("index: 起動時バリデーション", () => {
       login: vi.fn(),
       isReady: vi.fn().mockReturnValue(true),
     });
-    mocks.loadDiscordConfig.mockResolvedValue({
-      defaultBot: "personal",
-      bots: { personal: { tokenEnv: "DISCORD_BOT_TOKEN" } },
-    });
+    mocks.loadDiscordConfig.mockResolvedValue({ bots: {} });
     mocks.backfillDiscordMessages.mockResolvedValue(undefined);
     mocks.loadGroups.mockResolvedValue([]);
     mocks.loadProviders.mockResolvedValue([]);
