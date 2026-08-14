@@ -60,7 +60,7 @@
 {
   "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
   "tools": ["bash", "read", "write"],
-  "autoReply": true,
+  "allowMention": true,
   "toolLogArgs": true
 }
 ```

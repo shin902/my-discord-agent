@@ -170,7 +170,7 @@ describe("processMessage - terminal queue transitions", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(sendMessage).mockReset();
     vi.mocked(client.channels.fetch).mockResolvedValue({
@@ -601,7 +601,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(sendMessage).mockResolvedValue("AI response");
     commitInboxResult.mockClear();
@@ -728,7 +728,7 @@ describe("poller lease renewal", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => false,
@@ -772,7 +772,7 @@ describe("poller lease renewal", () => {
   });
 });
 
-describe("processMessage - autoReply", () => {
+describe("processMessage - allowMention", () => {
   const mockSend = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
@@ -787,11 +787,11 @@ describe("processMessage - autoReply", () => {
     mockSend.mockClear();
   });
 
-  it("autoReply metadata is handled without a final Discord send", async () => {
+  it("allowMention metadata is handled without a final Discord send", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: true,
+      allowMention: true,
     });
 
     await processMessage(makeMsg({ messageId: "msg-original" }));
@@ -804,7 +804,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: true,
+      allowMention: true,
     });
 
     await processMessage(makeMsg({ messageId: undefined }));
@@ -813,11 +813,11 @@ describe("processMessage - autoReply", () => {
     expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 
-  it("autoReply false does not trigger a final Discord send", async () => {
+  it("allowMention false does not trigger a final Discord send", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
 
     await processMessage(makeMsg());
@@ -830,7 +830,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     const attachments = [
       {
@@ -861,7 +861,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
@@ -928,7 +928,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(sendMessage).mockResolvedValue("");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -948,7 +948,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => false,
@@ -965,7 +965,7 @@ describe("processMessage - autoReply", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: true,
+      allowMention: true,
     });
     vi.mocked(sendMessage).mockResolvedValue("A".repeat(2001));
 
@@ -983,7 +983,7 @@ describe("processMessage - Discord イベント通知", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => true,
@@ -997,7 +997,7 @@ describe("processMessage - Discord イベント通知", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: true,
+      allowMention: true,
     });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
@@ -1013,7 +1013,7 @@ describe("processMessage - Discord イベント通知", () => {
     await processMessage(makeMsg({ messageId: "msg-original" }));
 
     await vi.waitFor(() => {
-      // autoReply が true でもツールコールはリプライしない
+      // allowMention が true でもツールコールはリプライしない
       expect(mockSend).toHaveBeenCalledWith(
         expect.stringMatching(/^🔧 `read_file` /),
       );
@@ -1038,7 +1038,10 @@ describe("processMessage - Discord イベント通知", () => {
     await processMessage(makeMsg());
 
     await vi.waitFor(() => {
-      expect(mockSend).toHaveBeenCalledWith("🔧 `bash`");
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "🔧 `bash`",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
     });
   });
 
@@ -1072,7 +1075,11 @@ describe("processMessage - Discord イベント通知", () => {
     await processMessage(makeMsg({ cronJobId: "daily-report" }));
 
     await vi.waitFor(() => {
-      expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "⚠️ エラー: oops",
+        reply: { messageReference: "msg-original", failIfNotExists: false },
+        allowedMentions: { parse: [], repliedUser: false },
+      });
     });
   });
 
@@ -1090,17 +1097,19 @@ describe("processMessage - Discord イベント通知", () => {
     await processMessage(makeMsg());
 
     await vi.waitFor(() => {
-      expect(mockSend).toHaveBeenCalledWith(
-        "⚠️ エラー: Context window exceeded",
-      );
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "⚠️ エラー: Context window exceeded",
+        reply: { messageReference: "msg-original", failIfNotExists: false },
+        allowedMentions: { parse: [], repliedUser: false },
+      });
     });
   });
 
-  it("autoReply: true のとき error イベントは元メッセージに reply 形式で送信される", async () => {
+  it("allowMention: true のとき error イベントは元メッセージに reply 形式で送信される", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: true,
+      allowMention: true,
     });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
@@ -1123,11 +1132,11 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 
-  it("autoReply: false のとき error イベントは通常送信される", async () => {
+  it("allowMention: false のとき error イベントは返信するが通知しない", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
@@ -1142,7 +1151,11 @@ describe("processMessage - Discord イベント通知", () => {
     await processMessage(makeMsg({ messageId: "msg-original" }));
 
     await vi.waitFor(() => {
-      expect(mockSend).toHaveBeenCalledWith("⚠️ エラー: oops");
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "⚠️ エラー: oops",
+        reply: { messageReference: "msg-original", failIfNotExists: false },
+        allowedMentions: { parse: [], repliedUser: false },
+      });
     });
   });
 
@@ -1162,9 +1175,9 @@ describe("processMessage - Discord イベント通知", () => {
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledOnce();
-      const sent = mockSend.mock.calls[0][0] as string;
-      expect(sent.length).toBeLessThanOrEqual(2000);
-      expect(sent.endsWith("…")).toBe(true);
+      const sent = mockSend.mock.calls[0][0] as { content: string };
+      expect(sent.content.length).toBeLessThanOrEqual(2000);
+      expect(sent.content.endsWith("…")).toBe(true);
     });
   });
 });
@@ -1181,7 +1194,7 @@ describe("processMessage - durable result", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
-      autoReply: true,
+      allowMention: true,
     });
     const msg = makeMsg({ fencingToken: 4, messageId: "msg-original" });
 
@@ -1198,6 +1211,7 @@ describe("processMessage - durable result", () => {
           destinationType: "channel",
           destinationId: "ch-1",
           replyMessageId: "msg-original",
+          allowMention: true,
         },
       }),
     );
@@ -1246,7 +1260,7 @@ describe("processMessage - provider ごとの LLM ロック", () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
-      autoReply: false,
+      allowMention: false,
     });
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => true,

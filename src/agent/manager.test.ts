@@ -981,7 +981,7 @@ describe("sendMessage: configOverride", () => {
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["read"],
         skills: ["base-skill"],
-        autoReply: true,
+        allowMention: true,
       }),
     }));
     const { initManager, sendMessage } = await import("./manager.js");
@@ -1012,7 +1012,7 @@ describe("sendMessage: configOverride", () => {
         model: { provider: "provider-a", modelId: "model-x" },
         tools: ["bash"],
         skills: ["override-skill"],
-        autoReply: true,
+        allowMention: true,
       }),
     );
   });

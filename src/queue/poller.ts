@@ -294,6 +294,7 @@ async function sendDiscordEvent(
   channelId: string,
   event: DiscordEvent,
   replyMessageId?: string,
+  allowMention = false,
 ): Promise<void> {
   try {
     const client = await resolveDiscordClient(groupName);
@@ -321,6 +322,9 @@ async function sendDiscordEvent(
       text.length > DISCORD_MAX ? `${text.slice(0, DISCORD_MAX - 1)}…` : text;
 
     const shouldReply = event.type === "error" && replyMessageId;
+    const allowedMentions = allowMention
+      ? { repliedUser: true }
+      : { parse: [], repliedUser: false };
     await channel.send(
       shouldReply
         ? {
@@ -329,9 +333,11 @@ async function sendDiscordEvent(
               messageReference: replyMessageId,
               failIfNotExists: false,
             },
-            allowedMentions: { repliedUser: true },
+            allowedMentions,
           }
-        : content,
+        : allowMention
+          ? content
+          : { content, allowedMentions },
     );
   } catch (err) {
     console.error("[poller] Discord イベント送信エラー:", err);
@@ -753,7 +759,7 @@ export async function processMessage(
   try {
     let response: string;
 
-    // グループ設定を先読みしてイベント通知と返信の両方で autoReply を参照できるようにする
+    // グループ設定を先読みしてイベント通知と返信の送信設定を確定する
     const groupConfig = await findGroupByName(msg.groupName).catch((err) => {
       console.error("[poller] グループ設定の読み込みエラー:", err);
       return undefined;
@@ -771,8 +777,7 @@ export async function processMessage(
       }
       return;
     }
-    const replyMessageId =
-      groupConfig?.autoReply && msg.messageId ? msg.messageId : undefined;
+    const replyMessageId = msg.messageId;
 
     try {
       const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
@@ -798,6 +803,7 @@ export async function processMessage(
                     msg.channelId,
                     event,
                     replyMessageId,
+                    groupConfig.allowMention === true,
                   );
                 },
                 attachments: msg.attachments,
@@ -878,6 +884,7 @@ export async function processMessage(
           destinationType: "channel",
           destinationId: msg.channelId,
           replyMessageId,
+          allowMention: groupConfig.allowMention === true,
         },
       },
     );

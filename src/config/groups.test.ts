@@ -52,13 +52,13 @@ describe("loadGroups", () => {
     );
   });
 
-  it("model/tools/autoReply/toolLogArgs/skills を含むグループ設定をパースできる", async () => {
+  it("model/tools/allowMention/toolLogArgs/skills を含むグループ設定をパースできる", async () => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["tavily-search"],
-        autoReply: true,
+        allowMention: true,
         toolLogArgs: true,
         skills: ["session-logs"],
         channels: [],
@@ -68,7 +68,7 @@ describe("loadGroups", () => {
     expect(groups[0]).toMatchObject({
       model: { provider: "zai", modelId: "glm-4.7-flash" },
       tools: ["tavily-search"],
-      autoReply: true,
+      allowMention: true,
       toolLogArgs: true,
       skills: ["session-logs"],
     });
@@ -89,7 +89,7 @@ describe("loadGroups", () => {
     const groups = await loadGroups();
     expect(groups[0].model).toBeUndefined();
     expect(groups[0].tools).toBeUndefined();
-    expect(groups[0].autoReply).toBeUndefined();
+    expect(groups[0].allowMention).toBeUndefined();
     expect(groups[0].toolLogArgs).toBeUndefined();
     expect(groups[0].skills).toBeUndefined();
   });

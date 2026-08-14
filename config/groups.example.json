@@ -6,7 +6,7 @@
       "modelId": "glm-4.7-flash"
     },
     "tools": ["tavily-search", "agent-reach"],
-    "autoReply": false,
+    "allowMention": false,
     "toolLogArgs": true,
     "channels": [{ "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }],
     "mounts": [
@@ -21,7 +21,7 @@
     "name": "issue-triage",
     "bot": "public",
     "tools": ["bash", "list-issues", "read-issue", "comment-issue"],
-    "autoReply": false,
+    "allowMention": false,
     "toolLogArgs": true,
     "channels": [],
     "mounts": [
