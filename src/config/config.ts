@@ -72,7 +72,12 @@ export async function loadDiscordConfig(): Promise<DiscordConfig> {
       bots: { personal: { tokenEnv: "DISCORD_BOT_TOKEN" } },
     };
   }
-  const config = DiscordConfigSchema.parse(raw.discord);
+  const config = DiscordConfigSchema.parse(
+    raw.discord ?? {
+      defaultBot: "personal",
+      bots: { personal: { tokenEnv: "DISCORD_BOT_TOKEN" } },
+    },
+  );
   if (!(config.defaultBot in config.bots)) {
     throw new Error(`discord.defaultBot が未定義です: ${config.defaultBot}`);
   }
