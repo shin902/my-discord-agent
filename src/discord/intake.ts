@@ -20,24 +20,9 @@ interface IngestOptions {
   updateLiveCursor?: boolean;
 }
 
-let startupBackfillGate: Promise<void> | null = null;
-
-/**
- * Prevent live MESSAGE_CREATE events from overtaking the startup history scan.
- * The backfill path bypasses this gate and feeds the same ingestion function.
- */
-export function setStartupBackfillGate(gate: Promise<void>): void {
-  startupBackfillGate = gate;
-  void gate.finally(() => {
-    if (startupBackfillGate === gate) startupBackfillGate = null;
-  });
-}
-
 export async function handleLiveDiscordMessage(
   message: Message,
 ): Promise<DiscordIngestResult> {
-  const gate = startupBackfillGate;
-  if (gate) await gate.catch(() => undefined);
   return ingestDiscordMessage(message, {
     source: "live",
     replyOnFailure: true,

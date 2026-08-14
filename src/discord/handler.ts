@@ -1,5 +1,5 @@
 import { type Client, Events, type Message } from "discord.js";
-import { handleLiveDiscordMessage, setStartupBackfillGate } from "./intake.js";
+import { handleLiveDiscordMessage } from "./intake.js";
 
 /** Discordイベントハンドラーを指定したClientへ登録する。 */
 export function registerHandlers(
@@ -9,7 +9,7 @@ export function registerHandlers(
   client.once(Events.ClientReady, (c) => {
     console.log(`起動しました: ${c.user.tag}`);
     if (onReady) {
-      const gate = Promise.resolve()
+      void Promise.resolve()
         .then(onReady)
         .catch((error) => {
           console.error(
@@ -17,7 +17,6 @@ export function registerHandlers(
             error,
           );
         });
-      setStartupBackfillGate(gate);
     }
   });
 
