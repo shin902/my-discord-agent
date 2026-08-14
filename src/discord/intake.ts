@@ -4,6 +4,7 @@ import {
   ThreadAutoArchiveDuration,
 } from "discord.js";
 import { findGroupByChannelId } from "../config/groups.js";
+import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
 
@@ -158,6 +159,7 @@ async function ingest(
     await repository.enqueue(payload);
     if (
       options.updateLiveCursor &&
+      !isDiscordChannelBackfillPending(lookupId) &&
       typeof repository.upsertDiscordCursor === "function"
     ) {
       repository.upsertDiscordCursor(cursorScope, message.id);

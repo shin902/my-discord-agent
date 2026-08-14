@@ -18,6 +18,10 @@ vi.mock("../queue/repository.js", async (importOriginal) => {
 });
 
 const { ingestDiscordMessage } = await import("./intake.js");
+const {
+  beginDiscordChannelBackfill,
+  finishDiscordChannelBackfill,
+} = await import("./backfill-state.js");
 const repositoryModule = await vi.importActual<
   typeof import("../queue/repository.js")
 >("../queue/repository.js");
@@ -143,6 +147,27 @@ describe("ingestDiscordMessage", () => {
     expect(
       repo.findByIdempotencyKey(`discord-message:${message.id}`),
     ).toBeUndefined();
+  });
+
+  it("起動時バックフィル中はliveカーソルを更新しない", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: { channelId: "root-1", sessionMode: "shared" },
+    });
+    beginDiscordChannelBackfill(["root-1"]);
+    try {
+      await ingestDiscordMessage(makeMessage({ id: "message-live" }), {
+        source: "live",
+        replyOnFailure: false,
+      });
+
+      expect(
+        repo.findByIdempotencyKey("discord-message:message-live"),
+      ).toBeDefined();
+      expect(repo.getDiscordCursor("root-1")).toBeUndefined();
+    } finally {
+      finishDiscordChannelBackfill("root-1");
+    }
   });
 
   it("enqueue失敗時はliveカーソルを更新しない", async () => {
