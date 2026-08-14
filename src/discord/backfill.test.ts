@@ -24,11 +24,9 @@ const { backfillDiscordMessages } = await import("./backfill.js");
 mocks.getDiscordClientForGroup.mockReturnValue(mockClient);
 
 let errorSpy: ReturnType<typeof vi.spyOn>;
-let warnSpy: ReturnType<typeof vi.spyOn>;
 
 afterEach(() => {
   errorSpy?.mockRestore();
-  warnSpy?.mockRestore();
 });
 
 function message(id: string, channelId: string): Record<string, unknown> {
@@ -53,10 +51,6 @@ function rootChannel(overrides: Record<string, unknown> = {}) {
     },
     threads: {
       fetchActive: vi.fn().mockResolvedValue({ threads: new Map() }),
-      fetchArchived: vi.fn().mockResolvedValue({
-        threads: new Map(),
-        hasMore: false,
-      }),
     },
     ...overrides,
   };
@@ -68,10 +62,6 @@ function forumRoot(...threads: Record<string, unknown>[]) {
     threads: {
       fetchActive: vi.fn().mockResolvedValue({
         threads: new Map(threads.map((thread) => [thread.id, thread])),
-      }),
-      fetchArchived: vi.fn().mockResolvedValue({
-        threads: new Map(),
-        hasMore: false,
       }),
     },
   });
@@ -93,7 +83,6 @@ describe("backfillDiscordMessages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.ingest.mockImplementation(async (input: { channelId: string }) => ({
       status: "enqueued",
       cursorScope: input.channelId,
@@ -443,7 +432,7 @@ describe("backfillDiscordMessages", () => {
     ]);
   });
 
-  it("Forumの初回thread列挙が部分的なら境界を保存せず、後から見つかった既存threadを新規扱いしない", async () => {
+  it("Forumのアクティブthread列挙に失敗したら境界を保存せず、成功後に保存する", async () => {
     const repo = repoWithCursors({});
     const firstThread = {
       id: "first-thread",
@@ -454,24 +443,11 @@ describe("backfillDiscordMessages", () => {
           .mockResolvedValue(page([])),
       },
     };
-    const omittedThread = {
-      id: "omitted-thread",
-      messages: {
-        fetch: vi
-          .fn()
-          .mockResolvedValueOnce(page([message("3000", "omitted-thread")]))
-          .mockResolvedValueOnce(page([])),
-      },
-    };
     const firstRoot = forumRoot(firstThread);
-    firstRoot.threads.fetchArchived.mockRejectedValueOnce(
+    firstRoot.threads.fetchActive.mockRejectedValueOnce(
       new Error("temporary enumeration failure"),
     );
     const secondRoot = forumRoot(firstThread);
-    secondRoot.threads.fetchArchived.mockResolvedValueOnce({
-      threads: new Map([[omittedThread.id, omittedThread]]),
-      hasMore: false,
-    });
     mocks.getRepo.mockReturnValue(repo);
     mocks.fetchChannel
       .mockResolvedValueOnce(firstRoot)
@@ -491,11 +467,11 @@ describe("backfillDiscordMessages", () => {
     await backfillDiscordMessages(groups);
 
     expect(repo.isDiscordCursorInitialized("root-1")).toBe(true);
-    expect(omittedThread.messages.fetch).toHaveBeenNthCalledWith(1, {
+    expect(firstThread.messages.fetch).toHaveBeenNthCalledWith(1, {
       limit: 1,
       cache: false,
     });
-    expect(omittedThread.messages.fetch).not.toHaveBeenCalledWith({
+    expect(firstThread.messages.fetch).not.toHaveBeenCalledWith({
       after: "0",
       limit: 100,
       cache: false,
@@ -552,40 +528,6 @@ describe("backfillDiscordMessages", () => {
     );
   });
 
-  it("private archived threadは参加済み取得を使い、権限不足をスタックなしで扱う", async () => {
-    const repo = repoWithCursors({ "root-1": "1000" });
-    const root = rootChannel();
-    root.threads.fetchArchived
-      .mockResolvedValueOnce({ threads: new Map(), hasMore: false })
-      .mockRejectedValueOnce(
-        Object.assign(new Error("Missing Access"), { code: 50001 }),
-      );
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
-
-    await backfillDiscordMessages([
-      {
-        name: "group",
-        channels: [{ channelId: "root-1", sessionMode: "thread" }],
-      },
-    ]);
-
-    expect(root.threads.fetchArchived).toHaveBeenNthCalledWith(
-      1,
-      { type: "public", fetchAll: true },
-      false,
-    );
-    expect(root.threads.fetchArchived).toHaveBeenNthCalledWith(
-      2,
-      { type: "private", fetchAll: false },
-      false,
-    );
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[discord-backfill] private archived threadの取得に失敗しました:",
-      expect.objectContaining({ code: 50001 }),
-    );
-  });
-
   it("Forumの空threadを初期化し、次回起動で新規投稿を取得する", async () => {
     const repo = repoWithCursors({});
     const thread = {
@@ -639,10 +581,6 @@ describe("backfillDiscordMessages", () => {
         fetchActive: vi.fn().mockResolvedValue({
           threads: new Map([[thread.id, thread]]),
         }),
-        fetchArchived: vi.fn().mockResolvedValue({
-          threads: new Map(),
-          hasMore: false,
-        }),
       },
     });
     mocks.getRepo.mockReturnValue(repo);
@@ -666,6 +604,55 @@ describe("backfillDiscordMessages", () => {
     );
   });
 
+  it("アーカイブ済みthreadを取得せずアクティブthreadだけ復旧する", async () => {
+    const repo = repoWithCursors({
+      "root-1": "1000",
+      "active-thread": "2000",
+    });
+    const activeThread = {
+      id: "active-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("2100", "active-thread")])),
+      },
+    };
+    const archivedThread = {
+      id: "archived-thread",
+      messages: {
+        fetch: vi
+          .fn()
+          .mockResolvedValueOnce(page([message("3100", "archived-thread")])),
+      },
+    };
+    const fetchArchived = vi.fn().mockResolvedValue({
+      threads: new Map([[archivedThread.id, archivedThread]]),
+    });
+    const root = rootChannel({
+      threads: {
+        fetchActive: vi.fn().mockResolvedValue({
+          threads: new Map([[activeThread.id, activeThread]]),
+        }),
+        fetchArchived,
+      },
+    });
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel.mockResolvedValue(root);
+
+    await backfillDiscordMessages([
+      {
+        name: "group",
+        channels: [{ channelId: "root-1", sessionMode: "thread" }],
+      },
+    ]);
+
+    expect(root.threads.fetchActive).toHaveBeenCalledWith(false);
+    expect(fetchArchived).not.toHaveBeenCalled();
+    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+      "2100",
+    ]);
+  });
+
   it("auto-threadのカーソルなしthreadは親チャンネル復旧前のカーソルから復旧する", async () => {
     const repo = repoWithCursors({ "root-1": "1000" });
     const thread = {
@@ -687,10 +674,6 @@ describe("backfillDiscordMessages", () => {
       threads: {
         fetchActive: vi.fn().mockResolvedValue({
           threads: new Map([[thread.id, thread]]),
-        }),
-        fetchArchived: vi.fn().mockResolvedValue({
-          threads: new Map(),
-          hasMore: false,
         }),
       },
     });

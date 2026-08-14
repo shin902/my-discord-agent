@@ -222,40 +222,18 @@ interface ThreadFetchResult {
 
 async function fetchThreads(root: RootChannel): Promise<ThreadFetchResult> {
   const threads = new Map<string, AnyThreadChannel>();
-  let complete = true;
   try {
     const active = await root.threads.fetchActive(false);
     for (const thread of active.threads.values())
       threads.set(thread.id, thread);
+    return { threads: [...threads.values()], complete: true };
   } catch (error) {
-    complete = false;
     console.warn(
       `[discord-backfill] active threadの取得に失敗しました:`,
       error,
     );
+    return { threads: [...threads.values()], complete: false };
   }
-
-  const archivedTypes =
-    root.type === ChannelType.GuildText
-      ? (["public", "private"] as const)
-      : (["public"] as const);
-  for (const type of archivedTypes) {
-    try {
-      const archived = await root.threads.fetchArchived(
-        { type, fetchAll: type === "public" },
-        false,
-      );
-      for (const thread of archived.threads.values())
-        threads.set(thread.id, thread);
-    } catch (error) {
-      complete = false;
-      console.warn(
-        `[discord-backfill] ${type} archived threadの取得に失敗しました:`,
-        error,
-      );
-    }
-  }
-  return { threads: [...threads.values()], complete };
 }
 
 function compareMessagesAscending(
