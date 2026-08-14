@@ -46,11 +46,54 @@ export function getDefaultDiscordBot(): string {
   return defaultBot;
 }
 
+function parentChannelId(channel: unknown): string | undefined {
+  if (!channel || typeof channel !== "object") return undefined;
+  const parentId = (channel as { parentId?: unknown }).parentId;
+  return typeof parentId === "string" ? parentId : undefined;
+}
+
+async function findDiscordClientForThread(
+  channelId: string,
+): Promise<Client | undefined> {
+  // A live event or a startup backfill normally leaves the thread in the
+  // receiving client's cache. Resolve from its parent without an API call.
+  for (const discordClient of clients.values()) {
+    const cached = discordClient.channels.cache.get(channelId);
+    const parentId = parentChannelId(cached);
+    if (!parentId) continue;
+    const resolved = await findGroupByChannelId(parentId);
+    if (resolved) {
+      return getDiscordClient(resolved.group.bot ?? getDefaultDiscordBot());
+    }
+  }
+
+  // Caches are empty after a restart, so fetch the thread metadata from each
+  // connected client. Fetching the thread is safe and does not mutate Discord;
+  // an inaccessible channel simply means this client cannot resolve it.
+  for (const discordClient of clients.values()) {
+    const fetched = await discordClient.channels
+      .fetch(channelId)
+      .catch(() => null);
+    const parentId = parentChannelId(fetched);
+    if (!parentId) continue;
+    const resolved = await findGroupByChannelId(parentId);
+    if (resolved) {
+      return getDiscordClient(resolved.group.bot ?? getDefaultDiscordBot());
+    }
+  }
+
+  return undefined;
+}
+
 export async function getDiscordClientForChannel(
   channelId: string,
 ): Promise<Client> {
   const resolved = await findGroupByChannelId(channelId);
-  return getDiscordClient(resolved?.group.bot ?? getDefaultDiscordBot());
+  if (resolved)
+    return getDiscordClient(resolved.group.bot ?? getDefaultDiscordBot());
+
+  const threadClient = await findDiscordClientForThread(channelId);
+  return threadClient ?? getDiscordClient(getDefaultDiscordBot());
 }
 
 export async function loginDiscordClients(): Promise<void> {
