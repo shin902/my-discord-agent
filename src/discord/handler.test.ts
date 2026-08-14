@@ -82,9 +82,9 @@ describe("registerHandlers - MessageCreate", () => {
     const startupClient = { once: vi.fn(), on: vi.fn() };
     registerHandlers(startupClient as never, onReady);
 
-    const readyHandler = startupClient.once.mock.calls[0]?.[1] as (
-      client: { user: { tag: string } },
-    ) => void;
+    const readyHandler = startupClient.once.mock.calls[0]?.[1] as (client: {
+      user: { tag: string };
+    }) => void;
     readyHandler({ user: { tag: "test-bot" } });
     await vi.waitFor(() => expect(onReady).toHaveBeenCalledOnce());
 
