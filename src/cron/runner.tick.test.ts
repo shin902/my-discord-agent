@@ -28,8 +28,14 @@ describe("tick() orchestration", () => {
       writeFile: mockWriteFile,
       mkdir: vi.fn().mockResolvedValue(undefined),
     }));
+    const discordClient = {
+      isReady: mockIsReady,
+      channels: { fetch: vi.fn() },
+    };
     vi.doMock("../discord/client.js", () => ({
-      client: { isReady: mockIsReady, channels: { fetch: vi.fn() } },
+      getDefaultDiscordClient: () => discordClient,
+      getDiscordClientForGroupName: vi.fn().mockResolvedValue(discordClient),
+      getDiscordClients: () => new Map([["personal", discordClient]]),
     }));
     vi.doMock("../queue/repository.js", () => ({
       getQueueRepository: () => ({ enqueue: mockAppendInbox }),

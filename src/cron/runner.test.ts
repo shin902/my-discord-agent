@@ -304,7 +304,12 @@ describe("cronジョブの configOverride", () => {
     vi.doMock("../config/config.js", () => ({
       loadRawCron: vi.fn().mockResolvedValue(rawCron),
     }));
-    vi.doMock("../discord/client.js", () => ({ client: {} }));
+    const discordClient = {};
+    vi.doMock("../discord/client.js", () => ({
+      getDefaultDiscordClient: () => discordClient,
+      getDiscordClientForGroupName: vi.fn().mockResolvedValue(discordClient),
+      getDiscordClients: () => new Map([["personal", discordClient]]),
+    }));
     vi.doMock("../queue/repository.js", () => ({
       getQueueRepository: () => ({ enqueue: appendInboxMock }),
     }));

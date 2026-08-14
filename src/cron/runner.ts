@@ -1,13 +1,16 @@
 import { existsSync } from "node:fs";
+import type { Client } from "discord.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
 import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
-import * as discordClients from "../discord/client.js";
-
-const defaultClient = discordClients.client;
+import {
+  getDefaultDiscordClient,
+  getDiscordClientForGroupName,
+  getDiscordClients,
+} from "../discord/client.js";
 
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueProducer } from "../queue/types.js";
@@ -31,7 +34,7 @@ const CronJobSchema = z
     id: z.string(),
     schedule: z.string(),
     enabled: z.boolean().default(true),
-    groupName: z.string().optional(),
+    groupName: z.string().min(1).optional(),
     prompt: z.string().optional(),
     channelId: z.string().optional(),
     deliveryMode: z.enum(["direct", "new-thread"]).optional(),
@@ -86,7 +89,7 @@ const CronJobsSchema = z
 export type CronJob = z.infer<typeof CronJobSchema>;
 
 export type CronContext = {
-  client: typeof defaultClient;
+  client: Client;
   appendInbox: typeof appendInbox;
 } & CronJob;
 
@@ -239,19 +242,9 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
 // --- Job execution ---
 
 export async function executeJob(job: CronJob): Promise<void> {
-  const settingsChannelId =
-    job.settings &&
-    typeof job.settings === "object" &&
-    !Array.isArray(job.settings)
-      ? (job.settings as Record<string, unknown>).channelId
-      : undefined;
-  const channelId =
-    job.channelId ??
-    (typeof settingsChannelId === "string" ? settingsChannelId : undefined);
-  const discordClient =
-    channelId && "getDiscordClientForChannel" in discordClients
-      ? await discordClients.getDiscordClientForChannel(channelId)
-      : defaultClient;
+  const discordClient = job.groupName
+    ? await getDiscordClientForGroupName(job.groupName)
+    : getDefaultDiscordClient();
   const ctx: CronContext = { client: discordClient, appendInbox, ...job };
 
   if (job.handler) {
@@ -276,11 +269,8 @@ export function _setCronJobs(jobs: CronJob[]): void {
 
 async function tick(): Promise<void> {
   if (_isRunning) return;
-  const clients =
-    "getDiscordClients" in discordClients
-      ? discordClients.getDiscordClients()
-      : new Map([["default", defaultClient]]);
-  if (![...clients.values()].some((value) => value.isReady())) return;
+  if (![...getDiscordClients().values()].some((value) => value.isReady()))
+    return;
   _isRunning = true;
   try {
     if (_jobs.length === 0) return;

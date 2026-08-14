@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const discordClient = vi.hoisted(() => ({
+  isReady: vi.fn(() => false),
+  channels: { fetch: vi.fn() },
+}));
 vi.mock("../discord/client.js", () => ({
-  client: {
-    isReady: vi.fn(() => false),
-    channels: { fetch: vi.fn() },
-  },
+  getDefaultDiscordClient: () => discordClient,
+  getDiscordClientForGroupName: vi.fn().mockResolvedValue(discordClient),
+  getDiscordClients: () => new Map([["personal", discordClient]]),
 }));
 const appendInboxMock = vi.hoisted(() => vi.fn());
 vi.mock("../queue/repository.js", () => ({
