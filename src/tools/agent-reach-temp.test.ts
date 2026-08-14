@@ -2,9 +2,8 @@ import { access, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import { execAsync } from "./exec.js";
 import { agentReachTool } from "./agent-reach.js";
+import { execAsync } from "./exec.js";
 
 vi.mock("./exec.js", () => ({ execAsync: vi.fn() }));
 vi.mock("node:dns/promises", () => ({

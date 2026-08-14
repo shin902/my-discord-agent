@@ -52,9 +52,9 @@ describe("Discord client registry", () => {
   it("group bot selects the additional bot and omission selects default", () => {
     const defaultClient = getDefaultDiscordClient();
     expect(getDiscordClientForGroup({ name: "default" })).toBe(defaultClient);
-    expect(
-      getDiscordClientForGroup({ name: "takop", bot: "takop" }),
-    ).toBe(getDiscordClient("takop"));
+    expect(getDiscordClientForGroup({ name: "takop", bot: "takop" })).toBe(
+      getDiscordClient("takop"),
+    );
   });
 
   it("group name resolves through group configuration", async () => {

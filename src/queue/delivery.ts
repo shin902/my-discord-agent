@@ -88,10 +88,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           "delivery has no destinationId",
         );
       if (!payload.groupName)
-        throw new DeliveryError(
-          "non-retryable",
-          "delivery has no groupName",
-        );
+        throw new DeliveryError("non-retryable", "delivery has no groupName");
       let client: Client;
       try {
         client = await resolveDiscordClient(payload.groupName);

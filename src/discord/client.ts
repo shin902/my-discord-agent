@@ -48,7 +48,9 @@ export function getDiscordClients(): ReadonlyMap<string, Client> {
   return clients;
 }
 
-export function getDiscordClientForGroup(group: Pick<GroupConfig, "name" | "bot">): Client {
+export function getDiscordClientForGroup(
+  group: Pick<GroupConfig, "name" | "bot">,
+): Client {
   return group.bot ? getDiscordClient(group.bot) : getDefaultDiscordClient();
 }
 

@@ -17,8 +17,7 @@ async function loadDiscordConfig(
   await writeFile(configPath, JSON.stringify(raw), "utf8");
   process.env.CONFIG_PATH = configPath;
   process.env.DISCORD_BOT_TOKEN = "default-token";
-  if (additionalToken === undefined)
-    delete process.env.TAKOP_BOT_TOKEN;
+  if (additionalToken === undefined) delete process.env.TAKOP_BOT_TOKEN;
   else process.env.TAKOP_BOT_TOKEN = additionalToken;
   vi.resetModules();
   const config = await import("./config.js");
@@ -29,11 +28,9 @@ afterEach(async () => {
   vi.resetModules();
   if (originalConfigPath === undefined) delete process.env.CONFIG_PATH;
   else process.env.CONFIG_PATH = originalConfigPath;
-  if (originalDefaultToken === undefined)
-    delete process.env.DISCORD_BOT_TOKEN;
+  if (originalDefaultToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
   else process.env.DISCORD_BOT_TOKEN = originalDefaultToken;
-  if (originalAdditionalToken === undefined)
-    delete process.env.TAKOP_BOT_TOKEN;
+  if (originalAdditionalToken === undefined) delete process.env.TAKOP_BOT_TOKEN;
   else process.env.TAKOP_BOT_TOKEN = originalAdditionalToken;
   await Promise.all(
     tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),

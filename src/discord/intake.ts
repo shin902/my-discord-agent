@@ -1,7 +1,7 @@
 import {
+  type Message,
   MessageType,
   ThreadAutoArchiveDuration,
-  type Message,
 } from "discord.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";

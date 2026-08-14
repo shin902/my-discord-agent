@@ -11,6 +11,7 @@ vi.mock("../discord/client.js", () => ({
   getDiscordClientForGroupName: vi.fn().mockResolvedValue(client),
   getDiscordClients: () => new Map([["personal", client]]),
 }));
+
 import { expectDefined } from "../test-utils.js";
 import {
   type DeliveryAdapter,
