@@ -12,6 +12,10 @@ import {
   getQueueRepository,
   type QueueRepository,
 } from "../queue/repository.js";
+import {
+  beginDiscordChannelBackfill,
+  finishDiscordChannelBackfill,
+} from "./backfill-state.js";
 import { getDiscordClientForGroup } from "./client.js";
 import { ingestDiscordMessage } from "./intake.js";
 
@@ -28,14 +32,25 @@ export async function backfillDiscordMessages(
   groups: readonly GroupConfig[],
   repo: QueueRepository = getQueueRepository(),
 ): Promise<void> {
+  // Live messages are still accepted while this function runs, but their
+  // cursor updates must not move a channel that has not been scanned yet.
+  // Register every channel before the sequential loop starts so a later
+  // channel cannot be advanced by a live event during an earlier channel's
+  // recovery.
+  const channelIds = groups.flatMap((group) =>
+    group.channels.map((channel) => channel.channelId),
+  );
+  beginDiscordChannelBackfill(channelIds);
   for (const group of groups) {
     const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {
       try {
-        await backfillTarget(discordClient, channel, repo);
+        const completed = await backfillTarget(discordClient, channel, repo);
+        if (completed) finishDiscordChannelBackfill(channel.channelId);
       } catch (error) {
         // A single inaccessible channel must not prevent other configured
-        // channels from recovering their histories.
+        // channels from recovering their histories. Keep its cursor gate in
+        // place so live messages cannot skip the unscanned history.
         console.error(
           `[discord-backfill] チャンネル ${channel.channelId} の復旧に失敗しました:`,
           error,
@@ -49,17 +64,17 @@ async function backfillTarget(
   discordClient: import("discord.js").Client,
   channel: ChannelConfig,
   repo: QueueRepository,
-): Promise<void> {
+): Promise<boolean> {
   const root = await discordClient.channels.fetch(channel.channelId);
   if (!isRootChannel(root)) {
     console.warn(
       `[discord-backfill] 対象チャンネルを取得できないか、履歴復旧に対応していません: ${channel.channelId}`,
     );
-    return;
+    return false;
   }
 
   if (isForumChannel(root)) {
-    if (channel.sessionMode === "shared") return;
+    if (channel.sessionMode === "shared") return true;
 
     // Forum threads have no parent-channel message history to use as a
     // fallback cursor. Persist the first complete thread enumeration as the
@@ -82,7 +97,7 @@ async function backfillTarget(
       forumWasInitialized,
       seededCursors,
     );
-    return;
+    return complete;
   }
 
   const rootCursor = await ensureRootCursor(root, repo);
@@ -93,9 +108,9 @@ async function backfillTarget(
     await recoverMessages(root, rootCursor, repo);
   }
 
-  if (channel.sessionMode === "shared") return;
+  if (channel.sessionMode === "shared") return true;
 
-  const { threads } = await fetchThreads(root);
+  const { threads, complete } = await fetchThreads(root);
   const threadFallbackCursor = rootCursor;
   for (const thread of threads) {
     const threadCursor =
@@ -103,6 +118,7 @@ async function backfillTarget(
     if (!threadCursor) continue;
     await recoverMessages(thread, threadCursor, repo);
   }
+  return complete;
 }
 
 async function seedForumThreadCursors(

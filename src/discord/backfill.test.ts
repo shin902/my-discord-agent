@@ -20,6 +20,9 @@ vi.mock("../queue/repository.js", () => ({
 }));
 
 const { backfillDiscordMessages } = await import("./backfill.js");
+const { isDiscordChannelBackfillPending } = await import(
+  "./backfill-state.js"
+);
 
 mocks.getDiscordClientForGroup.mockReturnValue(mockClient);
 
@@ -117,6 +120,52 @@ describe("backfillDiscordMessages", () => {
       cache: false,
     });
     expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith("root-1", "1002");
+  });
+
+  it("未到達のチャンネルもバックフィル開始時からカーソル更新を保留する", async () => {
+    const repo = repoWithCursors({ "root-1": "1000", "root-2": "2000" });
+    const firstRoot = rootChannel({ id: "root-1" });
+    const secondRoot = rootChannel({ id: "root-2" });
+    let releaseFirstPage!: (value: ReturnType<typeof page>) => void;
+    const firstPage = new Promise<ReturnType<typeof page>>((resolve) => {
+      releaseFirstPage = resolve;
+    });
+    let releaseSecondPage!: (value: ReturnType<typeof page>) => void;
+    const secondPage = new Promise<ReturnType<typeof page>>((resolve) => {
+      releaseSecondPage = resolve;
+    });
+    firstRoot.messages.fetch.mockReturnValueOnce(firstPage);
+    secondRoot.messages.fetch.mockReturnValueOnce(secondPage);
+    mocks.getRepo.mockReturnValue(repo);
+    mocks.fetchChannel
+      .mockResolvedValueOnce(firstRoot)
+      .mockResolvedValueOnce(secondRoot);
+
+    const backfill = backfillDiscordMessages([
+      {
+        name: "group",
+        channels: [
+          { channelId: "root-1", sessionMode: "shared" },
+          { channelId: "root-2", sessionMode: "shared" },
+        ],
+      },
+    ]);
+
+    await vi.waitFor(() =>
+      expect(isDiscordChannelBackfillPending("root-2")).toBe(true),
+    );
+    expect(isDiscordChannelBackfillPending("root-1")).toBe(true);
+
+    releaseFirstPage(page([]));
+    await vi.waitFor(() =>
+      expect(isDiscordChannelBackfillPending("root-1")).toBe(false),
+    );
+    expect(isDiscordChannelBackfillPending("root-2")).toBe(true);
+
+    releaseSecondPage(page([]));
+    await backfill;
+
+    expect(isDiscordChannelBackfillPending("root-2")).toBe(false);
   });
 
   it.each([
