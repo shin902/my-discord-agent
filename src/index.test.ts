@@ -250,6 +250,12 @@ describe("index: 起動時バリデーション", () => {
       login: vi.fn(),
       isReady: vi.fn().mockReturnValue(true),
     });
+    let releaseBackfill!: () => void;
+    mocks.backfillDiscordMessages.mockReturnValue(
+      new Promise<void>((resolve) => {
+        releaseBackfill = resolve;
+      }),
+    );
 
     await import("./index.js");
 
@@ -259,9 +265,14 @@ describe("index: 起動時バリデーション", () => {
     const secondReady = mocks.registerHandlers.mock
       .calls[1]?.[1] as () => Promise<void>;
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    await Promise.all([firstReady(), secondReady()]);
+    const firstBackfill = firstReady();
+    const secondBackfill = secondReady();
+    await vi.waitFor(() =>
+      expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce(),
+    );
 
-    expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce();
+    releaseBackfill();
+    await Promise.all([firstBackfill, secondBackfill]);
     expect(log).toHaveBeenCalledWith(
       "[discord-backfill] 起動時履歴復旧が完了しました",
     );
