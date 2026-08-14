@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { client } from "../discord/client.js";
+
+const client = vi.hoisted(() => ({
+  isReady: vi.fn().mockReturnValue(false),
+  channels: {
+    cache: { get: vi.fn() },
+    fetch: vi.fn(),
+  },
+}));
+vi.mock("../discord/client.js", () => ({
+  getDiscordClientForGroupName: vi.fn().mockResolvedValue(client),
+  getDiscordClients: () => new Map([["personal", client]]),
+}));
 import { expectDefined } from "../test-utils.js";
 import {
   type DeliveryAdapter,
@@ -24,6 +35,7 @@ function completed(
   const claim = expectDefined(repo.claim("agent", 1000));
   repo.commitResult(item.job.id, claim.fencingToken, response, {
     deliveryPayload: {
+      groupName: "group",
       destinationType: "channel",
       destinationId: "channel",
       ...metadata,

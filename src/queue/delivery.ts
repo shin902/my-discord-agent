@@ -1,39 +1,16 @@
 import { randomUUID } from "node:crypto";
-import * as discordClients from "../discord/client.js";
+import type { Client } from "discord.js";
+import {
+  getDiscordClientForGroupName,
+  getDiscordClients,
+} from "../discord/client.js";
 
 function discordClientsReady(): boolean {
-  try {
-    if ("getDiscordClients" in discordClients) {
-      const values = [...discordClients.getDiscordClients().values()];
-      if (values.length > 0) return values.some((value) => value.isReady());
-    }
-  } catch (error) {
-    if (
-      !(error instanceof Error) ||
-      !error.message.includes('No "getDiscordClients" export')
-    )
-      throw error;
-  }
-  return discordClients.client?.isReady() ?? false;
+  return [...getDiscordClients().values()].some((value) => value.isReady());
 }
 
-async function resolveDiscordClient(channelId: string) {
-  try {
-    if (
-      "getDiscordClients" in discordClients &&
-      discordClients.getDiscordClients().size === 0
-    )
-      return discordClients.client;
-    if ("getDiscordClientForChannel" in discordClients)
-      return await discordClients.getDiscordClientForChannel(channelId);
-  } catch (error) {
-    if (
-      !(error instanceof Error) ||
-      !error.message.includes('No "getDiscordClientForChannel" export')
-    )
-      throw error;
-  }
-  return discordClients.client;
+async function resolveDiscordClient(groupName: string) {
+  return getDiscordClientForGroupName(groupName);
 }
 
 import type {
@@ -80,6 +57,7 @@ export function classifyDiscordError(error: unknown): DeliveryErrorKind {
 }
 interface DeliveryPayload {
   content?: string;
+  groupName?: string;
   destinationType?: string;
   destinationId?: string;
   replyMessageId?: string;
@@ -109,7 +87,21 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           "non-retryable",
           "delivery has no destinationId",
         );
-      const client = await resolveDiscordClient(destinationId);
+      if (!payload.groupName)
+        throw new DeliveryError(
+          "non-retryable",
+          "delivery has no groupName",
+        );
+      let client: Client;
+      try {
+        client = await resolveDiscordClient(payload.groupName);
+      } catch (error) {
+        throw new DeliveryError(
+          "non-retryable",
+          error instanceof Error ? error.message : String(error),
+          error,
+        );
+      }
       if (typeof client.isReady === "function" && !client.isReady())
         throw new DeliveryError("retryable", "Discord client is not ready");
       let threadId = row.cronThreadId ?? payload.cronThreadId;

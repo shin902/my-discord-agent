@@ -12,7 +12,10 @@ import {
   type ProviderConcurrency,
   resolveProviderConcurrency,
 } from "../config/providers.js";
-import * as discordClients from "../discord/client.js";
+import {
+  getDiscordClientForGroupName,
+  getDiscordClients,
+} from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
@@ -209,38 +212,11 @@ const LEASE_MS = 60_000;
 const LEASE_RENEWAL_MS = 20_000;
 
 function discordReady(): boolean {
-  try {
-    if ("getDiscordClients" in discordClients) {
-      const values = [...discordClients.getDiscordClients().values()];
-      if (values.length > 0) return values.some((value) => value.isReady());
-    }
-  } catch (error) {
-    if (
-      !(error instanceof Error) ||
-      !error.message.includes('No "getDiscordClients" export')
-    )
-      throw error;
-  }
-  return discordClients.client?.isReady() ?? false;
+  return [...getDiscordClients().values()].some((value) => value.isReady());
 }
 
-async function resolveDiscordClient(channelId: string) {
-  try {
-    if (
-      "getDiscordClients" in discordClients &&
-      discordClients.getDiscordClients().size === 0
-    )
-      return discordClients.client;
-    if ("getDiscordClientForChannel" in discordClients)
-      return await discordClients.getDiscordClientForChannel(channelId);
-  } catch (error) {
-    if (
-      !(error instanceof Error) ||
-      !error.message.includes('No "getDiscordClientForChannel" export')
-    )
-      throw error;
-  }
-  return discordClients.client;
+function resolveDiscordClient(groupName: string) {
+  return getDiscordClientForGroupName(groupName);
 }
 
 function dispatchClaimedMessage(msg: InboxMessage): void {
@@ -274,12 +250,12 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
 
 const TYPING_INTERVAL_MS = 8_000;
 
-function startTypingLoop(channelId: string): () => void {
+function startTypingLoop(groupName: string, channelId: string): () => void {
   let cancelled = false;
   let cancelSleep: (() => void) | null = null;
 
   const loop = async () => {
-    const client = await resolveDiscordClient(channelId);
+    const client = await resolveDiscordClient(groupName);
     const channel =
       client.channels.cache.get(channelId) ??
       (await client.channels.fetch(channelId).catch(() => null));
@@ -314,12 +290,13 @@ function startTypingLoop(channelId: string): () => void {
 }
 
 async function sendDiscordEvent(
+  groupName: string,
   channelId: string,
   event: DiscordEvent,
   replyMessageId?: string,
 ): Promise<void> {
   try {
-    const client = await resolveDiscordClient(channelId);
+    const client = await resolveDiscordClient(groupName);
     const channel =
       client.channels.cache.get(channelId) ??
       (await client.channels.fetch(channelId).catch(() => null));
@@ -475,7 +452,7 @@ function discordStatusCode(error: unknown): number | undefined {
 async function createCronThread(msg: InboxMessage): Promise<string> {
   let mutationAttempted = false;
   try {
-    const client = await resolveDiscordClient(msg.channelId);
+    const client = await resolveDiscordClient(msg.groupName);
     const channel = (await client.channels.fetch(
       msg.channelId,
     )) as unknown as CronThreadParent | null;
@@ -619,6 +596,7 @@ async function processCronNewThread(
           empty: !response,
           metadata: executionMetadata(timing),
           deliveryPayload: {
+            groupName: msg.groupName,
             destinationType: "new-thread",
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
@@ -801,7 +779,7 @@ export async function processMessage(
       response = await withLlmLock(
         lockTarget,
         async () => {
-          stopTyping = startTypingLoop(msg.channelId);
+          stopTyping = startTypingLoop(msg.groupName, msg.channelId);
           const agentStartedAt = Date.now();
           try {
             return await sendMessage(
@@ -815,7 +793,12 @@ export async function processMessage(
                   if (msg.cronJobId && event.type === "tool_start") {
                     return;
                   }
-                  void sendDiscordEvent(msg.channelId, event, replyMessageId);
+                  void sendDiscordEvent(
+                    msg.groupName,
+                    msg.channelId,
+                    event,
+                    replyMessageId,
+                  );
                 },
                 attachments: msg.attachments,
                 onExecutionTiming: (executionTiming) => {
@@ -891,6 +874,7 @@ export async function processMessage(
         empty: !response,
         metadata: executionMetadata(timing),
         deliveryPayload: {
+          groupName: msg.groupName,
           destinationType: "channel",
           destinationId: msg.channelId,
           replyMessageId,
