@@ -1,16 +1,11 @@
-import { Events, type Message } from "discord.js";
-import { client } from "./client.js";
+import { type Client, Events, type Message } from "discord.js";
 import { handleLiveDiscordMessage, setStartupBackfillGate } from "./intake.js";
 
-/**
- * Discordイベントハンドラーを登録する。
- * index.ts から一度だけ呼ぶ。
- *
- * onReady は履歴バックフィルを開始するための任意コールバック。ready直後に
- * ゲートを設定し、バックフィル中のライブイベントが古い履歴を追い越さない
- * ようにする。
- */
-export function registerHandlers(onReady?: () => Promise<void> | void): void {
+/** Discordイベントハンドラーを指定したClientへ登録する。 */
+export function registerHandlers(
+  client: Client,
+  onReady?: () => Promise<void> | void,
+): void {
   client.once(Events.ClientReady, (c) => {
     console.log(`起動しました: ${c.user.tag}`);
     if (onReady) {

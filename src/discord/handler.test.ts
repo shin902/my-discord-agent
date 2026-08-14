@@ -1,9 +1,8 @@
 import { type Message, ThreadAutoArchiveDuration } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./client.js", () => ({
-  client: { once: vi.fn(), on: vi.fn() },
-}));
+const mockClient = { once: vi.fn(), on: vi.fn() };
+vi.mock("./client.js", () => ({}));
 
 const mockAppendInbox = vi.hoisted(() => vi.fn());
 vi.mock("../queue/repository.js", () => ({
@@ -14,17 +13,16 @@ vi.mock("../config/groups.js", () => ({
   findGroupByChannelId: vi.fn(),
 }));
 
-const { client } = await import("./client.js");
 const { findGroupByChannelId } = await import("../config/groups.js");
 const { registerHandlers } = await import("./handler.js");
 
 const mockFindGroup = vi.mocked(findGroupByChannelId);
 
 // ハンドラーを一度だけ登録し、以降はコールバックを取り出して直接呼ぶ
-registerHandlers();
+registerHandlers(mockClient as never);
 
 function getMessageHandler(): (msg: Message) => Promise<void> {
-  const calls = vi.mocked(client.on).mock.calls as [
+  const calls = vi.mocked(mockClient.on).mock.calls as [
     string,
     (msg: Message) => Promise<void>,
   ][];

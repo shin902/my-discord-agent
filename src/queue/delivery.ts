@@ -1,5 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { client } from "../discord/client.js";
+import type { Client } from "discord.js";
+import {
+  getDiscordClientForGroupName,
+  getDiscordClients,
+} from "../discord/client.js";
+
+function discordClientsReady(): boolean {
+  return [...getDiscordClients().values()].some((value) => value.isReady());
+}
+
+async function resolveDiscordClient(groupName: string) {
+  return getDiscordClientForGroupName(groupName);
+}
+
 import type {
   DeliveryClaim,
   DeliveryRow,
@@ -44,6 +57,7 @@ export function classifyDiscordError(error: unknown): DeliveryErrorKind {
 }
 interface DeliveryPayload {
   content?: string;
+  groupName?: string;
   destinationType?: string;
   destinationId?: string;
   replyMessageId?: string;
@@ -67,10 +81,27 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     // after either call therefore must not be retried automatically.
     let mutationAttempted = false;
     try {
+      const destinationId = payload.destinationId ?? row.destinationId;
+      if (!destinationId)
+        throw new DeliveryError(
+          "non-retryable",
+          "delivery has no destinationId",
+        );
+      if (!payload.groupName)
+        throw new DeliveryError("non-retryable", "delivery has no groupName");
+      let client: Client;
+      try {
+        client = await resolveDiscordClient(payload.groupName);
+      } catch (error) {
+        throw new DeliveryError(
+          "non-retryable",
+          error instanceof Error ? error.message : String(error),
+          error,
+        );
+      }
       if (typeof client.isReady === "function" && !client.isReady())
         throw new DeliveryError("retryable", "Discord client is not ready");
       let threadId = row.cronThreadId ?? payload.cronThreadId;
-      const destinationId = payload.destinationId ?? row.destinationId;
       let target: DeliveryTarget | undefined;
       if (
         payload.destinationType === "new-thread" ||
@@ -81,11 +112,6 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
             threadId,
           )) as unknown as DeliveryTarget;
         } else {
-          if (!destinationId)
-            throw new DeliveryError(
-              "non-retryable",
-              "delivery has no destinationId",
-            );
           const channel = (await client.channels.fetch(
             destinationId,
           )) as unknown as DeliveryTarget | null;
@@ -115,11 +141,6 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           }
         }
       } else {
-        if (!destinationId)
-          throw new DeliveryError(
-            "non-retryable",
-            "delivery has no destinationId",
-          );
         target = (client.channels.cache.get(destinationId) ??
           (await client.channels.fetch(
             destinationId,
@@ -205,8 +226,7 @@ export class DeliveryWorker {
     if (
       !this.options.ready &&
       this.adapter instanceof DiscordDeliveryAdapter &&
-      typeof client.isReady === "function" &&
-      !client.isReady()
+      !discordClientsReady()
     )
       return false;
     const claim = this.repository.claimDelivery(

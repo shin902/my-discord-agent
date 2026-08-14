@@ -2,10 +2,16 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Client } from "discord.js";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
 import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
-import { client } from "../discord/client.js";
+import {
+  getDefaultDiscordClient,
+  getDiscordClientForGroupName,
+  getDiscordClients,
+} from "../discord/client.js";
+
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueProducer } from "../queue/types.js";
 
@@ -28,7 +34,7 @@ const CronJobSchema = z
     id: z.string(),
     schedule: z.string(),
     enabled: z.boolean().default(true),
-    groupName: z.string().optional(),
+    groupName: z.string().min(1).optional(),
     prompt: z.string().optional(),
     channelId: z.string().optional(),
     deliveryMode: z.enum(["direct", "new-thread"]).optional(),
@@ -83,7 +89,7 @@ const CronJobsSchema = z
 export type CronJob = z.infer<typeof CronJobSchema>;
 
 export type CronContext = {
-  client: typeof client;
+  client: Client;
   appendInbox: typeof appendInbox;
 } & CronJob;
 
@@ -236,7 +242,10 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
 // --- Job execution ---
 
 export async function executeJob(job: CronJob): Promise<void> {
-  const ctx: CronContext = { client, appendInbox, ...job };
+  const discordClient = job.groupName
+    ? await getDiscordClientForGroupName(job.groupName)
+    : getDefaultDiscordClient();
+  const ctx: CronContext = { client: discordClient, appendInbox, ...job };
 
   if (job.handler) {
     const fn = await loadHandlerFn(job.handler);
@@ -260,7 +269,8 @@ export function _setCronJobs(jobs: CronJob[]): void {
 
 async function tick(): Promise<void> {
   if (_isRunning) return;
-  if (!client.isReady()) return;
+  if (![...getDiscordClients().values()].some((value) => value.isReady()))
+    return;
   _isRunning = true;
   try {
     if (_jobs.length === 0) return;

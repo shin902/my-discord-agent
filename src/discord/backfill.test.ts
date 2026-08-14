@@ -5,10 +5,12 @@ const mocks = vi.hoisted(() => ({
   fetchChannel: vi.fn(),
   ingest: vi.fn(),
   getRepo: vi.fn(),
+  getDiscordClientForGroup: vi.fn(),
 }));
 
+const mockClient = { channels: { fetch: mocks.fetchChannel } };
 vi.mock("./client.js", () => ({
-  client: { channels: { fetch: mocks.fetchChannel } },
+  getDiscordClientForGroup: mocks.getDiscordClientForGroup,
 }));
 vi.mock("./intake.js", () => ({
   ingestDiscordMessage: mocks.ingest,
@@ -18,6 +20,8 @@ vi.mock("../queue/repository.js", () => ({
 }));
 
 const { backfillDiscordMessages } = await import("./backfill.js");
+
+mocks.getDiscordClientForGroup.mockReturnValue(mockClient);
 
 let errorSpy: ReturnType<typeof vi.spyOn>;
 let warnSpy: ReturnType<typeof vi.spyOn>;

@@ -25,14 +25,19 @@ vi.mock("../config/groups.js", () => ({ findGroupByName: vi.fn() }));
 vi.mock("../config/providers.js", () => ({
   resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
 }));
-vi.mock("../discord/client.js", () => ({
-  client: {
-    isReady: vi.fn().mockReturnValue(false),
-    channels: {
-      cache: { get: vi.fn().mockReturnValue(undefined) },
-      fetch: vi.fn(),
-    },
+const discordClient = vi.hoisted(() => ({
+  isReady: vi.fn().mockReturnValue(false),
+  channels: {
+    cache: { get: vi.fn().mockReturnValue(undefined) },
+    fetch: vi.fn(),
   },
+}));
+const getDiscordClientForGroupName = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(discordClient),
+);
+vi.mock("../discord/client.js", () => ({
+  getDiscordClientForGroupName,
+  getDiscordClients: () => new Map([["personal", discordClient]]),
 }));
 const {
   claim,
@@ -72,7 +77,7 @@ vi.mock("./repository.js", () => ({
 const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
-const { client } = await import("../discord/client.js");
+const client = discordClient;
 const { processMessage, startPoller, stopPoller } = await import("./poller.js");
 
 let tempDirs: string[] = [];
@@ -1189,6 +1194,7 @@ describe("processMessage - durable result", () => {
       expect.objectContaining({
         empty: false,
         deliveryPayload: {
+          groupName: "default",
           destinationType: "channel",
           destinationId: "ch-1",
           replyMessageId: "msg-original",

@@ -12,7 +12,10 @@ import {
   type ProviderConcurrency,
   resolveProviderConcurrency,
 } from "../config/providers.js";
-import { client } from "../discord/client.js";
+import {
+  getDiscordClientForGroupName,
+  getDiscordClients,
+} from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
@@ -208,6 +211,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LEASE_MS = 60_000;
 const LEASE_RENEWAL_MS = 20_000;
 
+function discordReady(): boolean {
+  return [...getDiscordClients().values()].some((value) => value.isReady());
+}
+
+function resolveDiscordClient(groupName: string) {
+  return getDiscordClientForGroupName(groupName);
+}
+
 function dispatchClaimedMessage(msg: InboxMessage): void {
   const controller = new AbortController();
   const renewal = setInterval(() => {
@@ -239,11 +250,12 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
 
 const TYPING_INTERVAL_MS = 8_000;
 
-function startTypingLoop(channelId: string): () => void {
+function startTypingLoop(groupName: string, channelId: string): () => void {
   let cancelled = false;
   let cancelSleep: (() => void) | null = null;
 
   const loop = async () => {
+    const client = await resolveDiscordClient(groupName);
     const channel =
       client.channels.cache.get(channelId) ??
       (await client.channels.fetch(channelId).catch(() => null));
@@ -278,11 +290,13 @@ function startTypingLoop(channelId: string): () => void {
 }
 
 async function sendDiscordEvent(
+  groupName: string,
   channelId: string,
   event: DiscordEvent,
   replyMessageId?: string,
 ): Promise<void> {
   try {
+    const client = await resolveDiscordClient(groupName);
     const channel =
       client.channels.cache.get(channelId) ??
       (await client.channels.fetch(channelId).catch(() => null));
@@ -438,6 +452,7 @@ function discordStatusCode(error: unknown): number | undefined {
 async function createCronThread(msg: InboxMessage): Promise<string> {
   let mutationAttempted = false;
   try {
+    const client = await resolveDiscordClient(msg.groupName);
     const channel = (await client.channels.fetch(
       msg.channelId,
     )) as unknown as CronThreadParent | null;
@@ -581,6 +596,7 @@ async function processCronNewThread(
           empty: !response,
           metadata: executionMetadata(timing),
           deliveryPayload: {
+            groupName: msg.groupName,
             destinationType: "new-thread",
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
@@ -763,7 +779,7 @@ export async function processMessage(
       response = await withLlmLock(
         lockTarget,
         async () => {
-          stopTyping = startTypingLoop(msg.channelId);
+          stopTyping = startTypingLoop(msg.groupName, msg.channelId);
           const agentStartedAt = Date.now();
           try {
             return await sendMessage(
@@ -777,7 +793,12 @@ export async function processMessage(
                   if (msg.cronJobId && event.type === "tool_start") {
                     return;
                   }
-                  void sendDiscordEvent(msg.channelId, event, replyMessageId);
+                  void sendDiscordEvent(
+                    msg.groupName,
+                    msg.channelId,
+                    event,
+                    replyMessageId,
+                  );
                 },
                 attachments: msg.attachments,
                 onExecutionTiming: (executionTiming) => {
@@ -853,6 +874,7 @@ export async function processMessage(
         empty: !response,
         metadata: executionMetadata(timing),
         deliveryPayload: {
+          groupName: msg.groupName,
           destinationType: "channel",
           destinationId: msg.channelId,
           replyMessageId,
@@ -870,7 +892,7 @@ export async function processMessage(
 async function poll(): Promise<void> {
   while (running) {
     try {
-      if (client.isReady()) {
+      if (discordReady()) {
         const msg = await getQueueRepository().claim(
           "poller-single-host",
           LEASE_MS,

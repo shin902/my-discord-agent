@@ -12,7 +12,7 @@ import {
   getQueueRepository,
   type QueueRepository,
 } from "../queue/repository.js";
-import { client } from "./client.js";
+import { getDiscordClientForGroup } from "./client.js";
 import { ingestDiscordMessage } from "./intake.js";
 
 const DISCORD_MESSAGE_PAGE_SIZE = 100;
@@ -29,9 +29,10 @@ export async function backfillDiscordMessages(
   repo: QueueRepository = getQueueRepository(),
 ): Promise<void> {
   for (const group of groups) {
+    const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {
       try {
-        await backfillTarget(channel, repo);
+        await backfillTarget(discordClient, channel, repo);
       } catch (error) {
         // A single inaccessible channel must not prevent other configured
         // channels from recovering their histories.
@@ -45,10 +46,11 @@ export async function backfillDiscordMessages(
 }
 
 async function backfillTarget(
+  discordClient: import("discord.js").Client,
   channel: ChannelConfig,
   repo: QueueRepository,
 ): Promise<void> {
-  const root = await client.channels.fetch(channel.channelId);
+  const root = await discordClient.channels.fetch(channel.channelId);
   if (!isRootChannel(root)) {
     console.warn(
       `[discord-backfill] 対象チャンネルを取得できないか、履歴復旧に対応していません: ${channel.channelId}`,

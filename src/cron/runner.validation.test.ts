@@ -18,8 +18,11 @@ describe("loadAndValidateCron", () => {
       writeFile: vi.fn().mockResolvedValue(undefined),
       mkdir: vi.fn().mockResolvedValue(undefined),
     }));
+    const discordClient = { isReady: vi.fn(), channels: { fetch: vi.fn() } };
     vi.doMock("../discord/client.js", () => ({
-      client: { isReady: vi.fn(), channels: { fetch: vi.fn() } },
+      getDefaultDiscordClient: () => discordClient,
+      getDiscordClientForGroupName: vi.fn().mockResolvedValue(discordClient),
+      getDiscordClients: () => new Map([["personal", discordClient]]),
     }));
     vi.doMock("../queue/repository.js", () => ({
       getQueueRepository: () => ({ enqueue: vi.fn() }),
@@ -297,8 +300,11 @@ describe("loadHandlerFn — resolveHandlerPath", () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    const discordClient = { isReady: vi.fn(), channels: { fetch: vi.fn() } };
     vi.doMock("../discord/client.js", () => ({
-      client: { isReady: vi.fn(), channels: { fetch: vi.fn() } },
+      getDefaultDiscordClient: () => discordClient,
+      getDiscordClientForGroupName: vi.fn().mockResolvedValue(discordClient),
+      getDiscordClients: () => new Map([["personal", discordClient]]),
     }));
     vi.doMock("../queue/repository.js", () => ({
       getQueueRepository: () => ({ enqueue: vi.fn() }),
