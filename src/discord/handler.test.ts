@@ -73,6 +73,42 @@ describe("registerHandlers - MessageCreate", () => {
     mockAppendInbox.mockReset().mockResolvedValue(undefined);
   });
 
+  it("起動時バックフィルが未完了でもライブMessageCreateを処理する", async () => {
+    let releaseBackfill!: () => void;
+    const backfill = new Promise<void>((resolve) => {
+      releaseBackfill = resolve;
+    });
+    const onReady = vi.fn(() => backfill);
+    const startupClient = { once: vi.fn(), on: vi.fn() };
+    registerHandlers(startupClient as never, onReady);
+
+    const readyHandler = startupClient.once.mock.calls[0]?.[1] as (
+      client: { user: { tag: string } },
+    ) => void;
+    readyHandler({ user: { tag: "test-bot" } });
+    await vi.waitFor(() => expect(onReady).toHaveBeenCalledOnce());
+
+    mockFindGroup.mockResolvedValue({
+      group: { name: "default", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
+    });
+    const messageHandler = startupClient.on.mock.calls.find(
+      ([event]) => event === "messageCreate",
+    )?.[1] as (message: Message) => Promise<unknown>;
+    if (!messageHandler)
+      throw new Error("messageCreate ハンドラーが登録されていません");
+
+    const liveMessage = messageHandler(
+      makeMockMessage({ isThread: false, channelId: "ch-1" }),
+    );
+    try {
+      await vi.waitFor(() => expect(mockAppendInbox).toHaveBeenCalledOnce());
+    } finally {
+      releaseBackfill();
+      await liveMessage;
+    }
+  });
+
   it("bot のメッセージは allowedWebhookIds 未設定の場合無視される", async () => {
     mockFindGroup.mockResolvedValue({
       group: { name: "default", channels: [] },
