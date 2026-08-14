@@ -20,9 +20,7 @@ vi.mock("../queue/repository.js", () => ({
 }));
 
 const { backfillDiscordMessages } = await import("./backfill.js");
-const { isDiscordChannelBackfillPending } = await import(
-  "./backfill-state.js"
-);
+const { isDiscordChannelBackfillPending } = await import("./backfill-state.js");
 
 mocks.getDiscordClientForGroup.mockReturnValue(mockClient);
 

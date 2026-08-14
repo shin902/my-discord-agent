@@ -18,10 +18,8 @@ vi.mock("../queue/repository.js", async (importOriginal) => {
 });
 
 const { ingestDiscordMessage } = await import("./intake.js");
-const {
-  beginDiscordChannelBackfill,
-  finishDiscordChannelBackfill,
-} = await import("./backfill-state.js");
+const { beginDiscordChannelBackfill, finishDiscordChannelBackfill } =
+  await import("./backfill-state.js");
 const repositoryModule = await vi.importActual<
   typeof import("../queue/repository.js")
 >("../queue/repository.js");

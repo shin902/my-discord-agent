@@ -1,7 +1,9 @@
 const pendingBackfills = new Set<string>();
 
 /** 起動時バックフィルがまだ完了していないルートチャンネルを登録する。 */
-export function beginDiscordChannelBackfill(channelIds: readonly string[]): void {
+export function beginDiscordChannelBackfill(
+  channelIds: readonly string[],
+): void {
   for (const channelId of channelIds) pendingBackfills.add(channelId);
 }
 
