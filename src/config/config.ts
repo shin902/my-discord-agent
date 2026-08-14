@@ -51,7 +51,27 @@ export function loadConfigField<T>(
 let _raw: Record<string, unknown> | null = null;
 
 export async function loadDiscordConfig(): Promise<DiscordConfig> {
-  const raw = await loadRawConfig();
+  let raw: Record<string, unknown>;
+  try {
+    raw = await loadRawConfig();
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code !== "ENOENT" &&
+      !(
+        error instanceof Error &&
+        error.message.includes("config/config.json が見つかりません")
+      )
+    )
+      throw error;
+    // Keep the historical single-bot setup usable when config.json has not
+    // been created yet; configured deployments use the schema below.
+    if (!process.env.DISCORD_BOT_TOKEN)
+      throw new Error("DISCORD_BOT_TOKEN が設定されていません");
+    return {
+      defaultBot: "personal",
+      bots: { personal: { tokenEnv: "DISCORD_BOT_TOKEN" } },
+    };
+  }
   const config = DiscordConfigSchema.parse(raw.discord);
   if (!(config.defaultBot in config.bots)) {
     throw new Error(`discord.defaultBot が未定義です: ${config.defaultBot}`);

@@ -3,6 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // vi.resetModules() 後も同じ関数参照を保つためにホイスト
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
+  initDiscordClients: vi.fn(),
+  loginDiscordClients: vi.fn(),
+  destroyDiscordClients: vi.fn(),
+  discordClients: new Map([
+    ["personal", { login: vi.fn(), isReady: vi.fn().mockReturnValue(true) }],
+  ]),
   registerHandlers: vi.fn(),
   startPoller: vi.fn(),
   stopPoller: vi.fn(),
@@ -23,7 +29,13 @@ const mocks = vi.hoisted(() => ({
   runRuntimeOperator: vi.fn(),
 }));
 
-vi.mock("./discord/client.js", () => ({ client: { login: mocks.login } }));
+vi.mock("./discord/client.js", () => ({
+  client: { login: mocks.login },
+  initDiscordClients: mocks.initDiscordClients,
+  loginDiscordClients: mocks.loginDiscordClients,
+  destroyDiscordClients: mocks.destroyDiscordClients,
+  getDiscordClients: () => mocks.discordClients,
+}));
 vi.mock("./discord/handler.js", () => ({
   registerHandlers: mocks.registerHandlers,
 }));
@@ -115,9 +127,8 @@ describe("index: 起動時バリデーション", () => {
 
   it("DISCORD_BOT_TOKEN 未設定は起動時にスロー", async () => {
     delete process.env.DISCORD_BOT_TOKEN;
-    await expect(import("./index.js")).rejects.toThrow(
-      "DISCORD_BOT_TOKEN が設定されていません",
-    );
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
   });
 
   it("不明なプロバイダーは [startup] ログを出して process.exit(1) する", async () => {
@@ -215,7 +226,7 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.registerHandlers).toHaveBeenCalledOnce();
     expect(mocks.startPoller).toHaveBeenCalledOnce();
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
-    expect(mocks.login).toHaveBeenCalledWith("test-token");
+    expect(mocks.loginDiscordClients).toHaveBeenCalledOnce();
   });
   it("shutdown は cron のタイマーを queue worker より先に停止する", async () => {
     const listenersBefore = process.listeners("SIGTERM");
