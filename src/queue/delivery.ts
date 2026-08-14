@@ -61,6 +61,8 @@ interface DeliveryPayload {
   destinationType?: string;
   destinationId?: string;
   replyMessageId?: string;
+  // 省略時はメンション通知を許可しない。
+  allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
 }
@@ -154,18 +156,25 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       if (typeof target.isSendable !== "function" || !target.isSendable())
         throw new DeliveryError("non-retryable", "destination is not sendable");
       const content = String(payload.content ?? "");
+      const allowMention = payload.allowMention === true;
+      const reply = payload.replyMessageId && !threadId;
+      const allowedMentions = allowMention
+        ? { repliedUser: true }
+        : { parse: [], repliedUser: false };
       mutationAttempted = true;
-      const value =
-        payload.replyMessageId && !threadId
-          ? await target.send({
-              content,
-              reply: {
-                messageReference: payload.replyMessageId,
-                failIfNotExists: false,
-              },
-              allowedMentions: { repliedUser: true },
-            })
-          : await target.send(content);
+      const value = reply
+        ? await target.send({
+            content,
+            reply: {
+              messageReference: payload.replyMessageId,
+              failIfNotExists: false,
+            },
+            // allowMention=true は従来の送信形式を維持する。
+            allowedMentions,
+          })
+        : await target.send(
+            allowMention ? content : { content, allowedMentions },
+          );
       return {
         externalMessageId: String(value?.id ?? randomUUID()),
         ...(threadId ? { cronThreadId: threadId } : {}),

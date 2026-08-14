@@ -105,7 +105,10 @@ it("reuses the durably persisted cron thread for delivery", async () => {
       workerId: "delivery-a",
     });
     await worker.runOnce();
-    expect(send).toHaveBeenCalledWith("response");
+    expect(send).toHaveBeenCalledWith({
+      content: "response",
+      allowedMentions: { parse: [], repliedUser: false },
+    });
     expect(repo.getDelivery(jobId)).toMatchObject({
       status: "sent",
       cronThreadId: "thread-actual",
@@ -422,11 +425,17 @@ describe("durable delivery worker", () => {
       expect(send).toHaveBeenCalledTimes(3);
       expect(send.mock.calls[0]?.[0]).toMatchObject({
         reply: { messageReference: "original-message" },
+        allowedMentions: { parse: [], repliedUser: false },
       });
       expect(
         send.mock.calls
           .slice(1)
-          .every(([content]) => typeof content === "string"),
+          .every(([content]) => {
+            const payload = content as {
+              allowedMentions?: { parse?: unknown[] };
+            };
+            return payload.allowedMentions?.parse?.length === 0;
+          }),
       ).toBe(true);
       expect(repo.get(jobId)?.succeeded).toBe(true);
     } finally {

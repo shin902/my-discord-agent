@@ -43,7 +43,8 @@ const MountConfigSchema = z.object({
 export const AgentConfigSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
-  autoReply: z.boolean().optional(),
+  // true のとき返信先ユーザーへのメンション通知を許可する。省略時は false。
+  allowMention: z.boolean().optional(),
   toolLogArgs: z.boolean().optional(),
   skills: SkillSelectionSchema.optional(),
 });
