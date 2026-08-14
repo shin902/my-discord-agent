@@ -428,14 +428,12 @@ describe("durable delivery worker", () => {
         allowedMentions: { parse: [], repliedUser: false },
       });
       expect(
-        send.mock.calls
-          .slice(1)
-          .every(([content]) => {
-            const payload = content as {
-              allowedMentions?: { parse?: unknown[] };
-            };
-            return payload.allowedMentions?.parse?.length === 0;
-          }),
+        send.mock.calls.slice(1).every(([content]) => {
+          const payload = content as {
+            allowedMentions?: { parse?: unknown[] };
+          };
+          return payload.allowedMentions?.parse?.length === 0;
+        }),
       ).toBe(true);
       expect(repo.get(jobId)?.succeeded).toBe(true);
     } finally {
