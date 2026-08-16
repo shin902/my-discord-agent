@@ -622,6 +622,8 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     });
     getJob.mockReturnValue({
       status: "completed",
+      terminalState: "succeeded",
+      succeeded: true,
       idempotencyKey: dispatch.jobId,
     });
 
@@ -634,6 +636,42 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       expect(
         listUnreadArticles(db, 10).map((article) => article.title),
       ).toEqual(["Article 2"]);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps RSS articles unread after an empty terminal response", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    vi.mocked(sendMessage).mockResolvedValue("");
+    const msg = makeMsg({
+      id: "rss-empty",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+    getJob.mockReturnValue({
+      status: "completed",
+      terminalState: "empty_response",
+      succeeded: false,
+      idempotencyKey: dispatch.jobId,
+    });
+
+    await processMessage(msg);
+
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "empty_response",
+      expect.any(String),
+      expect.any(Object),
+    );
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(1);
       expect(listDispatchClaims(db)).toEqual([]);
     } finally {
       db.close();

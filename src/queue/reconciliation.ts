@@ -4,9 +4,21 @@ import {
   releaseDispatchArticles,
   tryOpenRssDb,
 } from "../rss/store.js";
-import { getQueueRepository, type QueueRepository } from "./repository.js";
+import {
+  getQueueRepository,
+  type QueueJob,
+  type QueueRepository,
+} from "./repository.js";
 
 export type RssDispatchResolution = "completed" | "dead_letter";
+
+function hasSuccessfulResult(job: QueueJob | undefined): boolean {
+  return (
+    job?.status === "completed" &&
+    job.succeeded === true &&
+    job.terminalState === "succeeded"
+  );
+}
 
 /**
  * Settle one RSS dispatch after its associated queue job reaches a terminal
@@ -42,7 +54,8 @@ export function settleRssDispatch(
 
 /**
  * Resolve the two crash windows between RSS claiming, queue insertion, and read marking.
- * A completed queue job makes its articles read; a missing/failed job releases its claim.
+ * A successful queue result makes its articles read; a missing/failed/non-success
+ * terminal job releases its claim without marking the articles read.
  */
 export function reconcileRssDispatches(
   repo: QueueRepository = getQueueRepository(),
@@ -65,14 +78,20 @@ export function reconcileRssDispatches(
       for (const claim of listDispatchClaims(db)) {
         const job = repo.findByIdempotencyKey(claim.dispatchJobId);
         const record = repo.getIdempotencyRecord(claim.dispatchJobId);
-        if (job?.status === "completed" || record?.status === "completed") {
+        if (hasSuccessfulResult(job)) {
           markArticlesRead(db, claim.articleIds);
           resolved++;
         } else if (
+          job?.status === "completed" ||
           job?.status === "dead_letter" ||
+          record?.status === "completed" ||
           record?.status === "dead_letter" ||
           !record
         ) {
+          // A completed job or tombstone can still lack durable success
+          // evidence (for example, an empty response or a pruned job). Those
+          // claims remain unread but must be released so a later RSS run can
+          // retry them.
           releaseDispatchArticles(db, claim.dispatchId, claim.articleIds);
           resolved++;
         }

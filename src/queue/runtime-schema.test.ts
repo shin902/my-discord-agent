@@ -272,7 +272,8 @@ describe("runtime schema migration", () => {
         status: "completed",
         session_id: "session",
         sequence: 1,
-        succeeded: 1,
+        result_state: null,
+        succeeded: 0,
       });
       // delivery row survived and was backfilled with durable-column defaults
       const delivery = db

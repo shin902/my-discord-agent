@@ -461,8 +461,8 @@ function rebuildLegacyQueueSchema(db: Database.Database): void {
       attempts,max_attempts,next_attempt_at,NULL,NULL,fencing_token,last_error,created_at,updated_at,completed_at,
       COALESCE(json_extract(payload_json,'$.sessionId'),''),
       ROW_NUMBER() OVER (PARTITION BY COALESCE(json_extract(payload_json,'$.sessionId'),'') ORDER BY created_at,id)-1,
-      CASE WHEN status='completed' THEN 'succeeded' WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END,
-      CASE WHEN status='completed' THEN 1 ELSE 0 END,
+      CASE WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END,
+      0,
       CASE WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END
     FROM jobs_legacy`);
   if (

@@ -172,7 +172,9 @@ function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
     if (!job) return;
     const resolution =
       job.status === "completed"
-        ? "completed"
+        ? job.succeeded === true && job.terminalState === "succeeded"
+          ? "completed"
+          : "dead_letter"
         : job.status === "dead_letter"
           ? "dead_letter"
           : undefined;

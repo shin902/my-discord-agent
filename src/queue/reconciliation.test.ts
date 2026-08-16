@@ -104,8 +104,24 @@ function queuePayload(
   };
 }
 
+function completeSuccessfully(
+  repo: QueueRepository,
+  rssPath: string,
+  dispatch: ArticleDispatch,
+): void {
+  const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+    idempotencyKey: dispatch.jobId,
+  });
+  const claimed = repo.claim("worker", 60_000);
+  repo.commitResult(
+    queued.job.id,
+    expectDefined(claimed).fencingToken,
+    "response",
+  );
+}
+
 describe("reconcileRssDispatches", () => {
-  it("startup recovery marks articles after the associated job completed", async () => {
+  it("startup recovery marks articles after the associated job succeeds", async () => {
     const rssPath = await makeRssPath();
     seedUnread(rssPath);
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
@@ -114,20 +130,7 @@ describe("reconcileRssDispatches", () => {
       const dispatch = claimUnreadArticles(rssDb, "cron-rss", 10);
       expect(dispatch).toBeDefined();
       rssDb.close();
-      const queued = repo.enqueue(
-        {
-          channelId: "channel",
-          groupName: "rss",
-          sessionId: "session",
-          content: "content",
-          timestamp: new Date().toISOString(),
-          rssDispatchId: expectDefined(dispatch).id,
-          rssStatePath: rssPath,
-        },
-        { idempotencyKey: expectDefined(dispatch).jobId },
-      );
-      const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      completeSuccessfully(repo, rssPath, expectDefined(dispatch));
 
       const beforeRecovery = openRssDb(rssPath);
       try {
@@ -139,6 +142,43 @@ describe("reconcileRssDispatches", () => {
       const check = openRssDb(rssPath);
       try {
         expect(listUnreadArticles(check, 10)).toEqual([]);
+      } finally {
+        check.close();
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("keeps articles unread after an empty terminal response", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "",
+        { empty: true },
+      );
+      expect(repo.get(queued.job.id)).toMatchObject({
+        status: "completed",
+        terminalState: "empty_response",
+        succeeded: false,
+      });
+
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
       } finally {
         check.close();
       }
@@ -175,31 +215,43 @@ describe("reconcileRssDispatches", () => {
     expect(pendingDispatch.articles).toHaveLength(1);
   });
 
-  it("converges reads from a completed idempotency tombstone without a jobs row", async () => {
+  it("keeps articles unread when an empty job is pruned but its tombstone remains", async () => {
     const rssPath = await makeRssPath();
     seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const rssDb = openRssDb(rssPath);
-      const dispatch = claimUnreadArticles(rssDb, "cron-rss", 10);
-      rssDb.close();
-      const completedAt = new Date().toISOString();
-      repo.db
-        .prepare(
-          "INSERT INTO idempotency_keys(key,job_id,status,created_at,completed_at) VALUES(?,?,?,?,?)",
-        )
-        .run(
-          expectDefined(dispatch).jobId,
-          null,
-          "completed",
-          completedAt,
-          completedAt,
-        );
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "",
+        { empty: true },
+      );
+      expect(repo.get(queued.job.id)).toMatchObject({
+        status: "completed",
+        terminalState: "empty_response",
+        succeeded: false,
+      });
+
+      // Retention can remove the terminal job while its completed idempotency
+      // tombstone remains. The tombstone alone does not prove success.
+      repo.db.prepare("DELETE FROM jobs WHERE id=?").run(queued.job.id);
+      expect(repo.getIdempotencyRecord(dispatch.jobId)).toMatchObject({
+        jobId: null,
+        status: "completed",
+      });
 
       expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
       const check = openRssDb(rssPath);
       try {
-        expect(listUnreadArticles(check, 10)).toEqual([]);
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
       } finally {
         check.close();
       }
@@ -228,11 +280,7 @@ describe("reconcileRssDispatches", () => {
     const dispatch = claimOne(rssPath, "cron-rss");
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
-        idempotencyKey: dispatch.jobId,
-      });
-      const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      completeSuccessfully(repo, rssPath, dispatch);
       // The same path is passed twice; it must be opened and reconciled exactly once.
       expect(reconcileRssDispatches(repo, [rssPath, rssPath])).toBe(1);
     } finally {
@@ -334,6 +382,12 @@ describe("reconcileRssDispatches", () => {
       expect(dispatchColumns(rssPath)).toEqual([
         { dispatch_id: null, dispatch_job_id: null },
       ]);
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
+      } finally {
+        check.close();
+      }
     } finally {
       repo.close();
     }
@@ -351,15 +405,7 @@ describe("reconcileRssDispatches", () => {
     claimOne(missingPath, "cron-rss"); // never enqueued
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const completedQueued = repo.enqueue(
-        queuePayload(completedPath, completedDispatch.id),
-        { idempotencyKey: completedDispatch.jobId },
-      );
-      const completedClaimed = repo.claim("worker", 60_000);
-      repo.complete(
-        completedQueued.job.id,
-        expectDefined(completedClaimed).fencingToken,
-      );
+      completeSuccessfully(repo, completedPath, completedDispatch);
 
       const deadQueued = repo.enqueue(
         queuePayload(deadLetterPath, deadDispatch.id),
@@ -404,11 +450,7 @@ describe("reconcileRssDispatches", () => {
     const dispatch = claimOne(rssPath, "cron-rss");
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
-        idempotencyKey: dispatch.jobId,
-      });
-      const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      completeSuccessfully(repo, rssPath, dispatch);
 
       const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
       expect(reconcileRssDispatches(repo)).toBe(1);
