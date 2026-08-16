@@ -189,7 +189,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
       const { summary, agentMessage } = await generateSummary(emailText, ctx);
 
-      if (!agentMessage || !summary.trim()) {
+      const hasAssistantError =
+        agentMessage !== null &&
+        "errorMessage" in agentMessage &&
+        Boolean(agentMessage.errorMessage);
+      if (!agentMessage || hasAssistantError || !summary.trim()) {
         console.warn(
           `[mail] "${meta.subject}" の要約生成に失敗しました。スキップします。`,
         );
