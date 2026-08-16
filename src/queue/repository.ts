@@ -1254,7 +1254,12 @@ export class QueueRepository {
       next_attempt_at: null,
       last_error: error ?? reason,
       terminal_reason: reason,
-      result_state: reason === "max_attempts" ? "max_retries" : "non_retryable",
+      result_state:
+        reason === "max_attempts"
+          ? "max_retries"
+          : reason === "empty_response"
+            ? "empty_response"
+            : "non_retryable",
       error_json: JSON.stringify({ message: error ?? reason, error }),
       ...metadataSetColumns(metadata),
     });
