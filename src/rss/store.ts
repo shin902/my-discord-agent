@@ -409,13 +409,18 @@ export function listDispatchClaims(db: Database.Database): DispatchClaim[] {
 
 export function markArticlesRead(
   db: Database.Database,
-  articleIds: number[],
+  dispatchId: string,
+  dispatchJobId: string,
+  articleIds: readonly number[],
 ): void {
   if (articleIds.length === 0) return;
   const placeholders = articleIds.map(() => "?").join(", ");
   db.prepare(`
     UPDATE rss_articles
     SET read_at = ?, dispatch_id = NULL, dispatch_job_id = NULL, dispatch_owner_key = NULL
-    WHERE read_at IS NULL AND id IN (${placeholders})
-  `).run(new Date().toISOString(), ...articleIds);
+    WHERE read_at IS NULL
+      AND dispatch_id = ?
+      AND dispatch_job_id = ?
+      AND id IN (${placeholders})
+  `).run(new Date().toISOString(), dispatchId, dispatchJobId, ...articleIds);
 }

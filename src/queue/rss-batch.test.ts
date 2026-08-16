@@ -38,6 +38,8 @@ describe("RSS dispatch batch idempotency", () => {
       expect(first).toBeDefined();
       markArticlesRead(
         db,
+        expectDefined(first).id,
+        expectDefined(first).jobId,
         expectDefined(first).articles.map((article) => article.id),
       );
       saveFeedEntries(db, {

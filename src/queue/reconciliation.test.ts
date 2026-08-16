@@ -7,6 +7,7 @@ import {
   claimUnreadArticles,
   listUnreadArticles,
   openRssDb,
+  releaseDispatchArticles,
   saveFeedEntries,
 } from "../rss/store.js";
 import { expectDefined } from "../test-utils.js";
@@ -213,6 +214,42 @@ describe("reconcileRssDispatches", () => {
       pendingCheck.close();
     }
     expect(pendingDispatch.articles).toHaveLength(1);
+  });
+
+  it("does not settle a reassigned article for the old completed dispatch", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const first = claimOne(rssPath, "cron-rss");
+    const db = openRssDb(rssPath);
+    let second: ArticleDispatch;
+    try {
+      releaseDispatchArticles(
+        db,
+        first.id,
+        first.articles.map((article) => article.id),
+      );
+      const reassigned = claimUnreadArticles(db, "cron-rss", 10);
+      expect(reassigned).toBeDefined();
+      second = expectDefined(reassigned);
+    } finally {
+      db.close();
+    }
+
+    expect(settleRssDispatch(rssPath, first.id, first.jobId, "completed")).toBe(
+      0,
+    );
+    expect(dispatchColumns(rssPath)).toEqual([
+      {
+        dispatch_id: second.id,
+        dispatch_job_id: second.jobId,
+      },
+    ]);
+    const check = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(check, 10)).toHaveLength(1);
+    } finally {
+      check.close();
+    }
   });
 
   it("keeps articles unread when an empty job is pruned but its tombstone remains", async () => {

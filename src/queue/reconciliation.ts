@@ -42,7 +42,12 @@ export function settleRssDispatch(
     );
     if (!claim) return 0;
     if (resolution === "completed") {
-      markArticlesRead(result.db, claim.articleIds);
+      markArticlesRead(
+        result.db,
+        claim.dispatchId,
+        claim.dispatchJobId,
+        claim.articleIds,
+      );
     } else {
       releaseDispatchArticles(result.db, claim.dispatchId, claim.articleIds);
     }
@@ -79,7 +84,12 @@ export function reconcileRssDispatches(
         const job = repo.findByIdempotencyKey(claim.dispatchJobId);
         const record = repo.getIdempotencyRecord(claim.dispatchJobId);
         if (hasSuccessfulResult(job)) {
-          markArticlesRead(db, claim.articleIds);
+          markArticlesRead(
+            db,
+            claim.dispatchId,
+            claim.dispatchJobId,
+            claim.articleIds,
+          );
           resolved++;
         } else if (
           job?.status === "completed" ||

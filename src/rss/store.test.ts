@@ -2,7 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { listUnreadArticles, openRssDb, saveFeedEntries } from "./store.js";
+import {
+  claimUnreadArticles,
+  listUnreadArticles,
+  markArticlesRead,
+  openRssDb,
+  releaseDispatchArticles,
+  saveFeedEntries,
+} from "./store.js";
 
 let tempDirs: string[] = [];
 afterEach(async () => {
@@ -17,6 +24,86 @@ async function makeRssPath(): Promise<string> {
   tempDirs.push(dir);
   return join(dir, "rss.sqlite3");
 }
+
+describe("markArticlesRead dispatch fencing", () => {
+  it("does not acknowledge an article after its dispatch was released and reassigned", async () => {
+    const db = openRssDb(await makeRssPath());
+    try {
+      saveFeedEntries(db, {
+        url: "https://example.com/fenced-feed.xml",
+        parsedName: "Feed",
+        etag: null,
+        lastModified: null,
+        entries: [
+          {
+            entryId: "article-1",
+            title: "Article",
+            link: "https://example.com/article",
+            publishedAt: "2026-08-01",
+            summary: "Summary",
+          },
+        ],
+        markInitialAsRead: false,
+      });
+
+      const first = claimUnreadArticles(db, "cron-rss", 10);
+      expect(first).toBeDefined();
+      const firstDispatch = first as NonNullable<typeof first>;
+      releaseDispatchArticles(
+        db,
+        firstDispatch.id,
+        firstDispatch.articles.map((article) => article.id),
+      );
+      const second = claimUnreadArticles(db, "cron-rss", 10);
+      expect(second).toBeDefined();
+      const secondDispatch = second as NonNullable<typeof second>;
+      const articleIds = secondDispatch.articles.map((article) => article.id);
+
+      // A dispatch is a composite identity: matching only one identifier must
+      // not acknowledge the currently assigned claim.
+      markArticlesRead(db, secondDispatch.id, firstDispatch.jobId, articleIds);
+      expect(
+        db
+          .prepare(
+            "SELECT read_at, dispatch_id, dispatch_job_id FROM rss_articles",
+          )
+          .get(),
+      ).toEqual({
+        read_at: null,
+        dispatch_id: secondDispatch.id,
+        dispatch_job_id: secondDispatch.jobId,
+      });
+
+      markArticlesRead(
+        db,
+        firstDispatch.id,
+        firstDispatch.jobId,
+        firstDispatch.articles.map((article) => article.id),
+      );
+      expect(
+        db
+          .prepare(
+            "SELECT read_at, dispatch_id, dispatch_job_id FROM rss_articles",
+          )
+          .get(),
+      ).toEqual({
+        read_at: null,
+        dispatch_id: secondDispatch.id,
+        dispatch_job_id: secondDispatch.jobId,
+      });
+
+      markArticlesRead(
+        db,
+        secondDispatch.id,
+        secondDispatch.jobId,
+        secondDispatch.articles.map((article) => article.id),
+      );
+      expect(listUnreadArticles(db, 10)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
 
 describe("listUnreadArticles row mapping", () => {
   it("maps every selected row field to the UnreadArticle shape", async () => {
