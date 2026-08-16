@@ -408,8 +408,10 @@ async function failAttemptIfNonZeroExitCode(
 }
 
 // RSS の既読化は有効な LLM 応答が得られた場合だけ許可する。
-// 空応答は commitResult せず、今回の dispatch の claim だけを解放する。
-// そうすれば記事は未読のまま残り、次回 cron が改めて拾える。
+// 空応答は commitResult せず、記事を既読にしない。既に cron thread を
+// 作成済みの実行は claim を保持したままキューで再試行し、空スレッドを残して
+// 次回 cron が同じ記事から別スレッドを作ることを防ぐ。それ以外は今回の claim
+// だけを解放し、記事を次回 cron が改めて拾えるようにする。
 async function failAttemptIfEmptyRssResponse(
   msg: InboxMessage,
   response: string,
@@ -418,6 +420,15 @@ async function failAttemptIfEmptyRssResponse(
   if (!msg.rssDispatchId || response.trim()) return false;
   if (msg.fencingToken === undefined) {
     throw new Error(`RSS empty response requires fencing token: ${msg.id}`);
+  }
+  if (msg.cronThreadId) {
+    await getQueueRepository().failAttempt(
+      msg.id,
+      new Error("LLM returned an empty response for RSS dispatch"),
+      msg.fencingToken,
+      { metadata: executionMetadata(timing) },
+    );
+    return true;
   }
   await getQueueRepository().deadLetter(
     msg.id,
