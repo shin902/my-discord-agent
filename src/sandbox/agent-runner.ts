@@ -30,7 +30,7 @@ import {
 import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
-import { isTransientError } from "../utils/error.js";
+import { TransientError, isTransientError } from "../utils/error.js";
 
 // pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
 // - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
@@ -647,6 +647,7 @@ export async function runAgentLoop(
 
   const pendingAppends: Promise<void>[] = [];
   let response = "";
+  let assistantError: string | undefined;
   let assistantTurns = 0;
   let aggregatedUsage: AgentTokenUsage = {
     input: 0,
@@ -669,6 +670,7 @@ export async function runAgentLoop(
           hasUsage = true;
         }
         if (event.message.errorMessage) {
+          assistantError ??= event.message.errorMessage;
           process.stderr.write(
             `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: event.message.errorMessage })}\n`,
           );
@@ -723,6 +725,9 @@ export async function runAgentLoop(
     }
   }
   await Promise.all(pendingAppends);
+  if (assistantError) {
+    throw new TransientError(assistantError);
+  }
   return response;
 }
 

@@ -682,9 +682,9 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   it("相対パスの host がリポジトリルート外を指す場合は設定エラーを返す", async () => {
     await setup([{ host: "../outside", container: "/outside" }]);
     const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-    expect(result).toContain("設定エラー");
-    expect(result).toContain("リポジトリルート外");
+    await expect(
+      sendMessage("test-group", "session-1", "hi"),
+    ).rejects.toThrow("設定エラー: mounts.host はリポジトリルート外");
   });
 });
 
@@ -920,9 +920,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("設定エラー: 不明なツール名: invalid");
+    await expect(
+      sendMessage("test-group", "session-1", "hi"),
+    ).rejects.toThrow("設定エラー: 不明なツール名: invalid");
   });
 
   it("不正なプロバイダを持つグループ設定は設定エラーを返す", async () => {
@@ -936,9 +936,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("設定エラー: 不明なプロバイダ: unknown");
+    await expect(
+      sendMessage("test-group", "session-1", "hi"),
+    ).rejects.toThrow("設定エラー: 不明なプロバイダ: unknown");
   });
 
   it("mounts.container が /workspace と重複する場合は設定エラーを返す", async () => {
@@ -952,10 +952,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toContain("設定エラー");
-    expect(result).toContain("/workspace");
+    await expect(
+      sendMessage("test-group", "session-1", "hi"),
+    ).rejects.toThrow("設定エラー: mounts.container は予約済みパス");
   });
 });
 

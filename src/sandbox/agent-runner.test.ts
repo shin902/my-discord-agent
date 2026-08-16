@@ -1235,7 +1235,9 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
       return createMockAgent([], errorMsg);
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await expect(
+      runAgentLoop("test-group", "session-1", "hi", {}),
+    ).rejects.toThrow("Context window exceeded");
 
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
@@ -1262,7 +1264,9 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
       });
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await expect(
+      runAgentLoop("test-group", "session-1", "hi", {}),
+    ).rejects.toThrow("Context window exceeded");
 
     const eventLine = written.find((l) => l.startsWith("__DISCORD_EVENT__:"));
     expect(eventLine).toBeDefined();

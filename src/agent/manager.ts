@@ -412,13 +412,17 @@ export async function sendMessage(
   try {
     await validateModel(resolvedModel.provider, resolvedModel.modelId);
   } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+    throw new NonRetryableError(
+      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+    );
   }
 
   try {
     resolveTools(effectiveConfig.tools ?? []);
   } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+    throw new NonRetryableError(
+      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+    );
   }
 
   // mounts は validateGroupConfig() が起動時に検証・キャッシュ済みならそれを使う。
@@ -432,7 +436,9 @@ export async function sendMessage(
     try {
       extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
     } catch (err) {
-      return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+      throw new NonRetryableError(
+        `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+      );
     }
   }
 

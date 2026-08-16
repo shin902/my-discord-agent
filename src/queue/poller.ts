@@ -407,6 +407,28 @@ async function failAttemptIfNonZeroExitCode(
   return true;
 }
 
+// RSS の既読化は有効な LLM 応答が得られた場合だけ許可する。
+// 空応答は commitResult せず、今回の dispatch の claim だけを解放する。
+// そうすれば記事は未読のまま残り、次回 cron が改めて拾える。
+async function failAttemptIfEmptyRssResponse(
+  msg: InboxMessage,
+  response: string,
+  timing: ResponseTiming,
+): Promise<boolean> {
+  if (!msg.rssDispatchId || response.trim()) return false;
+  if (msg.fencingToken === undefined) {
+    throw new Error(`RSS empty response requires fencing token: ${msg.id}`);
+  }
+  await getQueueRepository().deadLetter(
+    msg.id,
+    msg.fencingToken,
+    "empty_response",
+    "LLM returned an empty response for RSS dispatch",
+    executionMetadata(timing),
+  );
+  return true;
+}
+
 // コンテナ起動を running 状態として記録する onContainerStarted ハンドラを生成する。
 // 通常メッセージ（sessionId=msg.sessionId）と cron new-thread（導出 sessionId）で同一。
 function markRunningWhenContainerStarted(
@@ -593,6 +615,7 @@ async function processCronNewThread(
       },
     );
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (await failAttemptIfEmptyRssResponse(msg, response, timing)) return;
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
         msg.id,
@@ -868,6 +891,7 @@ export async function processMessage(
     }
 
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (await failAttemptIfEmptyRssResponse(msg, response, timing)) return;
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
