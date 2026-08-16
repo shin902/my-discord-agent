@@ -642,6 +642,14 @@ async function processCronNewThread(
       (error instanceof DeliveryError && error.kind === "non-retryable");
     if (ambiguousMutation || nonRetryable) {
       outcome = "dead-letter";
+      if (nonRetryable) {
+        await sendDiscordEvent(
+          msg.groupName,
+          msg.channelId,
+          { type: "error", message: String(error) },
+          msg.messageId,
+        );
+      }
       if (msg.fencingToken !== undefined)
         await getQueueRepository().deadLetter(
           msg.id,
@@ -863,6 +871,13 @@ export async function processMessage(
       if (err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+        await sendDiscordEvent(
+          msg.groupName,
+          msg.channelId,
+          { type: "error", message: String(err) },
+          replyMessageId,
+          groupConfig.allowMention === true,
+        );
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().deadLetter(
             msg.id,
