@@ -140,7 +140,7 @@ async function generateSummary(
   });
 
   return {
-    summary: text || "(要約を生成できませんでした)",
+    summary: text,
     agentMessage,
   };
 }
@@ -189,7 +189,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
       const { summary, agentMessage } = await generateSummary(emailText, ctx);
 
-      if (!agentMessage) {
+      if (!agentMessage || !summary.trim()) {
         console.warn(
           `[mail] "${meta.subject}" の要約生成に失敗しました。スキップします。`,
         );
