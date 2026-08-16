@@ -104,11 +104,24 @@ export default async function handler(ctx: CronContext): Promise<void> {
     );
     if (!dispatch) return;
 
-    const { content, queuedArticles } = buildContent(
-      instructions,
-      dispatch.articles,
-      settings.maxSummaryChars,
-    );
+    let content: string;
+    let queuedArticles: UnreadArticle[];
+    try {
+      ({ content, queuedArticles } = buildContent(
+        instructions,
+        dispatch.articles,
+        settings.maxSummaryChars,
+      ));
+    } catch (error) {
+      // Building content is deterministic and happens before queue admission.
+      // Release this exact claim so an invalid prompt cannot strand it forever.
+      releaseDispatchArticles(
+        db,
+        dispatch.id,
+        dispatch.articles.map((article) => article.id),
+      );
+      throw error;
+    }
 
     const queuedIds = new Set(queuedArticles.map((article) => article.id));
     releaseDispatchArticles(

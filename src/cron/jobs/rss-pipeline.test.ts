@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  claimUnreadArticles,
   getFeedState,
+  listDispatchClaims,
   listUnreadArticles,
   openRssDb,
   saveFeedEntries,
@@ -636,7 +638,7 @@ describe("RSS collect / dispatch", () => {
     expect(unreadTitles()).toEqual(["大きい記事", "小さい記事"]);
   });
 
-  it("promptが長すぎて1件も入らない場合は未読のまま設定エラーにする", async () => {
+  it("promptが長すぎて1件も入らない場合はclaimを解放して再実行できる", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx("process"));
     const appendInbox = vi.fn(async () => undefined);
@@ -647,6 +649,62 @@ describe("RSS collect / dispatch", () => {
       "promptが長すぎてinboxの文字数上限内に記事を追加できません",
     );
     expect(appendInbox).not.toHaveBeenCalled();
+
+    ctx.prompt = "修正済みの要約指示";
+    await dispatchHandler(ctx);
+
+    expect(appendInbox).toHaveBeenCalledTimes(1);
     expect(unreadTitles()).toEqual(["既存記事"]);
+  });
+
+  it("promptが上限超過した場合は現在のdispatch claimだけを解放する", async () => {
+    saveUnreadFeed("https://example.com/exact-claim.xml", "Exact Claim", [
+      {
+        entryId: "first",
+        title: "先に別claimされた記事",
+        link: "https://example.com/first",
+        publishedAt: "",
+        summary: "概要",
+      },
+      {
+        entryId: "second",
+        title: "promptで失敗する記事",
+        link: "https://example.com/second",
+        publishedAt: "",
+        summary: "概要",
+      },
+    ]);
+    const firstDb = openRssDb(statePath);
+    let otherDispatch: NonNullable<ReturnType<typeof claimUnreadArticles>>;
+    try {
+      const claimed = claimUnreadArticles(firstDb, "other-dispatch-owner", 1);
+      if (!claimed)
+        throw new Error("failed to create the other dispatch claim");
+      otherDispatch = claimed;
+    } finally {
+      firstDb.close();
+    }
+
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox, 1);
+    ctx.prompt = "p".repeat(64_001);
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow(
+      "promptが長すぎます（上限64000文字）",
+    );
+    expect(appendInbox).not.toHaveBeenCalled();
+
+    const secondDb = openRssDb(statePath);
+    try {
+      expect(listDispatchClaims(secondDb)).toEqual([
+        {
+          dispatchId: otherDispatch.id,
+          dispatchJobId: otherDispatch.jobId,
+          articleIds: otherDispatch.articles.map((article) => article.id),
+        },
+      ]);
+    } finally {
+      secondDb.close();
+    }
   });
 });
