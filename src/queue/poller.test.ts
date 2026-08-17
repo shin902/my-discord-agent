@@ -262,7 +262,7 @@ describe("processMessage - terminal queue transitions", () => {
     expect(deadLetter).not.toHaveBeenCalled();
   });
 
-  it("cron new-thread destination reports retryable agent errors in the created thread", async () => {
+  it("cron new-thread destination dead-letters agent errors after reporting them", async () => {
     const error = new TransientError("provider unavailable");
     const threadSend = vi.fn().mockResolvedValue(undefined);
     const create = vi.fn().mockResolvedValue({ id: "thread-agent-error" });
@@ -285,13 +285,14 @@ describe("processMessage - terminal queue transitions", () => {
       content: `⚠️ エラー: ${String(error)}`,
       allowedMentions: { parse: [], repliedUser: false },
     });
-    expect(failAttempt).toHaveBeenCalledWith(
+    expect(deadLetter).toHaveBeenCalledWith(
       msg.id,
-      error,
       msg.fencingToken,
-      expect.objectContaining({ metadata: expect.any(Object) }),
+      "cron_execution_error",
+      String(error),
+      expect.any(Object),
     );
-    expect(deadLetter).not.toHaveBeenCalled();
+    expect(failAttempt).not.toHaveBeenCalled();
   });
 
   it("non-zero exit fails the attempt with execution metadata in an options object", async () => {
@@ -577,7 +578,7 @@ describe("processMessage - terminal queue transitions", () => {
     expect(markRunning).not.toHaveBeenCalled();
   });
 
-  it("cron new-thread の非ゼロ終了コードは failAttempt に記録され commit されない", async () => {
+  it("cron new-thread の非ゼロ終了コードは dead-letter され commit されない", async () => {
     const executionTiming = {
       termination: "close" as const,
       exitCode: 9,
@@ -610,19 +611,19 @@ describe("processMessage - terminal queue transitions", () => {
       content: expect.stringContaining("partial response"),
       allowedMentions: { parse: [], repliedUser: false },
     });
-    expect(failAttempt).toHaveBeenCalledOnce();
-    expect(failAttempt).toHaveBeenCalledWith(
+    expect(deadLetter).toHaveBeenCalledOnce();
+    expect(deadLetter).toHaveBeenCalledWith(
       msg.id,
-      expect.any(Error),
       msg.fencingToken,
-      {
-        metadata: expect.objectContaining({
-          exitCode: 9,
-          termination: "close",
-          timing: executionTiming,
-        }),
-      },
+      "cron_execution_error",
+      expect.any(String),
+      expect.objectContaining({
+        exitCode: 9,
+        termination: "close",
+        timing: executionTiming,
+      }),
     );
+    expect(failAttempt).not.toHaveBeenCalled();
     expect(commitInboxResult).not.toHaveBeenCalled();
   });
 

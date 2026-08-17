@@ -406,9 +406,19 @@ async function failAttemptIfNonZeroExitCode(
     return undefined;
   }
   const error = new Error(response || `agent exited with code ${exitCode}`);
-  await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {
-    metadata: executionMetadata(timing),
-  });
+  if (msg.cronJobId && !msg.rssDispatchId && msg.fencingToken !== undefined) {
+    await getQueueRepository().deadLetter(
+      msg.id,
+      msg.fencingToken,
+      "cron_execution_error",
+      String(error),
+      executionMetadata(timing),
+    );
+  } else {
+    await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {
+      metadata: executionMetadata(timing),
+    });
+  }
   return error;
 }
 
@@ -730,13 +740,16 @@ async function processCronNewThread(
           executionMetadata(timing),
         );
     } else {
-      outcome = "retry";
+      // Cron executions are one-shot queue jobs. A failed run is terminal here;
+      // the scheduler will enqueue the next run at its next scheduled time.
+      outcome = "dead-letter";
       if (msg.fencingToken !== undefined)
-        await getQueueRepository().failAttempt(
+        await getQueueRepository().deadLetter(
           msg.id,
-          error,
           msg.fencingToken,
-          { metadata: executionMetadata(timing) },
+          "cron_execution_error",
+          String(error),
+          executionMetadata(timing),
         );
     }
   } finally {
@@ -966,18 +979,29 @@ export async function processMessage(
         }
         return;
       }
-      // リトライ方針（maxAttempts・指数バックオフ・retry_wait・dead-letter 遷移）は
-      // QueueRepository が一括で所有する。poller は失敗を記録するだけで、リトライ戦略や
-      // スリープは行わない（next_attempt_at が再 claim を制御する）。
       console.error(`[poller] 処理失敗:`, err);
-      outcome = "retry";
-      if (msg.fencingToken !== undefined) {
-        await getQueueRepository().failAttempt(msg.id, err, msg.fencingToken, {
-          metadata: executionMetadata(timing),
-        });
-        // 実行後の実際の遷移を観測してログのみを確定する（方針決定は repository 側）。
-        const after = getQueueRepository().get(msg.id);
-        if (after?.status === "dead_letter") outcome = "dead-letter";
+      if (msg.cronJobId) {
+        // Cron executions are terminal on failure. The scheduler, not the
+        // inbox retry policy, owns when the next run is attempted.
+        outcome = "dead-letter";
+        if (msg.fencingToken !== undefined) {
+          await getQueueRepository().deadLetter(
+            msg.id,
+            msg.fencingToken,
+            "cron_execution_error",
+            String(err),
+            executionMetadata(timing),
+          );
+        }
+      } else {
+        outcome = "retry";
+        if (msg.fencingToken !== undefined) {
+          await getQueueRepository().failAttempt(msg.id, err, msg.fencingToken, {
+            metadata: executionMetadata(timing),
+          });
+          const after = getQueueRepository().get(msg.id);
+          if (after?.status === "dead_letter") outcome = "dead-letter";
+        }
       }
       return;
     }

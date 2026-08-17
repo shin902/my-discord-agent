@@ -306,17 +306,12 @@ async function tick(): Promise<void> {
         console.log(`[cron] "${job.id}" 完了`);
         state[job.id] = { lastRun: now.toISOString() };
         changed = true;
-      } else if (result.reason instanceof NonRetryableError) {
-        // 設定ミスなど永続的なエラーは lastRun を更新してリトライを止める
-        console.error(`[cron] "${job.id}" 非リトライエラー:`, result.reason);
+      } else {
+        // A failed execution is still this schedule occurrence. Do not retry it
+        // on every poller tick; the next scheduled occurrence gets a new job.
+        console.error(`[cron] "${job.id}" 実行エラー:`, result.reason);
         state[job.id] = { lastRun: now.toISOString() };
         changed = true;
-      } else {
-        // 一時的なエラーは lastRun を更新せず次の tick でリトライ
-        console.error(
-          `[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`,
-          result.reason,
-        );
       }
     }
 

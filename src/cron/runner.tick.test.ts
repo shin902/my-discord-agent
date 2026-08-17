@@ -91,11 +91,15 @@ describe("tick() orchestration", () => {
     );
   });
 
-  it("一時的エラー: lastRun を更新しない（次の tick でリトライ）", async () => {
+  it("実行エラーでも lastRun を更新し、次の tick で再実行しない", async () => {
     mockAppendInbox.mockRejectedValue(new Error("some transient failure"));
     startCron();
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      expect.stringContaining("state.json"),
+      expect.stringContaining("tick-job"),
+      "utf-8",
+    );
   });
 
   it("NonRetryableError: lastRun を更新してリトライを防止する", async () => {
