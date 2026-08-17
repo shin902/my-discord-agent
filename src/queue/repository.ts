@@ -523,6 +523,15 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
       ddl: "result_state TEXT CHECK(result_state IN ('succeeded','empty_response','non_retryable','max_retries','dead_letter'))",
     },
   ]);
+  // Older modern stores had terminal status/succeeded but no result_state.
+  // Restore the durable terminal meaning before reconciliation inspects them.
+  db.exec(`UPDATE jobs SET result_state = CASE
+    WHEN status='completed' AND succeeded=1 THEN 'succeeded'
+    WHEN status='completed' THEN 'empty_response'
+    WHEN status='dead_letter' AND terminal_reason='max_attempts' THEN 'max_retries'
+    WHEN status='dead_letter' THEN 'dead_letter'
+    ELSE result_state
+  END WHERE result_state IS NULL AND status IN ('completed','dead_letter')`);
   addMissingColumns(db, "idempotency_keys", [
     { name: "completed_at", ddl: "completed_at TEXT" },
   ]);
@@ -1258,7 +1267,12 @@ export class QueueRepository {
       next_attempt_at: null,
       last_error: error ?? reason,
       terminal_reason: reason,
-      result_state: reason === "max_attempts" ? "max_retries" : "non_retryable",
+      result_state:
+        reason === "empty_response"
+          ? "empty_response"
+          : reason === "max_attempts"
+            ? "max_retries"
+            : "non_retryable",
       error_json: JSON.stringify({ message: error ?? reason, error }),
       ...metadataSetColumns(metadata),
     });

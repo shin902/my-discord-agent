@@ -212,6 +212,12 @@ describe("RSS collect / dispatch", () => {
       expect.objectContaining({
         channelId: "channel-1",
         groupName: "rss",
+        idempotencyKey: expect.any(String),
+        rssDispatchId: expect.any(String),
+        rssStatePath: statePath,
+        cronDeliveryMode: "direct",
+        cronSessionMode: "per-run",
+        cronJobId: "rss-dispatch",
         content: expect.stringContaining("新着記事"),
         configOverride: {
           tools: ["bash"],

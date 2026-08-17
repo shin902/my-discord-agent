@@ -14,7 +14,10 @@ import {
 import { NonRetryableError, TransientError } from "../utils/error.js";
 import type { InboxMessage } from "./types.js";
 
-vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+vi.mock("../agent/manager.js", () => ({
+  sendMessage: vi.fn(),
+  validateAgentConfiguration: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi.fn().mockImplementation(async (model) => ({
     provider: model?.provider ?? "zai",

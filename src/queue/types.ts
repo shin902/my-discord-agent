@@ -51,4 +51,18 @@ export interface InboxMessage {
 export type QueueInput = Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
 
 /** Explicit callback contract used by queue producers. */
-export type QueueProducer = (message: QueueInput) => Promise<void> | void;
+export type QueueProducerReceipt = {
+  inserted: boolean;
+  job: {
+    status: string;
+    succeeded?: boolean;
+    terminalState?: string;
+  };
+};
+
+export type QueueProducer = (
+  message: QueueInput,
+) =>
+  | Promise<QueueProducerReceipt | undefined | void>
+  | QueueProducerReceipt
+  | void;

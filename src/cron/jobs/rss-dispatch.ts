@@ -6,6 +6,7 @@ import {
   type UnreadArticle,
 } from "../../rss/store.js";
 import { NonRetryableError } from "../../utils/error.js";
+import { settleRssDispatch } from "../../queue/reconciliation.js";
 import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
@@ -132,7 +133,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
         .map((article) => article.id),
     );
 
-    await enqueueCronInbox(
+    const receipt = (await enqueueCronInbox(
       {
         ...ctx,
         idempotencyKey: dispatch.jobId,
@@ -140,7 +141,29 @@ export default async function handler(ctx: CronContext): Promise<void> {
         rssStatePath: settings.statePath,
       },
       content,
-    );
+    )) as
+      | { inserted: boolean; job: { status: string; succeeded?: boolean; terminalState?: string } }
+      | undefined;
+    // An idempotency hit may return an already-terminal job without inserting
+    // anything. Settle that claim now instead of leaving it for retention or
+    // startup reconciliation to discover later.
+    if (
+      receipt &&
+      !receipt.inserted &&
+      (receipt.job.status === "completed" ||
+        receipt.job.status === "dead_letter")
+    ) {
+      settleRssDispatch(
+        settings.statePath,
+        dispatch.id,
+        dispatch.jobId,
+        receipt.job.status === "completed" &&
+          receipt.job.succeeded === true &&
+          receipt.job.terminalState === "succeeded"
+          ? "completed"
+          : "dead_letter",
+      );
+    }
     console.log(
       `[rss-dispatch] ${queuedArticles.length}件をinboxへ投入しました（ジョブ成功後に既読化します）`,
     );

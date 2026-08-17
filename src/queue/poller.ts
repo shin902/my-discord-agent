@@ -5,6 +5,7 @@ import {
   type AgentExecutionTiming,
   type DiscordEvent,
   sendMessage,
+  validateAgentConfiguration,
 } from "../agent/manager.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { findGroupByName, type ModelConfig } from "../config/groups.js";
@@ -605,12 +606,18 @@ async function processCronNewThread(
       }
       return;
     }
+    const groupConfig = await findGroupByName(msg.groupName);
+    // Validate all local configuration before creating an external thread. A
+    // permanent configuration error must not leave an empty thread behind.
+    await validateAgentConfiguration({
+      ...groupConfig,
+      ...msg.configOverride,
+    });
+    const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
     if (usesCronDestinationSession(msg)) {
       await ensureCronThread(msg);
       sessionId = cronSessionId(msg);
     }
-    const groupConfig = await findGroupByName(msg.groupName);
-    const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
     const response = await withLlmLock(
       lockTarget,
       async () => {

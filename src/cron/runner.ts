@@ -16,7 +16,7 @@ import { getQueueRepository } from "../queue/repository.js";
 import type { QueueProducer } from "../queue/types.js";
 
 const appendInbox: QueueProducer = async (payload) => {
-  await getQueueRepository().enqueue(payload);
+  return getQueueRepository().enqueue(payload);
 };
 
 import { resolveTools } from "../tools/registry.js";

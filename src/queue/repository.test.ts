@@ -281,6 +281,32 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("preserves empty_response when dead-lettering an RSS empty response", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = expectDefined(repo.claim("worker-a", 1_000));
+      repo.deadLetter(
+        enqueued.job.id,
+        claimed.fencingToken,
+        "empty_response",
+        "empty",
+      );
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        status: "dead_letter",
+        terminalState: "empty_response",
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("commits canonical result and pending delivery atomically", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

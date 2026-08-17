@@ -333,7 +333,13 @@ describe("runtime schema migration", () => {
          INSERT INTO schema_meta VALUES ('schema_version','2');`,
       );
       db.exec(
-        `INSERT INTO jobs(id,payload_json,session_id,status,created_at,updated_at) VALUES ('modern-job','{"id":"modern-job","channelId":"c","groupName":"g","sessionId":"session","content":"modern","timestamp":"2026-01-01T00:00:00.000Z","retries":0}','session','queued','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`,
+        `INSERT INTO jobs(id,payload_json,session_id,status,created_at,updated_at) VALUES
+         ('modern-job','{"id":"modern-job","channelId":"c","groupName":"g","sessionId":"session","content":"modern","timestamp":"2026-01-01T00:00:00.000Z","retries":0}','session','queued','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('modern-success','{}','session','completed','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('modern-empty','{}','session','completed','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('modern-dead','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');
+         UPDATE jobs SET succeeded=1 WHERE id='modern-success';
+         UPDATE jobs SET terminal_reason='max_attempts' WHERE id='modern-dead';`,
       );
       db.exec(
         `INSERT INTO deliveries(id,job_id,created_at,updated_at) VALUES ('d1','modern-job','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`,
@@ -346,6 +352,15 @@ describe("runtime schema migration", () => {
         expect.arrayContaining(deliveryColumns),
       );
       expect(columnsOf(db, "idempotency_keys")).toContain("completed_at");
+      expect(
+        db
+          .prepare("SELECT id,result_state FROM jobs WHERE status IN ('completed','dead_letter') ORDER BY id")
+          .all(),
+      ).toEqual([
+        { id: "modern-dead", result_state: "max_retries" },
+        { id: "modern-empty", result_state: "empty_response" },
+        { id: "modern-success", result_state: "succeeded" },
+      ]);
       const delivery = db
         .prepare("SELECT * FROM deliveries WHERE id='d1'")
         .get() as { response_index: number; host_unique_key: string };

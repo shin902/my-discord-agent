@@ -54,7 +54,10 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@earendil-works/pi-agent-core")>()),
   Agent: mocks.AgentMock,
 }));
-vi.mock("../agent/manager.js", () => ({ sendMessage: mocks.sendMessage }));
+vi.mock("../agent/manager.js", () => ({
+  sendMessage: mocks.sendMessage,
+  validateAgentConfiguration: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../agent/model.js", () => ({ resolveModel: mocks.resolveModel }));
 vi.mock("../agent/session.js", () => ({
   appendMessage: mocks.appendMessage,

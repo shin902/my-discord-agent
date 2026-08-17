@@ -271,6 +271,15 @@ export async function validateGroupConfig(
   extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));
 }
 
+export async function validateAgentConfiguration(
+  config: AgentConfig & { mounts?: MountConfig[] },
+): Promise<void> {
+  const resolvedModel = await resolveModelConfig(config.model);
+  await validateModel(resolvedModel.provider, resolvedModel.modelId);
+  resolveTools(config.tools ?? []);
+  buildExtraMountArgs(config.mounts ?? []);
+}
+
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -412,13 +421,17 @@ export async function sendMessage(
   try {
     await validateModel(resolvedModel.provider, resolvedModel.modelId);
   } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+    throw new NonRetryableError(
+      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+    );
   }
 
   try {
     resolveTools(effectiveConfig.tools ?? []);
   } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+    throw new NonRetryableError(
+      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+    );
   }
 
   // mounts は validateGroupConfig() が起動時に検証・キャッシュ済みならそれを使う。
@@ -432,7 +445,9 @@ export async function sendMessage(
     try {
       extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
     } catch (err) {
-      return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+      throw new NonRetryableError(
+        `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+      );
     }
   }
 
@@ -748,7 +763,12 @@ export async function sendMessage(
       else if (code === 2) reject(new TransientError(plainStderr.trim()));
       else if (code === null)
         reject(new TransientError("コンテナがシグナルで終了しました"));
-      else resolve(`エージェント実行エラー: ${plainStderr.trim()}`);
+      else
+        reject(
+          new NonRetryableError(
+            `エージェント実行エラー: ${plainStderr.trim()}`,
+          ),
+        );
     });
 
     proc.on("error", (err: Error) => {

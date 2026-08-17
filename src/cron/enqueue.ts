@@ -11,6 +11,7 @@ import type {
   CronDeliveryMode,
   CronSessionMode,
   QueueProducer,
+  QueueProducerReceipt,
 } from "../queue/types.js";
 import { loadSkills } from "../skills/loader.js";
 import { resolveTools } from "../tools/registry.js";
@@ -113,7 +114,7 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
 export async function enqueueCronInbox(
   ctx: CronEnqueueContext,
   content: string,
-): Promise<void> {
+): Promise<QueueProducerReceipt | undefined> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
       "[cron-enqueue] groupName / channelId が設定されていません",
@@ -129,7 +130,7 @@ export async function enqueueCronInbox(
       : ctx.channelId;
   const configOverride = buildConfigOverride(ctx);
 
-  await ctx.appendInbox({
+  const receipt = await ctx.appendInbox({
     channelId: ctx.channelId,
     groupName: ctx.groupName,
     sessionId,
@@ -143,4 +144,5 @@ export async function enqueueCronInbox(
     ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
+  return receipt && "inserted" in receipt ? receipt : undefined;
 }
