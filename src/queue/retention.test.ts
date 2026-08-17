@@ -336,6 +336,72 @@ describe("runtime retention", () => {
     }
   });
 
+  it("protects a legacy RSS job until reconciliation repairs its missing mapping", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const rssDir = await mkdtemp(join(tmpdir(), "retention-rss-legacy-"));
+    const rssPath = join(rssDir, "rss.sqlite3");
+    const rssDb = openRssDb(rssPath);
+    try {
+      saveFeedEntries(rssDb, {
+        url: "https://example.com/legacy-feed.xml",
+        parsedName: "Feed",
+        etag: null,
+        lastModified: null,
+        entries: [
+          {
+            entryId: "article-1",
+            title: "Article",
+            link: "https://example.com/article",
+            publishedAt: "2020-01-01T00:00:00.000Z",
+            summary: "Summary",
+          },
+        ],
+        markInitialAsRead: false,
+      });
+      const dispatch = expectDefined(
+        claimUnreadArticles(rssDb, "cron-rss", 10),
+      );
+      rssDb
+        .prepare(
+          "UPDATE rss_articles SET dispatch_job_id=NULL,dispatch_owner_key=NULL WHERE dispatch_id=?",
+        )
+        .run(dispatch.id);
+      rssDb.close();
+
+      // This mirrors the original RSS queue contract: dispatch_id itself was
+      // the idempotency key and the payload had no rssDispatchId field.
+      const queued = repo.enqueue(
+        {
+          ...payload,
+          content: "legacy RSS dispatch",
+        },
+        { idempotencyKey: dispatch.id },
+      ).job;
+      repo.db
+        .prepare(
+          "UPDATE jobs SET status='completed',result_state='succeeded',succeeded=1,updated_at=? WHERE id=?",
+        )
+        .run("2020-01-01T00:00:00.000Z", queued.id);
+
+      const policy = { jobs: { completed: 1 }, idempotencyKeysMs: 1 };
+      expect(
+        planRetention(repo.db, policy, new Date("2025-01-01T00:00:00.000Z"), [
+          rssPath,
+        ]).items,
+      ).toEqual([]);
+
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(
+        planRetention(repo.db, policy, new Date("2025-01-01T00:00:00.000Z"), [
+          rssPath,
+        ]).items,
+      ).toEqual([expect.objectContaining({ kind: "job", id: queued.id })]);
+    } finally {
+      if (rssDb.open) rssDb.close();
+      repo.close();
+    }
+  });
+
   it("retains RSS terminal evidence until reconciliation settles its claim", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const rssDir = await mkdtemp(join(tmpdir(), "retention-rss-ordering-"));

@@ -38,6 +38,14 @@ export interface RssPathMetrics {
     articleIds: number[];
     reason: string;
   }>;
+  migrationRepairs: Array<{
+    dispatchId: string;
+    dispatchJobId: string | null;
+    articleIds: number[];
+    action: string;
+    reason: string;
+    repairedAt: string;
+  }>;
 }
 export interface RssMetrics extends RssPathMetrics {
   byPath: Record<string, RssPathMetrics>;
@@ -112,6 +120,7 @@ function rssMetrics(
     orphanDispatches: report.orphanDispatches.map((entry) => entry.jobId),
     tombstones: report.completedTombstones.map((entry) => entry.jobId),
     migrationAnomalies: report.migrationAnomalies,
+    migrationRepairs: report.migrationRepairs,
   };
 }
 
@@ -130,6 +139,7 @@ function aggregateRssMetrics(
     orphanDispatches: [],
     tombstones: [],
     migrationAnomalies: [],
+    migrationRepairs: [],
   };
   for (const entry of entries) {
     const metrics = rssMetrics(entry.db, runtimeDb);
@@ -141,6 +151,7 @@ function aggregateRssMetrics(
     aggregate.orphanDispatches.push(...metrics.orphanDispatches);
     aggregate.tombstones.push(...metrics.tombstones);
     aggregate.migrationAnomalies.push(...metrics.migrationAnomalies);
+    aggregate.migrationRepairs.push(...metrics.migrationRepairs);
   }
   return { ...aggregate, byPath, errors: [...errors] };
 }
@@ -256,6 +267,10 @@ export function collectObservability(
   if (rss && rss.migrationAnomalies.length > 0)
     alerts.push(
       `RSS migration anomalies (missing dispatch_job_id): ${rss.migrationAnomalies.length} [${rss.migrationAnomalies.map((entry) => entry.dispatchId).join(", ")}]`,
+    );
+  if (rss && rss.migrationRepairs.length > 0)
+    alerts.push(
+      `RSS migration repairs: ${rss.migrationRepairs.length} [${rss.migrationRepairs.map((entry) => entry.dispatchId).join(", ")}]`,
     );
   if (rss)
     for (const error of rss.errors)

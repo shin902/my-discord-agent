@@ -32,6 +32,26 @@ export interface ArticleDispatch {
   articles: UnreadArticle[];
 }
 
+export type DispatchRepairAction = "restored" | "released";
+export type DispatchRepairReason =
+  | "queue_mapping_restored"
+  | "missing_queue_mapping"
+  | "ambiguous_queue_mapping";
+
+export interface LegacyDispatchClaim {
+  dispatchId: string;
+  articleIds: number[];
+}
+
+export interface DispatchRepairRecord {
+  dispatchId: string;
+  dispatchJobId: string | null;
+  articleIds: number[];
+  action: DispatchRepairAction;
+  reason: DispatchRepairReason;
+  repairedAt: string;
+}
+
 interface FeedRow {
   id: number;
   url: string;
@@ -154,6 +174,18 @@ export function openRssDb(configuredPath?: string): Database.Database {
   db.exec(`
     CREATE INDEX IF NOT EXISTS rss_articles_owner_dispatch
       ON rss_articles(dispatch_owner_key, dispatch_id, id);
+    CREATE TABLE IF NOT EXISTS rss_dispatch_repairs (
+      id INTEGER PRIMARY KEY,
+      dispatch_id TEXT NOT NULL,
+      dispatch_job_id TEXT,
+      article_ids TEXT NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('restored', 'released')),
+      reason TEXT NOT NULL,
+      repaired_at TEXT NOT NULL,
+      UNIQUE(dispatch_id, action)
+    );
+    CREATE INDEX IF NOT EXISTS rss_dispatch_repairs_dispatch
+      ON rss_dispatch_repairs(dispatch_id, repaired_at);
   `);
   return db;
 }
@@ -326,6 +358,9 @@ export function claimUnreadArticles(
           f.url AS feed_url, a.title, a.link, a.published_at, a.summary
         FROM rss_articles a JOIN rss_feeds f ON f.id = a.feed_id
         WHERE a.read_at IS NULL
+          AND a.dispatch_id IS NOT NULL
+          AND a.dispatch_job_id IS NOT NULL
+          AND TRIM(a.dispatch_job_id) <> ''
           AND (a.dispatch_owner_key = ? OR (a.dispatch_owner_key IS NULL AND a.dispatch_job_id = ?))
         ORDER BY a.id ASC
       `)
@@ -387,12 +422,178 @@ export interface DispatchClaim {
   articleIds: number[];
 }
 
+/** Claims from older RSS schemas that have no queue mapping key. */
+export function listLegacyDispatchClaims(
+  db: Database.Database,
+): LegacyDispatchClaim[] {
+  const rows = db
+    .prepare(`
+    SELECT dispatch_id, GROUP_CONCAT(id) AS article_ids
+    FROM rss_articles
+    WHERE read_at IS NULL
+      AND dispatch_id IS NOT NULL
+      AND (dispatch_job_id IS NULL OR TRIM(dispatch_job_id) = '')
+    GROUP BY dispatch_id
+    ORDER BY dispatch_id
+  `)
+    .all() as Array<{
+    dispatch_id: string;
+    article_ids: string;
+  }>;
+  return rows.map((row) => ({
+    dispatchId: row.dispatch_id,
+    articleIds: row.article_ids.split(",").map(Number),
+  }));
+}
+
+function ownerKeyFromDispatchJobId(
+  dispatchJobId: string,
+  dispatchId: string,
+): string | null {
+  const suffix = `:${dispatchId}`;
+  if (!dispatchJobId.endsWith(suffix)) return null;
+  const owner = dispatchJobId.slice(0, -suffix.length);
+  return owner.length > 0 ? owner : null;
+}
+
+function recordDispatchRepair(
+  db: Database.Database,
+  input: {
+    dispatchId: string;
+    dispatchJobId: string | null;
+    articleIds: readonly number[];
+    action: DispatchRepairAction;
+    reason: DispatchRepairReason;
+  },
+): void {
+  db.prepare(`
+    INSERT INTO rss_dispatch_repairs
+      (dispatch_id, dispatch_job_id, article_ids, action, reason, repaired_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(dispatch_id, action) DO UPDATE SET
+      dispatch_job_id = excluded.dispatch_job_id,
+      article_ids = excluded.article_ids,
+      reason = excluded.reason,
+      repaired_at = excluded.repaired_at
+  `).run(
+    input.dispatchId,
+    input.dispatchJobId,
+    JSON.stringify([...input.articleIds]),
+    input.action,
+    input.reason,
+    new Date().toISOString(),
+  );
+}
+
+/** Restore a legacy claim's queue key, recording the migration decision. */
+export function restoreLegacyDispatchClaim(
+  db: Database.Database,
+  dispatchId: string,
+  dispatchJobId: string,
+  articleIds: readonly number[],
+): number {
+  if (!dispatchJobId || articleIds.length === 0) return 0;
+  return db.transaction(() => {
+    const ownerKey = ownerKeyFromDispatchJobId(dispatchJobId, dispatchId);
+    const placeholders = articleIds.map(() => "?").join(", ");
+    const result = db
+      .prepare(`
+      UPDATE rss_articles
+      SET dispatch_job_id = ?, dispatch_owner_key = COALESCE(dispatch_owner_key, ?)
+      WHERE read_at IS NULL
+        AND dispatch_id = ?
+        AND (dispatch_job_id IS NULL OR TRIM(dispatch_job_id) = '')
+        AND id IN (${placeholders})
+    `)
+      .run(dispatchJobId, ownerKey, dispatchId, ...articleIds);
+    if (result.changes > 0)
+      recordDispatchRepair(db, {
+        dispatchId,
+        dispatchJobId,
+        articleIds,
+        action: "restored",
+        reason: "queue_mapping_restored",
+      });
+    return result.changes;
+  })();
+}
+
+/** Release an unrecoverable legacy claim without marking its articles read. */
+export function releaseLegacyDispatchClaim(
+  db: Database.Database,
+  dispatchId: string,
+  articleIds: readonly number[],
+  reason: Exclude<DispatchRepairReason, "queue_mapping_restored">,
+): number {
+  if (articleIds.length === 0) return 0;
+  return db.transaction(() => {
+    const placeholders = articleIds.map(() => "?").join(", ");
+    const result = db
+      .prepare(`
+      UPDATE rss_articles
+      SET dispatch_id = NULL, dispatch_job_id = NULL, dispatch_owner_key = NULL
+      WHERE read_at IS NULL
+        AND dispatch_id = ?
+        AND (dispatch_job_id IS NULL OR TRIM(dispatch_job_id) = '')
+        AND id IN (${placeholders})
+    `)
+      .run(dispatchId, ...articleIds);
+    if (result.changes > 0)
+      recordDispatchRepair(db, {
+        dispatchId,
+        dispatchJobId: null,
+        articleIds,
+        action: "released",
+        reason,
+      });
+    return result.changes;
+  })();
+}
+
+export function listDispatchRepairRecords(
+  db: Database.Database,
+): DispatchRepairRecord[] {
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rss_dispatch_repairs'",
+      )
+      .get()
+  )
+    return [];
+  const rows = db
+    .prepare(`
+    SELECT dispatch_id, dispatch_job_id, article_ids, action, reason, repaired_at
+    FROM rss_dispatch_repairs
+    ORDER BY id
+  `)
+    .all() as Array<{
+    dispatch_id: string;
+    dispatch_job_id: string | null;
+    article_ids: string;
+    action: DispatchRepairAction;
+    reason: DispatchRepairReason;
+    repaired_at: string;
+  }>;
+  return rows.map((row) => ({
+    dispatchId: row.dispatch_id,
+    dispatchJobId: row.dispatch_job_id,
+    articleIds: JSON.parse(row.article_ids) as number[],
+    action: row.action,
+    reason: row.reason,
+    repairedAt: row.repaired_at,
+  }));
+}
+
 export function listDispatchClaims(db: Database.Database): DispatchClaim[] {
   const rows = db
     .prepare(`
     SELECT dispatch_id, dispatch_job_id, GROUP_CONCAT(id) AS article_ids
     FROM rss_articles
-    WHERE read_at IS NULL AND dispatch_id IS NOT NULL AND dispatch_job_id IS NOT NULL
+    WHERE read_at IS NULL
+      AND dispatch_id IS NOT NULL
+      AND dispatch_job_id IS NOT NULL
+      AND TRIM(dispatch_job_id) <> ''
     GROUP BY dispatch_id, dispatch_job_id
   `)
     .all() as Array<{

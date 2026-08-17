@@ -131,6 +131,26 @@ describe("runtime operator", () => {
       expect(report.observability.alerts).toContain(
         "RSS migration anomalies (missing dispatch_job_id): 1 [dispatch-missing-job]",
       );
+
+      expect(
+        reconcileRssDispatches(repo, [
+          resolveRssDbPath(join(dir, "rss.sqlite3")),
+        ]),
+      ).toBe(1);
+      const repaired = await runRuntimeOperator(repo.db, { rssDb });
+      expect(repaired.observability.rss).toMatchObject({
+        claimed: 0,
+        migrationRepairs: [
+          expect.objectContaining({
+            dispatchId: "dispatch-missing-job",
+            action: "released",
+            reason: "missing_queue_mapping",
+          }),
+        ],
+      });
+      expect(repaired.observability.alerts).toContain(
+        "RSS migration repairs: 1 [dispatch-missing-job]",
+      );
     } finally {
       rssDb.close();
       repo.close();

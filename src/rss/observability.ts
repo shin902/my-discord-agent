@@ -1,4 +1,8 @@
 import type Database from "better-sqlite3";
+import {
+  type DispatchRepairRecord,
+  listDispatchRepairRecords,
+} from "./store.js";
 
 export interface RssDispatchAnomaly {
   dispatchId: string;
@@ -15,6 +19,7 @@ export interface RssReconciliationReport {
   orphanDispatches: Array<{ dispatchId: string; jobId: string }>;
   completedTombstones: Array<{ dispatchId: string; jobId: string }>;
   migrationAnomalies: RssDispatchAnomaly[];
+  migrationRepairs: DispatchRepairRecord[];
 }
 
 /** Inspect RSS claims against runtime jobs without mutating either source of truth. */
@@ -62,7 +67,10 @@ export function inspectRssReconciliation(
   const migrationAnomalies: RssDispatchAnomaly[] = [];
   for (const claim of claims) {
     const articleIds = claim.article_ids.split(",").map(Number);
-    if (claim.dispatch_job_id === null) {
+    if (
+      claim.dispatch_job_id === null ||
+      claim.dispatch_job_id.trim().length === 0
+    ) {
       migrationAnomalies.push({
         dispatchId: claim.dispatch_id,
         jobId: null,
@@ -95,5 +103,6 @@ export function inspectRssReconciliation(
     orphanDispatches,
     completedTombstones,
     migrationAnomalies,
+    migrationRepairs: listDispatchRepairRecords(rssDb),
   };
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import {
   listDispatchClaims,
+  listLegacyDispatchClaims,
   resolveRssDbPath,
   tryOpenRssDb,
 } from "../rss/store.js";
@@ -110,6 +111,7 @@ interface RssDispatchIdentity {
 interface RssClaimSnapshot {
   pendingTokens: Set<string>;
   pendingJobIds: Set<string>;
+  pendingDispatchIds: Set<string>;
   unavailablePaths: Set<string>;
 }
 function rssDispatchToken(dispatchId: string, jobId: string): string {
@@ -149,9 +151,12 @@ function snapshotRssClaims(
   db: Database.Database,
   rssDbPaths?: readonly string[],
 ): RssClaimSnapshot {
-  const identities = rows(db, "SELECT payload_json,idempotency_key FROM jobs")
+  const identities = rows(
+    db,
+    "SELECT id,payload_json,idempotency_key FROM jobs",
+  )
     .map((row) =>
-      parseRssDispatchIdentity(row.payload_json, row.idempotency_key),
+      parseRssDispatchIdentity(row.payload_json, row.idempotency_key ?? row.id),
     )
     .filter(
       (identity): identity is RssDispatchIdentity => identity !== undefined,
@@ -161,9 +166,13 @@ function snapshotRssClaims(
   );
   for (const configuredPath of rssDbPaths ?? [])
     paths.add(resolveRssDbPath(configuredPath));
+  // A pre-payload legacy job may not reveal the default store path. Always
+  // inspect the default store so retention cannot prune its only key.
+  paths.add(resolveRssDbPath());
 
   const pendingTokens = new Set<string>();
   const pendingJobIds = new Set<string>();
+  const pendingDispatchIds = new Set<string>();
   const unavailablePaths = new Set<string>();
   for (const statePath of paths) {
     const result = tryOpenRssDb(statePath);
@@ -178,6 +187,13 @@ function snapshotRssClaims(
           rssDispatchToken(claim.dispatchId, claim.dispatchJobId),
         );
         pendingJobIds.add(claim.dispatchJobId);
+        pendingDispatchIds.add(claim.dispatchId);
+      }
+      // Legacy claims have no queue key, so retain their dispatch id as a
+      // possible old idempotency key until reconciliation repairs/releases it.
+      for (const claim of listLegacyDispatchClaims(result.db)) {
+        pendingDispatchIds.add(claim.dispatchId);
+        pendingJobIds.add(claim.dispatchId);
       }
     } catch {
       // A claim whose RSS store cannot be read is safer to retain than to
@@ -188,7 +204,12 @@ function snapshotRssClaims(
       result.db.close();
     }
   }
-  return { pendingTokens, pendingJobIds, unavailablePaths };
+  return {
+    pendingTokens,
+    pendingJobIds,
+    pendingDispatchIds,
+    unavailablePaths,
+  };
 }
 function hasUnsettledRssClaim(
   identity: RssDispatchIdentity,
@@ -196,6 +217,7 @@ function hasUnsettledRssClaim(
 ): boolean {
   return (
     snapshot.unavailablePaths.has(identity.statePath) ||
+    snapshot.pendingDispatchIds.has(identity.dispatchId) ||
     snapshot.pendingTokens.has(
       rssDispatchToken(identity.dispatchId, identity.jobId),
     )
@@ -258,11 +280,16 @@ export function planRetention(
         row.payload_json,
         row.idempotency_key,
       );
+      const hasLegacyRssClaim =
+        rssClaimSnapshot !== undefined &&
+        typeof row.idempotency_key === "string" &&
+        rssClaimSnapshot.pendingJobIds.has(row.idempotency_key);
       if (
         children.every((child) => plannedDeliveryIds.has(String(child.id))) &&
-        (rssIdentity === undefined ||
-          rssClaimSnapshot === undefined ||
-          !hasUnsettledRssClaim(rssIdentity, rssClaimSnapshot))
+        (rssIdentity === undefined
+          ? !hasLegacyRssClaim
+          : rssClaimSnapshot === undefined ||
+            !hasUnsettledRssClaim(rssIdentity, rssClaimSnapshot))
       )
         items.push(asItem("job", row, String(row.updated_at)));
     }

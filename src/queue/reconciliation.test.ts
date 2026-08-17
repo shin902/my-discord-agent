@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
+  listDispatchRepairRecords,
   listUnreadArticles,
   openRssDb,
   releaseDispatchArticles,
@@ -289,6 +290,133 @@ describe("reconcileRssDispatches", () => {
       const check = openRssDb(rssPath);
       try {
         expect(listUnreadArticles(check, 10)).toHaveLength(1);
+      } finally {
+        check.close();
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("repairs a legacy claim from a matching queue payload before settling it", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      completeSuccessfully(repo, rssPath, dispatch);
+      const legacyDb = openRssDb(rssPath);
+      try {
+        legacyDb
+          .prepare(
+            "UPDATE rss_articles SET dispatch_job_id=NULL,dispatch_owner_key=NULL WHERE dispatch_id=?",
+          )
+          .run(dispatch.id);
+      } finally {
+        legacyDb.close();
+      }
+
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toEqual([]);
+        expect(listDispatchRepairRecords(check)).toEqual([
+          expect.objectContaining({
+            dispatchId: dispatch.id,
+            dispatchJobId: dispatch.jobId,
+            action: "restored",
+            reason: "queue_mapping_restored",
+            articleIds: [1],
+          }),
+        ]);
+      } finally {
+        check.close();
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("repairs the original dispatch-id idempotency mapping without a modern RSS payload", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "rss",
+          sessionId: "session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: dispatch.id },
+      );
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "response",
+      );
+      const legacyDb = openRssDb(rssPath);
+      try {
+        legacyDb
+          .prepare(
+            "UPDATE rss_articles SET dispatch_job_id=NULL,dispatch_owner_key=NULL WHERE dispatch_id=?",
+          )
+          .run(dispatch.id);
+      } finally {
+        legacyDb.close();
+      }
+
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("releases an unmapped legacy claim with an audit record and allows retry", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "cron-rss");
+    const legacyDb = openRssDb(rssPath);
+    try {
+      legacyDb
+        .prepare(
+          "UPDATE rss_articles SET dispatch_job_id=NULL,dispatch_owner_key=NULL WHERE dispatch_id=?",
+        )
+        .run(dispatch.id);
+    } finally {
+      legacyDb.close();
+    }
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
+        expect(listDispatchRepairRecords(check)).toEqual([
+          expect.objectContaining({
+            dispatchId: dispatch.id,
+            dispatchJobId: null,
+            action: "released",
+            reason: "missing_queue_mapping",
+            articleIds: [1],
+          }),
+        ]);
+        const retry = claimUnreadArticles(check, "next-cron", 10);
+        expect(retry?.articles.map((article) => article.id)).toEqual([1]);
+        expect(retry?.id).not.toBe(dispatch.id);
       } finally {
         check.close();
       }

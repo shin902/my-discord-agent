@@ -1,9 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   claimUnreadArticles,
+  listLegacyDispatchClaims,
   listUnreadArticles,
   markArticlesRead,
   openRssDb,
@@ -167,6 +169,67 @@ describe("listUnreadArticles row mapping", () => {
       expect(listUnreadArticles(db, 10)[0].feedName).toBe(
         "https://example.com/named-feed.xml",
       );
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("RSS dispatch migration shape", () => {
+  it("adds the repair log while preserving a legacy claim for reconciliation", async () => {
+    const dbPath = await makeRssPath();
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE rss_feeds (
+        id INTEGER PRIMARY KEY,
+        url TEXT NOT NULL UNIQUE,
+        name TEXT,
+        etag TEXT,
+        last_modified TEXT,
+        initialized_at TEXT NOT NULL,
+        last_fetched_at TEXT NOT NULL
+      );
+      CREATE TABLE rss_articles (
+        id INTEGER PRIMARY KEY,
+        feed_id INTEGER NOT NULL REFERENCES rss_feeds(id) ON DELETE CASCADE,
+        entry_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        link TEXT NOT NULL,
+        published_at TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        collected_at TEXT NOT NULL,
+        read_at TEXT,
+        dispatch_id TEXT,
+        UNIQUE(feed_id, entry_id)
+      );
+      INSERT INTO rss_feeds(url,name,initialized_at,last_fetched_at)
+      VALUES('https://example.com/legacy.xml','Legacy','2020-01-01','2020-01-01');
+      INSERT INTO rss_articles(
+        feed_id,entry_id,title,link,published_at,summary,collected_at,read_at,dispatch_id
+      ) VALUES(1,'entry-1','Article','https://example.com/article','2020-01-01','',
+        '2020-01-01',NULL,'legacy-dispatch');
+    `);
+    legacy.close();
+
+    const db = openRssDb(dbPath);
+    try {
+      expect(
+        db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rss_dispatch_repairs'",
+          )
+          .get(),
+      ).toBeDefined();
+      expect(listLegacyDispatchClaims(db)).toEqual([
+        { dispatchId: "legacy-dispatch", articleIds: [1] },
+      ]);
+      expect(
+        db
+          .prepare(
+            "SELECT dispatch_id,dispatch_job_id FROM rss_articles WHERE id=1",
+          )
+          .get(),
+      ).toEqual({ dispatch_id: "legacy-dispatch", dispatch_job_id: null });
     } finally {
       db.close();
     }
