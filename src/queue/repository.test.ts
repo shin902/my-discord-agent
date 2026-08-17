@@ -302,6 +302,14 @@ describe("durable Phase 2 result state", () => {
         status: "dead_letter",
         terminalState: "empty_response",
       });
+      expect(
+        repo.db
+          .prepare("SELECT terminal_reason,result_state FROM jobs WHERE id=?")
+          .get(enqueued.job.id),
+      ).toEqual({
+        terminal_reason: "empty_response",
+        result_state: "empty_response",
+      });
     } finally {
       repo.close();
     }

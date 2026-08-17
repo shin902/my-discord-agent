@@ -25,6 +25,16 @@ export type TerminalState =
   | "non_retryable"
   | "max_retries"
   | "dead_letter";
+type DeadLetterTerminalState = Exclude<TerminalState, "succeeded">;
+
+function terminalStateForDeadLetterReason(
+  reason: string,
+): DeadLetterTerminalState {
+  if (reason === "empty_response") return "empty_response";
+  if (reason === "max_attempts") return "max_retries";
+  return "non_retryable";
+}
+
 export interface FailAttemptOptions {
   /** Optional patch merged into the job's payload_json before the retry is scheduled. */
   payloadPatch?: Partial<InboxMessage>;
@@ -1281,12 +1291,7 @@ export class QueueRepository {
       next_attempt_at: null,
       last_error: error ?? reason,
       terminal_reason: reason,
-      result_state:
-        reason === "empty_response"
-          ? "empty_response"
-          : reason === "max_attempts"
-            ? "max_retries"
-            : "non_retryable",
+      result_state: terminalStateForDeadLetterReason(reason),
       error_json: JSON.stringify({ message: error ?? reason, error }),
       ...metadataSetColumns(metadata),
     });
