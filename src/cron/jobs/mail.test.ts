@@ -50,6 +50,33 @@ function makeContext(channel: unknown): CronContext {
   };
 }
 
+function mockUnreadEmail(fetchMock: ReturnType<typeof vi.fn>): void {
+  fetchMock
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        value: [
+          {
+            id: "message-1",
+            subject: "重要なお知らせ",
+            from: {
+              emailAddress: {
+                name: "Alice",
+                address: "alice@example.com",
+              },
+            },
+          },
+        ],
+      }),
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        body: { contentType: "text", content: "メール本文" },
+      }),
+    });
+}
+
 describe("mail handler", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let channelSend: ReturnType<typeof vi.fn>;
@@ -89,30 +116,7 @@ describe("mail handler", () => {
   });
 
   it("errorMessage付きの部分的なassistant出力は送信・スレッド作成・既読化しない", async () => {
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          value: [
-            {
-              id: "message-1",
-              subject: "重要なお知らせ",
-              from: {
-                emailAddress: {
-                  name: "Alice",
-                  address: "alice@example.com",
-                },
-              },
-            },
-          ],
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          body: { contentType: "text", content: "メール本文" },
-        }),
-      });
+    mockUnreadEmail(fetchMock);
     const sentMessage = { startThread };
     const channel = {
       type: ChannelType.GuildText,
@@ -133,5 +137,50 @@ describe("mail handler", () => {
         ([, init]) => (init as RequestInit | undefined)?.method === "PATCH",
       ),
     ).toBe(false);
+  });
+
+  it("成功した要約は送信・スレッド作成・既読化・セッション記録を行う", async () => {
+    mockUnreadEmail(fetchMock);
+    fetchMock.mockResolvedValueOnce({ ok: true });
+    mocks.runTextOnlyAgent.mockResolvedValueOnce({
+      text: "要約本文",
+      agentMessage: {
+        role: "assistant",
+        content: [{ type: "text", text: "要約本文" }],
+      },
+    });
+    const thread = { id: "thread-1", send: vi.fn() };
+    const sentMessage = {
+      startThread: vi.fn().mockResolvedValue(thread),
+    };
+    const channel = {
+      type: ChannelType.GuildText,
+      send: channelSend.mockResolvedValue(sentMessage),
+    };
+
+    await handler(makeContext(channel));
+
+    expect(channelSend).toHaveBeenCalledWith("要約本文");
+    expect(sentMessage.startThread).toHaveBeenCalledOnce();
+    const patch = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(patch).toBeDefined();
+    expect((patch?.[1] as RequestInit).body).toBe(
+      JSON.stringify({ isRead: true }),
+    );
+    expect(mocks.appendMessage).toHaveBeenCalledTimes(2);
+    expect(mocks.appendMessage).toHaveBeenNthCalledWith(
+      1,
+      "mail",
+      "thread-1",
+      expect.objectContaining({ role: "user" }),
+    );
+    expect(mocks.appendMessage).toHaveBeenNthCalledWith(
+      2,
+      "mail",
+      "thread-1",
+      expect.objectContaining({ role: "assistant" }),
+    );
   });
 });
