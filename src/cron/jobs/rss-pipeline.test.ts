@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { openRuntimeDb, QueueRepository } from "../../queue/repository.js";
 import {
   claimUnreadArticles,
   getFeedState,
@@ -101,6 +102,15 @@ function unreadTitles(): string[] {
   const db = openRssDb(statePath);
   try {
     return listUnreadArticles(db, 100).map((article) => article.title);
+  } finally {
+    db.close();
+  }
+}
+
+function dispatchClaims(): ReturnType<typeof listDispatchClaims> {
+  const db = openRssDb(statePath);
+  try {
+    return listDispatchClaims(db);
   } finally {
     db.close();
   }
@@ -378,6 +388,51 @@ describe("RSS collect / dispatch", () => {
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
+  it("enqueue後のterminal dedupeでRSS claimを即時settleする", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      let crashed = false;
+      const receipts: Array<{ inserted: boolean }> = [];
+      const appendInbox = vi.fn(async (message) => {
+        const receipt = repo.enqueue(message);
+        receipts.push({ inserted: receipt.inserted });
+        if (!crashed) {
+          crashed = true;
+          throw new Error("crash after queue commit");
+        }
+        return receipt;
+      });
+      const ctx = makeDispatchCtx(appendInbox);
+
+      await expect(dispatchHandler(ctx)).rejects.toThrow(
+        "crash after queue commit",
+      );
+      const firstMessage = appendInbox.mock.calls[0]?.[0];
+      if (!firstMessage?.idempotencyKey)
+        throw new Error("expected RSS idempotency key");
+      const queued = repo.findByIdempotencyKey(firstMessage.idempotencyKey);
+      const claimed = repo.claim("rss-test-worker");
+      if (!queued || !claimed) throw new Error("expected queued RSS job");
+      repo.commitResult(queued.id, claimed.fencingToken, "summary");
+
+      await dispatchHandler(ctx);
+
+      expect(receipts).toHaveLength(2);
+      expect(receipts[1]).toEqual({ inserted: false });
+      expect(unreadTitles()).toEqual([]);
+      const check = openRssDb(statePath);
+      try {
+        expect(listDispatchClaims(check)).toEqual([]);
+      } finally {
+        check.close();
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
   it("対象フィードが重なる並列dispatchでは記事を一度だけ投入する", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx("process"));
@@ -405,6 +460,7 @@ describe("RSS collect / dispatch", () => {
     await expect(dispatchHandler(ctx)).rejects.toThrow("不明なツール名");
     expect(appendInbox).not.toHaveBeenCalled();
     expect(unreadTitles()).toEqual(["既存記事"]);
+    expect(dispatchClaims()).toEqual([]);
   });
 
   it("不明なモデルが指定されている場合はinbox投入せず未読のまま残す", async () => {
@@ -418,6 +474,7 @@ describe("RSS collect / dispatch", () => {
     await expect(dispatchHandler(ctx)).rejects.toThrow("不明なモデル");
     expect(appendInbox).not.toHaveBeenCalled();
     expect(unreadTitles()).toEqual(["既存記事"]);
+    expect(dispatchClaims()).toEqual([]);
   });
 
   it("不明なスキルが指定されている場合はinbox投入せず未読のまま残す", async () => {
@@ -432,6 +489,22 @@ describe("RSS collect / dispatch", () => {
     );
     expect(appendInbox).not.toHaveBeenCalled();
     expect(unreadTitles()).toEqual(["既存記事"]);
+    expect(dispatchClaims()).toEqual([]);
+  });
+
+  it("宛先が未指定の場合はinbox投入せずdispatch claimを残さない", async () => {
+    mockFeed(initialXml);
+    await collectHandler(makeCollectCtx("process"));
+    const appendInbox = vi.fn(async () => undefined);
+    const ctx = makeDispatchCtx(appendInbox);
+    ctx.channelId = undefined;
+
+    await expect(dispatchHandler(ctx)).rejects.toThrow(
+      "groupName / channelId が設定されていません",
+    );
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(unreadTitles()).toEqual(["既存記事"]);
+    expect(dispatchClaims()).toEqual([]);
   });
 
   it("今回inboxへ投入した件数だけをdispatch claimする", async () => {

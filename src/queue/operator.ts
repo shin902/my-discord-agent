@@ -90,6 +90,7 @@ export async function runRuntimeOperator(
     ? await pruneRetention(db, options.retention.policy, {
         at: options.at,
         dryRun: options.retention.dryRun ?? true,
+        rssDbPaths: options.rssDbPaths,
       })
     : null;
   return { health, observability, backup, retention };

@@ -2,6 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type Database from "better-sqlite3";
+import {
+  listDispatchClaims,
+  resolveRssDbPath,
+  tryOpenRssDb,
+} from "../rss/store.js";
 import type { DeliveryStatus, JobStatus } from "./repository.js";
 
 export type RetentionStatus =
@@ -97,17 +102,125 @@ function rows(
   return db.prepare(sql).all(...params) as Record<string, unknown>[];
 }
 
+interface RssDispatchIdentity {
+  statePath: string;
+  dispatchId: string;
+  jobId: string;
+}
+interface RssClaimSnapshot {
+  pendingTokens: Set<string>;
+  pendingJobIds: Set<string>;
+  unavailablePaths: Set<string>;
+}
+function rssDispatchToken(dispatchId: string, jobId: string): string {
+  return `${dispatchId}\u0000${jobId}`;
+}
+function parseRssDispatchIdentity(
+  payloadJson: unknown,
+  fallbackJobId?: unknown,
+): RssDispatchIdentity | undefined {
+  if (typeof payloadJson !== "string") return undefined;
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    const dispatchId = payload.rssDispatchId;
+    const jobId = payload.idempotencyKey ?? fallbackJobId;
+    if (typeof dispatchId !== "string" || typeof jobId !== "string")
+      return undefined;
+    const configuredPath =
+      typeof payload.rssStatePath === "string" &&
+      payload.rssStatePath.length > 0
+        ? payload.rssStatePath
+        : undefined;
+    return {
+      statePath: resolveRssDbPath(configuredPath),
+      dispatchId,
+      jobId,
+    };
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * Snapshot RSS claims before planning runtime deletes. Queue and RSS state are
+ * separate databases, so a terminal RSS job must stay available whenever its
+ * claim is still present (or the RSS store cannot be inspected safely).
+ */
+function snapshotRssClaims(
+  db: Database.Database,
+  rssDbPaths?: readonly string[],
+): RssClaimSnapshot {
+  const identities = rows(db, "SELECT payload_json,idempotency_key FROM jobs")
+    .map((row) =>
+      parseRssDispatchIdentity(row.payload_json, row.idempotency_key),
+    )
+    .filter(
+      (identity): identity is RssDispatchIdentity => identity !== undefined,
+    );
+  const paths = new Set<string>(
+    identities.map((identity) => identity.statePath),
+  );
+  for (const configuredPath of rssDbPaths ?? [])
+    paths.add(resolveRssDbPath(configuredPath));
+
+  const pendingTokens = new Set<string>();
+  const pendingJobIds = new Set<string>();
+  const unavailablePaths = new Set<string>();
+  for (const statePath of paths) {
+    const result = tryOpenRssDb(statePath);
+    if (!result.ok) {
+      if (identities.some((identity) => identity.statePath === statePath))
+        unavailablePaths.add(statePath);
+      continue;
+    }
+    try {
+      for (const claim of listDispatchClaims(result.db)) {
+        pendingTokens.add(
+          rssDispatchToken(claim.dispatchId, claim.dispatchJobId),
+        );
+        pendingJobIds.add(claim.dispatchJobId);
+      }
+    } catch {
+      // A claim whose RSS store cannot be read is safer to retain than to
+      // delete: reconciliation must get a chance to inspect its evidence.
+      if (identities.some((identity) => identity.statePath === statePath))
+        unavailablePaths.add(statePath);
+    } finally {
+      result.db.close();
+    }
+  }
+  return { pendingTokens, pendingJobIds, unavailablePaths };
+}
+function hasUnsettledRssClaim(
+  identity: RssDispatchIdentity,
+  snapshot: RssClaimSnapshot,
+): boolean {
+  return (
+    snapshot.unavailablePaths.has(identity.statePath) ||
+    snapshot.pendingTokens.has(
+      rssDispatchToken(identity.dispatchId, identity.jobId),
+    )
+  );
+}
+
 /** Build a deterministic plan. Active rows are deliberately excluded, including ambiguous deliveries. */
 export function planRetention(
   db: Database.Database,
   policy: RetentionPolicy,
   at = new Date(),
+  rssDbPaths?: readonly string[],
 ): RetentionPlan {
   const nowMs = at.getTime();
   const items: RetentionPlanItem[] = [];
   const cutoffs: Record<string, string | null> = {};
   const jobs = policy.jobs ?? {};
   const deliveries = policy.deliveries ?? {};
+  const idemCutoff = cutoff(nowMs, policy.idempotencyKeysMs);
+  const rssClaimSnapshot =
+    cutoff(nowMs, jobs.completed) !== undefined ||
+    cutoff(nowMs, jobs.dead_letter) !== undefined ||
+    idemCutoff !== undefined
+      ? snapshotRssClaims(db, rssDbPaths)
+      : undefined;
   const deliveryItems: RetentionPlanItem[] = [];
   for (const status of ["sent", "failed"] as const) {
     const c = cutoff(nowMs, deliveries[status]);
@@ -141,21 +254,33 @@ export function planRetention(
         "SELECT id FROM deliveries WHERE job_id=? ORDER BY response_index,id",
         row.id,
       );
-      if (children.every((child) => plannedDeliveryIds.has(String(child.id))))
+      const rssIdentity = parseRssDispatchIdentity(
+        row.payload_json,
+        row.idempotency_key,
+      );
+      if (
+        children.every((child) => plannedDeliveryIds.has(String(child.id))) &&
+        (rssIdentity === undefined ||
+          rssClaimSnapshot === undefined ||
+          !hasUnsettledRssClaim(rssIdentity, rssClaimSnapshot))
+      )
         items.push(asItem("job", row, String(row.updated_at)));
     }
   }
   // Deliveries are ordered before jobs so bounded batches can never reach a
   // parent before its planned children have been explicitly deleted.
   items.unshift(...deliveryItems);
-  const idemCutoff = cutoff(nowMs, policy.idempotencyKeysMs);
   cutoffs.idempotency_key = idemCutoff ?? null;
   if (idemCutoff)
     for (const row of rows(
       db,
       "SELECT * FROM idempotency_keys WHERE status IN ('completed','dead_letter') AND COALESCE(completed_at,created_at)<? AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.idempotency_key=idempotency_keys.key) ORDER BY COALESCE(completed_at,created_at),key",
       idemCutoff,
-    ))
+    )) {
+      // An orphan tombstone can still be the only queue-side evidence for a
+      // pending RSS claim. Keep it until reconciliation has released/read the
+      // claim; otherwise a later dedupe would lose the terminal outcome.
+      if (rssClaimSnapshot?.pendingJobIds.has(String(row.key))) continue;
       items.push(
         asItem(
           "idempotency_key",
@@ -163,6 +288,7 @@ export function planRetention(
           String(row.completed_at ?? row.created_at),
         ),
       );
+    }
   const deadCutoff = cutoff(nowMs, policy.deadLettersMs);
   cutoffs.dead_letter = deadCutoff ?? null;
   if (deadCutoff)
@@ -403,9 +529,19 @@ async function runRetentionPrune(
 export async function pruneRetention(
   db: Database.Database,
   policy: RetentionPolicy,
-  options: { at?: Date; dryRun?: boolean } = {},
+  options: {
+    at?: Date;
+    dryRun?: boolean;
+    /** RSS stores known by the caller but not present in queue payloads. */
+    rssDbPaths?: readonly string[];
+  } = {},
 ): Promise<RetentionResult> {
-  const plan = planRetention(db, policy, options.at ?? new Date());
+  const plan = planRetention(
+    db,
+    policy,
+    options.at ?? new Date(),
+    options.rssDbPaths,
+  );
   return runRetentionPrune(db, policy, options, plan, deleteRetentionBatch);
 }
 

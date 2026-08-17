@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { settleRssDispatch } from "../../queue/reconciliation.js";
+import type { QueueProducerReceipt } from "../../queue/types.js";
 import {
   claimUnreadArticles,
   openRssDb,
@@ -6,8 +8,7 @@ import {
   type UnreadArticle,
 } from "../../rss/store.js";
 import { NonRetryableError } from "../../utils/error.js";
-import { settleRssDispatch } from "../../queue/reconciliation.js";
-import { enqueueCronInbox } from "../enqueue.js";
+import { enqueueCronInbox, validateCronInboxContext } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 const FeedSchema = z.union([
@@ -95,6 +96,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const feedUrls = settings.feeds
     ? [...new Set(settings.feeds.map((feed) => feed.url))]
     : undefined;
+  // Queue admission validates the destination and config overrides. Run that
+  // pre-admission validation before claiming RSS articles so a permanent
+  // configuration error cannot strand a claim when the scheduler handles it.
+  await validateCronInboxContext(ctx);
   const db = openRssDb(settings.statePath);
   try {
     const dispatch = claimUnreadArticles(
@@ -133,7 +138,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
         .map((article) => article.id),
     );
 
-    const receipt = (await enqueueCronInbox(
+    const receipt: QueueProducerReceipt | undefined = await enqueueCronInbox(
       {
         ...ctx,
         idempotencyKey: dispatch.jobId,
@@ -141,18 +146,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
         rssStatePath: settings.statePath,
       },
       content,
-    )) as
-      | {
-          inserted: boolean;
-          job: { status: string; succeeded?: boolean; terminalState?: string };
-        }
-      | undefined;
+    );
     // An idempotency hit may return an already-terminal job without inserting
     // anything. Settle that claim now instead of leaving it for retention or
-    // startup reconciliation to discover later.
+    // startup reconciliation to discover later. The receipt is also allowed
+    // to describe a terminal insertion, so do not make this depend on the
+    // producer's inserted flag.
     if (
       receipt &&
-      !receipt.inserted &&
       (receipt.job.status === "completed" ||
         receipt.job.status === "dead_letter")
     ) {

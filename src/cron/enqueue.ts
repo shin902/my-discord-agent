@@ -111,10 +111,14 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
   }
 }
 
-export async function enqueueCronInbox(
+export async function validateCronInboxContext(
   ctx: CronEnqueueContext,
-  content: string,
-): Promise<QueueProducerReceipt | undefined> {
+): Promise<
+  CronEnqueueContext & {
+    groupName: string;
+    channelId: string;
+  }
+> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
       "[cron-enqueue] groupName / channelId が設定されていません",
@@ -122,17 +126,28 @@ export async function enqueueCronInbox(
   }
 
   await validateConfigOverride(ctx);
+  return ctx as CronEnqueueContext & {
+    groupName: string;
+    channelId: string;
+  };
+}
 
-  const { deliveryMode, sessionMode } = resolveModes(ctx);
+export async function enqueueCronInbox(
+  ctx: CronEnqueueContext,
+  content: string,
+): Promise<QueueProducerReceipt | undefined> {
+  const validated = await validateCronInboxContext(ctx);
+
+  const { deliveryMode, sessionMode } = resolveModes(validated);
   const sessionId =
     sessionMode === "per-run" || deliveryMode === "new-thread"
       ? `cron-${ctx.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      : ctx.channelId;
-  const configOverride = buildConfigOverride(ctx);
+      : validated.channelId;
+  const configOverride = buildConfigOverride(validated);
 
-  const receipt = await ctx.appendInbox({
-    channelId: ctx.channelId,
-    groupName: ctx.groupName,
+  const receipt = await validated.appendInbox({
+    channelId: validated.channelId,
+    groupName: validated.groupName,
     sessionId,
     content,
     timestamp: new Date().toISOString(),

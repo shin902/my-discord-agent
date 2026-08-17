@@ -2,7 +2,14 @@ import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import {
+  claimUnreadArticles,
+  listUnreadArticles,
+  openRssDb,
+  saveFeedEntries,
+} from "../rss/store.js";
 import { expectDefined } from "../test-utils.js";
+import { reconcileRssDispatches } from "./reconciliation.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 import { planRetention, pruneRetention } from "./retention.js";
 
@@ -325,6 +332,106 @@ describe("runtime retention", () => {
         ).inserted,
       ).toBe(false);
     } finally {
+      repo.close();
+    }
+  });
+
+  it("retains RSS terminal evidence until reconciliation settles its claim", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const rssDir = await mkdtemp(join(tmpdir(), "retention-rss-ordering-"));
+    const archiveDir = await mkdtemp(join(tmpdir(), "retention-rss-archive-"));
+    const rssPath = join(rssDir, "rss.sqlite3");
+    const rssDb = openRssDb(rssPath);
+    try {
+      saveFeedEntries(rssDb, {
+        url: "https://example.com/feed.xml",
+        parsedName: "Feed",
+        etag: null,
+        lastModified: null,
+        entries: [
+          {
+            entryId: "article-1",
+            title: "Article",
+            link: "https://example.com/article",
+            publishedAt: "2020-01-01T00:00:00.000Z",
+            summary: "Summary",
+          },
+        ],
+        markInitialAsRead: false,
+      });
+      const dispatch = expectDefined(
+        claimUnreadArticles(rssDb, "cron-rss", 10),
+      );
+      rssDb.close();
+
+      const queued = repo.enqueue(
+        {
+          ...payload,
+          idempotencyKey: dispatch.jobId,
+          rssDispatchId: dispatch.id,
+          rssStatePath: rssPath,
+        },
+        { idempotencyKey: dispatch.jobId },
+      );
+      const queueClaim = expectDefined(repo.claim("rss-worker"));
+      repo.commitResult(queued.job.id, queueClaim.fencingToken, "summary");
+      const delivery = expectDefined(repo.getDelivery(queued.job.id));
+      repo.db
+        .prepare("UPDATE jobs SET updated_at=?,completed_at=? WHERE id=?")
+        .run(
+          "2020-01-01T00:00:00.000Z",
+          "2020-01-01T00:00:00.000Z",
+          queued.job.id,
+        );
+      repo.db
+        .prepare("UPDATE deliveries SET status='sent',updated_at=? WHERE id=?")
+        .run("2020-01-01T00:00:00.000Z", delivery.id);
+      repo.db
+        .prepare(
+          "UPDATE idempotency_keys SET created_at=?,completed_at=? WHERE key=?",
+        )
+        .run(
+          "2020-01-01T00:00:00.000Z",
+          "2020-01-01T00:00:00.000Z",
+          dispatch.jobId,
+        );
+
+      const policy = {
+        archiveDir,
+        jobs: { completed: 1 },
+        deliveries: { sent: 1 },
+        idempotencyKeysMs: 1,
+        batchSize: 1,
+      };
+      const before = planRetention(
+        repo.db,
+        policy,
+        new Date("2025-01-01T00:00:00.000Z"),
+      );
+      expect(before.items.some((item) => item.kind === "job")).toBe(false);
+
+      await pruneRetention(repo.db, policy, {
+        at: new Date("2025-01-01T00:00:00.000Z"),
+      });
+      expect(repo.get(queued.job.id)).toBeDefined();
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+
+      const readCheck = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(readCheck, 10)).toEqual([]);
+      } finally {
+        readCheck.close();
+      }
+      expect(
+        planRetention(repo.db, policy, new Date("2025-01-01T00:00:00.000Z"))
+          .items,
+      ).toEqual([expect.objectContaining({ kind: "job", id: queued.job.id })]);
+      await pruneRetention(repo.db, policy, {
+        at: new Date("2025-01-01T00:00:00.000Z"),
+      });
+      expect(repo.get(queued.job.id)).toBeUndefined();
+    } finally {
+      if (rssDb.open) rssDb.close();
       repo.close();
     }
   });

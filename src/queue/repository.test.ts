@@ -3,6 +3,77 @@ import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("QueueRepository lease renewal", () => {
+  it("does not synthesize success from a pruned idempotency tombstone", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const completed = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "rss-completed-tombstone" },
+      );
+      const completedClaim = expectDefined(repo.claim("worker-a"));
+      repo.commitResult(completed.job.id, completedClaim.fencingToken, "", {
+        empty: true,
+      });
+      repo.db.prepare("DELETE FROM jobs WHERE id=?").run(completed.job.id);
+
+      const completedDedupe = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "session",
+          content: "replay",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "rss-completed-tombstone" },
+      );
+      expect(completedDedupe).toMatchObject({
+        inserted: false,
+        job: { status: "completed", succeeded: false },
+      });
+
+      const deadLetter = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "rss-dead-letter-tombstone" },
+      );
+      const deadClaim = expectDefined(repo.claim("worker-a"));
+      repo.deadLetter(
+        deadLetter.job.id,
+        deadClaim.fencingToken,
+        "non_retryable",
+      );
+      repo.db.prepare("DELETE FROM jobs WHERE id=?").run(deadLetter.job.id);
+
+      const deadDedupe = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "session",
+          content: "replay",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "rss-dead-letter-tombstone" },
+      );
+      expect(deadDedupe).toMatchObject({
+        inserted: false,
+        job: { status: "dead_letter", succeeded: false },
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("extends a claimed lease with its fencing token", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

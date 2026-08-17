@@ -691,25 +691,31 @@ export function openRuntimeDb(configuredPath?: string): Database.Database {
   configureRuntimeDb(db);
   return db;
 }
-function syntheticCompleted(
+function syntheticDedupe(
   payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
   key: string,
+  status: "active" | "completed" | "dead_letter",
 ): QueueJob {
   const timestamp = nowIso();
+  const queueStatus = status === "active" ? "queued" : status;
+  // An idempotency tombstone only proves that admission reached a terminal
+  // state. It does not retain the result_state that distinguishes a successful
+  // response from an empty/non-retryable one, so never synthesize success from
+  // a pruned job.
   return {
     ...payload,
     id: `idempotency-${key}`,
     retries: 0,
     enqueuedAt: timestamp,
     idempotencyKey: key,
-    status: "completed",
+    status: queueStatus,
     attempts: 0,
     maxAttempts: 0,
-    completedAt: timestamp,
+    ...(status !== "active" ? { completedAt: timestamp } : {}),
     fencingToken: 0,
     sequence: 0,
-    terminalState: "succeeded",
-    succeeded: true,
+    succeeded: false,
+    ...(status === "dead_letter" ? { terminalState: "dead_letter" } : {}),
   };
 }
 /** Column projection shared by delivery reads (getDelivery / listDeliveries). */
@@ -761,12 +767,16 @@ export class QueueRepository {
         const idem = this.db
           .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
           .get(key) as
-          | { key: string; job_id: string | null; status: string }
+          | {
+              key: string;
+              job_id: string | null;
+              status: "active" | "completed" | "dead_letter";
+            }
           | undefined;
         if (idem) {
           const existing = idem.job_id ? this.get(idem.job_id) : undefined;
           return {
-            job: existing ?? syntheticCompleted(payload, key),
+            job: existing ?? syntheticDedupe(payload, key, idem.status),
             inserted: false,
           };
         }
