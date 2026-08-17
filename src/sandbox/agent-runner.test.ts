@@ -1228,7 +1228,7 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
 
     const errorMsg = {
       role: "assistant",
-      content: [{ type: "text", text: "" }],
+      content: [{ type: "text", text: "部分的な応答" }],
       errorMessage: "Context window exceeded",
     };
     AgentMock.mockImplementation(function () {
@@ -1259,7 +1259,7 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
     AgentMock.mockImplementation(function () {
       return createMockAgent([], {
         role: "assistant",
-        content: [{ type: "text", text: "" }],
+        content: [{ type: "text", text: "部分的な応答" }],
         errorMessage: "Context window exceeded",
       });
     });

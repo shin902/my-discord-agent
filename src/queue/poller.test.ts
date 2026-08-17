@@ -676,97 +676,48 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(1);
       expect(listDispatchClaims(db)).toEqual([]);
+      expect(claimUnreadArticles(db, "next-cron", 1)?.articles).toHaveLength(
+        1,
+      );
     } finally {
       db.close();
     }
   });
 
-  it("既存cron threadでRSS空応答ならclaimを保持して再試行し重複threadを作らない", async () => {
+  it("releases an RSS claim after an assistant error for the next cron", async () => {
     const rssPath = await makeRssPath();
     seedUnreadArticles(rssPath, 1);
     const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
-    vi.mocked(sendMessage).mockResolvedValue("");
-    vi.mocked(client.channels.fetch).mockClear();
-    const msg = makeMsg({
-      id: "rss-existing-thread-empty",
-      sessionId: "cron-rss-placeholder",
-      cronDeliveryMode: "new-thread",
-      cronSessionMode: "destination",
-      cronJobId: "rss-job",
-      cronThreadId: "thread-existing",
-      idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
-    });
-    getJob.mockReturnValue({
-      status: "retry_wait",
-      idempotencyKey: dispatch.jobId,
-    });
-
-    await processMessage(msg);
-    await processMessage(msg);
-
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(sendMessage).toHaveBeenCalledWith(
-      "default",
-      "thread-existing",
-      "hello",
-      expect.any(Object),
-    );
-    expect(failAttempt).toHaveBeenCalledTimes(2);
-    expect(deadLetter).not.toHaveBeenCalled();
-    expect(client.channels.fetch).not.toHaveBeenCalled();
-    const db = openRssDb(rssPath);
-    try {
-      expect(listUnreadArticles(db, 10)).toHaveLength(1);
-      expect(listDispatchClaims(db)).toEqual([
-        {
-          dispatchId: dispatch.id,
-          dispatchJobId: dispatch.jobId,
-          articleIds: dispatch.articles.map((article) => article.id),
-        },
-      ]);
-    } finally {
-      db.close();
-    }
-  });
-
-  it("retains the RSS claim after a retryable processing failure", async () => {
-    const rssPath = await makeRssPath();
-    seedUnreadArticles(rssPath, 1);
-    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
-    const error = new Error("temporary failure");
+    const error = new TransientError("upstream response failed");
     vi.mocked(sendMessage).mockRejectedValue(error);
     const msg = makeMsg({
-      id: "rss-retry",
+      id: "rss-agent-error",
       idempotencyKey: dispatch.jobId,
       rssDispatchId: dispatch.id,
       rssStatePath: rssPath,
     });
     getJob.mockReturnValue({
-      status: "retry_wait",
+      status: "dead_letter",
       idempotencyKey: dispatch.jobId,
     });
 
     await processMessage(msg);
 
-    expect(failAttempt).toHaveBeenCalledWith(
+    expect(deadLetter).toHaveBeenCalledWith(
       msg.id,
-      error,
       msg.fencingToken,
-      expect.objectContaining({ metadata: expect.any(Object) }),
+      "rss_agent_error",
+      String(error),
+      expect.any(Object),
     );
-    expect(deadLetter).not.toHaveBeenCalled();
+    expect(failAttempt).not.toHaveBeenCalled();
     const db = openRssDb(rssPath);
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(1);
-      expect(listDispatchClaims(db)).toEqual([
-        {
-          dispatchId: dispatch.id,
-          dispatchJobId: dispatch.jobId,
-          articleIds: dispatch.articles.map((article) => article.id),
-        },
-      ]);
+      expect(listDispatchClaims(db)).toEqual([]);
+      expect(claimUnreadArticles(db, "next-cron", 1)?.articles).toHaveLength(
+        1,
+      );
     } finally {
       db.close();
     }

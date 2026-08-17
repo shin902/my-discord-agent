@@ -768,7 +768,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
     process.exit(0);
   })().catch((err) => {
-    const transient = isTransientError(err);
+    const transient = err instanceof TransientError || isTransientError(err);
     const code = transient ? 2 : 1;
     process.stderr.write(
       `agent-runner エラー${transient ? "（一時的）" : ""}: ${err instanceof Error ? err.message : String(err)}\n`,

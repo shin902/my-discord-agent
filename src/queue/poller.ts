@@ -16,7 +16,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
-import { NonRetryableError } from "../utils/error.js";
+import { NonRetryableError, TransientError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { settleRssDispatch } from "./reconciliation.js";
@@ -409,11 +409,27 @@ async function failAttemptIfNonZeroExitCode(
   return true;
 }
 
-// RSS の既読化は有効な LLM 応答が得られた場合だけ許可する。
-// 空応答は commitResult せず、記事を既読にしない。既に cron thread を
-// 作成済みの実行は claim を保持したままキューで再試行し、空スレッドを残して
-// 次回 cron が同じ記事から別スレッドを作ることを防ぐ。それ以外は今回の claim
-// だけを解放し、記事を次回 cron が改めて拾えるようにする。
+// RSS のエージェント失敗はこの実行を終了させ、claim を次回 cron に返す。
+async function deadLetterRssAgentError(
+  msg: InboxMessage,
+  error: unknown,
+  timing: ResponseTiming,
+): Promise<boolean> {
+  if (!msg.rssDispatchId || !(error instanceof TransientError)) return false;
+  if (msg.fencingToken === undefined) {
+    throw new Error(`RSS agent error requires fencing token: ${msg.id}`);
+  }
+  await getQueueRepository().deadLetter(
+    msg.id,
+    msg.fencingToken,
+    "rss_agent_error",
+    String(error),
+    executionMetadata(timing),
+  );
+  return true;
+}
+
+// 空応答では記事を既読にせず claim を解放し、次回 cron で再取得できるようにする。
 async function failAttemptIfEmptyRssResponse(
   msg: InboxMessage,
   response: string,
@@ -422,15 +438,6 @@ async function failAttemptIfEmptyRssResponse(
   if (!msg.rssDispatchId || response.trim()) return false;
   if (msg.fencingToken === undefined) {
     throw new Error(`RSS empty response requires fencing token: ${msg.id}`);
-  }
-  if (msg.cronThreadId) {
-    await getQueueRepository().failAttempt(
-      msg.id,
-      new Error("LLM returned an empty response for RSS dispatch"),
-      msg.fencingToken,
-      { metadata: executionMetadata(timing) },
-    );
-    return true;
   }
   await getQueueRepository().deadLetter(
     msg.id,
@@ -648,6 +655,10 @@ async function processCronNewThread(
       );
     outcome = response ? "success" : "empty-response";
   } catch (error) {
+    if (await deadLetterRssAgentError(msg, error, timing)) {
+      outcome = "dead-letter";
+      return;
+    }
     const ambiguousMutation =
       error instanceof DeliveryError && error.kind === "unknown";
     const nonRetryable =
@@ -655,14 +666,6 @@ async function processCronNewThread(
       (error instanceof DeliveryError && error.kind === "non-retryable");
     if (ambiguousMutation || nonRetryable) {
       outcome = "dead-letter";
-      if (nonRetryable) {
-        await sendDiscordEvent(
-          msg.groupName,
-          msg.channelId,
-          { type: "error", message: String(error) },
-          msg.messageId,
-        );
-      }
       if (msg.fencingToken !== undefined)
         await getQueueRepository().deadLetter(
           msg.id,
@@ -881,16 +884,13 @@ export async function processMessage(
       );
     } catch (err) {
       stopTyping();
+      if (await deadLetterRssAgentError(msg, err, timing)) {
+        outcome = "dead-letter";
+        return;
+      }
       if (err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
-        await sendDiscordEvent(
-          msg.groupName,
-          msg.channelId,
-          { type: "error", message: String(err) },
-          replyMessageId,
-          groupConfig.allowMention === true,
-        );
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().deadLetter(
             msg.id,
