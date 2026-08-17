@@ -479,6 +479,13 @@ function usesCronDestinationSession(msg: InboxMessage): boolean {
   );
 }
 
+function shouldPublishExecutionError(msg: InboxMessage): boolean {
+  // A new-thread job has no user-facing execution destination until its
+  // result is ready. Keep failures in logs/queue state instead of leaving an
+  // error-only message or thread in Discord.
+  return msg.cronDeliveryMode !== "new-thread" && msg.cronThread !== true;
+}
+
 function cronSessionId(msg: InboxMessage): string {
   return usesCronDestinationSession(msg)
     ? (msg.cronThreadId ?? msg.sessionId)
@@ -891,6 +898,15 @@ export async function processMessage(
       if (err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
+        if (shouldPublishExecutionError(msg)) {
+          await sendDiscordEvent(
+            msg.groupName,
+            msg.channelId,
+            { type: "error", message: String(err) },
+            replyMessageId,
+            groupConfig.allowMention === true,
+          );
+        }
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().deadLetter(
             msg.id,

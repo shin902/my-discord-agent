@@ -1023,12 +1023,61 @@ describe("processMessage - Discord イベント通知", () => {
       channels: [],
       allowMention: false,
     });
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(sendMessage).mockResolvedValue("AI response");
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => true,
       isTextBased: () => false,
       send: mockSend,
     } as never);
     mockSend.mockClear();
+  });
+
+  it("通常メッセージの NonRetryableError は Discord に通知される", async () => {
+    const error = new NonRetryableError("invalid input");
+    vi.mocked(sendMessage).mockRejectedValue(error);
+
+    await processMessage(makeMsg({ messageId: "msg-original" }));
+
+    expect(mockSend).toHaveBeenCalledWith({
+      content: `⚠️ エラー: ${String(error)}`,
+      reply: { messageReference: "msg-original", failIfNotExists: false },
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+  });
+
+  it("cron direct の NonRetryableError は Discord に通知される", async () => {
+    const error = new NonRetryableError("invalid input");
+    vi.mocked(sendMessage).mockRejectedValue(error);
+
+    await processMessage(
+      makeMsg({ cronDeliveryMode: "direct", cronJobId: "daily-job" }),
+    );
+
+    expect(mockSend).toHaveBeenCalledWith({
+      content: `⚠️ エラー: ${String(error)}`,
+      reply: { messageReference: "msg-original", failIfNotExists: false },
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+  });
+
+  it("cron new-thread の NonRetryableError は Discord に通知されない", async () => {
+    const error = new NonRetryableError("invalid input");
+    const create = vi.fn().mockResolvedValue({ id: "thread-1" });
+    vi.mocked(client.channels.fetch).mockResolvedValueOnce({
+      threads: { create },
+    } as never);
+    vi.mocked(sendMessage).mockRejectedValue(error);
+
+    await processMessage(
+      makeMsg({
+        cronDeliveryMode: "new-thread",
+        cronSessionMode: "destination",
+        cronJobId: "rss-job",
+      }),
+    );
+
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("tool_start イベント（args あり）で 🔧 ツール名 + 引数が送信される", async () => {
