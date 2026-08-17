@@ -278,6 +278,7 @@ describe("runtime schema migration", () => {
         status: "completed",
         session_id: "session",
         sequence: 1,
+        result_state: "succeeded",
         succeeded: 1,
       });
       // delivery row survived and was backfilled with durable-column defaults
@@ -337,9 +338,17 @@ describe("runtime schema migration", () => {
          ('modern-job','{"id":"modern-job","channelId":"c","groupName":"g","sessionId":"session","content":"modern","timestamp":"2026-01-01T00:00:00.000Z","retries":0}','session','queued','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
          ('modern-success','{}','session','completed','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
          ('modern-empty','{}','session','completed','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
-         ('modern-dead','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');
-         UPDATE jobs SET succeeded=1 WHERE id='modern-success';
-         UPDATE jobs SET terminal_reason='max_attempts' WHERE id='modern-dead';`,
+         ('modern-dead','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('modern-empty-dead','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('modern-error-dead','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('modern-legacy-dead','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('modern-existing-state','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');
+         UPDATE jobs SET result_json='"done"',succeeded=1 WHERE id='modern-success';
+         UPDATE jobs SET result_json='""' WHERE id='modern-empty';
+         UPDATE jobs SET terminal_reason='max_attempts' WHERE id='modern-dead';
+         UPDATE jobs SET terminal_reason='empty_response' WHERE id='modern-empty-dead';
+         UPDATE jobs SET terminal_reason='rss_agent_error' WHERE id='modern-error-dead';
+         UPDATE jobs SET terminal_reason='max_attempts',result_state='dead_letter' WHERE id='modern-existing-state';`,
       );
       db.exec(
         `INSERT INTO deliveries(id,job_id,created_at,updated_at) VALUES ('d1','modern-job','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`,
@@ -361,8 +370,15 @@ describe("runtime schema migration", () => {
       ).toEqual([
         { id: "modern-dead", result_state: "max_retries" },
         { id: "modern-empty", result_state: "empty_response" },
+        { id: "modern-empty-dead", result_state: "empty_response" },
+        { id: "modern-error-dead", result_state: "non_retryable" },
+        { id: "modern-existing-state", result_state: "dead_letter" },
+        { id: "modern-legacy-dead", result_state: "dead_letter" },
         { id: "modern-success", result_state: "succeeded" },
       ]);
+      expect(
+        db.prepare("SELECT result_state FROM jobs WHERE id='modern-job'").get(),
+      ).toEqual({ result_state: null });
       const delivery = db
         .prepare("SELECT * FROM deliveries WHERE id='d1'")
         .get() as { response_index: number; host_unique_key: string };
@@ -395,10 +411,30 @@ describe("runtime schema migration", () => {
         `CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
          INSERT INTO schema_meta VALUES ('schema_version','${QUEUE_SCHEMA_VERSION}');`,
       );
+      db.exec(
+        `INSERT INTO jobs(id,payload_json,session_id,status,created_at,updated_at) VALUES
+         ('migrated-success','{}','session','completed','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('migrated-empty','{}','session','completed','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'),
+         ('migrated-dead','{}','session','dead_letter','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');
+         UPDATE jobs SET result_json='"done"',succeeded=1 WHERE id='migrated-success';
+         UPDATE jobs SET result_json='""' WHERE id='migrated-empty';
+         UPDATE jobs SET terminal_reason='max_attempts' WHERE id='migrated-dead';`,
+      );
 
       expect(columnsOf(db, "jobs")).not.toContain("result_state");
       configureRuntimeDb(db);
       expect(columnsOf(db, "jobs")).toContain("result_state");
+      expect(
+        db
+          .prepare(
+            "SELECT id,result_state FROM jobs WHERE status IN ('completed','dead_letter') ORDER BY id",
+          )
+          .all(),
+      ).toEqual([
+        { id: "migrated-dead", result_state: "max_retries" },
+        { id: "migrated-empty", result_state: "empty_response" },
+        { id: "migrated-success", result_state: "succeeded" },
+      ]);
 
       const repo = new QueueRepository(db);
       const enqueued = repo.enqueue({
@@ -419,8 +455,8 @@ describe("runtime schema migration", () => {
         succeeded: true,
       });
       expect(collectObservability(db).agent).toMatchObject({
-        jobs: 1,
-        completed: 1,
+        jobs: 4,
+        completed: 3,
       });
     } finally {
       db.close();

@@ -421,6 +421,26 @@ function addMissingColumns(
     }
   }
 }
+/**
+ * Restore terminal state for rows written before result_state was durable.
+ *
+ * A null state is the only value eligible for repair: an explicit state may
+ * have been written by a newer worker and must not be rewritten by an older
+ * process reopening the store. Unknown legacy dead-letter rows intentionally
+ * retain the generic dead_letter state; rows with a known terminal reason use
+ * the same classification as deadLetterInTransaction().
+ */
+function backfillTerminalResultState(db: Database.Database): void {
+  db.exec(`UPDATE jobs SET result_state = CASE
+    WHEN status='completed' AND succeeded=1 THEN 'succeeded'
+    WHEN status='completed' THEN 'empty_response'
+    WHEN status='dead_letter' AND terminal_reason='empty_response' THEN 'empty_response'
+    WHEN status='dead_letter' AND terminal_reason='max_attempts' THEN 'max_retries'
+    WHEN status='dead_letter' AND terminal_reason IS NOT NULL THEN 'non_retryable'
+    WHEN status='dead_letter' THEN 'dead_letter'
+    ELSE result_state
+  END WHERE result_state IS NULL AND status IN ('completed','dead_letter')`);
+}
 /** Legacy pre-durable jobs tables lack either result_json or claimed. */
 function jobsTableIsLegacy(db: Database.Database): boolean {
   const row = db
@@ -525,13 +545,7 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
   ]);
   // Older modern stores had terminal status/succeeded but no result_state.
   // Restore the durable terminal meaning before reconciliation inspects them.
-  db.exec(`UPDATE jobs SET result_state = CASE
-    WHEN status='completed' AND succeeded=1 THEN 'succeeded'
-    WHEN status='completed' THEN 'empty_response'
-    WHEN status='dead_letter' AND terminal_reason='max_attempts' THEN 'max_retries'
-    WHEN status='dead_letter' THEN 'dead_letter'
-    ELSE result_state
-  END WHERE result_state IS NULL AND status IN ('completed','dead_letter')`);
+  backfillTerminalResultState(db);
   addMissingColumns(db, "idempotency_keys", [
     { name: "completed_at", ddl: "completed_at TEXT" },
   ]);
