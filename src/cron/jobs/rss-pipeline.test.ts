@@ -207,13 +207,19 @@ describe("RSS collect / dispatch", () => {
     const appendInbox = vi.fn(async () => undefined);
     await dispatchHandler(makeDispatchCtx(appendInbox));
 
+    const claimsDb = openRssDb(statePath);
+    const claims = listDispatchClaims(claimsDb);
+    claimsDb.close();
+    const claim = claims[0];
+    if (!claim) throw new Error("expected RSS dispatch claim");
+
     expect(appendInbox).toHaveBeenCalledTimes(1);
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
         channelId: "channel-1",
         groupName: "rss",
-        idempotencyKey: expect.any(String),
-        rssDispatchId: expect.any(String),
+        idempotencyKey: claim.dispatchJobId,
+        rssDispatchId: claim.dispatchId,
         rssStatePath: statePath,
         cronDeliveryMode: "direct",
         cronSessionMode: "per-run",
@@ -225,6 +231,11 @@ describe("RSS collect / dispatch", () => {
         },
       }),
     );
+    const queuedMessage = (appendInbox as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(queuedMessage.sessionId).toMatch(/^cron-rss-dispatch-/);
+    expect(queuedMessage.timestamp).toEqual(expect.any(String));
+    expect(Number.isNaN(Date.parse(queuedMessage.timestamp))).toBe(false);
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
     expect(content).toContain("RSS記事を日本語で要約してください");

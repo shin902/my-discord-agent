@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SendMessageOptions } from "../agent/manager.js";
 import {
   claimUnreadArticles,
   listDispatchClaims,
@@ -23,25 +24,17 @@ const mocks = vi.hoisted(() => {
   return {
     AgentMock,
     appendMessage: vi.fn(),
-    claim: vi.fn(),
     client,
-    commitResult: vi.fn(),
-    deadLetter: vi.fn(),
-    failAttempt: vi.fn(),
+    currentRepository: undefined as unknown,
     findGroupByName: vi.fn(),
-    freezeExecutionIdentity: vi.fn(),
-    getJob: vi.fn(),
     getDiscordClientForGroupName: vi.fn().mockResolvedValue(client),
-    heartbeat: vi.fn(),
     loadMessages: vi.fn(),
-    markRunning: vi.fn(),
     readFile: vi.fn(),
     readdir: vi.fn(),
     resolveModel: vi.fn(),
     resolveModelConfig: vi.fn(),
     resolveProviderConcurrency: vi.fn(),
     sendMessage: vi.fn(),
-    updateRunning: vi.fn(),
   };
 });
 
@@ -83,23 +76,18 @@ vi.mock("../discord/client.js", () => ({
   getDiscordClients: () => new Map([["default", mocks.client]]),
 }));
 vi.mock("./repository.js", () => ({
-  getQueueRepository: () => ({
-    claim: mocks.claim,
-    commitResult: mocks.commitResult,
-    deadLetter: mocks.deadLetter,
-    failAttempt: mocks.failAttempt,
-    freezeExecutionIdentity: mocks.freezeExecutionIdentity,
-    get: mocks.getJob,
-    heartbeat: mocks.heartbeat,
-    markRunning: mocks.markRunning,
-    updateRunning: mocks.updateRunning,
-  }),
+  getQueueRepository: () => mocks.currentRepository,
 }));
 
+const repositoryModule =
+  await vi.importActual<typeof import("./repository.js")>("./repository.js");
 const { runAgentLoop } = await import("../sandbox/agent-runner.js");
 const { processMessage } = await import("./poller.js");
 
 const tempDirs: string[] = [];
+let queueRepository:
+  | InstanceType<typeof repositoryModule.QueueRepository>
+  | undefined;
 
 function seedUnreadArticle(path: string): void {
   const db = openRssDb(path);
@@ -129,19 +117,14 @@ function makeMessage(
   dispatchJobId: string,
   dispatchId: string,
   rssPath: string,
-): InboxMessage {
-  const now = new Date().toISOString();
+): Omit<InboxMessage, "id" | "retries" | "enqueuedAt"> {
   return {
-    id: "rss-runner-error",
     channelId: "channel",
     groupName: "default",
     sessionId: "rss-session",
     messageId: "message",
     content: "summarize",
-    timestamp: now,
-    enqueuedAt: now,
-    fencingToken: 1,
-    retries: 0,
+    timestamp: new Date().toISOString(),
     idempotencyKey: dispatchJobId,
     rssDispatchId: dispatchId,
     rssStatePath: rssPath,
@@ -170,23 +153,12 @@ beforeEach(() => {
     };
   });
   mocks.appendMessage.mockReset().mockResolvedValue(undefined);
-  mocks.claim.mockReset().mockReturnValue(undefined);
-  mocks.commitResult.mockReset();
-  mocks.deadLetter.mockReset();
-  mocks.failAttempt.mockReset();
   mocks.findGroupByName.mockReset().mockResolvedValue({
     name: "default",
     channels: [],
     allowMention: false,
   });
-  mocks.freezeExecutionIdentity.mockReset().mockResolvedValue(undefined);
-  mocks.getJob.mockReset().mockReturnValue({
-    status: "dead_letter",
-    idempotencyKey: "rss-job",
-  });
-  mocks.heartbeat.mockReset();
   mocks.loadMessages.mockReset().mockResolvedValue([]);
-  mocks.markRunning.mockReset();
   mocks.readFile
     .mockReset()
     .mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
@@ -205,36 +177,67 @@ beforeEach(() => {
   mocks.sendMessage
     .mockReset()
     .mockImplementation(
-      async (_group: string, session: string, content: string) =>
-        runAgentLoop("default", session, content, {}),
+      async (
+        _group: string,
+        session: string,
+        content: string,
+        options?: SendMessageOptions,
+      ) => {
+        await options?.onContainerStarted?.();
+        try {
+          return await runAgentLoop("default", session, content, {});
+        } finally {
+          options?.onExecutionTiming?.({
+            termination: "close",
+            exitCode: 2,
+            preparationMs: 1,
+            dockerRunMs: 2,
+          });
+        }
+      },
     );
-  mocks.updateRunning.mockReset();
+  mocks.currentRepository = undefined;
 });
 
 afterEach(async () => {
+  try {
+    queueRepository?.close();
+  } catch {
+    // The test may have already closed the repository before reopening it.
+  }
+  queueRepository = undefined;
+  mocks.currentRepository = undefined;
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
 });
 
 describe("RSS runner to poller assistant error", () => {
-  it("keeps a partial assistant error unread and lets the next cron claim it", async () => {
+  it("durably releases an RSS claim after the manager reports a failed exit code", async () => {
     const dir = await mkdtemp(join(tmpdir(), "rss-runner-poller-test-"));
     tempDirs.push(dir);
     const rssPath = join(dir, "rss.sqlite3");
+    const runtimePath = join(dir, "runtime.sqlite");
     seedUnreadArticle(rssPath);
-    const db = openRssDb(rssPath);
-    const dispatch = claimUnreadArticles(db, "cron-rss", 1);
+    const rssDb = openRssDb(rssPath);
+    const dispatch = claimUnreadArticles(rssDb, "cron-rss", 1);
     if (!dispatch) throw new Error("expected RSS dispatch");
-    db.close();
+    rssDb.close();
 
-    const message = makeMessage(dispatch.jobId, dispatch.id, rssPath);
-    mocks.getJob.mockReturnValue({
-      status: "dead_letter",
-      idempotencyKey: dispatch.jobId,
-    });
+    queueRepository = new repositoryModule.QueueRepository(
+      repositoryModule.openRuntimeDb(runtimePath),
+      "rss-agent-test",
+    );
+    mocks.currentRepository = queueRepository;
+    const queued = queueRepository.enqueue(
+      makeMessage(dispatch.jobId, dispatch.id, rssPath),
+      { idempotencyKey: dispatch.jobId },
+    );
+    const claimed = queueRepository.claim("rss-agent-test", 60_000);
+    if (!claimed) throw new Error("expected queue claim");
+    const commitResultSpy = vi.spyOn(queueRepository, "commitResult");
 
-    await processMessage(message);
+    await processMessage(claimed.job);
 
     expect(mocks.appendMessage).toHaveBeenCalledWith(
       "default",
@@ -243,13 +246,29 @@ describe("RSS runner to poller assistant error", () => {
         errorMessage: "upstream response failed",
       }),
     );
-    expect(mocks.deadLetter).toHaveBeenCalledWith(
-      message.id,
-      message.fencingToken,
-      "rss_agent_error",
-      expect.stringContaining("upstream response failed"),
-      expect.any(Object),
+    expect(commitResultSpy).not.toHaveBeenCalled();
+    commitResultSpy.mockRestore();
+
+    queueRepository.close();
+    queueRepository = new repositoryModule.QueueRepository(
+      runtimePath,
+      "rss-agent-verifier",
     );
+    mocks.currentRepository = queueRepository;
+    expect(queueRepository.get(queued.job.id)).toMatchObject({
+      status: "dead_letter",
+      terminalState: "non_retryable",
+      exitCode: 2,
+      termination: "close",
+      succeeded: false,
+    });
+    expect(queueRepository.get(queued.job.id)?.resultJson).toBeUndefined();
+    expect(
+      queueRepository.db
+        .prepare("SELECT reason FROM dead_letters WHERE job_id=?")
+        .get(queued.job.id),
+    ).toEqual({ reason: "rss_agent_error" });
+
     const check = openRssDb(rssPath);
     try {
       expect(listUnreadArticles(check, 10)).toHaveLength(1);
