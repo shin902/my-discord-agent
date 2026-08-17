@@ -354,7 +354,9 @@ describe("runtime schema migration", () => {
       expect(columnsOf(db, "idempotency_keys")).toContain("completed_at");
       expect(
         db
-          .prepare("SELECT id,result_state FROM jobs WHERE status IN ('completed','dead_letter') ORDER BY id")
+          .prepare(
+            "SELECT id,result_state FROM jobs WHERE status IN ('completed','dead_letter') ORDER BY id",
+          )
           .all(),
       ).toEqual([
         { id: "modern-dead", result_state: "max_retries" },

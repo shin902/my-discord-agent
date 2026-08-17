@@ -142,7 +142,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
       },
       content,
     )) as
-      | { inserted: boolean; job: { status: string; succeeded?: boolean; terminalState?: string } }
+      | {
+          inserted: boolean;
+          job: { status: string; succeeded?: boolean; terminalState?: string };
+        }
       | undefined;
     // An idempotency hit may return an already-terminal job without inserting
     // anything. Settle that claim now instead of leaving it for retention or
