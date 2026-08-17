@@ -11,7 +11,11 @@ import {
   openRssDb,
   saveFeedEntries,
 } from "../rss/store.js";
-import { NonRetryableError, TransientError } from "../utils/error.js";
+import {
+  ConfigurationError,
+  NonRetryableError,
+  TransientError,
+} from "../utils/error.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({
@@ -607,6 +611,10 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       allowMention: false,
     });
     vi.mocked(sendMessage).mockResolvedValue("AI response");
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => false,
+      isTextBased: () => false,
+    } as never);
     commitInboxResult.mockClear();
     failAttempt.mockClear();
     deadLetter.mockClear();
@@ -722,12 +730,22 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     }
   });
 
-  it("releases the RSS claim after a terminal dead-letter failure", async () => {
+  it("does not commit RSS articles after a code-0 configuration error", async () => {
     const rssPath = await makeRssPath();
     seedUnreadArticles(rssPath, 1);
     const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
-    const error = new NonRetryableError("invalid input");
-    vi.mocked(sendMessage).mockRejectedValue(error);
+    const error = new ConfigurationError("設定エラー: invalid input");
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onExecutionTiming?.({
+          termination: "close",
+          exitCode: 0,
+          preparationMs: 1,
+          dockerRunMs: 2,
+        });
+        throw error;
+      },
+    );
     const msg = makeMsg({
       id: "rss-dead-letter",
       idempotencyKey: dispatch.jobId,
@@ -748,6 +766,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       String(error),
       expect.any(Object),
     );
+    expect(commitInboxResult).not.toHaveBeenCalled();
     const db = openRssDb(rssPath);
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(1);
@@ -1049,8 +1068,8 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 
-  it("cron direct の NonRetryableError は Discord に通知される", async () => {
-    const error = new NonRetryableError("invalid input");
+  it("cron direct の configuration error は Discord に通知される", async () => {
+    const error = new ConfigurationError("設定エラー: invalid input");
     vi.mocked(sendMessage).mockRejectedValue(error);
 
     await processMessage(

@@ -2,6 +2,7 @@ import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AGENT_ERROR_PREFIX } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_ATTACHMENTS_DIR = path.join(
@@ -920,9 +921,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
-      /設定エラー.*不明なツール名: invalid/,
-    );
+    const result = sendMessage("test-group", "session-1", "hi");
+    await expect(result).rejects.toMatchObject({ kind: "configuration" });
+    await expect(result).rejects.toThrow(/設定エラー.*不明なツール名: invalid/);
   });
 
   it("不正なプロバイダを持つグループ設定は非リトライエラーになる", async () => {
@@ -1140,6 +1141,34 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     expect(onDiscordEvent).not.toHaveBeenCalled();
+  });
+
+  it("runner の設定エラー envelope は ConfigurationError として伝播する", async () => {
+    const message = '❌ スキル "unknown" が見つかりません。';
+    const sendMessage = await setupWithStderr(
+      `${AGENT_ERROR_PREFIX}${JSON.stringify({ kind: "configuration", message })}\nagent-runner エラー: ${message}\n`,
+      1,
+    );
+
+    await expect(sendMessage("g", "s", "hi")).rejects.toMatchObject({
+      name: "ConfigurationError",
+      kind: "configuration",
+      message,
+    });
+  });
+
+  it("runner の設定エラー envelope は終了コード0でも成功レスポンスにしない", async () => {
+    const message = '❌ スキル "unknown" が見つかりません。';
+    const sendMessage = await setupWithStderr(
+      `${AGENT_ERROR_PREFIX}${JSON.stringify({ kind: "configuration", message })}\n`,
+      0,
+    );
+
+    await expect(sendMessage("g", "s", "hi")).rejects.toMatchObject({
+      name: "ConfigurationError",
+      kind: "configuration",
+      message,
+    });
   });
 
   it("イベント行と通常行が混在した場合それぞれ適切に処理される", async () => {

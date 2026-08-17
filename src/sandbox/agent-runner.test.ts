@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultConvertToLlm } from "./agent-runner.js";
+import { defaultConvertToLlm, writeAndWaitForFlush } from "./agent-runner.js";
 
 const { AgentMock } = vi.hoisted(() => ({
   AgentMock: vi.fn(),
@@ -1169,7 +1169,7 @@ describe("runAgentLoop", () => {
     ]);
   });
 
-  it("./command で未知のスキルを指定した場合は LLM を呼ばずにエラーを返す", async () => {
+  it("./command で未知のスキルを指定した場合は設定エラーとして LLM を呼ばない", async () => {
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
       content: [{ type: "text", text: "OK" }],
@@ -1179,15 +1179,25 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    const result = await runAgentLoop(
-      "test-group",
-      "session-1",
-      "./command unknown",
-      {},
-    );
-
-    expect(result).toContain("見つかりません");
+    await expect(
+      runAgentLoop("test-group", "session-1", "./command unknown", {}),
+    ).rejects.toMatchObject({
+      kind: "configuration",
+      message: expect.stringContaining("見つかりません"),
+    });
     expect(mockAgent.prompt).not.toHaveBeenCalled();
+  });
+
+  it("allowlist に指定した欠損スキルは設定エラーとして runner 境界へ伝播する", async () => {
+    await expect(
+      runAgentLoop("test-group", "session-1", "こんにちは", {
+        skills: ["missing-skill"],
+      }),
+    ).rejects.toMatchObject({
+      kind: "configuration",
+      message: expect.stringContaining("allowlist"),
+    });
+    expect(AgentMock).not.toHaveBeenCalled();
   });
 
   it("convertToLlm が Agent に渡される", async () => {
@@ -1205,6 +1215,34 @@ describe("runAgentLoop", () => {
     expect(lastAgentOptions).toMatchObject({
       convertToLlm: expect.any(Function),
     });
+  });
+});
+
+describe("writeAndWaitForFlush", () => {
+  it("stderr の書き込み callback 完了まで解決しない", async () => {
+    let flush!: () => void;
+    const writer = {
+      write: vi.fn((_chunk: string, callback: () => void) => {
+        flush = callback;
+        return false;
+      }),
+    };
+
+    let settled = false;
+    const pending = writeAndWaitForFlush(writer, "typed error\n").then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(writer.write).toHaveBeenCalledWith(
+      "typed error\n",
+      expect.any(Function),
+    );
+
+    flush();
+    await pending;
+    expect(settled).toBe(true);
   });
 });
 

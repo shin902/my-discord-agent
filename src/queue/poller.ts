@@ -17,7 +17,11 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
-import { NonRetryableError, TransientError } from "../utils/error.js";
+import {
+  isConfigurationError,
+  NonRetryableError,
+  TransientError,
+} from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { settleRssDispatch } from "./reconciliation.js";
@@ -676,6 +680,7 @@ async function processCronNewThread(
     const ambiguousMutation =
       error instanceof DeliveryError && error.kind === "unknown";
     const nonRetryable =
+      isConfigurationError(error) ||
       error instanceof NonRetryableError ||
       (error instanceof DeliveryError && error.kind === "non-retryable");
     if (ambiguousMutation || nonRetryable) {
@@ -902,7 +907,7 @@ export async function processMessage(
         outcome = "dead-letter";
         return;
       }
-      if (err instanceof NonRetryableError) {
+      if (isConfigurationError(err) || err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
         if (shouldPublishExecutionError(msg)) {

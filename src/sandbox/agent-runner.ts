@@ -30,7 +30,12 @@ import {
 import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
-import { TransientError, isTransientError } from "../utils/error.js";
+import {
+  AGENT_ERROR_PREFIX,
+  ConfigurationError,
+  isTransientError,
+  TransientError,
+} from "../utils/error.js";
 
 // pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
 // - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
@@ -295,6 +300,20 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+/**
+ * Writable の callback が呼ばれるまで待ち、終了直前の stderr 切断を防ぐ。
+ * process.exit() は pending な書き込みを待たずに終了するため、runner の
+ * typed error envelope を書いた直後に呼び出してはならない。
+ */
+export function writeAndWaitForFlush(
+  writer: { write(chunk: string, callback: () => void): boolean },
+  chunk: string,
+): Promise<void> {
+  return new Promise((resolve) => {
+    writer.write(chunk, resolve);
+  });
+}
+
 /** read の行位置・総量を details から LLM が読めるテキストへ変換する。 */
 function formatReadToolDetails(msg: AgentMessage): string | undefined {
   if (msg.role !== "toolResult" || msg.toolName !== "read") return undefined;
@@ -459,7 +478,9 @@ export async function runAgentLoop(
     const skill = skills.find((s) => s.name === skillCommand.skillName);
     if (!skill) {
       const available = skills.map((s) => s.name).join(", ") || "(なし)";
-      return `❌ スキル "${skillCommand.skillName}" が見つかりません。利用可能なスキル: ${available}`;
+      throw new ConfigurationError(
+        `❌ スキル "${skillCommand.skillName}" が見つかりません。利用可能なスキル: ${available}`,
+      );
     }
     const skillFile = await readFile(skill.location, "utf-8");
     const { body: skillBody } = parseYamlFrontmatter(skillFile);
@@ -767,12 +788,25 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.stdout.write(response, () => resolve());
     });
     process.exit(0);
-  })().catch((err) => {
-    const transient = err instanceof TransientError || isTransientError(err);
+  })().catch(async (err) => {
+    const configuration = err instanceof ConfigurationError;
+    const transient =
+      !configuration &&
+      (err instanceof TransientError || isTransientError(err));
     const code = transient ? 2 : 1;
-    process.stderr.write(
-      `agent-runner エラー${transient ? "（一時的）" : ""}: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    process.exit(code);
+    const message = err instanceof Error ? err.message : String(err);
+    const typedErrorLine = configuration
+      ? `${AGENT_ERROR_PREFIX}${JSON.stringify({ kind: "configuration", message })}\n`
+      : "";
+    try {
+      await writeAndWaitForFlush(
+        process.stderr,
+        `${typedErrorLine}agent-runner エラー${transient ? "（一時的）" : ""}: ${message}\n`,
+      );
+    } finally {
+      // stderr の callback 完了後に終了し、typed envelope の欠落を防ぐ。
+      // 書き込み自体が失敗しても、元の分類に対応する終了コードは維持する。
+      process.exit(code);
+    }
   });
 }

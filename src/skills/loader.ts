@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { SkillSelection } from "../config/groups.js";
+import { ConfigurationError } from "../utils/error.js";
 
 export const SkillSchema = z.object({
   name: z.string(),
@@ -68,7 +69,7 @@ export async function loadSkills(
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       if (allowlist && allowlist.length > 0) {
-        throw new Error(
+        throw new ConfigurationError(
           `[skills] スキルディレクトリ "${skillsDir}" が存在しません。allowlist に指定されたスキル: ${allowlist.join(", ")}`,
         );
       }
@@ -92,7 +93,7 @@ export async function loadSkills(
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         if (allowlist?.includes(entry.name)) {
-          throw new Error(
+          throw new ConfigurationError(
             `[skills] ディレクトリ "${entry.name}" は存在しますが SKILL.md がありません (${skillPath})`,
           );
         }
@@ -125,7 +126,7 @@ export async function loadSkills(
   if (allowlist) {
     const missing = allowlist.filter((name) => !foundDirs.has(name));
     if (missing.length > 0) {
-      throw new Error(
+      throw new ConfigurationError(
         `[skills] allowlist に指定されたスキルが "${skillsDir}" に見つかりません: ${missing.join(", ")}`,
       );
     }

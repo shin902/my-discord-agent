@@ -14,7 +14,13 @@ import {
 } from "../config/groups.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
-import { NonRetryableError, TransientError } from "../utils/error.js";
+import {
+  AGENT_ERROR_PREFIX,
+  ConfigurationError,
+  NonRetryableError,
+  parseAgentErrorPayload,
+  TransientError,
+} from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
@@ -271,13 +277,28 @@ export async function validateGroupConfig(
   extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));
 }
 
+function configurationErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "不明なエラー";
+}
+
+function asConfigurationError(error: unknown): ConfigurationError {
+  if (error instanceof ConfigurationError) return error;
+  return new ConfigurationError(
+    `設定エラー: ${configurationErrorMessage(error)}`,
+  );
+}
+
 export async function validateAgentConfiguration(
   config: AgentConfig & { mounts?: MountConfig[] },
 ): Promise<void> {
-  const resolvedModel = await resolveModelConfig(config.model);
-  await validateModel(resolvedModel.provider, resolvedModel.modelId);
-  resolveTools(config.tools ?? []);
-  buildExtraMountArgs(config.mounts ?? []);
+  try {
+    const resolvedModel = await resolveModelConfig(config.model);
+    await validateModel(resolvedModel.provider, resolvedModel.modelId);
+    resolveTools(config.tools ?? []);
+    buildExtraMountArgs(config.mounts ?? []);
+  } catch (error) {
+    throw asConfigurationError(error);
+  }
 }
 
 const MAX_ATTACHMENTS = 5;
@@ -416,22 +437,13 @@ export async function sendMessage(
     ...options.configOverride,
   };
 
-  const resolvedModel = await resolveModelConfig(effectiveConfig.model);
-
+  let resolvedModel: Awaited<ReturnType<typeof resolveModelConfig>>;
   try {
+    resolvedModel = await resolveModelConfig(effectiveConfig.model);
     await validateModel(resolvedModel.provider, resolvedModel.modelId);
-  } catch (err) {
-    throw new NonRetryableError(
-      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
-    );
-  }
-
-  try {
     resolveTools(effectiveConfig.tools ?? []);
-  } catch (err) {
-    throw new NonRetryableError(
-      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
-    );
+  } catch (error) {
+    throw asConfigurationError(error);
   }
 
   // mounts は validateGroupConfig() が起動時に検証・キャッシュ済みならそれを使う。
@@ -444,10 +456,8 @@ export async function sendMessage(
   } else {
     try {
       extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
-    } catch (err) {
-      throw new NonRetryableError(
-        `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
-      );
+    } catch (error) {
+      throw asConfigurationError(error);
     }
   }
 
@@ -604,6 +614,7 @@ export async function sendMessage(
     if (!requiresReadyHandshake) readyResolve();
     let agentTiming: AgentTimingEvent | undefined;
     let agentTimingReceivedAt: number | undefined;
+    let runnerConfigurationError: string | undefined;
     let timingReported = false;
 
     const reportExecutionTiming = (
@@ -689,6 +700,19 @@ export async function sendMessage(
         } catch {
           // ignore malformed events
         }
+      } else if (line.startsWith(AGENT_ERROR_PREFIX)) {
+        try {
+          const payload = parseAgentErrorPayload(
+            JSON.parse(line.slice(AGENT_ERROR_PREFIX.length)),
+          );
+          if (payload?.kind === "configuration") {
+            runnerConfigurationError = payload.message;
+            return;
+          }
+        } catch {
+          // Keep malformed protocol lines in stderr for the fallback error.
+        }
+        plainStderr += `${line}\n`;
       } else {
         // docker run --pull=always は pull 完了時に Status 行を出力する。
         // ここを境界にして、image pull とコンテナ内処理の所要時間を分離する。
@@ -759,7 +783,9 @@ export async function sendMessage(
         reject(new TransientError("runner exited before ready"));
         return;
       }
-      if (code === 0) resolve(stdout.trim());
+      if (runnerConfigurationError !== undefined)
+        reject(new ConfigurationError(runnerConfigurationError));
+      else if (code === 0) resolve(stdout.trim());
       else if (code === 2) reject(new TransientError(plainStderr.trim()));
       else if (code === null)
         reject(new TransientError("コンテナがシグナルで終了しました"));
