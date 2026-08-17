@@ -400,18 +400,16 @@ async function failAttemptIfNonZeroExitCode(
   msg: InboxMessage,
   response: string,
   timing: ResponseTiming,
-): Promise<boolean> {
+): Promise<Error | undefined> {
   const exitCode = timing.agentExecution?.exitCode;
   if (exitCode === undefined || exitCode === null || exitCode === 0) {
-    return false;
+    return undefined;
   }
-  await getQueueRepository().failAttempt(
-    msg.id,
-    new Error(response || `agent exited with code ${exitCode}`),
-    msg.fencingToken,
-    { metadata: executionMetadata(timing) },
-  );
-  return true;
+  const error = new Error(response || `agent exited with code ${exitCode}`);
+  await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {
+    metadata: executionMetadata(timing),
+  });
+  return error;
 }
 
 // RSS のエージェント失敗はこの実行を終了させ、claim を次回 cron に返す。
@@ -485,10 +483,24 @@ function usesCronDestinationSession(msg: InboxMessage): boolean {
 }
 
 function shouldPublishExecutionError(msg: InboxMessage): boolean {
-  // A new-thread job has no user-facing execution destination until its
-  // result is ready. Keep failures in logs/queue state instead of leaving an
-  // error-only message or thread in Discord.
+  // New-thread jobs use the dedicated flow above, which reports failures to
+  // the created thread when one exists rather than to the parent channel.
   return msg.cronDeliveryMode !== "new-thread" && msg.cronThread !== true;
+}
+
+async function reportCronThreadError(
+  msg: InboxMessage,
+  error: unknown,
+): Promise<void> {
+  if (!msg.cronThreadId) return;
+  // A destination-mode cron job creates its thread before running the agent.
+  // Once that mutation exists, all execution failures belong in that thread,
+  // not in the parent channel. sendDiscordEvent is best-effort by design so a
+  // Discord reporting failure cannot change the queue transition below.
+  await sendDiscordEvent(msg.groupName, msg.cronThreadId, {
+    type: "error",
+    message: String(error),
+  });
 }
 
 function cronSessionId(msg: InboxMessage): string {
@@ -569,6 +581,10 @@ async function createCronThread(msg: InboxMessage): Promise<string> {
 async function ensureCronThread(msg: InboxMessage): Promise<void> {
   if (msg.cronThreadId || msg.fencingToken === undefined) return;
   const threadId = await createCronThread(msg);
+  // Keep the external identity in memory immediately. If the local persistence
+  // call fails after Discord created the thread, the resulting error still has
+  // a concrete destination for reporting and no second thread is attempted.
+  msg.cronThreadId = threadId;
   try {
     // The thread is an external mutation. Persist its ID before the agent can
     // run so the destination session and the later delivery both use the same
@@ -598,6 +614,7 @@ async function processCronNewThread(
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = cronSessionId(msg);
+  let executionErrorEventReported = false;
   try {
     if (!msg.cronJobId) {
       outcome = "dead-letter";
@@ -628,6 +645,15 @@ async function processCronNewThread(
         const agentStartedAt = Date.now();
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
+            onDiscordEvent: (event) => {
+              // Tool progress is intentionally suppressed for cron jobs, but
+              // agent/provider error events belong in an already-created
+              // destination thread as well as thrown execution errors.
+              if (event.type === "error") {
+                executionErrorEventReported = true;
+                void reportCronThreadError(msg, event.message);
+              }
+            },
             onExecutionTiming: (executionTiming) => {
               timing.agentExecution = executionTiming;
             },
@@ -652,7 +678,15 @@ async function processCronNewThread(
         signal,
       },
     );
-    if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    const nonZeroExitError = await failAttemptIfNonZeroExitCode(
+      msg,
+      response,
+      timing,
+    );
+    if (nonZeroExitError) {
+      await reportCronThreadError(msg, nonZeroExitError);
+      return;
+    }
     if (await failAttemptIfEmptyRssResponse(msg, response, timing)) return;
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
@@ -674,9 +708,11 @@ async function processCronNewThread(
     outcome = response ? "success" : "empty-response";
   } catch (error) {
     if (await deadLetterRssAgentError(msg, error, timing)) {
+      if (!executionErrorEventReported) await reportCronThreadError(msg, error);
       outcome = "dead-letter";
       return;
     }
+    if (!executionErrorEventReported) await reportCronThreadError(msg, error);
     const ambiguousMutation =
       error instanceof DeliveryError && error.kind === "unknown";
     const nonRetryable =

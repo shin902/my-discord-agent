@@ -179,17 +179,20 @@ it("marks a 500 during thread creation ambiguous without retrying", async () => 
     repo.close();
   }
 });
-it("marks transport failure during message send ambiguous without retrying", async () => {
+it("reports a delivery failure inside the created thread without retrying the result", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
-  const send = vi.fn(async () => {
-    throw new TypeError("socket closed");
-  });
+  const send = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("socket closed"))
+    .mockResolvedValueOnce({ id: "error-message-1" });
   const thread = { id: "thread-1", isSendable: () => true, send };
   const channel = { threads: { create: vi.fn(async () => thread) } };
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
-    .mockResolvedValue(channel as never);
+    .mockImplementation(
+      async (id) => (id === "channel" ? channel : thread) as never,
+    );
   try {
     const jobId = completed(repo, "response", {
       destinationType: "new-thread",
@@ -201,8 +204,13 @@ it("marks transport failure during message send ambiguous without retrying", asy
     });
     await worker.runOnce();
     expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenLastCalledWith({
+      content: expect.stringContaining("socket closed"),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
     await worker.runOnce();
-    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledTimes(2);
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();

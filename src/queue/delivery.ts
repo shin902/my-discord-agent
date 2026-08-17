@@ -25,6 +25,7 @@ export class DeliveryError extends Error {
     public readonly kind: DeliveryErrorKind,
     message: string,
     public readonly cause?: unknown,
+    public readonly cronThreadId?: string,
   ) {
     super(message);
   }
@@ -72,6 +73,43 @@ type DeliveryTarget = {
   send: (payload: unknown) => Promise<{ id?: unknown }>;
   threads?: { create: (options: { name: string }) => Promise<DeliveryTarget> };
 };
+
+function formatDeliveryError(error: unknown): string {
+  const text = `⚠️ エラー: ${String(error)}`;
+  return text.length > 2000 ? `${text.slice(0, 1999)}…` : text;
+}
+
+async function reportDeliveryError(
+  row: DeliveryRow,
+  threadId: string,
+  error: unknown,
+): Promise<void> {
+  let groupName: string | undefined;
+  try {
+    const payload = JSON.parse(row.payloadJson ?? "{}") as DeliveryPayload;
+    groupName = payload.groupName;
+  } catch {
+    // A malformed payload is already a delivery failure; there is no safe
+    // group/client identity from which to report it.
+  }
+  if (!groupName) return;
+  try {
+    const client = await resolveDiscordClient(groupName);
+    const target = (await client.channels.fetch(
+      threadId,
+    )) as unknown as DeliveryTarget | null;
+    if (!target?.isSendable?.()) return;
+    await target.send({
+      content: formatDeliveryError(error),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+  } catch (reportError) {
+    // Error reporting is best effort and must not change the delivery retry
+    // state determined by the original failure.
+    console.error("[delivery] cron thread error report failed", reportError);
+  }
+}
+
 export class DiscordDeliveryAdapter implements DeliveryAdapter {
   async send(
     row: DeliveryRow,
@@ -82,6 +120,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     // after the server has applied the change. Transport/unknown failures
     // after either call therefore must not be retried automatically.
     let mutationAttempted = false;
+    let threadId = row.cronThreadId ?? payload.cronThreadId;
     try {
       const destinationId = payload.destinationId ?? row.destinationId;
       if (!destinationId)
@@ -103,7 +142,6 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       }
       if (typeof client.isReady === "function" && !client.isReady())
         throw new DeliveryError("retryable", "Discord client is not ready");
-      let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
       if (
         payload.destinationType === "new-thread" ||
@@ -180,28 +218,48 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         ...(threadId ? { cronThreadId: threadId } : {}),
       };
     } catch (error) {
-      if (error instanceof DeliveryError) throw error;
-      const kind = classifyDiscordError(error);
+      const kind =
+        error instanceof DeliveryError
+          ? error.kind
+          : classifyDiscordError(error);
       const status = statusCode(error);
       // After create/send starts, a 5xx response does not prove that Discord
       // rejected the mutation. Treat it like a lost transport response rather
       // than retrying and potentially duplicating a thread or message. A 429 is
       // safe to retry because it explicitly reports rate-limit rejection.
       const postMutationAmbiguous =
+        !(error instanceof DeliveryError) &&
         mutationAttempted &&
         (status !== undefined
           ? status >= 500
           : kind === "retryable" || kind === "unknown");
       const effectiveKind = postMutationAmbiguous
         ? "unknown"
-        : kind === "unknown"
-          ? "retryable"
-          : kind;
-      throw new DeliveryError(
-        effectiveKind,
-        error instanceof Error ? error.message : String(error),
-        error,
-      );
+        : error instanceof DeliveryError
+          ? error.kind
+          : kind === "unknown"
+            ? "retryable"
+            : kind;
+      const normalized =
+        error instanceof DeliveryError
+          ? error
+          : new DeliveryError(
+              effectiveKind,
+              error instanceof Error ? error.message : String(error),
+              error,
+            );
+      // The worker uses this identity to report failures without creating a
+      // second thread. It is set for both newly-created and already-persisted
+      // destinations, including failures while persisting a newly-created ID.
+      if (threadId && normalized.cronThreadId !== threadId) {
+        throw new DeliveryError(
+          normalized.kind,
+          normalized.message,
+          normalized.cause ?? error,
+          threadId,
+        );
+      }
+      throw normalized;
     }
   }
 }
@@ -269,6 +327,17 @@ export class DeliveryWorker {
       });
     } catch (error) {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
+      let threadId =
+        (error instanceof DeliveryError ? error.cronThreadId : undefined) ??
+        claim.row.cronThreadId;
+      if (!threadId) {
+        try {
+          threadId = this.repository.getDelivery(claim.row.jobId)?.cronThreadId;
+        } catch (lookupError) {
+          console.error("[delivery] cron thread lookup failed", lookupError);
+        }
+      }
+      if (threadId) await reportDeliveryError(claim.row, threadId, error);
       try {
         this.repository.updateDelivery(
           claim.row.id,

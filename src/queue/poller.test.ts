@@ -262,6 +262,38 @@ describe("processMessage - terminal queue transitions", () => {
     expect(deadLetter).not.toHaveBeenCalled();
   });
 
+  it("cron new-thread destination reports retryable agent errors in the created thread", async () => {
+    const error = new TransientError("provider unavailable");
+    const threadSend = vi.fn().mockResolvedValue(undefined);
+    const create = vi.fn().mockResolvedValue({ id: "thread-agent-error" });
+    vi.mocked(client.channels.fetch)
+      .mockResolvedValueOnce({ threads: { create } } as never)
+      .mockResolvedValueOnce({
+        isSendable: () => true,
+        send: threadSend,
+      } as never);
+    vi.mocked(sendMessage).mockRejectedValue(error);
+    const msg = makeMsg({
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronJobId: "daily",
+    });
+
+    await processMessage(msg);
+
+    expect(threadSend).toHaveBeenCalledWith({
+      content: `⚠️ エラー: ${String(error)}`,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      error,
+      msg.fencingToken,
+      expect.objectContaining({ metadata: expect.any(Object) }),
+    );
+    expect(deadLetter).not.toHaveBeenCalled();
+  });
+
   it("non-zero exit fails the attempt with execution metadata in an options object", async () => {
     const executionTiming = {
       termination: "close" as const,
@@ -553,6 +585,11 @@ describe("processMessage - terminal queue transitions", () => {
       dockerRunMs: 2,
       assistantTurns: 1,
     };
+    const threadSend = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(client.channels.fetch).mockResolvedValueOnce({
+      isSendable: () => true,
+      send: threadSend,
+    } as never);
     vi.mocked(sendMessage).mockImplementation(
       async (_group, _session, _content, options: unknown) => {
         (options as SendMessageOptions | undefined)?.onExecutionTiming?.(
@@ -569,6 +606,10 @@ describe("processMessage - terminal queue transitions", () => {
 
     await processMessage(msg);
 
+    expect(threadSend).toHaveBeenCalledWith({
+      content: expect.stringContaining("partial response"),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
     expect(failAttempt).toHaveBeenCalledOnce();
     expect(failAttempt).toHaveBeenCalledWith(
       msg.id,
@@ -1083,7 +1124,7 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 
-  it("cron new-thread の NonRetryableError は Discord に通知されない", async () => {
+  it("cron new-thread の NonRetryableError は作成済みスレッドに通知される", async () => {
     const error = new NonRetryableError("invalid input");
     const create = vi.fn().mockResolvedValue({ id: "thread-1" });
     vi.mocked(client.channels.fetch).mockResolvedValueOnce({
@@ -1099,7 +1140,45 @@ describe("processMessage - Discord イベント通知", () => {
       }),
     );
 
-    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockSend).toHaveBeenCalledWith({
+      content: `⚠️ エラー: ${String(error)}`,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+    expect(client.channels.fetch).toHaveBeenLastCalledWith("thread-1");
+  });
+
+  it("cron new-thread の agent error event は作成済みスレッドに送信される", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "thread-event-error" });
+    vi.mocked(client.channels.fetch)
+      .mockResolvedValueOnce({ threads: { create } } as never)
+      .mockResolvedValueOnce({
+        isSendable: () => true,
+        send: mockSend,
+      } as never);
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "error",
+          message: "provider rejected the prompt",
+        });
+        return "";
+      },
+    );
+
+    await processMessage(
+      makeMsg({
+        cronDeliveryMode: "new-thread",
+        cronSessionMode: "destination",
+        cronJobId: "daily-job",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "⚠️ エラー: provider rejected the prompt",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
   });
 
   it("tool_start イベント（args あり）で 🔧 ツール名 + 引数が送信される", async () => {
