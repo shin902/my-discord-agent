@@ -676,9 +676,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(1);
       expect(listDispatchClaims(db)).toEqual([]);
-      expect(claimUnreadArticles(db, "next-cron", 1)?.articles).toHaveLength(
-        1,
-      );
+      expect(claimUnreadArticles(db, "next-cron", 1)?.articles).toHaveLength(1);
     } finally {
       db.close();
     }
@@ -715,9 +713,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(1);
       expect(listDispatchClaims(db)).toEqual([]);
-      expect(claimUnreadArticles(db, "next-cron", 1)?.articles).toHaveLength(
-        1,
-      );
+      expect(claimUnreadArticles(db, "next-cron", 1)?.articles).toHaveLength(1);
     } finally {
       db.close();
     }

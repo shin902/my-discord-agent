@@ -51,9 +51,7 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   readdir: mocks.readdir,
 }));
 vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@earendil-works/pi-agent-core")
-  >()),
+  ...(await importOriginal<typeof import("@earendil-works/pi-agent-core")>()),
   Agent: mocks.AgentMock,
 }));
 vi.mock("../agent/manager.js", () => ({ sendMessage: mocks.sendMessage }));
@@ -124,7 +122,11 @@ function seedUnreadArticle(path: string): void {
   }
 }
 
-function makeMessage(dispatchJobId: string, dispatchId: string, rssPath: string): InboxMessage {
+function makeMessage(
+  dispatchJobId: string,
+  dispatchId: string,
+  rssPath: string,
+): InboxMessage {
   const now = new Date().toISOString();
   return {
     id: "rss-runner-error",
@@ -182,12 +184,12 @@ beforeEach(() => {
   mocks.heartbeat.mockReset();
   mocks.loadMessages.mockReset().mockResolvedValue([]);
   mocks.markRunning.mockReset();
-  mocks.readFile.mockReset().mockRejectedValue(
-    Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-  );
-  mocks.readdir.mockReset().mockRejectedValue(
-    Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-  );
+  mocks.readFile
+    .mockReset()
+    .mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+  mocks.readdir
+    .mockReset()
+    .mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
   mocks.resolveModel.mockReset().mockResolvedValue({
     id: "model",
     provider: "zai",
@@ -197,10 +199,12 @@ beforeEach(() => {
     modelId: "model",
   });
   mocks.resolveProviderConcurrency.mockReset().mockResolvedValue("serial");
-  mocks.sendMessage.mockReset().mockImplementation(
-    async (_group: string, session: string, content: string) =>
-      runAgentLoop("default", session, content, {}),
-  );
+  mocks.sendMessage
+    .mockReset()
+    .mockImplementation(
+      async (_group: string, session: string, content: string) =>
+        runAgentLoop("default", session, content, {}),
+    );
   mocks.updateRunning.mockReset();
 });
 
