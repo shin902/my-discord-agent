@@ -461,8 +461,8 @@ function rebuildLegacyQueueSchema(db: Database.Database): void {
       attempts,max_attempts,next_attempt_at,NULL,NULL,fencing_token,last_error,created_at,updated_at,completed_at,
       COALESCE(json_extract(payload_json,'$.sessionId'),''),
       ROW_NUMBER() OVER (PARTITION BY COALESCE(json_extract(payload_json,'$.sessionId'),'') ORDER BY created_at,id)-1,
-      CASE WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END,
-      0,
+      CASE WHEN status='completed' THEN 'succeeded' WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END,
+      CASE WHEN status='completed' THEN 1 ELSE 0 END,
       CASE WHEN status='dead_letter' THEN 'dead_letter' ELSE NULL END
     FROM jobs_legacy`);
   if (
@@ -518,6 +518,10 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
   addMissingColumns(db, "deliveries", DELIVERY_UPGRADE_COLUMNS);
   addMissingColumns(db, "jobs", [
     { name: "claimed", ddl: "claimed INTEGER NOT NULL DEFAULT 0" },
+    {
+      name: "result_state",
+      ddl: "result_state TEXT CHECK(result_state IN ('succeeded','empty_response','non_retryable','max_retries','dead_letter'))",
+    },
   ]);
   addMissingColumns(db, "idempotency_keys", [
     { name: "completed_at", ddl: "completed_at TEXT" },
@@ -1254,12 +1258,7 @@ export class QueueRepository {
       next_attempt_at: null,
       last_error: error ?? reason,
       terminal_reason: reason,
-      result_state:
-        reason === "max_attempts"
-          ? "max_retries"
-          : reason === "empty_response"
-            ? "empty_response"
-            : "non_retryable",
+      result_state: reason === "max_attempts" ? "max_retries" : "non_retryable",
       error_json: JSON.stringify({ message: error ?? reason, error }),
       ...metadataSetColumns(metadata),
     });

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { collectObservability } from "./observability.js";
 import {
   configureRuntimeDb,
   openRuntimeDb,
@@ -76,6 +77,11 @@ CREATE INDEX IF NOT EXISTS dead_letters_job ON dead_letters(job_id, created_at);
 // repository.ts) used to build "jobs modern, deliveries stale" and
 // "idempotency completed_at-deficient" fixtures.
 const MODERN_JOBS_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_json TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK(status IN ('queued','retry_wait','claimed','running','completed','dead_letter')), claimed INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 10, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, claimed_at TEXT, started_at TEXT, heartbeat_at TEXT, exit_code INTEGER, termination TEXT, stop_reason TEXT, usage_json TEXT, timing_json TEXT, error_json TEXT, result_json TEXT, result_state TEXT, terminal_reason TEXT, succeeded INTEGER NOT NULL DEFAULT 0, delivery_id TEXT, agents_snapshot_hash TEXT, memory_snapshot_hash TEXT, snapshot_hash TEXT, tool_call_key TEXT, workspace_path TEXT, conversation_path TEXT`;
+
+const MODERN_JOBS_COLUMNS_WITHOUT_RESULT_STATE = MODERN_JOBS_COLUMNS.replace(
+  ", result_state TEXT,",
+  ",",
+);
 
 // The afb-era deliveries table: no durable-delivery columns, unique per job.
 const LEGACY_DELIVERIES_COLUMNS = `id TEXT PRIMARY KEY, job_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', payload_json TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL`;
@@ -272,8 +278,7 @@ describe("runtime schema migration", () => {
         status: "completed",
         session_id: "session",
         sequence: 1,
-        result_state: null,
-        succeeded: 0,
+        succeeded: 1,
       });
       // delivery row survived and was backfilled with durable-column defaults
       const delivery = db
@@ -351,6 +356,55 @@ describe("runtime schema migration", () => {
       expect(schemaVersion(db)).toBe(QUEUE_SCHEMA_VERSION);
       db.exec("UPDATE jobs SET status='completed' WHERE id='modern-job'");
       enqueueSample(db);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("repairs result_state on a current modern store before commit and observability access", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec(
+        `CREATE TABLE jobs (${MODERN_JOBS_COLUMNS_WITHOUT_RESULT_STATE});`,
+      );
+      db.exec(`CREATE TABLE deliveries (${LEGACY_DELIVERIES_COLUMNS});`);
+      db.exec(
+        `CREATE TABLE idempotency_keys (key TEXT PRIMARY KEY, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, status TEXT NOT NULL CHECK(status IN ('active','completed','dead_letter')), created_at TEXT NOT NULL, completed_at TEXT);`,
+      );
+      db.exec(
+        `CREATE TABLE dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, reason TEXT NOT NULL, payload_json TEXT, error TEXT, source TEXT NOT NULL, created_at TEXT NOT NULL);`,
+      );
+      db.exec(
+        `CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         INSERT INTO schema_meta VALUES ('schema_version','${QUEUE_SCHEMA_VERSION}');`,
+      );
+
+      expect(columnsOf(db, "jobs")).not.toContain("result_state");
+      configureRuntimeDb(db);
+      expect(columnsOf(db, "jobs")).toContain("result_state");
+
+      const repo = new QueueRepository(db);
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "result-state-session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = repo.claim("worker", 1_000);
+      expect(claimed).toBeDefined();
+      if (!claimed) throw new Error("expected result-state job claim");
+      repo.commitResult(enqueued.job.id, claimed.fencingToken, "done");
+
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        status: "completed",
+        terminalState: "succeeded",
+        succeeded: true,
+      });
+      expect(collectObservability(db).agent).toMatchObject({
+        jobs: 1,
+        completed: 1,
+      });
     } finally {
       db.close();
     }
