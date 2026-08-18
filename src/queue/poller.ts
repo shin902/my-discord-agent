@@ -996,9 +996,14 @@ export async function processMessage(
       } else {
         outcome = "retry";
         if (msg.fencingToken !== undefined) {
-          await getQueueRepository().failAttempt(msg.id, err, msg.fencingToken, {
-            metadata: executionMetadata(timing),
-          });
+          await getQueueRepository().failAttempt(
+            msg.id,
+            err,
+            msg.fencingToken,
+            {
+              metadata: executionMetadata(timing),
+            },
+          );
           const after = getQueueRepository().get(msg.id);
           if (after?.status === "dead_letter") outcome = "dead-letter";
         }
