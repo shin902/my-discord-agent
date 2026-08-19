@@ -215,7 +215,11 @@ export function reconcileRssDispatches(
   // callers that pass no path argument fall back to queue-payload discovery.
   const discovered =
     configured === undefined ? repo.listRssStatePaths() : configured;
-  const paths = new Set<string | undefined>([undefined, ...discovered]);
+  // Explicit paths are authoritative. Only standalone discovery with no
+  // matching payload falls back to the process default database.
+  const paths = new Set<string | undefined>(
+    discovered.length > 0 ? discovered : [undefined],
+  );
   let resolved = 0;
   for (const rssDbPath of paths) {
     const result = tryOpenRssDb(rssDbPath);

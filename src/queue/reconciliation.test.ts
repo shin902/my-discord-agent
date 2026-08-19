@@ -140,7 +140,9 @@ describe("reconcileRssDispatches", () => {
       } finally {
         beforeRecovery.close();
       }
-      expect(reconcileRssDispatches(repo)).toBe(1);
+      // Limit this test to its isolated database; the process default RSS DB
+      // may contain live claims when the full suite runs in a developer checkout.
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
       const check = openRssDb(rssPath);
       try {
         expect(listUnreadArticles(check, 10)).toEqual([]);
@@ -617,7 +619,9 @@ describe("reconcileRssDispatches", () => {
     try {
       completeSuccessfully(repo, rssPath, dispatch);
 
-      const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
+      const discoverySpy = vi
+        .spyOn(repo, "listRssStatePaths")
+        .mockReturnValue([rssPath]);
       expect(reconcileRssDispatches(repo)).toBe(1);
       expect(discoverySpy).toHaveBeenCalledTimes(1);
     } finally {
