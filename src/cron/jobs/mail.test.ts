@@ -85,11 +85,9 @@ describe("mail cron delivery boundary", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     mockEmail(fetchMock);
-    const send = vi
-      .fn()
-      .mockResolvedValue({
-        startThread: vi.fn().mockResolvedValue({ id: "thread", send: vi.fn() }),
-      });
+    const send = vi.fn().mockResolvedValue({
+      startThread: vi.fn().mockResolvedValue({ id: "thread", send: vi.fn() }),
+    });
     const channel = { type: 0, send };
     mocks.runTextOnlyAgent.mockResolvedValue({
       text: "要約",
