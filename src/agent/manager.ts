@@ -412,13 +412,17 @@ export async function sendMessage(
   try {
     await validateModel(resolvedModel.provider, resolvedModel.modelId);
   } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+    throw new NonRetryableError(
+      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+    );
   }
 
   try {
     resolveTools(effectiveConfig.tools ?? []);
   } catch (err) {
-    return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+    throw new NonRetryableError(
+      `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+    );
   }
 
   // mounts は validateGroupConfig() が起動時に検証・キャッシュ済みならそれを使う。
@@ -432,7 +436,9 @@ export async function sendMessage(
     try {
       extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
     } catch (err) {
-      return `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`;
+      throw new NonRetryableError(
+        `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
+      );
     }
   }
 
@@ -589,6 +595,7 @@ export async function sendMessage(
     if (!requiresReadyHandshake) readyResolve();
     let agentTiming: AgentTimingEvent | undefined;
     let agentTimingReceivedAt: number | undefined;
+    let runnerError: string | undefined;
     let timingReported = false;
 
     const reportExecutionTiming = (
@@ -669,6 +676,7 @@ export async function sendMessage(
             agentTiming = event;
             agentTimingReceivedAt = Date.now();
           } else {
+            if (event.type === "error") runnerError = event.message;
             onDiscordEvent?.(event);
           }
         } catch {
@@ -744,11 +752,22 @@ export async function sendMessage(
         reject(new TransientError("runner exited before ready"));
         return;
       }
-      if (code === 0) resolve(stdout.trim());
+      if (code === 0 && (runnerError || agentTiming?.stopReason === "error")) {
+        reject(
+          new NonRetryableError(
+            `agent error: ${runnerError ?? "assistant stopReason=error"}`,
+          ),
+        );
+      } else if (code === 0) resolve(stdout.trim());
       else if (code === 2) reject(new TransientError(plainStderr.trim()));
       else if (code === null)
         reject(new TransientError("コンテナがシグナルで終了しました"));
-      else resolve(`エージェント実行エラー: ${plainStderr.trim()}`);
+      else
+        reject(
+          new NonRetryableError(
+            `エージェント実行エラー: ${plainStderr.trim()}`,
+          ),
+        );
     });
 
     proc.on("error", (err: Error) => {

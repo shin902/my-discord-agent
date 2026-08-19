@@ -682,9 +682,9 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   it("相対パスの host がリポジトリルート外を指す場合は設定エラーを返す", async () => {
     await setup([{ host: "../outside", container: "/outside" }]);
     const { sendMessage } = await import("./manager.js");
-    const result = await sendMessage("test-group", "session-1", "hi");
-    expect(result).toContain("設定エラー");
-    expect(result).toContain("リポジトリルート外");
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
+      /設定エラー.*リポジトリルート外/,
+    );
   });
 });
 
@@ -920,9 +920,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("設定エラー: 不明なツール名: invalid");
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
+      "設定エラー: 不明なツール名: invalid",
+    );
   });
 
   it("不正なプロバイダを持つグループ設定は設定エラーを返す", async () => {
@@ -936,9 +936,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toBe("設定エラー: 不明なプロバイダ: unknown");
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
+      "設定エラー: 不明なプロバイダ: unknown",
+    );
   });
 
   it("mounts.container が /workspace と重複する場合は設定エラーを返す", async () => {
@@ -952,10 +952,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    const result = await sendMessage("test-group", "session-1", "hi");
-
-    expect(result).toContain("設定エラー");
-    expect(result).toContain("/workspace");
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
+      /設定エラー.*\/workspace/,
+    );
   });
 });
 
@@ -1132,14 +1131,37 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
   });
 
+  it("stopReason=error は errorMessage がなくても失敗として伝播する", async () => {
+    const eventPayload = {
+      type: "agent_timing",
+      promptMs: 1,
+      assistantTurns: 1,
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+      },
+      stopReason: "error",
+    };
+    const sendMessage = await setupWithStderr(
+      `__DISCORD_EVENT__:${JSON.stringify(eventPayload)}\n`,
+    );
+
+    await expect(sendMessage("g", "s", "hi")).rejects.toThrow(
+      "assistant stopReason=error",
+    );
+  });
+
   it("通常の stderr はコールバックに渡されずエラー文字列に含まれる", async () => {
     const sendMessage = await setupWithStderr("plain error\n", 1);
 
     const onDiscordEvent = vi.fn();
-    const result = await sendMessage("g", "s", "hi", onDiscordEvent);
-
+    await expect(sendMessage("g", "s", "hi", onDiscordEvent)).rejects.toThrow(
+      "plain error",
+    );
     expect(onDiscordEvent).not.toHaveBeenCalled();
-    expect(result).toContain("plain error");
   });
 
   it("イベント行と通常行が混在した場合それぞれ適切に処理される", async () => {
@@ -1150,12 +1172,10 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    const result = await sendMessage("g", "s", "hi", onDiscordEvent);
-
+    await expect(sendMessage("g", "s", "hi", onDiscordEvent)).rejects.toThrow(
+      /log line[\s\S]*another log/,
+    );
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
-    expect(result).toContain("log line");
-    expect(result).toContain("another log");
-    expect(result).not.toContain("__DISCORD_EVENT__");
   });
 
   it("コールバックなしでも正常に動作する", async () => {

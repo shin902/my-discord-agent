@@ -4,6 +4,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { settleRssDispatch } from "./reconciliation.js";
 
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
@@ -267,33 +268,89 @@ export class DeliveryWorker {
         externalMessageId: sent.externalMessageId,
         ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),
       });
+      if (this.isRss(claim.row)) {
+        const deliveries = this.repository
+          .listDeliveries()
+          .filter((delivery) => delivery.jobId === claim.row.jobId);
+        if (deliveries.every((delivery) => delivery.status === "sent")) {
+          this.settleRss(claim.row, "completed");
+        }
+      } else {
+        this.settleRss(claim.row, "completed");
+      }
     } catch (error) {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
-        this.repository.updateDelivery(
-          claim.row.id,
-          claim.fencingToken,
-          kind === "unknown"
-            ? "ambiguous"
-            : kind === "non-retryable"
-              ? "failed"
-              : "retry_wait",
-          {
-            error: String(error),
-            ...(kind === "retryable"
-              ? {
-                  retryAt: new Date(
-                    Date.now() + (this.options.retryDelayMs ?? 1000),
-                  ).toISOString(),
-                }
-              : {}),
-          },
-        );
+        const rss = this.isRss(claim.row);
+        if (rss) {
+          this.repository.failRssDelivery(
+            claim.row.id,
+            claim.fencingToken,
+            kind === "unknown" ? "ambiguous" : "failed",
+            String(error),
+          );
+          this.settleRss(claim.row, "dead_letter");
+        } else {
+          this.repository.updateDelivery(
+            claim.row.id,
+            claim.fencingToken,
+            kind === "unknown"
+              ? "ambiguous"
+              : kind === "non-retryable"
+                ? "failed"
+                : "retry_wait",
+            {
+              error: String(error),
+              ...(kind === "retryable"
+                ? {
+                    retryAt: new Date(
+                      Date.now() + (this.options.retryDelayMs ?? 1000),
+                    ).toISOString(),
+                  }
+                : {}),
+            },
+          );
+        }
       } catch (updateError) {
         console.error("[delivery] state update failed", updateError);
       }
     }
   }
+  private isRss(row: DeliveryRow): boolean {
+    if (!row.payloadJson) return false;
+    try {
+      return (
+        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
+          .rssDispatchId === "string"
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private settleRss(
+    row: DeliveryRow,
+    resolution: "completed" | "dead_letter",
+  ): void {
+    if (!row.payloadJson) return;
+    try {
+      const payload = JSON.parse(row.payloadJson) as Record<string, unknown>;
+      if (typeof payload.rssDispatchId !== "string") return;
+      settleRssDispatch(
+        typeof payload.rssStatePath === "string"
+          ? payload.rssStatePath
+          : undefined,
+        payload.rssDispatchId,
+        typeof payload.rssDispatchJobId === "string"
+          ? payload.rssDispatchJobId
+          : undefined,
+        resolution,
+      );
+    } catch (error) {
+      console.error("[delivery] RSS状態の更新に失敗しました", error);
+    }
+  }
+
   private async loop(): Promise<void> {
     while (this.running) {
       try {

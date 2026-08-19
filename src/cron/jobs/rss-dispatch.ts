@@ -104,33 +104,42 @@ export default async function handler(ctx: CronContext): Promise<void> {
     );
     if (!dispatch) return;
 
-    const { content, queuedArticles } = buildContent(
-      instructions,
-      dispatch.articles,
-      settings.maxSummaryChars,
-    );
+    try {
+      const { content, queuedArticles } = buildContent(
+        instructions,
+        dispatch.articles,
+        settings.maxSummaryChars,
+      );
 
-    const queuedIds = new Set(queuedArticles.map((article) => article.id));
-    releaseDispatchArticles(
-      db,
-      dispatch.id,
-      dispatch.articles
-        .filter((article) => !queuedIds.has(article.id))
-        .map((article) => article.id),
-    );
+      const queuedIds = new Set(queuedArticles.map((article) => article.id));
+      releaseDispatchArticles(
+        db,
+        dispatch.id,
+        dispatch.articles
+          .filter((article) => !queuedIds.has(article.id))
+          .map((article) => article.id),
+      );
 
-    await enqueueCronInbox(
-      {
-        ...ctx,
-        idempotencyKey: dispatch.jobId,
-        rssDispatchId: dispatch.id,
-        rssStatePath: settings.statePath,
-      },
-      content,
-    );
-    console.log(
-      `[rss-dispatch] ${queuedArticles.length}件をinboxへ投入しました（ジョブ成功後に既読化します）`,
-    );
+      await enqueueCronInbox(
+        {
+          ...ctx,
+          idempotencyKey: dispatch.jobId,
+          rssDispatchId: dispatch.id,
+          rssStatePath: settings.statePath,
+        },
+        content,
+      );
+      console.log(
+        `[rss-dispatch] ${queuedArticles.length}件をinboxへ投入しました（ジョブ成功後に既読化します）`,
+      );
+    } catch (error) {
+      releaseDispatchArticles(
+        db,
+        dispatch.id,
+        dispatch.articles.map((article) => article.id),
+      );
+      throw error;
+    }
   } finally {
     db.close();
   }

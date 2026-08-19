@@ -65,13 +65,29 @@ export function reconcileRssDispatches(
       for (const claim of listDispatchClaims(db)) {
         const job = repo.findByIdempotencyKey(claim.dispatchJobId);
         const record = repo.getIdempotencyRecord(claim.dispatchJobId);
-        if (job?.status === "completed" || record?.status === "completed") {
+        const deliveries = job
+          ? repo
+              .listDeliveries()
+              .filter((delivery) => delivery.jobId === job.id)
+          : [];
+        const completed =
+          job?.status === "completed" || record?.status === "completed";
+        const allSent =
+          deliveries.length > 0 &&
+          deliveries.every((delivery) => delivery.status === "sent");
+        const allTerminal =
+          deliveries.length > 0 &&
+          deliveries.every((delivery) =>
+            ["sent", "failed", "ambiguous"].includes(delivery.status),
+          );
+        if (completed && allSent) {
           markArticlesRead(db, claim.articleIds);
           resolved++;
         } else if (
           job?.status === "dead_letter" ||
           record?.status === "dead_letter" ||
-          !record
+          !record ||
+          (completed && allTerminal)
         ) {
           releaseDispatchArticles(db, claim.dispatchId, claim.articleIds);
           resolved++;

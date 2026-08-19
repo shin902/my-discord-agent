@@ -338,7 +338,7 @@ describe("RSS collect / dispatch", () => {
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
 
-  it("inbox投入後の状態更新前に失敗しても同じ冪等キーで再開する", async () => {
+  it("inbox投入に失敗したdispatchはclaimを解放して次回再取得する", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx("process"));
     const keys: string[] = [];
@@ -355,7 +355,7 @@ describe("RSS collect / dispatch", () => {
 
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe("");
-    expect(keys[1]).toBe(keys[0]);
+    expect(keys[1]).not.toBe(keys[0]);
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
 

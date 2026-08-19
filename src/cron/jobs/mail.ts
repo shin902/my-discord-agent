@@ -139,10 +139,7 @@ async function generateSummary(
     getApiKey: () => Promise.resolve("proxy"),
   });
 
-  return {
-    summary: text || "(要約を生成できませんでした)",
-    agentMessage,
-  };
+  return { summary: text, agentMessage };
 }
 
 export default async function handler(ctx: CronContext): Promise<void> {
@@ -159,12 +156,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const { provider: providerName, modelId } = await resolveModelConfig(
     groupConfig?.model,
   );
-  try {
-    await resolveModel(providerName, modelId);
-  } catch (err) {
-    console.error("[mail] モデル設定が無効なため処理を中断します:", err);
-    return;
-  }
+  // Configuration errors must reach the cron runner as failures; swallowing them
+  // would make the job look successful while leaving the source ambiguous.
+  await resolveModel(providerName, modelId);
 
   const channel = await ctx.client.channels.fetch(ctx.channelId);
   if (
@@ -189,9 +183,23 @@ export default async function handler(ctx: CronContext): Promise<void> {
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
       const { summary, agentMessage } = await generateSummary(emailText, ctx);
 
-      if (!agentMessage) {
+      const assistantError =
+        agentMessage &&
+        "errorMessage" in agentMessage &&
+        typeof agentMessage.errorMessage === "string" &&
+        agentMessage.errorMessage.length > 0;
+      const stopReason =
+        agentMessage && "stopReason" in agentMessage
+          ? agentMessage.stopReason
+          : undefined;
+      if (
+        !agentMessage ||
+        !summary.trim() ||
+        assistantError ||
+        stopReason === "error"
+      ) {
         console.warn(
-          `[mail] "${meta.subject}" の要約生成に失敗しました。スキップします。`,
+          `[mail] "${meta.subject}" の要約が有効でないため未読のままにします。`,
         );
         continue;
       }

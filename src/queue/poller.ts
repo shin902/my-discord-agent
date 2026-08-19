@@ -166,7 +166,14 @@ function logResponseTiming(
 }
 
 function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
+  // RSS success is settled by the Discord delivery worker, not queue completion.
+  // This keeps the article unread until the post actually exists in Discord.
   if (!msg.rssDispatchId) return;
+  if (
+    msg.cronDeliveryMode === "direct" ||
+    msg.cronDeliveryMode === "new-thread"
+  )
+    return;
   try {
     const job = getQueueRepository().get(msg.id);
     if (!job) return;
@@ -389,6 +396,27 @@ async function withLlmLock<T>(
 
 // 非ゼロ終了コードの扱いは通常メッセージと cron new-thread で同一のため共通化する。
 // リトライ方針の決定は QueueRepository が所有するため、poller は記録するだけ。
+async function releaseRssAfterFailure(
+  msg: InboxMessage,
+  reason: string,
+  timing: ResponseTiming,
+): Promise<void> {
+  if (!msg.rssDispatchId || msg.fencingToken === undefined) return;
+  await getQueueRepository().deadLetter(
+    msg.id,
+    msg.fencingToken,
+    reason,
+    undefined,
+    executionMetadata(timing),
+  );
+  settleRssDispatch(
+    msg.rssStatePath,
+    msg.rssDispatchId,
+    msg.idempotencyKey,
+    "dead_letter",
+  );
+}
+
 async function failAttemptIfNonZeroExitCode(
   msg: InboxMessage,
   response: string,
@@ -398,12 +426,16 @@ async function failAttemptIfNonZeroExitCode(
   if (exitCode === undefined || exitCode === null || exitCode === 0) {
     return false;
   }
-  await getQueueRepository().failAttempt(
-    msg.id,
-    new Error(response || `agent exited with code ${exitCode}`),
-    msg.fencingToken,
-    { metadata: executionMetadata(timing) },
-  );
+  if (msg.rssDispatchId) {
+    await releaseRssAfterFailure(msg, "agent_exit", timing);
+  } else {
+    await getQueueRepository().failAttempt(
+      msg.id,
+      new Error(response || `agent exited with code ${exitCode}`),
+      msg.fencingToken,
+      { metadata: executionMetadata(timing) },
+    );
+  }
   return true;
 }
 
@@ -556,7 +588,9 @@ async function processCronNewThread(
       }
       return;
     }
-    if (usesCronDestinationSession(msg)) {
+    // RSS keeps the LLM session separate from its Discord destination so an
+    // empty/failed response cannot create an empty thread.
+    if (!msg.rssDispatchId && usesCronDestinationSession(msg)) {
       await ensureCronThread(msg);
       sessionId = cronSessionId(msg);
     }
@@ -593,6 +627,11 @@ async function processCronNewThread(
       },
     );
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (!response.trim() && msg.rssDispatchId) {
+      outcome = "dead-letter";
+      await releaseRssAfterFailure(msg, "empty_response", timing);
+      return;
+    }
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
         msg.id,
@@ -607,11 +646,23 @@ async function processCronNewThread(
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
             cronThreadId: msg.cronThreadId,
+            ...(msg.rssDispatchId
+              ? {
+                  rssDispatchId: msg.rssDispatchId,
+                  rssStatePath: msg.rssStatePath,
+                  rssDispatchJobId: msg.idempotencyKey,
+                }
+              : {}),
           },
         },
       );
     outcome = response ? "success" : "empty-response";
   } catch (error) {
+    if (msg.rssDispatchId) {
+      outcome = "dead-letter";
+      await releaseRssAfterFailure(msg, "agent_error", timing);
+      return;
+    }
     const ambiguousMutation =
       error instanceof DeliveryError && error.kind === "unknown";
     const nonRetryable =
@@ -766,7 +817,9 @@ export async function processMessage(
     });
     if (!groupConfig) {
       outcome = "dead-letter";
-      if (msg.fencingToken !== undefined) {
+      if (msg.rssDispatchId) {
+        await releaseRssAfterFailure(msg, "config-unavailable", timing);
+      } else if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
           msg.id,
           msg.fencingToken,
@@ -837,6 +890,11 @@ export async function processMessage(
       );
     } catch (err) {
       stopTyping();
+      if (msg.rssDispatchId) {
+        outcome = "dead-letter";
+        await releaseRssAfterFailure(msg, "agent_error", timing);
+        return;
+      }
       if (err instanceof NonRetryableError) {
         outcome = "dead-letter";
         console.error(`[poller] 処理失敗（非リトライ可能）:`, err);
@@ -868,6 +926,13 @@ export async function processMessage(
     }
 
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (!response.trim()) {
+      if (msg.rssDispatchId) {
+        outcome = "dead-letter";
+        await releaseRssAfterFailure(msg, "empty_response", timing);
+        return;
+      }
+    }
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
@@ -885,6 +950,13 @@ export async function processMessage(
           destinationId: msg.channelId,
           replyMessageId,
           allowMention: groupConfig.allowMention === true,
+          ...(msg.rssDispatchId
+            ? {
+                rssDispatchId: msg.rssDispatchId,
+                rssStatePath: msg.rssStatePath,
+                rssDispatchJobId: msg.idempotencyKey,
+              }
+            : {}),
         },
       },
     );

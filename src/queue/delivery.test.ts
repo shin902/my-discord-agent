@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const client = vi.hoisted(() => ({
@@ -12,6 +15,13 @@ vi.mock("../discord/client.js", () => ({
   getDiscordClients: () => new Map([["personal", client]]),
 }));
 
+import {
+  claimUnreadArticles,
+  listDispatchClaims,
+  listUnreadArticles,
+  openRssDb,
+  saveFeedEntries,
+} from "../rss/store.js";
 import { expectDefined } from "../test-utils.js";
 import {
   type DeliveryAdapter,
@@ -328,6 +338,183 @@ describe("durable delivery worker", () => {
       expect(send).toHaveBeenCalledTimes(1);
     } finally {
       repo.close();
+    }
+  });
+
+  it("RSSの複数チャンクは全送信成功まで既読化せず、途中失敗でclaimを解放する", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const rssDir = await mkdtemp(join(tmpdir(), "delivery-rss-chunks-test-"));
+    const rssPath = join(rssDir, "rss.sqlite3");
+    const rssDb = openRssDb(rssPath);
+    saveFeedEntries(rssDb, {
+      url: "https://example.com/feed.xml",
+      parsedName: "Feed",
+      etag: null,
+      lastModified: null,
+      entries: [
+        {
+          entryId: "entry-1",
+          title: "Article",
+          link: "https://example.com/article",
+          publishedAt: "2026-08-19",
+          summary: "Summary",
+        },
+      ],
+      markInitialAsRead: false,
+    });
+    const dispatch = expectDefined(claimUnreadArticles(rssDb, "rss-owner", 1));
+    rssDb.close();
+    let sends = 0;
+    const adapter: DeliveryAdapter = {
+      send: vi.fn(async () => {
+        sends += 1;
+        if (sends === 2) throw new DeliveryError("retryable", "429");
+        return { externalMessageId: `message-${sends}` };
+      }),
+    };
+    try {
+      const jobId = completed(repo, "x".repeat(4001), {
+        rssDispatchId: dispatch.id,
+        rssStatePath: rssPath,
+        rssDispatchJobId: dispatch.jobId,
+      });
+      const worker = new DeliveryWorker(repo, adapter, {
+        workerId: "delivery-a",
+      });
+      await worker.runOnce();
+      const afterFirst = openRssDb(rssPath);
+      try {
+        expect(listDispatchClaims(afterFirst)).toHaveLength(1);
+        expect(listUnreadArticles(afterFirst, 10)).toHaveLength(1);
+      } finally {
+        afterFirst.close();
+      }
+      await worker.runOnce();
+      expect(
+        repo
+          .listDeliveries()
+          .filter((delivery) => delivery.jobId === jobId)
+          .map((delivery) => delivery.status),
+      ).toEqual(["sent", "failed", "failed"]);
+      await worker.runOnce();
+      expect(adapter.send).toHaveBeenCalledTimes(2);
+      const checkDb = openRssDb(rssPath);
+      try {
+        expect(listDispatchClaims(checkDb)).toEqual([]);
+        expect(listUnreadArticles(checkDb, 10)).toHaveLength(1);
+      } finally {
+        checkDb.close();
+      }
+    } finally {
+      repo.close();
+      await rm(rssDir, { recursive: true, force: true });
+    }
+  });
+
+  it("RSSのretryableなDiscord失敗はclaimを解放し、deliveryを再試行しない", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const rssDir = await mkdtemp(join(tmpdir(), "delivery-rss-test-"));
+    const rssPath = join(rssDir, "rss.sqlite3");
+    const rssDb = openRssDb(rssPath);
+    saveFeedEntries(rssDb, {
+      url: "https://example.com/feed.xml",
+      parsedName: "Feed",
+      etag: null,
+      lastModified: null,
+      entries: [
+        {
+          entryId: "entry-1",
+          title: "Article",
+          link: "https://example.com/article",
+          publishedAt: "2026-08-19",
+          summary: "Summary",
+        },
+      ],
+      markInitialAsRead: false,
+    });
+    const dispatch = expectDefined(claimUnreadArticles(rssDb, "rss-owner", 1));
+    rssDb.close();
+    const adapter: DeliveryAdapter = {
+      send: vi.fn(async () => {
+        throw new DeliveryError("retryable", "429");
+      }),
+    };
+    try {
+      const jobId = completed(repo, "response", {
+        rssDispatchId: dispatch.id,
+        rssStatePath: rssPath,
+        rssDispatchJobId: dispatch.jobId,
+      });
+      const worker = new DeliveryWorker(repo, adapter, {
+        workerId: "delivery-a",
+      });
+      await worker.runOnce();
+      expect(repo.getDelivery(jobId)?.status).toBe("failed");
+      const checkDb = openRssDb(rssPath);
+      try {
+        expect(listDispatchClaims(checkDb)).toEqual([]);
+        expect(listUnreadArticles(checkDb, 10)).toHaveLength(1);
+      } finally {
+        checkDb.close();
+      }
+    } finally {
+      repo.close();
+      await rm(rssDir, { recursive: true, force: true });
+    }
+  });
+
+  it("RSS stale fencing failure does not release the claim", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const rssDir = await mkdtemp(join(tmpdir(), "delivery-rss-stale-test-"));
+    const rssPath = join(rssDir, "rss.sqlite3");
+    const rssDb = openRssDb(rssPath);
+    saveFeedEntries(rssDb, {
+      url: "https://example.com/feed.xml",
+      parsedName: "Feed",
+      etag: null,
+      lastModified: null,
+      entries: [
+        {
+          entryId: "entry-1",
+          title: "Article",
+          link: "https://example.com/article",
+          publishedAt: "2026-08-19",
+          summary: "Summary",
+        },
+      ],
+      markInitialAsRead: false,
+    });
+    const dispatch = expectDefined(claimUnreadArticles(rssDb, "rss-owner", 1));
+    rssDb.close();
+    try {
+      const jobId = completed(repo, "response", {
+        rssDispatchId: dispatch.id,
+        rssStatePath: rssPath,
+        rssDispatchJobId: dispatch.jobId,
+      });
+      vi.spyOn(repo, "failRssDelivery").mockImplementation(() => {
+        throw new Error("stale fencing token");
+      });
+      const worker = new DeliveryWorker(
+        repo,
+        {
+          send: vi.fn(async () => {
+            throw new DeliveryError("retryable", "429");
+          }),
+        },
+        { workerId: "delivery-a" },
+      );
+      await worker.runOnce();
+      expect(repo.getDelivery(jobId)?.status).toBe("sending");
+      const checkDb = openRssDb(rssPath);
+      try {
+        expect(listDispatchClaims(checkDb)).toHaveLength(1);
+      } finally {
+        checkDb.close();
+      }
+    } finally {
+      repo.close();
+      await rm(rssDir, { recursive: true, force: true });
     }
   });
 

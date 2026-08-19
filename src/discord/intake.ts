@@ -4,9 +4,9 @@ import {
   ThreadAutoArchiveDuration,
 } from "discord.js";
 import { findGroupByChannelId } from "../config/groups.js";
-import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
+import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 
 export type DiscordMessageSource = "live" | "backfill";
 
