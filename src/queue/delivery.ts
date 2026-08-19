@@ -282,12 +282,13 @@ export class DeliveryWorker {
       this.settleRss(claim.row, "dead_letter");
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
+        const rss = this.isRss(claim.row);
         this.repository.updateDelivery(
           claim.row.id,
           claim.fencingToken,
           kind === "unknown"
             ? "ambiguous"
-            : kind === "non-retryable" || this.isRss(claim.row)
+            : kind === "non-retryable" || rss
               ? "failed"
               : "retry_wait",
           {
@@ -301,6 +302,12 @@ export class DeliveryWorker {
               : {}),
           },
         );
+        if (rss) {
+          this.repository.failPendingDeliveriesForJob(
+            claim.row.jobId,
+            String(error),
+          );
+        }
       } catch (updateError) {
         console.error("[delivery] state update failed", updateError);
       }

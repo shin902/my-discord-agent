@@ -1510,6 +1510,13 @@ export class QueueRepository {
     if (changed.changes !== 1)
       throw new Error(`stale fencing token for delivery ${id}`);
   }
+  failPendingDeliveriesForJob(jobId: string, error: string): void {
+    this.db
+      .prepare(
+        "UPDATE deliveries SET status='failed',last_error=?,lease_until=NULL,worker_id=NULL,updated_at=? WHERE job_id=? AND status IN ('pending','retry_wait')",
+      )
+      .run(error, nowIso(), jobId);
+  }
   resolveAmbiguousDelivery(
     id: string,
     resolution: "retry" | "sent" | "failed",

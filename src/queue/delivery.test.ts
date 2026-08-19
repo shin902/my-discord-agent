@@ -395,7 +395,9 @@ describe("durable delivery worker", () => {
           .listDeliveries()
           .filter((delivery) => delivery.jobId === jobId)
           .map((delivery) => delivery.status),
-      ).toEqual(["sent", "failed", "pending"]);
+      ).toEqual(["sent", "failed", "failed"]);
+      await worker.runOnce();
+      expect(adapter.send).toHaveBeenCalledTimes(2);
       const checkDb = openRssDb(rssPath);
       try {
         expect(listDispatchClaims(checkDb)).toEqual([]);
