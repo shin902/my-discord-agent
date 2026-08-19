@@ -15,13 +15,6 @@ vi.mock("../discord/client.js", () => ({
   getDiscordClients: () => new Map([["personal", client]]),
 }));
 
-import { expectDefined } from "../test-utils.js";
-import {
-  type DeliveryAdapter,
-  DeliveryError,
-  DeliveryWorker,
-  DiscordDeliveryAdapter,
-} from "./delivery.js";
 import {
   claimUnreadArticles,
   listDispatchClaims,
@@ -29,6 +22,13 @@ import {
   openRssDb,
   saveFeedEntries,
 } from "../rss/store.js";
+import { expectDefined } from "../test-utils.js";
+import {
+  type DeliveryAdapter,
+  DeliveryError,
+  DeliveryWorker,
+  DiscordDeliveryAdapter,
+} from "./delivery.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 function completed(
