@@ -640,7 +640,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     }
   });
 
-  it("retains the RSS claim after a retryable processing failure", async () => {
+  it("releases the RSS claim after a processing failure", async () => {
     const rssPath = await makeRssPath();
     seedUnreadArticles(rssPath, 1);
     const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
@@ -659,23 +659,17 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
 
     await processMessage(msg);
 
-    expect(failAttempt).toHaveBeenCalledWith(
+    expect(deadLetter).toHaveBeenCalledWith(
       msg.id,
-      error,
       msg.fencingToken,
-      expect.objectContaining({ metadata: expect.any(Object) }),
+      "agent_error",
+      undefined,
+      expect.any(Object),
     );
-    expect(deadLetter).not.toHaveBeenCalled();
     const db = openRssDb(rssPath);
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(1);
-      expect(listDispatchClaims(db)).toEqual([
-        {
-          dispatchId: dispatch.id,
-          dispatchJobId: dispatch.jobId,
-          articleIds: dispatch.articles.map((article) => article.id),
-        },
-      ]);
+      expect(listDispatchClaims(db)).toEqual([]);
     } finally {
       db.close();
     }
@@ -703,8 +697,8 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     expect(deadLetter).toHaveBeenCalledWith(
       msg.id,
       msg.fencingToken,
-      "non_retryable",
-      String(error),
+      "agent_error",
+      undefined,
       expect.any(Object),
     );
     const db = openRssDb(rssPath);
@@ -1232,6 +1226,34 @@ describe("processMessage - durable result", () => {
 
     expect(sendTyping).toHaveBeenCalled();
     expect(commitInboxResult).toHaveBeenCalledOnce();
+  });
+
+  it("RSS cron new-threadの空応答はclaimを解放しdelivery/threadを作らない", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    vi.mocked(sendMessage).mockResolvedValue("");
+    const msg = makeMsg({
+      id: "rss-empty-new-thread",
+      cronJobId: "cron-rss",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "per-run",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalled();
+    const db = openRssDb(rssPath);
+    try {
+      expect(listDispatchClaims(db)).toEqual([]);
+      expect(listUnreadArticles(db, 10)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
   });
 
   it("does not create a delivery for an empty agent result", async () => {

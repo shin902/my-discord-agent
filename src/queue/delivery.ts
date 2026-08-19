@@ -4,6 +4,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { settleRssDispatch } from "./reconciliation.js";
 
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
@@ -267,7 +268,9 @@ export class DeliveryWorker {
         externalMessageId: sent.externalMessageId,
         ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),
       });
+      this.settleRss(claim.row, "completed");
     } catch (error) {
+      this.settleRss(claim.row, "dead_letter");
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
         this.repository.updateDelivery(
@@ -275,7 +278,7 @@ export class DeliveryWorker {
           claim.fencingToken,
           kind === "unknown"
             ? "ambiguous"
-            : kind === "non-retryable"
+            : kind === "non-retryable" || this.isRss(claim.row)
               ? "failed"
               : "retry_wait",
           {
@@ -294,6 +297,41 @@ export class DeliveryWorker {
       }
     }
   }
+  private isRss(row: DeliveryRow): boolean {
+    if (!row.payloadJson) return false;
+    try {
+      return (
+        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
+          .rssDispatchId === "string"
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private settleRss(
+    row: DeliveryRow,
+    resolution: "completed" | "dead_letter",
+  ): void {
+    if (!row.payloadJson) return;
+    try {
+      const payload = JSON.parse(row.payloadJson) as Record<string, unknown>;
+      if (typeof payload.rssDispatchId !== "string") return;
+      settleRssDispatch(
+        typeof payload.rssStatePath === "string"
+          ? payload.rssStatePath
+          : undefined,
+        payload.rssDispatchId,
+        typeof payload.rssDispatchJobId === "string"
+          ? payload.rssDispatchJobId
+          : undefined,
+        resolution,
+      );
+    } catch (error) {
+      console.error("[delivery] RSS状態の更新に失敗しました", error);
+    }
+  }
+
   private async loop(): Promise<void> {
     while (this.running) {
       try {

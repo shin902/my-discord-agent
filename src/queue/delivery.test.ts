@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const client = vi.hoisted(() => ({
@@ -19,6 +22,13 @@ import {
   DeliveryWorker,
   DiscordDeliveryAdapter,
 } from "./delivery.js";
+import {
+  claimUnreadArticles,
+  listDispatchClaims,
+  listUnreadArticles,
+  openRssDb,
+  saveFeedEntries,
+} from "../rss/store.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 function completed(
@@ -328,6 +338,56 @@ describe("durable delivery worker", () => {
       expect(send).toHaveBeenCalledTimes(1);
     } finally {
       repo.close();
+    }
+  });
+
+  it("RSSのretryableなDiscord失敗はclaimを解放し、deliveryを再試行しない", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const rssDir = await mkdtemp(join(tmpdir(), "delivery-rss-test-"));
+    const rssPath = join(rssDir, "rss.sqlite3");
+    const rssDb = openRssDb(rssPath);
+    saveFeedEntries(rssDb, {
+      url: "https://example.com/feed.xml",
+      parsedName: "Feed",
+      etag: null,
+      lastModified: null,
+      entries: [{
+        entryId: "entry-1",
+        title: "Article",
+        link: "https://example.com/article",
+        publishedAt: "2026-08-19",
+        summary: "Summary",
+      }],
+      markInitialAsRead: false,
+    });
+    const dispatch = expectDefined(
+      claimUnreadArticles(rssDb, "rss-owner", 1),
+    );
+    rssDb.close();
+    const adapter: DeliveryAdapter = {
+      send: vi.fn(async () => {
+        throw new DeliveryError("retryable", "429");
+      }),
+    };
+    try {
+      const jobId = completed(repo, "response", {
+        rssDispatchId: dispatch.id,
+        rssStatePath: rssPath,
+        rssDispatchJobId: dispatch.jobId,
+      });
+      const worker = new DeliveryWorker(repo, adapter, { workerId: "delivery-a" });
+      await worker.runOnce();
+      expect(repo.getDelivery(jobId)?.status).toBe("failed");
+      const checkDb = openRssDb(rssPath);
+      try {
+        expect(listDispatchClaims(checkDb)).toEqual([]);
+        expect(listUnreadArticles(checkDb, 10)).toHaveLength(1);
+      } finally {
+        checkDb.close();
+      }
+    } finally {
+      repo.close();
+      await rm(rssDir, { recursive: true, force: true });
     }
   });
 

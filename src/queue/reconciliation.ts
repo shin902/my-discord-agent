@@ -65,7 +65,11 @@ export function reconcileRssDispatches(
       for (const claim of listDispatchClaims(db)) {
         const job = repo.findByIdempotencyKey(claim.dispatchJobId);
         const record = repo.getIdempotencyRecord(claim.dispatchJobId);
-        if (job?.status === "completed" || record?.status === "completed") {
+        const delivery = job ? repo.getDelivery(job.id) : undefined;
+        if (
+          (job?.status === "completed" || record?.status === "completed") &&
+          (!delivery || delivery.status === "sent")
+        ) {
           markArticlesRead(db, claim.articleIds);
           resolved++;
         } else if (
