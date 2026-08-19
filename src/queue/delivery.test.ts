@@ -351,18 +351,18 @@ describe("durable delivery worker", () => {
       parsedName: "Feed",
       etag: null,
       lastModified: null,
-      entries: [{
-        entryId: "entry-1",
-        title: "Article",
-        link: "https://example.com/article",
-        publishedAt: "2026-08-19",
-        summary: "Summary",
-      }],
+      entries: [
+        {
+          entryId: "entry-1",
+          title: "Article",
+          link: "https://example.com/article",
+          publishedAt: "2026-08-19",
+          summary: "Summary",
+        },
+      ],
       markInitialAsRead: false,
     });
-    const dispatch = expectDefined(
-      claimUnreadArticles(rssDb, "rss-owner", 1),
-    );
+    const dispatch = expectDefined(claimUnreadArticles(rssDb, "rss-owner", 1));
     rssDb.close();
     const adapter: DeliveryAdapter = {
       send: vi.fn(async () => {
@@ -375,7 +375,9 @@ describe("durable delivery worker", () => {
         rssStatePath: rssPath,
         rssDispatchJobId: dispatch.jobId,
       });
-      const worker = new DeliveryWorker(repo, adapter, { workerId: "delivery-a" });
+      const worker = new DeliveryWorker(repo, adapter, {
+        workerId: "delivery-a",
+      });
       await worker.runOnce();
       expect(repo.getDelivery(jobId)?.status).toBe("failed");
       const checkDb = openRssDb(rssPath);
