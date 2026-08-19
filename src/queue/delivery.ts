@@ -279,33 +279,36 @@ export class DeliveryWorker {
         this.settleRss(claim.row, "completed");
       }
     } catch (error) {
-      this.settleRss(claim.row, "dead_letter");
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
         const rss = this.isRss(claim.row);
-        this.repository.updateDelivery(
-          claim.row.id,
-          claim.fencingToken,
-          kind === "unknown"
-            ? "ambiguous"
-            : kind === "non-retryable" || rss
-              ? "failed"
-              : "retry_wait",
-          {
-            error: String(error),
-            ...(kind === "retryable"
-              ? {
-                  retryAt: new Date(
-                    Date.now() + (this.options.retryDelayMs ?? 1000),
-                  ).toISOString(),
-                }
-              : {}),
-          },
-        );
         if (rss) {
-          this.repository.failPendingDeliveriesForJob(
-            claim.row.jobId,
+          this.repository.failRssDelivery(
+            claim.row.id,
+            claim.fencingToken,
+            kind === "unknown" ? "ambiguous" : "failed",
             String(error),
+          );
+          this.settleRss(claim.row, "dead_letter");
+        } else {
+          this.repository.updateDelivery(
+            claim.row.id,
+            claim.fencingToken,
+            kind === "unknown"
+              ? "ambiguous"
+              : kind === "non-retryable"
+                ? "failed"
+                : "retry_wait",
+            {
+              error: String(error),
+              ...(kind === "retryable"
+                ? {
+                    retryAt: new Date(
+                      Date.now() + (this.options.retryDelayMs ?? 1000),
+                    ).toISOString(),
+                  }
+                : {}),
+            },
           );
         }
       } catch (updateError) {

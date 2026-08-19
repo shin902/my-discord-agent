@@ -127,7 +127,19 @@ describe("reconcileRssDispatches", () => {
         { idempotencyKey: expectDefined(dispatch).jobId },
       );
       const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "response",
+        { deliveryPayload: { destinationId: "channel" } },
+      );
+      const deliveryClaim = repo.claimDelivery("delivery-worker");
+      expect(deliveryClaim).toBeDefined();
+      repo.updateDelivery(
+        expectDefined(deliveryClaim).row.id,
+        expectDefined(deliveryClaim).fencingToken,
+        "sent",
+      );
 
       const beforeRecovery = openRssDb(rssPath);
       try {
@@ -142,6 +154,89 @@ describe("reconcileRssDispatches", () => {
       } finally {
         check.close();
       }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("keeps a claimed RSS dispatch unread when a delivery chunk is pending", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "pending");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "x".repeat(4001),
+        {
+          deliveryPayload: { destinationId: "channel" },
+        },
+      );
+      const deliveryClaim = repo.claimDelivery("delivery-worker");
+      repo.updateDelivery(
+        expectDefined(deliveryClaim).row.id,
+        expectDefined(deliveryClaim).fencingToken,
+        "sent",
+      );
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(0);
+      expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBe(dispatch.id);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("keeps a claimed RSS dispatch unread when the completed job has no delivery", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "missing-delivery");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(0);
+      expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBe(dispatch.id);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("marks a claimed RSS dispatch read only after every delivery is sent", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "all-sent");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "x".repeat(4001),
+        {
+          deliveryPayload: { destinationId: "channel" },
+        },
+      );
+      let deliveryClaim = repo.claimDelivery("delivery-worker");
+      while (deliveryClaim) {
+        repo.updateDelivery(
+          deliveryClaim.row.id,
+          deliveryClaim.fencingToken,
+          "sent",
+        );
+        deliveryClaim = repo.claimDelivery("delivery-worker");
+      }
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBeNull();
     } finally {
       repo.close();
     }
@@ -196,10 +291,10 @@ describe("reconcileRssDispatches", () => {
           completedAt,
         );
 
-      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(0);
       const check = openRssDb(rssPath);
       try {
-        expect(listUnreadArticles(check, 10)).toEqual([]);
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
       } finally {
         check.close();
       }
@@ -234,7 +329,7 @@ describe("reconcileRssDispatches", () => {
       const claimed = repo.claim("worker", 60_000);
       repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
       // The same path is passed twice; it must be opened and reconciled exactly once.
-      expect(reconcileRssDispatches(repo, [rssPath, rssPath])).toBe(1);
+      expect(reconcileRssDispatches(repo, [rssPath, rssPath])).toBe(0);
     } finally {
       repo.close();
     }
@@ -380,10 +475,10 @@ describe("reconcileRssDispatches", () => {
           deadLetterPath,
           missingPath,
         ]),
-      ).toBe(3);
+      ).toBe(2);
       const completedCheck = openRssDb(completedPath);
       try {
-        expect(listUnreadArticles(completedCheck, 10)).toEqual([]);
+        expect(listUnreadArticles(completedCheck, 10)).toHaveLength(1);
       } finally {
         completedCheck.close();
       }
@@ -411,7 +506,7 @@ describe("reconcileRssDispatches", () => {
       repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
 
       const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
-      expect(reconcileRssDispatches(repo)).toBe(1);
+      expect(reconcileRssDispatches(repo)).toBe(0);
       expect(discoverySpy).toHaveBeenCalledTimes(1);
     } finally {
       repo.close();

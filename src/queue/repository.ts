@@ -1510,12 +1510,33 @@ export class QueueRepository {
     if (changed.changes !== 1)
       throw new Error(`stale fencing token for delivery ${id}`);
   }
-  failPendingDeliveriesForJob(jobId: string, error: string): void {
-    this.db
-      .prepare(
-        "UPDATE deliveries SET status='failed',last_error=?,lease_until=NULL,worker_id=NULL,updated_at=? WHERE job_id=? AND status IN ('pending','retry_wait')",
-      )
-      .run(error, nowIso(), jobId);
+  failRssDelivery(
+    id: string,
+    token: number,
+    status: "failed" | "ambiguous",
+    error: string,
+  ): void {
+    this.inImmediateTransaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT job_id FROM deliveries WHERE id=? AND status='sending' AND fencing_token=?",
+        )
+        .get(id, token) as { job_id: string } | undefined;
+      if (!row) throw new Error(`stale fencing token for delivery ${id}`);
+      const at = nowIso();
+      const changed = this.db
+        .prepare(
+          "UPDATE deliveries SET status=?,last_error=?,lease_until=NULL,worker_id=NULL,updated_at=? WHERE id=? AND status='sending' AND fencing_token=?",
+        )
+        .run(status, error, at, id, token);
+      if (changed.changes !== 1)
+        throw new Error(`stale fencing token for delivery ${id}`);
+      this.db
+        .prepare(
+          "UPDATE deliveries SET status='failed',last_error=?,lease_until=NULL,worker_id=NULL,updated_at=? WHERE job_id=? AND id<>? AND status IN ('pending','retry_wait')",
+        )
+        .run(error, at, row.job_id, id);
+    });
   }
   resolveAmbiguousDelivery(
     id: string,

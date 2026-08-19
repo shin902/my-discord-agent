@@ -463,6 +463,61 @@ describe("durable delivery worker", () => {
     }
   });
 
+  it("RSS stale fencing failure does not release the claim", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const rssDir = await mkdtemp(join(tmpdir(), "delivery-rss-stale-test-"));
+    const rssPath = join(rssDir, "rss.sqlite3");
+    const rssDb = openRssDb(rssPath);
+    saveFeedEntries(rssDb, {
+      url: "https://example.com/feed.xml",
+      parsedName: "Feed",
+      etag: null,
+      lastModified: null,
+      entries: [
+        {
+          entryId: "entry-1",
+          title: "Article",
+          link: "https://example.com/article",
+          publishedAt: "2026-08-19",
+          summary: "Summary",
+        },
+      ],
+      markInitialAsRead: false,
+    });
+    const dispatch = expectDefined(claimUnreadArticles(rssDb, "rss-owner", 1));
+    rssDb.close();
+    try {
+      const jobId = completed(repo, "response", {
+        rssDispatchId: dispatch.id,
+        rssStatePath: rssPath,
+        rssDispatchJobId: dispatch.jobId,
+      });
+      vi.spyOn(repo, "failRssDelivery").mockImplementation(() => {
+        throw new Error("stale fencing token");
+      });
+      const worker = new DeliveryWorker(
+        repo,
+        {
+          send: vi.fn(async () => {
+            throw new DeliveryError("retryable", "429");
+          }),
+        },
+        { workerId: "delivery-a" },
+      );
+      await worker.runOnce();
+      expect(repo.getDelivery(jobId)?.status).toBe("sending");
+      const checkDb = openRssDb(rssPath);
+      try {
+        expect(listDispatchClaims(checkDb)).toHaveLength(1);
+      } finally {
+        checkDb.close();
+      }
+    } finally {
+      repo.close();
+      await rm(rssDir, { recursive: true, force: true });
+    }
+  });
+
   it("retries retryable errors without touching the completed job", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     let count = 0;
