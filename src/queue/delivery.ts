@@ -268,7 +268,16 @@ export class DeliveryWorker {
         externalMessageId: sent.externalMessageId,
         ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),
       });
-      this.settleRss(claim.row, "completed");
+      if (this.isRss(claim.row)) {
+        const deliveries = this.repository
+          .listDeliveries()
+          .filter((delivery) => delivery.jobId === claim.row.jobId);
+        if (deliveries.every((delivery) => delivery.status === "sent")) {
+          this.settleRss(claim.row, "completed");
+        }
+      } else {
+        this.settleRss(claim.row, "completed");
+      }
     } catch (error) {
       this.settleRss(claim.row, "dead_letter");
       const kind = error instanceof DeliveryError ? error.kind : "unknown";

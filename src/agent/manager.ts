@@ -752,8 +752,12 @@ export async function sendMessage(
         reject(new TransientError("runner exited before ready"));
         return;
       }
-      if (code === 0 && runnerError) {
-        reject(new NonRetryableError(`agent error: ${runnerError}`));
+      if (code === 0 && (runnerError || agentTiming?.stopReason === "error")) {
+        reject(
+          new NonRetryableError(
+            `agent error: ${runnerError ?? "assistant stopReason=error"}`,
+          ),
+        );
       } else if (code === 0) resolve(stdout.trim());
       else if (code === 2) reject(new TransientError(plainStderr.trim()));
       else if (code === null)

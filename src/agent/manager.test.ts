@@ -1131,6 +1131,29 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
   });
 
+  it("stopReason=error は errorMessage がなくても失敗として伝播する", async () => {
+    const eventPayload = {
+      type: "agent_timing",
+      promptMs: 1,
+      assistantTurns: 1,
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+      },
+      stopReason: "error",
+    };
+    const sendMessage = await setupWithStderr(
+      `__DISCORD_EVENT__:${JSON.stringify(eventPayload)}\n`,
+    );
+
+    await expect(sendMessage("g", "s", "hi")).rejects.toThrow(
+      "assistant stopReason=error",
+    );
+  });
+
   it("通常の stderr はコールバックに渡されずエラー文字列に含まれる", async () => {
     const sendMessage = await setupWithStderr("plain error\n", 1);
 

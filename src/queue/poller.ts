@@ -817,7 +817,9 @@ export async function processMessage(
     });
     if (!groupConfig) {
       outcome = "dead-letter";
-      if (msg.fencingToken !== undefined) {
+      if (msg.rssDispatchId) {
+        await releaseRssAfterFailure(msg, "config-unavailable", timing);
+      } else if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
           msg.id,
           msg.fencingToken,

@@ -675,6 +675,37 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     }
   });
 
+  it("RSS directのグループ設定欠損はclaimを解放する", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    vi.mocked(findGroupByName).mockResolvedValue(undefined);
+    const msg = makeMsg({
+      id: "rss-config-unavailable",
+      cronDeliveryMode: "direct",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+
+    await processMessage(msg);
+
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "config-unavailable",
+      undefined,
+      expect.any(Object),
+    );
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(1);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("releases the RSS claim after a terminal dead-letter failure", async () => {
     const rssPath = await makeRssPath();
     seedUnreadArticles(rssPath, 1);
