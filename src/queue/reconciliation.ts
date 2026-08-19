@@ -70,17 +70,24 @@ export function reconcileRssDispatches(
               .listDeliveries()
               .filter((delivery) => delivery.jobId === job.id)
           : [];
-        if (
-          (job?.status === "completed" || record?.status === "completed") &&
+        const completed =
+          job?.status === "completed" || record?.status === "completed";
+        const allSent =
           deliveries.length > 0 &&
-          deliveries.every((delivery) => delivery.status === "sent")
-        ) {
+          deliveries.every((delivery) => delivery.status === "sent");
+        const allTerminal =
+          deliveries.length > 0 &&
+          deliveries.every((delivery) =>
+            ["sent", "failed", "ambiguous"].includes(delivery.status),
+          );
+        if (completed && allSent) {
           markArticlesRead(db, claim.articleIds);
           resolved++;
         } else if (
           job?.status === "dead_letter" ||
           record?.status === "dead_letter" ||
-          !record
+          !record ||
+          (completed && allTerminal)
         ) {
           releaseDispatchArticles(db, claim.dispatchId, claim.articleIds);
           resolved++;

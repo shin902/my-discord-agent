@@ -159,6 +159,88 @@ describe("reconcileRssDispatches", () => {
     }
   });
 
+  it("releases a claimed RSS dispatch after a completed job has failed delivery", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "failed");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "response",
+        { deliveryPayload: { destinationId: "channel" } },
+      );
+      const deliveryClaim = repo.claimDelivery("delivery-worker");
+      repo.updateDelivery(
+        expectDefined(deliveryClaim).row.id,
+        expectDefined(deliveryClaim).fencingToken,
+        "failed",
+      );
+
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBeNull();
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
+      } finally {
+        check.close();
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("releases a completed multi-chunk RSS dispatch when terminal chunks include failures", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "failed-chunks");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "x".repeat(4001),
+        { deliveryPayload: { destinationId: "channel" } },
+      );
+      let deliveryClaim = repo.claimDelivery("delivery-worker");
+      expect(deliveryClaim).toBeDefined();
+      repo.updateDelivery(
+        expectDefined(deliveryClaim).row.id,
+        expectDefined(deliveryClaim).fencingToken,
+        "sent",
+      );
+      deliveryClaim = repo.claimDelivery("delivery-worker");
+      while (deliveryClaim) {
+        repo.updateDelivery(
+          deliveryClaim.row.id,
+          deliveryClaim.fencingToken,
+          "failed",
+        );
+        deliveryClaim = repo.claimDelivery("delivery-worker");
+      }
+
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBeNull();
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toHaveLength(1);
+      } finally {
+        check.close();
+      }
+    } finally {
+      repo.close();
+    }
+  });
+
   it("keeps a claimed RSS dispatch unread when a delivery chunk is pending", async () => {
     const rssPath = await makeRssPath();
     seedUnread(rssPath);
