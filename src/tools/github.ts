@@ -122,13 +122,15 @@ export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
   parameters: listIssuesParameters,
   execute: async (_toolCallId, { owner, repo, state = "open", limit = 10 }) => {
     const perPage = Math.min(limit, 50);
-    const issues = z.array(GitHubIssueSchema).parse(
-      await githubFetch(
-        owner,
-        repo,
-        `/issues?state=${state}&per_page=${perPage}`,
-      ),
-    );
+    const issues = z
+      .array(GitHubIssueSchema)
+      .parse(
+        await githubFetch(
+          owner,
+          repo,
+          `/issues?state=${state}&per_page=${perPage}`,
+        ),
+      );
 
     const filtered = issues.filter((issue) => !issue.pull_request);
 

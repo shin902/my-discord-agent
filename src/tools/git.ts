@@ -21,13 +21,21 @@ type GitExecOptions = {
 };
 
 type GitDependencies = {
-  execFile: (command: string, args: string[], options: GitExecOptions) => Promise<void>;
+  execFile: (
+    command: string,
+    args: string[],
+    options: GitExecOptions,
+  ) => Promise<void>;
   stat: (path: string) => Promise<void>;
-  rm: (path: string, options: { recursive: boolean; force: boolean }) => Promise<void>;
+  rm: (
+    path: string,
+    options: { recursive: boolean; force: boolean },
+  ) => Promise<void>;
 };
 
 const defaultDependencies: GitDependencies = {
-  execFile: (command, args, options) => promisify(execFile)(command, args, options).then(() => undefined),
+  execFile: (command, args, options) =>
+    promisify(execFile)(command, args, options).then(() => undefined),
   stat: (path) => stat(path).then(() => undefined),
   rm,
 };
@@ -91,7 +99,9 @@ export function createCloneRepositoryTool(
         // "already exists and is not an empty directory" で失敗し続ける。
         // dest が呼び出し前から存在していた場合は触らない。
         if (!destExistedBefore) {
-          await dependencies.rm(dest, { recursive: true, force: true }).catch(() => {});
+          await dependencies
+            .rm(dest, { recursive: true, force: true })
+            .catch(() => {});
         }
         const details = z
           .object({

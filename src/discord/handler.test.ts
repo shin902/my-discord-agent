@@ -9,7 +9,10 @@ const mockAppendInbox = vi.fn();
 const mockFindGroup = vi.fn<typeof findGroupByChannelId>();
 const dependencies: DiscordIntakeDependencies = {
   findGroupByChannelId: mockFindGroup,
-  getQueueRepository: () => ({ enqueue: mockAppendInbox, upsertDiscordCursor: vi.fn() }),
+  getQueueRepository: () => ({
+    enqueue: mockAppendInbox,
+    upsertDiscordCursor: vi.fn(),
+  }),
   isDiscordChannelBackfillPending: () => false,
 };
 
@@ -18,9 +21,9 @@ const dependencies: DiscordIntakeDependencies = {
 registerHandlers(mockClient as never, undefined, dependencies);
 
 function getMessageHandler(): (msg: Message) => Promise<void> {
-  const call = vi.mocked(mockClient.on).mock.calls.find(
-    ([event]) => event === "messageCreate",
-  );
+  const call = vi
+    .mocked(mockClient.on)
+    .mock.calls.find(([event]) => event === "messageCreate");
   if (!call) throw new Error("messageCreate ハンドラーが登録されていません");
   // SAFETY: registerHandlers always registers MessageCreate with this signature.
   return call[1] as (msg: Message) => Promise<void>;
@@ -83,7 +86,9 @@ describe("registerHandlers - MessageCreate", () => {
     const readyCall = startupClient.once.mock.calls[0];
     if (!readyCall) throw new Error("ready handler が登録されていません");
     // SAFETY: registerHandlers always registers ClientReady with this signature.
-    const readyHandler = readyCall[1] as (client: { user: { tag: string } }) => void;
+    const readyHandler = readyCall[1] as (client: {
+      user: { tag: string };
+    }) => void;
     readyHandler({ user: { tag: "test-bot" } });
     await vi.waitFor(() => expect(onReady).toHaveBeenCalledOnce());
 
@@ -97,7 +102,9 @@ describe("registerHandlers - MessageCreate", () => {
     if (!messageCall)
       throw new Error("messageCreate ハンドラーが登録されていません");
     // SAFETY: registerHandlers always registers MessageCreate with this signature.
-    const messageHandler = messageCall[1] as (message: Message) => Promise<void>;
+    const messageHandler = messageCall[1] as (
+      message: Message,
+    ) => Promise<void>;
 
     const liveMessage = messageHandler(
       makeMockMessage({ isThread: false, channelId: "ch-1" }),

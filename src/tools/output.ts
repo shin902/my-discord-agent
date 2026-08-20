@@ -1,10 +1,7 @@
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  AgentTool,
-  AgentToolResult,
-} from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { z } from "zod";
 
 /** Maximum number of text characters returned inline to the model per tool call. */
@@ -26,8 +23,11 @@ type AnyToolResult = AgentToolResult<unknown>;
 
 export const ToolOutputTruncationSchema = z.object({
   reason: z.literal("text-output-too-large"),
-  totalCharacters: z.number(), totalBytes: z.number(), totalLines: z.number(),
-  inlineCharacterLimit: z.literal(TOOL_OUTPUT_CHAR_LIMIT), lifetime: z.literal("container-run"),
+  totalCharacters: z.number(),
+  totalBytes: z.number(),
+  totalLines: z.number(),
+  inlineCharacterLimit: z.literal(TOOL_OUTPUT_CHAR_LIMIT),
+  lifetime: z.literal("container-run"),
 });
 export type ToolOutputTruncation = z.infer<typeof ToolOutputTruncationSchema>;
 
@@ -36,7 +36,9 @@ export const ExternalizedToolOutputSchema = z.object({
   fullOutputPath: z.string(),
   truncation: ToolOutputTruncationSchema,
 });
-export type ExternalizedToolOutput = z.infer<typeof ExternalizedToolOutputSchema>;
+export type ExternalizedToolOutput = z.infer<
+  typeof ExternalizedToolOutputSchema
+>;
 
 type ParsedExternalizedDetails = ExternalDetails & {
   truncated: boolean;
@@ -44,13 +46,20 @@ type ParsedExternalizedDetails = ExternalDetails & {
   truncation: ToolOutputTruncation;
 };
 
-export function parseExternalizedDetails(value: ExternalDetails): ParsedExternalizedDetails {
-  const nested = ExternalDetailsSchema.safeParse(value[EXTERNALIZED_DETAILS_KEY]);
+export function parseExternalizedDetails(
+  value: ExternalDetails,
+): ParsedExternalizedDetails {
+  const nested = ExternalDetailsSchema.safeParse(
+    value[EXTERNALIZED_DETAILS_KEY],
+  );
   const output = nested.success ? nested.data : value;
   const parsed = ExternalizedToolOutputSchema.parse(output);
   const merged: ParsedExternalizedDetails = {
     ...value,
-    truncated: value.truncated === undefined ? parsed.truncated : BooleanSchema.parse(value.truncated),
+    truncated:
+      value.truncated === undefined
+        ? parsed.truncated
+        : BooleanSchema.parse(value.truncated),
     fullOutputPath: parsed.fullOutputPath,
     truncation: parsed.truncation,
   };
@@ -58,7 +67,9 @@ export function parseExternalizedDetails(value: ExternalDetails): ParsedExternal
 }
 
 /** Narrow a parsed details value after the JSON boundary has been established. */
-export function isExternalizedToolOutput(value: ExternalDetails): value is ExternalDetails & ExternalizedToolOutput {
+export function isExternalizedToolOutput(
+  value: ExternalDetails,
+): value is ExternalDetails & ExternalizedToolOutput {
   return ExternalizedToolOutputSchema.safeParse(value).success;
 }
 
@@ -84,9 +95,7 @@ function withExternalizedDetails(
     fullOutputPath: output.fullOutputPath,
     truncation: output.truncation,
   };
-  if (
-    details !== undefined
-  ) {
+  if (details !== undefined) {
     const originalDetails = details;
     const mergedDetails = { ...originalDetails };
     let hasMetadataCollision = false;
@@ -192,9 +201,10 @@ export async function externalizeLargeToolResult(
     }
   }
 
-  const details = result.details === undefined
-    ? undefined
-    : ExternalDetailsSchema.parse(result.details);
+  const details =
+    result.details === undefined
+      ? undefined
+      : ExternalDetailsSchema.parse(result.details);
   return {
     ...result,
     content,
@@ -219,9 +229,10 @@ export function wrapToolOutput<T extends AgentTool>(tool: T): T {
     params: Parameters<T["execute"]>[1],
     signal: Parameters<T["execute"]>[2],
     onUpdate: Parameters<T["execute"]>[3],
-  ) => externalizeLargeToolResult(
-    await originalExecute.call(tool, toolCallId, params, signal, onUpdate),
-  );
+  ) =>
+    externalizeLargeToolResult(
+      await originalExecute.call(tool, toolCallId, params, signal, onUpdate),
+    );
   wrappedTools.add(tool);
   return tool;
 }

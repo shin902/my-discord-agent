@@ -31,7 +31,16 @@ import {
 } from "./delivery.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
-type DeliveryMetadata = { destinationType?: string; destinationId?: string; cronJobId?: string; cronThreadId?: string; replyMessageId?: string; rssDispatchId?: string; rssStatePath?: string; rssDispatchJobId?: string };
+type DeliveryMetadata = {
+  destinationType?: string;
+  destinationId?: string;
+  cronJobId?: string;
+  cronThreadId?: string;
+  replyMessageId?: string;
+  rssDispatchId?: string;
+  rssStatePath?: string;
+  rssDispatchJobId?: string;
+};
 
 function completed(
   repo: QueueRepository,
@@ -79,9 +88,13 @@ it("durably persists the created thread before its first message send", async ()
     .spyOn(client.channels, "fetch")
     .mockResolvedValue(channel);
   try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-      workerId: "delivery-a",
-    });
+    const worker = new DeliveryWorker(
+      repo,
+      new DiscordDeliveryAdapter(discordDependencies),
+      {
+        workerId: "delivery-a",
+      },
+    );
     await worker.runOnce();
     expect(send).toHaveBeenCalledOnce();
     expect(repo.getDelivery(jobId)).toMatchObject({
@@ -113,9 +126,13 @@ it("reuses the durably persisted cron thread for delivery", async () => {
       cronJobId: "daily",
       cronThreadId: "thread-actual",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-      workerId: "delivery-a",
-    });
+    const worker = new DeliveryWorker(
+      repo,
+      new DiscordDeliveryAdapter(discordDependencies),
+      {
+        workerId: "delivery-a",
+      },
+    );
     await worker.runOnce();
     expect(send).toHaveBeenCalledWith({
       content: "response",
@@ -147,9 +164,13 @@ it("marks transport failure during thread creation ambiguous without retrying", 
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-      workerId: "delivery-a",
-    });
+    const worker = new DeliveryWorker(
+      repo,
+      new DiscordDeliveryAdapter(discordDependencies),
+      {
+        workerId: "delivery-a",
+      },
+    );
     await worker.runOnce();
     expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
     await worker.runOnce();
@@ -178,9 +199,13 @@ it("marks a 500 during thread creation ambiguous without retrying", async () => 
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-      workerId: "delivery-a",
-    });
+    const worker = new DeliveryWorker(
+      repo,
+      new DiscordDeliveryAdapter(discordDependencies),
+      {
+        workerId: "delivery-a",
+      },
+    );
     await worker.runOnce();
     expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
     await worker.runOnce();
@@ -208,9 +233,13 @@ it("marks transport failure during message send ambiguous without retrying", asy
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-      workerId: "delivery-a",
-    });
+    const worker = new DeliveryWorker(
+      repo,
+      new DiscordDeliveryAdapter(discordDependencies),
+      {
+        workerId: "delivery-a",
+      },
+    );
     await worker.runOnce();
     expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
     await worker.runOnce();
@@ -235,9 +264,13 @@ it("marks a 502 during message send ambiguous without retrying", async () => {
     .mockReturnValue(channel);
   try {
     const jobId = completed(repo, "response");
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-      workerId: "delivery-a",
-    });
+    const worker = new DeliveryWorker(
+      repo,
+      new DiscordDeliveryAdapter(discordDependencies),
+      {
+        workerId: "delivery-a",
+      },
+    );
     await worker.runOnce();
     expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
     await worker.runOnce();
@@ -272,9 +305,13 @@ it("marks thread persistence failures ambiguous without creating a duplicate thr
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-      workerId: "delivery-a",
-    });
+    const worker = new DeliveryWorker(
+      repo,
+      new DiscordDeliveryAdapter(discordDependencies),
+      {
+        workerId: "delivery-a",
+      },
+    );
     await worker.runOnce();
     expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
     expect(persistSpy).toHaveBeenCalledOnce();
@@ -559,18 +596,20 @@ describe("durable delivery worker", () => {
     const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
     const fetchSpy = vi
       .spyOn(client.channels, "fetch")
-      .mockImplementation(
-        async (id) => id === "channel" ? channel : thread,
-      );
+      .mockImplementation(async (id) => (id === "channel" ? channel : thread));
     try {
       const jobId = completed(repo, "x".repeat(4001), {
         destinationType: "new-thread",
         destinationId: "channel",
         cronJobId: "daily",
       });
-      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-        workerId: "delivery-a",
-      });
+      const worker = new DeliveryWorker(
+        repo,
+        new DiscordDeliveryAdapter(discordDependencies),
+        {
+          workerId: "delivery-a",
+        },
+      );
       while (await worker.runOnce()) {}
       const deliveries = repo.listDeliveries();
       expect(deliveries).toHaveLength(3);
@@ -589,7 +628,9 @@ describe("durable delivery worker", () => {
 
   it("only replies to the original message for the first split chunk", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    const send = vi.fn(async (_payload: DeliverySendPayload) => ({ id: "message" }));
+    const send = vi.fn(async (_payload: DeliverySendPayload) => ({
+      id: "message",
+    }));
     const channel = { isSendable: () => true, send };
     const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
     const fetchSpy = vi
@@ -601,9 +642,13 @@ describe("durable delivery worker", () => {
         destinationId: "channel",
         replyMessageId: "original-message",
       });
-      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
-        workerId: "delivery-a",
-      });
+      const worker = new DeliveryWorker(
+        repo,
+        new DiscordDeliveryAdapter(discordDependencies),
+        {
+          workerId: "delivery-a",
+        },
+      );
       while (await worker.runOnce()) {}
       const deliveries = repo.listDeliveries();
       expect(deliveries).toHaveLength(3);
@@ -618,8 +663,16 @@ describe("durable delivery worker", () => {
       });
       expect(
         send.mock.calls.slice(1).every(([content]) => {
-          const parsed = z.object({ allowedMentions: z.object({ parse: z.array(z.string()).optional() }).optional() }).safeParse(content);
-          return parsed.success && parsed.data.allowedMentions?.parse?.length === 0;
+          const parsed = z
+            .object({
+              allowedMentions: z
+                .object({ parse: z.array(z.string()).optional() })
+                .optional(),
+            })
+            .safeParse(content);
+          return (
+            parsed.success && parsed.data.allowedMentions?.parse?.length === 0
+          );
         }),
       ).toBe(true);
       expect(repo.get(jobId)?.succeeded).toBe(true);

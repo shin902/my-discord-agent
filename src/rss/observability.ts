@@ -32,17 +32,29 @@ export function inspectRssReconciliation(
   ).count;
   const unread = count.parse(
     rssDb
-      .prepare("SELECT COUNT(*) AS count FROM rss_articles WHERE read_at IS NULL")
+      .prepare(
+        "SELECT COUNT(*) AS count FROM rss_articles WHERE read_at IS NULL",
+      )
       .get(),
   ).count;
-  const claims = z.array(z.object({
-    dispatch_id: z.string(), dispatch_job_id: z.string().nullable(), article_ids: z.string(),
-  })).parse(rssDb.prepare(`
+  const claims = z
+    .array(
+      z.object({
+        dispatch_id: z.string(),
+        dispatch_job_id: z.string().nullable(),
+        article_ids: z.string(),
+      }),
+    )
+    .parse(
+      rssDb
+        .prepare(`
     SELECT dispatch_id, dispatch_job_id, GROUP_CONCAT(id) AS article_ids
     FROM rss_articles
     WHERE read_at IS NULL AND dispatch_id IS NOT NULL
     GROUP BY dispatch_id, dispatch_job_id
-  `).all());
+  `)
+        .all(),
+    );
   const orphanDispatches: Array<{ dispatchId: string; jobId: string }> = [];
   const completedTombstones: Array<{ dispatchId: string; jobId: string }> = [];
   const migrationAnomalies: RssDispatchAnomaly[] = [];
@@ -60,7 +72,11 @@ export function inspectRssReconciliation(
     const jobRaw = runtimeDb
       .prepare("SELECT status FROM jobs WHERE idempotency_key=? OR id=?")
       .get(claim.dispatch_job_id, claim.dispatch_job_id);
-    const job = z.object({ status: z.string().optional() }).nullable().optional().parse(jobRaw);
+    const job = z
+      .object({ status: z.string().optional() })
+      .nullable()
+      .optional()
+      .parse(jobRaw);
     if (!job)
       orphanDispatches.push({
         dispatchId: claim.dispatch_id,

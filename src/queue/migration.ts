@@ -3,10 +3,7 @@ import { constants } from "node:fs";
 import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  ModelConfigSchema,
-  SkillSelectionSchema,
-} from "../config/groups.js";
+import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
 import { z } from "zod";
 import { type LegacyMigrationResult, QueueRepository } from "./repository.js";
 
@@ -30,7 +27,8 @@ async function backupLegacyFile(
     try {
       await copyFile(source, destination, constants.COPYFILE_EXCL);
     } catch (error) {
-      if (z.object({ code: z.literal("EEXIST") }).safeParse(error).success) continue;
+      if (z.object({ code: z.literal("EEXIST") }).safeParse(error).success)
+        continue;
       throw error;
     }
     await chmod(destination, 0o444);
@@ -41,46 +39,55 @@ async function backupLegacyFile(
   throw new Error(`unable to allocate legacy backup path: ${source}`);
 }
 
-const LegacyMessageSchema = z.object({
-  id: z.string(),
-  channelId: z.string(),
-  groupName: z.string(),
-  sessionId: z.string(),
-  messageId: z.string().optional(),
-  content: z.string(),
-  timestamp: z.string(),
-  enqueuedAt: z.string().optional(),
-  retries: z.number().int().nonnegative().default(0),
-  idempotencyKey: z.string().optional(),
-  completedAt: z.string().optional(),
-  cronDeliveryMode: z.enum(["direct", "new-thread"]).optional(),
-  cronSessionMode: z.enum(["per-run", "destination"]).optional(),
-  cronThread: z.boolean().optional(),
-  cronJobId: z.string().optional(),
-  cronThreadId: z.string().optional(),
-  rssDispatchId: z.string().optional(),
-  rssStatePath: z.string().optional(),
-  configOverride: z.object({
-    model: ModelConfigSchema.optional(),
-    tools: z.array(z.string()).optional(),
-    skills: SkillSelectionSchema.optional(),
-  }).optional(),
-  attachments: z.array(z.object({
-    url: z.string(), name: z.string(), contentType: z.string().nullable(),
-    size: z.number().int().nonnegative(),
-  })).optional(),
-  agentsSnapshotContent: z.string().optional(),
-  memorySnapshotContent: z.string().optional(),
-  agentsSnapshotPresent: z.boolean().optional(),
-  memorySnapshotPresent: z.boolean().optional(),
-  snapshotPresent: z.boolean().optional(),
-  snapshotHash: z.string().optional(),
-  toolCallKey: z.string().optional(),
-  fencingToken: z.number().optional(),
-  workerId: z.string().optional(),
-  lastError: z.string().optional(),
-}).passthrough();
-
+const LegacyMessageSchema = z
+  .object({
+    id: z.string(),
+    channelId: z.string(),
+    groupName: z.string(),
+    sessionId: z.string(),
+    messageId: z.string().optional(),
+    content: z.string(),
+    timestamp: z.string(),
+    enqueuedAt: z.string().optional(),
+    retries: z.number().int().nonnegative().default(0),
+    idempotencyKey: z.string().optional(),
+    completedAt: z.string().optional(),
+    cronDeliveryMode: z.enum(["direct", "new-thread"]).optional(),
+    cronSessionMode: z.enum(["per-run", "destination"]).optional(),
+    cronThread: z.boolean().optional(),
+    cronJobId: z.string().optional(),
+    cronThreadId: z.string().optional(),
+    rssDispatchId: z.string().optional(),
+    rssStatePath: z.string().optional(),
+    configOverride: z
+      .object({
+        model: ModelConfigSchema.optional(),
+        tools: z.array(z.string()).optional(),
+        skills: SkillSelectionSchema.optional(),
+      })
+      .optional(),
+    attachments: z
+      .array(
+        z.object({
+          url: z.string(),
+          name: z.string(),
+          contentType: z.string().nullable(),
+          size: z.number().int().nonnegative(),
+        }),
+      )
+      .optional(),
+    agentsSnapshotContent: z.string().optional(),
+    memorySnapshotContent: z.string().optional(),
+    agentsSnapshotPresent: z.boolean().optional(),
+    memorySnapshotPresent: z.boolean().optional(),
+    snapshotPresent: z.boolean().optional(),
+    snapshotHash: z.string().optional(),
+    toolCallKey: z.string().optional(),
+    fencingToken: z.number().optional(),
+    workerId: z.string().optional(),
+    lastError: z.string().optional(),
+  })
+  .passthrough();
 
 export interface LegacyQueuePaths {
   inboxPath?: string;
@@ -110,7 +117,8 @@ export async function migrateLegacyQueue(
     try {
       bytes = await readFile(source);
     } catch (error) {
-      if (z.object({ code: z.literal("ENOENT") }).safeParse(error).success) continue;
+      if (z.object({ code: z.literal("ENOENT") }).safeParse(error).success)
+        continue;
       throw error;
     }
     const digest = createHash("sha256").update(bytes).digest("hex");
@@ -231,13 +239,15 @@ export async function migrateLegacyQueue(
             const timestamp = message.enqueuedAt ?? message.timestamp;
             // Normal enqueue numbers the first row of an empty session 0; mirror
             // that exactly so migrated and enqueued sessions share one ordering.
-            const sequenceRow = z.object({ sequence: z.number() }).parse(
-              repo.db
-                .prepare(
-                  "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
-                )
-                .get(message.sessionId),
-            );
+            const sequenceRow = z
+              .object({ sequence: z.number() })
+              .parse(
+                repo.db
+                  .prepare(
+                    "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
+                  )
+                  .get(message.sessionId),
+              );
             repo.db
               .prepare(
                 "INSERT INTO jobs(id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",

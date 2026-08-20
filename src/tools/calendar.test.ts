@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { createEventTool, deleteEventTool, listEventsTool, readEventTool, updateEventTool, withCalendarDependencies, type CalendarDependencies } from "./calendar.js";
-
+import {
+  createEventTool,
+  deleteEventTool,
+  listEventsTool,
+  readEventTool,
+  updateEventTool,
+  withCalendarDependencies,
+  type CalendarDependencies,
+} from "./calendar.js";
 
 type TextResult = { content: Array<{ type: string; text?: string }> };
 type RequestAt = { url: string; init: RequestInit };
@@ -19,8 +26,13 @@ function firstText(result: TextResult): string {
 }
 
 let fetchMock: ReturnType<typeof vi.fn<CalendarDependencies["fetch"]>>;
-const dependencies = (): CalendarDependencies => ({ fetch: fetchMock, resolveProxyBaseUrl: () => "http://proxy.test/google-calendar" });
-function execute<T>(operation: () => Promise<T>): Promise<T> { return withCalendarDependencies(dependencies(), operation); }
+const dependencies = (): CalendarDependencies => ({
+  fetch: fetchMock,
+  resolveProxyBaseUrl: () => "http://proxy.test/google-calendar",
+});
+function execute<T>(operation: () => Promise<T>): Promise<T> {
+  return withCalendarDependencies(dependencies(), operation);
+}
 function requestAt(index: number): RequestAt {
   const [url, init] = fetchMock.mock.calls[index] ?? [];
   return { url: z.string().parse(url), init: init ?? {} };
@@ -32,7 +44,10 @@ function bodyAt(index: number): CalendarBody {
 
 beforeEach(() => {
   process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-    { provider: "google-calendar", baseUrl: "http://proxy.test/google-calendar" },
+    {
+      provider: "google-calendar",
+      baseUrl: "http://proxy.test/google-calendar",
+    },
   ]);
   fetchMock = vi.fn<CalendarDependencies["fetch"]>();
   vi.stubGlobal("fetch", fetchMock);
@@ -91,7 +106,9 @@ describe("list-events", () => {
       ok: true,
       json: async () => ({ items: [] }),
     });
-    await execute(() => listEventsTool.execute("id", { timeMax: "2025-12-31T23:59:59Z" }));
+    await execute(() =>
+      listEventsTool.execute("id", { timeMax: "2025-12-31T23:59:59Z" }),
+    );
     const url = requestAt(0).url;
     expect(url).toContain(
       `timeMax=${encodeURIComponent("2025-12-31T23:59:59Z")}`,
@@ -103,7 +120,9 @@ describe("list-events", () => {
       ok: true,
       json: async () => ({ items: [] }),
     });
-    await execute(() => listEventsTool.execute("id", { calendarId: "team@example.com" }));
+    await execute(() =>
+      listEventsTool.execute("id", { calendarId: "team@example.com" }),
+    );
     const url = requestAt(0).url;
     expect(url).toContain(
       `/calendars/${encodeURIComponent("team@example.com")}/events`,
@@ -159,7 +178,9 @@ describe("read-event", () => {
 
   it("予定のタイトル・日時・参加者・説明をフォーマットする", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => makeEvent() });
-    const result = await execute(() => readEventTool.execute("id", { eventId: "evt-001" }));
+    const result = await execute(() =>
+      readEventTool.execute("id", { eventId: "evt-001" }),
+    );
     const text = firstText(result);
     expect(text).toContain("テスト予定");
     expect(text).toContain("2025-01-01T10:00:00+09:00");
@@ -185,11 +206,13 @@ describe("create-event", () => {
         htmlLink: "https://calendar.google.com/event?eid=abc",
       }),
     });
-    const result = await execute(() => createEventTool.execute("id", {
-      summary: "新規予定",
-      start: "2025-01-01T10:00:00+09:00",
-      end: "2025-01-01T11:00:00+09:00",
-    }));
+    const result = await execute(() =>
+      createEventTool.execute("id", {
+        summary: "新規予定",
+        start: "2025-01-01T10:00:00+09:00",
+        end: "2025-01-01T11:00:00+09:00",
+      }),
+    );
     const { url, init } = requestAt(0);
     expect(url).toContain("/calendars/primary/events");
     expect(init.method).toBe("POST");
@@ -205,11 +228,13 @@ describe("create-event", () => {
       ok: true,
       json: async () => ({ id: "evt-allday", summary: "終日予定" }),
     });
-    await execute(() => createEventTool.execute("id", {
-      summary: "終日予定",
-      start: "2025-01-01",
-      end: "2025-01-02",
-    }));
+    await execute(() =>
+      createEventTool.execute("id", {
+        summary: "終日予定",
+        start: "2025-01-01",
+        end: "2025-01-02",
+      }),
+    );
     const body = bodyAt(0);
     expect(body.start).toEqual({ date: "2025-01-01" });
     expect(body.end).toEqual({ date: "2025-01-02" });
@@ -220,12 +245,14 @@ describe("create-event", () => {
       ok: true,
       json: async () => ({ id: "evt-new", summary: "新規予定" }),
     });
-    await execute(() => createEventTool.execute("id", {
-      summary: "新規予定",
-      start: "2025-01-01T10:00:00+09:00",
-      end: "2025-01-01T11:00:00+09:00",
-      attendees: ["alice@example.com", "bob@example.com"],
-    }));
+    await execute(() =>
+      createEventTool.execute("id", {
+        summary: "新規予定",
+        start: "2025-01-01T10:00:00+09:00",
+        end: "2025-01-01T11:00:00+09:00",
+        attendees: ["alice@example.com", "bob@example.com"],
+      }),
+    );
     const body = bodyAt(0);
     expect(body.attendees).toEqual([
       { email: "alice@example.com" },
@@ -255,10 +282,12 @@ describe("update-event", () => {
       ok: true,
       json: async () => ({ id: "evt-001", summary: "更新後タイトル" }),
     });
-    const result = await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      summary: "更新後タイトル",
-    }));
+    const result = await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        summary: "更新後タイトル",
+      }),
+    );
     const { url, init } = requestAt(0);
     expect(url).toContain("/calendars/primary/events/evt-001");
     expect(init.method).toBe("PATCH");
@@ -272,11 +301,13 @@ describe("update-event", () => {
       ok: true,
       json: async () => ({ id: "evt-001", summary: "予定" }),
     });
-    await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      start: "2025-02-01",
-      end: "2025-02-02T10:00:00+09:00",
-    }));
+    await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2025-02-01",
+        end: "2025-02-02T10:00:00+09:00",
+      }),
+    );
     const body = bodyAt(0);
     expect(body.start).toEqual({ date: "2025-02-01" });
     expect(body.end).toEqual({ dateTime: "2025-02-02T10:00:00+09:00" });
@@ -312,11 +343,13 @@ describe("update-event", () => {
       .mockResolvedValueOnce(created) // POST recreate
       .mockResolvedValueOnce(currentEvent) // GET recheck (etag比較用)
       .mockResolvedValueOnce(deleteOk); // DELETE
-    const result = await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      start: "2026-06-19T14:50:00+09:00",
-      end: "2026-06-19T16:50:00+09:00",
-    }));
+    const result = await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(5);
     const createInit = requestAt(2).init;
@@ -374,11 +407,13 @@ describe("update-event", () => {
       .mockResolvedValueOnce(created) // POST recreate
       .mockResolvedValueOnce(currentEvent) // GET recheck (etag比較用)
       .mockResolvedValueOnce(deleteOk); // DELETE
-    await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      start: "2026-06-19T14:50:00+09:00",
-      end: "2026-06-19T16:50:00+09:00",
-    }));
+    await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    );
 
     const createBody = bodyAt(2);
     expect(createBody.recurrence).toEqual(["RRULE:FREQ=WEEKLY"]);
@@ -420,11 +455,13 @@ describe("update-event", () => {
       .mockResolvedValueOnce(created) // POST recreate
       .mockResolvedValueOnce(currentEvent) // GET recheck (etag比較用)
       .mockResolvedValueOnce(deleteOk); // DELETE
-    await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      start: "2026-06-19T14:50:00+09:00",
-      end: "2026-06-19T16:50:00+09:00",
-    }));
+    await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    );
 
     const createBody = bodyAt(2);
     expect(createBody.recurringEventId).toBeUndefined();
@@ -521,11 +558,13 @@ describe("update-event", () => {
       .mockResolvedValueOnce(currentEvent) // GET current
       .mockResolvedValueOnce(created) // POST recreate
       .mockResolvedValueOnce(updatedByOther); // GET recheck: etag が変わっている
-    const result = await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      start: "2026-06-19T14:50:00+09:00",
-      end: "2026-06-19T16:50:00+09:00",
-    }));
+    const result = await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(4); // DELETE は呼ばれない
     expect(firstText(result)).toContain("別の操作で更新された");
@@ -568,11 +607,13 @@ describe("update-event", () => {
       .mockResolvedValueOnce(currentEvent) // GET current
       .mockResolvedValueOnce(created) // POST recreate
       .mockResolvedValueOnce(notFound); // GET recheck: 旧予定は既に削除済み
-    const result = await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      start: "2026-06-19T14:50:00+09:00",
-      end: "2026-06-19T16:50:00+09:00",
-    }));
+    const result = await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(4); // DELETE は呼ばれない
     expect(firstText(result)).toContain("evt-new-001");
@@ -615,11 +656,13 @@ describe("update-event", () => {
       .mockResolvedValueOnce(created) // POST recreate
       .mockResolvedValueOnce(currentEvent) // GET recheck (etag比較用)
       .mockResolvedValueOnce(deleteFailed); // DELETE 失敗
-    const result = await execute(() => updateEventTool.execute("id", {
-      eventId: "evt-001",
-      start: "2026-06-19T14:50:00+09:00",
-      end: "2026-06-19T16:50:00+09:00",
-    }));
+    const result = await execute(() =>
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    );
 
     expect(firstText(result)).toContain("削除リクエストが失敗しました");
     expect(firstText(result)).toContain("evt-new-001");
@@ -651,7 +694,9 @@ describe("update-event", () => {
 describe("delete-event", () => {
   it("DELETE リクエストを送信する", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 204 });
-    const result = await execute(() => deleteEventTool.execute("id", { eventId: "evt-001" }));
+    const result = await execute(() =>
+      deleteEventTool.execute("id", { eventId: "evt-001" }),
+    );
     const { url, init } = requestAt(0);
     expect(url).toContain("/calendars/primary/events/evt-001");
     expect(init.method).toBe("DELETE");

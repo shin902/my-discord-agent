@@ -1,9 +1,5 @@
 import { z } from "zod";
-import {
-  loadConfigField,
-  loadRawConfig,
-  type JsonValue,
-} from "./config.js";
+import { loadConfigField, loadRawConfig, type JsonValue } from "./config.js";
 
 const ProxyConfigSchema = z.object({
   requestTimeoutMs: z.number().int().positive().optional(),

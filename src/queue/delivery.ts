@@ -7,7 +7,10 @@ import {
 } from "../discord/client.js";
 import { settleRssDispatch } from "./reconciliation.js";
 
-export interface DeliveryResult { externalMessageId: string; cronThreadId?: string; }
+export interface DeliveryResult {
+  externalMessageId: string;
+  cronThreadId?: string;
+}
 
 export type DeliverySendPayload =
   | string
@@ -19,40 +22,70 @@ export type DeliverySendPayload =
 export interface DeliveryTarget {
   readonly id?: string;
   readonly isSendable: () => boolean;
-  readonly send: (payload: DeliverySendPayload) => Promise<DeliveryMessageResponse>;
-  readonly threads?: { readonly create: (options: { name: string }) => Promise<DeliveryTarget> };
+  readonly send: (
+    payload: DeliverySendPayload,
+  ) => Promise<DeliveryMessageResponse>;
+  readonly threads?: {
+    readonly create: (options: { name: string }) => Promise<DeliveryTarget>;
+  };
 }
 export interface DeliveryClient {
   readonly isReady: () => boolean;
   readonly channels: {
-    readonly cache: { readonly get: (id: string) => DeliveryTarget | undefined };
+    readonly cache: {
+      readonly get: (id: string) => DeliveryTarget | undefined;
+    };
     readonly fetch: (id: string) => Promise<DeliveryTarget | null>;
   };
 }
-export interface DeliveryMessageResponse { readonly id?: string; }
+export interface DeliveryMessageResponse {
+  readonly id?: string;
+}
 
-function adaptDiscordClient(client: Awaited<ReturnType<typeof getDiscordClientForGroupName>>): DeliveryClient {
+function adaptDiscordClient(
+  client: Awaited<ReturnType<typeof getDiscordClientForGroupName>>,
+): DeliveryClient {
   return {
     isReady: () => client.isReady(),
     channels: {
       cache: { get: (id) => adaptDiscordTarget(client.channels.cache.get(id)) },
-      fetch: async (id) => adaptDiscordTarget(await client.channels.fetch(id)) ?? null,
+      fetch: async (id) =>
+        adaptDiscordTarget(await client.channels.fetch(id)) ?? null,
     },
   };
 }
-function adaptDiscordTarget(target: Awaited<ReturnType<Awaited<ReturnType<typeof getDiscordClientForGroupName>>["channels"]["fetch"]>> | null | undefined): DeliveryTarget | undefined {
+function adaptDiscordTarget(
+  target:
+    | Awaited<
+        ReturnType<
+          Awaited<
+            ReturnType<typeof getDiscordClientForGroupName>
+          >["channels"]["fetch"]
+        >
+      >
+    | null
+    | undefined,
+): DeliveryTarget | undefined {
   if (!target || !target.isSendable()) return undefined;
   return {
     id: target.id,
     isSendable: () => target.isSendable(),
     send: async (payload) => {
       const text = z.string().safeParse(payload);
-      if (text.success) return { id: (await target.send({ content: text.data })).id };
-      const objectPayload = z.object({
-        content: z.string(),
-        allowedMentions: z.object({ repliedUser: z.boolean() }).optional(),
-        reply: z.object({ messageReference: z.string(), failIfNotExists: z.boolean() }).optional(),
-      }).parse(payload);
+      if (text.success)
+        return { id: (await target.send({ content: text.data })).id };
+      const objectPayload = z
+        .object({
+          content: z.string(),
+          allowedMentions: z.object({ repliedUser: z.boolean() }).optional(),
+          reply: z
+            .object({
+              messageReference: z.string(),
+              failIfNotExists: z.boolean(),
+            })
+            .optional(),
+        })
+        .parse(payload);
       const response = await target.send(objectPayload);
       return { id: response.id };
     },
@@ -65,7 +98,8 @@ export interface DiscordDeliveryDependencies {
 const defaultDiscordDependencies: DiscordDeliveryDependencies = {
   resolveClient: async (groupName) =>
     adaptDiscordClient(await getDiscordClientForGroupName(groupName)),
-  clientsReady: () => [...getDiscordClients().values()].some((value) => value.isReady()),
+  clientsReady: () =>
+    [...getDiscordClients().values()].some((value) => value.isReady()),
 };
 
 import type {
@@ -88,29 +122,50 @@ export interface DeliverySendContext {
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
 }
 export interface DeliveryAdapter {
-  send(row: DeliveryRow, context?: DeliverySendContext): Promise<DeliveryResult>;
+  send(
+    row: DeliveryRow,
+    context?: DeliverySendContext,
+  ): Promise<DeliveryResult>;
 }
 type DeliveryUpdate = { error: string; retryAt?: string };
 type DeliverySentUpdate = { externalMessageId: string; cronThreadId?: string };
 const deliveryPayloadSchema = z.object({
-  content: z.string().optional(), groupName: z.string().optional(),
-  destinationType: z.string().optional(), destinationId: z.string().optional(),
-  replyMessageId: z.string().optional(), allowMention: z.boolean().optional(),
-  cronJobId: z.string().optional(), cronThreadId: z.string().optional(),
-  rssDispatchId: z.string().optional(), rssStatePath: z.string().optional(),
+  content: z.string().optional(),
+  groupName: z.string().optional(),
+  destinationType: z.string().optional(),
+  destinationId: z.string().optional(),
+  replyMessageId: z.string().optional(),
+  allowMention: z.boolean().optional(),
+  cronJobId: z.string().optional(),
+  cronThreadId: z.string().optional(),
+  rssDispatchId: z.string().optional(),
+  rssStatePath: z.string().optional(),
   rssDispatchJobId: z.string().optional(),
 });
 type DeliveryPayload = z.infer<typeof deliveryPayloadSchema>;
 function parseDeliveryPayload(json: string | null): DeliveryPayload {
   return deliveryPayloadSchema.parse(JSON.parse(json ?? "{}"));
 }
-function parseRssPayload(json: string | null): { rssDispatchId: string; rssStatePath?: string; rssDispatchJobId?: string } | undefined {
+function parseRssPayload(
+  json: string | null,
+):
+  | { rssDispatchId: string; rssStatePath?: string; rssDispatchJobId?: string }
+  | undefined {
   const payload = parseDeliveryPayload(json);
-  return payload.rssDispatchId ? { rssDispatchId: payload.rssDispatchId, rssStatePath: payload.rssStatePath, rssDispatchJobId: payload.rssDispatchJobId } : undefined;
+  return payload.rssDispatchId
+    ? {
+        rssDispatchId: payload.rssDispatchId,
+        rssStatePath: payload.rssStatePath,
+        rssDispatchJobId: payload.rssDispatchJobId,
+      }
+    : undefined;
 }
 function statusCode(cause: unknown): number | undefined {
   const parsed = z
-    .object({ status: z.number().optional(), statusCode: z.number().optional() })
+    .object({
+      status: z.number().optional(),
+      statusCode: z.number().optional(),
+    })
     .passthrough()
     .safeParse(cause);
   if (!parsed.success) return undefined;
@@ -129,8 +184,12 @@ export function classifyDiscordError(cause: unknown): DeliveryErrorKind {
   return "unknown";
 }
 export class DiscordDeliveryAdapter implements DeliveryAdapter {
-  constructor(private readonly dependencies: DiscordDeliveryDependencies = defaultDiscordDependencies) {}
-  dependenciesReady(): boolean { return this.dependencies.clientsReady(); }
+  constructor(
+    private readonly dependencies: DiscordDeliveryDependencies = defaultDiscordDependencies,
+  ) {}
+  dependenciesReady(): boolean {
+    return this.dependencies.clientsReady();
+  }
   async send(
     row: DeliveryRow,
     context: DeliverySendContext = {},
@@ -197,8 +256,10 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           }
         }
       } else {
-        target = client.channels.cache.get(destinationId) ??
-          (await client.channels.fetch(destinationId)) ?? undefined;
+        target =
+          client.channels.cache.get(destinationId) ??
+          (await client.channels.fetch(destinationId)) ??
+          undefined;
       }
       if (!target)
         throw new DeliveryError(
@@ -321,9 +382,16 @@ export class DeliveryWorker {
       // The pre-send persistCronThread path (invoked by the adapter right after
       // Discord thread creation and before the message send) remains the
       // crash-safety boundary that survives ambiguous/failed outcomes.
-      const update: DeliverySentUpdate = { externalMessageId: sent.externalMessageId };
+      const update: DeliverySentUpdate = {
+        externalMessageId: sent.externalMessageId,
+      };
       if (sent.cronThreadId) update.cronThreadId = sent.cronThreadId;
-      this.repository.updateDelivery(claim.row.id, claim.fencingToken, "sent", update);
+      this.repository.updateDelivery(
+        claim.row.id,
+        claim.fencingToken,
+        "sent",
+        update,
+      );
       if (this.isRss(claim.row)) {
         const deliveries = this.repository
           .listDeliveries()
@@ -374,7 +442,11 @@ export class DeliveryWorker {
     }
   }
   private isRss(row: DeliveryRow): boolean {
-    try { return parseRssPayload(row.payloadJson) !== undefined; } catch { return false; }
+    try {
+      return parseRssPayload(row.payloadJson) !== undefined;
+    } catch {
+      return false;
+    }
   }
 
   private settleRss(

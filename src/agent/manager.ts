@@ -51,10 +51,18 @@ function spawnManagerProcess(
   return {
     stdin,
     stdout: child.stdout
-      ? { on: (event, listener) => { child.stdout?.on(event, listener); } }
+      ? {
+          on: (event, listener) => {
+            child.stdout?.on(event, listener);
+          },
+        }
       : undefined,
     stderr: child.stderr
-      ? { on: (event, listener) => { child.stderr?.on(event, listener); } }
+      ? {
+          on: (event, listener) => {
+            child.stderr?.on(event, listener);
+          },
+        }
       : undefined,
     once(event, listener) {
       if (event === "close") child.once(event, listener);
@@ -158,7 +166,9 @@ declare global {
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 async function stopContainer(name: string): Promise<void> {
   const killResult = await new Promise<number>((resolve) => {
-    const kill = dependencies.spawn("docker", ["kill", name], { stdio: "ignore" });
+    const kill = dependencies.spawn("docker", ["kill", name], {
+      stdio: "ignore",
+    });
     if (!("once" in kill)) return resolve(0);
     kill.once("close", (code: number | null) => resolve(code ?? 1));
     kill.once("error", () => resolve(1));
@@ -360,7 +370,9 @@ interface PayloadData {
   groupName: string;
   sessionId: string;
   content: string;
-  groupConfig: AgentConfig & { model: Awaited<ReturnType<typeof resolveModelConfig>> };
+  groupConfig: AgentConfig & {
+    model: Awaited<ReturnType<typeof resolveModelConfig>>;
+  };
   agentsSnapshotContent?: string;
   agentsSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
@@ -502,10 +514,15 @@ export async function sendMessage(
     ...options.configOverride,
   };
 
-  const resolvedModel = await dependencies.resolveModelConfig(effectiveConfig.model);
+  const resolvedModel = await dependencies.resolveModelConfig(
+    effectiveConfig.model,
+  );
 
   try {
-    await dependencies.validateModel(resolvedModel.provider, resolvedModel.modelId);
+    await dependencies.validateModel(
+      resolvedModel.provider,
+      resolvedModel.modelId,
+    );
   } catch (err) {
     throw new NonRetryableError(
       `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
@@ -601,10 +618,14 @@ export async function sendMessage(
     content: promptContent,
     groupConfig: { ...effectiveConfig, model: resolvedModel },
   };
-  if (agentsSnapshotContent !== undefined) payloadData.agentsSnapshotContent = agentsSnapshotContent;
-  if (agentsSnapshotPresent !== undefined) payloadData.agentsSnapshotPresent = agentsSnapshotPresent;
-  if (memorySnapshotPresent !== undefined) payloadData.memorySnapshotPresent = memorySnapshotPresent;
-  if (memorySnapshotContent !== undefined) payloadData.memorySnapshotContent = memorySnapshotContent;
+  if (agentsSnapshotContent !== undefined)
+    payloadData.agentsSnapshotContent = agentsSnapshotContent;
+  if (agentsSnapshotPresent !== undefined)
+    payloadData.agentsSnapshotPresent = agentsSnapshotPresent;
+  if (memorySnapshotPresent !== undefined)
+    payloadData.memorySnapshotPresent = memorySnapshotPresent;
+  if (memorySnapshotContent !== undefined)
+    payloadData.memorySnapshotContent = memorySnapshotContent;
   if (snapshotHash !== undefined) payloadData.snapshotHash = snapshotHash;
   if (toolCallKey !== undefined) payloadData.toolCallKey = toolCallKey;
   const payload = JSON.stringify(payloadData);
@@ -650,7 +671,9 @@ export async function sendMessage(
   const agentTimeoutMs = await dependencies.loadAgentTimeoutMs();
   const dockerStartedAt = Date.now();
   return new Promise((resolve, reject) => {
-    const proc = dependencies.spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = dependencies.spawn("docker", args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     runningContainers.set(containerName, proc);
     let timeoutHandle: NodeJS.Timeout | undefined;
     const cancelActiveRun = () => {
@@ -716,11 +739,16 @@ export async function sendMessage(
         timing.assistantTurns = agentTiming.assistantTurns;
         timing.usage = agentTiming.usage;
         timing.stopReason = agentTiming.stopReason;
-        if (agentTiming.agentsSnapshotHash !== undefined) timing.agentsSnapshotHash = agentTiming.agentsSnapshotHash;
-        if (agentTiming.memorySnapshotHash !== undefined) timing.memorySnapshotHash = agentTiming.memorySnapshotHash;
-        if (agentTiming.snapshotHash !== undefined) timing.snapshotHash = agentTiming.snapshotHash;
-        if (agentTiming.toolCallKey !== undefined) timing.toolCallKey = agentTiming.toolCallKey;
-        if (agentTimingReceivedAt !== undefined) timing.postPromptMs = Math.max(0, finishedAt - agentTimingReceivedAt);
+        if (agentTiming.agentsSnapshotHash !== undefined)
+          timing.agentsSnapshotHash = agentTiming.agentsSnapshotHash;
+        if (agentTiming.memorySnapshotHash !== undefined)
+          timing.memorySnapshotHash = agentTiming.memorySnapshotHash;
+        if (agentTiming.snapshotHash !== undefined)
+          timing.snapshotHash = agentTiming.snapshotHash;
+        if (agentTiming.toolCallKey !== undefined)
+          timing.toolCallKey = agentTiming.toolCallKey;
+        if (agentTimingReceivedAt !== undefined)
+          timing.postPromptMs = Math.max(0, finishedAt - agentTimingReceivedAt);
       }
       try {
         onExecutionTiming?.(timing);
@@ -739,7 +767,9 @@ export async function sendMessage(
               readyResolve();
             })
             .catch((error) => {
-              readyReject(error instanceof Error ? error : new Error(String(error)));
+              readyReject(
+                error instanceof Error ? error : new Error(String(error)),
+              );
             });
         }
         return;

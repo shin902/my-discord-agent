@@ -69,7 +69,7 @@ async function isDirectory(targetPath: string): Promise<boolean> {
   try {
     return (await stat(targetPath)).isDirectory();
   } catch (err) {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;
   }
@@ -141,7 +141,9 @@ export async function enqueueCronInbox(
     cronDeliveryMode: deliveryMode,
     cronSessionMode: sessionMode,
     cronJobId: ctx.id,
-    ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : undefined),
+    ...(ctx.idempotencyKey
+      ? { idempotencyKey: ctx.idempotencyKey }
+      : undefined),
     ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : undefined),
     ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : undefined),
     ...(configOverride !== undefined ? { configOverride } : undefined),

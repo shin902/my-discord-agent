@@ -664,66 +664,214 @@ export function parseVtt(content: string): string {
   return out.join(" ").replace(/。/g, "。\n").trim();
 }
 
-const YouTubeChapterSchema = z.object({ start_time: z.number().optional(), title: z.string().optional() });
+const YouTubeChapterSchema = z.object({
+  start_time: z.number().optional(),
+  title: z.string().optional(),
+});
 const YouTubeMetaSchema = z.object({
-  title: z.string().optional(), channel: z.string().optional(), uploader: z.string().optional(),
-  upload_date: z.string().optional(), duration: z.number().optional(), view_count: z.number().optional(),
-  like_count: z.number().optional(), tags: z.array(z.string()).optional(), description: z.string().optional(),
+  title: z.string().optional(),
+  channel: z.string().optional(),
+  uploader: z.string().optional(),
+  upload_date: z.string().optional(),
+  duration: z.number().optional(),
+  view_count: z.number().optional(),
+  like_count: z.number().optional(),
+  tags: z.array(z.string()).optional(),
+  description: z.string().optional(),
   chapters: z.array(YouTubeChapterSchema).optional(),
 });
 type YouTubeMeta = z.infer<typeof YouTubeMetaSchema>;
 const GitHubLicenseSchema = z.object({ name: z.string().optional() });
-const GitHubRepoSchema = z.object({ full_name: z.string().optional(), description: z.string().optional(), language: z.string().optional(), license: GitHubLicenseSchema.nullable().optional(), stargazers_count: z.number().optional(), forks_count: z.number().optional(), open_issues_count: z.number().optional(), topics: z.array(z.string()).optional(), homepage: z.string().optional(), fork: z.boolean().optional(), created_at: z.string().optional(), updated_at: z.string().optional() });
+const GitHubRepoSchema = z.object({
+  full_name: z.string().optional(),
+  description: z.string().optional(),
+  language: z.string().optional(),
+  license: GitHubLicenseSchema.nullable().optional(),
+  stargazers_count: z.number().optional(),
+  forks_count: z.number().optional(),
+  open_issues_count: z.number().optional(),
+  topics: z.array(z.string()).optional(),
+  homepage: z.string().optional(),
+  fork: z.boolean().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
 type GitHubRepo = z.infer<typeof GitHubRepoSchema>;
-const RedditPostSchema = z.object({ title: z.string().optional(), subreddit: z.string().optional(), author: z.string().nullable().optional(), score: z.number().optional(), num_comments: z.number().optional(), created_utc: z.number().optional(), selftext: z.string().optional(), body: z.string().optional(), url: z.string().optional() });
-const RedditChildSchema = z.object({ kind: z.string().optional(), data: RedditPostSchema });
-const RedditListingSchema = z.object({ data: z.object({ children: z.array(RedditChildSchema) }) });
+const RedditPostSchema = z.object({
+  title: z.string().optional(),
+  subreddit: z.string().optional(),
+  author: z.string().nullable().optional(),
+  score: z.number().optional(),
+  num_comments: z.number().optional(),
+  created_utc: z.number().optional(),
+  selftext: z.string().optional(),
+  body: z.string().optional(),
+  url: z.string().optional(),
+});
+const RedditChildSchema = z.object({
+  kind: z.string().optional(),
+  data: RedditPostSchema,
+});
+const RedditListingSchema = z.object({
+  data: z.object({ children: z.array(RedditChildSchema) }),
+});
 type RedditListing = z.infer<typeof RedditListingSchema>;
 
-async function buildYouTubeMarkdown(metaJsonPath: string, subsDir: string): Promise<string> {
+async function buildYouTubeMarkdown(
+  metaJsonPath: string,
+  subsDir: string,
+): Promise<string> {
   let raw: string;
-  try { raw = await readFile(metaJsonPath, "utf-8"); } catch { return "(メタデータの読み込みに失敗しました)"; }
+  try {
+    raw = await readFile(metaJsonPath, "utf-8");
+  } catch {
+    return "(メタデータの読み込みに失敗しました)";
+  }
   const jsonStart = raw.indexOf("{");
-  if (jsonStart === -1) return `(JSON が見つかりません)\n\n${raw.slice(0, 2000)}`;
+  if (jsonStart === -1)
+    return `(JSON が見つかりません)\n\n${raw.slice(0, 2000)}`;
   const parsed = YouTubeMetaSchema.safeParse(JSON.parse(raw.slice(jsonStart)));
-  if (!parsed.success) return `(JSON パース失敗)\n\n${raw.slice(jsonStart, jsonStart + 2000)}`;
+  if (!parsed.success)
+    return `(JSON パース失敗)\n\n${raw.slice(jsonStart, jsonStart + 2000)}`;
   const meta: YouTubeMeta = parsed.data;
   const lines: string[] = [`# ${meta.title || "(タイトル不明)"}`, ""];
-  const channel = meta.channel || meta.uploader; if (channel) lines.push(`**チャンネル**: ${channel}`);
-  if (meta.upload_date?.length === 8) lines.push(`**投稿日**: ${meta.upload_date.slice(0,4)}-${meta.upload_date.slice(4,6)}-${meta.upload_date.slice(6,8)}`);
-  if (meta.duration !== undefined) lines.push(`**再生時間**: ${formatDuration(meta.duration)}`);
-  if (meta.view_count !== undefined) lines.push(`**視聴回数**: ${meta.view_count.toLocaleString()}`);
-  if (meta.like_count !== undefined) lines.push(`**いいね**: ${meta.like_count.toLocaleString()}`);
+  const channel = meta.channel || meta.uploader;
+  if (channel) lines.push(`**チャンネル**: ${channel}`);
+  if (meta.upload_date?.length === 8)
+    lines.push(
+      `**投稿日**: ${meta.upload_date.slice(0, 4)}-${meta.upload_date.slice(4, 6)}-${meta.upload_date.slice(6, 8)}`,
+    );
+  if (meta.duration !== undefined)
+    lines.push(`**再生時間**: ${formatDuration(meta.duration)}`);
+  if (meta.view_count !== undefined)
+    lines.push(`**視聴回数**: ${meta.view_count.toLocaleString()}`);
+  if (meta.like_count !== undefined)
+    lines.push(`**いいね**: ${meta.like_count.toLocaleString()}`);
   if (meta.tags?.length) lines.push(`**タグ**: ${meta.tags.join(", ")}`);
   if (meta.description) lines.push("", "## 説明", "", meta.description);
-  if (meta.chapters?.length) { lines.push("", "## チャプター", ""); for (const ch of meta.chapters) lines.push(`- ${ch.start_time === undefined ? "?" : formatDuration(ch.start_time)} ${ch.title ?? ""}`); }
-  let subFiles: string[] = []; try { subFiles = (await readdir(subsDir)).filter((f) => f.endsWith(".vtt")); } catch { /* subtitles are optional */ }
-  for (const file of subFiles) { const lang = file.match(/\.([a-z-]+)\.vtt$/i)?.[1] ?? file; const vtt = await readFile(join(subsDir, file), "utf-8").catch(() => null); if (vtt) { const text = parseVtt(vtt); if (text) lines.push("", `## 字幕 (${lang})`, "", text); } }
+  if (meta.chapters?.length) {
+    lines.push("", "## チャプター", "");
+    for (const ch of meta.chapters)
+      lines.push(
+        `- ${ch.start_time === undefined ? "?" : formatDuration(ch.start_time)} ${ch.title ?? ""}`,
+      );
+  }
+  let subFiles: string[] = [];
+  try {
+    subFiles = (await readdir(subsDir)).filter((f) => f.endsWith(".vtt"));
+  } catch {
+    /* subtitles are optional */
+  }
+  for (const file of subFiles) {
+    const lang = file.match(/\.([a-z-]+)\.vtt$/i)?.[1] ?? file;
+    const vtt = await readFile(join(subsDir, file), "utf-8").catch(() => null);
+    if (vtt) {
+      const text = parseVtt(vtt);
+      if (text) lines.push("", `## 字幕 (${lang})`, "", text);
+    }
+  }
   if (!subFiles.length) lines.push("", "## 字幕", "", "(取得できませんでした)");
   return lines.join("\n");
 }
 
-export async function buildGitHubMarkdown(repoJsonPath: string, readmePath: string): Promise<string> {
-  let raw: string; try { raw = await readFile(repoJsonPath, "utf-8"); } catch { return "(GitHub JSON の読み込みに失敗しました)"; }
-  let repo: GitHubRepo; try { repo = GitHubRepoSchema.parse(JSON.parse(raw)); } catch { return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`; }
-  const fullName = repo.full_name ?? ""; const lines = [`# ${fullName || "(不明)"}`, ""];
+export async function buildGitHubMarkdown(
+  repoJsonPath: string,
+  readmePath: string,
+): Promise<string> {
+  let raw: string;
+  try {
+    raw = await readFile(repoJsonPath, "utf-8");
+  } catch {
+    return "(GitHub JSON の読み込みに失敗しました)";
+  }
+  let repo: GitHubRepo;
+  try {
+    repo = GitHubRepoSchema.parse(JSON.parse(raw));
+  } catch {
+    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
+  }
+  const fullName = repo.full_name ?? "";
+  const lines = [`# ${fullName || "(不明)"}`, ""];
   if (repo.description) lines.push(repo.description, "");
   const license = repo.license?.name ?? "No License";
-  lines.push(`**Language**: ${repo.language || "Unknown"} | **License**: ${license} | **Stars**: ${(repo.stargazers_count ?? 0).toLocaleString()} | **Forks**: ${(repo.forks_count ?? 0).toLocaleString()} | **Open Issues**: ${(repo.open_issues_count ?? 0).toLocaleString()}`);
+  lines.push(
+    `**Language**: ${repo.language || "Unknown"} | **License**: ${license} | **Stars**: ${(repo.stargazers_count ?? 0).toLocaleString()} | **Forks**: ${(repo.forks_count ?? 0).toLocaleString()} | **Open Issues**: ${(repo.open_issues_count ?? 0).toLocaleString()}`,
+  );
   if (repo.topics?.length) lines.push(`**Topics**: ${repo.topics.join(", ")}`);
   if (repo.homepage) lines.push(`**Homepage**: ${repo.homepage}`);
-  lines.push(`**Fork**: ${repo.fork ? "Yes" : "No"} | **Created**: ${repo.created_at ?? ""} | **Updated**: ${repo.updated_at ?? ""}`, `**URL**: https://github.com/${fullName}`, "", "---", "");
-  const readme = await readFile(readmePath, "utf-8").catch(() => null); if (readme) lines.push("## README", "", readme); else lines.push("*(README not found)*"); return lines.join("\n");
+  lines.push(
+    `**Fork**: ${repo.fork ? "Yes" : "No"} | **Created**: ${repo.created_at ?? ""} | **Updated**: ${repo.updated_at ?? ""}`,
+    `**URL**: https://github.com/${fullName}`,
+    "",
+    "---",
+    "",
+  );
+  const readme = await readFile(readmePath, "utf-8").catch(() => null);
+  if (readme) lines.push("## README", "", readme);
+  else lines.push("*(README not found)*");
+  return lines.join("\n");
 }
 
 export async function buildRedditMarkdown(absPath: string): Promise<string> {
-  let raw: string; try { raw = await readFile(absPath, "utf-8"); } catch { return "(Reddit JSON の読み込みに失敗しました)"; }
-  let data: RedditListing | RedditListing[]; try { const json: unknown = JSON.parse(raw); data = Array.isArray(json) ? z.array(RedditListingSchema).parse(json) : RedditListingSchema.parse(json); } catch { return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`; }
+  let raw: string;
+  try {
+    raw = await readFile(absPath, "utf-8");
+  } catch {
+    return "(Reddit JSON の読み込みに失敗しました)";
+  }
+  let data: RedditListing | RedditListing[];
+  try {
+    const json: unknown = JSON.parse(raw);
+    data = Array.isArray(json)
+      ? z.array(RedditListingSchema).parse(json)
+      : RedditListingSchema.parse(json);
+  } catch {
+    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
+  }
   const postListing = Array.isArray(data) ? data[0] : data;
-  if (!postListing) return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
+  if (!postListing)
+    return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
   const post = postListing.data.children[0]?.data;
-  if (post && post.title) { const lines = [`# ${post.title}`, "", `**r/${post.subreddit ?? ""}** | u/${post.author ?? ""} | スコア: ${post.score ?? ""} | コメント: ${post.num_comments ?? ""}`]; if (post.created_utc !== undefined) lines.push(`**投稿日**: ${new Date(post.created_utc * 1000).toISOString().slice(0, 10)}`); if (post.selftext && !["[removed]", "[deleted]"].includes(post.selftext)) lines.push("", "## 本文", "", post.selftext); if (Array.isArray(data) && data[1]) { const comments = data[1].data.children.filter((c) => c.kind === "t1"); if (comments.length) { lines.push("", "## トップコメント", ""); for (const comment of comments) lines.push(`**u/${comment.data.author ?? ""}** (スコア: ${comment.data.score ?? ""})`, comment.data.selftext ?? comment.data.body ?? "", ""); } } return lines.join("\n"); }
-  const children = postListing.data.children; if (children.length) { const lines = ["# 投稿一覧", ""]; for (const child of children) { const p = child.data; lines.push(`## ${p.title ?? ""}`, `u/${p.author ?? ""} | スコア: ${p.score ?? ""} | コメント: ${p.num_comments ?? ""}`, `URL: ${p.url ?? ""}`, ""); } return lines.join("\n"); }
+  if (post && post.title) {
+    const lines = [
+      `# ${post.title}`,
+      "",
+      `**r/${post.subreddit ?? ""}** | u/${post.author ?? ""} | スコア: ${post.score ?? ""} | コメント: ${post.num_comments ?? ""}`,
+    ];
+    if (post.created_utc !== undefined)
+      lines.push(
+        `**投稿日**: ${new Date(post.created_utc * 1000).toISOString().slice(0, 10)}`,
+      );
+    if (post.selftext && !["[removed]", "[deleted]"].includes(post.selftext))
+      lines.push("", "## 本文", "", post.selftext);
+    if (Array.isArray(data) && data[1]) {
+      const comments = data[1].data.children.filter((c) => c.kind === "t1");
+      if (comments.length) {
+        lines.push("", "## トップコメント", "");
+        for (const comment of comments)
+          lines.push(
+            `**u/${comment.data.author ?? ""}** (スコア: ${comment.data.score ?? ""})`,
+            comment.data.selftext ?? comment.data.body ?? "",
+            "",
+          );
+      }
+    }
+    return lines.join("\n");
+  }
+  const children = postListing.data.children;
+  if (children.length) {
+    const lines = ["# 投稿一覧", ""];
+    for (const child of children) {
+      const p = child.data;
+      lines.push(
+        `## ${p.title ?? ""}`,
+        `u/${p.author ?? ""} | スコア: ${p.score ?? ""} | コメント: ${p.num_comments ?? ""}`,
+        `URL: ${p.url ?? ""}`,
+        "",
+      );
+    }
+    return lines.join("\n");
+  }
   return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
 }
 
@@ -736,42 +884,44 @@ const FxArticleBlockSchema = z
   })
   .catch({});
 
-const FxTweetSchema = z
-  .object({
-    text: z.string().optional().catch(undefined),
-    created_at: z.string().optional().catch(undefined),
-    likes: z.number().optional().catch(undefined),
-    retweets: z.number().optional().catch(undefined),
-    replies: z.number().optional().catch(undefined),
-    views: z.number().optional().catch(undefined),
-    author: z
-      .object({
-        name: z.string().optional().catch(undefined),
-        screen_name: z.string().optional().catch(undefined),
-      })
-      .optional()
-      .catch(undefined),
-    article: z
-      .object({
-        title: z.string().optional().catch(undefined),
-        preview_text: z.string().optional().catch(undefined),
-        content: z
-          .object({
-            blocks: z
-              .array(FxArticleBlockSchema)
-              .max(2000)
-              .optional()
-              .catch(undefined),
-          })
-          .optional()
-          .catch(undefined),
-      })
-      .optional()
-      .catch(undefined),
-  });
+const FxTweetSchema = z.object({
+  text: z.string().optional().catch(undefined),
+  created_at: z.string().optional().catch(undefined),
+  likes: z.number().optional().catch(undefined),
+  retweets: z.number().optional().catch(undefined),
+  replies: z.number().optional().catch(undefined),
+  views: z.number().optional().catch(undefined),
+  author: z
+    .object({
+      name: z.string().optional().catch(undefined),
+      screen_name: z.string().optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+  article: z
+    .object({
+      title: z.string().optional().catch(undefined),
+      preview_text: z.string().optional().catch(undefined),
+      content: z
+        .object({
+          blocks: z
+            .array(FxArticleBlockSchema)
+            .max(2000)
+            .optional()
+            .catch(undefined),
+        })
+        .optional()
+        .catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+});
 
 type JsonPrimitive = string | number | boolean | null | undefined;
-export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue =
+  | JsonPrimitive
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 const FxPostSchema = z.object({
   code: z.literal(200),
@@ -1096,106 +1246,106 @@ export function createAgentReachTool(
   executeCommand: ExecuteCommand = execAsync,
 ): AgentTool<typeof parameters> {
   return {
-  name: "agent-reach",
-  label: "Agent Reach",
-  description:
-    "youtube, github, reddit, x, rss, webページの情報を取得してmarkdownとして返す。左のサービスのURLから情報を取得するときは必ず使うこと。",
-  parameters,
-  execute: async (_toolCallId, { url }, signal?: AbortSignal) => {
-    const normalizedUrl = normalizeUrl(url);
-    const parsed = new URL(normalizedUrl);
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
-    }
-    await validatePublicDestination(getLookupHostname(parsed), resolve);
-    const service = detectService(parsed);
-    if (service === "x-article") {
-      throw new Error(
-        "FxTwitter で取得するため、X Article 直リンクではなく記事付き投稿の /status/... URLを指定してください",
-      );
-    }
-
-    if (service === "x-twitter") {
-      const fx = await fetchFxPost(normalizedUrl, signal);
-      if (!hasFxContent(fx)) {
-        throw new Error("FxTwitter API returned no post or article content");
+    name: "agent-reach",
+    label: "Agent Reach",
+    description:
+      "youtube, github, reddit, x, rss, webページの情報を取得してmarkdownとして返す。左のサービスのURLから情報を取得するときは必ず使うこと。",
+    parameters,
+    execute: async (_toolCallId, { url }, signal?: AbortSignal) => {
+      const normalizedUrl = normalizeUrl(url);
+      const parsed = new URL(normalizedUrl);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
       }
-
-      return {
-        content: [{ type: "text", text: formatFxPost(fx) }],
-        details: {
-          url: normalizedUrl,
-          service,
-          postId: parseXStatus(normalizedUrl).postId,
-          source: "fxtwitter",
-        },
-      };
-    }
-
-    const tmpDirAbs = await mkdtemp(join(tmpdir(), "agent-reach-"));
-    const absPath = join(tmpDirAbs, `${service}.md`);
-
-    try {
-      const cmd = buildCommand(service, normalizedUrl, absPath);
-      let stdout: string;
-      try {
-        ({ stdout } = await executeCommand(cmd, {
-          timeout: TIMEOUT_MS,
-          maxBuffer: 64 * 1024 * 1024,
-          cwd: WORKSPACE,
-        }));
-      } catch (err) {
-        const e = z
-          .object({
-            stdout: z.string().optional(),
-            stderr: z.string().optional(),
-            message: z.string().optional(),
-          })
-          .catch({})
-          .parse(err);
+      await validatePublicDestination(getLookupHostname(parsed), resolve);
+      const service = detectService(parsed);
+      if (service === "x-article") {
         throw new Error(
-          [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
-            "フェッチ失敗",
+          "FxTwitter で取得するため、X Article 直リンクではなく記事付き投稿の /status/... URLを指定してください",
         );
       }
 
-      if (HTTP_STATUS_SERVICES.has(service)) {
-        const status = parseHttpStatus(stdout);
-        if (status !== null && status >= 400) {
-          const bodyPath = getHttpErrorBodyPath(service, absPath);
-          const body = await readFile(bodyPath, "utf-8").catch(() => "");
-          throw new Error(formatHttpError(status, normalizedUrl, body));
+      if (service === "x-twitter") {
+        const fx = await fetchFxPost(normalizedUrl, signal);
+        if (!hasFxContent(fx)) {
+          throw new Error("FxTwitter API returned no post or article content");
         }
+
+        return {
+          content: [{ type: "text", text: formatFxPost(fx) }],
+          details: {
+            url: normalizedUrl,
+            service,
+            postId: parseXStatus(normalizedUrl).postId,
+            source: "fxtwitter",
+          },
+        };
       }
 
-      // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換
-      let content: string;
-      if (service === "youtube") {
-        const base = absPath.replace(/\.[^.]+$/, "");
-        content = await buildYouTubeMarkdown(
-          `${base}.meta.json`,
-          `${base}.subs`,
-        );
-      } else if (service === "github-repo") {
-        const base = absPath.replace(/\.[^.]+$/, "");
-        content = await buildGitHubMarkdown(
-          `${base}.repo.json`,
-          `${base}.readme.md`,
-        );
-      } else if (service === "reddit") {
-        content = await buildRedditMarkdown(absPath);
-      } else {
-        content = await readFile(absPath, "utf-8").catch(() => "");
-      }
+      const tmpDirAbs = await mkdtemp(join(tmpdir(), "agent-reach-"));
+      const absPath = join(tmpDirAbs, `${service}.md`);
 
-      return {
-        content: [{ type: "text", text: content }],
-        details: { url: normalizedUrl, service },
-      };
-    } finally {
-      await rm(tmpDirAbs, { recursive: true, force: true });
-    }
-  },
+      try {
+        const cmd = buildCommand(service, normalizedUrl, absPath);
+        let stdout: string;
+        try {
+          ({ stdout } = await executeCommand(cmd, {
+            timeout: TIMEOUT_MS,
+            maxBuffer: 64 * 1024 * 1024,
+            cwd: WORKSPACE,
+          }));
+        } catch (err) {
+          const e = z
+            .object({
+              stdout: z.string().optional(),
+              stderr: z.string().optional(),
+              message: z.string().optional(),
+            })
+            .catch({})
+            .parse(err);
+          throw new Error(
+            [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
+              "フェッチ失敗",
+          );
+        }
+
+        if (HTTP_STATUS_SERVICES.has(service)) {
+          const status = parseHttpStatus(stdout);
+          if (status !== null && status >= 400) {
+            const bodyPath = getHttpErrorBodyPath(service, absPath);
+            const body = await readFile(bodyPath, "utf-8").catch(() => "");
+            throw new Error(formatHttpError(status, normalizedUrl, body));
+          }
+        }
+
+        // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換
+        let content: string;
+        if (service === "youtube") {
+          const base = absPath.replace(/\.[^.]+$/, "");
+          content = await buildYouTubeMarkdown(
+            `${base}.meta.json`,
+            `${base}.subs`,
+          );
+        } else if (service === "github-repo") {
+          const base = absPath.replace(/\.[^.]+$/, "");
+          content = await buildGitHubMarkdown(
+            `${base}.repo.json`,
+            `${base}.readme.md`,
+          );
+        } else if (service === "reddit") {
+          content = await buildRedditMarkdown(absPath);
+        } else {
+          content = await readFile(absPath, "utf-8").catch(() => "");
+        }
+
+        return {
+          content: [{ type: "text", text: content }],
+          details: { url: normalizedUrl, service },
+        };
+      } finally {
+        await rm(tmpDirAbs, { recursive: true, force: true });
+      }
+    },
   };
 }
 

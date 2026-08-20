@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createGroupConfig, type GroupConfigFileSystem } from "./group-config.js";
+import {
+  createGroupConfig,
+  type GroupConfigFileSystem,
+} from "./group-config.js";
 
 const mockReadFile = vi.fn<GroupConfigFileSystem["readFile"]>();
 const mockStat = vi.fn<GroupConfigFileSystem["stat"]>();
 const mockCp = vi.fn<GroupConfigFileSystem["cp"]>();
 const mockMkdir = vi.fn<GroupConfigFileSystem["mkdir"]>();
-const { loadGroupSystemPrompt, initGroupPrompts, ensureGroupDirs, ensureGroupSkills } =
-  createGroupConfig({ readFile: mockReadFile, stat: mockStat, cp: mockCp, mkdir: mockMkdir });
+const {
+  loadGroupSystemPrompt,
+  initGroupPrompts,
+  ensureGroupDirs,
+  ensureGroupSkills,
+} = createGroupConfig({
+  readFile: mockReadFile,
+  stat: mockStat,
+  cp: mockCp,
+  mkdir: mockMkdir,
+});
 
 const statDir = () =>
   Promise.resolve({ isDirectory: () => true, isFile: () => false });

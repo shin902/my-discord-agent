@@ -30,9 +30,12 @@ function isKnownProvider(
 }
 
 export function resolveBaseUrl(baseUrl: string): string | null {
-  const resolved = baseUrl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, envVar: string) => {
-    return process.env[envVar] ?? `{${envVar}}`;
-  });
+  const resolved = baseUrl.replace(
+    /\{([A-Za-z0-9_]+)\}/g,
+    (_, envVar: string) => {
+      return process.env[envVar] ?? `{${envVar}}`;
+    },
+  );
   if (/\{[A-Za-z0-9_]+\}/.test(resolved)) return null;
   return resolved;
 }
@@ -85,8 +88,11 @@ export async function resolveModel(
     }
     return createCustomModel(entry, resolvedBaseUrl, modelId);
   }
-  const model = dependencies.getModels(provider).find((candidate) => candidate.id === modelId);
-  if (!model) throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
+  const model = dependencies
+    .getModels(provider)
+    .find((candidate) => candidate.id === modelId);
+  if (!model)
+    throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
   return model;
 }
 

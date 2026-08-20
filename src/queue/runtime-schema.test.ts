@@ -110,16 +110,33 @@ function makeTempDbPath(): string {
 
 const SchemaMetaRow = z.object({ value: z.string() });
 const TableColumn = z.object({ name: z.string() });
-const DeliveryRow = z.object({ response_index: z.number(), host_unique_key: z.string() });
-const JobRow = z.object({ id: z.string(), status: z.string(), session_id: z.string(), sequence: z.number(), result_state: z.string().nullable(), succeeded: z.number() });
+const DeliveryRow = z.object({
+  response_index: z.number(),
+  host_unique_key: z.string(),
+});
+const JobRow = z.object({
+  id: z.string(),
+  status: z.string(),
+  session_id: z.string(),
+  sequence: z.number(),
+  result_state: z.string().nullable(),
+  succeeded: z.number(),
+});
 
 function schemaVersion(db: Database.Database): number {
-  const row = SchemaMetaRow.optional().parse(db.prepare("SELECT value FROM schema_meta WHERE key='schema_version'").get());
+  const row = SchemaMetaRow.optional().parse(
+    db
+      .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
+      .get(),
+  );
   return row ? Number.parseInt(row.value, 10) : 0;
 }
 
 function columnsOf(db: Database.Database, table: string): string[] {
-  return z.array(TableColumn).parse(db.prepare(`PRAGMA table_info(${table})`).all()).map((column) => column.name);
+  return z
+    .array(TableColumn)
+    .parse(db.prepare(`PRAGMA table_info(${table})`).all())
+    .map((column) => column.name);
 }
 
 function expectTables(db: Database.Database): void {
@@ -254,7 +271,9 @@ describe("runtime schema migration", () => {
           "result_json",
         ]),
       );
-      const jobs = z.array(JobRow).parse(db.prepare("SELECT * FROM jobs ORDER BY id").all());
+      const jobs = z
+        .array(JobRow)
+        .parse(db.prepare("SELECT * FROM jobs ORDER BY id").all());
       expect(jobs).toHaveLength(2);
       expect(jobs[0]).toMatchObject({
         id: "legacy-active",
@@ -270,7 +289,9 @@ describe("runtime schema migration", () => {
         succeeded: 1,
       });
       // delivery row survived and was backfilled with durable-column defaults
-      const delivery = DeliveryRow.parse(db.prepare("SELECT * FROM deliveries WHERE id='delivery-1'").get());
+      const delivery = DeliveryRow.parse(
+        db.prepare("SELECT * FROM deliveries WHERE id='delivery-1'").get(),
+      );
       expect(delivery.response_index).toBe(0);
       expect(delivery.host_unique_key).toBe("legacy-active:0");
       expect(
@@ -333,7 +354,9 @@ describe("runtime schema migration", () => {
         expect.arrayContaining(deliveryColumns),
       );
       expect(columnsOf(db, "idempotency_keys")).toContain("completed_at");
-      const delivery = DeliveryRow.parse(db.prepare("SELECT * FROM deliveries WHERE id='d1'").get());
+      const delivery = DeliveryRow.parse(
+        db.prepare("SELECT * FROM deliveries WHERE id='d1'").get(),
+      );
       expect(delivery.response_index).toBe(0);
       expect(delivery.host_unique_key).toBe("modern-job:0");
       // repeating initialization on the same store is idempotent

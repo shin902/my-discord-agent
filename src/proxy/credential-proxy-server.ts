@@ -27,7 +27,10 @@ type ProxyRequest = IncomingMessage;
 type ProxyResponse = ServerResponse;
 export type ProxyRequestOptions = http.RequestOptions;
 export type ProxyRequestCallback = (res: IncomingMessage) => void;
-export type ProxyRequestFunction = (options: ProxyRequestOptions, callback?: ProxyRequestCallback) => http.ClientRequest;
+export type ProxyRequestFunction = (
+  options: ProxyRequestOptions,
+  callback?: ProxyRequestCallback,
+) => http.ClientRequest;
 export interface ProxyServer {
   on(event: "error", listener: (error: Error) => void): void | ProxyServer;
   listen(port: number, host: string, callback: () => void): void | ProxyServer;
@@ -80,7 +83,6 @@ function getFirstSetEnvVar(envVars: string[] | undefined): string | undefined {
 function appendPath(basePath: string, restPath: string): string {
   return `${basePath.replace(/\/$/, "")}/${restPath.replace(/^\//, "")}`;
 }
-
 
 async function handleRequest(
   creds: CredentialEntry[],
@@ -315,7 +317,11 @@ export async function initCredentialProxyServer(
         );
         continue;
       }
-      await dependencies.initGoogleAuth(entry.provider, entry.google, clientSecret);
+      await dependencies.initGoogleAuth(
+        entry.provider,
+        entry.google,
+        clientSecret,
+      );
       console.log(
         `[credential-proxy] Google Auth initialized for provider: ${entry.provider}`,
       );
@@ -336,7 +342,10 @@ export async function initCredentialProxyServer(
     }
     if (entry.redditCookie) {
       try {
-        await dependencies.getRedditCookieHeader(entry.provider, entry.redditCookie);
+        await dependencies.getRedditCookieHeader(
+          entry.provider,
+          entry.redditCookie,
+        );
         console.log(
           `[credential-proxy] Reddit cookie OK for provider: ${entry.provider}`,
         );

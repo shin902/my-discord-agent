@@ -9,7 +9,9 @@ const emailAddressSchema = z.object({
   name: z.string().optional(),
   address: z.string().optional(),
 });
-const recipientSchema = z.object({ emailAddress: emailAddressSchema.optional() });
+const recipientSchema = z.object({
+  emailAddress: emailAddressSchema.optional(),
+});
 const messageSchema = z.object({
   id: z.string().optional(),
   subject: z.string().optional(),
@@ -18,7 +20,12 @@ const messageSchema = z.object({
   ccRecipients: z.array(recipientSchema).optional(),
   receivedDateTime: z.string().optional(),
   bodyPreview: z.string().optional(),
-  body: z.object({ contentType: z.string().optional(), content: z.string().optional() }).optional(),
+  body: z
+    .object({
+      contentType: z.string().optional(),
+      content: z.string().optional(),
+    })
+    .optional(),
   isRead: z.boolean().optional(),
 });
 const listMessagesResponseSchema = z.object({ value: z.array(messageSchema) });

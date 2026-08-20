@@ -121,12 +121,16 @@ const defaultDependencies: CronRunnerDependencies = {
 
 let activeDependencies = defaultDependencies;
 
-export function createCronRunner(dependencies: Partial<CronRunnerDependencies> = {}) {
+export function createCronRunner(
+  dependencies: Partial<CronRunnerDependencies> = {},
+) {
   const injected = { ...defaultDependencies, ...dependencies };
   return {
     loadAndValidateCron: () => withDependencies(injected, loadAndValidateCron),
-    loadHandlerFn: (handler: string) => withDependencies(injected, () => loadHandlerFn(handler)),
-    executeJob: (job: CronJob) => withDependencies(injected, () => executeJob(job)),
+    loadHandlerFn: (handler: string) =>
+      withDependencies(injected, () => loadHandlerFn(handler)),
+    executeJob: (job: CronJob) =>
+      withDependencies(injected, () => executeJob(job)),
     startCron: () => {
       activeDependencies = injected;
       startCron();
@@ -135,7 +139,8 @@ export function createCronRunner(dependencies: Partial<CronRunnerDependencies> =
       stopCron();
       activeDependencies = defaultDependencies;
     },
-    setCronJobs: (jobs: CronJob[]) => withDependencies(injected, () => _setCronJobs(jobs)),
+    setCronJobs: (jobs: CronJob[]) =>
+      withDependencies(injected, () => _setCronJobs(jobs)),
   };
 }
 
@@ -174,7 +179,11 @@ async function loadState(): Promise<CronState> {
 async function saveState(state: CronState): Promise<void> {
   _state = state;
   await activeDependencies.mkdir(path.dirname(STATE_PATH), { recursive: true });
-  await activeDependencies.writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+  await activeDependencies.writeFile(
+    STATE_PATH,
+    JSON.stringify(state, null, 2),
+    "utf-8",
+  );
 }
 
 // --- Schedule matching ---
@@ -309,7 +318,11 @@ export async function executeJob(job: CronJob): Promise<void> {
   const discordClient = job.groupName
     ? await activeDependencies.getDiscordClientForGroupName(job.groupName)
     : activeDependencies.getDefaultDiscordClient();
-  const ctx: CronContext = { client: discordClient, appendInbox: activeDependencies.appendInbox, ...job };
+  const ctx: CronContext = {
+    client: discordClient,
+    appendInbox: activeDependencies.appendInbox,
+    ...job,
+  };
 
   if (job.handler) {
     const fn = await loadHandlerFn(job.handler);
@@ -333,7 +346,11 @@ export function _setCronJobs(jobs: CronJob[]): void {
 
 async function tick(): Promise<void> {
   if (_isRunning) return;
-  if (![...activeDependencies.getDiscordClients().values()].some((value) => value.isReady()))
+  if (
+    ![...activeDependencies.getDiscordClients().values()].some((value) =>
+      value.isReady(),
+    )
+  )
     return;
   _isRunning = true;
   try {

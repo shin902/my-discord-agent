@@ -1,6 +1,9 @@
 import { ChannelType } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { backfillDiscordMessages as backfillImpl, type DiscordBackfillDependencies } from "./backfill.js";
+import {
+  backfillDiscordMessages as backfillImpl,
+  type DiscordBackfillDependencies,
+} from "./backfill.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 
 const fetchChannel = vi.fn();
@@ -8,8 +11,14 @@ const ingest = vi.fn();
 const getRepo = vi.fn();
 const getClient = vi.fn();
 const mockClient = { channels: { fetch: fetchChannel } };
-const dependencies: DiscordBackfillDependencies = { getDiscordClientForGroup: getClient, ingestDiscordMessage: ingest };
-const backfillDiscordMessages = (groups: Parameters<typeof backfillImpl>[0], repo?: Parameters<typeof backfillImpl>[1]) => backfillImpl(groups, repo ?? getRepo(), dependencies);
+const dependencies: DiscordBackfillDependencies = {
+  getDiscordClientForGroup: getClient,
+  ingestDiscordMessage: ingest,
+};
+const backfillDiscordMessages = (
+  groups: Parameters<typeof backfillImpl>[0],
+  repo?: Parameters<typeof backfillImpl>[1],
+) => backfillImpl(groups, repo ?? getRepo(), dependencies);
 getClient.mockReturnValue(mockClient);
 
 let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -53,7 +62,9 @@ function page(messages: BackfillMessage[]): MessagePage {
   };
 }
 
-function rootChannel(overrides: Partial<RootChannelFixture> = {}): RootChannelFixture {
+function rootChannel(
+  overrides: Partial<RootChannelFixture> = {},
+): RootChannelFixture {
   return {
     id: "root-1",
     type: ChannelType.GuildText,
@@ -701,9 +712,7 @@ describe("backfillDiscordMessages", () => {
 
     expect(root.threads.fetchActive).toHaveBeenCalledWith(false);
     expect(fetchArchived).not.toHaveBeenCalled();
-    expect(ingest.mock.calls.map(([input]) => input.id)).toEqual([
-      "2100",
-    ]);
+    expect(ingest.mock.calls.map(([input]) => input.id)).toEqual(["2100"]);
   });
 
   it("auto-threadのカーソルなしthreadは親チャンネル復旧前のカーソルから復旧する", async () => {

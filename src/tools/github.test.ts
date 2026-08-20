@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest";
 
 const PROXY_CREDS = JSON.stringify([
   { provider: "github", baseUrl: "http://proxy.test/github" },
@@ -14,9 +22,17 @@ function firstText(result: {
   return first.text;
 }
 
-type IssueOverride = { number?: number; pull_request?: object; body?: string }
+type IssueOverride = { number?: number; pull_request?: object; body?: string };
 type FetchCall = readonly [input: string, init?: RequestInit];
-type FetchFn = (input: string, init?: RequestInit) => Promise<{ ok: boolean; status?: number; json?: () => Promise<object>; text?: () => Promise<string> }>;
+type FetchFn = (
+  input: string,
+  init?: RequestInit,
+) => Promise<{
+  ok: boolean;
+  status?: number;
+  json?: () => Promise<object>;
+  text?: () => Promise<string>;
+}>;
 
 function fetchCall(call: FetchCall | undefined): FetchCall {
   if (!call) throw new Error("Expected a fetch call");

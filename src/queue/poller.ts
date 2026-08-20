@@ -97,18 +97,24 @@ export function createPoller(
 
 const sendMessage = (...args: Parameters<PollerDependencies["sendMessage"]>) =>
   pollerDependencies.sendMessage(...args);
-const findGroupByName = (...args: Parameters<PollerDependencies["findGroupByName"]>) =>
-  pollerDependencies.findGroupByName(...args);
-const resolveModelConfig = (...args: Parameters<PollerDependencies["resolveModelConfig"]>) =>
-  pollerDependencies.resolveModelConfig(...args);
-const resolveProviderConcurrency = (...args: Parameters<PollerDependencies["resolveProviderConcurrency"]>) =>
-  pollerDependencies.resolveProviderConcurrency(...args);
-const getDiscordClientForGroupName = (...args: Parameters<PollerDependencies["getDiscordClientForGroupName"]>) =>
-  pollerDependencies.getDiscordClientForGroupName(...args);
-const getDiscordClients = (...args: Parameters<PollerDependencies["getDiscordClients"]>) =>
-  pollerDependencies.getDiscordClients(...args);
-const getQueueRepository = (...args: Parameters<PollerDependencies["getQueueRepository"]>) =>
-  pollerDependencies.getQueueRepository(...args);
+const findGroupByName = (
+  ...args: Parameters<PollerDependencies["findGroupByName"]>
+) => pollerDependencies.findGroupByName(...args);
+const resolveModelConfig = (
+  ...args: Parameters<PollerDependencies["resolveModelConfig"]>
+) => pollerDependencies.resolveModelConfig(...args);
+const resolveProviderConcurrency = (
+  ...args: Parameters<PollerDependencies["resolveProviderConcurrency"]>
+) => pollerDependencies.resolveProviderConcurrency(...args);
+const getDiscordClientForGroupName = (
+  ...args: Parameters<PollerDependencies["getDiscordClientForGroupName"]>
+) => pollerDependencies.getDiscordClientForGroupName(...args);
+const getDiscordClients = (
+  ...args: Parameters<PollerDependencies["getDiscordClients"]>
+) => pollerDependencies.getDiscordClients(...args);
+const getQueueRepository = (
+  ...args: Parameters<PollerDependencies["getQueueRepository"]>
+) => pollerDependencies.getQueueRepository(...args);
 
 const POLL_MS = 1000;
 const SLOW_RESPONSE_MS = 60_000;
@@ -167,7 +173,6 @@ function executionMetadata(timing: ResponseTiming): ExecutionMetadata {
       }
     : {};
 }
-
 
 function logResponseTiming(
   msg: InboxMessage,
@@ -589,7 +594,7 @@ async function createCronThread(msg: InboxMessage): Promise<string> {
   let mutationAttempted = false;
   try {
     const client = await resolveDiscordClient(msg.groupName);
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const fetchedChannel = await client.channels.fetch(msg.channelId);
     const channel = fetchedChannel
       ? cronThreadParent.parse(fetchedChannel)
@@ -629,7 +634,8 @@ async function createCronThread(msg: InboxMessage): Promise<string> {
     // transport/unknown failures are ambiguous and must never be retried.
     const postMutationTransportFailure =
       mutationAttempted &&
-      discordStatusCode(discordErrorInput.safeParse(error).data ?? {}) === undefined &&
+      discordStatusCode(discordErrorInput.safeParse(error).data ?? {}) ===
+        undefined &&
       (kind === "retryable" || kind === "unknown");
     const effectiveKind = postMutationTransportFailure
       ? "unknown"
@@ -818,7 +824,7 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   if (sessionRaw) {
     for (const line of sessionRaw.split(/\r?\n/)) {
       try {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+        // SAFETY: The surrounding boundary contract validates this value before the assertion.
         const entry = JSON.parse(line) as {
           customType?: string;
           content?: unknown;
@@ -890,10 +896,16 @@ export async function processMessage(
         `[poller] 実行 identity の保存に失敗しました (${msg.id}):`,
         error,
       );
-      const normalizedError = error instanceof Error ? error : new Error(String(error));
-      await getQueueRepository().failAttempt(msg.id, normalizedError, msg.fencingToken, {
-        metadata: { error: normalizedError },
-      });
+      const normalizedError =
+        error instanceof Error ? error : new Error(String(error));
+      await getQueueRepository().failAttempt(
+        msg.id,
+        normalizedError,
+        msg.fencingToken,
+        {
+          metadata: { error: normalizedError },
+        },
+      );
       settleRssDispatchAfterQueueTransition(msg);
       return;
     }

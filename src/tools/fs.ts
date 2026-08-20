@@ -289,10 +289,19 @@ export interface FsStat {
 }
 
 export interface FsDependencies {
-  createReadStream: (path: string, options: { encoding: "utf8" }) => AsyncIterable<string>;
-  glob: (pattern: string, options: { cwd: string; withFileTypes: false }) => AsyncIterable<string>;
+  createReadStream: (
+    path: string,
+    options: { encoding: "utf8" },
+  ) => AsyncIterable<string>;
+  glob: (
+    pattern: string,
+    options: { cwd: string; withFileTypes: false },
+  ) => AsyncIterable<string>;
   mkdir: (path: string, options: { recursive: true }) => Promise<void>;
-  readdir: (path: string, options: { withFileTypes: true }) => Promise<FsDirent[]>;
+  readdir: (
+    path: string,
+    options: { withFileTypes: true },
+  ) => Promise<FsDirent[]>;
   readFile: (path: string, encoding: "utf-8" | "base64") => Promise<string>;
   stat: (path: string) => Promise<FsStat>;
   writeFile: (path: string, data: string, encoding: "utf-8") => Promise<void>;
@@ -316,7 +325,7 @@ const writeParameters = Type.Object({
       "書き込むファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
   }),
   content: Type.String({ description: "書き込む内容" }),
-})
+});
 
 const listParameters = Type.Object({
   path: Type.String({
@@ -324,7 +333,7 @@ const listParameters = Type.Object({
       "一覧するディレクトリのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス。空文字でルート）",
     default: "",
   }),
-})
+});
 
 const editParameters = Type.Object({
   path: Type.String({
@@ -333,7 +342,7 @@ const editParameters = Type.Object({
   }),
   oldString: Type.String({ description: "置換対象の文字列" }),
   newString: Type.String({ description: "置換後の文字列" }),
-})
+});
 
 const globParameters = Type.Object({
   pattern: Type.String({
@@ -344,7 +353,7 @@ const globParameters = Type.Object({
       "検索のベースディレクトリ（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス。空文字でルート）",
     default: "",
   }),
-})
+});
 
 const grepParameters = Type.Object({
   pattern: Type.String({
@@ -373,49 +382,68 @@ export function createFsTool(
   const fs = dependencies;
 
   const readTool: AgentTool<typeof readParameters> = {
-  name: "read",
-  label: "Read File",
-  description:
-    "ワークスペース内のファイル内容を読み込む。startLine（1始まり）とlineCountで行範囲を指定でき、lineCountだけなら先頭から、startLineだけなら指定行から末尾までを返す。tailCountで末尾から読めるが、startLine/lineCountとは併用できない。結果にはファイル全体の文字数・行数と今回の読み込み範囲が含まれる。大きなファイルは先頭から順番に範囲を指定して読み進める",
-  parameters: readParameters,
-  execute: async (_toolCallId, { path, startLine, lineCount, tailCount }) => {
-    const safePath = sanitizePath(path);
-    const fp = fullPath(safePath);
-    const hasRange = validateReadRange({ startLine, lineCount, tailCount });
+    name: "read",
+    label: "Read File",
+    description:
+      "ワークスペース内のファイル内容を読み込む。startLine（1始まり）とlineCountで行範囲を指定でき、lineCountだけなら先頭から、startLineだけなら指定行から末尾までを返す。tailCountで末尾から読めるが、startLine/lineCountとは併用できない。結果にはファイル全体の文字数・行数と今回の読み込み範囲が含まれる。大きなファイルは先頭から順番に範囲を指定して読み進める",
+    parameters: readParameters,
+    execute: async (_toolCallId, { path, startLine, lineCount, tailCount }) => {
+      const safePath = sanitizePath(path);
+      const fp = fullPath(safePath);
+      const hasRange = validateReadRange({ startLine, lineCount, tailCount });
 
-    const mimeType = Object.entries(IMAGE_MIME_TYPES).find(
-      ([extension]) => extension === extname(safePath).toLowerCase(),
-    )?.[1];
-    if (mimeType) {
+      const mimeType = Object.entries(IMAGE_MIME_TYPES).find(
+        ([extension]) => extension === extname(safePath).toLowerCase(),
+      )?.[1];
+      if (mimeType) {
+        if (hasRange) {
+          throw new Error("画像ファイルでは行範囲を指定できません");
+        }
+        const { size = 0 } = await fs.stat(fp);
+        if (size > READ_IMAGE_BYTE_LIMIT) {
+          throw new Error(
+            `画像が大きすぎます (${size} bytes > ${READ_IMAGE_BYTE_LIMIT} bytes)`,
+          );
+        }
+        const data = await fs.readFile(fp, "base64");
+        return {
+          content: [{ type: "image", data, mimeType }],
+          details: { path: safePath, size, mimeType },
+        };
+      }
+
       if (hasRange) {
-        throw new Error("画像ファイルでは行範囲を指定できません");
-      }
-      const { size = 0 } = await fs.stat(fp);
-      if (size > READ_IMAGE_BYTE_LIMIT) {
-        throw new Error(
-          `画像が大きすぎます (${size} bytes > ${READ_IMAGE_BYTE_LIMIT} bytes)`,
+        const selected = await selectLinesFromStream(
+          fp,
+          { startLine, lineCount, tailCount },
+          fs.createReadStream,
         );
+        return {
+          content: [{ type: "text", text: selected.text }],
+          details: {
+            path: safePath,
+            size: selected.size,
+            characters: selected.size,
+            returnedCharacters: selected.text.length,
+            startLine: selected.startLine,
+            endLine: selected.endLine,
+            returnedLineCount: selected.returnedLineCount,
+            totalLines: selected.totalLines,
+            eof: selected.eof,
+          },
+        };
       }
-      const data = await fs.readFile(fp, "base64");
-      return {
-        content: [{ type: "image", data, mimeType }],
-        details: { path: safePath, size, mimeType },
-      };
-    }
 
-    if (hasRange) {
-      const selected = await selectLinesFromStream(
-        fp,
-        { startLine, lineCount, tailCount },
-        fs.createReadStream,
-      );
+      // Unbounded reads retain the existing full-output behavior.
+      const raw = await fs.readFile(fp, "utf-8");
+      const selected = selectLines(raw, {});
       return {
-        content: [{ type: "text", text: selected.text }],
+        content: [{ type: "text", text: raw }],
         details: {
           path: safePath,
-          size: selected.size,
-          characters: selected.size,
-          returnedCharacters: selected.text.length,
+          size: raw.length,
+          characters: raw.length,
+          returnedCharacters: raw.length,
           startLine: selected.startLine,
           endLine: selected.endLine,
           returnedLineCount: selected.returnedLineCount,
@@ -423,226 +451,201 @@ export function createFsTool(
           eof: selected.eof,
         },
       };
-    }
+    },
+  };
 
-    // Unbounded reads retain the existing full-output behavior.
-    const raw = await fs.readFile(fp, "utf-8");
-    const selected = selectLines(raw, {});
-    return {
-      content: [{ type: "text", text: raw }],
-      details: {
-        path: safePath,
-        size: raw.length,
-        characters: raw.length,
-        returnedCharacters: raw.length,
-        startLine: selected.startLine,
-        endLine: selected.endLine,
-        returnedLineCount: selected.returnedLineCount,
-        totalLines: selected.totalLines,
-        eof: selected.eof,
-      },
-    };
-  },
-};
-
-;
-
-const writeTool: AgentTool<typeof writeParameters> = {
-  name: "write",
-  label: "Write File",
-  description: "ワークスペース内にファイルを作成または上書きする",
-  parameters: writeParameters,
-  execute: async (_toolCallId, { path, content }) => {
-    const safePath = sanitizePath(path);
-    const fp = fullPath(safePath);
-    await fs.mkdir(dirname(fp), { recursive: true });
-    await fs.writeFile(fp, content, "utf-8");
-    const lines = countLines(content);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `書き込み完了: ${safePath} (${content.length} 文字, ${lines} 行)`,
+  const writeTool: AgentTool<typeof writeParameters> = {
+    name: "write",
+    label: "Write File",
+    description: "ワークスペース内にファイルを作成または上書きする",
+    parameters: writeParameters,
+    execute: async (_toolCallId, { path, content }) => {
+      const safePath = sanitizePath(path);
+      const fp = fullPath(safePath);
+      await fs.mkdir(dirname(fp), { recursive: true });
+      await fs.writeFile(fp, content, "utf-8");
+      const lines = countLines(content);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `書き込み完了: ${safePath} (${content.length} 文字, ${lines} 行)`,
+          },
+        ],
+        details: {
+          path: safePath,
+          size: content.length,
+          characters: content.length,
+          lines,
         },
-      ],
-      details: {
-        path: safePath,
-        size: content.length,
-        characters: content.length,
-        lines,
-      },
-    };
-  },
-};
+      };
+    },
+  };
 
-;
-
-const listTool: AgentTool<typeof listParameters> = {
-  name: "list",
-  label: "List Files",
-  description: "ワークスペース内のファイル・ディレクトリ一覧を取得する",
-  parameters: listParameters,
-  execute: async (_toolCallId, { path }) => {
-    const safePath = sanitizePath(path);
-    const entries = await fs.readdir(fullPath(safePath), { withFileTypes: true });
-    const lines = entries.map((e) => {
-      const kind = e.isDirectory() ? "dir" : "file";
-      return `${kind}: ${e.name}`;
-    });
-    const text = lines.length === 0 ? "(空のディレクトリ)" : lines.join("\n");
-    return {
-      content: [{ type: "text", text }],
-      details: { path: safePath, count: entries.length },
-    };
-  },
-};
-
-;
-
-const editTool: AgentTool<typeof editParameters> = {
-  name: "edit",
-  label: "Edit File",
-  description: "ワークスペース内のファイルの一部を文字列置換で編集する",
-  parameters: editParameters,
-  execute: async (_toolCallId, { path, oldString, newString }) => {
-    const safePath = sanitizePath(path);
-    const fp = fullPath(safePath);
-    const original = await fs.readFile(fp, "utf-8");
-    if (oldString === "") {
-      throw new Error(
-        "置換対象の文字列（oldString）を空にすることはできません",
-      );
-    }
-    if (!original.includes(oldString)) {
-      throw new Error(`置換対象が見つかりません: ${oldString.slice(0, 50)}`);
-    }
-    const updated = original.replaceAll(oldString, newString);
-    await fs.writeFile(fp, updated, "utf-8");
-    const count = original.split(oldString).length - 1;
-    const lines = countLines(updated);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `編集完了: ${safePath} (${count} 箇所置換, ${updated.length} 文字, ${lines} 行)`,
-        },
-      ],
-      details: {
-        path: safePath,
-        replacements: count,
-        size: updated.length,
-        characters: updated.length,
-        lines,
-      },
-    };
-  },
-};
-
-;
-
-const globTool: AgentTool<typeof globParameters> = {
-  name: "glob",
-  label: "Glob",
-  description: "ワークスペース内のファイルを glob パターンで検索する",
-  parameters: globParameters,
-  execute: async (_toolCallId, { pattern, path }) => {
-    const safePath = sanitizePath(path ?? "");
-    const cwd = fullPath(safePath);
-    const iterable = fs.glob(pattern, { cwd, withFileTypes: false });
-    const files: string[] = [];
-    for await (const f of iterable) {
-      files.push(join(safePath, f));
-    }
-    const text = files.join("\n");
-    return {
-      content: [{ type: "text", text: text || "(一致なし)" }],
-      details: { pattern, path: safePath, count: files.length },
-    };
-  },
-};
-
-;
-
-const grepTool: AgentTool<typeof grepParameters> = {
-  name: "grep",
-  label: "Grep",
-  description: "ワークスペース内のファイルを正規表現で検索する",
-  parameters: grepParameters,
-  execute: async (
-    _toolCallId,
-    { pattern, path, glob: globPattern, maxResults },
-  ) => {
-    const limit = maxResults ?? GREP_MAX_RESULTS;
-    const safePath = sanitizePath(path);
-    const basePath = fullPath(safePath);
-    const regex = new RegExp(pattern, "gm");
-
-    let files: string[];
-    let statInfo: FsStat;
-    try {
-      statInfo = await fs.stat(basePath);
-    } catch (err) {
-      if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success) {
-        return {
-          content: [{ type: "text", text: "(一致なし)" }],
-          details: { pattern, count: 0 },
-        };
-      }
-      throw err;
-    }
-    if (statInfo.isFile?.()) {
-      files = [safePath];
-    } else {
-      const gp = globPattern ?? "**/*";
-      const iterable = fs.glob(gp, {
-        cwd: basePath,
-        withFileTypes: false,
+  const listTool: AgentTool<typeof listParameters> = {
+    name: "list",
+    label: "List Files",
+    description: "ワークスペース内のファイル・ディレクトリ一覧を取得する",
+    parameters: listParameters,
+    execute: async (_toolCallId, { path }) => {
+      const safePath = sanitizePath(path);
+      const entries = await fs.readdir(fullPath(safePath), {
+        withFileTypes: true,
       });
-      files = [];
+      const lines = entries.map((e) => {
+        const kind = e.isDirectory() ? "dir" : "file";
+        return `${kind}: ${e.name}`;
+      });
+      const text = lines.length === 0 ? "(空のディレクトリ)" : lines.join("\n");
+      return {
+        content: [{ type: "text", text }],
+        details: { path: safePath, count: entries.length },
+      };
+    },
+  };
+
+  const editTool: AgentTool<typeof editParameters> = {
+    name: "edit",
+    label: "Edit File",
+    description: "ワークスペース内のファイルの一部を文字列置換で編集する",
+    parameters: editParameters,
+    execute: async (_toolCallId, { path, oldString, newString }) => {
+      const safePath = sanitizePath(path);
+      const fp = fullPath(safePath);
+      const original = await fs.readFile(fp, "utf-8");
+      if (oldString === "") {
+        throw new Error(
+          "置換対象の文字列（oldString）を空にすることはできません",
+        );
+      }
+      if (!original.includes(oldString)) {
+        throw new Error(`置換対象が見つかりません: ${oldString.slice(0, 50)}`);
+      }
+      const updated = original.replaceAll(oldString, newString);
+      await fs.writeFile(fp, updated, "utf-8");
+      const count = original.split(oldString).length - 1;
+      const lines = countLines(updated);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `編集完了: ${safePath} (${count} 箇所置換, ${updated.length} 文字, ${lines} 行)`,
+          },
+        ],
+        details: {
+          path: safePath,
+          replacements: count,
+          size: updated.length,
+          characters: updated.length,
+          lines,
+        },
+      };
+    },
+  };
+
+  const globTool: AgentTool<typeof globParameters> = {
+    name: "glob",
+    label: "Glob",
+    description: "ワークスペース内のファイルを glob パターンで検索する",
+    parameters: globParameters,
+    execute: async (_toolCallId, { pattern, path }) => {
+      const safePath = sanitizePath(path ?? "");
+      const cwd = fullPath(safePath);
+      const iterable = fs.glob(pattern, { cwd, withFileTypes: false });
+      const files: string[] = [];
       for await (const f of iterable) {
         files.push(join(safePath, f));
       }
-    }
+      const text = files.join("\n");
+      return {
+        content: [{ type: "text", text: text || "(一致なし)" }],
+        details: { pattern, path: safePath, count: files.length },
+      };
+    },
+  };
 
-    const matches: Array<{ file: string; line: number; content: string }> = [];
+  const grepTool: AgentTool<typeof grepParameters> = {
+    name: "grep",
+    label: "Grep",
+    description: "ワークスペース内のファイルを正規表現で検索する",
+    parameters: grepParameters,
+    execute: async (
+      _toolCallId,
+      { pattern, path, glob: globPattern, maxResults },
+    ) => {
+      const limit = maxResults ?? GREP_MAX_RESULTS;
+      const safePath = sanitizePath(path);
+      const basePath = fullPath(safePath);
+      const regex = new RegExp(pattern, "gm");
 
-    outer: for (const filePath of files) {
-      const fp = fullPath(filePath);
-      let content: string;
+      let files: string[];
+      let statInfo: FsStat;
       try {
-        content = await fs.readFile(fp, "utf-8");
-      } catch {
-        continue;
+        statInfo = await fs.stat(basePath);
+      } catch (err) {
+        if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success) {
+          return {
+            content: [{ type: "text", text: "(一致なし)" }],
+            details: { pattern, count: 0 },
+          };
+        }
+        throw err;
       }
-
-      const lines = content.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        regex.lastIndex = 0;
-        if (regex.test(lines[i])) {
-          matches.push({ file: filePath, line: i + 1, content: lines[i] });
-          if (matches.length > limit) break outer;
+      if (statInfo.isFile?.()) {
+        files = [safePath];
+      } else {
+        const gp = globPattern ?? "**/*";
+        const iterable = fs.glob(gp, {
+          cwd: basePath,
+          withFileTypes: false,
+        });
+        files = [];
+        for await (const f of iterable) {
+          files.push(join(safePath, f));
         }
       }
-    }
 
-    const truncated = matches.length > limit;
-    const shown = truncated ? matches.slice(0, limit) : matches;
-    const lines = shown.map((m) => `${m.file}:${m.line}: ${m.content}`);
-    if (truncated) {
-      lines.push(
-        `\n[${matches.length - limit} 件省略。pattern をより具体的にするか maxResults を増やしてください]`,
-      );
-    }
-    const text = lines.length === 0 ? "(一致なし)" : lines.join("\n");
+      const matches: Array<{ file: string; line: number; content: string }> =
+        [];
 
-    return {
-      content: [{ type: "text", text }],
-      details: { pattern, count: matches.length, truncated },
-    };
-  },
-};
+      outer: for (const filePath of files) {
+        const fp = fullPath(filePath);
+        let content: string;
+        try {
+          content = await fs.readFile(fp, "utf-8");
+        } catch {
+          continue;
+        }
+
+        const lines = content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          regex.lastIndex = 0;
+          if (regex.test(lines[i])) {
+            matches.push({ file: filePath, line: i + 1, content: lines[i] });
+            if (matches.length > limit) break outer;
+          }
+        }
+      }
+
+      const truncated = matches.length > limit;
+      const shown = truncated ? matches.slice(0, limit) : matches;
+      const lines = shown.map((m) => `${m.file}:${m.line}: ${m.content}`);
+      if (truncated) {
+        lines.push(
+          `\n[${matches.length - limit} 件省略。pattern をより具体的にするか maxResults を増やしてください]`,
+        );
+      }
+      const text = lines.length === 0 ? "(一致なし)" : lines.join("\n");
+
+      return {
+        content: [{ type: "text", text }],
+        details: { pattern, count: matches.length, truncated },
+      };
+    },
+  };
 
   return { readTool, writeTool, listTool, editTool, globTool, grepTool };
 }
 
-export const { readTool, writeTool, listTool, editTool, globTool, grepTool } = createFsTool();
+export const { readTool, writeTool, listTool, editTool, globTool, grepTool } =
+  createFsTool();

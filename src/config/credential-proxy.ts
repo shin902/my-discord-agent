@@ -133,9 +133,9 @@ export async function loadCredentialProxy(
   }
   const raw = await loadCredentials();
   const text = z.string().safeParse(raw);
-  const parsed = z.array(CredentialEntrySchema).parse(
-    text.success ? JSON.parse(text.data) : raw,
-  );
+  const parsed = z
+    .array(CredentialEntrySchema)
+    .parse(text.success ? JSON.parse(text.data) : raw);
   if (loadCredentials === loadRawCredentials) cache = parsed;
   else injectedCaches.set(loadCredentials, parsed);
   return parsed;

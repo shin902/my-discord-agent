@@ -14,17 +14,31 @@ import {
 import { NonRetryableError, TransientError } from "../utils/error.js";
 import type { InboxMessage } from "./types.js";
 
-const sendMessage = vi.fn<
-  (group: string, session: string, content: string, options?: SendMessageOptions) => Promise<string>
->();
-const findGroupByName = vi.fn<typeof import("../config/groups.js").findGroupByName>();
-const resolveModelConfig = vi.fn<typeof import("../config/default-model.js").resolveModelConfig>();
-const resolveProviderConcurrency = vi.fn<typeof import("../config/providers.js").resolveProviderConcurrency>();
+const sendMessage =
+  vi.fn<
+    (
+      group: string,
+      session: string,
+      content: string,
+      options?: SendMessageOptions,
+    ) => Promise<string>
+  >();
+const findGroupByName =
+  vi.fn<typeof import("../config/groups.js").findGroupByName>();
+const resolveModelConfig =
+  vi.fn<typeof import("../config/default-model.js").resolveModelConfig>();
+const resolveProviderConcurrency =
+  vi.fn<typeof import("../config/providers.js").resolveProviderConcurrency>();
 const discordClient = {
   isReady: vi.fn().mockReturnValue(false),
-  channels: { cache: { get: vi.fn().mockReturnValue(undefined) }, fetch: vi.fn() },
+  channels: {
+    cache: { get: vi.fn().mockReturnValue(undefined) },
+    fetch: vi.fn(),
+  },
 };
-const getDiscordClientForGroupName = vi.fn(async (_group: string) => discordClient);
+const getDiscordClientForGroupName = vi.fn(
+  async (_group: string) => discordClient,
+);
 const getDiscordClients = () => new Map([["personal", discordClient]]);
 const client = discordClient;
 const claim = vi.fn();
@@ -36,7 +50,17 @@ const heartbeat = vi.fn();
 const markRunning = vi.fn();
 const updateRunning = vi.fn();
 const getJob = vi.fn();
-const repository = { claim, commitResult: commitInboxResult, deadLetter, failAttempt, freezeExecutionIdentity, heartbeat, markRunning, updateRunning, get: getJob };
+const repository = {
+  claim,
+  commitResult: commitInboxResult,
+  deadLetter,
+  failAttempt,
+  freezeExecutionIdentity,
+  heartbeat,
+  markRunning,
+  updateRunning,
+  get: getJob,
+};
 const { processMessage, startPoller, stopPoller } = await import("./poller.js");
 const { createPoller } = await import("./poller.js");
 createPoller({
@@ -185,10 +209,13 @@ describe("processMessage - terminal queue transitions", () => {
       assistantTurns: 1,
     };
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
-        options?.onExecutionTiming?.(
-          executionTiming,
-        );
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
+        options?.onExecutionTiming?.(executionTiming);
         throw error;
       },
     );
@@ -237,10 +264,13 @@ describe("processMessage - terminal queue transitions", () => {
       assistantTurns: 1,
     };
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
-        options?.onExecutionTiming?.(
-          executionTiming,
-        );
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
+        options?.onExecutionTiming?.(executionTiming);
         return "partial response";
       },
     );
@@ -273,10 +303,13 @@ describe("processMessage - terminal queue transitions", () => {
     };
     const error = new TransientError("コンテナがシグナルで終了しました");
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
-        options?.onExecutionTiming?.(
-          executionTiming,
-        );
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
+        options?.onExecutionTiming?.(executionTiming);
         throw error;
       },
     );
@@ -302,7 +335,12 @@ describe("processMessage - terminal queue transitions", () => {
 
   it("通常ルートの onContainerStarted は sessionId の conversationPath で running を記録する", async () => {
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
         options?.onContainerStarted?.();
         return "AI response";
       },
@@ -324,7 +362,12 @@ describe("processMessage - terminal queue transitions", () => {
 
   it("cron new-thread の onContainerStarted は導出 sessionId の conversationPath で running を記録する", async () => {
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
         options?.onContainerStarted?.();
         return "AI response";
       },
@@ -354,9 +397,13 @@ describe("processMessage - terminal queue transitions", () => {
     });
     let synchronousError: unknown;
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
-        const callback = options
-          ?.onContainerStarted;
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
+        const callback = options?.onContainerStarted;
         let result: void | Promise<void>;
         try {
           result = callback?.();
@@ -398,7 +445,12 @@ describe("processMessage - terminal queue transitions", () => {
       Object.assign(msg, patch);
     });
     sendMessage.mockImplementation(
-      async (_group, session, _content, options: SendMessageOptions | undefined) => {
+      async (
+        _group,
+        session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
         expect(session).toBe("thread-actual");
         options?.onContainerStarted?.();
         return "AI response";
@@ -440,7 +492,12 @@ describe("processMessage - terminal queue transitions", () => {
       cronJobId: "daily",
     });
     sendMessage.mockImplementation(
-      async (_group, session, _content, options: SendMessageOptions | undefined) => {
+      async (
+        _group,
+        session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
         expect(session).toBe("cron-daily-run-placeholder");
         options?.onContainerStarted?.();
         return "AI response";
@@ -495,7 +552,12 @@ describe("processMessage - terminal queue transitions", () => {
 
   it("fencingToken 未設定の cron new-thread は running を記録しない", async () => {
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
         options?.onContainerStarted?.();
         return "AI response";
       },
@@ -520,10 +582,13 @@ describe("processMessage - terminal queue transitions", () => {
       assistantTurns: 1,
     };
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
-        options?.onExecutionTiming?.(
-          executionTiming,
-        );
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
+        options?.onExecutionTiming?.(executionTiming);
         return "partial response";
       },
     );
@@ -552,9 +617,7 @@ describe("processMessage - terminal queue transitions", () => {
   });
 
   it("identity capture failure fails the attempt with error metadata", async () => {
-    freezeExecutionIdentity.mockRejectedValueOnce(
-      new Error("identity boom"),
-    );
+    freezeExecutionIdentity.mockRejectedValueOnce(new Error("identity boom"));
     const msg = makeMsg();
 
     await processMessage(msg);
@@ -748,7 +811,12 @@ describe("poller lease renewal", () => {
       releaseAgent = resolve;
     });
     sendMessage.mockImplementation(
-      async (_group, _session, _content, options: SendMessageOptions | undefined) => {
+      async (
+        _group,
+        _session,
+        _content,
+        options: SendMessageOptions | undefined,
+      ) => {
         signal = options?.signal;
         return agentResult;
       },
@@ -1174,7 +1242,9 @@ describe("processMessage - Discord イベント通知", () => {
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledOnce();
       const sent = mockSend.mock.calls[0][0];
-      expect(sent).toEqual(expect.objectContaining({ content: expect.any(String) }));
+      expect(sent).toEqual(
+        expect.objectContaining({ content: expect.any(String) }),
+      );
       expect(sent.content.length).toBeLessThanOrEqual(2000);
       expect(sent.content.endsWith("…")).toBe(true);
     });

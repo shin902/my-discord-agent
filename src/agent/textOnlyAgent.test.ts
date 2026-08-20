@@ -1,7 +1,14 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import type {
+  Agent,
+  AgentEvent,
+  AgentMessage,
+} from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
-import { runTextOnlyAgent, type TextOnlyAgentFactory } from "./textOnlyAgent.js";
+import {
+  runTextOnlyAgent,
+  type TextOnlyAgentFactory,
+} from "./textOnlyAgent.js";
 
 type AgentOptions = ConstructorParameters<typeof Agent>[0];
 
@@ -13,7 +20,8 @@ function createFakeAgent(endMessage: AgentMessage) {
       return () => undefined;
     },
     async prompt(): Promise<void> {
-      for (const callback of subscribers) callback({ type: "message_end", message: endMessage });
+      for (const callback of subscribers)
+        callback({ type: "message_end", message: endMessage });
     },
   };
 }
@@ -25,7 +33,14 @@ describe("runTextOnlyAgent", () => {
     api: "test",
     provider: "test",
     model: "test",
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
     stopReason: "stop",
     timestamp: 0,
   };

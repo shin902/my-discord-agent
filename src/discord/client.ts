@@ -20,7 +20,9 @@ export function createDiscordClient(): Client {
 const clients = new Map<string, Client>();
 
 export async function initDiscordClients(
-  loadConfig: () => Promise<Awaited<ReturnType<typeof loadDiscordConfig>>> = loadDiscordConfig,
+  loadConfig: () => Promise<
+    Awaited<ReturnType<typeof loadDiscordConfig>>
+  > = loadDiscordConfig,
 ): Promise<void> {
   const config = await loadConfig();
   for (const existing of clients.values()) existing.destroy();

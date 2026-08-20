@@ -7,7 +7,11 @@ import { splitMessage } from "../utils/splitMessage.js";
 import type { InboxMessage } from "./types.js";
 
 type DomainValue = object | string | number | boolean | null | undefined;
-function isString<T extends DomainValue>(value: T): value is Extract<T, string> { return Object.prototype.toString.call(value) === "[object String]"; }
+function isString<T extends DomainValue>(
+  value: T,
+): value is Extract<T, string> {
+  return Object.prototype.toString.call(value) === "[object String]";
+}
 
 interface JobUpdate {
   status?: JobStatus;
@@ -286,7 +290,20 @@ const EXECUTION_METADATA_FIELDS: readonly ExecutionMetadataField[] = [
   },
 ];
 /** fenced() SET-clause entries; undefined/empty entries are omitted so a partial metadata object never overwrites previously stored columns. */
-type MetadataUpdates = Pick<JobUpdate, "exit_code" | "termination" | "stop_reason" | "usage_json" | "timing_json" | "agents_snapshot_hash" | "memory_snapshot_hash" | "snapshot_hash" | "tool_call_key" | "workspace_path" | "conversation_path">;
+type MetadataUpdates = Pick<
+  JobUpdate,
+  | "exit_code"
+  | "termination"
+  | "stop_reason"
+  | "usage_json"
+  | "timing_json"
+  | "agents_snapshot_hash"
+  | "memory_snapshot_hash"
+  | "snapshot_hash"
+  | "tool_call_key"
+  | "workspace_path"
+  | "conversation_path"
+>;
 
 // SAFETY: JSON payloads are written by QueueRepository and conform to the InboxMessage schema.
 function parsePayloadData(json: string): PayloadData {
@@ -298,7 +315,8 @@ function metadataSetColumns(metadata: ExecutionMetadata): MetadataUpdates {
   const updates: MetadataUpdates = {};
   for (const mapping of EXECUTION_METADATA_FIELDS) {
     const value = mapping.setValue(metadata);
-    if (value !== undefined) Object.assign(updates, { [mapping.column]: value });
+    if (value !== undefined)
+      Object.assign(updates, { [mapping.column]: value });
   }
   return updates;
 }
@@ -431,10 +449,10 @@ function jsonOrUndefined(value: string | null): DomainValue {
   }
 }
 function parsePayload(row: JobRow): QueueJob {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+  // SAFETY: The surrounding boundary contract validates this value before the assertion.
   const payload = JSON.parse(row.payload_json) as InboxMessage;
   const active = row.status === "claimed" || row.status === "running";
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+  // SAFETY: The surrounding boundary contract validates this value before the assertion.
   return {
     ...payload,
     status: row.status === "claimed" ? "running" : row.status,
@@ -443,7 +461,9 @@ function parsePayload(row: JobRow): QueueJob {
       : undefined),
     attempts: row.attempts,
     maxAttempts: row.max_attempts,
-    ...(row.next_attempt_at ? { nextAttemptAt: row.next_attempt_at } : undefined),
+    ...(row.next_attempt_at
+      ? { nextAttemptAt: row.next_attempt_at }
+      : undefined),
     ...(row.lease_until ? { leaseUntil: row.lease_until } : undefined),
     ...(row.worker_id ? { workerId: row.worker_id } : undefined),
     fencingToken: row.fencing_token,
@@ -456,12 +476,20 @@ function parsePayload(row: JobRow): QueueJob {
     ...(row.exit_code !== null ? { exitCode: row.exit_code } : undefined),
     ...(row.termination ? { termination: row.termination } : undefined),
     ...(row.stop_reason ? { stopReason: row.stop_reason } : undefined),
-    ...(row.usage_json ? { usage: jsonOrUndefined(row.usage_json) } : undefined),
-    ...(row.timing_json ? { timing: jsonOrUndefined(row.timing_json) } : undefined),
-    ...(row.error_json ? { error: jsonOrUndefined(row.error_json) } : undefined),
+    ...(row.usage_json
+      ? { usage: jsonOrUndefined(row.usage_json) }
+      : undefined),
+    ...(row.timing_json
+      ? { timing: jsonOrUndefined(row.timing_json) }
+      : undefined),
+    ...(row.error_json
+      ? { error: jsonOrUndefined(row.error_json) }
+      : undefined),
     ...(row.result_json !== null ? { resultJson: row.result_json } : undefined),
     ...(row.result_state ? { terminalState: row.result_state } : undefined),
-    ...(row.terminal_reason ? { terminalReason: row.terminal_reason } : undefined),
+    ...(row.terminal_reason
+      ? { terminalReason: row.terminal_reason }
+      : undefined),
     succeeded: row.succeeded === 1,
     ...(row.delivery_id ? { deliveryId: row.delivery_id } : undefined),
     ...(row.agents_snapshot_hash
@@ -505,8 +533,8 @@ const JOB_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_j
 
 function tableColumnNames(db: Database.Database, table: string): Set<string> {
   return new Set(
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     (
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
       db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
     ).map((column) => column.name),
   );
@@ -525,7 +553,7 @@ function addMissingColumns(
 }
 /** Legacy pre-durable jobs tables lack either result_json or claimed. */
 function jobsTableIsLegacy(db: Database.Database): boolean {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+  // SAFETY: The surrounding boundary contract validates this value before the assertion.
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'")
     .get() as { sql?: string } | undefined;
@@ -585,7 +613,7 @@ function rebuildLegacyQueueSchema(db: Database.Database): void {
       )
       .get()
   ) {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const columns = db
       .prepare("PRAGMA table_info(idempotency_keys_legacy)")
       .all() as Array<{ name: string }>;
@@ -690,7 +718,7 @@ if (
   );
 }
 function readSchemaVersion(db: Database.Database): number {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+  // SAFETY: The surrounding boundary contract validates this value before the assertion.
   const row = db
     .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
     .get() as { value: string } | undefined;
@@ -808,14 +836,14 @@ export class QueueRepository {
     this.db.close();
   }
   get(id: string): QueueJob | undefined {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id) as
       | JobRow
       | undefined;
     return row ? parsePayload(row) : undefined;
   }
   findByIdempotencyKey(key: string): QueueJob | undefined {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT * FROM jobs WHERE idempotency_key=?")
       .get(key) as JobRow | undefined;
@@ -828,7 +856,7 @@ export class QueueRepository {
     const key = options.idempotencyKey ?? payload.idempotencyKey;
     return this.inImmediateTransaction<EnqueueResult>(() => {
       if (key) {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+        // SAFETY: The surrounding boundary contract validates this value before the assertion.
         const idem = this.db
           .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
           .get(key) as
@@ -844,13 +872,13 @@ export class QueueRepository {
       }
       const id = `job-${randomUUID()}`;
       const timestamp = nowIso();
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const sequenceRow = this.db
         .prepare(
           "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
         )
         .get(payload.sessionId) as { sequence: number };
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const record = {
         id,
         retries: 0,
@@ -905,7 +933,7 @@ export class QueueRepository {
         try {
           this.db.exec("ROLLBACK");
         } catch {}
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+        // SAFETY: The surrounding boundary contract validates this value before the assertion.
         return undefined as never;
       }
       this.db.exec("COMMIT");
@@ -930,7 +958,7 @@ export class QueueRepository {
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
         : "";
       const eligible = `((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const exhausted = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
@@ -938,7 +966,7 @@ export class QueueRepository {
         .all(now, now, ...excluded) as JobRow[];
       for (const row of exhausted)
         this.deadLetterExhaustedInTransaction(row, "max_attempts");
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
@@ -969,11 +997,7 @@ export class QueueRepository {
       return claimed ? { job: claimed, fencingToken: token } : undefined;
     });
   }
-  private fenced(
-    id: string,
-    token: number,
-    update: JobUpdate,
-  ): void {
+  private fenced(id: string, token: number, update: JobUpdate): void {
     const sets = Object.keys(update)
       .map((key) => `${key}=@${key}`)
       .join(",");
@@ -999,12 +1023,12 @@ export class QueueRepository {
     token: number,
     patch: Partial<InboxMessage>,
   ): void {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT payload_json FROM jobs WHERE id=?")
       .get(id) as { payload_json: string } | undefined;
     if (!row) throw new Error(`DomainValue job ${id}`);
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const payload = parsePayloadData(row.payload_json);
     // payload_json holds the durable InboxMessage domain payload only. Execution
     // metadata (claim/lease timestamps, exit info, timings, snapshot hashes,
@@ -1043,7 +1067,7 @@ export class QueueRepository {
       "deliveryId",
     ] satisfies readonly (keyof PayloadData)[])
       delete payload[key];
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const sanitizedPatch: PayloadData = { ...patch };
     for (const key of [
       "fencingToken",
@@ -1108,7 +1132,7 @@ export class QueueRepository {
     const toolCallKey =
       identity.toolCallKey ??
       createHash("sha256").update(`phase2-job:${id}`).digest("hex");
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare(
         "SELECT payload_json FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
@@ -1116,7 +1140,7 @@ export class QueueRepository {
       .get(id, token) as { payload_json: string } | undefined;
     if (!row) throw new Error(`stale fencing token for job ${id}`);
     const payload = {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       ...(JSON.parse(row.payload_json) as PayloadData),
       ...(identity.agentsSnapshotContent !== undefined
         ? { agentsSnapshotContent: identity.agentsSnapshotContent }
@@ -1160,16 +1184,16 @@ export class QueueRepository {
     } = {},
   ): DeliveryRow | undefined {
     const at = nowIso();
-    const resultJson =
-      isString(result)
-        ? JSON.stringify(result)
-        : JSON.stringify(result ?? null);
+    const resultJson = isString(result)
+      ? JSON.stringify(result)
+      : JSON.stringify(result ?? null);
     const state: TerminalState = options.empty ? "empty_response" : "succeeded";
     const m = options.metadata ?? {};
     const hasDeliveryMeta = options.deliveryPayload !== undefined;
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const deliveryMeta = (
-      options.deliveryPayload && Object(options.deliveryPayload) === options.deliveryPayload
+      options.deliveryPayload &&
+      Object(options.deliveryPayload) === options.deliveryPayload
         ? options.deliveryPayload
         : {}
     ) as PayloadData;
@@ -1179,7 +1203,7 @@ export class QueueRepository {
           isString(result) ? result : JSON.stringify(result ?? null),
         );
     return this.inImmediateTransaction<DeliveryRow | undefined>(() => {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT idempotency_key FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
@@ -1311,7 +1335,7 @@ export class QueueRepository {
   ): void {
     const message = errorMessage(error);
     this.db.transaction(() => {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT attempts,max_attempts,result_json,payload_json FROM jobs WHERE id=?",
@@ -1326,7 +1350,7 @@ export class QueueRepository {
         | undefined;
       if (!row) throw new Error(`DomainValue job ${id}`);
       if (row.result_json !== null) return;
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const payload = JSON.parse(row.payload_json) as InboxMessage;
       this.updatePayload(id, token, {
         ...payloadPatch,
@@ -1364,7 +1388,7 @@ export class QueueRepository {
     source = "queue",
     metadata: ExecutionMetadata = {},
   ): void {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT payload_json,idempotency_key FROM jobs WHERE id=?")
       .get(id) as
@@ -1430,7 +1454,7 @@ export class QueueRepository {
   }
   recoverExpired(at = new Date()): number {
     const now = at.toISOString();
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const rows = this.db
       .prepare(
         "SELECT * FROM jobs WHERE status IN ('claimed','running') AND lease_until<=?",
@@ -1450,7 +1474,7 @@ export class QueueRepository {
     return count;
   }
   getDiscordCursor(scopeId: string): string | undefined {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare(
         "SELECT last_message_id FROM discord_sync_cursors WHERE scope_id=?",
@@ -1459,7 +1483,7 @@ export class QueueRepository {
     return row?.last_message_id || undefined;
   }
   isDiscordCursorInitialized(scopeId: string): boolean {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT initialized FROM discord_sync_cursors WHERE scope_id=?")
       .get(scopeId) as { initialized?: number } | undefined;
@@ -1483,7 +1507,7 @@ export class QueueRepository {
       .run(scopeId, messageId, nowIso());
   }
   getDelivery(jobId: string): DeliveryRow | undefined {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare(
         `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries WHERE job_id=? ORDER BY response_index LIMIT 1`,
@@ -1492,7 +1516,7 @@ export class QueueRepository {
     return row ? this.parseDelivery(row) : undefined;
   }
   listDeliveries(status?: DeliveryStatus): DeliveryRow[] {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const rows = (
       status
         ? this.db
@@ -1512,13 +1536,15 @@ export class QueueRepository {
     return {
       id: String(row.id),
       jobId: String(row.job_id),
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       status: row.status as DeliveryStatus,
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       payloadJson: row.payload_json as string | null,
       createdAt: String(row.created_at),
       responseIndex: Number(row.response_index ?? 0),
-      ...(row.payload_hash ? { payloadHash: String(row.payload_hash) } : undefined),
+      ...(row.payload_hash
+        ? { payloadHash: String(row.payload_hash) }
+        : undefined),
       ...(row.host_unique_key
         ? { hostUniqueKey: String(row.host_unique_key) }
         : undefined),
@@ -1537,7 +1563,9 @@ export class QueueRepository {
       ...(row.external_message_id
         ? { externalMessageId: String(row.external_message_id) }
         : undefined),
-      ...(row.lease_until ? { leaseUntil: String(row.lease_until) } : undefined),
+      ...(row.lease_until
+        ? { leaseUntil: String(row.lease_until) }
+        : undefined),
       ...(row.worker_id ? { workerId: String(row.worker_id) } : undefined),
       fencingToken: Number(row.fencing_token ?? 0),
       attempts: Number(row.attempts ?? 0),
@@ -1559,7 +1587,7 @@ export class QueueRepository {
           "UPDATE deliveries SET status='ambiguous',lease_until=NULL,worker_id=NULL,last_error=COALESCE(last_error,'sending lease expired'),updated_at=? WHERE status='sending' AND lease_until<=?",
         )
         .run(now, now);
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT candidate.* FROM deliveries AS candidate WHERE candidate.status IN ('pending','retry_wait') AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at<=?) AND NOT EXISTS (SELECT 1 FROM deliveries AS predecessor WHERE predecessor.job_id=candidate.job_id AND predecessor.response_index<candidate.response_index AND predecessor.status NOT IN ('sent','failed')) ORDER BY candidate.created_at,candidate.response_index LIMIT 1",
@@ -1648,7 +1676,7 @@ export class QueueRepository {
     error: string,
   ): void {
     this.inImmediateTransaction(() => {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT job_id FROM deliveries WHERE id=? AND status='sending' AND fencing_token=?",
@@ -1691,7 +1719,7 @@ export class QueueRepository {
   }
   setDeliveryThread(id: string, token: number, cronThreadId: string): void {
     this.inImmediateTransaction(() => {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT job_id FROM deliveries WHERE id=? AND status='sending' AND fencing_token=?",
@@ -1715,7 +1743,7 @@ export class QueueRepository {
     });
   }
   getIdempotencyRecord(key: string): IdempotencyRecord | undefined {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     return this.db
       .prepare(
         "SELECT key,job_id as jobId,status FROM idempotency_keys WHERE key=?",
@@ -1724,19 +1752,16 @@ export class QueueRepository {
   }
   listRssStatePaths(): string[] {
     const paths = new Set<string>();
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     for (const row of this.db
       .prepare("SELECT payload_json FROM jobs")
       .all() as Array<{ payload_json: string }>) {
       try {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+        // SAFETY: The surrounding boundary contract validates this value before the assertion.
         const value = JSON.parse(row.payload_json) as {
           rssStatePath?: DomainValue;
         };
-        if (
-          isString(value.rssStatePath) &&
-          value.rssStatePath.length > 0
-        )
+        if (isString(value.rssStatePath) && value.rssStatePath.length > 0)
           paths.add(value.rssStatePath);
       } catch {}
     }
@@ -1763,7 +1788,7 @@ export class QueueRepository {
       );
   }
   list(status?: JobStatus): QueueJob[] {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     const rows = (
       status
         ? this.db
@@ -1782,7 +1807,7 @@ export class QueueRepository {
     jobId: string | null;
     status: string;
   }> {
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    // SAFETY: The surrounding boundary contract validates this value before the assertion.
     return this.db
       .prepare(
         "SELECT key,job_id as jobId,status FROM idempotency_keys ORDER BY key",

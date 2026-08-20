@@ -24,7 +24,10 @@ interface IngestOptions {
 
 export interface DiscordIntakeDependencies {
   findGroupByChannelId: typeof findGroupByChannelId;
-  getQueueRepository: () => Pick<QueueRepository, "enqueue" | "upsertDiscordCursor">;
+  getQueueRepository: () => Pick<
+    QueueRepository,
+    "enqueue" | "upsertDiscordCursor"
+  >;
   isDiscordChannelBackfillPending: typeof isDiscordChannelBackfillPending;
 }
 
@@ -38,10 +41,14 @@ export async function handleLiveDiscordMessage(
   message: Message,
   dependencies: DiscordIntakeDependencies = defaultDependencies,
 ): Promise<DiscordIngestResult> {
-  return ingestDiscordMessage(message, {
-    source: "live",
-    replyOnFailure: true,
-  }, dependencies);
+  return ingestDiscordMessage(
+    message,
+    {
+      source: "live",
+      replyOnFailure: true,
+    },
+    dependencies,
+  );
 }
 
 export async function ingestDiscordMessage(
@@ -49,11 +56,15 @@ export async function ingestDiscordMessage(
   options: { source: DiscordMessageSource; replyOnFailure?: boolean },
   dependencies: DiscordIntakeDependencies = defaultDependencies,
 ): Promise<DiscordIngestResult> {
-  return ingest(message, {
-    source: options.source,
-    replyOnFailure: options.replyOnFailure ?? false,
-    updateLiveCursor: options.source === "live",
-  }, dependencies);
+  return ingest(
+    message,
+    {
+      source: options.source,
+      replyOnFailure: options.replyOnFailure ?? false,
+      updateLiveCursor: options.source === "live",
+    },
+    dependencies,
+  );
 }
 
 // URL あり → "{hostname}-{messageId末尾6文字}", URL なし → "thread-{messageId末尾6文字}", 最大100文字

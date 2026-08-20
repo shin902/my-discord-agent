@@ -60,7 +60,10 @@ describe("read", () => {
     fakeFs.readFile.mockResolvedValue("hello world");
     const result = await readTool.execute("call-1", { path: "test.txt" });
     expect(firstText(result)).toBe("hello world");
-    expect(fakeFs.readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith(
+      "/workspace/test.txt",
+      "utf-8",
+    );
   });
 
   it("長い内容も省略せずそのまま返す", async () => {
@@ -123,9 +126,12 @@ describe("read", () => {
 
     expect(firstText(result)).toBe("line 1\nline 2\nline 3");
     expect(fakeFs.readFile).not.toHaveBeenCalled();
-    expect(fakeFs.createReadStream).toHaveBeenCalledWith("/workspace/large.txt", {
-      encoding: "utf8",
-    });
+    expect(fakeFs.createReadStream).toHaveBeenCalledWith(
+      "/workspace/large.txt",
+      {
+        encoding: "utf8",
+      },
+    );
     expect(result.details).toMatchObject({
       size: generatedReadSize(totalLines),
       totalLines,
@@ -352,7 +358,10 @@ describe("read", () => {
       path: "/workspace/test.txt",
     });
     expect(firstText(result)).toBe("hello world");
-    expect(fakeFs.readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith(
+      "/workspace/test.txt",
+      "utf-8",
+    );
   });
 
   it("/workspace 以外の絶対パスはコンテナ内の実パスとしてそのまま読む（追加マウント対応）", async () => {
@@ -361,7 +370,10 @@ describe("read", () => {
       path: "/obsidian/wiki/index.md",
     });
     expect(firstText(result)).toBe("hello world");
-    expect(fakeFs.readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith(
+      "/obsidian/wiki/index.md",
+      "utf-8",
+    );
   });
 
   it("画像ファイルは base64 の image content を返す", async () => {
@@ -370,7 +382,10 @@ describe("read", () => {
 
     const result = await readTool.execute("call-1", { path: "photo.png" });
 
-    expect(fakeFs.readFile).toHaveBeenCalledWith("/workspace/photo.png", "base64");
+    expect(fakeFs.readFile).toHaveBeenCalledWith(
+      "/workspace/photo.png",
+      "base64",
+    );
     expect(result.content[0]).toEqual({
       type: "image",
       data: "base64data",
@@ -450,7 +465,9 @@ describe("list", () => {
     const result = await listTool.execute("call-1", { path: "" });
     expect(firstText(result)).toContain("file: foo.txt");
     expect(firstText(result)).toContain("dir: bar");
-    expect(fakeFs.readdir).toHaveBeenCalledWith("/workspace", { withFileTypes: true });
+    expect(fakeFs.readdir).toHaveBeenCalledWith("/workspace", {
+      withFileTypes: true,
+    });
   });
 
   it("空ディレクトリ", async () => {
@@ -509,7 +526,10 @@ describe("edit", () => {
       oldString: "world",
       newString: "sandbox",
     });
-    expect(fakeFs.readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith(
+      "/obsidian/wiki/index.md",
+      "utf-8",
+    );
     expect(fakeFs.writeFile).toHaveBeenCalledWith(
       "/obsidian/wiki/index.md",
       "hello sandbox",
@@ -578,9 +598,7 @@ describe("glob", () => {
 describe("grep", () => {
   it("正規表現でファイル内容を検索する", async () => {
     fakeFs.stat.mockResolvedValue({ isFile: () => true });
-    fakeFs.readFile.mockResolvedValue(
-      "hello world\nfoo bar\nhello sandbox",
-    );
+    fakeFs.readFile.mockResolvedValue("hello world\nfoo bar\nhello sandbox");
     const result = await grepTool.execute("call-1", {
       pattern: "hello",
       path: "test.txt",
@@ -597,7 +615,10 @@ describe("grep", () => {
       path: "/obsidian/wiki/index.md",
     });
     expect(fakeFs.stat).toHaveBeenCalledWith("/obsidian/wiki/index.md");
-    expect(fakeFs.readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith(
+      "/obsidian/wiki/index.md",
+      "utf-8",
+    );
     expect(firstText(result)).toContain(
       "/obsidian/wiki/index.md:1: hello world",
     );

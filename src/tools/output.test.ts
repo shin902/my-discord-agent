@@ -25,14 +25,21 @@ afterEach(async () => {
   );
 });
 
-interface TextResultDetails { source: string; requestId?: string; count?: number; }
+interface TextResultDetails {
+  source: string;
+  requestId?: string;
+  count?: number;
+}
 
 function textResult(
   text: string,
   details: TextResultDetails = { source: "test" },
   terminate?: boolean,
 ): AgentToolResult<TextResultDetails> {
-  const result: AgentToolResult<TextResultDetails> = { content: [{ type: "text", text }], details };
+  const result: AgentToolResult<TextResultDetails> = {
+    content: [{ type: "text", text }],
+    details,
+  };
   if (terminate !== undefined) result.terminate = terminate;
   return result;
 }
@@ -48,7 +55,9 @@ function fakeTool(name: string, result: AgentToolResult<unknown>): AgentTool {
 }
 
 function externalizedOutput(result: AgentToolResult<unknown>) {
-  const details = parseExternalizedDetails(ExternalDetailsSchema.parse(result.details));
+  const details = parseExternalizedDetails(
+    ExternalDetailsSchema.parse(result.details),
+  );
   return { details, path: details.fullOutputPath };
 }
 
@@ -136,11 +145,16 @@ describe("common tool output boundary", () => {
     );
 
     const result = await externalizeLargeToolResult(grepResult);
-    const details = parseExternalizedDetails(ExternalDetailsSchema.parse(result.details));
-    const nestedDetails = ExternalDetailsSchema.safeParse(details.externalizedOutput);
-    const metadata = nestedDetails.success && isExternalizedToolOutput(nestedDetails.data)
-      ? nestedDetails.data
-      : details;
+    const details = parseExternalizedDetails(
+      ExternalDetailsSchema.parse(result.details),
+    );
+    const nestedDetails = ExternalDetailsSchema.safeParse(
+      details.externalizedOutput,
+    );
+    const metadata =
+      nestedDetails.success && isExternalizedToolOutput(nestedDetails.data)
+        ? nestedDetails.data
+        : details;
     rememberOutput(metadata.fullOutputPath);
 
     expect(details.pattern).toBe("needle");

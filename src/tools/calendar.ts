@@ -13,19 +13,37 @@ type CalendarResponse = {
   json?: () => Promise<CalendarJson>;
   text?: () => Promise<string>;
 };
-type CalendarFetch = (input: string, init?: RequestInit) => Promise<CalendarResponse>;
-export type CalendarDependencies = { fetch: CalendarFetch; resolveProxyBaseUrl: (provider: string) => string };
+type CalendarFetch = (
+  input: string,
+  init?: RequestInit,
+) => Promise<CalendarResponse>;
+export type CalendarDependencies = {
+  fetch: CalendarFetch;
+  resolveProxyBaseUrl: (provider: string) => string;
+};
 const defaultDependencies: CalendarDependencies = {
   fetch: async (input, init) => {
     const response = await fetch(input, init);
-    return { ok: response.ok, status: response.status, json: async () => calendarJsonSchema.parse(response.json ? await response.json() : null),
-      text: async () => response.text ? response.text() : "" };
+    return {
+      ok: response.ok,
+      status: response.status,
+      json: async () =>
+        calendarJsonSchema.parse(response.json ? await response.json() : null),
+      text: async () => (response.text ? response.text() : ""),
+    };
   },
   resolveProxyBaseUrl,
 };
 const dependencyStorage = new AsyncLocalStorage<CalendarDependencies>();
-export function withCalendarDependencies<T>(dependencies: CalendarDependencies, operation: () => T): T { return dependencyStorage.run(dependencies, operation); }
-function dependencies(): CalendarDependencies { return dependencyStorage.getStore() ?? defaultDependencies; }
+export function withCalendarDependencies<T>(
+  dependencies: CalendarDependencies,
+  operation: () => T,
+): T {
+  return dependencyStorage.run(dependencies, operation);
+}
+function dependencies(): CalendarDependencies {
+  return dependencyStorage.getStore() ?? defaultDependencies;
+}
 
 const eventDateTimeSchema = z.object({
   date: z.string().optional(),
@@ -36,17 +54,19 @@ const attendeeSchema = z.object({
   email: z.string().optional(),
   responseStatus: z.string().optional(),
 });
-const calendarEventSchema = z.object({
-  id: z.string().optional(),
-  summary: z.string().optional(),
-  description: z.string().optional(),
-  location: z.string().optional(),
-  start: eventDateTimeSchema.optional(),
-  end: eventDateTimeSchema.optional(),
-  htmlLink: z.string().optional(),
-  attendees: z.array(attendeeSchema).optional(),
-  etag: z.string().optional(),
-}).passthrough();
+const calendarEventSchema = z
+  .object({
+    id: z.string().optional(),
+    summary: z.string().optional(),
+    description: z.string().optional(),
+    location: z.string().optional(),
+    start: eventDateTimeSchema.optional(),
+    end: eventDateTimeSchema.optional(),
+    htmlLink: z.string().optional(),
+    attendees: z.array(attendeeSchema).optional(),
+    etag: z.string().optional(),
+  })
+  .passthrough();
 const eventListSchema = z.object({ items: z.array(calendarEventSchema) });
 type EventDateTime = z.infer<typeof eventDateTimeSchema>;
 type CalendarEvent = z.infer<typeof calendarEventSchema>;
@@ -64,7 +84,10 @@ class CalendarApiError extends Error {
   }
 }
 
-async function calendarFetch<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+async function calendarFetch<T>(
+  path: string,
+  schema: z.ZodType<T>,
+): Promise<T> {
   const io = dependencies();
   const baseUrl = io.resolveProxyBaseUrl(PROVIDER);
   const res = await io.fetch(`${baseUrl}${path}`);

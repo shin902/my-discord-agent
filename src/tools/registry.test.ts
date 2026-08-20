@@ -48,7 +48,9 @@ describe("resolveTools", () => {
           lifetime: "container-run",
         },
       });
-      const fullOutputPath = z.object({ fullOutputPath: z.string() }).parse(result.details).fullOutputPath;
+      const fullOutputPath = z
+        .object({ fullOutputPath: z.string() })
+        .parse(result.details).fullOutputPath;
       expect(await readFile(fullOutputPath, "utf8")).toBe(text);
       await rm(dirname(fullOutputPath), { recursive: true, force: true });
     } finally {

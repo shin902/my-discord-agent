@@ -819,7 +819,7 @@ describe("fetchFxPost", () => {
     );
 
     expect(post.tweet.text).toBe("テストツイートです");
-      const call = fetchMock.mock.calls[0];
+    const call = fetchMock.mock.calls[0];
     expect(call).toBeDefined();
     const input = call?.[0];
     const init = call?.[1];

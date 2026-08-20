@@ -56,7 +56,12 @@ export async function backfillDiscordMessages(
     const discordClient = dependencies.getDiscordClientForGroup(group);
     for (const channel of group.channels) {
       try {
-        const completed = await backfillTarget(discordClient, channel, repo, dependencies);
+        const completed = await backfillTarget(
+          discordClient,
+          channel,
+          repo,
+          dependencies,
+        );
         if (completed) finishDiscordChannelBackfill(channel.channelId);
       } catch (error) {
         // A single inaccessible channel must not prevent other configured

@@ -5,11 +5,8 @@ import type { JsonValue } from "./config.js";
 const setupRawGroups = (raw: JsonValue[]) => () => Promise.resolve(raw);
 
 describe("loadGroups", () => {
-
   it("mounts が無いグループも読み込める", async () => {
-    const rawGroups = setupRawGroups([
-      { name: "chat", channels: [] },
-    ]);
+    const rawGroups = setupRawGroups([{ name: "chat", channels: [] }]);
     const groups = await loadGroups(rawGroups);
     expect(groups[0].mounts).toBeUndefined();
   });
@@ -76,9 +73,7 @@ describe("loadGroups", () => {
   });
 
   it("エージェント設定フィールドは省略可能", async () => {
-    const rawGroups = setupRawGroups([
-      { name: "chat", channels: [] },
-    ]);
+    const rawGroups = setupRawGroups([{ name: "chat", channels: [] }]);
     const groups = await loadGroups(rawGroups);
     expect(groups[0].model).toBeUndefined();
     expect(groups[0].tools).toBeUndefined();
@@ -89,7 +84,6 @@ describe("loadGroups", () => {
 });
 
 describe("findGroupByName", () => {
-
   it("name に一致するグループ設定を返す", async () => {
     const rawGroups = setupRawGroups([
       { name: "chat", channels: [] },
@@ -104,9 +98,7 @@ describe("findGroupByName", () => {
   });
 
   it("一致しない場合は undefined を返す", async () => {
-    const rawGroups = setupRawGroups([
-      { name: "chat", channels: [] },
-    ]);
+    const rawGroups = setupRawGroups([{ name: "chat", channels: [] }]);
     expect(await findGroupByName("nonexistent", rawGroups)).toBeUndefined();
   });
 });

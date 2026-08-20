@@ -13,7 +13,6 @@ import type { CronContext } from "../runner.js";
 import collectHandler from "./rss-collect.js";
 import dispatchHandler from "./rss-dispatch.js";
 
-
 let tmpDir: string;
 let statePath: string;
 let fetchMock: ReturnType<typeof vi.fn>;

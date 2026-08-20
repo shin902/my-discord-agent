@@ -1,7 +1,15 @@
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "vitest";
 import {
   initManager,
   resetManagerDependencies,
@@ -16,7 +24,6 @@ import {
   validateModel as managerValidateModel,
 } from "./manager.js";
 import { resolveTools as resolveConfiguredTools } from "../tools/registry.js";
-
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_ATTACHMENTS_DIR = path.join(
@@ -131,7 +138,11 @@ describe("resolveModel", () => {
   });
 });
 
-interface ResolvedModel { provider: string; modelId: string; thinkingLevel?: string }
+interface ResolvedModel {
+  provider: string;
+  modelId: string;
+  thinkingLevel?: string;
+}
 
 type SkillsMock = Mock<ManagerDependencies["ensureGroupSkills"]>;
 type SpawnMock = Mock<ManagerSpawn>;
@@ -159,14 +170,24 @@ const makeProc = (
         if (event === "data" && stderr) cb(Buffer.from(stderr));
       }),
     },
-    once: vi.fn((event: "close" | "error", cb: (value: number | null | Error) => void) => {
-      if (event === "close") cb(code);
-      return proc;
-    }),
-    on: vi.fn((event: "close" | "error", cb: (value: number | null | Error) => void) => {
-      if (event === "close") cb(code);
-      return proc;
-    }),
+    once: vi.fn(
+      (
+        event: "close" | "error",
+        cb: (value: number | null | Error) => void,
+      ) => {
+        if (event === "close") cb(code);
+        return proc;
+      },
+    ),
+    on: vi.fn(
+      (
+        event: "close" | "error",
+        cb: (value: number | null | Error) => void,
+      ) => {
+        if (event === "close") cb(code);
+        return proc;
+      },
+    ),
     kill: vi.fn(),
   };
   return proc;
@@ -203,8 +224,7 @@ describe("sendMessage: Docker 起動構成", () => {
     await initManager(12345);
   });
 
-  afterEach(() => {
-  });
+  afterEach(() => {});
 
   it("docker run --rm -i --pull=always --memory=512m --cpus=1 を含む", async () => {
     await sendMessage("test-group", "session-1", "hi");
@@ -555,7 +575,6 @@ describe("sendMessage: 添付ファイル", () => {
   });
 
   it("過去のメッセージで添付ディレクトリが作られていれば、添付なしの後続メッセージでもマウントする", async () => {
-
     await sendMessage(
       "test-group",
       "session-1",
@@ -597,7 +616,11 @@ describe("sendMessage: 添付ファイル", () => {
 describe("sendMessage: 追加マウント (config/groups.json の mounts)", () => {
   let spawnMock: SpawnMock;
 
-  const setup = async (mounts: Array<{ host: string; container: string; readOnly?: boolean }> | undefined) => {
+  const setup = async (
+    mounts:
+      | Array<{ host: string; container: string; readOnly?: boolean }>
+      | undefined,
+  ) => {
     spawnMock = vi.fn().mockReturnValue(makeProc());
     configureManager({
       spawn: spawnMock,
@@ -846,11 +869,9 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
 });
 
 describe("sendMessage: 設定バリデーション", () => {
-  beforeEach(() => {
-  });
+  beforeEach(() => {});
 
-  afterEach(() => {
-  });
+  afterEach(() => {});
 
   it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
     configureManager({
@@ -918,8 +939,7 @@ describe("sendMessage: configOverride", () => {
     return sendMessage;
   };
 
-  afterEach(() => {
-  });
+  afterEach(() => {});
 
   it("configOverride が payload の groupConfig を上書きする", async () => {
     const sendMessage = await setup();
@@ -988,8 +1008,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     return sendMessage;
   };
 
-  afterEach(() => {
-  });
+  afterEach(() => {});
 
   it("__DISCORD_EVENT__ 行はコールバックに渡される", async () => {
     const eventPayload = {

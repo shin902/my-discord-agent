@@ -106,9 +106,9 @@ export function openRssDb(configuredPath?: string): Database.Database {
     CREATE INDEX IF NOT EXISTS rss_articles_unread
       ON rss_articles(read_at, id);
   `);
-  const articleColumns = z.array(z.object({ name: z.string() })).parse(
-    db.prepare("PRAGMA table_info(rss_articles)").all(),
-  );
+  const articleColumns = z
+    .array(z.object({ name: z.string() }))
+    .parse(db.prepare("PRAGMA table_info(rss_articles)").all());
   if (!articleColumns.some((column) => column.name === "dispatch_id")) {
     db.exec("ALTER TABLE rss_articles ADD COLUMN dispatch_id TEXT");
   }
@@ -118,13 +118,23 @@ export function openRssDb(configuredPath?: string): Database.Database {
   if (!articleColumns.some((column) => column.name === "dispatch_owner_key")) {
     db.exec("ALTER TABLE rss_articles ADD COLUMN dispatch_owner_key TEXT");
   }
-  const legacyDispatches = z.array(z.object({
-    id: z.number(), dispatch_id: z.string(), dispatch_job_id: z.string(),
-  })).parse(db.prepare(`
+  const legacyDispatches = z
+    .array(
+      z.object({
+        id: z.number(),
+        dispatch_id: z.string(),
+        dispatch_job_id: z.string(),
+      }),
+    )
+    .parse(
+      db
+        .prepare(`
     SELECT id, dispatch_id, dispatch_job_id
     FROM rss_articles
     WHERE dispatch_owner_key IS NULL AND dispatch_id IS NOT NULL AND dispatch_job_id IS NOT NULL
-  `).all());
+  `)
+        .all(),
+    );
   const backfillOwner = db.prepare(
     "UPDATE rss_articles SET dispatch_owner_key=? WHERE id=?",
   );
@@ -149,10 +159,16 @@ export function getFeedState(
   const rowRaw = db
     .prepare("SELECT id, url, etag, last_modified FROM rss_feeds WHERE url = ?")
     .get(url);
-  const row = rowRaw ? z.object({
-    id: z.number(), url: z.string(), etag: z.string().nullable(),
-    last_modified: z.string().nullable(),
-  }).parse(rowRaw) : undefined;
+  const row = rowRaw
+    ? z
+        .object({
+          id: z.number(),
+          url: z.string(),
+          etag: z.string().nullable(),
+          last_modified: z.string().nullable(),
+        })
+        .parse(rowRaw)
+    : undefined;
   if (!row) return undefined;
   return {
     id: row.id,
@@ -266,11 +282,21 @@ export function listUnreadArticles(
   const feedFilter = feedUrls
     ? `AND f.url IN (${feedUrls.map(() => "?").join(", ")})`
     : "";
-  const rows = z.array(z.object({
-    id: z.number(), feed_name: z.string(), feed_url: z.string(),
-    title: z.string(), link: z.string(), published_at: z.string(), summary: z.string(),
-  })).parse(db
-    .prepare(`
+  const rows = z
+    .array(
+      z.object({
+        id: z.number(),
+        feed_name: z.string(),
+        feed_url: z.string(),
+        title: z.string(),
+        link: z.string(),
+        published_at: z.string(),
+        summary: z.string(),
+      }),
+    )
+    .parse(
+      db
+        .prepare(`
       SELECT
         a.id,
         COALESCE(f.name, f.url) AS feed_name,
@@ -286,7 +312,8 @@ export function listUnreadArticles(
       ORDER BY a.id ASC
       LIMIT ?
     `)
-    .all(...(feedUrls ?? []), limit));
+        .all(...(feedUrls ?? []), limit),
+    );
   return rows.map(mapArticle);
 }
 
@@ -310,11 +337,24 @@ export function claimUnreadArticles(
 ): ArticleDispatch | undefined {
   if (feedUrls?.length === 0) return undefined;
   return db.transaction(() => {
-    const pending = z.array(z.object({
-      id: z.number(), dispatch_id: z.string(), dispatch_job_id: z.string(),
-      dispatch_owner_key: z.string().nullable(), feed_name: z.string(), feed_url: z.string(),
-      title: z.string(), link: z.string(), published_at: z.string(), summary: z.string(),
-    })).parse(db.prepare(`
+    const pending = z
+      .array(
+        z.object({
+          id: z.number(),
+          dispatch_id: z.string(),
+          dispatch_job_id: z.string(),
+          dispatch_owner_key: z.string().nullable(),
+          feed_name: z.string(),
+          feed_url: z.string(),
+          title: z.string(),
+          link: z.string(),
+          published_at: z.string(),
+          summary: z.string(),
+        }),
+      )
+      .parse(
+        db
+          .prepare(`
         SELECT a.id, a.dispatch_id, a.dispatch_job_id, a.dispatch_owner_key,
           COALESCE(f.name, f.url) AS feed_name,
           f.url AS feed_url, a.title, a.link, a.published_at, a.summary
@@ -322,7 +362,9 @@ export function claimUnreadArticles(
         WHERE a.read_at IS NULL
           AND (a.dispatch_owner_key = ? OR (a.dispatch_owner_key IS NULL AND a.dispatch_job_id = ?))
         ORDER BY a.id ASC
-      `).all(jobId, jobId));
+      `)
+          .all(jobId, jobId),
+      );
     if (pending.length > 0) {
       return {
         id: pending[0].dispatch_id,
@@ -334,16 +376,29 @@ export function claimUnreadArticles(
     const feedFilter = feedUrls
       ? `AND f.url IN (${feedUrls.map(() => "?").join(", ")})`
       : "";
-    const rows = z.array(z.object({
-      id: z.number(), feed_name: z.string(), feed_url: z.string(), title: z.string(),
-      link: z.string(), published_at: z.string(), summary: z.string(),
-    })).parse(db.prepare(`
+    const rows = z
+      .array(
+        z.object({
+          id: z.number(),
+          feed_name: z.string(),
+          feed_url: z.string(),
+          title: z.string(),
+          link: z.string(),
+          published_at: z.string(),
+          summary: z.string(),
+        }),
+      )
+      .parse(
+        db
+          .prepare(`
         SELECT a.id, COALESCE(f.name, f.url) AS feed_name,
           f.url AS feed_url, a.title, a.link, a.published_at, a.summary
         FROM rss_articles a JOIN rss_feeds f ON f.id = a.feed_id
         WHERE a.read_at IS NULL AND a.dispatch_id IS NULL ${feedFilter}
         ORDER BY a.id ASC LIMIT ?
-      `).all(...(feedUrls ?? []), limit));
+      `)
+          .all(...(feedUrls ?? []), limit),
+      );
     if (rows.length === 0) return undefined;
 
     const dispatchId = randomUUID();
@@ -382,14 +437,24 @@ export interface DispatchClaim {
 }
 
 export function listDispatchClaims(db: Database.Database): DispatchClaim[] {
-  const rows = z.array(z.object({
-    dispatch_id: z.string(), dispatch_job_id: z.string(), article_ids: z.string(),
-  })).parse(db.prepare(`
+  const rows = z
+    .array(
+      z.object({
+        dispatch_id: z.string(),
+        dispatch_job_id: z.string(),
+        article_ids: z.string(),
+      }),
+    )
+    .parse(
+      db
+        .prepare(`
     SELECT dispatch_id, dispatch_job_id, GROUP_CONCAT(id) AS article_ids
     FROM rss_articles
     WHERE read_at IS NULL AND dispatch_id IS NOT NULL AND dispatch_job_id IS NOT NULL
     GROUP BY dispatch_id, dispatch_job_id
-  `).all());
+  `)
+        .all(),
+    );
   return rows.map((row) => ({
     dispatchId: row.dispatch_id,
     dispatchJobId: row.dispatch_job_id,

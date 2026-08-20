@@ -7,7 +7,10 @@ import type { RedditCookieConfig } from "../config/credential-proxy.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
-const StoredCookiesSchema = z.object({ cookieHeader: z.string(), updatedAt: z.string() });
+const StoredCookiesSchema = z.object({
+  cookieHeader: z.string(),
+  updatedAt: z.string(),
+});
 
 // reddit-cookie-refresh ジョブ（cron）が書き込み、credential-proxy が読み込む。
 // Playwright の永続プロファイルから定期的に抽出した www.reddit.com 用クッキー。
@@ -32,7 +35,10 @@ export class RedditCookieMissingError extends Error {
 export async function getRedditCookieHeader(
   provider: string,
   config: RedditCookieConfig,
-  readCookieFile: (path: string, encoding: "utf-8") => Promise<string> = readFile,
+  readCookieFile: (
+    path: string,
+    encoding: "utf-8",
+  ) => Promise<string> = readFile,
 ): Promise<string> {
   const cookieFile = path.resolve(ROOT, config.cookieFile);
   let raw: string;

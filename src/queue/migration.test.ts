@@ -26,11 +26,25 @@ async function makePaths(
 }
 
 type LegacyFixture = {
-  id: string; channelId: string; groupName: string; sessionId: string;
-  content: string; timestamp: string; retries: number | string;
+  id: string;
+  channelId: string;
+  groupName: string;
+  sessionId: string;
+  content: string;
+  timestamp: string;
+  retries: number | string;
 };
 function message(overrides: Partial<LegacyFixture> = {}): LegacyFixture {
-  return { id: "legacy-1", channelId: "channel", groupName: "group", sessionId: "session", content: "content", timestamp: "2026-08-01T00:00:00.000Z", retries: 0, ...overrides };
+  return {
+    id: "legacy-1",
+    channelId: "channel",
+    groupName: "group",
+    sessionId: "session",
+    content: "content",
+    timestamp: "2026-08-01T00:00:00.000Z",
+    retries: 0,
+    ...overrides,
+  };
 }
 
 describe("migrateLegacyQueue", () => {
@@ -68,8 +82,18 @@ describe("migrateLegacyQueue", () => {
         archiveDir: paths.archive,
       });
       expect(result.migrated).toBe(3);
-      const rowSchema = z.object({ id: z.string(), session_id: z.string(), sequence: z.number() });
-      const rows = z.array(rowSchema).parse(repo.db.prepare("SELECT id,session_id,sequence FROM jobs ORDER BY id").all());
+      const rowSchema = z.object({
+        id: z.string(),
+        session_id: z.string(),
+        sequence: z.number(),
+      });
+      const rows = z
+        .array(rowSchema)
+        .parse(
+          repo.db
+            .prepare("SELECT id,session_id,sequence FROM jobs ORDER BY id")
+            .all(),
+        );
       // Empty sessions start at 0 (COALESCE(MAX(sequence),-1)+1) exactly like
       // QueueRepository.enqueue, so migrated and enqueued rows share ordering.
       expect(rows).toEqual([

@@ -3,7 +3,9 @@ import type { JsonValue } from "./config.js";
 
 let loader: ReturnType<typeof vi.fn<() => Promise<JsonValue | string>>>;
 
-beforeEach(() => { loader = vi.fn<() => Promise<JsonValue | string>>(); });
+beforeEach(() => {
+  loader = vi.fn<() => Promise<JsonValue | string>>();
+});
 
 function makeConfig(credentials: JsonValue[]): JsonValue {
   return JSON.parse(JSON.stringify(credentials));
@@ -76,9 +78,7 @@ describe("loadCredentialProxy", () => {
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
 
-    await expect(loadCredentialProxy(loader)).rejects.toThrow(
-      "ENOENT",
-    );
+    await expect(loadCredentialProxy(loader)).rejects.toThrow("ENOENT");
   });
 
   it("ENOENT 以外のエラーは再スロー", async () => {

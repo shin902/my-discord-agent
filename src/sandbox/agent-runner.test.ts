@@ -20,7 +20,10 @@ type TestAgent = {
 };
 
 function createFakeAgent(): TestAgent {
-  const prompt: RunnerAgent["prompt"] = async (_input: string | AgentMessage | AgentMessage[], _images?: ImageContent[]) => undefined;
+  const prompt: RunnerAgent["prompt"] = async (
+    _input: string | AgentMessage | AgentMessage[],
+    _images?: ImageContent[],
+  ) => undefined;
   return {
     subscribe: (_listener) => () => undefined,
     prompt,
@@ -67,7 +70,9 @@ describe("agent runner dependency boundary", () => {
 });
 
 describe("defaultConvertToLlm", () => {
-  const custom = (customType: "agents-snapshot" | "memory-bootstrap"): AgentMessage => ({
+  const custom = (
+    customType: "agents-snapshot" | "memory-bootstrap",
+  ): AgentMessage => ({
     role: "custom",
     customType,
     content: "content",
@@ -92,10 +97,11 @@ describe("waitForNetwork", () => {
       .fn<(_host: string) => Promise<void>>()
       .mockRejectedValueOnce(new Error("not ready"))
       .mockResolvedValueOnce(undefined);
-    const sleepFn = vi.fn<(_ms: number) => Promise<void>>().mockResolvedValue(undefined);
+    const sleepFn = vi
+      .fn<(_ms: number) => Promise<void>>()
+      .mockResolvedValue(undefined);
     await waitForNetwork({ lookupFn, sleepFn });
     expect(lookupFn).toHaveBeenCalledTimes(2);
     expect(sleepFn).toHaveBeenCalledTimes(1);
   });
 });
-

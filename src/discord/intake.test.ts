@@ -3,14 +3,28 @@ import { Message } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
-import { ingestDiscordMessage as ingestDiscordMessageImpl, type DiscordIntakeDependencies } from "./intake.js";
-import { beginDiscordChannelBackfill, finishDiscordChannelBackfill, isDiscordChannelBackfillPending } from "./backfill-state.js";
+import {
+  ingestDiscordMessage as ingestDiscordMessageImpl,
+  type DiscordIntakeDependencies,
+} from "./intake.js";
+import {
+  beginDiscordChannelBackfill,
+  finishDiscordChannelBackfill,
+  isDiscordChannelBackfillPending,
+} from "./backfill-state.js";
 import * as repositoryModule from "../queue/repository.js";
 
 const findGroup = vi.fn<typeof findGroupByChannelId>();
 const getRepo = vi.fn<typeof getQueueRepository>();
-const dependencies: DiscordIntakeDependencies = { findGroupByChannelId: findGroup, getQueueRepository: getRepo, isDiscordChannelBackfillPending };
-const ingestDiscordMessage = (message: Message, options: Parameters<typeof ingestDiscordMessageImpl>[1]) => ingestDiscordMessageImpl(message, options, dependencies);
+const dependencies: DiscordIntakeDependencies = {
+  findGroupByChannelId: findGroup,
+  getQueueRepository: getRepo,
+  isDiscordChannelBackfillPending,
+};
+const ingestDiscordMessage = (
+  message: Message,
+  options: Parameters<typeof ingestDiscordMessageImpl>[1],
+) => ingestDiscordMessageImpl(message, options, dependencies);
 
 let db: Database.Database;
 let repo: InstanceType<typeof repositoryModule.QueueRepository>;

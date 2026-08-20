@@ -21,14 +21,23 @@ describe("agent-reach temporary directories", () => {
     let command = "";
     const execute: ExecuteCommand = async (nextCommand) => {
       command = nextCommand;
-      await writeFile(outputPathFromCommand(nextCommand), "fetched content", "utf8");
+      await writeFile(
+        outputPathFromCommand(nextCommand),
+        "fetched content",
+        "utf8",
+      );
       return { stdout: "200", stderr: "" };
     };
     const tool = createAgentReachTool(resolvePublic, execute);
-    const result = await tool.execute("temp-success", { url: "https://example.com/article" });
+    const result = await tool.execute("temp-success", {
+      url: "https://example.com/article",
+    });
     const outputPath = outputPathFromCommand(command);
     const callDir = dirname(outputPath);
-    expect(result.content[0]).toEqual({ type: "text", text: "fetched content" });
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: "fetched content",
+    });
     expect(callDir.startsWith(`${tmpdir()}/agent-reach-`)).toBe(true);
     expect(outputPath).not.toContain("/workspace");
     await expectMissing(callDir);
@@ -41,7 +50,9 @@ describe("agent-reach temporary directories", () => {
       throw new Error("network failure");
     };
     const tool = createAgentReachTool(resolvePublic, execute);
-    await expect(tool.execute("temp-failure", { url: "https://example.com/article" })).rejects.toThrow("network failure");
+    await expect(
+      tool.execute("temp-failure", { url: "https://example.com/article" }),
+    ).rejects.toThrow("network failure");
     expect(callDir.startsWith(`${tmpdir()}/agent-reach-`)).toBe(true);
     await expectMissing(callDir);
   });
@@ -49,7 +60,9 @@ describe("agent-reach temporary directories", () => {
   it("gives concurrent calls isolated directories and cleans both", async () => {
     const callDirs: string[] = [];
     let release: () => void = () => undefined;
-    const bothCalls = new Promise<void>((resolve) => { release = resolve; });
+    const bothCalls = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const execute: ExecuteCommand = async (command) => {
       const outputPath = outputPathFromCommand(command);
       callDirs.push(dirname(outputPath));

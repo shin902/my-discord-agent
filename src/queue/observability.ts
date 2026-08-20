@@ -127,20 +127,27 @@ const AgentRowSchema = z.object({
 });
 
 function ageValues(db: Database.Database, sql: string): number[] {
-  return z.array(AgeRowSchema).parse(db.prepare(sql).all()).flatMap((row) => {
-    const start = Date.parse(row.start);
-    const finish = row.finish ? Date.parse(row.finish) : NaN;
-    return Number.isFinite(start) && Number.isFinite(finish)
-      ? [Math.max(0, finish - start)]
-      : [];
-  });
+  return z
+    .array(AgeRowSchema)
+    .parse(db.prepare(sql).all())
+    .flatMap((row) => {
+      const start = Date.parse(row.start);
+      const finish = row.finish ? Date.parse(row.finish) : NaN;
+      return Number.isFinite(start) && Number.isFinite(finish)
+        ? [Math.max(0, finish - start)]
+        : [];
+    });
 }
 function counts(db: Database.Database, table: string) {
   const result: { [status: string]: number } = {};
   const rows = z
     .array(CountRowSchema)
     .parse(
-      db.prepare(`SELECT status,COUNT(*) AS count FROM ${table} GROUP BY status`).all(),
+      db
+        .prepare(
+          `SELECT status,COUNT(*) AS count FROM ${table} GROUP BY status`,
+        )
+        .all(),
     );
   for (const row of rows) result[row.status] = row.count;
   return result;
@@ -220,13 +227,15 @@ export function collectObservability(
       ),
     ),
     staleClaims: Number(
-      z.object({ count: z.number() }).parse(
-        runtimeDb
-          .prepare(
-            "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('claimed','running') AND lease_until IS NOT NULL AND lease_until<?",
-          )
-          .get(staleBefore),
-      ).count,
+      z
+        .object({ count: z.number() })
+        .parse(
+          runtimeDb
+            .prepare(
+              "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('claimed','running') AND lease_until IS NOT NULL AND lease_until<?",
+            )
+            .get(staleBefore),
+        ).count,
     ),
   };
   const delivery = {
@@ -238,22 +247,26 @@ export function collectObservability(
       ),
     ),
     ambiguous: Number(
-      z.object({ count: z.number() }).parse(
-        runtimeDb
-          .prepare(
-            "SELECT COUNT(*) AS count FROM deliveries WHERE status='ambiguous'",
-          )
-          .get(),
-      ).count,
+      z
+        .object({ count: z.number() })
+        .parse(
+          runtimeDb
+            .prepare(
+              "SELECT COUNT(*) AS count FROM deliveries WHERE status='ambiguous'",
+            )
+            .get(),
+        ).count,
     ),
     staleClaims: Number(
-      z.object({ count: z.number() }).parse(
-        runtimeDb
-          .prepare(
-            "SELECT COUNT(*) AS count FROM deliveries WHERE status='sending' AND lease_until IS NOT NULL AND lease_until<?",
-          )
-          .get(staleBefore),
-      ).count,
+      z
+        .object({ count: z.number() })
+        .parse(
+          runtimeDb
+            .prepare(
+              "SELECT COUNT(*) AS count FROM deliveries WHERE status='sending' AND lease_until IS NOT NULL AND lease_until<?",
+            )
+            .get(staleBefore),
+        ).count,
     ),
   };
   const agentRowsRaw = runtimeDb
@@ -316,36 +329,62 @@ export function inspectRuntime(
     jobs: z
       .array(
         z.object({
-          id: z.string(), status: z.string(), attempts: z.number(),
-          max_attempts: z.number(), lease_until: z.string().nullable(),
-          worker_id: z.string().nullable(), last_error: z.string().nullable(),
-          updated_at: z.string(), result_state: z.string().nullable(),
+          id: z.string(),
+          status: z.string(),
+          attempts: z.number(),
+          max_attempts: z.number(),
+          lease_until: z.string().nullable(),
+          worker_id: z.string().nullable(),
+          last_error: z.string().nullable(),
+          updated_at: z.string(),
+          result_state: z.string().nullable(),
         }),
       )
-      .parse(runtimeDb.prepare(
-        "SELECT id,status,attempts,max_attempts,lease_until,worker_id,last_error,updated_at,result_state FROM jobs ORDER BY updated_at DESC",
-      ).all()),
+      .parse(
+        runtimeDb
+          .prepare(
+            "SELECT id,status,attempts,max_attempts,lease_until,worker_id,last_error,updated_at,result_state FROM jobs ORDER BY updated_at DESC",
+          )
+          .all(),
+      ),
     deliveries: z
       .array(
         z.object({
-          id: z.string(), job_id: z.string(), status: z.string(), attempts: z.number(),
-          lease_until: z.string().nullable(), worker_id: z.string().nullable(),
-          last_error: z.string().nullable(), updated_at: z.string(),
+          id: z.string(),
+          job_id: z.string(),
+          status: z.string(),
+          attempts: z.number(),
+          lease_until: z.string().nullable(),
+          worker_id: z.string().nullable(),
+          last_error: z.string().nullable(),
+          updated_at: z.string(),
         }),
       )
-      .parse(runtimeDb.prepare(
-        "SELECT id,job_id,status,attempts,lease_until,worker_id,last_error,updated_at FROM deliveries ORDER BY updated_at DESC",
-      ).all()),
+      .parse(
+        runtimeDb
+          .prepare(
+            "SELECT id,job_id,status,attempts,lease_until,worker_id,last_error,updated_at FROM deliveries ORDER BY updated_at DESC",
+          )
+          .all(),
+      ),
     deadLetters: z
       .array(
         z.object({
-          id: z.string(), job_id: z.string(), reason: z.string(), error: z.string(),
-          source: z.string(), created_at: z.string(),
+          id: z.string(),
+          job_id: z.string(),
+          reason: z.string(),
+          error: z.string(),
+          source: z.string(),
+          created_at: z.string(),
         }),
       )
-      .parse(runtimeDb.prepare(
-        "SELECT id,job_id,reason,error,source,created_at FROM dead_letters ORDER BY created_at DESC",
-      ).all()),
+      .parse(
+        runtimeDb
+          .prepare(
+            "SELECT id,job_id,reason,error,source,created_at FROM dead_letters ORDER BY created_at DESC",
+          )
+          .all(),
+      ),
     rss: snapshot.rss,
     alerts: snapshot.alerts,
   };

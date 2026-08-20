@@ -50,10 +50,7 @@ export function reconcileRssDispatches(
   rssDbPaths?: string | readonly string[],
 ): number {
   const configured = z
-    .union([
-      z.string().transform((value) => [value]),
-      z.array(z.string()),
-    ])
+    .union([z.string().transform((value) => [value]), z.array(z.string())])
     .optional()
     .parse(rssDbPaths);
   // Caller-supplied paths (startup passes the merged repository + cron path

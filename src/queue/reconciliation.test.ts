@@ -63,15 +63,38 @@ function claimOne(path: string, owner: string): ArticleDispatch {
   }
 }
 
-function dispatchColumns(path: string): Array<{ dispatch_id: string | null; dispatch_job_id: string | null }> {
+function dispatchColumns(
+  path: string,
+): Array<{ dispatch_id: string | null; dispatch_job_id: string | null }> {
   const db = openRssDb(path);
   try {
-    const row = z.object({ dispatch_id: z.string().nullable(), dispatch_job_id: z.string().nullable() });
-    return z.array(row).parse(db.prepare("SELECT dispatch_id, dispatch_job_id FROM rss_articles ORDER BY id").all());
-  } finally { db.close(); }
+    const row = z.object({
+      dispatch_id: z.string().nullable(),
+      dispatch_job_id: z.string().nullable(),
+    });
+    return z
+      .array(row)
+      .parse(
+        db
+          .prepare(
+            "SELECT dispatch_id, dispatch_job_id FROM rss_articles ORDER BY id",
+          )
+          .all(),
+      );
+  } finally {
+    db.close();
+  }
 }
 
-type QueuePayload = { channelId: string; groupName: string; sessionId: string; content: string; timestamp: string; rssDispatchId: string; rssStatePath: string };
+type QueuePayload = {
+  channelId: string;
+  groupName: string;
+  sessionId: string;
+  content: string;
+  timestamp: string;
+  rssDispatchId: string;
+  rssStatePath: string;
+};
 function queuePayload(rssPath: string, dispatchId: string): QueuePayload {
   return {
     channelId: "channel",

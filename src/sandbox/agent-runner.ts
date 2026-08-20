@@ -210,7 +210,10 @@ async function getCustomProviderApiKey(
 }
 
 /** ワークスペース上のファイルを読む。存在しなければ null（他のエラーは再送出） */
-async function loadWorkspaceFile(path: string, fileReader: (path: string, encoding: "utf-8") => Promise<string> = readFile): Promise<string | null> {
+async function loadWorkspaceFile(
+  path: string,
+  fileReader: (path: string, encoding: "utf-8") => Promise<string> = readFile,
+): Promise<string | null> {
   try {
     return await fileReader(path, "utf-8");
   } catch (err) {
@@ -226,7 +229,9 @@ function snapshotHash(content: string | null): string | undefined {
     : createHash("sha256").update(content).digest("hex");
 }
 
-function loadSystemPromptFromWorkspace(fileReader: (path: string, encoding: "utf-8") => Promise<string>): Promise<string | null> {
+function loadSystemPromptFromWorkspace(
+  fileReader: (path: string, encoding: "utf-8") => Promise<string>,
+): Promise<string | null> {
   return loadWorkspaceFile("/workspace/AGENTS.md", fileReader);
 }
 
@@ -271,7 +276,9 @@ const ReadToolDetailsSchema = z.object({
   totalLines: z.number().finite().optional(),
   eof: z.boolean().optional(),
   truncated: z.boolean().optional(),
-  externalizedOutput: z.object({ truncated: z.boolean().optional() }).optional(),
+  externalizedOutput: z
+    .object({ truncated: z.boolean().optional() })
+    .optional(),
 });
 type ReadToolDetails = z.infer<typeof ReadToolDetailsSchema>;
 
@@ -303,9 +310,10 @@ function formatReadToolDetails(msg: AgentMessage): string | undefined {
     return undefined;
   }
 
-  const returnedCharacters = details.returnedCharacters !== undefined
-    ? `、今回の返却は ${details.returnedCharacters} 文字`
-    : "";
+  const returnedCharacters =
+    details.returnedCharacters !== undefined
+      ? `、今回の返却は ${details.returnedCharacters} 文字`
+      : "";
   const range =
     details.returnedLineCount === 0
       ? "0 行"
@@ -349,7 +357,7 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];
       bootstrapSeen.add(customType);
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       const content = (msg as ContextBootstrapMessage).content;
       return [{ role: "user", content, timestamp: msg.timestamp }];
     }
@@ -368,7 +376,10 @@ export interface FrozenExecutionIdentity {
   snapshotHash?: string;
   toolCallKey?: string;
 }
-type AgentRunnerAgent = Pick<InstanceType<typeof Agent>, "subscribe" | "prompt">;
+type AgentRunnerAgent = Pick<
+  InstanceType<typeof Agent>,
+  "subscribe" | "prompt"
+>;
 export interface AgentRunnerDependencies {
   readonly loadMessages: typeof loadMessages;
   readonly appendMessage: typeof appendMessage;
@@ -377,7 +388,9 @@ export interface AgentRunnerDependencies {
   readonly resolveModel: typeof resolveModel;
   readonly loadSkills: typeof loadSkills;
   readonly resolveTools: typeof resolveTools;
-  readonly createAgent: (options: ConstructorParameters<typeof Agent>[0]) => AgentRunnerAgent;
+  readonly createAgent: (
+    options: ConstructorParameters<typeof Agent>[0],
+  ) => AgentRunnerAgent;
 }
 
 const DEFAULT_DEPENDENCIES: AgentRunnerDependencies = {
@@ -485,7 +498,7 @@ export async function runAgentLoop(
       timestamp: Date.now(),
     };
     promptInput = [
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       {
         role: "user",
         content: [{ type: "text", text: content }],
@@ -500,9 +513,9 @@ export async function runAgentLoop(
     groupConfig.model?.modelId ?? FALLBACK_DEFAULT_MODEL.modelId,
   );
 
-  const tools = dependencies.resolveTools(groupConfig.tools ?? []).filter(
-    (t) => !VM_UNSUPPORTED_TOOLS.has(t.name),
-  );
+  const tools = dependencies
+    .resolveTools(groupConfig.tools ?? [])
+    .filter((t) => !VM_UNSUPPORTED_TOOLS.has(t.name));
 
   const skillPrompt = formatSkillsForPrompt(skills);
   const datePrompt = formatDateForPrompt();
@@ -594,7 +607,11 @@ export async function runAgentLoop(
       display: false,
       timestamp: Date.now(),
     };
-    await dependencies.appendMessage(groupName, sessionId, agentsSnapshotMessage);
+    await dependencies.appendMessage(
+      groupName,
+      sessionId,
+      agentsSnapshotMessage,
+    );
     newBootstrapMessages.push(agentsSnapshotMessage);
   }
 
@@ -623,9 +640,9 @@ export async function runAgentLoop(
   // 移行ターンでも安定した順序を保つ。
   if (newBootstrapMessages.length > 0) {
     const bootstrapOrder = [
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       AGENTS_SNAPSHOT_TYPE as string,
-// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      // SAFETY: The surrounding boundary contract validates this value before the assertion.
       ...CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
     ];
     const orderIndex = (m: AgentMessage) =>
@@ -654,7 +671,10 @@ export async function runAgentLoop(
       if (knownKey) return knownKey;
 
       // カスタムプロバイダー: credential-proxy.json を読んで envVars から取得
-      return getCustomProviderApiKey(provider, dependencies.loadCredentialProxy);
+      return getCustomProviderApiKey(
+        provider,
+        dependencies.loadCredentialProxy,
+      );
     },
   });
 
@@ -673,7 +693,9 @@ export async function runAgentLoop(
 
   agent.subscribe((event) => {
     if (event.type === "message_end") {
-      pendingAppends.push(dependencies.appendMessage(groupName, sessionId, event.message));
+      pendingAppends.push(
+        dependencies.appendMessage(groupName, sessionId, event.message),
+      );
       if (isAssistantMessage(event.message)) {
         assistantTurns++;
         stopReason = event.message.stopReason;
@@ -700,7 +722,11 @@ export async function runAgentLoop(
           type: "tool_start",
           toolName: event.toolName,
           args: event.args,
-        } satisfies { type: "tool_start"; toolName: string; args: typeof event.args };
+        } satisfies {
+          type: "tool_start";
+          toolName: string;
+          args: typeof event.args;
+        };
         process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
       } else {
         const payload = {

@@ -5,15 +5,17 @@ import type { CronContext } from "../runner.js";
 // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
 let store = { content: null as string | null };
 
-const makeIssue = (overrides: Partial<{
-  number: number;
-  title: string;
-  user: { login: string };
-  state: string;
-  updated_at: string;
-  comments: number;
-  pull_request: Record<string, string>;
-}> = {}) => ({
+const makeIssue = (
+  overrides: Partial<{
+    number: number;
+    title: string;
+    user: { login: string };
+    state: string;
+    updated_at: string;
+    comments: number;
+    pull_request: Record<string, string>;
+  }> = {},
+) => ({
   number: 1,
   title: "テストIssue",
   state: "open",
@@ -35,17 +37,24 @@ function makeCtx(overrides: Partial<CronContext> = {}): CronContext {
     client: {} as CronContext["client"],
     settings: { owner: "shin902", repo: "my-discord-agent" },
     ...overrides,
-  // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
   } as CronContext;
 }
 
 describe("issue-triage handler", () => {
-  let fetchMock: ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<{
-    ok: boolean;
-    status?: number;
-    json?(): Promise<GitHubIssue[]>;
-    text?(): Promise<string>;
-  }>>>;
+  let fetchMock: ReturnType<
+    typeof vi.fn<
+      (
+        input: string,
+        init?: RequestInit,
+      ) => Promise<{
+        ok: boolean;
+        status?: number;
+        json?(): Promise<GitHubIssue[]>;
+        text?(): Promise<string>;
+      }>
+    >
+  >;
 
   beforeEach(() => {
     vi.resetModules();
@@ -64,7 +73,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -78,7 +89,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -92,7 +105,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -112,7 +127,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -131,7 +148,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -153,7 +172,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -178,7 +199,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -200,7 +223,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -222,7 +247,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -247,7 +274,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -278,7 +307,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -294,7 +325,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -320,7 +353,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -347,7 +382,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -364,7 +401,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -386,7 +425,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -407,7 +448,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -435,7 +478,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -480,7 +525,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -512,7 +559,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -550,7 +599,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });
@@ -576,7 +627,9 @@ describe("issue-triage handler", () => {
       exists: () => store.content !== null,
       mkdir: async () => undefined,
       readFile: async () => store.content ?? "",
-      writeFile: async (_path, data) => { store.content = data; },
+      writeFile: async (_path, data) => {
+        store.content = data;
+      },
       getProxyPort: () => 12345,
       fetch: fetchMock,
     });

@@ -1,7 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_DISCORD_BOT_ID, destroyDiscordClients, getDefaultDiscordClient, getDiscordClient, getDiscordClientForGroup, getDiscordClientForGroupName, getDiscordClients, initDiscordClients } from "./client.js";
-const config = () => Promise.resolve({ bots: { takop: { tokenEnv: "TAKOP_BOT_TOKEN" } } });
-const group = (name: string) => Promise.resolve(name === "takop" ? { name, bot: "takop", channels: [] } : undefined);
+import {
+  DEFAULT_DISCORD_BOT_ID,
+  destroyDiscordClients,
+  getDefaultDiscordClient,
+  getDiscordClient,
+  getDiscordClientForGroup,
+  getDiscordClientForGroupName,
+  getDiscordClients,
+  initDiscordClients,
+} from "./client.js";
+const config = () =>
+  Promise.resolve({ bots: { takop: { tokenEnv: "TAKOP_BOT_TOKEN" } } });
+const group = (name: string) =>
+  Promise.resolve(
+    name === "takop" ? { name, bot: "takop", channels: [] } : undefined,
+  );
 
 describe("Discord client registry", () => {
   beforeEach(async () => {
@@ -32,9 +45,9 @@ describe("Discord client registry", () => {
     await expect(getDiscordClientForGroupName("takop", group)).resolves.toBe(
       getDiscordClient("takop"),
     );
-    await expect(getDiscordClientForGroupName("missing", group)).rejects.toThrow(
-      "グループが未定義です: missing",
-    );
+    await expect(
+      getDiscordClientForGroupName("missing", group),
+    ).rejects.toThrow("グループが未定義です: missing");
   });
 
   it("unknown named bot fails instead of falling back", () => {

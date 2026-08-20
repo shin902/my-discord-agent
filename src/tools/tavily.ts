@@ -35,14 +35,16 @@ const searchParams = Type.Object({
 
 const TavilyResponseSchema = z.object({
   answer: z.string().optional(),
-  results: z.array(
-    z.object({
-      title: z.string(),
-      url: z.string(),
-      content: z.string(),
-      score: z.number(),
-    }),
-  ).default([]),
+  results: z
+    .array(
+      z.object({
+        title: z.string(),
+        url: z.string(),
+        content: z.string(),
+        score: z.number(),
+      }),
+    )
+    .default([]),
 });
 
 export const tavilySearchTool: AgentTool<typeof searchParams> = {

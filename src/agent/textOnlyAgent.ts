@@ -4,18 +4,16 @@ import type {
   ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
-import type {
-  Api,
-  Model,
-  TextContent,
-} from "@earendil-works/pi-ai";
+import type { Api, Model, TextContent } from "@earendil-works/pi-ai";
 
 type AgentOptions = ConstructorParameters<typeof Agent>[0];
 interface TextOnlyAgentRuntime {
   subscribe: (listener: (event: AgentEvent) => void) => () => void;
   prompt: (prompt: string) => Promise<void>;
 }
-export type TextOnlyAgentFactory = (options: AgentOptions) => TextOnlyAgentRuntime;
+export type TextOnlyAgentFactory = (
+  options: AgentOptions,
+) => TextOnlyAgentRuntime;
 
 export interface TextOnlyAgentOptions {
   systemPrompt: string;
@@ -41,7 +39,8 @@ export interface TextOnlyAgentResult {
 export async function runTextOnlyAgent(
   options: TextOnlyAgentOptions,
 ): Promise<TextOnlyAgentResult> {
-  const createAgent = options.agentFactory ?? ((agentOptions) => new Agent(agentOptions));
+  const createAgent =
+    options.agentFactory ?? ((agentOptions) => new Agent(agentOptions));
   const agent = createAgent({
     initialState: {
       systemPrompt: options.systemPrompt,
