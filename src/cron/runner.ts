@@ -93,6 +93,65 @@ export type CronContext = {
   appendInbox: typeof appendInbox;
 } & CronJob;
 
+export type CronRunnerDependencies = {
+  existsSync: typeof existsSync;
+  readFile: typeof readFile;
+  writeFile: typeof writeFile;
+  mkdir: typeof mkdir;
+  loadRawCron: typeof loadRawCron;
+  getDefaultDiscordClient: typeof getDefaultDiscordClient;
+  getDiscordClientForGroupName: typeof getDiscordClientForGroupName;
+  getDiscordClients: typeof getDiscordClients;
+  appendInbox: QueueProducer;
+  resolveTools: typeof resolveTools;
+};
+
+const defaultDependencies: CronRunnerDependencies = {
+  existsSync,
+  readFile,
+  writeFile,
+  mkdir,
+  loadRawCron,
+  getDefaultDiscordClient,
+  getDiscordClientForGroupName,
+  getDiscordClients,
+  appendInbox,
+  resolveTools,
+};
+
+let activeDependencies = defaultDependencies;
+
+export function createCronRunner(dependencies: Partial<CronRunnerDependencies> = {}) {
+  const injected = { ...defaultDependencies, ...dependencies };
+  return {
+    loadAndValidateCron: () => withDependencies(injected, loadAndValidateCron),
+    loadHandlerFn: (handler: string) => withDependencies(injected, () => loadHandlerFn(handler)),
+    executeJob: (job: CronJob) => withDependencies(injected, () => executeJob(job)),
+    startCron: () => {
+      activeDependencies = injected;
+      startCron();
+    },
+    stopCron: () => {
+      stopCron();
+      activeDependencies = defaultDependencies;
+    },
+    setCronJobs: (jobs: CronJob[]) => withDependencies(injected, () => _setCronJobs(jobs)),
+  };
+}
+
+async function withDependencies<T>(
+  dependencies: CronRunnerDependencies,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const previous = activeDependencies;
+  activeDependencies = dependencies;
+  try {
+    return await fn();
+  } finally {
+    activeDependencies = previous;
+  }
+}
+
 // --- State ---
 
 const CronStateSchema = z.record(z.string(), z.object({ lastRun: z.string() }));
@@ -102,20 +161,20 @@ let _state: CronState | null = null;
 
 async function loadState(): Promise<CronState> {
   if (_state !== null) return _state;
-  if (!existsSync(STATE_PATH)) {
+  if (!activeDependencies.existsSync(STATE_PATH)) {
     _state = {};
     return _state;
   }
   _state = CronStateSchema.parse(
-    JSON.parse(await readFile(STATE_PATH, "utf-8")),
+    JSON.parse(await activeDependencies.readFile(STATE_PATH, "utf-8")),
   );
   return _state;
 }
 
 async function saveState(state: CronState): Promise<void> {
   _state = state;
-  await mkdir(path.dirname(STATE_PATH), { recursive: true });
-  await writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+  await activeDependencies.mkdir(path.dirname(STATE_PATH), { recursive: true });
+  await activeDependencies.writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
 }
 
 // --- Schedule matching ---
@@ -198,10 +257,14 @@ export async function loadHandlerFn(
   handlerRelPath: string,
 ): Promise<(ctx: CronContext) => Promise<void>> {
   const absPath = resolveHandlerPath(handlerRelPath);
-  const mod = (await import(pathToFileURL(absPath).href)) as {
-    default?: (ctx: CronContext) => Promise<void>;
-  };
-  if (typeof mod.default !== "function") {
+  const handlerSchema = z.function({
+    input: [z.custom<CronContext>()],
+    output: z.promise(z.void()),
+  });
+  const mod = z
+    .object({ default: handlerSchema.optional() })
+    .parse(await import(pathToFileURL(absPath).href));
+  if (!mod.default) {
     throw new NonRetryableError(
       `ハンドラー ${handlerRelPath} に default export (function) がありません`,
     );
@@ -219,21 +282,22 @@ async function validateHandlerPath(handlerRelPath: string): Promise<void> {
 export async function loadAndValidateCron(): Promise<CronJob[]> {
   let raw: unknown;
   try {
-    raw = await loadRawCron();
+    raw = await activeDependencies.loadRawCron();
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success)
+      return [];
     throw err;
   }
   const jobs = CronJobsSchema.parse(raw);
   // enabled な handler 付きジョブのみ起動時に import 検証する（無効化ジョブは対象外）
   const handlers = jobs.filter(
     (j): j is CronJob & { handler: string } =>
-      j.enabled && typeof j.handler === "string",
+      j.enabled && j.handler !== undefined,
   );
   await Promise.all(handlers.map((h) => validateHandlerPath(h.handler)));
   for (const job of jobs) {
     if (job.enabled && !job.handler && job.tools !== undefined) {
-      resolveTools(job.tools);
+      activeDependencies.resolveTools(job.tools);
     }
   }
   return jobs;
@@ -243,9 +307,9 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
 
 export async function executeJob(job: CronJob): Promise<void> {
   const discordClient = job.groupName
-    ? await getDiscordClientForGroupName(job.groupName)
-    : getDefaultDiscordClient();
-  const ctx: CronContext = { client: discordClient, appendInbox, ...job };
+    ? await activeDependencies.getDiscordClientForGroupName(job.groupName)
+    : activeDependencies.getDefaultDiscordClient();
+  const ctx: CronContext = { client: discordClient, appendInbox: activeDependencies.appendInbox, ...job };
 
   if (job.handler) {
     const fn = await loadHandlerFn(job.handler);
@@ -269,7 +333,7 @@ export function _setCronJobs(jobs: CronJob[]): void {
 
 async function tick(): Promise<void> {
   if (_isRunning) return;
-  if (![...getDiscordClients().values()].some((value) => value.isReady()))
+  if (![...activeDependencies.getDiscordClients().values()].some((value) => value.isReady()))
     return;
   _isRunning = true;
   try {

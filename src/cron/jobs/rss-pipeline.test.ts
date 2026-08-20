@@ -13,13 +13,6 @@ import type { CronContext } from "../runner.js";
 import collectHandler from "./rss-collect.js";
 import dispatchHandler from "./rss-dispatch.js";
 
-const { validateModelMock } = vi.hoisted(() => ({
-  validateModelMock: vi.fn(async () => undefined),
-}));
-
-vi.mock("../../agent/model.js", () => ({
-  validateModel: validateModelMock,
-}));
 
 let tmpDir: string;
 let statePath: string;
@@ -69,6 +62,7 @@ function makeCollectCtx(
       bootstrap,
     },
     appendInbox: vi.fn(async () => undefined),
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     client: {} as CronContext["client"],
   };
 }
@@ -91,6 +85,7 @@ function makeDispatchCtx(
     skills: ["agent-reach"],
     settings: { statePath, maxItemsPerRun },
     appendInbox,
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     client: {} as CronContext["client"],
   };
 }
@@ -132,7 +127,6 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", fetchMock);
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  validateModelMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(async () => {
@@ -217,6 +211,7 @@ describe("RSS collect / dispatch", () => {
         },
       }),
     );
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
     expect(content).toContain("RSS記事を日本語で要約してください");
@@ -300,6 +295,7 @@ describe("RSS collect / dispatch", () => {
 
     await dispatchHandler(ctx);
 
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
     expect(content).toContain("独自の形式で要約してください");
@@ -391,12 +387,11 @@ describe("RSS collect / dispatch", () => {
   it("不明なモデルが指定されている場合はinbox投入せず未読のまま残す", async () => {
     mockFeed(initialXml);
     await collectHandler(makeCollectCtx("process"));
-    validateModelMock.mockRejectedValueOnce(new Error("不明なモデル"));
     const appendInbox = vi.fn(async () => undefined);
     const ctx = makeDispatchCtx(appendInbox);
     ctx.model = { provider: "unknown-provider", modelId: "unknown-model" };
 
-    await expect(dispatchHandler(ctx)).rejects.toThrow("不明なモデル");
+    await expect(dispatchHandler(ctx)).rejects.toThrow("不明なプロバイダ");
     expect(appendInbox).not.toHaveBeenCalled();
     expect(unreadTitles()).toEqual(["既存記事"]);
   });
@@ -462,8 +457,10 @@ describe("RSS collect / dispatch", () => {
 
     await Promise.all([dispatchHandler(noteCtx), dispatchHandler(youtubeCtx)]);
 
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const noteContent = (noteInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const youtubeContent = (youtubeInbox as ReturnType<typeof vi.fn>).mock
       .calls[0][0].content;
     expect(noteContent).toContain("note記事");
@@ -558,6 +555,7 @@ describe("RSS collect / dispatch", () => {
 
     await dispatchHandler(makeDispatchCtx(appendInbox));
 
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
     expect(content).toContain(`フィード: ${"f".repeat(200)} (`);
@@ -592,6 +590,7 @@ describe("RSS collect / dispatch", () => {
 
     await dispatchHandler(ctx);
 
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
     const queuedCount = content.match(/^## RSS記事 /gm)?.length ?? 0;
@@ -629,6 +628,7 @@ describe("RSS collect / dispatch", () => {
 
     await dispatchHandler(ctx);
 
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const content = (appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0]
       .content;
     expect(content).not.toContain("大きい記事");

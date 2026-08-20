@@ -8,6 +8,7 @@ import {
   assertValidRepoPart,
   GITHUB_HEADERS,
   type GitHubIssue,
+  GitHubIssueSchema,
 } from "../../tools/github.js";
 import { NonRetryableError } from "../../utils/error.js";
 import { createFileLock } from "../../utils/lock.js";
@@ -16,6 +17,21 @@ import type { CronContext } from "../runner.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../../..");
 const STATE_PATH = path.join(ROOT, "data/issue-triage/state.json");
+
+type IssueTriageResponse = {
+  ok: boolean;
+  status?: number;
+  json?(): Promise<GitHubIssue[]>;
+  text?(): Promise<string>;
+};
+type IssueTriageDependencies = {
+  exists: (path: string) => boolean;
+  mkdir: (path: string, options: { recursive: boolean }) => Promise<void>;
+  readFile: (path: string, encoding: "utf-8") => Promise<string>;
+  writeFile: (path: string, data: string, encoding: "utf-8") => Promise<void>;
+  getProxyPort: () => number;
+  fetch: (input: string, init?: RequestInit) => Promise<IssueTriageResponse>;
+};
 
 const SettingsSchema = z.object({
   owner: z.string(),
@@ -31,6 +47,11 @@ const SettingsSchema = z.object({
 // 同一なため、コメント投稿者で bot/owner を区別できない代替策）
 type TriageState = Record<string, { updatedAt: string; commentCount: number }>;
 
+const triageStateSchema = z.record(
+  z.string(),
+  z.object({ updatedAt: z.string(), commentCount: z.number() }),
+);
+
 function stateKey(owner: string, repo: string, issueNumber: number): string {
   return `${owner}/${repo}#${issueNumber}`;
 }
@@ -41,62 +62,82 @@ function stateKey(owner: string, repo: string, issueNumber: number): string {
 // 安全に読み書きできる（このプロセス内の更新は常にロック経由で同期的に反映される）。
 let cachedState: TriageState | null = null;
 
-async function loadState(): Promise<TriageState> {
+export function createIssueTriageHandler(
+  dependencies: IssueTriageDependencies = {
+    exists: () => existsSync(STATE_PATH),
+    mkdir: async () => { await mkdir(path.dirname(STATE_PATH), { recursive: true }); },
+    readFile: async () => readFile(STATE_PATH, "utf-8"),
+    writeFile: async (_path, data) => { await writeFile(STATE_PATH, data, "utf-8"); },
+    getProxyPort,
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      return {
+        ok: response.ok,
+        status: response.status,
+        json: async () => z.array(GitHubIssueSchema).parse(await response.json()),
+        text: () => response.text(),
+      };
+    },
+  },
+) {
+  cachedState = null;
+  const loadState = async (): Promise<TriageState> => {
   if (cachedState !== null) return cachedState;
-  if (!existsSync(STATE_PATH)) {
+  if (!dependencies.exists(STATE_PATH)) {
     cachedState = {};
     return cachedState;
   }
-  cachedState = JSON.parse(await readFile(STATE_PATH, "utf-8")) as TriageState;
+  cachedState = triageStateSchema.parse(
+    JSON.parse(await dependencies.readFile(STATE_PATH, "utf-8")),
+  );
   return cachedState;
-}
-
-async function saveState(state: TriageState): Promise<void> {
-  cachedState = state;
-  await mkdir(path.dirname(STATE_PATH), { recursive: true });
-  await writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
-}
+  };
+  const saveState = async (state: TriageState): Promise<void> => {
+    cachedState = state;
+    await dependencies.mkdir(path.dirname(STATE_PATH), { recursive: true });
+    await dependencies.writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+  };
 
 // state.json は owner/repo を問わず1ファイル共有のため、複数の issue-triage
 // ジョブが同一tickで並行実行されると read→write 間に割り込みが発生し、
 // 後勝ちの書き込みが他ジョブの更新を丸ごと消してしまう（inbox.ts と同じ問題）。
 // 同一プロセス内の操作をPromiseチェーンで直列化することで読み書きをアトミックにする。
-const withStateLock = createFileLock();
+  const withStateLock = createFileLock();
 
 // appendInbox 成功直後に呼び、ロック内で最新状態に1キーだけ更新・書き戻す。
-async function recordProcessed(
-  key: string,
-  updatedAt: string,
-  commentCount: number,
-): Promise<void> {
+  const recordProcessed = async (
+    key: string,
+    updatedAt: string,
+    commentCount: number,
+  ): Promise<void> => {
   await withStateLock(async () => {
     const latest = await loadState();
     latest[key] = { updatedAt, commentCount };
     await saveState(latest);
   });
-}
+  };
 
 const PER_PAGE = 100;
 const MAX_PAGES = 10;
 
-async function fetchIssuesByCreator(
-  owner: string,
-  repo: string,
-  creator: string,
-): Promise<GitHubIssue[]> {
-  const port = getProxyPort();
+  const fetchIssuesByCreator = async (
+    owner: string,
+    repo: string,
+    creator: string,
+  ): Promise<GitHubIssue[]> => {
+  const port = dependencies.getProxyPort();
   const issues: GitHubIssue[] = [];
 
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const res = await fetch(
+    const res = await dependencies.fetch(
       `http://localhost:${port}/github/repos/${owner}/${repo}/issues?state=open&per_page=${PER_PAGE}&page=${page}&creator=${encodeURIComponent(creator)}`,
       { headers: GITHUB_HEADERS },
     );
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
+      const text = await res.text?.().catch(() => "") ?? "";
+      throw new Error(`GitHub API エラー ${res.status ?? 0}: ${text.slice(0, 200)}`);
     }
-    const pageIssues = (await res.json()) as GitHubIssue[];
+    const pageIssues = z.array(GitHubIssueSchema).parse(await res.json?.());
     issues.push(...pageIssues);
     if (pageIssues.length < PER_PAGE) break;
     if (page === MAX_PAGES) {
@@ -107,16 +148,16 @@ async function fetchIssuesByCreator(
   }
 
   return issues;
-}
+  };
 
 // allowedAuthors（既定: owner本人）単位で creator フィルタ付きAPI呼び出しを行う。
 // 全Open Issueを取得してからクライアント側で絞り込むより、対象外の投稿者分の
 // 取得・ページングコストを避けられる。
-async function fetchOpenIssues(
-  owner: string,
-  repo: string,
-  authors: string[],
-): Promise<GitHubIssue[]> {
+  const fetchOpenIssues = async (
+    owner: string,
+    repo: string,
+    authors: string[],
+  ): Promise<GitHubIssue[]> => {
   const issues: GitHubIssue[] = [];
   const seen = new Set<number>();
   for (const author of authors) {
@@ -127,7 +168,7 @@ async function fetchOpenIssues(
     }
   }
   return issues.filter((issue) => !issue.pull_request);
-}
+  };
 
 function buildPrompt(owner: string, repo: string, issue: GitHubIssue): string {
   return [
@@ -141,7 +182,7 @@ function buildPrompt(owner: string, repo: string, issue: GitHubIssue): string {
   ].join("\n");
 }
 
-export default async function handler(ctx: CronContext): Promise<void> {
+  return async function handler(ctx: CronContext): Promise<void> {
   if (!ctx.channelId) {
     throw new NonRetryableError(
       "[issue-triage] channelId が設定されていません",
@@ -249,4 +290,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       console.error(`[issue-triage] Issue #${issue.number} の投入に失敗:`, err);
     }
   }
+  };
 }
+
+export default createIssueTriageHandler();

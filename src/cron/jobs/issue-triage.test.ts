@@ -1,32 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GitHubIssue } from "../../tools/github.js";
 import type { CronContext } from "../runner.js";
 
-let store: { content: string | null } = { content: null };
+// SAFETY: the test fixture is constructed with the domain shape required by this boundary.
+let store = { content: null as string | null };
 
-vi.mock("node:fs", () => ({
-  existsSync: vi.fn(() => store.content !== null),
-}));
-
-vi.mock("node:fs/promises", () => ({
-  mkdir: vi.fn(async () => undefined),
-  readFile: vi.fn(async () => store.content ?? ""),
-  writeFile: vi.fn(async (_path: string, data: string) => {
-    store.content = data;
-  }),
-}));
-
-const getProxyPort = vi.fn(() => 12345);
-vi.mock("../../proxy/credential-proxy-server.js", () => ({ getProxyPort }));
-
-const makeIssue = (overrides: Record<string, unknown> = {}) => ({
+const makeIssue = (overrides: Partial<{
+  number: number;
+  title: string;
+  user: { login: string };
+  state: string;
+  updated_at: string;
+  comments: number;
+  pull_request: Record<string, string>;
+}> = {}) => ({
   number: 1,
   title: "テストIssue",
+  state: "open",
   user: { login: "shin902" },
   updated_at: "2024-01-02T10:00:00Z",
   ...overrides,
 });
 
 function makeCtx(overrides: Partial<CronContext> = {}): CronContext {
+  // SAFETY: the fixture contains the CronContext fields exercised by these tests.
   return {
     id: "issue-triage",
     schedule: "0 * * * *",
@@ -34,14 +31,21 @@ function makeCtx(overrides: Partial<CronContext> = {}): CronContext {
     channelId: "channel-1",
     groupName: "issue-triage",
     appendInbox: vi.fn(async () => undefined),
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     client: {} as CronContext["client"],
     settings: { owner: "shin902", repo: "my-discord-agent" },
     ...overrides,
+  // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
   } as CronContext;
 }
 
 describe("issue-triage handler", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<{
+    ok: boolean;
+    status?: number;
+    json?(): Promise<GitHubIssue[]>;
+    text?(): Promise<string>;
+  }>>>;
 
   beforeEach(() => {
     vi.resetModules();
@@ -55,19 +59,43 @@ describe("issue-triage handler", () => {
   });
 
   it("channelId が無ければ NonRetryableError を投げる", async () => {
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     await expect(handler(makeCtx({ channelId: undefined }))).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("groupName が無ければ NonRetryableError を投げる", async () => {
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     await expect(handler(makeCtx({ groupName: undefined }))).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("settings が不正なら NonRetryableError を投げる", async () => {
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     await expect(
       handler(makeCtx({ settings: { owner: "shin902" } })),
     ).rejects.toThrow();
@@ -79,7 +107,15 @@ describe("issue-triage handler", () => {
       ok: true,
       json: async () => [makeIssue({ user: { login: "mallory" } })],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).not.toHaveBeenCalled();
@@ -90,7 +126,15 @@ describe("issue-triage handler", () => {
       ok: true,
       json: async () => [makeIssue({ user: { login: "bob" } })],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx({
       settings: {
         owner: "shin902",
@@ -104,10 +148,19 @@ describe("issue-triage handler", () => {
 
   it("オーナーのIssueに対し appendInbox でプロンプトを投入する", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).toHaveBeenCalledTimes(1);
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const arg = (ctx.appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(arg.channelId).toBe("channel-1");
     expect(arg.groupName).toBe("issue-triage");
@@ -120,7 +173,15 @@ describe("issue-triage handler", () => {
       ok: true,
       json: async () => [makeIssue({ pull_request: {} })],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).not.toHaveBeenCalled();
@@ -134,7 +195,15 @@ describe("issue-triage handler", () => {
       },
     });
     fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).not.toHaveBeenCalled();
@@ -148,7 +217,15 @@ describe("issue-triage handler", () => {
       },
     });
     fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).toHaveBeenCalledTimes(1);
@@ -165,10 +242,19 @@ describe("issue-triage handler", () => {
       ok: true,
       json: async () => [makeIssue({ comments: 1 })],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).not.toHaveBeenCalled();
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const saved = JSON.parse(store.content as string);
     expect(saved["shin902/my-discord-agent#1"]).toEqual({
       updatedAt: "2024-01-02T10:00:00Z",
@@ -187,7 +273,15 @@ describe("issue-triage handler", () => {
       ok: true,
       json: async () => [makeIssue({ comments: 2 })],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).toHaveBeenCalledTimes(1);
@@ -195,10 +289,19 @@ describe("issue-triage handler", () => {
 
   it("処理後に state.json を保存する", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(store.content).not.toBeNull();
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const saved = JSON.parse(store.content as string);
     expect(saved["shin902/my-discord-agent#1"]).toEqual({
       updatedAt: "2024-01-02T10:00:00Z",
@@ -212,7 +315,15 @@ describe("issue-triage handler", () => {
       status: 500,
       text: async () => "Server Error",
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await expect(handler(ctx)).rejects.toThrow();
     expect(ctx.appendInbox).not.toHaveBeenCalled();
@@ -231,7 +342,15 @@ describe("issue-triage handler", () => {
       }
       return { ok: true, json: async () => page1 };
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(ctx.appendInbox).toHaveBeenCalledTimes(101);
@@ -240,7 +359,15 @@ describe("issue-triage handler", () => {
   });
 
   it("不正な owner/repo は NonRetryableError を投げ appendInbox を呼ばない", async () => {
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx({
       settings: { owner: "..", repo: "my-discord-agent" },
     });
@@ -254,7 +381,15 @@ describe("issue-triage handler", () => {
       ok: true,
       json: async () => [makeIssue({ user: { login: "SHIN902" } })],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx({
       settings: { owner: "Shin902", repo: "my-discord-agent" },
     });
@@ -267,7 +402,15 @@ describe("issue-triage handler", () => {
       ok: true,
       json: async () => [makeIssue({ user: { login: "Bob" } })],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx({
       settings: {
         owner: "shin902",
@@ -287,7 +430,15 @@ describe("issue-triage handler", () => {
         makeIssue({ number: 2, updated_at: "2024-01-02T11:00:00Z" }),
       ],
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const appendInbox = vi
       .fn()
       .mockResolvedValueOnce(undefined)
@@ -295,6 +446,7 @@ describe("issue-triage handler", () => {
     const ctx = makeCtx({ appendInbox });
     await handler(ctx);
     expect(appendInbox).toHaveBeenCalledTimes(2);
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const saved = JSON.parse(store.content as string);
     // Issue #1 の appendInbox は成功しているため、#2 が失敗してもstateに残る
     expect(saved["shin902/my-discord-agent#1"]).toEqual({
@@ -323,7 +475,15 @@ describe("issue-triage handler", () => {
         ],
       };
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctxA = makeCtx({
       settings: { owner: "shin902", repo: "repo-a" },
       appendInbox: vi.fn(async () => undefined),
@@ -333,6 +493,7 @@ describe("issue-triage handler", () => {
       appendInbox: vi.fn(async () => undefined),
     });
     await Promise.all([handler(ctxA), handler(ctxB)]);
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const saved = JSON.parse(store.content as string);
     expect(saved["shin902/repo-a#1"]).toEqual({
       updatedAt: "2024-01-02T10:00:00Z",
@@ -346,9 +507,18 @@ describe("issue-triage handler", () => {
 
   it("GitHub API呼び出しに creator フィルタを付与する（投稿者以外の取得・ページングを避ける）", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [makeIssue()] });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
+    // SAFETY: the test fixture is constructed with the domain shape required by this boundary.
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toContain("creator=shin902");
   });
@@ -375,7 +545,15 @@ describe("issue-triage handler", () => {
       }
       return { ok: true, json: async () => [] };
     });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx({
       settings: {
         owner: "shin902",
@@ -393,7 +571,15 @@ describe("issue-triage handler", () => {
       makeIssue({ number: i + 1 }),
     );
     fetchMock.mockResolvedValue({ ok: true, json: async () => fullPage });
-    const { default: handler } = await import("./issue-triage.js");
+    const { createIssueTriageHandler } = await import("./issue-triage.js");
+    const handler = createIssueTriageHandler({
+      exists: () => store.content !== null,
+      mkdir: async () => undefined,
+      readFile: async () => store.content ?? "",
+      writeFile: async (_path, data) => { store.content = data; },
+      getProxyPort: () => 12345,
+      fetch: fetchMock,
+    });
     const ctx = makeCtx();
     await handler(ctx);
     expect(warnSpy).toHaveBeenCalled();

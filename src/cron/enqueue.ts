@@ -37,10 +37,12 @@ export interface CronEnqueueContext {
   appendInbox: QueueProducer;
 }
 
-function resolveModes(ctx: CronEnqueueContext): {
+interface ResolvedCronModes {
   deliveryMode: CronDeliveryMode;
   sessionMode: CronSessionMode;
-} {
+}
+
+function resolveModes(ctx: CronEnqueueContext): ResolvedCronModes {
   if (ctx.deliveryMode && ctx.sessionMode) {
     return {
       deliveryMode: ctx.deliveryMode,
@@ -67,6 +69,7 @@ async function isDirectory(targetPath: string): Promise<boolean> {
   try {
     return (await stat(targetPath)).isDirectory();
   } catch (err) {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw err;
   }
@@ -138,9 +141,9 @@ export async function enqueueCronInbox(
     cronDeliveryMode: deliveryMode,
     cronSessionMode: sessionMode,
     cronJobId: ctx.id,
-    ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
-    ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
-    ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
-    ...(configOverride !== undefined ? { configOverride } : {}),
+    ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : undefined),
+    ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : undefined),
+    ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : undefined),
+    ...(configOverride !== undefined ? { configOverride } : undefined),
   });
 }

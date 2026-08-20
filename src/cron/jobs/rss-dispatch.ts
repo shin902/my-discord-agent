@@ -56,7 +56,7 @@ function buildContent(
   instructions: string,
   articles: UnreadArticle[],
   maxSummaryChars: number,
-): { content: string; queuedArticles: UnreadArticle[] } {
+) {
   let content = instructions;
   if (content.length > MAX_INBOX_CONTENT_CHARS) {
     throw new NonRetryableError(
