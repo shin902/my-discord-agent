@@ -1,6 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
-  Agent,
   AgentEvent,
   AgentMessage,
 } from "@earendil-works/pi-agent-core";
@@ -10,7 +9,7 @@ import {
   type TextOnlyAgentFactory,
 } from "./textOnlyAgent.js";
 
-type AgentOptions = ConstructorParameters<typeof Agent>[0];
+type AgentOptions = Parameters<TextOnlyAgentFactory>[0];
 
 function createFakeAgent(endMessage: AgentMessage) {
   const subscribers: Array<(event: AgentEvent) => void> = [];

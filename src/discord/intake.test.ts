@@ -1,8 +1,8 @@
 import type Database from "better-sqlite3";
-import { Message } from "discord.js";
+import type { Message } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { findGroupByChannelId } from "../config/groups.js";
-import { getQueueRepository } from "../queue/repository.js";
+import type { findGroupByChannelId } from "../config/groups.js";
+import type { getQueueRepository } from "../queue/repository.js";
 import {
   ingestDiscordMessage as ingestDiscordMessageImpl,
   type DiscordIntakeDependencies,

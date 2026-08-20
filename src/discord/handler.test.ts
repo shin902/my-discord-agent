@@ -1,7 +1,7 @@
-import { Message, ThreadAutoArchiveDuration } from "discord.js";
+import { type Message, ThreadAutoArchiveDuration } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerHandlers } from "./handler.js";
-import { findGroupByChannelId } from "../config/groups.js";
+import type { findGroupByChannelId } from "../config/groups.js";
 import type { DiscordIntakeDependencies } from "./intake.js";
 
 const mockClient = { once: vi.fn(), on: vi.fn() };

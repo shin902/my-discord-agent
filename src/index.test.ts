@@ -144,7 +144,7 @@ describe("index: 起動時バリデーション", () => {
         }),
     );
     const callbacks: Array<() => Promise<void>> = [];
-    deps.registerHandlers = (client, callback) => {
+    deps.registerHandlers = (_client, callback) => {
       if (callback)
         callbacks.push(async () => {
           await callback();
