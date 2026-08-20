@@ -1,8 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type {
-  AgentEvent,
-  AgentMessage,
-} from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import {
   runTextOnlyAgent,
