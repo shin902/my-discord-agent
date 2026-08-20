@@ -11,7 +11,9 @@ const TRANSIENT_PATTERNS = [
   /temporarily unavailable/i,
 ];
 
-export function isTransientError(err: unknown): boolean {
+export type ErrorInput = Error | string | null;
+
+export function isTransientError(err: ErrorInput): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return TRANSIENT_PATTERNS.some((re) => re.test(msg));
 }

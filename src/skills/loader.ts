@@ -1,4 +1,3 @@
-import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -12,10 +11,7 @@ export const SkillSchema = z.object({
 
 export type Skill = z.infer<typeof SkillSchema>;
 
-export function parseYamlFrontmatter(content: string): {
-  frontmatter: Record<string, string>;
-  body: string;
-} {
+export function parseYamlFrontmatter(content: string) {
   const trimmed = content.trim();
   if (!trimmed.startsWith("---")) {
     return { frontmatter: {}, body: content };
@@ -62,11 +58,14 @@ export async function loadSkills(
   }
 
   const allowlist = Array.isArray(selection) ? selection : undefined;
-  let entries: Dirent[];
+  let entries: import("node:fs").Dirent<string>[];
   try {
-    entries = (await readdir(skillsDir, { withFileTypes: true })) as Dirent[];
+    entries = await readdir(skillsDir, {
+      withFileTypes: true,
+      encoding: "utf8",
+    });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success) {
       if (allowlist && allowlist.length > 0) {
         throw new Error(
           `[skills] スキルディレクトリ "${skillsDir}" が存在しません。allowlist に指定されたスキル: ${allowlist.join(", ")}`,
@@ -90,7 +89,7 @@ export async function loadSkills(
     try {
       content = await readFile(skillPath, "utf-8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success) {
         if (allowlist?.includes(entry.name)) {
           throw new Error(
             `[skills] ディレクトリ "${entry.name}" は存在しますが SKILL.md がありません (${skillPath})`,
