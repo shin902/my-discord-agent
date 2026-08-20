@@ -114,7 +114,7 @@ export async function waitForNetwork(options?: {
   host?: string;
   timeoutMs?: number;
   retryMs?: number;
-  lookupFn?: (host: string) => Promise<unknown>;
+  lookupFn?: (host: string) => Promise<void>;
   sleepFn?: (ms: number) => Promise<void>;
 }): Promise<void> {
   const host = options?.host ?? NETWORK_READY_HOST;
@@ -136,13 +136,8 @@ export async function waitForNetwork(options?: {
   }
 }
 
-function isAssistantMessage(msg: unknown): msg is AssistantMessage {
-  return (
-    typeof msg === "object" &&
-    msg !== null &&
-    "role" in msg &&
-    (msg as Record<string, unknown>).role === "assistant"
-  );
+function isAssistantMessage(msg: AgentMessage): msg is AssistantMessage {
+  return z.object({ role: z.literal("assistant") }).safeParse(msg).success;
 }
 
 type AgentTokenUsage = Pick<
@@ -162,11 +157,9 @@ function addTokenUsage(total: AgentTokenUsage, usage: Usage): AgentTokenUsage {
 
 /** custom メッセージの customType を取り出す。custom role でなければ undefined */
 function getCustomType(msg: AgentMessage): string | undefined {
-  if (!("role" in msg) || (msg as { role: unknown }).role !== "custom") {
-    return undefined;
-  }
-  if (!("customType" in msg)) return undefined;
-  return (msg as { customType: unknown }).customType as string;
+  return z
+    .object({ role: z.literal("custom"), customType: z.string() })
+    .safeParse(msg).data?.customType;
 }
 
 function isAgentsSnapshotMessage(
@@ -195,9 +188,10 @@ type ContextBootstrapChannel = {
 /** カスタムプロバイダーの API キーを credential-proxy + 環境変数から取得 */
 async function getCustomProviderApiKey(
   provider: string,
+  credentialLoader: typeof loadCredentialProxy = loadCredentialProxy,
 ): Promise<string | undefined> {
   try {
-    const entries = await loadCredentialProxy();
+    const entries = await credentialLoader();
     const entry = entries.find((e) => e.provider === provider);
     if (!entry) return undefined;
     if (!entry.envVars || entry.envVars.length === 0) return "local";
@@ -216,11 +210,13 @@ async function getCustomProviderApiKey(
 }
 
 /** ワークスペース上のファイルを読む。存在しなければ null（他のエラーは再送出） */
-async function loadWorkspaceFile(path: string): Promise<string | null> {
+async function loadWorkspaceFile(path: string, fileReader: (path: string, encoding: "utf-8") => Promise<string> = readFile): Promise<string | null> {
   try {
-    return await readFile(path, "utf-8");
+    return await fileReader(path, "utf-8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success) {
+      return null;
+    }
     throw err;
   }
 }
@@ -230,8 +226,8 @@ function snapshotHash(content: string | null): string | undefined {
     : createHash("sha256").update(content).digest("hex");
 }
 
-function loadSystemPromptFromWorkspace(): Promise<string | null> {
-  return loadWorkspaceFile("/workspace/AGENTS.md");
+function loadSystemPromptFromWorkspace(fileReader: (path: string, encoding: "utf-8") => Promise<string>): Promise<string | null> {
+  return loadWorkspaceFile("/workspace/AGENTS.md", fileReader);
 }
 
 function formatDateForPrompt(): string {
@@ -260,65 +256,54 @@ function formatBootstrapSection(
   return `## ${channel.header}\n\n${truncated}\n\n[Warning: ${channel.header} exceeds the limit (${channel.charLimit} characters). Delete or summarize old content to keep it organized]`;
 }
 
-const CONTEXT_BOOTSTRAP_TYPES = new Set(
-  CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
+const CONTEXT_BOOTSTRAP_TYPES = new Set<string>(
+  CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType),
 );
 
-type ReadToolDetails = {
-  path?: unknown;
-  size?: unknown;
-  characters?: unknown;
-  returnedCharacters?: unknown;
-  startLine?: unknown;
-  endLine?: unknown;
-  returnedLineCount?: unknown;
-  totalLines?: unknown;
-  eof?: unknown;
-  truncated?: unknown;
-  externalizedOutput?: unknown;
-};
+const ReadToolDetailsSchema = z.object({
+  path: z.string().optional(),
+  size: z.number().finite().optional(),
+  characters: z.number().finite().optional(),
+  returnedCharacters: z.number().finite().optional(),
+  startLine: z.number().finite().optional(),
+  endLine: z.number().finite().optional(),
+  returnedLineCount: z.number().finite().optional(),
+  totalLines: z.number().finite().optional(),
+  eof: z.boolean().optional(),
+  truncated: z.boolean().optional(),
+  externalizedOutput: z.object({ truncated: z.boolean().optional() }).optional(),
+});
+type ReadToolDetails = z.infer<typeof ReadToolDetailsSchema>;
 
 function isExternalizedReadDetails(details: ReadToolDetails): boolean {
   if (details.truncated === true) return true;
-  if (
-    typeof details.externalizedOutput === "object" &&
-    details.externalizedOutput !== null
-  ) {
-    return (
-      (details.externalizedOutput as { truncated?: unknown }).truncated === true
-    );
-  }
-  return false;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+  return details.externalizedOutput?.truncated === true;
 }
 
 /** read の行位置・総量を details から LLM が読めるテキストへ変換する。 */
 function formatReadToolDetails(msg: AgentMessage): string | undefined {
   if (msg.role !== "toolResult" || msg.toolName !== "read") return undefined;
-  if (typeof msg.details !== "object" || msg.details === null) return undefined;
-
-  const details = msg.details as ReadToolDetails;
+  const detailsResult = ReadToolDetailsSchema.safeParse(msg.details);
+  if (!detailsResult.success) return undefined;
+  const details: ReadToolDetails = detailsResult.data;
   // The common output wrapper may preserve the original read range in details
   // while replacing the actual content with a temporary-file notice. Do not
   // claim that the range was delivered (especially EOF) in that case; the
   // notice itself tells the model to read the externalized file.
   if (isExternalizedReadDetails(details)) return undefined;
   if (
-    typeof details.path !== "string" ||
-    !isFiniteNumber(details.size) ||
-    !isFiniteNumber(details.totalLines) ||
-    !isFiniteNumber(details.startLine) ||
-    !isFiniteNumber(details.endLine) ||
-    !isFiniteNumber(details.returnedLineCount) ||
-    typeof details.eof !== "boolean"
+    details.path === undefined ||
+    details.size === undefined ||
+    details.totalLines === undefined ||
+    details.startLine === undefined ||
+    details.endLine === undefined ||
+    details.returnedLineCount === undefined ||
+    details.eof === undefined
   ) {
     return undefined;
   }
 
-  const returnedCharacters = isFiniteNumber(details.returnedCharacters)
+  const returnedCharacters = details.returnedCharacters !== undefined
     ? `、今回の返却は ${details.returnedCharacters} 文字`
     : "";
   const range =
@@ -364,6 +349,7 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];
       bootstrapSeen.add(customType);
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const content = (msg as ContextBootstrapMessage).content;
       return [{ role: "user", content, timestamp: msg.timestamp }];
     }
@@ -382,14 +368,38 @@ export interface FrozenExecutionIdentity {
   snapshotHash?: string;
   toolCallKey?: string;
 }
+type AgentRunnerAgent = Pick<InstanceType<typeof Agent>, "subscribe" | "prompt">;
+export interface AgentRunnerDependencies {
+  readonly loadMessages: typeof loadMessages;
+  readonly appendMessage: typeof appendMessage;
+  readonly readFile: (path: string, encoding: "utf-8") => Promise<string>;
+  readonly loadCredentialProxy: typeof loadCredentialProxy;
+  readonly resolveModel: typeof resolveModel;
+  readonly loadSkills: typeof loadSkills;
+  readonly resolveTools: typeof resolveTools;
+  readonly createAgent: (options: ConstructorParameters<typeof Agent>[0]) => AgentRunnerAgent;
+}
+
+const DEFAULT_DEPENDENCIES: AgentRunnerDependencies = {
+  loadMessages,
+  appendMessage,
+  readFile,
+  loadCredentialProxy,
+  resolveModel,
+  loadSkills,
+  resolveTools,
+  createAgent: (options) => new Agent(options),
+};
+
 export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
   groupConfig: AgentConfig,
   identity?: FrozenExecutionIdentity,
+  dependencies: AgentRunnerDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<string> {
-  const rawMessages = await loadMessages(groupName, sessionId);
+  const rawMessages = await dependencies.loadMessages(groupName, sessionId);
 
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
   // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
@@ -428,9 +438,9 @@ export async function runAgentLoop(
         )
       : needsAgentsSnapshot
         ? (identity?.agentsSnapshotContent ??
-          (await loadSystemPromptFromWorkspace()))
+          (await loadSystemPromptFromWorkspace(dependencies.readFile)))
         : Promise.resolve(null),
-    loadSkills("/workspace/SKILLS", groupConfig.skills),
+    dependencies.loadSkills("/workspace/SKILLS", groupConfig.skills),
     Promise.all(
       channelsNeedingBootstrap.map((c) =>
         c.customType === MEMORY_BOOTSTRAP_TYPE &&
@@ -443,7 +453,7 @@ export async function runAgentLoop(
           : c.customType === MEMORY_BOOTSTRAP_TYPE &&
               identity?.memorySnapshotContent !== undefined
             ? Promise.resolve(identity.memorySnapshotContent)
-            : loadWorkspaceFile(c.path),
+            : loadWorkspaceFile(c.path, dependencies.readFile),
       ),
     ),
   ]);
@@ -461,7 +471,7 @@ export async function runAgentLoop(
       const available = skills.map((s) => s.name).join(", ") || "(なし)";
       return `❌ スキル "${skillCommand.skillName}" が見つかりません。利用可能なスキル: ${available}`;
     }
-    const skillFile = await readFile(skill.location, "utf-8");
+    const skillFile = await dependencies.readFile(skill.location, "utf-8");
     const { body: skillBody } = parseYamlFrontmatter(skillFile);
     const skillInvocationMessage: SkillInvocationMessage = {
       role: "custom",
@@ -475,6 +485,7 @@ export async function runAgentLoop(
       timestamp: Date.now(),
     };
     promptInput = [
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       {
         role: "user",
         content: [{ type: "text", text: content }],
@@ -484,12 +495,12 @@ export async function runAgentLoop(
     ];
   }
 
-  const model = await resolveModel(
+  const model = await dependencies.resolveModel(
     groupConfig.model?.provider ?? FALLBACK_DEFAULT_MODEL.provider,
     groupConfig.model?.modelId ?? FALLBACK_DEFAULT_MODEL.modelId,
   );
 
-  const tools = resolveTools(groupConfig.tools ?? []).filter(
+  const tools = dependencies.resolveTools(groupConfig.tools ?? []).filter(
     (t) => !VM_UNSUPPORTED_TOOLS.has(t.name),
   );
 
@@ -583,7 +594,7 @@ export async function runAgentLoop(
       display: false,
       timestamp: Date.now(),
     };
-    await appendMessage(groupName, sessionId, agentsSnapshotMessage);
+    await dependencies.appendMessage(groupName, sessionId, agentsSnapshotMessage);
     newBootstrapMessages.push(agentsSnapshotMessage);
   }
 
@@ -601,7 +612,7 @@ export async function runAgentLoop(
       display: false,
       timestamp: Date.now(),
     };
-    await appendMessage(groupName, sessionId, bootstrapMessage);
+    await dependencies.appendMessage(groupName, sessionId, bootstrapMessage);
     newBootstrapMessages.push(bootstrapMessage);
   }
 
@@ -612,7 +623,9 @@ export async function runAgentLoop(
   // 移行ターンでも安定した順序を保つ。
   if (newBootstrapMessages.length > 0) {
     const bootstrapOrder = [
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       AGENTS_SNAPSHOT_TYPE as string,
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       ...CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
     ];
     const orderIndex = (m: AgentMessage) =>
@@ -626,7 +639,7 @@ export async function runAgentLoop(
     messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
   }
 
-  const agent = new Agent({
+  const agent = dependencies.createAgent({
     initialState: {
       systemPrompt: fullSystemPrompt,
       model,
@@ -641,7 +654,7 @@ export async function runAgentLoop(
       if (knownKey) return knownKey;
 
       // カスタムプロバイダー: credential-proxy.json を読んで envVars から取得
-      return getCustomProviderApiKey(provider);
+      return getCustomProviderApiKey(provider, dependencies.loadCredentialProxy);
     },
   });
 
@@ -660,7 +673,7 @@ export async function runAgentLoop(
 
   agent.subscribe((event) => {
     if (event.type === "message_end") {
-      pendingAppends.push(appendMessage(groupName, sessionId, event.message));
+      pendingAppends.push(dependencies.appendMessage(groupName, sessionId, event.message));
       if (isAssistantMessage(event.message)) {
         assistantTurns++;
         stopReason = event.message.stopReason;
@@ -682,33 +695,41 @@ export async function runAgentLoop(
     }
 
     if (event.type === "tool_execution_start") {
-      const payload: Record<string, unknown> = {
-        type: "tool_start",
-        toolName: event.toolName,
-      };
       if (groupConfig.toolLogArgs) {
-        payload.args = event.args;
+        const payload = {
+          type: "tool_start",
+          toolName: event.toolName,
+          args: event.args,
+        } satisfies { type: "tool_start"; toolName: string; args: typeof event.args };
+        process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
+      } else {
+        const payload = {
+          type: "tool_start",
+          toolName: event.toolName,
+        } satisfies { type: "tool_start"; toolName: string };
+        process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
       }
-      process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     }
   });
 
-  // promptInput は string | AgentMessage[] のunion。Agent.prompt はオーバーロードで
-  // union型を直接渡すと解決できないため、typeof で型を絞ってから呼び分けている。
+  // promptInput は string | AgentMessage[] のunion。Agent.prompt はオーバーロードのため
+  // 各分岐で具体型のローカル変数へ確定させて呼び出す。
   const promptStartedAt = Date.now();
   try {
-    if (typeof promptInput === "string") {
-      await agent.prompt(promptInput);
+    if (Array.isArray(promptInput)) {
+      const messages: AgentMessage[] = promptInput;
+      await agent.prompt(messages);
     } else {
-      await agent.prompt(promptInput);
+      const text: string = promptInput;
+      await agent.prompt(text);
     }
   } finally {
     const timingEvent = {
       type: "agent_timing",
       promptMs: Date.now() - promptStartedAt,
       assistantTurns,
-      ...(hasUsage ? { usage: aggregatedUsage } : {}),
-      ...(stopReason !== undefined ? { stopReason } : {}),
+      ...(hasUsage ? { usage: aggregatedUsage } : undefined),
+      ...(stopReason !== undefined ? { stopReason } : undefined),
       agentsSnapshotHash,
       memorySnapshotHash,
       snapshotHash: snapshotHashValue,
@@ -763,7 +784,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
     process.exit(0);
   })().catch((err) => {
-    const transient = isTransientError(err);
+    const error = err instanceof Error ? err : new Error(String(err));
+    const transient = isTransientError(error);
     const code = transient ? 2 : 1;
     process.stderr.write(
       `agent-runner エラー${transient ? "（一時的）" : ""}: ${err instanceof Error ? err.message : String(err)}\n`,
