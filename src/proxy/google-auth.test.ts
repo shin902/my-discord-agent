@@ -104,17 +104,15 @@ describe("getGoogleAccessToken", () => {
   });
   it("returns the same pending device flow", async () => {
     vi.useFakeTimers();
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        response({
-          device_code: "device",
-          user_code: "CODE",
-          verification_url: "https://example.com/device",
-          expires_in: 1800,
-          interval: 60,
-        }),
-      );
+    const fetcher = vi.fn().mockResolvedValue(
+      response({
+        device_code: "device",
+        user_code: "CODE",
+        verification_url: "https://example.com/device",
+        expires_in: 1800,
+        interval: 60,
+      }),
+    );
     const auth = createGoogleAuth({ fetch: fetcher, fileSystem: fileSystem() });
     await auth.initGoogleAuth("google", config, "secret");
     const first = auth

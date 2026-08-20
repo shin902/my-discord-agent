@@ -29,12 +29,10 @@ function makeDependencies(): StartupDependencies {
     initializeQueue: vi.fn().mockResolvedValue(undefined),
     loadAndValidateCron: vi.fn().mockResolvedValue([]),
     reconcileRssDispatches: vi.fn(),
-    runRuntimeOperator: vi
-      .fn()
-      .mockResolvedValue({
-        health: { ok: true },
-        observability: { alerts: [] },
-      }),
+    runRuntimeOperator: vi.fn().mockResolvedValue({
+      health: { ok: true },
+      observability: { alerts: [] },
+    }),
     setCronJobs: vi.fn(),
     registerHandlers: vi.fn(),
     backfillDiscordMessages: vi.fn().mockResolvedValue(undefined),
@@ -184,14 +182,12 @@ describe("index: 起動時バリデーション", () => {
     vi.spyOn(repository, "listRssStatePaths").mockReturnValue([
       "runtime.sqlite",
     ]);
-    deps.loadAndValidateCron = vi
-      .fn()
-      .mockResolvedValue([
-        {
-          handler: "jobs/rss-dispatch.ts",
-          settings: { statePath: "cron.sqlite" },
-        },
-      ]);
+    deps.loadAndValidateCron = vi.fn().mockResolvedValue([
+      {
+        handler: "jobs/rss-dispatch.ts",
+        settings: { statePath: "cron.sqlite" },
+      },
+    ]);
     await import("./index.js").then(({ startApp }) => startApp(deps));
     expect(deps.reconcileRssDispatches).toHaveBeenCalledWith(repository, [
       "runtime.sqlite",

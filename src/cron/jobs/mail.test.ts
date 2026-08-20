@@ -100,11 +100,9 @@ describe("mail cron delivery boundary", () => {
     const fetchMock = vi.fn<typeof fetch>();
     for (const response of responses())
       fetchMock.mockResolvedValueOnce(response);
-    const send = vi
-      .fn()
-      .mockResolvedValue({
-        startThread: vi.fn().mockResolvedValue({ id: "thread", send: vi.fn() }),
-      });
+    const send = vi.fn().mockResolvedValue({
+      startThread: vi.fn().mockResolvedValue({ id: "thread", send: vi.fn() }),
+    });
     await createMailHandler(deps(fetchMock, assistant("stop")))(
       context({ type: 0, send }),
     );
