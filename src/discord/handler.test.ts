@@ -1,34 +1,29 @@
-import { type Message, ThreadAutoArchiveDuration } from "discord.js";
+import { Message, ThreadAutoArchiveDuration } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerHandlers } from "./handler.js";
+import { findGroupByChannelId } from "../config/groups.js";
+import type { DiscordIntakeDependencies } from "./intake.js";
 
 const mockClient = { once: vi.fn(), on: vi.fn() };
-vi.mock("./client.js", () => ({}));
-
-const mockAppendInbox = vi.hoisted(() => vi.fn());
-vi.mock("../queue/repository.js", () => ({
-  getQueueRepository: () => ({ enqueue: mockAppendInbox }),
-}));
-
-vi.mock("../config/groups.js", () => ({
-  findGroupByChannelId: vi.fn(),
-}));
-
-const { findGroupByChannelId } = await import("../config/groups.js");
-const { registerHandlers } = await import("./handler.js");
-
-const mockFindGroup = vi.mocked(findGroupByChannelId);
+const mockAppendInbox = vi.fn();
+const mockFindGroup = vi.fn<typeof findGroupByChannelId>();
+const dependencies: DiscordIntakeDependencies = {
+  findGroupByChannelId: mockFindGroup,
+  getQueueRepository: () => ({ enqueue: mockAppendInbox, upsertDiscordCursor: vi.fn() }),
+  isDiscordChannelBackfillPending: () => false,
+};
 
 // ハンドラーを一度だけ登録し、以降はコールバックを取り出して直接呼ぶ
-registerHandlers(mockClient as never);
+// SAFETY: The fixture only exercises the once/on registration boundary.
+registerHandlers(mockClient as never, undefined, dependencies);
 
 function getMessageHandler(): (msg: Message) => Promise<void> {
-  const calls = vi.mocked(mockClient.on).mock.calls as [
-    string,
-    (msg: Message) => Promise<void>,
-  ][];
-  const call = calls.find(([event]) => event === "messageCreate");
+  const call = vi.mocked(mockClient.on).mock.calls.find(
+    ([event]) => event === "messageCreate",
+  );
   if (!call) throw new Error("messageCreate ハンドラーが登録されていません");
-  return call[1];
+  // SAFETY: registerHandlers always registers MessageCreate with this signature.
+  return call[1] as (msg: Message) => Promise<void>;
 }
 
 function makeMockMessage(opts: {
@@ -42,7 +37,8 @@ function makeMockMessage(opts: {
   startThread?: ReturnType<typeof vi.fn>;
   channelFetch?: ReturnType<typeof vi.fn>;
 }): Message {
-  return {
+  // SAFETY: MessageFixture supplies every property consumed by the intake boundary.
+  const fixture = {
     author: { bot: opts.isBot ?? false },
     webhookId: opts.webhookId ?? null,
     channelId: opts.channelId,
@@ -64,7 +60,8 @@ function makeMockMessage(opts: {
     fetch: vi.fn().mockResolvedValue({ thread: null }),
     reply: vi.fn().mockResolvedValue(undefined),
     startThread: opts.startThread ?? vi.fn(),
-  } as unknown as Message;
+  };
+  return Object.assign(Object.create(Object.prototype), fixture);
 }
 
 describe("registerHandlers - MessageCreate", () => {
@@ -80,11 +77,13 @@ describe("registerHandlers - MessageCreate", () => {
     });
     const onReady = vi.fn(() => backfill);
     const startupClient = { once: vi.fn(), on: vi.fn() };
-    registerHandlers(startupClient as never, onReady);
+    // SAFETY: The fixture only exercises the once/on registration boundary.
+    registerHandlers(startupClient as never, onReady, dependencies);
 
-    const readyHandler = startupClient.once.mock.calls[0]?.[1] as (client: {
-      user: { tag: string };
-    }) => void;
+    const readyCall = startupClient.once.mock.calls[0];
+    if (!readyCall) throw new Error("ready handler が登録されていません");
+    // SAFETY: registerHandlers always registers ClientReady with this signature.
+    const readyHandler = readyCall[1] as (client: { user: { tag: string } }) => void;
     readyHandler({ user: { tag: "test-bot" } });
     await vi.waitFor(() => expect(onReady).toHaveBeenCalledOnce());
 
@@ -92,11 +91,13 @@ describe("registerHandlers - MessageCreate", () => {
       group: { name: "default", channels: [] },
       channel: { channelId: "ch-1", sessionMode: "shared" },
     });
-    const messageHandler = startupClient.on.mock.calls.find(
+    const messageCall = startupClient.on.mock.calls.find(
       ([event]) => event === "messageCreate",
-    )?.[1] as (message: Message) => Promise<unknown>;
-    if (!messageHandler)
+    );
+    if (!messageCall)
       throw new Error("messageCreate ハンドラーが登録されていません");
+    // SAFETY: registerHandlers always registers MessageCreate with this signature.
+    const messageHandler = messageCall[1] as (message: Message) => Promise<void>;
 
     const liveMessage = messageHandler(
       makeMockMessage({ isThread: false, channelId: "ch-1" }),
@@ -206,18 +207,13 @@ describe("registerHandlers - MessageCreate", () => {
       channelId: "ch-1",
       content: "画像を見て",
     });
-    (msg as unknown as { attachments: Map<string, unknown> }).attachments =
-      new Map([
-        [
-          "att-1",
-          {
-            url: "https://cdn.discordapp.com/attachments/x/y/photo.png",
-            name: "photo.png",
-            contentType: "image/png",
-            size: 12345,
-          },
-        ],
-      ]);
+    const attachment = Object.assign(Object.create(Object.prototype), {
+      url: "https://cdn.discordapp.com/attachments/x/y/photo.png",
+      name: "photo.png",
+      contentType: "image/png",
+      size: 12345,
+    });
+    msg.attachments.set("att-1", attachment);
     await getMessageHandler()(msg);
     expect(mockAppendInbox).toHaveBeenCalledWith(
       expect.objectContaining({

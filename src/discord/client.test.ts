@@ -1,40 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  loadDiscordConfig: vi.fn(),
-  findGroupByName: vi.fn(),
-}));
-
-vi.mock("../config/config.js", () => ({
-  loadDiscordConfig: mocks.loadDiscordConfig,
-}));
-vi.mock("../config/groups.js", () => ({
-  findGroupByName: mocks.findGroupByName,
-}));
-
-const {
-  DEFAULT_DISCORD_BOT_ID,
-  destroyDiscordClients,
-  getDefaultDiscordClient,
-  getDiscordClient,
-  getDiscordClientForGroup,
-  getDiscordClientForGroupName,
-  getDiscordClients,
-  initDiscordClients,
-} = await import("./client.js");
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_DISCORD_BOT_ID, destroyDiscordClients, getDefaultDiscordClient, getDiscordClient, getDiscordClientForGroup, getDiscordClientForGroupName, getDiscordClients, initDiscordClients } from "./client.js";
+const config = () => Promise.resolve({ bots: { takop: { tokenEnv: "TAKOP_BOT_TOKEN" } } });
+const group = (name: string) => Promise.resolve(name === "takop" ? { name, bot: "takop", channels: [] } : undefined);
 
 describe("Discord client registry", () => {
   beforeEach(async () => {
-    vi.clearAllMocks();
-    mocks.loadDiscordConfig.mockResolvedValue({
-      bots: { takop: { tokenEnv: "TAKOP_BOT_TOKEN" } },
-    });
-    mocks.findGroupByName.mockResolvedValue({
-      name: "takop",
-      bot: "takop",
-      channels: [],
-    });
-    await initDiscordClients();
+    await initDiscordClients(config);
   });
 
   afterEach(async () => {
@@ -58,11 +29,10 @@ describe("Discord client registry", () => {
   });
 
   it("group name resolves through group configuration", async () => {
-    await expect(getDiscordClientForGroupName("takop")).resolves.toBe(
+    await expect(getDiscordClientForGroupName("takop", group)).resolves.toBe(
       getDiscordClient("takop"),
     );
-    mocks.findGroupByName.mockResolvedValue(undefined);
-    await expect(getDiscordClientForGroupName("missing")).rejects.toThrow(
+    await expect(getDiscordClientForGroupName("missing", group)).rejects.toThrow(
       "グループが未定義です: missing",
     );
   });

@@ -27,10 +27,21 @@ const EMPTY_SCOPE_AFTER_MESSAGE_ID = "0";
 type RootChannel = TextChannel | NewsChannel | ForumChannel;
 type MessageChannel = TextChannel | NewsChannel | AnyThreadChannel;
 
+export interface DiscordBackfillDependencies {
+  getDiscordClientForGroup: typeof getDiscordClientForGroup;
+  ingestDiscordMessage: typeof ingestDiscordMessage;
+}
+
+const defaultDependencies: DiscordBackfillDependencies = {
+  getDiscordClientForGroup,
+  ingestDiscordMessage,
+};
+
 /** Recover Discord messages that arrived while the gateway was disconnected. */
 export async function backfillDiscordMessages(
   groups: readonly GroupConfig[],
   repo: QueueRepository = getQueueRepository(),
+  dependencies: DiscordBackfillDependencies = defaultDependencies,
 ): Promise<void> {
   // Live messages are still accepted while this function runs, but their
   // cursor updates must not move a channel that has not been scanned yet.
@@ -42,10 +53,10 @@ export async function backfillDiscordMessages(
   );
   beginDiscordChannelBackfill(channelIds);
   for (const group of groups) {
-    const discordClient = getDiscordClientForGroup(group);
+    const discordClient = dependencies.getDiscordClientForGroup(group);
     for (const channel of group.channels) {
       try {
-        const completed = await backfillTarget(discordClient, channel, repo);
+        const completed = await backfillTarget(discordClient, channel, repo, dependencies);
         if (completed) finishDiscordChannelBackfill(channel.channelId);
       } catch (error) {
         // A single inaccessible channel must not prevent other configured
@@ -64,6 +75,7 @@ async function backfillTarget(
   discordClient: import("discord.js").Client,
   channel: ChannelConfig,
   repo: QueueRepository,
+  dependencies: DiscordBackfillDependencies,
 ): Promise<boolean> {
   const root = await discordClient.channels.fetch(channel.channelId);
   if (!isRootChannel(root)) {
@@ -96,6 +108,7 @@ async function backfillTarget(
       repo,
       forumWasInitialized,
       seededCursors,
+      dependencies,
     );
     return complete;
   }
@@ -105,7 +118,7 @@ async function backfillTarget(
     channel.sessionMode !== "thread" && channel.sessionMode !== "email-mode";
 
   if (shouldReplayRoot && rootCursor && isMessageChannel(root)) {
-    await recoverMessages(root, rootCursor, repo);
+    await recoverMessages(root, rootCursor, repo, dependencies);
   }
 
   if (channel.sessionMode === "shared") return true;
@@ -116,7 +129,7 @@ async function backfillTarget(
     const threadCursor =
       repo.getDiscordCursor(thread.id) ?? threadFallbackCursor;
     if (!threadCursor) continue;
-    await recoverMessages(thread, threadCursor, repo);
+    await recoverMessages(thread, threadCursor, repo, dependencies);
   }
   return complete;
 }
@@ -137,12 +150,14 @@ async function backfillForumThreads(
   repo: QueueRepository,
   forumWasInitialized: boolean,
   seededCursors?: ReadonlyMap<string, string | undefined>,
+  dependencies: DiscordBackfillDependencies = defaultDependencies,
 ): Promise<void> {
   for (const thread of threads) {
     const threadCursor = seededCursors?.has(thread.id)
       ? seededCursors.get(thread.id)
       : await ensureForumThreadCursor(thread, repo, forumWasInitialized);
-    if (threadCursor) await recoverMessages(thread, threadCursor, repo);
+    if (threadCursor)
+      await recoverMessages(thread, threadCursor, repo, dependencies);
   }
 }
 
@@ -204,6 +219,7 @@ async function recoverMessages(
   channel: MessageChannel,
   afterMessageId: string,
   repo: QueueRepository,
+  dependencies: DiscordBackfillDependencies,
 ): Promise<void> {
   let cursor = afterMessageId;
   while (true) {
@@ -216,7 +232,7 @@ async function recoverMessages(
 
     const messages = [...fetched.values()].sort(compareMessagesAscending);
     for (const message of messages) {
-      const result = await ingestDiscordMessage(message, {
+      const result = await dependencies.ingestDiscordMessage(message, {
         source: "backfill",
         replyOnFailure: false,
       });

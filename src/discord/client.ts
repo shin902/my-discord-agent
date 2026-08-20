@@ -19,8 +19,10 @@ export function createDiscordClient(): Client {
 
 const clients = new Map<string, Client>();
 
-export async function initDiscordClients(): Promise<void> {
-  const config = await loadDiscordConfig();
+export async function initDiscordClients(
+  loadConfig: () => Promise<Awaited<ReturnType<typeof loadDiscordConfig>>> = loadDiscordConfig,
+): Promise<void> {
+  const config = await loadConfig();
   for (const existing of clients.values()) existing.destroy();
   clients.clear();
   clients.set(DEFAULT_DISCORD_BOT_ID, createDiscordClient());
@@ -56,8 +58,9 @@ export function getDiscordClientForGroup(
 
 export async function getDiscordClientForGroupName(
   groupName: string,
+  findGroup: typeof findGroupByName = findGroupByName,
 ): Promise<Client> {
-  const group = await findGroupByName(groupName);
+  const group = await findGroup(groupName);
   if (!group) throw new Error(`グループが未定義です: ${groupName}`);
   return getDiscordClientForGroup(group);
 }

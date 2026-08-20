@@ -6,6 +6,7 @@ import {
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
+import type { QueueRepository } from "../queue/repository.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 
 export type DiscordMessageSource = "live" | "backfill";
@@ -21,24 +22,38 @@ interface IngestOptions {
   updateLiveCursor?: boolean;
 }
 
+export interface DiscordIntakeDependencies {
+  findGroupByChannelId: typeof findGroupByChannelId;
+  getQueueRepository: () => Pick<QueueRepository, "enqueue" | "upsertDiscordCursor">;
+  isDiscordChannelBackfillPending: typeof isDiscordChannelBackfillPending;
+}
+
+const defaultDependencies: DiscordIntakeDependencies = {
+  findGroupByChannelId,
+  getQueueRepository,
+  isDiscordChannelBackfillPending,
+};
+
 export async function handleLiveDiscordMessage(
   message: Message,
+  dependencies: DiscordIntakeDependencies = defaultDependencies,
 ): Promise<DiscordIngestResult> {
   return ingestDiscordMessage(message, {
     source: "live",
     replyOnFailure: true,
-  });
+  }, dependencies);
 }
 
 export async function ingestDiscordMessage(
   message: Message,
   options: { source: DiscordMessageSource; replyOnFailure?: boolean },
+  dependencies: DiscordIntakeDependencies = defaultDependencies,
 ): Promise<DiscordIngestResult> {
   return ingest(message, {
     source: options.source,
     replyOnFailure: options.replyOnFailure ?? false,
     updateLiveCursor: options.source === "live",
-  });
+  }, dependencies);
 }
 
 // URL あり → "{hostname}-{messageId末尾6文字}", URL なし → "thread-{messageId末尾6文字}", 最大100文字
@@ -66,6 +81,7 @@ class ThreadCreationError extends Error {
 async function ingest(
   message: Message,
   options: IngestOptions,
+  dependencies: DiscordIntakeDependencies,
 ): Promise<DiscordIngestResult> {
   let channel = message.channel;
   if (channel.isThread() && !channel.parentId) {
@@ -76,7 +92,7 @@ async function ingest(
   const parentId = isThread && "parentId" in channel ? channel.parentId : null;
   const lookupId = isThread && parentId ? parentId : message.channelId;
   const defaultCursorScope = isThread ? message.channelId : lookupId;
-  const match = await findGroupByChannelId(lookupId);
+  const match = await dependencies.findGroupByChannelId(lookupId);
   if (!match) return { status: "ignored" };
 
   // Historical backfill deliberately excludes bot/webhook messages so old RSS
@@ -155,12 +171,11 @@ async function ingest(
       attachments,
     };
 
-    const repository = getQueueRepository();
+    const repository = dependencies.getQueueRepository();
     await repository.enqueue(payload);
     if (
       options.updateLiveCursor &&
-      !isDiscordChannelBackfillPending(lookupId) &&
-      typeof repository.upsertDiscordCursor === "function"
+      !dependencies.isDiscordChannelBackfillPending(lookupId)
     ) {
       repository.upsertDiscordCursor(cursorScope, message.id);
     }

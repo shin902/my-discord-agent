@@ -1,28 +1,16 @@
 import { ChannelType } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { backfillDiscordMessages as backfillImpl, type DiscordBackfillDependencies } from "./backfill.js";
+import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 
-const mocks = vi.hoisted(() => ({
-  fetchChannel: vi.fn(),
-  ingest: vi.fn(),
-  getRepo: vi.fn(),
-  getDiscordClientForGroup: vi.fn(),
-}));
-
-const mockClient = { channels: { fetch: mocks.fetchChannel } };
-vi.mock("./client.js", () => ({
-  getDiscordClientForGroup: mocks.getDiscordClientForGroup,
-}));
-vi.mock("./intake.js", () => ({
-  ingestDiscordMessage: mocks.ingest,
-}));
-vi.mock("../queue/repository.js", () => ({
-  getQueueRepository: mocks.getRepo,
-}));
-
-const { backfillDiscordMessages } = await import("./backfill.js");
-const { isDiscordChannelBackfillPending } = await import("./backfill-state.js");
-
-mocks.getDiscordClientForGroup.mockReturnValue(mockClient);
+const fetchChannel = vi.fn();
+const ingest = vi.fn();
+const getRepo = vi.fn();
+const getClient = vi.fn();
+const mockClient = { channels: { fetch: fetchChannel } };
+const dependencies: DiscordBackfillDependencies = { getDiscordClientForGroup: getClient, ingestDiscordMessage: ingest };
+const backfillDiscordMessages = (groups: Parameters<typeof backfillImpl>[0], repo?: Parameters<typeof backfillImpl>[1]) => backfillImpl(groups, repo ?? getRepo(), dependencies);
+getClient.mockReturnValue(mockClient);
 
 let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -30,11 +18,33 @@ afterEach(() => {
   errorSpy?.mockRestore();
 });
 
-function message(id: string, channelId: string): Record<string, unknown> {
+interface BackfillMessage {
+  id: string;
+  channelId: string;
+  createdTimestamp: number;
+}
+interface MessagePage {
+  size: number;
+  values: () => IterableIterator<BackfillMessage>;
+  first: () => BackfillMessage | undefined;
+}
+interface MessageChannelFixture {
+  id: string;
+  messages: { fetch: ReturnType<typeof vi.fn> };
+}
+interface RootChannelFixture extends MessageChannelFixture {
+  type: ChannelType;
+  threads: {
+    fetchActive: ReturnType<typeof vi.fn>;
+    fetchArchived?: ReturnType<typeof vi.fn>;
+  };
+}
+
+function message(id: string, channelId: string): BackfillMessage {
   return { id, channelId, createdTimestamp: Number(id) };
 }
 
-function page(messages: Record<string, unknown>[]) {
+function page(messages: BackfillMessage[]): MessagePage {
   const first = messages[0];
   return {
     size: messages.length,
@@ -43,21 +53,17 @@ function page(messages: Record<string, unknown>[]) {
   };
 }
 
-function rootChannel(overrides: Record<string, unknown> = {}) {
+function rootChannel(overrides: Partial<RootChannelFixture> = {}): RootChannelFixture {
   return {
     id: "root-1",
     type: ChannelType.GuildText,
-    messages: {
-      fetch: vi.fn(),
-    },
-    threads: {
-      fetchActive: vi.fn().mockResolvedValue({ threads: new Map() }),
-    },
+    messages: { fetch: vi.fn() },
+    threads: { fetchActive: vi.fn().mockResolvedValue({ threads: new Map() }) },
     ...overrides,
   };
 }
 
-function forumRoot(...threads: Record<string, unknown>[]) {
+function forumRoot(...threads: MessageChannelFixture[]): RootChannelFixture {
   return rootChannel({
     type: ChannelType.GuildForum,
     threads: {
@@ -84,7 +90,7 @@ describe("backfillDiscordMessages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    mocks.ingest.mockImplementation(async (input: { channelId: string }) => ({
+    ingest.mockImplementation(async (input: { channelId: string }) => ({
       status: "enqueued",
       cursorScope: input.channelId,
     }));
@@ -98,8 +104,8 @@ describe("backfillDiscordMessages", () => {
         page([message("1002", "root-1"), message("1001", "root-1")]),
       )
       .mockResolvedValueOnce(page([]));
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -108,7 +114,7 @@ describe("backfillDiscordMessages", () => {
       },
     ]);
 
-    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+    expect(ingest.mock.calls.map(([input]) => input.id)).toEqual([
       "1001",
       "1002",
     ]);
@@ -134,8 +140,8 @@ describe("backfillDiscordMessages", () => {
     });
     firstRoot.messages.fetch.mockReturnValueOnce(firstPage);
     secondRoot.messages.fetch.mockReturnValueOnce(secondPage);
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel
+    getRepo.mockReturnValue(repo);
+    fetchChannel
       .mockResolvedValueOnce(firstRoot)
       .mockResolvedValueOnce(secondRoot);
 
@@ -178,8 +184,8 @@ describe("backfillDiscordMessages", () => {
     root.messages.fetch
       .mockResolvedValueOnce(page(firstPage))
       .mockResolvedValueOnce(page([message("1101", "root-1")]));
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -188,7 +194,7 @@ describe("backfillDiscordMessages", () => {
       },
     ]);
 
-    expect(mocks.ingest).toHaveBeenCalledTimes(101);
+    expect(ingest).toHaveBeenCalledTimes(101);
     expect(root.messages.fetch).toHaveBeenNthCalledWith(1, {
       after: "1000",
       limit: 100,
@@ -208,9 +214,9 @@ describe("backfillDiscordMessages", () => {
     root.messages.fetch.mockResolvedValueOnce(
       page([message("1001", "root-1")]),
     );
-    mocks.ingest.mockRejectedValueOnce(new Error("enqueue failed"));
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    ingest.mockRejectedValueOnce(new Error("enqueue failed"));
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -230,8 +236,8 @@ describe("backfillDiscordMessages", () => {
     const repo = repoWithCursors({});
     const root = rootChannel({ type });
     root.messages.fetch.mockResolvedValueOnce(page([]));
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -242,7 +248,7 @@ describe("backfillDiscordMessages", () => {
 
     expect(repo.initializeDiscordCursor).toHaveBeenCalledWith("root-1");
     expect(repo.upsertDiscordCursor).not.toHaveBeenCalled();
-    expect(mocks.ingest).not.toHaveBeenCalled();
+    expect(ingest).not.toHaveBeenCalled();
   });
 
   it("初回空チャンネルの次回起動では新規メッセージを取得する", async () => {
@@ -251,8 +257,8 @@ describe("backfillDiscordMessages", () => {
     root.messages.fetch
       .mockResolvedValueOnce(page([]))
       .mockResolvedValueOnce(page([message("1001", "root-1")]));
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     const groups = [
       {
@@ -272,7 +278,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest).toHaveBeenCalledWith(
+    expect(ingest).toHaveBeenCalledWith(
       expect.objectContaining({ id: "1001" }),
       { source: "backfill", replyOnFailure: false },
     );
@@ -295,8 +301,8 @@ describe("backfillDiscordMessages", () => {
       },
     };
     const root = forumRoot(thread);
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -332,8 +338,8 @@ describe("backfillDiscordMessages", () => {
           .mockResolvedValueOnce(page([message("2200", "thread-1")])),
       },
     };
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(forumRoot(thread));
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(forumRoot(thread));
 
     await backfillDiscordMessages([
       {
@@ -352,7 +358,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest).toHaveBeenCalledTimes(101);
+    expect(ingest).toHaveBeenCalledTimes(101);
     expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith(
       "thread-1",
       "2200",
@@ -387,8 +393,8 @@ describe("backfillDiscordMessages", () => {
     };
     const firstRoot = forumRoot(existingThread);
     const secondRoot = forumRoot(existingThread, newThread);
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel
+    getRepo.mockReturnValue(repo);
+    fetchChannel
       .mockResolvedValueOnce(firstRoot)
       .mockResolvedValueOnce(secondRoot);
     const groups = [
@@ -400,7 +406,7 @@ describe("backfillDiscordMessages", () => {
 
     await backfillDiscordMessages(groups);
     expect(repo.isDiscordCursorInitialized("root-1")).toBe(true);
-    expect(mocks.ingest).not.toHaveBeenCalled();
+    expect(ingest).not.toHaveBeenCalled();
 
     await backfillDiscordMessages(groups);
 
@@ -409,7 +415,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+    expect(ingest.mock.calls.map(([input]) => input.id)).toEqual([
       "3001",
       "3002",
     ]);
@@ -447,8 +453,8 @@ describe("backfillDiscordMessages", () => {
     };
     const firstRoot = forumRoot(existingThread);
     const secondRoot = forumRoot(existingThread, newThread);
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel
+    getRepo.mockReturnValue(repo);
+    fetchChannel
       .mockResolvedValueOnce(firstRoot)
       .mockResolvedValueOnce(secondRoot);
     const groups = [
@@ -473,7 +479,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+    expect(ingest.mock.calls.map(([input]) => input.id)).toEqual([
       "3001",
       "3002",
     ]);
@@ -495,8 +501,8 @@ describe("backfillDiscordMessages", () => {
       new Error("temporary enumeration failure"),
     );
     const secondRoot = forumRoot(firstThread);
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel
+    getRepo.mockReturnValue(repo);
+    fetchChannel
       .mockResolvedValueOnce(firstRoot)
       .mockResolvedValueOnce(secondRoot);
     const groups = [
@@ -523,7 +529,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest).not.toHaveBeenCalled();
+    expect(ingest).not.toHaveBeenCalled();
   });
 
   it("Forumのthreadカーソル種まきに失敗したら境界を保存せず、完了後に保存する", async () => {
@@ -548,8 +554,8 @@ describe("backfillDiscordMessages", () => {
       },
     };
     const root = forumRoot(firstThread, failedThread);
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
     const groups = [
       {
         name: "group",
@@ -587,8 +593,8 @@ describe("backfillDiscordMessages", () => {
       },
     };
     const root = forumRoot(thread);
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
     const groups = [
       {
         name: "group",
@@ -598,7 +604,7 @@ describe("backfillDiscordMessages", () => {
 
     await backfillDiscordMessages(groups);
     expect(repo.initializeDiscordCursor).toHaveBeenCalledWith("thread-1");
-    expect(mocks.ingest).not.toHaveBeenCalled();
+    expect(ingest).not.toHaveBeenCalled();
 
     await backfillDiscordMessages(groups);
     expect(thread.messages.fetch).toHaveBeenNthCalledWith(2, {
@@ -606,7 +612,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest).toHaveBeenCalledWith(
+    expect(ingest).toHaveBeenCalledWith(
       expect.objectContaining({ id: "4001", channelId: "thread-1" }),
       { source: "backfill", replyOnFailure: false },
     );
@@ -630,8 +636,8 @@ describe("backfillDiscordMessages", () => {
         }),
       },
     });
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -645,7 +651,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest).toHaveBeenCalledWith(
+    expect(ingest).toHaveBeenCalledWith(
       expect.objectContaining({ id: "2002", channelId: "thread-1" }),
       { source: "backfill", replyOnFailure: false },
     );
@@ -683,8 +689,8 @@ describe("backfillDiscordMessages", () => {
         fetchArchived,
       },
     });
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -695,7 +701,7 @@ describe("backfillDiscordMessages", () => {
 
     expect(root.threads.fetchActive).toHaveBeenCalledWith(false);
     expect(fetchArchived).not.toHaveBeenCalled();
-    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+    expect(ingest.mock.calls.map(([input]) => input.id)).toEqual([
       "2100",
     ]);
   });
@@ -724,8 +730,8 @@ describe("backfillDiscordMessages", () => {
         }),
       },
     });
-    mocks.getRepo.mockReturnValue(repo);
-    mocks.fetchChannel.mockResolvedValue(root);
+    getRepo.mockReturnValue(repo);
+    fetchChannel.mockResolvedValue(root);
 
     await backfillDiscordMessages([
       {
@@ -744,7 +750,7 @@ describe("backfillDiscordMessages", () => {
       limit: 100,
       cache: false,
     });
-    expect(mocks.ingest.mock.calls.map(([input]) => input.id)).toEqual([
+    expect(ingest.mock.calls.map(([input]) => input.id)).toEqual([
       "3000",
       "2000",
     ]);

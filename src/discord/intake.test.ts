@@ -1,28 +1,16 @@
 import type Database from "better-sqlite3";
-import type { Message } from "discord.js";
+import { Message } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { findGroupByChannelId } from "../config/groups.js";
+import { getQueueRepository } from "../queue/repository.js";
+import { ingestDiscordMessage as ingestDiscordMessageImpl, type DiscordIntakeDependencies } from "./intake.js";
+import { beginDiscordChannelBackfill, finishDiscordChannelBackfill, isDiscordChannelBackfillPending } from "./backfill-state.js";
+import * as repositoryModule from "../queue/repository.js";
 
-const mocks = vi.hoisted(() => ({
-  findGroup: vi.fn(),
-  getRepo: vi.fn(),
-}));
-
-vi.mock("../config/groups.js", () => ({
-  findGroupByChannelId: mocks.findGroup,
-}));
-
-vi.mock("../queue/repository.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../queue/repository.js")>();
-  return { ...actual, getQueueRepository: mocks.getRepo };
-});
-
-const { ingestDiscordMessage } = await import("./intake.js");
-const { beginDiscordChannelBackfill, finishDiscordChannelBackfill } =
-  await import("./backfill-state.js");
-const repositoryModule = await vi.importActual<
-  typeof import("../queue/repository.js")
->("../queue/repository.js");
+const findGroup = vi.fn<typeof findGroupByChannelId>();
+const getRepo = vi.fn<typeof getQueueRepository>();
+const dependencies: DiscordIntakeDependencies = { findGroupByChannelId: findGroup, getQueueRepository: getRepo, isDiscordChannelBackfillPending };
+const ingestDiscordMessage = (message: Message, options: Parameters<typeof ingestDiscordMessageImpl>[1]) => ingestDiscordMessageImpl(message, options, dependencies);
 
 let db: Database.Database;
 let repo: InstanceType<typeof repositoryModule.QueueRepository>;
@@ -35,9 +23,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   db = repositoryModule.openRuntimeDb(":memory:");
   repo = new repositoryModule.QueueRepository(db);
-  mocks.getRepo.mockReturnValue(repo);
-  mocks.findGroup.mockResolvedValue({
-    group: { name: "group" },
+  getRepo.mockReturnValue(repo);
+  findGroup.mockResolvedValue({
+    group: { name: "group", channels: [] },
     channel: { channelId: "root-1", sessionMode: "auto-thread" },
   });
 });
@@ -53,7 +41,8 @@ function makeMessage(options: {
   fetchedThread?: { id: string } | null;
   startThread?: ReturnType<typeof vi.fn>;
 }): Message {
-  return {
+  // SAFETY: MessageFixture supplies every property consumed by the intake boundary.
+  const fixture = {
     id: options.id,
     channelId: options.channelId ?? "root-1",
     author: { bot: options.isBot ?? false },
@@ -69,7 +58,8 @@ function makeMessage(options: {
     fetch: vi.fn().mockResolvedValue({ thread: options.fetchedThread ?? null }),
     startThread: options.startThread ?? vi.fn(),
     reply: vi.fn().mockResolvedValue(undefined),
-  } as unknown as Message;
+  };
+  return Object.assign(Object.create(Object.prototype), fixture);
 }
 
 describe("ingestDiscordMessage", () => {
@@ -122,8 +112,8 @@ describe("ingestDiscordMessage", () => {
     { label: "bot", isBot: true, webhookId: null },
     { label: "Webhook", isBot: true, webhookId: "allowed-webhook" },
   ])("backfillでは$labelメッセージを除外する", async ({ isBot, webhookId }) => {
-    mocks.findGroup.mockResolvedValue({
-      group: { name: "group" },
+    findGroup.mockResolvedValue({
+      group: { name: "group", channels: [] },
       channel: {
         channelId: "root-1",
         sessionMode: "shared",
@@ -148,8 +138,8 @@ describe("ingestDiscordMessage", () => {
   });
 
   it("起動時バックフィル中はliveカーソルを更新しない", async () => {
-    mocks.findGroup.mockResolvedValue({
-      group: { name: "group" },
+    findGroup.mockResolvedValue({
+      group: { name: "group", channels: [] },
       channel: { channelId: "root-1", sessionMode: "shared" },
     });
     beginDiscordChannelBackfill(["root-1"]);
@@ -169,8 +159,8 @@ describe("ingestDiscordMessage", () => {
   });
 
   it("enqueue失敗時はliveカーソルを更新しない", async () => {
-    mocks.findGroup.mockResolvedValue({
-      group: { name: "group" },
+    findGroup.mockResolvedValue({
+      group: { name: "group", channels: [] },
       channel: { channelId: "root-1", sessionMode: "shared" },
     });
     const enqueue = vi.spyOn(repo, "enqueue").mockImplementation(() => {
