@@ -1,4 +1,4 @@
-import { loadRawConfig } from "./config.js";
+import { loadRawConfig, type JsonValue } from "./config.js";
 import { type ModelConfig, ModelConfigSchema } from "./groups.js";
 
 // サンドボックスコンテナ（config.json を読めない）で groupConfig.model が未設定の場合に使うデフォルト。agent-runner.ts を単独実行するときの安全網。
@@ -9,8 +9,10 @@ export const FALLBACK_DEFAULT_MODEL: ModelConfig = {
   modelId: "glm-4.7-flash",
 };
 
-export async function loadDefaultModel(): Promise<ModelConfig> {
-  const raw = await loadRawConfig();
+export async function loadDefaultModel(
+  loadConfig: () => Promise<Record<string, JsonValue>> = loadRawConfig,
+): Promise<ModelConfig> {
+  const raw = await loadConfig();
   if (raw.defaultModel === undefined) {
     throw new Error(
       "config/config.json に defaultModel が設定されていません。config.example.json を参考に設定してください",
@@ -24,11 +26,12 @@ export async function resolveModelConfig(
   model?: ModelConfig,
 ): Promise<ModelConfig> {
   const defaultModel = await loadDefaultModel();
-  return {
+  const resolved: ModelConfig = {
     provider: model?.provider ?? defaultModel.provider,
     modelId: model?.modelId ?? defaultModel.modelId,
-    ...(model?.thinkingLevel !== undefined
-      ? { thinkingLevel: model.thinkingLevel }
-      : {}),
   };
+  if (model?.thinkingLevel !== undefined) {
+    resolved.thinkingLevel = model.thinkingLevel;
+  }
+  return resolved;
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadRawProviders } from "./config.js";
+import { loadRawProviders, type JsonValue } from "./config.js";
 
 export const ProviderConcurrencySchema = z.enum(["serial", "parallel"]);
 export type ProviderConcurrency = z.infer<typeof ProviderConcurrencySchema>;
@@ -26,15 +26,18 @@ const ProvidersConfigSchema = z
     }
   });
 
-export async function loadProviders(): Promise<ProviderConfig[]> {
-  return ProvidersConfigSchema.parse(await loadRawProviders());
+export async function loadProviders(
+  loadProvidersConfig: () => Promise<JsonValue> = loadRawProviders,
+): Promise<ProviderConfig[]> {
+  return ProvidersConfigSchema.parse(await loadProvidersConfig());
 }
 
 /** 未設定 provider は安全側に倒して直列実行する。 */
 export async function resolveProviderConcurrency(
   provider: string,
+  loadProvidersConfig: () => Promise<JsonValue> = loadRawProviders,
 ): Promise<ProviderConcurrency> {
-  const entries = await loadProviders();
+  const entries = await loadProviders(loadProvidersConfig);
   return (
     entries.find((entry) => entry.provider === provider)?.concurrency ??
     "serial"

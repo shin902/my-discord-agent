@@ -1,29 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { JsonValue } from "./config.js";
 
-vi.mock("node:fs/promises", () => ({
-  readFile: vi.fn(),
-}));
+let loader: ReturnType<typeof vi.fn<() => Promise<JsonValue | string>>>;
 
-const { readFile } = await import("node:fs/promises");
+beforeEach(() => { loader = vi.fn<() => Promise<JsonValue | string>>(); });
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-function makeConfig(credentials: unknown[]) {
-  return JSON.stringify(credentials);
+function makeConfig(credentials: JsonValue[]): JsonValue {
+  return JSON.parse(JSON.stringify(credentials));
 }
 
 async function importFresh() {
   vi.resetModules();
   const mod = await import("./credential-proxy.js");
-  return mod as typeof import("./credential-proxy.js");
+  return mod;
 }
 
 describe("loadCredentialProxy", () => {
   it("設定ファイルを読み込んでパースする", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
+    loader.mockResolvedValue(
       makeConfig([
         {
           provider: "openai",
@@ -33,7 +28,7 @@ describe("loadCredentialProxy", () => {
       ]),
     );
 
-    const result = await loadCredentialProxy();
+    const result = await loadCredentialProxy(loader);
     expect(result).toEqual([
       {
         provider: "openai",
@@ -41,12 +36,12 @@ describe("loadCredentialProxy", () => {
         baseUrl: "https://api.example.com",
       },
     ]);
-    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it("2回目以降の呼び出しではキャッシュを返し readFile を呼ばない", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
+    loader.mockResolvedValue(
       makeConfig([
         {
           provider: "openai",
@@ -56,8 +51,8 @@ describe("loadCredentialProxy", () => {
       ]),
     );
 
-    await loadCredentialProxy();
-    const result = await loadCredentialProxy();
+    await loadCredentialProxy(loader);
+    const result = await loadCredentialProxy(loader);
     expect(result).toEqual([
       {
         provider: "openai",
@@ -65,46 +60,46 @@ describe("loadCredentialProxy", () => {
         baseUrl: "https://api.example.com",
       },
     ]);
-    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it("credentials が配列でない場合はエラーをスローする", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ foo: "bar" }));
+    loader.mockResolvedValue(JSON.stringify({ foo: "bar" }));
 
-    await expect(loadCredentialProxy()).rejects.toThrow();
+    await expect(loadCredentialProxy(loader)).rejects.toThrow();
   });
 
   it("ファイルが存在しない場合はエラーをスローする", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockRejectedValue(
+    loader.mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
 
-    await expect(loadCredentialProxy()).rejects.toThrow(
-      "config/credentials.json が見つかりません",
+    await expect(loadCredentialProxy(loader)).rejects.toThrow(
+      "ENOENT",
     );
   });
 
   it("ENOENT 以外のエラーは再スロー", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockRejectedValue(
+    loader.mockRejectedValue(
       Object.assign(new Error("EACCES"), { code: "EACCES" }),
     );
 
-    await expect(loadCredentialProxy()).rejects.toThrow("EACCES");
+    await expect(loadCredentialProxy(loader)).rejects.toThrow("EACCES");
   });
 
   it("不正な JSON は SyntaxError を投げる", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue("{ invalid json }");
+    loader.mockResolvedValue("{ invalid json }");
 
-    await expect(loadCredentialProxy()).rejects.toThrow(SyntaxError);
+    await expect(loadCredentialProxy(loader)).rejects.toThrow(SyntaxError);
   });
 
   it("credentials のスキーマに合わない JSON は ZodError を投げる", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
+    loader.mockResolvedValue(
       makeConfig([
         {
           provider: "openai",
@@ -114,12 +109,12 @@ describe("loadCredentialProxy", () => {
       ]),
     );
 
-    await expect(loadCredentialProxy()).rejects.toThrow();
+    await expect(loadCredentialProxy(loader)).rejects.toThrow();
   });
 
   it("廃止された thinkingFormat: 'qwen' は移行先を示すエラーメッセージで弾かれる", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
+    loader.mockResolvedValue(
       makeConfig([
         {
           provider: "llama-cpp",
@@ -129,14 +124,14 @@ describe("loadCredentialProxy", () => {
       ]),
     );
 
-    await expect(loadCredentialProxy()).rejects.toThrow(
+    await expect(loadCredentialProxy(loader)).rejects.toThrow(
       /qwen-chat-template.*openrouter/,
     );
   });
 
   it("CLIProxyAPI 向け openai-codex-responses 設定を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
+    loader.mockResolvedValue(
       makeConfig([
         {
           provider: "codex-oauth",
@@ -150,7 +145,7 @@ describe("loadCredentialProxy", () => {
       ]),
     );
 
-    const result = await loadCredentialProxy();
+    const result = await loadCredentialProxy(loader);
     expect(result).toEqual([
       {
         provider: "codex-oauth",
@@ -162,24 +157,24 @@ describe("loadCredentialProxy", () => {
         maxTokens: 8192,
       },
     ]);
-    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it("credentials が空配列も正常にキャッシュされる", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(makeConfig([]));
+    loader.mockResolvedValue(makeConfig([]));
 
-    const result1 = await loadCredentialProxy();
+    const result1 = await loadCredentialProxy(loader);
     expect(result1).toEqual([]);
 
-    const result2 = await loadCredentialProxy();
+    const result2 = await loadCredentialProxy(loader);
     expect(result2).toEqual([]);
-    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it("ollama 向け thinkingFormat: openrouter と thinkingLevelMap を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
+    loader.mockResolvedValue(
       makeConfig([
         {
           provider: "ollama",
@@ -192,7 +187,7 @@ describe("loadCredentialProxy", () => {
       ]),
     );
 
-    const result = await loadCredentialProxy();
+    const result = await loadCredentialProxy(loader);
     expect(result).toEqual([
       {
         provider: "ollama",
@@ -207,7 +202,7 @@ describe("loadCredentialProxy", () => {
 
   it("query-token 認証設定を受け付ける", async () => {
     const { loadCredentialProxy } = await importFresh();
-    vi.mocked(readFile).mockResolvedValue(
+    loader.mockResolvedValue(
       makeConfig([
         {
           provider: "browserless",
@@ -218,7 +213,7 @@ describe("loadCredentialProxy", () => {
       ]),
     );
 
-    const result = await loadCredentialProxy();
+    const result = await loadCredentialProxy(loader);
     expect(result).toEqual([
       {
         provider: "browserless",

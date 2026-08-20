@@ -17,7 +17,9 @@ export const PROVIDERS_PATH =
 export const CRON_PATH =
   process.env.CRON_PATH ?? path.join(__dirname, "../../config/cron.json");
 
-const TopLevelSchema = z.record(z.string(), z.unknown());
+const JsonValueSchema = z.json();
+export type JsonValue = z.infer<typeof JsonValueSchema>;
+const TopLevelSchema = z.record(z.string(), JsonValueSchema);
 
 export const DiscordConfigSchema = z.object({
   bots: z
@@ -26,20 +28,22 @@ export const DiscordConfigSchema = z.object({
 });
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
 
-export function loadConfigField<T>(
-  raw: Record<string, unknown>,
+export function loadConfigField<
+  TObject extends Record<string, JsonValue | undefined>,
+  TField extends keyof TObject,
+>(
+  raw: Record<string, JsonValue>,
   section: string,
-  schema: z.ZodTypeAny,
-  field: string,
-  defaultValue: NoInfer<T>,
-): T {
+  schema: z.ZodType<TObject>,
+  field: TField,
+  defaultValue: NoInfer<NonNullable<TObject[TField]>>,
+): NonNullable<TObject[TField]> {
   if (raw[section] === undefined) return defaultValue;
   const result = schema.safeParse(raw[section]);
   if (result.success) {
-    if (result.data === null || typeof result.data !== "object")
-      return defaultValue;
-    const value = (result.data as Record<string, unknown>)[field];
-    if (value !== undefined) return value as T;
+    const value = result.data[field];
+    if (value === undefined || value === null) return defaultValue;
+    return value;
   } else {
     console.warn(
       `[${section}] 設定が不正、デフォルト使用:`,
@@ -49,7 +53,7 @@ export function loadConfigField<T>(
   return defaultValue;
 }
 
-let _raw: Record<string, unknown> | null = null;
+let _raw: Record<string, JsonValue> | null = null;
 
 export async function loadDiscordConfig(): Promise<DiscordConfig> {
   const raw = await loadRawConfig();
@@ -67,14 +71,14 @@ export async function loadDiscordConfig(): Promise<DiscordConfig> {
 }
 
 // config/config.json（defaultModel・proxy・agent）を読み込む
-export async function loadRawConfig(): Promise<Record<string, unknown>> {
+export async function loadRawConfig(): Promise<Record<string, JsonValue>> {
   if (_raw !== null) return _raw;
   try {
     const text = await readFile(CONFIG_PATH, "utf-8");
     _raw = TopLevelSchema.parse(JSON.parse(text));
     return _raw;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success) {
       throw new Error(
         "config/config.json が見つかりません。config/config.example.json をコピーして作成してください",
       );
@@ -86,12 +90,12 @@ export async function loadRawConfig(): Promise<Record<string, unknown>> {
 async function readJsonArrayFile(
   filePath: string,
   missingFileHint: string,
-): Promise<unknown> {
+): Promise<JsonValue> {
   try {
     const text = await readFile(filePath, "utf-8");
     return JSON.parse(text);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success) {
       throw new Error(missingFileHint);
     }
     throw err;
@@ -99,7 +103,7 @@ async function readJsonArrayFile(
 }
 
 // config/groups.json を読み込む
-export async function loadRawGroups(): Promise<unknown> {
+export async function loadRawGroups(): Promise<JsonValue> {
   return readJsonArrayFile(
     GROUPS_PATH,
     "config/groups.json が見つかりません。config/groups.example.json をコピーして作成してください",
@@ -107,7 +111,7 @@ export async function loadRawGroups(): Promise<unknown> {
 }
 
 // config/credentials.json を読み込む
-export async function loadRawCredentials(): Promise<unknown> {
+export async function loadRawCredentials(): Promise<JsonValue> {
   return readJsonArrayFile(
     CREDENTIALS_PATH,
     "config/credentials.json が見つかりません。config/credentials.example.json をコピーして作成してください",
@@ -115,17 +119,18 @@ export async function loadRawCredentials(): Promise<unknown> {
 }
 
 // config/providers.json を読み込む（省略時は安全なデフォルト設定を使うため空配列）
-export async function loadRawProviders(): Promise<unknown> {
+export async function loadRawProviders(): Promise<JsonValue> {
   try {
     return JSON.parse(await readFile(PROVIDERS_PATH, "utf-8"));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if (z.object({ code: z.literal("ENOENT") }).safeParse(err).success)
+      return [];
     throw err;
   }
 }
 
 // config/cron.json を読み込む（cron は省略可能なため、ENOENT は呼び出し側で処理する）
-export async function loadRawCron(): Promise<unknown> {
+export async function loadRawCron(): Promise<JsonValue> {
   const text = await readFile(CRON_PATH, "utf-8");
   return JSON.parse(text);
 }

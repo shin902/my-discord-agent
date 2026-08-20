@@ -1,30 +1,12 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createGroupConfig, type GroupConfigFileSystem } from "./group-config.js";
 
-vi.mock("node:fs/promises", () => ({
-  readFile: vi.fn(),
-  stat: vi.fn(),
-  cp: vi.fn(),
-  mkdir: vi.fn(),
-}));
-
-const { readFile, stat, cp, mkdir } = await import("node:fs/promises");
-const {
-  loadGroupSystemPrompt,
-  initGroupPrompts,
-  ensureGroupDirs,
-  ensureGroupSkills,
-} = await import("./group-config.js");
-
-// readFile はオーバーロードがあり vi.mocked がデフォルトで Buffer 返しの overload を選ぶため、
-// string 返しの overload に一度だけキャストして各テストで as any を使わずに済むようにする。
-const mockReadFile = vi.mocked(readFile) as unknown as Mock<
-  () => Promise<string>
->;
-const mockStat = vi.mocked(stat) as unknown as Mock<
-  () => Promise<{ isDirectory: () => boolean; isFile: () => boolean }>
->;
-const mockCp = vi.mocked(cp);
-const mockMkdir = vi.mocked(mkdir);
+const mockReadFile = vi.fn<GroupConfigFileSystem["readFile"]>();
+const mockStat = vi.fn<GroupConfigFileSystem["stat"]>();
+const mockCp = vi.fn<GroupConfigFileSystem["cp"]>();
+const mockMkdir = vi.fn<GroupConfigFileSystem["mkdir"]>();
+const { loadGroupSystemPrompt, initGroupPrompts, ensureGroupDirs, ensureGroupSkills } =
+  createGroupConfig({ readFile: mockReadFile, stat: mockStat, cp: mockCp, mkdir: mockMkdir });
 
 const statDir = () =>
   Promise.resolve({ isDirectory: () => true, isFile: () => false });

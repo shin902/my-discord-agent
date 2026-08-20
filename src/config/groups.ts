@@ -1,6 +1,6 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { loadRawGroups } from "./config.js";
+import { loadRawGroups, type JsonValue } from "./config.js";
 
 const THINKING_LEVELS = [
   "off",
@@ -67,17 +67,20 @@ export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 
 let _groups: GroupConfig[] | null = null;
 
-export async function loadGroups(): Promise<GroupConfig[]> {
-  if (_groups !== null) return _groups;
-  const raw = await loadRawGroups();
-  _groups = GroupsConfigSchema.parse(raw);
-  return _groups;
+export async function loadGroups(
+  loadGroupsConfig: () => Promise<JsonValue> = loadRawGroups,
+): Promise<GroupConfig[]> {
+  if (loadGroupsConfig === loadRawGroups && _groups !== null) return _groups;
+  const parsed = GroupsConfigSchema.parse(await loadGroupsConfig());
+  if (loadGroupsConfig === loadRawGroups) _groups = parsed;
+  return parsed;
 }
 
 export async function findGroupByName(
   name: string,
+  loadGroupsConfig?: () => Promise<JsonValue>,
 ): Promise<GroupConfig | undefined> {
-  const groups = await loadGroups();
+  const groups = await loadGroups(loadGroupsConfig);
   return groups.find((g) => g.name === name);
 }
 

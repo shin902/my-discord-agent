@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadRawCredentials } from "./config.js";
+import { loadRawCredentials, type JsonValue } from "./config.js";
 
 export const MsalConfigSchema = z.object({
   tenantId: z.string(),
@@ -115,16 +115,28 @@ export const CredentialEntrySchema = z.object({
 export type CredentialEntry = z.infer<typeof CredentialEntrySchema>;
 
 let cache: CredentialEntry[] | null = null;
+const injectedCaches = new WeakMap<object, CredentialEntry[]>();
 
-export async function loadCredentialProxy(): Promise<CredentialEntry[]> {
-  if (cache) return cache;
+export async function loadCredentialProxy(
+  loadCredentials: () => Promise<JsonValue | string> = loadRawCredentials,
+): Promise<CredentialEntry[]> {
+  if (loadCredentials === loadRawCredentials && cache) return cache;
+  if (loadCredentials !== loadRawCredentials) {
+    const injected = injectedCaches.get(loadCredentials);
+    if (injected) return injected;
+  }
   // sandbox コンテナへの受け渡し: manager.ts が CREDENTIAL_PROXY_JSON に直列化して渡す
   const inlineJson = process.env.CREDENTIAL_PROXY_JSON;
   if (inlineJson) {
     cache = z.array(CredentialEntrySchema).parse(JSON.parse(inlineJson));
     return cache;
   }
-  const raw = await loadRawCredentials();
-  cache = z.array(CredentialEntrySchema).parse(raw);
-  return cache;
+  const raw = await loadCredentials();
+  const text = z.string().safeParse(raw);
+  const parsed = z.array(CredentialEntrySchema).parse(
+    text.success ? JSON.parse(text.data) : raw,
+  );
+  if (loadCredentials === loadRawCredentials) cache = parsed;
+  else injectedCaches.set(loadCredentials, parsed);
+  return parsed;
 }

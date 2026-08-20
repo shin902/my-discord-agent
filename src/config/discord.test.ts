@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DiscordConfig, JsonValue } from "./config.js";
 
 const originalConfigPath = process.env.CONFIG_PATH;
 const originalDefaultToken = process.env.DISCORD_BOT_TOKEN;
@@ -8,9 +9,9 @@ const originalAdditionalToken = process.env.TAKOP_BOT_TOKEN;
 const tempDirs: string[] = [];
 
 async function loadDiscordConfig(
-  raw: unknown,
+  raw: Record<string, JsonValue>,
   additionalToken?: string,
-): Promise<unknown> {
+): Promise<DiscordConfig> {
   const dir = await mkdtemp(path.join(process.cwd(), "config-test-"));
   tempDirs.push(dir);
   const configPath = path.join(dir, "config.json");
