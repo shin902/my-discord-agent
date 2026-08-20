@@ -20,6 +20,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Runtime credentials are intentionally gitignored; tests need the example schema.
+      - run: cp config/credentials.example.json config/credentials.json
+
       - name: Biome format check
         run: pnpm format:check
 
