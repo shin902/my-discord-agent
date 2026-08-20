@@ -832,7 +832,7 @@ export async function buildRedditMarkdown(absPath: string): Promise<string> {
   if (!postListing)
     return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
   const post = postListing.data.children[0]?.data;
-  if (post && post.title) {
+  if (post?.title) {
     const lines = [
       `# ${post.title}`,
       "",

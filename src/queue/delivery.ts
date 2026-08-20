@@ -66,7 +66,7 @@ function adaptDiscordTarget(
     | null
     | undefined,
 ): DeliveryTarget | undefined {
-  if (!target || !target.isSendable()) return undefined;
+  if (!target?.isSendable()) return undefined;
   return {
     id: target.id,
     isSendable: () => target.isSendable(),
