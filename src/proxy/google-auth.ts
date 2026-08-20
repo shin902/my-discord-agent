@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import type { GoogleOAuthConfig } from "../config/credential-proxy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,19 @@ type ProviderState = {
   clientSecret: string;
   cachePath: string;
   pendingAuth?: PendingAuth;
+  pendingDeviceCode?: Promise<DeviceCodeResponse>;
+};
+
+export type GoogleAuthFileSystem = {
+  readFile: typeof readFile;
+  writeFile: typeof writeFile;
+  mkdir: typeof mkdir;
+  chmod: typeof chmod;
+};
+
+export type GoogleAuthDependencies = {
+  fileSystem?: GoogleAuthFileSystem;
+  fetch?: typeof fetch;
 };
 
 // ツール実行時にデバイス認証が未完了の場合に投げる。
@@ -59,16 +73,39 @@ type TokenResponse = {
   error_description?: string;
 };
 
-const registry = new Map<string, ProviderState>();
+const cachedTokensSchema = z.object({
+  accessToken: z.string().optional(),
+  refreshToken: z.string().optional(),
+  expiresAt: z.number().optional(),
+});
+const deviceCodeSchema = z.object({
+  device_code: z.string(),
+  user_code: z.string(),
+  verification_url: z.string().url(),
+  expires_in: z.number(),
+  interval: z.number(),
+});
+const tokenResponseSchema = z.object({
+  access_token: z.string().optional(),
+  refresh_token: z.string().optional(),
+  expires_in: z.number().optional(),
+  error: z.string().optional(),
+  error_description: z.string().optional(),
+});
 
 function cachePathFor(provider: string): string {
   return path.join(DATA_DIR, `google-token-${provider}.json`);
 }
 
-async function loadCache(cachePath: string): Promise<CachedTokens> {
+export function createGoogleAuth(dependencies: GoogleAuthDependencies = {}) {
+  const fileSystem = dependencies.fileSystem ?? { readFile, writeFile, mkdir, chmod };
+  const fetcher = dependencies.fetch ?? fetch;
+  const registry = new Map<string, ProviderState>();
+
+  async function loadCache(cachePath: string): Promise<CachedTokens> {
   try {
-    const raw = await readFile(cachePath, "utf-8");
-    return JSON.parse(raw) as CachedTokens;
+    const raw = await fileSystem.readFile(cachePath, "utf-8");
+    return cachedTokensSchema.parse(JSON.parse(raw));
   } catch {
     return {};
   }
@@ -78,36 +115,41 @@ async function persistCache(
   cachePath: string,
   tokens: CachedTokens,
 ): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(cachePath, JSON.stringify(tokens), {
+  await fileSystem.mkdir(DATA_DIR, { recursive: true });
+  await fileSystem.writeFile(cachePath, JSON.stringify(tokens), {
     encoding: "utf-8",
     mode: 0o600,
   });
-  await chmod(cachePath, 0o600);
+  await fileSystem.chmod(cachePath, 0o600);
 }
 
-async function postForm(
+async function postForm<T>(
   url: string,
   params: Record<string, string>,
-): Promise<TokenResponse | DeviceCodeResponse> {
-  const res = await fetch(url, {
+  schema: z.ZodType<T>,
+): Promise<T> {
+  const res = await fetcher(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params),
   });
-  return (await res.json()) as TokenResponse | DeviceCodeResponse;
+  return schema.parse(await res.json());
 }
 
 async function refreshAccessToken(
   state: ProviderState,
   refreshToken: string,
 ): Promise<TokenResponse> {
-  return (await postForm(TOKEN_URL, {
-    client_id: state.config.clientId,
-    client_secret: state.clientSecret,
-    refresh_token: refreshToken,
-    grant_type: "refresh_token",
-  })) as TokenResponse;
+  return postForm(
+    TOKEN_URL,
+    {
+      client_id: state.config.clientId,
+      client_secret: state.clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    },
+    tokenResponseSchema,
+  );
 }
 
 // デバイスコードフローをバックグラウンドでポーリングし、完了したらトークンを
@@ -126,12 +168,16 @@ async function pollDeviceCode(
 
     let result: TokenResponse;
     try {
-      result = (await postForm(TOKEN_URL, {
-        client_id: state.config.clientId,
-        client_secret: state.clientSecret,
-        device_code: deviceCode.device_code,
-        grant_type: DEVICE_GRANT_TYPE,
-      })) as TokenResponse;
+      result = await postForm(
+        TOKEN_URL,
+        {
+          client_id: state.config.clientId,
+          client_secret: state.clientSecret,
+          device_code: deviceCode.device_code,
+          grant_type: DEVICE_GRANT_TYPE,
+        },
+        tokenResponseSchema,
+      );
     } catch (err) {
       console.error(
         `[google-auth:${provider}] トークン取得中にエラーが発生しました: ${err instanceof Error ? err.message : err}`,
@@ -163,19 +209,19 @@ async function pollDeviceCode(
   );
 }
 
-export async function initGoogleAuth(
-  provider: string,
-  config: GoogleOAuthConfig,
-  clientSecret: string,
-): Promise<void> {
-  registry.set(provider, {
-    config,
-    clientSecret,
-    cachePath: cachePathFor(provider),
-  });
-}
+  async function initGoogleAuth(
+    provider: string,
+    config: GoogleOAuthConfig,
+    clientSecret: string,
+  ): Promise<void> {
+    registry.set(provider, {
+      config,
+      clientSecret,
+      cachePath: cachePathFor(provider),
+    });
+  }
 
-export async function getGoogleAccessToken(provider: string): Promise<string> {
+  async function getGoogleAccessToken(provider: string): Promise<string> {
   const state = registry.get(provider);
   if (!state) {
     throw new Error(
@@ -202,7 +248,7 @@ export async function getGoogleAccessToken(provider: string): Promise<string> {
         expiresAt: Date.now() + (refreshed.expires_in ?? 0) * 1000,
       };
       await persistCache(state.cachePath, tokens);
-      return tokens.accessToken as string;
+      return refreshed.access_token;
     }
     console.warn(
       `[google-auth:${provider}] リフレッシュトークンでの取得に失敗しました。デバイスコードフローにフォールバックします`,
@@ -213,11 +259,22 @@ export async function getGoogleAccessToken(provider: string): Promise<string> {
   if (state.pendingAuth) {
     throw new GoogleAuthRequiredError(provider, state.pendingAuth);
   }
+  if (state.pendingDeviceCode) {
+    await state.pendingDeviceCode;
+    if (state.pendingAuth) throw new GoogleAuthRequiredError(provider, state.pendingAuth);
+  }
 
-  const deviceCode = (await postForm(DEVICE_CODE_URL, {
-    client_id: state.config.clientId,
-    scope: state.config.scopes.join(" "),
-  })) as DeviceCodeResponse;
+  const deviceCodePromise = postForm(
+    DEVICE_CODE_URL,
+    {
+      client_id: state.config.clientId,
+      scope: state.config.scopes.join(" "),
+    },
+    deviceCodeSchema,
+  );
+  state.pendingDeviceCode = deviceCodePromise;
+  const deviceCode = await deviceCodePromise;
+  state.pendingDeviceCode = undefined;
 
   const pending: PendingAuth = {
     verificationUrl: deviceCode.verification_url,
@@ -234,5 +291,12 @@ export async function getGoogleAccessToken(provider: string): Promise<string> {
     if (state.pendingAuth === pending) state.pendingAuth = undefined;
   });
 
-  throw new GoogleAuthRequiredError(provider, pending);
+    throw new GoogleAuthRequiredError(provider, pending);
+  }
+
+  return { initGoogleAuth, getGoogleAccessToken };
 }
+
+const defaultAuth = createGoogleAuth();
+export const initGoogleAuth = defaultAuth.initGoogleAuth;
+export const getGoogleAccessToken = defaultAuth.getGoogleAccessToken;

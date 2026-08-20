@@ -1,72 +1,50 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const CONFIG = { cookieFile: "data/reddit-cookies.json", maxAgeDays: 7 };
 
 describe("getRedditCookieHeader", () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
 
-  afterEach(() => {
-    vi.resetModules();
-  });
 
   it("クッキーファイルが存在しない場合エラーを投げる", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
-    }));
-    const { getRedditCookieHeader, RedditCookieMissingError } = await import(
-      "./reddit-cookie-store.js"
-    );
+    const readCookieFile = async () => { throw new Error("ENOENT"); };
+    const { getRedditCookieHeader, RedditCookieMissingError } = await import("./reddit-cookie-store.js");
     await expect(
-      getRedditCookieHeader("reddit", CONFIG),
+      getRedditCookieHeader("reddit", CONFIG, readCookieFile),
     ).rejects.toBeInstanceOf(RedditCookieMissingError);
   });
 
   it("有効期限内のクッキーヘッダーを返す", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const readCookieFile = async () => JSON.stringify({
           cookieHeader: "session=abc123; loid=xyz",
           updatedAt: new Date().toISOString(),
-        }),
-      ),
-    }));
+        });
     const { getRedditCookieHeader } = await import("./reddit-cookie-store.js");
-    const header = await getRedditCookieHeader("reddit", CONFIG);
+    const header = await getRedditCookieHeader("reddit", CONFIG, readCookieFile);
     expect(header).toBe("session=abc123; loid=xyz");
   });
 
   it("maxAgeDays を超えている場合エラーを投げる", async () => {
     const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const readCookieFile = async () => JSON.stringify({
           cookieHeader: "session=abc123",
           updatedAt: staleDate.toISOString(),
-        }),
-      ),
-    }));
+        });
     const { getRedditCookieHeader, RedditCookieStaleError } = await import(
       "./reddit-cookie-store.js"
     );
     await expect(
-      getRedditCookieHeader("reddit", CONFIG),
+      getRedditCookieHeader("reddit", CONFIG, readCookieFile),
     ).rejects.toBeInstanceOf(RedditCookieStaleError);
   });
 
   it("maxAgeDays ちょうど未満なら有効", async () => {
     const freshDate = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const readCookieFile = async () => JSON.stringify({
           cookieHeader: "session=abc123",
           updatedAt: freshDate.toISOString(),
-        }),
-      ),
-    }));
+        });
     const { getRedditCookieHeader } = await import("./reddit-cookie-store.js");
-    await expect(getRedditCookieHeader("reddit", CONFIG)).resolves.toBe(
+    await expect(getRedditCookieHeader("reddit", CONFIG, readCookieFile)).resolves.toBe(
       "session=abc123",
     );
   });

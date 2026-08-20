@@ -14,6 +14,7 @@ import {
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 import { getRedditCookieHeader } from "./reddit-cookie-store.js";
+import { z } from "zod";
 
 class UpstreamTimeoutError extends Error {
   constructor(message?: string) {
@@ -21,6 +22,44 @@ class UpstreamTimeoutError extends Error {
     this.name = "UpstreamTimeoutError";
   }
 }
+
+type ProxyRequest = IncomingMessage;
+type ProxyResponse = ServerResponse;
+export type ProxyRequestOptions = http.RequestOptions;
+export type ProxyRequestCallback = (res: IncomingMessage) => void;
+export type ProxyRequestFunction = (options: ProxyRequestOptions, callback?: ProxyRequestCallback) => http.ClientRequest;
+export interface ProxyServer {
+  on(event: "error", listener: (error: Error) => void): void | ProxyServer;
+  listen(port: number, host: string, callback: () => void): void | ProxyServer;
+  address(): string | { port: number } | null;
+}
+export type ProxyCreateServer = (listener: http.RequestListener) => ProxyServer;
+
+export interface CredentialProxyDependencies {
+  request: ProxyRequestFunction;
+  httpsRequest: ProxyRequestFunction;
+  createServer: ProxyCreateServer;
+  loadCredentialProxy: typeof loadCredentialProxy;
+  loadRequestTimeoutMs: typeof loadRequestTimeoutMs;
+  initGraphAuth: typeof initGraphAuth;
+  getGraphAccessToken: typeof getGraphAccessToken;
+  initGoogleAuth: typeof initGoogleAuth;
+  getGoogleAccessToken: typeof getGoogleAccessToken;
+  getRedditCookieHeader: typeof getRedditCookieHeader;
+}
+
+const defaultDependencies: CredentialProxyDependencies = {
+  request: http.request,
+  httpsRequest: https.request,
+  createServer: http.createServer,
+  loadCredentialProxy,
+  loadRequestTimeoutMs,
+  initGraphAuth,
+  getGraphAccessToken,
+  initGoogleAuth,
+  getGoogleAccessToken,
+  getRedditCookieHeader,
+};
 
 let proxyPort: number | null = null;
 
@@ -42,11 +81,13 @@ function appendPath(basePath: string, restPath: string): string {
   return `${basePath.replace(/\/$/, "")}/${restPath.replace(/^\//, "")}`;
 }
 
+
 async function handleRequest(
   creds: CredentialEntry[],
   timeoutMs: number,
-  req: IncomingMessage,
-  res: ServerResponse,
+  req: ProxyRequest,
+  res: ProxyResponse,
+  dependencies: CredentialProxyDependencies,
 ): Promise<void> {
   const url = req.url ?? "/";
   const parsedReqUrl = new URL(url, "http://localhost");
@@ -95,7 +136,7 @@ async function handleRequest(
     // MSALトークン注入（Graph API用）
     let token: string;
     try {
-      token = await getGraphAccessToken(entry.provider);
+      token = await dependencies.getGraphAccessToken(entry.provider);
     } catch (err) {
       console.error(
         `[credential-proxy] graph token 取得失敗: ${err instanceof Error ? err.message : err}`,
@@ -110,7 +151,7 @@ async function handleRequest(
     // Google OAuth トークン注入（Google Calendar API 等用）
     let token: string;
     try {
-      token = await getGoogleAccessToken(entry.provider);
+      token = await dependencies.getGoogleAccessToken(entry.provider);
     } catch (err) {
       if (err instanceof GoogleAuthRequiredError) {
         console.log(`[credential-proxy] ${err.message}`);
@@ -131,7 +172,7 @@ async function handleRequest(
     // Reddit クッキー注入（agent-reach の reddit サービス用）
     let cookieHeader: string;
     try {
-      cookieHeader = await getRedditCookieHeader(
+      cookieHeader = await dependencies.getRedditCookieHeader(
         entry.provider,
         entry.redditCookie,
       );
@@ -168,7 +209,7 @@ async function handleRequest(
   }
 
   const isHttps = parsedTarget.protocol === "https:";
-  const httpModule = isHttps ? https : http;
+  const request = isHttps ? dependencies.httpsRequest : dependencies.request;
   const defaultPort = isHttps ? 443 : 80;
 
   const options = {
@@ -181,7 +222,7 @@ async function handleRequest(
   };
 
   await new Promise<void>((resolve, reject) => {
-    const upstream = httpModule.request(options, (upstreamRes) => {
+    const upstream = request(options, (upstreamRes) => {
       res.writeHead(upstreamRes.statusCode ?? 200, upstreamRes.headers);
       upstreamRes.pipe(res);
       upstreamRes.on("end", resolve);
@@ -237,9 +278,10 @@ async function handleRequest(
 export function createRequestHandler(
   creds: CredentialEntry[],
   timeoutMs: number,
+  dependencies: CredentialProxyDependencies = defaultDependencies,
 ) {
-  return (req: IncomingMessage, res: ServerResponse) => {
-    handleRequest(creds, timeoutMs, req, res).catch((err) => {
+  return (req: ProxyRequest, res: ProxyResponse) => {
+    handleRequest(creds, timeoutMs, req, res, dependencies).catch((err) => {
       if (!res.headersSent) {
         console.error(`[credential-proxy] unhandled error: ${err}`);
         res.writeHead(500);
@@ -249,16 +291,18 @@ export function createRequestHandler(
   };
 }
 
-export async function initCredentialProxyServer(): Promise<number> {
+export async function initCredentialProxyServer(
+  dependencies: CredentialProxyDependencies = defaultDependencies,
+): Promise<number> {
   const [creds, timeoutMs] = await Promise.all([
-    loadCredentialProxy(),
-    loadRequestTimeoutMs(),
+    dependencies.loadCredentialProxy(),
+    dependencies.loadRequestTimeoutMs(),
   ]);
 
   // MSALが必要なプロバイダーを初期化
   for (const entry of creds) {
     if (entry.msal) {
-      await initGraphAuth(entry.provider, entry.msal);
+      await dependencies.initGraphAuth(entry.provider, entry.msal);
       console.log(
         `[credential-proxy] Graph Auth initialized for provider: ${entry.provider}`,
       );
@@ -271,7 +315,7 @@ export async function initCredentialProxyServer(): Promise<number> {
         );
         continue;
       }
-      await initGoogleAuth(entry.provider, entry.google, clientSecret);
+      await dependencies.initGoogleAuth(entry.provider, entry.google, clientSecret);
       console.log(
         `[credential-proxy] Google Auth initialized for provider: ${entry.provider}`,
       );
@@ -279,7 +323,7 @@ export async function initCredentialProxyServer(): Promise<number> {
       // 認証未完了の場合 getGoogleAccessToken は GoogleAuthRequiredError を
       // 即座に投げ、ポーリングはバックグラウンドで継続する（ここではブロックしない）。
       try {
-        await getGoogleAccessToken(entry.provider);
+        await dependencies.getGoogleAccessToken(entry.provider);
       } catch (err) {
         if (err instanceof GoogleAuthRequiredError) {
           console.log(`[credential-proxy] ${err.message}`);
@@ -292,7 +336,7 @@ export async function initCredentialProxyServer(): Promise<number> {
     }
     if (entry.redditCookie) {
       try {
-        await getRedditCookieHeader(entry.provider, entry.redditCookie);
+        await dependencies.getRedditCookieHeader(entry.provider, entry.redditCookie);
         console.log(
           `[credential-proxy] Reddit cookie OK for provider: ${entry.provider}`,
         );
@@ -304,12 +348,14 @@ export async function initCredentialProxyServer(): Promise<number> {
     }
   }
 
-  const server = http.createServer(createRequestHandler(creds, timeoutMs));
+  const server = dependencies.createServer(
+    createRequestHandler(creds, timeoutMs, dependencies),
+  );
 
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);
     server.listen(0, "0.0.0.0", () => {
-      proxyPort = (server.address() as { port: number }).port;
+      proxyPort = z.object({ port: z.number() }).parse(server.address()).port;
       console.log(
         `[credential-proxy] HTTP proxy listening on port ${proxyPort}`,
       );
