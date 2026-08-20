@@ -203,11 +203,18 @@ export function getLookupHostname(parsed: URL): string {
     : parsed.hostname;
 }
 
-type LookupAddress = { address: string; family: number };
-type LookupAll = (
+const LookupAddressSchema = z.object({
+  address: z.string().min(1),
+  family: z.number(),
+});
+type LookupAddress = z.infer<typeof LookupAddressSchema>;
+export type LookupAll = (
   hostname: string,
   options: { all: true; verbatim: true },
 ) => Promise<LookupAddress[]>;
+
+const lookupAll: LookupAll = (hostname, options) =>
+  dnsLookup(hostname, options);
 
 /**
  * Resolve every address for a destination and reject unless every answer is
@@ -216,7 +223,7 @@ type LookupAll = (
  */
 export async function validatePublicDestination(
   hostname: string,
-  resolve: LookupAll = dnsLookup as LookupAll,
+  resolve: LookupAll = lookupAll,
 ): Promise<void> {
   const lookupHostname =
     hostname.startsWith("[") && hostname.endsWith("]")
@@ -232,7 +239,11 @@ export async function validatePublicDestination(
 
   let addresses: LookupAddress[];
   try {
-    addresses = await resolve(lookupHostname, { all: true, verbatim: true });
+    const resolved = await resolve(lookupHostname, {
+      all: true,
+      verbatim: true,
+    });
+    addresses = z.array(LookupAddressSchema).parse(resolved);
   } catch {
     throw new Error(`宛先ホスト名のDNS解決に失敗しました: ${lookupHostname}`);
   }
@@ -242,16 +253,8 @@ export async function validatePublicDestination(
   }
 
   for (const result of addresses) {
-    if (
-      !result ||
-      typeof result.address !== "string" ||
-      !isPublicIpAddress(result.address)
-    ) {
-      const address =
-        result && typeof result.address === "string"
-          ? result.address
-          : "不正なアドレス";
-      throw new Error(`内部アドレスへのアクセスは禁止: ${address}`);
+    if (!isPublicIpAddress(result.address)) {
+      throw new Error(`内部アドレスへのアクセスは禁止: ${result.address}`);
     }
   }
 }
@@ -357,11 +360,13 @@ socket.socket.connect = _guarded_connect
 socket.socket.connect_ex = _guarded_connect_ex
 `;
 
-function networkPolicyCommands(outAbsPath: string): {
+type NetworkPolicyCommands = {
   setup: string;
   env: string;
   dir: string;
-} {
+};
+
+function networkPolicyCommands(outAbsPath: string): NetworkPolicyCommands {
   const base = outAbsPath.replace(/\.[^.]+$/, "");
   const dir = `${base}.network-policy`;
   const quotedDir = shellQuote(dir);
@@ -589,10 +594,12 @@ function assertSafeXUrl(raw: string, label: string): URL {
 }
 
 /** X post URL から username / postId を抽出する */
-export function parseXStatus(raw: string): {
+export type XStatus = {
   username: string;
   postId: string;
-} {
+};
+
+export function parseXStatus(raw: string): XStatus {
   const url = assertSafeXUrl(raw, "X post");
   const match =
     /^\/(?<username>[^/]{1,64})\/status\/(?<postId>\d{1,32})\/?$/.exec(
@@ -657,276 +664,66 @@ export function parseVtt(content: string): string {
   return out.join(" ").replace(/。/g, "。\n").trim();
 }
 
-/** yt-dlp の巨大 JSON を Markdown サマリーに変換する */
-async function buildYouTubeMarkdown(
-  metaJsonPath: string,
-  subsDir: string,
-): Promise<string> {
-  let raw: string;
-  try {
-    raw = await readFile(metaJsonPath, "utf-8");
-  } catch {
-    return "(メタデータの読み込みに失敗しました)";
-  }
+const YouTubeChapterSchema = z.object({ start_time: z.number().optional(), title: z.string().optional() });
+const YouTubeMetaSchema = z.object({
+  title: z.string().optional(), channel: z.string().optional(), uploader: z.string().optional(),
+  upload_date: z.string().optional(), duration: z.number().optional(), view_count: z.number().optional(),
+  like_count: z.number().optional(), tags: z.array(z.string()).optional(), description: z.string().optional(),
+  chapters: z.array(YouTubeChapterSchema).optional(),
+});
+type YouTubeMeta = z.infer<typeof YouTubeMetaSchema>;
+const GitHubLicenseSchema = z.object({ name: z.string().optional() });
+const GitHubRepoSchema = z.object({ full_name: z.string().optional(), description: z.string().optional(), language: z.string().optional(), license: GitHubLicenseSchema.nullable().optional(), stargazers_count: z.number().optional(), forks_count: z.number().optional(), open_issues_count: z.number().optional(), topics: z.array(z.string()).optional(), homepage: z.string().optional(), fork: z.boolean().optional(), created_at: z.string().optional(), updated_at: z.string().optional() });
+type GitHubRepo = z.infer<typeof GitHubRepoSchema>;
+const RedditPostSchema = z.object({ title: z.string().optional(), subreddit: z.string().optional(), author: z.string().nullable().optional(), score: z.number().optional(), num_comments: z.number().optional(), created_utc: z.number().optional(), selftext: z.string().optional(), body: z.string().optional(), url: z.string().optional() });
+const RedditChildSchema = z.object({ kind: z.string().optional(), data: RedditPostSchema });
+const RedditListingSchema = z.object({ data: z.object({ children: z.array(RedditChildSchema) }) });
+type RedditListing = z.infer<typeof RedditListingSchema>;
 
-  // yt-dlp は先頭に WARNING 行を出すことがある。JSON 部分だけ抽出する。
+async function buildYouTubeMarkdown(metaJsonPath: string, subsDir: string): Promise<string> {
+  let raw: string;
+  try { raw = await readFile(metaJsonPath, "utf-8"); } catch { return "(メタデータの読み込みに失敗しました)"; }
   const jsonStart = raw.indexOf("{");
-  if (jsonStart === -1)
-    return `(JSON が見つかりません)\n\n${raw.slice(0, 2000)}`;
-
-  let meta: Record<string, unknown>;
-  try {
-    meta = JSON.parse(raw.slice(jsonStart));
-  } catch {
-    return `(JSON パース失敗)\n\n${raw.slice(jsonStart, jsonStart + 2000)}`;
-  }
-
-  const str = (k: string) =>
-    typeof meta[k] === "string" ? (meta[k] as string) : "";
-  const num = (k: string) =>
-    typeof meta[k] === "number" ? (meta[k] as number) : null;
-
-  const lines: string[] = [];
-
-  lines.push(`# ${str("title") || "(タイトル不明)"}`);
-  lines.push("");
-
-  const channel = str("channel") || str("uploader");
-  if (channel) lines.push(`**チャンネル**: ${channel}`);
-
-  const uploadDate = str("upload_date");
-  if (uploadDate.length === 8) {
-    lines.push(
-      `**投稿日**: ${uploadDate.slice(0, 4)}-${uploadDate.slice(4, 6)}-${uploadDate.slice(6, 8)}`,
-    );
-  }
-
-  const duration = num("duration");
-  if (duration !== null)
-    lines.push(`**再生時間**: ${formatDuration(duration)}`);
-
-  const views = num("view_count");
-  if (views !== null) lines.push(`**視聴回数**: ${views.toLocaleString()}`);
-
-  const likes = num("like_count");
-  if (likes !== null) lines.push(`**いいね**: ${likes.toLocaleString()}`);
-
-  const tags = meta.tags;
-  if (Array.isArray(tags) && tags.length > 0) {
-    lines.push(`**タグ**: ${(tags as string[]).join(", ")}`);
-  }
-
-  const desc = str("description");
-  if (desc) {
-    lines.push("", "## 説明", "", desc);
-  }
-
-  const chapters = meta.chapters;
-  if (Array.isArray(chapters) && chapters.length > 0) {
-    lines.push("", "## チャプター", "");
-    for (const ch of chapters as Array<Record<string, unknown>>) {
-      const t =
-        typeof ch.start_time === "number"
-          ? formatDuration(ch.start_time as number)
-          : "?";
-      lines.push(`- ${t} ${ch.title ?? ""}`);
-    }
-  }
-
-  // 字幕テキストを Markdown に埋め込む
-  let subFiles: string[] = [];
-  try {
-    subFiles = (await readdir(subsDir)).filter((f) => f.endsWith(".vtt"));
-  } catch {
-    // 字幕なし
-  }
-
-  if (subFiles.length > 0) {
-    for (const f of subFiles) {
-      const lang = f.match(/\.([a-z-]+)\.vtt$/i)?.[1] ?? f;
-      const vtt = await readFile(join(subsDir, f), "utf-8").catch(() => null);
-      if (!vtt) continue;
-      const text = parseVtt(vtt);
-      if (text) lines.push("", `## 字幕 (${lang})`, "", text);
-    }
-  } else {
-    lines.push("", "## 字幕", "", "(取得できませんでした)");
-  }
-
+  if (jsonStart === -1) return `(JSON が見つかりません)\n\n${raw.slice(0, 2000)}`;
+  const parsed = YouTubeMetaSchema.safeParse(JSON.parse(raw.slice(jsonStart)));
+  if (!parsed.success) return `(JSON パース失敗)\n\n${raw.slice(jsonStart, jsonStart + 2000)}`;
+  const meta: YouTubeMeta = parsed.data;
+  const lines: string[] = [`# ${meta.title || "(タイトル不明)"}`, ""];
+  const channel = meta.channel || meta.uploader; if (channel) lines.push(`**チャンネル**: ${channel}`);
+  if (meta.upload_date?.length === 8) lines.push(`**投稿日**: ${meta.upload_date.slice(0,4)}-${meta.upload_date.slice(4,6)}-${meta.upload_date.slice(6,8)}`);
+  if (meta.duration !== undefined) lines.push(`**再生時間**: ${formatDuration(meta.duration)}`);
+  if (meta.view_count !== undefined) lines.push(`**視聴回数**: ${meta.view_count.toLocaleString()}`);
+  if (meta.like_count !== undefined) lines.push(`**いいね**: ${meta.like_count.toLocaleString()}`);
+  if (meta.tags?.length) lines.push(`**タグ**: ${meta.tags.join(", ")}`);
+  if (meta.description) lines.push("", "## 説明", "", meta.description);
+  if (meta.chapters?.length) { lines.push("", "## チャプター", ""); for (const ch of meta.chapters) lines.push(`- ${ch.start_time === undefined ? "?" : formatDuration(ch.start_time)} ${ch.title ?? ""}`); }
+  let subFiles: string[] = []; try { subFiles = (await readdir(subsDir)).filter((f) => f.endsWith(".vtt")); } catch { /* subtitles are optional */ }
+  for (const file of subFiles) { const lang = file.match(/\.([a-z-]+)\.vtt$/i)?.[1] ?? file; const vtt = await readFile(join(subsDir, file), "utf-8").catch(() => null); if (vtt) { const text = parseVtt(vtt); if (text) lines.push("", `## 字幕 (${lang})`, "", text); } }
+  if (!subFiles.length) lines.push("", "## 字幕", "", "(取得できませんでした)");
   return lines.join("\n");
 }
 
-/** GitHub REST API レスポンス + README を Markdown サマリーに変換する */
-export async function buildGitHubMarkdown(
-  repoJsonPath: string,
-  readmePath: string,
-): Promise<string> {
-  let raw: string;
-  try {
-    raw = await readFile(repoJsonPath, "utf-8");
-  } catch {
-    return "(GitHub JSON の読み込みに失敗しました)";
-  }
-
-  let repo: Record<string, unknown>;
-  try {
-    repo = JSON.parse(raw);
-  } catch {
-    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
-  }
-
-  const str = (k: string) =>
-    typeof repo[k] === "string" ? (repo[k] as string) : "";
-  const num = (k: string) =>
-    typeof repo[k] === "number" ? (repo[k] as number) : null;
-
-  const lines: string[] = [];
-
-  const fullName = str("full_name");
-  lines.push(`# ${fullName || "(不明)"}`);
-  lines.push("");
-
-  const description = str("description");
-  if (description) {
-    lines.push(description);
-    lines.push("");
-  }
-
-  const language = str("language") || "Unknown";
-  const license =
-    (repo.license as Record<string, string> | null)?.name ?? "No License";
-  const stars = num("stargazers_count") ?? 0;
-  const forks = num("forks_count") ?? 0;
-  const issues = num("open_issues_count") ?? 0;
-
-  lines.push(
-    `**Language**: ${language} | **License**: ${license} | **Stars**: ${stars.toLocaleString()} | **Forks**: ${forks.toLocaleString()} | **Open Issues**: ${issues.toLocaleString()}`,
-  );
-
-  const topics = repo.topics as string[] | undefined;
-  if (Array.isArray(topics) && topics.length > 0) {
-    lines.push(`**Topics**: ${topics.join(", ")}`);
-  }
-
-  const homepage = str("homepage");
-  if (homepage) lines.push(`**Homepage**: ${homepage}`);
-
-  const isFork = repo.fork ? "Yes" : "No";
-  lines.push(
-    `**Fork**: ${isFork} | **Created**: ${str("created_at")} | **Updated**: ${str("updated_at")}`,
-  );
-  lines.push(`**URL**: https://github.com/${fullName}`);
-  lines.push("", "---", "");
-
-  let readme: string | null = null;
-  try {
-    readme = await readFile(readmePath, "utf-8");
-  } catch {
-    // README が存在しない
-  }
-
-  if (readme) {
-    lines.push("## README", "", readme);
-  } else {
-    lines.push("*(README not found)*");
-  }
-
-  return lines.join("\n");
+export async function buildGitHubMarkdown(repoJsonPath: string, readmePath: string): Promise<string> {
+  let raw: string; try { raw = await readFile(repoJsonPath, "utf-8"); } catch { return "(GitHub JSON の読み込みに失敗しました)"; }
+  let repo: GitHubRepo; try { repo = GitHubRepoSchema.parse(JSON.parse(raw)); } catch { return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`; }
+  const fullName = repo.full_name ?? ""; const lines = [`# ${fullName || "(不明)"}`, ""];
+  if (repo.description) lines.push(repo.description, "");
+  const license = repo.license?.name ?? "No License";
+  lines.push(`**Language**: ${repo.language || "Unknown"} | **License**: ${license} | **Stars**: ${(repo.stargazers_count ?? 0).toLocaleString()} | **Forks**: ${(repo.forks_count ?? 0).toLocaleString()} | **Open Issues**: ${(repo.open_issues_count ?? 0).toLocaleString()}`);
+  if (repo.topics?.length) lines.push(`**Topics**: ${repo.topics.join(", ")}`);
+  if (repo.homepage) lines.push(`**Homepage**: ${repo.homepage}`);
+  lines.push(`**Fork**: ${repo.fork ? "Yes" : "No"} | **Created**: ${repo.created_at ?? ""} | **Updated**: ${repo.updated_at ?? ""}`, `**URL**: https://github.com/${fullName}`, "", "---", "");
+  const readme = await readFile(readmePath, "utf-8").catch(() => null); if (readme) lines.push("## README", "", readme); else lines.push("*(README not found)*"); return lines.join("\n");
 }
 
-/** Reddit JSON API レスポンスを Markdown サマリーに変換する */
 export async function buildRedditMarkdown(absPath: string): Promise<string> {
-  let raw: string;
-  try {
-    raw = await readFile(absPath, "utf-8");
-  } catch {
-    return "(Reddit JSON の読み込みに失敗しました)";
-  }
-
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
-  }
-
-  const lines: string[] = [];
-
-  // スレッド詳細: [{post listing}, {comments listing}]
-  if (Array.isArray(data) && data.length >= 1) {
-    const postListing = (data[0] as Record<string, unknown>)?.data as Record<
-      string,
-      unknown
-    >;
-    const postChildren = postListing?.children as Array<
-      Record<string, unknown>
-    >;
-    const post = postChildren?.[0]?.data as Record<string, unknown> | undefined;
-
-    if (post) {
-      lines.push(`# ${post.title ?? "(タイトル不明)"}`);
-      lines.push("");
-      lines.push(
-        `**r/${post.subreddit}** | u/${post.author} | スコア: ${post.score} | コメント: ${post.num_comments}`,
-      );
-
-      const created = post.created_utc;
-      if (typeof created === "number") {
-        lines.push(
-          `**投稿日**: ${new Date(created * 1000).toISOString().slice(0, 10)}`,
-        );
-      }
-
-      const selftext = post.selftext as string | undefined;
-      if (selftext && selftext !== "[removed]" && selftext !== "[deleted]") {
-        lines.push("", "## 本文", "", selftext);
-      }
-
-      // コメント
-      if (data[1] != null && typeof data[1] === "object") {
-        const commentListing = (data[1] as unknown as Record<string, unknown>)
-          ?.data as Record<string, unknown>;
-        const comments = (
-          commentListing?.children as Array<Record<string, unknown>>
-        )?.filter((c) => c.kind === "t1");
-
-        if (comments?.length) {
-          lines.push("", "## トップコメント", "");
-          for (const c of comments) {
-            const cd = c.data as Record<string, unknown>;
-            const body = (cd.body as string | undefined) ?? "";
-            lines.push(`**u/${cd.author}** (スコア: ${cd.score})`);
-            lines.push(body);
-            lines.push("");
-          }
-        }
-      }
-
-      return lines.join("\n");
-    }
-  }
-
-  // サブレディット一覧: {kind: "Listing", data: {children: [...]}}
-  const listing = (data as Record<string, unknown>)?.data as
-    | Record<string, unknown>
-    | undefined;
-  const children = listing?.children as
-    | Array<Record<string, unknown>>
-    | undefined;
-  if (children?.length) {
-    lines.push("# 投稿一覧", "");
-    for (const child of children) {
-      const p = child.data as Record<string, unknown>;
-      lines.push(`## ${p.title}`);
-      lines.push(
-        `u/${p.author} | スコア: ${p.score} | コメント: ${p.num_comments}`,
-      );
-      lines.push(`URL: ${p.url}`);
-      lines.push("");
-    }
-    return lines.join("\n");
-  }
-
+  let raw: string; try { raw = await readFile(absPath, "utf-8"); } catch { return "(Reddit JSON の読み込みに失敗しました)"; }
+  let data: RedditListing | RedditListing[]; try { const json: unknown = JSON.parse(raw); data = Array.isArray(json) ? z.array(RedditListingSchema).parse(json) : RedditListingSchema.parse(json); } catch { return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`; }
+  const postListing = Array.isArray(data) ? data[0] : data;
+  if (!postListing) return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
+  const post = postListing.data.children[0]?.data;
+  if (post && post.title) { const lines = [`# ${post.title}`, "", `**r/${post.subreddit ?? ""}** | u/${post.author ?? ""} | スコア: ${post.score ?? ""} | コメント: ${post.num_comments ?? ""}`]; if (post.created_utc !== undefined) lines.push(`**投稿日**: ${new Date(post.created_utc * 1000).toISOString().slice(0, 10)}`); if (post.selftext && !["[removed]", "[deleted]"].includes(post.selftext)) lines.push("", "## 本文", "", post.selftext); if (Array.isArray(data) && data[1]) { const comments = data[1].data.children.filter((c) => c.kind === "t1"); if (comments.length) { lines.push("", "## トップコメント", ""); for (const comment of comments) lines.push(`**u/${comment.data.author ?? ""}** (スコア: ${comment.data.score ?? ""})`, comment.data.selftext ?? comment.data.body ?? "", ""); } } return lines.join("\n"); }
+  const children = postListing.data.children; if (children.length) { const lines = ["# 投稿一覧", ""]; for (const child of children) { const p = child.data; lines.push(`## ${p.title ?? ""}`, `u/${p.author ?? ""} | スコア: ${p.score ?? ""} | コメント: ${p.num_comments ?? ""}`, `URL: ${p.url ?? ""}`, ""); } return lines.join("\n"); }
   return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
 }
 
@@ -971,35 +768,32 @@ const FxTweetSchema = z
       })
       .optional()
       .catch(undefined),
-  })
-  .catch({});
+  });
+
+type JsonPrimitive = string | number | boolean | null | undefined;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 const FxPostSchema = z.object({
-  code: z.number(),
+  code: z.literal(200),
   message: z.string().optional().catch(undefined),
   tweet: FxTweetSchema,
 });
-
+const FxErrorSchema = z.object({
+  code: z.number().refine((code) => code !== 200),
+  message: z.string().optional().catch(undefined),
+});
+const FxResponseSchema = z.union([FxPostSchema, FxErrorSchema]);
+const FxOversizedBlocksSchema = z.object({
+  tweet: z.object({
+    article: z.object({
+      content: z.object({ blocks: z.array(z.unknown()).min(2001) }),
+    }),
+  }),
+});
 export type FxPost = z.infer<typeof FxPostSchema>;
 
-function hasInvalidFxSuccessShape(value: unknown): boolean {
-  if (value === null || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  if (record.code !== 200) return false;
-  const tweet = record.tweet;
-  return tweet === null || typeof tweet !== "object" || Array.isArray(tweet);
-}
-
-function hasTooManyFxArticleBlocks(value: unknown): boolean {
-  if (value === null || typeof value !== "object") return false;
-  const tweet = (value as Record<string, unknown>).tweet;
-  if (tweet === null || typeof tweet !== "object") return false;
-  const article = (tweet as Record<string, unknown>).article;
-  if (article === null || typeof article !== "object") return false;
-  const content = (article as Record<string, unknown>).content;
-  if (content === null || typeof content !== "object") return false;
-  const blocks = (content as Record<string, unknown>).blocks;
-  return Array.isArray(blocks) && blocks.length > 2000;
+export function parseFxPost(value: JsonValue): FxPost {
+  return FxPostSchema.parse(value);
 }
 
 /**
@@ -1027,11 +821,10 @@ export async function fetchFxPost(
     throw new Error(`FxTwitter API error: HTTP ${response.status}`);
   }
 
-  if (hasInvalidFxSuccessShape(raw) || hasTooManyFxArticleBlocks(raw)) {
+  if (FxOversizedBlocksSchema.safeParse(raw).success) {
     throw new Error("FxTwitter API returned an invalid response schema");
   }
-
-  const parsed = FxPostSchema.safeParse(raw);
+  const parsed = FxResponseSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error("FxTwitter API returned an invalid response schema");
   }
@@ -1040,7 +833,7 @@ export async function fetchFxPost(
     throw new Error(`FxTwitter API error: ${parsed.data.code} ${message}`);
   }
 
-  return parsed.data;
+  return FxPostSchema.parse(parsed.data);
 }
 
 /** FxTwitter レスポンスがエージェントに返せる本文（通常テキスト or Article）を持つか */
@@ -1075,13 +868,13 @@ export function formatFxPost(post: FxPost): string {
   lines.push("");
   if (post.tweet.created_at)
     lines.push(`**投稿日時**: ${post.tweet.created_at}`);
-  if (typeof post.tweet.likes === "number")
+  if (post.tweet.likes !== undefined)
     lines.push(`**いいね**: ${post.tweet.likes.toLocaleString()}`);
-  if (typeof post.tweet.retweets === "number")
+  if (post.tweet.retweets !== undefined)
     lines.push(`**リツイート**: ${post.tweet.retweets.toLocaleString()}`);
-  if (typeof post.tweet.replies === "number")
+  if (post.tweet.replies !== undefined)
     lines.push(`**返信**: ${post.tweet.replies.toLocaleString()}`);
-  if (typeof post.tweet.views === "number")
+  if (post.tweet.views !== undefined)
     lines.push(`**表示回数**: ${post.tweet.views.toLocaleString()}`);
 
   const article = post.tweet.article;
@@ -1113,7 +906,7 @@ export function formatFxPost(post: FxPost): string {
 export async function readLimitedJson(
   response: Response,
   maxBytes: number,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const contentType = response.headers.get("content-type") ?? "";
   if (!/^application\/json(?:;|$)/i.test(contentType.trim())) {
     throw new Error("Upstream returned non-JSON response");
@@ -1147,7 +940,7 @@ export async function readLimitedJson(
 
   const raw = new TextDecoder().decode(Buffer.concat(chunks, total));
   try {
-    return JSON.parse(raw);
+    return z.json().parse(JSON.parse(raw));
   } catch {
     throw new Error("Upstream returned invalid JSON");
   }
@@ -1292,7 +1085,17 @@ const parameters = Type.Object({
   url: Type.String({ description: "取得するURL" }),
 });
 
-export const agentReachTool: AgentTool<typeof parameters> = {
+type ExecResult = { stdout: string; stderr: string };
+export type ExecuteCommand = (
+  command: string,
+  options: { timeout: number; maxBuffer: number; cwd: string },
+) => Promise<ExecResult>;
+
+export function createAgentReachTool(
+  resolve: LookupAll = lookupAll,
+  executeCommand: ExecuteCommand = execAsync,
+): AgentTool<typeof parameters> {
+  return {
   name: "agent-reach",
   label: "Agent Reach",
   description:
@@ -1304,7 +1107,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error(`許可されていないプロトコル: ${parsed.protocol}`);
     }
-    await validatePublicDestination(getLookupHostname(parsed));
+    await validatePublicDestination(getLookupHostname(parsed), resolve);
     const service = detectService(parsed);
     if (service === "x-article") {
       throw new Error(
@@ -1336,13 +1139,20 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       const cmd = buildCommand(service, normalizedUrl, absPath);
       let stdout: string;
       try {
-        ({ stdout } = await execAsync(cmd, {
+        ({ stdout } = await executeCommand(cmd, {
           timeout: TIMEOUT_MS,
           maxBuffer: 64 * 1024 * 1024,
           cwd: WORKSPACE,
         }));
       } catch (err) {
-        const e = err as { stdout?: string; stderr?: string; message?: string };
+        const e = z
+          .object({
+            stdout: z.string().optional(),
+            stderr: z.string().optional(),
+            message: z.string().optional(),
+          })
+          .catch({})
+          .parse(err);
         throw new Error(
           [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
             "フェッチ失敗",
@@ -1386,4 +1196,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       await rm(tmpDirAbs, { recursive: true, force: true });
     }
   },
-};
+  };
+}
+
+export const agentReachTool = createAgentReachTool();

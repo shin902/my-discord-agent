@@ -1,20 +1,41 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { z } from "zod";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const MAX_BODY_CHARS = 8000;
 
-async function graphFetch(path: string): Promise<unknown> {
+const emailAddressSchema = z.object({
+  name: z.string().optional(),
+  address: z.string().optional(),
+});
+const recipientSchema = z.object({ emailAddress: emailAddressSchema.optional() });
+const messageSchema = z.object({
+  id: z.string().optional(),
+  subject: z.string().optional(),
+  from: z.object({ emailAddress: emailAddressSchema.optional() }).optional(),
+  toRecipients: z.array(recipientSchema).optional(),
+  ccRecipients: z.array(recipientSchema).optional(),
+  receivedDateTime: z.string().optional(),
+  bodyPreview: z.string().optional(),
+  body: z.object({ contentType: z.string().optional(), content: z.string().optional() }).optional(),
+  isRead: z.boolean().optional(),
+});
+const listMessagesResponseSchema = z.object({ value: z.array(messageSchema) });
+type Message = z.infer<typeof messageSchema>;
+type GraphPatchBody = { isRead: boolean };
+
+async function graphFetch(path: string): Promise<string> {
   const baseUrl = resolveProxyBaseUrl("graph");
   const res = await fetch(`${baseUrl}${path}`);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Graph API エラー ${res.status}: ${text.slice(0, 200)}`);
   }
-  return res.json();
+  return JSON.stringify(await res.json());
 }
 
-async function graphPatch(path: string, body: unknown): Promise<void> {
+async function graphPatch(path: string, body: GraphPatchBody): Promise<void> {
   const baseUrl = resolveProxyBaseUrl("graph");
   const res = await fetch(`${baseUrl}${path}`, {
     method: "PATCH",
@@ -66,17 +87,17 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
     const top = Math.min(limit, 50);
     const select = "id,subject,from,receivedDateTime,bodyPreview,isRead";
     const filterParam = unreadOnly ? "&$filter=isRead eq false" : "";
-    const data = (await graphFetch(
-      `/me/mailFolders/${folder}/messages?$top=${top}&$select=${select}&$orderby=receivedDateTime desc${filterParam}`,
-    )) as { value: Array<Record<string, unknown>> };
+    const data = listMessagesResponseSchema.parse(
+      JSON.parse(
+        await graphFetch(
+          `/me/mailFolders/${folder}/messages?$top=${top}&$select=${select}&$orderby=receivedDateTime desc${filterParam}`,
+        ),
+      ),
+    );
 
     const lines: string[] = [`## メール一覧（${folder}）`, ""];
     for (const msg of data.value) {
-      const from = (
-        msg.from as
-          | { emailAddress?: { name?: string; address?: string } }
-          | undefined
-      )?.emailAddress;
+      const from = msg.from?.emailAddress;
       const sender = from?.name
         ? `${from.name} <${from.address}>`
         : (from?.address ?? "不明");
@@ -118,9 +139,13 @@ export const readEmailTool: AgentTool<typeof readEmailParameters> = {
   execute: async (_toolCallId, { id, markAsRead = true }) => {
     const select =
       "id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,isRead";
-    const msg = (await graphFetch(
-      `/me/messages/${encodeURIComponent(id)}?$select=${select}`,
-    )) as Record<string, unknown>;
+    const msg: Message = messageSchema.parse(
+      JSON.parse(
+        await graphFetch(
+          `/me/messages/${encodeURIComponent(id)}?$select=${select}`,
+        ),
+      ),
+    );
 
     if (markAsRead && msg.isRead === false) {
       await graphPatch(`/me/messages/${encodeURIComponent(id)}`, {
@@ -128,19 +153,12 @@ export const readEmailTool: AgentTool<typeof readEmailParameters> = {
       });
     }
 
-    const from = (
-      msg.from as
-        | { emailAddress?: { name?: string; address?: string } }
-        | undefined
-    )?.emailAddress;
+    const from = msg.from?.emailAddress;
     const sender = from?.name
       ? `${from.name} <${from.address}>`
       : (from?.address ?? "不明");
 
-    const formatRecipients = (field: unknown): string => {
-      const list = field as
-        | Array<{ emailAddress?: { name?: string; address?: string } }>
-        | undefined;
+    const formatRecipients = (list: Message["toRecipients"]): string => {
       if (!list || list.length === 0) return "(なし)";
       return list
         .map((r) => {
@@ -152,9 +170,7 @@ export const readEmailTool: AgentTool<typeof readEmailParameters> = {
         .join(", ");
     };
 
-    const body = msg.body as
-      | { contentType?: string; content?: string }
-      | undefined;
+    const body = msg.body;
     let bodyText = body?.content ?? "";
     if (body?.contentType === "html") {
       bodyText = bodyText

@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { z } from "zod";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const MAX_BODY_CHARS = 8000;
@@ -19,11 +20,14 @@ export function assertValidRepoPart(value: string, label: string): void {
   }
 }
 
+type JsonValue = z.infer<typeof JsonValueSchema>;
+const JsonValueSchema = z.json();
+
 async function githubFetch(
   owner: string,
   repo: string,
   suffix: string,
-): Promise<unknown> {
+): Promise<JsonValue> {
   assertValidRepoPart(owner, "owner");
   assertValidRepoPart(repo, "repo");
   const baseUrl = resolveProxyBaseUrl("github");
@@ -33,15 +37,15 @@ async function githubFetch(
     const text = await res.text().catch(() => "");
     throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
   }
-  return res.json();
+  return JsonValueSchema.parse(await res.json());
 }
 
 async function githubPost(
   owner: string,
   repo: string,
   suffix: string,
-  body: unknown,
-): Promise<unknown> {
+  body: JsonValue,
+): Promise<JsonValue> {
   assertValidRepoPart(owner, "owner");
   assertValidRepoPart(repo, "repo");
   const baseUrl = resolveProxyBaseUrl("github");
@@ -55,7 +59,7 @@ async function githubPost(
     const text = await res.text().catch(() => "");
     throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
   }
-  return res.json();
+  return JsonValueSchema.parse(await res.json());
 }
 
 export type GitHubIssue = {
@@ -68,8 +72,22 @@ export type GitHubIssue = {
   created_at?: string;
   updated_at?: string;
   body?: string;
-  pull_request?: unknown;
+  pull_request?: JsonValue;
 };
+
+export const GitHubIssueSchema: z.ZodType<GitHubIssue> = z.object({
+  number: z.number(),
+  title: z.string(),
+  state: z.string().default("open"),
+  user: z.object({ login: z.string().optional() }).optional(),
+  labels: z.array(z.object({ name: z.string().optional() })).optional(),
+  comments: z.number().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+  body: z.string().optional(),
+  pull_request: JsonValueSchema.optional(),
+});
+const GitHubCommentSchema = z.object({ id: z.number(), html_url: z.string() });
 
 function formatLabels(labels: GitHubIssue["labels"]): string {
   if (!labels || labels.length === 0) return "(なし)";
@@ -104,11 +122,13 @@ export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
   parameters: listIssuesParameters,
   execute: async (_toolCallId, { owner, repo, state = "open", limit = 10 }) => {
     const perPage = Math.min(limit, 50);
-    const issues = (await githubFetch(
-      owner,
-      repo,
-      `/issues?state=${state}&per_page=${perPage}`,
-    )) as GitHubIssue[];
+    const issues = z.array(GitHubIssueSchema).parse(
+      await githubFetch(
+        owner,
+        repo,
+        `/issues?state=${state}&per_page=${perPage}`,
+      ),
+    );
 
     const filtered = issues.filter((issue) => !issue.pull_request);
 
@@ -148,11 +168,9 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   description: "指定した Issue の本文全文を取得する",
   parameters: readIssueParameters,
   execute: async (_toolCallId, { owner, repo, issue_number }) => {
-    const issue = (await githubFetch(
-      owner,
-      repo,
-      `/issues/${issue_number}`,
-    )) as GitHubIssue;
+    const issue = GitHubIssueSchema.parse(
+      await githubFetch(owner, repo, `/issues/${issue_number}`),
+    );
 
     let body = issue.body ?? "";
     if (body.length > MAX_BODY_CHARS) {
@@ -180,11 +198,6 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   },
 };
 
-type GitHubComment = {
-  id: number;
-  html_url: string;
-};
-
 const commentIssueParameters = Type.Object({
   owner: Type.String({
     description: "リポジトリオーナー（ユーザー名/Organization名）",
@@ -209,13 +222,11 @@ export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
       );
     }
 
-    const comment = (await githubPost(
-      owner,
-      repo,
-      `/issues/${issue_number}/comments`,
-      { body },
-    )) as GitHubComment;
-
+    const comment = GitHubCommentSchema.parse(
+      await githubPost(owner, repo, `/issues/${issue_number}/comments`, {
+        body,
+      }),
+    );
     return {
       content: [
         {

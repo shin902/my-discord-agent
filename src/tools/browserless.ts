@@ -1,8 +1,12 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { z } from "zod";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
-async function post(path: string, body: unknown): Promise<string> {
+type JsonValue = z.infer<typeof JsonValueSchema>;
+const JsonValueSchema = z.json();
+
+async function post(path: string, body: JsonValue): Promise<string> {
   const baseUrl = resolveProxyBaseUrl("browserless");
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
@@ -100,7 +104,8 @@ export const browserlessFunctionTool: AgentTool<typeof functionParams> = {
   description: "Puppeteer コードをブラウザで実行 → JSON",
   parameters: functionParams,
   execute: async (_id, { code, context }) => {
-    const text = await post("/function", { code, context });
+    const payload = JsonValueSchema.parse({ code, context });
+    const text = await post("/function", payload);
     return {
       content: [{ type: "text", text }],
       details: { codeLength: code.length },

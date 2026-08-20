@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { z } from "zod";
 
 import { assertValidRepoPart } from "./github.js";
 import { assertNoParentTraversal } from "./path-safety.js";
@@ -12,6 +13,24 @@ import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const WORKSPACE = "/workspace";
 const CLONE_TIMEOUT_MS = 120_000;
+
+type GitExecOptions = {
+  cwd: string;
+  timeout: number;
+  maxBuffer: number;
+};
+
+type GitDependencies = {
+  execFile: (command: string, args: string[], options: GitExecOptions) => Promise<void>;
+  stat: (path: string) => Promise<void>;
+  rm: (path: string, options: { recursive: boolean; force: boolean }) => Promise<void>;
+};
+
+const defaultDependencies: GitDependencies = {
+  execFile: (command, args, options) => promisify(execFile)(command, args, options).then(() => undefined),
+  stat: (path) => stat(path).then(() => undefined),
+  rm,
+};
 
 function resolveCloneDir(repo: string, directory?: string): string {
   const raw = directory?.trim() || repo;
@@ -40,8 +59,10 @@ const cloneRepositoryParameters = Type.Object({
   ),
 });
 
-export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
-  {
+export function createCloneRepositoryTool(
+  dependencies: GitDependencies = defaultDependencies,
+): AgentTool<typeof cloneRepositoryParameters> {
+  return {
     name: "clone-repository",
     label: "Clone GitHub Repository",
     description:
@@ -54,13 +75,13 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
       const dest = resolveCloneDir(repo, directory);
       const baseUrl = resolveProxyBaseUrl("github-git");
       const cloneUrl = `${baseUrl}/${owner}/${repo}.git`;
-      const destExistedBefore = await stat(dest).then(
+      const destExistedBefore = await dependencies.stat(dest).then(
         () => true,
         () => false,
       );
 
       try {
-        await promisify(execFile)(
+        await dependencies.execFile(
           "git",
           ["clone", "--depth", "1", cloneUrl, dest],
           { cwd: WORKSPACE, timeout: CLONE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
@@ -70,10 +91,17 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
         // "already exists and is not an empty directory" で失敗し続ける。
         // dest が呼び出し前から存在していた場合は触らない。
         if (!destExistedBefore) {
-          await rm(dest, { recursive: true, force: true }).catch(() => {});
+          await dependencies.rm(dest, { recursive: true, force: true }).catch(() => {});
         }
-        const e = err as { stderr?: string; message?: string };
-        throw new Error(e.stderr || e.message || "git clone に失敗しました");
+        const details = z
+          .object({
+            stderr: z.string().optional(),
+            message: z.string().optional(),
+          })
+          .safeParse(err).data;
+        throw new Error(
+          details?.stderr || details?.message || "git clone に失敗しました",
+        );
       }
 
       return {
@@ -84,3 +112,6 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
       };
     },
   };
+}
+
+export const cloneRepositoryTool = createCloneRepositoryTool();

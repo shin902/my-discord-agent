@@ -1,10 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { z } from "zod";
 
 const GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
-
-const WEATHER_CODE_DESCRIPTIONS: Record<number, string> = {
+const WEATHER_CODE_DESCRIPTIONS = {
   0: "晴れ",
   1: "ほぼ晴れ",
   2: "一部曇り",
@@ -33,21 +33,28 @@ const WEATHER_CODE_DESCRIPTIONS: Record<number, string> = {
   95: "雷雨",
   96: "雷雨（小粒のあられ）",
   99: "雷雨（大粒のあられ）",
-};
+} satisfies Record<number, string>;
 
 function describeWeatherCode(code: number): string {
-  return WEATHER_CODE_DESCRIPTIONS[code] ?? `天気コード ${code}`;
+  const description = Object.entries(WEATHER_CODE_DESCRIPTIONS).find(
+    ([key]) => Number(key) === code,
+  )?.[1];
+  return description ?? `天気コード ${code}`;
 }
 
-type GeocodingResponse = {
-  results?: Array<{
-    name: string;
-    latitude: number;
-    longitude: number;
-    country?: string;
-    admin1?: string;
-  }>;
-};
+const geocodingResponseSchema = z.object({
+  results: z
+    .array(
+      z.object({
+        name: z.string(),
+        latitude: z.number(),
+        longitude: z.number(),
+        country: z.string().optional(),
+        admin1: z.string().optional(),
+      }),
+    )
+    .optional(),
+});
 
 type Place = {
   latitude: number;
@@ -64,7 +71,7 @@ async function geocodeLocation(location: string): Promise<Place> {
       `ジオコーディングAPIエラー ${res.status}: ${text.slice(0, 200)}`,
     );
   }
-  const data = (await res.json()) as GeocodingResponse;
+  const data = geocodingResponseSchema.parse(await res.json());
   const first = data.results?.[0];
   if (!first) {
     throw new Error(`地名「${location}」が見つかりませんでした`);
@@ -81,17 +88,17 @@ const currentWeatherParams = Type.Object({
   }),
 });
 
-type CurrentWeatherResponse = {
-  current: {
-    time: string;
-    temperature_2m: number;
-    apparent_temperature: number;
-    relative_humidity_2m: number;
-    wind_speed_10m: number;
-    weather_code: number;
-  };
-  current_units: Record<string, string>;
-};
+const currentWeatherResponseSchema = z.object({
+  current: z.object({
+    time: z.string(),
+    temperature_2m: z.number(),
+    apparent_temperature: z.number(),
+    relative_humidity_2m: z.number(),
+    wind_speed_10m: z.number(),
+    weather_code: z.number(),
+  }),
+  current_units: z.record(z.string(), z.string()),
+});
 
 export const getCurrentWeatherTool: AgentTool<typeof currentWeatherParams> = {
   name: "get-current-weather",
@@ -109,7 +116,7 @@ export const getCurrentWeatherTool: AgentTool<typeof currentWeatherParams> = {
       const text = await res.text().catch(() => "");
       throw new Error(`天気APIエラー ${res.status}: ${text.slice(0, 200)}`);
     }
-    const data = (await res.json()) as CurrentWeatherResponse;
+    const data = currentWeatherResponseSchema.parse(await res.json());
     const c = data.current;
     const units = data.current_units;
 
@@ -147,16 +154,16 @@ const forecastParams = Type.Object({
   ),
 });
 
-type ForecastResponse = {
-  daily: {
-    time: string[];
-    temperature_2m_max: number[];
-    temperature_2m_min: number[];
-    precipitation_probability_max: number[];
-    weather_code: number[];
-  };
-  daily_units: Record<string, string>;
-};
+const forecastResponseSchema = z.object({
+  daily: z.object({
+    time: z.array(z.string()),
+    temperature_2m_max: z.array(z.number()),
+    temperature_2m_min: z.array(z.number()),
+    precipitation_probability_max: z.array(z.number()),
+    weather_code: z.array(z.number()),
+  }),
+  daily_units: z.record(z.string(), z.string()),
+});
 
 export const getWeatherForecastTool: AgentTool<typeof forecastParams> = {
   name: "get-weather-forecast",
@@ -176,7 +183,7 @@ export const getWeatherForecastTool: AgentTool<typeof forecastParams> = {
       const text = await res.text().catch(() => "");
       throw new Error(`天気APIエラー ${res.status}: ${text.slice(0, 200)}`);
     }
-    const data = (await res.json()) as ForecastResponse;
+    const data = forecastResponseSchema.parse(await res.json());
     const d = data.daily;
     const units = data.daily_units;
 

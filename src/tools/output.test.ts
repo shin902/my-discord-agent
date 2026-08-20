@@ -3,13 +3,16 @@ import { dirname, join } from "node:path";
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { grepTool, readTool } from "./fs.js";
 import {
-  type ExternalizedToolOutput,
   externalizeLargeToolResult,
   TOOL_OUTPUT_CHAR_LIMIT,
   wrapToolOutput,
+  parseExternalizedDetails,
+  isExternalizedToolOutput,
+  ExternalDetailsSchema,
 } from "./output.js";
 
 const temporaryDirectories: string[] = [];
@@ -22,22 +25,16 @@ afterEach(async () => {
   );
 });
 
-type TextResultDetails = Record<string, unknown>;
-
-type ResultWithExternalizedOutput = AgentToolResult<
-  TextResultDetails & ExternalizedToolOutput
->;
+interface TextResultDetails { source: string; requestId?: string; count?: number; }
 
 function textResult(
   text: string,
   details: TextResultDetails = { source: "test" },
   terminate?: boolean,
 ): AgentToolResult<TextResultDetails> {
-  return {
-    content: [{ type: "text", text }],
-    details,
-    ...(terminate === undefined ? {} : { terminate }),
-  };
+  const result: AgentToolResult<TextResultDetails> = { content: [{ type: "text", text }], details };
+  if (terminate !== undefined) result.terminate = terminate;
+  return result;
 }
 
 function fakeTool(name: string, result: AgentToolResult<unknown>): AgentTool {
@@ -45,19 +42,13 @@ function fakeTool(name: string, result: AgentToolResult<unknown>): AgentTool {
     name,
     label: name,
     description: name,
-    parameters: {} as never,
+    parameters: z.object({}),
     execute: vi.fn(async () => result),
   };
 }
 
-function externalizedOutput(result: AgentToolResult<unknown>): {
-  details: ResultWithExternalizedOutput["details"];
-  path: string;
-} {
-  const details = result.details as ResultWithExternalizedOutput["details"];
-  if (!details.fullOutputPath) {
-    throw new Error("Expected an externalized output path");
-  }
+function externalizedOutput(result: AgentToolResult<unknown>) {
+  const details = parseExternalizedDetails(ExternalDetailsSchema.parse(result.details));
   return { details, path: details.fullOutputPath };
 }
 
@@ -145,10 +136,11 @@ describe("common tool output boundary", () => {
     );
 
     const result = await externalizeLargeToolResult(grepResult);
-    const details = result.details as Record<string, unknown> & {
-      externalizedOutput: ExternalizedToolOutput;
-    };
-    const metadata = details.externalizedOutput;
+    const details = parseExternalizedDetails(ExternalDetailsSchema.parse(result.details));
+    const nestedDetails = ExternalDetailsSchema.safeParse(details.externalizedOutput);
+    const metadata = nestedDetails.success && isExternalizedToolOutput(nestedDetails.data)
+      ? nestedDetails.data
+      : details;
     rememberOutput(metadata.fullOutputPath);
 
     expect(details.pattern).toBe("needle");

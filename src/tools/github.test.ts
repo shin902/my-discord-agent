@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const PROXY_CREDS = JSON.stringify([
   { provider: "github", baseUrl: "http://proxy.test/github" },
@@ -14,7 +14,21 @@ function firstText(result: {
   return first.text;
 }
 
-const makeIssue = (overrides: Record<string, unknown> = {}) => ({
+type IssueOverride = { number?: number; pull_request?: object; body?: string }
+type FetchCall = readonly [input: string, init?: RequestInit];
+type FetchFn = (input: string, init?: RequestInit) => Promise<{ ok: boolean; status?: number; json?: () => Promise<object>; text?: () => Promise<string> }>;
+
+function fetchCall(call: FetchCall | undefined): FetchCall {
+  if (!call) throw new Error("Expected a fetch call");
+  return call;
+}
+
+function fetchInit(call: FetchCall): RequestInit {
+  if (!call[1]) throw new Error("Expected request options");
+  return call[1];
+}
+
+const makeIssue = (overrides: IssueOverride = {}) => ({
   number: 1,
   title: "テストIssue",
   state: "open",
@@ -29,12 +43,12 @@ const makeIssue = (overrides: Record<string, unknown> = {}) => ({
 
 describe("list-issues", () => {
   const originalEnv = process.env;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<FetchFn>;
 
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
-    fetchMock = vi.fn();
+    fetchMock = vi.fn<FetchFn>();
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -60,9 +74,11 @@ describe("list-issues", () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
     const { listIssuesTool } = await import("./github.js");
     await listIssuesTool.execute("id", { owner: "o", repo: "r" });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const call = fetchCall(fetchMock.mock.calls[0]);
+    const url = call[0];
+    const init = fetchInit(call);
     expect(url).toContain("/repos/o/r/issues?state=open&per_page=10");
-    expect((init.headers as Record<string, string>).Accept).toBe(
+    expect(new Headers(init.headers).get("Accept")).toBe(
       "application/vnd.github+json",
     );
   });
@@ -71,7 +87,7 @@ describe("list-issues", () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
     const { listIssuesTool } = await import("./github.js");
     await listIssuesTool.execute("id", { owner: "o", repo: "r", limit: 100 });
-    const url = fetchMock.mock.calls[0][0] as string;
+    const url = fetchCall(fetchMock.mock.calls[0])[0];
     expect(url).toContain("per_page=50");
   });
 
@@ -144,12 +160,12 @@ describe("list-issues", () => {
 
 describe("read-issue", () => {
   const originalEnv = process.env;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<FetchFn>;
 
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
-    fetchMock = vi.fn();
+    fetchMock = vi.fn<FetchFn>();
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -166,7 +182,7 @@ describe("read-issue", () => {
       repo: "r",
       issue_number: 1,
     });
-    const url = fetchMock.mock.calls[0][0] as string;
+    const url = fetchCall(fetchMock.mock.calls[0])[0];
     expect(url).toContain("/repos/o/r/issues/1");
   });
 
@@ -214,12 +230,12 @@ describe("read-issue", () => {
 
 describe("comment-issue", () => {
   const originalEnv = process.env;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<FetchFn>;
 
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
-    fetchMock = vi.fn();
+    fetchMock = vi.fn<FetchFn>();
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -240,10 +256,12 @@ describe("comment-issue", () => {
       issue_number: 1,
       body: "コメント本文",
     });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const call = fetchCall(fetchMock.mock.calls[0]);
+    const url = call[0];
+    const init = fetchInit(call);
     expect(url).toContain("/repos/o/r/issues/1/comments");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({ body: "コメント本文" });
+    expect(JSON.parse(String(init.body))).toEqual({ body: "コメント本文" });
     expect(firstText(result)).toContain("http://example.test/comment/1");
   });
 

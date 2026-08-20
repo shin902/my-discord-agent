@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type {
   AgentTool,
   AgentToolResult,
-  AgentToolUpdateCallback,
 } from "@earendil-works/pi-agent-core";
+import { z } from "zod";
 
 /** Maximum number of text characters returned inline to the model per tool call. */
 export const TOOL_OUTPUT_CHAR_LIMIT = 50_000;
@@ -14,26 +14,55 @@ const TOOL_OUTPUT_TEMP_PREFIX = "my-discord-agent-tool-";
 const TOOL_OUTPUT_FILE_NAME = "output.txt";
 const EXTERNALIZED_DETAILS_KEY = "externalizedOutput";
 
+/** Schema at the tool boundary: details are JSON objects, never unchecked values. */
+export const ExternalDetailsSchema = z.record(z.string(), z.json());
+export type ExternalDetails = z.infer<typeof ExternalDetailsSchema>;
+
 type TextBlock = Extract<
   AgentToolResult<unknown>["content"][number],
   { type: "text" }
 >;
 type AnyToolResult = AgentToolResult<unknown>;
 
-export interface ToolOutputTruncation {
-  reason: "text-output-too-large";
-  totalCharacters: number;
-  totalBytes: number;
-  totalLines: number;
-  inlineCharacterLimit: typeof TOOL_OUTPUT_CHAR_LIMIT;
-  lifetime: "container-run";
-}
+export const ToolOutputTruncationSchema = z.object({
+  reason: z.literal("text-output-too-large"),
+  totalCharacters: z.number(), totalBytes: z.number(), totalLines: z.number(),
+  inlineCharacterLimit: z.literal(TOOL_OUTPUT_CHAR_LIMIT), lifetime: z.literal("container-run"),
+});
+export type ToolOutputTruncation = z.infer<typeof ToolOutputTruncationSchema>;
 
-export interface ExternalizedToolOutput {
-  truncated: true;
+export const ExternalizedToolOutputSchema = z.object({
+  truncated: z.literal(true),
+  fullOutputPath: z.string(),
+  truncation: ToolOutputTruncationSchema,
+});
+export type ExternalizedToolOutput = z.infer<typeof ExternalizedToolOutputSchema>;
+
+type ParsedExternalizedDetails = ExternalDetails & {
+  truncated: boolean;
   fullOutputPath: string;
   truncation: ToolOutputTruncation;
+};
+
+export function parseExternalizedDetails(value: ExternalDetails): ParsedExternalizedDetails {
+  const nested = ExternalDetailsSchema.safeParse(value[EXTERNALIZED_DETAILS_KEY]);
+  const output = nested.success ? nested.data : value;
+  const parsed = ExternalizedToolOutputSchema.parse(output);
+  const merged: ParsedExternalizedDetails = {
+    ...value,
+    truncated: value.truncated === undefined ? parsed.truncated : BooleanSchema.parse(value.truncated),
+    fullOutputPath: parsed.fullOutputPath,
+    truncation: parsed.truncation,
+  };
+  return merged;
 }
+
+/** Narrow a parsed details value after the JSON boundary has been established. */
+export function isExternalizedToolOutput(value: ExternalDetails): value is ExternalDetails & ExternalizedToolOutput {
+  return ExternalizedToolOutputSchema.safeParse(value).success;
+}
+
+const BooleanSchema = z.boolean();
 
 function isTextBlock(
   block: AnyToolResult["content"][number],
@@ -47,20 +76,18 @@ function countLines(text: string): number {
 }
 
 function withExternalizedDetails(
-  details: unknown,
+  details: ExternalDetails | undefined,
   output: ExternalizedToolOutput,
-): unknown {
-  const metadata = {
+): ExternalDetails {
+  const metadata: ExternalizedToolOutput = {
     truncated: output.truncated,
     fullOutputPath: output.fullOutputPath,
     truncation: output.truncation,
   };
   if (
-    typeof details === "object" &&
-    details !== null &&
-    !Array.isArray(details)
+    details !== undefined
   ) {
-    const originalDetails = details as Record<string, unknown>;
+    const originalDetails = details;
     const mergedDetails = { ...originalDetails };
     let hasMetadataCollision = false;
 
@@ -85,7 +112,7 @@ function withExternalizedDetails(
     return mergedDetails;
   }
   return {
-    originalDetails: details,
+    originalDetails: details ?? null,
     ...metadata,
   };
 }
@@ -165,10 +192,15 @@ export async function externalizeLargeToolResult(
     }
   }
 
+  const details = result.details === undefined
+    ? undefined
+    : ExternalDetailsSchema.parse(result.details);
   return {
     ...result,
     content,
-    details: withExternalizedDetails(result.details, output),
+    // The schema parse above establishes the JSON boundary; the merger only
+    // adds JSON-shaped metadata and preserves existing fields.
+    details: withExternalizedDetails(details, output),
   };
 }
 
@@ -182,21 +214,14 @@ export function wrapToolOutput<T extends AgentTool>(tool: T): T {
   if (wrappedTools.has(tool)) return tool;
 
   const originalExecute = tool.execute;
-  tool.execute = (async (
-    toolCallId: string,
-    args: unknown,
-    signal?: AbortSignal,
-    onUpdate?: AgentToolUpdateCallback,
-  ) => {
-    const result = await originalExecute.call(
-      tool,
-      toolCallId,
-      args as never,
-      signal,
-      onUpdate,
-    );
-    return externalizeLargeToolResult(result);
-  }) as T["execute"];
+  tool.execute = async (
+    toolCallId: Parameters<T["execute"]>[0],
+    params: Parameters<T["execute"]>[1],
+    signal: Parameters<T["execute"]>[2],
+    onUpdate: Parameters<T["execute"]>[3],
+  ) => externalizeLargeToolResult(
+    await originalExecute.call(tool, toolCallId, params, signal, onUpdate),
+  );
   wrappedTools.add(tool);
   return tool;
 }

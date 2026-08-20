@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 
 import { agentReachTool } from "./agent-reach.js";
@@ -47,8 +48,7 @@ describe("resolveTools", () => {
           lifetime: "container-run",
         },
       });
-      const fullOutputPath = (result.details as { fullOutputPath: string })
-        .fullOutputPath;
+      const fullOutputPath = z.object({ fullOutputPath: z.string() }).parse(result.details).fullOutputPath;
       expect(await readFile(fullOutputPath, "utf8")).toBe(text);
       await rm(dirname(fullOutputPath), { recursive: true, force: true });
     } finally {
@@ -75,7 +75,7 @@ describe("resolveTools", () => {
       name: "singleton-test",
       label: "singleton-test",
       description: "singleton-test",
-      parameters: {} as never,
+      parameters: {},
       execute,
     };
 

@@ -1,21 +1,56 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Type } from "typebox";
+import { z } from "zod";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const PROVIDER = "google-calendar";
-
-type EventDateTime = { date?: string; dateTime?: string; timeZone?: string };
-
-type CalendarEvent = {
-  id?: string;
-  summary?: string;
-  description?: string;
-  location?: string;
-  start?: EventDateTime;
-  end?: EventDateTime;
-  htmlLink?: string;
-  attendees?: Array<{ email?: string; responseStatus?: string }>;
+type CalendarJson = object | string | number | boolean | null;
+const calendarJsonSchema = z.custom<CalendarJson>();
+type CalendarResponse = {
+  ok: boolean;
+  status?: number;
+  json?: () => Promise<CalendarJson>;
+  text?: () => Promise<string>;
 };
+type CalendarFetch = (input: string, init?: RequestInit) => Promise<CalendarResponse>;
+export type CalendarDependencies = { fetch: CalendarFetch; resolveProxyBaseUrl: (provider: string) => string };
+const defaultDependencies: CalendarDependencies = {
+  fetch: async (input, init) => {
+    const response = await fetch(input, init);
+    return { ok: response.ok, status: response.status, json: async () => calendarJsonSchema.parse(response.json ? await response.json() : null),
+      text: async () => response.text ? response.text() : "" };
+  },
+  resolveProxyBaseUrl,
+};
+const dependencyStorage = new AsyncLocalStorage<CalendarDependencies>();
+export function withCalendarDependencies<T>(dependencies: CalendarDependencies, operation: () => T): T { return dependencyStorage.run(dependencies, operation); }
+function dependencies(): CalendarDependencies { return dependencyStorage.getStore() ?? defaultDependencies; }
+
+const eventDateTimeSchema = z.object({
+  date: z.string().optional(),
+  dateTime: z.string().optional(),
+  timeZone: z.string().optional(),
+});
+const attendeeSchema = z.object({
+  email: z.string().optional(),
+  responseStatus: z.string().optional(),
+});
+const calendarEventSchema = z.object({
+  id: z.string().optional(),
+  summary: z.string().optional(),
+  description: z.string().optional(),
+  location: z.string().optional(),
+  start: eventDateTimeSchema.optional(),
+  end: eventDateTimeSchema.optional(),
+  htmlLink: z.string().optional(),
+  attendees: z.array(attendeeSchema).optional(),
+  etag: z.string().optional(),
+}).passthrough();
+const eventListSchema = z.object({ items: z.array(calendarEventSchema) });
+type EventDateTime = z.infer<typeof eventDateTimeSchema>;
+type CalendarEvent = z.infer<typeof calendarEventSchema>;
+type CalendarEventPayload = z.input<typeof calendarEventSchema>;
 
 // status を持つことで、呼び出し側がエラーメッセージの文字列形式に依存せず
 // HTTPステータス（404 など）で分岐できるようにする
@@ -29,39 +64,42 @@ class CalendarApiError extends Error {
   }
 }
 
-async function calendarFetch(path: string): Promise<unknown> {
-  const baseUrl = resolveProxyBaseUrl(PROVIDER);
-  const res = await fetch(`${baseUrl}${path}`);
+async function calendarFetch<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  const io = dependencies();
+  const baseUrl = io.resolveProxyBaseUrl(PROVIDER);
+  const res = await io.fetch(`${baseUrl}${path}`);
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
+    const text = await res.text?.().catch(() => "");
     throw new CalendarApiError(
-      res.status,
-      `Google Calendar API エラー ${res.status}: ${text.slice(0, 200)}`,
+      res.status ?? 0,
+      `Google Calendar API エラー ${res.status}: ${text?.slice(0, 200) ?? ""}`,
     );
   }
-  return res.json();
+  return schema.parse(await res.json?.());
 }
 
-async function calendarRequest(
+async function calendarRequest<T>(
   method: "POST" | "PATCH" | "DELETE",
   path: string,
-  body?: unknown,
-): Promise<unknown> {
-  const baseUrl = resolveProxyBaseUrl(PROVIDER);
-  const res = await fetch(`${baseUrl}${path}`, {
+  body: CalendarEventPayload | undefined,
+  schema: z.ZodType<T>,
+): Promise<T | null> {
+  const io = dependencies();
+  const baseUrl = io.resolveProxyBaseUrl(PROVIDER);
+  const res = await io.fetch(`${baseUrl}${path}`, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
+    const text = await res.text?.().catch(() => "");
     throw new CalendarApiError(
-      res.status,
-      `Google Calendar API ${method} エラー ${res.status}: ${text.slice(0, 200)}`,
+      res.status ?? 0,
+      `Google Calendar API ${method} エラー ${res.status}: ${text?.slice(0, 200) ?? ""}`,
     );
   }
   if (res.status === 204) return null;
-  return res.json();
+  return schema.parse(await res.json?.());
 }
 
 // "YYYY-MM-DD" 形式は終日イベントの date として扱い、それ以外は dateTime として扱う
@@ -120,9 +158,10 @@ export const listEventsTool: AgentTool<typeof listEventsParameters> = {
     });
     if (timeMax) params.set("timeMax", timeMax);
 
-    const data = (await calendarFetch(
+    const data = await calendarFetch(
       `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
-    )) as { items: CalendarEvent[] };
+      eventListSchema,
+    );
 
     const lines: string[] = [`## 予定一覧（${calendarId}）`, ""];
     for (const event of data.items) {
@@ -154,9 +193,10 @@ export const readEventTool: AgentTool<typeof readEventParameters> = {
     "指定した予定の詳細を取得する。list-events で得た eventId を渡す",
   parameters: readEventParameters,
   execute: async (_toolCallId, { eventId, calendarId = "primary" }) => {
-    const event = (await calendarFetch(
+    const event = await calendarFetch(
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-    )) as CalendarEvent;
+      calendarEventSchema,
+    );
 
     const attendees =
       event.attendees && event.attendees.length > 0
@@ -220,7 +260,7 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
       calendarId = "primary",
     },
   ) => {
-    const body: Record<string, unknown> = {
+    const body: CalendarEventPayload = {
       summary,
       start: toEventDateTime(start),
       end: toEventDateTime(end),
@@ -231,11 +271,13 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
       body.attendees = attendees.map((email) => ({ email }));
     }
 
-    const event = (await calendarRequest(
+    const event = await calendarRequest(
       "POST",
       `/calendars/${encodeURIComponent(calendarId)}/events`,
       body,
-    )) as CalendarEvent;
+      calendarEventSchema,
+    );
+    if (!event) throw new Error("Calendar API returned no event");
 
     return {
       content: [
@@ -312,7 +354,7 @@ function isDateOnly(dt: EventDateTime | undefined): boolean {
 async function recreateEventForTypeChange(params: {
   eventId: string;
   calendarId: string;
-  current: CalendarEvent & Record<string, unknown>;
+  current: CalendarEvent;
   finalStart: EventDateTime | undefined;
   finalEnd: EventDateTime | undefined;
   summary?: string;
@@ -332,7 +374,7 @@ async function recreateEventForTypeChange(params: {
     attendees,
   } = params;
 
-  const recreateBody: Record<string, unknown> = {};
+  const recreateBody: CalendarEventPayload = {};
   for (const [key, value] of Object.entries(current)) {
     if (!EXCLUDED_RECREATE_FIELDS.has(key) && value !== undefined) {
       recreateBody[key] = value;
@@ -354,11 +396,13 @@ async function recreateEventForTypeChange(params: {
           .map((a) => ({ email: a.email }));
   if (finalAttendees !== undefined) recreateBody.attendees = finalAttendees;
 
-  const recreated = (await calendarRequest(
+  const recreated = await calendarRequest(
     "POST",
     `/calendars/${encodeURIComponent(calendarId)}/events`,
     recreateBody,
-  )) as CalendarEvent;
+    calendarEventSchema,
+  );
+  if (!recreated) throw new Error("Calendar API returned no event");
 
   const buildKeepBothNotice = (reason: string) => ({
     content: [
@@ -379,9 +423,10 @@ async function recreateEventForTypeChange(params: {
   // 確認せずに削除へ進む。Google Calendar API は通常 etag を返すため、現状この縮退の実害は小さい想定。
   let oldEventAlreadyGone = false;
   try {
-    const latest = (await calendarFetch(
+    const latest = await calendarFetch(
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-    )) as Record<string, unknown>;
+      calendarEventSchema,
+    );
     if (current.etag !== undefined && latest.etag !== current.etag) {
       return buildKeepBothNotice(
         "再作成中に旧予定が別の操作で更新されたのを検知したため",
@@ -404,6 +449,8 @@ async function recreateEventForTypeChange(params: {
       await calendarRequest(
         "DELETE",
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        undefined,
+        calendarEventSchema,
       );
     } catch (deleteErr) {
       const deleteMessage =
@@ -448,7 +495,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
       calendarId = "primary",
     },
   ) => {
-    const body: Record<string, unknown> = {};
+    const body: CalendarEventPayload = {};
     if (summary !== undefined) body.summary = summary;
     if (start !== undefined) body.start = toEventDateTime(start);
     if (end !== undefined) body.end = toEventDateTime(end);
@@ -459,11 +506,13 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
     }
 
     try {
-      const event = (await calendarRequest(
+      const event = await calendarRequest(
         "PATCH",
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
         body,
-      )) as CalendarEvent;
+        calendarEventSchema,
+      );
+      if (!event) throw new Error("Calendar API returned no event");
 
       return {
         content: [
@@ -487,9 +536,10 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
 
       // GET と再作成(POST)の間に旧イベントが更新される可能性は残るが、再作成内容のスナップショットは
       // ここで取得するしかなく、削除直前の etag 再確認（recreateEventForTypeChange 内）でしか検知できない。
-      const current = (await calendarFetch(
+      const current = await calendarFetch(
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
-      )) as CalendarEvent & Record<string, unknown>;
+        calendarEventSchema,
+      );
 
       // エラー文言だけでは「本当に終日↔時刻指定の変更が原因か」を判別できないため、
       // 取得した現在値と比較し、実際に型が変わるリクエストでない場合は元のエラーを伝える。
@@ -544,6 +594,8 @@ export const deleteEventTool: AgentTool<typeof deleteEventParameters> = {
     await calendarRequest(
       "DELETE",
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      undefined,
+      calendarEventSchema,
     );
 
     return {

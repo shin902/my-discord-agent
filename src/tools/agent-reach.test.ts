@@ -14,15 +14,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
-import type { FxPost } from "./agent-reach.js";
 import {
-  agentReachTool,
+  createAgentReachTool,
   buildCommand,
   buildGitHubMarkdown,
   buildRedditMarkdown,
   detectService,
   fetchFxPost,
   formatFxPost,
+  parseFxPost,
   formatHttpError,
   getHttpErrorBodyPath,
   hasFxContent,
@@ -33,12 +33,17 @@ import {
   readLimitedJson,
 } from "./agent-reach.js";
 
-const dnsLookupMock = vi.hoisted(() =>
-  vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
-);
-vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
-
 const execFileAsync = promisify(execFile);
+type FixtureValue =
+  | string
+  | number
+  | boolean
+  | null
+  | FixtureValue[]
+  | { [key: string]: FixtureValue };
+const agentReachTool = createAgentReachTool(async () => [
+  { address: "8.8.8.8", family: 4 },
+]);
 
 describe("normalizeUrl", () => {
   it("意味のある query を保持し fragment だけを除去する", () => {
@@ -189,7 +194,7 @@ describe("shared agent-reach parity fixtures", () => {
     payload,
     expectedOutput,
   }) => {
-    expect(formatFxPost(payload as unknown as FxPost)).toBe(expectedOutput);
+    expect(formatFxPost(parseFxPost(payload))).toBe(expectedOutput);
   });
 
   it.each(
@@ -617,7 +622,7 @@ Language: ja
 });
 
 describe("buildGitHubMarkdown パース", () => {
-  async function writeJson(data: unknown): Promise<string> {
+  async function writeJson(data: FixtureValue): Promise<string> {
     const path = join(tmpdir(), `github-test-${Date.now()}.json`);
     await writeFile(path, JSON.stringify(data), "utf-8");
     return path;
@@ -681,7 +686,7 @@ describe("buildGitHubMarkdown パース", () => {
 });
 
 describe("buildRedditMarkdown パース", () => {
-  async function write(data: unknown): Promise<string> {
+  async function write(data: FixtureValue): Promise<string> {
     const path = join(tmpdir(), `reddit-test-${Date.now()}.json`);
     await writeFile(path, JSON.stringify(data), "utf-8");
     return path;
@@ -814,11 +819,14 @@ describe("fetchFxPost", () => {
     );
 
     expect(post.tweet.text).toBe("テストツイートです");
-    const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const call = fetchMock.mock.calls[0];
+    expect(call).toBeDefined();
+    const input = call?.[0];
+    const init = call?.[1];
     expect(input).toBe("https://api.fxtwitter.com/testuser/status/123456789");
-    expect(init.method).toBe("GET");
-    expect(init.redirect).toBe("error");
-    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.method).toBe("GET");
+    expect(init?.redirect).toBe("error");
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("code: 404 → throw する", async () => {

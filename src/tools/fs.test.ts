@@ -1,40 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FsDependencies } from "./fs.js";
+import { createFsTool } from "./fs.js";
 
-vi.mock("node:fs", () => ({
-  createReadStream: vi.fn(),
-}));
+const fakeFs = {
+  createReadStream: vi.fn<FsDependencies["createReadStream"]>(),
+  glob: vi.fn<FsDependencies["glob"]>(),
+  mkdir: vi.fn<FsDependencies["mkdir"]>(),
+  readdir: vi.fn<FsDependencies["readdir"]>(),
+  readFile: vi.fn<FsDependencies["readFile"]>(),
+  stat: vi.fn<FsDependencies["stat"]>(),
+  writeFile: vi.fn<FsDependencies["writeFile"]>(),
+} satisfies FsDependencies;
 
-vi.mock("node:fs/promises", () => ({
-  readFile: vi.fn(),
-  writeFile: vi.fn(),
-  mkdir: vi.fn(),
-  readdir: vi.fn(),
-  glob: vi.fn(),
-  stat: vi.fn(),
-}));
-
-import { createReadStream } from "node:fs";
-import {
-  glob,
-  mkdir,
-  readdir,
-  readFile,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import {
-  editTool,
-  globTool,
-  grepTool,
-  listTool,
-  readTool,
-  writeTool,
-} from "./fs.js";
+const { readTool, writeTool, editTool, globTool, grepTool, listTool } =
+  createFsTool(fakeFs);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(mkdir).mockResolvedValue(undefined);
-  vi.mocked(writeFile).mockResolvedValue(undefined);
+  fakeFs.mkdir.mockResolvedValue(undefined);
+  fakeFs.writeFile.mockResolvedValue(undefined);
 });
 
 function firstText(result: {
@@ -51,7 +35,7 @@ function mockReadStream(...chunks: string[]): void {
   async function* stream() {
     yield* chunks;
   }
-  vi.mocked(createReadStream).mockReturnValue(stream() as never);
+  fakeFs.createReadStream.mockReturnValue(stream());
 }
 
 function mockGeneratedReadStream(lineCount: number): void {
@@ -60,7 +44,7 @@ function mockGeneratedReadStream(lineCount: number): void {
       yield `line ${line}\n`;
     }
   }
-  vi.mocked(createReadStream).mockReturnValue(stream() as never);
+  fakeFs.createReadStream.mockReturnValue(stream());
 }
 
 function generatedReadSize(lineCount: number): number {
@@ -73,15 +57,15 @@ function generatedReadSize(lineCount: number): number {
 
 describe("read", () => {
   it("ファイル内容を読み込む", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.readFile.mockResolvedValue("hello world");
     const result = await readTool.execute("call-1", { path: "test.txt" });
     expect(firstText(result)).toBe("hello world");
-    expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
   });
 
   it("長い内容も省略せずそのまま返す", async () => {
     const big = "a".repeat(50_001);
-    vi.mocked(readFile).mockResolvedValue(big as never);
+    fakeFs.readFile.mockResolvedValue(big);
     const result = await readTool.execute("call-1", { path: "long.txt" });
     expect(firstText(result)).toBe(big);
   });
@@ -138,8 +122,8 @@ describe("read", () => {
     });
 
     expect(firstText(result)).toBe("line 1\nline 2\nline 3");
-    expect(readFile).not.toHaveBeenCalled();
-    expect(createReadStream).toHaveBeenCalledWith("/workspace/large.txt", {
+    expect(fakeFs.readFile).not.toHaveBeenCalled();
+    expect(fakeFs.createReadStream).toHaveBeenCalledWith("/workspace/large.txt", {
       encoding: "utf8",
     });
     expect(result.details).toMatchObject({
@@ -164,7 +148,7 @@ describe("read", () => {
     });
 
     expect(firstText(result)).toBe("line 12345\nline 12346");
-    expect(readFile).not.toHaveBeenCalled();
+    expect(fakeFs.readFile).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({
       size: generatedReadSize(totalLines),
       totalLines,
@@ -222,7 +206,7 @@ describe("read", () => {
     });
 
     expect(firstText(result)).toBe("line 19998\nline 19999\nline 20000");
-    expect(readFile).not.toHaveBeenCalled();
+    expect(fakeFs.readFile).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({
       size: generatedReadSize(totalLines),
       totalLines,
@@ -234,7 +218,7 @@ describe("read", () => {
   });
 
   it("tailCount は startLine/lineCount と併用できない", async () => {
-    vi.mocked(readFile).mockResolvedValue("line 1\nline 2" as never);
+    fakeFs.readFile.mockResolvedValue("line 1\nline 2");
 
     await expect(
       readTool.execute("call-1", {
@@ -250,7 +234,7 @@ describe("read", () => {
         tailCount: 1,
       }),
     ).rejects.toThrow("tailCount");
-    expect(readFile).not.toHaveBeenCalled();
+    expect(fakeFs.readFile).not.toHaveBeenCalled();
   });
 
   it("行範囲の値は正の整数でなければならない", async () => {
@@ -265,7 +249,7 @@ describe("read", () => {
         ).rejects.toThrow(`${field} は正の整数`);
       }
     }
-    expect(readFile).not.toHaveBeenCalled();
+    expect(fakeFs.readFile).not.toHaveBeenCalled();
   });
 
   it("startLine が EOF を超える場合は明示的にエラーになる", async () => {
@@ -339,8 +323,8 @@ describe("read", () => {
         lineCount: 1,
       }),
     ).rejects.toThrow("画像ファイルでは行範囲を指定できません");
-    expect(stat).not.toHaveBeenCalled();
-    expect(readFile).not.toHaveBeenCalled();
+    expect(fakeFs.stat).not.toHaveBeenCalled();
+    expect(fakeFs.readFile).not.toHaveBeenCalled();
   });
 
   it("read の説明に行範囲と順次読み込みの指示が含まれる", () => {
@@ -363,30 +347,30 @@ describe("read", () => {
   });
 
   it("/workspace 始まりの絶対パスも相対パスと同様に解決する", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.readFile.mockResolvedValue("hello world");
     const result = await readTool.execute("call-1", {
       path: "/workspace/test.txt",
     });
     expect(firstText(result)).toBe("hello world");
-    expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
   });
 
   it("/workspace 以外の絶対パスはコンテナ内の実パスとしてそのまま読む（追加マウント対応）", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.readFile.mockResolvedValue("hello world");
     const result = await readTool.execute("call-1", {
       path: "/obsidian/wiki/index.md",
     });
     expect(firstText(result)).toBe("hello world");
-    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(fakeFs.readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
   });
 
   it("画像ファイルは base64 の image content を返す", async () => {
-    vi.mocked(stat).mockResolvedValue({ size: 1234 } as never);
-    vi.mocked(readFile).mockResolvedValue("base64data" as never);
+    fakeFs.stat.mockResolvedValue({ size: 1234 });
+    fakeFs.readFile.mockResolvedValue("base64data");
 
     const result = await readTool.execute("call-1", { path: "photo.png" });
 
-    expect(readFile).toHaveBeenCalledWith("/workspace/photo.png", "base64");
+    expect(fakeFs.readFile).toHaveBeenCalledWith("/workspace/photo.png", "base64");
     expect(result.content[0]).toEqual({
       type: "image",
       data: "base64data",
@@ -395,8 +379,8 @@ describe("read", () => {
   });
 
   it("拡張子に応じて mimeType を判定する (jpg/jpeg/gif/webp)", async () => {
-    vi.mocked(stat).mockResolvedValue({ size: 100 } as never);
-    vi.mocked(readFile).mockResolvedValue("data" as never);
+    fakeFs.stat.mockResolvedValue({ size: 100 });
+    fakeFs.readFile.mockResolvedValue("data");
 
     const cases: Array<[string, string]> = [
       ["a.jpg", "image/jpeg"],
@@ -411,12 +395,12 @@ describe("read", () => {
   });
 
   it("画像が10MBを超える場合はエラーになる", async () => {
-    vi.mocked(stat).mockResolvedValue({ size: 11 * 1024 * 1024 } as never);
+    fakeFs.stat.mockResolvedValue({ size: 11 * 1024 * 1024 });
 
     await expect(
       readTool.execute("call-1", { path: "huge.png" }),
     ).rejects.toThrow("画像が大きすぎます");
-    expect(readFile).not.toHaveBeenCalled();
+    expect(fakeFs.readFile).not.toHaveBeenCalled();
   });
 });
 
@@ -427,7 +411,7 @@ describe("write", () => {
       content: "hello",
     });
     expect(firstText(result)).toBe("書き込み完了: out.txt (5 文字, 1 行)");
-    expect(writeFile).toHaveBeenCalledWith(
+    expect(fakeFs.writeFile).toHaveBeenCalledWith(
       "/workspace/out.txt",
       "hello",
       "utf-8",
@@ -439,7 +423,7 @@ describe("write", () => {
       path: "sub/dir/file.txt",
       content: "x",
     });
-    expect(mkdir).toHaveBeenCalledWith("/workspace/sub/dir", {
+    expect(fakeFs.mkdir).toHaveBeenCalledWith("/workspace/sub/dir", {
       recursive: true,
     });
   });
@@ -449,7 +433,7 @@ describe("write", () => {
       path: "/obsidian/wiki/index.md",
       content: "hello",
     });
-    expect(writeFile).toHaveBeenCalledWith(
+    expect(fakeFs.writeFile).toHaveBeenCalledWith(
       "/obsidian/wiki/index.md",
       "hello",
       "utf-8",
@@ -459,30 +443,30 @@ describe("write", () => {
 
 describe("list", () => {
   it("エントリ一覧を返す", async () => {
-    vi.mocked(readdir).mockResolvedValue([
+    fakeFs.readdir.mockResolvedValue([
       { name: "foo.txt", isDirectory: () => false, isFile: () => true },
       { name: "bar", isDirectory: () => true, isFile: () => false },
-    ] as never);
+    ]);
     const result = await listTool.execute("call-1", { path: "" });
     expect(firstText(result)).toContain("file: foo.txt");
     expect(firstText(result)).toContain("dir: bar");
-    expect(readdir).toHaveBeenCalledWith("/workspace", { withFileTypes: true });
+    expect(fakeFs.readdir).toHaveBeenCalledWith("/workspace", { withFileTypes: true });
   });
 
   it("空ディレクトリ", async () => {
-    vi.mocked(readdir).mockResolvedValue([] as never);
+    fakeFs.readdir.mockResolvedValue([]);
     const result = await listTool.execute("call-1", { path: "" });
     expect(firstText(result)).toBe("(空のディレクトリ)");
   });
 
   it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま一覧する（追加マウント対応）", async () => {
-    vi.mocked(readdir).mockResolvedValue([
+    fakeFs.readdir.mockResolvedValue([
       { name: "index.md", isDirectory: () => false, isFile: () => true },
-    ] as never);
+    ]);
     const result = await listTool.execute("call-1", {
       path: "/obsidian/wiki",
     });
-    expect(readdir).toHaveBeenCalledWith("/obsidian/wiki", {
+    expect(fakeFs.readdir).toHaveBeenCalledWith("/obsidian/wiki", {
       withFileTypes: true,
     });
     expect(firstText(result)).toContain("file: index.md");
@@ -491,13 +475,13 @@ describe("list", () => {
 
 describe("edit", () => {
   it("部分置換する", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.readFile.mockResolvedValue("hello world");
     const result = await editTool.execute("call-1", {
       path: "test.txt",
       oldString: "world",
       newString: "sandbox",
     });
-    expect(writeFile).toHaveBeenCalledWith(
+    expect(fakeFs.writeFile).toHaveBeenCalledWith(
       "/workspace/test.txt",
       "hello sandbox",
       "utf-8",
@@ -508,7 +492,7 @@ describe("edit", () => {
   });
 
   it("置換対象がないとエラー", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.readFile.mockResolvedValue("hello world");
     await expect(
       editTool.execute("call-1", {
         path: "test.txt",
@@ -519,14 +503,14 @@ describe("edit", () => {
   });
 
   it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま編集する（追加マウント対応）", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.readFile.mockResolvedValue("hello world");
     await editTool.execute("call-1", {
       path: "/obsidian/wiki/index.md",
       oldString: "world",
       newString: "sandbox",
     });
-    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
-    expect(writeFile).toHaveBeenCalledWith(
+    expect(fakeFs.readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(fakeFs.writeFile).toHaveBeenCalledWith(
       "/obsidian/wiki/index.md",
       "hello sandbox",
       "utf-8",
@@ -534,7 +518,7 @@ describe("edit", () => {
   });
 
   it("oldString が空文字列の場合はエラー", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.readFile.mockResolvedValue("hello world");
     await expect(
       editTool.execute("call-1", {
         path: "test.txt",
@@ -553,7 +537,7 @@ describe("glob", () => {
       yield "foo.ts";
       yield "bar.ts";
     }
-    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    fakeFs.glob.mockReturnValue(mockGlob());
     const result = await globTool.execute("call-1", {
       pattern: "*.ts",
       path: "",
@@ -566,7 +550,7 @@ describe("glob", () => {
     async function* mockGlob() {
       yield* [];
     }
-    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    fakeFs.glob.mockReturnValue(mockGlob());
     const result = await globTool.execute("call-1", {
       pattern: "*.md",
       path: "",
@@ -578,12 +562,12 @@ describe("glob", () => {
     async function* mockGlob() {
       yield "index.md";
     }
-    vi.mocked(glob).mockReturnValue(mockGlob() as never);
+    fakeFs.glob.mockReturnValue(mockGlob());
     const result = await globTool.execute("call-1", {
       pattern: "*.md",
       path: "/obsidian/wiki",
     });
-    expect(glob).toHaveBeenCalledWith("*.md", {
+    expect(fakeFs.glob).toHaveBeenCalledWith("*.md", {
       cwd: "/obsidian/wiki",
       withFileTypes: false,
     });
@@ -593,9 +577,9 @@ describe("glob", () => {
 
 describe("grep", () => {
   it("正規表現でファイル内容を検索する", async () => {
-    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
-    vi.mocked(readFile).mockResolvedValue(
-      "hello world\nfoo bar\nhello sandbox" as never,
+    fakeFs.stat.mockResolvedValue({ isFile: () => true });
+    fakeFs.readFile.mockResolvedValue(
+      "hello world\nfoo bar\nhello sandbox",
     );
     const result = await grepTool.execute("call-1", {
       pattern: "hello",
@@ -606,29 +590,29 @@ describe("grep", () => {
   });
 
   it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま検索する（追加マウント対応）", async () => {
-    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.stat.mockResolvedValue({ isFile: () => true });
+    fakeFs.readFile.mockResolvedValue("hello world");
     const result = await grepTool.execute("call-1", {
       pattern: "hello",
       path: "/obsidian/wiki/index.md",
     });
-    expect(stat).toHaveBeenCalledWith("/obsidian/wiki/index.md");
-    expect(readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
+    expect(fakeFs.stat).toHaveBeenCalledWith("/obsidian/wiki/index.md");
+    expect(fakeFs.readFile).toHaveBeenCalledWith("/obsidian/wiki/index.md", "utf-8");
     expect(firstText(result)).toContain(
       "/obsidian/wiki/index.md:1: hello world",
     );
   });
 
   it("ディレクトリを再帰検索する", async () => {
-    vi.mocked(stat).mockResolvedValue({
+    fakeFs.stat.mockResolvedValue({
       isFile: () => false,
       isDirectory: () => true,
-    } as never);
+    });
     async function* mockGlob() {
       yield "a.txt";
     }
-    vi.mocked(glob).mockReturnValue(mockGlob() as never);
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+    fakeFs.glob.mockReturnValue(mockGlob());
+    fakeFs.readFile.mockResolvedValue("hello world");
     const result = await grepTool.execute("call-1", {
       pattern: "hello",
       path: "src",
@@ -637,8 +621,8 @@ describe("grep", () => {
   });
 
   it("一致なし", async () => {
-    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
-    vi.mocked(readFile).mockResolvedValue("foo bar" as never);
+    fakeFs.stat.mockResolvedValue({ isFile: () => true });
+    fakeFs.readFile.mockResolvedValue("foo bar");
     const result = await grepTool.execute("call-1", {
       pattern: "baz",
       path: "test.txt",
@@ -647,7 +631,7 @@ describe("grep", () => {
   });
 
   it("存在しないパスは (一致なし) を返す", async () => {
-    vi.mocked(stat).mockRejectedValue(
+    fakeFs.stat.mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
     const result = await grepTool.execute("call-1", {
@@ -658,7 +642,7 @@ describe("grep", () => {
   });
 
   it("ENOENT 以外の stat エラーは再スロー", async () => {
-    vi.mocked(stat).mockRejectedValue(
+    fakeFs.stat.mockRejectedValue(
       Object.assign(new Error("EACCES"), { code: "EACCES" }),
     );
     await expect(

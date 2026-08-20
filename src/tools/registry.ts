@@ -34,7 +34,11 @@ import {
 } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
-const TOOLS: Record<string, AgentTool> = {
+interface ToolRegistry {
+  [name: string]: AgentTool;
+}
+
+const TOOLS: ToolRegistry = {
   bash: bashTool,
   "agent-reach": agentReachTool,
   read: readTool,

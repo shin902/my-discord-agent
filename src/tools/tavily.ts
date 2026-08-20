@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
+import { z } from "zod";
 
 const searchParams = Type.Object({
   query: Type.String({ description: "検索クエリ" }),
@@ -32,17 +33,17 @@ const searchParams = Type.Object({
   ),
 });
 
-type TavilyResult = {
-  title: string;
-  url: string;
-  content: string;
-  score: number;
-};
-
-type TavilyResponse = {
-  answer?: string;
-  results: TavilyResult[];
-};
+const TavilyResponseSchema = z.object({
+  answer: z.string().optional(),
+  results: z.array(
+    z.object({
+      title: z.string(),
+      url: z.string(),
+      content: z.string(),
+      score: z.number(),
+    }),
+  ).default([]),
+});
 
 export const tavilySearchTool: AgentTool<typeof searchParams> = {
   name: "tavily-search",
@@ -76,7 +77,7 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
       const text = await res.text().catch(() => "");
       throw new Error(`Tavily API エラー ${res.status}: ${text.slice(0, 200)}`);
     }
-    const data = (await res.json()) as TavilyResponse;
+    const data = TavilyResponseSchema.parse(await res.json());
     const results = data.results ?? [];
 
     const lines: string[] = [];
@@ -87,8 +88,7 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
     for (const r of results) {
       lines.push(`### ${r.title ?? "(タイトルなし)"}`);
       if (r.url) lines.push(`- URL: ${r.url}`);
-      if (typeof r.score === "number")
-        lines.push(`- スコア: ${r.score.toFixed(2)}`);
+      lines.push(`- スコア: ${r.score.toFixed(2)}`);
       if (r.content) lines.push(`- ${r.content}`);
       lines.push("");
     }
@@ -114,20 +114,14 @@ const extractParams = Type.Object({
   ),
 });
 
-type TavilyExtractResult = {
-  url: string;
-  raw_content?: string;
-};
-
-type TavilyExtractFailure = {
-  url: string;
-  error: string;
-};
-
-type TavilyExtractResponse = {
-  results?: TavilyExtractResult[];
-  failed_results?: TavilyExtractFailure[];
-};
+const TavilyExtractResponseSchema = z.object({
+  results: z
+    .array(z.object({ url: z.string(), raw_content: z.string().optional() }))
+    .optional(),
+  failed_results: z
+    .array(z.object({ url: z.string(), error: z.string() }))
+    .optional(),
+});
 
 export const tavilyExtractTool: AgentTool<typeof extractParams> = {
   name: "tavily-extract",
@@ -149,7 +143,7 @@ export const tavilyExtractTool: AgentTool<typeof extractParams> = {
       const text = await res.text().catch(() => "");
       throw new Error(`Tavily API エラー ${res.status}: ${text.slice(0, 200)}`);
     }
-    const data = (await res.json()) as TavilyExtractResponse;
+    const data = TavilyExtractResponseSchema.parse(await res.json());
     const results = data.results ?? [];
     const failedResults = data.failed_results ?? [];
 
@@ -212,15 +206,12 @@ const crawlParams = Type.Object({
   ),
 });
 
-type TavilyCrawlResult = {
-  url: string;
-  raw_content?: string;
-};
-
-type TavilyCrawlResponse = {
-  base_url?: string;
-  results?: TavilyCrawlResult[];
-};
+const TavilyCrawlResponseSchema = z.object({
+  base_url: z.string().optional(),
+  results: z
+    .array(z.object({ url: z.string(), raw_content: z.string().optional() }))
+    .optional(),
+});
 
 export const tavilyCrawlTool: AgentTool<typeof crawlParams> = {
   name: "tavily-crawl",
@@ -258,7 +249,7 @@ export const tavilyCrawlTool: AgentTool<typeof crawlParams> = {
       const text = await res.text().catch(() => "");
       throw new Error(`Tavily API エラー ${res.status}: ${text.slice(0, 200)}`);
     }
-    const data = (await res.json()) as TavilyCrawlResponse;
+    const data = TavilyCrawlResponseSchema.parse(await res.json());
     const results = data.results ?? [];
 
     const lines: string[] = [`# クロール結果: ${data.base_url ?? url}`, ""];
@@ -314,10 +305,10 @@ const mapParams = Type.Object({
   ),
 });
 
-type TavilyMapResponse = {
-  base_url?: string;
-  results?: string[];
-};
+const TavilyMapResponseSchema = z.object({
+  base_url: z.string().optional(),
+  results: z.array(z.string()).optional(),
+});
 
 export const tavilyMapTool: AgentTool<typeof mapParams> = {
   name: "tavily-map",
@@ -355,7 +346,7 @@ export const tavilyMapTool: AgentTool<typeof mapParams> = {
       const text = await res.text().catch(() => "");
       throw new Error(`Tavily API エラー ${res.status}: ${text.slice(0, 200)}`);
     }
-    const data = (await res.json()) as TavilyMapResponse;
+    const data = TavilyMapResponseSchema.parse(await res.json());
     const results = data.results ?? [];
 
     const lines: string[] = [`# サイトマップ: ${data.base_url ?? url}`, ""];

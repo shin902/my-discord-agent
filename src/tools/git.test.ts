@@ -1,42 +1,22 @@
-import type { ChildProcess } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
-vi.mock("node:fs/promises", () => ({ stat: vi.fn(), rm: vi.fn() }));
+import { createCloneRepositoryTool } from "./git.js";
 
-import { execFile } from "node:child_process";
-import { rm, stat } from "node:fs/promises";
-
-const mockExecFile = vi.mocked(execFile);
-const mockStat = vi.mocked(stat);
-const mockRm = vi.mocked(rm);
+type ExecFile = (command: string, args: string[], options: { cwd: string; timeout: number; maxBuffer: number }) => Promise<void>;
+const mockExecFile = vi.fn<ExecFile>();
+const mockStat = vi.fn<(path: string) => Promise<void>>();
+const mockRm = vi.fn<(path: string, options: { recursive: boolean; force: boolean }) => Promise<void>>();
 
 const PROXY_CREDS = JSON.stringify([
   { provider: "github-git", baseUrl: "http://proxy.test/github-git" },
 ]);
 
-function mockSuccess(stdout = "", stderr = "") {
-  mockExecFile.mockImplementation((..._args: unknown[]) => {
-    const cb = _args[_args.length - 1] as (
-      err: Error | null,
-      stdout: string,
-      stderr: string,
-    ) => void;
-    cb(null, stdout, stderr);
-    return {} as ChildProcess;
-  });
+function mockSuccess() {
+  mockExecFile.mockResolvedValue(undefined);
 }
 
 function mockFailure(err: Error & { stderr?: string }) {
-  mockExecFile.mockImplementation((..._args: unknown[]) => {
-    const cb = _args[_args.length - 1] as (
-      err: Error | null,
-      stdout: string,
-      stderr: string,
-    ) => void;
-    cb(err, "", err.stderr ?? "");
-    return {} as ChildProcess;
-  });
+  mockExecFile.mockRejectedValue(err);
 }
 
 function firstText(result: {
@@ -66,7 +46,7 @@ describe("clone-repository", () => {
 
   it("プロキシ経由のURLでgit cloneを実行する", async () => {
     mockSuccess();
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await cloneRepositoryTool.execute("id", { owner: "o", repo: "r" });
 
     const args = mockExecFile.mock.calls[0];
@@ -82,7 +62,7 @@ describe("clone-repository", () => {
 
   it("directory を指定すると clone 先が変わる", async () => {
     mockSuccess();
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await cloneRepositoryTool.execute("id", {
       owner: "o",
       repo: "r",
@@ -95,7 +75,7 @@ describe("clone-repository", () => {
 
   it("成功時に clone 先を返す", async () => {
     mockSuccess();
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     const result = await cloneRepositoryTool.execute("id", {
       owner: "o",
       repo: "r",
@@ -105,7 +85,7 @@ describe("clone-repository", () => {
   });
 
   it("owner/repo に不正な文字が含まれると例外", async () => {
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o/../x", repo: "r" }),
     ).rejects.toThrow("無効なowner");
@@ -113,7 +93,7 @@ describe("clone-repository", () => {
   });
 
   it("directory が絶対パスだと例外", async () => {
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await expect(
       cloneRepositoryTool.execute("id", {
         owner: "o",
@@ -125,7 +105,7 @@ describe("clone-repository", () => {
   });
 
   it("directory が .. でワークスペース外に出ようとすると例外", async () => {
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await expect(
       cloneRepositoryTool.execute("id", {
         owner: "o",
@@ -142,7 +122,7 @@ describe("clone-repository", () => {
         stderr: "fatal: repository not found",
       }),
     );
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
     ).rejects.toThrow("fatal: repository not found");
@@ -153,7 +133,7 @@ describe("clone-repository", () => {
     mockFailure(
       Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
     );
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
     ).rejects.toThrow();
@@ -164,11 +144,11 @@ describe("clone-repository", () => {
   });
 
   it("clone失敗時、dest が呼び出し前から存在していれば削除しない", async () => {
-    mockStat.mockResolvedValue({} as never);
+    mockStat.mockResolvedValue(undefined);
     mockFailure(
       Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
     );
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
     ).rejects.toThrow();
@@ -177,7 +157,7 @@ describe("clone-repository", () => {
 
   it("clone成功時はdestを削除しない", async () => {
     mockSuccess();
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await cloneRepositoryTool.execute("id", { owner: "o", repo: "r" });
     expect(mockRm).not.toHaveBeenCalled();
   });
@@ -186,7 +166,7 @@ describe("clone-repository", () => {
     process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
       { provider: "github", baseUrl: "http://proxy.test/github" },
     ]);
-    const { cloneRepositoryTool } = await import("./git.js");
+    const cloneRepositoryTool = createCloneRepositoryTool({ execFile: mockExecFile, stat: mockStat, rm: mockRm });
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
     ).rejects.toThrow(
