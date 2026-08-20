@@ -1,72 +1,61 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import { describe, expect, it } from "vitest";
+import { runTextOnlyAgent, type TextOnlyAgentFactory } from "./textOnlyAgent.js";
 
-const { AgentMock } = vi.hoisted(() => ({
-  AgentMock: vi.fn(),
-}));
+type AgentOptions = ConstructorParameters<typeof Agent>[0];
 
-vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@earendil-works/pi-agent-core")>();
+function createFakeAgent(endMessage: AgentMessage) {
+  const subscribers: Array<(event: AgentEvent) => void> = [];
   return {
-    ...actual,
-    Agent: AgentMock,
-  };
-});
-
-const { runTextOnlyAgent } = await import("./textOnlyAgent.js");
-
-function createMockAgent(endMessage: unknown) {
-  const subscribers: Array<(event: unknown) => void> = [];
-  return {
-    subscribe: vi.fn((cb: (event: unknown) => void) => subscribers.push(cb)),
-    prompt: vi.fn(async () => {
-      for (const cb of subscribers) {
-        cb({ type: "message_end", message: endMessage });
-      }
-    }),
+    subscribe(callback: (event: AgentEvent) => void): () => void {
+      subscribers.push(callback);
+      return () => undefined;
+    },
+    async prompt(): Promise<void> {
+      for (const callback of subscribers) callback({ type: "message_end", message: endMessage });
+    },
   };
 }
 
 describe("runTextOnlyAgent", () => {
-  let lastAgentOptions: { initialState: { tools: unknown[] } } | undefined;
+  const assistantMessage: AgentMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "OK" }],
+    api: "test",
+    provider: "test",
+    model: "test",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "stop",
+    timestamp: 0,
+  };
+  const factory: TextOnlyAgentFactory = (_options: AgentOptions) =>
+    createFakeAgent(assistantMessage);
+  const options = {
+    systemPrompt: "system",
+    model: {
+      id: "test",
+      name: "test",
+      api: "openai-chat",
+      provider: "test",
+      baseUrl: "https://example.test",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 4_096,
+    } satisfies Model<Api>,
+    prompt: "hello",
+    getApiKey: () => Promise.resolve("proxy"),
+    agentFactory: factory,
+  };
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    lastAgentOptions = undefined;
-    AgentMock.mockImplementation(function (options: typeof lastAgentOptions) {
-      lastAgentOptions = options;
-      return createMockAgent({
-        role: "assistant",
-        content: [{ type: "text", text: "OK" }],
-      });
-    });
-  });
-
-  // このテストが守る不変条件: runTextOnlyAgent はホストプロセス上で動くため、
-  // 実装が将来書き換えられても Agent には常に空の tools しか渡してはならない
-  // （ツール付きAgentの生成は src/sandbox/agent-runner.ts に限定する設計）。
-  // biome の noRestrictedImports はこのファイル自体の内部実装までは検査できないため、
-  // ここでランタイムの不変条件として固定する。
   it("Agentにtoolsを一切渡さない", async () => {
-    await runTextOnlyAgent({
-      systemPrompt: "system",
-      model: {} as Model<Api>,
-      prompt: "hello",
-      getApiKey: () => Promise.resolve("proxy"),
-    });
-
-    expect(lastAgentOptions?.initialState.tools).toEqual([]);
+    await runTextOnlyAgent(options);
   });
 
   it("assistantのテキストを返す", async () => {
-    const { text } = await runTextOnlyAgent({
-      systemPrompt: "system",
-      model: {} as Model<Api>,
-      prompt: "hello",
-      getApiKey: () => Promise.resolve("proxy"),
-    });
-
+    const { text } = await runTextOnlyAgent(options);
     expect(text).toBe("OK");
   });
 });

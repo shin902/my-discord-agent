@@ -1,14 +1,21 @@
 import type {
+  AgentEvent,
   AgentMessage,
   ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type {
   Api,
-  AssistantMessage,
   Model,
   TextContent,
 } from "@earendil-works/pi-ai";
+
+type AgentOptions = ConstructorParameters<typeof Agent>[0];
+interface TextOnlyAgentRuntime {
+  subscribe: (listener: (event: AgentEvent) => void) => () => void;
+  prompt: (prompt: string) => Promise<void>;
+}
+export type TextOnlyAgentFactory = (options: AgentOptions) => TextOnlyAgentRuntime;
 
 export interface TextOnlyAgentOptions {
   systemPrompt: string;
@@ -18,6 +25,7 @@ export interface TextOnlyAgentOptions {
   getApiKey: (
     provider: string,
   ) => Promise<string | undefined> | string | undefined;
+  agentFactory?: TextOnlyAgentFactory;
 }
 
 export interface TextOnlyAgentResult {
@@ -33,7 +41,8 @@ export interface TextOnlyAgentResult {
 export async function runTextOnlyAgent(
   options: TextOnlyAgentOptions,
 ): Promise<TextOnlyAgentResult> {
-  const agent = new Agent({
+  const createAgent = options.agentFactory ?? ((agentOptions) => new Agent(agentOptions));
+  const agent = createAgent({
     initialState: {
       systemPrompt: options.systemPrompt,
       model: options.model,
@@ -48,9 +57,9 @@ export async function runTextOnlyAgent(
   let agentMessage: AgentMessage | null = null;
   agent.subscribe((event) => {
     if (event.type !== "message_end") return;
-    const msg = event.message as AssistantMessage;
+    const msg = event.message;
     if (msg.role !== "assistant") return;
-    agentMessage = msg as AgentMessage;
+    agentMessage = msg;
     text = msg.content
       .filter((c): c is TextContent => c.type === "text")
       .map((c) => c.text)

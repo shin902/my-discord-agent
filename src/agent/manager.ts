@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,88 @@ const ROOT = path.join(__dirname, "../../");
 import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
 
 export { resolveBaseUrl, resolveModel, validateModel };
+
+/** The child-process surface consumed by the manager. */
+export interface ManagerChildProcess {
+  stdin: { write(chunk: string): boolean; end(): void };
+  stdout?: { on(event: "data", listener: (chunk: Buffer) => void): void };
+  stderr?: { on(event: "data", listener: (chunk: Buffer) => void): void };
+  once(event: "close", listener: (code: number | null) => void): this;
+  once(event: "error", listener: (error: Error) => void): this;
+  on(event: "close", listener: (code: number | null) => void): this;
+  on(event: "error", listener: (error: Error) => void): this;
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+export type ManagerSpawn = (
+  command: string,
+  args: string[],
+  options: SpawnOptions,
+) => ManagerChildProcess;
+
+function spawnManagerProcess(
+  command: string,
+  args: string[],
+  options: SpawnOptions,
+): ManagerChildProcess {
+  const child = spawn(command, args, options);
+  const stdin = child.stdin ?? { write: () => false, end: () => {} };
+  return {
+    stdin,
+    stdout: child.stdout
+      ? { on: (event, listener) => { child.stdout?.on(event, listener); } }
+      : undefined,
+    stderr: child.stderr
+      ? { on: (event, listener) => { child.stderr?.on(event, listener); } }
+      : undefined,
+    once(event, listener) {
+      if (event === "close") child.once(event, listener);
+      else child.once(event, listener);
+      return this;
+    },
+    on(event, listener) {
+      if (event === "close") child.on(event, listener);
+      else child.on(event, listener);
+      return this;
+    },
+    kill: (signal) => child.kill(signal),
+  };
+}
+
+/** Host services used by the manager. Tests may provide faithful implementations
+ * without replacing module bindings or changing the default runtime wiring. */
+export interface ManagerDependencies {
+  spawn: ManagerSpawn;
+  loadCredentialProxy: typeof loadCredentialProxy;
+  loadAgentTimeoutMs: typeof loadAgentTimeoutMs;
+  resolveModelConfig: typeof resolveModelConfig;
+  findGroupByName: typeof findGroupByName;
+  ensureGroupSkills: typeof ensureGroupSkills;
+  resolveTools: typeof resolveTools;
+  validateModel: typeof validateModel;
+}
+
+const defaultDependencies: ManagerDependencies = {
+  spawn: spawnManagerProcess,
+  loadCredentialProxy,
+  loadAgentTimeoutMs,
+  resolveModelConfig,
+  findGroupByName,
+  ensureGroupSkills,
+  resolveTools,
+  validateModel,
+};
+let dependencies = defaultDependencies;
+
+export function setManagerDependencies(
+  overrides: Partial<ManagerDependencies>,
+): void {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
+export function resetManagerDependencies(): void {
+  dependencies = defaultDependencies;
+}
 
 export type DiscordEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
@@ -76,14 +158,14 @@ declare global {
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 async function stopContainer(name: string): Promise<void> {
   const killResult = await new Promise<number>((resolve) => {
-    const kill = spawn("docker", ["kill", name], { stdio: "ignore" });
-    if (typeof kill.once !== "function") return resolve(0);
+    const kill = dependencies.spawn("docker", ["kill", name], { stdio: "ignore" });
+    if (!("once" in kill)) return resolve(0);
     kill.once("close", (code: number | null) => resolve(code ?? 1));
     kill.once("error", () => resolve(1));
   });
   const inspect = await new Promise<{ code: number; output: string }>(
     (resolve) => {
-      const child = spawn("docker", ["inspect", name], {
+      const child = dependencies.spawn("docker", ["inspect", name], {
         stdio: ["ignore", "pipe", "pipe"],
       });
       let output = "";
@@ -93,7 +175,7 @@ async function stopContainer(name: string): Promise<void> {
       child.stderr?.on("data", (chunk: Buffer) => {
         output += chunk.toString();
       });
-      if (typeof child.once !== "function") return resolve({ code: 1, output });
+      if (!("once" in child)) return resolve({ code: 1, output });
       child.once("close", (code: number | null) =>
         resolve({ code: code ?? 1, output }),
       );
@@ -133,7 +215,7 @@ let storedProxyPort: number | null = null;
 // `--pull=always` によるイメージ pull 中はコンテナがまだ作られていないため
 // `docker kill <name>` だけでは何も止められない。クライアントプロセス自体も
 // 直接 kill することで、pull 中・コンテナ起動後どちらのフェーズでも確実に止める。
-const runningContainers = new Map<string, ChildProcess>();
+const runningContainers = new Map<string, ManagerChildProcess>();
 
 /**
  * 実行中の全エージェントコンテナ（および対応する docker run クライアント
@@ -153,7 +235,7 @@ export function killAllRunningContainers(): Promise<void> {
       // docker kill も併用する（無関係な場合は失敗するだけで無害）。
       proc.kill("SIGKILL");
       return new Promise<void>((resolve) => {
-        const killProc = spawn("docker", ["kill", name], {
+        const killProc = dependencies.spawn("docker", ["kill", name], {
           stdio: "ignore",
         });
         killProc.on("close", () => resolve());
@@ -263,7 +345,7 @@ export async function validateGroupConfig(
   group: GroupConfig,
   defaultModel: { provider: string; modelId: string },
 ): Promise<void> {
-  await validateModel(
+  await dependencies.validateModel(
     group.model?.provider ?? defaultModel.provider,
     group.model?.modelId ?? defaultModel.modelId,
   );
@@ -273,6 +355,19 @@ export async function validateGroupConfig(
 
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
+
+interface PayloadData {
+  groupName: string;
+  sessionId: string;
+  content: string;
+  groupConfig: AgentConfig & { model: Awaited<ReturnType<typeof resolveModelConfig>> };
+  agentsSnapshotContent?: string;
+  agentsSnapshotPresent?: boolean;
+  memorySnapshotPresent?: boolean;
+  memorySnapshotContent?: string;
+  snapshotHash?: string;
+  toolCallKey?: string;
+}
 
 interface SavedAttachment {
   relPath: string;
@@ -352,15 +447,15 @@ export function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
-  options?: SendMessageOptions,
+  onDiscordEvent?: (event: DiscordEvent) => void,
+  attachments?: AttachmentRef[],
+  onExecutionTiming?: (timing: AgentExecutionTiming) => void,
 ): Promise<string>;
 export function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
-  onDiscordEvent?: (event: DiscordEvent) => void,
-  attachments?: AttachmentRef[],
-  onExecutionTiming?: (timing: AgentExecutionTiming) => void,
+  options?: SendMessageOptions,
 ): Promise<string>;
 export async function sendMessage(
   groupName: string,
@@ -373,13 +468,13 @@ export async function sendMessage(
   legacyOnExecutionTiming?: (timing: AgentExecutionTiming) => void,
 ): Promise<string> {
   const isLegacyCall =
-    typeof optionsOrOnDiscordEvent === "function" ||
+    optionsOrOnDiscordEvent instanceof Function ||
     legacyAttachments !== undefined ||
     legacyOnExecutionTiming !== undefined;
   const options: SendMessageOptions = isLegacyCall
     ? {
         onDiscordEvent:
-          typeof optionsOrOnDiscordEvent === "function"
+          optionsOrOnDiscordEvent instanceof Function
             ? optionsOrOnDiscordEvent
             : undefined,
         attachments: legacyAttachments,
@@ -400,17 +495,17 @@ export async function sendMessage(
     toolCallKey,
   } = options;
   const executionStartedAt = Date.now();
-  const groupsEntry = await findGroupByName(groupName);
+  const groupsEntry = await dependencies.findGroupByName(groupName);
   const baseConfig: AgentConfig = groupsEntry ?? {};
   const effectiveConfig: AgentConfig = {
     ...baseConfig,
     ...options.configOverride,
   };
 
-  const resolvedModel = await resolveModelConfig(effectiveConfig.model);
+  const resolvedModel = await dependencies.resolveModelConfig(effectiveConfig.model);
 
   try {
-    await validateModel(resolvedModel.provider, resolvedModel.modelId);
+    await dependencies.validateModel(resolvedModel.provider, resolvedModel.modelId);
   } catch (err) {
     throw new NonRetryableError(
       `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
@@ -418,7 +513,7 @@ export async function sendMessage(
   }
 
   try {
-    resolveTools(effectiveConfig.tools ?? []);
+    dependencies.resolveTools(effectiveConfig.tools ?? []);
   } catch (err) {
     throw new NonRetryableError(
       `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
@@ -447,7 +542,7 @@ export async function sendMessage(
     options.configOverride?.skills !== undefined &&
     Array.isArray(effectiveConfig.skills)
   ) {
-    await ensureGroupSkills(groupName, effectiveConfig.skills);
+    await dependencies.ensureGroupSkills(groupName, effectiveConfig.skills);
   }
   await mkdir(path.join(ROOT, "data/sessions", groupName), {
     recursive: true,
@@ -460,7 +555,7 @@ export async function sendMessage(
   }
   const proxyPort = storedProxyPort;
 
-  const creds = await loadCredentialProxy();
+  const creds = await dependencies.loadCredentialProxy();
   const credentialJson = buildSanitizedCredentialJson(creds, proxyPort);
 
   let promptContent = content;
@@ -500,18 +595,19 @@ export async function sendMessage(
     // ディレクトリが存在しない場合はマウントしない
   }
 
-  const payload = JSON.stringify({
+  const payloadData: PayloadData = {
     groupName,
     sessionId,
     content: promptContent,
     groupConfig: { ...effectiveConfig, model: resolvedModel },
-    ...(agentsSnapshotContent !== undefined ? { agentsSnapshotContent } : {}),
-    ...(agentsSnapshotPresent !== undefined ? { agentsSnapshotPresent } : {}),
-    ...(memorySnapshotPresent !== undefined ? { memorySnapshotPresent } : {}),
-    ...(memorySnapshotContent !== undefined ? { memorySnapshotContent } : {}),
-    ...(snapshotHash !== undefined ? { snapshotHash } : {}),
-    ...(toolCallKey !== undefined ? { toolCallKey } : {}),
-  });
+  };
+  if (agentsSnapshotContent !== undefined) payloadData.agentsSnapshotContent = agentsSnapshotContent;
+  if (agentsSnapshotPresent !== undefined) payloadData.agentsSnapshotPresent = agentsSnapshotPresent;
+  if (memorySnapshotPresent !== undefined) payloadData.memorySnapshotPresent = memorySnapshotPresent;
+  if (memorySnapshotContent !== undefined) payloadData.memorySnapshotContent = memorySnapshotContent;
+  if (snapshotHash !== undefined) payloadData.snapshotHash = snapshotHash;
+  if (toolCallKey !== undefined) payloadData.toolCallKey = toolCallKey;
+  const payload = JSON.stringify(payloadData);
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない
   // （デーモンが管理しているため）。タイムアウト時に `docker kill` で実体を止められるよう
@@ -551,10 +647,10 @@ export async function sendMessage(
     "/app/runner.mjs",
   ];
 
-  const agentTimeoutMs = await loadAgentTimeoutMs();
+  const agentTimeoutMs = await dependencies.loadAgentTimeoutMs();
   const dockerStartedAt = Date.now();
   return new Promise((resolve, reject) => {
-    const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = dependencies.spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
     let timeoutHandle: NodeJS.Timeout | undefined;
     const cancelActiveRun = () => {
@@ -587,7 +683,7 @@ export async function sendMessage(
     const requiresReadyHandshake = onContainerStarted !== undefined;
     const readySettled = !requiresReadyHandshake;
     let readyResolve!: () => void;
-    let readyReject!: (error: unknown) => void;
+    let readyReject!: (error: Error) => void;
     const readyPromise = new Promise<void>((resolve, reject) => {
       readyResolve = resolve;
       readyReject = reject;
@@ -607,44 +703,25 @@ export async function sendMessage(
       timingReported = true;
       const timing: AgentExecutionTiming = {
         termination,
-        ...(exitCode !== undefined ? { exitCode } : {}),
         preparationMs: dockerStartedAt - executionStartedAt,
         dockerRunMs: finishedAt - dockerStartedAt,
-        ...(pullCompletedAt !== undefined
-          ? {
-              imagePullMs: pullCompletedAt - dockerStartedAt,
-              containerAndAgentMs: finishedAt - pullCompletedAt,
-            }
-          : {}),
-        ...(agentTiming !== undefined
-          ? {
-              promptMs: agentTiming.promptMs,
-              assistantTurns: agentTiming.assistantTurns,
-              usage: agentTiming.usage,
-              stopReason: agentTiming.stopReason,
-              ...(agentTiming.agentsSnapshotHash !== undefined
-                ? { agentsSnapshotHash: agentTiming.agentsSnapshotHash }
-                : {}),
-              ...(agentTiming.memorySnapshotHash !== undefined
-                ? { memorySnapshotHash: agentTiming.memorySnapshotHash }
-                : {}),
-              ...(agentTiming.snapshotHash !== undefined
-                ? { snapshotHash: agentTiming.snapshotHash }
-                : {}),
-              ...(agentTiming.toolCallKey !== undefined
-                ? { toolCallKey: agentTiming.toolCallKey }
-                : {}),
-              ...(agentTimingReceivedAt !== undefined
-                ? {
-                    postPromptMs: Math.max(
-                      0,
-                      finishedAt - agentTimingReceivedAt,
-                    ),
-                  }
-                : {}),
-            }
-          : {}),
       };
+      if (exitCode !== undefined) timing.exitCode = exitCode;
+      if (pullCompletedAt !== undefined) {
+        timing.imagePullMs = pullCompletedAt - dockerStartedAt;
+        timing.containerAndAgentMs = finishedAt - pullCompletedAt;
+      }
+      if (agentTiming !== undefined) {
+        timing.promptMs = agentTiming.promptMs;
+        timing.assistantTurns = agentTiming.assistantTurns;
+        timing.usage = agentTiming.usage;
+        timing.stopReason = agentTiming.stopReason;
+        if (agentTiming.agentsSnapshotHash !== undefined) timing.agentsSnapshotHash = agentTiming.agentsSnapshotHash;
+        if (agentTiming.memorySnapshotHash !== undefined) timing.memorySnapshotHash = agentTiming.memorySnapshotHash;
+        if (agentTiming.snapshotHash !== undefined) timing.snapshotHash = agentTiming.snapshotHash;
+        if (agentTiming.toolCallKey !== undefined) timing.toolCallKey = agentTiming.toolCallKey;
+        if (agentTimingReceivedAt !== undefined) timing.postPromptMs = Math.max(0, finishedAt - agentTimingReceivedAt);
+      }
       try {
         onExecutionTiming?.(timing);
       } catch (err) {
@@ -662,16 +739,14 @@ export async function sendMessage(
               readyResolve();
             })
             .catch((error) => {
-              readyReject(error);
+              readyReject(error instanceof Error ? error : new Error(String(error)));
             });
         }
         return;
       }
       if (line.startsWith(DISCORD_EVENT_PREFIX)) {
         try {
-          const event = JSON.parse(line.slice(DISCORD_EVENT_PREFIX.length)) as
-            | DiscordEvent
-            | AgentTimingEvent;
+          const event = JSON.parse(line.slice(DISCORD_EVENT_PREFIX.length));
           if (event.type === "agent_timing") {
             agentTiming = event;
             agentTimingReceivedAt = Date.now();
@@ -695,10 +770,10 @@ export async function sendMessage(
       }
     };
 
-    proc.stdout.on("data", (chunk: Buffer) => {
+    proc.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
-    proc.stderr.on("data", (chunk: Buffer) => {
+    proc.stderr?.on("data", (chunk: Buffer) => {
       stderrTail += chunk.toString();
       const lines = stderrTail.split("\n");
       stderrTail = lines.pop() ?? "";

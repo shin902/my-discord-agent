@@ -1,7 +1,22 @@
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import {
+  initManager,
+  resetManagerDependencies,
+  sendMessage,
+  setManagerDependencies,
+  type ManagerChildProcess,
+  type ManagerDependencies,
+  type ManagerSpawn,
+  resolveBaseUrl,
+  resolveModel,
+  killAllRunningContainers,
+  validateModel as managerValidateModel,
+} from "./manager.js";
+import { resolveTools as resolveConfiguredTools } from "../tools/registry.js";
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_ATTACHMENTS_DIR = path.join(
@@ -16,17 +31,19 @@ const TEST_ATTACHMENTS_DIR = path.join(
 const GROUPS_DIR = path.join(__dirname, "../../groups");
 const SESSIONS_DIR = path.join(__dirname, "../../data/sessions");
 
-const listEntries = (dir: string) => readdir(dir).catch(() => [] as string[]);
+const listEntries = (dir: string) => readdir(dir).catch(() => []);
 
 let groupsBefore: Set<string>;
 let sessionsBefore: Set<string>;
 
 beforeEach(async () => {
+  configureManager();
   groupsBefore = new Set(await listEntries(GROUPS_DIR));
   sessionsBefore = new Set(await listEntries(SESSIONS_DIR));
 });
 
 afterEach(async () => {
+  resetManagerDependencies();
   const [groupsAfter, sessionsAfter] = await Promise.all([
     listEntries(GROUPS_DIR),
     listEntries(SESSIONS_DIR),
@@ -43,42 +60,6 @@ afterEach(async () => {
     newDirs.map((dir) => rm(dir, { recursive: true, force: true })),
   );
 });
-
-vi.mock("@earendil-works/pi-ai", () => ({
-  getProviders: () => ["provider-a", "zai"],
-  getModels: (provider: string) =>
-    provider === "zai"
-      ? [{ id: "glm-4.7-flash", name: "GLM-4.7-Flash" }]
-      : [{ id: "model-x", name: "Model X" }],
-}));
-
-vi.mock("../config/credential-proxy.js", () => ({
-  loadCredentialProxy: vi.fn().mockResolvedValue([]),
-}));
-
-vi.mock("../config/agent-config.js", () => ({
-  loadAgentTimeoutMs: vi.fn().mockResolvedValue(10 * 60 * 1000),
-}));
-
-vi.mock("../config/default-model.js", () => ({
-  resolveModelConfig: vi
-    .fn()
-    .mockImplementation(
-      async (model?: {
-        provider?: string;
-        modelId?: string;
-        thinkingLevel?: string;
-      }) => ({
-        provider: model?.provider ?? "zai",
-        modelId: model?.modelId ?? "glm-4.7-flash",
-        ...(model?.thinkingLevel !== undefined
-          ? { thinkingLevel: model.thinkingLevel }
-          : {}),
-      }),
-    ),
-}));
-
-const { resolveModel, resolveBaseUrl } = await import("./manager.js");
 
 describe("resolveBaseUrl", () => {
   const originalEnv = process.env;
@@ -133,8 +114,8 @@ describe("resolveBaseUrl", () => {
 
 describe("resolveModel", () => {
   it("有効なプロバイダとモデルIDはモデルを返す", async () => {
-    const model = await resolveModel("provider-a", "model-x");
-    expect(model.id).toBe("model-x");
+    const model = await resolveModel("zai", "glm-4.7-flash");
+    expect(model.id).toBe("glm-4.7-flash");
   });
 
   it("不明なプロバイダはエラー", async () => {
@@ -144,59 +125,90 @@ describe("resolveModel", () => {
   });
 
   it("不明なモデルIDはエラー", async () => {
-    await expect(resolveModel("provider-a", "unknown-model")).rejects.toThrow(
-      "不明なモデル: unknown-model (provider: provider-a)",
+    await expect(resolveModel("anthropic", "unknown-model")).rejects.toThrow(
+      "不明なモデル: unknown-model (provider: anthropic)",
     );
   });
 });
+
+interface ResolvedModel { provider: string; modelId: string; thinkingLevel?: string }
+
+type SkillsMock = Mock<ManagerDependencies["ensureGroupSkills"]>;
+type SpawnMock = Mock<ManagerSpawn>;
+
+const getSpawnArgs = (spawnMock: SpawnMock, index = 0): string[] => {
+  const args = spawnMock.mock.calls[index][1];
+  if (!Array.isArray(args)) throw new Error("spawn args missing");
+  return args;
+};
 
 const makeProc = (
   code: number | null = 0,
   stdout = "mocked response",
   stderr = "",
-) => ({
-  stdin: { write: vi.fn(), end: vi.fn() },
-  stdout: {
-    on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
-      if (event === "data") cb(Buffer.from(stdout));
+): ManagerChildProcess => {
+  const proc: ManagerChildProcess = {
+    stdin: { write: vi.fn(), end: vi.fn() },
+    stdout: {
+      on: vi.fn((event: "data", cb: (chunk: Buffer) => void) => {
+        if (event === "data") cb(Buffer.from(stdout));
+      }),
+    },
+    stderr: {
+      on: vi.fn((event: "data", cb: (chunk: Buffer) => void) => {
+        if (event === "data" && stderr) cb(Buffer.from(stderr));
+      }),
+    },
+    once: vi.fn((event: "close" | "error", cb: (value: number | null | Error) => void) => {
+      if (event === "close") cb(code);
+      return proc;
     }),
-  },
-  stderr: {
-    on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
-      if (event === "data" && stderr) cb(Buffer.from(stderr));
+    on: vi.fn((event: "close" | "error", cb: (value: number | null | Error) => void) => {
+      if (event === "close") cb(code);
+      return proc;
     }),
-  },
-  on: vi.fn((event: string, cb: (code: number | null) => void) => {
-    if (event === "close") cb(code);
-  }),
-  kill: vi.fn(),
-});
+    kill: vi.fn(),
+  };
+  return proc;
+};
+
+const configureManager = (
+  overrides: Partial<ManagerDependencies> = {},
+): void => {
+  setManagerDependencies({
+    spawn: vi.fn<ManagerSpawn>().mockReturnValue(makeProc()),
+    loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    loadAgentTimeoutMs: vi.fn().mockResolvedValue(10 * 60 * 1000),
+    resolveModelConfig: vi.fn().mockImplementation(
+      async (model?: ResolvedModel): Promise<ResolvedModel> => ({
+        provider: model?.provider ?? "zai",
+        modelId: model?.modelId ?? "glm-4.7-flash",
+        thinkingLevel: model?.thinkingLevel,
+      }),
+    ),
+    findGroupByName: vi.fn().mockResolvedValue(undefined),
+    ensureGroupSkills: vi.fn().mockResolvedValue(undefined),
+    resolveTools: resolveConfiguredTools,
+    validateModel: managerValidateModel,
+    ...overrides,
+  });
+};
 
 describe("sendMessage: Docker 起動構成", () => {
-  let spawnMock: ReturnType<typeof vi.fn>;
+  let spawnMock: SpawnMock;
 
   beforeEach(async () => {
-    vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
-    }));
-    vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi.fn().mockResolvedValue(undefined),
-    }));
-    const { initManager } = await import("./manager.js");
+    configureManager({ spawn: spawnMock });
     await initManager(12345);
   });
 
   afterEach(() => {
-    vi.resetModules();
   });
 
   it("docker run --rm -i --pull=always --memory=512m --cpus=1 を含む", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     expect(args).toContain("--rm");
     expect(args).toContain("-i");
     expect(args).toContain("--pull=always");
@@ -206,7 +218,6 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("SIGKILL などで null 終了したコンテナは成功レスポンスにせず再試行可能なエラーにする", async () => {
     spawnMock.mockReturnValueOnce(makeProc(null));
-    const { sendMessage } = await import("./manager.js");
 
     await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
       "コンテナがシグナルで終了しました",
@@ -225,7 +236,6 @@ describe("sendMessage: Docker 起動構成", () => {
         ].join("\n"),
       ),
     );
-    const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
     await sendMessage(
@@ -249,7 +259,6 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("コンテナ内 stderr の Status 行を image pull 完了として扱わない", async () => {
     spawnMock.mockReturnValueOnce(makeProc(0, "response", "Status: 200 OK\n"));
-    const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
     await sendMessage(
@@ -289,7 +298,6 @@ describe("sendMessage: Docker 起動構成", () => {
       );
       proc.on = vi.fn();
       spawnMock.mockReturnValueOnce(proc);
-      const { sendMessage } = await import("./manager.js");
       const onExecutionTiming = vi.fn();
 
       const result = sendMessage(
@@ -325,9 +333,6 @@ describe("sendMessage: Docker 起動構成", () => {
   it("killAllRunningContainers は実行中のコンテナ名を docker kill する", async () => {
     vi.useFakeTimers();
     try {
-      const { sendMessage, killAllRunningContainers } = await import(
-        "./manager.js"
-      );
       const proc = makeProc();
       proc.on = vi.fn(); // close イベントを発火させず「実行中」の状態を維持する
       spawnMock.mockReturnValueOnce(proc);
@@ -343,8 +348,8 @@ describe("sendMessage: Docker 起動構成", () => {
       expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
 
       expect(spawnMock).toHaveBeenCalledTimes(2);
-      const runArgs = spawnMock.mock.calls[0][1] as string[];
-      const killArgs = spawnMock.mock.calls[1][1] as string[];
+      const runArgs = getSpawnArgs(spawnMock, 0);
+      const killArgs = getSpawnArgs(spawnMock, 1);
       const nameIndex = runArgs.indexOf("--name");
       expect(killArgs).toEqual(["kill", runArgs[nameIndex + 1]]);
     } finally {
@@ -353,22 +358,19 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 
   it("実行中のコンテナが無ければ killAllRunningContainers は何もしない", async () => {
-    const { killAllRunningContainers } = await import("./manager.js");
     await killAllRunningContainers();
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     expect(args).toContain("--add-host=host.docker.internal:host-gateway");
   });
 
   it("/sessions/{groupName} にグループ単位でmountする", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
       volumeArgs.some(
@@ -381,9 +383,8 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 
   it("/workspace を mount する", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
       volumeArgs.some(
@@ -393,17 +394,15 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 
   it("/config を mount しない", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
   });
 
   it("--user にホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const userIdx = args.indexOf("--user");
     expect(userIdx).toBeGreaterThanOrEqual(0);
     expect(args[userIdx + 1]).toBe(
@@ -414,9 +413,8 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_JSON="))).toBe(
       true,
@@ -424,9 +422,8 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 
   it("CREDENTIAL_PROXY_PATH 環境変数を渡さない", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_PATH="))).toBe(
       false,
@@ -434,49 +431,38 @@ describe("sendMessage: Docker 起動構成", () => {
   });
 
   it("node /app/runner.mjs で実行する", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const nodeIdx = args.indexOf("node");
     expect(nodeIdx).toBeGreaterThan(-1);
     expect(args[nodeIdx + 1]).toBe("/app/runner.mjs");
   });
 
   it("カスタムイメージを使用する", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     expect(args).toContain("localhost:5050/my-discord-agent-runner:latest");
   });
 });
 
 describe("sendMessage: 添付ファイル", () => {
-  let spawnMock: ReturnType<typeof vi.fn>;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let spawnMock: SpawnMock;
+  let fetchMock: Mock<typeof fetch>;
 
   beforeEach(async () => {
     await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
-    vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
-    }));
-    vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi.fn().mockResolvedValue(undefined),
-    }));
+    configureManager({ spawn: spawnMock });
     fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
     });
     vi.stubGlobal("fetch", fetchMock);
-    const { initManager } = await import("./manager.js");
     await initManager(12345);
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
-    vi.resetModules();
     await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
   });
 
@@ -490,7 +476,6 @@ describe("sendMessage: 添付ファイル", () => {
   ];
 
   it("添付ファイルを /workspace/attachments に読み取り専用でマウントする", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage(
       "test-group",
       "session-1",
@@ -500,7 +485,7 @@ describe("sendMessage: 添付ファイル", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(attachments[0].url);
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
       volumeArgs.some(
@@ -512,7 +497,6 @@ describe("sendMessage: 添付ファイル", () => {
   });
 
   it("プロンプトに添付ファイルのパス一覧を追記する", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage(
       "test-group",
       "session-1",
@@ -521,15 +505,14 @@ describe("sendMessage: 添付ファイル", () => {
       attachments,
     );
 
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    const proc = spawnMock.mock.results[0].value;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0]);
     expect(payload.content).toContain("見て");
     expect(payload.content).toContain("[添付ファイル]");
     expect(payload.content).toContain("attachments/0-photo.png");
   });
 
   it("画像添付がある場合は read ツールでの確認を促すヒントを追記する", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage(
       "test-group",
       "session-1",
@@ -538,13 +521,12 @@ describe("sendMessage: 添付ファイル", () => {
       attachments,
     );
 
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    const proc = spawnMock.mock.results[0].value;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0]);
     expect(payload.content).toContain("read ツール");
   });
 
   it("画像以外の添付ファイルのみの場合は read ツールのヒントを追記しない", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "見て", undefined, [
       {
         url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
@@ -554,27 +536,25 @@ describe("sendMessage: 添付ファイル", () => {
       },
     ]);
 
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    const proc = spawnMock.mock.results[0].value;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0]);
     expect(payload.content).not.toContain("read ツール");
   });
 
   it("添付ファイルがない場合はマウントせず content も変更しない", async () => {
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
 
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs.some((v) => v.includes(":/workspace/attachments"))).toBe(
       false,
     );
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    const proc = spawnMock.mock.results[0].value;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0]);
     expect(payload.content).toBe("hi");
   });
 
   it("過去のメッセージで添付ディレクトリが作られていれば、添付なしの後続メッセージでもマウントする", async () => {
-    const { sendMessage } = await import("./manager.js");
 
     await sendMessage(
       "test-group",
@@ -586,7 +566,7 @@ describe("sendMessage: 添付ファイル", () => {
 
     await sendMessage("test-group", "session-1", "さっきの画像について教えて");
 
-    const args = spawnMock.mock.calls[1][1] as string[];
+    const args = getSpawnArgs(spawnMock, 1);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
       volumeArgs.some(
@@ -596,18 +576,17 @@ describe("sendMessage: 添付ファイル", () => {
       ),
     ).toBe(true);
 
-    const proc = spawnMock.mock.results[1].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[1][0] as string);
+    const proc = spawnMock.mock.results[1].value;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[1][0]);
     expect(payload.content).toBe("さっきの画像について教えて");
   });
 
   it("サイズが上限を超える添付ファイルはダウンロードしない", async () => {
-    const { sendMessage } = await import("./manager.js");
     const tooLarge = [{ ...attachments[0], size: 11 * 1024 * 1024 }];
     await sendMessage("test-group", "session-1", "hi", undefined, tooLarge);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs.some((v) => v.includes(":/workspace/attachments"))).toBe(
       false,
@@ -616,51 +595,41 @@ describe("sendMessage: 添付ファイル", () => {
 });
 
 describe("sendMessage: 追加マウント (config/groups.json の mounts)", () => {
-  let spawnMock: ReturnType<typeof vi.fn>;
+  let spawnMock: SpawnMock;
 
-  const setup = async (mounts: unknown) => {
-    vi.resetModules();
+  const setup = async (mounts: Array<{ host: string; container: string; readOnly?: boolean }> | undefined) => {
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
-    }));
-    vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi
-        .fn()
-        .mockResolvedValue({ name: "test-group", channels: [], mounts }),
-    }));
-    const { initManager } = await import("./manager.js");
+    configureManager({
+      spawn: spawnMock,
+      findGroupByName: vi.fn().mockResolvedValue({
+        name: "test-group",
+        channels: [],
+        mounts,
+      }),
+    });
     await initManager(12345);
   };
 
-  afterEach(() => {
-    vi.resetModules();
-  });
-
   it("絶対パスの host を container にそのままマウントする", async () => {
     await setup([{ host: "/host/repo", container: "/repo" }]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs).toContain("/host/repo:/repo");
   });
 
   it("readOnly: true の場合は :ro が付与される", async () => {
     await setup([{ host: "/host/repo", container: "/repo", readOnly: true }]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs).toContain("/host/repo:/repo:ro");
   });
 
   it("相対パスの host は ROOT 基準で解決される", async () => {
     await setup([{ host: "relative/dir", container: "/relative" }]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
       volumeArgs.some(
@@ -672,16 +641,14 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
 
   it("mounts が未設定の場合は追加マウントなし", async () => {
     await setup(undefined);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const args = spawnMock.mock.calls[0][1] as string[];
+    const args = getSpawnArgs(spawnMock, 0);
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs).toHaveLength(2);
   });
 
   it("相対パスの host がリポジトリルート外を指す場合は設定エラーを返す", async () => {
     await setup([{ host: "../outside", container: "/outside" }]);
-    const { sendMessage } = await import("./manager.js");
     await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
       /設定エラー.*リポジトリルート外/,
     );
@@ -692,31 +659,25 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    vi.resetModules();
     process.env = { ...originalEnv };
   });
 
   afterEach(() => {
     process.env = originalEnv;
-    vi.resetModules();
   });
 
   const setup = async (creds: unknown[]) => {
     const spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-    vi.doMock("../config/credential-proxy.js", () => ({
+    configureManager({
+      spawn: spawnMock,
       loadCredentialProxy: vi.fn().mockResolvedValue(creds),
-    }));
-    vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi.fn().mockResolvedValue(undefined),
-    }));
-    const { initManager } = await import("./manager.js");
+    });
     await initManager(12345);
     return spawnMock;
   };
 
-  const getCredJson = (spawnMock: ReturnType<typeof vi.fn>) => {
-    const args = spawnMock.mock.calls[0][1] as string[];
+  const getCredJson = (spawnMock: SpawnMock) => {
+    const args = getSpawnArgs(spawnMock, 0);
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     const credArg = envArgs.find((v) => v.startsWith("CREDENTIAL_PROXY_JSON="));
     return JSON.parse(credArg?.slice("CREDENTIAL_PROXY_JSON=".length) ?? "[]");
@@ -731,7 +692,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         baseUrl: "https://api.example.com/v1",
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/test");
@@ -746,7 +706,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         baseUrl: "https://api.example.com/v1",
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].baseUrl).toMatch(
@@ -763,7 +722,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         baseUrl: "https://api.example.com/v1",
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].envVars).toBeUndefined();
@@ -782,7 +740,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         },
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].google).toBeUndefined();
@@ -800,7 +757,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         },
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].redditCookie).toBeUndefined();
@@ -817,7 +773,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         baseUrl: "https://api.example.com/v1",
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].auth).toBeUndefined();
@@ -834,7 +789,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         reasoning: true,
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].api).toBe("openai-completions");
@@ -852,7 +806,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
       { provider: "bad", baseUrl: "https://api.example.com/{MISSING_VAR}/v1" },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds).toHaveLength(1);
@@ -869,7 +822,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       { provider: "local-llm", baseUrl: "http://192.168.40.65:8080/v1" },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].provider).toBe("local-llm");
@@ -887,7 +839,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         baseUrl: "https://api.example.com/v1",
       },
     ]);
-    const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds).toHaveLength(0);
@@ -896,29 +847,19 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
 
 describe("sendMessage: 設定バリデーション", () => {
   beforeEach(() => {
-    vi.resetModules();
-    vi.doMock("node:child_process", () => ({
-      spawn: vi.fn().mockReturnValue(makeProc()),
-    }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
-    }));
   });
 
   afterEach(() => {
-    vi.resetModules();
   });
 
   it("不正なツール名を持つグループ設定は設定エラーを返す", async () => {
-    vi.doMock("../config/groups.js", () => ({
+    configureManager({
       findGroupByName: vi.fn().mockResolvedValue({
         name: "test-group",
         channels: [],
         tools: ["invalid"],
       }),
-    }));
-
-    const { sendMessage, initManager } = await import("./manager.js");
+    });
     await initManager(12345);
     await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
       "設定エラー: 不明なツール名: invalid",
@@ -926,15 +867,13 @@ describe("sendMessage: 設定バリデーション", () => {
   });
 
   it("不正なプロバイダを持つグループ設定は設定エラーを返す", async () => {
-    vi.doMock("../config/groups.js", () => ({
+    configureManager({
       findGroupByName: vi.fn().mockResolvedValue({
         name: "test-group",
         channels: [],
         model: { provider: "unknown", modelId: "x" },
       }),
-    }));
-
-    const { sendMessage, initManager } = await import("./manager.js");
+    });
     await initManager(12345);
     await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
       "設定エラー: 不明なプロバイダ: unknown",
@@ -942,15 +881,13 @@ describe("sendMessage: 設定バリデーション", () => {
   });
 
   it("mounts.container が /workspace と重複する場合は設定エラーを返す", async () => {
-    vi.doMock("../config/groups.js", () => ({
+    configureManager({
       findGroupByName: vi.fn().mockResolvedValue({
         name: "test-group",
         channels: [],
         mounts: [{ host: "/host/repo", container: "/workspace" }],
       }),
-    }));
-
-    const { sendMessage, initManager } = await import("./manager.js");
+    });
     await initManager(12345);
     await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
       /設定エラー.*\/workspace/,
@@ -959,21 +896,15 @@ describe("sendMessage: 設定バリデーション", () => {
 });
 
 describe("sendMessage: configOverride", () => {
-  let spawnMock: ReturnType<typeof vi.fn>;
-  let ensureGroupSkillsMock: ReturnType<typeof vi.fn>;
+  let spawnMock: SpawnMock;
+  let ensureGroupSkillsMock: SkillsMock;
 
   const setup = async () => {
-    vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
-    }));
-    vi.doMock("../config/group-config.js", () => ({
+    configureManager({
+      spawn: spawnMock,
       ensureGroupSkills: ensureGroupSkillsMock,
-    }));
-    vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi.fn().mockResolvedValue({
         name: "test-group",
         channels: [],
@@ -982,15 +913,12 @@ describe("sendMessage: configOverride", () => {
         skills: ["base-skill"],
         allowMention: true,
       }),
-    }));
-    const { initManager, sendMessage } = await import("./manager.js");
+    });
     await initManager(12345);
     return sendMessage;
   };
 
   afterEach(() => {
-    vi.doUnmock("../config/group-config.js");
-    vi.resetModules();
   });
 
   it("configOverride が payload の groupConfig を上書きする", async () => {
@@ -998,17 +926,17 @@ describe("sendMessage: configOverride", () => {
 
     await sendMessage("test-group", "session-1", "hi", {
       configOverride: {
-        model: { provider: "provider-a", modelId: "model-x" },
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["bash"],
         skills: ["override-skill"],
       },
     });
 
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    const proc = spawnMock.mock.results[0].value;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0]);
     expect(payload.groupConfig).toEqual(
       expect.objectContaining({
-        model: { provider: "provider-a", modelId: "model-x" },
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["bash"],
         skills: ["override-skill"],
         allowMention: true,
@@ -1039,8 +967,8 @@ describe("sendMessage: configOverride", () => {
       configOverride: { skills: "*" },
     });
 
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    const proc = spawnMock.mock.results[0].value;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0]);
     expect(payload.groupConfig).toEqual(
       expect.objectContaining({
         skills: "*",
@@ -1052,24 +980,15 @@ describe("sendMessage: configOverride", () => {
 
 describe("sendMessage: onDiscordEvent コールバック", () => {
   const setupWithStderr = async (stderr: string, code = 0) => {
-    vi.resetModules();
     const spawnMock = vi
       .fn()
       .mockReturnValue(makeProc(code, "response", stderr));
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([]),
-    }));
-    vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi.fn().mockResolvedValue(undefined),
-    }));
-    const { initManager } = await import("./manager.js");
+    configureManager({ spawn: spawnMock });
     await initManager(12345);
-    return (await import("./manager.js")).sendMessage;
+    return sendMessage;
   };
 
   afterEach(() => {
-    vi.resetModules();
   });
 
   it("__DISCORD_EVENT__ 行はコールバックに渡される", async () => {
