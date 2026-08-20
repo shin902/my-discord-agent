@@ -31,6 +31,9 @@ export type FetchFeedResult =
 
 type ParseFeedOptions = { baseUrl: string; contentType?: string | null };
 type ConditionalHeaders = { etag: string | null; lastModified: string | null };
+interface FeedRequestHeaders {
+  [header: string]: string;
+}
 
 function stableEntryId(
   guid: string,
@@ -144,7 +147,7 @@ export async function fetchFeed(
   url: string,
   conditional?: ConditionalHeaders,
 ): Promise<FetchFeedResult> {
-  const headers: Record<string, string> = {
+  const headers: FeedRequestHeaders = {
     Accept:
       "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml, text/xml",
     "User-Agent": "my-discord-agent/rss-collector",
