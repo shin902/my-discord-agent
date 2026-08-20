@@ -32,7 +32,9 @@ export type ProxyRequestFunction = (
   callback?: ProxyRequestCallback,
 ) => http.ClientRequest;
 export interface ProxyServer {
+  // biome-ignore lint/suspicious/noConfusingVoidType: Implementations may return void or be chainable like Node.js servers.
   on(event: "error", listener: (error: Error) => void): void | ProxyServer;
+  // biome-ignore lint/suspicious/noConfusingVoidType: Implementations may return void or be chainable like Node.js servers.
   listen(port: number, host: string, callback: () => void): void | ProxyServer;
   address(): string | { port: number } | null;
 }
