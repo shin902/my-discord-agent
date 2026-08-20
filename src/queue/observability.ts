@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { inspectRssReconciliation } from "../rss/observability.js";
+import { z } from "zod";
 export interface LatencyPercentiles {
   count: number;
   p50: number | null;
@@ -55,10 +56,39 @@ export interface ObservabilitySnapshot {
   rss: RssMetrics | null;
   alerts: string[];
 }
+export interface OperatorJob {
+  id: string;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  lease_until: string | null;
+  worker_id: string | null;
+  last_error: string | null;
+  updated_at: string;
+  result_state: string | null;
+}
+export interface OperatorDelivery {
+  id: string;
+  job_id: string;
+  status: string;
+  attempts: number;
+  lease_until: string | null;
+  worker_id: string | null;
+  last_error: string | null;
+  updated_at: string;
+}
+export interface OperatorDeadLetter {
+  id: string;
+  job_id: string;
+  reason: string;
+  error: string;
+  source: string;
+  created_at: string;
+}
 export interface OperatorInspection {
-  jobs: Record<string, unknown>[];
-  deliveries: Record<string, unknown>[];
-  deadLetters: Record<string, unknown>[];
+  jobs: OperatorJob[];
+  deliveries: OperatorDelivery[];
+  deadLetters: OperatorDeadLetter[];
   rss: RssMetrics | null;
   alerts: string[];
 }
@@ -80,10 +110,24 @@ function percentiles(values: number[]): LatencyPercentiles {
     p99: pick(0.99),
   };
 }
+const AgeRowSchema = z.object({
+  start: z.string(),
+  finish: z.string().nullable(),
+});
+const CountRowSchema = z.object({
+  status: z.string(),
+  count: z.number(),
+});
+const AgentRowSchema = z.object({
+  jobs: z.number(),
+  completed: z.number().nullable(),
+  failed: z.number().nullable(),
+  empty_responses: z.number().nullable(),
+  average_attempts: z.number(),
+});
+
 function ageValues(db: Database.Database, sql: string): number[] {
-  return (
-    db.prepare(sql).all() as Array<{ start: string; finish: string | null }>
-  ).flatMap((row) => {
+  return z.array(AgeRowSchema).parse(db.prepare(sql).all()).flatMap((row) => {
     const start = Date.parse(row.start);
     const finish = row.finish ? Date.parse(row.finish) : NaN;
     return Number.isFinite(start) && Number.isFinite(finish)
@@ -91,12 +135,14 @@ function ageValues(db: Database.Database, sql: string): number[] {
       : [];
   });
 }
-function counts(db: Database.Database, table: string): Record<string, number> {
-  const result: Record<string, number> = {};
-  for (const row of db
-    .prepare(`SELECT status,COUNT(*) AS count FROM ${table} GROUP BY status`)
-    .all() as Array<{ status: string; count: number }>)
-    result[row.status] = Number(row.count);
+function counts(db: Database.Database, table: string) {
+  const result: { [status: string]: number } = {};
+  const rows = z
+    .array(CountRowSchema)
+    .parse(
+      db.prepare(`SELECT status,COUNT(*) AS count FROM ${table} GROUP BY status`).all(),
+    );
+  for (const row of rows) result[row.status] = row.count;
   return result;
 }
 function rssMetrics(
@@ -174,12 +220,12 @@ export function collectObservability(
       ),
     ),
     staleClaims: Number(
-      (
+      z.object({ count: z.number() }).parse(
         runtimeDb
           .prepare(
             "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('claimed','running') AND lease_until IS NOT NULL AND lease_until<?",
           )
-          .get(staleBefore) as { count: number }
+          .get(staleBefore),
       ).count,
     ),
   };
@@ -192,35 +238,30 @@ export function collectObservability(
       ),
     ),
     ambiguous: Number(
-      (
+      z.object({ count: z.number() }).parse(
         runtimeDb
           .prepare(
             "SELECT COUNT(*) AS count FROM deliveries WHERE status='ambiguous'",
           )
-          .get() as { count: number }
+          .get(),
       ).count,
     ),
     staleClaims: Number(
-      (
+      z.object({ count: z.number() }).parse(
         runtimeDb
           .prepare(
             "SELECT COUNT(*) AS count FROM deliveries WHERE status='sending' AND lease_until IS NOT NULL AND lease_until<?",
           )
-          .get(staleBefore) as { count: number }
+          .get(staleBefore),
       ).count,
     ),
   };
-  const agentRows = runtimeDb
+  const agentRowsRaw = runtimeDb
     .prepare(
       "SELECT COUNT(*) AS jobs,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,SUM(CASE WHEN status='dead_letter' THEN 1 ELSE 0 END) AS failed,SUM(CASE WHEN result_state='empty_response' THEN 1 ELSE 0 END) AS empty_responses,COALESCE(AVG(attempts),0) AS average_attempts FROM jobs",
     )
-    .get() as {
-    jobs: number;
-    completed: number;
-    failed: number;
-    empty_responses: number;
-    average_attempts: number;
-  };
+    .get();
+  const agentRows = AgentRowSchema.parse(agentRowsRaw);
   const agent: AgentMetrics = {
     jobs: Number(agentRows.jobs),
     completed: Number(agentRows.completed ?? 0),
@@ -272,36 +313,56 @@ export function inspectRuntime(
 ): OperatorInspection {
   const snapshot = collectObservability(runtimeDb, rssDb, options);
   return {
-    jobs: runtimeDb
-      .prepare(
+    jobs: z
+      .array(
+        z.object({
+          id: z.string(), status: z.string(), attempts: z.number(),
+          max_attempts: z.number(), lease_until: z.string().nullable(),
+          worker_id: z.string().nullable(), last_error: z.string().nullable(),
+          updated_at: z.string(), result_state: z.string().nullable(),
+        }),
+      )
+      .parse(runtimeDb.prepare(
         "SELECT id,status,attempts,max_attempts,lease_until,worker_id,last_error,updated_at,result_state FROM jobs ORDER BY updated_at DESC",
+      ).all()),
+    deliveries: z
+      .array(
+        z.object({
+          id: z.string(), job_id: z.string(), status: z.string(), attempts: z.number(),
+          lease_until: z.string().nullable(), worker_id: z.string().nullable(),
+          last_error: z.string().nullable(), updated_at: z.string(),
+        }),
       )
-      .all() as Record<string, unknown>[],
-    deliveries: runtimeDb
-      .prepare(
+      .parse(runtimeDb.prepare(
         "SELECT id,job_id,status,attempts,lease_until,worker_id,last_error,updated_at FROM deliveries ORDER BY updated_at DESC",
+      ).all()),
+    deadLetters: z
+      .array(
+        z.object({
+          id: z.string(), job_id: z.string(), reason: z.string(), error: z.string(),
+          source: z.string(), created_at: z.string(),
+        }),
       )
-      .all() as Record<string, unknown>[],
-    deadLetters: runtimeDb
-      .prepare(
+      .parse(runtimeDb.prepare(
         "SELECT id,job_id,reason,error,source,created_at FROM dead_letters ORDER BY created_at DESC",
-      )
-      .all() as Record<string, unknown>[],
+      ).all()),
     rss: snapshot.rss,
     alerts: snapshot.alerts,
   };
 }
 
+export type StructuredLogField = string | number | boolean | null;
+export type StructuredLogFields = Readonly<Record<string, StructuredLogField>>;
 export interface StructuredLog {
   at: string;
   component: "queue" | "delivery" | "agent" | "rss";
   event: string;
-  fields: Record<string, unknown>;
+  fields: StructuredLogFields;
 }
 export function structuredLog(
   component: StructuredLog["component"],
   event: string,
-  fields: Record<string, unknown> = {},
+  fields: StructuredLogFields = {},
   at = new Date(),
 ): StructuredLog {
   return { at: at.toISOString(), component, event, fields };

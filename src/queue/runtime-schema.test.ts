@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   configureRuntimeDb,
   openRuntimeDb,
@@ -107,17 +108,18 @@ function makeTempDbPath(): string {
   return join(dir, "runtime.sqlite");
 }
 
+const SchemaMetaRow = z.object({ value: z.string() });
+const TableColumn = z.object({ name: z.string() });
+const DeliveryRow = z.object({ response_index: z.number(), host_unique_key: z.string() });
+const JobRow = z.object({ id: z.string(), status: z.string(), session_id: z.string(), sequence: z.number(), result_state: z.string().nullable(), succeeded: z.number() });
+
 function schemaVersion(db: Database.Database): number {
-  const row = db
-    .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
-    .get() as { value: string } | undefined;
+  const row = SchemaMetaRow.optional().parse(db.prepare("SELECT value FROM schema_meta WHERE key='schema_version'").get());
   return row ? Number.parseInt(row.value, 10) : 0;
 }
 
 function columnsOf(db: Database.Database, table: string): string[] {
-  return (
-    db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
-  ).map((column) => column.name);
+  return z.array(TableColumn).parse(db.prepare(`PRAGMA table_info(${table})`).all()).map((column) => column.name);
 }
 
 function expectTables(db: Database.Database): void {
@@ -154,7 +156,7 @@ function enqueueSample(db: Database.Database): void {
     const claimed = repo.claim("worker-a", 1_000);
     expect(claimed).toBeDefined();
     expect(claimed?.job.content).toBe("content");
-    expect(typeof enqueued.job.id).toBe("string");
+    expect(z.string().parse(enqueued.job.id)).toBeTruthy();
   } finally {
     repo.close();
   }
@@ -252,14 +254,7 @@ describe("runtime schema migration", () => {
           "result_json",
         ]),
       );
-      const jobs = db.prepare("SELECT * FROM jobs ORDER BY id").all() as Array<{
-        id: string;
-        status: string;
-        session_id: string;
-        sequence: number;
-        result_state: string | null;
-        succeeded: number;
-      }>;
+      const jobs = z.array(JobRow).parse(db.prepare("SELECT * FROM jobs ORDER BY id").all());
       expect(jobs).toHaveLength(2);
       expect(jobs[0]).toMatchObject({
         id: "legacy-active",
@@ -275,9 +270,7 @@ describe("runtime schema migration", () => {
         succeeded: 1,
       });
       // delivery row survived and was backfilled with durable-column defaults
-      const delivery = db
-        .prepare("SELECT * FROM deliveries WHERE id='delivery-1'")
-        .get() as { response_index: number; host_unique_key: string };
+      const delivery = DeliveryRow.parse(db.prepare("SELECT * FROM deliveries WHERE id='delivery-1'").get());
       expect(delivery.response_index).toBe(0);
       expect(delivery.host_unique_key).toBe("legacy-active:0");
       expect(
@@ -340,9 +333,7 @@ describe("runtime schema migration", () => {
         expect.arrayContaining(deliveryColumns),
       );
       expect(columnsOf(db, "idempotency_keys")).toContain("completed_at");
-      const delivery = db
-        .prepare("SELECT * FROM deliveries WHERE id='d1'")
-        .get() as { response_index: number; host_unique_key: string };
+      const delivery = DeliveryRow.parse(db.prepare("SELECT * FROM deliveries WHERE id='d1'").get());
       expect(delivery.response_index).toBe(0);
       expect(delivery.host_unique_key).toBe("modern-job:0");
       // repeating initialization on the same store is idempotent

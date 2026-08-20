@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { z } from "zod";
 
 async function canonicalPath(value: string): Promise<string> {
   const absolute = path.resolve(value);
@@ -67,15 +68,16 @@ function checkpoint(
   try {
     const value = db.pragma("wal_checkpoint(PASSIVE)", {
       simple: false,
-    }) as unknown;
-    if (Array.isArray(value)) {
-      const row = (value[0] ?? {}) as Record<string, unknown>;
-      return {
-        busy: Number(row.busy ?? 0),
-        log: Number(row.log ?? 0),
-        checkpointed: Number(row.checkpointed ?? 0),
-      };
-    }
+    });
+    const row = z
+      .object({
+        busy: z.number(),
+        log: z.number(),
+        checkpointed: z.number(),
+      })
+      .optional()
+      .parse(Array.isArray(value) ? value[0] : undefined);
+    if (row) return row;
     return null;
   } catch {
     return null;
@@ -133,14 +135,15 @@ export async function validateRuntimeBackup(
         error: error instanceof Error ? error.message : String(error),
       };
     }
-    return {
+    const result: BackupValidation = {
       path: backupPath,
       exists: true,
       integrity: valid,
       restored: valid,
       timestamp: info.mtime.toISOString(),
-      ...(valid ? {} : { error: "SQLite integrity_check failed" }),
     };
+    if (!valid) result.error = "SQLite integrity_check failed";
+    return result;
   } catch (error) {
     return {
       path: backupPath,

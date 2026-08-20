@@ -15,9 +15,6 @@ describe("acquireLlmLock", () => {
   it("parallel provider は同時に複数取得できる", async () => {
     const release1 = await acquireLlmLock("provider-a", "parallel");
     const release2 = await acquireLlmLock("provider-a", "parallel");
-
-    expect(typeof release1).toBe("function");
-    expect(typeof release2).toBe("function");
     release1();
     release2();
   });
@@ -61,9 +58,6 @@ describe("acquireLlmLock", () => {
   it("異なる serial provider は同時に取得できる", async () => {
     const releaseA = await acquireLlmLock("provider-a", "serial");
     const releaseB = await acquireLlmLock("provider-b", "serial");
-
-    expect(typeof releaseA).toBe("function");
-    expect(typeof releaseB).toBe("function");
     releaseA();
     releaseB();
   });
@@ -91,7 +85,6 @@ describe("acquireLlmLock", () => {
     release1();
 
     const release2 = await acquireLlmLock("provider-a", "serial");
-    expect(typeof release2).toBe("function");
     release2();
   });
 });

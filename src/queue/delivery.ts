@@ -1,18 +1,72 @@
 import { randomUUID } from "node:crypto";
-import type { Client } from "discord.js";
+
+import { z } from "zod";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
 import { settleRssDispatch } from "./reconciliation.js";
 
-function discordClientsReady(): boolean {
-  return [...getDiscordClients().values()].some((value) => value.isReady());
-}
+export interface DeliveryResult { externalMessageId: string; cronThreadId?: string; }
 
-async function resolveDiscordClient(groupName: string) {
-  return getDiscordClientForGroupName(groupName);
+export type DeliverySendPayload =
+  | string
+  | {
+      content: string;
+      allowedMentions?: { parse?: readonly string[]; repliedUser: boolean };
+      reply?: { messageReference: string; failIfNotExists: boolean };
+    };
+export interface DeliveryTarget {
+  readonly id?: string;
+  readonly isSendable: () => boolean;
+  readonly send: (payload: DeliverySendPayload) => Promise<DeliveryMessageResponse>;
+  readonly threads?: { readonly create: (options: { name: string }) => Promise<DeliveryTarget> };
 }
+export interface DeliveryClient {
+  readonly isReady: () => boolean;
+  readonly channels: {
+    readonly cache: { readonly get: (id: string) => DeliveryTarget | undefined };
+    readonly fetch: (id: string) => Promise<DeliveryTarget | null>;
+  };
+}
+export interface DeliveryMessageResponse { readonly id?: string; }
+
+function adaptDiscordClient(client: Awaited<ReturnType<typeof getDiscordClientForGroupName>>): DeliveryClient {
+  return {
+    isReady: () => client.isReady(),
+    channels: {
+      cache: { get: (id) => adaptDiscordTarget(client.channels.cache.get(id)) },
+      fetch: async (id) => adaptDiscordTarget(await client.channels.fetch(id)) ?? null,
+    },
+  };
+}
+function adaptDiscordTarget(target: Awaited<ReturnType<Awaited<ReturnType<typeof getDiscordClientForGroupName>>["channels"]["fetch"]>> | null | undefined): DeliveryTarget | undefined {
+  if (!target || !target.isSendable()) return undefined;
+  return {
+    id: target.id,
+    isSendable: () => target.isSendable(),
+    send: async (payload) => {
+      const text = z.string().safeParse(payload);
+      if (text.success) return { id: (await target.send({ content: text.data })).id };
+      const objectPayload = z.object({
+        content: z.string(),
+        allowedMentions: z.object({ repliedUser: z.boolean() }).optional(),
+        reply: z.object({ messageReference: z.string(), failIfNotExists: z.boolean() }).optional(),
+      }).parse(payload);
+      const response = await target.send(objectPayload);
+      return { id: response.id };
+    },
+  };
+}
+export interface DiscordDeliveryDependencies {
+  resolveClient: (groupName: string) => Promise<DeliveryClient>;
+  clientsReady: () => boolean;
+}
+const defaultDiscordDependencies: DiscordDeliveryDependencies = {
+  resolveClient: async (groupName) =>
+    adaptDiscordClient(await getDiscordClientForGroupName(groupName)),
+  clientsReady: () => [...getDiscordClients().values()].some((value) => value.isReady()),
+};
 
 import type {
   DeliveryClaim,
@@ -34,51 +88,54 @@ export interface DeliverySendContext {
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
 }
 export interface DeliveryAdapter {
-  send(
-    row: DeliveryRow,
-    context?: DeliverySendContext,
-  ): Promise<{ externalMessageId: string; cronThreadId?: string }>;
+  send(row: DeliveryRow, context?: DeliverySendContext): Promise<DeliveryResult>;
 }
-function statusCode(error: unknown): number | undefined {
-  const value = error as { status?: unknown; statusCode?: unknown };
-  const code = value?.status ?? value?.statusCode;
-  return typeof code === "number" ? code : undefined;
+type DeliveryUpdate = { error: string; retryAt?: string };
+type DeliverySentUpdate = { externalMessageId: string; cronThreadId?: string };
+const deliveryPayloadSchema = z.object({
+  content: z.string().optional(), groupName: z.string().optional(),
+  destinationType: z.string().optional(), destinationId: z.string().optional(),
+  replyMessageId: z.string().optional(), allowMention: z.boolean().optional(),
+  cronJobId: z.string().optional(), cronThreadId: z.string().optional(),
+  rssDispatchId: z.string().optional(), rssStatePath: z.string().optional(),
+  rssDispatchJobId: z.string().optional(),
+});
+type DeliveryPayload = z.infer<typeof deliveryPayloadSchema>;
+function parseDeliveryPayload(json: string | null): DeliveryPayload {
+  return deliveryPayloadSchema.parse(JSON.parse(json ?? "{}"));
 }
-export function classifyDiscordError(error: unknown): DeliveryErrorKind {
-  const status = statusCode(error);
+function parseRssPayload(json: string | null): { rssDispatchId: string; rssStatePath?: string; rssDispatchJobId?: string } | undefined {
+  const payload = parseDeliveryPayload(json);
+  return payload.rssDispatchId ? { rssDispatchId: payload.rssDispatchId, rssStatePath: payload.rssStatePath, rssDispatchJobId: payload.rssDispatchJobId } : undefined;
+}
+function statusCode(cause: unknown): number | undefined {
+  const parsed = z
+    .object({ status: z.number().optional(), statusCode: z.number().optional() })
+    .passthrough()
+    .safeParse(cause);
+  if (!parsed.success) return undefined;
+  return parsed.data.status ?? parsed.data.statusCode;
+}
+export function classifyDiscordError(cause: unknown): DeliveryErrorKind {
+  const status = statusCode(cause);
   if (status !== undefined)
     return status === 429 || status >= 500 ? "retryable" : "non-retryable";
   if (
-    error instanceof TypeError ||
-    (error instanceof Error &&
-      /timeout|network|econn|socket|fetch/i.test(error.message))
+    cause instanceof TypeError ||
+    (cause instanceof Error &&
+      /timeout|network|econn|socket|fetch/i.test(cause.message))
   )
     return "retryable";
   return "unknown";
 }
-interface DeliveryPayload {
-  content?: string;
-  groupName?: string;
-  destinationType?: string;
-  destinationId?: string;
-  replyMessageId?: string;
-  // 省略時はメンション通知を許可しない。
-  allowMention?: boolean;
-  cronJobId?: string;
-  cronThreadId?: string;
-}
-type DeliveryTarget = {
-  id?: unknown;
-  isSendable?: () => boolean;
-  send: (payload: unknown) => Promise<{ id?: unknown }>;
-  threads?: { create: (options: { name: string }) => Promise<DeliveryTarget> };
-};
 export class DiscordDeliveryAdapter implements DeliveryAdapter {
+  constructor(private readonly dependencies: DiscordDeliveryDependencies = defaultDiscordDependencies) {}
+  dependenciesReady(): boolean { return this.dependencies.clientsReady(); }
   async send(
     row: DeliveryRow,
     context: DeliverySendContext = {},
-  ): Promise<{ externalMessageId: string; cronThreadId?: string }> {
-    const payload = JSON.parse(row.payloadJson ?? "{}") as DeliveryPayload;
+  ): Promise<DeliveryResult> {
+    const payload = parseDeliveryPayload(row.payloadJson);
     // Discord's create/send calls are mutations whose response can be lost
     // after the server has applied the change. Transport/unknown failures
     // after either call therefore must not be retried automatically.
@@ -92,9 +149,9 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         );
       if (!payload.groupName)
         throw new DeliveryError("non-retryable", "delivery has no groupName");
-      let client: Client;
+      let client: DeliveryClient;
       try {
-        client = await resolveDiscordClient(payload.groupName);
+        client = await this.dependencies.resolveClient(payload.groupName);
       } catch (error) {
         throw new DeliveryError(
           "non-retryable",
@@ -102,7 +159,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           error,
         );
       }
-      if (typeof client.isReady === "function" && !client.isReady())
+      if (!client.isReady())
         throw new DeliveryError("retryable", "Discord client is not ready");
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
@@ -111,19 +168,15 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         row.destinationType === "new-thread"
       ) {
         if (threadId) {
-          target = (await client.channels.fetch(
-            threadId,
-          )) as unknown as DeliveryTarget;
+          target = (await client.channels.fetch(threadId)) ?? undefined;
         } else {
-          const channel = (await client.channels.fetch(
-            destinationId,
-          )) as unknown as DeliveryTarget | null;
+          const channel = await client.channels.fetch(destinationId);
           if (!channel)
             throw new DeliveryError(
               "retryable",
               "destination channel is unavailable",
             );
-          if (typeof channel.threads?.create !== "function")
+          if (!channel.threads)
             throw new DeliveryError(
               "non-retryable",
               "destination does not support threads",
@@ -144,17 +197,15 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           }
         }
       } else {
-        target = (client.channels.cache.get(destinationId) ??
-          (await client.channels.fetch(
-            destinationId,
-          ))) as unknown as DeliveryTarget;
+        target = client.channels.cache.get(destinationId) ??
+          (await client.channels.fetch(destinationId)) ?? undefined;
       }
       if (!target)
         throw new DeliveryError(
           "retryable",
           "destination channel is unavailable",
         );
-      if (typeof target.isSendable !== "function" || !target.isSendable())
+      if (!target.isSendable())
         throw new DeliveryError("non-retryable", "destination is not sendable");
       const content = String(payload.content ?? "");
       const allowMention = payload.allowMention === true;
@@ -167,7 +218,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         ? await target.send({
             content,
             reply: {
-              messageReference: payload.replyMessageId,
+              messageReference: payload.replyMessageId ?? "",
               failIfNotExists: false,
             },
             // allowMention=true は従来の送信形式を維持する。
@@ -176,10 +227,11 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         : await target.send(
             allowMention ? content : { content, allowedMentions },
           );
-      return {
-        externalMessageId: String(value?.id ?? randomUUID()),
-        ...(threadId ? { cronThreadId: threadId } : {}),
-      };
+      const sent = {
+        externalMessageId: String(value.id ?? randomUUID()),
+        cronThreadId: threadId,
+      } satisfies DeliveryResult;
+      return sent;
     } catch (error) {
       if (error instanceof DeliveryError) throw error;
       const kind = classifyDiscordError(error);
@@ -236,7 +288,7 @@ export class DeliveryWorker {
     if (
       !this.options.ready &&
       this.adapter instanceof DiscordDeliveryAdapter &&
-      !discordClientsReady()
+      !this.adapterReady()
     )
       return false;
     const claim = this.repository.claimDelivery(
@@ -247,6 +299,11 @@ export class DeliveryWorker {
     if (!claim) return false;
     await this.process(claim);
     return true;
+  }
+  private adapterReady(): boolean {
+    return this.adapter instanceof DiscordDeliveryAdapter
+      ? this.adapter.dependenciesReady()
+      : true;
   }
   private async process(claim: DeliveryClaim): Promise<void> {
     try {
@@ -264,10 +321,9 @@ export class DeliveryWorker {
       // The pre-send persistCronThread path (invoked by the adapter right after
       // Discord thread creation and before the message send) remains the
       // crash-safety boundary that survives ambiguous/failed outcomes.
-      this.repository.updateDelivery(claim.row.id, claim.fencingToken, "sent", {
-        externalMessageId: sent.externalMessageId,
-        ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),
-      });
+      const update: DeliverySentUpdate = { externalMessageId: sent.externalMessageId };
+      if (sent.cronThreadId) update.cronThreadId = sent.cronThreadId;
+      this.repository.updateDelivery(claim.row.id, claim.fencingToken, "sent", update);
       if (this.isRss(claim.row)) {
         const deliveries = this.repository
           .listDeliveries()
@@ -299,16 +355,17 @@ export class DeliveryWorker {
               : kind === "non-retryable"
                 ? "failed"
                 : "retry_wait",
-            {
-              error: String(error),
-              ...(kind === "retryable"
-                ? {
-                    retryAt: new Date(
-                      Date.now() + (this.options.retryDelayMs ?? 1000),
-                    ).toISOString(),
-                  }
-                : {}),
-            },
+            (() => {
+              const update: DeliveryUpdate = {
+                error: String(error),
+              };
+              if (kind === "retryable") {
+                update.retryAt = new Date(
+                  Date.now() + (this.options.retryDelayMs ?? 1000),
+                ).toISOString();
+              }
+              return update;
+            })(),
           );
         }
       } catch (updateError) {
@@ -317,33 +374,20 @@ export class DeliveryWorker {
     }
   }
   private isRss(row: DeliveryRow): boolean {
-    if (!row.payloadJson) return false;
-    try {
-      return (
-        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
-          .rssDispatchId === "string"
-      );
-    } catch {
-      return false;
-    }
+    try { return parseRssPayload(row.payloadJson) !== undefined; } catch { return false; }
   }
 
   private settleRss(
     row: DeliveryRow,
     resolution: "completed" | "dead_letter",
   ): void {
-    if (!row.payloadJson) return;
     try {
-      const payload = JSON.parse(row.payloadJson) as Record<string, unknown>;
-      if (typeof payload.rssDispatchId !== "string") return;
+      const payload = parseRssPayload(row.payloadJson);
+      if (!payload) return;
       settleRssDispatch(
-        typeof payload.rssStatePath === "string"
-          ? payload.rssStatePath
-          : undefined,
+        payload.rssStatePath,
         payload.rssDispatchId,
-        typeof payload.rssDispatchJobId === "string"
-          ? payload.rssDispatchJobId
-          : undefined,
+        payload.rssDispatchJobId,
         resolution,
       );
     } catch (error) {

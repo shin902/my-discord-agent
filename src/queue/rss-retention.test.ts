@@ -169,16 +169,7 @@ describe("RSS retention", () => {
   });
 
   it("never deletes an RSS article when a later archive export fails", async () => {
-    vi.resetModules();
-    vi.doMock("node:crypto", async () => {
-      const actual =
-        await vi.importActual<typeof import("node:crypto")>("node:crypto");
-      return { ...actual, randomUUID: () => "fixed-rss-retention-test-id" };
-    });
     try {
-      const { pruneRssRetention: isolatedPruneRssRetention } = await import(
-        "./retention.js"
-      );
       const db = createRssOnlyDb();
       const dir = await mkdtemp(join(tmpdir(), "rss-retention-late-fail-"));
       try {
@@ -192,10 +183,10 @@ describe("RSS retention", () => {
         await writeFile(blockedSecondTarget, "pre-existing archive");
 
         await expect(
-          isolatedPruneRssRetention(
+          pruneRssRetention(
             db,
             { rssArticlesMs: 1, archiveDir: dir, batchSize: 1 },
-            { at },
+            { at, makeId: () => "fixed-rss-retention-test-id" },
           ),
         ).rejects.toThrow();
         expect(

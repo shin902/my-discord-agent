@@ -148,16 +148,7 @@ describe("runtime retention", () => {
     }
   });
   it("does not delete earlier batches when a later archive export fails", async () => {
-    vi.resetModules();
-    vi.doMock("node:crypto", async () => {
-      const actual =
-        await vi.importActual<typeof import("node:crypto")>("node:crypto");
-      return { ...actual, randomUUID: () => "fixed-retention-test-id" };
-    });
     try {
-      const { pruneRetention: isolatedPruneRetention } = await import(
-        "./retention.js"
-      );
       const repo = new QueueRepository(openRuntimeDb(":memory:"));
       const dir = await mkdtemp(join(tmpdir(), "retention-late-fail-"));
       const at = new Date("2025-01-01T00:00:00.000Z");
@@ -177,10 +168,10 @@ describe("runtime retention", () => {
         await writeFile(blockedSecondTarget, "pre-existing archive");
 
         await expect(
-          isolatedPruneRetention(
+          pruneRetention(
             repo.db,
             { archiveDir: dir, jobs: { completed: 1 }, batchSize: 1 },
-            { at },
+            { at, makeId: () => "fixed-retention-test-id" },
           ),
         ).rejects.toThrow();
         expect(repo.get(firstJob.id)).toBeDefined();

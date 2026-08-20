@@ -3,8 +3,12 @@ import { constants } from "node:fs";
 import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  ModelConfigSchema,
+  SkillSelectionSchema,
+} from "../config/groups.js";
+import { z } from "zod";
 import { type LegacyMigrationResult, QueueRepository } from "./repository.js";
-import type { InboxMessage } from "./types.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -26,7 +30,7 @@ async function backupLegacyFile(
     try {
       await copyFile(source, destination, constants.COPYFILE_EXCL);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+      if (z.object({ code: z.literal("EEXIST") }).safeParse(error).success) continue;
       throw error;
     }
     await chmod(destination, 0o444);
@@ -37,110 +41,46 @@ async function backupLegacyFile(
   throw new Error(`unable to allocate legacy backup path: ${source}`);
 }
 
-function validMessage(value: unknown): value is InboxMessage {
-  if (!value || typeof value !== "object") return false;
-  const message = value as Partial<InboxMessage>;
-  if (
-    typeof message.id !== "string" ||
-    typeof message.channelId !== "string" ||
-    typeof message.groupName !== "string" ||
-    typeof message.sessionId !== "string" ||
-    typeof message.content !== "string" ||
-    typeof message.timestamp !== "string"
-  )
-    return false;
-  if (
-    message.enqueuedAt !== undefined &&
-    typeof message.enqueuedAt !== "string"
-  )
-    return false;
-  if (
-    message.retries !== undefined &&
-    (!Number.isInteger(message.retries) || message.retries < 0)
-  )
-    return false;
-  for (const optional of [
-    message.messageId,
-    message.idempotencyKey,
-    message.completedAt,
-    message.cronJobId,
-    message.cronThreadId,
-    message.rssDispatchId,
-    message.rssStatePath,
-  ]) {
-    if (optional !== undefined && typeof optional !== "string") return false;
-  }
-  if (
-    message.cronDeliveryMode !== undefined &&
-    message.cronDeliveryMode !== "direct" &&
-    message.cronDeliveryMode !== "new-thread"
-  )
-    return false;
-  if (
-    message.cronSessionMode !== undefined &&
-    message.cronSessionMode !== "per-run" &&
-    message.cronSessionMode !== "destination"
-  )
-    return false;
-  if (
-    message.cronThread !== undefined &&
-    typeof message.cronThread !== "boolean"
-  )
-    return false;
-  if (message.attachments !== undefined) {
-    if (!Array.isArray(message.attachments)) return false;
-    if (
-      message.attachments.some(
-        (attachment) =>
-          !attachment ||
-          typeof attachment.url !== "string" ||
-          typeof attachment.name !== "string" ||
-          (attachment.contentType !== null &&
-            typeof attachment.contentType !== "string") ||
-          !Number.isInteger(attachment.size) ||
-          attachment.size < 0,
-      )
-    )
-      return false;
-  }
-  if (message.configOverride !== undefined) {
-    const override = message.configOverride;
-    if (!override || typeof override !== "object" || Array.isArray(override))
-      return false;
-    if (
-      override.tools !== undefined &&
-      (!Array.isArray(override.tools) ||
-        override.tools.some((tool) => typeof tool !== "string"))
-    )
-      return false;
-    if (
-      override.skills !== undefined &&
-      override.skills !== "*" &&
-      (!Array.isArray(override.skills) ||
-        override.skills.some((skill) => typeof skill !== "string"))
-    )
-      return false;
-    if (override.model !== undefined) {
-      const model = override.model;
-      if (
-        !model ||
-        typeof model !== "object" ||
-        Array.isArray(model) ||
-        typeof model.provider !== "string" ||
-        typeof model.modelId !== "string"
-      )
-        return false;
-      if (
-        model.thinkingLevel !== undefined &&
-        !["off", "minimal", "low", "medium", "high", "xhigh"].includes(
-          model.thinkingLevel,
-        )
-      )
-        return false;
-    }
-  }
-  return true;
-}
+const LegacyMessageSchema = z.object({
+  id: z.string(),
+  channelId: z.string(),
+  groupName: z.string(),
+  sessionId: z.string(),
+  messageId: z.string().optional(),
+  content: z.string(),
+  timestamp: z.string(),
+  enqueuedAt: z.string().optional(),
+  retries: z.number().int().nonnegative().default(0),
+  idempotencyKey: z.string().optional(),
+  completedAt: z.string().optional(),
+  cronDeliveryMode: z.enum(["direct", "new-thread"]).optional(),
+  cronSessionMode: z.enum(["per-run", "destination"]).optional(),
+  cronThread: z.boolean().optional(),
+  cronJobId: z.string().optional(),
+  cronThreadId: z.string().optional(),
+  rssDispatchId: z.string().optional(),
+  rssStatePath: z.string().optional(),
+  configOverride: z.object({
+    model: ModelConfigSchema.optional(),
+    tools: z.array(z.string()).optional(),
+    skills: SkillSelectionSchema.optional(),
+  }).optional(),
+  attachments: z.array(z.object({
+    url: z.string(), name: z.string(), contentType: z.string().nullable(),
+    size: z.number().int().nonnegative(),
+  })).optional(),
+  agentsSnapshotContent: z.string().optional(),
+  memorySnapshotContent: z.string().optional(),
+  agentsSnapshotPresent: z.boolean().optional(),
+  memorySnapshotPresent: z.boolean().optional(),
+  snapshotPresent: z.boolean().optional(),
+  snapshotHash: z.string().optional(),
+  toolCallKey: z.string().optional(),
+  fencingToken: z.number().optional(),
+  workerId: z.string().optional(),
+  lastError: z.string().optional(),
+}).passthrough();
+
 
 export interface LegacyQueuePaths {
   inboxPath?: string;
@@ -170,7 +110,7 @@ export async function migrateLegacyQueue(
     try {
       bytes = await readFile(source);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if (z.object({ code: z.literal("ENOENT") }).safeParse(error).success) continue;
       throw error;
     }
     const digest = createHash("sha256").update(bytes).digest("hex");
@@ -205,7 +145,8 @@ export async function migrateLegacyQueue(
           result.deadLetters++;
           continue;
         }
-        if (!validMessage(value)) {
+        const parsedMessage = LegacyMessageSchema.safeParse(value);
+        if (!parsedMessage.success) {
           repo.recordDeadLetter({
             reason: "invalid_inbox_row",
             payloadJson: raw,
@@ -214,22 +155,16 @@ export async function migrateLegacyQueue(
           result.malformed++;
           continue;
         }
-        const identity = value as Partial<InboxMessage>;
-        const identityFields: Array<[string, unknown, string]> = [
-          ["agentsSnapshotContent", identity.agentsSnapshotContent, "string"],
-          ["memorySnapshotContent", identity.memorySnapshotContent, "string"],
-          ["snapshotHash", identity.snapshotHash, "string"],
-          ["toolCallKey", identity.toolCallKey, "string"],
-          ["agentsSnapshotPresent", identity.agentsSnapshotPresent, "boolean"],
-          ["memorySnapshotPresent", identity.memorySnapshotPresent, "boolean"],
-          ["snapshotPresent", identity.snapshotPresent, "boolean"],
-        ];
-        const hasIdentity = identityFields.some(
-          ([, field]) => field !== undefined,
-        );
-        const invalidIdentityTypes = identityFields.some(
-          ([, field, type]) => field !== undefined && typeof field !== type,
-        );
+        const identity = parsedMessage.data;
+        const hasIdentity =
+          identity.agentsSnapshotContent !== undefined ||
+          identity.memorySnapshotContent !== undefined ||
+          identity.snapshotHash !== undefined ||
+          identity.toolCallKey !== undefined ||
+          identity.agentsSnapshotPresent !== undefined ||
+          identity.memorySnapshotPresent !== undefined ||
+          identity.snapshotPresent !== undefined;
+        const invalidIdentityTypes = false;
         const incoherentIdentity =
           (hasIdentity &&
             (identity.agentsSnapshotPresent === undefined ||
@@ -264,7 +199,7 @@ export async function migrateLegacyQueue(
           result.malformed++;
           continue;
         }
-        const message = value;
+        const message = parsedMessage.data;
         if (message.completedAt) {
           if (message.idempotencyKey) {
             repo.db
@@ -296,11 +231,13 @@ export async function migrateLegacyQueue(
             const timestamp = message.enqueuedAt ?? message.timestamp;
             // Normal enqueue numbers the first row of an empty session 0; mirror
             // that exactly so migrated and enqueued sessions share one ordering.
-            const sequenceRow = repo.db
-              .prepare(
-                "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
-              )
-              .get(message.sessionId) as { sequence: number };
+            const sequenceRow = z.object({ sequence: z.number() }).parse(
+              repo.db
+                .prepare(
+                  "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
+                )
+                .get(message.sessionId),
+            );
             repo.db
               .prepare(
                 "INSERT INTO jobs(id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",

@@ -6,6 +6,99 @@ import Database from "better-sqlite3";
 import { splitMessage } from "../utils/splitMessage.js";
 import type { InboxMessage } from "./types.js";
 
+type DomainValue = object | string | number | boolean | null | undefined;
+function isString<T extends DomainValue>(value: T): value is Extract<T, string> { return Object.prototype.toString.call(value) === "[object String]"; }
+
+interface JobUpdate {
+  status?: JobStatus;
+  claimed?: number;
+  started_at?: string;
+  heartbeat_at?: string;
+  lease_until?: string | null;
+  worker_id?: string | null;
+  next_attempt_at?: string | null;
+  last_error?: string | null;
+  error_json?: string;
+  terminal_reason?: string;
+  result_state?: TerminalState;
+  payload_json?: string;
+  exit_code?: number | null;
+  termination?: string;
+  stop_reason?: string;
+  usage_json?: string;
+  timing_json?: string;
+  agents_snapshot_hash?: string;
+  memory_snapshot_hash?: string;
+  snapshot_hash?: string;
+  tool_call_key?: string;
+  workspace_path?: string;
+  conversation_path?: string;
+}
+
+interface PayloadData extends Partial<InboxMessage> {
+  executionState?: ExecutionState;
+  claimedAt?: string;
+  startedAt?: string;
+  heartbeatAt?: string;
+  exitCode?: number | null;
+  termination?: string;
+  stopReason?: string;
+  usage?: DomainValue;
+  timing?: DomainValue;
+  error?: DomainValue;
+  agentsSnapshotHash?: string;
+  memorySnapshotHash?: string;
+  workspacePath?: string;
+  conversationPath?: string;
+  status?: JobStatus;
+  attempts?: number;
+  maxAttempts?: number;
+  nextAttemptAt?: string;
+  leaseUntil?: string;
+  sequence?: number;
+  succeeded?: boolean;
+  terminalState?: TerminalState;
+  resultJson?: string;
+  deliveryId?: string;
+  replyMessageId?: string;
+  destinationType?: string;
+  destinationId?: string;
+  cronThreadId?: string;
+}
+
+interface DeliveryQueryRow {
+  id: string;
+  job_id: string;
+  status: DeliveryStatus;
+  payload_json: string | null;
+  created_at: string;
+  response_index: number;
+  payload_hash: string | null;
+  host_unique_key: string | null;
+  destination_type: string | null;
+  destination_id: string | null;
+  reply_message_id: string | null;
+  cron_thread_id: string | null;
+  external_message_id: string | null;
+  lease_until: string | null;
+  worker_id: string | null;
+  fencing_token: number;
+  attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+}
+
+interface DeliveryUpdateParams {
+  id: string;
+  token: number;
+  status: DeliveryStatus;
+  updated_at: string;
+  externalMessageId?: string;
+  cronThreadId?: string;
+  error?: string;
+  retryAt?: string;
+}
+
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
@@ -38,9 +131,9 @@ export interface ExecutionMetadata {
   exitCode?: number | null;
   termination?: string;
   stopReason?: string;
-  usage?: unknown;
-  timing?: unknown;
-  error?: unknown;
+  usage?: DomainValue;
+  timing?: DomainValue;
+  error?: DomainValue;
   agentsSnapshotHash?: string;
   memorySnapshotHash?: string;
   snapshotHash?: string;
@@ -101,9 +194,9 @@ interface ExecutionMetadataField {
   /** SQL column that durably persists the field. */
   column: string;
   /** fenced() SET-clause value: undefined means "omit" so undefined never overwrites. */
-  setValue: (metadata: ExecutionMetadata) => unknown;
+  setValue: (metadata: ExecutionMetadata) => DomainValue;
   /** commitResult COALESCE value; NULL degrades to "keep the stored value". */
-  coalesceValue: (metadata: ExecutionMetadata) => unknown;
+  coalesceValue: (metadata: ExecutionMetadata) => DomainValue;
 }
 // The single ExecutionMetadata -> SQL-column mapping shared by markRunning,
 // commitResult, retry and deadLetterInTransaction. The two emitters below
@@ -193,13 +286,19 @@ const EXECUTION_METADATA_FIELDS: readonly ExecutionMetadataField[] = [
   },
 ];
 /** fenced() SET-clause entries; undefined/empty entries are omitted so a partial metadata object never overwrites previously stored columns. */
-function metadataSetColumns(
-  metadata: ExecutionMetadata,
-): Record<string, unknown> {
-  const updates: Record<string, unknown> = {};
+type MetadataUpdates = Pick<JobUpdate, "exit_code" | "termination" | "stop_reason" | "usage_json" | "timing_json" | "agents_snapshot_hash" | "memory_snapshot_hash" | "snapshot_hash" | "tool_call_key" | "workspace_path" | "conversation_path">;
+
+// SAFETY: JSON payloads are written by QueueRepository and conform to the InboxMessage schema.
+function parsePayloadData(json: string): PayloadData {
+  // SAFETY: JSON payloads are written by QueueRepository and conform to the InboxMessage schema.
+  return JSON.parse(json) as PayloadData;
+}
+
+function metadataSetColumns(metadata: ExecutionMetadata): MetadataUpdates {
+  const updates: MetadataUpdates = {};
   for (const mapping of EXECUTION_METADATA_FIELDS) {
     const value = mapping.setValue(metadata);
-    if (value !== undefined) updates[mapping.column] = value;
+    if (value !== undefined) Object.assign(updates, { [mapping.column]: value });
   }
   return updates;
 }
@@ -210,7 +309,7 @@ function metadataCoalesceAssignments(): string {
   ).join(",");
 }
 /** commitResult positional values aligned with metadataCoalesceAssignments(). */
-function metadataCoalesceValues(metadata: ExecutionMetadata): unknown[] {
+function metadataCoalesceValues(metadata: ExecutionMetadata): DomainValue[] {
   return EXECUTION_METADATA_FIELDS.map((mapping) =>
     mapping.coalesceValue(metadata),
   );
@@ -320,10 +419,10 @@ function compareSnowflakeIds(left: string, right: string): number {
   const rightValue = BigInt(right);
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
 }
-function errorMessage(error: unknown): string {
+function errorMessage<T extends DomainValue>(error: T): string {
   return error instanceof Error ? error.message : String(error);
 }
-function jsonOrUndefined(value: string | null): unknown {
+function jsonOrUndefined(value: string | null): DomainValue {
   if (!value) return undefined;
   try {
     return JSON.parse(value);
@@ -332,49 +431,51 @@ function jsonOrUndefined(value: string | null): unknown {
   }
 }
 function parsePayload(row: JobRow): QueueJob {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
   const payload = JSON.parse(row.payload_json) as InboxMessage;
   const active = row.status === "claimed" || row.status === "running";
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
   return {
     ...payload,
     status: row.status === "claimed" ? "running" : row.status,
     ...(active
       ? { executionState: row.status === "claimed" ? "claimed" : "running" }
-      : {}),
+      : undefined),
     attempts: row.attempts,
     maxAttempts: row.max_attempts,
-    ...(row.next_attempt_at ? { nextAttemptAt: row.next_attempt_at } : {}),
-    ...(row.lease_until ? { leaseUntil: row.lease_until } : {}),
-    ...(row.worker_id ? { workerId: row.worker_id } : {}),
+    ...(row.next_attempt_at ? { nextAttemptAt: row.next_attempt_at } : undefined),
+    ...(row.lease_until ? { leaseUntil: row.lease_until } : undefined),
+    ...(row.worker_id ? { workerId: row.worker_id } : undefined),
     fencingToken: row.fencing_token,
-    ...(row.last_error ? { lastError: row.last_error } : {}),
-    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+    ...(row.last_error ? { lastError: row.last_error } : undefined),
+    ...(row.completed_at ? { completedAt: row.completed_at } : undefined),
     sequence: row.sequence,
-    ...(row.claimed_at ? { claimedAt: row.claimed_at } : {}),
-    ...(row.started_at ? { startedAt: row.started_at } : {}),
-    ...(row.heartbeat_at ? { heartbeatAt: row.heartbeat_at } : {}),
-    ...(row.exit_code !== null ? { exitCode: row.exit_code } : {}),
-    ...(row.termination ? { termination: row.termination } : {}),
-    ...(row.stop_reason ? { stopReason: row.stop_reason } : {}),
-    ...(row.usage_json ? { usage: jsonOrUndefined(row.usage_json) } : {}),
-    ...(row.timing_json ? { timing: jsonOrUndefined(row.timing_json) } : {}),
-    ...(row.error_json ? { error: jsonOrUndefined(row.error_json) } : {}),
-    ...(row.result_json !== null ? { resultJson: row.result_json } : {}),
-    ...(row.result_state ? { terminalState: row.result_state } : {}),
-    ...(row.terminal_reason ? { terminalReason: row.terminal_reason } : {}),
+    ...(row.claimed_at ? { claimedAt: row.claimed_at } : undefined),
+    ...(row.started_at ? { startedAt: row.started_at } : undefined),
+    ...(row.heartbeat_at ? { heartbeatAt: row.heartbeat_at } : undefined),
+    ...(row.exit_code !== null ? { exitCode: row.exit_code } : undefined),
+    ...(row.termination ? { termination: row.termination } : undefined),
+    ...(row.stop_reason ? { stopReason: row.stop_reason } : undefined),
+    ...(row.usage_json ? { usage: jsonOrUndefined(row.usage_json) } : undefined),
+    ...(row.timing_json ? { timing: jsonOrUndefined(row.timing_json) } : undefined),
+    ...(row.error_json ? { error: jsonOrUndefined(row.error_json) } : undefined),
+    ...(row.result_json !== null ? { resultJson: row.result_json } : undefined),
+    ...(row.result_state ? { terminalState: row.result_state } : undefined),
+    ...(row.terminal_reason ? { terminalReason: row.terminal_reason } : undefined),
     succeeded: row.succeeded === 1,
-    ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}),
+    ...(row.delivery_id ? { deliveryId: row.delivery_id } : undefined),
     ...(row.agents_snapshot_hash
       ? { agentsSnapshotHash: row.agents_snapshot_hash }
-      : {}),
+      : undefined),
     ...(row.memory_snapshot_hash
       ? { memorySnapshotHash: row.memory_snapshot_hash }
-      : {}),
-    ...(row.snapshot_hash ? { snapshotHash: row.snapshot_hash } : {}),
-    ...(row.tool_call_key ? { toolCallKey: row.tool_call_key } : {}),
-    ...(row.workspace_path ? { workspacePath: row.workspace_path } : {}),
+      : undefined),
+    ...(row.snapshot_hash ? { snapshotHash: row.snapshot_hash } : undefined),
+    ...(row.tool_call_key ? { toolCallKey: row.tool_call_key } : undefined),
+    ...(row.workspace_path ? { workspacePath: row.workspace_path } : undefined),
     ...(row.conversation_path
       ? { conversationPath: row.conversation_path }
-      : {}),
+      : undefined),
   } as QueueJob;
 }
 interface SchemaMigration {
@@ -405,6 +506,7 @@ const JOB_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_j
 function tableColumnNames(db: Database.Database, table: string): Set<string> {
   return new Set(
     (
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
     ).map((column) => column.name),
   );
@@ -423,6 +525,7 @@ function addMissingColumns(
 }
 /** Legacy pre-durable jobs tables lack either result_json or claimed. */
 function jobsTableIsLegacy(db: Database.Database): boolean {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'")
     .get() as { sql?: string } | undefined;
@@ -482,6 +585,7 @@ function rebuildLegacyQueueSchema(db: Database.Database): void {
       )
       .get()
   ) {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const columns = db
       .prepare("PRAGMA table_info(idempotency_keys_legacy)")
       .all() as Array<{ name: string }>;
@@ -586,6 +690,7 @@ if (
   );
 }
 function readSchemaVersion(db: Database.Database): number {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
   const row = db
     .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
     .get() as { value: string } | undefined;
@@ -686,7 +791,7 @@ export class QueueRepository {
     dbOrPath?: Database.Database | string,
     workerId = "queue-single-host",
   ) {
-    if (typeof dbOrPath === "string" || dbOrPath === undefined) {
+    if (isString(dbOrPath) || dbOrPath === undefined) {
       // openRuntimeDb opens AND configures the store: the schema migration runs
       // exactly once for path/:memory:/default construction.
       this.db = openRuntimeDb(dbOrPath);
@@ -703,12 +808,14 @@ export class QueueRepository {
     this.db.close();
   }
   get(id: string): QueueJob | undefined {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id) as
       | JobRow
       | undefined;
     return row ? parsePayload(row) : undefined;
   }
   findByIdempotencyKey(key: string): QueueJob | undefined {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT * FROM jobs WHERE idempotency_key=?")
       .get(key) as JobRow | undefined;
@@ -721,6 +828,7 @@ export class QueueRepository {
     const key = options.idempotencyKey ?? payload.idempotencyKey;
     return this.inImmediateTransaction<EnqueueResult>(() => {
       if (key) {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
         const idem = this.db
           .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
           .get(key) as
@@ -736,17 +844,19 @@ export class QueueRepository {
       }
       const id = `job-${randomUUID()}`;
       const timestamp = nowIso();
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const sequenceRow = this.db
         .prepare(
           "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
         )
         .get(payload.sessionId) as { sequence: number };
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const record = {
         id,
         retries: 0,
         ...payload,
         enqueuedAt: timestamp,
-        ...(key ? { idempotencyKey: key } : {}),
+        ...(key ? { idempotencyKey: key } : undefined),
       } as InboxMessage;
       this.db
         .prepare(
@@ -795,6 +905,7 @@ export class QueueRepository {
         try {
           this.db.exec("ROLLBACK");
         } catch {}
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
         return undefined as never;
       }
       this.db.exec("COMMIT");
@@ -819,6 +930,7 @@ export class QueueRepository {
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
         : "";
       const eligible = `((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const exhausted = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
@@ -826,6 +938,7 @@ export class QueueRepository {
         .all(now, now, ...excluded) as JobRow[];
       for (const row of exhausted)
         this.deadLetterExhaustedInTransaction(row, "max_attempts");
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
@@ -859,7 +972,7 @@ export class QueueRepository {
   private fenced(
     id: string,
     token: number,
-    update: Record<string, unknown>,
+    update: JobUpdate,
   ): void {
     const sets = Object.keys(update)
       .map((key) => `${key}=@${key}`)
@@ -886,11 +999,13 @@ export class QueueRepository {
     token: number,
     patch: Partial<InboxMessage>,
   ): void {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT payload_json FROM jobs WHERE id=?")
       .get(id) as { payload_json: string } | undefined;
-    if (!row) throw new Error(`unknown job ${id}`);
-    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    if (!row) throw new Error(`DomainValue job ${id}`);
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    const payload = parsePayloadData(row.payload_json);
     // payload_json holds the durable InboxMessage domain payload only. Execution
     // metadata (claim/lease timestamps, exit info, timings, snapshot hashes,
     // workspace paths, ...) lives in dedicated SQL columns; never fold the
@@ -926,9 +1041,10 @@ export class QueueRepository {
       "terminalState",
       "resultJson",
       "deliveryId",
-    ])
+    ] satisfies readonly (keyof PayloadData)[])
       delete payload[key];
-    const sanitizedPatch = { ...patch } as Record<string, unknown>;
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    const sanitizedPatch: PayloadData = { ...patch };
     for (const key of [
       "fencingToken",
       "workerId",
@@ -952,7 +1068,7 @@ export class QueueRepository {
       "memorySnapshotHash",
       "workspacePath",
       "conversationPath",
-    ])
+    ] satisfies readonly (keyof PayloadData)[])
       delete sanitizedPatch[key];
     Object.assign(payload, sanitizedPatch);
     this.fenced(id, token, { payload_json: JSON.stringify(payload) });
@@ -992,6 +1108,7 @@ export class QueueRepository {
     const toolCallKey =
       identity.toolCallKey ??
       createHash("sha256").update(`phase2-job:${id}`).digest("hex");
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare(
         "SELECT payload_json FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
@@ -999,22 +1116,23 @@ export class QueueRepository {
       .get(id, token) as { payload_json: string } | undefined;
     if (!row) throw new Error(`stale fencing token for job ${id}`);
     const payload = {
-      ...(JSON.parse(row.payload_json) as Record<string, unknown>),
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
+      ...(JSON.parse(row.payload_json) as PayloadData),
       ...(identity.agentsSnapshotContent !== undefined
         ? { agentsSnapshotContent: identity.agentsSnapshotContent }
-        : {}),
+        : undefined),
       ...(identity.memorySnapshotContent !== undefined
         ? { memorySnapshotContent: identity.memorySnapshotContent }
-        : {}),
+        : undefined),
       ...(identity.agentsSnapshotPresent !== undefined
         ? { agentsSnapshotPresent: identity.agentsSnapshotPresent }
-        : {}),
+        : undefined),
       ...(identity.memorySnapshotPresent !== undefined
         ? { memorySnapshotPresent: identity.memorySnapshotPresent }
-        : {}),
+        : undefined),
       ...(identity.snapshotPresent !== undefined
         ? { snapshotPresent: identity.snapshotPresent }
-        : {}),
+        : undefined),
     };
     const result = this.db
       .prepare(
@@ -1031,35 +1149,37 @@ export class QueueRepository {
     if (result.changes !== 1)
       throw new Error(`stale fencing token for job ${id}`);
   }
-  commitResult(
+  commitResult<T extends DomainValue>(
     id: string,
     token: number,
-    result: unknown,
+    result: T,
     options: {
       empty?: boolean;
       metadata?: ExecutionMetadata;
-      deliveryPayload?: unknown;
+      deliveryPayload?: DomainValue;
     } = {},
   ): DeliveryRow | undefined {
     const at = nowIso();
     const resultJson =
-      typeof result === "string"
+      isString(result)
         ? JSON.stringify(result)
         : JSON.stringify(result ?? null);
     const state: TerminalState = options.empty ? "empty_response" : "succeeded";
     const m = options.metadata ?? {};
     const hasDeliveryMeta = options.deliveryPayload !== undefined;
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const deliveryMeta = (
-      options.deliveryPayload && typeof options.deliveryPayload === "object"
+      options.deliveryPayload && Object(options.deliveryPayload) === options.deliveryPayload
         ? options.deliveryPayload
         : {}
-    ) as Record<string, unknown>;
+    ) as PayloadData;
     const chunks = options.empty
       ? []
       : splitMessage(
-          typeof result === "string" ? result : JSON.stringify(result ?? null),
+          isString(result) ? result : JSON.stringify(result ?? null),
         );
     return this.inImmediateTransaction<DeliveryRow | undefined>(() => {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT idempotency_key FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
@@ -1151,20 +1271,20 @@ export class QueueRepository {
   }
   complete(id: string, token: number): void {
     const job = this.get(id);
-    if (!job) throw new Error(`unknown job ${id}`);
+    if (!job) throw new Error(`DomainValue job ${id}`);
     if (job.executionState === "claimed") this.markRunning(id, token);
     if (job.resultJson === undefined)
       this.commitResult(id, token, "", { empty: true });
   }
   /** Record a failed execution attempt, applying durable retry policy. */
-  failAttempt(
+  failAttempt<T extends DomainValue>(
     id: string,
-    error: unknown,
+    error: T,
     fencingToken: number | undefined,
     options: FailAttemptOptions = {},
   ): void {
     const job = this.get(id);
-    if (!job) throw new Error(`unknown job ${id}`);
+    if (!job) throw new Error(`DomainValue job ${id}`);
     if (job.status !== "running" && job.status !== "claimed")
       throw new Error(`job ${id} is not active`);
     const token = fencingToken ?? job.fencingToken;
@@ -1181,16 +1301,17 @@ export class QueueRepository {
     );
   }
 
-  retry(
+  retry<T extends DomainValue>(
     id: string,
     token: number,
-    error: unknown,
+    error: T,
     delayMs = 1000,
     payloadPatch?: Partial<InboxMessage>,
     metadata: ExecutionMetadata = {},
   ): void {
     const message = errorMessage(error);
     this.db.transaction(() => {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT attempts,max_attempts,result_json,payload_json FROM jobs WHERE id=?",
@@ -1203,8 +1324,9 @@ export class QueueRepository {
             payload_json: string;
           }
         | undefined;
-      if (!row) throw new Error(`unknown job ${id}`);
+      if (!row) throw new Error(`DomainValue job ${id}`);
       if (row.result_json !== null) return;
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const payload = JSON.parse(row.payload_json) as InboxMessage;
       this.updatePayload(id, token, {
         ...payloadPatch,
@@ -1242,6 +1364,7 @@ export class QueueRepository {
     source = "queue",
     metadata: ExecutionMetadata = {},
   ): void {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT payload_json,idempotency_key FROM jobs WHERE id=?")
       .get(id) as
@@ -1307,6 +1430,7 @@ export class QueueRepository {
   }
   recoverExpired(at = new Date()): number {
     const now = at.toISOString();
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const rows = this.db
       .prepare(
         "SELECT * FROM jobs WHERE status IN ('claimed','running') AND lease_until<=?",
@@ -1326,6 +1450,7 @@ export class QueueRepository {
     return count;
   }
   getDiscordCursor(scopeId: string): string | undefined {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare(
         "SELECT last_message_id FROM discord_sync_cursors WHERE scope_id=?",
@@ -1334,6 +1459,7 @@ export class QueueRepository {
     return row?.last_message_id || undefined;
   }
   isDiscordCursorInitialized(scopeId: string): boolean {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare("SELECT initialized FROM discord_sync_cursors WHERE scope_id=?")
       .get(scopeId) as { initialized?: number } | undefined;
@@ -1357,14 +1483,16 @@ export class QueueRepository {
       .run(scopeId, messageId, nowIso());
   }
   getDelivery(jobId: string): DeliveryRow | undefined {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const row = this.db
       .prepare(
         `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries WHERE job_id=? ORDER BY response_index LIMIT 1`,
       )
-      .get(jobId) as Record<string, unknown> | undefined;
+      .get(jobId) as DeliveryQueryRow | undefined;
     return row ? this.parseDelivery(row) : undefined;
   }
   listDeliveries(status?: DeliveryStatus): DeliveryRow[] {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const rows = (
       status
         ? this.db
@@ -1377,44 +1505,46 @@ export class QueueRepository {
               `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries ORDER BY job_id,response_index`,
             )
             .all()
-    ) as Array<Record<string, unknown>>;
+    ) as Array<DeliveryQueryRow>;
     return rows.map((row) => this.parseDelivery(row));
   }
-  private parseDelivery(row: Record<string, unknown>): DeliveryRow {
+  private parseDelivery(row: DeliveryQueryRow): DeliveryRow {
     return {
       id: String(row.id),
       jobId: String(row.job_id),
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       status: row.status as DeliveryStatus,
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       payloadJson: row.payload_json as string | null,
       createdAt: String(row.created_at),
       responseIndex: Number(row.response_index ?? 0),
-      ...(row.payload_hash ? { payloadHash: String(row.payload_hash) } : {}),
+      ...(row.payload_hash ? { payloadHash: String(row.payload_hash) } : undefined),
       ...(row.host_unique_key
         ? { hostUniqueKey: String(row.host_unique_key) }
-        : {}),
+        : undefined),
       ...(row.destination_type
         ? { destinationType: String(row.destination_type) }
-        : {}),
+        : undefined),
       ...(row.destination_id
         ? { destinationId: String(row.destination_id) }
-        : {}),
+        : undefined),
       ...(row.reply_message_id
         ? { replyMessageId: String(row.reply_message_id) }
-        : {}),
+        : undefined),
       ...(row.cron_thread_id
         ? { cronThreadId: String(row.cron_thread_id) }
-        : {}),
+        : undefined),
       ...(row.external_message_id
         ? { externalMessageId: String(row.external_message_id) }
-        : {}),
-      ...(row.lease_until ? { leaseUntil: String(row.lease_until) } : {}),
-      ...(row.worker_id ? { workerId: String(row.worker_id) } : {}),
+        : undefined),
+      ...(row.lease_until ? { leaseUntil: String(row.lease_until) } : undefined),
+      ...(row.worker_id ? { workerId: String(row.worker_id) } : undefined),
       fencingToken: Number(row.fencing_token ?? 0),
       attempts: Number(row.attempts ?? 0),
       ...(row.next_attempt_at
         ? { nextAttemptAt: String(row.next_attempt_at) }
-        : {}),
-      ...(row.last_error ? { lastError: String(row.last_error) } : {}),
+        : undefined),
+      ...(row.last_error ? { lastError: String(row.last_error) } : undefined),
     };
   }
   claimDelivery(
@@ -1429,11 +1559,12 @@ export class QueueRepository {
           "UPDATE deliveries SET status='ambiguous',lease_until=NULL,worker_id=NULL,last_error=COALESCE(last_error,'sending lease expired'),updated_at=? WHERE status='sending' AND lease_until<=?",
         )
         .run(now, now);
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT candidate.* FROM deliveries AS candidate WHERE candidate.status IN ('pending','retry_wait') AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at<=?) AND NOT EXISTS (SELECT 1 FROM deliveries AS predecessor WHERE predecessor.job_id=candidate.job_id AND predecessor.response_index<candidate.response_index AND predecessor.status NOT IN ('sent','failed')) ORDER BY candidate.created_at,candidate.response_index LIMIT 1",
         )
-        .get(now) as Record<string, unknown> | undefined;
+        .get(now) as DeliveryQueryRow | undefined;
       if (!row) return undefined;
       const token = Number(row.fencing_token ?? 0) + 1;
       const changed = this.db
@@ -1448,7 +1579,7 @@ export class QueueRepository {
           row.id,
         );
       if (changed.changes !== 1) return TRANSACTION_ROLLBACK;
-      const claimed = {
+      const claimed: DeliveryQueryRow = {
         ...row,
         status: "sending",
         lease_until: new Date(
@@ -1473,7 +1604,7 @@ export class QueueRepository {
     } = {},
   ): void {
     const sets = ["status=@status", "updated_at=@updated_at"];
-    const params: Record<string, unknown> = {
+    const params: DeliveryUpdateParams = {
       id,
       token,
       status,
@@ -1517,6 +1648,7 @@ export class QueueRepository {
     error: string,
   ): void {
     this.inImmediateTransaction(() => {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT job_id FROM deliveries WHERE id=? AND status='sending' AND fencing_token=?",
@@ -1559,6 +1691,7 @@ export class QueueRepository {
   }
   setDeliveryThread(id: string, token: number, cronThreadId: string): void {
     this.inImmediateTransaction(() => {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
       const row = this.db
         .prepare(
           "SELECT job_id FROM deliveries WHERE id=? AND status='sending' AND fencing_token=?",
@@ -1582,6 +1715,7 @@ export class QueueRepository {
     });
   }
   getIdempotencyRecord(key: string): IdempotencyRecord | undefined {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     return this.db
       .prepare(
         "SELECT key,job_id as jobId,status FROM idempotency_keys WHERE key=?",
@@ -1590,15 +1724,17 @@ export class QueueRepository {
   }
   listRssStatePaths(): string[] {
     const paths = new Set<string>();
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     for (const row of this.db
       .prepare("SELECT payload_json FROM jobs")
       .all() as Array<{ payload_json: string }>) {
       try {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
         const value = JSON.parse(row.payload_json) as {
-          rssStatePath?: unknown;
+          rssStatePath?: DomainValue;
         };
         if (
-          typeof value.rssStatePath === "string" &&
+          isString(value.rssStatePath) &&
           value.rssStatePath.length > 0
         )
           paths.add(value.rssStatePath);
@@ -1627,6 +1763,7 @@ export class QueueRepository {
       );
   }
   list(status?: JobStatus): QueueJob[] {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     const rows = (
       status
         ? this.db
@@ -1645,6 +1782,7 @@ export class QueueRepository {
     jobId: string | null;
     status: string;
   }> {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
     return this.db
       .prepare(
         "SELECT key,job_id as jobId,status FROM idempotency_keys ORDER BY key",

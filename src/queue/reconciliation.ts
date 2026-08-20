@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   listDispatchClaims,
   markArticlesRead,
@@ -48,7 +49,13 @@ export function reconcileRssDispatches(
   repo: QueueRepository = getQueueRepository(),
   rssDbPaths?: string | readonly string[],
 ): number {
-  const configured = typeof rssDbPaths === "string" ? [rssDbPaths] : rssDbPaths;
+  const configured = z
+    .union([
+      z.string().transform((value) => [value]),
+      z.array(z.string()),
+    ])
+    .optional()
+    .parse(rssDbPaths);
   // Caller-supplied paths (startup passes the merged repository + cron path
   // list) are authoritative: listRssStatePaths() parses every job payload, so
   // discovering it again here would duplicate that full scan. Only standalone

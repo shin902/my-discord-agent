@@ -1,27 +1,114 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import {
   type AgentExecutionTiming,
   type DiscordEvent,
-  sendMessage,
+  sendMessage as defaultSendMessage,
 } from "../agent/manager.js";
-import { resolveModelConfig } from "../config/default-model.js";
-import { findGroupByName, type ModelConfig } from "../config/groups.js";
+import { resolveModelConfig as defaultResolveModelConfig } from "../config/default-model.js";
+import {
+  findGroupByName as defaultFindGroupByName,
+  type ModelConfig,
+} from "../config/groups.js";
 import {
   type ProviderConcurrency,
-  resolveProviderConcurrency,
+  resolveProviderConcurrency as defaultResolveProviderConcurrency,
 } from "../config/providers.js";
 import {
-  getDiscordClientForGroupName,
-  getDiscordClients,
+  getDiscordClientForGroupName as defaultGetDiscordClientForGroupName,
+  getDiscordClients as defaultGetDiscordClients,
 } from "../discord/client.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { settleRssDispatch } from "./reconciliation.js";
-import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
+import {
+  type ExecutionMetadata,
+  getQueueRepository as defaultGetQueueRepository,
+} from "./repository.js";
 import type { InboxMessage } from "./types.js";
+
+export interface PollerDependencies {
+  sendMessage: (
+    groupName: string,
+    sessionId: string,
+    content: string,
+    options?: import("../agent/manager.js").SendMessageOptions,
+  ) => Promise<string>;
+  findGroupByName: typeof defaultFindGroupByName;
+  resolveModelConfig: typeof defaultResolveModelConfig;
+  resolveProviderConcurrency: typeof defaultResolveProviderConcurrency;
+  getDiscordClientForGroupName: (groupName: string) => Promise<ClientLike>;
+  getDiscordClients: () => ReadonlyMap<string, { isReady(): boolean }>;
+  getQueueRepository: () => Pick<
+    ReturnType<typeof defaultGetQueueRepository>,
+    | "claim"
+    | "heartbeat"
+    | "markRunning"
+    | "updateRunning"
+    | "get"
+    | "freezeExecutionIdentity"
+    | "deadLetter"
+    | "failAttempt"
+    | "commitResult"
+  >;
+}
+
+interface DiscordSendPayload {
+  content?: string;
+  reply?: { messageReference: string; failIfNotExists: boolean };
+  allowedMentions?: { repliedUser?: boolean; parse?: never[] };
+}
+interface ChannelLike {
+  isTextBased(): boolean;
+  isSendable(): boolean;
+  send(content: string | DiscordSendPayload): Promise<void>;
+  sendTyping?(): Promise<void>;
+  threads?: { create(input: { name: string }): Promise<{ id?: string }> };
+}
+interface ClientLike {
+  channels: {
+    cache: { get(channelId: string): ChannelLike | undefined };
+    fetch(channelId: string): Promise<ChannelLike | null>;
+  };
+}
+
+const defaultDependencies: PollerDependencies = {
+  sendMessage: defaultSendMessage,
+  findGroupByName: defaultFindGroupByName,
+  resolveModelConfig: defaultResolveModelConfig,
+  resolveProviderConcurrency: defaultResolveProviderConcurrency,
+  // SAFETY: Discord clients satisfy the narrow channel boundary used by the poller.
+  getDiscordClientForGroupName: (groupName) =>
+    defaultGetDiscordClientForGroupName(groupName) as Promise<ClientLike>,
+  getDiscordClients: defaultGetDiscordClients,
+  getQueueRepository: defaultGetQueueRepository,
+};
+let pollerDependencies = defaultDependencies;
+
+export function createPoller(
+  overrides: Partial<PollerDependencies> = {},
+): PollerDependencies {
+  pollerDependencies = { ...defaultDependencies, ...overrides };
+  return pollerDependencies;
+}
+
+const sendMessage = (...args: Parameters<PollerDependencies["sendMessage"]>) =>
+  pollerDependencies.sendMessage(...args);
+const findGroupByName = (...args: Parameters<PollerDependencies["findGroupByName"]>) =>
+  pollerDependencies.findGroupByName(...args);
+const resolveModelConfig = (...args: Parameters<PollerDependencies["resolveModelConfig"]>) =>
+  pollerDependencies.resolveModelConfig(...args);
+const resolveProviderConcurrency = (...args: Parameters<PollerDependencies["resolveProviderConcurrency"]>) =>
+  pollerDependencies.resolveProviderConcurrency(...args);
+const getDiscordClientForGroupName = (...args: Parameters<PollerDependencies["getDiscordClientForGroupName"]>) =>
+  pollerDependencies.getDiscordClientForGroupName(...args);
+const getDiscordClients = (...args: Parameters<PollerDependencies["getDiscordClients"]>) =>
+  pollerDependencies.getDiscordClients(...args);
+const getQueueRepository = (...args: Parameters<PollerDependencies["getQueueRepository"]>) =>
+  pollerDependencies.getQueueRepository(...args);
 
 const POLL_MS = 1000;
 const SLOW_RESPONSE_MS = 60_000;
@@ -80,6 +167,7 @@ function executionMetadata(timing: ResponseTiming): ExecutionMetadata {
       }
     : {};
 }
+
 
 function logResponseTiming(
   msg: InboxMessage,
@@ -270,8 +358,10 @@ function startTypingLoop(groupName: string, channelId: string): () => void {
 
     while (!cancelled) {
       try {
-        // PartialGroupDMChannel は sendTyping を持たないため型アサションを使用
-        await (channel as { sendTyping(): Promise<void> }).sendTyping();
+        const typingChannel = z
+          .object({ sendTyping: z.function() })
+          .parse(channel);
+        await typingChannel.sendTyping();
       } catch {
         // typing indicator はベストエフォート
       }
@@ -475,31 +565,41 @@ function cronSessionId(msg: InboxMessage): string {
     : msg.sessionId;
 }
 
-type CronThreadParent = {
-  threads?: {
-    create: (options: { name: string }) => Promise<{ id?: unknown }>;
-  };
-};
+const cronThreadParent = z.object({
+  threads: z
+    .object({
+      create: z.function({
+        input: [z.object({ name: z.string() })],
+        output: z.promise(z.object({ id: z.string().optional() })),
+      }),
+    })
+    .optional(),
+});
+const discordErrorInput = z.object({
+  status: z.number().optional(),
+  statusCode: z.number().optional(),
+});
+type DiscordErrorInput = z.infer<typeof discordErrorInput>;
 
-function discordStatusCode(error: unknown): number | undefined {
-  const value = error as { status?: unknown; statusCode?: unknown };
-  const code = value?.status ?? value?.statusCode;
-  return typeof code === "number" ? code : undefined;
+function discordStatusCode(error: DiscordErrorInput): number | undefined {
+  return error.status ?? error.statusCode;
 }
 
 async function createCronThread(msg: InboxMessage): Promise<string> {
   let mutationAttempted = false;
   try {
     const client = await resolveDiscordClient(msg.groupName);
-    const channel = (await client.channels.fetch(
-      msg.channelId,
-    )) as unknown as CronThreadParent | null;
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
+    const fetchedChannel = await client.channels.fetch(msg.channelId);
+    const channel = fetchedChannel
+      ? cronThreadParent.parse(fetchedChannel)
+      : null;
     if (!channel) {
       throw new NonRetryableError(
         `cron-thread: チャンネル ${msg.channelId} が見つかりません`,
       );
     }
-    if (typeof channel.threads?.create !== "function") {
+    if (!channel.threads?.create) {
       throw new NonRetryableError(
         `cron-thread: チャンネル ${msg.channelId} はスレッドをサポートしていません`,
       );
@@ -529,7 +629,7 @@ async function createCronThread(msg: InboxMessage): Promise<string> {
     // transport/unknown failures are ambiguous and must never be retried.
     const postMutationTransportFailure =
       mutationAttempted &&
-      discordStatusCode(error) === undefined &&
+      discordStatusCode(discordErrorInput.safeParse(error).data ?? {}) === undefined &&
       (kind === "retryable" || kind === "unknown");
     const effectiveKind = postMutationTransportFailure
       ? "unknown"
@@ -555,7 +655,8 @@ async function ensureCronThread(msg: InboxMessage): Promise<void> {
       cronThreadId: threadId,
       sessionId: threadId,
     });
-  } catch (_error) {
+  } catch (error) {
+    void error;
     // Do not blindly create another thread if a local persistence call reports
     // an error after its write may have committed.
     const persisted = getQueueRepository().get(msg.id)?.cronThreadId;
@@ -652,7 +753,7 @@ async function processCronNewThread(
                   rssStatePath: msg.rssStatePath,
                   rssDispatchJobId: msg.idempotencyKey,
                 }
-              : {}),
+              : undefined),
           },
         },
       );
@@ -683,7 +784,7 @@ async function processCronNewThread(
       if (msg.fencingToken !== undefined)
         await getQueueRepository().failAttempt(
           msg.id,
-          error,
+          error instanceof Error ? error : new Error(String(error)),
           msg.fencingToken,
           { metadata: executionMetadata(timing) },
         );
@@ -703,8 +804,8 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
 }> {
   const base = path.resolve("groups", msg.groupName);
   const readOptional = async (file: string) =>
-    readFile(file, "utf8").catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
       throw error;
     });
   let agentsSnapshotContent = await readOptional(path.join(base, "AGENTS.md"));
@@ -717,6 +818,7 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   if (sessionRaw) {
     for (const line of sessionRaw.split(/\r?\n/)) {
       try {
+// SAFETY: The surrounding boundary contract validates this value before the assertion.
         const entry = JSON.parse(line) as {
           customType?: string;
           content?: unknown;
@@ -788,8 +890,9 @@ export async function processMessage(
         `[poller] 実行 identity の保存に失敗しました (${msg.id}):`,
         error,
       );
-      await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {
-        metadata: { error },
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      await getQueueRepository().failAttempt(msg.id, normalizedError, msg.fencingToken, {
+        metadata: { error: normalizedError },
       });
       settleRssDispatchAfterQueueTransition(msg);
       return;
@@ -915,9 +1018,14 @@ export async function processMessage(
       console.error(`[poller] 処理失敗:`, err);
       outcome = "retry";
       if (msg.fencingToken !== undefined) {
-        await getQueueRepository().failAttempt(msg.id, err, msg.fencingToken, {
-          metadata: executionMetadata(timing),
-        });
+        await getQueueRepository().failAttempt(
+          msg.id,
+          err instanceof Error ? err : new Error(String(err)),
+          msg.fencingToken,
+          {
+            metadata: executionMetadata(timing),
+          },
+        );
         // 実行後の実際の遷移を観測してログのみを確定する（方針決定は repository 側）。
         const after = getQueueRepository().get(msg.id);
         if (after?.status === "dead_letter") outcome = "dead-letter";
@@ -956,7 +1064,7 @@ export async function processMessage(
                 rssStatePath: msg.rssStatePath,
                 rssDispatchJobId: msg.idempotencyKey,
               }
-            : {}),
+            : undefined),
         },
       },
     );

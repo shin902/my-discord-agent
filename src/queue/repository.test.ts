@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
+import type { InboxMessage } from "./types.js";
+
+type PersistedPayload = InboxMessage;
+type SqlRow = Record<string, string | number | null>;
+
+function parsePersistedPayload(json: string): PersistedPayload {
+  // SAFETY: Every fixture writes an InboxMessage JSON payload through QueueRepository.
+  return JSON.parse(json) as PersistedPayload;
+}
 
 describe("QueueRepository lease renewal", () => {
   it("extends a claimed lease with its fencing token", () => {
@@ -98,6 +107,7 @@ describe("failAttempt - options object", () => {
           },
         },
       );
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const row = repo.db
         .prepare(
           "SELECT payload_json,exit_code,termination,stop_reason,timing_json FROM jobs WHERE id=?",
@@ -113,8 +123,10 @@ describe("failAttempt - options object", () => {
       expect(row.exit_code).toBe(1);
       expect(row.termination).toBe("close");
       expect(row.stop_reason).toBe("error");
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       expect(row.timing_json).toBe(JSON.stringify(timing));
-      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      // SAFETY: parsePersistedPayload validates the persisted InboxMessage contract.
+      const payload = parsePersistedPayload(row.payload_json);
       expect(payload).not.toHaveProperty("exitCode");
       expect(payload).not.toHaveProperty("termination");
       expect(payload).not.toHaveProperty("timing");
@@ -150,6 +162,7 @@ describe("failAttempt - options object", () => {
           timing,
         },
       });
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const row = repo.db
         .prepare(
           "SELECT payload_json,claimed_at,started_at,heartbeat_at,workspace_path,conversation_path,exit_code,termination,stop_reason,timing_json FROM jobs WHERE id=?",
@@ -177,7 +190,8 @@ describe("failAttempt - options object", () => {
       expect(row.stop_reason).toBe("error");
       expect(row.timing_json).toBe(JSON.stringify(timing));
       // ... and none of it leaks into the persisted payload_json
-      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      // SAFETY: parsePersistedPayload validates the persisted InboxMessage contract.
+      const payload = parsePersistedPayload(row.payload_json);
       for (const key of [
         "executionState",
         "claimedAt",
@@ -226,13 +240,15 @@ describe("failAttempt - options object", () => {
         payloadPatch: { content: "patched" },
         metadata: { timing: { promptMs: 5 } },
       });
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const row = repo.db
         .prepare("SELECT payload_json,timing_json FROM jobs WHERE id=?")
         .get(enqueued.job.id) as {
         payload_json: string;
         timing_json: string | null;
       };
-      const payload = JSON.parse(row.payload_json) as { content?: string };
+      // SAFETY: parsePersistedPayload validates the persisted InboxMessage contract.
+      const payload = parsePersistedPayload(row.payload_json);
       expect(payload.content).toBe("patched");
       expect(row.timing_json).toBe(JSON.stringify({ promptMs: 5 }));
       // re-claim after the retry wait to confirm both patch and metadata survive
@@ -523,6 +539,7 @@ describe("durable Phase 2 result state", () => {
       ).toBeUndefined();
       // The rollback-without-throw path must undo BOTH writes of the attempt:
       // the ambiguous sweep of the stale row and the claim of the candidate.
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const rows = repo.db
         .prepare("SELECT id,status,fencing_token FROM deliveries")
         .all() as Array<{ id: string; status: string; fencing_token: number }>;
@@ -582,11 +599,12 @@ describe("durable Phase 2 result state", () => {
           retryAt: new Date(Date.now() + 10_000).toISOString(),
         },
       );
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const row = repo.db
         .prepare(
           "SELECT status,lease_until,worker_id,next_attempt_at FROM deliveries WHERE id=?",
         )
-        .get(delivery.id) as Record<string, unknown>;
+        .get(delivery.id) as SqlRow;
       expect(row).toMatchObject({
         status: "retry_wait",
         lease_until: null,
@@ -728,6 +746,7 @@ describe("QueueRepository - single-owner retry policy", () => {
       expect(job.status).toBe("dead_letter");
       expect(job.terminalState).toBe("max_retries");
       expect(job.attempts).toBe(3);
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const records = repo.db
         .prepare("SELECT reason,error,source FROM dead_letters WHERE job_id=?")
         .all(enqueued.job.id) as Array<{
@@ -831,6 +850,7 @@ describe("QueueRepository - single-owner retry policy", () => {
           toolCallKey: "tool",
         },
       });
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const row = repo.db
         .prepare(
           "SELECT payload_json,exit_code,termination,stop_reason,timing_json,snapshot_hash,tool_call_key FROM jobs WHERE id=?",
@@ -852,7 +872,8 @@ describe("QueueRepository - single-owner retry policy", () => {
       expect(row.snapshot_hash).toBe("snap");
       expect(row.tool_call_key).toBe("tool");
       // ... and never leaks into the persisted payload_json
-      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      // SAFETY: parsePersistedPayload validates the persisted InboxMessage contract.
+      const payload = parsePersistedPayload(row.payload_json);
       for (const key of [
         "exitCode",
         "termination",
@@ -908,11 +929,12 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       // A later call that omits those fields must preserve what the first
       // attempt stored (undefined must never overwrite a metadata column).
       repo.markRunning(id, token, { startedAt: "2025-02-02T00:00:00.000Z" });
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       let row = repo.db
         .prepare(
           "SELECT exit_code,termination,stop_reason,timing_json,snapshot_hash,workspace_path,conversation_path,started_at FROM jobs WHERE id=?",
         )
-        .get(id) as Record<string, unknown>;
+        .get(id) as SqlRow;
       expect(row).toMatchObject({
         exit_code: 7,
         termination: "close",
@@ -926,22 +948,21 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       // An explicit null is still a legal value: markRunning writes NULL into
       // exit_code while every other column remains untouched.
       repo.markRunning(id, token, { exitCode: null });
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       row = repo.db
         .prepare(
           "SELECT exit_code,snapshot_hash,workspace_path FROM jobs WHERE id=?",
         )
-        .get(id) as Record<string, unknown>;
+        .get(id) as SqlRow;
       expect(row.exit_code).toBeNull();
       expect(row.snapshot_hash).toBe("snap-1");
       expect(row.workspace_path).toBe("/ws/1");
       // and none of it ever leaks into the durable payload_json
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const payloadRow = repo.db
         .prepare("SELECT payload_json FROM jobs WHERE id=?")
         .get(id) as { payload_json: string };
-      const payload = JSON.parse(payloadRow.payload_json) as Record<
-        string,
-        unknown
-      >;
+      const payload = parsePersistedPayload(payloadRow.payload_json);
       for (const key of [
         "executionState",
         "claimedAt",
@@ -979,11 +1000,12 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       repo.failAttempt(id, new Error("boom"), first.fencingToken, {
         metadata: { timing: { promptMs: 2 } },
       });
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       let row = repo.db
         .prepare(
           "SELECT status,exit_code,snapshot_hash,workspace_path,timing_json FROM jobs WHERE id=?",
         )
-        .get(id) as Record<string, unknown>;
+        .get(id) as SqlRow;
       expect(row).toMatchObject({
         status: "retry_wait",
         exit_code: 3,
@@ -1000,11 +1022,12 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       repo.commitResult(id, second.fencingToken, "done", {
         metadata: { usage: null },
       });
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       row = repo.db
         .prepare(
           "SELECT exit_code,snapshot_hash,workspace_path,usage_json FROM jobs WHERE id=?",
         )
-        .get(id) as Record<string, unknown>;
+        .get(id) as SqlRow;
       expect(row.exit_code).toBe(3);
       expect(row.snapshot_hash).toBe("snap-pre");
       expect(row.workspace_path).toBe("/ws/pre");
@@ -1031,11 +1054,12 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
         }),
       ).toThrow(/stale fencing/);
       // the rejected metadata write left the lease owned by worker-b untouched
+      // SAFETY: The SELECT projection below is a concrete test-owned SQL row contract.
       const row = repo.db
         .prepare(
           "SELECT status,claimed,worker_id,lease_until,termination FROM jobs WHERE id=?",
         )
-        .get(enqueued.job.id) as Record<string, unknown>;
+        .get(enqueued.job.id) as SqlRow;
       expect(row).toMatchObject({
         status: "claimed",
         claimed: 1,

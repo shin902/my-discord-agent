@@ -1,19 +1,17 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { z } from "zod";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-const client = vi.hoisted(() => ({
+const client = {
   isReady: vi.fn().mockReturnValue(false),
-  channels: {
-    cache: { get: vi.fn() },
-    fetch: vi.fn(),
-  },
-}));
-vi.mock("../discord/client.js", () => ({
-  getDiscordClientForGroupName: vi.fn().mockResolvedValue(client),
-  getDiscordClients: () => new Map([["personal", client]]),
-}));
+  channels: { cache: { get: vi.fn() }, fetch: vi.fn() },
+};
+const discordDependencies = {
+  resolveClient: async () => client,
+  clientsReady: () => client.isReady(),
+};
 
 import {
   claimUnreadArticles,
@@ -25,16 +23,20 @@ import {
 import { expectDefined } from "../test-utils.js";
 import {
   type DeliveryAdapter,
+  type DeliverySendPayload,
+  type DeliveryTarget,
   DeliveryError,
   DeliveryWorker,
   DiscordDeliveryAdapter,
 } from "./delivery.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
+type DeliveryMetadata = { destinationType?: string; destinationId?: string; cronJobId?: string; cronThreadId?: string; replyMessageId?: string; rssDispatchId?: string; rssStatePath?: string; rssDispatchJobId?: string };
+
 function completed(
   repo: QueueRepository,
   response: string,
-  metadata: Record<string, unknown> = {},
+  metadata: DeliveryMetadata = {},
 ) {
   const item = repo.enqueue({
     channelId: "channel",
@@ -75,9 +77,9 @@ it("durably persists the created thread before its first message send", async ()
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
-    .mockResolvedValue(channel as never);
+    .mockResolvedValue(channel);
   try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -102,7 +104,7 @@ it("reuses the durably persisted cron thread for delivery", async () => {
     .spyOn(client.channels, "fetch")
     .mockImplementation(async (id) => {
       expect(id).toBe("thread-actual");
-      return thread as never;
+      return thread satisfies DeliveryTarget;
     });
   try {
     const jobId = completed(repo, "response", {
@@ -111,7 +113,7 @@ it("reuses the durably persisted cron thread for delivery", async () => {
       cronJobId: "daily",
       cronThreadId: "thread-actual",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -138,14 +140,14 @@ it("marks transport failure during thread creation ambiguous without retrying", 
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
-    .mockResolvedValue(channel as never);
+    .mockResolvedValue(channel);
   try {
     const jobId = completed(repo, "response", {
       destinationType: "new-thread",
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -169,14 +171,14 @@ it("marks a 500 during thread creation ambiguous without retrying", async () => 
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
-    .mockResolvedValue(channel as never);
+    .mockResolvedValue(channel);
   try {
     const jobId = completed(repo, "response", {
       destinationType: "new-thread",
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -199,14 +201,14 @@ it("marks transport failure during message send ambiguous without retrying", asy
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
-    .mockResolvedValue(channel as never);
+    .mockResolvedValue(channel);
   try {
     const jobId = completed(repo, "response", {
       destinationType: "new-thread",
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -230,10 +232,10 @@ it("marks a 502 during message send ambiguous without retrying", async () => {
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const cacheSpy = vi
     .spyOn(client.channels.cache, "get")
-    .mockReturnValue(channel as never);
+    .mockReturnValue(channel);
   try {
     const jobId = completed(repo, "response");
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -258,7 +260,7 @@ it("marks thread persistence failures ambiguous without creating a duplicate thr
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
-    .mockResolvedValue(channel as never);
+    .mockResolvedValue(channel);
   const persistSpy = vi
     .spyOn(repo, "setDeliveryThread")
     .mockImplementation(() => {
@@ -270,7 +272,7 @@ it("marks thread persistence failures ambiguous without creating a duplicate thr
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -558,7 +560,7 @@ describe("durable delivery worker", () => {
     const fetchSpy = vi
       .spyOn(client.channels, "fetch")
       .mockImplementation(
-        async (id) => (id === "channel" ? channel : thread) as never,
+        async (id) => id === "channel" ? channel : thread,
       );
     try {
       const jobId = completed(repo, "x".repeat(4001), {
@@ -566,7 +568,7 @@ describe("durable delivery worker", () => {
         destinationId: "channel",
         cronJobId: "daily",
       });
-      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
         workerId: "delivery-a",
       });
       while (await worker.runOnce()) {}
@@ -587,19 +589,19 @@ describe("durable delivery worker", () => {
 
   it("only replies to the original message for the first split chunk", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    const send = vi.fn(async (_payload: unknown) => ({ id: "message" }));
+    const send = vi.fn(async (_payload: DeliverySendPayload) => ({ id: "message" }));
     const channel = { isSendable: () => true, send };
     const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
     const fetchSpy = vi
       .spyOn(client.channels, "fetch")
-      .mockResolvedValue(channel as never);
+      .mockResolvedValue(channel);
     try {
       const jobId = completed(repo, "x".repeat(4001), {
         destinationType: "channel",
         destinationId: "channel",
         replyMessageId: "original-message",
       });
-      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(discordDependencies), {
         workerId: "delivery-a",
       });
       while (await worker.runOnce()) {}
@@ -616,10 +618,8 @@ describe("durable delivery worker", () => {
       });
       expect(
         send.mock.calls.slice(1).every(([content]) => {
-          const payload = content as {
-            allowedMentions?: { parse?: unknown[] };
-          };
-          return payload.allowedMentions?.parse?.length === 0;
+          const parsed = z.object({ allowedMentions: z.object({ parse: z.array(z.string()).optional() }).optional() }).safeParse(content);
+          return parsed.success && parsed.data.allowedMentions?.parse?.length === 0;
         }),
       ).toBe(true);
       expect(repo.get(jobId)?.succeeded).toBe(true);

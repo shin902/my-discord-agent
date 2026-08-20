@@ -2,6 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { migrateLegacyQueue } from "./migration.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
@@ -24,19 +25,12 @@ async function makePaths(
   return { inbox, dead, archive: join(dir, "archive") };
 }
 
-function message(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
-  return {
-    id: "legacy-1",
-    channelId: "channel",
-    groupName: "group",
-    sessionId: "session",
-    content: "content",
-    timestamp: "2026-08-01T00:00:00.000Z",
-    retries: 0,
-    ...overrides,
-  };
+type LegacyFixture = {
+  id: string; channelId: string; groupName: string; sessionId: string;
+  content: string; timestamp: string; retries: number | string;
+};
+function message(overrides: Partial<LegacyFixture> = {}): LegacyFixture {
+  return { id: "legacy-1", channelId: "channel", groupName: "group", sessionId: "session", content: "content", timestamp: "2026-08-01T00:00:00.000Z", retries: 0, ...overrides };
 }
 
 describe("migrateLegacyQueue", () => {
@@ -74,13 +68,8 @@ describe("migrateLegacyQueue", () => {
         archiveDir: paths.archive,
       });
       expect(result.migrated).toBe(3);
-      const rows = repo.db
-        .prepare("SELECT id,session_id,sequence FROM jobs ORDER BY id")
-        .all() as Array<{
-        id: string;
-        session_id: string;
-        sequence: number;
-      }>;
+      const rowSchema = z.object({ id: z.string(), session_id: z.string(), sequence: z.number() });
+      const rows = z.array(rowSchema).parse(repo.db.prepare("SELECT id,session_id,sequence FROM jobs ORDER BY id").all());
       // Empty sessions start at 0 (COALESCE(MAX(sequence),-1)+1) exactly like
       // QueueRepository.enqueue, so migrated and enqueued rows share ordering.
       expect(rows).toEqual([

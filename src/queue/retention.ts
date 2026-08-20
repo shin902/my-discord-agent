@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import type { DeliveryStatus, JobStatus } from "./repository.js";
 
 export type RetentionStatus =
@@ -28,7 +29,7 @@ export interface RetentionPlanItem {
   timestamp: string;
   payloadHash: string;
   finalState: string;
-  row: Record<string, unknown>;
+  row: RetentionRow;
 }
 export interface RetentionPlan {
   now: string;
@@ -65,16 +66,31 @@ function cutoff(now: number, age: number | undefined): string | undefined {
   const ms = finiteAge(age);
   return ms === undefined ? undefined : new Date(now - ms).toISOString();
 }
-function hashPayload(row: Record<string, unknown>): string {
-  const value =
-    typeof row.payload_json === "string"
-      ? row.payload_json
-      : JSON.stringify(row);
+const RetentionRowSchema = z
+  .object({
+    id: z.union([z.string(), z.number()]).optional(),
+    key: z.string().optional(),
+    status: z.string().optional(),
+    payload_json: z.string().optional(),
+    result_state: z.string().optional(),
+    terminal_reason: z.string().nullable().optional(),
+    updated_at: z.string().optional(),
+    created_at: z.string().optional(),
+    completed_at: z.string().nullable().optional(),
+    read_at: z.string().nullable().optional(),
+    job_id: z.string().optional(),
+  })
+  .passthrough();
+type RetentionRow = z.infer<typeof RetentionRowSchema>;
+type SqlValue = string | number | bigint | boolean | null | undefined;
+
+function hashPayload(row: RetentionRow): string {
+  const value = row.payload_json ?? JSON.stringify(row);
   return createHash("sha256").update(value).digest("hex");
 }
 function asItem(
   kind: RetentionPlanItem["kind"],
-  row: Record<string, unknown>,
+  row: RetentionRow,
   timestamp: string,
 ): RetentionPlanItem {
   return {
@@ -92,9 +108,9 @@ function asItem(
 function rows(
   db: Database.Database,
   sql: string,
-  ...params: unknown[]
-): Record<string, unknown>[] {
-  return db.prepare(sql).all(...params) as Record<string, unknown>[];
+  ...params: SqlValue[]
+): RetentionRow[] {
+  return z.array(RetentionRowSchema).parse(db.prepare(sql).all(...params));
 }
 
 /** Build a deterministic plan. Active rows are deliberately excluded, including ambiguous deliveries. */
@@ -213,7 +229,7 @@ function hasTable(db: Database.Database, table: string): boolean {
 function staleRssArticleRows(
   db: Database.Database,
   cutoffAt: string,
-): Record<string, unknown>[] {
+): RetentionRow[] {
   return rows(
     db,
     "SELECT * FROM rss_articles WHERE read_at IS NOT NULL AND dispatch_id IS NULL AND read_at<? ORDER BY read_at,id",
@@ -235,6 +251,7 @@ async function archiveItems(
   archiveDir: string,
   at: string,
   batch: number,
+  makeId: () => string = randomUUID,
 ): Promise<string[]> {
   await mkdir(archiveDir, { recursive: true });
   const paths: string[] = [];
@@ -243,7 +260,7 @@ async function archiveItems(
     const stamp = at.replace(/[:.]/g, "-");
     const target = path.join(
       archiveDir,
-      `runtime-retention-${stamp}-${offset / batch}-${randomUUID()}.jsonl`,
+      `runtime-retention-${stamp}-${offset / batch}-${makeId()}.jsonl`,
     );
     const body = `${chunk.map((item) => JSON.stringify({ version: 1, exportedAt: at, ...item })).join("\n")}\n`;
     let created = false;
@@ -351,7 +368,7 @@ interface PrunePlan {
 async function runRetentionPrune(
   db: Database.Database,
   policy: RetentionPolicy,
-  options: { at?: Date; dryRun?: boolean },
+  options: { at?: Date; dryRun?: boolean; makeId?: () => string },
   plan: PrunePlan,
   deleteBatch: (db: Database.Database, items: RetentionPlanItem[]) => number,
 ): Promise<RetentionResult> {
@@ -384,6 +401,7 @@ async function runRetentionPrune(
     policy.archiveDir,
     plan.now,
     batchSize,
+    options.makeId,
   );
   let deleted = 0;
   for (let offset = 0; offset < plan.items.length; offset += batchSize) {
@@ -403,7 +421,7 @@ async function runRetentionPrune(
 export async function pruneRetention(
   db: Database.Database,
   policy: RetentionPolicy,
-  options: { at?: Date; dryRun?: boolean } = {},
+  options: { at?: Date; dryRun?: boolean; makeId?: () => string } = {},
 ): Promise<RetentionResult> {
   const plan = planRetention(db, policy, options.at ?? new Date());
   return runRetentionPrune(db, policy, options, plan, deleteRetentionBatch);
@@ -438,7 +456,7 @@ export function planRssRetention(
 export async function pruneRssRetention(
   db: Database.Database,
   policy: RetentionPolicy,
-  options: { at?: Date; dryRun?: boolean } = {},
+  options: { at?: Date; dryRun?: boolean; makeId?: () => string } = {},
 ): Promise<RetentionResult> {
   const plan = planRssRetention(db, policy, options.at ?? new Date());
   return runRetentionPrune(
