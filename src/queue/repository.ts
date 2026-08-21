@@ -1512,7 +1512,17 @@ export class QueueRepository {
         .run(now, now);
       const row = this.db
         .prepare(
-          "SELECT candidate.* FROM deliveries AS candidate WHERE candidate.status IN ('pending','retry_wait') AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at<=?) AND NOT EXISTS (SELECT 1 FROM deliveries AS predecessor WHERE predecessor.job_id=candidate.job_id AND predecessor.response_index<candidate.response_index AND predecessor.status NOT IN ('sent','failed')) ORDER BY candidate.created_at,candidate.response_index LIMIT 1",
+          `SELECT candidate.* FROM deliveries AS candidate
+           WHERE candidate.status IN ('pending','retry_wait')
+             AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at<=?)
+             AND NOT EXISTS (
+               SELECT 1 FROM deliveries AS predecessor
+               WHERE predecessor.job_id=candidate.job_id
+                 AND predecessor.response_index<candidate.response_index
+                 AND predecessor.status NOT IN ('sent')
+                 AND NOT (EXISTS (SELECT 1 FROM jobs rss_job WHERE rss_job.id=candidate.job_id AND json_extract(rss_job.payload_json,'$.rssDispatchId') IS NOT NULL) AND predecessor.status='failed')
+             )
+           ORDER BY candidate.created_at,candidate.response_index LIMIT 1`,
         )
         .get(now) as Record<string, unknown> | undefined;
       if (!row) return undefined;

@@ -100,6 +100,67 @@ it("edits the parent placeholder then sends overflow chunks in response order", 
   }
 });
 
+it("blocks overflow when placeholder delivery is permanently failed", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  completed(repo, "A".repeat(5000), {
+    destinationType: "new-thread",
+    destinationId: "channel",
+    cronThreadId: "thread-1",
+    cronPlaceholderMessageId: "placeholder-1",
+  });
+  const parent = { messages: { fetch: vi.fn().mockResolvedValue({}) } };
+  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockImplementation(async (id) =>
+      id === "thread-1" ? (thread as never) : (parent as never),
+    );
+  try {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-block-failed",
+    });
+    while (await worker.runOnce()) {}
+    expect(thread.send).not.toHaveBeenCalled();
+    expect(repo.listDeliveries().some((row) => row.status === "failed")).toBe(
+      true,
+    );
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
+it("blocks overflow when a predecessor delivery is ambiguous", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const jobId = completed(repo, "A".repeat(5000), {
+    destinationType: "new-thread",
+    destinationId: "channel",
+    cronThreadId: "thread-1",
+    cronPlaceholderMessageId: "placeholder-1",
+  });
+  const first = expectDefined(repo.claimDelivery("seed"));
+  repo.updateDelivery(first.row.id, first.fencingToken, "ambiguous");
+  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockResolvedValue(thread as never);
+  try {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-block-ambiguous",
+    });
+    while (await worker.runOnce()) {}
+    expect(thread.send).not.toHaveBeenCalled();
+    expect(repo.get(jobId)).toBeDefined();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
 it("does not mark delivery sent when the placeholder cannot be edited", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const jobId = completed(repo, "response", {
