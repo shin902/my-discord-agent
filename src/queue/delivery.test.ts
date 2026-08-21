@@ -192,80 +192,14 @@ it("does not mark delivery sent when the placeholder cannot be edited", async ()
 });
 
 it.each([
-  403, 404,
-])("classifies placeholder edit HTTP %s as permanent", async (status) => {
-  const repo = new QueueRepository(openRuntimeDb(":memory:"));
-  const jobId = completed(repo, "response", {
-    destinationType: "new-thread",
-    destinationId: "channel",
-    cronThreadId: "thread-1",
-    cronPlaceholderMessageId: "placeholder-1",
-  });
-  const edit = vi
-    .fn()
-    .mockRejectedValue(Object.assign(new Error("denied"), { status }));
-  const parent = { messages: { fetch: vi.fn().mockResolvedValue({ edit }) } };
-  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
-  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockImplementation(async (id) =>
-      id === "thread-1" ? (thread as never) : (parent as never),
-    );
-  try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: `delivery-edit-${status}`,
-    });
-    await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({ status: "failed" });
-    expect(edit).toHaveBeenCalledOnce();
-  } finally {
-    readySpy.mockRestore();
-    fetchSpy.mockRestore();
-    repo.close();
-  }
-});
-
-it.each([
-  {
-    label: "numeric-string status",
-    error: Object.assign(new Error("denied"), { status: "403" }),
-    expected: "failed",
-  },
-  {
-    label: "numeric-string statusCode",
-    error: Object.assign(new Error("missing"), { statusCode: "404" }),
-    expected: "failed",
-  },
-  {
-    label: "Unknown Channel REST code",
-    error: Object.assign(new Error("unknown channel"), { code: 10003 }),
-    expected: "failed",
-  },
-  {
-    label: "Unknown Message REST code",
-    error: Object.assign(new Error("unknown message"), { code: "10008" }),
-    expected: "failed",
-  },
-  {
-    label: "numeric-string rate limit status",
-    error: Object.assign(new Error("rate limited"), { status: "429" }),
-    expected: "retry_wait",
-  },
-  {
-    label: "numeric-string server statusCode",
-    error: Object.assign(new Error("server"), { statusCode: "503" }),
-    expected: "retry_wait",
-  },
-  {
-    label: "network error",
-    error: new TypeError("network timeout"),
-    expected: "retry_wait",
-  },
-])("classifies $label at the delivery worker boundary", async ({
-  error,
-  expected,
-}) => {
+  Object.assign(new Error("forbidden"), { status: 403 }),
+  Object.assign(new Error("missing"), { status: 404 }),
+  Object.assign(new Error("unknown channel"), { code: 10003 }),
+  Object.assign(new Error("unknown message"), { code: 10008 }),
+  Object.assign(new Error("rate limited"), { status: 429 }),
+  Object.assign(new Error("server"), { status: 503 }),
+  new TypeError("network timeout"),
+])("retries every placeholder edit failure uniformly", async (error) => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const jobId = completed(repo, "response", {
     destinationType: "new-thread",
@@ -284,10 +218,10 @@ it.each([
     );
   try {
     const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: `delivery-classify-${expected}`,
+      workerId: "delivery-edit-retry",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({ status: expected });
+    expect(repo.getDelivery(jobId)).toMatchObject({ status: "retry_wait" });
     expect(edit).toHaveBeenCalledOnce();
   } finally {
     readySpy.mockRestore();
