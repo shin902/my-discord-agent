@@ -714,6 +714,67 @@ export class QueueRepository {
       .get(key) as JobRow | undefined;
     return row ? parsePayload(row) : undefined;
   }
+  listTerminalCronJobs(): QueueJob[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM jobs WHERE status='dead_letter' AND json_extract(payload_json,'$.cronSourceType') IS NOT NULL",
+      )
+      .all() as JobRow[];
+    return rows.map(parsePayload);
+  }
+  /** Atomically provision a cron job and move it into the destination session ordering. */
+  provisionCronJob(
+    id: string,
+    sessionId: string,
+    patch: Partial<InboxMessage>,
+  ): QueueJob | undefined {
+    return this.inImmediateTransaction(() => {
+      const row = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id) as
+        | JobRow
+        | undefined;
+      if (!row) return undefined;
+      const payload = {
+        ...(JSON.parse(row.payload_json) as InboxMessage),
+        ...patch,
+        sessionId,
+        cronProvisioning: false,
+      };
+      this.db
+        .prepare("UPDATE jobs SET sequence=sequence+1 WHERE session_id=?")
+        .run(sessionId);
+      this.db
+        .prepare(
+          "UPDATE jobs SET payload_json=?,session_id=?,sequence=0,updated_at=? WHERE id=?",
+        )
+        .run(JSON.stringify(payload), sessionId, nowIso(), id);
+      return parsePayload(
+        this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id) as JobRow,
+      );
+    });
+  }
+  /** Atomically merge provisioning state into an existing cron job payload. */
+  patchJobPayload(
+    id: string,
+    patch: Partial<InboxMessage>,
+  ): QueueJob | undefined {
+    return this.inImmediateTransaction(() => {
+      const row = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id) as
+        | JobRow
+        | undefined;
+      if (!row) return undefined;
+      const payload = {
+        ...(JSON.parse(row.payload_json) as InboxMessage),
+        ...patch,
+      };
+      this.db
+        .prepare("UPDATE jobs SET payload_json=? WHERE id=?")
+        .run(JSON.stringify(payload), id);
+      const updated = this.db
+        .prepare("SELECT * FROM jobs WHERE id=?")
+        .get(id) as JobRow;
+      return parsePayload(updated);
+    });
+  }
   enqueue(
     payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
     options: { idempotencyKey?: string; maxAttempts?: number } = {},
@@ -818,7 +879,7 @@ export class QueueRepository {
       const excludedSql = excluded.length
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
         : "";
-      const eligible = `((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
+      const eligible = `json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
       const exhausted = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
@@ -828,7 +889,7 @@ export class QueueRepository {
         this.deadLetterExhaustedInTransaction(row, "max_attempts");
       const row = this.db
         .prepare(
-          `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
+          `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs blocker WHERE json_extract(blocker.payload_json,'$.cronProvisioning')=1 AND json_extract(blocker.payload_json,'$.cronThreadId')=j.session_id) AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
         )
         .get(now, now, ...excluded) as JobRow | undefined;
       if (!row) return undefined;
@@ -854,6 +915,15 @@ export class QueueRepository {
       if (result.changes !== 1) throw new Error(`claim race for job ${row.id}`);
       const claimed = this.get(row.id);
       return claimed ? { job: claimed, fencingToken: token } : undefined;
+    });
+  }
+  releaseClaim(id: string, token: number): void {
+    this.fenced(id, token, {
+      status: "queued",
+      claimed: 0,
+      lease_until: null,
+      worker_id: null,
+      next_attempt_at: null,
     });
   }
   private fenced(
@@ -1086,7 +1156,10 @@ export class QueueRepository {
         const replyMessageId =
           index === 0 ? deliveryMeta.replyMessageId : undefined;
         const payloadMetadata = { ...deliveryMeta };
-        if (index > 0) delete payloadMetadata.replyMessageId;
+        if (index > 0) {
+          delete payloadMetadata.replyMessageId;
+          delete payloadMetadata.cronPlaceholderMessageId;
+        }
         const payload = hasDeliveryMeta
           ? JSON.stringify({
               ...payloadMetadata,

@@ -65,11 +65,19 @@ function validMessage(value: unknown): value is InboxMessage {
     message.completedAt,
     message.cronJobId,
     message.cronThreadId,
+    message.cronPlaceholderMessageId,
+    message.cronSourceType,
+    message.cronSourceId,
     message.rssDispatchId,
     message.rssStatePath,
   ]) {
     if (optional !== undefined && typeof optional !== "string") return false;
   }
+  if (
+    message.cronProvisioning !== undefined &&
+    typeof message.cronProvisioning !== "boolean"
+  )
+    return false;
   if (
     message.cronDeliveryMode !== undefined &&
     message.cronDeliveryMode !== "direct" &&

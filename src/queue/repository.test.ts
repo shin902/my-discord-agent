@@ -1135,6 +1135,43 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
     }
   });
 
+  it("provisionCronJob moves the authoritative session ordering atomically", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const first = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "mail-1",
+        content: "cron",
+        timestamp: new Date().toISOString(),
+        cronProvisioning: true,
+        cronSourceType: "mail",
+      }).job;
+      const user = repo.enqueue({
+        channelId: "thread-1",
+        groupName: "group",
+        sessionId: "thread-1",
+        content: "user",
+        timestamp: new Date().toISOString(),
+      }).job;
+      const provisioned = repo.provisionCronJob(first.id, "thread-1", {
+        cronThreadId: "thread-1",
+      });
+      expect(provisioned).toMatchObject({
+        sessionId: "thread-1",
+        cronProvisioning: false,
+        sequence: 0,
+      });
+      expect(repo.get(user.id)).toMatchObject({
+        sessionId: "thread-1",
+        sequence: 1,
+      });
+      expect(repo.claim("worker")).toMatchObject({ job: { id: first.id } });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("distinguishes an initialized empty Discord scope from an unseen scope", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
