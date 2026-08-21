@@ -718,10 +718,7 @@ export class QueueRepository {
     const rows = this.db
       .prepare(
         `SELECT j.* FROM jobs j
-         WHERE (
-           json_extract(j.payload_json,'$.cronSourceType') IS NOT NULL
-           OR json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread'
-         )
+         WHERE json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread'
            AND (
              j.status='dead_letter'
              OR (j.status='completed' AND EXISTS (
@@ -890,7 +887,7 @@ export class QueueRepository {
       const excludedSql = excluded.length
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
         : "";
-      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR (json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread' AND json_extract(j.payload_json,'$.cronSourceType') IS NULL)) AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
+      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread') AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
       const exhausted = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,

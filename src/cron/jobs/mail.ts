@@ -1,10 +1,6 @@
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
-import { getQueueRepository } from "../../queue/repository.js";
 import { NonRetryableError } from "../../utils/error.js";
-import {
-  type CronItemThreadOptions,
-  enqueueCronItemThread,
-} from "../enqueue.js";
+import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 const MAX_BODY_CHARS = 8000;
@@ -30,17 +26,7 @@ async function graphFetch(path: string): Promise<unknown> {
   return res.json();
 }
 
-export async function acknowledgeEmail(emailId: string): Promise<void> {
-  const res = await fetch(
-    graphUrl(`/me/messages/${encodeURIComponent(emailId)}`),
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isRead: true }),
-    },
-  );
-  if (!res.ok) throw new Error(`メール既読化失敗: ${res.status}`);
-}
+export { acknowledgeEmail } from "../mail-ack.js";
 
 interface UnreadEmail {
   id: string;
@@ -115,16 +101,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
     console.error("[mail] groupName が設定されていません");
     return;
   }
-
-  const deliveryMode = ctx.deliveryMode ?? "item-thread";
-  if (deliveryMode !== "item-thread") {
+  if (ctx.deliveryMode !== undefined && ctx.deliveryMode !== "new-thread") {
     throw new NonRetryableError(
-      `[mail] deliveryMode=${deliveryMode} はmail.tsに対応していません。item-threadへ移行してください`,
+      `[mail] deliveryMode=${ctx.deliveryMode} はmail.tsに対応していません。new-threadを指定してください`,
     );
   }
   if (ctx.sessionMode !== undefined && ctx.sessionMode !== "destination") {
     throw new NonRetryableError(
-      "[mail] item-threadはsessionMode=destinationと組み合わせてください",
+      "[mail] new-threadはsessionMode=destinationと組み合わせてください",
     );
   }
 
@@ -134,40 +118,20 @@ export default async function handler(ctx: CronContext): Promise<void> {
   console.log(`[mail] 未読メール ${unread.length} 件を処理します`);
 
   for (const meta of unread) {
-    const key = `mail:${meta.id}`;
     try {
-      const repo = getQueueRepository();
-      const job = repo.findByIdempotencyKey(key);
-      if (job?.status === "dead_letter") continue;
-      if (job?.status === "completed") {
-        const deliveries = repo
-          .listDeliveries()
-          .filter((delivery) => delivery.jobId === job.id);
-        if (
-          deliveries.length > 0 &&
-          deliveries.every((delivery) => delivery.status === "sent")
-        ) {
-          await acknowledgeEmail(meta.id);
-        }
-        continue;
-      }
-
-      const bodyText = job ? "" : await fetchEmailBody(meta.id);
-      const emailText = job
-        ? ""
-        : `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
-      await enqueueCronItemThread(
-        ctx,
-        job ? "" : `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
+      const bodyText = await fetchEmailBody(meta.id);
+      const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
+      await enqueueCronInbox(
         {
-          idempotencyKey: key,
-          sourceType: "mail",
-          sourceId: meta.id,
-          threadName: meta.subject.slice(0, 100) || "メール",
-        } satisfies CronItemThreadOptions,
+          ...ctx,
+          deliveryMode: "new-thread",
+          sessionMode: "destination",
+          mailEmailId: meta.id,
+        },
+        `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
       );
     } catch (err) {
-      console.error(`[mail] メール ${meta.id} のキュー登録・準備に失敗:`, err);
+      console.error(`[mail] メール ${meta.id} のキュー登録に失敗:`, err);
     }
   }
 }

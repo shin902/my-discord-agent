@@ -1135,7 +1135,7 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
     }
   });
 
-  it("lists completed cron jobs once when a delivery is failed or ambiguous", () => {
+  it("lists item-thread cron jobs once when a delivery is failed or ambiguous", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
       for (const status of ["failed", "ambiguous"] as const) {
@@ -1145,7 +1145,7 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
           sessionId: `s-${status}`,
           content: "cron",
           timestamp: new Date().toISOString(),
-          cronSourceType: "mail",
+          cronDeliveryMode: "item-thread",
           cronPlaceholderMessageId: `p-${status}`,
         }).job;
         const claim = expectDefined(repo.claim("agent"));
@@ -1154,7 +1154,7 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
             groupName: "group",
             destinationId: "channel",
             destinationType: "channel",
-            cronSourceType: "mail",
+            cronPlaceholderMessageId: `p-${status}`,
           },
         });
         const deliveryClaim = expectDefined(
@@ -1172,15 +1172,14 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
         sessionId: "pending",
         content: "cron",
         timestamp: new Date().toISOString(),
-        cronSourceType: "mail",
+        cronDeliveryMode: "item-thread",
       }).job;
       const pendingClaim = expectDefined(repo.claim("agent"));
       repo.commitResult(pending.id, pendingClaim.fencingToken, "response", {
         deliveryPayload: {
           groupName: "group",
           destinationId: "channel",
-          destinationType: "channel",
-          cronSourceType: "mail",
+          destinationType: "new-thread",
         },
       });
       expect(repo.listTerminalCronJobs().map((job) => job.id)).toHaveLength(2);
@@ -1216,11 +1215,13 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
       const first = repo.enqueue({
         channelId: "channel",
         groupName: "group",
-        sessionId: "mail-1",
+        sessionId: "cron-item",
         content: "cron",
         timestamp: new Date().toISOString(),
+        cronDeliveryMode: "item-thread",
+        cronSessionMode: "destination",
+        cronThread: true,
         cronProvisioning: true,
-        cronSourceType: "mail",
       }).job;
       const user = repo.enqueue({
         channelId: "thread-1",

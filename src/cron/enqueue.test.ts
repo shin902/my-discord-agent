@@ -26,10 +26,7 @@ it("provisions an item thread before the caller can run AI", async () => {
     };
     const client = {
       channels: {
-        fetch: vi
-          .fn()
-          .mockResolvedValueOnce(parent)
-          .mockResolvedValueOnce(undefined),
+        fetch: vi.fn().mockResolvedValueOnce(parent),
       },
     } as never;
 

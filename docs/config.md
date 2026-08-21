@@ -162,6 +162,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "id": "mail-check",
     "schedule": "*/30 * * * *",
     "enabled": true,
+    "deliveryMode": "new-thread",
+    "sessionMode": "destination",
     "handler": "jobs/mail.ts"
   },
   {
@@ -196,11 +198,11 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### jobs/mail.ts
 
-`mail.ts` は `deliveryMode: "item-thread"`（省略時も既存設定互換としてitem-thread）で動作し、未読メールを `mail:{messageId}` の冪等キー付きinboxジョブとして登録し、AIを直接実行しない。処理前に親チャンネルへ仮メッセージを投稿してスレッドを確保し、pollerが通常のprovider concurrency・セッション順序・delivery処理を使って回答する。回答の先頭は仮メッセージを編集し、長い回答の続きは同じスレッドへ投稿する。全deliveryがDiscordへ送信された後、次回のmail cronでメールを既読化するため、AI・delivery・ACKの失敗時は未読のまま残る。
+`mail.ts` は未読メールごとに本文を取得し、`new-thread` / `destination` のinbox jobを投入する。AI・スレッド作成・Discord deliveryは通常のpollerへ任せ、全delivery chunkが`sent`になった後にだけメールを既読化する。ACK対象を特定するメールID以外のmail固有冪等キー、source照合、placeholder/threadのcross-run再利用は行わない。
 
-作成済みの仮メッセージとスレッドは保存済みIDから再利用する。作成途中のジョブや既読化に失敗したメールは次回のmail cronで再試行し、deliveryの失敗はdelivery workerの既存再試行機構に任せる。placeholderの最終回答編集は冪等な操作として、Discordのエラー内容にかかわらず最大3回（初回を含む）試行する。3回失敗したdeliveryは終端化し、次回のcron reconciliationで失敗表示を1回だけ試みる。最終的なAIまたはdelivery失敗時は、可能なら仮メッセージを失敗表示へ編集する。
+AI・delivery・既読化の失敗時はメールが未読のまま残る。次回cronは過去jobを復旧せず、そのメールに新しいjobとスレッドを作るため、失敗した試行のDiscord投稿が残る場合は重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
 
-同じメールアカウント・同じメールソースを対象にする `mail.ts` のcronエントリやハンドラーを複数設定してはいけない。冪等キーは同じcron producerの次回実行における重複を防ぐものであり、複数producerや複数ホストによるprovisioningの協調は保証しない。
+複数producerや複数ホストで同じメールソースを処理する協調は保証しない。
 
 ### jobs/rss-collect.ts / jobs/rss-dispatch.ts
 

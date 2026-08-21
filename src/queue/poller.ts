@@ -457,9 +457,7 @@ export async function reconcileTerminalCronFailures(): Promise<void> {
 }
 
 function isCronItemMessage(msg: InboxMessage): boolean {
-  return (
-    msg.cronDeliveryMode === "item-thread" || msg.cronSourceType === "mail"
-  );
+  return msg.cronDeliveryMode === "item-thread";
 }
 
 async function finalizeCronFailure(msg: InboxMessage): Promise<void> {
@@ -482,8 +480,7 @@ async function finalizeCronFailure(msg: InboxMessage): Promise<void> {
 }
 
 async function markCronFailurePlaceholder(msg: InboxMessage): Promise<boolean> {
-  if (msg.cronDeliveryMode !== "item-thread" && msg.cronSourceType !== "mail")
-    return false;
+  if (msg.cronDeliveryMode !== "item-thread") return false;
   if (!msg.cronPlaceholderMessageId) return false;
   try {
     const client = await getDiscordClientForGroupName(msg.groupName);
@@ -742,10 +739,7 @@ async function processCronThreadDelivery(
         await finalizeCronFailure(msg);
         return;
       }
-      if (
-        msg.cronDeliveryMode === "item-thread" ||
-        msg.cronSourceType === "mail"
-      ) {
+      if (msg.cronDeliveryMode === "item-thread") {
         outcome = "retry";
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().failAttempt(
@@ -776,8 +770,7 @@ async function processCronThreadDelivery(
             cronJobId: msg.cronJobId,
             cronThreadId: msg.cronThreadId,
             cronPlaceholderMessageId: msg.cronPlaceholderMessageId,
-            cronSourceType: msg.cronSourceType,
-            cronSourceId: msg.cronSourceId,
+            ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
             ...(msg.rssDispatchId
               ? {
                   rssDispatchId: msg.rssDispatchId,

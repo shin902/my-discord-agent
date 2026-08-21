@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "discord.js";
+import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
@@ -70,6 +71,7 @@ interface DeliveryPayload {
   cronJobId?: string;
   cronThreadId?: string;
   cronPlaceholderMessageId?: string;
+  mailEmailId?: string;
 }
 type DeliveryTarget = {
   id?: unknown;
@@ -309,13 +311,15 @@ export class DeliveryWorker {
       const deliveries = this.repository
         .listDeliveries()
         .filter((delivery) => delivery.jobId === claim.row.jobId);
+      const allSent = deliveries.every(
+        (delivery) => delivery.status === "sent",
+      );
       if (this.isRss(claim.row)) {
-        if (deliveries.every((delivery) => delivery.status === "sent")) {
-          this.settleRss(claim.row, "completed");
-        }
+        if (allSent) this.settleRss(claim.row, "completed");
       } else {
         this.settleRss(claim.row, "completed");
       }
+      if (allSent) await this.acknowledgeMail(claim.row);
     } catch (error) {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
@@ -384,6 +388,17 @@ export class DeliveryWorker {
       );
     } catch {
       return false;
+    }
+  }
+
+  private async acknowledgeMail(row: DeliveryRow): Promise<void> {
+    if (!row.payloadJson) return;
+    try {
+      const payload = JSON.parse(row.payloadJson) as DeliveryPayload;
+      if (typeof payload.mailEmailId !== "string") return;
+      await acknowledgeEmail(payload.mailEmailId);
+    } catch (error) {
+      console.error("[mail] Discord配送後の既読化に失敗:", error);
     }
   }
 

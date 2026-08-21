@@ -107,19 +107,24 @@ describe("executeJob", () => {
     expect(arg.cronJobId).toBe("test-job");
   });
 
-  it("item-thread + destination: item-threadをキューへ渡す", async () => {
-    await executeJob({
+  it("item-thread + destination: 投入ごとに新しいidentityをキューへ渡す", async () => {
+    const job = {
       id: "item-job",
       schedule: "5m",
       enabled: true,
       groupName: "my-group",
       prompt: "summarize item",
       channelId: "ch-123",
-      deliveryMode: "item-thread",
-      sessionMode: "destination",
-    });
+      deliveryMode: "item-thread" as const,
+      sessionMode: "destination" as const,
+    };
 
-    expect(vi.mocked(appendInbox)).toHaveBeenCalledWith(
+    await executeJob(job);
+    await executeJob(job);
+
+    expect(vi.mocked(appendInbox)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(appendInbox)).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
         cronDeliveryMode: "item-thread",
         cronSessionMode: "destination",
@@ -128,6 +133,10 @@ describe("executeJob", () => {
         idempotencyKey: expect.stringMatching(/^cron-item:item-job:/),
       }),
     );
+    const keys = vi
+      .mocked(appendInbox)
+      .mock.calls.map(([arg]) => arg.idempotencyKey);
+    expect(keys[0]).not.toBe(keys[1]);
     expect(discordClient.channels.fetch).not.toHaveBeenCalled();
   });
 
