@@ -186,16 +186,17 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `deliveryMode` | `direct` | `channelId` へ直接投稿する。通常チャンネルだけでなく既存スレッドのIDも指定可能 |
 | `deliveryMode` | `new-thread` | `channelId` を親として実行ごとに新しいスレッドを作成する |
+| `deliveryMode` | `item-thread` | 処理前に仮メッセージと1項目用スレッドを確保し、回答先頭で仮メッセージを編集する。`sessionMode` は `destination` 必須 |
 | `sessionMode` | `per-run` | cron実行ごとに独立したセッションIDを生成する |
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドのIDをセッションIDにする |
 
-既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
+既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 
 `model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
 
 ### jobs/mail.ts
 
-`mail.ts` は未読メールを `mail:{messageId}` の冪等キー付きinboxジョブとして登録し、AIを直接実行しない。処理前に親チャンネルへ仮メッセージを投稿してスレッドを確保し、pollerが通常のprovider concurrency・セッション順序・delivery処理を使って回答する。回答の先頭は仮メッセージを編集し、長い回答の続きは同じスレッドへ投稿する。全deliveryがDiscordへ送信された後、次回のmail cronでメールを既読化するため、AI・delivery・ACKの失敗時は未読のまま残る。
+`mail.ts` は `deliveryMode: "item-thread"`（省略時も既存設定互換としてitem-thread）で動作し、未読メールを `mail:{messageId}` の冪等キー付きinboxジョブとして登録し、AIを直接実行しない。処理前に親チャンネルへ仮メッセージを投稿してスレッドを確保し、pollerが通常のprovider concurrency・セッション順序・delivery処理を使って回答する。回答の先頭は仮メッセージを編集し、長い回答の続きは同じスレッドへ投稿する。全deliveryがDiscordへ送信された後、次回のmail cronでメールを既読化するため、AI・delivery・ACKの失敗時は未読のまま残る。
 
 作成済みの仮メッセージとスレッドは保存済みIDから再利用する。作成途中のジョブや既読化に失敗したメールは次回のmail cronで再試行し、deliveryの失敗はdelivery workerの既存再試行機構に任せる。placeholderの最終回答編集は冪等な操作として、Discordのエラー内容にかかわらず最大3回（初回を含む）試行する。3回失敗したdeliveryは終端化し、次回のcron reconciliationで失敗表示を1回だけ試みる。最終的なAIまたはdelivery失敗時は、可能なら仮メッセージを失敗表示へ編集する。
 

@@ -16,6 +16,10 @@
     "id": "mail-check",
     "schedule": "*/30 * * * *",
     "enabled": true,
+    "groupName": "my-group",
+    "channelId": "YOUR_CHANNEL_ID",
+    "deliveryMode": "item-thread",
+    "sessionMode": "destination",
     "handler": "jobs/mail.ts"
   },
   {

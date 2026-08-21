@@ -17,6 +17,7 @@ vi.mock("../../queue/repository.js", () => ({
   getQueueRepository: () => mocks.queueRepo,
 }));
 
+import { enqueueCronItemThread } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 function makeContext(
@@ -73,7 +74,7 @@ describe("mail cron queue boundary", () => {
     mocks.queueRepo.findByIdempotencyKey.mockReturnValue(undefined);
   });
 
-  it("registers stable queue metadata before provisioning Discord", async () => {
+  it("handler item helper always provisions Discord before returning", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     unread(fetchMock);
@@ -81,9 +82,16 @@ describe("mail cron queue boundary", () => {
     const appendInbox = vi.fn().mockResolvedValue(undefined);
     mocks.queueRepo.findByIdempotencyKey
       .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce(undefined)
       .mockReturnValue({
         id: "job-1",
         status: "queued",
+        channelId: "channel",
+        cronDeliveryMode: "item-thread",
+        cronSessionMode: "destination",
+        cronThread: true,
+        cronSourceType: "mail",
+        cronSourceId: "mail-1",
         cronProvisioning: true,
       });
     mocks.queueRepo.provisionCronJob.mockReturnValue({ id: "job-1" });
@@ -91,9 +99,10 @@ describe("mail cron queue boundary", () => {
     const send = vi
       .fn()
       .mockResolvedValue({ id: "placeholder-1", startThread });
-    await (await import("./mail.js")).default(
-      makeContext({ type: 0, send }, appendInbox),
-    );
+    const context = makeContext({ type: 0, send }, appendInbox);
+    context.deliveryMode = "item-thread";
+    context.sessionMode = "destination";
+    await (await import("./mail.js")).default(context);
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKey: "mail:mail-1",
@@ -111,6 +120,14 @@ describe("mail cron queue boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects an explicit non-item-thread mail configuration", async () => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    context.deliveryMode = "new-thread";
+    await expect((await import("./mail.js")).default(context)).rejects.toThrow(
+      "item-threadへ移行してください",
+    );
+  });
+
   it("recovers a persisted placeholder thread after a cache-miss restart", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -124,6 +141,12 @@ describe("mail cron queue boundary", () => {
     mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
       id: "job-1",
       status: "queued",
+      channelId: "channel",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronSourceType: "mail",
+      cronSourceId: "mail-1",
       cronProvisioning: true,
       cronPlaceholderMessageId: "placeholder-1",
     });
@@ -143,6 +166,11 @@ describe("mail cron queue boundary", () => {
       ).channels.fetch,
     ).toHaveBeenNthCalledWith(2, "placeholder-1", { force: true });
     expect(startThread).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.patchJobPayload).toHaveBeenCalledWith("job-1", {
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+    });
     expect(mocks.queueRepo.provisionCronJob).toHaveBeenCalledWith(
       "job-1",
       "placeholder-1",
@@ -165,6 +193,11 @@ describe("mail cron queue boundary", () => {
     mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
       id: "job-1",
       status: "queued",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronSourceType: "mail",
+      cronSourceId: "mail-1",
       cronProvisioning: true,
       cronPlaceholderMessageId: "placeholder-1",
     });
@@ -194,6 +227,11 @@ describe("mail cron queue boundary", () => {
     mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
       id: "job-1",
       status: "queued",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronSourceType: "mail",
+      cronSourceId: "mail-1",
       cronProvisioning: true,
       cronPlaceholderMessageId: "placeholder-1",
     });
@@ -201,6 +239,157 @@ describe("mail cron queue boundary", () => {
       makeContext(channel, vi.fn(), lookupError),
     );
     expect(startThread).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "completed",
+    "dead_letter",
+  ] as const)("%s jobs do not refetch the body, enqueue, or reprovision", async (status) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    unread(fetchMock);
+    const appendInbox = vi.fn();
+    const send = vi.fn();
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "job-1",
+      status,
+      cronPlaceholderMessageId: "placeholder-1",
+      cronThreadId: "thread-1",
+    });
+    await (await import("./mail.js")).default(
+      makeContext({ type: 0, send }, appendInbox),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects an active idempotency collision instead of mutating another cron job", async () => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "direct-job",
+      status: "queued",
+      channelId: "channel",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "per-run",
+    });
+
+    await expect(
+      enqueueCronItemThread(context, "content", {
+        idempotencyKey: "mail:mail-1",
+        sourceType: "mail",
+        sourceId: "mail-1",
+      }),
+    ).rejects.toThrow("既存の別cronジョブ");
+    expect(mocks.queueRepo.patchJobPayload).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "completed",
+    "dead_letter",
+  ] as const)("%s persisted item jobs are not reprovisioned by the handler helper", async (status) => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "terminal-item",
+      status,
+      cronDeliveryMode: "item-thread",
+      cronSourceType: "mail",
+      cronSourceId: "mail-1",
+    });
+
+    await enqueueCronItemThread(context, "", {
+      idempotencyKey: "mail:mail-1",
+      sourceType: "mail",
+      sourceId: "mail-1",
+    });
+
+    expect(context.appendInbox).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.patchJobPayload).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "completed",
+    "dead_letter",
+  ] as const)("%s matching legacy mail jobs are not reprovisioned", async (status) => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "legacy-mail",
+      status,
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronSourceType: "mail",
+      cronSourceId: "mail-1",
+    });
+
+    await enqueueCronItemThread(context, "", {
+      idempotencyKey: "mail:mail-1",
+      sourceType: "mail",
+      sourceId: "mail-1",
+    });
+
+    expect(mocks.queueRepo.patchJobPayload).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["completed", "direct"],
+    ["dead_letter", "direct"],
+    ["completed", "new-thread"],
+    ["dead_letter", "new-thread"],
+  ] as const)("%s unrelated %s jobs reject an idempotency collision", async (status, deliveryMode) => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    const legacyMail = deliveryMode === "new-thread";
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "unrelated-terminal",
+      status,
+      cronDeliveryMode: deliveryMode,
+      cronSessionMode: legacyMail ? "destination" : "per-run",
+      ...(legacyMail
+        ? {
+            cronThread: true,
+            cronSourceType: "mail",
+            cronSourceId: "mail-2",
+          }
+        : {}),
+    });
+
+    await expect(
+      enqueueCronItemThread(context, "content", {
+        idempotencyKey: "mail:mail-1",
+        sourceType: "mail",
+        sourceId: "mail-1",
+      }),
+    ).rejects.toThrow("既存の別cronジョブ");
+    expect(mocks.queueRepo.patchJobPayload).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects an active new-thread collision with a different mail source", async () => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "other-mail-job",
+      status: "queued",
+      channelId: "channel",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronSourceType: "mail",
+      cronSourceId: "mail-2",
+    });
+
+    await expect(
+      enqueueCronItemThread(context, "content", {
+        idempotencyKey: "mail:mail-1",
+        sourceType: "mail",
+        sourceId: "mail-1",
+      }),
+    ).rejects.toThrow("既存の別cronジョブ");
+    expect(mocks.queueRepo.patchJobPayload).not.toHaveBeenCalled();
     expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
   });
 

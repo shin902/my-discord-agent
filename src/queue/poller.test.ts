@@ -12,6 +12,7 @@ import {
   saveFeedEntries,
 } from "../rss/store.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
+import { DeliveryError } from "./delivery.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
@@ -1381,6 +1382,74 @@ describe("processMessage - durable result", () => {
       4,
       expect.any(Object),
     );
+  });
+
+  it.each([
+    "ambiguous",
+    "non-retryable",
+    "max-attempts",
+    "empty-response",
+    "nonzero-exit",
+  ] as const)("item-thread terminal path %s attempts failure notification once and persists the flag", async (path) => {
+    const msg = makeMsg({
+      id: `item-${path}`,
+      sessionId: "thread",
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronJobId: "item-job",
+      cronThreadId: "thread",
+      cronPlaceholderMessageId: "placeholder",
+    });
+    const terminalJob = {
+      ...msg,
+      status: "dead_letter",
+      cronFailureNotified: false,
+    };
+    getJob.mockReturnValue({ status: "dead_letter" });
+    listTerminalCronJobs.mockReturnValue([terminalJob]);
+    patchJobPayload.mockImplementation((_id, patch) => {
+      Object.assign(terminalJob, patch);
+    });
+    const edit = vi.fn().mockRejectedValue(new Error("edit unavailable"));
+    client.channels.fetch.mockResolvedValue({
+      messages: { fetch: vi.fn().mockResolvedValue({ edit }) },
+    });
+
+    if (path === "ambiguous") {
+      vi.mocked(sendMessage).mockRejectedValue(
+        new DeliveryError("unknown", "transport result unknown"),
+      );
+    } else if (path === "non-retryable") {
+      vi.mocked(sendMessage).mockRejectedValue(
+        new NonRetryableError("invalid item"),
+      );
+    } else if (path === "max-attempts") {
+      vi.mocked(sendMessage).mockRejectedValue(new Error("temporary"));
+    } else if (path === "empty-response") {
+      vi.mocked(sendMessage).mockResolvedValue("");
+    } else {
+      vi.mocked(sendMessage).mockImplementation(
+        async (_group, _session, _content, options: unknown) => {
+          (options as SendMessageOptions).onExecutionTiming?.({
+            termination: "close",
+            exitCode: 7,
+            preparationMs: 0,
+            dockerRunMs: 0,
+          });
+          return "partial";
+        },
+      );
+    }
+
+    await processMessage(msg);
+    await reconcileTerminalCronFailures();
+
+    expect(edit).toHaveBeenCalledOnce();
+    expect(patchJobPayload).toHaveBeenCalledOnce();
+    expect(patchJobPayload).toHaveBeenCalledWith(msg.id, {
+      cronFailureNotified: true,
+    });
+    expect(terminalJob.cronFailureNotified).toBe(true);
   });
 });
 

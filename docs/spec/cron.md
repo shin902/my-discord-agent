@@ -46,6 +46,10 @@ data/cron/
   {
     "id": "mail-check",
     "schedule": "*/30 * * * *",
+    "groupName": "email",
+    "channelId": "12345",
+    "deliveryMode": "item-thread",
+    "sessionMode": "destination",
     "handler": "jobs/mail.ts"
   }
 ]
@@ -64,7 +68,7 @@ data/cron/
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
-| `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` | Discordへの投稿方法（後述） |
+| `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
 | `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
@@ -91,6 +95,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 |---|---|---|
 | `deliveryMode` | `direct` | `channelId` が指すチャンネルまたは既存スレッドへ直接投稿する |
 | `deliveryMode` | `new-thread` | `channelId` を親チャンネルとして毎回新規スレッドを作成し、そこへ投稿する |
+| `deliveryMode` | `item-thread` | 処理前に仮メッセージと1項目用スレッドを確保し、仮メッセージを回答先頭で編集する。handlerなしジョブではpollerがAI前に確保する |
 | `sessionMode` | `per-run` | 実行ごとに一意なセッションIDを生成する |
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドIDをセッションIDとして使う |
 
@@ -102,8 +107,9 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `direct` + `destination` | 投稿先単位で履歴を継続する |
 | `new-thread` + `destination` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
+| `item-thread` + `destination` | 1項目ごとに仮メッセージと独立スレッドを先に確保し、そのスレッドをAI・ユーザー返信のセッションにする。`item-thread` は `destination` 必須 |
 
-旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。
+旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。mail.ts は `deliveryMode` 省略時もitem-threadとして扱う既存設定互換を維持し、明示的に別モードを指定した場合は設定エラーにする。
 
 ---
 
@@ -119,7 +125,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `mode?`, `handler?`, `settings?`）を展開して渡す
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `mode?`, `handler?`, `settings?`）を展開して渡す
+
+複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { idempotencyKey, sourceType, sourceId, threadName })` で登録・provisioningする。handlerから呼ぶ場合、`idempotencyKey` は外部項目に対応する安定した値として必須であり、helperが自動生成することはない。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から登録され、handlerなしの実行に限って内部用のper-run keyを生成してpollerがAI実行前にprovisioningする。source固有の発見処理と完了ACKはhandler側に残す。
 
 ---
 

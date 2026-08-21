@@ -81,7 +81,8 @@ function validMessage(value: unknown): value is InboxMessage {
   if (
     message.cronDeliveryMode !== undefined &&
     message.cronDeliveryMode !== "direct" &&
-    message.cronDeliveryMode !== "new-thread"
+    message.cronDeliveryMode !== "new-thread" &&
+    message.cronDeliveryMode !== "item-thread"
   )
     return false;
   if (

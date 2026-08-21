@@ -1189,6 +1189,27 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
     }
   });
 
+  it("claims declarative item-thread jobs so the poller can provision before AI", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const item = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "cron-item",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+        cronDeliveryMode: "item-thread",
+        cronSessionMode: "destination",
+        cronThread: true,
+        cronJobId: "item-job",
+        cronProvisioning: true,
+      }).job;
+      expect(repo.claim("worker")?.job.id).toBe(item.id);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("provisionCronJob moves the authoritative session ordering atomically", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

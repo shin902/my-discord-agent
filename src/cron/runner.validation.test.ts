@@ -163,6 +163,44 @@ describe("loadAndValidateCron", () => {
     expect(result[0].id).toBe("group-job");
   });
 
+  it("item-thread + destination は検証に成功する", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "item-thread-job",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "summarize item",
+          channelId: "ch-123",
+          deliveryMode: "item-thread",
+          sessionMode: "destination",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).resolves.toHaveLength(1);
+  });
+
+  it("item-thread は destination 以外のsessionModeを拒否する", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "invalid-item-thread",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "summarize item",
+          channelId: "ch-123",
+          deliveryMode: "item-thread",
+          sessionMode: "per-run",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).rejects.toThrow(
+      "item-thread は sessionMode=destination と組み合わせてください",
+    );
+  });
+
   it("deliveryMode/sessionMode の片方だけではエラーになる", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([

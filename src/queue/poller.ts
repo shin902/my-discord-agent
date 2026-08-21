@@ -12,6 +12,7 @@ import {
   type ProviderConcurrency,
   resolveProviderConcurrency,
 } from "../config/providers.js";
+import { provisionCronItemThread } from "../cron/enqueue.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
@@ -171,7 +172,8 @@ function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
   if (!msg.rssDispatchId) return;
   if (
     msg.cronDeliveryMode === "direct" ||
-    msg.cronDeliveryMode === "new-thread"
+    msg.cronDeliveryMode === "new-thread" ||
+    msg.cronDeliveryMode === "item-thread"
   )
     return;
   try {
@@ -394,7 +396,7 @@ async function withLlmLock<T>(
   }
 }
 
-// 非ゼロ終了コードの扱いは通常メッセージと cron new-thread で同一のため共通化する。
+// 非ゼロ終了コードの扱いは通常メッセージと cron thread delivery で同一のため共通化する。
 // リトライ方針の決定は QueueRepository が所有するため、poller は記録するだけ。
 async function releaseRssAfterFailure(
   msg: InboxMessage,
@@ -428,6 +430,7 @@ async function failAttemptIfNonZeroExitCode(
   }
   if (msg.rssDispatchId) {
     await releaseRssAfterFailure(msg, "agent_exit", timing);
+    await finalizeCronFailure(msg);
   } else {
     await getQueueRepository().failAttempt(
       msg.id,
@@ -435,28 +438,53 @@ async function failAttemptIfNonZeroExitCode(
       msg.fencingToken,
       { metadata: executionMetadata(timing) },
     );
+    if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
+      await finalizeCronFailure(msg);
+    }
   }
   return true;
 }
 
 // コンテナ起動を running 状態として記録する onContainerStarted ハンドラを生成する。
-// 通常メッセージ（sessionId=msg.sessionId）と cron new-thread（導出 sessionId）で同一。
+// 通常メッセージ（sessionId=msg.sessionId）と cron thread delivery（導出 sessionId）で同一。
 export async function reconcileTerminalCronFailures(): Promise<void> {
   const repo = getQueueRepository();
   const jobs = repo.listTerminalCronJobs();
   for (const job of jobs) {
-    if (job.cronFailureNotified || !job.cronPlaceholderMessageId) continue;
+    if (job.cronFailureNotified) continue;
+    await finalizeCronFailure(job);
+  }
+}
+
+function isCronItemMessage(msg: InboxMessage): boolean {
+  return (
+    msg.cronDeliveryMode === "item-thread" || msg.cronSourceType === "mail"
+  );
+}
+
+async function finalizeCronFailure(msg: InboxMessage): Promise<void> {
+  if (!isCronItemMessage(msg)) return;
+  try {
+    await markCronFailurePlaceholder(msg);
+  } finally {
     try {
-      await markCronFailurePlaceholder(job);
-    } finally {
-      repo.patchJobPayload(job.id, { cronFailureNotified: true });
+      getQueueRepository().patchJobPayload(msg.id, {
+        cronFailureNotified: true,
+      });
+      msg.cronFailureNotified = true;
+    } catch (error) {
+      console.error(
+        `[poller] cron failure notification state update failed (${msg.id}):`,
+        error,
+      );
     }
   }
 }
 
 async function markCronFailurePlaceholder(msg: InboxMessage): Promise<boolean> {
-  if (msg.cronSourceType !== "mail" || !msg.cronPlaceholderMessageId)
+  if (msg.cronDeliveryMode !== "item-thread" && msg.cronSourceType !== "mail")
     return false;
+  if (!msg.cronPlaceholderMessageId) return false;
   try {
     const client = await getDiscordClientForGroupName(msg.groupName);
     const channel = (await client.channels.fetch(msg.channelId)) as unknown as {
@@ -505,7 +533,9 @@ function usesCronDestinationSession(msg: InboxMessage): boolean {
   return (
     msg.cronSessionMode === "destination" ||
     (msg.cronSessionMode === undefined &&
-      (msg.cronThread === true || msg.cronDeliveryMode === "new-thread"))
+      (msg.cronThread === true ||
+        msg.cronDeliveryMode === "new-thread" ||
+        msg.cronDeliveryMode === "item-thread"))
   );
 }
 
@@ -609,7 +639,34 @@ async function ensureCronThread(msg: InboxMessage): Promise<void> {
   msg.sessionId = threadId;
 }
 
-async function processCronNewThread(
+async function ensureCronItemThread(msg: InboxMessage): Promise<void> {
+  if (
+    msg.cronDeliveryMode !== "item-thread" ||
+    (msg.cronThreadId &&
+      msg.cronPlaceholderMessageId &&
+      msg.cronProvisioning !== true &&
+      msg.sessionId === msg.cronThreadId)
+  )
+    return;
+  if (msg.fencingToken === undefined) return;
+  const repository = getQueueRepository();
+  const job = repository.get(msg.id);
+  if (!job)
+    throw new Error(`[cron-item-thread] job ${msg.id} が見つかりません`);
+  const client = await resolveDiscordClient(msg.groupName);
+  const provisioned = await provisionCronItemThread(client, repository, job, {
+    threadName: `cron-${String(msg.cronJobId ?? msg.id).slice(0, 90)}`,
+  });
+  msg.cronDeliveryMode = "item-thread";
+  msg.cronSessionMode = "destination";
+  msg.cronThread = true;
+  msg.cronProvisioning = false;
+  msg.cronThreadId = provisioned.cronThreadId;
+  msg.cronPlaceholderMessageId = provisioned.cronPlaceholderMessageId;
+  msg.sessionId = provisioned.sessionId;
+}
+
+async function processCronThreadDelivery(
   msg: InboxMessage,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -618,14 +675,14 @@ async function processCronNewThread(
   let sessionId = cronSessionId(msg);
   try {
     if (
-      msg.cronSourceType === "mail" &&
-      (!msg.cronThreadId || !msg.cronPlaceholderMessageId)
+      msg.cronDeliveryMode === "item-thread" &&
+      (!msg.cronThreadId ||
+        !msg.cronPlaceholderMessageId ||
+        msg.cronProvisioning === true ||
+        msg.sessionId !== msg.cronThreadId)
     ) {
-      outcome = "retry";
-      if (msg.fencingToken !== undefined) {
-        getQueueRepository().releaseClaim(msg.id, msg.fencingToken);
-      }
-      return;
+      await ensureCronItemThread(msg);
+      sessionId = cronSessionId(msg);
     }
     if (!msg.cronJobId) {
       outcome = "dead-letter";
@@ -635,6 +692,7 @@ async function processCronNewThread(
           msg.fencingToken,
           "invalid_cron_job",
         );
+        await finalizeCronFailure(msg);
       }
       return;
     }
@@ -681,9 +739,13 @@ async function processCronNewThread(
       if (msg.rssDispatchId) {
         outcome = "dead-letter";
         await releaseRssAfterFailure(msg, "empty_response", timing);
+        await finalizeCronFailure(msg);
         return;
       }
-      if (msg.cronSourceType === "mail") {
+      if (
+        msg.cronDeliveryMode === "item-thread" ||
+        msg.cronSourceType === "mail"
+      ) {
         outcome = "retry";
         if (msg.fencingToken !== undefined) {
           await getQueueRepository().failAttempt(
@@ -692,6 +754,9 @@ async function processCronNewThread(
             msg.fencingToken,
             { metadata: executionMetadata(timing) },
           );
+          if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
+            await finalizeCronFailure(msg);
+          }
         }
         return;
       }
@@ -728,6 +793,7 @@ async function processCronNewThread(
     if (msg.rssDispatchId) {
       outcome = "dead-letter";
       await releaseRssAfterFailure(msg, "agent_error", timing);
+      await finalizeCronFailure(msg);
       return;
     }
     const ambiguousMutation =
@@ -745,16 +811,20 @@ async function processCronNewThread(
           String(error),
           executionMetadata(timing),
         );
-      await markCronFailurePlaceholder(msg);
+      await finalizeCronFailure(msg);
     } else {
       outcome = "retry";
-      if (msg.fencingToken !== undefined)
+      if (msg.fencingToken !== undefined) {
         await getQueueRepository().failAttempt(
           msg.id,
           error,
           msg.fencingToken,
           { metadata: executionMetadata(timing) },
         );
+        if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
+          await finalizeCronFailure(msg);
+        }
+      }
     }
   } finally {
     logResponseTiming({ ...msg, sessionId }, timing, outcome);
@@ -863,9 +933,13 @@ export async function processMessage(
       return;
     }
   }
-  if (msg.cronDeliveryMode === "new-thread" || msg.cronThread) {
+  if (
+    msg.cronDeliveryMode === "new-thread" ||
+    msg.cronDeliveryMode === "item-thread" ||
+    msg.cronThread
+  ) {
     try {
-      return await processCronNewThread(msg, signal);
+      return await processCronThreadDelivery(msg, signal);
     } finally {
       settleRssDispatchAfterQueueTransition(msg);
     }
@@ -915,7 +989,7 @@ export async function processMessage(
               {
                 onDiscordEvent: (event) => {
                   // cron direct のツールコール通知はチャットが溜まるため抑制する
-                  // (new-thread の場合はここに到達せず専用フローで処理される)
+                  // (cron thread deliveryではここに到達せず専用フローで処理される)
                   if (msg.cronJobId && event.type === "tool_start") {
                     return;
                   }

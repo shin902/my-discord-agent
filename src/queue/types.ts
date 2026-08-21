@@ -1,6 +1,6 @@
 import type { ModelConfig, SkillSelection } from "../config/groups.js";
 
-export type CronDeliveryMode = "direct" | "new-thread";
+export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
 export type CronSessionMode = "per-run" | "destination";
 
 export interface AttachmentRef {

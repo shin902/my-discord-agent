@@ -11,7 +11,10 @@ vi.mock("../discord/client.js", () => ({
 }));
 const appendInboxMock = vi.hoisted(() => vi.fn());
 vi.mock("../queue/repository.js", () => ({
-  getQueueRepository: () => ({ enqueue: appendInboxMock }),
+  getQueueRepository: () => ({
+    enqueue: appendInboxMock,
+    findByIdempotencyKey: vi.fn().mockReturnValue(undefined),
+  }),
 }));
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../utils/splitMessage.js", () => ({
@@ -102,6 +105,30 @@ describe("executeJob", () => {
     expect(arg.cronDeliveryMode).toBe("new-thread");
     expect(arg.cronSessionMode).toBe("destination");
     expect(arg.cronJobId).toBe("test-job");
+  });
+
+  it("item-thread + destination: item-threadをキューへ渡す", async () => {
+    await executeJob({
+      id: "item-job",
+      schedule: "5m",
+      enabled: true,
+      groupName: "my-group",
+      prompt: "summarize item",
+      channelId: "ch-123",
+      deliveryMode: "item-thread",
+      sessionMode: "destination",
+    });
+
+    expect(vi.mocked(appendInbox)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cronDeliveryMode: "item-thread",
+        cronSessionMode: "destination",
+        cronThread: true,
+        cronProvisioning: true,
+        idempotencyKey: expect.stringMatching(/^cron-item:item-job:/),
+      }),
+    );
+    expect(discordClient.channels.fetch).not.toHaveBeenCalled();
   });
 
   it("new-thread + destination: 実行ごとに異なる仮セッションをキューへ渡す", async () => {
