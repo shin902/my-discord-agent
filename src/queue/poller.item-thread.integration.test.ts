@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChannelType } from "discord.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   repository: undefined as unknown,
@@ -80,9 +80,7 @@ describe("declarative item-thread poller integration", () => {
       type: ChannelType.GuildText,
       send: vi.fn().mockResolvedValue(placeholder),
     };
-    state.client.channels.fetch
-      .mockResolvedValueOnce(parent)
-      .mockResolvedValueOnce(undefined);
+    state.client.channels.fetch.mockResolvedValueOnce(parent);
 
     vi.mocked(sendMessage).mockImplementation(async (_group, sessionId) => {
       const persisted = repository.get(item.id);

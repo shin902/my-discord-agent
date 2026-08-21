@@ -38,7 +38,7 @@ LLM の直列・並列実行は provider ごとの設定として別スペック
 
 ### new-thread / item-thread メッセージの識別
 
-キューに積まれたメッセージには `cronDeliveryMode`、`cronSessionMode`、元のジョブIDが含まれる。`new-thread` は投稿前にスレッドを作成し、`item-thread` は仮メッセージと1項目用スレッドを確保してからAIを実行する。poller は投稿方法を見て通常メッセージとは別のフローで処理し、スレッド作成後にセッション戦略を適用する。旧キューの `cronThread: true` も後方互換のため処理する。
+キューに積まれたメッセージには `cronDeliveryMode`、`cronSessionMode`、元のジョブIDが含まれる。`new-thread` は投稿前に毎回新しいスレッドを作成し、`item-thread` は仮メッセージと1項目用スレッドを確保してからAIを実行する。poller は投稿方法を見て通常メッセージとは別のフローで処理し、スレッド作成後にセッション戦略を適用する。item-threadの投入は毎回新しいjob identityを使い、既存job・placeholder・threadのcross-run照合や復旧は行わない。
 
 ### スレッド名の命名規則
 
@@ -56,7 +56,7 @@ new-thread / item-thread はユーザーからの問いかけではないため�
 
 ### セッション継続性
 
-`sessionMode: "destination"` では、poller がスレッドを作成した時点のスレッドIDがそのままセッションIDになる。ユーザーがそのスレッドに返信すると、同じセッションIDで会話履歴が引き継がれる。
+`sessionMode: "destination"` では、poller がスレッドを作成した時点のスレッドIDがそのままセッションIDになる。ユーザーがそのスレッドに返信すると、同じセッションIDで会話履歴が引き継がれる。cronの各投入は新しいjob/threadを作るため、別のcron実行からセッションを再開しない。
 
 `sessionMode: "per-run"` では、スレッドIDとは別の実行固有セッションIDを維持する。そのスレッドへのユーザー返信は通常のスレッドセッションとして扱われるため、cron実行時の履歴は引き継がない。
 
@@ -66,6 +66,6 @@ new-thread / item-thread はユーザーからの問いかけではないため�
 
 | ファイル | 変更内容 |
 |---|---|
-| `queue/inbox.ts` | cronの投稿方法・セッション戦略・ジョブIDのフィールドを保持 |
+| `queue/types.ts` / `queue/repository.ts` | cronの投稿方法・セッション戦略・job payloadとclaim/provisioningを保持 |
 | `cron/runner.ts` | 宣言的ジョブをキューへ書き込む |
 | `queue/poller.ts` | new-thread / item-thread 専用フローを処理（typing indicator より前に分岐） |

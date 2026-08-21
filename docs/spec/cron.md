@@ -48,7 +48,7 @@ data/cron/
     "schedule": "*/30 * * * *",
     "groupName": "email",
     "channelId": "12345",
-    "deliveryMode": "item-thread",
+    "deliveryMode": "new-thread",
     "sessionMode": "destination",
     "handler": "jobs/mail.ts"
   }
@@ -109,7 +109,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに仮メッセージと独立スレッドを先に確保し、そのスレッドをAI・ユーザー返信のセッションにする。`item-thread` は `destination` 必須 |
 
-旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。mail.ts は `deliveryMode` 省略時もitem-threadとして扱う既存設定互換を維持し、明示的に別モードを指定した場合は設定エラーにする。
+旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。mail.ts は `new-thread` + `destination` で動作し、別のdeliveryModeを指定した場合は設定エラーにする。
 
 ---
 
@@ -127,7 +127,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - `appendInbox`
 - ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
-複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { idempotencyKey, sourceType, sourceId, threadName })` で登録・provisioningする。handlerから呼ぶ場合、`idempotencyKey` は外部項目に対応する安定した値として必須であり、helperが自動生成することはない。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から登録され、handlerなしの実行に限って内部用のper-run keyを生成してpollerがAI実行前にprovisioningする。source固有の発見処理と完了ACKはhandler側に残す。
+複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { threadName })` で登録・provisioningできる。ただしこのhelperは非推奨で、handler側がpollerとの競合を含む利用責任を負う。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から投入され、投入ごとに新しいjob identityを作り、pollerがAI実行前にprovisioningする。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 
 ---
 
@@ -154,18 +154,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 ## メール処理（`jobs/mail.ts`）
 
-メールハンドラーはメールの発見とDiscord作業場所の確保だけを担当し、AIを直接呼び出さない。各メールは `mail:{messageId}` という安定した冪等キーで予約するため、次回のcron実行で同じメールを二重にAI処理しない。
+メールハンドラーは未読メールを取得して本文をinboxへ投入し、投入が成功した直後にメールを既読化する。AI・スレッド作成・Discord deliveryは通常のpollerへ任せ、各投入は `new-thread` として毎回新しいjobとスレッドを使う。
 
-1. 未読メールを取得し、既存の予約がなければ本文を取得してinboxへ登録する。
-2. 処理中の仮メッセージを親チャンネルへ投稿し、そのメッセージからスレッドを作成する。作成済みの仮メッセージとスレッドは保存したIDから再利用する。
-3. 仮メッセージIDとスレッドIDを永続化してから、pollerがAI処理をclaimする。作成途中のジョブは次回のmail cronで再試行する。
-4. AI実行は通常のpollerを通り、providerのconcurrency設定、同一セッション内の順序保証、既存のセッション履歴をそのまま利用する。別スレッドは並列化でき、同じスレッド内の処理は直列になる。
-5. 成功した回答の先頭chunkで仮メッセージを編集し、残りのchunkは同じスレッドへ順番に投稿する。AIまたはDiscord deliveryが最終的に失敗した場合は、可能なら仮メッセージを `⚠️ 処理に失敗しました` へ編集する。
-6. 全てのDiscord deliveryが `sent` になった後、次回のmail cronでメールを既読化する。AI失敗、delivery失敗、既読化失敗のいずれでもメールは未読のまま残る。
+1. 未読メールを取得して本文を取得する。
+2. `new-thread` / `destination` のinbox jobを投入する。jobにはメール固有の冪等キーやsource照合情報を付けず、前回のjob・placeholder・スレッドを検索しない。
+3. inbox投入が成功したら、メールを直ちに既読化する。投入または既読化に失敗した場合、そのメールの処理はその実行では完了しない。
+4. pollerが親チャンネルに毎回新しいスレッドを作成し、providerのconcurrency設定とセッション順序を保ったままAI・deliveryを実行する。
 
-一時的なAIエラーは通常のキュー再試行機構に任せる。Discordのdeliveryエラーはdelivery workerが再試行する。placeholderの最終回答編集は冪等な操作として、Discordのエラー内容にかかわらず最大3回（初回を含む）試行する。3回失敗したdeliveryは終端化し、次回のcron reconciliationで失敗表示を1回だけ試みる。新しいメッセージ送信やスレッド作成など、送信結果が不明な外部変異は `ambiguous` として自動再送しない。
-
-同じメールアカウント・同じメールソースを対象にする `mail.ts` のcronエントリやハンドラーを複数設定してはいけない。冪等キーはcronの次回実行時の重複を防ぐためのもので、複数producerや複数ホストによるprovisioningの協調を保証するものではない。
+既読化後のAI・Discord delivery失敗はmail handlerから再開・照合しない。既読化に失敗した場合や、投入成功後にプロセスが停止した場合は、次回実行で新しいjobが作られるため重複しうる。このjob境界の性質はmail固有の既知の残余リスクであり、RSS dispatchなど別目的の冪等性は維持する。
 
 ## 運用メモ
 

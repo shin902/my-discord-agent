@@ -18,7 +18,7 @@
     "enabled": true,
     "groupName": "my-group",
     "channelId": "YOUR_CHANNEL_ID",
-    "deliveryMode": "item-thread",
+    "deliveryMode": "new-thread",
     "sessionMode": "destination",
     "handler": "jobs/mail.ts"
   },
