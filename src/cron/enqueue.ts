@@ -234,6 +234,7 @@ async function registerCronItemThread(
     cronJobId: ctx.id,
     cronProvisioning: true,
     idempotencyKey: key,
+    ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
   return repository.findByIdempotencyKey(key);

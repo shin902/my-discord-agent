@@ -1,5 +1,4 @@
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
-import { NonRetryableError } from "../../utils/error.js";
 import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
@@ -101,17 +100,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
     console.error("[mail] groupName が設定されていません");
     return;
   }
-  if (ctx.deliveryMode !== undefined && ctx.deliveryMode !== "new-thread") {
-    throw new NonRetryableError(
-      `[mail] deliveryMode=${ctx.deliveryMode} はmail.tsに対応していません。new-threadを指定してください`,
-    );
-  }
-  if (ctx.sessionMode !== undefined && ctx.sessionMode !== "destination") {
-    throw new NonRetryableError(
-      "[mail] new-threadはsessionMode=destinationと組み合わせてください",
-    );
-  }
-
   const unread = await listUnreadEmails();
   if (unread.length === 0) return;
 
@@ -124,8 +112,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
       await enqueueCronInbox(
         {
           ...ctx,
-          deliveryMode: "new-thread",
-          sessionMode: "destination",
           mailEmailId: meta.id,
         },
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
