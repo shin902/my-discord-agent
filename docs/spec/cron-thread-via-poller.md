@@ -36,9 +36,9 @@ LLM の直列・並列実行は provider ごとの設定として別スペック
 
 ## 各挙動の詳細
 
-### new-thread メッセージの識別
+### new-thread / item-thread メッセージの識別
 
-キューに積まれたメッセージには `cronDeliveryMode: "new-thread"`、`cronSessionMode`、元のジョブIDが含まれる。poller は投稿方法を見て通常メッセージとは別のフローで処理し、スレッド作成後にセッション戦略を適用する。旧キューの `cronThread: true` も後方互換のため処理する。
+キューに積まれたメッセージには `cronDeliveryMode`、`cronSessionMode`、元のジョブIDが含まれる。`new-thread` は投稿前にスレッドを作成し、`item-thread` は仮メッセージと1項目用スレッドを確保してからAIを実行する。poller は投稿方法を見て通常メッセージとは別のフローで処理し、スレッド作成後にセッション戦略を適用する。旧キューの `cronThread: true` も後方互換のため処理する。
 
 ### スレッド名の命名規則
 
@@ -48,11 +48,11 @@ LLM の直列・並列実行は provider ごとの設定として別スペック
 
 ### 対応チャンネルの制限
 
-new-thread が作成できるのはテキストチャンネルとアナウンスチャンネルのみ。それ以外のチャンネルIDが設定されていた場合は dead-letter に移動して処理を止める（リトライしない）。
+new-thread / item-thread が作成できるのはテキストチャンネルとアナウンスチャンネルのみ。それ以外のチャンネルIDが設定されていた場合は dead-letter に移動して処理を止める（リトライしない）。
 
 ### typing indicator
 
-new-thread はユーザーからの問いかけではないため、typing indicator は表示しない。通常メッセージのみ表示する。
+new-thread / item-thread はユーザーからの問いかけではないため、typing indicator は表示しない。通常メッセージのみ表示する。
 
 ### セッション継続性
 
@@ -68,4 +68,4 @@ new-thread はユーザーからの問いかけではないため、typing indic
 |---|---|
 | `queue/inbox.ts` | cronの投稿方法・セッション戦略・ジョブIDのフィールドを保持 |
 | `cron/runner.ts` | 宣言的ジョブをキューへ書き込む |
-| `queue/poller.ts` | new-thread 専用フローを処理（typing indicator より前に分岐） |
+| `queue/poller.ts` | new-thread / item-thread 専用フローを処理（typing indicator より前に分岐） |

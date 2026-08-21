@@ -81,9 +81,11 @@ describe("mail cron queue boundary", () => {
     const appendInbox = vi.fn().mockResolvedValue(undefined);
     mocks.queueRepo.findByIdempotencyKey
       .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce(undefined)
       .mockReturnValue({
         id: "job-1",
         status: "queued",
+        channelId: "channel",
         cronProvisioning: true,
       });
     mocks.queueRepo.provisionCronJob.mockReturnValue({ id: "job-1" });
@@ -91,9 +93,10 @@ describe("mail cron queue boundary", () => {
     const send = vi
       .fn()
       .mockResolvedValue({ id: "placeholder-1", startThread });
-    await (await import("./mail.js")).default(
-      makeContext({ type: 0, send }, appendInbox),
-    );
+    const context = makeContext({ type: 0, send }, appendInbox);
+    context.deliveryMode = "item-thread";
+    context.sessionMode = "destination";
+    await (await import("./mail.js")).default(context);
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKey: "mail:mail-1",
@@ -111,6 +114,14 @@ describe("mail cron queue boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects an explicit non-item-thread mail configuration", async () => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    context.deliveryMode = "new-thread";
+    await expect((await import("./mail.js")).default(context)).rejects.toThrow(
+      "item-threadへ移行してください",
+    );
+  });
+
   it("recovers a persisted placeholder thread after a cache-miss restart", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -124,6 +135,7 @@ describe("mail cron queue boundary", () => {
     mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
       id: "job-1",
       status: "queued",
+      channelId: "channel",
       cronProvisioning: true,
       cronPlaceholderMessageId: "placeholder-1",
     });

@@ -1,6 +1,10 @@
-import { ChannelType, ThreadAutoArchiveDuration } from "discord.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import { getQueueRepository } from "../../queue/repository.js";
+import { NonRetryableError } from "../../utils/error.js";
+import {
+  type CronItemThreadOptions,
+  enqueueCronItemThread,
+} from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 const MAX_BODY_CHARS = 8000;
@@ -42,61 +46,6 @@ interface UnreadEmail {
   id: string;
   subject: string;
   from: string;
-}
-
-interface CronThreadChannel {
-  id: string;
-  parentId?: string | null;
-}
-
-function isDefinitiveMissingDiscordResource(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const value = error as {
-    code?: unknown;
-    status?: unknown;
-    statusCode?: unknown;
-  };
-  const code = typeof value.code === "number" ? value.code : Number(value.code);
-  const status =
-    typeof value.status === "number" ? value.status : Number(value.status);
-  const statusCode =
-    typeof value.statusCode === "number"
-      ? value.statusCode
-      : Number(value.statusCode);
-  return (
-    code === 10003 || code === 10008 || status === 404 || statusCode === 404
-  );
-}
-
-/**
- * A message-created thread has the starter message's snowflake as its channel
- * id. Fetching that channel directly bypasses discord.js's cache-backed
- * Message.thread getter, which is not a reliable existence check after a
- * restart.
- */
-async function fetchExistingCronThread(
-  client: CronContext["client"],
-  parentChannelId: string,
-  starterMessageId: string,
-): Promise<CronThreadChannel | undefined> {
-  try {
-    const thread = (await client.channels.fetch(starterMessageId, {
-      force: true,
-    })) as unknown as CronThreadChannel | null;
-    if (!thread) return undefined;
-    if (thread.parentId !== undefined && thread.parentId !== parentChannelId) {
-      throw new Error(
-        `既存スレッド ${starterMessageId} の親チャンネルが一致しません`,
-      );
-    }
-    if (typeof thread.id !== "string" || thread.id !== starterMessageId) {
-      throw new Error(`既存スレッド ${starterMessageId} の識別情報が不正です`);
-    }
-    return thread;
-  } catch (error) {
-    if (isDefinitiveMissingDiscordResource(error)) return undefined;
-    throw error;
-  }
 }
 
 async function listUnreadEmails(): Promise<UnreadEmail[]> {
@@ -167,16 +116,16 @@ export default async function handler(ctx: CronContext): Promise<void> {
     return;
   }
 
-  const channel = await ctx.client.channels.fetch(ctx.channelId);
-  if (
-    !channel ||
-    (channel.type !== ChannelType.GuildText &&
-      channel.type !== ChannelType.GuildAnnouncement)
-  ) {
-    console.error(
-      `[mail] チャンネル ${ctx.channelId} はスレッドをサポートしていません`,
+  const deliveryMode = ctx.deliveryMode ?? "item-thread";
+  if (deliveryMode !== "item-thread") {
+    throw new NonRetryableError(
+      `[mail] deliveryMode=${deliveryMode} はmail.tsに対応していません。item-threadへ移行してください`,
     );
-    return;
+  }
+  if (ctx.sessionMode !== undefined && ctx.sessionMode !== "destination") {
+    throw new NonRetryableError(
+      "[mail] item-threadはsessionMode=destinationと組み合わせてください",
+    );
   }
 
   const unread = await listUnreadEmails();
@@ -188,11 +137,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
     const key = `mail:${meta.id}`;
     try {
       const repo = getQueueRepository();
-      let job = repo.findByIdempotencyKey(key);
+      const job = repo.findByIdempotencyKey(key);
       if (job?.status === "completed") {
         const deliveries = repo
           .listDeliveries()
-          .filter((delivery) => delivery.jobId === job?.id);
+          .filter((delivery) => delivery.jobId === job.id);
         if (
           deliveries.length > 0 &&
           deliveries.every((delivery) => delivery.status === "sent")
@@ -201,71 +150,22 @@ export default async function handler(ctx: CronContext): Promise<void> {
         }
         continue;
       }
-      if (!job) {
-        const bodyText = await fetchEmailBody(meta.id);
-        const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
-        await ctx.appendInbox({
-          channelId: ctx.channelId,
-          groupName: ctx.groupName,
-          sessionId: `mail-${meta.id}`,
-          content: `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
-          timestamp: new Date().toISOString(),
-          cronDeliveryMode: "new-thread",
-          cronSessionMode: "destination",
-          cronThread: true,
-          cronJobId: ctx.id,
-          cronSourceType: "mail",
-          cronSourceId: meta.id,
+
+      const bodyText = job ? "" : await fetchEmailBody(meta.id);
+      const emailText = job
+        ? ""
+        : `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
+      await enqueueCronItemThread(
+        ctx,
+        job ? "" : `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
+        {
           idempotencyKey: key,
-          cronProvisioning: true,
-        });
-        job = repo.findByIdempotencyKey(key);
-      }
-      if (!job || job.status === "completed" || job.status === "dead_letter")
-        continue;
-      if (
-        job.cronProvisioning ||
-        !job.cronThreadId ||
-        !job.cronPlaceholderMessageId
-      ) {
-        const discordChannel = channel as typeof channel & {
-          messages?: {
-            fetch: (id: string) => Promise<{
-              id: string;
-              thread?: { id: string };
-              startThread: (options: {
-                name: string;
-                autoArchiveDuration: ThreadAutoArchiveDuration;
-              }) => Promise<{ id: string }>;
-            }>;
-          };
-        };
-        const placeholder = job.cronPlaceholderMessageId
-          ? await discordChannel.messages?.fetch(job.cronPlaceholderMessageId)
-          : await channel.send("処理中…");
-        if (!placeholder) throw new Error("placeholder message unavailable");
-        const placeholderId = String(placeholder.id);
-        if (!job.cronPlaceholderMessageId) {
-          repo.patchJobPayload(job.id, {
-            cronPlaceholderMessageId: placeholderId,
-          });
-        }
-        const existingThread = await fetchExistingCronThread(
-          ctx.client,
-          ctx.channelId,
-          placeholderId,
-        );
-        const thread =
-          existingThread ??
-          (await placeholder.startThread({
-            name: meta.subject.slice(0, 100) || "メール",
-            autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-          }));
-        repo.provisionCronJob(job.id, thread.id, {
-          cronThreadId: thread.id,
-          cronPlaceholderMessageId: placeholderId,
-        });
-      }
+          sourceType: "mail",
+          sourceId: meta.id,
+          threadName: meta.subject.slice(0, 100) || "メール",
+          provision: true,
+        } satisfies CronItemThreadOptions,
+      );
     } catch (err) {
       console.error(`[mail] メール ${meta.id} のキュー登録・準備に失敗:`, err);
     }
