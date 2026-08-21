@@ -66,11 +66,14 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
+  cronPlaceholderMessageId?: string;
 }
 type DeliveryTarget = {
   id?: unknown;
   isSendable?: () => boolean;
   send: (payload: unknown) => Promise<{ id?: unknown }>;
+  edit?: (payload: unknown) => Promise<unknown>;
+  messages?: { fetch: (id: string) => Promise<DeliveryTarget> };
   threads?: { create: (options: { name: string }) => Promise<DeliveryTarget> };
 };
 export class DiscordDeliveryAdapter implements DeliveryAdapter {
@@ -158,24 +161,55 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         throw new DeliveryError("non-retryable", "destination is not sendable");
       const content = String(payload.content ?? "");
       const allowMention = payload.allowMention === true;
-      const reply = payload.replyMessageId && !threadId;
       const allowedMentions = allowMention
         ? { repliedUser: true }
         : { parse: [], repliedUser: false };
-      mutationAttempted = true;
-      const value = reply
-        ? await target.send({
-            content,
-            reply: {
-              messageReference: payload.replyMessageId,
-              failIfNotExists: false,
-            },
-            // allowMention=true は従来の送信形式を維持する。
-            allowedMentions,
-          })
-        : await target.send(
-            allowMention ? content : { content, allowedMentions },
+      // Cron item threads reserve a visible placeholder before the LLM starts.
+      // Replace that message with the first response chunk rather than adding a
+      // second parent message. Remaining chunks are posted in the same thread.
+      if (payload.cronPlaceholderMessageId && target !== undefined) {
+        const channel = (await client.channels.fetch(
+          destinationId,
+        )) as unknown as DeliveryTarget | null;
+        const placeholder = await channel?.messages?.fetch(
+          payload.cronPlaceholderMessageId,
+        );
+        if (!placeholder?.edit) {
+          throw new DeliveryError(
+            "non-retryable",
+            "cron placeholder cannot be fetched or edited",
           );
+        }
+        mutationAttempted = true;
+        try {
+          await placeholder.edit({ content, allowedMentions });
+        } catch (error) {
+          // Editing the same placeholder is idempotent: a retry cannot create
+          // duplicate output, even when Discord returns a transient 5xx.
+          throw new DeliveryError(
+            "retryable",
+            "cron placeholder edit failed",
+            error,
+          );
+        }
+      }
+      const reply = payload.replyMessageId && !threadId;
+      mutationAttempted = true;
+      const value = payload.cronPlaceholderMessageId
+        ? { id: payload.cronPlaceholderMessageId }
+        : reply
+          ? await target.send({
+              content,
+              reply: {
+                messageReference: payload.replyMessageId,
+                failIfNotExists: false,
+              },
+              // allowMention=true は従来の送信形式を維持する。
+              allowedMentions,
+            })
+          : await target.send(
+              allowMention ? content : { content, allowedMentions },
+            );
       return {
         externalMessageId: String(value?.id ?? randomUUID()),
         ...(threadId ? { cronThreadId: threadId } : {}),
@@ -268,10 +302,10 @@ export class DeliveryWorker {
         externalMessageId: sent.externalMessageId,
         ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),
       });
+      const deliveries = this.repository
+        .listDeliveries()
+        .filter((delivery) => delivery.jobId === claim.row.jobId);
       if (this.isRss(claim.row)) {
-        const deliveries = this.repository
-          .listDeliveries()
-          .filter((delivery) => delivery.jobId === claim.row.jobId);
         if (deliveries.every((delivery) => delivery.status === "sent")) {
           this.settleRss(claim.row, "completed");
         }

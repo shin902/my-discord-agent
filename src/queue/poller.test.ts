@@ -49,6 +49,8 @@ const {
   markRunning,
   updateRunning,
   getJob,
+  listTerminalCronJobs,
+  patchJobPayload,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
   commitInboxResult: vi.fn(),
@@ -59,6 +61,8 @@ const {
   markRunning: vi.fn(),
   updateRunning: vi.fn(),
   getJob: vi.fn(),
+  listTerminalCronJobs: vi.fn().mockReturnValue([]),
+  patchJobPayload: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -71,6 +75,8 @@ vi.mock("./repository.js", () => ({
     deadLetter,
     updateRunning,
     get: getJob,
+    listTerminalCronJobs,
+    patchJobPayload,
   }),
 }));
 
@@ -78,7 +84,12 @@ const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const client = discordClient;
-const { processMessage, startPoller, stopPoller } = await import("./poller.js");
+const {
+  processMessage,
+  startPoller,
+  stopPoller,
+  reconcileTerminalCronFailures,
+} = await import("./poller.js");
 
 let tempDirs: string[] = [];
 
@@ -92,6 +103,9 @@ beforeEach(() => {
   updateRunning.mockClear();
   getJob.mockReset();
   getJob.mockReturnValue(undefined);
+  listTerminalCronJobs.mockReset();
+  listTerminalCronJobs.mockReturnValue([]);
+  patchJobPayload.mockReset();
   vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
 });
@@ -1287,21 +1301,55 @@ describe("processMessage - durable result", () => {
     }
   });
 
-  it("does not create a delivery for an empty agent result", async () => {
+  it("terminal mail reconciliation edits once and retries after edit failure", async () => {
+    const edit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary"))
+      .mockResolvedValueOnce(undefined);
+    listTerminalCronJobs.mockReturnValue([
+      {
+        id: "dead-mail",
+        groupName: "default",
+        channelId: "channel",
+        cronSourceType: "mail",
+        cronPlaceholderMessageId: "placeholder",
+      },
+    ]);
+    client.channels.fetch.mockResolvedValue({
+      messages: { fetch: vi.fn().mockResolvedValue({ edit }) },
+    });
+    await reconcileTerminalCronFailures();
+    expect(patchJobPayload).not.toHaveBeenCalled();
+    await reconcileTerminalCronFailures();
+    expect(edit).toHaveBeenCalledTimes(2);
+    expect(patchJobPayload).toHaveBeenCalledWith("dead-mail", {
+      cronFailureNotified: true,
+    });
+  });
+
+  it("mail empty AI output retries without completing or creating delivery", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
     });
     vi.mocked(sendMessage).mockResolvedValue("");
-    const msg = makeMsg({ fencingToken: 4 });
+    const msg = makeMsg({
+      fencingToken: 4,
+      cronDeliveryMode: "new-thread",
+      cronJobId: "mail",
+      cronSourceType: "mail",
+      cronThreadId: "thread",
+      cronPlaceholderMessageId: "placeholder",
+    });
 
     await processMessage(msg);
 
-    expect(commitInboxResult).toHaveBeenCalledWith(
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(failAttempt).toHaveBeenCalledWith(
       msg.id,
+      expect.any(Error),
       4,
-      "",
-      expect.objectContaining({ empty: true }),
+      expect.any(Object),
     );
   });
 });
