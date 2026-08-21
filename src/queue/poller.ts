@@ -441,6 +441,46 @@ async function failAttemptIfNonZeroExitCode(
 
 // コンテナ起動を running 状態として記録する onContainerStarted ハンドラを生成する。
 // 通常メッセージ（sessionId=msg.sessionId）と cron new-thread（導出 sessionId）で同一。
+export async function reconcileTerminalCronFailures(): Promise<void> {
+  const repo = getQueueRepository();
+  const jobs = repo.listTerminalCronJobs();
+  for (const job of jobs) {
+    if (job.cronFailureNotified || !job.cronPlaceholderMessageId) continue;
+    try {
+      await markCronFailurePlaceholder(job);
+    } finally {
+      repo.patchJobPayload(job.id, { cronFailureNotified: true });
+    }
+  }
+}
+
+async function markCronFailurePlaceholder(msg: InboxMessage): Promise<boolean> {
+  if (msg.cronSourceType !== "mail" || !msg.cronPlaceholderMessageId)
+    return false;
+  try {
+    const client = await getDiscordClientForGroupName(msg.groupName);
+    const channel = (await client.channels.fetch(msg.channelId)) as unknown as {
+      messages?: {
+        fetch: (
+          id: string,
+        ) => Promise<{ edit?: (content: string) => Promise<unknown> }>;
+      };
+    };
+    const message = await channel?.messages?.fetch(
+      msg.cronPlaceholderMessageId,
+    );
+    if (!message?.edit) throw new Error("cron failure placeholder unavailable");
+    await message.edit("⚠️ 処理に失敗しました");
+    return true;
+  } catch (error) {
+    console.error(
+      `[poller] cron failure placeholder 更新失敗 (${msg.id}):`,
+      error,
+    );
+    return false;
+  }
+}
+
 function markRunningWhenContainerStarted(
   msg: InboxMessage,
   sessionId: string,
@@ -577,6 +617,16 @@ async function processCronNewThread(
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = cronSessionId(msg);
   try {
+    if (
+      msg.cronSourceType === "mail" &&
+      (!msg.cronThreadId || !msg.cronPlaceholderMessageId)
+    ) {
+      outcome = "retry";
+      if (msg.fencingToken !== undefined) {
+        getQueueRepository().releaseClaim(msg.id, msg.fencingToken);
+      }
+      return;
+    }
     if (!msg.cronJobId) {
       outcome = "dead-letter";
       if (msg.fencingToken !== undefined) {
@@ -627,10 +677,24 @@ async function processCronNewThread(
       },
     );
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
-    if (!response.trim() && msg.rssDispatchId) {
-      outcome = "dead-letter";
-      await releaseRssAfterFailure(msg, "empty_response", timing);
-      return;
+    if (!response.trim()) {
+      if (msg.rssDispatchId) {
+        outcome = "dead-letter";
+        await releaseRssAfterFailure(msg, "empty_response", timing);
+        return;
+      }
+      if (msg.cronSourceType === "mail") {
+        outcome = "retry";
+        if (msg.fencingToken !== undefined) {
+          await getQueueRepository().failAttempt(
+            msg.id,
+            new Error("empty agent response"),
+            msg.fencingToken,
+            { metadata: executionMetadata(timing) },
+          );
+        }
+        return;
+      }
     }
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
@@ -646,6 +710,9 @@ async function processCronNewThread(
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
             cronThreadId: msg.cronThreadId,
+            cronPlaceholderMessageId: msg.cronPlaceholderMessageId,
+            cronSourceType: msg.cronSourceType,
+            cronSourceId: msg.cronSourceId,
             ...(msg.rssDispatchId
               ? {
                   rssDispatchId: msg.rssDispatchId,
@@ -678,6 +745,7 @@ async function processCronNewThread(
           String(error),
           executionMetadata(timing),
         );
+      await markCronFailurePlaceholder(msg);
     } else {
       outcome = "retry";
       if (msg.fencingToken !== undefined)
@@ -972,6 +1040,7 @@ async function poll(): Promise<void> {
   while (running) {
     try {
       if (discordReady()) {
+        await reconcileTerminalCronFailures();
         const msg = await getQueueRepository().claim(
           "poller-single-host",
           LEASE_MS,

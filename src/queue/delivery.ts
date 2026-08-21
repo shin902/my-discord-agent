@@ -6,6 +6,8 @@ import {
 } from "../discord/client.js";
 import { settleRssDispatch } from "./reconciliation.js";
 
+const MAX_CRON_PLACEHOLDER_ATTEMPTS = 3;
+
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
 }
@@ -44,6 +46,7 @@ function statusCode(error: unknown): number | undefined {
   const code = value?.status ?? value?.statusCode;
   return typeof code === "number" ? code : undefined;
 }
+
 export function classifyDiscordError(error: unknown): DeliveryErrorKind {
   const status = statusCode(error);
   if (status !== undefined)
@@ -66,11 +69,14 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
+  cronPlaceholderMessageId?: string;
 }
 type DeliveryTarget = {
   id?: unknown;
   isSendable?: () => boolean;
   send: (payload: unknown) => Promise<{ id?: unknown }>;
+  edit?: (payload: unknown) => Promise<unknown>;
+  messages?: { fetch: (id: string) => Promise<DeliveryTarget> };
   threads?: { create: (options: { name: string }) => Promise<DeliveryTarget> };
 };
 export class DiscordDeliveryAdapter implements DeliveryAdapter {
@@ -158,24 +164,56 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         throw new DeliveryError("non-retryable", "destination is not sendable");
       const content = String(payload.content ?? "");
       const allowMention = payload.allowMention === true;
-      const reply = payload.replyMessageId && !threadId;
       const allowedMentions = allowMention
         ? { repliedUser: true }
         : { parse: [], repliedUser: false };
-      mutationAttempted = true;
-      const value = reply
-        ? await target.send({
-            content,
-            reply: {
-              messageReference: payload.replyMessageId,
-              failIfNotExists: false,
-            },
-            // allowMention=true は従来の送信形式を維持する。
-            allowedMentions,
-          })
-        : await target.send(
-            allowMention ? content : { content, allowedMentions },
+      // Cron item threads reserve a visible placeholder before the LLM starts.
+      // Replace that message with the first response chunk rather than adding a
+      // second parent message. Remaining chunks are posted in the same thread.
+      if (payload.cronPlaceholderMessageId && target !== undefined) {
+        const channel = (await client.channels.fetch(
+          destinationId,
+        )) as unknown as DeliveryTarget | null;
+        const placeholder = await channel?.messages?.fetch(
+          payload.cronPlaceholderMessageId,
+        );
+        if (!placeholder?.edit) {
+          throw new DeliveryError(
+            "non-retryable",
+            "cron placeholder cannot be fetched or edited",
           );
+        }
+        mutationAttempted = true;
+        try {
+          await placeholder.edit({ content, allowedMentions });
+        } catch (error) {
+          // Editing the same placeholder is idempotent. Keep the cron delivery
+          // retryable for every edit failure, regardless of Discord error code;
+          // retry limits are intentionally outside this feature's scope.
+          throw new DeliveryError(
+            "retryable",
+            "cron placeholder edit failed",
+            error,
+          );
+        }
+      }
+      const reply = payload.replyMessageId && !threadId;
+      mutationAttempted = true;
+      const value = payload.cronPlaceholderMessageId
+        ? { id: payload.cronPlaceholderMessageId }
+        : reply
+          ? await target.send({
+              content,
+              reply: {
+                messageReference: payload.replyMessageId,
+                failIfNotExists: false,
+              },
+              // allowMention=true は従来の送信形式を維持する。
+              allowedMentions,
+            })
+          : await target.send(
+              allowMention ? content : { content, allowedMentions },
+            );
       return {
         externalMessageId: String(value?.id ?? randomUUID()),
         ...(threadId ? { cronThreadId: threadId } : {}),
@@ -268,10 +306,10 @@ export class DeliveryWorker {
         externalMessageId: sent.externalMessageId,
         ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),
       });
+      const deliveries = this.repository
+        .listDeliveries()
+        .filter((delivery) => delivery.jobId === claim.row.jobId);
       if (this.isRss(claim.row)) {
-        const deliveries = this.repository
-          .listDeliveries()
-          .filter((delivery) => delivery.jobId === claim.row.jobId);
         if (deliveries.every((delivery) => delivery.status === "sent")) {
           this.settleRss(claim.row, "completed");
         }
@@ -291,17 +329,26 @@ export class DeliveryWorker {
           );
           this.settleRss(claim.row, "dead_letter");
         } else {
+          const placeholder = this.isCronPlaceholder(claim.row);
+          const terminalPlaceholderFailure =
+            placeholder &&
+            Number(claim.row.attempts ?? 0) >= MAX_CRON_PLACEHOLDER_ATTEMPTS;
+          const status = terminalPlaceholderFailure
+            ? "failed"
+            : placeholder
+              ? "retry_wait"
+              : kind === "unknown"
+                ? "ambiguous"
+                : kind === "non-retryable"
+                  ? "failed"
+                  : "retry_wait";
           this.repository.updateDelivery(
             claim.row.id,
             claim.fencingToken,
-            kind === "unknown"
-              ? "ambiguous"
-              : kind === "non-retryable"
-                ? "failed"
-                : "retry_wait",
+            status,
             {
               error: String(error),
-              ...(kind === "retryable"
+              ...(status === "retry_wait"
                 ? {
                     retryAt: new Date(
                       Date.now() + (this.options.retryDelayMs ?? 1000),
@@ -316,6 +363,18 @@ export class DeliveryWorker {
       }
     }
   }
+  private isCronPlaceholder(row: DeliveryRow): boolean {
+    if (!row.payloadJson) return false;
+    try {
+      return (
+        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
+          .cronPlaceholderMessageId === "string"
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private isRss(row: DeliveryRow): boolean {
     if (!row.payloadJson) return false;
     try {
