@@ -138,6 +138,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     try {
       const repo = getQueueRepository();
       const job = repo.findByIdempotencyKey(key);
+      if (job?.status === "dead_letter") continue;
       if (job?.status === "completed") {
         const deliveries = repo
           .listDeliveries()

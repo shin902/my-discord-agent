@@ -216,6 +216,30 @@ describe("mail cron queue boundary", () => {
     expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "completed",
+    "dead_letter",
+  ] as const)("%s jobs do not refetch the body, enqueue, or reprovision", async (status) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    unread(fetchMock);
+    const appendInbox = vi.fn();
+    const send = vi.fn();
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "job-1",
+      status,
+      cronPlaceholderMessageId: "placeholder-1",
+      cronThreadId: "thread-1",
+    });
+    await (await import("./mail.js")).default(
+      makeContext({ type: 0, send }, appendInbox),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
   it("ACKs only completed jobs whose every delivery is sent", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

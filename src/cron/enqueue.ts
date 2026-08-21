@@ -136,7 +136,8 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
 }
 
 export interface CronItemThreadOptions {
-  idempotencyKey?: string;
+  /** Stable source identity supplied by the handler. */
+  idempotencyKey: string;
   sourceType?: string;
   sourceId?: string;
   threadName?: string;
@@ -278,19 +279,21 @@ export async function provisionCronItemThread(
 export async function enqueueCronItemThread(
   ctx: CronEnqueueContext,
   content: string,
-  options: CronItemThreadOptions = {},
+  options: CronItemThreadOptions,
 ): Promise<void> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
       "[cron-item-thread] groupName / channelId が設定されていません",
     );
   }
+  if (!options.idempotencyKey) {
+    throw new NonRetryableError(
+      "[cron-item-thread] handler は安定した idempotencyKey を指定してください",
+    );
+  }
   await validateConfigOverride(ctx);
 
-  const key =
-    options.idempotencyKey ??
-    ctx.idempotencyKey ??
-    `cron-item:${ctx.id}:${randomUUID()}`;
+  const key = options.idempotencyKey;
   const repository = getQueueRepository();
   let job = repository.findByIdempotencyKey(key);
   if (!job) {
@@ -348,7 +351,11 @@ export async function enqueueCronInbox(
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
   if (deliveryMode === "item-thread") {
-    await enqueueCronItemThread(ctx, content, { provision: false });
+    await enqueueCronItemThread(ctx, content, {
+      idempotencyKey:
+        ctx.idempotencyKey ?? `cron-item:${ctx.id}:${randomUUID()}`,
+      provision: false,
+    });
     return;
   }
 

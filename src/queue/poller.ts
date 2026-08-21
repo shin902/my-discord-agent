@@ -430,6 +430,7 @@ async function failAttemptIfNonZeroExitCode(
   }
   if (msg.rssDispatchId) {
     await releaseRssAfterFailure(msg, "agent_exit", timing);
+    await finalizeCronFailure(msg);
   } else {
     await getQueueRepository().failAttempt(
       msg.id,
@@ -438,10 +439,7 @@ async function failAttemptIfNonZeroExitCode(
       { metadata: executionMetadata(timing) },
     );
     if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
-      await markCronFailurePlaceholder(msg);
-      getQueueRepository().patchJobPayload(msg.id, {
-        cronFailureNotified: true,
-      });
+      await finalizeCronFailure(msg);
     }
   }
   return true;
@@ -453,11 +451,32 @@ export async function reconcileTerminalCronFailures(): Promise<void> {
   const repo = getQueueRepository();
   const jobs = repo.listTerminalCronJobs();
   for (const job of jobs) {
-    if (job.cronFailureNotified || !job.cronPlaceholderMessageId) continue;
+    if (job.cronFailureNotified) continue;
+    await finalizeCronFailure(job);
+  }
+}
+
+function isCronItemMessage(msg: InboxMessage): boolean {
+  return (
+    msg.cronDeliveryMode === "item-thread" || msg.cronSourceType === "mail"
+  );
+}
+
+async function finalizeCronFailure(msg: InboxMessage): Promise<void> {
+  if (!isCronItemMessage(msg)) return;
+  try {
+    await markCronFailurePlaceholder(msg);
+  } finally {
     try {
-      await markCronFailurePlaceholder(job);
-    } finally {
-      repo.patchJobPayload(job.id, { cronFailureNotified: true });
+      getQueueRepository().patchJobPayload(msg.id, {
+        cronFailureNotified: true,
+      });
+      msg.cronFailureNotified = true;
+    } catch (error) {
+      console.error(
+        `[poller] cron failure notification state update failed (${msg.id}):`,
+        error,
+      );
     }
   }
 }
@@ -673,6 +692,7 @@ async function processCronThreadDelivery(
           msg.fencingToken,
           "invalid_cron_job",
         );
+        await finalizeCronFailure(msg);
       }
       return;
     }
@@ -719,6 +739,7 @@ async function processCronThreadDelivery(
       if (msg.rssDispatchId) {
         outcome = "dead-letter";
         await releaseRssAfterFailure(msg, "empty_response", timing);
+        await finalizeCronFailure(msg);
         return;
       }
       if (
@@ -734,10 +755,7 @@ async function processCronThreadDelivery(
             { metadata: executionMetadata(timing) },
           );
           if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
-            await markCronFailurePlaceholder(msg);
-            getQueueRepository().patchJobPayload(msg.id, {
-              cronFailureNotified: true,
-            });
+            await finalizeCronFailure(msg);
           }
         }
         return;
@@ -775,6 +793,7 @@ async function processCronThreadDelivery(
     if (msg.rssDispatchId) {
       outcome = "dead-letter";
       await releaseRssAfterFailure(msg, "agent_error", timing);
+      await finalizeCronFailure(msg);
       return;
     }
     const ambiguousMutation =
@@ -792,7 +811,7 @@ async function processCronThreadDelivery(
           String(error),
           executionMetadata(timing),
         );
-      await markCronFailurePlaceholder(msg);
+      await finalizeCronFailure(msg);
     } else {
       outcome = "retry";
       if (msg.fencingToken !== undefined) {
@@ -803,10 +822,7 @@ async function processCronThreadDelivery(
           { metadata: executionMetadata(timing) },
         );
         if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
-          await markCronFailurePlaceholder(msg);
-          getQueueRepository().patchJobPayload(msg.id, {
-            cronFailureNotified: true,
-          });
+          await finalizeCronFailure(msg);
         }
       }
     }

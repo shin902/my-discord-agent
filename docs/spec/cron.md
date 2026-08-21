@@ -127,7 +127,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - `appendInbox`
 - ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
-複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { idempotencyKey, sourceType, sourceId, threadName })` で登録・provisioningする。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から登録され、pollerがAI実行前にprovisioningする。source固有の発見処理と完了ACKはhandler側に残す。
+複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { idempotencyKey, sourceType, sourceId, threadName })` で登録・provisioningする。handlerから呼ぶ場合、`idempotencyKey` は外部項目に対応する安定した値として必須であり、helperが自動生成することはない。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から登録され、handlerなしの実行に限って内部用のper-run keyを生成してpollerがAI実行前にprovisioningする。source固有の発見処理と完了ACKはhandler側に残す。
 
 ---
 

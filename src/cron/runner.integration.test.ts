@@ -125,6 +125,7 @@ describe("executeJob", () => {
         cronSessionMode: "destination",
         cronThread: true,
         cronProvisioning: true,
+        idempotencyKey: expect.stringMatching(/^cron-item:item-job:/),
       }),
     );
   });
