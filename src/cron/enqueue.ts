@@ -344,8 +344,8 @@ async function registerCronItemThread(
     });
     job = repository.findByIdempotencyKey(key);
   }
-  if (!job || job.status === "completed" || job.status === "dead_letter")
-    return undefined;
+  if (!job) return undefined;
+  const terminal = job.status === "completed" || job.status === "dead_letter";
 
   if (job.cronDeliveryMode === "item-thread") {
     if (!hasMatchingItemSource(job, options)) {
@@ -353,7 +353,7 @@ async function registerCronItemThread(
         `[cron-item-thread] idempotencyKey ${key} は別のitem-thread項目に使用されています`,
       );
     }
-    return job;
+    return terminal ? undefined : job;
   }
 
   if (!isLegacyMailItem(job, options)) {
@@ -361,6 +361,7 @@ async function registerCronItemThread(
       `[cron-item-thread] idempotencyKey ${key} は既存の別cronジョブに使用されています`,
     );
   }
+  if (terminal) return undefined;
   return (
     repository.patchJobPayload(job.id, {
       cronDeliveryMode: "item-thread",

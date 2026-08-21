@@ -311,6 +311,64 @@ describe("mail cron queue boundary", () => {
     expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "completed",
+    "dead_letter",
+  ] as const)("%s matching legacy mail jobs are not reprovisioned", async (status) => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "legacy-mail",
+      status,
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronSourceType: "mail",
+      cronSourceId: "mail-1",
+    });
+
+    await enqueueCronItemThread(context, "", {
+      idempotencyKey: "mail:mail-1",
+      sourceType: "mail",
+      sourceId: "mail-1",
+    });
+
+    expect(mocks.queueRepo.patchJobPayload).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["completed", "direct"],
+    ["dead_letter", "direct"],
+    ["completed", "new-thread"],
+    ["dead_letter", "new-thread"],
+  ] as const)("%s unrelated %s jobs reject an idempotency collision", async (status, deliveryMode) => {
+    const context = makeContext({ type: 0, send: vi.fn() });
+    const legacyMail = deliveryMode === "new-thread";
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "unrelated-terminal",
+      status,
+      cronDeliveryMode: deliveryMode,
+      cronSessionMode: legacyMail ? "destination" : "per-run",
+      ...(legacyMail
+        ? {
+            cronThread: true,
+            cronSourceType: "mail",
+            cronSourceId: "mail-2",
+          }
+        : {}),
+    });
+
+    await expect(
+      enqueueCronItemThread(context, "content", {
+        idempotencyKey: "mail:mail-1",
+        sourceType: "mail",
+        sourceId: "mail-1",
+      }),
+    ).rejects.toThrow("既存の別cronジョブ");
+    expect(mocks.queueRepo.patchJobPayload).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
+  });
+
   it("rejects an active new-thread collision with a different mail source", async () => {
     const context = makeContext({ type: 0, send: vi.fn() });
     mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
