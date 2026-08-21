@@ -39,13 +39,37 @@ export interface DeliveryAdapter {
     context?: DeliverySendContext,
   ): Promise<{ externalMessageId: string; cronThreadId?: string }>;
 }
-function statusCode(error: unknown): number | undefined {
-  const value = error as { status?: unknown; statusCode?: unknown };
-  const code = value?.status ?? value?.statusCode;
-  return typeof code === "number" ? code : undefined;
+type DiscordErrorDetails = {
+  status?: number;
+  code?: number;
+};
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number")
+    return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
+
+function normalizeDiscordError(error: unknown): DiscordErrorDetails {
+  if (typeof error !== "object" || error === null) return {};
+  const value = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    code?: unknown;
+  };
+  const status = toNumber(value.status) ?? toNumber(value.statusCode);
+  const code = toNumber(value.code);
+  return {
+    ...(status !== undefined ? { status } : {}),
+    ...(code !== undefined ? { code } : {}),
+  };
+}
+
 export function classifyDiscordError(error: unknown): DeliveryErrorKind {
-  const status = statusCode(error);
+  const { status, code } = normalizeDiscordError(error);
+  if (code === 10003 || code === 10008) return "non-retryable";
   if (status !== undefined)
     return status === 429 || status >= 500 ? "retryable" : "non-retryable";
   if (
@@ -184,16 +208,12 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         try {
           await placeholder.edit({ content, allowedMentions });
         } catch (error) {
-          // Editing the same placeholder is idempotent, so transient failures
-          // are safe to retry. Permanent Discord responses remain failed.
-          const status = statusCode(error);
-          const kind = classifyDiscordError(error);
-          const editKind =
-            status === 403 || status === 404 || kind === "non-retryable"
-              ? "non-retryable"
-              : "retryable";
+          // Editing the same placeholder is idempotent, so retryable failures
+          // are safe to retry. Preserve unknown/ambiguous outcomes and
+          // permanent Discord responses instead of forcing every error into a
+          // retry loop.
           throw new DeliveryError(
-            editKind,
+            classifyDiscordError(error),
             "cron placeholder edit failed",
             error,
           );
@@ -223,7 +243,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     } catch (error) {
       if (error instanceof DeliveryError) throw error;
       const kind = classifyDiscordError(error);
-      const status = statusCode(error);
+      const { status } = normalizeDiscordError(error);
       // After create/send starts, a 5xx response does not prove that Discord
       // rejected the mutation. Treat it like a lost transport response rather
       // than retrying and potentially duplicating a thread or message. A 429 is

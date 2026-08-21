@@ -226,6 +226,76 @@ it.each([
   }
 });
 
+it.each([
+  {
+    label: "numeric-string status",
+    error: Object.assign(new Error("denied"), { status: "403" }),
+    expected: "failed",
+  },
+  {
+    label: "numeric-string statusCode",
+    error: Object.assign(new Error("missing"), { statusCode: "404" }),
+    expected: "failed",
+  },
+  {
+    label: "Unknown Channel REST code",
+    error: Object.assign(new Error("unknown channel"), { code: 10003 }),
+    expected: "failed",
+  },
+  {
+    label: "Unknown Message REST code",
+    error: Object.assign(new Error("unknown message"), { code: "10008" }),
+    expected: "failed",
+  },
+  {
+    label: "numeric-string rate limit status",
+    error: Object.assign(new Error("rate limited"), { status: "429" }),
+    expected: "retry_wait",
+  },
+  {
+    label: "numeric-string server statusCode",
+    error: Object.assign(new Error("server"), { statusCode: "503" }),
+    expected: "retry_wait",
+  },
+  {
+    label: "network error",
+    error: new TypeError("network timeout"),
+    expected: "retry_wait",
+  },
+])("classifies $label at the delivery worker boundary", async ({
+  error,
+  expected,
+}) => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const jobId = completed(repo, "response", {
+    destinationType: "new-thread",
+    destinationId: "channel",
+    cronThreadId: "thread-1",
+    cronPlaceholderMessageId: "placeholder-1",
+  });
+  const edit = vi.fn().mockRejectedValue(error);
+  const parent = { messages: { fetch: vi.fn().mockResolvedValue({ edit }) } };
+  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockImplementation(async (id) =>
+      id === "thread-1" ? (thread as never) : (parent as never),
+    );
+  try {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: `delivery-classify-${expected}`,
+    });
+    await worker.runOnce();
+    expect(repo.getDelivery(jobId)).toMatchObject({ status: expected });
+    expect(edit).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
 it("classifies a transient placeholder edit failure as retryable", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const jobId = completed(repo, "response", {

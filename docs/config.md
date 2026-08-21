@@ -193,6 +193,14 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 `model` / `tools` / `skills` を任意で指定すると、そのジョブの実行時だけ `config/groups.json` のグループ既定値を上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。
 
+### jobs/mail.ts
+
+`mail.ts` は未読メールを `mail:{messageId}` の冪等キー付きinboxジョブとして登録し、AIを直接実行しない。処理前に親チャンネルへ仮メッセージを投稿してスレッドを確保し、pollerが通常のprovider concurrency・セッション順序・delivery処理を使って回答する。回答の先頭は仮メッセージを編集し、長い回答の続きは同じスレッドへ投稿する。全deliveryがDiscordへ送信された後、次回のmail cronでメールを既読化するため、AI・delivery・ACKの失敗時は未読のまま残る。
+
+作成済みの仮メッセージとスレッドは保存済みIDから再利用する。作成途中のジョブや既読化に失敗したメールは次回のmail cronで再試行し、deliveryの一時的な失敗はdelivery workerの既存再試行機構に任せる。最終的なAIまたはdelivery失敗時は、可能なら仮メッセージを失敗表示へ編集する。
+
+同じメールアカウント・同じメールソースを対象にする `mail.ts` のcronエントリやハンドラーを複数設定してはいけない。冪等キーは同じcron producerの次回実行における重複を防ぐものであり、複数producerや複数ホストによるprovisioningの協調は保証しない。
+
 ### jobs/rss-collect.ts / jobs/rss-dispatch.ts
 
 RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` はLLMを使わずRSS/Atomフィードの記事を `data/rss.sqlite3` に保存し、`rss-dispatch.ts` は未読記事をまとめて通常のエージェントinboxへ投入する。
