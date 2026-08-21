@@ -164,7 +164,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
           sourceType: "mail",
           sourceId: meta.id,
           threadName: meta.subject.slice(0, 100) || "メール",
-          provision: true,
         } satisfies CronItemThreadOptions,
       );
     } catch (err) {

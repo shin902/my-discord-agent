@@ -141,8 +141,12 @@ export interface CronItemThreadOptions {
   sourceType?: string;
   sourceId?: string;
   threadName?: string;
-  provision?: boolean;
 }
+
+type CronItemThreadRegistrationOptions = Pick<
+  CronItemThreadOptions,
+  "idempotencyKey" | "sourceType" | "sourceId"
+>;
 
 type ItemThreadMessage = {
   id: unknown;
@@ -275,12 +279,35 @@ export async function provisionCronItemThread(
   return provisioned;
 }
 
-/** Register one cron item and optionally provision its Discord thread. */
-export async function enqueueCronItemThread(
+function hasMatchingItemSource(
+  job: QueueJob,
+  options: CronItemThreadRegistrationOptions,
+): boolean {
+  return (
+    job.cronSourceType === options.sourceType &&
+    job.cronSourceId === options.sourceId
+  );
+}
+
+function isLegacyMailItem(
+  job: QueueJob,
+  options: CronItemThreadRegistrationOptions,
+): boolean {
+  return (
+    job.cronDeliveryMode === "new-thread" &&
+    job.cronThread === true &&
+    options.sourceType === "mail" &&
+    options.sourceId !== undefined &&
+    job.cronSourceType === "mail" &&
+    job.cronSourceId === options.sourceId
+  );
+}
+
+async function registerCronItemThread(
   ctx: CronEnqueueContext,
   content: string,
-  options: CronItemThreadOptions,
-): Promise<void> {
+  options: CronItemThreadRegistrationOptions,
+): Promise<QueueJob | undefined> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
       "[cron-item-thread] groupName / channelId が設定されていません",
@@ -318,17 +345,41 @@ export async function enqueueCronItemThread(
     job = repository.findByIdempotencyKey(key);
   }
   if (!job || job.status === "completed" || job.status === "dead_letter")
-    return;
+    return undefined;
 
-  if (job.cronDeliveryMode !== "item-thread") {
-    job =
-      repository.patchJobPayload(job.id, {
-        cronDeliveryMode: "item-thread",
-        cronSessionMode: "destination",
-        cronThread: true,
-      }) ?? job;
+  if (job.cronDeliveryMode === "item-thread") {
+    if (!hasMatchingItemSource(job, options)) {
+      throw new NonRetryableError(
+        `[cron-item-thread] idempotencyKey ${key} は別のitem-thread項目に使用されています`,
+      );
+    }
+    return job;
   }
-  if (options.provision === false) return;
+
+  if (!isLegacyMailItem(job, options)) {
+    throw new NonRetryableError(
+      `[cron-item-thread] idempotencyKey ${key} は既存の別cronジョブに使用されています`,
+    );
+  }
+  return (
+    repository.patchJobPayload(job.id, {
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+    }) ?? job
+  );
+}
+
+/** Register one handler item and provision its Discord thread before returning. */
+export async function enqueueCronItemThread(
+  ctx: CronEnqueueContext,
+  content: string,
+  options: CronItemThreadOptions,
+): Promise<void> {
+  const job = await registerCronItemThread(ctx, content, options);
+  if (!job) return;
+
+  const repository = getQueueRepository();
   if (
     job.cronThreadId &&
     job.cronPlaceholderMessageId &&
@@ -351,10 +402,9 @@ export async function enqueueCronInbox(
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
   if (deliveryMode === "item-thread") {
-    await enqueueCronItemThread(ctx, content, {
+    await registerCronItemThread(ctx, content, {
       idempotencyKey:
         ctx.idempotencyKey ?? `cron-item:${ctx.id}:${randomUUID()}`,
-      provision: false,
     });
     return;
   }

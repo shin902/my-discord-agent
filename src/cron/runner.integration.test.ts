@@ -128,6 +128,7 @@ describe("executeJob", () => {
         idempotencyKey: expect.stringMatching(/^cron-item:item-job:/),
       }),
     );
+    expect(discordClient.channels.fetch).not.toHaveBeenCalled();
   });
 
   it("new-thread + destination: 実行ごとに異なる仮セッションをキューへ渡す", async () => {
