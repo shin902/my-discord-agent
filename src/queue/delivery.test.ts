@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+const acknowledgeEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
+
 const client = vi.hoisted(() => ({
   isReady: vi.fn().mockReturnValue(false),
   channels: {
@@ -540,6 +543,29 @@ describe("durable delivery worker", () => {
           .listDeliveries("sent")
           .every((row) => row.externalMessageId === "discord-1"),
       ).toBe(true);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("ACKs mail only after every Discord delivery chunk is sent", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const adapter: DeliveryAdapter = {
+      send: vi.fn(async () => ({ externalMessageId: "discord-1" })),
+    };
+    acknowledgeEmail.mockClear();
+    try {
+      completed(repo, "a".repeat(2001), { mailEmailId: "mail-1" });
+      const worker = new DeliveryWorker(repo, adapter, {
+        workerId: "delivery-a",
+      });
+
+      await worker.runOnce();
+      expect(acknowledgeEmail).not.toHaveBeenCalled();
+
+      await worker.runOnce();
+      expect(acknowledgeEmail).toHaveBeenCalledOnce();
+      expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
     } finally {
       repo.close();
     }

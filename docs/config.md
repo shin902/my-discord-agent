@@ -198,9 +198,9 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### jobs/mail.ts
 
-`mail.ts` は未読メールごとに本文を取得し、`new-thread` / `destination` のinbox jobを投入した直後にメールを既読化する。AI・スレッド作成・Discord deliveryは通常のpollerへ任せ、cron投入ごとに新しいjobとスレッドを使う。mail固有の冪等キー、source照合、placeholder/threadのcross-run再利用は行わない。
+`mail.ts` は未読メールごとに本文を取得し、`new-thread` / `destination` のinbox jobを投入する。AI・スレッド作成・Discord deliveryは通常のpollerへ任せ、全delivery chunkが`sent`になった後にだけメールを既読化する。ACK対象を特定するメールID以外のmail固有冪等キー、source照合、placeholder/threadのcross-run再利用は行わない。
 
-inbox投入に失敗したメールはその実行では既読化しない。投入成功後の既読化失敗や、既読化後のAI・delivery失敗は次回実行で再開・照合しないため、新しいjobが作られて重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
+AI・delivery・既読化の失敗時はメールが未読のまま残る。次回cronは過去jobを復旧せず、そのメールに新しいjobとスレッドを作るため、失敗した試行のDiscord投稿が残る場合は重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
 
 複数producerや複数ホストで同じメールソースを処理する協調は保証しない。
 

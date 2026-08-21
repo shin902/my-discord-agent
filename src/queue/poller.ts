@@ -770,6 +770,7 @@ async function processCronThreadDelivery(
             cronJobId: msg.cronJobId,
             cronThreadId: msg.cronThreadId,
             cronPlaceholderMessageId: msg.cronPlaceholderMessageId,
+            ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
             ...(msg.rssDispatchId
               ? {
                   rssDispatchId: msg.rssDispatchId,

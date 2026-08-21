@@ -26,17 +26,7 @@ async function graphFetch(path: string): Promise<unknown> {
   return res.json();
 }
 
-export async function acknowledgeEmail(emailId: string): Promise<void> {
-  const res = await fetch(
-    graphUrl(`/me/messages/${encodeURIComponent(emailId)}`),
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isRead: true }),
-    },
-  );
-  if (!res.ok) throw new Error(`メール既読化失敗: ${res.status}`);
-}
+export { acknowledgeEmail } from "../mail-ack.js";
 
 interface UnreadEmail {
   id: string;
@@ -136,15 +126,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
           ...ctx,
           deliveryMode: "new-thread",
           sessionMode: "destination",
+          mailEmailId: meta.id,
         },
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
       );
-      await acknowledgeEmail(meta.id);
     } catch (err) {
-      console.error(
-        `[mail] メール ${meta.id} のキュー登録・既読化に失敗:`,
-        err,
-      );
+      console.error(`[mail] メール ${meta.id} のキュー登録に失敗:`, err);
     }
   }
 }

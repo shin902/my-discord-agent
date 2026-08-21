@@ -44,6 +44,7 @@ export interface CronEnqueueContext {
   tools?: string[];
   skills?: SkillSelection;
   idempotencyKey?: string;
+  mailEmailId?: string;
   rssDispatchId?: string;
   rssStatePath?: string;
   appendInbox: QueueProducer;
@@ -291,6 +292,7 @@ export async function enqueueCronInbox(
     cronSessionMode: sessionMode,
     cronJobId: ctx.id,
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
+    ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
     ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
     ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),

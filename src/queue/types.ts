@@ -29,6 +29,8 @@ export interface InboxMessage {
   cronThreadId?: string;
   /** Placeholder message created before cron AI execution. */
   cronPlaceholderMessageId?: string;
+  /** Mail message to acknowledge only after every Discord delivery is sent. */
+  mailEmailId?: string;
   /** Item-thread jobs remain claimable so the poller can provision their destination before AI execution. */
   cronProvisioning?: boolean;
   cronFailureNotified?: boolean;

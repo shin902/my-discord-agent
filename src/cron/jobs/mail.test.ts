@@ -51,12 +51,11 @@ describe("mail cron queue boundary", () => {
     vi.unstubAllGlobals();
   });
 
-  it("enqueues a fresh new-thread job and ACKs only after enqueue", async () => {
+  it("enqueues a fresh new-thread job without ACKing before delivery", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(unreadResponse())
-      .mockResolvedValueOnce(bodyResponse())
-      .mockResolvedValueOnce(jsonResponse({}));
+      .mockResolvedValueOnce(bodyResponse());
     vi.stubGlobal("fetch", fetchMock);
     const appendInbox = vi.fn().mockResolvedValue(undefined);
 
@@ -73,15 +72,9 @@ describe("mail cron queue boundary", () => {
     const payload = appendInbox.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.sessionId).toEqual(expect.stringMatching(/^cron-mail-/));
     expect(payload.idempotencyKey).toBeUndefined();
+    expect(payload.mailEmailId).toBe("mail-1");
     expect(payload.cronPlaceholderMessageId).toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2][1]).toMatchObject({
-      method: "PATCH",
-      body: JSON.stringify({ isRead: true }),
-    });
-    expect(appendInbox.mock.invocationCallOrder[0]).toBeLessThan(
-      fetchMock.mock.invocationCallOrder[2],
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("enqueues the unread email again on a later cron run without cross-run lookup", async () => {
@@ -89,10 +82,8 @@ describe("mail cron queue boundary", () => {
       .fn()
       .mockResolvedValueOnce(unreadResponse())
       .mockResolvedValueOnce(bodyResponse())
-      .mockResolvedValueOnce(jsonResponse({}))
       .mockResolvedValueOnce(unreadResponse())
-      .mockResolvedValueOnce(bodyResponse())
-      .mockResolvedValueOnce(jsonResponse({}));
+      .mockResolvedValueOnce(bodyResponse());
     vi.stubGlobal("fetch", fetchMock);
     const appendInbox = vi.fn().mockResolvedValue(undefined);
     const context = makeContext(appendInbox);
