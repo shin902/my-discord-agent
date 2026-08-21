@@ -44,6 +44,61 @@ interface UnreadEmail {
   from: string;
 }
 
+interface CronThreadChannel {
+  id: string;
+  parentId?: string | null;
+}
+
+function isDefinitiveMissingDiscordResource(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const value = error as {
+    code?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+  };
+  const code = typeof value.code === "number" ? value.code : Number(value.code);
+  const status =
+    typeof value.status === "number" ? value.status : Number(value.status);
+  const statusCode =
+    typeof value.statusCode === "number"
+      ? value.statusCode
+      : Number(value.statusCode);
+  return (
+    code === 10003 || code === 10008 || status === 404 || statusCode === 404
+  );
+}
+
+/**
+ * A message-created thread has the starter message's snowflake as its channel
+ * id. Fetching that channel directly bypasses discord.js's cache-backed
+ * Message.thread getter, which is not a reliable existence check after a
+ * restart.
+ */
+async function fetchExistingCronThread(
+  client: CronContext["client"],
+  parentChannelId: string,
+  starterMessageId: string,
+): Promise<CronThreadChannel | undefined> {
+  try {
+    const thread = (await client.channels.fetch(starterMessageId, {
+      force: true,
+    })) as unknown as CronThreadChannel | null;
+    if (!thread) return undefined;
+    if (thread.parentId !== undefined && thread.parentId !== parentChannelId) {
+      throw new Error(
+        `既存スレッド ${starterMessageId} の親チャンネルが一致しません`,
+      );
+    }
+    if (typeof thread.id !== "string" || thread.id !== starterMessageId) {
+      throw new Error(`既存スレッド ${starterMessageId} の識別情報が不正です`);
+    }
+    return thread;
+  } catch (error) {
+    if (isDefinitiveMissingDiscordResource(error)) return undefined;
+    throw error;
+  }
+}
+
 async function listUnreadEmails(): Promise<UnreadEmail[]> {
   const select = "id,subject,from";
   const data = (await graphFetch(
@@ -195,13 +250,17 @@ export default async function handler(ctx: CronContext): Promise<void> {
             cronPlaceholderMessageId: placeholderId,
           });
         }
-        const existingThreadId = placeholder.thread?.id;
-        const thread = existingThreadId
-          ? { id: String(existingThreadId) }
-          : await placeholder.startThread({
-              name: meta.subject.slice(0, 100) || "メール",
-              autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-            });
+        const existingThread = await fetchExistingCronThread(
+          ctx.client,
+          ctx.channelId,
+          placeholderId,
+        );
+        const thread =
+          existingThread ??
+          (await placeholder.startThread({
+            name: meta.subject.slice(0, 100) || "メール",
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+          }));
         repo.provisionCronJob(job.id, thread.id, {
           cronThreadId: thread.id,
           cronPlaceholderMessageId: placeholderId,

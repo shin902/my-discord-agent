@@ -19,7 +19,17 @@ vi.mock("../../queue/repository.js", () => ({
 
 import type { CronContext } from "../runner.js";
 
-function makeContext(channel: unknown, appendInbox = vi.fn()): CronContext {
+function makeContext(
+  channel: unknown,
+  appendInbox = vi.fn(),
+  threadLookup?: unknown,
+): CronContext {
+  const fetch = vi.fn().mockResolvedValueOnce(channel);
+  if (threadLookup instanceof Error) {
+    fetch.mockRejectedValueOnce(threadLookup);
+  } else if (threadLookup !== undefined) {
+    fetch.mockResolvedValueOnce(threadLookup);
+  }
   return {
     id: "mail",
     schedule: "15m",
@@ -28,9 +38,7 @@ function makeContext(channel: unknown, appendInbox = vi.fn()): CronContext {
     groupName: "mail",
     channelId: "channel",
     appendInbox,
-    client: {
-      channels: { fetch: vi.fn().mockResolvedValue(channel) },
-    } as never,
+    client: { channels: { fetch } } as never,
   };
 }
 
@@ -103,35 +111,97 @@ describe("mail cron queue boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("reuses persisted placeholder and thread without Discord duplication", async () => {
+  it("recovers a persisted placeholder thread after a cache-miss restart", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     unread(fetchMock);
+    const startThread = vi.fn();
     const message = {
       id: "placeholder-1",
-      thread: { id: "thread-1" },
-      startThread: vi.fn(),
+      startThread,
     };
+    const existingThread = { id: "placeholder-1", parentId: "channel" };
     mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
       id: "job-1",
       status: "queued",
       cronProvisioning: true,
       cronPlaceholderMessageId: "placeholder-1",
-      cronThreadId: "thread-1",
     });
     mocks.queueRepo.provisionCronJob.mockReturnValue({ id: "job-1" });
     const messages = { fetch: vi.fn().mockResolvedValue(message) };
     const send = vi.fn();
     const channel = { type: 0, send, messages };
-    await (await import("./mail.js")).default(makeContext(channel));
+    const context = makeContext(channel, vi.fn(), existingThread);
+    await (await import("./mail.js")).default(context);
     expect(send).not.toHaveBeenCalled();
     expect(messages.fetch).toHaveBeenCalledWith("placeholder-1");
-    expect(message.startThread).not.toHaveBeenCalled();
+    expect(
+      (
+        context.client as unknown as {
+          channels: { fetch: ReturnType<typeof vi.fn> };
+        }
+      ).channels.fetch,
+    ).toHaveBeenNthCalledWith(2, "placeholder-1", { force: true });
+    expect(startThread).not.toHaveBeenCalled();
     expect(mocks.queueRepo.provisionCronJob).toHaveBeenCalledWith(
       "job-1",
-      "thread-1",
+      "placeholder-1",
+      expect.objectContaining({ cronPlaceholderMessageId: "placeholder-1" }),
+    );
+  });
+
+  it.each([
+    Object.assign(new Error("unknown channel"), { status: 404 }),
+    Object.assign(new Error("unknown channel"), { code: 10003 }),
+  ])("creates a thread after a definitive missing-thread lookup", async (lookupError) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    unread(fetchMock);
+    const startThread = vi.fn().mockResolvedValue({ id: "thread-new" });
+    const message = { id: "placeholder-1", startThread };
+    const messages = { fetch: vi.fn().mockResolvedValue(message) };
+    const send = vi.fn();
+    const channel = { type: 0, send, messages };
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "job-1",
+      status: "queued",
+      cronProvisioning: true,
+      cronPlaceholderMessageId: "placeholder-1",
+    });
+    await (await import("./mail.js")).default(
+      makeContext(channel, vi.fn(), lookupError),
+    );
+    expect(startThread).toHaveBeenCalledOnce();
+    expect(mocks.queueRepo.provisionCronJob).toHaveBeenCalledWith(
+      "job-1",
+      "thread-new",
       expect.any(Object),
     );
+  });
+
+  it.each([
+    Object.assign(new Error("forbidden"), { status: 403 }),
+    new Error("network timeout"),
+  ])("does not create a thread after an uncertain lookup failure", async (lookupError) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    unread(fetchMock);
+    const startThread = vi.fn();
+    const message = { id: "placeholder-1", startThread };
+    const messages = { fetch: vi.fn().mockResolvedValue(message) };
+    const send = vi.fn();
+    const channel = { type: 0, send, messages };
+    mocks.queueRepo.findByIdempotencyKey.mockReturnValue({
+      id: "job-1",
+      status: "queued",
+      cronProvisioning: true,
+      cronPlaceholderMessageId: "placeholder-1",
+    });
+    await (await import("./mail.js")).default(
+      makeContext(channel, vi.fn(), lookupError),
+    );
+    expect(startThread).not.toHaveBeenCalled();
+    expect(mocks.queueRepo.provisionCronJob).not.toHaveBeenCalled();
   });
 
   it("ACKs only completed jobs whose every delivery is sent", async () => {
