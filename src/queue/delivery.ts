@@ -184,10 +184,16 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         try {
           await placeholder.edit({ content, allowedMentions });
         } catch (error) {
-          // Editing the same placeholder is idempotent: a retry cannot create
-          // duplicate output, even when Discord returns a transient 5xx.
+          // Editing the same placeholder is idempotent, so transient failures
+          // are safe to retry. Permanent Discord responses remain failed.
+          const status = statusCode(error);
+          const kind = classifyDiscordError(error);
+          const editKind =
+            status === 403 || status === 404 || kind === "non-retryable"
+              ? "non-retryable"
+              : "retryable";
           throw new DeliveryError(
-            "retryable",
+            editKind,
             "cron placeholder edit failed",
             error,
           );

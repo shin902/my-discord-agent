@@ -130,6 +130,41 @@ it("does not mark delivery sent when the placeholder cannot be edited", async ()
   }
 });
 
+it.each([
+  403, 404,
+])("classifies placeholder edit HTTP %s as permanent", async (status) => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const jobId = completed(repo, "response", {
+    destinationType: "new-thread",
+    destinationId: "channel",
+    cronThreadId: "thread-1",
+    cronPlaceholderMessageId: "placeholder-1",
+  });
+  const edit = vi
+    .fn()
+    .mockRejectedValue(Object.assign(new Error("denied"), { status }));
+  const parent = { messages: { fetch: vi.fn().mockResolvedValue({ edit }) } };
+  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockImplementation(async (id) =>
+      id === "thread-1" ? (thread as never) : (parent as never),
+    );
+  try {
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: `delivery-edit-${status}`,
+    });
+    await worker.runOnce();
+    expect(repo.getDelivery(jobId)).toMatchObject({ status: "failed" });
+    expect(edit).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
 it("classifies a transient placeholder edit failure as retryable", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const jobId = completed(repo, "response", {

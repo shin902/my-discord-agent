@@ -717,7 +717,15 @@ export class QueueRepository {
   listTerminalCronJobs(): QueueJob[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM jobs WHERE status='dead_letter' AND json_extract(payload_json,'$.cronSourceType') IS NOT NULL",
+        `SELECT j.* FROM jobs j
+         WHERE json_extract(j.payload_json,'$.cronSourceType') IS NOT NULL
+           AND (
+             j.status='dead_letter'
+             OR (j.status='completed' AND EXISTS (
+               SELECT 1 FROM deliveries d
+               WHERE d.job_id=j.id AND d.status IN ('failed','ambiguous')
+             ))
+           )`,
       )
       .all() as JobRow[];
     return rows.map(parsePayload);

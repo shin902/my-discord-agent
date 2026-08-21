@@ -1135,6 +1135,60 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
     }
   });
 
+  it("lists completed cron jobs once when a delivery is failed or ambiguous", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      for (const status of ["failed", "ambiguous"] as const) {
+        const item = repo.enqueue({
+          channelId: "channel",
+          groupName: "group",
+          sessionId: `s-${status}`,
+          content: "cron",
+          timestamp: new Date().toISOString(),
+          cronSourceType: "mail",
+          cronPlaceholderMessageId: `p-${status}`,
+        }).job;
+        const claim = expectDefined(repo.claim("agent"));
+        repo.commitResult(item.id, claim.fencingToken, "response", {
+          deliveryPayload: {
+            groupName: "group",
+            destinationId: "channel",
+            destinationType: "channel",
+            cronSourceType: "mail",
+          },
+        });
+        const deliveryClaim = expectDefined(
+          repo.claimDelivery("delivery", 1000),
+        );
+        repo.updateDelivery(
+          deliveryClaim.row.id,
+          deliveryClaim.fencingToken,
+          status,
+        );
+      }
+      const pending = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "pending",
+        content: "cron",
+        timestamp: new Date().toISOString(),
+        cronSourceType: "mail",
+      }).job;
+      const pendingClaim = expectDefined(repo.claim("agent"));
+      repo.commitResult(pending.id, pendingClaim.fencingToken, "response", {
+        deliveryPayload: {
+          groupName: "group",
+          destinationId: "channel",
+          destinationType: "channel",
+          cronSourceType: "mail",
+        },
+      });
+      expect(repo.listTerminalCronJobs().map((job) => job.id)).toHaveLength(2);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("provisionCronJob moves the authoritative session ordering atomically", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
