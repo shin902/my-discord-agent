@@ -155,7 +155,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 5. 成功した回答の先頭chunkで仮メッセージを編集し、残りのchunkは同じスレッドへ順番に投稿する。AIまたはDiscord deliveryが最終的に失敗した場合は、可能なら仮メッセージを `⚠️ 処理に失敗しました` へ編集する。
 6. 全てのDiscord deliveryが `sent` になった後、次回のmail cronでメールを既読化する。AI失敗、delivery失敗、既読化失敗のいずれでもメールは未読のまま残る。
 
-一時的なAIエラーは通常のキュー再試行機構に任せる。Discordのdeliveryエラーはdelivery workerが再試行する。placeholderの最終回答編集は冪等な操作として、Discordのエラー内容にかかわらず再試行する。新しいメッセージ送信やスレッド作成など、送信結果が不明な外部変異は `ambiguous` として自動再送しない。deliveryの再試行回数上限は別途定義していない。
+一時的なAIエラーは通常のキュー再試行機構に任せる。Discordのdeliveryエラーはdelivery workerが再試行する。placeholderの最終回答編集は冪等な操作として、Discordのエラー内容にかかわらず最大3回（初回を含む）試行する。3回失敗したdeliveryは終端化し、次回のcron reconciliationで失敗表示を1回だけ試みる。新しいメッセージ送信やスレッド作成など、送信結果が不明な外部変異は `ambiguous` として自動再送しない。
 
 同じメールアカウント・同じメールソースを対象にする `mail.ts` のcronエントリやハンドラーを複数設定してはいけない。冪等キーはcronの次回実行時の重複を防ぐためのもので、複数producerや複数ホストによるprovisioningの協調を保証するものではない。
 
@@ -171,7 +171,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 ## スコープ外（別途検討）
 
-- **一時的エラーのリトライ上限**: 現状は上限なし。連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
+- **一般deliveryのリトライ上限**: placeholderの最終回答編集は3回の固定上限を持つ。その他のdeliveryの再試行上限は未定義で、連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
 
 - **`allowedTools` / `allowedSkills`**: ジョブごとにグループ設定のツール・スキルをオーバーライドする機能（issue #73）。`InboxMessage` と `sendMessage` 両方への対応が必要なため別途実装。
 

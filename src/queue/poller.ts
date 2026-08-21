@@ -446,8 +446,11 @@ export async function reconcileTerminalCronFailures(): Promise<void> {
   const jobs = repo.listTerminalCronJobs();
   for (const job of jobs) {
     if (job.cronFailureNotified || !job.cronPlaceholderMessageId) continue;
-    if (await markCronFailurePlaceholder(job))
+    try {
+      await markCronFailurePlaceholder(job);
+    } finally {
       repo.patchJobPayload(job.id, { cronFailureNotified: true });
+    }
   }
 }
 

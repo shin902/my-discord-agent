@@ -119,8 +119,11 @@ it("blocks overflow when placeholder delivery is permanently failed", async () =
   try {
     const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-block-failed",
+      retryDelayMs: 0,
     });
-    while (await worker.runOnce()) {}
+    await worker.runOnce();
+    await worker.runOnce(new Date(Date.now() + 1));
+    await worker.runOnce(new Date(Date.now() + 2));
     expect(thread.send).not.toHaveBeenCalled();
     expect(repo.listDeliveries().some((row) => row.status === "failed")).toBe(
       true,
@@ -182,7 +185,7 @@ it("does not mark delivery sent when the placeholder cannot be edited", async ()
       workerId: "delivery-missing-placeholder",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({ status: "failed" });
+    expect(repo.getDelivery(jobId)).toMatchObject({ status: "retry_wait" });
     expect(thread.send).not.toHaveBeenCalled();
   } finally {
     readySpy.mockRestore();
@@ -193,13 +196,8 @@ it("does not mark delivery sent when the placeholder cannot be edited", async ()
 
 it.each([
   Object.assign(new Error("forbidden"), { status: 403 }),
-  Object.assign(new Error("missing"), { status: 404 }),
-  Object.assign(new Error("unknown channel"), { code: 10003 }),
-  Object.assign(new Error("unknown message"), { code: 10008 }),
-  Object.assign(new Error("rate limited"), { status: 429 }),
-  Object.assign(new Error("server"), { status: 503 }),
   new TypeError("network timeout"),
-])("retries every placeholder edit failure uniformly", async (error) => {
+])("counts placeholder edit failures without inspecting error codes", async (error) => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const jobId = completed(repo, "response", {
     destinationType: "new-thread",
@@ -219,10 +217,24 @@ it.each([
   try {
     const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-edit-retry",
+      retryDelayMs: 0,
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({ status: "retry_wait" });
-    expect(edit).toHaveBeenCalledOnce();
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      status: "retry_wait",
+      attempts: 1,
+    });
+    await worker.runOnce(new Date(Date.now() + 1));
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      status: "retry_wait",
+      attempts: 2,
+    });
+    await worker.runOnce(new Date(Date.now() + 2));
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      status: "failed",
+      attempts: 3,
+    });
+    expect(edit).toHaveBeenCalledTimes(3);
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();
@@ -230,7 +242,7 @@ it.each([
   }
 });
 
-it("classifies a transient placeholder edit failure as retryable", async () => {
+it("marks a placeholder delivery sent when edit succeeds before the third attempt", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const jobId = completed(repo, "response", {
     destinationType: "new-thread",
@@ -256,9 +268,15 @@ it("classifies a transient placeholder edit failure as retryable", async () => {
       retryDelayMs: 0,
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({ status: "retry_wait" });
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      status: "retry_wait",
+      attempts: 1,
+    });
     await worker.runOnce(new Date(Date.now() + 1));
-    expect(repo.getDelivery(jobId)).toMatchObject({ status: "sent" });
+    expect(repo.getDelivery(jobId)).toMatchObject({
+      status: "sent",
+      attempts: 2,
+    });
     expect(edit).toHaveBeenCalledTimes(2);
   } finally {
     readySpy.mockRestore();

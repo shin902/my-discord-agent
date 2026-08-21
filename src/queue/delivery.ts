@@ -6,6 +6,8 @@ import {
 } from "../discord/client.js";
 import { settleRssDispatch } from "./reconciliation.js";
 
+const MAX_CRON_PLACEHOLDER_ATTEMPTS = 3;
+
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
 }
@@ -327,17 +329,26 @@ export class DeliveryWorker {
           );
           this.settleRss(claim.row, "dead_letter");
         } else {
+          const placeholder = this.isCronPlaceholder(claim.row);
+          const terminalPlaceholderFailure =
+            placeholder &&
+            Number(claim.row.attempts ?? 0) >= MAX_CRON_PLACEHOLDER_ATTEMPTS;
+          const status = terminalPlaceholderFailure
+            ? "failed"
+            : placeholder
+              ? "retry_wait"
+              : kind === "unknown"
+                ? "ambiguous"
+                : kind === "non-retryable"
+                  ? "failed"
+                  : "retry_wait";
           this.repository.updateDelivery(
             claim.row.id,
             claim.fencingToken,
-            kind === "unknown"
-              ? "ambiguous"
-              : kind === "non-retryable"
-                ? "failed"
-                : "retry_wait",
+            status,
             {
               error: String(error),
-              ...(kind === "retryable"
+              ...(status === "retry_wait"
                 ? {
                     retryAt: new Date(
                       Date.now() + (this.options.retryDelayMs ?? 1000),
@@ -352,6 +363,18 @@ export class DeliveryWorker {
       }
     }
   }
+  private isCronPlaceholder(row: DeliveryRow): boolean {
+    if (!row.payloadJson) return false;
+    try {
+      return (
+        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
+          .cronPlaceholderMessageId === "string"
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private isRss(row: DeliveryRow): boolean {
     if (!row.payloadJson) return false;
     try {

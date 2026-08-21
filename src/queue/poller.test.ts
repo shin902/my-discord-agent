@@ -1301,27 +1301,57 @@ describe("processMessage - durable result", () => {
     }
   });
 
-  it("terminal mail reconciliation edits once and retries after edit failure", async () => {
-    const edit = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValueOnce(undefined);
-    listTerminalCronJobs.mockReturnValue([
+  it("terminal mail reconciliation notifies once after a successful edit", async () => {
+    let notified = false;
+    listTerminalCronJobs.mockImplementation(() => [
       {
         id: "dead-mail",
         groupName: "default",
         channelId: "channel",
         cronSourceType: "mail",
         cronPlaceholderMessageId: "placeholder",
+        cronFailureNotified: notified,
       },
     ]);
+    patchJobPayload.mockImplementation(() => {
+      notified = true;
+    });
+    const edit = vi.fn().mockResolvedValue(undefined);
     client.channels.fetch.mockResolvedValue({
       messages: { fetch: vi.fn().mockResolvedValue({ edit }) },
     });
     await reconcileTerminalCronFailures();
-    expect(patchJobPayload).not.toHaveBeenCalled();
     await reconcileTerminalCronFailures();
-    expect(edit).toHaveBeenCalledTimes(2);
+    expect(edit).toHaveBeenCalledOnce();
+    expect(patchJobPayload).toHaveBeenCalledOnce();
+    expect(patchJobPayload).toHaveBeenCalledWith("dead-mail", {
+      cronFailureNotified: true,
+    });
+  });
+
+  it("terminal mail reconciliation marks notification attempted after edit failure", async () => {
+    let notified = false;
+    listTerminalCronJobs.mockImplementation(() => [
+      {
+        id: "dead-mail",
+        groupName: "default",
+        channelId: "channel",
+        cronSourceType: "mail",
+        cronPlaceholderMessageId: "placeholder",
+        cronFailureNotified: notified,
+      },
+    ]);
+    patchJobPayload.mockImplementation(() => {
+      notified = true;
+    });
+    const edit = vi.fn().mockRejectedValue(new Error("temporary"));
+    client.channels.fetch.mockResolvedValue({
+      messages: { fetch: vi.fn().mockResolvedValue({ edit }) },
+    });
+    await reconcileTerminalCronFailures();
+    await reconcileTerminalCronFailures();
+    expect(edit).toHaveBeenCalledOnce();
+    expect(patchJobPayload).toHaveBeenCalledOnce();
     expect(patchJobPayload).toHaveBeenCalledWith("dead-mail", {
       cronFailureNotified: true,
     });
