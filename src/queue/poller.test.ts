@@ -1256,6 +1256,34 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+  it("direct mail cron carries mailEmailId into delivery metadata", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    const msg = makeMsg({
+      cronJobId: "mail-check",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "per-run",
+      mailEmailId: "mail-1",
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "AI response",
+      expect.objectContaining({
+        deliveryPayload: expect.objectContaining({
+          destinationType: "channel",
+          mailEmailId: "mail-1",
+        }),
+      }),
+    );
+  });
+
   it("keeps typing progress independent from final result delivery", async () => {
     const sendTyping = vi.fn().mockResolvedValue(undefined);
     vi.mocked(client.channels.cache.get).mockReturnValue({

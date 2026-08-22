@@ -548,14 +548,19 @@ describe("durable delivery worker", () => {
     }
   });
 
-  it("ACKs mail only after every Discord delivery chunk is sent", async () => {
+  it("ACKs direct mail only after every Discord delivery chunk is sent", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const adapter: DeliveryAdapter = {
       send: vi.fn(async () => ({ externalMessageId: "discord-1" })),
     };
     acknowledgeEmail.mockClear();
     try {
-      completed(repo, "a".repeat(2001), { mailEmailId: "mail-1" });
+      completed(repo, "a".repeat(2001), {
+        destinationType: "channel",
+        destinationId: "channel",
+        cronJobId: "mail-check",
+        mailEmailId: "mail-1",
+      });
       const worker = new DeliveryWorker(repo, adapter, {
         workerId: "delivery-a",
       });

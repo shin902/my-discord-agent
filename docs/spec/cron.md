@@ -109,7 +109,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに仮メッセージと独立スレッドを先に確保し、そのスレッドをAI・ユーザー返信のセッションにする。`item-thread` は `destination` 必須 |
 
-旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。mail.ts は `new-thread` + `destination` で動作し、別のdeliveryModeを指定した場合は設定エラーにする。
+旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` は配送方式を解釈せず、設定された `deliveryMode` / `sessionMode` を `enqueueCronInbox()` に渡す。各方式の投稿先準備・配送はcron enqueue/pollerの共通処理が担う。
 
 ---
 
@@ -154,14 +154,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 ## メール処理（`jobs/mail.ts`）
 
-メールハンドラーは未読メールを取得して本文をinboxへ投入する。AI・スレッド作成・Discord deliveryは通常のpollerへ任せ、全delivery chunkが`sent`になった後にだけメールを既読化する。各投入は `new-thread` として毎回新しいjobとスレッドを使う。
+メールハンドラーは未読メールを取得して本文とACK対象のメールIDをinboxへ投入する。AI・Discord delivery・deliveryModeに応じたスレッド作成はcron enqueue/pollerの共通処理へ任せ、mail.ts自体は配送方式を制限しない。全delivery chunkが`sent`になった後にだけメールを既読化する。
 
 1. 未読メールを取得して本文を取得する。
-2. `new-thread` / `destination` のinbox jobを投入する。jobにはACK対象のメールIDだけを保持し、mail固有の冪等キーやsource照合情報を付けず、前回のjob・placeholder・スレッドを検索しない。
-3. pollerが親チャンネルに毎回新しいスレッドを作成し、providerのconcurrency設定とセッション順序を保ったままAI・deliveryを実行する。
+2. `enqueueCronInbox()` にメールIDを付けてjobを投入する。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。jobにはACK対象のメールID以外のmail固有冪等キーやsource照合情報を付けず、前回のjob・placeholder・スレッドを検索しない。
+3. cron enqueue/pollerが設定された方式に従って投稿先を準備し、providerのconcurrency設定とセッション順序を保ったままAI・deliveryを実行する。`item-thread` ではAI実行前に仮メッセージと独立スレッドを確保する。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
-AI・Discord delivery・既読化のいずれかが失敗したメールは未読のまま残る。次回実行では過去jobを再開・照合せず新しいjob/threadを作るため、失敗した試行のDiscord投稿が残る場合は重複しうる。このjob境界の性質はmail固有の既知の残余リスクであり、RSS dispatchなど別目的の冪等性は維持する。
+AI・Discord delivery・既読化のいずれかが失敗したメールは未読のまま残る。次回実行では過去jobを再開・照合せず新しいjobと投稿先を作るため、失敗した試行のDiscord投稿が残る場合は重複しうる。このjob境界の性質はmail固有の既知の残余リスクであり、RSS dispatchなど別目的の冪等性は維持する。
 
 ## 運用メモ
 

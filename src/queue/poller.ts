@@ -1085,6 +1085,7 @@ export async function processMessage(
           destinationId: msg.channelId,
           replyMessageId,
           allowMention: groupConfig.allowMention === true,
+          ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
           ...(msg.rssDispatchId
             ? {
                 rssDispatchId: msg.rssDispatchId,

@@ -3,11 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getProxyPort = vi.hoisted(() => vi.fn());
 vi.mock("../../proxy/credential-proxy-server.js", () => ({ getProxyPort }));
 
+const itemThreadQueue = vi.hoisted(() => ({
+  findByIdempotencyKey: vi.fn(),
+}));
+vi.mock("../../queue/repository.js", () => ({
+  getQueueRepository: () => itemThreadQueue,
+}));
+
 import type { CronContext } from "../runner.js";
 import handler from "./mail.js";
 
 function makeContext(
   appendInbox = vi.fn().mockResolvedValue(undefined),
+  modes: {
+    deliveryMode: NonNullable<CronContext["deliveryMode"]>;
+    sessionMode: NonNullable<CronContext["sessionMode"]>;
+  } = {
+    deliveryMode: "new-thread",
+    sessionMode: "destination",
+  },
 ): CronContext {
   return {
     id: "mail",
@@ -18,6 +32,7 @@ function makeContext(
     channelId: "channel",
     appendInbox,
     client: {} as never,
+    ...modes,
   };
 }
 
@@ -111,13 +126,29 @@ describe("mail cron queue boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects an explicit non-new-thread configuration", async () => {
-    const context = makeContext();
-    context.deliveryMode = "item-thread";
+  it("passes through the configured item-thread mode", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unreadResponse())
+      .mockResolvedValueOnce(bodyResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const appendInbox = vi.fn().mockResolvedValue(undefined);
 
-    await expect(handler(context)).rejects.toThrow(
-      "new-threadを指定してください",
+    await handler(
+      makeContext(appendInbox, {
+        deliveryMode: "item-thread",
+        sessionMode: "destination",
+      }),
     );
-    expect(context.appendInbox).not.toHaveBeenCalled();
+
+    expect(appendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cronDeliveryMode: "item-thread",
+        cronSessionMode: "destination",
+        cronProvisioning: true,
+        mailEmailId: "mail-1",
+      }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
