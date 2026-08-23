@@ -123,10 +123,11 @@ cp config/credentials.example.json config/credentials.json
 
 # 必要に応じて
 cp config/providers.example.json config/providers.json
-cp config/cron.example.json config/cron.json
 ```
 
 `.env` と各 JSON を利用環境に合わせて編集してください。
+
+`config/cron.json` は省略できます。cron を使う場合は `config/cron.example.json` を参考に必要なジョブだけを設定してください。example には有効化済みのカスタム handler も含まれるため、そのままコピーして `pnpm dev` を実行するのではなく、不要なジョブを無効化し、開発時は handler パスを実在する `.ts` ファイルに合わせてください。
 
 ### 3. ローカル OCI レジストリを起動
 
