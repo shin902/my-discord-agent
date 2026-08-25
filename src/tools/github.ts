@@ -160,7 +160,7 @@ const readIssueParameters = Type.Object({
     description: "リポジトリオーナー（ユーザー名/Organization名）",
   }),
   repo: Type.String({ description: "リポジトリ名" }),
-  issue_number: Type.Integer({ description: "Issue 番号" }),
+  issue_number: Type.Integer({ description: "Issue 番号", minimum: 1 }),
 });
 
 export const readIssueTool: AgentTool<typeof readIssueParameters> = {
@@ -218,7 +218,7 @@ const readPullRequestParameters = Type.Object({
     description: "リポジトリオーナー（ユーザー名/Organization名）",
   }),
   repo: Type.String({ description: "リポジトリ名" }),
-  pull_number: Type.Integer({ description: "Pull Request 番号" }),
+  pull_number: Type.Integer({ description: "Pull Request 番号", minimum: 1 }),
 });
 
 function formatPullRequestField(value: string | undefined): string {
@@ -299,7 +299,7 @@ const listIssueCommentsParameters = Type.Object({
     description: "リポジトリオーナー（ユーザー名/Organization名）",
   }),
   repo: Type.String({ description: "リポジトリ名" }),
-  issue_number: Type.Integer({ description: "Issue 番号" }),
+  issue_number: Type.Integer({ description: "Issue 番号", minimum: 1 }),
 });
 
 export const listIssueCommentsTool: AgentTool<
@@ -356,7 +356,7 @@ const listPullRequestCommentsParameters = Type.Object({
     description: "リポジトリオーナー（ユーザー名/Organization名）",
   }),
   repo: Type.String({ description: "リポジトリ名" }),
-  pull_number: Type.Integer({ description: "Pull Request 番号" }),
+  pull_number: Type.Integer({ description: "Pull Request 番号", minimum: 1 }),
 });
 
 function formatGitHubField(value: string | number | null | undefined): string {
@@ -477,7 +477,7 @@ const commentIssueParameters = Type.Object({
     description: "リポジトリオーナー（ユーザー名/Organization名）",
   }),
   repo: Type.String({ description: "リポジトリ名" }),
-  issue_number: Type.Integer({ description: "Issue 番号" }),
+  issue_number: Type.Integer({ description: "Issue 番号", minimum: 1 }),
   body: Type.String({
     description: `コメント本文（Markdown可、最大 ${MAX_COMMENT_CHARS} 文字）`,
   }),

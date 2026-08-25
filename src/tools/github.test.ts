@@ -1,3 +1,4 @@
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const PROXY_CREDS = JSON.stringify([
@@ -38,6 +39,38 @@ const makePullRequest = (overrides: Record<string, unknown> = {}) => ({
   updated_at: "2024-02-02T10:00:00Z",
   body: "## 変更内容\n\n**Markdown**を保持",
   ...overrides,
+});
+
+describe("GitHub issue/PR number schemas", () => {
+  it("issue_number と pull_number は 0 や負数を拒否する", async () => {
+    const {
+      commentIssueTool,
+      listIssueCommentsTool,
+      listPullRequestCommentsTool,
+      readIssueTool,
+      readPullRequestTool,
+    } = await import("./github.js");
+    const cases = [
+      { tool: readIssueTool, field: "issue_number" },
+      { tool: listIssueCommentsTool, field: "issue_number" },
+      { tool: commentIssueTool, field: "issue_number" },
+      { tool: readPullRequestTool, field: "pull_number" },
+      { tool: listPullRequestCommentsTool, field: "pull_number" },
+    ] as const;
+
+    for (const { tool, field } of cases) {
+      for (const number of [0, -1]) {
+        expect(() =>
+          validateToolArguments(tool, {
+            type: "toolCall",
+            id: `${tool.name}-${number}`,
+            name: tool.name,
+            arguments: { owner: "o", repo: "r", [field]: number },
+          }),
+        ).toThrow(/must be >= 1/);
+      }
+    }
+  });
 });
 
 describe("list-issues", () => {
