@@ -480,6 +480,8 @@ const commentIssueParameters = Type.Object({
   issue_number: Type.Integer({ description: "Issue 番号", minimum: 1 }),
   body: Type.String({
     description: `コメント本文（Markdown可、最大 ${MAX_COMMENT_CHARS} 文字）`,
+    minLength: 1,
+    maxLength: MAX_COMMENT_CHARS,
   }),
 });
 
@@ -490,6 +492,9 @@ export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
     "指定した Issue にコメントを投稿する。GitHub 上に公開される書き込み操作のため、明示的に指示された Issue 以外には投稿しないこと",
   parameters: commentIssueParameters,
   execute: async (_toolCallId, { owner, repo, issue_number, body }) => {
+    if (body.length === 0) {
+      throw new Error("コメント本文は空にできません");
+    }
     if (body.length > MAX_COMMENT_CHARS) {
       throw new Error(
         `コメント本文が長すぎます（${body.length} 文字、最大 ${MAX_COMMENT_CHARS} 文字）`,

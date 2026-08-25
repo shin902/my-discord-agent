@@ -41,7 +41,7 @@ const makePullRequest = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-describe("GitHub issue/PR number schemas", () => {
+describe("GitHub tool argument schemas", () => {
   it("issue_number と pull_number は 0 や負数を拒否する", async () => {
     const {
       commentIssueTool,
@@ -70,6 +70,25 @@ describe("GitHub issue/PR number schemas", () => {
         ).toThrow(/must be >= 1/);
       }
     }
+  });
+
+  it("comment-issue の body は空文字と最大長超過を拒否し、最大長は許可する", async () => {
+    const { commentIssueTool } = await import("./github.js");
+    const validateBody = (body: string) =>
+      validateToolArguments(commentIssueTool, {
+        type: "toolCall",
+        id: `comment-issue-${body.length}`,
+        name: "comment-issue",
+        arguments: { owner: "o", repo: "r", issue_number: 1, body },
+      });
+
+    expect(() => validateBody("")).toThrow(
+      "body: must not have fewer than 1 characters",
+    );
+    expect(() => validateBody("a".repeat(8000))).not.toThrow();
+    expect(() => validateBody("a".repeat(8001))).toThrow(
+      "body: must not have more than 8000 characters",
+    );
   });
 });
 
@@ -805,6 +824,37 @@ describe("comment-issue", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ body: "コメント本文" });
     expect(firstText(result)).toContain("http://example.test/comment/1");
+  });
+
+  it("本文が空文字だと例外を投げ、API を呼ばない", async () => {
+    const { commentIssueTool } = await import("./github.js");
+    await expect(
+      commentIssueTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        issue_number: 1,
+        body: "",
+      }),
+    ).rejects.toThrow("コメント本文は空にできません");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("本文が最大文字数ちょうどならコメントを POST する", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 1, html_url: "http://example.test/comment/1" }),
+    });
+    const { commentIssueTool } = await import("./github.js");
+    const body = "a".repeat(8000);
+    await commentIssueTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      issue_number: 1,
+      body,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ body });
   });
 
   it("本文が最大文字数を超えると例外を投げ、API を呼ばない", async () => {
