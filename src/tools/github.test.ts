@@ -212,6 +212,117 @@ describe("read-issue", () => {
   });
 });
 
+describe("list-issue-comments", () => {
+  const originalEnv = process.env;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  const makeComment = (overrides: Record<string, unknown> = {}) => ({
+    id: 101,
+    user: { login: "bob" },
+    created_at: "2024-02-01T10:00:00Z",
+    updated_at: "2024-02-02T10:00:00Z",
+    body: "**Markdown**\n\n- item",
+    ...overrides,
+  });
+
+  it("コメントの作者・日時・本文を Markdown でフォーマットする", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [makeComment()],
+    });
+    const { listIssueCommentsTool } = await import("./github.js");
+    const result = await listIssueCommentsTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      issue_number: 1,
+    });
+    const text = firstText(result);
+
+    expect(text).toContain("# Issue #1 のコメント");
+    expect(text).toContain("## コメント 1");
+    expect(text).toContain("作者: bob");
+    expect(text).toContain("投稿日時: 2024-02-01T10:00:00Z");
+    expect(text).toContain("更新日時: 2024-02-02T10:00:00Z");
+    expect(text).toContain("**Markdown**");
+    expect(text).toContain("- item");
+    expect(result.details).toEqual({
+      owner: "o",
+      repo: "r",
+      issue_number: 1,
+      count: 1,
+    });
+  });
+
+  it("per_page 件で満たされたページの次ページまで全件取得する", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      makeComment({ id: index + 1, body: `comment ${index + 1}` }),
+    );
+    const secondPage = [makeComment({ id: 101, body: "comment 101" })];
+    fetchMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => (url.includes("page=2") ? secondPage : firstPage),
+    }));
+
+    const { listIssueCommentsTool } = await import("./github.js");
+    const result = await listIssueCommentsTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      issue_number: 1,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://proxy.test/github/repos/o/r/issues/1/comments?per_page=100&page=1",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "http://proxy.test/github/repos/o/r/issues/1/comments?per_page=100&page=2",
+    );
+    expect(firstText(result)).toContain("comment 101");
+    expect(result.details).toMatchObject({ count: 101 });
+  });
+
+  it("コメントがないときはその旨を返す", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
+    const { listIssueCommentsTool } = await import("./github.js");
+    const result = await listIssueCommentsTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      issue_number: 1,
+    });
+
+    expect(firstText(result)).toContain("コメントはありません");
+  });
+
+  it("GitHub API エラー時は例外を投げる", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => "Internal Server Error",
+    });
+    const { listIssueCommentsTool } = await import("./github.js");
+
+    await expect(
+      listIssueCommentsTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        issue_number: 1,
+      }),
+    ).rejects.toThrow("500");
+  });
+});
+
 describe("comment-issue", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;

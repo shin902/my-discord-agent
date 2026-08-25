@@ -180,6 +180,62 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   },
 };
 
+type GitHubIssueComment = {
+  id?: number;
+  user?: { login?: string };
+  created_at?: string;
+  updated_at?: string;
+  body?: string | null;
+};
+
+const ISSUE_COMMENTS_PER_PAGE = 100;
+
+const listIssueCommentsParameters = Type.Object({
+  owner: Type.String({
+    description: "リポジトリオーナー（ユーザー名/Organization名）",
+  }),
+  repo: Type.String({ description: "リポジトリ名" }),
+  issue_number: Type.Integer({ description: "Issue 番号" }),
+});
+
+export const listIssueCommentsTool: AgentTool<
+  typeof listIssueCommentsParameters
+> = {
+  name: "list-issue-comments",
+  label: "List GitHub Issue Comments",
+  description:
+    "指定した GitHub Issue の全コメントを取得し、作者・投稿日時・更新日時・本文を Markdown で返す",
+  parameters: listIssueCommentsParameters,
+  execute: async (_toolCallId, { owner, repo, issue_number }) => {
+    const comments: GitHubIssueComment[] = [];
+
+    for (let page = 1; ; page++) {
+      const pageComments = (await githubFetch(
+        owner,
+        repo,
+        `/issues/${issue_number}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}&page=${page}`,
+      )) as GitHubIssueComment[];
+      comments.push(...pageComments);
+      if (pageComments.length < ISSUE_COMMENTS_PER_PAGE) break;
+    }
+
+    const lines = [`# Issue #${issue_number} のコメント`, ""];
+    comments.forEach((comment, index) => {
+      lines.push(`## コメント ${index + 1}`);
+      lines.push(`- 作者: ${comment.user?.login ?? "不明"}`);
+      lines.push(`- 投稿日時: ${comment.created_at ?? "不明"}`);
+      lines.push(`- 更新日時: ${comment.updated_at ?? "不明"}`);
+      lines.push("", comment.body ?? "(本文なし)", "", "---", "");
+    });
+    if (comments.length === 0) lines.push("(コメントはありません)");
+
+    return {
+      content: [{ type: "text", text: lines.join("\n") }],
+      details: { owner, repo, issue_number, count: comments.length },
+    };
+  },
+};
+
 type GitHubComment = {
   id: number;
   html_url: string;

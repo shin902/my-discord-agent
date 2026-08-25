@@ -16,6 +16,11 @@
 | `list` | ワークスペース内のディレクトリ一覧を取得する |
 | `glob` | glob パターンでファイルを検索する |
 | `grep` | 正規表現でファイル内を検索する |
+| `list-issues` | GitHub リポジトリの Issue 一覧を取得（Pull Request は除外） |
+| `read-issue` | GitHub Issue の本文とメタ情報を取得 |
+| `list-issue-comments` | GitHub Issue の全コメントを取得し、作者・日時・本文を Markdown で返す |
+| `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
+| `clone-repository` | Credential Proxy 経由で GitHub リポジトリを `/workspace` に clone |
 | `browserless-search` | ウェブ検索を実行して結果（JSON）を返す |
 | `browserless-function` | Puppeteer コードをブラウザで実行する |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |

@@ -23,7 +23,12 @@ import {
   writeTool,
 } from "./fs.js";
 import { cloneRepositoryTool } from "./git.js";
-import { commentIssueTool, listIssuesTool, readIssueTool } from "./github.js";
+import {
+  commentIssueTool,
+  listIssueCommentsTool,
+  listIssuesTool,
+  readIssueTool,
+} from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
 import {
@@ -47,6 +52,7 @@ const TOOLS: Record<string, AgentTool> = {
   "read-email": readEmailTool,
   "list-issues": listIssuesTool,
   "read-issue": readIssueTool,
+  "list-issue-comments": listIssueCommentsTool,
   "comment-issue": commentIssueTool,
   "clone-repository": cloneRepositoryTool,
   "list-events": listEventsTool,
