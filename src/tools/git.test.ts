@@ -15,6 +15,10 @@ const PROXY_CREDS = JSON.stringify([
   { provider: "github-git", baseUrl: "http://proxy.test/github-git" },
 ]);
 
+function notFoundError(): Error & { code: string } {
+  return Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+}
+
 function mockSuccess(stdout = "", stderr = "") {
   mockExecFile.mockImplementation((..._args: unknown[]) => {
     const cb = _args[_args.length - 1] as (
@@ -56,7 +60,7 @@ describe("clone-repository", () => {
     vi.resetModules();
     vi.clearAllMocks();
     process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
-    mockStat.mockRejectedValue(new Error("ENOENT"));
+    mockStat.mockRejectedValue(notFoundError());
     mockRm.mockResolvedValue(undefined);
   });
 
@@ -73,14 +77,30 @@ describe("clone-repository", () => {
     expect(args[0]).toBe("git");
     expect(args[1]).toEqual([
       "clone",
-      "--depth",
-      "1",
       "http://proxy.test/github-git/o/r.git",
-      "/workspace/r",
+      "/tmp/r",
     ]);
   });
 
-  it("directory を指定すると clone 先が変わる", async () => {
+  it("depth を指定すると shallow clone の引数を追加する", async () => {
+    mockSuccess();
+    const { cloneRepositoryTool } = await import("./git.js");
+    await cloneRepositoryTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      depth: 5,
+    });
+
+    expect(mockExecFile.mock.calls[0]?.[1]).toEqual([
+      "clone",
+      "--depth",
+      "5",
+      "http://proxy.test/github-git/o/r.git",
+      "/tmp/r",
+    ]);
+  });
+
+  it("directory を指定すると /tmp 配下の clone 先が変わる", async () => {
     mockSuccess();
     const { cloneRepositoryTool } = await import("./git.js");
     await cloneRepositoryTool.execute("id", {
@@ -90,7 +110,7 @@ describe("clone-repository", () => {
     });
 
     const args = mockExecFile.mock.calls[0];
-    expect(args[1]).toContain("/workspace/my-dir");
+    expect(args[1]).toContain("/tmp/my-dir");
   });
 
   it("成功時に clone 先を返す", async () => {
@@ -101,7 +121,14 @@ describe("clone-repository", () => {
       repo: "r",
     });
     expect(firstText(result)).toContain("o/r");
-    expect(firstText(result)).toContain("/workspace/r");
+    expect(firstText(result)).toContain("/tmp/r");
+    expect(firstText(result)).toContain("全履歴");
+    expect(result.details).toEqual({
+      owner: "o",
+      repo: "r",
+      directory: "/tmp/r",
+      depth: null,
+    });
   });
 
   it("owner/repo に不正な文字が含まれると例外", async () => {
@@ -136,6 +163,18 @@ describe("clone-repository", () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
+  it("depth が正の整数でなければ例外", async () => {
+    const { cloneRepositoryTool } = await import("./git.js");
+    await expect(
+      cloneRepositoryTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        depth: 0,
+      }),
+    ).rejects.toThrow("depth は正の整数で指定してください");
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
   it("git clone失敗時はstderrを含む例外を投げる", async () => {
     mockFailure(
       Object.assign(new Error("failed"), {
@@ -149,7 +188,7 @@ describe("clone-repository", () => {
   });
 
   it("clone失敗時、dest が呼び出し前に存在しなければ削除する", async () => {
-    mockStat.mockRejectedValue(new Error("ENOENT"));
+    mockStat.mockRejectedValue(notFoundError());
     mockFailure(
       Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
     );
@@ -157,7 +196,7 @@ describe("clone-repository", () => {
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
     ).rejects.toThrow();
-    expect(mockRm).toHaveBeenCalledWith("/workspace/r", {
+    expect(mockRm).toHaveBeenCalledWith("/tmp/r", {
       recursive: true,
       force: true,
     });
@@ -165,6 +204,18 @@ describe("clone-repository", () => {
 
   it("clone失敗時、dest が呼び出し前から存在していれば削除しない", async () => {
     mockStat.mockResolvedValue({} as never);
+    mockFailure(
+      Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
+    );
+    const { cloneRepositoryTool } = await import("./git.js");
+    await expect(
+      cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
+    ).rejects.toThrow();
+    expect(mockRm).not.toHaveBeenCalled();
+  });
+
+  it("dest の存在確認に失敗した場合は削除しない", async () => {
+    mockStat.mockRejectedValue(new Error("EACCES"));
     mockFailure(
       Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
     );

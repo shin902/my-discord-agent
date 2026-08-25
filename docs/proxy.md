@@ -109,7 +109,7 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 
 ### GitHub Clone（`clone-repository` ツール用）
 
-エージェントが README 以外も参照したい場合に、リポジトリを `/workspace` 配下へ shallow clone する。git の smart HTTP プロトコルは通常の HTTP リクエスト/レスポンスなので、既存の汎用リバースプロキシがそのまま使えるが、**認証方式は `api.github.com`（REST API）とは異なる**点に注意。
+エージェントが README 以外も参照したい場合に、リポジトリをエージェントコンテナ内のエフェメラルな `/tmp` 配下へ clone する。`depth` を省略した場合は全履歴を取得し、指定した場合のみ shallow clone する。コンテナ終了時には clone も破棄される。git の smart HTTP プロトコルは通常の HTTP リクエスト/レスポンスなので、既存の汎用リバースプロキシがそのまま使えるが、**認証方式は `api.github.com`（REST API）とは異なる**点に注意。
 
 ```json
 {
@@ -123,7 +123,7 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 - `list-issues`/`read-issue`/`comment-issue` が使う `github`（`api.github.com` 向け、Issues権限のみ）とは別のプロバイダー・別のトークンに分離している。Issue 操作用トークンに Contents 権限を持たせない（最小権限）ため。
 - `GITHUB_CLONE_TOKEN` は対象リポジトリ・`Contents: Read` 権限のみの fine-grained PAT を想定。
 - **`auth: { "type": "basic" }` が必須**: GitHub の git smart-HTTP サーバー（`github.com`、`api.github.com` とは別エンドポイント）は `Authorization: Bearer ...` を受け付けず、`Authorization: Basic base64("x-access-token:<token>")` が必要（`actions/checkout` 等と同じ方式）。`auth` を省略すると Bearer ヘッダーが注入され、プライベートリポジトリの clone が 401 で失敗する。パブリックリポジトリは無認証でも clone 自体は成立するため、トークンが実際には使われていないことに気づきにくい点に注意。
-- `clone-repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone --depth 1` を実行する。実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
+- `clone-repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone` を実行する。`depth` を指定した場合だけ `--depth <depth>` を付ける。clone 先の `directory` は `/tmp` からの相対パスで、実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
 
 ### その他の pi-ai 対応プロバイダ
 
