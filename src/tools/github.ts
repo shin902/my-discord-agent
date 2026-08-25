@@ -261,13 +261,12 @@ async function fetchAllGitHubPages<T>(
   suffix: string,
 ): Promise<T[]> {
   const items: T[] = [];
-  const separator = suffix.includes("?") ? "&" : "?";
 
   for (let page = 1; ; page++) {
     const pageItems = (await githubFetch(
       owner,
       repo,
-      `${suffix}${separator}per_page=${GITHUB_PAGE_SIZE}&page=${page}`,
+      `${suffix}?per_page=${GITHUB_PAGE_SIZE}&page=${page}`,
     )) as T[];
     items.push(...pageItems);
     if (pageItems.length < GITHUB_PAGE_SIZE) return items;
