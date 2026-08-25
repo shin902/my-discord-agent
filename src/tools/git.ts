@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { isAbsolute, normalize, resolve } from "node:path";
+import { lstat } from "node:fs/promises";
+import { dirname, isAbsolute, normalize, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -28,6 +29,33 @@ function resolveCloneDir(repo: string, directory?: string): string {
     "アクセス拒否: clone 先が /tmp 外に出ることは許可されていません",
   );
   return resolve(CLONE_ROOT, normalized);
+}
+
+async function assertNoSymlinkInExistingAncestors(
+  destination: string,
+): Promise<void> {
+  const ancestors: string[] = [];
+  for (
+    let current = destination;
+    current !== CLONE_ROOT;
+    current = dirname(current)
+  ) {
+    ancestors.push(current);
+  }
+  ancestors.push(CLONE_ROOT);
+
+  for (const ancestor of ancestors.reverse()) {
+    try {
+      if ((await lstat(ancestor)).isSymbolicLink()) {
+        throw new Error(
+          `アクセス拒否: clone 先までの既存パスに symlink が含まれています (${ancestor})`,
+        );
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") break;
+      throw err;
+    }
+  }
 }
 
 function validateCloneDepth(depth: number | undefined): void {
@@ -68,6 +96,7 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
       validateCloneDepth(depth);
 
       const dest = resolveCloneDir(repo, directory);
+      await assertNoSymlinkInExistingAncestors(dest);
       const baseUrl = resolveProxyBaseUrl("github-git");
       const cloneUrl = `${baseUrl}/${owner}/${repo}.git`;
 

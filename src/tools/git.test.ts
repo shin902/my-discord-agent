@@ -1,4 +1,6 @@
 import type { ChildProcess } from "node:child_process";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
@@ -124,6 +126,26 @@ describe("clone-repository", () => {
       }),
     ).rejects.toThrow("/tmp 配下の相対パスで指定してください");
     expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it("directory が /tmp 内の symlink 経由で外へ出るなら例外", async () => {
+    const testDir = await mkdtemp("/tmp/clone-repository-symlink-");
+    const linkPath = join(testDir, "link");
+    const directory = relative("/tmp", join(linkPath, "repo"));
+    try {
+      await symlink("/workspace", linkPath);
+      const { cloneRepositoryTool } = await import("./git.js");
+      await expect(
+        cloneRepositoryTool.execute("id", {
+          owner: "o",
+          repo: "r",
+          directory,
+        }),
+      ).rejects.toThrow("clone 先までの既存パスに symlink が含まれています");
+      expect(mockExecFile).not.toHaveBeenCalled();
+    } finally {
+      await rm(testDir, { force: true, recursive: true });
+    }
   });
 
   it("成功時に clone 先を返す", async () => {
