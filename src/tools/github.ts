@@ -247,13 +247,32 @@ export const readPullRequestTool: AgentTool<typeof readPullRequestParameters> =
 
 type GitHubIssueComment = {
   id?: number;
-  user?: { login?: string };
-  created_at?: string;
-  updated_at?: string;
+  user?: { login?: string } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
   body?: string | null;
 };
 
-const ISSUE_COMMENTS_PER_PAGE = 100;
+const GITHUB_PAGE_SIZE = 100;
+
+async function fetchAllGitHubPages<T>(
+  owner: string,
+  repo: string,
+  suffix: string,
+): Promise<T[]> {
+  const items: T[] = [];
+  const separator = suffix.includes("?") ? "&" : "?";
+
+  for (let page = 1; ; page++) {
+    const pageItems = (await githubFetch(
+      owner,
+      repo,
+      `${suffix}${separator}per_page=${GITHUB_PAGE_SIZE}&page=${page}`,
+    )) as T[];
+    items.push(...pageItems);
+    if (pageItems.length < GITHUB_PAGE_SIZE) return items;
+  }
+}
 
 const listIssueCommentsParameters = Type.Object({
   owner: Type.String({
@@ -272,17 +291,11 @@ export const listIssueCommentsTool: AgentTool<
     "指定した GitHub Issue の全コメントを取得し、作者・投稿日時・更新日時・本文を Markdown で返す",
   parameters: listIssueCommentsParameters,
   execute: async (_toolCallId, { owner, repo, issue_number }) => {
-    const comments: GitHubIssueComment[] = [];
-
-    for (let page = 1; ; page++) {
-      const pageComments = (await githubFetch(
-        owner,
-        repo,
-        `/issues/${issue_number}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}&page=${page}`,
-      )) as GitHubIssueComment[];
-      comments.push(...pageComments);
-      if (pageComments.length < ISSUE_COMMENTS_PER_PAGE) break;
-    }
+    const comments = await fetchAllGitHubPages<GitHubIssueComment>(
+      owner,
+      repo,
+      `/issues/${issue_number}/comments`,
+    );
 
     const lines = [`# Issue #${issue_number} のコメント`, ""];
     comments.forEach((comment, index) => {
@@ -297,6 +310,139 @@ export const listIssueCommentsTool: AgentTool<
     return {
       content: [{ type: "text", text: lines.join("\n") }],
       details: { owner, repo, issue_number, count: comments.length },
+    };
+  },
+};
+
+type GitHubPullRequestReview = {
+  id?: number;
+  user?: { login?: string } | null;
+  state?: string | null;
+  created_at?: string | null;
+  submitted_at?: string | null;
+  updated_at?: string | null;
+  body?: string | null;
+};
+
+type GitHubPullRequestReviewComment = GitHubIssueComment & {
+  path?: string | null;
+  line?: number | null;
+  original_line?: number | null;
+  side?: string | null;
+};
+
+const listPullRequestCommentsParameters = Type.Object({
+  owner: Type.String({
+    description: "リポジトリオーナー（ユーザー名/Organization名）",
+  }),
+  repo: Type.String({ description: "リポジトリ名" }),
+  pull_number: Type.Integer({ description: "Pull Request 番号" }),
+});
+
+function formatGitHubField(value: string | number | null | undefined): string {
+  if (value == null || (typeof value === "string" && !value.trim())) {
+    return "不明";
+  }
+  return String(value);
+}
+
+function appendMarkdownBody(lines: string[], body: string | null | undefined) {
+  lines.push("", body || "(本文なし)", "", "---", "");
+}
+
+function formatInlineReviewLocation(
+  comment: GitHubPullRequestReviewComment,
+): string {
+  const fields: string[] = [];
+  if (comment.path) fields.push(`path=${comment.path}`);
+  if (comment.line != null) fields.push(`line=${comment.line}`);
+  if (comment.original_line != null) {
+    fields.push(`original_line=${comment.original_line}`);
+  }
+  if (comment.side) fields.push(`side=${comment.side}`);
+  return fields.join(", ");
+}
+
+export const listPullRequestCommentsTool: AgentTool<
+  typeof listPullRequestCommentsParameters
+> = {
+  name: "list-pull-request-comments",
+  label: "List GitHub Pull Request Comments",
+  description:
+    "指定した Pull Request の会話コメント・レビュー・インラインレビューコメントを全件取得し、Markdown で返す",
+  parameters: listPullRequestCommentsParameters,
+  execute: async (_toolCallId, { owner, repo, pull_number }) => {
+    const conversationComments = await fetchAllGitHubPages<GitHubIssueComment>(
+      owner,
+      repo,
+      `/issues/${pull_number}/comments`,
+    );
+    const reviews = await fetchAllGitHubPages<GitHubPullRequestReview>(
+      owner,
+      repo,
+      `/pulls/${pull_number}/reviews`,
+    );
+    const inlineComments =
+      await fetchAllGitHubPages<GitHubPullRequestReviewComment>(
+        owner,
+        repo,
+        `/pulls/${pull_number}/comments`,
+      );
+
+    const lines = [`# Pull Request #${pull_number} のコメント・レビュー`, ""];
+
+    lines.push("## 会話コメント（Issue コメント）", "");
+    if (conversationComments.length === 0) {
+      lines.push("(会話コメントはありません)", "");
+    } else {
+      conversationComments.forEach((comment, index) => {
+        lines.push(`### コメント ${index + 1}`);
+        lines.push(`- 作者: ${formatGitHubField(comment.user?.login)}`);
+        lines.push(`- 投稿日時: ${formatGitHubField(comment.created_at)}`);
+        lines.push(`- 更新日時: ${formatGitHubField(comment.updated_at)}`);
+        appendMarkdownBody(lines, comment.body);
+      });
+    }
+
+    lines.push("## レビュー投稿", "");
+    if (reviews.length === 0) {
+      lines.push("(レビューはありません)", "");
+    } else {
+      reviews.forEach((review, index) => {
+        lines.push(`### レビュー ${index + 1}`);
+        lines.push(`- 作者: ${formatGitHubField(review.user?.login)}`);
+        lines.push(`- 状態: ${formatGitHubField(review.state)}`);
+        lines.push(`- 作成日時: ${formatGitHubField(review.created_at)}`);
+        lines.push(`- 提出日時: ${formatGitHubField(review.submitted_at)}`);
+        lines.push(`- 更新日時: ${formatGitHubField(review.updated_at)}`);
+        appendMarkdownBody(lines, review.body);
+      });
+    }
+
+    lines.push("## インラインレビューコメント", "");
+    if (inlineComments.length === 0) {
+      lines.push("(インラインレビューコメントはありません)", "");
+    } else {
+      inlineComments.forEach((comment, index) => {
+        lines.push(`### インラインコメント ${index + 1}`);
+        lines.push(`- 作者: ${formatGitHubField(comment.user?.login)}`);
+        lines.push(`- 投稿日時: ${formatGitHubField(comment.created_at)}`);
+        lines.push(`- 更新日時: ${formatGitHubField(comment.updated_at)}`);
+        const location = formatInlineReviewLocation(comment);
+        if (location) lines.push(`- 位置: ${location}`);
+        appendMarkdownBody(lines, comment.body);
+      });
+    }
+
+    return {
+      content: [{ type: "text", text: lines.join("\n") }],
+      details: {
+        owner,
+        repo,
+        pull_number,
+        count:
+          conversationComments.length + reviews.length + inlineComments.length,
+      },
     };
   },
 };

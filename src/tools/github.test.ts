@@ -460,6 +460,255 @@ describe("list-issue-comments", () => {
   });
 });
 
+describe("list-pull-request-comments", () => {
+  const originalEnv = process.env;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  const makeConversationComment = (
+    overrides: Record<string, unknown> = {},
+  ) => ({
+    id: 101,
+    user: { login: "bob" },
+    created_at: "2024-03-01T10:00:00Z",
+    updated_at: "2024-03-02T10:00:00Z",
+    body: "**conversation**",
+    ...overrides,
+  });
+
+  const makeReview = (overrides: Record<string, unknown> = {}) => ({
+    id: 201,
+    user: { login: "carol" },
+    state: "APPROVED",
+    submitted_at: "2024-03-03T10:00:00Z",
+    updated_at: "2024-03-04T10:00:00Z",
+    body: "review *body*",
+    ...overrides,
+  });
+
+  const makeInlineComment = (overrides: Record<string, unknown> = {}) => ({
+    id: 301,
+    user: { login: "dave" },
+    created_at: "2024-03-05T10:00:00Z",
+    updated_at: "2024-03-06T10:00:00Z",
+    body: "`inline` comment",
+    path: "src/example.ts",
+    line: 12,
+    original_line: 10,
+    side: "RIGHT",
+    ...overrides,
+  });
+
+  const executeTool = async () => {
+    const { listPullRequestCommentsTool } = await import("./github.js");
+    return listPullRequestCommentsTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      pull_number: 42,
+    });
+  };
+
+  it("三つの API の結果を種類ごとに Markdown でフォーマットする", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/issues/42/comments")) {
+        return { ok: true, json: async () => [makeConversationComment()] };
+      }
+      if (url.includes("/pulls/42/reviews")) {
+        return { ok: true, json: async () => [makeReview()] };
+      }
+      if (url.includes("/pulls/42/comments")) {
+        return { ok: true, json: async () => [makeInlineComment()] };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const result = await executeTool();
+    const text = firstText(result);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://proxy.test/github/repos/o/r/issues/42/comments?per_page=100&page=1",
+      "http://proxy.test/github/repos/o/r/pulls/42/reviews?per_page=100&page=1",
+      "http://proxy.test/github/repos/o/r/pulls/42/comments?per_page=100&page=1",
+    ]);
+    expect(text).toContain("# Pull Request #42 のコメント・レビュー");
+    expect(text).toContain("## 会話コメント（Issue コメント）");
+    expect(text).toContain("作者: bob");
+    expect(text).toContain("2024-03-01T10:00:00Z");
+    expect(text).toContain("**conversation**");
+    expect(text).toContain("## レビュー投稿");
+    expect(text).toContain("作者: carol");
+    expect(text).toContain("状態: APPROVED");
+    expect(text).toContain("提出日時: 2024-03-03T10:00:00Z");
+    expect(text).toContain("review *body*");
+    expect(text).toContain("## インラインレビューコメント");
+    expect(text).toContain("作者: dave");
+    expect(text).toContain("path=src/example.ts");
+    expect(text).toContain("line=12");
+    expect(text).toContain("original_line=10");
+    expect(text).toContain("side=RIGHT");
+    expect(text).toContain("`inline` comment");
+    expect(text).not.toContain("undefined");
+    expect(result.details).toMatchObject({
+      owner: "o",
+      repo: "r",
+      pull_number: 42,
+      count: 3,
+    });
+  });
+
+  it("三つの API で 100 件を超える全ページを取得する", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const requestUrl = new URL(url);
+      const page = requestUrl.searchParams.get("page");
+      const firstPage = page === "1";
+      if (requestUrl.pathname.endsWith("/issues/42/comments")) {
+        return {
+          ok: true,
+          json: async () =>
+            firstPage
+              ? Array.from({ length: 100 }, (_, index) =>
+                  makeConversationComment({
+                    id: index,
+                    body: `conversation-${index}`,
+                  }),
+                )
+              : [
+                  makeConversationComment({
+                    id: 101,
+                    body: "conversation-page-2",
+                  }),
+                ],
+        };
+      }
+      if (requestUrl.pathname.endsWith("/pulls/42/reviews")) {
+        return {
+          ok: true,
+          json: async () =>
+            firstPage
+              ? Array.from({ length: 100 }, (_, index) =>
+                  makeReview({ id: index, body: `review-${index}` }),
+                )
+              : [makeReview({ id: 101, body: "review-page-2" })],
+        };
+      }
+      if (requestUrl.pathname.endsWith("/pulls/42/comments")) {
+        return {
+          ok: true,
+          json: async () =>
+            firstPage
+              ? Array.from({ length: 100 }, (_, index) =>
+                  makeInlineComment({ id: index, body: `inline-${index}` }),
+                )
+              : [makeInlineComment({ id: 101, body: "inline-page-2" })],
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const result = await executeTool();
+    const urls = fetchMock.mock.calls.map(([url]) => url as string);
+
+    expect(urls).toHaveLength(6);
+    expect(urls).toEqual([
+      "http://proxy.test/github/repos/o/r/issues/42/comments?per_page=100&page=1",
+      "http://proxy.test/github/repos/o/r/issues/42/comments?per_page=100&page=2",
+      "http://proxy.test/github/repos/o/r/pulls/42/reviews?per_page=100&page=1",
+      "http://proxy.test/github/repos/o/r/pulls/42/reviews?per_page=100&page=2",
+      "http://proxy.test/github/repos/o/r/pulls/42/comments?per_page=100&page=1",
+      "http://proxy.test/github/repos/o/r/pulls/42/comments?per_page=100&page=2",
+    ]);
+    const text = firstText(result);
+    expect(text).toContain("conversation-page-2");
+    expect(text).toContain("review-page-2");
+    expect(text).toContain("inline-page-2");
+  });
+
+  it("空のカテゴリを明示し、null や欠落フィールドを安全に扱う", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/issues/42/comments")) {
+        return {
+          ok: true,
+          json: async () => [
+            makeConversationComment({
+              user: null,
+              created_at: null,
+              updated_at: undefined,
+              body: null,
+            }),
+          ],
+        };
+      }
+      if (url.includes("/pulls/42/reviews")) {
+        return {
+          ok: true,
+          json: async () => [
+            makeReview({
+              user: null,
+              state: null,
+              created_at: null,
+              submitted_at: null,
+              updated_at: undefined,
+              body: null,
+            }),
+          ],
+        };
+      }
+      return {
+        ok: true,
+        json: async () => [
+          makeInlineComment({
+            user: null,
+            created_at: null,
+            updated_at: undefined,
+            body: null,
+            path: null,
+            line: null,
+            original_line: undefined,
+            side: null,
+          }),
+        ],
+      };
+    });
+
+    const result = await executeTool();
+    const text = firstText(result);
+
+    expect(text).toContain("作者: 不明");
+    expect(text).toContain("提出日時: 不明");
+    expect(text).toContain("(本文なし)");
+    expect(text).not.toContain("undefined");
+    expect(text).not.toContain("位置:");
+
+    fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
+    const emptyResult = await executeTool();
+    const emptyText = firstText(emptyResult);
+    expect(emptyText).toContain("(会話コメントはありません)");
+    expect(emptyText).toContain("(レビューはありません)");
+    expect(emptyText).toContain("(インラインレビューコメントはありません)");
+  });
+
+  it("いずれかの GitHub API が失敗したら例外を返す", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: async () => "Bad Gateway",
+    });
+
+    await expect(executeTool()).rejects.toThrow("502");
+  });
+});
+
 describe("comment-issue", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;

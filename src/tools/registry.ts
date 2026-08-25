@@ -27,6 +27,7 @@ import {
   commentIssueTool,
   listIssueCommentsTool,
   listIssuesTool,
+  listPullRequestCommentsTool,
   readIssueTool,
   readPullRequestTool,
 } from "./github.js";
@@ -54,6 +55,7 @@ const TOOLS: Record<string, AgentTool> = {
   "list-issues": listIssuesTool,
   "read-issue": readIssueTool,
   "list-issue-comments": listIssueCommentsTool,
+  "list-pull-request-comments": listPullRequestCommentsTool,
   "read-pull-request": readPullRequestTool,
   "comment-issue": commentIssueTool,
   "clone-repository": cloneRepositoryTool,
