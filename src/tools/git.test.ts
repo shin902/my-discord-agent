@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   existsSync,
@@ -7,7 +8,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import type { ChildProcess } from "node:child_process";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

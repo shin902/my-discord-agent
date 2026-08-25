@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } from "node:constants";
-import { lstat, mkdir, open, type FileHandle } from "node:fs/promises";
+import { type FileHandle, lstat, mkdir, open } from "node:fs/promises";
 import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";

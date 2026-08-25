@@ -842,10 +842,7 @@ describe("comment-issue", () => {
       body: "コメント本文",
     });
     const [issueUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const [commentUrl, init] = fetchMock.mock.calls[1] as [
-      string,
-      RequestInit,
-    ];
+    const [commentUrl, init] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(issueUrl).toContain("/repos/o/r/issues/1");
     expect(commentUrl).toContain("/repos/o/r/issues/1/comments");
     expect(init.method).toBe("POST");
