@@ -106,6 +106,36 @@ describe("list-issues", () => {
     expect(text).not.toContain("#2");
   });
 
+  it("先頭ページが PR 中心でも次ページから Issue を limit 件まで取得する", async () => {
+    const firstPage = [
+      makeIssue({ number: 101, pull_request: {} }),
+      makeIssue({ number: 102, pull_request: {} }),
+    ];
+    const secondPage = [makeIssue({ number: 1 }), makeIssue({ number: 2 })];
+    fetchMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => (url.includes("&page=2") ? secondPage : firstPage),
+    }));
+
+    const { listIssuesTool } = await import("./github.js");
+    const result = await listIssuesTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      limit: 2,
+    });
+    const text = firstText(result);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://proxy.test/github/repos/o/r/issues?state=open&per_page=2&page=1",
+      "http://proxy.test/github/repos/o/r/issues?state=open&per_page=2&page=2",
+    ]);
+    expect(text).toContain("#1");
+    expect(text).toContain("#2");
+    expect(text).not.toContain("#101");
+    expect(text).not.toContain("#102");
+    expect(result.details).toMatchObject({ count: 2 });
+  });
+
   it("結果が空のとき「Issue はありません」を返す", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
     const { listIssuesTool } = await import("./github.js");

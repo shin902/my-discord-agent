@@ -96,6 +96,29 @@ const listIssuesParameters = Type.Object({
   ),
 });
 
+async function fetchIssuesUntilLimit(
+  owner: string,
+  repo: string,
+  state: string,
+  limit: number,
+): Promise<GitHubIssue[]> {
+  const perPage = Math.min(limit, 50);
+  const issues: GitHubIssue[] = [];
+
+  for (let page = 1; ; page++) {
+    const pageItems = (await githubFetch(
+      owner,
+      repo,
+      `/issues?state=${state}&per_page=${perPage}&page=${page}`,
+    )) as GitHubIssue[];
+    issues.push(...pageItems.filter((issue) => !issue.pull_request));
+
+    if (issues.length >= perPage || pageItems.length < perPage) {
+      return issues.slice(0, perPage);
+    }
+  }
+}
+
 export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
   name: "list-issues",
   label: "List GitHub Issues",
@@ -103,14 +126,12 @@ export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
     "指定リポジトリの Issue 一覧を取得する。番号・タイトル・状態・ラベル・コメント数を返す（Pull Request は除外）",
   parameters: listIssuesParameters,
   execute: async (_toolCallId, { owner, repo, state = "open", limit = 10 }) => {
-    const perPage = Math.min(limit, 50);
-    const issues = (await githubFetch(
+    const filtered = await fetchIssuesUntilLimit(
       owner,
       repo,
-      `/issues?state=${state}&per_page=${perPage}`,
-    )) as GitHubIssue[];
-
-    const filtered = issues.filter((issue) => !issue.pull_request);
+      state,
+      Math.min(limit, 50),
+    );
 
     const lines: string[] = [
       `## Issue 一覧（${owner}/${repo}, state=${state}）`,
