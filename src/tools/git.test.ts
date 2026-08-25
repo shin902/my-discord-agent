@@ -1,41 +1,55 @@
 import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
-vi.mock("node:fs/promises", () => ({ stat: vi.fn(), rm: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 
-import { execFile } from "node:child_process";
-import { rm, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
 
-const mockExecFile = vi.mocked(execFile);
-const mockStat = vi.mocked(stat);
-const mockRm = vi.mocked(rm);
+const mockSpawn = vi.mocked(spawn);
+
+function createMockChild() {
+  return Object.assign(new EventEmitter() as ChildProcess, {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    kill: vi.fn(() => true),
+  });
+}
 
 const PROXY_CREDS = JSON.stringify([
   { provider: "github-git", baseUrl: "http://proxy.test/github-git" },
 ]);
 
 function mockSuccess(stdout = "", stderr = "") {
-  mockExecFile.mockImplementation((..._args: unknown[]) => {
-    const cb = _args[_args.length - 1] as (
-      err: Error | null,
-      stdout: string,
-      stderr: string,
-    ) => void;
-    cb(null, stdout, stderr);
-    return {} as ChildProcess;
+  mockSpawn.mockImplementation(() => {
+    const child = createMockChild();
+    queueMicrotask(() => {
+      if (stdout) child.stdout.emit("data", stdout);
+      if (stderr) child.stderr.emit("data", stderr);
+      child.emit("close", 0, null);
+    });
+    return child;
   });
 }
 
 function mockFailure(err: Error & { stderr?: string }) {
-  mockExecFile.mockImplementation((..._args: unknown[]) => {
-    const cb = _args[_args.length - 1] as (
-      err: Error | null,
-      stdout: string,
-      stderr: string,
-    ) => void;
-    cb(err, "", err.stderr ?? "");
-    return {} as ChildProcess;
+  mockSpawn.mockImplementation(() => {
+    const child = createMockChild();
+    queueMicrotask(() => {
+      if (err.stderr) child.stderr.emit("data", err.stderr);
+      child.emit("close", 1, null);
+    });
+    return child;
   });
 }
 
@@ -56,12 +70,14 @@ describe("clone-repository", () => {
     vi.resetModules();
     vi.clearAllMocks();
     process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
-    mockStat.mockRejectedValue(new Error("ENOENT"));
-    mockRm.mockResolvedValue(undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     process.env = originalEnv;
+    await Promise.all([
+      rm("/tmp/r", { force: true, recursive: true }),
+      rm("/tmp/my-dir", { force: true, recursive: true }),
+    ]);
   });
 
   it("プロキシ経由のURLでgit cloneを実行する", async () => {
@@ -69,18 +85,37 @@ describe("clone-repository", () => {
     const { cloneRepositoryTool } = await import("./git.js");
     await cloneRepositoryTool.execute("id", { owner: "o", repo: "r" });
 
-    const args = mockExecFile.mock.calls[0];
+    const args = mockSpawn.mock.calls[0];
     expect(args[0]).toBe("git");
     expect(args[1]).toEqual([
       "clone",
-      "--depth",
-      "1",
       "http://proxy.test/github-git/o/r.git",
-      "/workspace/r",
+      "/proc/self/fd/3",
+    ]);
+    expect((args[2] as { stdio: unknown[] }).stdio[3]).toEqual(
+      expect.any(Number),
+    );
+  });
+
+  it("depth を指定すると shallow clone の引数を追加する", async () => {
+    mockSuccess();
+    const { cloneRepositoryTool } = await import("./git.js");
+    await cloneRepositoryTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      depth: 5,
+    });
+
+    expect(mockSpawn.mock.calls[0]?.[1]).toEqual([
+      "clone",
+      "--depth",
+      "5",
+      "http://proxy.test/github-git/o/r.git",
+      "/proc/self/fd/3",
     ]);
   });
 
-  it("directory を指定すると clone 先が変わる", async () => {
+  it("directory の相対パスを /tmp 基準の clone 先として受け付ける", async () => {
     mockSuccess();
     const { cloneRepositoryTool } = await import("./git.js");
     await cloneRepositoryTool.execute("id", {
@@ -89,8 +124,93 @@ describe("clone-repository", () => {
       directory: "my-dir",
     });
 
-    const args = mockExecFile.mock.calls[0];
-    expect(args[1]).toContain("/workspace/my-dir");
+    expect(mockSpawn.mock.calls[0]?.[1]).toContain("/proc/self/fd/3");
+  });
+
+  it("directory が /tmp 外へ出る親相対パスなら例外", async () => {
+    const { cloneRepositoryTool } = await import("./git.js");
+    await expect(
+      cloneRepositoryTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        directory: "../escape",
+      }),
+    ).rejects.toThrow("clone 先が /tmp 外に出ることは許可されていません");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("directory が絶対パスなら例外", async () => {
+    const { cloneRepositoryTool } = await import("./git.js");
+    await expect(
+      cloneRepositoryTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        directory: "/tmp/clone",
+      }),
+    ).rejects.toThrow("/tmp 配下の相対パスで指定してください");
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("directory が /tmp 内の symlink 経由で外へ出るなら例外", async () => {
+    const testDir = await mkdtemp("/tmp/clone-repository-symlink-");
+    const linkPath = join(testDir, "link");
+    const directory = relative("/tmp", join(linkPath, "repo"));
+    try {
+      await symlink("/workspace", linkPath);
+      const { cloneRepositoryTool } = await import("./git.js");
+      await expect(
+        cloneRepositoryTool.execute("id", {
+          owner: "o",
+          repo: "r",
+          directory,
+        }),
+      ).rejects.toThrow("clone 先までの既存パスに symlink が含まれています");
+      expect(mockSpawn).not.toHaveBeenCalled();
+    } finally {
+      await rm(testDir, { force: true, recursive: true });
+    }
+  });
+
+  it("clone 開始後にパスの祖先が置き換えられても fd の先へ書き込む", async () => {
+    const testDir = await mkdtemp("/tmp/clone-repository-race-");
+    const parent = join(testDir, "parent");
+    const movedParent = join(testDir, "moved-parent");
+    const outside = join(testDir, "outside");
+    const directory = relative("/tmp", join(parent, "repo"));
+    mkdirSync(outside);
+
+    mockSpawn.mockImplementation((_file, _args, options) => {
+      const stdio = (options as { stdio: unknown[] }).stdio;
+      const destinationFd = stdio[3];
+      if (typeof destinationFd !== "number") {
+        throw new Error("clone destination fd が渡されていません");
+      }
+      renameSync(parent, movedParent);
+      symlinkSync(outside, parent);
+      writeFileSync(
+        `/proc/self/fd/${destinationFd}/race-marker`,
+        "opened-directory",
+      );
+
+      const child = createMockChild();
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child;
+    });
+
+    try {
+      const { cloneRepositoryTool } = await import("./git.js");
+      await cloneRepositoryTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        directory,
+      });
+      expect(
+        readFileSync(join(movedParent, "repo", "race-marker"), "utf8"),
+      ).toBe("opened-directory");
+      expect(existsSync(join(outside, "race-marker"))).toBe(false);
+    } finally {
+      await rm(testDir, { force: true, recursive: true });
+    }
   });
 
   it("成功時に clone 先を返す", async () => {
@@ -101,7 +221,14 @@ describe("clone-repository", () => {
       repo: "r",
     });
     expect(firstText(result)).toContain("o/r");
-    expect(firstText(result)).toContain("/workspace/r");
+    expect(firstText(result)).toContain("/tmp/r");
+    expect(firstText(result)).toContain("全履歴");
+    expect(result.details).toEqual({
+      owner: "o",
+      repo: "r",
+      directory: "/tmp/r",
+      depth: null,
+    });
   });
 
   it("owner/repo に不正な文字が含まれると例外", async () => {
@@ -109,31 +236,19 @@ describe("clone-repository", () => {
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o/../x", repo: "r" }),
     ).rejects.toThrow("無効なowner");
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it("directory が絶対パスだと例外", async () => {
+  it("depth が正の整数でなければ例外", async () => {
     const { cloneRepositoryTool } = await import("./git.js");
     await expect(
       cloneRepositoryTool.execute("id", {
         owner: "o",
         repo: "r",
-        directory: "/etc/passwd",
+        depth: 0,
       }),
-    ).rejects.toThrow("絶対パスは指定できません");
-    expect(mockExecFile).not.toHaveBeenCalled();
-  });
-
-  it("directory が .. でワークスペース外に出ようとすると例外", async () => {
-    const { cloneRepositoryTool } = await import("./git.js");
-    await expect(
-      cloneRepositoryTool.execute("id", {
-        owner: "o",
-        repo: "r",
-        directory: "../escape",
-      }),
-    ).rejects.toThrow("ワークスペース外に出ることは許可されていません");
-    expect(mockExecFile).not.toHaveBeenCalled();
+    ).rejects.toThrow("depth は正の整数で指定してください");
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("git clone失敗時はstderrを含む例外を投げる", async () => {
@@ -146,40 +261,6 @@ describe("clone-repository", () => {
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
     ).rejects.toThrow("fatal: repository not found");
-  });
-
-  it("clone失敗時、dest が呼び出し前に存在しなければ削除する", async () => {
-    mockStat.mockRejectedValue(new Error("ENOENT"));
-    mockFailure(
-      Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
-    );
-    const { cloneRepositoryTool } = await import("./git.js");
-    await expect(
-      cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
-    ).rejects.toThrow();
-    expect(mockRm).toHaveBeenCalledWith("/workspace/r", {
-      recursive: true,
-      force: true,
-    });
-  });
-
-  it("clone失敗時、dest が呼び出し前から存在していれば削除しない", async () => {
-    mockStat.mockResolvedValue({} as never);
-    mockFailure(
-      Object.assign(new Error("failed"), { stderr: "fatal: timeout" }),
-    );
-    const { cloneRepositoryTool } = await import("./git.js");
-    await expect(
-      cloneRepositoryTool.execute("id", { owner: "o", repo: "r" }),
-    ).rejects.toThrow();
-    expect(mockRm).not.toHaveBeenCalled();
-  });
-
-  it("clone成功時はdestを削除しない", async () => {
-    mockSuccess();
-    const { cloneRepositoryTool } = await import("./git.js");
-    await cloneRepositoryTool.execute("id", { owner: "o", repo: "r" });
-    expect(mockRm).not.toHaveBeenCalled();
   });
 
   it("github-git プロバイダーが CREDENTIAL_PROXY_JSON にない場合は例外", async () => {

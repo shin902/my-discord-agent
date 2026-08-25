@@ -5,12 +5,33 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 
 import { agentReachTool } from "./agent-reach.js";
+import {
+  listIssueCommentsTool,
+  listPullRequestCommentsTool,
+  readPullRequestTool,
+} from "./github.js";
 import { wrapToolOutput } from "./output.js";
 import { resolveTools } from "./registry.js";
 
 describe("resolveTools", () => {
   it("agent-reach を解決して agentReachTool を返す", () => {
     expect(resolveTools(["agent-reach"])).toEqual([agentReachTool]);
+  });
+
+  it("list-issue-comments を解決して listIssueCommentsTool を返す", () => {
+    expect(resolveTools(["list-issue-comments"])).toEqual([
+      listIssueCommentsTool,
+    ]);
+  });
+
+  it("read-pull-request を解決して readPullRequestTool を返す", () => {
+    expect(resolveTools(["read-pull-request"])).toEqual([readPullRequestTool]);
+  });
+
+  it("list-pull-request-comments を解決して listPullRequestCommentsTool を返す", () => {
+    expect(resolveTools(["list-pull-request-comments"])).toEqual([
+      listPullRequestCommentsTool,
+    ]);
   });
 
   it("空配列は空配列を返す", () => {

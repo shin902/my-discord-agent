@@ -107,9 +107,26 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 - `redditCookie` フィールドは `msal` / `google` と同様、サンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
 - `agent-reach` ツールのredditサービス、互換用`agent-reach.sh`、および`last30days`スキル（`scripts/reddit-search.sh`）は`CREDENTIAL_PROXY_JSON`からプロキシURLを解決してアクセスする。
 
+### GitHub REST API（Issue/PR ツール用）
+
+`list-issues`、`read-issue`、`list-issue-comments`、`comment-issue`、`read-pull-request`、`list-pull-request-comments` は `api.github.com` 向けの `github` プロバイダーを使う。
+
+```json
+{
+  "provider": "github",
+  "envVars": ["GITHUB_ISSUE_TRIAGE_TOKEN"],
+  "baseUrl": "https://api.github.com"
+}
+```
+
+`GITHUB_ISSUE_TRIAGE_TOKEN` には、対象リポジトリに対する以下の fine-grained PAT 権限を設定する。
+
+- `Issues: Read and write`: `list-issues`、`read-issue`、`list-issue-comments` は読み取りに使い、`comment-issue` は Issue コメントの投稿に使う。`comment-issue` には Issue の write 権限が必要で、読み取り専用の Issue ツールだけなら `Issues: Read` で足りる。
+- `Pull requests: Read`: `read-pull-request` は PR 本文・メタデータを、`list-pull-request-comments` は会話コメント・レビュー・レビューコメントを読み取る。これらの PR ツールは読み取り専用で、Pull requests の write 権限は必要ない。
+
 ### GitHub Clone（`clone-repository` ツール用）
 
-エージェントが README 以外も参照したい場合に、リポジトリを `/workspace` 配下へ shallow clone する。git の smart HTTP プロトコルは通常の HTTP リクエスト/レスポンスなので、既存の汎用リバースプロキシがそのまま使えるが、**認証方式は `api.github.com`（REST API）とは異なる**点に注意。
+エージェントが README 以外も参照したい場合に、リポジトリをエージェントコンテナ内へ clone する。`directory` を省略した場合は `/tmp/{repo}`、指定した場合も `/tmp` を基準とする相対パスのみ受け付け、絶対パス、`..` などで `/tmp` 外へ出る指定、clone 先までの既存パスに symlink が含まれる指定は拒否する。`depth` を省略した場合は全履歴を取得し、指定した場合のみ shallow clone する。git の smart HTTP プロトコルは通常の HTTP リクエスト/レスポンスなので、既存の汎用リバースプロキシがそのまま使えるが、**認証方式は `api.github.com`（REST API）とは異なる**点に注意。
 
 ```json
 {
@@ -120,10 +137,10 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 }
 ```
 
-- `list-issues`/`read-issue`/`comment-issue` が使う `github`（`api.github.com` 向け、Issues権限のみ）とは別のプロバイダー・別のトークンに分離している。Issue 操作用トークンに Contents 権限を持たせない（最小権限）ため。
+- GitHub REST API の Issue/PR ツールが使う `github`（`api.github.com` 向け）とは別のプロバイダー・別のトークンに分離している。REST API 用トークンに Contents 権限を持たせない（最小権限）ため。
 - `GITHUB_CLONE_TOKEN` は対象リポジトリ・`Contents: Read` 権限のみの fine-grained PAT を想定。
 - **`auth: { "type": "basic" }` が必須**: GitHub の git smart-HTTP サーバー（`github.com`、`api.github.com` とは別エンドポイント）は `Authorization: Bearer ...` を受け付けず、`Authorization: Basic base64("x-access-token:<token>")` が必要（`actions/checkout` 等と同じ方式）。`auth` を省略すると Bearer ヘッダーが注入され、プライベートリポジトリの clone が 401 で失敗する。パブリックリポジトリは無認証でも clone 自体は成立するため、トークンが実際には使われていないことに気づきにくい点に注意。
-- `clone-repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone --depth 1` を実行する。実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
+- `clone-repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone` を実行する。`depth` を指定した場合だけ `--depth <depth>` を付ける。clone 先の `directory` は `/tmp` を基準にする相対パスに限定され、絶対パス、`..` などで `/tmp` 外へ解決される指定、clone 先までの既存パスに symlink が含まれる指定は拒否される。実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
 
 ### その他の pi-ai 対応プロバイダ
 
