@@ -23,7 +23,7 @@ function resolveCloneDir(repo: string, directory?: string): string {
   assertNoParentTraversal(
     normalized,
     raw,
-    "アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません",
+    "アクセス拒否: 相対パスの .. で clone ルート（/tmp）外に出ることは許可されていません",
   );
   return join(CLONE_ROOT, normalized);
 }

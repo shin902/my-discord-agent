@@ -151,7 +151,7 @@ describe("clone-repository", () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
-  it("directory が .. でワークスペース外に出ようとすると例外", async () => {
+  it("directory が .. で clone ルート（/tmp）外に出ようとすると例外", async () => {
     const { cloneRepositoryTool } = await import("./git.js");
     await expect(
       cloneRepositoryTool.execute("id", {
@@ -159,7 +159,7 @@ describe("clone-repository", () => {
         repo: "r",
         directory: "../escape",
       }),
-    ).rejects.toThrow("ワークスペース外に出ることは許可されていません");
+    ).rejects.toThrow("clone ルート（/tmp）外に出ることは許可されていません");
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
