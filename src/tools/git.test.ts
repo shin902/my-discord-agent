@@ -102,28 +102,28 @@ describe("clone-repository", () => {
     expect(mockExecFile.mock.calls[0]?.[1]).toContain("/tmp/my-dir");
   });
 
-  it("directory の親相対パスを通常のパス解決で受け付ける", async () => {
-    mockSuccess();
+  it("directory が /tmp 外へ出る親相対パスなら例外", async () => {
     const { cloneRepositoryTool } = await import("./git.js");
-    await cloneRepositoryTool.execute("id", {
-      owner: "o",
-      repo: "r",
-      directory: "../escape",
-    });
-
-    expect(mockExecFile.mock.calls[0]?.[1]).toContain("/escape");
+    await expect(
+      cloneRepositoryTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        directory: "../escape",
+      }),
+    ).rejects.toThrow("clone 先が /tmp 外に出ることは許可されていません");
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
-  it("directory の絶対パスをコンテナ内の clone 先として受け付ける", async () => {
-    mockSuccess();
+  it("directory が絶対パスなら例外", async () => {
     const { cloneRepositoryTool } = await import("./git.js");
-    await cloneRepositoryTool.execute("id", {
-      owner: "o",
-      repo: "r",
-      directory: "/workspace/repos/../clone",
-    });
-
-    expect(mockExecFile.mock.calls[0]?.[1]).toContain("/workspace/clone");
+    await expect(
+      cloneRepositoryTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        directory: "/tmp/clone",
+      }),
+    ).rejects.toThrow("/tmp 配下の相対パスで指定してください");
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
   it("成功時に clone 先を返す", async () => {

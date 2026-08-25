@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { resolve } from "node:path";
+import { isAbsolute, normalize, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 import { assertValidRepoPart } from "./github.js";
+import { assertNoParentTraversal } from "./path-safety.js";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const WORKSPACE = "/workspace";
@@ -13,7 +14,18 @@ const CLONE_ROOT = "/tmp";
 const CLONE_TIMEOUT_MS = 120_000;
 
 function resolveCloneDir(repo: string, directory?: string): string {
-  return resolve(CLONE_ROOT, directory?.trim() || repo);
+  const raw = directory?.trim() || repo;
+  if (isAbsolute(raw)) {
+    throw new Error(`clone 先は /tmp 配下の相対パスで指定してください (${raw})`);
+  }
+
+  const normalized = normalize(raw);
+  assertNoParentTraversal(
+    normalized,
+    raw,
+    "アクセス拒否: clone 先が /tmp 外に出ることは許可されていません",
+  );
+  return resolve(CLONE_ROOT, normalized);
 }
 
 function validateCloneDepth(depth: number | undefined): void {
@@ -30,7 +42,7 @@ const cloneRepositoryParameters = Type.Object({
   directory: Type.Optional(
     Type.String({
       description:
-        "clone 先ディレクトリ（省略時は /tmp/{repo}。相対パスは /tmp を基準に解決し、絶対パスも指定可能）",
+        "clone 先ディレクトリ（省略時は /tmp/{repo}。/tmp を基準にする相対パスのみ指定可能）",
     }),
   ),
   depth: Type.Optional(
@@ -46,7 +58,7 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
     name: "clone-repository",
     label: "Clone GitHub Repository",
     description:
-      "GitHub リポジトリをエージェントコンテナ内へ clone する（directory 省略時は一時的な /tmp/{repo}、指定時は /tmp 基準の相対パスまたは絶対パス。depth 省略時は全履歴、指定時のみ shallow clone。クレデンシャルプロキシ経由でトークンを安全に注入し、エージェントにトークン自体は渡さない）",
+      "GitHub リポジトリをエージェントコンテナ内へ clone する（directory 省略時は一時的な /tmp/{repo}、指定時も /tmp 基準の相対パスに限定。depth 省略時は全履歴、指定時のみ shallow clone。クレデンシャルプロキシ経由でトークンを安全に注入し、エージェントにトークン自体は渡さない）",
     parameters: cloneRepositoryParameters,
     execute: async (_toolCallId, { owner, repo, directory, depth }) => {
       assertValidRepoPart(owner, "owner");

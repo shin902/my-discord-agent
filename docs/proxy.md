@@ -140,7 +140,7 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 - GitHub REST API の Issue/PR ツールが使う `github`（`api.github.com` 向け）とは別のプロバイダー・別のトークンに分離している。REST API 用トークンに Contents 権限を持たせない（最小権限）ため。
 - `GITHUB_CLONE_TOKEN` は対象リポジトリ・`Contents: Read` 権限のみの fine-grained PAT を想定。
 - **`auth: { "type": "basic" }` が必須**: GitHub の git smart-HTTP サーバー（`github.com`、`api.github.com` とは別エンドポイント）は `Authorization: Bearer ...` を受け付けず、`Authorization: Basic base64("x-access-token:<token>")` が必要（`actions/checkout` 等と同じ方式）。`auth` を省略すると Bearer ヘッダーが注入され、プライベートリポジトリの clone が 401 で失敗する。パブリックリポジトリは無認証でも clone 自体は成立するため、トークンが実際には使われていないことに気づきにくい点に注意。
-- `clone-repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone` を実行する。`depth` を指定した場合だけ `--depth <depth>` を付ける。clone 先の `directory` は相対パスなら `/tmp` を基準に解決され、絶対パスならコンテナ内のパスとして正規化される。実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
+- `clone-repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone` を実行する。`depth` を指定した場合だけ `--depth <depth>` を付ける。clone 先の `directory` は `/tmp` を基準にする相対パスに限定され、`/tmp` 外へ解決される指定や絶対パスは拒否される。実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
 
 ### その他の pi-ai 対応プロバイダ
 
