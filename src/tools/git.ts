@@ -16,7 +16,9 @@ const CLONE_TIMEOUT_MS = 120_000;
 function resolveCloneDir(repo: string, directory?: string): string {
   const raw = directory?.trim() || repo;
   if (isAbsolute(raw)) {
-    throw new Error(`clone 先は /tmp 配下の相対パスで指定してください (${raw})`);
+    throw new Error(
+      `clone 先は /tmp 配下の相対パスで指定してください (${raw})`,
+    );
   }
 
   const normalized = normalize(raw);
