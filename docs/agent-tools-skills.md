@@ -22,7 +22,7 @@
 | `list-issue-comments` | GitHub Issue の全コメントを取得し、作者・日時・本文を Markdown で返す |
 | `list-pull-request-comments` | GitHub Pull Request の会話コメント・レビュー・インラインコメントを全件取得し、Markdown で返す |
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
-| `clone-repository` | Credential Proxy 経由で GitHub リポジトリをエフェメラルな `/tmp` 配下に clone（`depth` 省略時は全履歴、指定時のみ shallow clone） |
+| `clone-repository` | Credential Proxy 経由で GitHub リポジトリを clone（`directory` 省略時は `/tmp/{repo}`、指定時は `/tmp` 基準の相対パスまたはコンテナ内の絶対パス。`depth` 省略時は全履歴、指定時のみ shallow clone） |
 | `browserless-search` | ウェブ検索を実行して結果（JSON）を返す |
 | `browserless-function` | Puppeteer コードをブラウザで実行する |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
