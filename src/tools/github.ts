@@ -76,6 +76,24 @@ function formatLabels(labels: GitHubIssue["labels"]): string {
   return labels.map((l) => l.name ?? "?").join(", ");
 }
 
+async function fetchIssueOnly(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<GitHubIssue> {
+  const issue = (await githubFetch(
+    owner,
+    repo,
+    `/issues/${issueNumber}`,
+  )) as GitHubIssue;
+  if (issue.pull_request != null) {
+    throw new Error(
+      "指定された番号は Pull Request です。Issue 番号を指定してください",
+    );
+  }
+  return issue;
+}
+
 const listIssuesParameters = Type.Object({
   owner: Type.String({
     description: "リポジトリオーナー（ユーザー名/Organization名）",
@@ -169,11 +187,7 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   description: "指定した Issue の本文全文を取得する",
   parameters: readIssueParameters,
   execute: async (_toolCallId, { owner, repo, issue_number }) => {
-    const issue = (await githubFetch(
-      owner,
-      repo,
-      `/issues/${issue_number}`,
-    )) as GitHubIssue;
+    const issue = await fetchIssueOnly(owner, repo, issue_number);
 
     let body = issue.body ?? "";
     if (body.length > MAX_BODY_CHARS) {
@@ -501,6 +515,7 @@ export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
       );
     }
 
+    await fetchIssueOnly(owner, repo, issue_number);
     const comment = (await githubPost(
       owner,
       repo,

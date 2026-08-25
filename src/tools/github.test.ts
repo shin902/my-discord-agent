@@ -279,6 +279,23 @@ describe("read-issue", () => {
     expect(text).toContain("Issue本文");
   });
 
+  it("Pull Request のレスポンスを Issue として読み込まない", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makeIssue({ pull_request: {} }),
+    });
+    const { readIssueTool } = await import("./github.js");
+
+    await expect(
+      readIssueTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        issue_number: 1,
+      }),
+    ).rejects.toThrow("Pull Request");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("本文が 8000 文字を超えたら省略する", async () => {
     const longBody = "a".repeat(10000);
     fetchMock.mockResolvedValue({
@@ -808,10 +825,15 @@ describe("comment-issue", () => {
   });
 
   it("指定した issue_number にコメントを POST する", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 1, html_url: "http://example.test/comment/1" }),
-    });
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => makeIssue() })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 1,
+          html_url: "http://example.test/comment/1",
+        }),
+      });
     const { commentIssueTool } = await import("./github.js");
     const result = await commentIssueTool.execute("id", {
       owner: "o",
@@ -819,11 +841,34 @@ describe("comment-issue", () => {
       issue_number: 1,
       body: "コメント本文",
     });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/repos/o/r/issues/1/comments");
+    const [issueUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [commentUrl, init] = fetchMock.mock.calls[1] as [
+      string,
+      RequestInit,
+    ];
+    expect(issueUrl).toContain("/repos/o/r/issues/1");
+    expect(commentUrl).toContain("/repos/o/r/issues/1/comments");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ body: "コメント本文" });
     expect(firstText(result)).toContain("http://example.test/comment/1");
+  });
+
+  it("Pull Request のレスポンスならコメントを POST しない", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makeIssue({ pull_request: {} }),
+    });
+    const { commentIssueTool } = await import("./github.js");
+
+    await expect(
+      commentIssueTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        issue_number: 1,
+        body: "本文",
+      }),
+    ).rejects.toThrow("Pull Request");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("本文が空文字だと例外を投げ、API を呼ばない", async () => {
@@ -853,7 +898,7 @@ describe("comment-issue", () => {
       body,
     });
 
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ body });
   });
 
