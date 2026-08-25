@@ -1,39 +1,55 @@
+import { EventEmitter } from "node:events";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import type { ChildProcess } from "node:child_process";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 
-const mockExecFile = vi.mocked(execFile);
+const mockSpawn = vi.mocked(spawn);
+
+function createMockChild() {
+  return Object.assign(new EventEmitter() as ChildProcess, {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    kill: vi.fn(() => true),
+  });
+}
 
 const PROXY_CREDS = JSON.stringify([
   { provider: "github-git", baseUrl: "http://proxy.test/github-git" },
 ]);
 
 function mockSuccess(stdout = "", stderr = "") {
-  mockExecFile.mockImplementation((..._args: unknown[]) => {
-    const cb = _args[_args.length - 1] as (
-      err: Error | null,
-      stdout: string,
-      stderr: string,
-    ) => void;
-    cb(null, stdout, stderr);
-    return {} as ChildProcess;
+  mockSpawn.mockImplementation(() => {
+    const child = createMockChild();
+    queueMicrotask(() => {
+      if (stdout) child.stdout.emit("data", stdout);
+      if (stderr) child.stderr.emit("data", stderr);
+      child.emit("close", 0, null);
+    });
+    return child;
   });
 }
 
 function mockFailure(err: Error & { stderr?: string }) {
-  mockExecFile.mockImplementation((..._args: unknown[]) => {
-    const cb = _args[_args.length - 1] as (
-      err: Error | null,
-      stdout: string,
-      stderr: string,
-    ) => void;
-    cb(err, "", err.stderr ?? "");
-    return {} as ChildProcess;
+  mockSpawn.mockImplementation(() => {
+    const child = createMockChild();
+    queueMicrotask(() => {
+      if (err.stderr) child.stderr.emit("data", err.stderr);
+      child.emit("close", 1, null);
+    });
+    return child;
   });
 }
 
@@ -56,8 +72,12 @@ describe("clone-repository", () => {
     process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     process.env = originalEnv;
+    await Promise.all([
+      rm("/tmp/r", { force: true, recursive: true }),
+      rm("/tmp/my-dir", { force: true, recursive: true }),
+    ]);
   });
 
   it("プロキシ経由のURLでgit cloneを実行する", async () => {
@@ -65,13 +85,16 @@ describe("clone-repository", () => {
     const { cloneRepositoryTool } = await import("./git.js");
     await cloneRepositoryTool.execute("id", { owner: "o", repo: "r" });
 
-    const args = mockExecFile.mock.calls[0];
+    const args = mockSpawn.mock.calls[0];
     expect(args[0]).toBe("git");
     expect(args[1]).toEqual([
       "clone",
       "http://proxy.test/github-git/o/r.git",
-      "/tmp/r",
+      "/proc/self/fd/3",
     ]);
+    expect((args[2] as { stdio: unknown[] }).stdio[3]).toEqual(
+      expect.any(Number),
+    );
   });
 
   it("depth を指定すると shallow clone の引数を追加する", async () => {
@@ -83,12 +106,12 @@ describe("clone-repository", () => {
       depth: 5,
     });
 
-    expect(mockExecFile.mock.calls[0]?.[1]).toEqual([
+    expect(mockSpawn.mock.calls[0]?.[1]).toEqual([
       "clone",
       "--depth",
       "5",
       "http://proxy.test/github-git/o/r.git",
-      "/tmp/r",
+      "/proc/self/fd/3",
     ]);
   });
 
@@ -101,7 +124,7 @@ describe("clone-repository", () => {
       directory: "my-dir",
     });
 
-    expect(mockExecFile.mock.calls[0]?.[1]).toContain("/tmp/my-dir");
+    expect(mockSpawn.mock.calls[0]?.[1]).toContain("/proc/self/fd/3");
   });
 
   it("directory が /tmp 外へ出る親相対パスなら例外", async () => {
@@ -113,7 +136,7 @@ describe("clone-repository", () => {
         directory: "../escape",
       }),
     ).rejects.toThrow("clone 先が /tmp 外に出ることは許可されていません");
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("directory が絶対パスなら例外", async () => {
@@ -125,7 +148,7 @@ describe("clone-repository", () => {
         directory: "/tmp/clone",
       }),
     ).rejects.toThrow("/tmp 配下の相対パスで指定してください");
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("directory が /tmp 内の symlink 経由で外へ出るなら例外", async () => {
@@ -142,7 +165,49 @@ describe("clone-repository", () => {
           directory,
         }),
       ).rejects.toThrow("clone 先までの既存パスに symlink が含まれています");
-      expect(mockExecFile).not.toHaveBeenCalled();
+      expect(mockSpawn).not.toHaveBeenCalled();
+    } finally {
+      await rm(testDir, { force: true, recursive: true });
+    }
+  });
+
+  it("clone 開始後にパスの祖先が置き換えられても fd の先へ書き込む", async () => {
+    const testDir = await mkdtemp("/tmp/clone-repository-race-");
+    const parent = join(testDir, "parent");
+    const movedParent = join(testDir, "moved-parent");
+    const outside = join(testDir, "outside");
+    const directory = relative("/tmp", join(parent, "repo"));
+    mkdirSync(outside);
+
+    mockSpawn.mockImplementation((_file, _args, options) => {
+      const stdio = (options as { stdio: unknown[] }).stdio;
+      const destinationFd = stdio[3];
+      if (typeof destinationFd !== "number") {
+        throw new Error("clone destination fd が渡されていません");
+      }
+      renameSync(parent, movedParent);
+      symlinkSync(outside, parent);
+      writeFileSync(
+        `/proc/self/fd/${destinationFd}/race-marker`,
+        "opened-directory",
+      );
+
+      const child = createMockChild();
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child;
+    });
+
+    try {
+      const { cloneRepositoryTool } = await import("./git.js");
+      await cloneRepositoryTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        directory,
+      });
+      expect(
+        readFileSync(join(movedParent, "repo", "race-marker"), "utf8"),
+      ).toBe("opened-directory");
+      expect(existsSync(join(outside, "race-marker"))).toBe(false);
     } finally {
       await rm(testDir, { force: true, recursive: true });
     }
@@ -171,7 +236,7 @@ describe("clone-repository", () => {
     await expect(
       cloneRepositoryTool.execute("id", { owner: "o/../x", repo: "r" }),
     ).rejects.toThrow("無効なowner");
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("depth が正の整数でなければ例外", async () => {
@@ -183,7 +248,7 @@ describe("clone-repository", () => {
         depth: 0,
       }),
     ).rejects.toThrow("depth は正の整数で指定してください");
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("git clone失敗時はstderrを含む例外を投げる", async () => {

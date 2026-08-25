@@ -1,7 +1,7 @@
-import { execFile } from "node:child_process";
-import { lstat } from "node:fs/promises";
-import { dirname, isAbsolute, normalize, resolve } from "node:path";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
+import { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } from "node:constants";
+import { lstat, mkdir, open, type FileHandle } from "node:fs/promises";
+import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
@@ -31,31 +31,126 @@ function resolveCloneDir(repo: string, directory?: string): string {
   return resolve(CLONE_ROOT, normalized);
 }
 
-async function assertNoSymlinkInExistingAncestors(
-  destination: string,
-): Promise<void> {
-  const ancestors: string[] = [];
-  for (
-    let current = destination;
-    current !== CLONE_ROOT;
-    current = dirname(current)
-  ) {
-    ancestors.push(current);
-  }
-  ancestors.push(CLONE_ROOT);
+const DIRECTORY_OPEN_FLAGS = O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
+const CLONE_DESTINATION_FD = 3;
+const MAX_CLONE_OUTPUT_BYTES = 1024 * 1024;
 
-  for (const ancestor of ancestors.reverse()) {
+function symlinkInCloneDestinationError(path: string): Error {
+  return new Error(
+    `アクセス拒否: clone 先までの既存パスに symlink が含まれています (${path})`,
+  );
+}
+
+async function openDirectoryWithoutSymlink(path: string): Promise<FileHandle> {
+  try {
+    return await open(path, DIRECTORY_OPEN_FLAGS);
+  } catch (err) {
+    // O_NOFOLLOW rejects a raced symlink. lstat is only used to preserve the
+    // tool's stable error for that case; the opened parent fd still anchors
+    // this lookup to /tmp rather than to a path that can be redirected.
     try {
-      if ((await lstat(ancestor)).isSymbolicLink()) {
-        throw new Error(
-          `アクセス拒否: clone 先までの既存パスに symlink が含まれています (${ancestor})`,
-        );
+      if ((await lstat(path)).isSymbolicLink()) {
+        throw symlinkInCloneDestinationError(path);
       }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") break;
-      throw err;
+    } catch (checkErr) {
+      if (
+        checkErr instanceof Error &&
+        checkErr.message.startsWith("アクセス拒否: clone 先までの既存パス")
+      ) {
+        throw checkErr;
+      }
     }
+    throw err;
   }
+}
+
+async function openSecureCloneDestination(
+  destination: string,
+): Promise<FileHandle> {
+  let current = await open(CLONE_ROOT, DIRECTORY_OPEN_FLAGS);
+  try {
+    const parts = relative(CLONE_ROOT, destination)
+      .split(sep)
+      .filter((part) => part.length > 0);
+
+    for (const part of parts) {
+      const child = `/proc/self/fd/${current.fd}/${part}`;
+      try {
+        await mkdir(child);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+
+      const next = await openDirectoryWithoutSymlink(child);
+      const previous = current;
+      current = next;
+      await previous.close();
+    }
+
+    return current;
+  } catch (err) {
+    await current.close().catch(() => {});
+    throw err;
+  }
+}
+
+function runGitClone(args: string[], destination: FileHandle): Promise<void> {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn("git", args, {
+      cwd: WORKSPACE,
+      timeout: CLONE_TIMEOUT_MS,
+      stdio: ["ignore", "pipe", "pipe", destination.fd],
+    });
+
+    let stderr = "";
+    let outputBytes = 0;
+    let outputLimitExceeded = false;
+    let settled = false;
+
+    const recordOutput = (chunk: string | Buffer, isStderr: boolean) => {
+      outputBytes += Buffer.byteLength(chunk);
+      if (isStderr) stderr += chunk.toString();
+      if (outputBytes > MAX_CLONE_OUTPUT_BYTES && !outputLimitExceeded) {
+        outputLimitExceeded = true;
+        child.kill();
+      }
+    };
+
+    child.stdout?.on("data", (chunk: string | Buffer) =>
+      recordOutput(chunk, false),
+    );
+    child.stderr?.on("data", (chunk: string | Buffer) =>
+      recordOutput(chunk, true),
+    );
+    child.once("error", (err) => {
+      if (settled) return;
+      settled = true;
+      rejectRun(err);
+    });
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      if (outputLimitExceeded) {
+        const err = new Error("git clone の出力が大きすぎます") as Error & {
+          stderr?: string;
+        };
+        err.stderr = stderr;
+        rejectRun(err);
+        return;
+      }
+      if (code === 0) {
+        resolveRun();
+        return;
+      }
+      const err = new Error(
+        signal
+          ? `git clone がシグナル ${signal} で終了しました`
+          : "git clone に失敗しました",
+      ) as Error & { stderr?: string };
+      err.stderr = stderr;
+      rejectRun(err);
+    });
+  });
 }
 
 function validateCloneDepth(depth: number | undefined): void {
@@ -96,23 +191,21 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
       validateCloneDepth(depth);
 
       const dest = resolveCloneDir(repo, directory);
-      await assertNoSymlinkInExistingAncestors(dest);
       const baseUrl = resolveProxyBaseUrl("github-git");
       const cloneUrl = `${baseUrl}/${owner}/${repo}.git`;
+      const destination = await openSecureCloneDestination(dest);
 
       const cloneArgs = ["clone"];
       if (depth !== undefined) cloneArgs.push("--depth", String(depth));
-      cloneArgs.push(cloneUrl, dest);
+      cloneArgs.push(cloneUrl, `/proc/self/fd/${CLONE_DESTINATION_FD}`);
 
       try {
-        await promisify(execFile)("git", cloneArgs, {
-          cwd: WORKSPACE,
-          timeout: CLONE_TIMEOUT_MS,
-          maxBuffer: 1024 * 1024,
-        });
+        await runGitClone(cloneArgs, destination);
       } catch (err) {
         const e = err as { stderr?: string; message?: string };
         throw new Error(e.stderr || e.message || "git clone に失敗しました");
+      } finally {
+        await destination.close().catch(() => {});
       }
 
       const history = depth === undefined ? "全履歴" : `depth=${depth}`;
