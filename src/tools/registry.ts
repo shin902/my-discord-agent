@@ -28,6 +28,7 @@ import {
   listIssueCommentsTool,
   listIssuesTool,
   readIssueTool,
+  readPullRequestTool,
 } from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
@@ -53,6 +54,7 @@ const TOOLS: Record<string, AgentTool> = {
   "list-issues": listIssuesTool,
   "read-issue": readIssueTool,
   "list-issue-comments": listIssueCommentsTool,
+  "read-pull-request": readPullRequestTool,
   "comment-issue": commentIssueTool,
   "clone-repository": cloneRepositoryTool,
   "list-events": listEventsTool,

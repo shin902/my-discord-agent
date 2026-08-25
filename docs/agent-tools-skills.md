@@ -18,6 +18,7 @@
 | `grep` | 正規表現でファイル内を検索する |
 | `list-issues` | GitHub リポジトリの Issue 一覧を取得（Pull Request は除外） |
 | `read-issue` | GitHub Issue の本文とメタ情報を取得 |
+| `read-pull-request` | GitHub Pull Request の本文とメタ情報（base/head を含む）を Markdown で返す |
 | `list-issue-comments` | GitHub Issue の全コメントを取得し、作者・日時・本文を Markdown で返す |
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `clone-repository` | Credential Proxy 経由で GitHub リポジトリを `/workspace` に clone |

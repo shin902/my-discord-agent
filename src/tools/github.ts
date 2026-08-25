@@ -180,6 +180,71 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   },
 };
 
+type GitHubPullRequest = {
+  number: number;
+  title: string;
+  state: string;
+  user?: { login?: string };
+  base?: { ref?: string };
+  head?: { ref?: string };
+  created_at?: string;
+  updated_at?: string;
+  body?: string | null;
+};
+
+const readPullRequestParameters = Type.Object({
+  owner: Type.String({
+    description: "リポジトリオーナー（ユーザー名/Organization名）",
+  }),
+  repo: Type.String({ description: "リポジトリ名" }),
+  pull_number: Type.Integer({ description: "Pull Request 番号" }),
+});
+
+function formatPullRequestField(value: string | undefined): string {
+  return value?.trim() ? value : "不明";
+}
+
+export const readPullRequestTool: AgentTool<typeof readPullRequestParameters> =
+  {
+    name: "read-pull-request",
+    label: "Read GitHub Pull Request",
+    description:
+      "指定した GitHub Pull Request の本文とメタ情報を取得し、Markdown で返す",
+    parameters: readPullRequestParameters,
+    execute: async (_toolCallId, { owner, repo, pull_number }) => {
+      const pullRequest = (await githubFetch(
+        owner,
+        repo,
+        `/pulls/${pull_number}`,
+      )) as GitHubPullRequest;
+
+      let body = pullRequest.body ?? "";
+      if (body.length > MAX_BODY_CHARS) {
+        body = `${body.slice(0, MAX_BODY_CHARS)}\n\n...(${body.length - MAX_BODY_CHARS} 文字省略)`;
+      }
+
+      const lines = [
+        `# #${pullRequest.number} ${pullRequest.title}`,
+        "",
+        `**状態**: ${formatPullRequestField(pullRequest.state)}`,
+        `**作成者**: ${formatPullRequestField(pullRequest.user?.login)}`,
+        `**ベースブランチ**: ${formatPullRequestField(pullRequest.base?.ref)}`,
+        `**ヘッドブランチ**: ${formatPullRequestField(pullRequest.head?.ref)}`,
+        `**作成日時**: ${formatPullRequestField(pullRequest.created_at)}`,
+        `**更新日時**: ${formatPullRequestField(pullRequest.updated_at)}`,
+        "",
+        "---",
+        "",
+        body || "(本文なし)",
+      ];
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { owner, repo, pull_number },
+      };
+    },
+  };
+
 type GitHubIssueComment = {
   id?: number;
   user?: { login?: string };

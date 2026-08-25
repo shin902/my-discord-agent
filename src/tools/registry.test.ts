@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 
 import { agentReachTool } from "./agent-reach.js";
-import { listIssueCommentsTool } from "./github.js";
+import { listIssueCommentsTool, readPullRequestTool } from "./github.js";
 import { wrapToolOutput } from "./output.js";
 import { resolveTools } from "./registry.js";
 
@@ -18,6 +18,10 @@ describe("resolveTools", () => {
     expect(resolveTools(["list-issue-comments"])).toEqual([
       listIssueCommentsTool,
     ]);
+  });
+
+  it("read-pull-request を解決して readPullRequestTool を返す", () => {
+    expect(resolveTools(["read-pull-request"])).toEqual([readPullRequestTool]);
   });
 
   it("空配列は空配列を返す", () => {

@@ -27,6 +27,19 @@ const makeIssue = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const makePullRequest = (overrides: Record<string, unknown> = {}) => ({
+  number: 42,
+  title: "テストPR",
+  state: "open",
+  user: { login: "alice" },
+  base: { ref: "main" },
+  head: { ref: "feature/test" },
+  created_at: "2024-02-01T10:00:00Z",
+  updated_at: "2024-02-02T10:00:00Z",
+  body: "## 変更内容\n\n**Markdown**を保持",
+  ...overrides,
+});
+
 describe("list-issues", () => {
   const originalEnv = process.env;
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -209,6 +222,130 @@ describe("read-issue", () => {
         issue_number: 1,
       }),
     ).rejects.toThrow("無効なrepo");
+  });
+});
+
+describe("read-pull-request", () => {
+  const originalEnv = process.env;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv, CREDENTIAL_PROXY_JSON: PROXY_CREDS };
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  it("pull_number で Pull Request の endpoint を選択する", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makePullRequest(),
+    });
+    const { readPullRequestTool } = await import("./github.js");
+    await readPullRequestTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      pull_number: 42,
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://proxy.test/github/repos/o/r/pulls/42",
+    );
+  });
+
+  it("PR のメタ情報と base/head、本文 Markdown をフォーマットする", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makePullRequest(),
+    });
+    const { readPullRequestTool } = await import("./github.js");
+    const result = await readPullRequestTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      pull_number: 42,
+    });
+    const text = firstText(result);
+
+    expect(text).toContain("# #42 テストPR");
+    expect(text).toContain("**状態**: open");
+    expect(text).toContain("**作成者**: alice");
+    expect(text).toContain("**ベースブランチ**: main");
+    expect(text).toContain("**ヘッドブランチ**: feature/test");
+    expect(text).toContain("**作成日時**: 2024-02-01T10:00:00Z");
+    expect(text).toContain("**更新日時**: 2024-02-02T10:00:00Z");
+    expect(text).toContain("## 変更内容");
+    expect(text).toContain("**Markdown**を保持");
+    expect(result.details).toEqual({ owner: "o", repo: "r", pull_number: 42 });
+  });
+
+  it("optional fields が欠落または空でも不明/本文なしとして出力する", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () =>
+        makePullRequest({
+          state: "",
+          user: { login: "" },
+          base: { ref: "" },
+          head: {},
+          created_at: "",
+          updated_at: undefined,
+          body: null,
+        }),
+    });
+    const { readPullRequestTool } = await import("./github.js");
+    const result = await readPullRequestTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      pull_number: 42,
+    });
+    const text = firstText(result);
+
+    expect(text).toContain("**状態**: 不明");
+    expect(text).toContain("**作成者**: 不明");
+    expect(text).toContain("**ベースブランチ**: 不明");
+    expect(text).toContain("**ヘッドブランチ**: 不明");
+    expect(text).toContain("**作成日時**: 不明");
+    expect(text).toContain("**更新日時**: 不明");
+    expect(text).toContain("(本文なし)");
+    expect(text).not.toContain("undefined");
+  });
+
+  it("本文が 8000 文字を超えたら省略する", async () => {
+    const longBody = "a".repeat(10000);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => makePullRequest({ body: longBody }),
+    });
+    const { readPullRequestTool } = await import("./github.js");
+    const result = await readPullRequestTool.execute("id", {
+      owner: "o",
+      repo: "r",
+      pull_number: 42,
+    });
+
+    expect(firstText(result)).toContain("2000 文字省略");
+  });
+
+  it("GitHub API エラー時は例外を投げる", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: async () => "Not Found",
+    });
+    const { readPullRequestTool } = await import("./github.js");
+
+    await expect(
+      readPullRequestTool.execute("id", {
+        owner: "o",
+        repo: "r",
+        pull_number: 42,
+      }),
+    ).rejects.toThrow("404");
   });
 });
 
