@@ -175,21 +175,48 @@ function hasNoReplyMarker(response: string): boolean {
 }
 
 async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
+  if (msg.mailEmailId) {
+    try {
+      await acknowledgeEmail(msg.mailEmailId);
+    } catch (error) {
+      console.error(
+        `[poller] 無配信mailの既読化に失敗しました (${msg.id}):`,
+        error,
+      );
+    }
+  }
+
+  if (!msg.rssDispatchId) return;
   try {
-    if (msg.mailEmailId) await acknowledgeEmail(msg.mailEmailId);
-    if (msg.rssDispatchId) {
-      settleRssDispatch(
+    const settled = settleRssDispatch(
+      msg.rssStatePath,
+      msg.rssDispatchId,
+      msg.idempotencyKey,
+      "completed",
+    );
+    if (settled === 1) return;
+    throw new Error("RSS dispatch claim was not found or could not be opened");
+  } catch (settleError) {
+    console.error(
+      `[poller] 無配信RSSの確定に失敗しました (${msg.id}):`,
+      settleError,
+    );
+    try {
+      const released = settleRssDispatch(
         msg.rssStatePath,
         msg.rssDispatchId,
         msg.idempotencyKey,
-        "completed",
+        "dead_letter",
+      );
+      if (released !== 1) {
+        throw new Error("RSS dispatch claim was not found or could not be opened");
+      }
+    } catch (releaseError) {
+      console.error(
+        `[poller] 無配信RSSのclaim解放にも失敗しました (${msg.id}):`,
+        releaseError,
       );
     }
-  } catch (error) {
-    console.error(
-      `[poller] 無配信cronのsource確定に失敗しました (${msg.id}):`,
-      error,
-    );
   }
 }
 

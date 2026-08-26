@@ -193,7 +193,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドのIDをセッションIDにする |
 | `noReply` | `true` | このcronリクエストのsystem promptへ、通知不要時に独立行 `<NO_REPLY>` を返す指示を追加する（`item-thread`では利用不可） |
 
-独立行 `<NO_REPLY>` の応答は通常会話、および`direct`/`new-thread` cronで正常完了し、Discordへ配送しない。inlineの言及は通常どおり配送する。`noReply`の既定値は`false`で、AGENTS.mdなどに同じ指示を書く場合は不要。`item-thread`では`noReply: true`を設定エラーとし、AGENTS.mdなどによってmarkerが出ても通常の応答テキストとして既存placeholderへ配送する。Mail/RSSは無配信時も処理済みとしてsourceを確定する。`new-thread` + `destination` は既存のsession ID契約を守るためAI実行前にスレッドを作るので、NO_REPLY時は投稿のないスレッドが残る。
+独立行 `<NO_REPLY>` の応答は通常会話、および`direct`/`new-thread` cronで正常完了し、Discordへ配送しない。inlineの言及は通常どおり配送する。`noReply`の既定値は`false`で、AGENTS.mdなどに同じ指示を書く場合は不要。`item-thread`では`noReply: true`を設定エラーとし、AGENTS.mdなどによってmarkerが出ても通常の応答テキストとして既存placeholderへ配送する。Mail/RSSは無配信時も処理済みとしてsourceを確定する。Mailの既読化に失敗した場合は未読のまま次回cronで再取得し、RSSの確定に失敗した場合はclaimを解放して次回cronで再取得する。`new-thread` + `destination` は既存のsession ID契約を守るためAI実行前にスレッドを作るので、NO_REPLY時は投稿のないスレッドが残る。
 
 既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 

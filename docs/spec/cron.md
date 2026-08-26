@@ -110,7 +110,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに仮メッセージと独立スレッドを先に確保し、そのスレッドをAI・ユーザー返信のセッションにする。`item-thread` は `destination` 必須 |
 
-応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。ただし、事前にplaceholderとthreadを確保する`item-thread`では`noReply: true`を設定エラーとし、AGENTS.mdなどによってmarkerが出ても通常の応答テキストとして配送する。Mail/RSS sourceは無配信でも正常にACK/finalizeする。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
+応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。ただし、事前にplaceholderとthreadを確保する`item-thread`では`noReply: true`を設定エラーとし、AGENTS.mdなどによってmarkerが出ても通常の応答テキストとして配送する。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` は配送方式を解釈せず、設定された `deliveryMode` / `sessionMode` を `enqueueCronInbox()` に渡す。各方式の投稿先準備・配送はcron enqueue/pollerの共通処理が担う。
 
