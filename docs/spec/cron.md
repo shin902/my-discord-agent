@@ -70,6 +70,7 @@ data/cron/
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
 | `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
+| `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false`。`item-thread`では利用不可 |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
 | `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |
@@ -109,6 +110,8 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに仮メッセージと独立スレッドを先に確保し、そのスレッドをAI・ユーザー返信のセッションにする。`item-thread` は `destination` 必須 |
 
+応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。ただし、事前にplaceholderとthreadを確保する`item-thread`では`noReply: true`を設定エラーとし、AGENTS.mdなどによってmarkerが出ても通常の応答テキストとして配送する。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
+
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` は配送方式を解釈せず、設定された `deliveryMode` / `sessionMode` を `enqueueCronInbox()` に渡す。各方式の投稿先準備・配送はcron enqueue/pollerの共通処理が担う。
 
 ---
@@ -125,7 +128,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 `CronContext` に含めるもの:
 - Discord `client`
 - `appendInbox`
-- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `mode?`, `handler?`, `settings?`）を展開して渡す
+- ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
 複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { threadName })` で登録・provisioningできる。ただしこのhelperは非推奨で、handler側がpollerとの競合を含む利用責任を負う。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から投入され、投入ごとに新しいjob identityを作り、pollerがAI実行前にprovisioningする。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 

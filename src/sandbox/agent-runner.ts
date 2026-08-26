@@ -388,6 +388,7 @@ export async function runAgentLoop(
   content: string,
   groupConfig: AgentConfig,
   identity?: FrozenExecutionIdentity,
+  systemPromptAppend?: string,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
 
@@ -564,6 +565,7 @@ export async function runAgentLoop(
   const fullSystemPrompt = [
     agentsContent ?? DEFAULT_SYSTEM_PROMPT,
     skillPrompt,
+    systemPromptAppend,
     datePrompt,
   ]
     .filter(Boolean)
@@ -737,6 +739,7 @@ const PayloadSchema = z.object({
   memorySnapshotContent: z.string().optional(),
   snapshotHash: z.string().optional(),
   toolCallKey: z.string().optional(),
+  systemPromptAppend: z.string().optional(),
 });
 
 // CLIエントリポイント（import時は実行しない）
@@ -752,6 +755,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       payload.content,
       payload.groupConfig,
       payload,
+      payload.systemPromptAppend,
     );
     // pi-agent-core/pi-ai 側がHTTPクライアントのkeep-aliveソケット等を残し、
     // イベントループが自然に空にならずプロセスがexitしないケースがある。

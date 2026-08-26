@@ -16,6 +16,14 @@ import { DeliveryError } from "./delivery.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+const acknowledgeEmail = vi.hoisted(() => vi.fn());
+vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
+const settleRssDispatch = vi.hoisted(() => vi.fn());
+vi.mock("./reconciliation.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./reconciliation.js")>();
+  settleRssDispatch.mockImplementation(actual.settleRssDispatch);
+  return { ...actual, settleRssDispatch };
+});
 vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi.fn().mockImplementation(async (model) => ({
     provider: model?.provider ?? "zai",
@@ -96,6 +104,8 @@ let tempDirs: string[] = [];
 
 beforeEach(() => {
   vi.mocked(sendMessage).mockClear();
+  acknowledgeEmail.mockClear();
+  settleRssDispatch.mockClear();
   claim.mockReset();
   claim.mockReturnValue(undefined);
   deadLetter.mockClear();
@@ -474,6 +484,41 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
+  it("item-thread は独立NO_REPLY行を既存placeholderへ配送する", async () => {
+    const response = "summary\n<NO_REPLY>";
+    vi.mocked(sendMessage).mockResolvedValue(response);
+    const msg = makeMsg({
+      sessionId: "thread-1",
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronJobId: "item-job",
+      cronThreadId: "thread-1",
+      cronPlaceholderMessageId: "placeholder-1",
+      cronNoReply: true,
+    });
+
+    await processMessage(msg);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      msg.sessionId,
+      msg.content,
+      expect.objectContaining({ systemPromptAppend: undefined }),
+    );
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      response,
+      expect.objectContaining({
+        suppressDelivery: false,
+        deliveryPayload: expect.objectContaining({
+          cronThreadId: "thread-1",
+          cronPlaceholderMessageId: "placeholder-1",
+        }),
+      }),
+    );
+  });
+
   it("cron new-thread per-run はスレッド作成前の仮セッションを維持する", async () => {
     const msg = makeMsg({
       sessionId: "cron-daily-run-placeholder",
@@ -649,6 +694,110 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       expect(
         listUnreadArticles(db, 10).map((article) => article.title),
       ).toEqual(["Article 2"]);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("finalizes RSS source when NO_REPLY suppresses delivery", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    vi.mocked(sendMessage).mockResolvedValue("summary\n<NO_REPLY>");
+    const msg = makeMsg({
+      id: "rss-suppressed",
+      cronJobId: "cron-rss",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "per-run",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      expect.any(String),
+      expect.objectContaining({ suppressDelivery: true }),
+    );
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(0);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("mail ACK失敗後もsuppressed RSS sourceを確定する", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    acknowledgeEmail.mockRejectedValueOnce(new Error("Graph unavailable"));
+    vi.mocked(sendMessage).mockResolvedValue("<NO_REPLY>");
+    const msg = makeMsg({
+      id: "mail-rss-suppressed",
+      mailEmailId: "mail-1",
+      cronJobId: "cron-rss",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "per-run",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+
+    await processMessage(msg);
+
+    expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(0);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("suppressed RSS settle失敗時にclaimを解放する", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    settleRssDispatch.mockImplementationOnce(() => {
+      throw new Error("settle failed");
+    });
+    vi.mocked(sendMessage).mockResolvedValue("<NO_REPLY>");
+    const msg = makeMsg({
+      id: "rss-suppressed-settle-failure",
+      cronJobId: "cron-rss",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "per-run",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+
+    await processMessage(msg);
+
+    expect(settleRssDispatch).toHaveBeenNthCalledWith(
+      1,
+      rssPath,
+      dispatch.id,
+      dispatch.jobId,
+      "completed",
+    );
+    expect(settleRssDispatch).toHaveBeenNthCalledWith(
+      2,
+      rssPath,
+      dispatch.id,
+      dispatch.jobId,
+      "dead_letter",
+    );
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(1);
       expect(listDispatchClaims(db)).toEqual([]);
     } finally {
       db.close();
@@ -1256,6 +1405,85 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+  it("通常会話でも独立NO_REPLY行を無配信にする", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("説明\r\n  <NO_REPLY>  \r\n以上");
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      expect.any(String),
+      expect.objectContaining({ suppressDelivery: true }),
+    );
+  });
+
+  it("inline markerは無配信にしない", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    const response = "text <NO_REPLY> text";
+    vi.mocked(sendMessage).mockResolvedValue(response);
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      response,
+      expect.objectContaining({ suppressDelivery: false }),
+    );
+  });
+
+  it("cron noReply option appends a request-scoped system instruction", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    const msg = makeMsg({ cronJobId: "job", cronNoReply: true });
+
+    await processMessage(msg);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      msg.sessionId,
+      msg.content,
+      expect.objectContaining({
+        systemPromptAppend: expect.stringContaining("<NO_REPLY>"),
+      }),
+    );
+  });
+
+  it("NO_REPLYで抑止したmail sourceをACKする", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("<NO_REPLY>");
+    const msg = makeMsg({ mailEmailId: "mail-1" });
+
+    await processMessage(msg);
+
+    expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "<NO_REPLY>",
+      expect.objectContaining({ suppressDelivery: true }),
+    );
+  });
+
   it("direct mail cron carries mailEmailId into delivery metadata", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",

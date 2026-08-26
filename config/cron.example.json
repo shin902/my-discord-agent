@@ -47,6 +47,7 @@
     "prompt": "各記事のURLをagent-reachで取得し、日本語で要約してください",
     "deliveryMode": "direct",
     "sessionMode": "per-run",
+    "noReply": true,
     "handler": "jobs/rss-dispatch.ts",
     "tools": ["bash"],
     "skills": ["agent-reach"],

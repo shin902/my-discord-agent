@@ -181,6 +181,32 @@ describe("loadAndValidateCron", () => {
     await expect(loadAndValidateCron()).resolves.toHaveLength(1);
   });
 
+  it.each([
+    {
+      id: "declarative",
+      groupName: "my-group",
+      prompt: "summarize item",
+      channelId: "ch-123",
+    },
+    { id: "handler", handler: "jobs/rss-dispatch.ts" },
+  ])("$id item-thread で noReply を拒否する", async (job) => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          ...job,
+          schedule: "5m",
+          deliveryMode: "item-thread",
+          sessionMode: "destination",
+          noReply: true,
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).rejects.toThrow(
+      "item-thread では noReply を利用できません",
+    );
+  });
+
   it("item-thread は destination 以外のsessionModeを拒否する", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([

@@ -24,6 +24,8 @@ export interface InboxMessage {
   completedAt?: string;
   cronDeliveryMode?: CronDeliveryMode;
   cronSessionMode?: CronSessionMode;
+  /** Add the NO_REPLY protocol instruction to this cron request's system prompt. */
+  cronNoReply?: boolean;
   cronThread?: boolean;
   cronJobId?: string;
   cronThreadId?: string;

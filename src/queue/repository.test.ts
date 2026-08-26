@@ -281,6 +281,37 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("commits a suppressed response as success without delivery", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const claimed = repo.claim("worker-a", 1_000);
+      const delivery = repo.commitResult(
+        enqueued.job.id,
+        expectDefined(claimed).fencingToken,
+        "explanation\n<NO_REPLY>",
+        { suppressDelivery: true },
+      );
+
+      expect(delivery).toBeUndefined();
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        status: "completed",
+        resultJson: JSON.stringify("explanation\n<NO_REPLY>"),
+        terminalState: "succeeded",
+        succeeded: true,
+      });
+      expect(repo.listDeliveries()).toHaveLength(0);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("commits canonical result and pending delivery atomically", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
