@@ -209,7 +209,9 @@ async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
         "dead_letter",
       );
       if (released !== 1) {
-        throw new Error("RSS dispatch claim was not found or could not be opened");
+        throw new Error(
+          "RSS dispatch claim was not found or could not be opened",
+        );
       }
     } catch (releaseError) {
       console.error(
