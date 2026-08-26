@@ -147,7 +147,9 @@ describe("runAgentLoop", () => {
     expect(appendMessage).not.toHaveBeenCalledWith(
       "test-group",
       "session-1",
-      expect.objectContaining({ content: expect.stringContaining("<NO_REPLY>") }),
+      expect.objectContaining({
+        content: expect.stringContaining("<NO_REPLY>"),
+      }),
     );
   });
 
