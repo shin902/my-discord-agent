@@ -15,7 +15,7 @@
     "test": "vitest run",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "biome lint src/",
+    "lint": "biome lint src/ .pi/extensions/",
     "check": "biome check --write src/"
   },
   "dependencies": {
