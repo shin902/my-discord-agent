@@ -476,6 +476,41 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
+  it("item-thread は独立NO_REPLY行を既存placeholderへ配送する", async () => {
+    const response = "summary\n<NO_REPLY>";
+    vi.mocked(sendMessage).mockResolvedValue(response);
+    const msg = makeMsg({
+      sessionId: "thread-1",
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronJobId: "item-job",
+      cronThreadId: "thread-1",
+      cronPlaceholderMessageId: "placeholder-1",
+      cronNoReply: true,
+    });
+
+    await processMessage(msg);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      msg.sessionId,
+      msg.content,
+      expect.objectContaining({ systemPromptAppend: undefined }),
+    );
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      response,
+      expect.objectContaining({
+        suppressDelivery: false,
+        deliveryPayload: expect.objectContaining({
+          cronThreadId: "thread-1",
+          cronPlaceholderMessageId: "placeholder-1",
+        }),
+      }),
+    );
+  });
+
   it("cron new-thread per-run はスレッド作成前の仮セッションを維持する", async () => {
     const msg = makeMsg({
       sessionId: "cron-daily-run-placeholder",

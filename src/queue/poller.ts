@@ -746,9 +746,10 @@ async function processCronThreadDelivery(
             memorySnapshotContent: msg.memorySnapshotContent,
             snapshotHash: msg.snapshotHash,
             toolCallKey: msg.toolCallKey,
-            systemPromptAppend: msg.cronNoReply
-              ? NO_REPLY_SYSTEM_PROMPT
-              : undefined,
+            systemPromptAppend:
+              msg.cronNoReply && msg.cronDeliveryMode !== "item-thread"
+                ? NO_REPLY_SYSTEM_PROMPT
+                : undefined,
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -785,7 +786,8 @@ async function processCronThreadDelivery(
         return;
       }
     }
-    const suppressDelivery = hasNoReplyMarker(response);
+    const suppressDelivery =
+      msg.cronDeliveryMode !== "item-thread" && hasNoReplyMarker(response);
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
         msg.id,
