@@ -31,7 +31,12 @@
     }
   },
   "files": {
-    "includes": ["src/**/*", "vitest.config.ts", "config/**/*"]
+    "includes": [
+      "src/**/*",
+      "vitest.config.ts",
+      "config/**/*",
+      ".pi/extensions/**/*.ts"
+    ]
   },
   "overrides": [
     {
