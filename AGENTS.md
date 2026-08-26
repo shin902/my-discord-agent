@@ -26,7 +26,7 @@ After writing or editing a Biome-supported file, run Biome on the changed file i
 pnpm exec biome check --write <changed-file>
 ```
 
-Before reporting a code change complete, run the same checks as CI and fix failures:
+Before push or reporting a code change complete, run the same checks as CI and fix failures:
 
 ```bash
 pnpm format:check
