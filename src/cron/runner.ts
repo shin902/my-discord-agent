@@ -39,6 +39,7 @@ const CronJobSchema = z
     channelId: z.string().optional(),
     deliveryMode: z.enum(["direct", "new-thread", "item-thread"]).optional(),
     sessionMode: z.enum(["per-run", "destination"]).optional(),
+    noReply: z.boolean().optional(),
     // 後方互換。新規設定では deliveryMode/sessionMode を使用する。
     mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
@@ -73,7 +74,6 @@ const CronJobSchema = z
           "item-thread は sessionMode=destination と組み合わせてください",
       });
     }
-
     if (job.handler != null) return;
     if (job.groupName == null || job.prompt == null || job.channelId == null) {
       ctx.addIssue({

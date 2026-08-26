@@ -16,6 +16,8 @@ import { DeliveryError } from "./delivery.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+const acknowledgeEmail = vi.hoisted(() => vi.fn());
+vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi.fn().mockImplementation(async (model) => ({
     provider: model?.provider ?? "zai",
@@ -655,6 +657,38 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     }
   });
 
+  it("finalizes RSS source when NO_REPLY suppresses delivery", async () => {
+    const rssPath = await makeRssPath();
+    seedUnreadArticles(rssPath, 1);
+    const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
+    vi.mocked(sendMessage).mockResolvedValue("summary\n<NO_REPLY>");
+    const msg = makeMsg({
+      id: "rss-suppressed",
+      cronJobId: "cron-rss",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "per-run",
+      idempotencyKey: dispatch.jobId,
+      rssDispatchId: dispatch.id,
+      rssStatePath: rssPath,
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      expect.any(String),
+      expect.objectContaining({ suppressDelivery: true }),
+    );
+    const db = openRssDb(rssPath);
+    try {
+      expect(listUnreadArticles(db, 10)).toHaveLength(0);
+      expect(listDispatchClaims(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("releases the RSS claim after a processing failure", async () => {
     const rssPath = await makeRssPath();
     seedUnreadArticles(rssPath, 1);
@@ -1256,6 +1290,85 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+  it("通常会話でも独立NO_REPLY行を無配信にする", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("説明\r\n  <NO_REPLY>  \r\n以上");
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      expect.any(String),
+      expect.objectContaining({ suppressDelivery: true }),
+    );
+  });
+
+  it("inline markerは無配信にしない", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    const response = "text <NO_REPLY> text";
+    vi.mocked(sendMessage).mockResolvedValue(response);
+    const msg = makeMsg();
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      response,
+      expect.objectContaining({ suppressDelivery: false }),
+    );
+  });
+
+  it("cron noReply option appends a request-scoped system instruction", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    const msg = makeMsg({ cronJobId: "job", cronNoReply: true });
+
+    await processMessage(msg);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      msg.sessionId,
+      msg.content,
+      expect.objectContaining({
+        systemPromptAppend: expect.stringContaining("<NO_REPLY>"),
+      }),
+    );
+  });
+
+  it("NO_REPLYで抑止したmail sourceをACKする", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("<NO_REPLY>");
+    const msg = makeMsg({ mailEmailId: "mail-1" });
+
+    await processMessage(msg);
+
+    expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "<NO_REPLY>",
+      expect.objectContaining({ suppressDelivery: true }),
+    );
+  });
+
   it("direct mail cron carries mailEmailId into delivery metadata", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",

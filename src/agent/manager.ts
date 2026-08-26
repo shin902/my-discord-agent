@@ -346,6 +346,8 @@ export interface SendMessageOptions {
   memorySnapshotContent?: string;
   snapshotHash?: string;
   toolCallKey?: string;
+  /** Request-scoped instructions appended to the sandbox system prompt. */
+  systemPromptAppend?: string;
 }
 
 export function sendMessage(
@@ -398,6 +400,7 @@ export async function sendMessage(
     memorySnapshotContent,
     snapshotHash,
     toolCallKey,
+    systemPromptAppend,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -511,6 +514,7 @@ export async function sendMessage(
     ...(memorySnapshotContent !== undefined ? { memorySnapshotContent } : {}),
     ...(snapshotHash !== undefined ? { snapshotHash } : {}),
     ...(toolCallKey !== undefined ? { toolCallKey } : {}),
+    ...(systemPromptAppend !== undefined ? { systemPromptAppend } : {}),
   });
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない

@@ -13,6 +13,7 @@ import {
   resolveProviderConcurrency,
 } from "../config/providers.js";
 import { provisionCronItemThread } from "../cron/enqueue.js";
+import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
@@ -163,6 +164,32 @@ function logResponseTiming(
     console.warn(`[poller] 応答遅延を検出: ${message}`);
   } else {
     console.log(`[poller] 応答時間: ${message}`);
+  }
+}
+
+const NO_REPLY_SYSTEM_PROMPT =
+  "通知すべき内容がない場合は、独立した行に <NO_REPLY> とだけ出力してください。";
+
+function hasNoReplyMarker(response: string): boolean {
+  return response.split(/\r?\n/).some((line) => line.trim() === "<NO_REPLY>");
+}
+
+async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
+  try {
+    if (msg.mailEmailId) await acknowledgeEmail(msg.mailEmailId);
+    if (msg.rssDispatchId) {
+      settleRssDispatch(
+        msg.rssStatePath,
+        msg.rssDispatchId,
+        msg.idempotencyKey,
+        "completed",
+      );
+    }
+  } catch (error) {
+    console.error(
+      `[poller] 無配信cronのsource確定に失敗しました (${msg.id}):`,
+      error,
+    );
   }
 }
 
@@ -719,6 +746,9 @@ async function processCronThreadDelivery(
             memorySnapshotContent: msg.memorySnapshotContent,
             snapshotHash: msg.snapshotHash,
             toolCallKey: msg.toolCallKey,
+            systemPromptAppend: msg.cronNoReply
+              ? NO_REPLY_SYSTEM_PROMPT
+              : undefined,
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -755,6 +785,7 @@ async function processCronThreadDelivery(
         return;
       }
     }
+    const suppressDelivery = hasNoReplyMarker(response);
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
         msg.id,
@@ -762,6 +793,7 @@ async function processCronThreadDelivery(
         response,
         {
           empty: !response,
+          suppressDelivery,
           metadata: executionMetadata(timing),
           deliveryPayload: {
             groupName: msg.groupName,
@@ -781,6 +813,7 @@ async function processCronThreadDelivery(
           },
         },
       );
+    if (suppressDelivery) await finalizeSuppressedSource(msg);
     outcome = response ? "success" : "empty-response";
   } catch (error) {
     if (msg.rssDispatchId) {
@@ -1008,6 +1041,9 @@ export async function processMessage(
                 memorySnapshotContent: msg.memorySnapshotContent,
                 snapshotHash: msg.snapshotHash,
                 toolCallKey: msg.toolCallKey,
+                systemPromptAppend: msg.cronNoReply
+                  ? NO_REPLY_SYSTEM_PROMPT
+                  : undefined,
                 signal,
                 configOverride: msg.configOverride,
               },
@@ -1068,6 +1104,7 @@ export async function processMessage(
         return;
       }
     }
+    const suppressDelivery = hasNoReplyMarker(response);
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
@@ -1078,6 +1115,7 @@ export async function processMessage(
       response,
       {
         empty: !response,
+        suppressDelivery,
         metadata: executionMetadata(timing),
         deliveryPayload: {
           groupName: msg.groupName,
@@ -1096,6 +1134,7 @@ export async function processMessage(
         },
       },
     );
+    if (suppressDelivery) await finalizeSuppressedSource(msg);
     outcome = response ? "success" : "empty-response";
     stopTyping();
   } finally {

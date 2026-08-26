@@ -39,6 +39,7 @@ export interface CronEnqueueContext {
   channelId?: string;
   deliveryMode?: CronDeliveryMode;
   sessionMode?: CronSessionMode;
+  noReply?: boolean;
   mode?: "to-channel" | "to-thread";
   model?: ModelConfig;
   tools?: string[];
@@ -230,6 +231,7 @@ async function registerCronItemThread(
     timestamp: new Date().toISOString(),
     cronDeliveryMode: "item-thread",
     cronSessionMode: "destination",
+    ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronThread: true,
     cronJobId: ctx.id,
     cronProvisioning: true,
@@ -291,6 +293,7 @@ export async function enqueueCronInbox(
     timestamp: new Date().toISOString(),
     cronDeliveryMode: deliveryMode,
     cronSessionMode: sessionMode,
+    ...(ctx.noReply ? { cronNoReply: true } : {}),
     cronJobId: ctx.id,
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
     ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),

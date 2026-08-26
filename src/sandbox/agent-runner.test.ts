@@ -129,6 +129,28 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("request-scoped instructionsをsystem promptだけに追加する", async () => {
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "こんにちは",
+      {},
+      undefined,
+      "独立行に <NO_REPLY> と出力する",
+    );
+
+    expect(lastAgentOptions).toMatchObject({
+      initialState: {
+        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n独立行に <NO_REPLY> と出力する\n\n${datePromptJST()}`,
+      },
+    });
+    expect(appendMessage).not.toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({ content: expect.stringContaining("<NO_REPLY>") }),
+    );
+  });
+
   it("agent.prompt の所要時間とassistant usage合計をイベント出力する", async () => {
     const subscribers: Array<(event: unknown) => void> = [];
     const messages = [

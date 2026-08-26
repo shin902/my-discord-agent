@@ -1115,6 +1115,7 @@ export class QueueRepository {
     result: unknown,
     options: {
       empty?: boolean;
+      suppressDelivery?: boolean;
       metadata?: ExecutionMetadata;
       deliveryPayload?: unknown;
     } = {},
@@ -1132,11 +1133,14 @@ export class QueueRepository {
         ? options.deliveryPayload
         : {}
     ) as Record<string, unknown>;
-    const chunks = options.empty
-      ? []
-      : splitMessage(
-          typeof result === "string" ? result : JSON.stringify(result ?? null),
-        );
+    const chunks =
+      options.empty || options.suppressDelivery
+        ? []
+        : splitMessage(
+            typeof result === "string"
+              ? result
+              : JSON.stringify(result ?? null),
+          );
     return this.inImmediateTransaction<DeliveryRow | undefined>(() => {
       const row = this.db
         .prepare(
