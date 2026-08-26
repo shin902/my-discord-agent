@@ -10,16 +10,16 @@ Runtime DBは通常 `data/runtime.sqlite`。`RUNTIME_DB_PATH` があればそち
 まず付属のread-only CLIを使う。
 
 ```bash
-.pi/skills/runtime-db/scripts/runtime-db.sh path
-.pi/skills/runtime-db/scripts/runtime-db.sh tables
-.pi/skills/runtime-db/scripts/runtime-db.sh schema [table]
-.pi/skills/runtime-db/scripts/runtime-db.sh jobs [limit]
-.pi/skills/runtime-db/scripts/runtime-db.sh job <id>
-.pi/skills/runtime-db/scripts/runtime-db.sh deliveries [limit]
-.pi/skills/runtime-db/scripts/runtime-db.sh delivery <id>
-.pi/skills/runtime-db/scripts/runtime-db.sh idempotency [limit]
-.pi/skills/runtime-db/scripts/runtime-db.sh cursors
-.pi/skills/runtime-db/scripts/runtime-db.sh query '<SELECT/PRAGMA/WITH/EXPLAIN>'
+bash .pi/skills/runtime-db/scripts/runtime-db.sh path
+bash .pi/skills/runtime-db/scripts/runtime-db.sh tables
+bash .pi/skills/runtime-db/scripts/runtime-db.sh schema [table]
+bash .pi/skills/runtime-db/scripts/runtime-db.sh jobs [limit]
+bash .pi/skills/runtime-db/scripts/runtime-db.sh job <id>
+bash .pi/skills/runtime-db/scripts/runtime-db.sh deliveries [limit]
+bash .pi/skills/runtime-db/scripts/runtime-db.sh delivery <id>
+bash .pi/skills/runtime-db/scripts/runtime-db.sh idempotency [limit]
+bash .pi/skills/runtime-db/scripts/runtime-db.sh cursors
+bash .pi/skills/runtime-db/scripts/runtime-db.sh query '<SELECT/PRAGMA/WITH/EXPLAIN>'
 ```
 
 `jobs`はagent実行、`deliveries`は外部配送、`idempotency_keys`は重複抑止を表す。`discord_sync_cursors`はDiscord履歴バックフィルのカーソル。
