@@ -19,6 +19,12 @@ vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const acknowledgeEmail = vi.hoisted(() => vi.fn());
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 const settleRssDispatch = vi.hoisted(() => vi.fn());
+const loadBotRegistry = vi.hoisted(() => vi.fn());
+const resolveBotProfile = vi.hoisted(() => vi.fn());
+vi.mock("../config/bots.js", () => ({
+  loadBotRegistry,
+  resolveBotProfile,
+}));
 vi.mock("./reconciliation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./reconciliation.js")>();
   settleRssDispatch.mockImplementation(actual.settleRssDispatch);
@@ -30,7 +36,10 @@ vi.mock("../config/default-model.js", () => ({
     modelId: model?.modelId ?? "glm-4.7-flash",
   })),
 }));
-vi.mock("../config/groups.js", () => ({ findGroupByName: vi.fn() }));
+vi.mock("../config/groups.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config/groups.js")>();
+  return { ...actual, findGroupByName: vi.fn() };
+});
 vi.mock("../config/providers.js", () => ({
   resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
 }));
@@ -119,6 +128,8 @@ beforeEach(() => {
   patchJobPayload.mockReset();
   vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
+  loadBotRegistry.mockReset();
+  resolveBotProfile.mockReset();
 });
 
 afterEach(async () => {
@@ -191,6 +202,74 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
 }
 
 const EMPTY_AGENT_RESPONSES = ["", "   ", "\r\n", "\t"] as const;
+
+describe("processMessage - Bot execution resolution", () => {
+  beforeEach(() => {
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => false,
+      isTextBased: () => false,
+    } as never);
+  });
+
+  it("uses group-to-Bot config and Bot model for lock without channel overrides", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      model: { provider: "group-provider", modelId: "group-model" },
+    });
+    loadBotRegistry.mockResolvedValue({ coding: {} });
+    resolveBotProfile.mockReturnValue({
+      group: "default",
+      instructions: "coding instructions",
+      model: { provider: "bot-provider", modelId: "bot-model" },
+      tools: ["read"],
+    });
+    vi.mocked(sendMessage).mockResolvedValue("response");
+    const msg = makeMsg({
+      botId: "coding",
+      configOverride: {
+        model: { provider: "channel-provider", modelId: "channel-model" },
+        tools: ["channel-tool"],
+      },
+    });
+
+    await processMessage(msg);
+
+    expect(resolveProviderConcurrency).toHaveBeenCalledWith("bot-provider");
+    const options = vi.mocked(sendMessage).mock.calls[0]?.[3] as
+      | SendMessageOptions
+      | undefined;
+    expect(options?.configOverride).toEqual({
+      model: { provider: "bot-provider", modelId: "bot-model" },
+      tools: ["read"],
+    });
+    expect(options?.systemPromptAppend).toBe("coding instructions");
+  });
+
+  it("dead-letters an unknown Bot instead of retrying", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
+    loadBotRegistry.mockResolvedValue({});
+    resolveBotProfile.mockImplementation(() => {
+      throw new Error("Bot が未定義です: missing");
+    });
+    const msg = makeMsg({ botId: "missing" });
+
+    await processMessage(msg);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "non_retryable",
+      expect.stringContaining("Bot が未定義です: missing"),
+      expect.anything(),
+    );
+    expect(failAttempt).not.toHaveBeenCalled();
+  });
+});
 
 describe("processMessage - terminal queue transitions", () => {
   beforeEach(() => {

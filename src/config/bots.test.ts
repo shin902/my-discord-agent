@@ -6,11 +6,32 @@ vi.mock("./config.js", () => ({
 }));
 
 const { loadRawConfig } = await import("./config.js");
-const { loadBotRegistry } = await import("./bots.js");
+const { loadBotRegistry, resolveBotProfile } = await import("./bots.js");
 const mockLoadRawConfig = vi.mocked(loadRawConfig);
 
 beforeEach(() => {
   mockLoadRawConfig.mockReset();
+});
+
+describe("resolveBotProfile", () => {
+  const registry = {
+    coding: { group: "main", instructions: "coding" },
+  };
+
+  it("returns a Bot in its configured group", () => {
+    expect(resolveBotProfile(registry, "coding", "main")).toEqual(
+      registry.coding,
+    );
+  });
+
+  it("rejects unknown and cross-group Bots", () => {
+    expect(() => resolveBotProfile(registry, "missing", "main")).toThrow(
+      "Bot が未定義です: missing",
+    );
+    expect(() => resolveBotProfile(registry, "coding", "other")).toThrow(
+      "利用できません",
+    );
+  });
 });
 
 describe("loadBotRegistry", () => {

@@ -9,9 +9,10 @@ vi.mock("../queue/repository.js", () => ({
   getQueueRepository: () => ({ enqueue: mockAppendInbox }),
 }));
 
-vi.mock("../config/groups.js", () => ({
-  findGroupByChannelId: vi.fn(),
-}));
+vi.mock("../config/groups.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config/groups.js")>();
+  return { ...actual, findGroupByChannelId: vi.fn() };
+});
 
 const { findGroupByChannelId } = await import("../config/groups.js");
 const { registerHandlers } = await import("./handler.js");

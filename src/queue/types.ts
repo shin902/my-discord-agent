@@ -38,6 +38,8 @@ export interface InboxMessage {
   cronFailureNotified?: boolean;
   rssDispatchId?: string;
   rssStatePath?: string;
+  /** A one-shot persistent Bot profile selected by a Discord command. */
+  botId?: string;
   /** AgentConfig fields selected by Discord channel intake or a cron job. */
   configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];

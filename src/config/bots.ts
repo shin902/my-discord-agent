@@ -17,6 +17,20 @@ export const BotRegistrySchema = z
 
 export type BotRegistry = z.infer<typeof BotRegistrySchema>;
 
+/** Resolve a Bot profile and enforce its AgentGroup boundary. */
+export function resolveBotProfile(
+  registry: BotRegistry,
+  botId: string,
+  groupName: string,
+): BotProfile {
+  const profile = Object.hasOwn(registry, botId) ? registry[botId] : undefined;
+  if (!profile) throw new Error(`Bot が未定義です: ${botId}`);
+  if (profile.group !== groupName) {
+    throw new Error(`Bot ${botId} はグループ ${groupName} から利用できません`);
+  }
+  return profile;
+}
+
 export async function loadBotRegistry(): Promise<BotRegistry> {
   const raw = await loadRawConfig();
   return BotRegistrySchema.parse(raw.bots);
