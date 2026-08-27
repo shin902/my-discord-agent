@@ -168,7 +168,9 @@ describe("loadOrCreateSessionTimeAnchor", () => {
 
   it("初期化競合では先に作られたsidecarを正本にする", async () => {
     mockReadFile
-      .mockRejectedValueOnce(Object.assign(new Error("ENOENT"), { code: "ENOENT" }))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+      )
       .mockResolvedValueOnce("111111\n");
     mockWriteFile.mockRejectedValue(
       Object.assign(new Error("EEXIST"), { code: "EEXIST" }),

@@ -15,9 +15,7 @@ describe("time context formatting", () => {
   });
 
   it("formats exact current time with a numeric offset", () => {
-    expect(formatCurrentDateTime(timestamp)).toBe(
-      "2026-08-28T07:37:06+09:00",
-    );
+    expect(formatCurrentDateTime(timestamp)).toBe("2026-08-28T07:37:06+09:00");
     expect(formatWeekday(timestamp)).toBe("Fri");
   });
 });

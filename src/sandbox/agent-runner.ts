@@ -245,7 +245,9 @@ function loadSystemPromptFromWorkspace(): Promise<string | null> {
   return loadWorkspaceFile("/workspace/AGENTS.md");
 }
 
-function findEarliestMessageTimestamp(messages: AgentMessage[]): number | undefined {
+function findEarliestMessageTimestamp(
+  messages: AgentMessage[],
+): number | undefined {
   let earliest: number | undefined;
   for (const message of messages) {
     const timestamp = message.timestamp;
