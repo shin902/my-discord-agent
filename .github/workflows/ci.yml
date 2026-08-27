@@ -30,4 +30,10 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        shell: bash
+        run: |
+          set +e
+          pnpm test > /tmp/test.log 2>&1
+          status=$?
+          tail -n 240 /tmp/test.log
+          exit $status
