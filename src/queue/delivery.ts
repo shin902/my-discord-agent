@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "discord.js";
+import { renameSession } from "../agent/session.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
@@ -35,6 +36,7 @@ export class DeliveryError extends Error {
 }
 export interface DeliverySendContext {
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
+  promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
 }
 export interface DeliveryAdapter {
   send(
@@ -73,10 +75,14 @@ interface DeliveryPayload {
   cronPlaceholderMessageId?: string;
   mailEmailId?: string;
 }
+type DeliveryMessage = {
+  id?: unknown;
+  startThread?: (options: { name: string }) => Promise<{ id?: unknown }>;
+};
 type DeliveryTarget = {
   id?: unknown;
   isSendable?: () => boolean;
-  send: (payload: unknown) => Promise<{ id?: unknown }>;
+  send: (payload: unknown) => Promise<DeliveryMessage>;
   edit?: (payload: unknown) => Promise<unknown>;
   messages?: { fetch: (id: string) => Promise<DeliveryTarget> };
   threads?: { create: (options: { name: string }) => Promise<DeliveryTarget> };
@@ -112,12 +118,12 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       }
       if (typeof client.isReady === "function" && !client.isReady())
         throw new DeliveryError("retryable", "Discord client is not ready");
+
+      const destinationType = payload.destinationType ?? row.destinationType;
+      const isItemThread = destinationType === "item-thread";
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
-      if (
-        payload.destinationType === "new-thread" ||
-        row.destinationType === "new-thread"
-      ) {
+      if (destinationType === "new-thread") {
         if (threadId) {
           target = (await client.channels.fetch(
             threadId,
@@ -151,6 +157,10 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
             );
           }
         }
+      } else if (isItemThread && threadId) {
+        target = (await client.channels.fetch(
+          threadId,
+        )) as unknown as DeliveryTarget;
       } else {
         target = (client.channels.cache.get(destinationId) ??
           (await client.channels.fetch(
@@ -169,9 +179,59 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const allowedMentions = allowMention
         ? { repliedUser: true }
         : { parse: [], repliedUser: false };
-      // Cron item threads reserve a visible placeholder before the LLM starts.
-      // Replace that message with the first response chunk rather than adding a
-      // second parent message. Remaining chunks are posted in the same thread.
+
+      if (isItemThread && !threadId) {
+        mutationAttempted = true;
+        const parent = await target.send(
+          allowMention ? content : { content, allowedMentions },
+        );
+        const parentId = String(parent.id ?? "");
+        if (!parentId) {
+          throw new DeliveryError(
+            "unknown",
+            "item-thread parent message ID is empty",
+          );
+        }
+        try {
+          // Start Thread from Message uses the source message ID as the thread
+          // ID. Promote the session before the thread becomes visible so an
+          // immediate user reply always finds the renamed JSONL.
+          await context.promoteCronItemSession?.(parentId);
+          await context.persistCronThread?.(parentId);
+        } catch (error) {
+          throw new DeliveryError(
+            "unknown",
+            `failed to promote item-thread session ${parentId}`,
+            error,
+          );
+        }
+        if (typeof parent.startThread !== "function") {
+          throw new DeliveryError(
+            "unknown",
+            "item-thread parent message does not support startThread",
+          );
+        }
+        try {
+          const thread = await parent.startThread({
+            name: `cron-${String(payload.cronJobId ?? row.jobId).slice(0, 90)}`,
+          });
+          const createdThreadId = String(thread.id ?? parentId);
+          if (createdThreadId !== parentId) {
+            throw new Error(
+              `item-thread ID mismatch: message=${parentId} thread=${createdThreadId}`,
+            );
+          }
+        } catch (error) {
+          throw new DeliveryError(
+            "unknown",
+            `failed to start item-thread ${parentId}`,
+            error,
+          );
+        }
+        return { externalMessageId: parentId, cronThreadId: parentId };
+      }
+
+      // Legacy pre-provisioned item threads may still carry a placeholder.
       if (payload.cronPlaceholderMessageId && target !== undefined) {
         const channel = (await client.channels.fetch(
           destinationId,
@@ -189,9 +249,6 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         try {
           await placeholder.edit({ content, allowedMentions });
         } catch (error) {
-          // Editing the same placeholder is idempotent. Keep the cron delivery
-          // retryable for every edit failure, regardless of Discord error code;
-          // retry limits are intentionally outside this feature's scope.
           throw new DeliveryError(
             "retryable",
             "cron placeholder edit failed",
@@ -297,13 +354,32 @@ export class DeliveryWorker {
             claim.fencingToken,
             threadId,
           ),
+        promoteCronItemSession: async (threadId) => {
+          const job = this.repository.get(claim.row.jobId);
+          if (!job) throw new Error(`unknown job ${claim.row.jobId}`);
+          if (job.sessionId === threadId) return;
+          const originalSessionId = job.sessionId;
+          await renameSession(job.groupName, originalSessionId, threadId);
+          try {
+            const promoted = this.repository.provisionCronJob(job.id, threadId, {
+              cronThreadId: threadId,
+            });
+            if (!promoted) throw new Error(`unknown job ${job.id}`);
+          } catch (error) {
+            await renameSession(
+              job.groupName,
+              threadId,
+              originalSessionId,
+            ).catch(() => {});
+            throw error;
+          }
+        },
       });
       // The final updateDelivery below already persists cronThreadId in the
       // same fenced write that moves the row to 'sent', so the separate
       // send-success setDeliveryThread above would only duplicate that write.
-      // The pre-send persistCronThread path (invoked by the adapter right after
-      // Discord thread creation and before the message send) remains the
-      // crash-safety boundary that survives ambiguous/failed outcomes.
+      // persistCronThread is still used before a newly-created thread becomes
+      // visible so later response chunks resolve the same destination.
       this.repository.updateDelivery(claim.row.id, claim.fencingToken, "sent", {
         externalMessageId: sent.externalMessageId,
         ...(sent.cronThreadId ? { cronThreadId: sent.cronThreadId } : {}),
