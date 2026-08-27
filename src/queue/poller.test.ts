@@ -190,6 +190,8 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
   };
 }
 
+const EMPTY_AGENT_RESPONSES = ["", "   ", "\r\n", "\t"] as const;
+
 describe("processMessage - terminal queue transitions", () => {
   beforeEach(() => {
     vi.mocked(findGroupByName).mockResolvedValue({
@@ -1113,7 +1115,7 @@ describe("processMessage - allowMention", () => {
     logSpy.mockRestore();
   });
 
-  it("空応答は success ではなく empty-response として記録する", async () => {
+  it("空応答は retry せず empty_response として terminal failure にする", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
       channels: [],
@@ -1121,15 +1123,25 @@ describe("processMessage - allowMention", () => {
     });
     vi.mocked(sendMessage).mockResolvedValue("");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const msg = makeMsg();
 
-    await processMessage(makeMsg());
+    await processMessage(msg);
 
     expect(mockSend).not.toHaveBeenCalled();
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(failAttempt).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "empty_response",
+      undefined,
+      expect.any(Object),
+    );
     const line = logSpy.mock.calls
       .flat()
       .find((value) => String(value).includes('"event":"response_timing"'));
     const details = JSON.parse(String(line).slice(String(line).indexOf("{")));
-    expect(details.outcome).toBe("empty-response");
+    expect(details.outcome).toBe("dead-letter");
     logSpy.mockRestore();
   });
 
@@ -1162,6 +1174,93 @@ describe("processMessage - allowMention", () => {
 
     expect(mockSend).not.toHaveBeenCalled();
     expect(commitInboxResult).toHaveBeenCalledOnce();
+  });
+});
+
+describe("processMessage - empty agent responses", () => {
+  beforeEach(() => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(client.channels.fetch).mockReset();
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => false,
+      isTextBased: () => false,
+    } as never);
+    commitInboxResult.mockReset();
+    deadLetter.mockReset();
+    failAttempt.mockReset();
+    freezeExecutionIdentity.mockReset();
+    freezeExecutionIdentity.mockResolvedValue(undefined);
+    patchJobPayload.mockReset();
+  });
+
+  async function expectTerminalEmptyResponse(
+    response: string,
+    overrides: Partial<InboxMessage> = {},
+  ): Promise<void> {
+    const msg = makeMsg(overrides);
+    vi.mocked(sendMessage).mockResolvedValue(response);
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(failAttempt).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledOnce();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "empty_response",
+      undefined,
+      expect.any(Object),
+    );
+  }
+
+  it.each(
+    EMPTY_AGENT_RESPONSES,
+  )("通常会話の %j 応答は即時 terminal failure にする", async (response) => {
+    await expectTerminalEmptyResponse(response);
+  });
+
+  it.each(
+    EMPTY_AGENT_RESPONSES,
+  )("cron direct の %j 応答は即時 terminal failure にする", async (response) => {
+    await expectTerminalEmptyResponse(response, {
+      id: "cron-direct-empty",
+      cronJobId: "cron-direct",
+      cronDeliveryMode: "direct",
+      cronSessionMode: "per-run",
+    });
+  });
+
+  it.each(
+    EMPTY_AGENT_RESPONSES,
+  )("cron new-thread の %j 応答は即時 terminal failure にする", async (response) => {
+    await expectTerminalEmptyResponse(response, {
+      id: "cron-new-thread-empty",
+      cronJobId: "cron-new-thread",
+      cronDeliveryMode: "new-thread",
+      cronSessionMode: "per-run",
+      cronThreadId: "thread-1",
+    });
+  });
+
+  it.each(
+    EMPTY_AGENT_RESPONSES,
+  )("cron item-thread の %j 応答は即時 terminal failure にする", async (response) => {
+    await expectTerminalEmptyResponse(response, {
+      id: "cron-item-thread-empty",
+      sessionId: "thread-1",
+      cronJobId: "cron-item-thread",
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronThreadId: "thread-1",
+      cronPlaceholderMessageId: "placeholder-1",
+    });
   });
 });
 
@@ -1530,11 +1629,13 @@ describe("processMessage - durable result", () => {
     expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 
-  it("RSS cron new-threadの空応答はclaimを解放しdelivery/threadを作らない", async () => {
+  it.each(
+    EMPTY_AGENT_RESPONSES,
+  )("RSS cron new-threadの %j 応答はclaimを解放しdelivery/threadを作らない", async (response) => {
     const rssPath = await makeRssPath();
     seedUnreadArticles(rssPath, 1);
     const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
-    vi.mocked(sendMessage).mockResolvedValue("");
+    vi.mocked(sendMessage).mockResolvedValue(response);
     const msg = makeMsg({
       id: "rss-empty-new-thread",
       cronJobId: "cron-rss",
@@ -1548,7 +1649,14 @@ describe("processMessage - durable result", () => {
     await processMessage(msg);
 
     expect(commitInboxResult).not.toHaveBeenCalled();
-    expect(deadLetter).toHaveBeenCalled();
+    expect(failAttempt).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "empty_response",
+      undefined,
+      expect.any(Object),
+    );
     const db = openRssDb(rssPath);
     try {
       expect(listDispatchClaims(db)).toEqual([]);
