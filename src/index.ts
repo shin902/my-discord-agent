@@ -4,6 +4,7 @@ import {
   killAllRunningContainers,
   validateGroupConfig,
 } from "./agent/manager.js";
+import { loadBotRegistry } from "./config/bots.js";
 import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
@@ -34,6 +35,7 @@ import { getQueueRepository } from "./queue/repository.js";
 const groups = await loadGroups();
 try {
   const discordConfig = await loadDiscordConfig();
+  await loadBotRegistry();
   for (const group of groups) {
     if (group.bot && !(group.bot in discordConfig.bots))
       throw new Error(

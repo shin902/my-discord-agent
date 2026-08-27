@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   registerHandlers: vi.fn(),
   backfillDiscordMessages: vi.fn(),
   loadDiscordConfig: vi.fn(),
+  loadBotRegistry: vi.fn(),
   startPoller: vi.fn(),
   stopPoller: vi.fn(),
   startDeliveryWorker: vi.fn(),
@@ -44,6 +45,9 @@ vi.mock("./discord/backfill.js", () => ({
 }));
 vi.mock("./config/config.js", () => ({
   loadDiscordConfig: mocks.loadDiscordConfig,
+}));
+vi.mock("./config/bots.js", () => ({
+  loadBotRegistry: mocks.loadBotRegistry,
 }));
 vi.mock("./queue/poller.js", () => ({
   startPoller: mocks.startPoller,
@@ -106,6 +110,7 @@ describe("index: 起動時バリデーション", () => {
       isReady: vi.fn().mockReturnValue(true),
     });
     mocks.loadDiscordConfig.mockResolvedValue({ bots: {} });
+    mocks.loadBotRegistry.mockResolvedValue({});
     mocks.backfillDiscordMessages.mockResolvedValue(undefined);
     mocks.loadGroups.mockResolvedValue([]);
     mocks.loadProviders.mockResolvedValue([]);
@@ -145,6 +150,16 @@ describe("index: 起動時バリデーション", () => {
     );
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
     expect(mockExit).toHaveBeenCalledWith(1);
+  });
+
+  it("不正な Bot profile は [startup] ログを出して process.exit(1) する", async () => {
+    mocks.loadBotRegistry.mockRejectedValue(
+      new Error("bots.coding.instructions は必須です"),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.initDiscordClients).not.toHaveBeenCalled();
   });
 
   it("不明なプロバイダーは [startup] ログを出して process.exit(1) する", async () => {
