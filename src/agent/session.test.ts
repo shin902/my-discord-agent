@@ -15,16 +15,8 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
 }));
 
-const {
-  readFile,
-  writeFile,
-  link,
-  rename,
-  unlink,
-  appendFile,
-  mkdir,
-  chmod,
-} = await import("node:fs/promises");
+const { readFile, writeFile, link, rename, unlink, appendFile, mkdir, chmod } =
+  await import("node:fs/promises");
 const { existsSync } = await import("node:fs");
 const { loadMessages, appendMessage, loadOrCreateSessionTimeAnchor } =
   await import("./session.js");
