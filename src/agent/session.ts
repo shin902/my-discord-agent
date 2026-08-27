@@ -1,5 +1,11 @@
 import { existsSync } from "node:fs";
-import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
@@ -21,6 +27,10 @@ async function ensureDir(groupName: string): Promise<void> {
 
 function sessionPath(groupName: string, sessionId: string): string {
   return path.join(SESSIONS_DIR, groupName, `${sessionId}.jsonl`);
+}
+
+function sessionTimeAnchorPath(groupName: string, sessionId: string): string {
+  return path.join(SESSIONS_DIR, groupName, `${sessionId}.time-anchor`);
 }
 
 function hasArrayContent(
@@ -59,6 +69,55 @@ export async function loadMessages(
       }
       return msg as unknown as AgentMessage;
     });
+}
+
+function parseTimeAnchor(value: string): number | undefined {
+  const timestamp = Number(value.trim());
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : undefined;
+}
+
+/**
+ * セッション開始時刻を会話JSONLとは別のsidecarへ一度だけ固定する。
+ * 既存セッション移行時は caller が履歴の最古timestampを fallback として渡せる。
+ */
+export async function loadOrCreateSessionTimeAnchor(
+  groupName: string,
+  sessionId: string,
+  fallbackTimestamp = Date.now(),
+): Promise<number> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  await ensureDir(groupName);
+
+  const file = sessionTimeAnchorPath(groupName, sessionId);
+  try {
+    const existing = parseTimeAnchor(await readFile(file, "utf-8"));
+    if (existing !== undefined) return existing;
+    throw new Error(`不正なセッション時刻アンカー: ${file}`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  const timestamp =
+    Number.isFinite(fallbackTimestamp) && fallbackTimestamp > 0
+      ? fallbackTimestamp
+      : Date.now();
+  try {
+    await writeFile(file, `${timestamp}\n`, {
+      encoding: "utf-8",
+      mode: 0o666,
+      flag: "wx",
+    });
+    return timestamp;
+  } catch (err) {
+    // 同一セッションの初期化が競合した場合は、先に作られた値を正本にする。
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    const existing = parseTimeAnchor(await readFile(file, "utf-8"));
+    if (existing === undefined) {
+      throw new Error(`不正なセッション時刻アンカー: ${file}`);
+    }
+    return existing;
+  }
 }
 
 export async function appendMessage(
