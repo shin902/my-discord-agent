@@ -71,7 +71,7 @@ Discord受信
 
 ```
 config/credentials.json     # AIプロバイダー・外部サービスの接続設定（Zodで検証）
-config/groups.json          # チャンネル→グループのマッピング＋モデル・ツール・allowMention・toolLogArgs・skills（Zodで検証）
+config/groups.json          # チャンネル→グループのマッピング＋group/channelのAgentConfig（model・tools・skills・mounts）・配送設定（Zodで検証）
 config/cron.json            # 定期実行ジョブ定義（省略可。無ければ cron は空扱い）
 config/config.json          # defaultModel・poller など上記以外の設定
 groups/{name}/
@@ -84,7 +84,7 @@ data/queue/dead-letter.jsonl# リトライ上限超えたメッセージ（自�
 data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
 ```
 
-設定ファイルの詳細リファレンスは `docs/config.md` を参照。
+設定ファイルの詳細リファレンスは `docs/config.md` を参照。通常のDiscord会話はAgentConfigを `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順に解決する。
 
 cron ハンドラーの置き場は `src/cron/jobs/local/` を gitignore し、機構（`src/cron/`）・共有サンプルと個人ジョブを分離している。`local/` を `src/` 配下に置くのは必須で、`tsconfig.json` の `include: ["src/**/*"]` 上 `tsc` が `src/` 外をコンパイルせず、prod（`pnpm start`）で `loadHandlerFn` が `dist/` の `.js` を import できなくなるため。ジョブ定義（`cron` 配列・`handler` パス）は gitignore 済みの `config` 側に書く。
 

@@ -1,10 +1,10 @@
 # エージェントのツールとスキル
 
-エージェントが使えるツールとスキルの概要。グループ設定（`config/groups.json` の `groups[]`）と `AGENTS.md` でどれを有効にするかを制御する。
+エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）と `AGENTS.md` でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skillsは指定時に完全置換する。
 
 ## ツール
 
-エージェントに渡す MCP ツール群。`groups[].tools` フィールドで指定する。
+エージェントに渡す MCP ツール群。通常のDiscord会話では `groups[].tools` と `groups[].channels[].tools`、cronではgroupの `tools` とcron jobの `tools` で指定する。cronの `channelId` は配送先だけを表し、配送先channelの `tools` は継承しない。
 
 | ツール名 | 概要 |
 |---------|------|
@@ -77,7 +77,7 @@
 
 ## スキル
 
-`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常はシステムプロンプトの `<available_skills>` 一覧として渡され、LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
+`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
 スキルと専用ツールは独立した実行経路として扱う。スキルは `bash` と同梱スクリプトを利用でき、標準出力の直接利用だけでなくファイルへのリダイレクトなど、用途に応じた柔軟なワークフローを提供する。一方、専用ツールは `bash` を許可したくない不特定多数向けのボットでも、対象機能だけを安全に許可するために使う。スキルを専用ツールの使い方だけを説明するドキュメントにはしない。
 
@@ -97,7 +97,7 @@ LLM の自律判断を待たず、ユーザーが特定のスキルを確実に�
 **仕組み（`src/skills/command.ts` / `src/sandbox/agent-runner.ts`）:**
 
 - `parseSkillCommand()` がメッセージ先頭の `./command スキル名` パターンを解析する
-- 指定されたスキル名がグループの `skills` 許可リスト（`groups/{name}/group.json`）に存在しない場合、LLM を呼ばずに利用可能なスキル一覧をエラーとして即時返信する
+- 指定されたスキル名が実行時の `skills` 許可リストに存在しない場合、LLM を呼ばずに利用可能なスキル一覧をエラーとして即時返信する
 - 存在する場合、`SKILL.md` のフロントマターを除いた本文を「このスキルの手順に従って実行してください」という指示文に整形し、`role: "custom"` / `customType: "skill-invocation"` の専用メッセージとして組み立てる
 - ユーザーの生発言（`./command スキル名 ...`）はそのまま `role: "user"` メッセージとして保持し、上記の skill-invocation メッセージと**2件セット**で `agent.prompt()` に渡す。両方とも JSONL セッションに永続化されるため、履歴上で「ユーザーが何を打ったか」と「LLM に渡った実行指示」を区別できる
 - `defaultConvertToLlm()` が skill-invocation メッセージを `user` ロールとして LLM 送信用メッセージに変換する（`<available_skills>` 経由の自律判断とは異なり、必ず該当スキルの手順が実行される）。`memory-bootstrap` と異なり1セッション内に複数件存在しうるため、出現するたびに変換する（最初の1件だけに絞るデデュープはしない）

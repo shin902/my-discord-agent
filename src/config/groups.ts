@@ -23,14 +23,7 @@ export const SkillSelectionSchema = z.union([
   z.literal("*"),
 ]);
 
-const ChannelConfigSchema = z.object({
-  channelId: z.string(),
-  sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
-  // feedcord 等、Webhook経由でこのチャンネルに投稿するメッセージを許可するWebhook IDのリスト
-  allowedWebhookIds: z.array(z.string()).optional(),
-});
-
-const MountConfigSchema = z.object({
+export const MountConfigSchema = z.object({
   host: z.string(),
   container: z.string().startsWith("/", {
     message: "mounts.container は絶対パスで指定してください",
@@ -38,22 +31,35 @@ const MountConfigSchema = z.object({
   readOnly: z.boolean().optional(),
 });
 
-// エージェントの挙動を決める設定。サンドボックスコンテナにそのまま渡される
-// （エージェント自身が書き換えられない config/groups.json 側で管理する）
+// 各信頼済み設定階層で指定できるエージェント実行設定。
+// オブジェクト・配列を含め、階層解決時はフィールド単位で完全置換する。
 export const AgentConfigSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
-  // true のとき返信先ユーザーへのメンション通知を許可する。省略時は false。
-  allowMention: z.boolean().optional(),
-  toolLogArgs: z.boolean().optional(),
   skills: SkillSelectionSchema.optional(),
+  mounts: z.array(MountConfigSchema).optional(),
 });
 
-const GroupConfigSchema = AgentConfigSchema.extend({
+// sandboxへ渡す実行設定。group限定のtoolLogArgsはagentのイベント整形に必要だが、
+// channel/cronの共通override対象には含めない。
+export const AgentRuntimeConfigSchema = AgentConfigSchema.extend({
+  allowMention: z.boolean().optional(),
+  toolLogArgs: z.boolean().optional(),
+});
+
+// チャンネル固有のrouting設定に加えて、AgentConfigを任意で上書きできる。
+const ChannelConfigSchema = AgentConfigSchema.extend({
+  channelId: z.string(),
+  sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
+  // feedcord 等、Webhook経由でこのチャンネルに投稿するメッセージを許可するWebhook IDのリスト
+  allowedWebhookIds: z.array(z.string()).optional(),
+});
+
+// allowMention/toolLogArgs は配送・観測設定であり、group限定のままにする。
+const GroupConfigSchema = AgentRuntimeConfigSchema.extend({
   name: z.string(),
   bot: z.string().min(1).optional(),
   channels: z.array(ChannelConfigSchema),
-  mounts: z.array(MountConfigSchema).optional(),
 });
 
 const GroupsConfigSchema = z.array(GroupConfigSchema);
@@ -63,6 +69,7 @@ export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
 export type MountConfig = z.infer<typeof MountConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+export type AgentRuntimeConfig = z.infer<typeof AgentRuntimeConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 
 let _groups: GroupConfig[] | null = null;

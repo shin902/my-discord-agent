@@ -118,6 +118,36 @@ describe("ingestDiscordMessage", () => {
     });
   });
 
+  it("channelのAgentConfig overrideをqueueへ保持する", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        model: { provider: "channel-provider", modelId: "channel-model" },
+        tools: [],
+        skills: "*",
+        mounts: [{ host: "channel", container: "/channel" }],
+      },
+    });
+
+    await ingestDiscordMessage(
+      makeMessage({ id: "message-channel-override" }),
+      { source: "backfill", replyOnFailure: false },
+    );
+
+    expect(
+      repo.findByIdempotencyKey("discord-message:message-channel-override"),
+    ).toMatchObject({
+      configOverride: {
+        model: { provider: "channel-provider", modelId: "channel-model" },
+        tools: [],
+        skills: "*",
+        mounts: [{ host: "channel", container: "/channel" }],
+      },
+    });
+  });
+
   it.each([
     { label: "bot", isBot: true, webhookId: null },
     { label: "Webhook", isBot: true, webhookId: "allowed-webhook" },

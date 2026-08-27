@@ -5,7 +5,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Client } from "discord.js";
 import { z } from "zod";
 import { loadRawCron } from "../config/config.js";
-import { ModelConfigSchema, SkillSelectionSchema } from "../config/groups.js";
+import { AgentConfigSchema } from "../config/groups.js";
+import { buildExtraMountArgs } from "../config/mounts.js";
 import {
   getDefaultDiscordClient,
   getDiscordClientForGroupName,
@@ -43,9 +44,8 @@ const CronJobSchema = z
     // 後方互換。新規設定では deliveryMode/sessionMode を使用する。
     mode: z.enum(["to-channel", "to-thread"]).optional(),
     handler: z.string().optional(),
-    model: ModelConfigSchema.optional(),
-    tools: z.array(z.string()).optional(),
-    skills: SkillSelectionSchema.optional(),
+    // group/channel と同じ AgentConfig fields。指定時は各フィールドを完全置換する。
+    ...AgentConfigSchema.shape,
     // ハンドラー固有の設定値。中身は検証せずそのまま CronContext 経由でハンドラーに渡す
     settings: z.unknown().optional(),
   })
@@ -248,8 +248,9 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
   );
   await Promise.all(handlers.map((h) => validateHandlerPath(h.handler)));
   for (const job of jobs) {
-    if (job.enabled && !job.handler && job.tools !== undefined) {
-      resolveTools(job.tools);
+    if (job.enabled && !job.handler) {
+      if (job.tools !== undefined) resolveTools(job.tools);
+      if (job.mounts !== undefined) buildExtraMountArgs(job.mounts);
     }
   }
   return jobs;

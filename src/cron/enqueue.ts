@@ -8,11 +8,9 @@ import {
   ThreadAutoArchiveDuration,
 } from "discord.js";
 import { validateModel } from "../agent/model.js";
-import type {
-  AgentConfig,
-  ModelConfig,
-  SkillSelection,
-} from "../config/groups.js";
+import { pickAgentConfig } from "../config/agent-resolution.js";
+import type { AgentConfig, SkillSelection } from "../config/groups.js";
+import { buildExtraMountArgs } from "../config/mounts.js";
 import {
   getQueueRepository,
   type QueueJob,
@@ -32,7 +30,7 @@ const ROOT = path.resolve(__dirname, "../..");
 const GROUPS_DIR = path.join(ROOT, "groups");
 const TEMPLATE_SKILLS_DIR = path.join(ROOT, "templates/SKILLS");
 
-export interface CronEnqueueContext {
+export type CronEnqueueContext = {
   id: string;
   client: Client;
   groupName?: string;
@@ -41,15 +39,12 @@ export interface CronEnqueueContext {
   sessionMode?: CronSessionMode;
   noReply?: boolean;
   mode?: "to-channel" | "to-thread";
-  model?: ModelConfig;
-  tools?: string[];
-  skills?: SkillSelection;
   idempotencyKey?: string;
   mailEmailId?: string;
   rssDispatchId?: string;
   rssStatePath?: string;
   appendInbox: QueueProducer;
-}
+} & Partial<AgentConfig>;
 
 function resolveModes(ctx: CronEnqueueContext): {
   deliveryMode: CronDeliveryMode;
@@ -83,10 +78,7 @@ function resolveModes(ctx: CronEnqueueContext): {
 function buildConfigOverride(
   ctx: CronEnqueueContext,
 ): Partial<AgentConfig> | undefined {
-  const override: Partial<AgentConfig> = {};
-  if (ctx.model !== undefined) override.model = ctx.model;
-  if (ctx.tools !== undefined) override.tools = ctx.tools;
-  if (ctx.skills !== undefined) override.skills = ctx.skills;
+  const override = pickAgentConfig(ctx);
   return Object.keys(override).length > 0 ? override : undefined;
 }
 
@@ -126,13 +118,14 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
       await validateModel(ctx.model.provider, ctx.model.modelId);
     }
     if (ctx.tools !== undefined) resolveTools(ctx.tools);
+    if (ctx.mounts !== undefined) buildExtraMountArgs(ctx.mounts);
     if (ctx.skills !== undefined && ctx.groupName !== undefined) {
       await validateSkills(ctx.groupName, ctx.skills);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new NonRetryableError(
-      `[cron-enqueue] model/tools/skills の設定が不正です: ${message}`,
+      `[cron-enqueue] AgentConfig (model/tools/skills/mounts) の設定が不正です: ${message}`,
     );
   }
 }

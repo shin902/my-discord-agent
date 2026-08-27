@@ -3,6 +3,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
+import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -10,8 +11,8 @@ import {
   type AgentConfig,
   findGroupByName,
   type GroupConfig,
-  type MountConfig,
 } from "../config/groups.js";
+import { buildExtraMountArgs } from "../config/mounts.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
@@ -215,39 +216,7 @@ function buildSanitizedCredentialJson(
   return JSON.stringify(sanitized);
 }
 
-const RESERVED_CONTAINER_PATHS = ["/workspace", "/sessions"];
-
-export function buildExtraMountArgs(mounts: MountConfig[]): string[] {
-  const args: string[] = [];
-  for (const mount of mounts) {
-    if (
-      RESERVED_CONTAINER_PATHS.some(
-        (reserved) =>
-          mount.container === reserved ||
-          mount.container.startsWith(`${reserved}/`),
-      )
-    ) {
-      throw new NonRetryableError(
-        `mounts.container は予約済みパス (${RESERVED_CONTAINER_PATHS.join(", ")}) と重複できません: ${mount.container}`,
-      );
-    }
-    let hostPath: string;
-    if (path.isAbsolute(mount.host)) {
-      hostPath = mount.host;
-    } else {
-      hostPath = path.join(ROOT, mount.host);
-      const rel = path.relative(ROOT, hostPath);
-      if (rel.startsWith("..") || path.isAbsolute(rel)) {
-        throw new NonRetryableError(
-          `mounts.host はリポジトリルート外を指しています: ${mount.host}`,
-        );
-      }
-    }
-    const suffix = mount.readOnly ? ":ro" : "";
-    args.push("-v", `${hostPath}:${mount.container}${suffix}`);
-  }
-  return args;
-}
+export { buildExtraMountArgs } from "../config/mounts.js";
 
 // groupName ごとの mounts 解決結果（docker -v 引数）のキャッシュ。
 // group-config.ts と同じ「起動時に1回だけロード、再起動まで反映されない」方針に合わせ、
@@ -255,19 +224,28 @@ export function buildExtraMountArgs(mounts: MountConfig[]): string[] {
 const extraMountArgsCache = new Map<string, string[]>();
 
 /**
- * 起動時バリデーション専用。グループ設定（model/tools/mounts）をまとめて検証し、
- * 無効な設定はスローして即クラッシュさせる。mounts の解決結果はキャッシュし、
- * sendMessage() からの再計算を避ける。
+ * 起動時バリデーション専用。グループと各チャンネルの effective
+ * AgentConfig（model/tools/mounts）を検証し、グループ既定の mounts はキャッシュする。
  */
 export async function validateGroupConfig(
   group: GroupConfig,
   defaultModel: { provider: string; modelId: string },
 ): Promise<void> {
-  await validateModel(
-    group.model?.provider ?? defaultModel.provider,
-    group.model?.modelId ?? defaultModel.modelId,
+  const validateConfig = async (config: AgentConfig): Promise<void> => {
+    await validateModel(
+      config.model?.provider ?? defaultModel.provider,
+      config.model?.modelId ?? defaultModel.modelId,
+    );
+    resolveTools(config.tools ?? []);
+    buildExtraMountArgs(config.mounts ?? []);
+  };
+
+  await validateConfig(resolveAgentConfig(group));
+  await Promise.all(
+    group.channels.map((channel) =>
+      validateConfig(resolveAgentConfig(group, channel)),
+    ),
   );
-  resolveTools(group.tools ?? []);
   extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));
 }
 
@@ -404,11 +382,10 @@ export async function sendMessage(
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
-  const baseConfig: AgentConfig = groupsEntry ?? {};
-  const effectiveConfig: AgentConfig = {
-    ...baseConfig,
-    ...options.configOverride,
-  };
+  const effectiveConfig = resolveAgentConfig(
+    groupsEntry,
+    options.configOverride,
+  );
 
   const resolvedModel = await resolveModelConfig(effectiveConfig.model);
 
@@ -428,16 +405,18 @@ export async function sendMessage(
     );
   }
 
-  // mounts は validateGroupConfig() が起動時に検証・キャッシュ済みならそれを使う。
-  // キャッシュに無い場合（未知のグループ名や、起動時検証を経ていない呼び出し）は
-  // その場で再計算してフォールバックする。
+  // group既定のmountsは起動時キャッシュを使い、configOverrideを含む
+  // effective値は必ずその場で検証してDocker引数へ変換する。
   let extraMountArgs: string[];
-  const cachedMountArgs = extraMountArgsCache.get(groupName);
+  const cachedMountArgs =
+    options.configOverride?.mounts === undefined
+      ? extraMountArgsCache.get(groupName)
+      : undefined;
   if (cachedMountArgs !== undefined) {
     extraMountArgs = cachedMountArgs;
   } else {
     try {
-      extraMountArgs = buildExtraMountArgs(groupsEntry?.mounts ?? []);
+      extraMountArgs = buildExtraMountArgs(effectiveConfig.mounts ?? []);
     } catch (err) {
       throw new NonRetryableError(
         `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
@@ -507,7 +486,16 @@ export async function sendMessage(
     groupName,
     sessionId,
     content: promptContent,
-    groupConfig: { ...effectiveConfig, model: resolvedModel },
+    groupConfig: {
+      ...effectiveConfig,
+      model: resolvedModel,
+      ...(groupsEntry?.allowMention !== undefined
+        ? { allowMention: groupsEntry.allowMention }
+        : {}),
+      ...(groupsEntry?.toolLogArgs !== undefined
+        ? { toolLogArgs: groupsEntry.toolLogArgs }
+        : {}),
+    },
     ...(agentsSnapshotContent !== undefined ? { agentsSnapshotContent } : {}),
     ...(agentsSnapshotPresent !== undefined ? { agentsSnapshotPresent } : {}),
     ...(memorySnapshotPresent !== undefined ? { memorySnapshotPresent } : {}),

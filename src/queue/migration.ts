@@ -128,6 +128,22 @@ function validMessage(value: unknown): value is InboxMessage {
         override.skills.some((skill) => typeof skill !== "string"))
     )
       return false;
+    if (
+      override.mounts !== undefined &&
+      (!Array.isArray(override.mounts) ||
+        override.mounts.some(
+          (mount) =>
+            !mount ||
+            typeof mount !== "object" ||
+            Array.isArray(mount) ||
+            typeof mount.host !== "string" ||
+            typeof mount.container !== "string" ||
+            !mount.container.startsWith("/") ||
+            (mount.readOnly !== undefined &&
+              typeof mount.readOnly !== "boolean"),
+        ))
+    )
+      return false;
     if (override.model !== undefined) {
       const model = override.model;
       if (

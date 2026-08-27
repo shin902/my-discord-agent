@@ -22,7 +22,10 @@ import { resolveModel } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
-import { type AgentConfig, AgentConfigSchema } from "../config/groups.js";
+import {
+  type AgentRuntimeConfig,
+  AgentRuntimeConfigSchema,
+} from "../config/groups.js";
 import {
   formatSkillCommandPrompt,
   parseSkillCommand,
@@ -386,7 +389,7 @@ export async function runAgentLoop(
   groupName: string,
   sessionId: string,
   content: string,
-  groupConfig: AgentConfig,
+  groupConfig: AgentRuntimeConfig,
   identity?: FrozenExecutionIdentity,
   systemPromptAppend?: string,
 ): Promise<string> {
@@ -732,7 +735,7 @@ const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
   content: z.string(),
-  groupConfig: AgentConfigSchema,
+  groupConfig: AgentRuntimeConfigSchema,
   agentsSnapshotContent: z.string().optional(),
   agentsSnapshotPresent: z.boolean().optional(),
   memorySnapshotPresent: z.boolean().optional(),
