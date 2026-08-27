@@ -57,6 +57,64 @@ describe("declarative item-thread poller integration", () => {
     state.repository = undefined;
   });
 
+  it("persists an empty item-thread response as terminal failure without delivery", async () => {
+    const repository = state.repository as InstanceType<typeof QueueRepository>;
+    const item = repository.enqueue({
+      channelId: "parent-channel",
+      groupName: "group",
+      sessionId: "cron-item-placeholder",
+      content: "summarize this item",
+      timestamp: new Date().toISOString(),
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronThread: true,
+      cronJobId: "item-empty-job",
+      cronProvisioning: true,
+    }).job;
+    const claimed = repository.claim("poller");
+    if (!claimed) throw new Error("expected item-thread claim");
+
+    const startThread = vi.fn().mockResolvedValue({ id: "thread-empty" });
+    const placeholder = { id: "placeholder-empty", startThread };
+    const parent = {
+      type: ChannelType.GuildText,
+      send: vi.fn().mockResolvedValue(placeholder),
+    };
+    const edit = vi.fn().mockResolvedValue(undefined);
+    const failureChannel = {
+      messages: {
+        fetch: vi.fn().mockResolvedValue({ edit }),
+      },
+    };
+    state.client.channels.fetch
+      .mockResolvedValueOnce(parent)
+      .mockResolvedValueOnce(failureChannel);
+    vi.mocked(sendMessage).mockResolvedValue(" \r\n\t");
+
+    await processMessage(claimed.job);
+
+    expect(repository.get(item.id)).toMatchObject({
+      status: "dead_letter",
+      terminalReason: "empty_response",
+      terminalState: "empty_response",
+      cronPlaceholderMessageId: "placeholder-empty",
+      cronThreadId: "thread-empty",
+      sessionId: "thread-empty",
+    });
+    expect(repository.getDelivery(item.id)).toBeUndefined();
+    expect(repository.listDeliveries()).toHaveLength(0);
+    expect(
+      repository.db
+        .prepare("SELECT reason,error,source FROM dead_letters WHERE job_id=?")
+        .get(item.id),
+    ).toMatchObject({
+      reason: "empty_response",
+      error: null,
+      source: "queue",
+    });
+    expect(edit).toHaveBeenCalledWith("⚠️ 処理に失敗しました");
+  });
+
   it("provisions Discord IDs and authoritative session before sendMessage", async () => {
     const repository = state.repository as InstanceType<typeof QueueRepository>;
     const item = repository.enqueue({
