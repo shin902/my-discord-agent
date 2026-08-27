@@ -7,6 +7,9 @@ describe("cron AgentConfig override", () => {
 
   it("channel設定を継承し、job指定は同じフィールドだけ完全置換する", async () => {
     vi.resetModules();
+    vi.doMock("../agent/model.js", () => ({
+      validateModel: vi.fn().mockResolvedValue(undefined),
+    }));
     vi.doMock("../config/groups.js", () => ({
       findGroupByName: vi.fn().mockResolvedValue({
         name: "group",
