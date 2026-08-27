@@ -6,7 +6,7 @@
 
 ```
 config/
-  config.json              # defaultModel・proxy・agent などの設定
+  config.json              # Bot profile・defaultModel・proxy・agent などの設定
   config.example.json
   providers.json           # AI プロバイダーごとの実行ポリシー（省略可）
   providers.example.json
@@ -29,7 +29,7 @@ AgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマ
 | `config/credentials.json` | ✓ | 配列 | AI プロバイダー・外部サービスの接続設定 |
 | `config/groups.json` | ✓ | 配列 | チャンネル → グループのマッピング |
 | `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義 |
-| `config/config.json` | ✓ | オブジェクト | `defaultModel`（必須）・proxy・agent 設定 |
+| `config/config.json` | ✓ | オブジェクト | Bot profile・`defaultModel`（必須）・proxy・agent 設定 |
 
 > **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
 
@@ -302,6 +302,16 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 ```json
 {
+  "bots": {
+    "coding": {
+      "group": "default",
+      "instructions": "コード変更を担当する worker",
+      "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+      "tools": ["read", "write", "edit"],
+      "skills": [],
+      "mounts": []
+    }
+  },
   "defaultModel": { "provider": "zai", "modelId": "glm-4.7-flash" },
   "proxy": { "requestTimeoutMs": 120000 },
   "agent": { "timeoutMs": 600000 }
@@ -310,9 +320,12 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 | キー | 必須 | 内容 |
 |---|---|---|
+| `bots` | — | 名前付き Bot profile の map。各 profile は `group` と空でない `instructions`（ともに必須）、AgentConfig（`model` / `tools` / `skills` / `mounts`）を持つ |
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
+
+`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig は `group` の設定を将来上書きするために使い、channel の設定は継承しない。現在は設定の読み込み・validation のみで、Bot の実行処理は別途実装する。
 
 ## 環境変数
 
