@@ -77,6 +77,8 @@ LLM 実行結果と Discord 配信は分離されており、ジョブ状態は 
 | `config/providers.json` | No | Provider ごとの concurrency 設定。省略時はデフォルト値を使用 |
 | `config/cron.json` | No | cron job 定義とAgentConfig override |
 
+AgentConfigの継承は実行経路ごとに分かれます。通常のDiscord会話は `group → channel`、cronは配送先のchannel/thread設定を参照せず `group → cron job` です。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDと既存スレッドIDでAgentConfigの解決結果は変わりません。いずれも指定した `model` / `tools` / `skills` / `mounts` はフィールド単位で完全置換されます。
+
 パスは `CONFIG_PATH`、`GROUPS_PATH`、`CREDENTIALS_PATH`、`PROVIDERS_PATH`、`CRON_PATH` で上書きできます。
 
 ### Discord Bot token

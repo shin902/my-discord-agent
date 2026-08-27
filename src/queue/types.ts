@@ -38,7 +38,7 @@ export interface InboxMessage {
   cronFailureNotified?: boolean;
   rssDispatchId?: string;
   rssStatePath?: string;
-  /** Channel/cron AgentConfig fields resolved at enqueue time. */
+  /** AgentConfig fields selected by Discord channel intake or a cron job. */
   configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];
   agentsSnapshotContent?: string;

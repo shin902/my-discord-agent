@@ -84,7 +84,7 @@ data/queue/dead-letter.jsonl# リトライ上限超えたメッセージ（自�
 data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
 ```
 
-設定ファイルの詳細リファレンスは `docs/config.md` を参照。
+設定ファイルの詳細リファレンスは `docs/config.md` を参照。通常のDiscord会話はAgentConfigを `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順に解決する。
 
 cron ハンドラーの置き場は `src/cron/jobs/local/` を gitignore し、機構（`src/cron/`）・共有サンプルと個人ジョブを分離している。`local/` を `src/` 配下に置くのは必須で、`tsconfig.json` の `include: ["src/**/*"]` 上 `tsc` が `src/` 外をコンパイルせず、prod（`pnpm start`）で `loadHandlerFn` が `dist/` の `.js` を import できなくなるため。ジョブ定義（`cron` 配列・`handler` パス）は gitignore 済みの `config` 側に書く。
 

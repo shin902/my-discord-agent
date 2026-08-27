@@ -21,7 +21,7 @@ groups/{name}/
   AGENTS.md                # グループのシステムプロンプト
 ```
 
-グループ・チャンネル・cron jobのAgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマウントされない静的設定として管理する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
+AgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → channel`、cronでは配送先のchannel/thread設定を継承せず `group → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
 
 | ファイル | 必須 | トップレベル形式 | 内容 |
 |---|---|---|---|
@@ -136,7 +136,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル。channelで指定するとgroupの指定を完全置換 |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 
-`sessionMode` の詳細は `CLAUDE.md` を参照。AgentConfigの解決順は `group → channel → cron job`。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `skills` / `mounts` の暗黙加算やdeep mergeは行わない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
+`sessionMode` の詳細は `CLAUDE.md` を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `skills` / `mounts` の暗黙加算やdeep mergeは行わない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
 
 ### 起動時Discord履歴バックフィル
 
@@ -204,7 +204,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 
-`model` / `tools` / `skills` / `mounts` を任意で指定すると、groupとchannelの既定値をそのジョブの実行時だけ上書きできる。`skills` は配列、`[]`、`"*"` のいずれも指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
+`model` / `tools` / `skills` / `mounts` を任意で指定すると、groupの既定値をそのジョブの実行時だけ上書きできる。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfigは継承しない。`skills` は配列、`[]`、`"*"` のいずれも指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
 
 ### jobs/mail.ts
 

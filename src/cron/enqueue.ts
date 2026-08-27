@@ -8,13 +8,8 @@ import {
   ThreadAutoArchiveDuration,
 } from "discord.js";
 import { validateModel } from "../agent/model.js";
-import { resolveAgentConfig } from "../config/agent-resolution.js";
-import type {
-  AgentConfig,
-  ChannelConfig,
-  SkillSelection,
-} from "../config/groups.js";
-import { findGroupByName } from "../config/groups.js";
+import { pickAgentConfig } from "../config/agent-resolution.js";
+import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import {
   getQueueRepository,
@@ -80,23 +75,10 @@ function resolveModes(ctx: CronEnqueueContext): {
   return { deliveryMode: "direct", sessionMode: "per-run" };
 }
 
-async function buildConfigOverride(
+function buildConfigOverride(
   ctx: CronEnqueueContext,
-): Promise<Partial<AgentConfig> | undefined> {
-  let channel: ChannelConfig | undefined;
-  if (ctx.groupName) {
-    try {
-      const group = await findGroupByName(ctx.groupName);
-      channel = group?.channels.find(
-        (candidate) => candidate.channelId === ctx.channelId,
-      );
-    } catch {
-      // Cron enqueue historically did not require loading groups.json. If a
-      // standalone handler/test has no group loader, retain the job override
-      // and let the normal manager validation handle the group config later.
-    }
-  }
-  const override = resolveAgentConfig(channel, ctx);
+): Partial<AgentConfig> | undefined {
+  const override = pickAgentConfig(ctx);
   return Object.keys(override).length > 0 ? override : undefined;
 }
 
@@ -232,7 +214,7 @@ async function registerCronItemThread(
 
   const key = `cron-item:${ctx.id}:${randomUUID()}`;
   const repository = getQueueRepository();
-  const configOverride = await buildConfigOverride(ctx);
+  const configOverride = buildConfigOverride(ctx);
   const sessionId = `cron-${ctx.id}-${randomUUID()}`;
   await ctx.appendInbox({
     channelId: ctx.channelId,
@@ -294,7 +276,7 @@ export async function enqueueCronInbox(
     sessionMode === "per-run" || deliveryMode === "new-thread"
       ? `cron-${ctx.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       : ctx.channelId;
-  const configOverride = await buildConfigOverride(ctx);
+  const configOverride = buildConfigOverride(ctx);
 
   await ctx.appendInbox({
     channelId: ctx.channelId,

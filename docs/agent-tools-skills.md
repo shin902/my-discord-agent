@@ -1,10 +1,10 @@
 # エージェントのツールとスキル
 
-エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）と `AGENTS.md` でどれを有効にするかを制御する。AgentConfigの解決順は `group → channel → cron job` で、tools/skillsは指定時に完全置換する。
+エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）と `AGENTS.md` でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skillsは指定時に完全置換する。
 
 ## ツール
 
-エージェントに渡す MCP ツール群。AgentConfigの `tools` フィールド（`groups[].tools`、`groups[].channels[].tools`、cron jobの `tools`）で指定する。
+エージェントに渡す MCP ツール群。通常のDiscord会話では `groups[].tools` と `groups[].channels[].tools`、cronではgroupの `tools` とcron jobの `tools` で指定する。cronの `channelId` は配送先だけを表し、配送先channelの `tools` は継承しない。
 
 | ツール名 | 概要 |
 |---------|------|
@@ -77,7 +77,7 @@
 
 ## スキル
 
-`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。AgentConfigの `skills` フィールド（group/channel/cron job）で選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
+`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
 スキルと専用ツールは独立した実行経路として扱う。スキルは `bash` と同梱スクリプトを利用でき、標準出力の直接利用だけでなくファイルへのリダイレクトなど、用途に応じた柔軟なワークフローを提供する。一方、専用ツールは `bash` を許可したくない不特定多数向けのボットでも、対象機能だけを安全に許可するために使う。スキルを専用ツールの使い方だけを説明するドキュメントにはしない。
 

@@ -405,7 +405,7 @@ export async function sendMessage(
     );
   }
 
-  // group既定のmountsは起動時キャッシュを使い、channel/cronのoverrideを含む
+  // group既定のmountsは起動時キャッシュを使い、configOverrideを含む
   // effective値は必ずその場で検証してDocker引数へ変換する。
   let extraMountArgs: string[];
   const cachedMountArgs =
