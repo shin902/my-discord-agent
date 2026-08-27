@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  link: vi.fn(),
+  rename: vi.fn(),
+  unlink: vi.fn(),
   appendFile: vi.fn(),
   mkdir: vi.fn(),
   chmod: vi.fn(),
@@ -12,15 +15,25 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
 }));
 
-const { readFile, writeFile, appendFile, mkdir, chmod } = await import(
-  "node:fs/promises"
-);
+const {
+  readFile,
+  writeFile,
+  link,
+  rename,
+  unlink,
+  appendFile,
+  mkdir,
+  chmod,
+} = await import("node:fs/promises");
 const { existsSync } = await import("node:fs");
 const { loadMessages, appendMessage, loadOrCreateSessionTimeAnchor } =
   await import("./session.js");
 
 const mockReadFile = vi.mocked(readFile);
 const mockWriteFile = vi.mocked(writeFile);
+const mockLink = vi.mocked(link);
+const mockRename = vi.mocked(rename);
+const mockUnlink = vi.mocked(unlink);
 const mockAppendFile = vi.mocked(appendFile);
 const mockMkdir = vi.mocked(mkdir);
 const mockChmod = vi.mocked(chmod);
@@ -132,6 +145,9 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     mockMkdir.mockResolvedValue(undefined);
     mockChmod.mockResolvedValue(undefined);
     mockWriteFile.mockResolvedValue(undefined);
+    mockLink.mockResolvedValue(undefined);
+    mockRename.mockResolvedValue(undefined);
+    mockUnlink.mockResolvedValue(undefined);
   });
 
   it("既存sidecarの時刻を再利用する", async () => {
@@ -145,9 +161,11 @@ describe("loadOrCreateSessionTimeAnchor", () => {
 
     expect(result).toBe(123456);
     expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockLink).not.toHaveBeenCalled();
+    expect(mockRename).not.toHaveBeenCalled();
   });
 
-  it("sidecarがなければfallback時刻を一度だけ保存する", async () => {
+  it("sidecarがなければ完成済みtmpをno-clobberで原子的に公開する", async () => {
     mockReadFile.mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -159,20 +177,28 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     );
 
     expect(result).toBe(1787868000000);
+    const temporaryFile = String(mockWriteFile.mock.calls[0]?.[0]);
+    expect(temporaryFile).toContain("session-a.time-anchor.");
+    expect(temporaryFile).toEndWith(".tmp");
     expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("session-a.time-anchor"),
+      temporaryFile,
       "1787868000000\n",
       { encoding: "utf-8", mode: 0o666, flag: "wx" },
     );
+    expect(mockLink).toHaveBeenCalledWith(
+      temporaryFile,
+      expect.stringMatching(/session-a\.time-anchor$/),
+    );
+    expect(mockUnlink).toHaveBeenCalledWith(temporaryFile);
   });
 
-  it("初期化競合では先に作られたsidecarを正本にする", async () => {
+  it("初期化競合では先に原子的に公開されたsidecarを正本にする", async () => {
     mockReadFile
       .mockRejectedValueOnce(
         Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
       )
       .mockResolvedValueOnce("111111\n");
-    mockWriteFile.mockRejectedValue(
+    mockLink.mockRejectedValue(
       Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
     );
 
@@ -183,14 +209,48 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     );
 
     expect(result).toBe(111111);
+    expect(mockRename).not.toHaveBeenCalled();
   });
 
-  it("不正な既存sidecarはエラーにする", async () => {
+  it("旧実装が残した空またはpartial sidecarは原子的に自己修復する", async () => {
     mockReadFile.mockResolvedValue("not-a-timestamp\n");
 
-    await expect(
-      loadOrCreateSessionTimeAnchor("group1", "session-a", 123),
-    ).rejects.toThrow("不正なセッション時刻アンカー");
+    const result = await loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      333333,
+    );
+
+    expect(result).toBe(333333);
+    const temporaryFile = String(mockWriteFile.mock.calls[0]?.[0]);
+    expect(mockRename).toHaveBeenCalledWith(
+      temporaryFile,
+      expect.stringMatching(/session-a\.time-anchor$/),
+    );
+    expect(mockUnlink).toHaveBeenCalledWith(temporaryFile);
+  });
+
+  it("競合相手が不完全なsidecarを公開していても完成済みtmpで復旧する", async () => {
+    mockReadFile
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+      )
+      .mockResolvedValueOnce("");
+    mockLink.mockRejectedValue(
+      Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
+    );
+
+    const result = await loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      444444,
+    );
+
+    expect(result).toBe(444444);
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringMatching(/\.tmp$/),
+      expect.stringMatching(/session-a\.time-anchor$/),
+    );
   });
 });
 
