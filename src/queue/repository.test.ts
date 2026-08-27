@@ -281,6 +281,54 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("persists empty_response when an empty response is dead-lettered", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "repo-empty-response" },
+      );
+      const claimed = repo.claim("worker-a", 1_000);
+      repo.deadLetter(
+        enqueued.job.id,
+        expectDefined(claimed).fencingToken,
+        "empty_response",
+      );
+
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        status: "dead_letter",
+        terminalReason: "empty_response",
+        terminalState: "empty_response",
+        succeeded: false,
+      });
+      expect(repo.getDelivery(enqueued.job.id)).toBeUndefined();
+      expect(repo.listDeliveries()).toHaveLength(0);
+      expect(
+        repo.db
+          .prepare(
+            "SELECT reason,error,source FROM dead_letters WHERE job_id=?",
+          )
+          .get(enqueued.job.id),
+      ).toMatchObject({
+        reason: "empty_response",
+        error: null,
+        source: "queue",
+      });
+      expect(repo.getIdempotencyRecord("repo-empty-response")).toMatchObject({
+        status: "dead_letter",
+        jobId: enqueued.job.id,
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("commits a suppressed response as success without delivery", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

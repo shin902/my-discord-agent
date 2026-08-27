@@ -29,12 +29,7 @@ const POLL_MS = 1000;
 const SLOW_RESPONSE_MS = 60_000;
 let running = false;
 
-type ResponseOutcome =
-  | "success"
-  | "empty-response"
-  | "retry"
-  | "dead-letter"
-  | "unexpected-error";
+type ResponseOutcome = "success" | "retry" | "dead-letter" | "unexpected-error";
 
 interface ResponseTiming {
   startedAt: number;
@@ -172,6 +167,10 @@ const NO_REPLY_SYSTEM_PROMPT =
 
 function hasNoReplyMarker(response: string): boolean {
   return response.split(/\r?\n/).some((line) => line.trim() === "<NO_REPLY>");
+}
+
+function isEmptyAgentResponse(response: string): boolean {
+  return response.trim().length === 0;
 }
 
 async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
@@ -473,6 +472,27 @@ async function releaseRssAfterFailure(
     msg.idempotencyKey,
     "dead_letter",
   );
+}
+
+async function failEmptyAgentResponse(
+  msg: InboxMessage,
+  timing: ResponseTiming,
+): Promise<void> {
+  if (msg.rssDispatchId) {
+    await releaseRssAfterFailure(msg, "empty_response", timing);
+  } else {
+    if (msg.fencingToken === undefined) {
+      throw new Error(`fenced inbox message required: ${msg.id}`);
+    }
+    await getQueueRepository().deadLetter(
+      msg.id,
+      msg.fencingToken,
+      "empty_response",
+      undefined,
+      executionMetadata(timing),
+    );
+  }
+  await finalizeCronFailure(msg);
 }
 
 async function failAttemptIfNonZeroExitCode(
@@ -792,28 +812,10 @@ async function processCronThreadDelivery(
       },
     );
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
-    if (!response.trim()) {
-      if (msg.rssDispatchId) {
-        outcome = "dead-letter";
-        await releaseRssAfterFailure(msg, "empty_response", timing);
-        await finalizeCronFailure(msg);
-        return;
-      }
-      if (msg.cronDeliveryMode === "item-thread") {
-        outcome = "retry";
-        if (msg.fencingToken !== undefined) {
-          await getQueueRepository().failAttempt(
-            msg.id,
-            new Error("empty agent response"),
-            msg.fencingToken,
-            { metadata: executionMetadata(timing) },
-          );
-          if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
-            await finalizeCronFailure(msg);
-          }
-        }
-        return;
-      }
+    if (isEmptyAgentResponse(response)) {
+      outcome = "dead-letter";
+      await failEmptyAgentResponse(msg, timing);
+      return;
     }
     const suppressDelivery =
       msg.cronDeliveryMode !== "item-thread" && hasNoReplyMarker(response);
@@ -845,7 +847,7 @@ async function processCronThreadDelivery(
         },
       );
     if (suppressDelivery) await finalizeSuppressedSource(msg);
-    outcome = response ? "success" : "empty-response";
+    outcome = "success";
   } catch (error) {
     if (msg.rssDispatchId) {
       outcome = "dead-letter";
@@ -1128,12 +1130,10 @@ export async function processMessage(
     }
 
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
-    if (!response.trim()) {
-      if (msg.rssDispatchId) {
-        outcome = "dead-letter";
-        await releaseRssAfterFailure(msg, "empty_response", timing);
-        return;
-      }
+    if (isEmptyAgentResponse(response)) {
+      outcome = "dead-letter";
+      await failEmptyAgentResponse(msg, timing);
+      return;
     }
     const suppressDelivery = hasNoReplyMarker(response);
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
@@ -1166,7 +1166,7 @@ export async function processMessage(
       },
     );
     if (suppressDelivery) await finalizeSuppressedSource(msg);
-    outcome = response ? "success" : "empty-response";
+    outcome = "success";
     stopTyping();
   } finally {
     stopTyping();
