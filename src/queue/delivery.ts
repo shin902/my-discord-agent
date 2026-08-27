@@ -361,9 +361,13 @@ export class DeliveryWorker {
           const originalSessionId = job.sessionId;
           await renameSession(job.groupName, originalSessionId, threadId);
           try {
-            const promoted = this.repository.provisionCronJob(job.id, threadId, {
-              cronThreadId: threadId,
-            });
+            const promoted = this.repository.provisionCronJob(
+              job.id,
+              threadId,
+              {
+                cronThreadId: threadId,
+              },
+            );
             if (!promoted) throw new Error(`unknown job ${job.id}`);
           } catch (error) {
             await renameSession(
