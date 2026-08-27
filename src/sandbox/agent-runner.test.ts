@@ -34,25 +34,19 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
 vi.mock("../agent/session.js", () => ({
   loadMessages: vi.fn(),
   appendMessage: vi.fn(),
+  loadOrCreateSessionTimeAnchor: vi.fn().mockResolvedValue(1787868000000),
 }));
 
 const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
   "./agent-runner.js"
 );
-const { loadMessages, appendMessage } = await import("../agent/session.js");
+const { loadMessages, appendMessage, loadOrCreateSessionTimeAnchor } =
+  await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
-function todayJST(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" });
-}
-
 function datePromptJST(): string {
-  const weekday = new Date().toLocaleDateString("en-US", {
-    timeZone: "Asia/Tokyo",
-    weekday: "short",
-  });
-  return `## Today's date\n\n${todayJST()} (${weekday}) JST`;
+  return "## Session time anchor\n\nStarted: 2026-08-28 07:00 JST (Fri)";
 }
 
 function createMockAgent(deltas: string[], endMessage: unknown) {
@@ -81,6 +75,7 @@ describe("runAgentLoop", () => {
     lastAgentOptions = undefined;
     vi.mocked(loadMessages).mockResolvedValue([]);
     vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(loadOrCreateSessionTimeAnchor).mockResolvedValue(1787868000000);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -114,6 +109,11 @@ describe("runAgentLoop", () => {
     );
 
     expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
+    expect(loadOrCreateSessionTimeAnchor).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.any(Number),
+    );
     expect(lastAgentOptions).toMatchObject({
       initialState: {
         systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}`,
@@ -141,7 +141,7 @@ describe("runAgentLoop", () => {
 
     expect(lastAgentOptions).toMatchObject({
       initialState: {
-        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n独立行に <NO_REPLY> と出力する\n\n${datePromptJST()}`,
+        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n独立行に <NO_REPLY> と出力する`,
       },
     });
     expect(appendMessage).not.toHaveBeenCalledWith(
@@ -305,7 +305,6 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // agents-snapshot が appendMessage で保存される（system role 維持のため AGENTS.md 原文をそのまま保持）
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -315,7 +314,6 @@ describe("runAgentLoop", () => {
         content: "カスタムプロンプト",
       }),
     );
-    // memory-bootstrap が appendMessage で保存される
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -326,7 +324,6 @@ describe("runAgentLoop", () => {
       }),
     );
 
-    // messages 配列の先頭に agents-snapshot、続いて memory-bootstrap が含まれる
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
@@ -365,7 +362,6 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // self-bootstrap が appendMessage で保存される
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -385,7 +381,6 @@ describe("runAgentLoop", () => {
       }),
     );
 
-    // messages 配列は agents-snapshot → memory-bootstrap → self-bootstrap の順で並ぶ
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
@@ -441,7 +436,6 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // bootstrap custom メッセージは追加されない
     const bootstrapCalls = vi
       .mocked(appendMessage)
       .mock.calls.filter(
@@ -478,7 +472,6 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // 空文字でも「ファイルは存在する」という状態を agents-snapshot として固定化する
     const snapshotCalls = vi
       .mocked(appendMessage)
       .mock.calls.filter(
@@ -524,11 +517,9 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // AGENTS.md / MEMORY.md は読み込まれない
     expect(readFile).not.toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
     expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
 
-    // custom メッセージは追加で書き込まれない
     const promptAppends = vi
       .mocked(appendMessage)
       .mock.calls.filter(
@@ -540,7 +531,6 @@ describe("runAgentLoop", () => {
       );
     expect(promptAppends).toHaveLength(0);
 
-    // 既存スナップショットの内容が systemPrompt に再利用される
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
@@ -618,9 +608,7 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // MEMORY.md は既存の bootstrap があるため再読み込みしない
     expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
-    // SELF.md は bootstrap がまだ無いため読み込んで移行する
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -630,7 +618,6 @@ describe("runAgentLoop", () => {
         content: expect.stringContaining("後から生えた人格"),
       }),
     );
-    // memory-bootstrap は再書き込みされない
     const memoryAppends = vi
       .mocked(appendMessage)
       .mock.calls.filter(
@@ -670,9 +657,6 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // 移行ターンでも self-bootstrap が memory-bootstrap より前に来てはいけない
-    // （次ターン以降は JSONL の定義順ロードで memory-bootstrap → self-bootstrap になるため、
-    // 移行ターンだけ逆転するとプロンプトキャッシュが不安定になる）
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
@@ -707,16 +691,13 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // AGENTS.md は systemPrompt に含まれる（system role として復元）
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
     expect(systemPrompt).toContain("旧形式プロンプト");
-    // MEMORY.md は systemPrompt には含めない（memory-bootstrap 経由で user role として渡す）
     expect(systemPrompt).not.toContain("旧記憶");
     expect(systemPrompt).not.toContain("## Memory (MEMORY.md)");
 
-    // agents-snapshot として JSONL に書き込まれ、次回以降は再読み込みされない
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -726,7 +707,6 @@ describe("runAgentLoop", () => {
         content: "旧形式プロンプト",
       }),
     );
-    // memory-bootstrap として JSONL に書き込まれる
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -737,19 +717,15 @@ describe("runAgentLoop", () => {
       }),
     );
 
-    // Agent に渡す messages の先頭に agents-snapshot、続いて memory-bootstrap が入る
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({ customType: "agents-snapshot" });
     expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
-    // 既存履歴1件 + agents-snapshot 1件 + memory-bootstrap 1件
     expect(messages).toHaveLength(3);
   });
 
   it("ロード時に JSONL 末尾にある agents-snapshot / memory-bootstrap を先頭へ並べ替える（移行ターン以降のキャッシュ整合性）", async () => {
-    // 旧形式セッションの移行ターン直後を模した JSONL の中身。
-    // appendMessage で末尾追記されているため、bootstrap 系が履歴の途中に挟まっている。
     const agentsSnapshotMsg = {
       role: "custom",
       customType: "agents-snapshot",
@@ -796,7 +772,6 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // bootstrap 系が先頭に並び替えられ、残り履歴は元の順序を保つ
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
@@ -858,7 +833,6 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // memory-bootstrap メッセージの content に切り詰めた MEMORY.md が含まれる
     const bootstrapCall = vi
       .mocked(appendMessage)
       .mock.calls.find(
@@ -1237,6 +1211,7 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
     vi.clearAllMocks();
     vi.mocked(loadMessages).mockResolvedValue([]);
     vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(loadOrCreateSessionTimeAnchor).mockResolvedValue(1787868000000);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -1308,6 +1283,7 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     vi.clearAllMocks();
     vi.mocked(loadMessages).mockResolvedValue([]);
     vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(loadOrCreateSessionTimeAnchor).mockResolvedValue(1787868000000);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
