@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   appendFile,
   chmod,
+  link,
   mkdir,
   readFile,
+  rename,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -76,9 +80,29 @@ function parseTimeAnchor(value: string): number | undefined {
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : undefined;
 }
 
+type TimeAnchorState =
+  | { kind: "missing" }
+  | { kind: "invalid" }
+  | { kind: "valid"; timestamp: number };
+
+async function readTimeAnchorState(file: string): Promise<TimeAnchorState> {
+  try {
+    const timestamp = parseTimeAnchor(await readFile(file, "utf-8"));
+    return timestamp === undefined
+      ? { kind: "invalid" }
+      : { kind: "valid", timestamp };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { kind: "missing" };
+    }
+    throw err;
+  }
+}
+
 /**
  * セッション開始時刻を会話JSONLとは別のsidecarへ一度だけ固定する。
  * 既存セッション移行時は caller が履歴の最古timestampを fallback として渡せる。
+ * sidecar は完成済みtmpから原子的に公開し、旧実装由来の壊れたsidecarは自己修復する。
  */
 export async function loadOrCreateSessionTimeAnchor(
   groupName: string,
@@ -90,33 +114,47 @@ export async function loadOrCreateSessionTimeAnchor(
   await ensureDir(groupName);
 
   const file = sessionTimeAnchorPath(groupName, sessionId);
-  try {
-    const existing = parseTimeAnchor(await readFile(file, "utf-8"));
-    if (existing !== undefined) return existing;
-    throw new Error(`不正なセッション時刻アンカー: ${file}`);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
+  const initialState = await readTimeAnchorState(file);
+  if (initialState.kind === "valid") return initialState.timestamp;
 
   const timestamp =
     Number.isFinite(fallbackTimestamp) && fallbackTimestamp > 0
       ? fallbackTimestamp
       : Date.now();
+  const temporaryFile = `${file}.${process.pid}.${randomUUID()}.tmp`;
+
+  await writeFile(temporaryFile, `${timestamp}\n`, {
+    encoding: "utf-8",
+    mode: 0o666,
+    flag: "wx",
+  });
+
   try {
-    await writeFile(file, `${timestamp}\n`, {
-      encoding: "utf-8",
-      mode: 0o666,
-      flag: "wx",
-    });
-    return timestamp;
-  } catch (err) {
-    // 同一セッションの初期化が競合した場合は、先に作られた値を正本にする。
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    const existing = parseTimeAnchor(await readFile(file, "utf-8"));
-    if (existing === undefined) {
-      throw new Error(`不正なセッション時刻アンカー: ${file}`);
+    if (initialState.kind === "invalid") {
+      // 旧実装が残した空/partial sidecarは完成済みtmpで原子的に置換する。
+      await rename(temporaryFile, file);
+      return timestamp;
     }
-    return existing;
+
+    try {
+      // hard link は同一ディレクトリ内でno-clobberに公開できる。
+      // publish前にtmpへのwriteが完了しているため、final名からpartial内容は見えない。
+      await link(temporaryFile, file);
+      return timestamp;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+
+      // 同一セッションの初期化が競合した場合は、先に公開された有効値を正本にする。
+      const winner = await readTimeAnchorState(file);
+      if (winner.kind === "valid") return winner.timestamp;
+
+      // rolling update等で旧実装が不完全なfinalを先に作った場合も自己修復する。
+      await rename(temporaryFile, file);
+      return timestamp;
+    }
+  } finally {
+    // rename済みならENOENT、link済みならtmp名だけを削除する。cleanup失敗でsessionを壊さない。
+    await unlink(temporaryFile).catch(() => {});
   }
 }
 
