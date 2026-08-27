@@ -32,12 +32,14 @@ import {
 } from "../skills/command.js";
 import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
+import { formatSessionTimeAnchor } from "../time/context.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 
 // pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
 // - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
 //   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
+// - "session-time-anchor": セッション開始時刻を固定化する。チャット履歴には乗せず systemPrompt にのみ使う。
 // - "memory-bootstrap": MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
 // - "self-bootstrap": /workspace/memory/SELF.md をセッション初回に注入する擬似ユーザーメッセージ。
 //   MEMORY.md（過去の事象＝書き換え不可の記録）とはカテゴリを分け、SELF.md は
@@ -52,6 +54,7 @@ import { isTransientError } from "../utils/error.js";
 // チャット表示の可否判定に使う。LLM 送信可否（defaultConvertToLlm 側で制御）とは別概念。
 // うちはその TUI を使わないため実質無効だが、いずれも裏方メッセージなので意味的に false 固定。
 const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
+const SESSION_TIME_ANCHOR_TYPE = "session-time-anchor";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 const SELF_BOOTSTRAP_TYPE = "self-bootstrap";
 const SKILL_INVOCATION_TYPE = "skill-invocation";
@@ -61,6 +64,10 @@ const SKILL_INVOCATION_TYPE = "skill-invocation";
 // [object Object] 化しないよう型上も string に絞る
 type AgentsSnapshotMessage = Omit<CustomMessage, "content"> & {
   customType: typeof AGENTS_SNAPSHOT_TYPE;
+  content: string;
+};
+type SessionTimeAnchorMessage = Omit<CustomMessage, "content"> & {
+  customType: typeof SESSION_TIME_ANCHOR_TYPE;
   content: string;
 };
 // MEMORY.md / SELF.md 共通の context-bootstrap メッセージ型（詳細は ContextBootstrapChannel 定義を参照）
@@ -178,6 +185,12 @@ function isAgentsSnapshotMessage(
   return getCustomType(msg) === AGENTS_SNAPSHOT_TYPE;
 }
 
+function isSessionTimeAnchorMessage(
+  msg: AgentMessage,
+): msg is SessionTimeAnchorMessage {
+  return getCustomType(msg) === SESSION_TIME_ANCHOR_TYPE;
+}
+
 function isSkillInvocationMessage(
   msg: AgentMessage,
 ): msg is SkillInvocationMessage {
@@ -237,17 +250,14 @@ function loadSystemPromptFromWorkspace(): Promise<string | null> {
   return loadWorkspaceFile("/workspace/AGENTS.md");
 }
 
-function formatDateForPrompt(): string {
-  const now = new Date();
-  const today = now.toLocaleDateString("en-CA", {
-    timeZone: "Asia/Tokyo",
-  });
-  // 「明日」「来週の月曜」等の相対日付を解決できるよう曜日も渡す
-  const weekday = now.toLocaleDateString("en-US", {
-    timeZone: "Asia/Tokyo",
-    weekday: "short",
-  });
-  return `## Today's date\n\n${today} (${weekday}) JST`;
+function findEarliestMessageTimestamp(messages: AgentMessage[]): number | undefined {
+  let earliest: number | undefined;
+  for (const message of messages) {
+    const timestamp = message.timestamp;
+    if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) continue;
+    if (earliest === undefined || timestamp < earliest) earliest = timestamp;
+  }
+  return earliest;
 }
 
 function formatBootstrapSection(
@@ -351,7 +361,7 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
 }
 
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
- * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
+ * - agentsSnapshot / sessionTimeAnchor: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
  * - contextBootstrap（memoryBootstrap / selfBootstrap）: customType ごとに最初の1件のみ
  *   user として展開し、残りは除外する（セッションあたり1件しか書き込まれないため、
  *   実質的にフィルタが発動するケースはない）。
@@ -362,7 +372,9 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   const bootstrapSeen = new Set<string>();
   return messages.flatMap((msg) => {
-    if (isAgentsSnapshotMessage(msg)) return [];
+    if (isAgentsSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg)) {
+      return [];
+    }
     const customType = getCustomType(msg);
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];
@@ -402,12 +414,13 @@ export async function runAgentLoop(
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
 
-  // bootstrap 系（agents-snapshot / context-bootstrap＝memory-bootstrap・self-bootstrap）は
+  // bootstrap 系（agents-snapshot / session-time-anchor / context-bootstrap）は
   // 常に先頭に並べる。旧形式セッションの移行では appendMessage で JSONL 末尾に追記されるため、
   // ロード後に並べ替えないと、移行ターンと次ターン以降で bootstrap の位置が変わり、
   // LLM への見え方が非対称になる上にプロンプトキャッシュも効かなくなる。
   const isBootstrapMessage = (m: AgentMessage) =>
     isAgentsSnapshotMessage(m) ||
+    isSessionTimeAnchorMessage(m) ||
     CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(m) ?? "");
   messages = [
     ...messages.filter(isBootstrapMessage),
@@ -419,6 +432,15 @@ export async function runAgentLoop(
   // 新規セッション（messages が空）では必然的に見つからず needsAgentsSnapshot は true になる
   const existingAgentsSnapshot = messages.find(isAgentsSnapshotMessage);
   const needsAgentsSnapshot = !existingAgentsSnapshot;
+  const existingSessionTimeAnchor = messages.find(isSessionTimeAnchorMessage);
+  const needsSessionTimeAnchor = !existingSessionTimeAnchor;
+  const sessionAnchorTimestamp =
+    existingSessionTimeAnchor?.timestamp ??
+    findEarliestMessageTimestamp(rawMessages) ??
+    Date.now();
+  const sessionTimeAnchorContent =
+    existingSessionTimeAnchor?.content ??
+    formatSessionTimeAnchor(sessionAnchorTimestamp);
   const channelsNeedingBootstrap = CONTEXT_BOOTSTRAP_CHANNELS.filter(
     (channel) => !messages.some((m) => getCustomType(m) === channel.customType),
   );
@@ -498,7 +520,6 @@ export async function runAgentLoop(
   );
 
   const skillPrompt = formatSkillsForPrompt(skills);
-  const datePrompt = formatDateForPrompt();
 
   const agentsSnapshotHash = snapshotHash(
     identity?.agentsSnapshotPresent !== undefined
@@ -550,7 +571,8 @@ export async function runAgentLoop(
   //
   // 【仕様】AGENTS.md が空文字（ファイルは存在するが中身が空）の場合、
   // `agentsContent ?? DEFAULT_SYSTEM_PROMPT` は "" のままとなり、続く .filter(Boolean) で
-  // 除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は skills+date のみになる。
+  // 除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は
+  // session-time-anchor + skills のみになる。
   // これは意図的な挙動: 「空の AGENTS.md を置く」ことを、グループがベースプロンプトを
   // 明示的にオプトアウトする手段として扱う（ファイル不存在=null の場合のみ DEFAULT を適用する）。
   //
@@ -567,9 +589,9 @@ export async function runAgentLoop(
           : (existingAgentsSnapshot?.content ?? null)));
   const fullSystemPrompt = [
     agentsContent ?? DEFAULT_SYSTEM_PROMPT,
+    sessionTimeAnchorContent,
     skillPrompt,
     systemPromptAppend,
-    datePrompt,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -590,6 +612,21 @@ export async function runAgentLoop(
     };
     await appendMessage(groupName, sessionId, agentsSnapshotMessage);
     newBootstrapMessages.push(agentsSnapshotMessage);
+  }
+
+  // セッション開始時刻は一度だけ custom message として固定化する。
+  // 既存セッションの移行時は保存済み履歴の最古 timestamp を使うため、過去履歴の本文を
+  // timestamp 付きに再renderせず、導入後のsystem promptも次ターン以降byte-stableにできる。
+  if (needsSessionTimeAnchor) {
+    const sessionTimeAnchorMessage: SessionTimeAnchorMessage = {
+      role: "custom",
+      customType: SESSION_TIME_ANCHOR_TYPE,
+      content: sessionTimeAnchorContent,
+      display: false,
+      timestamp: sessionAnchorTimestamp,
+    };
+    await appendMessage(groupName, sessionId, sessionTimeAnchorMessage);
+    newBootstrapMessages.push(sessionTimeAnchorMessage);
   }
 
   // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
@@ -613,11 +650,11 @@ export async function runAgentLoop(
   // newBootstrapMessages を先頭へ丸ごと prepend すると、移行ターン（例: memory-bootstrap は
   // 既存であり self-bootstrap のみ新規追加される場合）で self-bootstrap が memory-bootstrap より
   // 前に来てしまい、次ターン以降（JSONL 再ロード時は定義順に並ぶ）と順序が食い違う。
-  // bootstrap 種別の正規順序（agents-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージし、
-  // 移行ターンでも安定した順序を保つ。
+  // bootstrap 種別の正規順序でマージし、移行ターンでも安定した順序を保つ。
   if (newBootstrapMessages.length > 0) {
     const bootstrapOrder = [
       AGENTS_SNAPSHOT_TYPE as string,
+      SESSION_TIME_ANCHOR_TYPE as string,
       ...CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
     ];
     const orderIndex = (m: AgentMessage) =>
