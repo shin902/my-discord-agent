@@ -14,6 +14,7 @@ import {
   readEventTool,
   updateEventTool,
 } from "./calendar.js";
+import { dateTool } from "./date.js";
 import {
   editTool,
   globTool,
@@ -43,6 +44,7 @@ import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
+  date: dateTool,
   "agent-reach": agentReachTool,
   read: readTool,
   write: writeTool,
