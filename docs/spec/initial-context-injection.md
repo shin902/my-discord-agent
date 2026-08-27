@@ -1,101 +1,123 @@
-# 仕様: AGENTS.md / MEMORY.md の初回のみ注入
+# 仕様: 初回コンテキスト固定とセッション時刻アンカー
 
-GitHub Issue: #117 / 実装 PR: #122（マージ済み）
+GitHub Issue: #117 / 初期実装 PR: #122（マージ済み）
 
-> **ステータス**: 実装済み。本ドキュメントは `src/sandbox/agent-runner.ts` の現行実装を反映している。
-> 当初案（tool_use + tool_result ペア注入）は採用せず、調査（`docs/research/openclaw-context-injection-analysis.md` の経路 B）が推奨した
-> pi-agent-core 標準の `CustomMessage`（`role: "custom"`）方式に着地した。
+> **ステータス**: 実装済み。本ドキュメントは `src/sandbox/agent-runner.ts` / `src/agent/session.ts` の現行実装を反映する。
 
 ## 背景
 
-以前の `runAgentLoop()` は毎リクエストで AGENTS.md と MEMORY.md を読み込み、システムプロンプトに結合していた。Agent は毎回使い捨て生成されるため、これらのファイルが更新されるとシステムプロンプト全体が変わり、以下の問題が生じていた。
+`runAgentLoop()` はリクエストごとに使い捨ての Agent を生成する。一方、AGENTS.md・MEMORY.md・現在日時のような情報を毎ターン再生成すると、同じセッションでも過去に LLM が見た prefix が変わり、prefill / KV / prompt cache の再利用を阻害する。
 
-- プロンプトキャッシュが無効化される（システムプロンプトのプレフィックスが変わるため）
-- 毎リクエストでファイル I/O が発生する
-- セッション内容を毎回 prefill し直すことになり、レスポンスが遅くなる
+このため、セッション中のコンテキストは可能な限り byte-stable に保つ。
 
-## 方針
+## 基本方針
 
-openclaw の「初回のみ注入」の思想に倣う。ただし openclaw の独自 harness 層（`@openclaw/agent-core`）はプライベートで利用できないため、pi-agent-core が標準提供する `CustomMessage`（`role: "custom"`）＋ 独自 `convertToLlm` で同等の制御を実現する。
+- AGENTS.md / MEMORY.md / SELF.md はセッション初回に固定し、2回目以降はファイルを再読込しない。
+- セッション開始時刻は **hour単位の固定アンカー**として systemPrompt に含める。
+- 現在日時を毎ターン systemPrompt へ再注入しない。
+- 過去の user / assistant 履歴へ timestamp を後付けしたり、LLM送信時に再renderしたりしない。
+- 正確な「今」が必要な処理は、許可された AgentConfig で `date` ツールを使う。
+- 将来、長期間空いたセッション再開時に `Session resumed at ...` のような新規 tail event を追加する案はあるが、初版には含めない。
 
-AGENTS.md と MEMORY.md はセッション開始時（初回リクエスト）にのみ読み込み、`role: "custom"` のメッセージとしてセッション JSONL に固定化する。2 回目以降のリクエストではファイルを読み込まず、JSONL に保存済みの内容を再利用する。
+## AGENTS.md / MEMORY.md / SELF.md の固定
 
-## 注入形式: pi-agent-core 標準の CustomMessage（`role: "custom"`）
-
-`customType` で 2 種類を使い分ける。いずれも `display: false`（裏方メッセージ。TUI 表示の可否判定用フィールドで、本プロジェクトの LLM 送信可否制御とは別概念）。
+pi-agent-core 標準の `CustomMessage`（`role: "custom"`）と独自 `convertToLlm` を利用する。`display: false` はTUI表示用で、LLM送信可否とは別概念。
 
 | customType | 対象 | LLM への渡し方 |
 |---|---|---|
-| `agents-snapshot` | AGENTS.md | **チャット履歴には乗せない**。`convertToLlm` で常に除外し、systemPrompt（system role）の組み立てにのみ使う |
-| `memory-bootstrap` | MEMORY.md | **最初の 1 件のみ `role: "user"` に展開**。擬似ユーザーメッセージとして会話履歴経由で渡す |
+| `agents-snapshot` | AGENTS.md | チャット履歴には乗せない。systemPrompt の組み立てにのみ使う |
+| `memory-bootstrap` | MEMORY.md | 最初の1件のみ `role: "user"` に展開 |
+| `self-bootstrap` | `/workspace/memory/SELF.md` | 最初の1件のみ `role: "user"` に展開 |
+| `skill-invocation` | `./command` で明示実行したスキル本文 | 出現するたび `role: "user"` に展開 |
 
-### AGENTS.md と MEMORY.md で扱いが異なる理由
+### AGENTS.md と MEMORY.md / SELF.md の扱いが異なる理由
 
-- **AGENTS.md は system role に残す**: 指示遵守の優先度を維持するため、チャット履歴ではなく systemPrompt（system role）に置く。ただし毎ターン再読み込みすると使い捨て Agent ではキャッシュが崩れるため、初回に `agents-snapshot` としてセッションに固定化し、2 回目以降はそのスナップショット内容を systemPrompt に再利用する（ファイル更新の影響を受けない）。
-- **MEMORY.md は user role に変換**: AGENTS.md（system）との二重注入を避けつつ、会話履歴の一部として届ける。
+- **AGENTS.md は system role に残す**: 指示遵守の優先度を維持する。初回に `agents-snapshot` として固定し、以後はその内容を systemPrompt に再利用する。
+- **MEMORY.md / SELF.md は user role に変換**: system prompt との二重注入を避けつつ、会話履歴の一部として届ける。
 
-### なぜ user メッセージそのものではなく custom 型か
+### なぜ生の user メッセージとして保存しないか
 
-session-logs スキルを使った cron ジョブ（memory-daily / memory-weekly）が `role == "user"` でユーザー発言を抽出している。初期コンテキストを生の user メッセージとして JSONL に書くと、日次/週次サマリーにシステムプロンプト相当の内容が混入する。
+session-logs 等は `role == "user"` を実ユーザー発言として扱う。初期コンテキストを生の user メッセージとして JSONL に書くと、日次/週次サマリーへシステム由来の文章が混入する。
 
-`role: "custom"` で JSONL に保存すれば、session-logs の既存クエリ（`select(.role == "user")` 等）の抽出対象にならない。LLM へは `convertToLlm` の中でのみ（memory-bootstrap を）user に展開するため、保存形式（custom）と送信形式（user）を分離できる。
+保存形式を `custom`、LLM送信形式を `user` に分離することで、履歴の意味を保つ。
 
-## convertToLlm の実装
+## セッション時刻アンカー
 
-`defaultConvertToLlm`（`agent-runner.ts`）で AgentMessage[] → LLM Message[] 変換を制御する。
+### 目的
 
-- `agents-snapshot`: 常に空配列（除外）。systemPrompt 側で扱うため。
-- `memory-bootstrap`: 最初の 1 件のみ `{ role: "user", content, timestamp }` に展開。2 件目以降は除外（セッションあたり 1 件しか書き込まれないため実質発動しない安全弁）。
-- それ以外（標準 role・他の customType 等）: pi-agent-core 標準の `convertToLlm`（`libraryConvertToLlm`）に委譲する。未知の role を素通しせず、ライブラリの正規処理に任せるため。
+LLMへ「このセッションがいつ始まったか」という時間軸の基準だけを与えつつ、毎ターン変動する現在時刻でsystem prompt cacheを壊さない。
+
+形式は次のような hour 単位の固定値とする。
+
+```text
+## Session time anchor
+
+Started: 2026-08-28 07:00 JST (Fri)
+```
+
+### 保存先
+
+時刻アンカーは会話JSONLへ CustomMessage として追加しない。`data/sessions/<group>/<sessionId>.time-anchor` の sidecar に epoch milliseconds を1件だけ保存する。
+
+これにより、時刻機能の導入・再開で過去の user / assistant / tool 履歴そのものを変更しない。
+
+### 新規セッション
+
+初回 `runAgentLoop()` で現在時刻を sidecar に `wx`（既存ファイルを上書きしない）で保存する。以後は毎回同じ値を読み、同一の systemPrompt 断片を再生成する。
+
+### 既存セッションの移行
+
+sidecar がまだ無い既存セッションでは、保存済みJSONLメッセージの **最古 timestamp** を開始時刻として sidecar に一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
+
+同一セッションの初期化が競合して `EEXIST` になった場合は、先に作成された sidecar を正本として読み直す。
+
+## `date` ツールとの責務分離
+
+固定アンカーは「セッション開始時点」の情報であり、現在時刻ではない。
+
+現在の月日・曜日・時分秒が必要な場合は `date` ツールを使う。`date` は Bash やネットワークに依存せず、Asia/Tokyo（JST, UTC+09:00）の正確な日時とUTC時刻を返す。
+
+`date` は通常ツールと同じ capability として registry に登録されるため、自動的に全グループへ開放はしない。利用したい group / channel / cron の effective AgentConfig `tools` に `date` を含める。
+
+## systemPrompt の組み立て順
+
+通常は次の順で組み立てる。
+
+1. `agents-snapshot` の内容、または AGENTS.md 不在時の `DEFAULT_SYSTEM_PROMPT`
+2. 固定 `Session time anchor`
+3. `formatSkillsForPrompt()` のスキル一覧（有効な場合）
+4. request-scoped `systemPromptAppend`（cron の NO_REPLY 指示など、有効な場合）
+
+MEMORY.md / SELF.md はここへ重複注入せず、context-bootstrap 経由で会話履歴へ入る。
 
 ## 空ファイルの扱い（オプトアウト仕様）
 
 ファイル不存在（`null`）と空文字（`""`）を区別する。
 
-- **AGENTS.md が空文字**: `agents-snapshot` を空内容で書き込み、systemPrompt 組み立て時に `agentsContent ?? DEFAULT_SYSTEM_PROMPT` が `""` のまま `.filter(Boolean)` で除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は skills + 日付のみになる。**「空の AGENTS.md を置く」ことをベースプロンプトの明示的オプトアウト手段として扱う**（ファイル不存在=null の場合のみ DEFAULT を適用）。
-- **MEMORY.md が空文字**: `memory-bootstrap` を空内容で書き込む。「ファイルは存在し空である」状態を固定化し、毎ターン再読み込みし続ける非対称性を防ぐ。
+- **AGENTS.md が空文字**: `agents-snapshot` を空内容で保存し、DEFAULT_SYSTEM_PROMPT も除外する。結果として systemPrompt は固定time anchor（+ skills / request append）のみになる。
+- **MEMORY.md / SELF.md が空文字**: 対応する bootstrap を空内容で保存し、「存在するが空」の状態を固定する。
 
-いずれも空文字でもスナップショット/bootstrap を書き込むのがポイント。書き込まないと「内容なし」と「未注入」が区別できず、毎ターンファイルを読み直してしまう。
+空文字でもスナップショット/bootstrapを保存しないと「内容なし」と「未注入」を区別できず、毎ターン再読込する非対称性が生じるため、この挙動は意図的である。
 
 ## ロード時の並べ替え
 
-bootstrap 系（`agents-snapshot` / `memory-bootstrap`）は `loadMessages()` 後に常に履歴の先頭へ並べ替える。旧形式セッションの移行では `appendMessage` で JSONL 末尾に追記されるため、並べ替えないと移行ターンと次ターン以降で memory-bootstrap の位置が変わり、LLM への見え方が非対称になりプロンプトキャッシュも効かなくなる。
+JSONL内の bootstrap 系（`agents-snapshot` / `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。旧形式セッションの移行で bootstrap が JSONL 末尾に追記されても、移行ターンと次ターン以降で LLM-visible ordering が変わらないようにするため。
 
-## 変更対象（実装結果）
-
-### agent-runner.ts（主たる変更）
-
-- `agents-snapshot` / `memory-bootstrap` の `CustomMessage` 型定義（content を string に限定）と型ガード（`isAgentsSnapshotMessage` / `isMemoryBootstrapMessage`）
-- `loadMessages()` 後に bootstrap メッセージを先頭へ並べ替え
-- 既存スナップショット/bootstrap の有無で `needsAgentsSnapshot` / `needsMemoryBootstrap` を判定し、必要時のみファイル読み込み
-- 新規/未移行セッションで bootstrap メッセージを `appendMessage()` で書き込み、`messages` 先頭に追加
-- systemPrompt の組み立てを `[AGENTS.md（or DEFAULT）, skills, date]` に変更（MEMORY.md セクションは除外。MEMORY.md は memory-bootstrap 経由で会話履歴に届く）
-- `defaultConvertToLlm` を実装し Agent コンストラクタに渡す
-
-### session.ts
-
-変更なし。既存の `appendMessage()` / `loadMessages()` が `CustomMessage`（`role: "custom"`）をそのまま JSONL に読み書きできる。
-
-### manager.ts / poller.ts / handler.ts / inbox.ts / group-config.ts
-
-変更なし。疎結合は維持された。
-
-## 既存セッションの扱い（フォールバック）
-
-この変更を適用した後、bootstrap メッセージを持たない旧形式セッションについては:
-
-- `messages` に bootstrap がない → `needsAgentsSnapshot` / `needsMemoryBootstrap` が true になる
-- そのターンで AGENTS.md / MEMORY.md を読み込み、bootstrap メッセージを書き込んで新方式に移行する（次回以降は再読み込みしない）
-- AGENTS.md は移行後も systemPrompt（system role）に含まれるため、挙動の連続性は保たれる
+時刻アンカーは sidecar のため、この並べ替え対象にはならない。
 
 ## セッションモード別の考慮事項
 
-- **shared**: チャンネル全体で 1 セッション。長期間使い回されるため、AGENTS.md / MEMORY.md が更新されても既存セッションには反映されない。ただし「初回のみ注入」が方針なのでこれは許容する。
-- **thread**: スレッドごとにセッション。スレッド作成時に注入される。
-- **auto-thread**: 新スレッド作成時に注入される。
+- **shared**: チャンネル全体で1セッション。長期間使い回しても開始アンカーは固定される。正確な現在時刻は `date` を使う。
+- **thread**: スレッドごとにセッション開始アンカーを1件作る。
+- **auto-thread**: 新スレッド作成時のセッションに対してアンカーを1件作る。
 
-## 確定した設計判断（旧「未解決事項」）
+## キャッシュ不変条件
 
-1. **MEMORY.md の 2000 字制限**: `formatMemoryForPrompt`（`MEMORY_CHAR_LIMIT = 2000`）で truncate し、超過時は整理を促す警告を付与する。セッション履歴のトークン消費を抑えるため維持。
-2. **スキルの注入**: スキル（`formatSkillsForPrompt`）は初回注入にせず、引き続き毎ターン systemPrompt に組み立てる（変更頻度が低く安定しているため）。日付（`formatDateForPrompt`）も同様に毎ターン組み立てる。
-3. **shared セッションのリフレッシュ手段**: 長期間使われる shared セッションで AGENTS.md を更新反映したい場合の手段（セッションリセット等）は別 issue で検討する。
+この仕様で特に守るものは次の通り。
+
+- 一度 LLM に渡した過去の会話本文を、時刻付与のために後から変更しない。
+- session time anchor は初回決定後に更新しない。
+- MEMORY.md / SELF.md の bootstrap 順序をセッション途中で変えない。
+- live current time を system prompt の変動要素にしない。
+
+これにより、時間認識のために prefix/KV cache の安定性を犠牲にしない。
