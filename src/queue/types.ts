@@ -1,4 +1,4 @@
-import type { ModelConfig, SkillSelection } from "../config/groups.js";
+import type { AgentConfig } from "../config/groups.js";
 
 export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
 export type CronSessionMode = "per-run" | "destination";
@@ -38,11 +38,8 @@ export interface InboxMessage {
   cronFailureNotified?: boolean;
   rssDispatchId?: string;
   rssStatePath?: string;
-  configOverride?: {
-    model?: ModelConfig;
-    tools?: string[];
-    skills?: SkillSelection;
-  };
+  /** Channel/cron AgentConfig fields resolved at enqueue time. */
+  configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];
   agentsSnapshotContent?: string;
   memorySnapshotContent?: string;

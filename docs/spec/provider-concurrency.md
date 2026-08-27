@@ -41,7 +41,7 @@
 
 ## 設定解決
 
-通常の Discord メッセージはグループの `model`、cron は `configOverride.model` があればその値を優先し、最後に `defaultModel` で補完する。解決した `provider` と同名の `providers.json` エントリから `concurrency` を取得して LLM ロックを取る。
+通常の Discord メッセージとcronは、共通AgentConfigの `group → channel → cron job` 解決後の `model` を使い、最後に `defaultModel` で補完する。解決した `provider` と同名の `providers.json` エントリから `concurrency` を取得して LLM ロックを取る。
 
 ## 変更ファイル
 

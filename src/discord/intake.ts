@@ -3,6 +3,7 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
+import { pickAgentConfig } from "../config/agent-resolution.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
@@ -144,6 +145,7 @@ async function ingest(
           }))
         : undefined;
 
+    const channelConfigOverride = pickAgentConfig(match.channel);
     const payload: QueueInput = {
       channelId: inboxChannelId,
       groupName: match.group.name,
@@ -153,6 +155,9 @@ async function ingest(
       timestamp: message.createdAt.toISOString(),
       idempotencyKey: `discord-message:${message.id}`,
       attachments,
+      ...(Object.keys(channelConfigOverride).length > 0
+        ? { configOverride: channelConfigOverride }
+        : {}),
     };
 
     const repository = getQueueRepository();

@@ -52,7 +52,7 @@ describe("loadGroups", () => {
     );
   });
 
-  it("model/tools/allowMention/toolLogArgs/skills を含むグループ設定をパースできる", async () => {
+  it("model/tools/allowMention/toolLogArgs/skills/mounts を含むグループ設定をパースできる", async () => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
@@ -61,6 +61,7 @@ describe("loadGroups", () => {
         allowMention: true,
         toolLogArgs: true,
         skills: ["session-logs"],
+        mounts: [{ host: "repo", container: "/repo", readOnly: true }],
         channels: [],
       },
     ]);
@@ -71,7 +72,39 @@ describe("loadGroups", () => {
       allowMention: true,
       toolLogArgs: true,
       skills: ["session-logs"],
+      mounts: [{ host: "repo", container: "/repo", readOnly: true }],
     });
+  });
+
+  it("channelごとのAgentConfig overrideをパースできる", async () => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "chat",
+        model: { provider: "group-provider", modelId: "group-model" },
+        tools: ["group-tool"],
+        channels: [
+          {
+            channelId: "channel",
+            sessionMode: "shared",
+            model: { provider: "channel-provider", modelId: "channel-model" },
+            tools: [],
+            skills: "*",
+            mounts: [{ host: "channel", container: "/channel" }],
+            allowMention: true,
+            toolLogArgs: true,
+          },
+        ],
+      },
+    ]);
+    const groups = await loadGroups();
+    expect(groups[0].channels[0]).toMatchObject({
+      model: { provider: "channel-provider", modelId: "channel-model" },
+      tools: [],
+      skills: "*",
+      mounts: [{ host: "channel", container: "/channel" }],
+    });
+    expect(groups[0].channels[0]).not.toHaveProperty("allowMention");
+    expect(groups[0].channels[0]).not.toHaveProperty("toolLogArgs");
   });
 
   it('skills は全ロードを示す "*" もパースできる', async () => {
@@ -92,6 +125,7 @@ describe("loadGroups", () => {
     expect(groups[0].allowMention).toBeUndefined();
     expect(groups[0].toolLogArgs).toBeUndefined();
     expect(groups[0].skills).toBeUndefined();
+    expect(groups[0].mounts).toBeUndefined();
   });
 });
 

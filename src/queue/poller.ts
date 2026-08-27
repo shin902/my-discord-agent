@@ -6,6 +6,7 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
+import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { findGroupByName, type ModelConfig } from "../config/groups.js";
 import {
@@ -424,7 +425,7 @@ async function resolveLlmLockTarget(
   groupModel?: ModelConfig,
 ): Promise<LlmLockTarget> {
   const model = await resolveModelConfig(
-    msg.configOverride?.model ?? groupModel,
+    resolveAgentConfig({ model: groupModel }, msg.configOverride).model,
   );
   return {
     provider: model.provider,

@@ -71,7 +71,7 @@ Discord受信
 
 ```
 config/credentials.json     # AIプロバイダー・外部サービスの接続設定（Zodで検証）
-config/groups.json          # チャンネル→グループのマッピング＋モデル・ツール・allowMention・toolLogArgs・skills（Zodで検証）
+config/groups.json          # チャンネル→グループのマッピング＋group/channelのAgentConfig（model・tools・skills・mounts）・配送設定（Zodで検証）
 config/cron.json            # 定期実行ジョブ定義（省略可。無ければ cron は空扱い）
 config/config.json          # defaultModel・poller など上記以外の設定
 groups/{name}/

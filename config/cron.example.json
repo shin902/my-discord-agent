@@ -10,7 +10,8 @@
     "sessionMode": "destination",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["read", "grep"],
-    "skills": ["session-logs"]
+    "skills": ["session-logs"],
+    "mounts": []
   },
   {
     "id": "mail-check",

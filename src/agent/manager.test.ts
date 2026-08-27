@@ -980,6 +980,7 @@ describe("sendMessage: configOverride", () => {
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["read"],
         skills: ["base-skill"],
+        mounts: [{ host: "/group/repo", container: "/group-repo" }],
         allowMention: true,
       }),
     }));
@@ -1047,6 +1048,21 @@ describe("sendMessage: configOverride", () => {
       }),
     );
     expect(ensureGroupSkillsMock).not.toHaveBeenCalled();
+  });
+
+  it("configOverride.mounts はgroupのmountsを完全置換し、Docker引数にも反映する", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        mounts: [{ host: "/channel/repo", container: "/channel-repo" }],
+      },
+    });
+
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(volumeArgs).toContain("/channel/repo:/channel-repo");
+    expect(volumeArgs).not.toContain("/group/repo:/group-repo");
   });
 });
 

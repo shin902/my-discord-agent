@@ -8,7 +8,16 @@
     "tools": ["tavily-search", "agent-reach"],
     "allowMention": false,
     "toolLogArgs": true,
-    "channels": [{ "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" }],
+    "channels": [
+      { "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" },
+      {
+        "channelId": "YOUR_RESTRICTED_CHANNEL_ID",
+        "sessionMode": "shared",
+        "tools": ["read"],
+        "skills": [],
+        "mounts": []
+      }
+    ],
     "mounts": [
       {
         "host": "/path/to/your/folder",

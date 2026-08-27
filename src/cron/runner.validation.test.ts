@@ -163,6 +163,28 @@ describe("loadAndValidateCron", () => {
     expect(result[0].id).toBe("group-job");
   });
 
+  it("cron jobでもAgentConfigのmounts overrideを受理する", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "mount-override",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "do something",
+          channelId: "ch-123",
+          deliveryMode: "direct",
+          sessionMode: "per-run",
+          mounts: [{ host: "repo", container: "/repo", readOnly: true }],
+        },
+      ]),
+    );
+
+    const result = await loadAndValidateCron();
+    expect(result[0].mounts).toEqual([
+      { host: "repo", container: "/repo", readOnly: true },
+    ]);
+  });
+
   it("item-thread + destination は検証に成功する", async () => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([

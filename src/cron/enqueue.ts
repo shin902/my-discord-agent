@@ -8,11 +8,14 @@ import {
   ThreadAutoArchiveDuration,
 } from "discord.js";
 import { validateModel } from "../agent/model.js";
+import { resolveAgentConfig } from "../config/agent-resolution.js";
 import type {
   AgentConfig,
-  ModelConfig,
+  ChannelConfig,
   SkillSelection,
 } from "../config/groups.js";
+import { findGroupByName } from "../config/groups.js";
+import { buildExtraMountArgs } from "../config/mounts.js";
 import {
   getQueueRepository,
   type QueueJob,
@@ -32,7 +35,7 @@ const ROOT = path.resolve(__dirname, "../..");
 const GROUPS_DIR = path.join(ROOT, "groups");
 const TEMPLATE_SKILLS_DIR = path.join(ROOT, "templates/SKILLS");
 
-export interface CronEnqueueContext {
+export type CronEnqueueContext = {
   id: string;
   client: Client;
   groupName?: string;
@@ -41,15 +44,12 @@ export interface CronEnqueueContext {
   sessionMode?: CronSessionMode;
   noReply?: boolean;
   mode?: "to-channel" | "to-thread";
-  model?: ModelConfig;
-  tools?: string[];
-  skills?: SkillSelection;
   idempotencyKey?: string;
   mailEmailId?: string;
   rssDispatchId?: string;
   rssStatePath?: string;
   appendInbox: QueueProducer;
-}
+} & Partial<AgentConfig>;
 
 function resolveModes(ctx: CronEnqueueContext): {
   deliveryMode: CronDeliveryMode;
@@ -80,13 +80,23 @@ function resolveModes(ctx: CronEnqueueContext): {
   return { deliveryMode: "direct", sessionMode: "per-run" };
 }
 
-function buildConfigOverride(
+async function buildConfigOverride(
   ctx: CronEnqueueContext,
-): Partial<AgentConfig> | undefined {
-  const override: Partial<AgentConfig> = {};
-  if (ctx.model !== undefined) override.model = ctx.model;
-  if (ctx.tools !== undefined) override.tools = ctx.tools;
-  if (ctx.skills !== undefined) override.skills = ctx.skills;
+): Promise<Partial<AgentConfig> | undefined> {
+  let channel: ChannelConfig | undefined;
+  if (ctx.groupName) {
+    try {
+      const group = await findGroupByName(ctx.groupName);
+      channel = group?.channels.find(
+        (candidate) => candidate.channelId === ctx.channelId,
+      );
+    } catch {
+      // Cron enqueue historically did not require loading groups.json. If a
+      // standalone handler/test has no group loader, retain the job override
+      // and let the normal manager validation handle the group config later.
+    }
+  }
+  const override = resolveAgentConfig(channel, ctx);
   return Object.keys(override).length > 0 ? override : undefined;
 }
 
@@ -126,13 +136,14 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
       await validateModel(ctx.model.provider, ctx.model.modelId);
     }
     if (ctx.tools !== undefined) resolveTools(ctx.tools);
+    if (ctx.mounts !== undefined) buildExtraMountArgs(ctx.mounts);
     if (ctx.skills !== undefined && ctx.groupName !== undefined) {
       await validateSkills(ctx.groupName, ctx.skills);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new NonRetryableError(
-      `[cron-enqueue] model/tools/skills の設定が不正です: ${message}`,
+      `[cron-enqueue] AgentConfig (model/tools/skills/mounts) の設定が不正です: ${message}`,
     );
   }
 }
@@ -221,7 +232,7 @@ async function registerCronItemThread(
 
   const key = `cron-item:${ctx.id}:${randomUUID()}`;
   const repository = getQueueRepository();
-  const configOverride = buildConfigOverride(ctx);
+  const configOverride = await buildConfigOverride(ctx);
   const sessionId = `cron-${ctx.id}-${randomUUID()}`;
   await ctx.appendInbox({
     channelId: ctx.channelId,
@@ -283,7 +294,7 @@ export async function enqueueCronInbox(
     sessionMode === "per-run" || deliveryMode === "new-thread"
       ? `cron-${ctx.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       : ctx.channelId;
-  const configOverride = buildConfigOverride(ctx);
+  const configOverride = await buildConfigOverride(ctx);
 
   await ctx.appendInbox({
     channelId: ctx.channelId,

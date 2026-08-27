@@ -6,7 +6,7 @@
 ```
 AgentGroup（エージェント設定プロファイル）
   id, name, folder
-  ← config/groups.json groups[]  (モデル・ツール・allowMention・スキル設定)
+  ← config/groups.json groups[]  (AgentConfigの既定値、group限定の配送・観測設定)
   ← groups/<folder>/AGENTS.md (グループ固有の指示・メモリ)
   │
   └── [1対多] Channel（Discordチャンネル / DM）
@@ -20,6 +20,6 @@ AgentGroup（エージェント設定プロファイル）
 
 | エンティティ | 責務 |
 |---|---|
-| `AgentGroup` | エージェントの能力設定（モデル・ツール・スキル）。複数チャンネルを持つ |
-| `Channel` | Discordチャンネル1つ。必ず1つのグループに属する。`sessionMode`（`shared` / `thread` / `auto-thread`）を持つ |
+| `AgentGroup` | エージェントのAgentConfig既定値（モデル・ツール・スキル・mounts）とcontext/trust境界。複数チャンネルを持つ |
+| `Channel` | Discordチャンネル1つ。必ず1つのグループに属し、AgentConfigを任意でoverrideできる。`sessionMode`（`shared` / `thread` / `auto-thread`）を持つ |
 | `Session` | 1会話。sessionId（= message.channelId）で一意。スレッドも独自の channelId を持つため自然に分離される |

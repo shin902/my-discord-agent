@@ -72,10 +72,10 @@ LLM 実行結果と Discord 配信は分離されており、ジョブ状態は 
 | ファイル | 必須 | 用途 |
 | --- | --- | --- |
 | `config/config.json` | Yes | Discord Bot、デフォルトモデル、timeout など |
-| `config/groups.json` | Yes | チャンネル、モデル、tools、skills、mounts などの group 設定 |
+| `config/groups.json` | Yes | チャンネル、group/channelのAgentConfig（model、tools、skills、mounts）などの設定 |
 | `config/credentials.json` | Yes | sandbox / proxy から利用する credential 定義 |
 | `config/providers.json` | No | Provider ごとの concurrency 設定。省略時はデフォルト値を使用 |
-| `config/cron.json` | No | cron job 定義 |
+| `config/cron.json` | No | cron job 定義とAgentConfig override |
 
 パスは `CONFIG_PATH`、`GROUPS_PATH`、`CREDENTIALS_PATH`、`PROVIDERS_PATH`、`CRON_PATH` で上書きできます。
 
