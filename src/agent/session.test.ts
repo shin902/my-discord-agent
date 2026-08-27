@@ -171,7 +171,7 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     expect(result).toBe(1787868000000);
     const temporaryFile = String(mockWriteFile.mock.calls[0]?.[0]);
     expect(temporaryFile).toContain("session-a.time-anchor.");
-    expect(temporaryFile).toEndWith(".tmp");
+    expect(temporaryFile).toMatch(/\.tmp$/);
     expect(mockWriteFile).toHaveBeenCalledWith(
       temporaryFile,
       "1787868000000\n",
