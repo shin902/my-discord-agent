@@ -86,9 +86,9 @@ export async function runEphemeralAgent(
       ...context,
       parentRun: childRun,
     });
-    const childTools = context.tools.map((tool) =>
-      tool.name === "subagent" ? childSubagentTool : tool,
-    );
+    const childTools = context.tools
+      .filter((tool) => tool.name !== "bot")
+      .map((tool) => (tool.name === "subagent" ? childSubagentTool : tool));
     const execution = await runAgent({
       systemPrompt: context.systemPrompt,
       model: context.model,

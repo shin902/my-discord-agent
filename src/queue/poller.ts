@@ -31,6 +31,7 @@ import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { settleRssDispatch } from "./reconciliation.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
+import { withBotTaskSessionLease } from "./session-lease.js";
 import type { InboxMessage } from "./types.js";
 
 const POLL_MS = 1000;
@@ -500,6 +501,34 @@ async function withLlmLock<T>(
   }
 }
 
+async function withBotTaskAndLlmLock<T>(
+  msg: InboxMessage,
+  target: LlmLockTarget,
+  fn: (signal?: AbortSignal) => Promise<T>,
+  options: Omit<LlmLockOptions, "signal"> = {},
+  signal?: AbortSignal,
+  sessionId = msg.sessionId,
+): Promise<T> {
+  const execute = (executionSignal?: AbortSignal) =>
+    withLlmLock(
+      target,
+      () =>
+        msg.botId
+          ? withBotTaskSessionLease(
+              getQueueRepository(),
+              sessionId,
+              fn,
+              executionSignal,
+            )
+          : fn(executionSignal),
+      {
+        ...options,
+        signal: executionSignal,
+      },
+    );
+  return execute(signal);
+}
+
 // 非ゼロ終了コードの扱いは通常メッセージと cron thread delivery で同一のため共通化する。
 // リトライ方針の決定は QueueRepository が所有するため、poller は記録するだけ。
 async function releaseRssAfterFailure(
@@ -831,9 +860,10 @@ async function processCronThreadDelivery(
       groupConfig?.model,
       execution.configOverride,
     );
-    const response = await withLlmLock(
+    const response = await withBotTaskAndLlmLock(
+      msg,
       lockTarget,
-      async () => {
+      async (executionSignal) => {
         const agentStartedAt = Date.now();
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
@@ -841,7 +871,7 @@ async function processCronThreadDelivery(
               timing.agentExecution = executionTiming;
             },
             onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
-            signal,
+            signal: executionSignal,
             configOverride: execution.configOverride,
             systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
             systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
@@ -854,6 +884,11 @@ async function processCronThreadDelivery(
               (msg.cronNoReply && msg.cronDeliveryMode !== "item-thread"
                 ? NO_REPLY_SYSTEM_PROMPT
                 : undefined),
+            heldLlmProvider:
+              lockTarget.concurrency === "serial"
+                ? lockTarget.provider
+                : undefined,
+            ...(msg.botId ? { enableBotTool: false } : {}),
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -863,8 +898,9 @@ async function processCronThreadDelivery(
         onAcquired: (waitMs) => {
           timing.lockWaitMs = waitMs;
         },
-        signal,
       },
+      signal,
+      sessionId,
     );
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
     if (isEmptyAgentResponse(response)) {
@@ -1099,9 +1135,10 @@ export async function processMessage(
         groupConfig.model,
         execution.configOverride,
       );
-      response = await withLlmLock(
+      response = await withBotTaskAndLlmLock(
+        msg,
         lockTarget,
-        async () => {
+        async (executionSignal) => {
           stopTyping = startTypingLoop(msg.groupName, msg.channelId);
           const agentStartedAt = Date.now();
           try {
@@ -1141,8 +1178,13 @@ export async function processMessage(
                 systemPromptAppend:
                   execution.systemPromptAppend ??
                   (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
-                signal,
+                signal: executionSignal,
                 configOverride: execution.configOverride,
+                heldLlmProvider:
+                  lockTarget.concurrency === "serial"
+                    ? lockTarget.provider
+                    : undefined,
+                ...(msg.botId ? { enableBotTool: false } : {}),
               },
             );
           } finally {
@@ -1153,8 +1195,8 @@ export async function processMessage(
           onAcquired: (waitMs) => {
             timing.lockWaitMs = waitMs;
           },
-          signal,
         },
+        signal,
       );
     } catch (err) {
       stopTyping();

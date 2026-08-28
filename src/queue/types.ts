@@ -40,6 +40,8 @@ export interface InboxMessage {
   rssStatePath?: string;
   /** A one-shot persistent Bot profile selected by a Discord command. */
   botId?: string;
+  /** Internal durable admission marker; never claimed as an executable job. */
+  botTaskSessionAdmission?: boolean;
   /** AgentConfig fields selected by Discord channel intake or a cron job. */
   configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];

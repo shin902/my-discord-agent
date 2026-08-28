@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import {
   type GroupConfig,
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
+import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
@@ -214,19 +215,105 @@ const runningContainers = new Map<string, ChildProcess>();
  * 実行中の全エージェントコンテナ（および対応する docker run クライアント
  * プロセス）を停止する。SIGTERM/SIGINT 受信時に index.ts から呼び出される想定。
  */
-export function killAllRunningContainers(): Promise<void> {
+export interface KillAllRunningContainersOptions {
+  /** Also discover containers left by a previous host process. */
+  includeOrphans?: boolean;
+  /** Reject unless Docker proves discovery and termination succeeded. */
+  strict?: boolean;
+}
+
+function resolveCleanupOptions(
+  options: boolean | KillAllRunningContainersOptions,
+): Required<KillAllRunningContainersOptions> {
+  if (typeof options === "boolean")
+    return { includeOrphans: options, strict: false };
+  return {
+    includeOrphans: options.includeOrphans ?? false,
+    strict: options.strict ?? false,
+  };
+}
+
+function discoverManagedContainerIds(): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error: Error | undefined, stdout = "") => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve(stdout.trim() ? stdout.trim().split(/\s+/) : []);
+    };
+    const child = execFile(
+      "docker",
+      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      (error, stdout, stderr) => {
+        if (error) {
+          finish(
+            new Error(
+              `container cleanup discovery failed: ${stderr?.trim() || error.message}`,
+            ),
+          );
+          return;
+        }
+        finish(undefined, stdout);
+      },
+    );
+    child.on("error", (error) => finish(error));
+  });
+}
+
+function killContainerIds(ids: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const killProc = spawn("docker", ["kill", ...ids], { stdio: "ignore" });
+    const on =
+      typeof killProc.once === "function"
+        ? killProc.once.bind(killProc)
+        : killProc.on.bind(killProc);
+    on("close", (code: number | null) => {
+      if (code === 0) resolve();
+      else
+        reject(new Error(`container cleanup kill failed: exit=${code ?? 1}`));
+    });
+    on("error", (error: Error) => reject(error));
+  });
+}
+
+async function killOrphansStrict(): Promise<void> {
+  const ids = await discoverManagedContainerIds();
+  if (ids.length === 0) return;
+  await killContainerIds(ids);
+  const remaining = await discoverManagedContainerIds();
+  if (remaining.length > 0)
+    throw new Error(
+      `container cleanup failed: ${remaining.length} managed container(s) remain`,
+    );
+}
+
+async function killOrphansBestEffort(): Promise<void> {
+  try {
+    const ids = await discoverManagedContainerIds();
+    if (ids.length > 0) await killContainerIds(ids);
+  } catch {
+    // Shutdown is best effort; startup uses killOrphansStrict instead.
+  }
+}
+
+export function killAllRunningContainers(
+  options: boolean | KillAllRunningContainersOptions = false,
+): Promise<void> {
+  const { includeOrphans, strict } = resolveCleanupOptions(options);
   const entries = [...runningContainers.entries()];
-  if (entries.length === 0) return Promise.resolve();
-  console.error(
-    `[manager] シャットダウン: 実行中のコンテナ ${entries.length} 件を停止します`,
-    entries.map(([name]) => name),
-  );
-  return Promise.all(
+  const killManaged = includeOrphans
+    ? strict
+      ? killOrphansStrict()
+      : killOrphansBestEffort()
+    : Promise.resolve();
+  const killTracked = Promise.all(
     entries.map(([name, proc]) => {
       // pull 中でコンテナがまだ存在しない場合に備え、クライアントプロセスも直接殺す。
       // コンテナが既に起動済みの場合はクライアント kill だけでは止まらないため
       // docker kill も併用する（無関係な場合は失敗するだけで無害）。
       proc.kill("SIGKILL");
+      if (strict) return stopContainer(name);
       return new Promise<void>((resolve) => {
         const killProc = spawn("docker", ["kill", name], {
           stdio: "ignore",
@@ -235,7 +322,8 @@ export function killAllRunningContainers(): Promise<void> {
         killProc.on("error", () => resolve());
       });
     }),
-  ).then(() => {
+  );
+  return Promise.all([killManaged, killTracked]).then(() => {
     // proc の close イベントでも削除されるが、呼び出し元から見て
     // 「killAllRunningContainers 完了時点で registry が空」を保証するため明示的に消す
     for (const [name] of entries) {
@@ -391,6 +479,10 @@ export interface SendMessageOptions {
   toolCallKey?: string;
   /** Request-scoped instructions appended to the sandbox system prompt. */
   systemPromptAppend?: string;
+  /** Disable nested agent-facing Bot delegation for a Bot execution. */
+  enableBotTool?: boolean;
+  /** Provider whose serial LLM lock is held by the caller, if any. */
+  heldLlmProvider?: string;
 }
 
 export function sendMessage(
@@ -444,6 +536,8 @@ export async function sendMessage(
     snapshotHash,
     toolCallKey,
     systemPromptAppend,
+    enableBotTool,
+    heldLlmProvider,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -547,6 +641,11 @@ export async function sendMessage(
     // ディレクトリが存在しない場合はマウントしない
   }
 
+  const agentTimeoutMs = await loadAgentTimeoutMs();
+  const internalRequest =
+    enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
+      ? createInternalRequestConfig?.(groupName, heldLlmProvider)
+      : undefined;
   const payload = JSON.stringify({
     groupName,
     sessionId,
@@ -572,6 +671,14 @@ export async function sendMessage(
     ...(snapshotHash !== undefined ? { snapshotHash } : {}),
     ...(toolCallKey !== undefined ? { toolCallKey } : {}),
     ...(systemPromptAppend !== undefined ? { systemPromptAppend } : {}),
+    ...(enableBotTool !== false && internalRequest
+      ? {
+          botToolEndpoint: {
+            url: `http://host.docker.internal:${internalRequest.port}/__agent/bot`,
+            token: internalRequest.token,
+          },
+        }
+      : {}),
   });
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない
@@ -612,9 +719,8 @@ export async function sendMessage(
     "/app/runner.mjs",
   ];
 
-  const agentTimeoutMs = await loadAgentTimeoutMs();
   const dockerStartedAt = Date.now();
-  return new Promise((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
     let timeoutHandle: NodeJS.Timeout | undefined;
@@ -870,5 +976,7 @@ export async function sendMessage(
             ),
         );
       });
+  }).finally(() => {
+    internalRequest?.revoke();
   });
 }

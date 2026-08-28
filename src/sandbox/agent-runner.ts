@@ -37,6 +37,7 @@ import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
 import { type AgentRun, agentRunRegistry } from "./agent-run.js";
+import { type BotToolEndpoint, createBotTool } from "./bot.js";
 import { createSubagentTool } from "./subagent.js";
 import { loadGroupSystemPrompt } from "./system-prompt.js";
 
@@ -162,7 +163,10 @@ type AgentTokenUsage = Pick<
   "input" | "output" | "cacheRead" | "cacheWrite" | "totalTokens"
 >;
 
-function addTokenUsage(total: AgentTokenUsage, usage: Usage): AgentTokenUsage {
+function addTokenUsage(
+  total: AgentTokenUsage,
+  usage: Pick<Usage, keyof AgentTokenUsage>,
+): AgentTokenUsage {
   return {
     input: total.input + usage.input,
     output: total.output + usage.output,
@@ -401,6 +405,7 @@ export async function runAgentLoop(
   groupConfig: AgentRuntimeConfig,
   identity?: FrozenExecutionIdentity,
   systemPromptAppend?: string,
+  botToolEndpoint?: BotToolEndpoint,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
 
@@ -683,7 +688,18 @@ export async function runAgentLoop(
     },
   };
   const subagentTool = createSubagentTool(delegationContext);
-  const agentTools = [...tools, subagentTool];
+  const botTool =
+    botToolEndpoint && groupConfig.tools?.includes("bot") === true
+      ? createBotTool({
+          endpoint: botToolEndpoint,
+          groupName,
+          onUsage: (usage) => {
+            aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
+            hasUsage = true;
+          },
+        })
+      : undefined;
+  const agentTools = [...tools, subagentTool, ...(botTool ? [botTool] : [])];
   delegationContext.tools = agentTools;
 
   const pendingAppends: Promise<void>[] = [];
@@ -840,6 +856,9 @@ const PayloadSchema = z.object({
   snapshotHash: z.string().optional(),
   toolCallKey: z.string().optional(),
   systemPromptAppend: z.string().optional(),
+  botToolEndpoint: z
+    .object({ url: z.string().url(), token: z.string().min(1) })
+    .optional(),
 });
 
 // CLIエントリポイント（import時は実行しない）
@@ -856,6 +875,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       payload.groupConfig,
       payload,
       payload.systemPromptAppend,
+      payload.botToolEndpoint,
     );
     // pi-agent-core/pi-ai 側がHTTPクライアントのkeep-aliveソケット等を残し、
     // イベントループが自然に空にならずプロセスがexitしないケースがある。

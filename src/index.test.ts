@@ -77,6 +77,7 @@ vi.mock("./config/default-model.js", () => ({
 }));
 vi.mock("./proxy/credential-proxy-server.js", () => ({
   initCredentialProxyServer: vi.fn().mockResolvedValue(0),
+  registerInternalRequestHandler: vi.fn(),
 }));
 vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),
@@ -267,6 +268,20 @@ describe("index: 起動時バリデーション", () => {
     expect(mockExit).toHaveBeenCalledWith(1);
   });
 
+  it("strictな起動時コンテナcleanup失敗ではqueue recoveryへ進まない", async () => {
+    mocks.killAllRunningContainers.mockRejectedValueOnce(
+      new Error("container cleanup discovery failed"),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledWith({
+      includeOrphans: true,
+      strict: true,
+    });
+    expect(mocks.initializeQueue).not.toHaveBeenCalled();
+  });
+
   it("有効な設定では registerHandlers・startPoller・startDeliveryWorker・login が呼ばれる", async () => {
     mocks.loadGroups.mockResolvedValue([
       {
@@ -278,6 +293,11 @@ describe("index: 起動時バリデーション", () => {
 
     await import("./index.js");
 
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledWith({
+      includeOrphans: true,
+      strict: true,
+    });
+    expect(mocks.initializeQueue).toHaveBeenCalledOnce();
     expect(mocks.registerHandlers).toHaveBeenCalledWith(
       mocks.discordClients.get("personal"),
       expect.any(Function),
@@ -353,7 +373,7 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.stopCron).toHaveBeenCalledOnce();
     expect(mocks.stopPoller).toHaveBeenCalledOnce();
     expect(mocks.stopDeliveryWorker).toHaveBeenCalledOnce();
-    expect(mocks.killAllRunningContainers).toHaveBeenCalledOnce();
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledTimes(2);
     expect(mocks.stopCron.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.stopPoller.mock.invocationCallOrder[0],
     );
@@ -361,7 +381,7 @@ describe("index: 起動時バリデーション", () => {
       mocks.stopDeliveryWorker.mock.invocationCallOrder[0],
     );
     expect(mocks.stopDeliveryWorker.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+      mocks.killAllRunningContainers.mock.invocationCallOrder[1],
     );
   });
 
