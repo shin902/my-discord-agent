@@ -3,6 +3,37 @@ import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("QueueRepository payload", () => {
+  it("normalizes legacy system prompt snapshot fields when reading payload_json", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+      });
+      repo.db.prepare("UPDATE jobs SET payload_json=? WHERE id=?").run(
+        JSON.stringify({
+          ...enqueued.job,
+          agentsSnapshotContent: "legacy prompt",
+          agentsSnapshotPresent: true,
+        }),
+        enqueued.job.id,
+      );
+
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        systemPromptSnapshotContent: "legacy prompt",
+        systemPromptSnapshotPresent: true,
+      });
+      expect(repo.get(enqueued.job.id)).not.toHaveProperty(
+        "agentsSnapshotContent",
+      );
+    } finally {
+      repo.close();
+    }
+  });
+
   it("round-trips botId in payload_json without a schema column", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
@@ -397,7 +428,7 @@ describe("durable Phase 2 result state", () => {
       repo.markRunning(enqueued.job.id, expectDefined(claimed).fencingToken, {
         termination: "close",
         exitCode: 0,
-        agentsSnapshotHash: "agents-hash",
+        systemPromptSnapshotHash: "agents-hash",
         memorySnapshotHash: "memory-hash",
         toolCallKey: "tool-key",
       });
@@ -416,7 +447,7 @@ describe("durable Phase 2 result state", () => {
         resultJson: JSON.stringify("canonical"),
         succeeded: true,
         terminalState: "succeeded",
-        agentsSnapshotHash: "agents-hash",
+        systemPromptSnapshotHash: "agents-hash",
         toolCallKey: "tool-key",
       });
       expect(repo.getDelivery(enqueued.job.id)).toMatchObject({
@@ -929,7 +960,7 @@ describe("QueueRepository - single-owner retry policy", () => {
           timing,
           snapshotHash: "snap",
           memorySnapshotHash: "mem",
-          agentsSnapshotHash: "agents",
+          systemPromptSnapshotHash: "agents",
           toolCallKey: "tool",
         },
       });
@@ -960,7 +991,7 @@ describe("QueueRepository - single-owner retry policy", () => {
         "termination",
         "stopReason",
         "timing",
-        "agentsSnapshotHash",
+        "systemPromptSnapshotHash",
         "memorySnapshotHash",
         "snapshotHash",
         "toolCallKey",
