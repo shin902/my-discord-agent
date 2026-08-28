@@ -194,6 +194,7 @@ async function stopContainer(name: string): Promise<void> {
   }
 }
 const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
+const RUNNER_CONTAINER_LABEL = "my-discord-agent.runner=true";
 
 function formatTimeoutLabel(ms: number): string {
   if (ms % 60_000 === 0) return `${ms / 60_000}分`;
@@ -244,7 +245,7 @@ function discoverManagedContainerIds(): Promise<string[]> {
     };
     const child = execFile(
       "docker",
-      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      ["ps", "-q", "--filter", `label=${RUNNER_CONTAINER_LABEL}`],
       (error, stdout, stderr) => {
         if (error) {
           finish(
@@ -697,6 +698,8 @@ export async function sendMessage(
     "--pull=always",
     "--name",
     containerName,
+    "--label",
+    RUNNER_CONTAINER_LABEL,
     "--memory=512m",
     "--cpus=1",
     "--user",

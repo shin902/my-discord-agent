@@ -210,6 +210,9 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toContain("--pull=always");
     expect(args).toContain("--memory=512m");
     expect(args).toContain("--cpus=1");
+    expect(args).toEqual(
+      expect.arrayContaining(["--label", "my-discord-agent.runner=true"]),
+    );
   });
 
   it("SIGKILL などで null 終了したコンテナは成功レスポンスにせず再試行可能なエラーにする", async () => {
@@ -397,6 +400,11 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(spawnMock).toHaveBeenCalledWith("docker", ["kill", "container-1"], {
       stdio: "ignore",
     });
+    expect(execFileMock).toHaveBeenCalledWith(
+      "docker",
+      ["ps", "-q", "--filter", "label=my-discord-agent.runner=true"],
+      expect.any(Function),
+    );
     expect(execFileMock).toHaveBeenCalledTimes(2);
   });
 
