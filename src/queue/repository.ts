@@ -227,6 +227,11 @@ export interface EnqueueResult {
   inserted: boolean;
 }
 
+export interface BotTaskSessionEnqueueResult {
+  session: BotTaskSession;
+  enqueue: EnqueueResult;
+}
+
 export interface BotTaskSession {
   sessionId: string;
   handle: string;
@@ -237,6 +242,11 @@ export interface BotTaskSession {
   lastUsedAt: string;
   preview: string;
 }
+
+export type BotTaskSessionPayload = Omit<
+  InboxMessage,
+  "id" | "retries" | "enqueuedAt" | "sessionId"
+>;
 
 export interface CreateBotTaskSessionInput {
   sessionId: string;
@@ -804,39 +814,58 @@ export class QueueRepository {
       .all() as JobRow[];
     return rows.map(parsePayload);
   }
+  private createBotTaskSessionInTransaction(
+    input: CreateBotTaskSessionInput,
+  ): BotTaskSession {
+    if (input.sourceKey) {
+      const existing = this.db
+        .prepare("SELECT * FROM bot_task_sessions WHERE source_key=?")
+        .get(input.sourceKey) as BotTaskSessionRow | undefined;
+      if (existing) return parseBotTaskSession(existing);
+    }
+    this.db
+      .prepare(
+        `INSERT INTO bot_task_sessions
+          (session_id,handle,group_name,bot_id,channel_id,source_key,created_at,last_used_at,preview)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        input.sessionId,
+        input.handle,
+        input.groupName,
+        input.botId,
+        input.channelId,
+        input.sourceKey ?? null,
+        input.createdAt,
+        input.createdAt,
+        input.preview,
+      );
+    const created = this.db
+      .prepare("SELECT * FROM bot_task_sessions WHERE session_id=?")
+      .get(input.sessionId) as BotTaskSessionRow | undefined;
+    if (!created)
+      throw new Error(
+        `failed to read back Bot task session ${input.sessionId}`,
+      );
+    return parseBotTaskSession(created);
+  }
   createBotTaskSession(input: CreateBotTaskSessionInput): BotTaskSession {
+    return this.inImmediateTransaction(() =>
+      this.createBotTaskSessionInTransaction(input),
+    );
+  }
+  createBotTaskSessionAndEnqueue(
+    input: CreateBotTaskSessionInput,
+    payload: BotTaskSessionPayload,
+    options: { idempotencyKey?: string; maxAttempts?: number } = {},
+  ): BotTaskSessionEnqueueResult {
     return this.inImmediateTransaction(() => {
-      if (input.sourceKey) {
-        const existing = this.db
-          .prepare("SELECT * FROM bot_task_sessions WHERE source_key=?")
-          .get(input.sourceKey) as BotTaskSessionRow | undefined;
-        if (existing) return parseBotTaskSession(existing);
-      }
-      this.db
-        .prepare(
-          `INSERT INTO bot_task_sessions
-            (session_id,handle,group_name,bot_id,channel_id,source_key,created_at,last_used_at,preview)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
-        )
-        .run(
-          input.sessionId,
-          input.handle,
-          input.groupName,
-          input.botId,
-          input.channelId,
-          input.sourceKey ?? null,
-          input.createdAt,
-          input.createdAt,
-          input.preview,
-        );
-      const created = this.db
-        .prepare("SELECT * FROM bot_task_sessions WHERE session_id=?")
-        .get(input.sessionId) as BotTaskSessionRow | undefined;
-      if (!created)
-        throw new Error(
-          `failed to read back Bot task session ${input.sessionId}`,
-        );
-      return parseBotTaskSession(created);
+      const session = this.createBotTaskSessionInTransaction(input);
+      const enqueue = this.enqueueInTransaction(
+        { ...payload, sessionId: session.sessionId },
+        options,
+      );
+      return { session, enqueue };
     });
   }
   findBotTaskSession(
@@ -859,7 +888,7 @@ export class QueueRepository {
       .all(groupName, botId) as BotTaskSessionRow[];
     return rows.map(parseBotTaskSession);
   }
-  touchBotTaskSession(
+  private touchBotTaskSessionInTransaction(
     sessionId: string,
     channelId: string,
     lastUsedAt: string,
@@ -869,6 +898,50 @@ export class QueueRepository {
         "UPDATE bot_task_sessions SET channel_id=?,last_used_at=? WHERE session_id=?",
       )
       .run(channelId, lastUsedAt, sessionId);
+  }
+  touchBotTaskSession(
+    sessionId: string,
+    channelId: string,
+    lastUsedAt: string,
+  ): void {
+    this.inImmediateTransaction(() =>
+      this.touchBotTaskSessionInTransaction(sessionId, channelId, lastUsedAt),
+    );
+  }
+  resumeBotTaskSessionAndEnqueue(
+    handle: string,
+    groupName: string,
+    botId: string,
+    channelId: string,
+    lastUsedAt: string,
+    payload: BotTaskSessionPayload,
+    options: { idempotencyKey?: string; maxAttempts?: number } = {},
+  ): BotTaskSessionEnqueueResult | undefined {
+    return this.inImmediateTransaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
+        )
+        .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
+      if (!row) return undefined;
+      this.touchBotTaskSessionInTransaction(
+        row.session_id,
+        channelId,
+        lastUsedAt,
+      );
+      const enqueue = this.enqueueInTransaction(
+        { ...payload, sessionId: row.session_id },
+        options,
+      );
+      const updated = this.db
+        .prepare("SELECT * FROM bot_task_sessions WHERE session_id=?")
+        .get(row.session_id) as BotTaskSessionRow | undefined;
+      if (!updated)
+        throw new Error(
+          `failed to read back Bot task session ${row.session_id}`,
+        );
+      return { session: parseBotTaskSession(updated), enqueue };
+    });
   }
   /** Atomically provision a cron job and move it into the destination session ordering. */
   provisionCronJob(
@@ -923,67 +996,73 @@ export class QueueRepository {
       return parsePayload(updated);
     });
   }
-  enqueue(
+  private enqueueInTransaction(
     payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
     options: { idempotencyKey?: string; maxAttempts?: number } = {},
   ): EnqueueResult {
     const key = options.idempotencyKey ?? payload.idempotencyKey;
-    return this.inImmediateTransaction<EnqueueResult>(() => {
-      if (key) {
-        const idem = this.db
-          .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
-          .get(key) as
-          | { key: string; job_id: string | null; status: string }
-          | undefined;
-        if (idem) {
-          const existing = idem.job_id ? this.get(idem.job_id) : undefined;
-          return {
-            job: existing ?? syntheticCompleted(payload, key),
-            inserted: false,
-          };
-        }
+    if (key) {
+      const idem = this.db
+        .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
+        .get(key) as
+        | { key: string; job_id: string | null; status: string }
+        | undefined;
+      if (idem) {
+        const existing = idem.job_id ? this.get(idem.job_id) : undefined;
+        return {
+          job: existing ?? syntheticCompleted(payload, key),
+          inserted: false,
+        };
       }
-      const id = `job-${randomUUID()}`;
-      const timestamp = nowIso();
-      const sequenceRow = this.db
-        .prepare(
-          "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
-        )
-        .get(payload.sessionId) as { sequence: number };
-      const record = {
+    }
+    const id = `job-${randomUUID()}`;
+    const timestamp = nowIso();
+    const sequenceRow = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
+      )
+      .get(payload.sessionId) as { sequence: number };
+    const record = {
+      id,
+      retries: 0,
+      ...payload,
+      enqueuedAt: timestamp,
+      ...(key ? { idempotencyKey: key } : {}),
+    } as InboxMessage;
+    this.db
+      .prepare(
+        `INSERT INTO jobs (id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
         id,
-        retries: 0,
-        ...payload,
-        enqueuedAt: timestamp,
-        ...(key ? { idempotencyKey: key } : {}),
-      } as InboxMessage;
+        key ?? null,
+        JSON.stringify(record),
+        payload.sessionId,
+        sequenceRow.sequence,
+        "queued",
+        0,
+        options.maxAttempts ?? 10,
+        timestamp,
+        timestamp,
+      );
+    if (key)
       this.db
         .prepare(
-          `INSERT INTO jobs (id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          "INSERT INTO idempotency_keys(key,job_id,status,created_at) VALUES(?,?,?,?)",
         )
-        .run(
-          id,
-          key ?? null,
-          JSON.stringify(record),
-          payload.sessionId,
-          sequenceRow.sequence,
-          "queued",
-          0,
-          options.maxAttempts ?? 10,
-          timestamp,
-          timestamp,
-        );
-      if (key)
-        this.db
-          .prepare(
-            "INSERT INTO idempotency_keys(key,job_id,status,created_at) VALUES(?,?,?,?)",
-          )
-          .run(key, id, "active", timestamp);
-      const job = this.get(id);
-      if (job === undefined)
-        throw new Error(`failed to read back enqueued job ${id}`);
-      return { job, inserted: true };
-    });
+        .run(key, id, "active", timestamp);
+    const job = this.get(id);
+    if (job === undefined)
+      throw new Error(`failed to read back enqueued job ${id}`);
+    return { job, inserted: true };
+  }
+  enqueue(
+    payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
+    options: { idempotencyKey?: string; maxAttempts?: number } = {},
+  ): EnqueueResult {
+    return this.inImmediateTransaction(() =>
+      this.enqueueInTransaction(payload, options),
+    );
   }
   /**
    * Run one queue write as a BEGIN IMMEDIATE transaction with the historical

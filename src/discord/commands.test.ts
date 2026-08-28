@@ -4,11 +4,9 @@ const mocks = vi.hoisted(() => ({
   findGroupByChannelId: vi.fn(),
   loadBotRegistry: vi.fn(),
   resolveBotProfile: vi.fn(),
-  enqueue: vi.fn(),
-  createBotTaskSession: vi.fn(),
-  findBotTaskSession: vi.fn(),
+  createBotTaskSessionAndEnqueue: vi.fn(),
+  resumeBotTaskSessionAndEnqueue: vi.fn(),
   listBotTaskSessions: vi.fn(),
-  touchBotTaskSession: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", async (importOriginal) => {
@@ -21,11 +19,9 @@ vi.mock("../config/bots.js", () => ({
 }));
 vi.mock("../queue/repository.js", () => ({
   getQueueRepository: () => ({
-    enqueue: mocks.enqueue,
-    createBotTaskSession: mocks.createBotTaskSession,
-    findBotTaskSession: mocks.findBotTaskSession,
+    createBotTaskSessionAndEnqueue: mocks.createBotTaskSessionAndEnqueue,
+    resumeBotTaskSessionAndEnqueue: mocks.resumeBotTaskSessionAndEnqueue,
     listBotTaskSessions: mocks.listBotTaskSessions,
-    touchBotTaskSession: mocks.touchBotTaskSession,
   }),
 }));
 
@@ -84,20 +80,21 @@ beforeEach(() => {
     instructions: "Act as coding worker",
     model: { provider: "bot-provider", modelId: "bot-model" },
   });
-  mocks.enqueue.mockResolvedValue(undefined);
-  mocks.createBotTaskSession.mockImplementation((input) => ({
-    sessionId: input.sessionId,
-    handle: input.handle,
-    groupName: input.groupName,
-    botId: input.botId,
-    channelId: input.channelId,
-    createdAt: input.createdAt,
-    lastUsedAt: input.createdAt,
-    preview: input.preview,
+  mocks.createBotTaskSessionAndEnqueue.mockImplementation((input) => ({
+    session: {
+      sessionId: input.sessionId,
+      handle: input.handle,
+      groupName: input.groupName,
+      botId: input.botId,
+      channelId: input.channelId,
+      createdAt: input.createdAt,
+      lastUsedAt: input.createdAt,
+      preview: input.preview,
+    },
+    enqueue: { job: {}, inserted: true },
   }));
-  mocks.findBotTaskSession.mockReturnValue(undefined);
+  mocks.resumeBotTaskSessionAndEnqueue.mockReturnValue(undefined);
   mocks.listBotTaskSessions.mockReturnValue([]);
-  mocks.touchBotTaskSession.mockReturnValue(undefined);
 });
 
 describe("BOT_COMMAND", () => {
@@ -190,15 +187,20 @@ describe("handleBotCommand", () => {
       "coding",
       "main",
     );
-    expect(mocks.enqueue).toHaveBeenCalledWith({
-      channelId: "channel-1",
-      groupName: "main",
-      sessionId: expect.stringMatching(/^bot-task-/),
-      content: "Fix it",
-      timestamp: expect.any(String),
-      idempotencyKey: "discord-interaction:interaction-1",
-      botId: "coding",
-    });
+    expect(mocks.createBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupName: "main",
+        botId: "coding",
+        channelId: "channel-1",
+        sourceKey: "discord-interaction:interaction-1",
+      }),
+      expect.objectContaining({
+        channelId: "channel-1",
+        content: "Fix it",
+        idempotencyKey: "discord-interaction:interaction-1",
+        botId: "coding",
+      }),
+    );
     expect(interaction.editReply).toHaveBeenCalledWith({
       content: expect.stringMatching(
         /^Botへの依頼を受け付けました。Task Session: task-/,
@@ -212,7 +214,7 @@ describe("handleBotCommand", () => {
 
     await handleBotCommand(interaction as never, "personal");
 
-    expect(mocks.enqueue).toHaveBeenCalledOnce();
+    expect(mocks.createBotTaskSessionAndEnqueue).toHaveBeenCalledOnce();
   });
 
   it("accepts a command on the explicitly assigned Discord Bot identity", async () => {
@@ -224,7 +226,7 @@ describe("handleBotCommand", () => {
 
     await handleBotCommand(interaction as never, "secondary");
 
-    expect(mocks.enqueue).toHaveBeenCalledOnce();
+    expect(mocks.createBotTaskSessionAndEnqueue).toHaveBeenCalledOnce();
   });
 
   it("rejects a command received by the wrong Discord Bot identity", async () => {
@@ -232,7 +234,7 @@ describe("handleBotCommand", () => {
 
     await handleBotCommand(interaction as never, "secondary");
 
-    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith({
       content:
         "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
@@ -249,11 +251,9 @@ describe("handleBotCommand", () => {
     await handleBotCommand(interaction as never);
 
     expect(mocks.findGroupByChannelId).toHaveBeenCalledWith("parent-channel");
-    expect(mocks.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channelId: "channel-1",
-        sessionId: expect.stringMatching(/^bot-task-/),
-      }),
+    expect(mocks.createBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: "channel-1" }),
+      expect.objectContaining({ channelId: "channel-1" }),
     );
   });
 
@@ -269,32 +269,30 @@ describe("handleBotCommand", () => {
 
     await handleBotCommand(interaction as never);
 
-    expect(mocks.createBotTaskSession).toHaveBeenCalledWith(
+    expect(mocks.createBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         groupName: "main",
         botId: "coding",
         channelId: "thread-1",
         preview: "Investigate this issue",
       }),
-    );
-    expect(mocks.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channelId: "thread-1",
-        sessionId: expect.stringMatching(/^bot-task-/),
-      }),
+      expect.objectContaining({ channelId: "thread-1" }),
     );
   });
 
   it("resumes only the explicitly owned task session", async () => {
-    mocks.findBotTaskSession.mockReturnValue({
-      sessionId: "bot-task-existing",
-      handle: "task-existing",
-      groupName: "main",
-      botId: "coding",
-      channelId: "old-channel",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      lastUsedAt: "2026-01-01T00:00:00.000Z",
-      preview: "Existing task",
+    mocks.resumeBotTaskSessionAndEnqueue.mockReturnValue({
+      session: {
+        sessionId: "bot-task-existing",
+        handle: "task-existing",
+        groupName: "main",
+        botId: "coding",
+        channelId: "channel-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastUsedAt: "2026-01-02T00:00:00.000Z",
+        preview: "Existing task",
+      },
+      enqueue: { job: {}, inserted: true },
     });
     const interaction = makeInteraction({
       action: "resume",
@@ -304,19 +302,13 @@ describe("handleBotCommand", () => {
 
     await handleBotCommand(interaction as never);
 
-    expect(mocks.findBotTaskSession).toHaveBeenCalledWith(
+    expect(mocks.resumeBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
       "task-existing",
       "main",
       "coding",
-    );
-    expect(mocks.touchBotTaskSession).toHaveBeenCalledWith(
-      "bot-task-existing",
       "channel-1",
       expect.any(String),
-    );
-    expect(mocks.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: "bot-task-existing",
         channelId: "channel-1",
         botId: "coding",
       }),
@@ -337,8 +329,8 @@ describe("handleBotCommand", () => {
 
     await handleBotCommand(interaction as never);
 
-    expect(mocks.enqueue).not.toHaveBeenCalled();
     if (session.includes("/")) {
+      expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
       expect(interaction.reply).toHaveBeenCalledWith(
         expect.objectContaining({
           content: expect.any(String),
@@ -346,6 +338,14 @@ describe("handleBotCommand", () => {
         }),
       );
     } else {
+      expect(mocks.resumeBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
+        "task-missing",
+        "main",
+        "coding",
+        "channel-1",
+        expect.any(String),
+        expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      );
       expect(interaction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ content: expect.any(String) }),
       );
@@ -374,7 +374,8 @@ describe("handleBotCommand", () => {
     await handleBotCommand(interaction as never);
 
     expect(mocks.listBotTaskSessions).toHaveBeenCalledWith("main", "coding");
-    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
+    expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith({
       content: expect.stringContaining("task-one"),
       ephemeral: true,
@@ -389,7 +390,8 @@ describe("handleBotCommand", () => {
 
     await handleBotCommand(interaction as never);
 
-    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
+    expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith({
       content: "Bot が未定義です: missing",
       ephemeral: true,

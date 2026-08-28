@@ -9,7 +9,6 @@ import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import type { BotTaskSession } from "../queue/repository.js";
 import { getQueueRepository } from "../queue/repository.js";
-import type { QueueInput } from "../queue/types.js";
 import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
 
 export const BOT_COMMAND = new SlashCommandBuilder()
@@ -259,50 +258,49 @@ export async function handleBotCommand(
   try {
     const repository = getQueueRepository();
     const now = new Date().toISOString();
-    let session: BotTaskSession;
-    if (action === "resume") {
-      const found = repository.findBotTaskSession(
-        handle,
-        match.group.name,
-        botId,
-      );
-      if (!found) {
-        await interaction.editReply({
-          content: "指定されたTask Sessionは見つかりません。",
-        });
-        return;
-      }
-      session = found;
-      repository.touchBotTaskSession(
-        session.sessionId,
-        interaction.channelId,
-        now,
-      );
-    } else {
-      session = repository.createBotTaskSession({
-        sessionId: taskSessionId(),
-        handle: taskSessionHandle(),
-        groupName: match.group.name,
-        botId,
-        channelId: interaction.channelId,
-        sourceKey: `discord-interaction:${interaction.id}`,
-        createdAt: now,
-        preview: taskPreview(prompt),
-      });
-    }
-
-    const payload: QueueInput = {
+    const payload = {
       channelId: interaction.channelId,
       groupName: match.group.name,
       // Task Session identity is deliberately independent from the delivery
       // channel/thread so Bot work never shares normal conversation history.
-      sessionId: session.sessionId,
       content: prompt,
       timestamp: now,
       idempotencyKey: `discord-interaction:${interaction.id}`,
       botId,
     };
-    await repository.enqueue(payload);
+    let session: BotTaskSession;
+    if (action === "resume") {
+      const result = repository.resumeBotTaskSessionAndEnqueue(
+        handle,
+        match.group.name,
+        botId,
+        interaction.channelId,
+        now,
+        payload,
+      );
+      if (!result) {
+        await interaction.editReply({
+          content: "指定されたTask Sessionは見つかりません。",
+        });
+        return;
+      }
+      session = result.session;
+    } else {
+      const result = repository.createBotTaskSessionAndEnqueue(
+        {
+          sessionId: taskSessionId(),
+          handle: taskSessionHandle(),
+          groupName: match.group.name,
+          botId,
+          channelId: interaction.channelId,
+          sourceKey: `discord-interaction:${interaction.id}`,
+          createdAt: now,
+          preview: taskPreview(prompt),
+        },
+        payload,
+      );
+      session = result.session;
+    }
     await interaction.editReply({
       content: `Botへの依頼を受け付けました。Task Session: ${session.handle}`,
     });

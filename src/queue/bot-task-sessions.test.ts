@@ -23,6 +23,28 @@ function input(
 describe("Bot task sessions", () => {
   const repositories: QueueRepository[] = [];
 
+  function request(content: string, idempotencyKey: string) {
+    return {
+      channelId: "channel-1",
+      groupName: "main",
+      content,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      idempotencyKey,
+      botId: "coding",
+    };
+  }
+
+  function failJobInsert(repository: QueueRepository, key: string): void {
+    repository.db.exec(`
+      CREATE TRIGGER fail_bot_task_enqueue
+      BEFORE INSERT ON jobs
+      WHEN NEW.idempotency_key = '${key}'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced enqueue failure');
+      END;
+    `);
+  }
+
   afterEach(() => {
     for (const repository of repositories.splice(0)) repository.close();
   });
@@ -108,6 +130,74 @@ describe("Bot task sessions", () => {
       sessionId: "bot-task-1",
       channelId: "thread-1",
       lastUsedAt: "2026-01-02T00:00:00.000Z",
+    });
+  });
+
+  it("preserves source-key and idempotency behavior across retries", () => {
+    const repository = new QueueRepository(openRuntimeDb(":memory:"));
+    repositories.push(repository);
+    const sourceKey = "discord-interaction:retry";
+    const first = repository.createBotTaskSessionAndEnqueue(
+      input({ sourceKey }),
+      request("run", "discord-interaction:retry"),
+    );
+    const second = repository.createBotTaskSessionAndEnqueue(
+      input({
+        sessionId: "bot-task-retry-ignored",
+        handle: "retry-ignored",
+        sourceKey,
+      }),
+      request("run", "discord-interaction:retry"),
+    );
+
+    expect(second.session).toEqual(first.session);
+    expect(second.enqueue.inserted).toBe(false);
+    expect(
+      repository.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+    ).toEqual({ count: 1 });
+  });
+
+  it("rolls back a new session when its enqueue fails", () => {
+    const repository = new QueueRepository(openRuntimeDb(":memory:"));
+    repositories.push(repository);
+    failJobInsert(repository, "run-failure");
+
+    expect(() =>
+      repository.createBotTaskSessionAndEnqueue(
+        input({ sourceKey: "discord-interaction:run-failure" }),
+        request("run", "run-failure"),
+      ),
+    ).toThrow("forced enqueue failure");
+
+    expect(repository.listBotTaskSessions("main", "coding")).toEqual([]);
+    expect(
+      repository.findBotTaskSession("task-one", "main", "coding"),
+    ).toBeUndefined();
+  });
+
+  it("rolls back resume metadata when its enqueue fails", () => {
+    const repository = new QueueRepository(openRuntimeDb(":memory:"));
+    repositories.push(repository);
+    repository.createBotTaskSession(input());
+    failJobInsert(repository, "resume-failure");
+
+    expect(() =>
+      repository.resumeBotTaskSessionAndEnqueue(
+        "task-one",
+        "main",
+        "coding",
+        "thread-1",
+        "2026-01-02T00:00:00.000Z",
+        request("resume", "resume-failure"),
+      ),
+    ).toThrow("forced enqueue failure");
+
+    expect(
+      repository.findBotTaskSession("task-one", "main", "coding"),
+    ).toMatchObject({
+      sessionId: "bot-task-1",
+      channelId: "channel-1",
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
     });
   });
 });
