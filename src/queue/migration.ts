@@ -4,7 +4,7 @@ import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type LegacyMigrationResult, QueueRepository } from "./repository.js";
-import type { InboxMessage } from "./types.js";
+import { type InboxMessage, normalizeInboxMessagePayload } from "./types.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -240,13 +240,22 @@ export async function migrateLegacyQueue(
           result.malformed++;
           continue;
         }
-        const identity = value as Partial<InboxMessage>;
+        const message = normalizeInboxMessagePayload(value as InboxMessage);
+        const identity = message as Partial<InboxMessage>;
         const identityFields: Array<[string, unknown, string]> = [
-          ["agentsSnapshotContent", identity.agentsSnapshotContent, "string"],
+          [
+            "systemPromptSnapshotContent",
+            identity.systemPromptSnapshotContent,
+            "string",
+          ],
           ["memorySnapshotContent", identity.memorySnapshotContent, "string"],
           ["snapshotHash", identity.snapshotHash, "string"],
           ["toolCallKey", identity.toolCallKey, "string"],
-          ["agentsSnapshotPresent", identity.agentsSnapshotPresent, "boolean"],
+          [
+            "systemPromptSnapshotPresent",
+            identity.systemPromptSnapshotPresent,
+            "boolean",
+          ],
           ["memorySnapshotPresent", identity.memorySnapshotPresent, "boolean"],
           ["snapshotPresent", identity.snapshotPresent, "boolean"],
         ];
@@ -258,14 +267,14 @@ export async function migrateLegacyQueue(
         );
         const incoherentIdentity =
           (hasIdentity &&
-            (identity.agentsSnapshotPresent === undefined ||
+            (identity.systemPromptSnapshotPresent === undefined ||
               identity.memorySnapshotPresent === undefined)) ||
-          (identity.agentsSnapshotContent !== undefined &&
-            identity.agentsSnapshotPresent !== true) ||
+          (identity.systemPromptSnapshotContent !== undefined &&
+            identity.systemPromptSnapshotPresent !== true) ||
           (identity.memorySnapshotContent !== undefined &&
             identity.memorySnapshotPresent !== true) ||
-          (identity.agentsSnapshotPresent === true &&
-            identity.agentsSnapshotContent === undefined) ||
+          (identity.systemPromptSnapshotPresent === true &&
+            identity.systemPromptSnapshotContent === undefined) ||
           (identity.memorySnapshotPresent === true &&
             identity.memorySnapshotContent === undefined) ||
           (identity.snapshotPresent !== undefined &&
@@ -273,7 +282,7 @@ export async function migrateLegacyQueue(
               identity.snapshotHash.length === 0)) ||
           (identity.snapshotPresent !== undefined &&
             identity.snapshotPresent !==
-              (identity.agentsSnapshotPresent === true ||
+              (identity.systemPromptSnapshotPresent === true ||
                 identity.memorySnapshotPresent === true)) ||
           (identity.snapshotHash !== undefined &&
             identity.snapshotPresent === undefined) ||
@@ -290,7 +299,6 @@ export async function migrateLegacyQueue(
           result.malformed++;
           continue;
         }
-        const message = value;
         if (message.completedAt) {
           if (message.idempotencyKey) {
             repo.db

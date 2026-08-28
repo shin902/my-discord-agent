@@ -43,9 +43,9 @@ export interface InboxMessage {
   /** AgentConfig fields selected by Discord channel intake or a cron job. */
   configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];
-  agentsSnapshotContent?: string;
+  systemPromptSnapshotContent?: string;
   memorySnapshotContent?: string;
-  agentsSnapshotPresent?: boolean;
+  systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
   snapshotPresent?: boolean;
   snapshotHash?: string;
@@ -54,6 +54,32 @@ export interface InboxMessage {
   fencingToken?: number;
   workerId?: string;
   lastError?: string;
+}
+
+/** Normalize payload fields written before system-prompt snapshot terminology was introduced. */
+export function normalizeInboxMessagePayload(
+  payload: InboxMessage,
+): InboxMessage {
+  const normalized = { ...payload } as InboxMessage &
+    Record<string, unknown> & {
+      agentsSnapshotContent?: string;
+      agentsSnapshotPresent?: boolean;
+    };
+  if (
+    normalized.systemPromptSnapshotContent === undefined &&
+    normalized.agentsSnapshotContent !== undefined
+  ) {
+    normalized.systemPromptSnapshotContent = normalized.agentsSnapshotContent;
+  }
+  if (
+    normalized.systemPromptSnapshotPresent === undefined &&
+    normalized.agentsSnapshotPresent !== undefined
+  ) {
+    normalized.systemPromptSnapshotPresent = normalized.agentsSnapshotPresent;
+  }
+  delete normalized.agentsSnapshotContent;
+  delete normalized.agentsSnapshotPresent;
+  return normalized;
 }
 
 export type QueueInput = Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;

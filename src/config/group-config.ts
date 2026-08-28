@@ -125,8 +125,9 @@ export async function initGroupPrompts(groups: GroupConfig[]): Promise<void> {
 
 export async function loadGroupSystemPrompt(
   groupName: string,
+  options?: { refresh?: boolean },
 ): Promise<string | null> {
   const cached = _promptCache.get(groupName);
-  if (cached !== undefined) return cached;
+  if (!options?.refresh && cached !== undefined) return cached;
   return _loadGroupSystemPromptFromFile(groupName);
 }

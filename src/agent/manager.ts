@@ -43,7 +43,7 @@ interface AgentTimingEvent {
   assistantTurns: number;
   usage?: AgentTokenUsage;
   stopReason?: string;
-  agentsSnapshotHash?: string;
+  systemPromptSnapshotHash?: string;
   memorySnapshotHash?: string;
   snapshotHash?: string;
   toolCallKey?: string;
@@ -61,7 +61,7 @@ export interface AgentExecutionTiming {
   assistantTurns?: number;
   usage?: AgentTokenUsage;
   stopReason?: string;
-  agentsSnapshotHash?: string;
+  systemPromptSnapshotHash?: string;
   memorySnapshotHash?: string;
   snapshotHash?: string;
   toolCallKey?: string;
@@ -310,8 +310,8 @@ export interface SendMessageOptions {
   onContainerStarted?: () => void | Promise<void>;
   signal?: AbortSignal;
   configOverride?: Partial<AgentConfig>;
-  agentsSnapshotContent?: string;
-  agentsSnapshotPresent?: boolean;
+  systemPromptSnapshotContent?: string;
+  systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
   memorySnapshotContent?: string;
   snapshotHash?: string;
@@ -364,8 +364,8 @@ export async function sendMessage(
     onExecutionTiming,
     onContainerStarted,
     signal,
-    agentsSnapshotContent,
-    agentsSnapshotPresent,
+    systemPromptSnapshotContent,
+    systemPromptSnapshotPresent,
     memorySnapshotPresent,
     memorySnapshotContent,
     snapshotHash,
@@ -488,8 +488,12 @@ export async function sendMessage(
         ? { toolLogArgs: groupsEntry.toolLogArgs }
         : {}),
     },
-    ...(agentsSnapshotContent !== undefined ? { agentsSnapshotContent } : {}),
-    ...(agentsSnapshotPresent !== undefined ? { agentsSnapshotPresent } : {}),
+    ...(systemPromptSnapshotContent !== undefined
+      ? { systemPromptSnapshotContent }
+      : {}),
+    ...(systemPromptSnapshotPresent !== undefined
+      ? { systemPromptSnapshotPresent }
+      : {}),
     ...(memorySnapshotPresent !== undefined ? { memorySnapshotPresent } : {}),
     ...(memorySnapshotContent !== undefined ? { memorySnapshotContent } : {}),
     ...(snapshotHash !== undefined ? { snapshotHash } : {}),
@@ -606,8 +610,11 @@ export async function sendMessage(
               assistantTurns: agentTiming.assistantTurns,
               usage: agentTiming.usage,
               stopReason: agentTiming.stopReason,
-              ...(agentTiming.agentsSnapshotHash !== undefined
-                ? { agentsSnapshotHash: agentTiming.agentsSnapshotHash }
+              ...(agentTiming.systemPromptSnapshotHash !== undefined
+                ? {
+                    systemPromptSnapshotHash:
+                      agentTiming.systemPromptSnapshotHash,
+                  }
                 : {}),
               ...(agentTiming.memorySnapshotHash !== undefined
                 ? { memorySnapshotHash: agentTiming.memorySnapshotHash }

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { splitMessage } from "../utils/splitMessage.js";
-import type { InboxMessage } from "./types.js";
+import { type InboxMessage, normalizeInboxMessagePayload } from "./types.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -41,7 +41,7 @@ export interface ExecutionMetadata {
   usage?: unknown;
   timing?: unknown;
   error?: unknown;
-  agentsSnapshotHash?: string;
+  systemPromptSnapshotHash?: string;
   memorySnapshotHash?: string;
   snapshotHash?: string;
   toolCallKey?: string;
@@ -154,12 +154,13 @@ const EXECUTION_METADATA_FIELDS: readonly ExecutionMetadataField[] = [
       m.timing === undefined ? null : JSON.stringify(m.timing),
   },
   {
-    field: "agentsSnapshotHash",
+    field: "systemPromptSnapshotHash",
+    // Keep the deployed column name as a storage compatibility boundary.
     column: "agents_snapshot_hash",
-    setValue: (m) => m.agentsSnapshotHash || undefined,
-    // commitResult historically fell back from agentsSnapshotHash to
+    setValue: (m) => m.systemPromptSnapshotHash || undefined,
+    // commitResult historically fell back from systemPromptSnapshotHash to
     // snapshotHash; keep that method-specific collapse here.
-    coalesceValue: (m) => m.agentsSnapshotHash ?? m.snapshotHash ?? null,
+    coalesceValue: (m) => m.systemPromptSnapshotHash ?? m.snapshotHash ?? null,
   },
   {
     field: "memorySnapshotHash",
@@ -332,7 +333,9 @@ function jsonOrUndefined(value: string | null): unknown {
   }
 }
 function parsePayload(row: JobRow): QueueJob {
-  const payload = JSON.parse(row.payload_json) as InboxMessage;
+  const payload = normalizeInboxMessagePayload(
+    JSON.parse(row.payload_json) as InboxMessage,
+  );
   const active = row.status === "claimed" || row.status === "running";
   return {
     ...payload,
@@ -364,7 +367,7 @@ function parsePayload(row: JobRow): QueueJob {
     succeeded: row.succeeded === 1,
     ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}),
     ...(row.agents_snapshot_hash
-      ? { agentsSnapshotHash: row.agents_snapshot_hash }
+      ? { systemPromptSnapshotHash: row.agents_snapshot_hash }
       : {}),
     ...(row.memory_snapshot_hash
       ? { memorySnapshotHash: row.memory_snapshot_hash }
@@ -987,7 +990,7 @@ export class QueueRepository {
       "usage",
       "timing",
       "error",
-      "agentsSnapshotHash",
+      "systemPromptSnapshotHash",
       "memorySnapshotHash",
       "workspacePath",
       "conversationPath",
@@ -1026,7 +1029,7 @@ export class QueueRepository {
       "usage",
       "timing",
       "error",
-      "agentsSnapshotHash",
+      "systemPromptSnapshotHash",
       "memorySnapshotHash",
       "workspacePath",
       "conversationPath",
@@ -1059,9 +1062,9 @@ export class QueueRepository {
     identity: {
       snapshotHash?: string;
       toolCallKey?: string;
-      agentsSnapshotContent?: string;
+      systemPromptSnapshotContent?: string;
       memorySnapshotContent?: string;
-      agentsSnapshotPresent?: boolean;
+      systemPromptSnapshotPresent?: boolean;
       memorySnapshotPresent?: boolean;
       snapshotPresent?: boolean;
     } = {},
@@ -1078,14 +1081,14 @@ export class QueueRepository {
     if (!row) throw new Error(`stale fencing token for job ${id}`);
     const payload = {
       ...(JSON.parse(row.payload_json) as Record<string, unknown>),
-      ...(identity.agentsSnapshotContent !== undefined
-        ? { agentsSnapshotContent: identity.agentsSnapshotContent }
+      ...(identity.systemPromptSnapshotContent !== undefined
+        ? { systemPromptSnapshotContent: identity.systemPromptSnapshotContent }
         : {}),
       ...(identity.memorySnapshotContent !== undefined
         ? { memorySnapshotContent: identity.memorySnapshotContent }
         : {}),
-      ...(identity.agentsSnapshotPresent !== undefined
-        ? { agentsSnapshotPresent: identity.agentsSnapshotPresent }
+      ...(identity.systemPromptSnapshotPresent !== undefined
+        ? { systemPromptSnapshotPresent: identity.systemPromptSnapshotPresent }
         : {}),
       ...(identity.memorySnapshotPresent !== undefined
         ? { memorySnapshotPresent: identity.memorySnapshotPresent }

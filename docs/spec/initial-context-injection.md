@@ -26,12 +26,14 @@ AGENTS.md と MEMORY.md はセッション開始時（初回リクエスト）�
 
 | customType | 対象 | LLM への渡し方 |
 |---|---|---|
-| `agents-snapshot` | AGENTS.md | **チャット履歴には乗せない**。`convertToLlm` で常に除外し、systemPrompt（system role）の組み立てにのみ使う |
+| `system-prompt-snapshot` | グループ system prompt（現在の保存元は AGENTS.md） | **チャット履歴には乗せない**。`convertToLlm` で常に除外し、systemPrompt（system role）の組み立てにのみ使う |
 | `memory-bootstrap` | MEMORY.md | **最初の 1 件のみ `role: "user"` に展開**。擬似ユーザーメッセージとして会話履歴経由で渡す |
+
+旧セッションの `agents-snapshot` も読み込み時だけ互換扱いし、新規に保存する customType は `system-prompt-snapshot` とする。
 
 ### AGENTS.md と MEMORY.md で扱いが異なる理由
 
-- **AGENTS.md は system role に残す**: 指示遵守の優先度を維持するため、チャット履歴ではなく systemPrompt（system role）に置く。ただし毎ターン再読み込みすると使い捨て Agent ではキャッシュが崩れるため、初回に `agents-snapshot` としてセッションに固定化し、2 回目以降はそのスナップショット内容を systemPrompt に再利用する（ファイル更新の影響を受けない）。
+- **AGENTS.md は system role に残す**: 指示遵守の優先度を維持するため、チャット履歴ではなく systemPrompt（system role）に置く。ただし毎ターン再読み込みすると使い捨て Agent ではキャッシュが崩れるため、初回に `system-prompt-snapshot` としてセッションに固定化し、2 回目以降はそのスナップショット内容を systemPrompt に再利用する（ファイル更新の影響を受けない）。
 - **MEMORY.md は user role に変換**: AGENTS.md（system）との二重注入を避けつつ、会話履歴の一部として届ける。
 
 ### なぜ user メッセージそのものではなく custom 型か
@@ -44,7 +46,7 @@ session-logs スキルを使った cron ジョブ（memory-daily / memory-weekly
 
 `defaultConvertToLlm`（`agent-runner.ts`）で AgentMessage[] → LLM Message[] 変換を制御する。
 
-- `agents-snapshot`: 常に空配列（除外）。systemPrompt 側で扱うため。
+- `system-prompt-snapshot`: 常に空配列（除外）。systemPrompt 側で扱うため。
 - `memory-bootstrap`: 最初の 1 件のみ `{ role: "user", content, timestamp }` に展開。2 件目以降は除外（セッションあたり 1 件しか書き込まれないため実質発動しない安全弁）。
 - それ以外（標準 role・他の customType 等）: pi-agent-core 標準の `convertToLlm`（`libraryConvertToLlm`）に委譲する。未知の role を素通しせず、ライブラリの正規処理に任せるため。
 
@@ -52,22 +54,22 @@ session-logs スキルを使った cron ジョブ（memory-daily / memory-weekly
 
 ファイル不存在（`null`）と空文字（`""`）を区別する。
 
-- **AGENTS.md が空文字**: `agents-snapshot` を空内容で書き込み、systemPrompt 組み立て時に `agentsContent ?? DEFAULT_SYSTEM_PROMPT` が `""` のまま `.filter(Boolean)` で除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は skills + 日付のみになる。**「空の AGENTS.md を置く」ことをベースプロンプトの明示的オプトアウト手段として扱う**（ファイル不存在=null の場合のみ DEFAULT を適用）。
+- **AGENTS.md が空文字**: `system-prompt-snapshot` を空内容で書き込み、systemPrompt 組み立て時に `systemPromptContent ?? DEFAULT_SYSTEM_PROMPT` が `""` のまま `.filter(Boolean)` で除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は skills + 日付のみになる。**「空の AGENTS.md を置く」ことをベースプロンプトの明示的オプトアウト手段として扱う**（ファイル不存在=null の場合のみ DEFAULT を適用）。
 - **MEMORY.md が空文字**: `memory-bootstrap` を空内容で書き込む。「ファイルは存在し空である」状態を固定化し、毎ターン再読み込みし続ける非対称性を防ぐ。
 
 いずれも空文字でもスナップショット/bootstrap を書き込むのがポイント。書き込まないと「内容なし」と「未注入」が区別できず、毎ターンファイルを読み直してしまう。
 
 ## ロード時の並べ替え
 
-bootstrap 系（`agents-snapshot` / `memory-bootstrap`）は `loadMessages()` 後に常に履歴の先頭へ並べ替える。旧形式セッションの移行では `appendMessage` で JSONL 末尾に追記されるため、並べ替えないと移行ターンと次ターン以降で memory-bootstrap の位置が変わり、LLM への見え方が非対称になりプロンプトキャッシュも効かなくなる。
+bootstrap 系（`system-prompt-snapshot` / `memory-bootstrap`）は `loadMessages()` 後に常に履歴の先頭へ並べ替える。旧形式セッションの移行では `appendMessage` で JSONL 末尾に追記されるため、並べ替えないと移行ターンと次ターン以降で memory-bootstrap の位置が変わり、LLM への見え方が非対称になりプロンプトキャッシュも効かなくなる。
 
 ## 変更対象（実装結果）
 
 ### agent-runner.ts（主たる変更）
 
-- `agents-snapshot` / `memory-bootstrap` の `CustomMessage` 型定義（content を string に限定）と型ガード（`isAgentsSnapshotMessage` / `isMemoryBootstrapMessage`）
+- `system-prompt-snapshot` / `memory-bootstrap` の `CustomMessage` 型定義（content を string に限定）と型ガード（`isSystemPromptSnapshotMessage` / `isMemoryBootstrapMessage`）
 - `loadMessages()` 後に bootstrap メッセージを先頭へ並べ替え
-- 既存スナップショット/bootstrap の有無で `needsAgentsSnapshot` / `needsMemoryBootstrap` を判定し、必要時のみファイル読み込み
+- 既存スナップショット/bootstrap の有無で `needsSystemPromptSnapshot` / `needsMemoryBootstrap` を判定し、必要時のみファイル読み込み
 - 新規/未移行セッションで bootstrap メッセージを `appendMessage()` で書き込み、`messages` 先頭に追加
 - systemPrompt の組み立てを `[AGENTS.md（or DEFAULT）, skills, date]` に変更（MEMORY.md セクションは除外。MEMORY.md は memory-bootstrap 経由で会話履歴に届く）
 - `defaultConvertToLlm` を実装し Agent コンストラクタに渡す

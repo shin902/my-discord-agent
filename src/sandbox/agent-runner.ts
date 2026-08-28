@@ -34,15 +34,16 @@ import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
+import { loadGroupSystemPrompt } from "./system-prompt.js";
 
 // pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
-// - "agents-snapshot": AGENTS.md の内容をセッション初回に固定化するためのスナップショット。
+// - "system-prompt-snapshot": グループの system prompt をセッション初回に固定化するためのスナップショット。
 //   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
 // - "memory-bootstrap": MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
 // - "self-bootstrap": /workspace/memory/SELF.md をセッション初回に注入する擬似ユーザーメッセージ。
 //   MEMORY.md（過去の事象＝書き換え不可の記録）とはカテゴリを分け、SELF.md は
 //   「現在の自分が過去をどう解釈するか」を表す可変の人格記述として別枠で扱う
-//   （docs/todo/issue-persona-growth.md 参照）。強制力は AGENTS.md 側の記述が持ち、
+//   （docs/todo/issue-persona-growth.md 参照）。強制力は system prompt 側の記述が持ち、
 //   SELF.md 自体はコンテキスト側の参照情報にとどめる。
 // - "skill-invocation": `./command` で明示実行されたスキルの SKILL.md 本文を注入する擬似ユーザーメッセージ。
 //   ユーザーの生発言（`./command スキル名 ...`）とは別メッセージとして保存することで、
@@ -51,7 +52,9 @@ import { isTransientError } from "../utils/error.js";
 // display フラグについて: 標準 CustomMessage の必須フィールドで、pi-coding-agent 系 TUI が
 // チャット表示の可否判定に使う。LLM 送信可否（defaultConvertToLlm 側で制御）とは別概念。
 // うちはその TUI を使わないため実質無効だが、いずれも裏方メッセージなので意味的に false 固定。
-const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
+const SYSTEM_PROMPT_SNAPSHOT_TYPE = "system-prompt-snapshot";
+// Sessions written before the generic name was introduced remain readable.
+const LEGACY_SYSTEM_PROMPT_SNAPSHOT_TYPE = "agents-snapshot";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 const SELF_BOOTSTRAP_TYPE = "self-bootstrap";
 const SKILL_INVOCATION_TYPE = "skill-invocation";
@@ -59,8 +62,8 @@ const SKILL_INVOCATION_TYPE = "skill-invocation";
 // CustomMessage.content は string | (TextContent | ImageContent)[] だが、
 // このファイルでは常に string のみを書き込むため、テンプレートリテラル展開時に
 // [object Object] 化しないよう型上も string に絞る
-type AgentsSnapshotMessage = Omit<CustomMessage, "content"> & {
-  customType: typeof AGENTS_SNAPSHOT_TYPE;
+type SystemPromptSnapshotMessage = Omit<CustomMessage, "content"> & {
+  customType: typeof SYSTEM_PROMPT_SNAPSHOT_TYPE;
   content: string;
 };
 // MEMORY.md / SELF.md 共通の context-bootstrap メッセージ型（詳細は ContextBootstrapChannel 定義を参照）
@@ -73,7 +76,7 @@ type SkillInvocationMessage = Omit<CustomMessage, "content"> & {
   content: string;
 };
 
-// AGENTS.md を持たないグループのフォールバック。ペルソナはグループ側で
+// グループ system prompt がない場合のフォールバック。ペルソナはグループ側で
 // 上書きされる前提のため、ここには全グループ共通で成り立つ最小限だけを書く。
 export const DEFAULT_SYSTEM_PROMPT = `You are a personal assistant dedicated to a single user on Discord.
 You are newly created and do not yet have an established personality. Write your experiences in a diary and discover who you are through them. SELF.md describes who you are at present; your behavior must not contradict it.
@@ -172,10 +175,14 @@ function getCustomType(msg: AgentMessage): string | undefined {
   return (msg as { customType: unknown }).customType as string;
 }
 
-function isAgentsSnapshotMessage(
+function isSystemPromptSnapshotMessage(
   msg: AgentMessage,
-): msg is AgentsSnapshotMessage {
-  return getCustomType(msg) === AGENTS_SNAPSHOT_TYPE;
+): msg is SystemPromptSnapshotMessage {
+  const customType = getCustomType(msg);
+  return (
+    customType === SYSTEM_PROMPT_SNAPSHOT_TYPE ||
+    customType === LEGACY_SYSTEM_PROMPT_SNAPSHOT_TYPE
+  );
 }
 
 function isSkillInvocationMessage(
@@ -231,10 +238,6 @@ function snapshotHash(content: string | null): string | undefined {
   return content === null
     ? undefined
     : createHash("sha256").update(content).digest("hex");
-}
-
-function loadSystemPromptFromWorkspace(): Promise<string | null> {
-  return loadWorkspaceFile("/workspace/AGENTS.md");
 }
 
 function formatDateForPrompt(): string {
@@ -351,7 +354,7 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
 }
 
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
- * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
+ * - systemPromptSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
  * - contextBootstrap（memoryBootstrap / selfBootstrap）: customType ごとに最初の1件のみ
  *   user として展開し、残りは除外する（セッションあたり1件しか書き込まれないため、
  *   実質的にフィルタが発動するケースはない）。
@@ -362,7 +365,7 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   const bootstrapSeen = new Set<string>();
   return messages.flatMap((msg) => {
-    if (isAgentsSnapshotMessage(msg)) return [];
+    if (isSystemPromptSnapshotMessage(msg)) return [];
     const customType = getCustomType(msg);
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];
@@ -378,9 +381,9 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 }
 
 export interface FrozenExecutionIdentity {
-  agentsSnapshotContent?: string;
+  systemPromptSnapshotContent?: string;
   memorySnapshotContent?: string;
-  agentsSnapshotPresent?: boolean;
+  systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
   snapshotHash?: string;
   toolCallKey?: string;
@@ -402,37 +405,39 @@ export async function runAgentLoop(
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
 
-  // bootstrap 系（agents-snapshot / context-bootstrap＝memory-bootstrap・self-bootstrap）は
+  // bootstrap 系（system-prompt-snapshot / context-bootstrap＝memory-bootstrap・self-bootstrap）は
   // 常に先頭に並べる。旧形式セッションの移行では appendMessage で JSONL 末尾に追記されるため、
   // ロード後に並べ替えないと、移行ターンと次ターン以降で bootstrap の位置が変わり、
   // LLM への見え方が非対称になる上にプロンプトキャッシュも効かなくなる。
   const isBootstrapMessage = (m: AgentMessage) =>
-    isAgentsSnapshotMessage(m) ||
+    isSystemPromptSnapshotMessage(m) ||
     CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(m) ?? "");
   messages = [
     ...messages.filter(isBootstrapMessage),
     ...messages.filter((m) => !isBootstrapMessage(m)),
   ];
 
-  // AGENTS.md: 既存セッションにスナップショットがあれば再読み込みせず再利用する
+  // 既存セッションに system prompt のスナップショットがあれば再読み込みせず再利用する
   // （system role のまま固定し、ファイル更新の影響を受けないようにする）。
-  // 新規セッション（messages が空）では必然的に見つからず needsAgentsSnapshot は true になる
-  const existingAgentsSnapshot = messages.find(isAgentsSnapshotMessage);
-  const needsAgentsSnapshot = !existingAgentsSnapshot;
+  // 新規セッション（messages が空）では必然的に見つからず needsSystemPromptSnapshot は true になる
+  const existingSystemPromptSnapshot = messages.find(
+    isSystemPromptSnapshotMessage,
+  );
+  const needsSystemPromptSnapshot = !existingSystemPromptSnapshot;
   const channelsNeedingBootstrap = CONTEXT_BOOTSTRAP_CHANNELS.filter(
     (channel) => !messages.some((m) => getCustomType(m) === channel.customType),
   );
 
-  const [systemPromptFile, skills, channelFileContents] = await Promise.all([
-    identity?.agentsSnapshotPresent !== undefined
+  const [loadedSystemPrompt, skills, channelFileContents] = await Promise.all([
+    identity?.systemPromptSnapshotPresent !== undefined
       ? Promise.resolve(
-          identity.agentsSnapshotPresent
-            ? (identity.agentsSnapshotContent ?? "")
+          identity.systemPromptSnapshotPresent
+            ? (identity.systemPromptSnapshotContent ?? "")
             : null,
         )
-      : needsAgentsSnapshot
-        ? (identity?.agentsSnapshotContent ??
-          (await loadSystemPromptFromWorkspace()))
+      : needsSystemPromptSnapshot
+        ? (identity?.systemPromptSnapshotContent ??
+          (await loadGroupSystemPrompt()))
         : Promise.resolve(null),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
     Promise.all(
@@ -500,15 +505,15 @@ export async function runAgentLoop(
   const skillPrompt = formatSkillsForPrompt(skills);
   const datePrompt = formatDateForPrompt();
 
-  const agentsSnapshotHash = snapshotHash(
-    identity?.agentsSnapshotPresent !== undefined
-      ? identity.agentsSnapshotPresent
-        ? (identity.agentsSnapshotContent ?? "")
+  const systemPromptSnapshotHash = snapshotHash(
+    identity?.systemPromptSnapshotPresent !== undefined
+      ? identity.systemPromptSnapshotPresent
+        ? (identity.systemPromptSnapshotContent ?? "")
         : null
-      : (identity?.agentsSnapshotContent ??
-          (needsAgentsSnapshot
-            ? systemPromptFile
-            : (existingAgentsSnapshot?.content ?? null))),
+      : (identity?.systemPromptSnapshotContent ??
+          (needsSystemPromptSnapshot
+            ? loadedSystemPrompt
+            : (existingSystemPromptSnapshot?.content ?? null))),
   );
   const existingMemorySnapshot = messages.find(
     (message) => getCustomType(message) === MEMORY_BOOTSTRAP_TYPE,
@@ -529,10 +534,12 @@ export async function runAgentLoop(
             : null));
   const memorySnapshotHash = snapshotHash(memoryContent);
   const computedSnapshotHash =
-    agentsSnapshotHash === undefined && memorySnapshotHash === undefined
+    systemPromptSnapshotHash === undefined && memorySnapshotHash === undefined
       ? undefined
       : createHash("sha256")
-          .update(`${agentsSnapshotHash ?? ""}:${memorySnapshotHash ?? ""}`)
+          .update(
+            `${systemPromptSnapshotHash ?? ""}:${memorySnapshotHash ?? ""}`,
+          )
           .digest("hex");
   const snapshotHashValue = identity?.snapshotHash ?? computedSnapshotHash;
   const toolCallKey =
@@ -543,30 +550,30 @@ export async function runAgentLoop(
           .digest("hex")
       : undefined);
 
-  // AGENTS.md の内容: 新規読み込み分があればそれを、なければ既存スナップショットを使う
-  // AGENTS.md は system role の systemPrompt に固定で含める（指示遵守の優先度を維持するため）。
-  // AGENTS.md が存在する場合はそれが DEFAULT_SYSTEM_PROMPT を完全に置き換える
+  // system prompt の内容: 新規読み込み分があればそれを、なければ既存スナップショットを使う。
+  // system role の systemPrompt に固定で含める（指示遵守の優先度を維持するため）。
+  // グループの system prompt が存在する場合は DEFAULT_SYSTEM_PROMPT を完全に置き換える
   // （グループ独自のペルソナ定義と汎用文言が矛盾しないようにするため）。
   //
-  // 【仕様】AGENTS.md が空文字（ファイルは存在するが中身が空）の場合、
-  // `agentsContent ?? DEFAULT_SYSTEM_PROMPT` は "" のままとなり、続く .filter(Boolean) で
+  // 【仕様】system prompt が空文字（ファイルは存在するが中身が空）の場合、
+  // `systemPromptContent ?? DEFAULT_SYSTEM_PROMPT` は "" のままとなり、続く .filter(Boolean) で
   // 除外される。結果として DEFAULT_SYSTEM_PROMPT も含まれず、systemPrompt は skills+date のみになる。
-  // これは意図的な挙動: 「空の AGENTS.md を置く」ことを、グループがベースプロンプトを
+  // これは意図的な挙動: 「空の system prompt」を置くことを、グループがベースプロンプトを
   // 明示的にオプトアウトする手段として扱う（ファイル不存在=null の場合のみ DEFAULT を適用する）。
   //
   // MEMORY.md / SELF.md は下の context-bootstrap 注入によって会話履歴経由で LLM に届く
-  // （user role に変換されるため、AGENTS.md と二重注入にはならない）。
-  const agentsContent =
-    identity?.agentsSnapshotPresent !== undefined
-      ? identity.agentsSnapshotPresent
-        ? (identity.agentsSnapshotContent ?? "")
+  // （user role に変換されるため、system prompt と二重注入にはならない）。
+  const systemPromptContent =
+    identity?.systemPromptSnapshotPresent !== undefined
+      ? identity.systemPromptSnapshotPresent
+        ? (identity.systemPromptSnapshotContent ?? "")
         : null
-      : (identity?.agentsSnapshotContent ??
-        (needsAgentsSnapshot
-          ? systemPromptFile
-          : (existingAgentsSnapshot?.content ?? null)));
+      : (identity?.systemPromptSnapshotContent ??
+        (needsSystemPromptSnapshot
+          ? loadedSystemPrompt
+          : (existingSystemPromptSnapshot?.content ?? null)));
   const fullSystemPrompt = [
-    agentsContent ?? DEFAULT_SYSTEM_PROMPT,
+    systemPromptContent ?? DEFAULT_SYSTEM_PROMPT,
     skillPrompt,
     systemPromptAppend,
     datePrompt,
@@ -577,25 +584,25 @@ export async function runAgentLoop(
   const newBootstrapMessages: AgentMessage[] = [];
 
   // 新規セッション、またはスナップショット未作成の既存セッションの場合、
-  // AGENTS.md をセッションに固定化するスナップショットを書き込む。
-  // AGENTS.md が空文字でも「ファイルは存在し空である」という状態を固定化するため、
-  // null（ファイル不存在）とは区別して書き込む（そうしないと毎ターン再読み込みし続ける）
-  if (needsAgentsSnapshot && systemPromptFile !== null) {
-    const agentsSnapshotMessage: AgentsSnapshotMessage = {
+  // system prompt をセッションに固定化するスナップショットを書き込む。
+  // system prompt が空文字でも「ファイルは存在し空である」という状態を固定化するため、
+  // null（値不存在）とは区別して書き込む（そうしないと毎ターン再読み込みし続ける）
+  if (needsSystemPromptSnapshot && loadedSystemPrompt !== null) {
+    const systemPromptSnapshotMessage: SystemPromptSnapshotMessage = {
       role: "custom",
-      customType: AGENTS_SNAPSHOT_TYPE,
-      content: systemPromptFile,
+      customType: SYSTEM_PROMPT_SNAPSHOT_TYPE,
+      content: loadedSystemPrompt,
       display: false,
       timestamp: Date.now(),
     };
-    await appendMessage(groupName, sessionId, agentsSnapshotMessage);
-    newBootstrapMessages.push(agentsSnapshotMessage);
+    await appendMessage(groupName, sessionId, systemPromptSnapshotMessage);
+    newBootstrapMessages.push(systemPromptSnapshotMessage);
   }
 
   // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
   // MEMORY.md / SELF.md を custom メッセージとして注入する。
   // 各ファイルが空文字でも「ファイルは存在し空である」という状態を固定化するため、
-  // null（ファイル不存在）とは区別して書き込む（AGENTS.md と同様、そうしないと毎ターン再読み込みし続ける）
+  // null（値不存在）とは区別して書き込む（system prompt と同様、そうしないと毎ターン再読み込みし続ける）
   for (const [i, channel] of channelsNeedingBootstrap.entries()) {
     const fileContent = channelFileContents[i];
     if (fileContent === null) continue;
@@ -613,11 +620,11 @@ export async function runAgentLoop(
   // newBootstrapMessages を先頭へ丸ごと prepend すると、移行ターン（例: memory-bootstrap は
   // 既存であり self-bootstrap のみ新規追加される場合）で self-bootstrap が memory-bootstrap より
   // 前に来てしまい、次ターン以降（JSONL 再ロード時は定義順に並ぶ）と順序が食い違う。
-  // bootstrap 種別の正規順序（agents-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージし、
+  // bootstrap 種別の正規順序（system-prompt-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージし、
   // 移行ターンでも安定した順序を保つ。
   if (newBootstrapMessages.length > 0) {
     const bootstrapOrder = [
-      AGENTS_SNAPSHOT_TYPE as string,
+      SYSTEM_PROMPT_SNAPSHOT_TYPE as string,
       ...CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
     ];
     const orderIndex = (m: AgentMessage) =>
@@ -714,7 +721,7 @@ export async function runAgentLoop(
       assistantTurns,
       ...(hasUsage ? { usage: aggregatedUsage } : {}),
       ...(stopReason !== undefined ? { stopReason } : {}),
-      agentsSnapshotHash,
+      systemPromptSnapshotHash,
       memorySnapshotHash,
       snapshotHash: snapshotHashValue,
       toolCallKey,
@@ -736,8 +743,8 @@ const PayloadSchema = z.object({
   sessionId: z.string(),
   content: z.string(),
   groupConfig: AgentRuntimeConfigSchema,
-  agentsSnapshotContent: z.string().optional(),
-  agentsSnapshotPresent: z.boolean().optional(),
+  systemPromptSnapshotContent: z.string().optional(),
+  systemPromptSnapshotPresent: z.boolean().optional(),
   memorySnapshotPresent: z.boolean().optional(),
   memorySnapshotContent: z.string().optional(),
   snapshotHash: z.string().optional(),

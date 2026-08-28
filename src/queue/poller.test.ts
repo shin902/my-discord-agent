@@ -1005,7 +1005,7 @@ describe("poller lease renewal", () => {
       isTextBased: () => false,
     } as never);
     const msg = makeMsg({
-      agentsSnapshotPresent: false,
+      systemPromptSnapshotPresent: false,
       memorySnapshotPresent: false,
       snapshotPresent: false,
       snapshotHash: "snapshot",

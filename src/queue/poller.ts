@@ -9,6 +9,7 @@ import {
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
+import { loadGroupSystemPrompt } from "../config/group-config.js";
 import {
   type AgentConfig,
   findGroupByName,
@@ -77,7 +78,7 @@ function executionMetadata(timing: ResponseTiming): ExecutionMetadata {
         stopReason: execution.stopReason,
         usage: execution.usage,
         timing: execution,
-        agentsSnapshotHash: execution.agentsSnapshotHash,
+        systemPromptSnapshotHash: execution.systemPromptSnapshotHash,
         memorySnapshotHash: execution.memorySnapshotHash,
         snapshotHash: execution.snapshotHash,
         toolCallKey: execution.toolCallKey,
@@ -828,8 +829,8 @@ async function processCronThreadDelivery(
             onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
             signal,
             configOverride: execution.configOverride,
-            agentsSnapshotContent: msg.agentsSnapshotContent,
-            agentsSnapshotPresent: msg.agentsSnapshotPresent,
+            systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
+            systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
             memorySnapshotPresent: msg.memorySnapshotPresent,
             memorySnapshotContent: msg.memorySnapshotContent,
             snapshotHash: msg.snapshotHash,
@@ -930,23 +931,24 @@ async function processCronThreadDelivery(
   }
 }
 async function captureFrozenIdentity(msg: InboxMessage): Promise<{
-  agentsSnapshotContent?: string;
+  systemPromptSnapshotContent?: string;
   memorySnapshotContent?: string;
-  agentsSnapshotPresent: boolean;
+  systemPromptSnapshotPresent: boolean;
   memorySnapshotPresent: boolean;
   snapshotPresent: boolean;
   snapshotHash: string;
   toolCallKey: string;
 }> {
-  const base = path.resolve("groups", msg.groupName);
   const readOptional = async (file: string) =>
     readFile(file, "utf8").catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     });
-  let agentsSnapshotContent = await readOptional(path.join(base, "AGENTS.md"));
+  let systemPromptSnapshotContent =
+    (await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
+    undefined;
   let memorySnapshotContent = await readOptional(
-    path.join(base, "memory", "MEMORY.md"),
+    path.join("groups", msg.groupName, "memory", "MEMORY.md"),
   );
   const sessionRaw = await readOptional(
     path.resolve("data", "sessions", msg.groupName, `${msg.sessionId}.jsonl`),
@@ -958,8 +960,11 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
           customType?: string;
           content?: unknown;
         };
-        if (entry.customType === "agents-snapshot")
-          agentsSnapshotContent = String(entry.content ?? "");
+        if (
+          entry.customType === "system-prompt-snapshot" ||
+          entry.customType === "agents-snapshot"
+        )
+          systemPromptSnapshotContent = String(entry.content ?? "");
         if (entry.customType === "memory-bootstrap")
           memorySnapshotContent = String(entry.content ?? "");
       } catch {
@@ -967,9 +972,9 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
       }
     }
   }
-  const agentsSnapshotPresent = agentsSnapshotContent !== undefined;
+  const systemPromptSnapshotPresent = systemPromptSnapshotContent !== undefined;
   const memorySnapshotPresent = memorySnapshotContent !== undefined;
-  const snapshotPresent = agentsSnapshotPresent || memorySnapshotPresent;
+  const snapshotPresent = systemPromptSnapshotPresent || memorySnapshotPresent;
   const canonicalMemory =
     memorySnapshotContent === undefined
       ? ""
@@ -978,16 +983,16 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
         : `## Memory (MEMORY.md)\n\n${Array.from(memorySnapshotContent).slice(0, 2000).join("")}${Array.from(memorySnapshotContent).length > 2000 ? "\n\n[Warning: Memory (MEMORY.md) exceeds the limit (2000 characters). Delete or summarize old content to keep it organized]" : ""}`;
   const snapshotHash = createHash("sha256")
     .update(
-      `${agentsSnapshotPresent ? "1" : "0"}:${agentsSnapshotContent ?? ""}:${memorySnapshotPresent ? "1" : "0"}:${canonicalMemory}`,
+      `${systemPromptSnapshotPresent ? "1" : "0"}:${systemPromptSnapshotContent ?? ""}:${memorySnapshotPresent ? "1" : "0"}:${canonicalMemory}`,
     )
     .digest("hex");
   const toolCallKey = createHash("sha256")
     .update(`${msg.id}:${msg.groupName}:${msg.sessionId}:${snapshotHash}`)
     .digest("hex");
   return {
-    agentsSnapshotContent,
+    systemPromptSnapshotContent,
     memorySnapshotContent,
-    agentsSnapshotPresent,
+    systemPromptSnapshotPresent,
     memorySnapshotPresent,
     snapshotPresent,
     snapshotHash,
@@ -1003,11 +1008,11 @@ export async function processMessage(
       const identity =
         msg.snapshotHash &&
         msg.toolCallKey &&
-        msg.agentsSnapshotPresent !== undefined
+        msg.systemPromptSnapshotPresent !== undefined
           ? {
-              agentsSnapshotContent: msg.agentsSnapshotContent,
+              systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
               memorySnapshotContent: msg.memorySnapshotContent,
-              agentsSnapshotPresent: msg.agentsSnapshotPresent,
+              systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
               memorySnapshotPresent: msg.memorySnapshotPresent ?? false,
               snapshotPresent: msg.snapshotPresent ?? false,
               snapshotHash: msg.snapshotHash,
@@ -1113,8 +1118,8 @@ export async function processMessage(
                   msg,
                   msg.sessionId,
                 ),
-                agentsSnapshotContent: msg.agentsSnapshotContent,
-                agentsSnapshotPresent: msg.agentsSnapshotPresent,
+                systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
+                systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
                 memorySnapshotPresent: msg.memorySnapshotPresent,
                 memorySnapshotContent: msg.memorySnapshotContent,
                 snapshotHash: msg.snapshotHash,

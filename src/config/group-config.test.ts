@@ -86,6 +86,16 @@ describe("initGroupPrompts", () => {
     expect(mockReadFile).not.toHaveBeenCalled();
   });
 
+  it("refresh を指定するとキャッシュ済みの system prompt を再読み込みする", async () => {
+    mockReadFile.mockResolvedValueOnce("初期プロンプト");
+    await initGroupPrompts([{ name: "init-refresh", channels: [] }]);
+
+    mockReadFile.mockResolvedValueOnce("更新済みプロンプト");
+    await expect(
+      loadGroupSystemPrompt("init-refresh", { refresh: true }),
+    ).resolves.toBe("更新済みプロンプト");
+  });
+
   it("AGENTS.md がない場合は null がキャッシュされる", async () => {
     mockReadFile.mockRejectedValueOnce(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
