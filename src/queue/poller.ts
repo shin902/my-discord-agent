@@ -31,7 +31,6 @@ import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { settleRssDispatch } from "./reconciliation.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
-import { withBotTaskSessionLease } from "./session-lease.js";
 import type { InboxMessage } from "./types.js";
 
 const POLL_MS = 1000;
@@ -502,31 +501,16 @@ async function withLlmLock<T>(
 }
 
 async function withBotTaskAndLlmLock<T>(
-  msg: InboxMessage,
+  _msg: InboxMessage,
   target: LlmLockTarget,
   fn: (signal?: AbortSignal) => Promise<T>,
   options: Omit<LlmLockOptions, "signal"> = {},
   signal?: AbortSignal,
-  sessionId = msg.sessionId,
 ): Promise<T> {
-  const execute = (executionSignal?: AbortSignal) =>
-    withLlmLock(
-      target,
-      () =>
-        msg.botId
-          ? withBotTaskSessionLease(
-              getQueueRepository(),
-              sessionId,
-              fn,
-              executionSignal,
-            )
-          : fn(executionSignal),
-      {
-        ...options,
-        signal: executionSignal,
-      },
-    );
-  return execute(signal);
+  return withLlmLock(target, () => fn(signal), {
+    ...options,
+    signal,
+  });
 }
 
 // 非ゼロ終了コードの扱いは通常メッセージと cron thread delivery で同一のため共通化する。
@@ -900,7 +884,6 @@ async function processCronThreadDelivery(
         },
       },
       signal,
-      sessionId,
     );
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
     if (isEmptyAgentResponse(response)) {

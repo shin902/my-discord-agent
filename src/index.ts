@@ -50,8 +50,8 @@ try {
   const proxyPort = await initCredentialProxyServer();
   registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort);
-  // Stop containers left by a previous process before discarding its
-  // non-expiring Bot session leases and direct-admission markers.
+  // Stop containers left by a previous process before recovering its
+  // direct-admission markers.
   await killAllRunningContainers({ includeOrphans: true, strict: true });
   await initGroupPrompts(groups);
   await loadProviders();

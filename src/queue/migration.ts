@@ -375,10 +375,8 @@ export async function migrateLegacyQueue(
 export async function initializeQueue(
   repo: QueueRepository,
 ): Promise<LegacyMigrationResult> {
-  // Managed containers are stopped before this startup cleanup. Active Bot
-  // session leases and direct-admission markers from the previous process are
-  // therefore safe to discard and cannot block the recovered queue forever.
-  repo.clearBotTaskSessionLeases();
+  // Managed containers are stopped before recovering direct-admission markers
+  // from the previous process, so no detached runner can append to a transcript.
   repo.recoverBotTaskSessionAdmissions();
   repo.recoverExpired();
   return migrateLegacyQueue(repo);

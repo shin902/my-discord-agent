@@ -13,10 +13,7 @@ import {
 } from "../queue/bot-task-sessions.js";
 import { acquireLlmLock } from "../queue/llm-mutex.js";
 import { getQueueRepository } from "../queue/repository.js";
-import {
-  withBotTaskSessionAdmission,
-  withBotTaskSessionLease,
-} from "../queue/session-lease.js";
+import { withBotTaskSessionAdmission } from "../queue/session-admission.js";
 import { type AgentExecutionTiming, sendMessage } from "./manager.js";
 
 const BotRequestSchema = z.object({
@@ -139,8 +136,8 @@ export async function handleBotToolRequest(
     const { session, admission } = admitted;
 
     // Admission happens before the provider lock so a direct call cannot
-    // overtake an earlier queued invocation. Once admitted, provider locks are
-    // acquired before the execution lease, matching the queue path.
+    // overtake an earlier queued invocation. The ticket remains active until
+    // sendMessage has settled, so later turns cannot append concurrently.
     let execution!: { content: string; timing?: AgentExecutionTiming };
     await withBotTaskSessionAdmission(
       repository,
@@ -155,31 +152,26 @@ export async function handleBotToolRequest(
                 controller.signal,
               );
         try {
-          execution = await withBotTaskSessionLease(
-            repository,
-            session.sessionId,
-            async (leaseSignal) => {
-              let timing: AgentExecutionTiming | undefined;
-              const content = await sendMessage(
-                group.name,
-                session.sessionId,
-                prompt,
-                {
-                  configOverride,
-                  systemPromptAppend: profile.instructions,
-                  enableBotTool: false,
-                  signal: leaseSignal,
-                  onExecutionTiming: (value) => {
-                    timing = value;
-                  },
+          execution = await (async () => {
+            let timing: AgentExecutionTiming | undefined;
+            const content = await sendMessage(
+              group.name,
+              session.sessionId,
+              prompt,
+              {
+                configOverride,
+                systemPromptAppend: profile.instructions,
+                enableBotTool: false,
+                signal: controller.signal,
+                onExecutionTiming: (value) => {
+                  timing = value;
                 },
-              );
-              if (content.trim() === "")
-                throw new Error("Botが空の応答で終了しました");
-              return { content, timing };
-            },
-            controller.signal,
-          );
+              },
+            );
+            if (content.trim() === "")
+              throw new Error("Botが空の応答で終了しました");
+            return { content, timing };
+          })();
         } finally {
           release?.();
         }

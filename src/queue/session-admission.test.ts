@@ -1,101 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
-import {
-  withBotTaskSessionAdmission,
-  withBotTaskSessionLease,
-} from "./session-lease.js";
+import { withBotTaskSessionAdmission } from "./session-admission.js";
 
 function createRepository(): QueueRepository {
   return new QueueRepository(openRuntimeDb(":memory:"));
 }
 
-describe("Bot Task Session lease", () => {
+describe("Bot Task Session admission", () => {
   const repositories: QueueRepository[] = [];
 
   afterEach(() => {
     for (const repository of repositories.splice(0)) repository.close();
-  });
-
-  it("serializes direct executions for one session while allowing different sessions", async () => {
-    const repository = createRepository();
-    repositories.push(repository);
-    let releaseFirst!: () => void;
-    const firstEntered = new Promise<void>((resolve) => {
-      void withBotTaskSessionLease(repository, "session-1", async () => {
-        resolve();
-        await new Promise<void>((release) => {
-          releaseFirst = release;
-        });
-        return "first";
-      });
-    });
-    await firstEntered;
-
-    let secondStarted = false;
-    const second = withBotTaskSessionLease(
-      repository,
-      "session-1",
-      async () => {
-        secondStarted = true;
-        return "second";
-      },
-    );
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(secondStarted).toBe(false);
-
-    let otherStarted = false;
-    const other = withBotTaskSessionLease(repository, "session-2", async () => {
-      otherStarted = true;
-      return "other";
-    });
-    await expect(other).resolves.toBe("other");
-    expect(otherStarted).toBe(true);
-
-    releaseFirst();
-    await expect(second).resolves.toBe("second");
-  });
-
-  it("releases after errors and does not take over an active execution", async () => {
-    const repository = createRepository();
-    repositories.push(repository);
-    await expect(
-      withBotTaskSessionLease(repository, "session-1", async () => {
-        throw new Error("failed");
-      }),
-    ).rejects.toThrow("failed");
-    await expect(
-      withBotTaskSessionLease(repository, "session-1", async () => "next"),
-    ).resolves.toBe("next");
-
-    const first = repository.tryAcquireBotTaskSessionLease(
-      "session-2",
-      "owner-1",
-      1,
-    );
-    expect(first).toBeDefined();
-    const blocked = repository.tryAcquireBotTaskSessionLease(
-      "session-2",
-      "owner-2",
-      1,
-      new Date(Date.now() + 2),
-    );
-    expect(blocked).toBeUndefined();
-    repository.releaseBotTaskSessionLease(first as NonNullable<typeof first>);
-    const recovered = repository.tryAcquireBotTaskSessionLease(
-      "session-2",
-      "owner-2",
-      1,
-    );
-    expect(recovered).toMatchObject({ ownerId: "owner-2", fencingToken: 1 });
-    expect(
-      repository.renewBotTaskSessionLease(
-        recovered as NonNullable<typeof recovered>,
-        60_000,
-      ),
-    ).toBe(true);
-    repository.releaseBotTaskSessionLease(
-      recovered as NonNullable<typeof recovered>,
-    );
   });
 
   it("direct admission waits behind an earlier queued invocation in the same database", async () => {
@@ -222,7 +137,7 @@ describe("Bot Task Session lease", () => {
     repository.completeBotTaskSessionAdmission(direct.admission);
   });
 
-  it("two direct admissions execute in acceptance order without using the session lease", async () => {
+  it("two direct admissions execute in acceptance order using the admission ledger", async () => {
     const repository = createRepository();
     repositories.push(repository);
     const session = repository.createBotTaskSession({
@@ -283,6 +198,73 @@ describe("Bot Task Session lease", () => {
     await expect(firstRun).resolves.toBe("first");
     await expect(secondRun).resolves.toBe("second");
     expect(secondStarted).toBe(true);
+  });
+
+  it("different sessions can execute concurrently through the admission ledger", async () => {
+    const repository = createRepository();
+    repositories.push(repository);
+    const firstSession = repository.createBotTaskSession({
+      sessionId: "session-parallel-first",
+      handle: "task-parallel-first",
+      groupName: "main",
+      botId: "coding",
+      channelId: "channel",
+      createdAt: new Date().toISOString(),
+      preview: "first",
+    });
+    const secondSession = repository.createBotTaskSession({
+      sessionId: "session-parallel-second",
+      handle: "task-parallel-second",
+      groupName: "main",
+      botId: "coding",
+      channelId: "channel",
+      createdAt: new Date().toISOString(),
+      preview: "second",
+    });
+    const first = repository.resumeBotTaskSessionAndAdmission(
+      firstSession.handle,
+      firstSession.groupName,
+      firstSession.botId,
+      "agent:main",
+      new Date().toISOString(),
+    );
+    const second = repository.resumeBotTaskSessionAndAdmission(
+      secondSession.handle,
+      secondSession.groupName,
+      secondSession.botId,
+      "agent:main",
+      new Date().toISOString(),
+    );
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (!first || !second) throw new Error("direct admission was not created");
+
+    let releaseFirst!: () => void;
+    let firstStarted = false;
+    const firstRun = withBotTaskSessionAdmission(
+      repository,
+      first.admission,
+      async () => {
+        firstStarted = true;
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      },
+    );
+    await vi.waitFor(() => expect(firstStarted).toBe(true));
+
+    let secondStarted = false;
+    const secondRun = withBotTaskSessionAdmission(
+      repository,
+      second.admission,
+      async () => {
+        secondStarted = true;
+      },
+    );
+    await vi.waitFor(() => expect(secondStarted).toBe(true));
+
+    releaseFirst();
+    await Promise.all([firstRun, secondRun]);
   });
 
   it("failed direct admission settles its ticket so a successor can execute", async () => {
@@ -377,7 +359,7 @@ describe("Bot Task Session lease", () => {
       controller.signal,
     );
     controller.abort();
-    await expect(directRun).rejects.toThrow("lease aborted");
+    await expect(directRun).rejects.toThrow("admission aborted");
     expect(repository.get(direct.admission.jobId)).toMatchObject({
       status: "dead_letter",
       terminalReason: "cancelled",
@@ -483,26 +465,5 @@ describe("Bot Task Session lease", () => {
     expect(repository.claim("poller")).toBeUndefined();
     repository.completeBotTaskSessionAdmission(direct.admission);
     expect(repository.claim("poller")?.job.id).toBe(queued.job.id);
-  });
-
-  it("aborting while waiting does not start the second execution", async () => {
-    const repository = createRepository();
-    repositories.push(repository);
-    const first = repository.tryAcquireBotTaskSessionLease(
-      "session-1",
-      "owner-1",
-      60_000,
-    );
-    expect(first).toBeDefined();
-    const controller = new AbortController();
-    const second = withBotTaskSessionLease(
-      repository,
-      "session-1",
-      async () => "unexpected",
-      controller.signal,
-    );
-    controller.abort();
-    await expect(second).rejects.toThrow("lease aborted");
-    repository.releaseBotTaskSessionLease(first as NonNullable<typeof first>);
   });
 });

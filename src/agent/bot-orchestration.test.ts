@@ -46,16 +46,6 @@ const {
     tryAdmitBotTaskSessionAdmission: vi.fn().mockReturnValue("admitted"),
     completeBotTaskSessionAdmission: vi.fn(),
     cancelBotTaskSessionAdmission: vi.fn(),
-    tryAcquireBotTaskSessionLease: vi.fn(
-      (sessionId: string, ownerId: string) => ({
-        sessionId,
-        ownerId,
-        leaseUntil: "2099-01-01T00:00:00.000Z",
-        fencingToken: 1,
-      }),
-    ),
-    renewBotTaskSessionLease: vi.fn().mockReturnValue(true),
-    releaseBotTaskSessionLease: vi.fn(),
   },
 }));
 
@@ -171,12 +161,6 @@ describe("handleBotToolRequest", () => {
       expect.objectContaining({ jobId: "admission-1" }),
     );
     expect(repository.completeBotTaskSessionAdmission).toHaveBeenCalledOnce();
-    expect(repository.tryAcquireBotTaskSessionLease).toHaveBeenCalledWith(
-      "bot-task-1",
-      expect.any(String),
-      expect.any(Number),
-    );
-    expect(repository.releaseBotTaskSessionLease).toHaveBeenCalledOnce();
     expect(sendMessage).toHaveBeenCalledWith(
       "main",
       "bot-task-1",

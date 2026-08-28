@@ -69,9 +69,6 @@ const {
   getJob,
   listTerminalCronJobs,
   patchJobPayload,
-  tryAcquireBotTaskSessionLease,
-  renewBotTaskSessionLease,
-  releaseBotTaskSessionLease,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
   commitInboxResult: vi.fn(),
@@ -84,16 +81,6 @@ const {
   getJob: vi.fn(),
   listTerminalCronJobs: vi.fn().mockReturnValue([]),
   patchJobPayload: vi.fn(),
-  tryAcquireBotTaskSessionLease: vi.fn(
-    (sessionId: string, ownerId: string) => ({
-      sessionId,
-      ownerId,
-      fencingToken: 1,
-      leaseUntil: "2099-01-01T00:00:00.000Z",
-    }),
-  ),
-  renewBotTaskSessionLease: vi.fn().mockReturnValue(true),
-  releaseBotTaskSessionLease: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -108,9 +95,6 @@ vi.mock("./repository.js", () => ({
     get: getJob,
     listTerminalCronJobs,
     patchJobPayload,
-    tryAcquireBotTaskSessionLease,
-    renewBotTaskSessionLease,
-    releaseBotTaskSessionLease,
   }),
 }));
 
@@ -252,12 +236,6 @@ describe("processMessage - Bot execution resolution", () => {
     await processMessage(msg);
 
     expect(resolveProviderConcurrency).toHaveBeenCalledWith("bot-provider");
-    expect(tryAcquireBotTaskSessionLease).toHaveBeenCalledWith(
-      "ch-1",
-      expect.any(String),
-      expect.any(Number),
-    );
-    expect(releaseBotTaskSessionLease).toHaveBeenCalledOnce();
     const options = vi.mocked(sendMessage).mock.calls[0]?.[3] as
       | SendMessageOptions
       | undefined;
