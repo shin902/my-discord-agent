@@ -77,6 +77,7 @@ vi.mock("./config/default-model.js", () => ({
 }));
 vi.mock("./proxy/credential-proxy-server.js", () => ({
   initCredentialProxyServer: vi.fn().mockResolvedValue(0),
+  registerInternalRequestHandler: vi.fn(),
 }));
 vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),

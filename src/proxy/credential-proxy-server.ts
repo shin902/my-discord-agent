@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
 import * as https from "node:https";
@@ -23,6 +24,41 @@ class UpstreamTimeoutError extends Error {
 }
 
 let proxyPort: number | null = null;
+const internalRequestTokens = new Map<string, string>();
+let internalRequestHandler:
+  | ((
+      req: IncomingMessage,
+      res: ServerResponse,
+      scope: string,
+    ) => Promise<void>)
+  | null = null;
+
+export interface InternalRequestConfig {
+  port: number;
+  token: string;
+}
+
+/** Register the host-only handler used by sandbox agent tools. */
+export function registerInternalRequestHandler(
+  handler: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    scope: string,
+  ) => Promise<void>,
+): void {
+  internalRequestHandler = handler;
+}
+
+/** Issue a short-lived, group-scoped credential for one sandbox run. */
+export function createInternalRequestConfig(
+  scope: string,
+): InternalRequestConfig | undefined {
+  if (proxyPort === null) return undefined;
+  const token = randomUUID();
+  internalRequestTokens.set(token, scope);
+  setTimeout(() => internalRequestTokens.delete(token), 15 * 60_000).unref();
+  return { port: proxyPort, token };
+}
 
 export function getProxyPort(): number {
   if (proxyPort === null)
@@ -239,6 +275,27 @@ export function createRequestHandler(
   timeoutMs: number,
 ) {
   return (req: IncomingMessage, res: ServerResponse) => {
+    const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (pathname === "/__agent/bot") {
+      const token = req.headers["x-agent-internal-token"];
+      const scope =
+        typeof token === "string"
+          ? internalRequestTokens.get(token)
+          : undefined;
+      if (internalRequestHandler && scope !== undefined) {
+        internalRequestHandler(req, res, scope).catch((err) => {
+          if (!res.headersSent) {
+            console.error(`[credential-proxy] internal request failed: ${err}`);
+            res.writeHead(500);
+            res.end("Internal Server Error");
+          }
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
     handleRequest(creds, timeoutMs, req, res).catch((err) => {
       if (!res.headersSent) {
         console.error(`[credential-proxy] unhandled error: ${err}`);

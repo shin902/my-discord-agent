@@ -14,6 +14,7 @@ import {
   type GroupConfig,
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
+import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
@@ -391,6 +392,8 @@ export interface SendMessageOptions {
   toolCallKey?: string;
   /** Request-scoped instructions appended to the sandbox system prompt. */
   systemPromptAppend?: string;
+  /** Disable nested agent-facing Bot delegation for a Bot execution. */
+  enableBotTool?: boolean;
 }
 
 export function sendMessage(
@@ -444,6 +447,7 @@ export async function sendMessage(
     snapshotHash,
     toolCallKey,
     systemPromptAppend,
+    enableBotTool,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -547,6 +551,7 @@ export async function sendMessage(
     // ディレクトリが存在しない場合はマウントしない
   }
 
+  const internalRequest = createInternalRequestConfig?.(groupName);
   const payload = JSON.stringify({
     groupName,
     sessionId,
@@ -572,6 +577,14 @@ export async function sendMessage(
     ...(snapshotHash !== undefined ? { snapshotHash } : {}),
     ...(toolCallKey !== undefined ? { toolCallKey } : {}),
     ...(systemPromptAppend !== undefined ? { systemPromptAppend } : {}),
+    ...(enableBotTool !== false && internalRequest
+      ? {
+          botToolEndpoint: {
+            url: `http://host.docker.internal:${internalRequest.port}/__agent/bot`,
+            token: internalRequest.token,
+          },
+        }
+      : {}),
   });
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない

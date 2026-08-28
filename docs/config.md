@@ -325,7 +325,7 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 
-`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig はその group の設定を上書きし、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示する。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。
+`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig はその group の設定を上書きし、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示する。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。メインAgentには同じBot Registryを呼び出す組み込み `bot` toolも常に提供され、`action=run|resume|list` を指定できる。`run` / `resume` はキューへ積まず、同じtool call内でsandbox実行の完了まで待って結果を返す（非同期handle返却やpollingは行わない）。
 
 ## 環境変数
 

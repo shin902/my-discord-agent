@@ -8,6 +8,7 @@
 
 | ツール名 | 概要 |
 |---------|------|
+| `bot` | Bot RegistryのBotを `run` / `resume` / `list` で呼び出す組み込みオーケストレーションツール。`run` / `resume` は同じtool call内で完了まで待機し、結果を返す（キュー投入や非同期実行はしない） |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
 | `read` | ワークスペース内のファイルを読み込む |

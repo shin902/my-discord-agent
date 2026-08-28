@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConvertToLlm } from "./agent-runner.js";
 
 const { AgentMock } = vi.hoisted(() => ({
@@ -78,6 +78,10 @@ function createMockAgent(deltas: string[], endMessage: unknown) {
 }
 
 describe("runAgentLoop", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     lastAgentOptions = undefined;
@@ -162,6 +166,50 @@ describe("runAgentLoop", () => {
       kind: "subagent",
       status: "completed",
     });
+  });
+
+  it("root Agentへ同期bot toolを配線し、完了結果を返す", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: "Bot result",
+          action: "run",
+          botId: "coding",
+          session: "task-abc123",
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "delegate",
+      {},
+      undefined,
+      undefined,
+      { url: "http://host.docker.internal:1234/__agent/bot", token: "secret" },
+    );
+    const rootOptions = lastAgentOptions as {
+      initialState: { tools: AgentTool[] };
+    };
+    const botTool = rootOptions.initialState.tools.find(
+      (tool) => tool.name === "bot",
+    );
+    expect(botTool).toBeDefined();
+    if (!botTool) throw new Error("bot tool was not wired");
+
+    const result = await botTool.execute("tool-call", {
+      action: "run",
+      bot: "coding",
+      prompt: "inspect",
+    });
+    expect(result.content).toEqual([{ type: "text", text: "Bot result" }]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://host.docker.internal:1234/__agent/bot",
+      expect.any(Object),
+    );
   });
 
   it("request-scoped instructionsをsystem promptだけに追加する", async () => {

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { handleBotToolRequest } from "./agent/bot-orchestration.js";
 import {
   initManager,
   killAllRunningContainers,
@@ -24,7 +25,10 @@ import {
   loginDiscordClients,
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
-import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
+import {
+  initCredentialProxyServer,
+  registerInternalRequestHandler,
+} from "./proxy/credential-proxy-server.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
@@ -44,6 +48,7 @@ try {
   }
   await ensureGroupDirs(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
+  registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort);
   await initGroupPrompts(groups);
   await loadProviders();
