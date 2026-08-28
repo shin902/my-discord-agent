@@ -1,8 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createRootAgentRun } from "./agent-run.js";
-import { createSubagentTool } from "./subagent.js";
+import { createRootDelegationLineage, createSubagentTool } from "./subagent.js";
 
 const { runAgentMock } = vi.hoisted(() => ({
   runAgentMock: vi.fn(),
@@ -22,7 +21,7 @@ const baseTool: AgentTool = {
 };
 
 function makeParent(maxDelegationDepth = 1) {
-  return createRootAgentRun({ maxDelegationDepth });
+  return createRootDelegationLineage(maxDelegationDepth);
 }
 
 function makeTool(parent = makeParent()) {
@@ -74,6 +73,25 @@ describe("createSubagentTool", () => {
       status: "completed",
     });
     expect(result.details).not.toHaveProperty("result");
+  });
+
+  it("propagates lineage through a nested delegation", async () => {
+    const { context, tool } = makeTool(makeParent(3));
+    const first = await tool.execute("tool-call", { task: "first" });
+
+    const childTool = runAgentMock.mock.calls[0][0].tools.find(
+      (candidate: AgentTool) => candidate.name === "subagent",
+    );
+    expect(childTool).toBeDefined();
+    if (!childTool) throw new Error("nested subagent tool was not wired");
+
+    const nested = await childTool.execute("nested", { task: "second" });
+    expect(nested.details.parentRunId).toBe(first.details.runId);
+    expect(nested.details.parentRunId).not.toBe(context.parentRun.id);
+    expect(runAgentMock.mock.calls[1][0]).toMatchObject({
+      messages: [],
+      sessionId: nested.details.runId,
+    });
   });
 
   it("reports lifecycle progress and rejects recursive delegation at the depth limit", async () => {

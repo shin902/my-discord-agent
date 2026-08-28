@@ -36,14 +36,12 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
-import {
-  completeAgentRun,
-  createRootAgentRun,
-  failAgentRun,
-  type SubagentRun,
-} from "./agent-run.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
-import { createSubagentTool } from "./subagent.js";
+import {
+  createRootDelegationLineage,
+  createSubagentTool,
+  type SubagentRun,
+} from "./subagent.js";
 import { loadGroupSystemPrompt } from "./system-prompt.js";
 
 export { runEphemeralAgent } from "./subagent.js";
@@ -654,7 +652,7 @@ export async function runAgentLoop(
     messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
   }
 
-  const rootRun = createRootAgentRun();
+  const rootRun = createRootDelegationLineage();
   const getApiKey = (provider: string) => {
     // KnownProvider: pi-ai の環境変数マッピングを使用
     const knownKey = getEnvApiKey(provider);
@@ -813,18 +811,6 @@ export async function runAgentLoop(
       },
     });
     response = execution.response;
-    const rootFailed =
-      execution.terminalStopReason === "error" ||
-      execution.terminalStopReason === "aborted" ||
-      execution.response.trim() === "";
-    if (rootFailed) {
-      failAgentRun(rootRun);
-    } else {
-      completeAgentRun(rootRun);
-    }
-  } catch (error) {
-    failAgentRun(rootRun);
-    throw error;
   } finally {
     const timingEvent = {
       type: "agent_timing",
