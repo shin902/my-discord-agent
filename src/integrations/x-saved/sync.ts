@@ -50,7 +50,11 @@ export async function runXSavedSync(
     (value): value is string => Boolean(value),
   );
   let status: XSavedSyncStatus =
-    errors.length === 0 ? "success" : errors.length === 1 ? "partial" : "failed";
+    errors.length === 0
+      ? "success"
+      : errors.length === 1
+        ? "partial"
+        : "failed";
   let sourceItems = 0;
   let newItems = 0;
   let updatedItems = 0;
