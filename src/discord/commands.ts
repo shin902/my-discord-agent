@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   ApplicationCommandType,
   type ChatInputCommandInteraction,
@@ -7,6 +6,12 @@ import {
 } from "discord.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { findGroupByChannelId } from "../config/groups.js";
+import {
+  formatBotTaskSessionList,
+  generateBotTaskSessionHandle,
+  generateBotTaskSessionId,
+  previewBotTaskPrompt,
+} from "../queue/bot-task-sessions.js";
 import type { BotTaskSession } from "../queue/repository.js";
 import { getQueueRepository } from "../queue/repository.js";
 import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
@@ -120,49 +125,8 @@ async function replyEphemeral(
   }
 }
 
-function taskSessionId(): string {
-  return `bot-task-${randomUUID()}`;
-}
-
-function taskSessionHandle(): string {
-  return `task-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-}
-
-function taskPreview(prompt: string): string {
-  const normalized = prompt.replace(/\s+/g, " ").trim();
-  return normalized.length > 100 ? `${normalized.slice(0, 97)}...` : normalized;
-}
-
 function validSessionHandle(handle: string): boolean {
   return /^[A-Za-z0-9_-]{8,64}$/.test(handle);
-}
-
-function formatTaskSessionList(
-  sessions: Array<{
-    handle: string;
-    botId: string;
-    createdAt: string;
-    lastUsedAt: string;
-    channelId: string;
-    preview: string;
-  }>,
-): string {
-  if (sessions.length === 0) return "利用可能なTask Sessionはありません。";
-  const lines: string[] = [];
-  for (const session of sessions) {
-    const line = `- ${session.handle} | ${session.botId} | created: ${session.createdAt} | last-used: ${session.lastUsedAt} | ${session.preview} (channel: ${session.channelId})`;
-    if (
-      `Task Session一覧（${sessions.length}件）:\n${[...lines, line].join("\n")}`
-        .length > 1_800
-    )
-      break;
-    lines.push(line);
-  }
-  const suffix =
-    sessions.length > lines.length
-      ? `\n（他${sessions.length - lines.length}件）`
-      : "";
-  return `Task Session一覧（${sessions.length}件）:\n${lines.join("\n")}${suffix}`;
 }
 
 /** Enqueue a Bot request while retaining the normal delivery path. */
@@ -226,7 +190,10 @@ export async function handleBotCommand(
         match.group.name,
         botId,
       );
-      await replyEphemeral(interaction, formatTaskSessionList(sessions));
+      await replyEphemeral(
+        interaction,
+        formatBotTaskSessionList(sessions, { includeChannelId: true }),
+      );
     } catch (error) {
       await replyEphemeral(
         interaction,
@@ -288,14 +255,14 @@ export async function handleBotCommand(
     } else {
       const result = repository.createBotTaskSessionAndEnqueue(
         {
-          sessionId: taskSessionId(),
-          handle: taskSessionHandle(),
+          sessionId: generateBotTaskSessionId(),
+          handle: generateBotTaskSessionHandle(),
           groupName: match.group.name,
           botId,
           channelId: interaction.channelId,
           sourceKey: `discord-interaction:${interaction.id}`,
           createdAt: now,
-          preview: taskPreview(prompt),
+          preview: previewBotTaskPrompt(prompt),
         },
         payload,
       );

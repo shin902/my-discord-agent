@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  formatBotTaskSessionList,
+  generateBotTaskSessionHandle,
+  generateBotTaskSessionId,
+  previewBotTaskPrompt,
+} from "./bot-task-sessions.js";
+import {
   type CreateBotTaskSessionInput,
   openRuntimeDb,
   QueueRepository,
@@ -47,6 +53,27 @@ describe("Bot task sessions", () => {
 
   afterEach(() => {
     for (const repository of repositories.splice(0)) repository.close();
+  });
+
+  it("shares Task Session presentation helpers while keeping channel output explicit", () => {
+    const session = {
+      ...input(),
+      lastUsedAt: input().createdAt,
+    };
+
+    expect(generateBotTaskSessionId()).toMatch(/^bot-task-[0-9a-f-]{36}$/);
+    expect(generateBotTaskSessionHandle()).toMatch(/^task-[0-9a-f]{12}$/);
+    expect(previewBotTaskPrompt("  first\nsecond   third  ")).toBe(
+      "first second third",
+    );
+    expect(previewBotTaskPrompt("x".repeat(101))).toBe(`${"x".repeat(97)}...`);
+
+    expect(formatBotTaskSessionList([session])).toBe(
+      "Task Session一覧（1件）:\n- task-one | coding | created: 2026-01-01T00:00:00.000Z | last-used: 2026-01-01T00:00:00.000Z | Fix the parser",
+    );
+    expect(
+      formatBotTaskSessionList([session], { includeChannelId: true }),
+    ).toContain("Fix the parser (channel: channel-1)");
   });
 
   it("persists metadata and isolates list/find by group and Bot ownership", () => {
