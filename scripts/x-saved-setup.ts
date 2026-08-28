@@ -31,6 +31,26 @@ function parseArgs(argv: string[]): {
   return { archivePath, keepBacklog };
 }
 
+function initializeKeptBacklog(
+  db: ReturnType<typeof openXSavedDb>,
+  now = new Date().toISOString(),
+): { applied: boolean; count: number } {
+  const current = db
+    .prepare("SELECT value FROM x_meta WHERE key = 'baseline_initialized_at'")
+    .get() as { value: string } | undefined;
+  if (current) return { applied: false, count: 0 };
+
+  db.transaction(() => {
+    db.prepare(
+      "INSERT INTO x_meta (key, value) VALUES ('baseline_initialized_at', ?)",
+    ).run(now);
+    db.prepare(
+      "INSERT INTO x_meta (key, value) VALUES ('baseline_mode', 'keep-backlog')",
+    ).run();
+  })();
+  return { applied: true, count: 0 };
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   if (options.archivePath) {
@@ -48,8 +68,13 @@ async function main(): Promise<void> {
   try {
     const ingest = ingestBirdclawSavedItems({ xSavedDb: db });
     const baseline = options.keepBacklog
-      ? { applied: false, count: 0 }
+      ? initializeKeptBacklog(db)
       : initializeHistoricalBaseline(db);
+    if (!options.keepBacklog && baseline.applied) {
+      db.prepare(
+        "INSERT OR IGNORE INTO x_meta (key, value) VALUES ('baseline_mode', 'historical')",
+      ).run();
+    }
     console.log(
       JSON.stringify(
         {
