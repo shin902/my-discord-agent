@@ -2,6 +2,7 @@ import "dotenv/config";
 import {
   initManager,
   killAllRunningContainers,
+  validateBotConfigs,
   validateGroupConfig,
 } from "./agent/manager.js";
 import { loadBotRegistry } from "./config/bots.js";
@@ -35,14 +36,13 @@ import { getQueueRepository } from "./queue/repository.js";
 const groups = await loadGroups();
 try {
   const discordConfig = await loadDiscordConfig();
-  await loadBotRegistry();
+  const botRegistry = await loadBotRegistry();
   for (const group of groups) {
     if (group.bot && !(group.bot in discordConfig.bots))
       throw new Error(
         `Group ${group.name} のDiscord Botが未定義です: ${group.bot}`,
       );
   }
-  await initDiscordClients();
   await ensureGroupDirs(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
   await initManager(proxyPort);
@@ -50,6 +50,8 @@ try {
   await loadProviders();
   const defaultModel = await loadDefaultModel();
   await Promise.all(groups.map((g) => validateGroupConfig(g, defaultModel)));
+  await validateBotConfigs(groups, botRegistry, defaultModel);
+  await initDiscordClients();
   const queueRepository = getQueueRepository();
   await initializeQueue(queueRepository);
   const cronJobs = await loadAndValidateCron();

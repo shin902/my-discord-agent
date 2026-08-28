@@ -325,7 +325,7 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 
-`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig はその group の設定を上書きし、channel の設定は継承しない。Discordでは `/bot` コマンドに `bot` と `prompt` を指定すると、指定したBotへ1回だけ依頼できる。Botの実行は通常のキュー・sandbox・Discord配送経路を利用し、セッションは当面呼び出し元のchannel/threadと共有する。
+`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig はその group の設定を上書きし、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` と `prompt` を指定すると、指定したBotへ1回だけ依頼できる。Botの実行は通常のキュー・sandbox・Discord配送経路を利用し、セッションは当面呼び出し元のchannel/threadと共有する。
 
 ## 環境変数
 

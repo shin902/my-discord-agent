@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
+import type { BotRegistry } from "../config/bots.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -223,6 +224,19 @@ export { buildExtraMountArgs } from "../config/mounts.js";
 // validateGroupConfig() が起動時に一度だけ計算してここに格納する。
 const extraMountArgsCache = new Map<string, string[]>();
 
+/** Validate one effective AgentConfig at startup. */
+export async function validateAgentConfig(
+  config: AgentConfig,
+  defaultModel: { provider: string; modelId: string },
+): Promise<void> {
+  await validateModel(
+    config.model?.provider ?? defaultModel.provider,
+    config.model?.modelId ?? defaultModel.modelId,
+  );
+  resolveTools(config.tools ?? []);
+  buildExtraMountArgs(config.mounts ?? []);
+}
+
 /**
  * 起動時バリデーション専用。グループと各チャンネルの effective
  * AgentConfig（model/tools/mounts）を検証し、グループ既定の mounts はキャッシュする。
@@ -231,22 +245,44 @@ export async function validateGroupConfig(
   group: GroupConfig,
   defaultModel: { provider: string; modelId: string },
 ): Promise<void> {
-  const validateConfig = async (config: AgentConfig): Promise<void> => {
-    await validateModel(
-      config.model?.provider ?? defaultModel.provider,
-      config.model?.modelId ?? defaultModel.modelId,
-    );
-    resolveTools(config.tools ?? []);
-    buildExtraMountArgs(config.mounts ?? []);
-  };
-
-  await validateConfig(resolveAgentConfig(group));
+  await validateAgentConfig(resolveAgentConfig(group), defaultModel);
   await Promise.all(
     group.channels.map((channel) =>
-      validateConfig(resolveAgentConfig(group, channel)),
+      validateAgentConfig(resolveAgentConfig(group, channel), defaultModel),
     ),
   );
   extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));
+}
+
+/** Validate every Bot profile against its referenced AgentGroup at startup. */
+export async function validateBotConfigs(
+  groups: GroupConfig[],
+  bots: BotRegistry,
+  defaultModel: { provider: string; modelId: string },
+): Promise<void> {
+  await Promise.all(
+    Object.entries(bots).map(async ([botId, profile]) => {
+      const group = groups.find(
+        (candidate) => candidate.name === profile.group,
+      );
+      if (!group) {
+        throw new Error(
+          `Bot ${botId} のグループが未定義です: ${profile.group}`,
+        );
+      }
+      try {
+        await validateAgentConfig(
+          resolveAgentConfig(group, profile),
+          defaultModel,
+        );
+      } catch (error) {
+        throw new Error(
+          `Bot ${botId} の設定が不正です: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
+    }),
+  );
 }
 
 const MAX_ATTACHMENTS = 5;
