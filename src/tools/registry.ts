@@ -41,6 +41,10 @@ import {
 } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
+// Context-created tools are validated here but instantiated by their runtime
+// owner, not by the static registry.
+const CONTEXT_CREATED_TOOLS = new Set(["bot"]);
+
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
   "agent-reach": agentReachTool,
@@ -78,6 +82,7 @@ const TOOLS: Record<string, AgentTool> = {
 
 export function resolveTools(toolNames: string[]): AgentTool[] {
   return toolNames.flatMap((name) => {
+    if (CONTEXT_CREATED_TOOLS.has(name)) return [];
     const tool = TOOLS[name];
     if (!tool) throw new Error(`不明なツール名: ${name}`);
     return [wrapToolOutput(tool)];

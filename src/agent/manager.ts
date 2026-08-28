@@ -643,7 +643,7 @@ export async function sendMessage(
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
   const internalRequest =
-    enableBotTool !== false
+    enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
       ? createInternalRequestConfig?.(groupName, heldLlmProvider)
       : undefined;
   const payload = JSON.stringify({

@@ -151,7 +151,7 @@ describe("handleBotToolRequest", () => {
   it("runはTask Sessionを作成してBot実行完了後に結果を返す", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({
-      coding: { group: "main", instructions: "code" },
+      coding: { group: "main", instructions: "code", tools: ["bot"] },
     });
     repository.createBotTaskSession.mockReturnValue(session());
     sendMessage.mockResolvedValue("調査結果");

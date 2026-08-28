@@ -42,6 +42,12 @@ describe("validateAgentConfig", () => {
     ).rejects.toThrow("不明なモデル");
   });
 
+  it("accepts bot as a recognized context-created tool", async () => {
+    await expect(
+      validateAgentConfig({ tools: ["bot"] }, defaultModel),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects an unknown effective tool", async () => {
     await expect(
       validateAgentConfig({ tools: ["missing-tool"] }, defaultModel),

@@ -688,16 +688,17 @@ export async function runAgentLoop(
     },
   };
   const subagentTool = createSubagentTool(delegationContext);
-  const botTool = botToolEndpoint
-    ? createBotTool({
-        endpoint: botToolEndpoint,
-        groupName,
-        onUsage: (usage) => {
-          aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
-          hasUsage = true;
-        },
-      })
-    : undefined;
+  const botTool =
+    botToolEndpoint && groupConfig.tools?.includes("bot") === true
+      ? createBotTool({
+          endpoint: botToolEndpoint,
+          groupName,
+          onUsage: (usage) => {
+            aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
+            hasUsage = true;
+          },
+        })
+      : undefined;
   const agentTools = [...tools, subagentTool, ...(botTool ? [botTool] : [])];
   delegationContext.tools = agentTools;
 

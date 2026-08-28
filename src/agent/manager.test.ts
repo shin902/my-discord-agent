@@ -1017,12 +1017,21 @@ describe("sendMessage: 設定バリデーション", () => {
 describe("sendMessage: configOverride", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
   let ensureGroupSkillsMock: ReturnType<typeof vi.fn>;
+  let createInternalRequestConfigMock: ReturnType<typeof vi.fn>;
 
   const setup = async () => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
+    createInternalRequestConfigMock = vi.fn(() => ({
+      port: 12345,
+      token: "internal-token",
+      revoke: vi.fn(),
+    }));
     vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("../proxy/credential-proxy-server.js", () => ({
+      createInternalRequestConfig: createInternalRequestConfigMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -1047,7 +1056,51 @@ describe("sendMessage: configOverride", () => {
 
   afterEach(() => {
     vi.doUnmock("../config/group-config.js");
+    vi.doUnmock("../proxy/credential-proxy-server.js");
     vi.resetModules();
+  });
+
+  it("botがeffective toolsにない場合はendpointとtokenを渡さない", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi");
+
+    expect(createInternalRequestConfigMock).not.toHaveBeenCalled();
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.botToolEndpoint).toBeUndefined();
+  });
+
+  it("botがeffective toolsに明示された場合だけendpointとtokenを渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["bot"] },
+    });
+
+    expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
+      "test-group",
+      undefined,
+    );
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.botToolEndpoint).toEqual({
+      url: "http://host.docker.internal:12345/__agent/bot",
+      token: "internal-token",
+    });
+  });
+
+  it("groupのbot設定はchannel相当のtools上書きで無効化される", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["read"] },
+    });
+
+    expect(createInternalRequestConfigMock).not.toHaveBeenCalled();
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.botToolEndpoint).toBeUndefined();
   });
 
   it("configOverride が payload の groupConfig を上書きする", async () => {

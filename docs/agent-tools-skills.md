@@ -1,6 +1,6 @@
 # エージェントのツールとスキル
 
-エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）と `AGENTS.md` でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skillsは指定時に完全置換する。
+エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skillsは指定時に完全置換する。`bot` は明示的にtoolsへ追加したAgentだけが利用できます。
 
 ## ツール
 
@@ -8,7 +8,7 @@
 
 | ツール名 | 概要 |
 |---------|------|
-| `bot` | Bot RegistryのBotを `run` / `resume` / `list` で呼び出す組み込みオーケストレーションツール。`run` / `resume` は同じtool call内で完了まで待機し、結果を返す（キュー投入や非同期実行はしない） |
+| `bot` | toolsへ明示的に追加したAgentだけが利用できる、Bot RegistryのBotを `run` / `resume` / `list` で呼び出す組み込みオーケストレーションツール。`run` / `resume` は同じtool call内で完了まで待機し、結果を返す（キュー投入や非同期実行はしない） |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
 | `read` | ワークスペース内のファイルを読み込む |

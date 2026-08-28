@@ -186,7 +186,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       "delegate",
-      {},
+      { tools: ["bot"] },
       undefined,
       undefined,
       { url: "http://host.docker.internal:1234/__agent/bot", token: "secret" },
@@ -210,6 +210,25 @@ describe("runAgentLoop", () => {
       "http://host.docker.internal:1234/__agent/bot",
       expect.any(Object),
     );
+  });
+
+  it("明示的なbot設定がなければendpointがあってもbot toolを渡さない", async () => {
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "delegate",
+      {},
+      undefined,
+      undefined,
+      { url: "http://host.docker.internal:1234/__agent/bot", token: "secret" },
+    );
+
+    const rootOptions = lastAgentOptions as {
+      initialState: { tools: AgentTool[] };
+    };
+    expect(
+      rootOptions.initialState.tools.some((tool) => tool.name === "bot"),
+    ).toBe(false);
   });
 
   it("request-scoped instructionsをsystem promptだけに追加する", async () => {
