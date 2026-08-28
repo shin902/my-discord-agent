@@ -15,9 +15,6 @@ const {
   acquireLlmLock: vi.fn().mockResolvedValue(vi.fn()),
   resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
   repository: {
-    createBotTaskSession: vi.fn(),
-    findBotTaskSession: vi.fn(),
-    touchBotTaskSession: vi.fn(),
     listBotTaskSessions: vi.fn(),
     createBotTaskSessionAndAdmission: vi.fn(() => ({
       session: {
@@ -153,7 +150,6 @@ describe("handleBotToolRequest", () => {
     loadBotRegistry.mockResolvedValue({
       coding: { group: "main", instructions: "code", tools: ["bot"] },
     });
-    repository.createBotTaskSession.mockReturnValue(session());
     sendMessage.mockResolvedValue("調査結果");
     const req = new MockRequest(
       JSON.stringify({
@@ -263,7 +259,6 @@ describe("handleBotToolRequest", () => {
   it("親と同じserial providerはlockを再取得せず完了する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     sendMessage.mockResolvedValue("結果");
 
     await invoke(
@@ -307,13 +302,11 @@ describe("handleBotToolRequest", () => {
     );
     expect(acquireLlmLock).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(repository.createBotTaskSession).not.toHaveBeenCalled();
   });
 
   it("親lockなしのserial providerはlockを取得し、エラー時も解放する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     const release = vi.fn();
     acquireLlmLock.mockResolvedValueOnce(release);
     resolveProviderConcurrency.mockResolvedValueOnce("serial");
@@ -342,7 +335,6 @@ describe("handleBotToolRequest", () => {
   it("parallel providerはlock待機なしで実行し、releaseはnoop契約に委ねる", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     resolveProviderConcurrency.mockResolvedValueOnce("parallel");
     sendMessage.mockResolvedValueOnce("結果");
 
@@ -369,7 +361,6 @@ describe("handleBotToolRequest", () => {
   it("実行中のabortでも取得済みlockを解放する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     const release = vi.fn();
     acquireLlmLock.mockResolvedValueOnce(release);
     const req = new MockRequest(
@@ -393,7 +384,6 @@ describe("handleBotToolRequest", () => {
   it("lock待機中のabortでは取得後のreleaseなしで失敗する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     acquireLlmLock.mockRejectedValueOnce(new Error("provider lock aborted"));
 
     await invoke(
