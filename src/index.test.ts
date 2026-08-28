@@ -49,6 +49,7 @@ vi.mock("./config/config.js", () => ({
 }));
 vi.mock("./config/bots.js", () => ({
   loadBotRegistry: mocks.loadBotRegistry,
+  validateBotConfigs: mocks.validateBotConfigs,
 }));
 vi.mock("./queue/poller.js", () => ({
   startPoller: mocks.startPoller,
@@ -70,7 +71,6 @@ vi.mock("./agent/manager.js", () => ({
   initManager: mocks.initManager,
   killAllRunningContainers: mocks.killAllRunningContainers,
   validateGroupConfig: mocks.validateGroupConfig,
-  validateBotConfigs: mocks.validateBotConfigs,
 }));
 vi.mock("./config/default-model.js", () => ({
   loadDefaultModel: mocks.loadDefaultModel,

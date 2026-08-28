@@ -78,72 +78,7 @@ vi.mock("../config/default-model.js", () => ({
     ),
 }));
 
-const { resolveModel, resolveBaseUrl, validateBotConfigs } = await import(
-  "./manager.js"
-);
-
-describe("validateBotConfigs", () => {
-  const group = {
-    name: "main",
-    channels: [],
-    model: { provider: "zai", modelId: "glm-4.7-flash" },
-  };
-  const defaultModel = { provider: "zai", modelId: "glm-4.7-flash" };
-
-  it("accepts a valid effective group-to-Bot config", async () => {
-    await expect(
-      validateBotConfigs(
-        [group],
-        {
-          coding: {
-            group: "main",
-            instructions: "Act as a coding worker",
-            model: { provider: "provider-a", modelId: "model-x" },
-            tools: ["read"],
-            mounts: [{ host: "groups/main", container: "/repo" }],
-          },
-        },
-        defaultModel,
-      ),
-    ).resolves.toBeUndefined();
-  });
-
-  it.each([
-    [
-      "invalid model",
-      { model: { provider: "provider-a", modelId: "missing" } },
-      "不明なモデル",
-    ],
-    ["unknown tool", { tools: ["missing-tool"] }, "不明なツール名"],
-    [
-      "invalid mount",
-      { mounts: [{ host: "../outside", container: "/repo" }] },
-      "リポジトリルート外",
-    ],
-  ] as [
-    string,
-    Partial<import("../config/bots.js").BotProfile>,
-    string,
-  ][])("rejects a Bot with %s before startup", async (_name, override, message) => {
-    await expect(
-      validateBotConfigs(
-        [group],
-        { coding: { group: "main", instructions: "worker", ...override } },
-        defaultModel,
-      ),
-    ).rejects.toThrow(message);
-  });
-
-  it("rejects a Bot referencing a missing group", async () => {
-    await expect(
-      validateBotConfigs(
-        [group],
-        { coding: { group: "other", instructions: "worker" } },
-        defaultModel,
-      ),
-    ).rejects.toThrow("Bot coding のグループが未定義です: other");
-  });
-});
+const { resolveModel, resolveBaseUrl } = await import("./manager.js");
 
 describe("resolveBaseUrl", () => {
   const originalEnv = process.env;

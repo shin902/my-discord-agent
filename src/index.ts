@@ -2,10 +2,9 @@ import "dotenv/config";
 import {
   initManager,
   killAllRunningContainers,
-  validateBotConfigs,
   validateGroupConfig,
 } from "./agent/manager.js";
-import { loadBotRegistry } from "./config/bots.js";
+import { loadBotRegistry, validateBotConfigs } from "./config/bots.js";
 import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
