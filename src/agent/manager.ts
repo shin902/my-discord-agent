@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
+import { validateAgentConfig } from "../config/agent-validation.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -231,19 +232,10 @@ export async function validateGroupConfig(
   group: GroupConfig,
   defaultModel: { provider: string; modelId: string },
 ): Promise<void> {
-  const validateConfig = async (config: AgentConfig): Promise<void> => {
-    await validateModel(
-      config.model?.provider ?? defaultModel.provider,
-      config.model?.modelId ?? defaultModel.modelId,
-    );
-    resolveTools(config.tools ?? []);
-    buildExtraMountArgs(config.mounts ?? []);
-  };
-
-  await validateConfig(resolveAgentConfig(group));
+  await validateAgentConfig(resolveAgentConfig(group), defaultModel);
   await Promise.all(
     group.channels.map((channel) =>
-      validateConfig(resolveAgentConfig(group, channel)),
+      validateAgentConfig(resolveAgentConfig(group, channel), defaultModel),
     ),
   );
   extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));

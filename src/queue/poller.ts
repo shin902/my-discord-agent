@@ -7,8 +7,14 @@ import {
   sendMessage,
 } from "../agent/manager.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
+import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
-import { findGroupByName, type ModelConfig } from "../config/groups.js";
+import {
+  type AgentConfig,
+  findGroupByName,
+  type GroupConfig,
+  type ModelConfig,
+} from "../config/groups.js";
 import {
   type ProviderConcurrency,
   resolveProviderConcurrency,
@@ -420,12 +426,39 @@ interface LlmLockTarget {
   concurrency: ProviderConcurrency;
 }
 
+async function resolveBotExecution(
+  msg: InboxMessage,
+  groupConfig: GroupConfig | undefined,
+): Promise<{
+  configOverride?: Partial<AgentConfig>;
+  systemPromptAppend?: string;
+}> {
+  if (!msg.botId) return { configOverride: msg.configOverride };
+  if (!groupConfig)
+    throw new NonRetryableError(
+      `Bot ${msg.botId} のグループ設定が未定義です: ${msg.groupName}`,
+    );
+  const registry = await loadBotRegistry();
+  try {
+    const profile = resolveBotProfile(registry, msg.botId, groupConfig.name);
+    return {
+      configOverride: resolveAgentConfig(groupConfig, profile),
+      systemPromptAppend: profile.instructions,
+    };
+  } catch (error) {
+    throw new NonRetryableError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 async function resolveLlmLockTarget(
   msg: InboxMessage,
   groupModel?: ModelConfig,
+  configOverride = msg.configOverride,
 ): Promise<LlmLockTarget> {
   const model = await resolveModelConfig(
-    resolveAgentConfig({ model: groupModel }, msg.configOverride).model,
+    resolveAgentConfig({ model: groupModel }, configOverride).model,
   );
   return {
     provider: model.provider,
@@ -777,7 +810,12 @@ async function processCronThreadDelivery(
       sessionId = cronSessionId(msg);
     }
     const groupConfig = await findGroupByName(msg.groupName);
-    const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
+    const execution = await resolveBotExecution(msg, groupConfig);
+    const lockTarget = await resolveLlmLockTarget(
+      msg,
+      groupConfig?.model,
+      execution.configOverride,
+    );
     const response = await withLlmLock(
       lockTarget,
       async () => {
@@ -789,7 +827,7 @@ async function processCronThreadDelivery(
             },
             onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
             signal,
-            configOverride: msg.configOverride,
+            configOverride: execution.configOverride,
             agentsSnapshotContent: msg.agentsSnapshotContent,
             agentsSnapshotPresent: msg.agentsSnapshotPresent,
             memorySnapshotPresent: msg.memorySnapshotPresent,
@@ -797,9 +835,10 @@ async function processCronThreadDelivery(
             snapshotHash: msg.snapshotHash,
             toolCallKey: msg.toolCallKey,
             systemPromptAppend:
-              msg.cronNoReply && msg.cronDeliveryMode !== "item-thread"
+              execution.systemPromptAppend ??
+              (msg.cronNoReply && msg.cronDeliveryMode !== "item-thread"
                 ? NO_REPLY_SYSTEM_PROMPT
-                : undefined,
+                : undefined),
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -1035,7 +1074,12 @@ export async function processMessage(
     const replyMessageId = msg.messageId;
 
     try {
-      const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
+      const execution = await resolveBotExecution(msg, groupConfig);
+      const lockTarget = await resolveLlmLockTarget(
+        msg,
+        groupConfig.model,
+        execution.configOverride,
+      );
       response = await withLlmLock(
         lockTarget,
         async () => {
@@ -1075,11 +1119,11 @@ export async function processMessage(
                 memorySnapshotContent: msg.memorySnapshotContent,
                 snapshotHash: msg.snapshotHash,
                 toolCallKey: msg.toolCallKey,
-                systemPromptAppend: msg.cronNoReply
-                  ? NO_REPLY_SYSTEM_PROMPT
-                  : undefined,
+                systemPromptAppend:
+                  execution.systemPromptAppend ??
+                  (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
                 signal,
-                configOverride: msg.configOverride,
+                configOverride: execution.configOverride,
               },
             );
           } finally {

@@ -2,6 +2,29 @@ import { describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
+describe("QueueRepository payload", () => {
+  it("round-trips botId in payload_json without a schema column", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+        botId: "coding",
+      });
+      expect(repo.get(enqueued.job.id)?.botId).toBe("coding");
+      const columns = repo.db
+        .prepare("PRAGMA table_info(jobs)")
+        .all() as Array<{ name: string }>;
+      expect(columns.some((column) => column.name === "bot_id")).toBe(false);
+    } finally {
+      repo.close();
+    }
+  });
+});
+
 describe("QueueRepository lease renewal", () => {
   it("extends a claimed lease with its fencing token", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));

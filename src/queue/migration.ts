@@ -72,6 +72,8 @@ function validMessage(value: unknown): value is InboxMessage {
   ]) {
     if (optional !== undefined && typeof optional !== "string") return false;
   }
+  if (message.botId !== undefined && typeof message.botId !== "string")
+    return false;
   if (
     message.cronProvisioning !== undefined &&
     typeof message.cronProvisioning !== "boolean"
