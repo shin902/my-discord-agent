@@ -83,7 +83,17 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
     const subCost = db
       .prepare<[], SubCostRow>(
-        `SELECT SUM(
+        `WITH current_subscriptions AS (
+          SELECT s.*
+          FROM subscriptions AS s
+          JOIN (
+            SELECT name, MAX(id) AS id
+            FROM subscriptions
+            GROUP BY name
+          ) AS latest
+            ON latest.id = s.id
+        )
+        SELECT SUM(
           CASE
             WHEN cycle = 'monthly' THEN amount
             WHEN cycle = 'yearly'  THEN CAST(amount * 1.0 / 12 AS INTEGER)
@@ -91,7 +101,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
             ELSE amount
           END
         ) AS monthly_cost
-        FROM subscriptions
+        FROM current_subscriptions
         WHERE active = 1 AND amount < 0`,
       )
       .get();
