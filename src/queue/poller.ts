@@ -854,6 +854,10 @@ async function processCronThreadDelivery(
               (msg.cronNoReply && msg.cronDeliveryMode !== "item-thread"
                 ? NO_REPLY_SYSTEM_PROMPT
                 : undefined),
+            heldLlmProvider:
+              lockTarget.concurrency === "serial"
+                ? lockTarget.provider
+                : undefined,
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -1143,6 +1147,10 @@ export async function processMessage(
                   (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
                 signal,
                 configOverride: execution.configOverride,
+                heldLlmProvider:
+                  lockTarget.concurrency === "serial"
+                    ? lockTarget.provider
+                    : undefined,
               },
             );
           } finally {

@@ -394,6 +394,8 @@ export interface SendMessageOptions {
   systemPromptAppend?: string;
   /** Disable nested agent-facing Bot delegation for a Bot execution. */
   enableBotTool?: boolean;
+  /** Provider whose serial LLM lock is held by the caller, if any. */
+  heldLlmProvider?: string;
 }
 
 export function sendMessage(
@@ -448,6 +450,7 @@ export async function sendMessage(
     toolCallKey,
     systemPromptAppend,
     enableBotTool,
+    heldLlmProvider,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -551,7 +554,10 @@ export async function sendMessage(
     // ディレクトリが存在しない場合はマウントしない
   }
 
-  const internalRequest = createInternalRequestConfig?.(groupName);
+  const internalRequest = createInternalRequestConfig?.(
+    groupName,
+    heldLlmProvider,
+  );
   const payload = JSON.stringify({
     groupName,
     sessionId,

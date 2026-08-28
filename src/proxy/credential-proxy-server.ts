@@ -24,12 +24,18 @@ class UpstreamTimeoutError extends Error {
 }
 
 let proxyPort: number | null = null;
-const internalRequestTokens = new Map<string, string>();
+interface InternalRequestAuthorization {
+  scope: string;
+  /** Provider whose serial lock is held by the parent run, if any. */
+  heldProvider?: string;
+}
+const internalRequestTokens = new Map<string, InternalRequestAuthorization>();
 let internalRequestHandler:
   | ((
       req: IncomingMessage,
       res: ServerResponse,
       scope: string,
+      heldProvider?: string,
     ) => Promise<void>)
   | null = null;
 
@@ -44,6 +50,7 @@ export function registerInternalRequestHandler(
     req: IncomingMessage,
     res: ServerResponse,
     scope: string,
+    heldProvider?: string,
   ) => Promise<void>,
 ): void {
   internalRequestHandler = handler;
@@ -52,10 +59,11 @@ export function registerInternalRequestHandler(
 /** Issue a short-lived, group-scoped credential for one sandbox run. */
 export function createInternalRequestConfig(
   scope: string,
+  heldProvider?: string,
 ): InternalRequestConfig | undefined {
   if (proxyPort === null) return undefined;
   const token = randomUUID();
-  internalRequestTokens.set(token, scope);
+  internalRequestTokens.set(token, { scope, heldProvider });
   setTimeout(() => internalRequestTokens.delete(token), 15 * 60_000).unref();
   return { port: proxyPort, token };
 }
@@ -278,12 +286,17 @@ export function createRequestHandler(
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
     if (pathname === "/__agent/bot") {
       const token = req.headers["x-agent-internal-token"];
-      const scope =
+      const authorization =
         typeof token === "string"
           ? internalRequestTokens.get(token)
           : undefined;
-      if (internalRequestHandler && scope !== undefined) {
-        internalRequestHandler(req, res, scope).catch((err) => {
+      if (internalRequestHandler && authorization !== undefined) {
+        internalRequestHandler(
+          req,
+          res,
+          authorization.scope,
+          authorization.heldProvider,
+        ).catch((err) => {
           if (!res.headersSent) {
             console.error(`[credential-proxy] internal request failed: ${err}`);
             res.writeHead(500);

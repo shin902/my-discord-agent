@@ -3,7 +3,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
+import { resolveModelConfig } from "../config/default-model.js";
 import { findGroupByName } from "../config/groups.js";
+import { resolveProviderConcurrency } from "../config/providers.js";
+import { acquireLlmLock } from "../queue/llm-mutex.js";
 import type { BotTaskSession } from "../queue/repository.js";
 import { getQueueRepository } from "../queue/repository.js";
 import { type AgentExecutionTiming, sendMessage } from "./manager.js";
@@ -83,6 +86,7 @@ export async function handleBotToolRequest(
   req: IncomingMessage,
   res: ServerResponse,
   scope?: string,
+  heldProvider?: string,
 ): Promise<void> {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -149,25 +153,39 @@ export async function handleBotToolRequest(
       });
     }
 
-    let timing: AgentExecutionTiming | undefined;
-    const content = await sendMessage(group.name, session.sessionId, prompt, {
-      configOverride: resolveAgentConfig(group, profile),
-      systemPromptAppend: profile.instructions,
-      enableBotTool: false,
-      signal: controller.signal,
-      onExecutionTiming: (value) => {
-        timing = value;
-      },
-    });
-    if (content.trim() === "") throw new Error("Botが空の応答で終了しました");
+    const configOverride = resolveAgentConfig(group, profile);
+    const model = await resolveModelConfig(configOverride.model);
+    const concurrency = await resolveProviderConcurrency(model.provider);
+    // The parent poller already holds its serial-provider lock. Re-acquiring it
+    // would deadlock because the parent waits for this synchronous tool call.
+    // A direct sendMessage() has no heldProvider and must acquire normally.
+    const release =
+      heldProvider === model.provider
+        ? undefined
+        : await acquireLlmLock(model.provider, concurrency, controller.signal);
+    try {
+      let timing: AgentExecutionTiming | undefined;
+      const content = await sendMessage(group.name, session.sessionId, prompt, {
+        configOverride,
+        systemPromptAppend: profile.instructions,
+        enableBotTool: false,
+        signal: controller.signal,
+        onExecutionTiming: (value) => {
+          timing = value;
+        },
+      });
+      if (content.trim() === "") throw new Error("Botが空の応答で終了しました");
 
-    writeJson(res, 200, {
-      content,
-      action: request.action,
-      botId: request.bot,
-      session: session.handle,
-      ...(timing?.usage ? { usage: timing.usage } : {}),
-    } satisfies BotToolResponse);
+      writeJson(res, 200, {
+        content,
+        action: request.action,
+        botId: request.bot,
+        session: session.handle,
+        ...(timing?.usage ? { usage: timing.usage } : {}),
+      } satisfies BotToolResponse);
+    } finally {
+      release?.();
+    }
   } catch (error) {
     writeJson(res, 500, {
       error: error instanceof Error ? error.message : String(error),

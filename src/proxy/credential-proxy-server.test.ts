@@ -711,6 +711,86 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
   });
 });
 
+describe("internal agent route: scoped authorization", () => {
+  let serverRequestHandler:
+    | ((req: IncomingMessage, res: ServerResponse) => void)
+    | undefined;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doMock("node:http", () => ({
+      createServer: vi.fn((handler) => {
+        serverRequestHandler = handler;
+        return {
+          on: vi.fn(),
+          listen: vi.fn((_port: number, _host: string, cb: () => void) => cb()),
+          address: vi.fn(() => ({ port: 12345 })),
+        };
+      }),
+      request: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: vi.fn() }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../config/proxy-config.js", () => ({
+      loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
+    }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  async function setup() {
+    const proxy = await import("./credential-proxy-server.js");
+    await proxy.initCredentialProxyServer();
+    return proxy;
+  }
+
+  it("valid tokenはscopeとheld providerをhandlerへ渡す", async () => {
+    const proxy = await setup();
+    const handler = vi.fn().mockResolvedValue(undefined);
+    proxy.registerInternalRequestHandler(handler);
+    const config = proxy.createInternalRequestConfig("main", "openai");
+    expect(config).toMatchObject({ port: 12345, token: expect.any(String) });
+
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      makeRes() as unknown as ServerResponse,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(handler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "main",
+      "openai",
+    );
+  });
+
+  it.each([
+    "",
+    "invalid-token",
+  ])("missing/invalid tokenは内部routeを拒否する (%s)", async (token) => {
+    const proxy = await setup();
+    const handler = vi.fn().mockResolvedValue(undefined);
+    proxy.registerInternalRequestHandler(handler);
+    const res = makeRes();
+
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", token ? { "x-agent-internal-token": token } : {}),
+      res as unknown as ServerResponse,
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.writeHead).toHaveBeenCalledWith(404);
+    expect(res.end).toHaveBeenCalledWith("Not Found");
+  });
+});
+
 describe("initCredentialProxyServer: Google Auth 初期化", () => {
   const originalEnv = process.env;
   const GOOGLE_CREDS: CredentialEntry[] = [

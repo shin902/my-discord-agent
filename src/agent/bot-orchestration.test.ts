@@ -1,18 +1,26 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { sendMessage, findGroupByName, loadBotRegistry, repository } =
-  vi.hoisted(() => ({
-    sendMessage: vi.fn(),
-    findGroupByName: vi.fn(),
-    loadBotRegistry: vi.fn(),
-    repository: {
-      createBotTaskSession: vi.fn(),
-      findBotTaskSession: vi.fn(),
-      touchBotTaskSession: vi.fn(),
-      listBotTaskSessions: vi.fn(),
-    },
-  }));
+const {
+  sendMessage,
+  findGroupByName,
+  loadBotRegistry,
+  acquireLlmLock,
+  resolveProviderConcurrency,
+  repository,
+} = vi.hoisted(() => ({
+  sendMessage: vi.fn(),
+  findGroupByName: vi.fn(),
+  loadBotRegistry: vi.fn(),
+  acquireLlmLock: vi.fn().mockResolvedValue(vi.fn()),
+  resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
+  repository: {
+    createBotTaskSession: vi.fn(),
+    findBotTaskSession: vi.fn(),
+    touchBotTaskSession: vi.fn(),
+    listBotTaskSessions: vi.fn(),
+  },
+}));
 
 vi.mock("./manager.js", () => ({ sendMessage }));
 vi.mock("../config/groups.js", () => ({ findGroupByName }));
@@ -33,6 +41,11 @@ vi.mock("../config/bots.js", () => ({
 vi.mock("../config/agent-resolution.js", () => ({
   resolveAgentConfig: vi.fn(() => ({ model: { provider: "p", modelId: "m" } })),
 }));
+vi.mock("../config/default-model.js", () => ({
+  resolveModelConfig: vi.fn(async (model: unknown) => model),
+}));
+vi.mock("../config/providers.js", () => ({ resolveProviderConcurrency }));
+vi.mock("../queue/llm-mutex.js", () => ({ acquireLlmLock }));
 vi.mock("../queue/repository.js", () => ({
   getQueueRepository: () => repository,
 }));
@@ -65,10 +78,17 @@ function response() {
   return result;
 }
 
-function invoke(req: MockRequest, res: ReturnType<typeof response>) {
+function invoke(
+  req: MockRequest,
+  res: ReturnType<typeof response>,
+  heldProvider?: string,
+  scope?: string,
+) {
   return handleBotToolRequest(
     req as unknown as import("node:http").IncomingMessage,
     res as unknown as import("node:http").ServerResponse,
+    scope,
+    heldProvider,
   );
 }
 
@@ -183,6 +203,149 @@ describe("handleBotToolRequest", () => {
     expect(JSON.parse(res.end.mock.calls[0][0]).content).toContain(
       "task-abc123",
     );
+  });
+
+  it("親と同じserial providerはlockを再取得せず完了する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    repository.createBotTaskSession.mockReturnValue(session());
+    sendMessage.mockResolvedValue("結果");
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ),
+      response(),
+      "p",
+    );
+
+    expect(acquireLlmLock).not.toHaveBeenCalled();
+  });
+
+  it("異なるserial providerはlockを取得し、エラー時も解放する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    repository.createBotTaskSession.mockReturnValue(session());
+    const release = vi.fn();
+    acquireLlmLock.mockResolvedValueOnce(release);
+    resolveProviderConcurrency.mockResolvedValueOnce("serial");
+    sendMessage.mockRejectedValueOnce(new Error("failed"));
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ),
+      response(),
+      "other-provider",
+    );
+
+    expect(acquireLlmLock).toHaveBeenCalledWith(
+      "p",
+      "serial",
+      expect.any(AbortSignal),
+    );
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("parallel providerはlock待機なしで実行し、releaseはnoop契約に委ねる", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    repository.createBotTaskSession.mockReturnValue(session());
+    resolveProviderConcurrency.mockResolvedValueOnce("parallel");
+    sendMessage.mockResolvedValueOnce("結果");
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ),
+      response(),
+      "other-provider",
+    );
+
+    expect(acquireLlmLock).toHaveBeenCalledWith(
+      "p",
+      "parallel",
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("実行中のabortでも取得済みlockを解放する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    repository.createBotTaskSession.mockReturnValue(session());
+    const release = vi.fn();
+    acquireLlmLock.mockResolvedValueOnce(release);
+    const req = new MockRequest(
+      JSON.stringify({
+        groupName: "main",
+        action: "run",
+        bot: "coding",
+        prompt: "inspect",
+      }),
+    );
+    sendMessage.mockImplementationOnce(async () => {
+      req.emit("aborted");
+      throw new Error("aborted");
+    });
+
+    await invoke(req, response(), "other-provider");
+
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("lock待機中のabortでは取得後のreleaseなしで失敗する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    repository.createBotTaskSession.mockReturnValue(session());
+    acquireLlmLock.mockRejectedValueOnce(new Error("provider lock aborted"));
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ),
+      response(),
+      "other-provider",
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("token scopeを越えるgroupのBotは拒否する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    const req = new MockRequest(
+      JSON.stringify({
+        groupName: "other",
+        action: "run",
+        bot: "coding",
+        prompt: "inspect",
+      }),
+    );
+    const res = response();
+
+    await invoke(req, res, undefined, "main");
+
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    expect(findGroupByName).not.toHaveBeenCalled();
   });
 
   it("異なるgroupのBotは拒否する", async () => {
