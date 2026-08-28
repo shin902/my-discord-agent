@@ -57,7 +57,7 @@ export function registerInternalRequestHandler(
   internalRequestHandler = handler;
 }
 
-/** Issue a short-lived, group-scoped credential for one sandbox run. */
+/** Issue a group-scoped credential for one sandbox run. The caller must revoke it when the run ends. */
 export function createInternalRequestConfig(
   scope: string,
   heldProvider?: string,
@@ -65,13 +65,9 @@ export function createInternalRequestConfig(
   if (proxyPort === null) return undefined;
   const token = randomUUID();
   internalRequestTokens.set(token, { scope, heldProvider });
-  let timeoutHandle: NodeJS.Timeout | undefined;
   const revoke = () => {
-    if (!internalRequestTokens.delete(token)) return;
-    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    internalRequestTokens.delete(token);
   };
-  timeoutHandle = setTimeout(revoke, 15 * 60_000);
-  timeoutHandle.unref();
   return { port: proxyPort, token, revoke };
 }
 

@@ -739,6 +739,7 @@ describe("internal agent route: scoped authorization", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.resetModules();
   });
 
@@ -781,6 +782,36 @@ describe("internal agent route: scoped authorization", () => {
     expect(handler).toHaveBeenCalledTimes(1);
     expect(revokedResponse.writeHead).toHaveBeenCalledWith(404);
     expect(revokedResponse.end).toHaveBeenCalledWith("Not Found");
+  });
+
+  it("run中は15分を超えてもtokenが有効で、revoke後は無効になる", async () => {
+    vi.useFakeTimers();
+    const proxy = await setup();
+    const handler = vi.fn().mockResolvedValue(undefined);
+    proxy.registerInternalRequestHandler(handler);
+    const config = proxy.createInternalRequestConfig("main");
+    expect(config).toBeDefined();
+
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      makeRes() as unknown as ServerResponse,
+    );
+    vi.advanceTimersByTime(15 * 60_000 + 1);
+    expect(handler).toHaveBeenCalledOnce();
+
+    config?.revoke();
+    config?.revoke();
+    const revokedResponse = makeRes();
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      revokedResponse as unknown as ServerResponse,
+    );
+    expect(handler).toHaveBeenCalledOnce();
+    expect(revokedResponse.writeHead).toHaveBeenCalledWith(404);
   });
 
   it.each([
