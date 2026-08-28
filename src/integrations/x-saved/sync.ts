@@ -44,6 +44,7 @@ export async function runXSavedSync(
     limit: options.limit ?? 100,
     maxPages: options.maxPages ?? 3,
     account: options.account,
+    birdclawDbPath: options.birdclawDbPath,
   });
 
   const errors = [syncResult.bookmarks.error, syncResult.likes.error].filter(
