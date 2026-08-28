@@ -199,7 +199,9 @@ function resolveBirdclawAccountId(
        WHERE id = ? OR lower(handle) = lower(?) OR lower(name) = lower(?)
        LIMIT 1`,
     )
-    .get(selector, selector.replace(/^@/, ""), selector) as AccountRow | undefined;
+    .get(selector, selector.replace(/^@/, ""), selector) as
+    | AccountRow
+    | undefined;
   if (!row) {
     throw new Error(`BirdClaw account not found: ${selector}`);
   }
@@ -295,9 +297,11 @@ function loadBirdclawRows(
   `;
 
   const statement = sourceDb.prepare(query);
-  return (accountId
-    ? statement.all(accountId, accountId, accountId, accountId)
-    : statement.all()) as BirdclawRow[];
+  return (
+    accountId
+      ? statement.all(accountId, accountId, accountId, accountId)
+      : statement.all()
+  ) as BirdclawRow[];
 }
 
 export function ingestBirdclawSavedItems(options?: {
@@ -315,7 +319,8 @@ export function ingestBirdclawSavedItems(options?: {
   });
   const ownsTarget = options?.xSavedDb === undefined;
   const targetDb =
-    options?.xSavedDb ?? openXSavedDb(resolveXSavedDbPath(options?.xSavedDbPath));
+    options?.xSavedDb ??
+    openXSavedDb(resolveXSavedDbPath(options?.xSavedDbPath));
 
   try {
     const rows = loadBirdclawRows(sourceDb, options?.account);
@@ -381,7 +386,9 @@ export function ingestBirdclawSavedItems(options?: {
           authorHandle,
           url,
           tweetCreatedAt: row.created_at,
-          externalUrlsJson: JSON.stringify(extractExternalUrls(row.entities_json)),
+          externalUrlsJson: JSON.stringify(
+            extractExternalUrls(row.entities_json),
+          ),
           seenLiked: row.liked ? 1 : 0,
           seenBookmarked: row.bookmarked ? 1 : 0,
           now,
