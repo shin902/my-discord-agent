@@ -152,26 +152,24 @@ export async function handleBotToolRequest(
                 controller.signal,
               );
         try {
-          execution = await (async () => {
-            let timing: AgentExecutionTiming | undefined;
-            const content = await sendMessage(
-              group.name,
-              session.sessionId,
-              prompt,
-              {
-                configOverride,
-                systemPromptAppend: profile.instructions,
-                enableBotTool: false,
-                signal: controller.signal,
-                onExecutionTiming: (value) => {
-                  timing = value;
-                },
+          let timing: AgentExecutionTiming | undefined;
+          const content = await sendMessage(
+            group.name,
+            session.sessionId,
+            prompt,
+            {
+              configOverride,
+              systemPromptAppend: profile.instructions,
+              enableBotTool: false,
+              signal: controller.signal,
+              onExecutionTiming: (value) => {
+                timing = value;
               },
-            );
-            if (content.trim() === "")
-              throw new Error("Botが空の応答で終了しました");
-            return { content, timing };
-          })();
+            },
+          );
+          if (content.trim() === "")
+            throw new Error("Botが空の応答で終了しました");
+          execution = { content, timing };
         } finally {
           release?.();
         }

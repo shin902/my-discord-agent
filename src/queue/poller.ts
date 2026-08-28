@@ -500,19 +500,6 @@ async function withLlmLock<T>(
   }
 }
 
-async function withBotTaskAndLlmLock<T>(
-  _msg: InboxMessage,
-  target: LlmLockTarget,
-  fn: (signal?: AbortSignal) => Promise<T>,
-  options: Omit<LlmLockOptions, "signal"> = {},
-  signal?: AbortSignal,
-): Promise<T> {
-  return withLlmLock(target, () => fn(signal), {
-    ...options,
-    signal,
-  });
-}
-
 // 非ゼロ終了コードの扱いは通常メッセージと cron thread delivery で同一のため共通化する。
 // リトライ方針の決定は QueueRepository が所有するため、poller は記録するだけ。
 async function releaseRssAfterFailure(
@@ -844,10 +831,9 @@ async function processCronThreadDelivery(
       groupConfig?.model,
       execution.configOverride,
     );
-    const response = await withBotTaskAndLlmLock(
-      msg,
+    const response = await withLlmLock(
       lockTarget,
-      async (executionSignal) => {
+      async () => {
         const agentStartedAt = Date.now();
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
@@ -855,7 +841,7 @@ async function processCronThreadDelivery(
               timing.agentExecution = executionTiming;
             },
             onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
-            signal: executionSignal,
+            signal,
             configOverride: execution.configOverride,
             systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
             systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
@@ -882,8 +868,8 @@ async function processCronThreadDelivery(
         onAcquired: (waitMs) => {
           timing.lockWaitMs = waitMs;
         },
+        signal,
       },
-      signal,
     );
     if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
     if (isEmptyAgentResponse(response)) {
@@ -1118,10 +1104,9 @@ export async function processMessage(
         groupConfig.model,
         execution.configOverride,
       );
-      response = await withBotTaskAndLlmLock(
-        msg,
+      response = await withLlmLock(
         lockTarget,
-        async (executionSignal) => {
+        async () => {
           stopTyping = startTypingLoop(msg.groupName, msg.channelId);
           const agentStartedAt = Date.now();
           try {
@@ -1161,7 +1146,7 @@ export async function processMessage(
                 systemPromptAppend:
                   execution.systemPromptAppend ??
                   (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
-                signal: executionSignal,
+                signal,
                 configOverride: execution.configOverride,
                 heldLlmProvider:
                   lockTarget.concurrency === "serial"
@@ -1178,8 +1163,8 @@ export async function processMessage(
           onAcquired: (waitMs) => {
             timing.lockWaitMs = waitMs;
           },
+          signal,
         },
-        signal,
       );
     } catch (err) {
       stopTyping();
