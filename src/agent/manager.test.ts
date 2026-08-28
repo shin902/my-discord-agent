@@ -1104,6 +1104,49 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
   });
 
+  it("subagentイベントは転送し、未知イベントは無視する", async () => {
+    const events = [
+      {
+        type: "subagent_tool_start",
+        worker: "ephemeral",
+        runId: "child-123",
+        parentRunId: "root-123",
+        toolName: "read",
+        taskPreview: "調査タスク",
+      },
+      {
+        type: "subagent_update",
+        worker: "ephemeral",
+        runId: "child-123",
+        parentRunId: "root-123",
+        status: "completed",
+        taskPreview: "調査タスク",
+        resultPreview: "調査完了",
+      },
+      { type: "future_event", message: "must be ignored" },
+      {
+        type: "subagent_update",
+        worker: "ephemeral",
+        runId: "child-123",
+        parentRunId: "root-123",
+        status: "running",
+        taskPreview: "@everyone unsafe",
+      }, // unsafe taskPreview: must be ignored
+    ];
+    const sendMessage = await setupWithStderr(
+      events
+        .map((event) => `__DISCORD_EVENT__:${JSON.stringify(event)}\n`)
+        .join(""),
+    );
+
+    const onDiscordEvent = vi.fn();
+    await sendMessage("g", "s", "hi", onDiscordEvent);
+
+    expect(onDiscordEvent).toHaveBeenCalledTimes(2);
+    expect(onDiscordEvent).toHaveBeenNthCalledWith(1, events[0]);
+    expect(onDiscordEvent).toHaveBeenNthCalledWith(2, events[1]);
+  });
+
   it("agent_timing はDiscordへ転送せず実行時間へ統合する", async () => {
     const eventPayload = {
       type: "agent_timing",

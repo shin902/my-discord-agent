@@ -1,0 +1,147 @@
+import type {
+  AgentEvent,
+  AgentTool,
+  AgentToolResult,
+  AgentToolUpdateCallback,
+  ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { type AgentExecutionOptions, runAgent } from "./agent-execution.js";
+import {
+  type AgentRun,
+  type AgentRunStatus,
+  agentRunRegistry,
+} from "./agent-run.js";
+import { resultPreview, taskPreview } from "./subagent-preview.js";
+
+const parameters = Type.Object({
+  task: Type.String({
+    description: "サブエージェントへ委譲する自己完結したタスク",
+  }),
+});
+
+export type SubagentDetails = {
+  worker: "ephemeral";
+  runId: string;
+  parentRunId: string;
+  status: AgentRunStatus;
+  taskPreview: string;
+  resultPreview?: string;
+};
+
+export interface SubagentToolContext {
+  parentRun: AgentRun;
+  systemPrompt: string;
+  model: Model<Api>;
+  tools: AgentTool[];
+  thinkingLevel: ThinkingLevel;
+  convertToLlm: AgentExecutionOptions["convertToLlm"];
+  getApiKey: AgentExecutionOptions["getApiKey"];
+  onEvent?: (run: AgentRun, event: AgentEvent) => void;
+}
+
+function details(run: AgentRun): SubagentDetails {
+  return {
+    worker: "ephemeral",
+    runId: run.id,
+    parentRunId: run.parentRunId ?? "",
+    status: run.status,
+    taskPreview: run.taskPreview ?? "(unknown task)",
+    ...(run.resultPreview ? { resultPreview: run.resultPreview } : {}),
+  };
+}
+
+function progress(
+  run: AgentRun,
+  text: string,
+  onUpdate?: AgentToolUpdateCallback<SubagentDetails>,
+): void {
+  onUpdate?.({ content: [{ type: "text", text }], details: details(run) });
+}
+
+export async function runEphemeralAgent(
+  context: SubagentToolContext,
+  task: string,
+  signal?: AbortSignal,
+  onUpdate?: AgentToolUpdateCallback<SubagentDetails>,
+): Promise<AgentToolResult<SubagentDetails>> {
+  if (
+    context.parentRun.delegationDepth >= context.parentRun.maxDelegationDepth
+  ) {
+    throw new Error(
+      `サブエージェントの最大深度に達しています (max=${context.parentRun.maxDelegationDepth})`,
+    );
+  }
+
+  const childRun = agentRunRegistry.create({
+    kind: "subagent",
+    parentRunId: context.parentRun.id,
+  });
+  childRun.taskPreview = taskPreview(task);
+  progress(childRun, "Subagent started", onUpdate);
+
+  try {
+    const childSubagentTool = createSubagentTool({
+      ...context,
+      parentRun: childRun,
+    });
+    const childTools = context.tools.map((tool) =>
+      tool.name === "subagent" ? childSubagentTool : tool,
+    );
+    const execution = await runAgent({
+      systemPrompt: context.systemPrompt,
+      model: context.model,
+      messages: [],
+      tools: childTools,
+      thinkingLevel: context.thinkingLevel,
+      prompt: task,
+      convertToLlm: context.convertToLlm,
+      getApiKey: context.getApiKey,
+      sessionId: childRun.id,
+      signal,
+      onEvent: (event) => {
+        context.onEvent?.(childRun, event);
+      },
+    });
+    if (signal?.aborted || execution.terminalStopReason === "aborted") {
+      throw new Error("サブエージェントが中断されました");
+    }
+    if (execution.terminalStopReason === "error") {
+      const reason = execution.terminalErrorMessage
+        ? `: ${execution.terminalErrorMessage}`
+        : "";
+      throw new Error(`サブエージェントの実行に失敗しました${reason}`);
+    }
+    if (execution.response.trim() === "") {
+      throw new Error("サブエージェントが空の応答で終了しました");
+    }
+
+    childRun.resultPreview = resultPreview(execution.response);
+    agentRunRegistry.complete(childRun.id, execution.response);
+    progress(childRun, "Subagent completed", onUpdate);
+    return {
+      content: [{ type: "text", text: execution.response }],
+      details: details(childRun),
+    } satisfies AgentToolResult<SubagentDetails>;
+  } catch (error) {
+    agentRunRegistry.fail(childRun.id);
+    progress(childRun, "Subagent failed", onUpdate);
+    throw error;
+  }
+}
+
+/** Create a one-shot delegation tool scoped to a single parent run. */
+export function createSubagentTool(
+  context: SubagentToolContext,
+): AgentTool<typeof parameters, SubagentDetails> {
+  return {
+    name: "subagent",
+    label: "Subagent",
+    description:
+      "自己完結したタスクをephemeral subagentへ委譲し、結果を受け取る。親の実行設定を引き継ぐが、会話履歴と永続memoryは共有しない。",
+    parameters,
+    execute: async (_toolCallId, { task }, signal, onUpdate) =>
+      runEphemeralAgent(context, task, signal, onUpdate),
+  };
+}

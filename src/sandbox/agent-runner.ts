@@ -4,8 +4,9 @@ import { readFile } from "node:fs/promises";
 import { text } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import {
-  Agent,
+  type AgentEvent,
   type AgentMessage,
+  type AgentTool,
   type CustomMessage,
   convertToLlm as libraryConvertToLlm,
 } from "@earendil-works/pi-agent-core";
@@ -34,7 +35,12 @@ import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
+import { runAgent } from "./agent-execution.js";
+import { type AgentRun, agentRunRegistry } from "./agent-run.js";
+import { createSubagentTool } from "./subagent.js";
 import { loadGroupSystemPrompt } from "./system-prompt.js";
+
+export { runEphemeralAgent } from "./subagent.js";
 
 // pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
 // - "system-prompt-snapshot": グループの system prompt をセッション初回に固定化するためのスナップショット。
@@ -638,24 +644,47 @@ export async function runAgentLoop(
     messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
   }
 
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: fullSystemPrompt,
-      model,
-      messages,
-      tools,
-      thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
-    },
-    convertToLlm: defaultConvertToLlm,
-    getApiKey: (provider: string) => {
-      // KnownProvider: pi-ai の環境変数マッピングを使用
-      const knownKey = getEnvApiKey(provider);
-      if (knownKey) return knownKey;
+  const rootRun = agentRunRegistry.create({ kind: "root" });
+  const getApiKey = (provider: string) => {
+    // KnownProvider: pi-ai の環境変数マッピングを使用
+    const knownKey = getEnvApiKey(provider);
+    if (knownKey) return knownKey;
 
-      // カスタムプロバイダー: credential-proxy.json を読んで envVars から取得
-      return getCustomProviderApiKey(provider);
+    // カスタムプロバイダー: credential-proxy.json を読んで envVars から取得
+    return getCustomProviderApiKey(provider);
+  };
+  const delegationContext = {
+    parentRun: rootRun,
+    systemPrompt: fullSystemPrompt,
+    model,
+    tools: [] as AgentTool[],
+    thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
+    convertToLlm: defaultConvertToLlm,
+    getApiKey,
+    onEvent: (run: AgentRun, event: AgentEvent) => {
+      if (event.type === "message_end" && isAssistantMessage(event.message)) {
+        assistantTurns++;
+        if (event.message.usage) {
+          aggregatedUsage = addTokenUsage(aggregatedUsage, event.message.usage);
+          hasUsage = true;
+        }
+        return;
+      }
+      if (event.type !== "tool_execution_start") return;
+      const payload: Record<string, unknown> = {
+        type: "subagent_tool_start",
+        worker: "ephemeral",
+        runId: run.id,
+        parentRunId: run.parentRunId,
+        toolName: event.toolName,
+        taskPreview: run.taskPreview ?? "(unknown task)",
+      };
+      process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     },
-  });
+  };
+  const subagentTool = createSubagentTool(delegationContext);
+  const agentTools = [...tools, subagentTool];
+  delegationContext.tools = agentTools;
 
   const pendingAppends: Promise<void>[] = [];
   let response = "";
@@ -670,50 +699,111 @@ export async function runAgentLoop(
   let hasUsage = false;
   let stopReason: string | undefined;
 
-  agent.subscribe((event) => {
-    if (event.type === "message_end") {
-      pendingAppends.push(appendMessage(groupName, sessionId, event.message));
-      if (isAssistantMessage(event.message)) {
-        assistantTurns++;
-        stopReason = event.message.stopReason;
-        if (event.message.usage) {
-          aggregatedUsage = addTokenUsage(aggregatedUsage, event.message.usage);
-          hasUsage = true;
-        }
-        if (event.message.errorMessage) {
-          process.stderr.write(
-            `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: event.message.errorMessage })}\n`,
-          );
-        } else {
-          response = event.message.content
-            .filter((c): c is TextContent => c.type === "text")
-            .map((c) => c.text)
-            .join("");
-        }
-      }
-    }
-
-    if (event.type === "tool_execution_start") {
-      const payload: Record<string, unknown> = {
-        type: "tool_start",
-        toolName: event.toolName,
-      };
-      if (groupConfig.toolLogArgs) {
-        payload.args = event.args;
-      }
-      process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
-    }
-  });
-
-  // promptInput は string | AgentMessage[] のunion。Agent.prompt はオーバーロードで
-  // union型を直接渡すと解決できないため、typeof で型を絞ってから呼び分けている。
+  // runAgent owns Agent construction and prompt execution. This callback keeps
+  // persistent-session concerns (append and Discord event formatting) here.
   const promptStartedAt = Date.now();
   try {
-    if (typeof promptInput === "string") {
-      await agent.prompt(promptInput);
+    const execution = await runAgent({
+      systemPrompt: fullSystemPrompt,
+      model,
+      messages,
+      tools: agentTools,
+      thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
+      prompt: promptInput,
+      convertToLlm: defaultConvertToLlm,
+      getApiKey,
+      sessionId,
+      onEvent: (event) => {
+        if (event.type === "message_end") {
+          pendingAppends.push(
+            appendMessage(groupName, sessionId, event.message),
+          );
+          if (isAssistantMessage(event.message)) {
+            assistantTurns++;
+            stopReason = event.message.stopReason;
+            if (event.message.usage) {
+              aggregatedUsage = addTokenUsage(
+                aggregatedUsage,
+                event.message.usage,
+              );
+              hasUsage = true;
+            }
+            if (event.message.errorMessage) {
+              process.stderr.write(
+                `__DISCORD_EVENT__:${JSON.stringify({ type: "error", message: event.message.errorMessage })}\n`,
+              );
+            } else {
+              response = event.message.content
+                .filter((c): c is TextContent => c.type === "text")
+                .map((c) => c.text)
+                .join("");
+            }
+          }
+        }
+
+        if (event.type === "tool_execution_start") {
+          const payload: Record<string, unknown> = {
+            type: "tool_start",
+            toolName: event.toolName,
+          };
+          if (groupConfig.toolLogArgs) payload.args = event.args;
+          process.stderr.write(
+            `__DISCORD_EVENT__:${JSON.stringify(payload)}\n`,
+          );
+        }
+
+        if (
+          event.type === "tool_execution_update" &&
+          event.toolName === "subagent"
+        ) {
+          const partialDetails =
+            typeof event.partialResult === "object" &&
+            event.partialResult !== null &&
+            "details" in event.partialResult
+              ? event.partialResult.details
+              : undefined;
+          const partialContent = Array.isArray(event.partialResult.content)
+            ? event.partialResult.content
+                .filter(
+                  (
+                    content: unknown,
+                  ): content is { type: "text"; text: string } =>
+                    typeof content === "object" &&
+                    content !== null &&
+                    "type" in content &&
+                    content.type === "text" &&
+                    "text" in content &&
+                    typeof content.text === "string",
+                )
+                .map((content: { type: "text"; text: string }) => content.text)
+                .join("")
+            : undefined;
+          const payload: Record<string, unknown> = {
+            type: "subagent_update",
+            ...(typeof partialDetails === "object" && partialDetails !== null
+              ? partialDetails
+              : {}),
+            ...(partialContent ? { message: partialContent } : {}),
+          };
+          process.stderr.write(
+            `__DISCORD_EVENT__:${JSON.stringify(payload)}\n`,
+          );
+        }
+      },
+    });
+    response = execution.response;
+    const rootFailed =
+      execution.terminalStopReason === "error" ||
+      execution.terminalStopReason === "aborted" ||
+      execution.response.trim() === "";
+    if (rootFailed) {
+      agentRunRegistry.fail(rootRun.id);
     } else {
-      await agent.prompt(promptInput);
+      agentRunRegistry.complete(rootRun.id, response);
     }
+  } catch (error) {
+    agentRunRegistry.fail(rootRun.id);
+    throw error;
   } finally {
     const timingEvent = {
       type: "agent_timing",

@@ -1,3 +1,4 @@
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConvertToLlm } from "./agent-runner.js";
 
@@ -40,6 +41,7 @@ const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
   "./agent-runner.js"
 );
 const { loadMessages, appendMessage } = await import("../agent/session.js");
+const { agentRunRegistry } = await import("./agent-run.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
@@ -126,6 +128,39 @@ describe("runAgentLoop", () => {
     expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", {
       role: "assistant",
       content: [{ type: "text", text: "Hello world" }],
+    });
+  });
+
+  it("root Agentへsubagent toolを配線し、実行時に独立childを作る", async () => {
+    await runAgentLoop("test-group", "session-1", "delegate", {});
+
+    const rootOptions = lastAgentOptions as {
+      initialState: { messages: unknown[]; tools: AgentTool[] };
+      sessionId?: string;
+    };
+    const subagentTool = rootOptions.initialState.tools.find(
+      (tool) => tool.name === "subagent",
+    );
+    expect(subagentTool).toBeDefined();
+    if (!subagentTool) throw new Error("subagent tool was not wired");
+
+    const result = await subagentTool.execute("tool-call", {
+      task: "inspect independently",
+    });
+
+    expect(result.content).toEqual([{ type: "text", text: "OK" }]);
+    expect(AgentMock).toHaveBeenCalledTimes(2);
+    const childOptions = AgentMock.mock.calls[1][0] as {
+      initialState: { messages: unknown[] };
+      sessionId?: string;
+    };
+    expect(childOptions.initialState.messages).toEqual([]);
+    expect(childOptions.sessionId).toBe(result.details.runId);
+    expect(childOptions.sessionId).not.toBe(rootOptions.sessionId);
+    expect(agentRunRegistry.get(result.details.runId)).toMatchObject({
+      parentRunId: expect.any(String),
+      kind: "subagent",
+      status: "completed",
     });
   });
 
@@ -228,6 +263,125 @@ describe("runAgentLoop", () => {
     });
 
     stderrSpy.mockRestore();
+  });
+
+  it("同期subagentのassistant turnsとusageをroot timingへ合算する", async () => {
+    let rootOptions: {
+      initialState: { tools: AgentTool[] };
+    } | null = null;
+    const createAgent = (
+      message: {
+        role: "assistant";
+        content: unknown[];
+        usage: unknown;
+        stopReason: string;
+      },
+      invokeSubagent = false,
+    ) => {
+      const subscribers: Array<(event: unknown) => void> = [];
+      return {
+        subscribe: vi.fn((cb: (event: unknown) => void) =>
+          subscribers.push(cb),
+        ),
+        prompt: vi.fn(async () => {
+          if (invokeSubagent) {
+            const subagent = rootOptions?.initialState.tools.find(
+              (tool) => tool.name === "subagent",
+            );
+            if (!subagent) throw new Error("subagent tool was not wired");
+            await subagent.execute("delegate", { task: "child task" });
+          }
+          for (const cb of subscribers) {
+            cb({ type: "message_end", message });
+          }
+        }),
+      };
+    };
+
+    AgentMock.mockImplementation(function (options: unknown) {
+      if (!rootOptions) {
+        rootOptions = options as typeof rootOptions;
+        return createAgent(
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "root" }],
+            usage: {
+              input: 10,
+              output: 2,
+              cacheRead: 3,
+              cacheWrite: 1,
+              totalTokens: 16,
+            },
+            stopReason: "stop",
+          },
+          true,
+        );
+      }
+      return createAgent({
+        role: "assistant",
+        content: [{ type: "text", text: "child" }],
+        usage: {
+          input: 100,
+          output: 20,
+          cacheRead: 30,
+          cacheWrite: 4,
+          totalTokens: 154,
+        },
+        stopReason: "stop",
+      });
+    });
+
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    await runAgentLoop("test-group", "session-1", "delegate", {});
+
+    const timingLine = written.find((line) =>
+      line.includes('"type":"agent_timing"'),
+    );
+    expect(timingLine).toBeDefined();
+    if (!timingLine) throw new Error("timingLine not found");
+    const timing = JSON.parse(
+      timingLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(timing).toMatchObject({
+      assistantTurns: 2,
+      usage: {
+        input: 110,
+        output: 22,
+        cacheRead: 33,
+        cacheWrite: 5,
+        totalTokens: 170,
+      },
+      stopReason: "stop",
+    });
+
+    stderrSpy.mockRestore();
+  });
+
+  it.each([
+    ["error", "provider error"],
+    ["aborted", ""],
+    ["stop", "   "],
+  ] as const)("root runのterminal outcome %sをregistryへ反映する", async (stopReason, text) => {
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return createMockAgent([], {
+        role: "assistant",
+        content: text ? [{ type: "text", text }] : [],
+        stopReason,
+      });
+    });
+
+    await runAgentLoop("test-group", `terminal-${stopReason}`, "terminal", {});
+
+    const roots = agentRunRegistry.list().filter((run) => run.kind === "root");
+    expect(roots.at(-1)?.status).toBe("failed");
   });
 
   it("グループ設定のモデルを使用する", async () => {
