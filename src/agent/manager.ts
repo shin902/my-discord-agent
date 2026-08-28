@@ -554,10 +554,11 @@ export async function sendMessage(
     // ディレクトリが存在しない場合はマウントしない
   }
 
-  const internalRequest = createInternalRequestConfig?.(
-    groupName,
-    heldLlmProvider,
-  );
+  const agentTimeoutMs = await loadAgentTimeoutMs();
+  const internalRequest =
+    enableBotTool !== false
+      ? createInternalRequestConfig?.(groupName, heldLlmProvider)
+      : undefined;
   const payload = JSON.stringify({
     groupName,
     sessionId,
@@ -631,9 +632,8 @@ export async function sendMessage(
     "/app/runner.mjs",
   ];
 
-  const agentTimeoutMs = await loadAgentTimeoutMs();
   const dockerStartedAt = Date.now();
-  return new Promise((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
     let timeoutHandle: NodeJS.Timeout | undefined;
@@ -889,5 +889,7 @@ export async function sendMessage(
             ),
         );
       });
+  }).finally(() => {
+    internalRequest?.revoke();
   });
 }

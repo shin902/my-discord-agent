@@ -769,6 +769,18 @@ describe("internal agent route: scoped authorization", () => {
       "main",
       "openai",
     );
+
+    config?.revoke();
+    const revokedResponse = makeRes();
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      revokedResponse as unknown as ServerResponse,
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(revokedResponse.writeHead).toHaveBeenCalledWith(404);
+    expect(revokedResponse.end).toHaveBeenCalledWith("Not Found");
   });
 
   it.each([

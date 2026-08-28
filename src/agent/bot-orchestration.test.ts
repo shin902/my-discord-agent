@@ -227,7 +227,35 @@ describe("handleBotToolRequest", () => {
     expect(acquireLlmLock).not.toHaveBeenCalled();
   });
 
-  it("異なるserial providerはlockを取得し、エラー時も解放する", async () => {
+  it("親が別のserial providerを保持中なら同期Bot呼び出しを拒否する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    resolveProviderConcurrency.mockResolvedValueOnce("serial");
+    const res = response();
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ),
+      res,
+      "other-provider",
+    );
+
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    expect(JSON.parse(res.end.mock.calls[0][0]).error).toContain(
+      "異なるserial providerへの同期Bot呼び出しは利用できません",
+    );
+    expect(acquireLlmLock).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(repository.createBotTaskSession).not.toHaveBeenCalled();
+  });
+
+  it("親lockなしのserial providerはlockを取得し、エラー時も解放する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     repository.createBotTaskSession.mockReturnValue(session());
@@ -246,7 +274,6 @@ describe("handleBotToolRequest", () => {
         }),
       ),
       response(),
-      "other-provider",
     );
 
     expect(acquireLlmLock).toHaveBeenCalledWith(
@@ -303,7 +330,7 @@ describe("handleBotToolRequest", () => {
       throw new Error("aborted");
     });
 
-    await invoke(req, response(), "other-provider");
+    await invoke(req, response());
 
     expect(release).toHaveBeenCalledOnce();
   });
@@ -324,7 +351,6 @@ describe("handleBotToolRequest", () => {
         }),
       ),
       response(),
-      "other-provider",
     );
 
     expect(sendMessage).not.toHaveBeenCalled();

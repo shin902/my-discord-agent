@@ -130,6 +130,19 @@ export async function handleBotToolRequest(
       throw new Error("resume には session が必須です");
     }
 
+    const configOverride = resolveAgentConfig(group, profile);
+    const model = await resolveModelConfig(configOverride.model);
+    const concurrency = await resolveProviderConcurrency(model.provider);
+    if (
+      heldProvider !== undefined &&
+      heldProvider !== model.provider &&
+      concurrency === "serial"
+    ) {
+      throw new Error(
+        "親がserial providerのlockを保持しているため、異なるserial providerへの同期Bot呼び出しは利用できません",
+      );
+    }
+
     const repository = getQueueRepository();
     const now = new Date().toISOString();
     let session: BotTaskSession | undefined;
@@ -153,12 +166,10 @@ export async function handleBotToolRequest(
       });
     }
 
-    const configOverride = resolveAgentConfig(group, profile);
-    const model = await resolveModelConfig(configOverride.model);
-    const concurrency = await resolveProviderConcurrency(model.provider);
     // The parent poller already holds its serial-provider lock. Re-acquiring it
     // would deadlock because the parent waits for this synchronous tool call.
-    // A direct sendMessage() has no heldProvider and must acquire normally.
+    // Different serial providers were rejected above to avoid ABBA deadlocks;
+    // parallel providers retain their no-wait mutex contract.
     const release =
       heldProvider === model.provider
         ? undefined

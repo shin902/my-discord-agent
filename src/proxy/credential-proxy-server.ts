@@ -42,6 +42,7 @@ let internalRequestHandler:
 export interface InternalRequestConfig {
   port: number;
   token: string;
+  revoke: () => void;
 }
 
 /** Register the host-only handler used by sandbox agent tools. */
@@ -64,8 +65,14 @@ export function createInternalRequestConfig(
   if (proxyPort === null) return undefined;
   const token = randomUUID();
   internalRequestTokens.set(token, { scope, heldProvider });
-  setTimeout(() => internalRequestTokens.delete(token), 15 * 60_000).unref();
-  return { port: proxyPort, token };
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const revoke = () => {
+    if (!internalRequestTokens.delete(token)) return;
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  };
+  timeoutHandle = setTimeout(revoke, 15 * 60_000);
+  timeoutHandle.unref();
+  return { port: proxyPort, token, revoke };
 }
 
 export function getProxyPort(): number {
