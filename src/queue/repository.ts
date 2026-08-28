@@ -11,7 +11,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 4;
+export const QUEUE_SCHEMA_VERSION = 5;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -225,6 +225,52 @@ const TRANSACTION_ROLLBACK = Symbol("queue.transaction.rollback");
 export interface EnqueueResult {
   job: QueueJob;
   inserted: boolean;
+}
+
+export interface BotTaskSession {
+  sessionId: string;
+  handle: string;
+  groupName: string;
+  botId: string;
+  channelId: string;
+  createdAt: string;
+  lastUsedAt: string;
+  preview: string;
+}
+
+export interface CreateBotTaskSessionInput {
+  sessionId: string;
+  handle: string;
+  groupName: string;
+  botId: string;
+  channelId: string;
+  sourceKey?: string;
+  createdAt: string;
+  preview: string;
+}
+
+interface BotTaskSessionRow {
+  session_id: string;
+  handle: string;
+  group_name: string;
+  bot_id: string;
+  channel_id: string;
+  created_at: string;
+  last_used_at: string;
+  preview: string;
+}
+
+function parseBotTaskSession(row: BotTaskSessionRow): BotTaskSession {
+  return {
+    sessionId: row.session_id,
+    handle: row.handle,
+    groupName: row.group_name,
+    botId: row.bot_id,
+    channelId: row.channel_id,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    preview: row.preview,
+  };
 }
 export interface LegacyMigrationResult {
   migrated: number;
@@ -529,6 +575,23 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
     "DROP INDEX IF EXISTS deliveries_job; CREATE UNIQUE INDEX IF NOT EXISTS deliveries_host_unique ON deliveries(host_unique_key) WHERE host_unique_key IS NOT NULL; UPDATE deliveries SET response_index=0 WHERE response_index IS NULL; UPDATE deliveries SET host_unique_key=job_id || ':0' WHERE host_unique_key IS NULL;",
   );
 }
+function createBotTaskSessionTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bot_task_sessions (
+      session_id TEXT PRIMARY KEY,
+      handle TEXT NOT NULL UNIQUE,
+      group_name TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      source_key TEXT UNIQUE,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT NOT NULL,
+      preview TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS bot_task_sessions_owner
+      ON bot_task_sessions(group_name, bot_id, last_used_at DESC);
+  `);
+}
 function repairRuntimeSchema(db: Database.Database): void {
   if (jobsTableIsLegacy(db)) rebuildLegacyQueueSchema(db);
   applyDurableRuntimeColumns(db);
@@ -538,6 +601,7 @@ function repairRuntimeSchema(db: Database.Database): void {
   addMissingColumns(db, "discord_sync_cursors", [
     { name: "initialized", ddl: "initialized INTEGER NOT NULL DEFAULT 1" },
   ]);
+  createBotTaskSessionTable(db);
 }
 // Versioned schema migrations. Every step is idempotent; the value recorded in
 // schema_meta('schema_version') gates which steps still need to run. Stores stamped
@@ -573,6 +637,13 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     summary: "persist empty Discord backfill initialization",
     up(db) {
       repairRuntimeSchema(db);
+    },
+  },
+  {
+    version: 5,
+    summary: "add Bot task session metadata",
+    up(db) {
+      createBotTaskSessionTable(db);
     },
   },
 ];
@@ -732,6 +803,72 @@ export class QueueRepository {
       )
       .all() as JobRow[];
     return rows.map(parsePayload);
+  }
+  createBotTaskSession(input: CreateBotTaskSessionInput): BotTaskSession {
+    return this.inImmediateTransaction(() => {
+      if (input.sourceKey) {
+        const existing = this.db
+          .prepare("SELECT * FROM bot_task_sessions WHERE source_key=?")
+          .get(input.sourceKey) as BotTaskSessionRow | undefined;
+        if (existing) return parseBotTaskSession(existing);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO bot_task_sessions
+            (session_id,handle,group_name,bot_id,channel_id,source_key,created_at,last_used_at,preview)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          input.sessionId,
+          input.handle,
+          input.groupName,
+          input.botId,
+          input.channelId,
+          input.sourceKey ?? null,
+          input.createdAt,
+          input.createdAt,
+          input.preview,
+        );
+      const created = this.db
+        .prepare("SELECT * FROM bot_task_sessions WHERE session_id=?")
+        .get(input.sessionId) as BotTaskSessionRow | undefined;
+      if (!created)
+        throw new Error(
+          `failed to read back Bot task session ${input.sessionId}`,
+        );
+      return parseBotTaskSession(created);
+    });
+  }
+  findBotTaskSession(
+    handle: string,
+    groupName: string,
+    botId: string,
+  ): BotTaskSession | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
+      )
+      .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
+    return row ? parseBotTaskSession(row) : undefined;
+  }
+  listBotTaskSessions(groupName: string, botId: string): BotTaskSession[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM bot_task_sessions WHERE group_name=? AND bot_id=? ORDER BY last_used_at DESC, created_at DESC",
+      )
+      .all(groupName, botId) as BotTaskSessionRow[];
+    return rows.map(parseBotTaskSession);
+  }
+  touchBotTaskSession(
+    sessionId: string,
+    channelId: string,
+    lastUsedAt: string,
+  ): void {
+    this.db
+      .prepare(
+        "UPDATE bot_task_sessions SET channel_id=?,last_used_at=? WHERE session_id=?",
+      )
+      .run(channelId, lastUsedAt, sessionId);
   }
   /** Atomically provision a cron job and move it into the destination session ordering. */
   provisionCronJob(
