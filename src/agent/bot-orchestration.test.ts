@@ -19,6 +19,16 @@ const {
     findBotTaskSession: vi.fn(),
     touchBotTaskSession: vi.fn(),
     listBotTaskSessions: vi.fn(),
+    tryAcquireBotTaskSessionLease: vi.fn(
+      (sessionId: string, ownerId: string) => ({
+        sessionId,
+        ownerId,
+        fencingToken: 1,
+        leaseUntil: "2099-01-01T00:00:00.000Z",
+      }),
+    ),
+    renewBotTaskSessionLease: vi.fn().mockReturnValue(true),
+    releaseBotTaskSessionLease: vi.fn(),
   },
 }));
 
@@ -131,6 +141,12 @@ describe("handleBotToolRequest", () => {
     expect(repository.createBotTaskSession).toHaveBeenCalledWith(
       expect.objectContaining({ botId: "coding", preview: "inspect" }),
     );
+    expect(repository.tryAcquireBotTaskSessionLease).toHaveBeenCalledWith(
+      "bot-task-1",
+      expect.any(String),
+      expect.any(Number),
+    );
+    expect(repository.releaseBotTaskSessionLease).toHaveBeenCalledOnce();
     expect(sendMessage).toHaveBeenCalledWith(
       "main",
       "bot-task-1",

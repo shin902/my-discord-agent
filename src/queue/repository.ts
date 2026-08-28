@@ -243,6 +243,13 @@ export interface BotTaskSession {
   preview: string;
 }
 
+export interface BotTaskSessionLease {
+  sessionId: string;
+  ownerId: string;
+  fencingToken: number;
+  leaseUntil: string;
+}
+
 export type BotTaskSessionPayload = Omit<
   InboxMessage,
   "id" | "retries" | "enqueuedAt" | "sessionId"
@@ -600,6 +607,12 @@ function createBotTaskSessionTable(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS bot_task_sessions_owner
       ON bot_task_sessions(group_name, bot_id, last_used_at DESC);
+    CREATE TABLE IF NOT EXISTS bot_task_session_leases (
+      session_id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      lease_until TEXT NOT NULL,
+      fencing_token INTEGER NOT NULL DEFAULT 0
+    );
   `);
 }
 function repairRuntimeSchema(db: Database.Database): void {
@@ -907,6 +920,82 @@ export class QueueRepository {
     this.inImmediateTransaction(() =>
       this.touchBotTaskSessionInTransaction(sessionId, channelId, lastUsedAt),
     );
+  }
+  tryAcquireBotTaskSessionLease(
+    sessionId: string,
+    ownerId: string,
+    leaseMs: number,
+    at = new Date(),
+  ): BotTaskSessionLease | undefined {
+    const now = at.toISOString();
+    const leaseUntil = new Date(
+      at.getTime() + Math.max(1, leaseMs),
+    ).toISOString();
+    return this.inImmediateTransaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO bot_task_session_leases(session_id,owner_id,lease_until,fencing_token)
+           VALUES (?,?,?,1)
+           ON CONFLICT(session_id) DO UPDATE SET
+             owner_id=excluded.owner_id,
+             lease_until=excluded.lease_until,
+             fencing_token=bot_task_session_leases.fencing_token+1
+           WHERE bot_task_session_leases.lease_until<=?`,
+        )
+        .run(sessionId, ownerId, leaseUntil, now);
+      const row = this.db
+        .prepare(
+          "SELECT session_id,owner_id,lease_until,fencing_token FROM bot_task_session_leases WHERE session_id=? AND owner_id=?",
+        )
+        .get(sessionId, ownerId) as
+        | {
+            session_id: string;
+            owner_id: string;
+            lease_until: string;
+            fencing_token: number;
+          }
+        | undefined;
+      return row
+        ? {
+            sessionId: row.session_id,
+            ownerId: row.owner_id,
+            leaseUntil: row.lease_until,
+            fencingToken: row.fencing_token,
+          }
+        : undefined;
+    });
+  }
+  renewBotTaskSessionLease(
+    lease: BotTaskSessionLease,
+    leaseMs: number,
+    at = new Date(),
+  ): boolean {
+    const leaseUntil = new Date(
+      at.getTime() + Math.max(1, leaseMs),
+    ).toISOString();
+    const result = this.db
+      .prepare(
+        "UPDATE bot_task_session_leases SET lease_until=? WHERE session_id=? AND owner_id=? AND fencing_token=? AND lease_until>?",
+      )
+      .run(
+        leaseUntil,
+        lease.sessionId,
+        lease.ownerId,
+        lease.fencingToken,
+        at.toISOString(),
+      );
+    if (result.changes === 1) {
+      lease.leaseUntil = leaseUntil;
+      return true;
+    }
+    return false;
+  }
+  releaseBotTaskSessionLease(lease: BotTaskSessionLease): void {
+    this.db
+      .prepare(
+        "DELETE FROM bot_task_session_leases WHERE session_id=? AND owner_id=? AND fencing_token=?",
+      )
+      .run(lease.sessionId, lease.ownerId, lease.fencingToken);
   }
   resumeBotTaskSessionAndEnqueue(
     handle: string,

@@ -9,6 +9,7 @@ import { resolveProviderConcurrency } from "../config/providers.js";
 import { acquireLlmLock } from "../queue/llm-mutex.js";
 import type { BotTaskSession } from "../queue/repository.js";
 import { getQueueRepository } from "../queue/repository.js";
+import { withBotTaskSessionLease } from "../queue/session-lease.js";
 import { type AgentExecutionTiming, sendMessage } from "./manager.js";
 
 const BotRequestSchema = z.object({
@@ -166,37 +167,51 @@ export async function handleBotToolRequest(
       });
     }
 
-    // The parent poller already holds its serial-provider lock. Re-acquiring it
-    // would deadlock because the parent waits for this synchronous tool call.
-    // Different serial providers were rejected above to avoid ABBA deadlocks;
-    // parallel providers retain their no-wait mutex contract.
+    // Provider locks are acquired before the session lease everywhere. This
+    // keeps standalone direct calls, queued jobs, and nested calls ordered the
+    // same way; nested calls on the parent's provider borrow its lock.
     const release =
       heldProvider === model.provider
         ? undefined
         : await acquireLlmLock(model.provider, concurrency, controller.signal);
+    let execution: { content: string; timing?: AgentExecutionTiming };
     try {
-      let timing: AgentExecutionTiming | undefined;
-      const content = await sendMessage(group.name, session.sessionId, prompt, {
-        configOverride,
-        systemPromptAppend: profile.instructions,
-        enableBotTool: false,
-        signal: controller.signal,
-        onExecutionTiming: (value) => {
-          timing = value;
+      execution = await withBotTaskSessionLease(
+        repository,
+        session.sessionId,
+        async (leaseSignal) => {
+          let timing: AgentExecutionTiming | undefined;
+          const content = await sendMessage(
+            group.name,
+            session.sessionId,
+            prompt,
+            {
+              configOverride,
+              systemPromptAppend: profile.instructions,
+              enableBotTool: false,
+              signal: leaseSignal,
+              onExecutionTiming: (value) => {
+                timing = value;
+              },
+            },
+          );
+          if (content.trim() === "")
+            throw new Error("Botが空の応答で終了しました");
+          return { content, timing };
         },
-      });
-      if (content.trim() === "") throw new Error("Botが空の応答で終了しました");
-
-      writeJson(res, 200, {
-        content,
-        action: request.action,
-        botId: request.bot,
-        session: session.handle,
-        ...(timing?.usage ? { usage: timing.usage } : {}),
-      } satisfies BotToolResponse);
+        controller.signal,
+      );
     } finally {
       release?.();
     }
+
+    writeJson(res, 200, {
+      content: execution.content,
+      action: request.action,
+      botId: request.bot,
+      session: session.handle,
+      ...(execution.timing?.usage ? { usage: execution.timing.usage } : {}),
+    } satisfies BotToolResponse);
   } catch (error) {
     writeJson(res, 500, {
       error: error instanceof Error ? error.message : String(error),
