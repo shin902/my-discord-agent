@@ -662,6 +662,14 @@ export async function runAgentLoop(
     convertToLlm: defaultConvertToLlm,
     getApiKey,
     onEvent: (run: AgentRun, event: AgentEvent) => {
+      if (event.type === "message_end" && isAssistantMessage(event.message)) {
+        assistantTurns++;
+        if (event.message.usage) {
+          aggregatedUsage = addTokenUsage(aggregatedUsage, event.message.usage);
+          hasUsage = true;
+        }
+        return;
+      }
       if (event.type !== "tool_execution_start") return;
       const payload: Record<string, unknown> = {
         type: "subagent_tool_start",
@@ -753,11 +761,28 @@ export async function runAgentLoop(
             "details" in event.partialResult
               ? event.partialResult.details
               : undefined;
+          const partialContent = Array.isArray(event.partialResult.content)
+            ? event.partialResult.content
+                .filter(
+                  (
+                    content: unknown,
+                  ): content is { type: "text"; text: string } =>
+                    typeof content === "object" &&
+                    content !== null &&
+                    "type" in content &&
+                    content.type === "text" &&
+                    "text" in content &&
+                    typeof content.text === "string",
+                )
+                .map((content: { type: "text"; text: string }) => content.text)
+                .join("")
+            : undefined;
           const payload: Record<string, unknown> = {
             type: "subagent_update",
             ...(typeof partialDetails === "object" && partialDetails !== null
               ? partialDetails
               : {}),
+            ...(partialContent ? { message: partialContent } : {}),
           };
           process.stderr.write(
             `__DISCORD_EVENT__:${JSON.stringify(payload)}\n`,

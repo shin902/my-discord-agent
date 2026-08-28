@@ -78,7 +78,7 @@ describe("createSubagentTool", () => {
     expect(child?.startedAt).toBeLessThanOrEqual(child?.completedAt ?? 0);
   });
 
-  it("forwards child tool progress and rejects recursive delegation at the depth limit", async () => {
+  it("reports lifecycle progress and rejects recursive delegation at the depth limit", async () => {
     const parent = makeParent();
     const { tool } = makeTool(parent);
     const updates: string[] = [];
@@ -102,7 +102,7 @@ describe("createSubagentTool", () => {
         );
       },
     );
-    expect(updates.some((text) => text.includes("read started"))).toBe(true);
+    expect(updates.some((text) => text.includes("started"))).toBe(true);
 
     const childId = runAgentMock.mock.calls[0][0].sessionId as string;
     const childTool = runAgentMock.mock.calls[0][0].tools[1] as AgentTool;

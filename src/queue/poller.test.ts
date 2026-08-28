@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SendMessageOptions } from "../agent/manager.js";
+import type { DiscordEvent, SendMessageOptions } from "../agent/manager.js";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -1410,6 +1410,68 @@ describe("processMessage - Discord イベント通知", () => {
         allowedMentions: { parse: [], repliedUser: false },
       });
     });
+  });
+
+  it("subagent_tool_start イベントはエラーではなく進捗として送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "subagent_tool_start",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          toolName: "read",
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "🤖 Subagent `child-12`: 🔧 `read`",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
+  });
+
+  it("subagent_update イベントはエラーではなく状態更新として送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "subagent_update",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          status: "completed",
+          message: "調査完了",
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "🤖 Subagent `child-12`: 調査完了",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
+  });
+
+  it("未知のDiscordイベントはエラー通知に変換されない", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "future_event",
+        } as unknown as DiscordEvent);
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("cronJobId が設定されている（direct cron）場合、tool_start イベントは送信されない", async () => {

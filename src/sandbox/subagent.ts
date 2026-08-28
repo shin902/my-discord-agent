@@ -94,19 +94,6 @@ export async function runEphemeralAgent(
       signal,
       onEvent: (event) => {
         context.onEvent?.(childRun, event);
-        if (event.type === "tool_execution_start") {
-          progress(
-            childRun,
-            `Subagent ${childRun.id}: ${event.toolName} started`,
-            onUpdate,
-          );
-        } else if (event.type === "tool_execution_end") {
-          progress(
-            childRun,
-            `Subagent ${childRun.id}: ${event.toolName} finished`,
-            onUpdate,
-          );
-        }
       },
     });
     if (signal?.aborted || execution.terminalStopReason === "aborted") {

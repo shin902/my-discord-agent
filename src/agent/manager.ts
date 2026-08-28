@@ -25,9 +25,25 @@ import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
 
 export { resolveBaseUrl, resolveModel, validateModel };
 
+export type AgentRunStatus = "running" | "completed" | "failed";
+
 export type DiscordEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | {
+      type: "subagent_tool_start";
+      runId: string;
+      parentRunId: string;
+      toolName: string;
+      args?: unknown;
+    }
+  | {
+      type: "subagent_update";
+      runId: string;
+      parentRunId: string;
+      status: AgentRunStatus;
+      message?: string;
+    };
 
 export interface AgentTokenUsage {
   input: number;
@@ -76,6 +92,44 @@ declare global {
   }
 }
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isAgentRunStatus(value: unknown): value is AgentRunStatus {
+  return value === "running" || value === "completed" || value === "failed";
+}
+
+function isDiscordEvent(value: unknown): value is DiscordEvent {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  switch (value.type) {
+    case "tool_start":
+      return typeof value.toolName === "string";
+    case "error":
+      return typeof value.message === "string";
+    case "subagent_tool_start":
+      return (
+        typeof value.runId === "string" &&
+        typeof value.parentRunId === "string" &&
+        typeof value.toolName === "string"
+      );
+    case "subagent_update":
+      return (
+        typeof value.runId === "string" &&
+        typeof value.parentRunId === "string" &&
+        isAgentRunStatus(value.status) &&
+        (value.message === undefined || typeof value.message === "string")
+      );
+    default:
+      return false;
+  }
+}
+
+function isAgentTimingEvent(value: unknown): value is AgentTimingEvent {
+  return isRecord(value) && value.type === "agent_timing";
+}
+
 async function stopContainer(name: string): Promise<void> {
   const killResult = await new Promise<number>((resolve) => {
     const kill = spawn("docker", ["kill", name], { stdio: "ignore" });
@@ -660,18 +714,18 @@ export async function sendMessage(
       }
       if (line.startsWith(DISCORD_EVENT_PREFIX)) {
         try {
-          const event = JSON.parse(line.slice(DISCORD_EVENT_PREFIX.length)) as
-            | DiscordEvent
-            | AgentTimingEvent;
-          if (event.type === "agent_timing") {
-            agentTiming = event;
+          const parsed: unknown = JSON.parse(
+            line.slice(DISCORD_EVENT_PREFIX.length),
+          );
+          if (isAgentTimingEvent(parsed)) {
+            agentTiming = parsed;
             agentTimingReceivedAt = Date.now();
-          } else {
-            if (event.type === "error") runnerError = event.message;
-            onDiscordEvent?.(event);
+          } else if (isDiscordEvent(parsed)) {
+            if (parsed.type === "error") runnerError = parsed.message;
+            onDiscordEvent?.(parsed);
           }
         } catch {
-          // ignore malformed events
+          // ignore malformed or unknown events
         }
       } else {
         // docker run --pull=always は pull 完了時に Status 行を出力する。

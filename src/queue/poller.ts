@@ -385,8 +385,20 @@ async function sendDiscordEvent(
       } else {
         text = `🔧 \`${event.toolName}\``;
       }
-    } else {
+    } else if (event.type === "subagent_tool_start") {
+      const args =
+        event.args === undefined ? "" : ` ${JSON.stringify(event.args)}`;
+      const truncatedArgs = args.length > 301 ? `${args.slice(0, 300)}…` : args;
+      text = `🤖 Subagent \`${event.runId.slice(0, 8)}\`: 🔧 \`${event.toolName}\`${truncatedArgs}`;
+    } else if (event.type === "subagent_update") {
+      const message = event.message ?? `status=${event.status}`;
+      text = `🤖 Subagent \`${event.runId.slice(0, 8)}\`: ${message}`;
+    } else if (event.type === "error") {
       text = `⚠️ エラー: ${event.message}`;
+    } else {
+      // Keep the runtime boundary defensive if an untyped event reaches this
+      // function despite the DiscordEvent union and manager validation.
+      return;
     }
 
     const DISCORD_MAX = 2000;
