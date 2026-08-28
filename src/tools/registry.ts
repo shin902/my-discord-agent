@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { agentReachTool } from "./agent-reach.js";
+import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { bashTool } from "./bash.js";
 import {
   browserlessContentTool,
@@ -44,6 +45,8 @@ import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
   "agent-reach": agentReachTool,
+  "arxiv-search": arxivSearchTool,
+  "arxiv-survey": arxivSurveyTool,
   read: readTool,
   write: writeTool,
   list: listTool,

@@ -10,6 +10,8 @@
 |---------|------|
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
+| `arxiv-search` | arXivを自然言語クエリで検索。投稿日範囲と並び順を指定でき、正規化した論文メタデータをJSONで返す |
+| `arxiv-survey` | 1〜8個の自然言語クエリをOR条件でまとめてarXiv検索。期間指定の定期サーベイ向け |
 | `read` | ワークスペース内のファイルを読み込む |
 | `write` | ワークスペース内にファイルを書き込む |
 | `edit` | ワークスペース内のファイルを文字列置換で編集する |
@@ -137,6 +139,16 @@ LLM の自律判断を待たず、ユーザーが特定のスキルを確実に�
 rm -rf groups/{name}/SKILLS/agent-reach
 cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 ```
+
+### arxiv-search / arxiv-survey
+
+**場所:** `templates/SKILLS/arxiv-search/` / `templates/SKILLS/arxiv-survey/`
+
+arXivの公開Atom APIを使う、credential不要・statelessな論文検索機能。`arxiv-search` は1つの自然言語queryを検索し、`arxiv-survey` は1〜8個のqueryをOR条件で1回のAPIリクエストにまとめる。両方とも投稿日範囲（`from` / `to`）と `relevance` / `submitted` / `updated` の並び順を指定できる。
+
+Tool版はTypeScriptのstructured arguments、Skill版はPythonのCLI argumentsを入力に使う。Skill版は `--from` / `--to` / `--limit` / `--sort` を指定し、stdoutへJSONを返す。両実装とも `id` / `version` / `title` / `authors` / `submitted_at` / `updated_at` / `categories` / `abstract` / `url` / `pdf_url` を同じ意味で返す。
+
+cronで使う場合も既読状態は保存せず、実行ごとに期間を明示する。公開Botなど`bash`を許可しない境界ではTool版を、trustedな環境でSkillを使う場合はPython版を選べる。
 
 ### session-logs
 
