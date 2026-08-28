@@ -190,10 +190,7 @@ export async function handleBotCommand(
         match.group.name,
         botId,
       );
-      await replyEphemeral(
-        interaction,
-        formatBotTaskSessionList(sessions, { includeChannelId: true }),
-      );
+      await replyEphemeral(interaction, formatBotTaskSessionList(sessions));
     } catch (error) {
       await replyEphemeral(
         interaction,
@@ -241,7 +238,6 @@ export async function handleBotCommand(
         handle,
         match.group.name,
         botId,
-        interaction.channelId,
         now,
         payload,
       );
@@ -259,7 +255,6 @@ export async function handleBotCommand(
           handle: generateBotTaskSessionHandle(),
           groupName: match.group.name,
           botId,
-          channelId: interaction.channelId,
           sourceKey: `discord-interaction:${interaction.id}`,
           createdAt: now,
           preview: previewBotTaskPrompt(prompt),

@@ -14,21 +14,11 @@ export function previewBotTaskPrompt(prompt: string): string {
   return normalized.length > 100 ? `${normalized.slice(0, 97)}...` : normalized;
 }
 
-export interface FormatBotTaskSessionListOptions {
-  includeChannelId?: boolean;
-}
-
-export function formatBotTaskSessionList(
-  sessions: BotTaskSession[],
-  options: FormatBotTaskSessionListOptions = {},
-): string {
+export function formatBotTaskSessionList(sessions: BotTaskSession[]): string {
   if (sessions.length === 0) return "利用可能なTask Sessionはありません。";
   const lines: string[] = [];
   for (const session of sessions) {
-    const channel = options.includeChannelId
-      ? ` (channel: ${session.channelId})`
-      : "";
-    const line = `- ${session.handle} | ${session.botId} | created: ${session.createdAt} | last-used: ${session.lastUsedAt} | ${session.preview}${channel}`;
+    const line = `- ${session.handle} | ${session.botId} | created: ${session.createdAt} | last-used: ${session.lastUsedAt} | ${session.preview}`;
     if (
       `Task Session一覧（${sessions.length}件）:\n${[...lines, line].join("\n")}`
         .length > 1_800

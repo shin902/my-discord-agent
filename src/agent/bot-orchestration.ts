@@ -120,7 +120,6 @@ export async function handleBotToolRequest(
             request.session as string,
             group.name,
             request.bot,
-            `agent:${request.groupName}`,
             now,
           )
         : repository.createBotTaskSessionAndAdmission({
@@ -128,7 +127,6 @@ export async function handleBotToolRequest(
             handle: generateBotTaskSessionHandle(),
             groupName: group.name,
             botId: request.bot,
-            channelId: `agent:${request.groupName}`,
             createdAt: now,
             preview: previewBotTaskPrompt(prompt),
           });

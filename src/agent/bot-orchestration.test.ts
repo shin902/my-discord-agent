@@ -22,7 +22,6 @@ const {
         handle: "task-abc123",
         groupName: "main",
         botId: "coding",
-        channelId: "agent:main",
         createdAt: "2026-01-01T00:00:00.000Z",
         lastUsedAt: "2026-01-01T00:00:00.000Z",
         preview: "inspect",
@@ -35,7 +34,6 @@ const {
         handle: "task-abc123",
         groupName: "main",
         botId: "coding",
-        channelId: "agent:main",
         createdAt: "2026-01-01T00:00:00.000Z",
         lastUsedAt: "2026-01-01T00:00:00.000Z",
         preview: "inspect",
@@ -125,7 +123,6 @@ function session(overrides: Record<string, unknown> = {}) {
     handle: "task-abc123",
     groupName: "main",
     botId: "coding",
-    channelId: "agent:main",
     createdAt: "2026-01-01T00:00:00.000Z",
     lastUsedAt: "2026-01-01T00:00:00.000Z",
     preview: "inspect",
@@ -201,7 +198,6 @@ describe("handleBotToolRequest", () => {
       "task-abc123",
       "main",
       "coding",
-      "agent:main",
       expect.any(String),
     );
     expect(repository.completeBotTaskSessionAdmission).toHaveBeenCalledOnce();

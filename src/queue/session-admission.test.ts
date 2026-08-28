@@ -21,7 +21,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-ordered",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "queued",
     });
@@ -37,7 +36,6 @@ describe("Bot Task Session admission", () => {
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(direct).toBeDefined();
@@ -70,7 +68,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-fail-fast",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "queued",
     });
@@ -86,7 +83,6 @@ describe("Bot Task Session admission", () => {
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(direct).toBeDefined();
@@ -118,7 +114,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-immediate",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
@@ -126,7 +121,6 @@ describe("Bot Task Session admission", () => {
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(direct).toBeDefined();
@@ -145,7 +139,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-direct-direct",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
@@ -153,14 +146,12 @@ describe("Bot Task Session admission", () => {
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     const second = repository.resumeBotTaskSessionAndAdmission(
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(first).toBeDefined();
@@ -208,7 +199,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-parallel-first",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "first",
     });
@@ -217,7 +207,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-parallel-second",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "second",
     });
@@ -225,14 +214,12 @@ describe("Bot Task Session admission", () => {
       firstSession.handle,
       firstSession.groupName,
       firstSession.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     const second = repository.resumeBotTaskSessionAndAdmission(
       secondSession.handle,
       secondSession.groupName,
       secondSession.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(first).toBeDefined();
@@ -275,7 +262,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-direct-failure",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
@@ -283,14 +269,12 @@ describe("Bot Task Session admission", () => {
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     const second = repository.resumeBotTaskSessionAndAdmission(
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(first).toBeDefined();
@@ -321,7 +305,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-direct-abort",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "queued",
     });
@@ -337,7 +320,6 @@ describe("Bot Task Session admission", () => {
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(direct).toBeDefined();
@@ -380,7 +362,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-queue-retry",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "queued",
     });
@@ -438,7 +419,6 @@ describe("Bot Task Session admission", () => {
       handle: "task-direct-first",
       groupName: "main",
       botId: "coding",
-      channelId: "channel",
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
@@ -446,7 +426,6 @@ describe("Bot Task Session admission", () => {
       session.handle,
       session.groupName,
       session.botId,
-      "agent:main",
       new Date().toISOString(),
     );
     expect(direct).toBeDefined();

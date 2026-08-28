@@ -237,7 +237,6 @@ export interface BotTaskSession {
   handle: string;
   groupName: string;
   botId: string;
-  channelId: string;
   createdAt: string;
   lastUsedAt: string;
   preview: string;
@@ -259,7 +258,6 @@ export interface CreateBotTaskSessionInput {
   handle: string;
   groupName: string;
   botId: string;
-  channelId: string;
   sourceKey?: string;
   createdAt: string;
   preview: string;
@@ -282,7 +280,6 @@ function parseBotTaskSession(row: BotTaskSessionRow): BotTaskSession {
     handle: row.handle,
     groupName: row.group_name,
     botId: row.bot_id,
-    channelId: row.channel_id,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
     preview: row.preview,
@@ -598,6 +595,7 @@ function createBotTaskSessionTable(db: Database.Database): void {
       handle TEXT NOT NULL UNIQUE,
       group_name TEXT NOT NULL,
       bot_id TEXT NOT NULL,
+      -- Legacy physical column; delivery belongs to jobs/deliveries.
       channel_id TEXT NOT NULL,
       source_key TEXT UNIQUE,
       created_at TEXT NOT NULL,
@@ -840,7 +838,9 @@ export class QueueRepository {
         input.handle,
         input.groupName,
         input.botId,
-        input.channelId,
+        // Legacy channel_id is not part of Task Session metadata. Keep writing
+        // an inert value so pre-existing NOT NULL schemas remain insertable.
+        "",
         input.sourceKey ?? null,
         input.createdAt,
         input.createdAt,
@@ -863,7 +863,6 @@ export class QueueRepository {
   private createBotTaskSessionAdmissionInTransaction(
     sessionId: string,
     groupName: string,
-    channelId: string,
     createdAt: string,
   ): BotTaskSessionAdmission {
     const jobId = `bot-admission-${randomUUID()}`;
@@ -874,7 +873,9 @@ export class QueueRepository {
       .get(sessionId) as { sequence: number };
     const payload: InboxMessage = {
       id: jobId,
-      channelId,
+      // Admission tickets are not delivered; this legacy payload field is
+      // intentionally empty and is never used as a Task Session destination.
+      channelId: "",
       groupName,
       sessionId,
       content: "",
@@ -910,7 +911,6 @@ export class QueueRepository {
       const admission = this.createBotTaskSessionAdmissionInTransaction(
         session.sessionId,
         session.groupName,
-        session.channelId,
         input.createdAt,
       );
       return { session, admission };
@@ -920,7 +920,6 @@ export class QueueRepository {
     handle: string,
     groupName: string,
     botId: string,
-    channelId: string,
     lastUsedAt: string,
   ):
     | { session: BotTaskSession; admission: BotTaskSessionAdmission }
@@ -932,20 +931,14 @@ export class QueueRepository {
         )
         .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
       if (!row) return undefined;
-      this.touchBotTaskSessionInTransaction(
-        row.session_id,
-        channelId,
-        lastUsedAt,
-      );
+      this.touchBotTaskSessionInTransaction(row.session_id, lastUsedAt);
       const session = parseBotTaskSession({
         ...row,
-        channel_id: channelId,
         last_used_at: lastUsedAt,
       });
       const admission = this.createBotTaskSessionAdmissionInTransaction(
         session.sessionId,
         groupName,
-        channelId,
         lastUsedAt,
       );
       return { session, admission };
@@ -1076,22 +1069,15 @@ export class QueueRepository {
   }
   private touchBotTaskSessionInTransaction(
     sessionId: string,
-    channelId: string,
     lastUsedAt: string,
   ): void {
     this.db
-      .prepare(
-        "UPDATE bot_task_sessions SET channel_id=?,last_used_at=? WHERE session_id=?",
-      )
-      .run(channelId, lastUsedAt, sessionId);
+      .prepare("UPDATE bot_task_sessions SET last_used_at=? WHERE session_id=?")
+      .run(lastUsedAt, sessionId);
   }
-  touchBotTaskSession(
-    sessionId: string,
-    channelId: string,
-    lastUsedAt: string,
-  ): void {
+  touchBotTaskSession(sessionId: string, lastUsedAt: string): void {
     this.inImmediateTransaction(() =>
-      this.touchBotTaskSessionInTransaction(sessionId, channelId, lastUsedAt),
+      this.touchBotTaskSessionInTransaction(sessionId, lastUsedAt),
     );
   }
   recoverBotTaskSessionAdmissions(): void {
@@ -1108,7 +1094,6 @@ export class QueueRepository {
     handle: string,
     groupName: string,
     botId: string,
-    channelId: string,
     lastUsedAt: string,
     payload: BotTaskSessionPayload,
     options: { idempotencyKey?: string; maxAttempts?: number } = {},
@@ -1120,11 +1105,7 @@ export class QueueRepository {
         )
         .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
       if (!row) return undefined;
-      this.touchBotTaskSessionInTransaction(
-        row.session_id,
-        channelId,
-        lastUsedAt,
-      );
+      this.touchBotTaskSessionInTransaction(row.session_id, lastUsedAt);
       const enqueue = this.enqueueInTransaction(
         { ...payload, sessionId: row.session_id },
         options,

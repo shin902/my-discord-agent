@@ -191,7 +191,6 @@ describe("handleBotCommand", () => {
       expect.objectContaining({
         groupName: "main",
         botId: "coding",
-        channelId: "channel-1",
         sourceKey: "discord-interaction:interaction-1",
       }),
       expect.objectContaining({
@@ -252,7 +251,7 @@ describe("handleBotCommand", () => {
 
     expect(mocks.findGroupByChannelId).toHaveBeenCalledWith("parent-channel");
     expect(mocks.createBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ channelId: "channel-1" }),
+      expect.not.objectContaining({ channelId: "channel-1" }),
       expect.objectContaining({ channelId: "channel-1" }),
     );
   });
@@ -273,7 +272,6 @@ describe("handleBotCommand", () => {
       expect.objectContaining({
         groupName: "main",
         botId: "coding",
-        channelId: "thread-1",
         preview: "Investigate this issue",
       }),
       expect.objectContaining({ channelId: "thread-1" }),
@@ -287,7 +285,6 @@ describe("handleBotCommand", () => {
         handle: "task-existing",
         groupName: "main",
         botId: "coding",
-        channelId: "channel-1",
         createdAt: "2026-01-01T00:00:00.000Z",
         lastUsedAt: "2026-01-02T00:00:00.000Z",
         preview: "Existing task",
@@ -306,7 +303,6 @@ describe("handleBotCommand", () => {
       "task-existing",
       "main",
       "coding",
-      "channel-1",
       expect.any(String),
       expect.objectContaining({
         channelId: "channel-1",
@@ -342,7 +338,6 @@ describe("handleBotCommand", () => {
         "task-missing",
         "main",
         "coding",
-        "channel-1",
         expect.any(String),
         expect.objectContaining({ idempotencyKey: expect.any(String) }),
       );
@@ -359,7 +354,6 @@ describe("handleBotCommand", () => {
         handle: "task-one",
         groupName: "main",
         botId: "coding",
-        channelId: "channel-1",
         createdAt: "2026-01-01T00:00:00.000Z",
         lastUsedAt: "2026-01-02T00:00:00.000Z",
         preview: "Fix the parser",
