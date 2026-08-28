@@ -58,11 +58,15 @@ function findFetchedCount(value: unknown): number | null {
   return null;
 }
 
-async function runBirdclaw(args: string[]): Promise<unknown> {
+async function runBirdclaw(
+  args: string[],
+  birdclawDbPath?: string,
+): Promise<unknown> {
   const { stdout } = await execFileAsync(birdclawBinary(), args, {
     env: {
       ...process.env,
       BIRDCLAW_DISABLE_LIVE_WRITES: "1",
+      ...(birdclawDbPath ? { BIRDCLAW_DB_PATH: birdclawDbPath } : {}),
     },
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
@@ -90,6 +94,7 @@ async function syncCollection(options: {
   limit: number;
   maxPages: number;
   account?: string;
+  birdclawDbPath?: string;
 }): Promise<BirdclawCommandResult> {
   const args = [
     "sync",
@@ -109,7 +114,7 @@ async function syncCollection(options: {
   }
 
   try {
-    const output = await runBirdclaw(args);
+    const output = await runBirdclaw(args, options.birdclawDbPath);
     return {
       ok: true,
       collection: options.collection,
@@ -134,6 +139,7 @@ export async function syncBirdclawSavedCollections(options: {
   limit: number;
   maxPages: number;
   account?: string;
+  birdclawDbPath?: string;
 }): Promise<{
   bookmarks: BirdclawCommandResult;
   likes: BirdclawCommandResult;
