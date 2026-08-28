@@ -785,6 +785,8 @@ async function processCronThreadDelivery(
     }
     const groupConfig = await findGroupByName(msg.groupName);
     const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
+    const legacyItemThread =
+      msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true;
     const response = await withLlmLock(
       lockTarget,
       async () => {
@@ -803,9 +805,10 @@ async function processCronThreadDelivery(
             memorySnapshotContent: msg.memorySnapshotContent,
             snapshotHash: msg.snapshotHash,
             toolCallKey: msg.toolCallKey,
-            systemPromptAppend: msg.cronNoReply
-              ? NO_REPLY_SYSTEM_PROMPT
-              : undefined,
+            systemPromptAppend:
+              msg.cronNoReply && !legacyItemThread
+                ? NO_REPLY_SYSTEM_PROMPT
+                : undefined,
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -824,7 +827,7 @@ async function processCronThreadDelivery(
       await failEmptyAgentResponse(msg, timing);
       return;
     }
-    const suppressDelivery = hasNoReplyMarker(response);
+    const suppressDelivery = !legacyItemThread && hasNoReplyMarker(response);
     const lateItemThread =
       msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning === true;
     if (msg.fencingToken !== undefined)
@@ -841,12 +844,10 @@ async function processCronThreadDelivery(
             destinationType: lateItemThread ? "item-thread" : "new-thread",
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
-            ...(!lateItemThread && msg.cronThreadId
-              ? { cronThreadId: msg.cronThreadId }
-              : {}),
-            ...(!lateItemThread && msg.cronPlaceholderMessageId
-              ? { cronPlaceholderMessageId: msg.cronPlaceholderMessageId }
-              : {}),
+            cronThreadId: lateItemThread ? undefined : msg.cronThreadId,
+            cronPlaceholderMessageId: lateItemThread
+              ? undefined
+              : msg.cronPlaceholderMessageId,
             ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
             ...(msg.rssDispatchId
               ? {
