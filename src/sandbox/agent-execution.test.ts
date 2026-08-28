@@ -75,6 +75,44 @@ describe("runAgent", () => {
     expect(events).toEqual(["message_end"]);
   });
 
+  it("exposes the terminal assistant status without changing execution errors", async () => {
+    const agent = createAgentMock();
+    AgentMock.mockImplementationOnce(function () {
+      return agent;
+    });
+    agent.prompt.mockImplementationOnce(async () => {
+      for (const listener of (agent.subscribe as ReturnType<typeof vi.fn>).mock
+        .calls) {
+        listener[0]({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [],
+            stopReason: "error",
+            errorMessage: "provider failed",
+          },
+        });
+      }
+    });
+
+    const result = await runAgent({
+      systemPrompt: "system",
+      model,
+      messages: [],
+      tools: [],
+      thinkingLevel: "off",
+      prompt: "task",
+      convertToLlm: () => [],
+      getApiKey: () => undefined,
+    });
+
+    expect(result).toMatchObject({
+      response: "",
+      terminalStopReason: "error",
+      terminalErrorMessage: "provider failed",
+    });
+  });
+
   it("propagates an abort signal to the independent Agent", async () => {
     const agent = createAgentMock();
     AgentMock.mockImplementationOnce(function () {

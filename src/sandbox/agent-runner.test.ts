@@ -1,3 +1,4 @@
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConvertToLlm } from "./agent-runner.js";
 
@@ -40,6 +41,7 @@ const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
   "./agent-runner.js"
 );
 const { loadMessages, appendMessage } = await import("../agent/session.js");
+const { agentRunRegistry } = await import("./agent-run.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
@@ -126,6 +128,39 @@ describe("runAgentLoop", () => {
     expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", {
       role: "assistant",
       content: [{ type: "text", text: "Hello world" }],
+    });
+  });
+
+  it("root Agentへsubagent toolを配線し、実行時に独立childを作る", async () => {
+    await runAgentLoop("test-group", "session-1", "delegate", {});
+
+    const rootOptions = lastAgentOptions as {
+      initialState: { messages: unknown[]; tools: AgentTool[] };
+      sessionId?: string;
+    };
+    const subagentTool = rootOptions.initialState.tools.find(
+      (tool) => tool.name === "subagent",
+    );
+    expect(subagentTool).toBeDefined();
+    if (!subagentTool) throw new Error("subagent tool was not wired");
+
+    const result = await subagentTool.execute("tool-call", {
+      task: "inspect independently",
+    });
+
+    expect(result.content).toEqual([{ type: "text", text: "OK" }]);
+    expect(AgentMock).toHaveBeenCalledTimes(2);
+    const childOptions = AgentMock.mock.calls[1][0] as {
+      initialState: { messages: unknown[] };
+      sessionId?: string;
+    };
+    expect(childOptions.initialState.messages).toEqual([]);
+    expect(childOptions.sessionId).toBe(result.details.runId);
+    expect(childOptions.sessionId).not.toBe(rootOptions.sessionId);
+    expect(agentRunRegistry.get(result.details.runId)).toMatchObject({
+      parentRunId: expect.any(String),
+      kind: "subagent",
+      status: "completed",
     });
   });
 

@@ -126,4 +126,38 @@ describe("createSubagentTool", () => {
     const childId = runAgentMock.mock.calls[0][0].sessionId as string;
     expect(agentRunRegistry.get(childId)?.status).toBe("failed");
   });
+
+  it.each([
+    ["error", "provider failed", "実行に失敗しました: provider failed"],
+    ["aborted", undefined, "中断されました"],
+  ] as const)("marks a child with stopReason %s as failed", async (stopReason, terminalErrorMessage, expectedError) => {
+    const { tool } = makeTool();
+    runAgentMock.mockResolvedValue({
+      response: "partial",
+      agent: {},
+      terminalStopReason: stopReason,
+      terminalErrorMessage,
+    });
+
+    await expect(
+      tool.execute("tool-call", { task: "terminal" }),
+    ).rejects.toThrow(expectedError);
+    const childId = runAgentMock.mock.calls[0][0].sessionId as string;
+    expect(agentRunRegistry.get(childId)?.status).toBe("failed");
+  });
+
+  it("marks an empty final response as failed", async () => {
+    const { tool } = makeTool();
+    runAgentMock.mockResolvedValue({
+      response: "  \n",
+      agent: {},
+      terminalStopReason: "stop",
+    });
+
+    await expect(tool.execute("tool-call", { task: "empty" })).rejects.toThrow(
+      "空の応答",
+    );
+    const childId = runAgentMock.mock.calls[0][0].sessionId as string;
+    expect(agentRunRegistry.get(childId)?.status).toBe("failed");
+  });
 });

@@ -5,7 +5,13 @@ import {
   type AgentTool,
   type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import type { Api, Message, Model } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  Message,
+  Model,
+  StopReason,
+} from "@earendil-works/pi-ai";
 
 export interface AgentExecutionOptions {
   systemPrompt: string;
@@ -26,6 +32,8 @@ export interface AgentExecutionOptions {
 export interface AgentExecutionResult {
   response: string;
   agent: Agent;
+  terminalStopReason?: StopReason;
+  terminalErrorMessage?: string;
 }
 
 function textFromAssistantMessage(message: AgentMessage): string {
@@ -67,14 +75,21 @@ export async function runAgent(
   }
 
   let response = "";
+  let terminalStopReason: StopReason | undefined;
+  let terminalErrorMessage: string | undefined;
   agent.subscribe((event) => {
     options.onEvent?.(event);
-    if (event.type === "message_end") {
-      response = textFromAssistantMessage(event.message);
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      const message = event.message as AssistantMessage;
+      response = textFromAssistantMessage(message);
+      terminalStopReason = message.stopReason;
+      terminalErrorMessage = message.errorMessage;
     }
   });
 
   try {
+    // Agent.prompt has separate string and AgentMessage[] overloads, so narrowing
+    // the union is required for TypeScript to select an overload.
     if (typeof options.prompt === "string") {
       await agent.prompt(options.prompt);
     } else {
@@ -84,5 +99,10 @@ export async function runAgent(
     options.signal?.removeEventListener("abort", abort);
   }
 
-  return { response, agent };
+  return {
+    response,
+    agent,
+    terminalStopReason,
+    terminalErrorMessage,
+  };
 }

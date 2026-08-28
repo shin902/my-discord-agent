@@ -109,7 +109,18 @@ export async function runEphemeralAgent(
         }
       },
     });
-    if (signal?.aborted) throw new Error("サブエージェントが中断されました");
+    if (signal?.aborted || execution.terminalStopReason === "aborted") {
+      throw new Error("サブエージェントが中断されました");
+    }
+    if (execution.terminalStopReason === "error") {
+      const reason = execution.terminalErrorMessage
+        ? `: ${execution.terminalErrorMessage}`
+        : "";
+      throw new Error(`サブエージェントの実行に失敗しました${reason}`);
+    }
+    if (execution.response.trim() === "") {
+      throw new Error("サブエージェントが空の応答で終了しました");
+    }
 
     agentRunRegistry.complete(childRun.id, execution.response);
     progress(childRun, `Subagent ${childRun.id} completed`, onUpdate);
