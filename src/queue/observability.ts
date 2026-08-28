@@ -91,10 +91,19 @@ function ageValues(db: Database.Database, sql: string): number[] {
       : [];
   });
 }
-function counts(db: Database.Database, table: string): Record<string, number> {
+const EXECUTABLE_JOB_PREDICATE =
+  "json_extract(payload_json,'$.botTaskSessionAdmission') IS NOT 1";
+
+function counts(
+  db: Database.Database,
+  table: string,
+  predicate = "1=1",
+): Record<string, number> {
   const result: Record<string, number> = {};
   for (const row of db
-    .prepare(`SELECT status,COUNT(*) AS count FROM ${table} GROUP BY status`)
+    .prepare(
+      `SELECT status,COUNT(*) AS count FROM ${table} WHERE ${predicate} GROUP BY status`,
+    )
     .all() as Array<{ status: string; count: number }>)
     result[row.status] = Number(row.count);
   return result;
@@ -166,18 +175,18 @@ export function collectObservability(
       : 60_000;
   const staleBefore = new Date(now - staleAfter).toISOString();
   const queue = {
-    byStatus: counts(runtimeDb, "jobs"),
+    byStatus: counts(runtimeDb, "jobs", EXECUTABLE_JOB_PREDICATE),
     latencyMs: percentiles(
       ageValues(
         runtimeDb,
-        "SELECT created_at AS start,completed_at AS finish FROM jobs WHERE completed_at IS NOT NULL",
+        `SELECT created_at AS start,completed_at AS finish FROM jobs WHERE ${EXECUTABLE_JOB_PREDICATE} AND completed_at IS NOT NULL`,
       ),
     ),
     staleClaims: Number(
       (
         runtimeDb
           .prepare(
-            "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('claimed','running') AND lease_until IS NOT NULL AND lease_until<?",
+            `SELECT COUNT(*) AS count FROM jobs WHERE ${EXECUTABLE_JOB_PREDICATE} AND status IN ('claimed','running') AND lease_until IS NOT NULL AND lease_until<?`,
           )
           .get(staleBefore) as { count: number }
       ).count,
@@ -212,7 +221,7 @@ export function collectObservability(
   };
   const agentRows = runtimeDb
     .prepare(
-      "SELECT COUNT(*) AS jobs,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,SUM(CASE WHEN status='dead_letter' THEN 1 ELSE 0 END) AS failed,SUM(CASE WHEN result_state='empty_response' THEN 1 ELSE 0 END) AS empty_responses,COALESCE(AVG(attempts),0) AS average_attempts FROM jobs",
+      `SELECT COUNT(*) AS jobs,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,SUM(CASE WHEN status='dead_letter' THEN 1 ELSE 0 END) AS failed,SUM(CASE WHEN result_state='empty_response' THEN 1 ELSE 0 END) AS empty_responses,COALESCE(AVG(attempts),0) AS average_attempts FROM jobs WHERE ${EXECUTABLE_JOB_PREDICATE}`,
     )
     .get() as {
     jobs: number;
@@ -274,7 +283,7 @@ export function inspectRuntime(
   return {
     jobs: runtimeDb
       .prepare(
-        "SELECT id,status,attempts,max_attempts,lease_until,worker_id,last_error,updated_at,result_state FROM jobs ORDER BY updated_at DESC",
+        `SELECT id,status,attempts,max_attempts,lease_until,worker_id,last_error,updated_at,result_state FROM jobs WHERE ${EXECUTABLE_JOB_PREDICATE} ORDER BY updated_at DESC`,
       )
       .all() as Record<string, unknown>[],
     deliveries: runtimeDb
