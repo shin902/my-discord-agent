@@ -382,10 +382,18 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it("strict startup cleanup は全管理コンテナ停止を確認して完了する", async () => {
+  it("strict startup cleanup はlabelと旧nameの管理コンテナを重複なく停止する", async () => {
     execFileMock
       .mockImplementationOnce((_command, _args, callback) => {
-        callback?.(null, "container-1\n", "");
+        callback?.(null, "labelled\nshared\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "legacy\nshared\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "", "");
         return { on: vi.fn() };
       })
       .mockImplementationOnce((_command, _args, callback) => {
@@ -397,15 +405,57 @@ describe("sendMessage: Docker 起動構成", () => {
     await expect(
       killAllRunningContainers({ includeOrphans: true, strict: true }),
     ).resolves.toBeUndefined();
-    expect(spawnMock).toHaveBeenCalledWith("docker", ["kill", "container-1"], {
-      stdio: "ignore",
-    });
-    expect(execFileMock).toHaveBeenCalledWith(
+    expect(spawnMock).toHaveBeenCalledWith(
+      "docker",
+      ["kill", "labelled", "shared", "legacy"],
+      { stdio: "ignore" },
+    );
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      1,
       "docker",
       ["ps", "-q", "--filter", "label=my-discord-agent.runner=true"],
       expect.any(Function),
     );
-    expect(execFileMock).toHaveBeenCalledTimes(2);
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      expect.any(Function),
+    );
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      3,
+      "docker",
+      ["ps", "-q", "--filter", "label=my-discord-agent.runner=true"],
+      expect.any(Function),
+    );
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      4,
+      "docker",
+      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      expect.any(Function),
+    );
+    expect(execFileMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("strict startup cleanup は停止確認のdiscovery失敗を隠さない", async () => {
+    execFileMock
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "container-1\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(new Error("docker daemon unavailable"), "", "daemon down");
+        return { on: vi.fn() };
+      });
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).rejects.toThrow("container cleanup discovery failed");
   });
 
   it("strict startup cleanup は個別のdocker kill失敗を隠さない", async () => {
@@ -419,7 +469,7 @@ describe("sendMessage: Docker 起動構成", () => {
     await expect(
       killAllRunningContainers({ includeOrphans: true, strict: true }),
     ).rejects.toThrow("container cleanup kill failed");
-    expect(execFileMock).toHaveBeenCalledOnce();
+    expect(execFileMock).toHaveBeenCalledTimes(2);
   });
 
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {
