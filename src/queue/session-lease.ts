@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { BotTaskSessionLease, QueueRepository } from "./repository.js";
+import type {
+  BotTaskSessionAdmission,
+  BotTaskSessionLease,
+  QueueRepository,
+} from "./repository.js";
 
 const SESSION_LEASE_MS = 60_000;
 const SESSION_LEASE_RENEW_MS = 20_000;
@@ -28,8 +32,30 @@ function waitForRetry(signal?: AbortSignal): Promise<void> {
 
 /**
  * Serialize all Bot Task Session executions through the runtime database.
- * The lease is recoverable after a crashed host and renewed for long runs.
+ * Active leases are non-expiring; startup cleanup is responsible for recovery
+ * after managed containers have been stopped.
  */
+export async function withBotTaskSessionAdmission<T>(
+  repository: QueueRepository,
+  admission: BotTaskSessionAdmission,
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  let admitted = false;
+  try {
+    while (!admitted) {
+      if (signal?.aborted)
+        throw new Error("Bot Task Session admission aborted");
+      admitted = repository.admitBotTaskSessionAdmission(admission);
+      if (!admitted) await waitForRetry(signal);
+    }
+    return await fn();
+  } finally {
+    if (admitted) repository.completeBotTaskSessionAdmission(admission);
+    else repository.cancelBotTaskSessionAdmission(admission);
+  }
+}
+
 export async function withBotTaskSessionLease<T>(
   repository: QueueRepository,
   sessionId: string,

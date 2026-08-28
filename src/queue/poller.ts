@@ -888,6 +888,7 @@ async function processCronThreadDelivery(
               lockTarget.concurrency === "serial"
                 ? lockTarget.provider
                 : undefined,
+            ...(msg.botId ? { enableBotTool: false } : {}),
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -1183,6 +1184,7 @@ export async function processMessage(
                   lockTarget.concurrency === "serial"
                     ? lockTarget.provider
                     : undefined,
+                ...(msg.botId ? { enableBotTool: false } : {}),
               },
             );
           } finally {

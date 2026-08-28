@@ -250,6 +250,12 @@ export interface BotTaskSessionLease {
   leaseUntil: string;
 }
 
+export interface BotTaskSessionAdmission {
+  jobId: string;
+  sessionId: string;
+  sequence: number;
+}
+
 export type BotTaskSessionPayload = Omit<
   InboxMessage,
   "id" | "retries" | "enqueuedAt" | "sessionId"
@@ -867,6 +873,144 @@ export class QueueRepository {
       this.createBotTaskSessionInTransaction(input),
     );
   }
+  private createBotTaskSessionAdmissionInTransaction(
+    sessionId: string,
+    groupName: string,
+    channelId: string,
+    createdAt: string,
+  ): BotTaskSessionAdmission {
+    const jobId = `bot-admission-${randomUUID()}`;
+    const sequenceRow = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
+      )
+      .get(sessionId) as { sequence: number };
+    const payload: InboxMessage = {
+      id: jobId,
+      channelId,
+      groupName,
+      sessionId,
+      content: "",
+      timestamp: createdAt,
+      enqueuedAt: createdAt,
+      retries: 0,
+      botTaskSessionAdmission: true,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO jobs (id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        jobId,
+        null,
+        JSON.stringify(payload),
+        sessionId,
+        sequenceRow.sequence,
+        "queued",
+        0,
+        1,
+        createdAt,
+        createdAt,
+      );
+    return { jobId, sessionId, sequence: sequenceRow.sequence };
+  }
+  createBotTaskSessionAndAdmission(input: CreateBotTaskSessionInput): {
+    session: BotTaskSession;
+    admission: BotTaskSessionAdmission;
+  } {
+    return this.inImmediateTransaction(() => {
+      const session = this.createBotTaskSessionInTransaction(input);
+      const admission = this.createBotTaskSessionAdmissionInTransaction(
+        session.sessionId,
+        session.groupName,
+        session.channelId,
+        input.createdAt,
+      );
+      return { session, admission };
+    });
+  }
+  resumeBotTaskSessionAndAdmission(
+    handle: string,
+    groupName: string,
+    botId: string,
+    channelId: string,
+    lastUsedAt: string,
+  ):
+    | { session: BotTaskSession; admission: BotTaskSessionAdmission }
+    | undefined {
+    return this.inImmediateTransaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
+        )
+        .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
+      if (!row) return undefined;
+      this.touchBotTaskSessionInTransaction(
+        row.session_id,
+        channelId,
+        lastUsedAt,
+      );
+      const session = parseBotTaskSession({
+        ...row,
+        channel_id: channelId,
+        last_used_at: lastUsedAt,
+      });
+      const admission = this.createBotTaskSessionAdmissionInTransaction(
+        session.sessionId,
+        groupName,
+        channelId,
+        lastUsedAt,
+      );
+      return { session, admission };
+    });
+  }
+  admitBotTaskSessionAdmission(admission: BotTaskSessionAdmission): boolean {
+    return this.inImmediateTransaction(() => {
+      const blocked = this.db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE session_id=? AND sequence<? AND status NOT IN ('completed','dead_letter') LIMIT 1",
+        )
+        .get(admission.sessionId, admission.sequence);
+      if (blocked) return false;
+      const result = this.db
+        .prepare(
+          "UPDATE jobs SET status='running',updated_at=? WHERE id=? AND session_id=? AND sequence=? AND status='queued' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+        )
+        .run(
+          nowIso(),
+          admission.jobId,
+          admission.sessionId,
+          admission.sequence,
+        );
+      return result.changes === 1;
+    });
+  }
+  completeBotTaskSessionAdmission(admission: BotTaskSessionAdmission): void {
+    this.db
+      .prepare(
+        "UPDATE jobs SET status='completed',completed_at=?,updated_at=? WHERE id=? AND session_id=? AND sequence=? AND status='running' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+      )
+      .run(
+        nowIso(),
+        nowIso(),
+        admission.jobId,
+        admission.sessionId,
+        admission.sequence,
+      );
+  }
+  cancelBotTaskSessionAdmission(admission: BotTaskSessionAdmission): void {
+    this.db
+      .prepare(
+        "UPDATE jobs SET status='dead_letter',completed_at=?,updated_at=?,terminal_reason='cancelled' WHERE id=? AND session_id=? AND sequence=? AND status IN ('queued','running') AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+      )
+      .run(
+        nowIso(),
+        nowIso(),
+        admission.jobId,
+        admission.sessionId,
+        admission.sequence,
+      );
+  }
   createBotTaskSessionAndEnqueue(
     input: CreateBotTaskSessionInput,
     payload: BotTaskSessionPayload,
@@ -924,13 +1068,14 @@ export class QueueRepository {
   tryAcquireBotTaskSessionLease(
     sessionId: string,
     ownerId: string,
-    leaseMs: number,
+    _leaseMs: number,
     at = new Date(),
   ): BotTaskSessionLease | undefined {
     const now = at.toISOString();
-    const leaseUntil = new Date(
-      at.getTime() + Math.max(1, leaseMs),
-    ).toISOString();
+    // Active leases do not expire: takeover while a detached container can
+    // still append to the transcript would defeat serialization. Startup
+    // cleanup removes leases only after managed containers are stopped.
+    const leaseUntil = "9999-12-31T23:59:59.999Z";
     return this.inImmediateTransaction(() => {
       this.db
         .prepare(
@@ -967,12 +1112,10 @@ export class QueueRepository {
   }
   renewBotTaskSessionLease(
     lease: BotTaskSessionLease,
-    leaseMs: number,
+    _leaseMs: number,
     at = new Date(),
   ): boolean {
-    const leaseUntil = new Date(
-      at.getTime() + Math.max(1, leaseMs),
-    ).toISOString();
+    const leaseUntil = "9999-12-31T23:59:59.999Z";
     const result = this.db
       .prepare(
         "UPDATE bot_task_session_leases SET lease_until=? WHERE session_id=? AND owner_id=? AND fencing_token=? AND lease_until>?",
@@ -996,6 +1139,21 @@ export class QueueRepository {
         "DELETE FROM bot_task_session_leases WHERE session_id=? AND owner_id=? AND fencing_token=?",
       )
       .run(lease.sessionId, lease.ownerId, lease.fencingToken);
+  }
+  clearBotTaskSessionLeases(): void {
+    this.inImmediateTransaction(() => {
+      this.db.prepare("DELETE FROM bot_task_session_leases").run();
+    });
+  }
+  recoverBotTaskSessionAdmissions(): void {
+    this.inImmediateTransaction(() => {
+      const now = nowIso();
+      this.db
+        .prepare(
+          "UPDATE jobs SET status='dead_letter',completed_at=?,updated_at=?,terminal_reason='startup-recovery' WHERE json_extract(payload_json,'$.botTaskSessionAdmission')=1 AND status IN ('queued','running')",
+        )
+        .run(now, now);
+    });
   }
   resumeBotTaskSessionAndEnqueue(
     handle: string,
@@ -1198,14 +1356,14 @@ export class QueueRepository {
       const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread') AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
       const exhausted = this.db
         .prepare(
-          `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
+          `SELECT j.* FROM jobs j WHERE json_extract(j.payload_json,'$.botTaskSessionAdmission') IS NOT 1 AND ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
         )
         .all(now, now, ...excluded) as JobRow[];
       for (const row of exhausted)
         this.deadLetterExhaustedInTransaction(row, "max_attempts");
       const row = this.db
         .prepare(
-          `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs blocker WHERE json_extract(blocker.payload_json,'$.cronProvisioning')=1 AND json_extract(blocker.payload_json,'$.cronThreadId')=j.session_id) AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
+          `SELECT j.* FROM jobs j WHERE json_extract(j.payload_json,'$.botTaskSessionAdmission') IS NOT 1 AND ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs blocker WHERE json_extract(blocker.payload_json,'$.cronProvisioning')=1 AND json_extract(blocker.payload_json,'$.cronThreadId')=j.session_id) AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
         )
         .get(now, now, ...excluded) as JobRow | undefined;
       if (!row) return undefined;

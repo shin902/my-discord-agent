@@ -9,7 +9,10 @@ import { resolveProviderConcurrency } from "../config/providers.js";
 import { acquireLlmLock } from "../queue/llm-mutex.js";
 import type { BotTaskSession } from "../queue/repository.js";
 import { getQueueRepository } from "../queue/repository.js";
-import { withBotTaskSessionLease } from "../queue/session-lease.js";
+import {
+  withBotTaskSessionAdmission,
+  withBotTaskSessionLease,
+} from "../queue/session-lease.js";
 import { type AgentExecutionTiming, sendMessage } from "./manager.js";
 
 const BotRequestSchema = z.object({
@@ -146,64 +149,75 @@ export async function handleBotToolRequest(
 
     const repository = getQueueRepository();
     const now = new Date().toISOString();
-    let session: BotTaskSession | undefined;
-    if (request.action === "resume") {
-      session = repository.findBotTaskSession(
-        request.session as string,
-        group.name,
-        request.bot,
-      );
-      if (!session) throw new Error("指定されたTask Sessionは見つかりません");
-      repository.touchBotTaskSession(session.sessionId, session.channelId, now);
-    } else {
-      session = repository.createBotTaskSession({
-        sessionId: taskSessionId(),
-        handle: taskSessionHandle(),
-        groupName: group.name,
-        botId: request.bot,
-        channelId: `agent:${request.groupName}`,
-        createdAt: now,
-        preview: taskPreview(prompt),
-      });
-    }
-
-    // Provider locks are acquired before the session lease everywhere. This
-    // keeps standalone direct calls, queued jobs, and nested calls ordered the
-    // same way; nested calls on the parent's provider borrow its lock.
-    const release =
-      heldProvider === model.provider
-        ? undefined
-        : await acquireLlmLock(model.provider, concurrency, controller.signal);
-    let execution: { content: string; timing?: AgentExecutionTiming };
-    try {
-      execution = await withBotTaskSessionLease(
-        repository,
-        session.sessionId,
-        async (leaseSignal) => {
-          let timing: AgentExecutionTiming | undefined;
-          const content = await sendMessage(
+    const admitted =
+      request.action === "resume"
+        ? repository.resumeBotTaskSessionAndAdmission(
+            request.session as string,
             group.name,
+            request.bot,
+            `agent:${request.groupName}`,
+            now,
+          )
+        : repository.createBotTaskSessionAndAdmission({
+            sessionId: taskSessionId(),
+            handle: taskSessionHandle(),
+            groupName: group.name,
+            botId: request.bot,
+            channelId: `agent:${request.groupName}`,
+            createdAt: now,
+            preview: taskPreview(prompt),
+          });
+    if (!admitted) throw new Error("指定されたTask Sessionは見つかりません");
+    const { session, admission } = admitted;
+
+    // Admission happens before the provider lock so a direct call cannot
+    // overtake an earlier queued invocation. Once admitted, provider locks are
+    // acquired before the execution lease, matching the queue path.
+    let execution!: { content: string; timing?: AgentExecutionTiming };
+    await withBotTaskSessionAdmission(
+      repository,
+      admission,
+      async () => {
+        const release =
+          heldProvider === model.provider
+            ? undefined
+            : await acquireLlmLock(
+                model.provider,
+                concurrency,
+                controller.signal,
+              );
+        try {
+          execution = await withBotTaskSessionLease(
+            repository,
             session.sessionId,
-            prompt,
-            {
-              configOverride,
-              systemPromptAppend: profile.instructions,
-              enableBotTool: false,
-              signal: leaseSignal,
-              onExecutionTiming: (value) => {
-                timing = value;
-              },
+            async (leaseSignal) => {
+              let timing: AgentExecutionTiming | undefined;
+              const content = await sendMessage(
+                group.name,
+                session.sessionId,
+                prompt,
+                {
+                  configOverride,
+                  systemPromptAppend: profile.instructions,
+                  enableBotTool: false,
+                  signal: leaseSignal,
+                  onExecutionTiming: (value) => {
+                    timing = value;
+                  },
+                },
+              );
+              if (content.trim() === "")
+                throw new Error("Botが空の応答で終了しました");
+              return { content, timing };
             },
+            controller.signal,
           );
-          if (content.trim() === "")
-            throw new Error("Botが空の応答で終了しました");
-          return { content, timing };
-        },
-        controller.signal,
-      );
-    } finally {
-      release?.();
-    }
+        } finally {
+          release?.();
+        }
+      },
+      controller.signal,
+    );
 
     writeJson(res, 200, {
       content: execution.content,

@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -215,14 +215,31 @@ const runningContainers = new Map<string, ChildProcess>();
  * 実行中の全エージェントコンテナ（および対応する docker run クライアント
  * プロセス）を停止する。SIGTERM/SIGINT 受信時に index.ts から呼び出される想定。
  */
-export function killAllRunningContainers(): Promise<void> {
+export function killAllRunningContainers(
+  includeOrphans = false,
+): Promise<void> {
   const entries = [...runningContainers.entries()];
-  if (entries.length === 0) return Promise.resolve();
-  console.error(
-    `[manager] シャットダウン: 実行中のコンテナ ${entries.length} 件を停止します`,
-    entries.map(([name]) => name),
-  );
-  return Promise.all(
+  const killManaged = includeOrphans
+    ? new Promise<void>((resolve) => {
+        execFile(
+          "docker",
+          ["ps", "-q", "--filter", "name=my-discord-agent-"],
+          (error, stdout) => {
+            if (error || !stdout.trim()) {
+              resolve();
+              return;
+            }
+            const ids = stdout.trim().split(/\s+/);
+            const killProc = spawn("docker", ["kill", ...ids], {
+              stdio: "ignore",
+            });
+            killProc.on("close", () => resolve());
+            killProc.on("error", () => resolve());
+          },
+        ).on("error", () => resolve());
+      })
+    : Promise.resolve();
+  const killTracked = Promise.all(
     entries.map(([name, proc]) => {
       // pull 中でコンテナがまだ存在しない場合に備え、クライアントプロセスも直接殺す。
       // コンテナが既に起動済みの場合はクライアント kill だけでは止まらないため
@@ -236,7 +253,8 @@ export function killAllRunningContainers(): Promise<void> {
         killProc.on("error", () => resolve());
       });
     }),
-  ).then(() => {
+  );
+  return Promise.all([killManaged, killTracked]).then(() => {
     // proc の close イベントでも削除されるが、呼び出し元から見て
     // 「killAllRunningContainers 完了時点で registry が空」を保証するため明示的に消す
     for (const [name] of entries) {

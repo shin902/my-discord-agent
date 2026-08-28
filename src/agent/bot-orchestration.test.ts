@@ -19,6 +19,35 @@ const {
     findBotTaskSession: vi.fn(),
     touchBotTaskSession: vi.fn(),
     listBotTaskSessions: vi.fn(),
+    createBotTaskSessionAndAdmission: vi.fn(() => ({
+      session: {
+        sessionId: "bot-task-1",
+        handle: "task-abc123",
+        groupName: "main",
+        botId: "coding",
+        channelId: "agent:main",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastUsedAt: "2026-01-01T00:00:00.000Z",
+        preview: "inspect",
+      },
+      admission: { jobId: "admission-1", sessionId: "bot-task-1", sequence: 0 },
+    })),
+    resumeBotTaskSessionAndAdmission: vi.fn(() => ({
+      session: {
+        sessionId: "bot-task-1",
+        handle: "task-abc123",
+        groupName: "main",
+        botId: "coding",
+        channelId: "agent:main",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastUsedAt: "2026-01-01T00:00:00.000Z",
+        preview: "inspect",
+      },
+      admission: { jobId: "admission-1", sessionId: "bot-task-1", sequence: 0 },
+    })),
+    admitBotTaskSessionAdmission: vi.fn().mockReturnValue(true),
+    completeBotTaskSessionAdmission: vi.fn(),
+    cancelBotTaskSessionAdmission: vi.fn(),
     tryAcquireBotTaskSessionLease: vi.fn(
       (sessionId: string, ownerId: string) => ({
         sessionId,
@@ -138,9 +167,13 @@ describe("handleBotToolRequest", () => {
 
     await invoke(req, res);
 
-    expect(repository.createBotTaskSession).toHaveBeenCalledWith(
+    expect(repository.createBotTaskSessionAndAdmission).toHaveBeenCalledWith(
       expect.objectContaining({ botId: "coding", preview: "inspect" }),
     );
+    expect(repository.admitBotTaskSessionAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "admission-1" }),
+    );
+    expect(repository.completeBotTaskSessionAdmission).toHaveBeenCalledOnce();
     expect(repository.tryAcquireBotTaskSessionLease).toHaveBeenCalledWith(
       "bot-task-1",
       expect.any(String),
@@ -167,7 +200,10 @@ describe("handleBotToolRequest", () => {
     loadBotRegistry.mockResolvedValue({
       coding: { group: "main", instructions: "code" },
     });
-    repository.findBotTaskSession.mockReturnValue(session());
+    repository.resumeBotTaskSessionAndAdmission.mockReturnValue({
+      session: session(),
+      admission: { jobId: "admission-1", sessionId: "bot-task-1", sequence: 0 },
+    });
     sendMessage.mockResolvedValue("続きの結果");
     const req = new MockRequest(
       JSON.stringify({
@@ -182,11 +218,14 @@ describe("handleBotToolRequest", () => {
 
     await invoke(req, res);
 
-    expect(repository.touchBotTaskSession).toHaveBeenCalledWith(
-      "bot-task-1",
+    expect(repository.resumeBotTaskSessionAndAdmission).toHaveBeenCalledWith(
+      "task-abc123",
+      "main",
+      "coding",
       "agent:main",
       expect.any(String),
     );
+    expect(repository.completeBotTaskSessionAdmission).toHaveBeenCalledOnce();
     expect(sendMessage).toHaveBeenCalledWith(
       "main",
       "bot-task-1",

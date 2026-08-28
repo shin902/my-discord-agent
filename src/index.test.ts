@@ -354,7 +354,7 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.stopCron).toHaveBeenCalledOnce();
     expect(mocks.stopPoller).toHaveBeenCalledOnce();
     expect(mocks.stopDeliveryWorker).toHaveBeenCalledOnce();
-    expect(mocks.killAllRunningContainers).toHaveBeenCalledOnce();
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledTimes(2);
     expect(mocks.stopCron.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.stopPoller.mock.invocationCallOrder[0],
     );
@@ -362,7 +362,7 @@ describe("index: 起動時バリデーション", () => {
       mocks.stopDeliveryWorker.mock.invocationCallOrder[0],
     );
     expect(mocks.stopDeliveryWorker.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+      mocks.killAllRunningContainers.mock.invocationCallOrder[1],
     );
   });
 

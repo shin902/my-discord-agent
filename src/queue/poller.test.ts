@@ -266,6 +266,7 @@ describe("processMessage - Bot execution resolution", () => {
       tools: ["read"],
     });
     expect(options?.systemPromptAppend).toBe("coding instructions");
+    expect(options?.enableBotTool).toBe(false);
   });
 
   it("dead-letters an unknown Bot instead of retrying", async () => {
