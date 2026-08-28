@@ -298,6 +298,9 @@ describe("index: 起動時バリデーション", () => {
       strict: true,
     });
     expect(mocks.initializeQueue).toHaveBeenCalledOnce();
+    expect(
+      mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.initializeQueue.mock.invocationCallOrder[0]);
     expect(mocks.registerHandlers).toHaveBeenCalledWith(
       mocks.discordClients.get("personal"),
       expect.any(Function),
