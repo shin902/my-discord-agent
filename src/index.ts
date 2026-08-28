@@ -106,8 +106,8 @@ const runStartupBackfillOnce = async (): Promise<void> => {
   await backfillDiscordMessages(groups);
   console.log("[discord-backfill] 起動時履歴復旧が完了しました");
 };
-for (const discordClient of getDiscordClients().values()) {
-  registerHandlers(discordClient, runStartupBackfillOnce);
+for (const [discordBotId, discordClient] of getDiscordClients()) {
+  registerHandlers(discordClient, runStartupBackfillOnce, discordBotId);
 }
 startPoller();
 startDeliveryWorker(getQueueRepository());

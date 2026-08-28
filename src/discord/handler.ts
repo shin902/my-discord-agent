@@ -1,16 +1,21 @@
 import { type Client, Events, type Message } from "discord.js";
-import { handleBotCommand, synchronizeBotCommand } from "./commands.js";
+import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
+import {
+  handleBotCommand,
+  synchronizeBotCommandWithRetry,
+} from "./commands.js";
 import { handleLiveDiscordMessage } from "./intake.js";
 
 /** Discordイベントハンドラーを指定したClientへ登録する。 */
 export function registerHandlers(
   client: Client,
   onReady?: () => Promise<void> | void,
+  discordBotId = DEFAULT_DISCORD_BOT_ID,
 ): void {
   client.once(Events.ClientReady, (c) => {
     console.log(`起動しました: ${c.user.tag}`);
-    void synchronizeBotCommand(c).catch((error) =>
-      console.error("[handler] /bot コマンドの同期に失敗しました:", error),
+    void synchronizeBotCommandWithRetry(c).catch((error) =>
+      console.error("[handler] /bot コマンドの同期を断念しました:", error),
     );
     if (onReady) {
       void Promise.resolve()
@@ -33,7 +38,7 @@ export function registerHandlers(
   client.on(Events.InteractionCreate, (interaction) => {
     if (!interaction.isChatInputCommand() || interaction.commandName !== "bot")
       return;
-    void handleBotCommand(interaction).catch((error) =>
+    void handleBotCommand(interaction, discordBotId).catch((error) =>
       console.error("[handler] /bot コマンドの処理に失敗しました:", error),
     );
   });

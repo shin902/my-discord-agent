@@ -2,7 +2,13 @@ import { type Message, ThreadAutoArchiveDuration } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockClient = { once: vi.fn(), on: vi.fn() };
-vi.mock("./client.js", () => ({}));
+const mockHandleBotCommand = vi.hoisted(() => vi.fn());
+const mockSynchronizeBotCommandWithRetry = vi.hoisted(() => vi.fn());
+vi.mock("./client.js", () => ({ DEFAULT_DISCORD_BOT_ID: "personal" }));
+vi.mock("./commands.js", () => ({
+  handleBotCommand: mockHandleBotCommand,
+  synchronizeBotCommandWithRetry: mockSynchronizeBotCommandWithRetry,
+}));
 
 const mockAppendInbox = vi.hoisted(() => vi.fn());
 vi.mock("../queue/repository.js", () => ({
@@ -68,10 +74,36 @@ function makeMockMessage(opts: {
   } as unknown as Message;
 }
 
+describe("registerHandlers - InteractionCreate", () => {
+  beforeEach(() => {
+    mockHandleBotCommand.mockReset().mockResolvedValue(undefined);
+    mockSynchronizeBotCommandWithRetry.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("passes the receiving Discord Bot identity to command handling", () => {
+    const client = { once: vi.fn(), on: vi.fn() };
+    registerHandlers(client as never, undefined, "secondary");
+    const handler = client.on.mock.calls.find(
+      ([event]) => event === "interactionCreate",
+    )?.[1] as ((interaction: unknown) => void) | undefined;
+    if (!handler)
+      throw new Error("interactionCreate handler was not registered");
+    const interaction = {
+      isChatInputCommand: () => true,
+      commandName: "bot",
+    };
+
+    handler(interaction);
+
+    expect(mockHandleBotCommand).toHaveBeenCalledWith(interaction, "secondary");
+  });
+});
+
 describe("registerHandlers - MessageCreate", () => {
   beforeEach(() => {
     mockFindGroup.mockReset();
     mockAppendInbox.mockReset().mockResolvedValue(undefined);
+    mockSynchronizeBotCommandWithRetry.mockReset().mockResolvedValue(undefined);
   });
 
   it("起動時バックフィルが未完了でもライブMessageCreateを処理する", async () => {

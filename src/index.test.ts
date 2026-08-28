@@ -278,6 +278,11 @@ describe("index: 起動時バリデーション", () => {
 
     await import("./index.js");
 
+    expect(mocks.registerHandlers).toHaveBeenCalledWith(
+      mocks.discordClients.get("personal"),
+      expect.any(Function),
+      "personal",
+    );
     expect(mocks.registerHandlers).toHaveBeenCalledOnce();
     expect(mocks.startPoller).toHaveBeenCalledOnce();
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
@@ -299,6 +304,18 @@ describe("index: 起動時バリデーション", () => {
     await import("./index.js");
 
     expect(mocks.registerHandlers).toHaveBeenCalledTimes(2);
+    expect(mocks.registerHandlers).toHaveBeenNthCalledWith(
+      1,
+      mocks.discordClients.get("personal"),
+      expect.any(Function),
+      "personal",
+    );
+    expect(mocks.registerHandlers).toHaveBeenNthCalledWith(
+      2,
+      mocks.discordClients.get("secondary"),
+      expect.any(Function),
+      "secondary",
+    );
     const firstReady = mocks.registerHandlers.mock
       .calls[0]?.[1] as () => Promise<void>;
     const secondReady = mocks.registerHandlers.mock
