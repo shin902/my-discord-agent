@@ -2,6 +2,24 @@ import { describe, expect, it } from "vitest";
 import { AgentRunRegistry } from "./agent-run.js";
 
 describe("AgentRunRegistry", () => {
+  it("creates subagent runs with required parent and task metadata", () => {
+    const registry = new AgentRunRegistry();
+    const parent = registry.create({ kind: "root" });
+
+    const child = registry.create({
+      kind: "subagent",
+      parentRunId: parent.id,
+      taskPreview: "inspect independently",
+    });
+
+    expect(child).toMatchObject({
+      kind: "subagent",
+      parentRunId: parent.id,
+      taskPreview: "inspect independently",
+      status: "running",
+    });
+  });
+
   it("retains only the newest completed runs", () => {
     const registry = new AgentRunRegistry(2);
     const first = registry.create({ kind: "root" });

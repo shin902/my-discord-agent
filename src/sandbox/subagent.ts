@@ -12,6 +12,7 @@ import {
   type AgentRun,
   type AgentRunStatus,
   agentRunRegistry,
+  type SubagentRun,
 } from "./agent-run.js";
 import { resultPreview, taskPreview } from "./subagent-preview.js";
 
@@ -38,22 +39,22 @@ export interface SubagentToolContext {
   thinkingLevel: ThinkingLevel;
   convertToLlm: AgentExecutionOptions["convertToLlm"];
   getApiKey: AgentExecutionOptions["getApiKey"];
-  onEvent?: (run: AgentRun, event: AgentEvent) => void;
+  onEvent?: (run: SubagentRun, event: AgentEvent) => void;
 }
 
-function details(run: AgentRun): SubagentDetails {
+function details(run: SubagentRun): SubagentDetails {
   return {
     worker: "ephemeral",
     runId: run.id,
-    parentRunId: run.parentRunId ?? "",
+    parentRunId: run.parentRunId,
     status: run.status,
-    taskPreview: run.taskPreview ?? "(unknown task)",
+    taskPreview: run.taskPreview,
     ...(run.resultPreview ? { resultPreview: run.resultPreview } : {}),
   };
 }
 
 function progress(
-  run: AgentRun,
+  run: SubagentRun,
   text: string,
   onUpdate?: AgentToolUpdateCallback<SubagentDetails>,
 ): void {
@@ -77,8 +78,8 @@ export async function runEphemeralAgent(
   const childRun = agentRunRegistry.create({
     kind: "subagent",
     parentRunId: context.parentRun.id,
+    taskPreview: taskPreview(task),
   });
-  childRun.taskPreview = taskPreview(task);
   progress(childRun, "Subagent started", onUpdate);
 
   try {

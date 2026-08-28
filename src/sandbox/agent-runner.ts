@@ -36,7 +36,7 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
-import { type AgentRun, agentRunRegistry } from "./agent-run.js";
+import { agentRunRegistry, type SubagentRun } from "./agent-run.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
 import { createSubagentTool } from "./subagent.js";
 import { loadGroupSystemPrompt } from "./system-prompt.js";
@@ -666,7 +666,7 @@ export async function runAgentLoop(
     thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
     convertToLlm: defaultConvertToLlm,
     getApiKey,
-    onEvent: (run: AgentRun, event: AgentEvent) => {
+    onEvent: (run: SubagentRun, event: AgentEvent) => {
       if (event.type === "message_end" && isAssistantMessage(event.message)) {
         assistantTurns++;
         if (event.message.usage) {
@@ -682,7 +682,7 @@ export async function runAgentLoop(
         runId: run.id,
         parentRunId: run.parentRunId,
         toolName: event.toolName,
-        taskPreview: run.taskPreview ?? "(unknown task)",
+        taskPreview: run.taskPreview,
       };
       process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     },

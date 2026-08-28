@@ -17,6 +17,27 @@ export interface AgentRun {
   resultPreview?: string;
 }
 
+export type SubagentRun = AgentRun & {
+  kind: "subagent";
+  parentRunId: string;
+  taskPreview: string;
+};
+
+type AgentRunCreateOptions = {
+  delegationDepth?: number;
+  maxDelegationDepth?: number;
+};
+type RootRunCreateOptions = AgentRunCreateOptions & {
+  kind: "root";
+  parentRunId?: never;
+  taskPreview?: never;
+};
+type SubagentRunCreateOptions = AgentRunCreateOptions & {
+  kind: "subagent";
+  parentRunId: string;
+  taskPreview: string;
+};
+
 /** In-memory run registry for current-process orchestration and future observers. */
 export class AgentRunRegistry {
   private readonly runs = new Map<string, AgentRun>();
@@ -29,12 +50,9 @@ export class AgentRunRegistry {
     this.maxCompletedRuns = maxCompletedRuns;
   }
 
-  create(options: {
-    kind: AgentRunKind;
-    parentRunId?: string;
-    delegationDepth?: number;
-    maxDelegationDepth?: number;
-  }): AgentRun {
+  create(options: RootRunCreateOptions): AgentRun;
+  create(options: SubagentRunCreateOptions): SubagentRun;
+  create(options: RootRunCreateOptions | SubagentRunCreateOptions): AgentRun {
     const parent = options.parentRunId
       ? this.runs.get(options.parentRunId)
       : undefined;
@@ -45,6 +63,9 @@ export class AgentRunRegistry {
     const run: AgentRun = {
       id: randomUUID(),
       ...(options.parentRunId ? { parentRunId: options.parentRunId } : {}),
+      ...(options.kind === "subagent"
+        ? { taskPreview: options.taskPreview }
+        : {}),
       kind: options.kind,
       status: "running",
       delegationDepth:
