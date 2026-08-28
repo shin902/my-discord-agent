@@ -54,6 +54,12 @@ describe("createSubagentTool", () => {
     const result = await tool.execute("tool-call", { task: "investigate" });
 
     expect(result.content).toEqual([{ type: "text", text: "child result" }]);
+    expect(result.details).toMatchObject({
+      worker: "ephemeral",
+      status: "completed",
+      taskPreview: "investigate",
+      resultPreview: "child result",
+    });
     const execution = runAgentMock.mock.calls[0][0];
     expect(execution).toMatchObject({
       systemPrompt: context.systemPrompt,
@@ -110,6 +116,37 @@ describe("createSubagentTool", () => {
       childTool.execute("nested", { task: "nested" }),
     ).rejects.toThrow("最大深度");
     expect(agentRunRegistry.get(childId)?.status).toBe("completed");
+  });
+
+  it("shows a safe task preview and emits a terminal failed update", async () => {
+    const { tool } = makeTool();
+    const updates: Array<{ details: Record<string, unknown> }> = [];
+    runAgentMock.mockRejectedValue(new Error("secret provider response"));
+
+    await expect(
+      tool.execute(
+        "tool-call",
+        { task: `@everyone investigate\n${"x".repeat(200)}` },
+        undefined,
+        (update) => updates.push({ details: update.details }),
+      ),
+    ).rejects.toThrow("secret provider response");
+
+    expect(updates).toHaveLength(2);
+    expect(updates[0].details).toMatchObject({
+      worker: "ephemeral",
+      status: "running",
+    });
+    expect(updates[0].details.taskPreview).not.toContain("@everyone");
+    expect(String(updates[0].details.taskPreview).length).toBeLessThanOrEqual(
+      120,
+    );
+    expect(updates[1].details).toMatchObject({
+      worker: "ephemeral",
+      status: "failed",
+      taskPreview: updates[0].details.taskPreview,
+    });
+    expect(JSON.stringify(updates[1])).not.toContain("secret provider");
   });
 
   it("marks the child failed when execution aborts", async () => {

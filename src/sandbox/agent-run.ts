@@ -13,6 +13,8 @@ export interface AgentRun {
   startedAt: number;
   completedAt?: number;
   result?: string;
+  taskPreview?: string;
+  resultPreview?: string;
 }
 
 /** In-memory run registry for current-process orchestration and future observers. */

@@ -32,17 +32,20 @@ export type DiscordEvent =
   | { type: "error"; message: string }
   | {
       type: "subagent_tool_start";
+      worker: "ephemeral";
       runId: string;
       parentRunId: string;
       toolName: string;
-      args?: unknown;
+      taskPreview: string;
     }
   | {
       type: "subagent_update";
+      worker: "ephemeral";
       runId: string;
       parentRunId: string;
       status: AgentRunStatus;
-      message?: string;
+      taskPreview: string;
+      resultPreview?: string;
     };
 
 export interface AgentTokenUsage {
@@ -101,6 +104,17 @@ function isAgentRunStatus(value: unknown): value is AgentRunStatus {
   return value === "running" || value === "completed" || value === "failed";
 }
 
+function isSafeSubagentPreview(
+  value: unknown,
+  maxLength: number,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= maxLength &&
+    !/[\r\n@]/.test(value)
+  );
+}
+
 function isDiscordEvent(value: unknown): value is DiscordEvent {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   switch (value.type) {
@@ -110,16 +124,21 @@ function isDiscordEvent(value: unknown): value is DiscordEvent {
       return typeof value.message === "string";
     case "subagent_tool_start":
       return (
+        value.worker === "ephemeral" &&
         typeof value.runId === "string" &&
         typeof value.parentRunId === "string" &&
-        typeof value.toolName === "string"
+        typeof value.toolName === "string" &&
+        isSafeSubagentPreview(value.taskPreview, 120)
       );
     case "subagent_update":
       return (
+        value.worker === "ephemeral" &&
         typeof value.runId === "string" &&
         typeof value.parentRunId === "string" &&
         isAgentRunStatus(value.status) &&
-        (value.message === undefined || typeof value.message === "string")
+        isSafeSubagentPreview(value.taskPreview, 120) &&
+        (value.resultPreview === undefined ||
+          isSafeSubagentPreview(value.resultPreview, 200))
       );
     default:
       return false;

@@ -13,6 +13,7 @@ import {
   type AgentRunStatus,
   agentRunRegistry,
 } from "./agent-run.js";
+import { resultPreview, taskPreview } from "./subagent-preview.js";
 
 const parameters = Type.Object({
   task: Type.String({
@@ -20,10 +21,13 @@ const parameters = Type.Object({
   }),
 });
 
-type SubagentDetails = {
+export type SubagentDetails = {
+  worker: "ephemeral";
   runId: string;
   parentRunId: string;
   status: AgentRunStatus;
+  taskPreview: string;
+  resultPreview?: string;
 };
 
 export interface SubagentToolContext {
@@ -39,9 +43,12 @@ export interface SubagentToolContext {
 
 function details(run: AgentRun): SubagentDetails {
   return {
+    worker: "ephemeral",
     runId: run.id,
     parentRunId: run.parentRunId ?? "",
     status: run.status,
+    taskPreview: run.taskPreview ?? "(unknown task)",
+    ...(run.resultPreview ? { resultPreview: run.resultPreview } : {}),
   };
 }
 
@@ -71,7 +78,8 @@ export async function runEphemeralAgent(
     kind: "subagent",
     parentRunId: context.parentRun.id,
   });
-  progress(childRun, `Subagent ${childRun.id} started`, onUpdate);
+  childRun.taskPreview = taskPreview(task);
+  progress(childRun, "Subagent started", onUpdate);
 
   try {
     const childSubagentTool = createSubagentTool({
@@ -109,14 +117,16 @@ export async function runEphemeralAgent(
       throw new Error("サブエージェントが空の応答で終了しました");
     }
 
+    childRun.resultPreview = resultPreview(execution.response);
     agentRunRegistry.complete(childRun.id, execution.response);
-    progress(childRun, `Subagent ${childRun.id} completed`, onUpdate);
+    progress(childRun, "Subagent completed", onUpdate);
     return {
       content: [{ type: "text", text: execution.response }],
       details: details(childRun),
     } satisfies AgentToolResult<SubagentDetails>;
   } catch (error) {
     agentRunRegistry.fail(childRun.id);
+    progress(childRun, "Subagent failed", onUpdate);
     throw error;
   }
 }

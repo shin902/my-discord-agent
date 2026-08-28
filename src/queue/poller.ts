@@ -386,13 +386,15 @@ async function sendDiscordEvent(
         text = `🔧 \`${event.toolName}\``;
       }
     } else if (event.type === "subagent_tool_start") {
-      const args =
-        event.args === undefined ? "" : ` ${JSON.stringify(event.args)}`;
-      const truncatedArgs = args.length > 301 ? `${args.slice(0, 300)}…` : args;
-      text = `🤖 Subagent \`${event.runId.slice(0, 8)}\`: 🔧 \`${event.toolName}\`${truncatedArgs}`;
+      text = `🤖 ${event.worker} \`${event.runId.slice(0, 8)}\`: 🔧 \`${event.toolName}\``;
     } else if (event.type === "subagent_update") {
-      const message = event.message ?? `status=${event.status}`;
-      text = `🤖 Subagent \`${event.runId.slice(0, 8)}\`: ${message}`;
+      const detail =
+        event.status === "completed" && event.resultPreview
+          ? `完了: ${event.resultPreview}`
+          : event.status === "failed"
+            ? "失敗"
+            : event.taskPreview;
+      text = `🤖 ${event.worker} \`${event.runId.slice(0, 8)}\`: ${detail}`;
     } else if (event.type === "error") {
       text = `⚠️ エラー: ${event.message}`;
     } else {

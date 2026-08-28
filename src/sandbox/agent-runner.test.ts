@@ -364,6 +364,26 @@ describe("runAgentLoop", () => {
     stderrSpy.mockRestore();
   });
 
+  it.each([
+    ["error", "provider error"],
+    ["aborted", ""],
+    ["stop", "   "],
+  ] as const)("root runのterminal outcome %sをregistryへ反映する", async (stopReason, text) => {
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return createMockAgent([], {
+        role: "assistant",
+        content: text ? [{ type: "text", text }] : [],
+        stopReason,
+      });
+    });
+
+    await runAgentLoop("test-group", `terminal-${stopReason}`, "terminal", {});
+
+    const roots = agentRunRegistry.list().filter((run) => run.kind === "root");
+    expect(roots.at(-1)?.status).toBe("failed");
+  });
+
   it("グループ設定のモデルを使用する", async () => {
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",

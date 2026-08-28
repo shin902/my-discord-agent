@@ -1417,9 +1417,11 @@ describe("processMessage - Discord イベント通知", () => {
       async (_g, _s, _c, options: unknown) => {
         (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
           type: "subagent_tool_start",
+          worker: "ephemeral",
           runId: "child-123456789",
           parentRunId: "root-123",
           toolName: "read",
+          taskPreview: "inspect task",
         });
         return "AI response";
       },
@@ -1429,7 +1431,7 @@ describe("processMessage - Discord イベント通知", () => {
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith({
-        content: "🤖 Subagent `child-12`: 🔧 `read`",
+        content: "🤖 ephemeral `child-12`: 🔧 `read`",
         allowedMentions: { parse: [], repliedUser: false },
       });
     });
@@ -1440,10 +1442,12 @@ describe("processMessage - Discord イベント通知", () => {
       async (_g, _s, _c, options: unknown) => {
         (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
           type: "subagent_update",
+          worker: "ephemeral",
           runId: "child-123456789",
           parentRunId: "root-123",
           status: "completed",
-          message: "調査完了",
+          taskPreview: "inspect task",
+          resultPreview: "調査完了",
         });
         return "AI response";
       },
@@ -1453,7 +1457,32 @@ describe("processMessage - Discord イベント通知", () => {
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith({
-        content: "🤖 Subagent `child-12`: 調査完了",
+        content: "🤖 ephemeral `child-12`: 完了: 調査完了",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
+  });
+
+  it("subagent_update のrunning状態では安全なtask previewを送信する", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "subagent_update",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          status: "running",
+          taskPreview: "調査タスク",
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "🤖 ephemeral `child-12`: 調査タスク",
         allowedMentions: { parse: [], repliedUser: false },
       });
     });

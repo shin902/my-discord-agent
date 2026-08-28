@@ -1108,18 +1108,30 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const events = [
       {
         type: "subagent_tool_start",
+        worker: "ephemeral",
         runId: "child-123",
         parentRunId: "root-123",
         toolName: "read",
+        taskPreview: "調査タスク",
       },
       {
         type: "subagent_update",
+        worker: "ephemeral",
         runId: "child-123",
         parentRunId: "root-123",
         status: "completed",
-        message: "調査完了",
+        taskPreview: "調査タスク",
+        resultPreview: "調査完了",
       },
       { type: "future_event", message: "must be ignored" },
+      {
+        type: "subagent_update",
+        worker: "ephemeral",
+        runId: "child-123",
+        parentRunId: "root-123",
+        status: "running",
+        taskPreview: "@everyone unsafe",
+      }, // unsafe taskPreview: must be ignored
     ];
     const sendMessage = await setupWithStderr(
       events

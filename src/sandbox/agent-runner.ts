@@ -673,11 +673,12 @@ export async function runAgentLoop(
       if (event.type !== "tool_execution_start") return;
       const payload: Record<string, unknown> = {
         type: "subagent_tool_start",
+        worker: "ephemeral",
         runId: run.id,
         parentRunId: run.parentRunId,
         toolName: event.toolName,
+        taskPreview: run.taskPreview ?? "(unknown task)",
       };
-      if (groupConfig.toolLogArgs) payload.args = event.args;
       process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     },
   };
@@ -791,7 +792,15 @@ export async function runAgentLoop(
       },
     });
     response = execution.response;
-    agentRunRegistry.complete(rootRun.id, response);
+    const rootFailed =
+      execution.terminalStopReason === "error" ||
+      execution.terminalStopReason === "aborted" ||
+      execution.response.trim() === "";
+    if (rootFailed) {
+      agentRunRegistry.fail(rootRun.id);
+    } else {
+      agentRunRegistry.complete(rootRun.id, response);
+    }
   } catch (error) {
     agentRunRegistry.fail(rootRun.id);
     throw error;
