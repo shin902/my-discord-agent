@@ -66,8 +66,18 @@ export default async function handler(ctx: CronContext): Promise<void> {
     db = new Database(dbPath, { readonly: true });
     subs = db
       .prepare<[number], SubscriptionRow>(
-        `SELECT name, amount, cycle, next_date, category
-        FROM subscriptions
+        `WITH current_subscriptions AS (
+          SELECT s.*
+          FROM subscriptions AS s
+          JOIN (
+            SELECT name, MAX(id) AS id
+            FROM subscriptions
+            GROUP BY name
+          ) AS latest
+            ON latest.id = s.id
+        )
+        SELECT name, amount, cycle, next_date, category
+        FROM current_subscriptions
         WHERE active = 1
           AND next_date BETWEEN date('now', 'localtime') AND date('now', 'localtime', ? || ' days')
         ORDER BY next_date ASC`,
