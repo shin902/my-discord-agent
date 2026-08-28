@@ -126,6 +126,7 @@ function expectTables(db: Database.Database): void {
     "deliveries",
     "idempotency_keys",
     "dead_letters",
+    "bot_task_sessions",
   ]) {
     expect(
       db
