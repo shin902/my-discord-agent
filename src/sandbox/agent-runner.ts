@@ -36,7 +36,12 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
-import { agentRunRegistry, type SubagentRun } from "./agent-run.js";
+import {
+  completeAgentRun,
+  createRootAgentRun,
+  failAgentRun,
+  type SubagentRun,
+} from "./agent-run.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
 import { createSubagentTool } from "./subagent.js";
 import { loadGroupSystemPrompt } from "./system-prompt.js";
@@ -649,7 +654,7 @@ export async function runAgentLoop(
     messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
   }
 
-  const rootRun = agentRunRegistry.create({ kind: "root" });
+  const rootRun = createRootAgentRun();
   const getApiKey = (provider: string) => {
     // KnownProvider: pi-ai の環境変数マッピングを使用
     const knownKey = getEnvApiKey(provider);
@@ -813,12 +818,12 @@ export async function runAgentLoop(
       execution.terminalStopReason === "aborted" ||
       execution.response.trim() === "";
     if (rootFailed) {
-      agentRunRegistry.fail(rootRun.id);
+      failAgentRun(rootRun);
     } else {
-      agentRunRegistry.complete(rootRun.id, response);
+      completeAgentRun(rootRun);
     }
   } catch (error) {
-    agentRunRegistry.fail(rootRun.id);
+    failAgentRun(rootRun);
     throw error;
   } finally {
     const timingEvent = {

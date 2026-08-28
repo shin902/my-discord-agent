@@ -29,8 +29,6 @@ const BotRequestSchema = z.object({
 
 export interface BotToolResponse {
   content: string;
-  action: "run" | "resume" | "list";
-  botId: string;
   session?: string;
   usage?: AgentExecutionTiming["usage"];
 }
@@ -91,8 +89,6 @@ export async function handleBotToolRequest(
         content: formatBotTaskSessionList(
           getQueueRepository().listBotTaskSessions(group.name, request.bot),
         ),
-        action: request.action,
-        botId: request.bot,
       } satisfies BotToolResponse);
       return;
     }
@@ -193,8 +189,6 @@ export async function handleBotToolRequest(
 
     writeJson(res, 200, {
       content: execution.content,
-      action: request.action,
-      botId: request.bot,
       session: session.handle,
       ...(execution.timing?.usage ? { usage: execution.timing.usage } : {}),
     } satisfies BotToolResponse);

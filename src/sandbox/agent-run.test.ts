@@ -1,56 +1,55 @@
 import { describe, expect, it } from "vitest";
-import { AgentRunRegistry } from "./agent-run.js";
+import {
+  completeAgentRun,
+  createRootAgentRun,
+  createSubagentRun,
+  failAgentRun,
+} from "./agent-run.js";
 
-describe("AgentRunRegistry", () => {
-  it("creates subagent runs with required parent and task metadata", () => {
-    const registry = new AgentRunRegistry();
-    const parent = registry.create({ kind: "root" });
-
-    const child = registry.create({
-      kind: "subagent",
-      parentRunId: parent.id,
-      taskPreview: "inspect independently",
-    });
+describe("agent run lifecycle", () => {
+  it("creates child metadata from its parent run", () => {
+    const parent = createRootAgentRun({ maxDelegationDepth: 2 });
+    const child = createSubagentRun(parent, "inspect independently");
 
     expect(child).toMatchObject({
       kind: "subagent",
       parentRunId: parent.id,
       taskPreview: "inspect independently",
       status: "running",
+      delegationDepth: 1,
+      maxDelegationDepth: 2,
     });
   });
 
-  it("retains only the newest completed runs", () => {
-    const registry = new AgentRunRegistry(2);
-    const first = registry.create({ kind: "root" });
-    const second = registry.create({ kind: "root" });
-    const third = registry.create({ kind: "root" });
+  it("preserves the parent's delegation settings for nested children", () => {
+    const root = createRootAgentRun({ maxDelegationDepth: 3 });
+    const child = createSubagentRun(root, "first task");
+    const grandchild = createSubagentRun(child, "nested task");
 
-    registry.complete(first.id);
-    registry.complete(second.id);
-    registry.complete(third.id);
-
-    expect(registry.get(first.id)).toBeUndefined();
-    expect(registry.get(second.id)).toBeDefined();
-    expect(registry.get(third.id)).toBeDefined();
-    expect(registry.list()).toHaveLength(2);
+    expect(grandchild).toMatchObject({
+      parentRunId: child.id,
+      delegationDepth: 2,
+      maxDelegationDepth: 3,
+    });
   });
 
-  it("does not evict active runs while retaining terminal runs", () => {
-    const registry = new AgentRunRegistry(1);
-    const active = registry.create({ kind: "root" });
-    const completed = registry.create({ kind: "root" });
-    registry.complete(completed.id);
-    const nextCompleted = registry.create({ kind: "root" });
-    registry.complete(nextCompleted.id);
+  it("transitions run status without retaining completion history", () => {
+    const completed = createRootAgentRun();
+    const failed = createRootAgentRun();
 
-    expect(registry.get(active.id)).toBeDefined();
-    expect(registry.get(completed.id)).toBeUndefined();
-    expect(registry.get(nextCompleted.id)).toBeDefined();
+    completeAgentRun(completed);
+    failAgentRun(failed);
+
+    expect(completed).toMatchObject({ status: "completed" });
+    expect(completed).not.toHaveProperty("result");
+    expect(completed).not.toHaveProperty("startedAt");
+    expect(completed).not.toHaveProperty("completedAt");
+    expect(failed).toMatchObject({ status: "failed" });
+    expect(failed).not.toHaveProperty("startedAt");
+    expect(failed).not.toHaveProperty("completedAt");
   });
 
-  it("rejects an invalid retention limit", () => {
-    expect(() => new AgentRunRegistry(-1)).toThrow("maxCompletedRuns");
-    expect(() => new AgentRunRegistry(1.5)).toThrow("maxCompletedRuns");
+  it("defaults the maximum delegation depth to one", () => {
+    expect(createRootAgentRun().maxDelegationDepth).toBe(1);
   });
 });

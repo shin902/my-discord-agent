@@ -49,8 +49,8 @@ const {
       (sessionId: string, ownerId: string) => ({
         sessionId,
         ownerId,
-        fencingToken: 1,
         leaseUntil: "2099-01-01T00:00:00.000Z",
+        fencingToken: 1,
       }),
     ),
     renewBotTaskSessionLease: vi.fn().mockReturnValue(true),
@@ -183,10 +183,8 @@ describe("handleBotToolRequest", () => {
       expect.objectContaining({ enableBotTool: false }),
     );
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
-    expect(JSON.parse(res.end.mock.calls[0][0])).toMatchObject({
+    expect(JSON.parse(res.end.mock.calls[0][0])).toEqual({
       content: "調査結果",
-      action: "run",
-      botId: "coding",
       session: "task-abc123",
     });
   });
@@ -251,9 +249,9 @@ describe("handleBotToolRequest", () => {
       "main",
       "coding",
     );
-    expect(JSON.parse(res.end.mock.calls[0][0]).content).toContain(
-      "task-abc123",
-    );
+    expect(JSON.parse(res.end.mock.calls[0][0])).toEqual({
+      content: expect.stringContaining("task-abc123"),
+    });
   });
 
   it("親と同じserial providerはlockを再取得せず完了する", async () => {

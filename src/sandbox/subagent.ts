@@ -11,7 +11,9 @@ import { type AgentExecutionOptions, runAgent } from "./agent-execution.js";
 import {
   type AgentRun,
   type AgentRunStatus,
-  agentRunRegistry,
+  completeAgentRun,
+  createSubagentRun,
+  failAgentRun,
   type SubagentRun,
 } from "./agent-run.js";
 import { resultPreview, taskPreview } from "./subagent-preview.js";
@@ -75,11 +77,7 @@ export async function runEphemeralAgent(
     );
   }
 
-  const childRun = agentRunRegistry.create({
-    kind: "subagent",
-    parentRunId: context.parentRun.id,
-    taskPreview: taskPreview(task),
-  });
+  const childRun = createSubagentRun(context.parentRun, taskPreview(task));
   progress(childRun, "Subagent started", onUpdate);
 
   try {
@@ -119,14 +117,14 @@ export async function runEphemeralAgent(
     }
 
     childRun.resultPreview = resultPreview(execution.response);
-    agentRunRegistry.complete(childRun.id, execution.response);
+    completeAgentRun(childRun);
     progress(childRun, "Subagent completed", onUpdate);
     return {
       content: [{ type: "text", text: execution.response }],
       details: details(childRun),
     } satisfies AgentToolResult<SubagentDetails>;
   } catch (error) {
-    agentRunRegistry.fail(childRun.id);
+    failAgentRun(childRun);
     progress(childRun, "Subagent failed", onUpdate);
     throw error;
   }
