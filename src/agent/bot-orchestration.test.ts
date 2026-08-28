@@ -43,6 +43,7 @@ const {
       admission: { jobId: "admission-1", sessionId: "bot-task-1", sequence: 0 },
     })),
     admitBotTaskSessionAdmission: vi.fn().mockReturnValue(true),
+    tryAdmitBotTaskSessionAdmission: vi.fn().mockReturnValue("admitted"),
     completeBotTaskSessionAdmission: vi.fn(),
     cancelBotTaskSessionAdmission: vi.fn(),
     tryAcquireBotTaskSessionLease: vi.fn(
@@ -275,6 +276,40 @@ describe("handleBotToolRequest", () => {
     expect(acquireLlmLock).not.toHaveBeenCalled();
   });
 
+  it("先行処理がある同じserial providerの同期resumeは待たずに拒否する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    repository.tryAdmitBotTaskSessionAdmission.mockReturnValueOnce("blocked");
+    const res = response();
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "resume",
+          bot: "coding",
+          session: "task-abc123",
+          prompt: "inspect",
+        }),
+      ),
+      res,
+      "p",
+    );
+
+    expect(repository.tryAdmitBotTaskSessionAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "admission-1" }),
+    );
+    expect(repository.cancelBotTaskSessionAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "admission-1" }),
+    );
+    expect(repository.admitBotTaskSessionAdmission).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    expect(JSON.parse(res.end.mock.calls[0][0]).error).toContain(
+      "先行するBot Task Session処理",
+    );
+  });
+
   it("親が別のserial providerを保持中なら同期Bot呼び出しを拒否する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
@@ -328,6 +363,31 @@ describe("handleBotToolRequest", () => {
       expect.any(AbortSignal),
     );
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("同じparallel providerでは先行処理を待って実行する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    resolveProviderConcurrency.mockResolvedValueOnce("parallel");
+    sendMessage.mockResolvedValueOnce("結果");
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "resume",
+          bot: "coding",
+          session: "task-abc123",
+          prompt: "inspect",
+        }),
+      ),
+      response(),
+      "p",
+    );
+
+    expect(repository.tryAdmitBotTaskSessionAdmission).not.toHaveBeenCalled();
+    expect(repository.admitBotTaskSessionAdmission).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenCalledOnce();
   });
 
   it("parallel providerはlock待機なしで実行し、releaseはnoop契約に委ねる", async () => {

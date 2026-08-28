@@ -185,6 +185,10 @@ export async function handleBotToolRequest(
         }
       },
       controller.signal,
+      {
+        failIfBlocked:
+          heldProvider === model.provider && concurrency === "serial",
+      },
     );
 
     writeJson(res, 200, {

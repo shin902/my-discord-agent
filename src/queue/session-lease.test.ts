@@ -147,6 +147,81 @@ describe("Bot Task Session lease", () => {
     expect(directStarted).toBe(true);
   });
 
+  it("fail-fast admissionは先行処理をterminal cancellationにして後続を塞がない", async () => {
+    const repository = createRepository();
+    repositories.push(repository);
+    const session = repository.createBotTaskSession({
+      sessionId: "session-fail-fast",
+      handle: "task-fail-fast",
+      groupName: "main",
+      botId: "coding",
+      channelId: "channel",
+      createdAt: new Date().toISOString(),
+      preview: "queued",
+    });
+    const first = repository.enqueue({
+      channelId: "channel",
+      groupName: "main",
+      sessionId: session.sessionId,
+      content: "queued",
+      timestamp: new Date().toISOString(),
+      botId: "coding",
+    });
+    const direct = repository.resumeBotTaskSessionAndAdmission(
+      session.handle,
+      session.groupName,
+      session.botId,
+      "agent:main",
+      new Date().toISOString(),
+    );
+    expect(direct).toBeDefined();
+    if (!direct) throw new Error("direct admission was not created");
+    const later = repository.enqueue({
+      channelId: "channel",
+      groupName: "main",
+      sessionId: session.sessionId,
+      content: "later",
+      timestamp: new Date().toISOString(),
+      botId: "coding",
+    });
+
+    expect(repository.tryAdmitBotTaskSessionAdmission(direct.admission)).toBe(
+      "blocked",
+    );
+    const blockedClaim = repository.claim("poller");
+    expect(blockedClaim?.job.id).toBe(first.job.id);
+    if (!blockedClaim) throw new Error("earlier job was not claimed");
+    repository.complete(first.job.id, blockedClaim.fencingToken);
+    expect(repository.claim("poller")?.job.id).toBe(later.job.id);
+  });
+
+  it("immediate admission succeeds when no predecessor blocks it", () => {
+    const repository = createRepository();
+    repositories.push(repository);
+    const session = repository.createBotTaskSession({
+      sessionId: "session-immediate",
+      handle: "task-immediate",
+      groupName: "main",
+      botId: "coding",
+      channelId: "channel",
+      createdAt: new Date().toISOString(),
+      preview: "direct",
+    });
+    const direct = repository.resumeBotTaskSessionAndAdmission(
+      session.handle,
+      session.groupName,
+      session.botId,
+      "agent:main",
+      new Date().toISOString(),
+    );
+    expect(direct).toBeDefined();
+    if (!direct) throw new Error("direct admission was not created");
+    expect(repository.tryAdmitBotTaskSessionAdmission(direct.admission)).toBe(
+      "admitted",
+    );
+    repository.completeBotTaskSessionAdmission(direct.admission);
+  });
+
   it("a later queued invocation cannot overtake an admitted direct invocation", async () => {
     const repository = createRepository();
     repositories.push(repository);

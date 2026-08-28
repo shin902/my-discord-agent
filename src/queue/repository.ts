@@ -985,6 +985,48 @@ export class QueueRepository {
       return result.changes === 1;
     });
   }
+  /**
+   * Admit a direct invocation only if it is immediately eligible. The admission
+   * ticket is terminally cancelled in the same transaction when blocked, so it
+   * cannot hold later work after the caller fails fast.
+   */
+  tryAdmitBotTaskSessionAdmission(
+    admission: BotTaskSessionAdmission,
+  ): "admitted" | "blocked" | "unavailable" {
+    return this.inImmediateTransaction(() => {
+      const blocked = this.db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE session_id=? AND sequence<? AND status NOT IN ('completed','dead_letter') LIMIT 1",
+        )
+        .get(admission.sessionId, admission.sequence);
+      if (blocked) {
+        const at = nowIso();
+        this.db
+          .prepare(
+            "UPDATE jobs SET status='dead_letter',completed_at=?,updated_at=?,terminal_reason='cancelled' WHERE id=? AND session_id=? AND sequence=? AND status='queued' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+          )
+          .run(
+            at,
+            at,
+            admission.jobId,
+            admission.sessionId,
+            admission.sequence,
+          );
+        return "blocked";
+      }
+      const result = this.db
+        .prepare(
+          "UPDATE jobs SET status='running',updated_at=? WHERE id=? AND session_id=? AND sequence=? AND status='queued' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+        )
+        .run(
+          nowIso(),
+          admission.jobId,
+          admission.sessionId,
+          admission.sequence,
+        );
+      return result.changes === 1 ? "admitted" : "unavailable";
+    });
+  }
   completeBotTaskSessionAdmission(admission: BotTaskSessionAdmission): void {
     this.db
       .prepare(

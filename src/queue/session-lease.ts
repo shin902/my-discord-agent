@@ -35,19 +35,36 @@ function waitForRetry(signal?: AbortSignal): Promise<void> {
  * Active leases are non-expiring; startup cleanup is responsible for recovery
  * after managed containers have been stopped.
  */
+export interface BotTaskSessionAdmissionOptions {
+  /** Fail instead of waiting when a predecessor would require the held lock. */
+  failIfBlocked?: boolean;
+}
+
 export async function withBotTaskSessionAdmission<T>(
   repository: QueueRepository,
   admission: BotTaskSessionAdmission,
   fn: () => Promise<T>,
   signal?: AbortSignal,
+  options: BotTaskSessionAdmissionOptions = {},
 ): Promise<T> {
   let admitted = false;
   try {
-    while (!admitted) {
-      if (signal?.aborted)
-        throw new Error("Bot Task Session admission aborted");
-      admitted = repository.admitBotTaskSessionAdmission(admission);
-      if (!admitted) await waitForRetry(signal);
+    if (options.failIfBlocked) {
+      const result = repository.tryAdmitBotTaskSessionAdmission(admission);
+      if (result === "blocked")
+        throw new Error(
+          "先行するBot Task Session処理が親のprovider lockを待つため、同期Bot呼び出しを開始できません",
+        );
+      if (result === "unavailable")
+        throw new Error("Bot Task Session admissionを開始できません");
+      admitted = true;
+    } else {
+      while (!admitted) {
+        if (signal?.aborted)
+          throw new Error("Bot Task Session admission aborted");
+        admitted = repository.admitBotTaskSessionAdmission(admission);
+        if (!admitted) await waitForRetry(signal);
+      }
     }
     return await fn();
   } finally {
