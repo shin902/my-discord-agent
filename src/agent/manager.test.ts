@@ -174,11 +174,19 @@ const makeProc = (
 
 describe("sendMessage: Docker 起動構成", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
+  let execFileMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    execFileMock = vi.fn((_command, _args, callback) => {
+      callback?.(null, "", "");
+      return { on: vi.fn() };
+    });
+    vi.doMock("node:child_process", () => ({
+      spawn: spawnMock,
+      execFile: execFileMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -356,6 +364,54 @@ describe("sendMessage: Docker 起動構成", () => {
     const { killAllRunningContainers } = await import("./manager.js");
     await killAllRunningContainers();
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("strict startup cleanup はDockerのdiscovery失敗を伝播する", async () => {
+    execFileMock.mockImplementationOnce((_command, _args, callback) => {
+      callback?.(new Error("docker daemon unavailable"), "", "daemon down");
+      return { on: vi.fn() };
+    });
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).rejects.toThrow("container cleanup discovery failed");
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("strict startup cleanup は全管理コンテナ停止を確認して完了する", async () => {
+    execFileMock
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "container-1\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "", "");
+        return { on: vi.fn() };
+      });
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).resolves.toBeUndefined();
+    expect(spawnMock).toHaveBeenCalledWith("docker", ["kill", "container-1"], {
+      stdio: "ignore",
+    });
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("strict startup cleanup は個別のdocker kill失敗を隠さない", async () => {
+    execFileMock.mockImplementationOnce((_command, _args, callback) => {
+      callback?.(null, "container-1\n", "");
+      return { on: vi.fn() };
+    });
+    spawnMock.mockReturnValueOnce(makeProc(1));
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).rejects.toThrow("container cleanup kill failed");
+    expect(execFileMock).toHaveBeenCalledOnce();
   });
 
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {

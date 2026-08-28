@@ -215,29 +215,97 @@ const runningContainers = new Map<string, ChildProcess>();
  * 実行中の全エージェントコンテナ（および対応する docker run クライアント
  * プロセス）を停止する。SIGTERM/SIGINT 受信時に index.ts から呼び出される想定。
  */
+export interface KillAllRunningContainersOptions {
+  /** Also discover containers left by a previous host process. */
+  includeOrphans?: boolean;
+  /** Reject unless Docker proves discovery and termination succeeded. */
+  strict?: boolean;
+}
+
+function resolveCleanupOptions(
+  options: boolean | KillAllRunningContainersOptions,
+): Required<KillAllRunningContainersOptions> {
+  if (typeof options === "boolean")
+    return { includeOrphans: options, strict: false };
+  return {
+    includeOrphans: options.includeOrphans ?? false,
+    strict: options.strict ?? false,
+  };
+}
+
+function discoverManagedContainerIds(): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error: Error | undefined, stdout = "") => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve(stdout.trim() ? stdout.trim().split(/\s+/) : []);
+    };
+    const child = execFile(
+      "docker",
+      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      (error, stdout, stderr) => {
+        if (error) {
+          finish(
+            new Error(
+              `container cleanup discovery failed: ${stderr?.trim() || error.message}`,
+            ),
+          );
+          return;
+        }
+        finish(undefined, stdout);
+      },
+    );
+    child.on("error", (error) => finish(error));
+  });
+}
+
+function killContainerIds(ids: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const killProc = spawn("docker", ["kill", ...ids], { stdio: "ignore" });
+    const on =
+      typeof killProc.once === "function"
+        ? killProc.once.bind(killProc)
+        : killProc.on.bind(killProc);
+    on("close", (code: number | null) => {
+      if (code === 0) resolve();
+      else
+        reject(new Error(`container cleanup kill failed: exit=${code ?? 1}`));
+    });
+    on("error", (error: Error) => reject(error));
+  });
+}
+
+async function killOrphansStrict(): Promise<void> {
+  const ids = await discoverManagedContainerIds();
+  if (ids.length === 0) return;
+  await killContainerIds(ids);
+  const remaining = await discoverManagedContainerIds();
+  if (remaining.length > 0)
+    throw new Error(
+      `container cleanup failed: ${remaining.length} managed container(s) remain`,
+    );
+}
+
+async function killOrphansBestEffort(): Promise<void> {
+  try {
+    const ids = await discoverManagedContainerIds();
+    if (ids.length > 0) await killContainerIds(ids);
+  } catch {
+    // Shutdown is best effort; startup uses killOrphansStrict instead.
+  }
+}
+
 export function killAllRunningContainers(
-  includeOrphans = false,
+  options: boolean | KillAllRunningContainersOptions = false,
 ): Promise<void> {
+  const { includeOrphans, strict } = resolveCleanupOptions(options);
   const entries = [...runningContainers.entries()];
   const killManaged = includeOrphans
-    ? new Promise<void>((resolve) => {
-        execFile(
-          "docker",
-          ["ps", "-q", "--filter", "name=my-discord-agent-"],
-          (error, stdout) => {
-            if (error || !stdout.trim()) {
-              resolve();
-              return;
-            }
-            const ids = stdout.trim().split(/\s+/);
-            const killProc = spawn("docker", ["kill", ...ids], {
-              stdio: "ignore",
-            });
-            killProc.on("close", () => resolve());
-            killProc.on("error", () => resolve());
-          },
-        ).on("error", () => resolve());
-      })
+    ? strict
+      ? killOrphansStrict()
+      : killOrphansBestEffort()
     : Promise.resolve();
   const killTracked = Promise.all(
     entries.map(([name, proc]) => {
@@ -245,6 +313,7 @@ export function killAllRunningContainers(
       // コンテナが既に起動済みの場合はクライアント kill だけでは止まらないため
       // docker kill も併用する（無関係な場合は失敗するだけで無害）。
       proc.kill("SIGKILL");
+      if (strict) return stopContainer(name);
       return new Promise<void>((resolve) => {
         const killProc = spawn("docker", ["kill", name], {
           stdio: "ignore",

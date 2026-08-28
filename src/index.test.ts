@@ -268,6 +268,20 @@ describe("index: 起動時バリデーション", () => {
     expect(mockExit).toHaveBeenCalledWith(1);
   });
 
+  it("strictな起動時コンテナcleanup失敗ではqueue recoveryへ進まない", async () => {
+    mocks.killAllRunningContainers.mockRejectedValueOnce(
+      new Error("container cleanup discovery failed"),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledWith({
+      includeOrphans: true,
+      strict: true,
+    });
+    expect(mocks.initializeQueue).not.toHaveBeenCalled();
+  });
+
   it("有効な設定では registerHandlers・startPoller・startDeliveryWorker・login が呼ばれる", async () => {
     mocks.loadGroups.mockResolvedValue([
       {
@@ -279,6 +293,11 @@ describe("index: 起動時バリデーション", () => {
 
     await import("./index.js");
 
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledWith({
+      includeOrphans: true,
+      strict: true,
+    });
+    expect(mocks.initializeQueue).toHaveBeenCalledOnce();
     expect(mocks.registerHandlers).toHaveBeenCalledWith(
       mocks.discordClients.get("personal"),
       expect.any(Function),
