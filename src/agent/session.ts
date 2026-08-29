@@ -6,7 +6,6 @@ import {
   link,
   mkdir,
   readFile,
-  rename,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -76,8 +75,7 @@ export async function loadMessages(
 }
 
 const TIME_ANCHOR_PATTERN = /^[1-9]\d{12}$/;
-const TIME_ANCHOR_REPAIR_WAIT_MS = 10;
-const TIME_ANCHOR_REPAIR_TIMEOUT_MS = 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 function isValidTimeAnchor(timestamp: number): boolean {
   return (
@@ -86,14 +84,18 @@ function isValidTimeAnchor(timestamp: number): boolean {
   );
 }
 
+function canonicalHour(timestamp: number): number {
+  return Math.floor(timestamp / HOUR_MS) * HOUR_MS;
+}
+
 function parseTimeAnchor(value: string): number | undefined {
   const serialized = value.trim();
-  // Date.now() produces a 13-digit epoch-millisecond timestamp. Requiring the
-  // complete shape prevents a numeric prefix from being accepted as 1970 time.
+  // Keep the existing epoch-millisecond file format, but expose and write only
+  // the hour bucket needed by the session prompt.
   if (!TIME_ANCHOR_PATTERN.test(serialized)) return undefined;
 
   const timestamp = Number(serialized);
-  return isValidTimeAnchor(timestamp) ? timestamp : undefined;
+  return isValidTimeAnchor(timestamp) ? canonicalHour(timestamp) : undefined;
 }
 
 type TimeAnchorState =
@@ -115,78 +117,10 @@ async function readTimeAnchorState(file: string): Promise<TimeAnchorState> {
   }
 }
 
-async function repairTimeAnchor(
-  file: string,
-  temporaryFile: string,
-): Promise<number> {
-  // The fixed claim is a hard link to a complete candidate. Every publisher
-  // uses that inode, so concurrent and recovered publishers cannot introduce a
-  // different value for this session.
-  const claimPath = `${file}.repair`;
-  let ownsClaim = false;
-  try {
-    try {
-      await link(temporaryFile, claimPath);
-      ownsClaim = true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    }
-
-    const deadline = Date.now() + TIME_ANCHOR_REPAIR_TIMEOUT_MS;
-    while (true) {
-      const current = await readTimeAnchorState(file);
-      if (current.kind === "valid") return current.timestamp;
-
-      const candidate = await readTimeAnchorState(claimPath);
-      if (candidate.kind === "missing" && !ownsClaim) {
-        try {
-          // If the previous owner disappeared before publishing, take over its
-          // completed candidate with the same no-clobber claim protocol.
-          await link(temporaryFile, claimPath);
-          ownsClaim = true;
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-        }
-        continue;
-      }
-
-      if (candidate.kind === "valid") {
-        // Never rename the reusable claim path itself. A unique hard-link
-        // snapshot pins this exact inode while the atomic publication occurs;
-        // an abandoned claim remains available for later crash recovery.
-        const snapshotPath = `${claimPath}.${process.pid}.${randomUUID()}.snapshot`;
-        try {
-          await link(claimPath, snapshotPath);
-          const beforePublish = await readTimeAnchorState(file);
-          if (beforePublish.kind === "valid") return beforePublish.timestamp;
-
-          await rename(snapshotPath, file);
-          const winner = await readTimeAnchorState(file);
-          if (winner.kind === "valid") return winner.timestamp;
-        } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== "ENOENT" && code !== "EEXIST") throw err;
-        } finally {
-          await unlink(snapshotPath).catch(() => {});
-        }
-      }
-
-      if (Date.now() >= deadline) {
-        throw new Error(`時刻sidecarの修復がタイムアウトしました: ${file}`);
-      }
-      await new Promise((resolve) =>
-        setTimeout(resolve, TIME_ANCHOR_REPAIR_WAIT_MS),
-      );
-    }
-  } finally {
-    if (ownsClaim) await unlink(claimPath).catch(() => {});
-  }
-}
-
 /**
  * セッション開始時刻を会話JSONLとは別のsidecarへ一度だけ固定する。
  * 既存セッション移行時は caller が履歴の最古timestampを fallback として渡せる。
- * sidecar は完成済みtmpから原子的に公開し、旧実装由来の壊れたsidecarは自己修復する。
+ * epoch-millisecond形式は維持しつつ、保存値はhour bucketへ正規化する。
  */
 export async function loadOrCreateSessionTimeAnchor(
   groupName: string,
@@ -200,25 +134,36 @@ export async function loadOrCreateSessionTimeAnchor(
   const file = sessionTimeAnchorPath(groupName, sessionId);
   const initialState = await readTimeAnchorState(file);
   if (initialState.kind === "valid") return initialState.timestamp;
+  if (initialState.kind === "invalid") {
+    throw new Error(`時刻sidecarが不正です: ${file}`);
+  }
 
-  const timestamp = isValidTimeAnchor(fallbackTimestamp)
-    ? fallbackTimestamp
-    : Date.now();
+  const candidate = canonicalHour(
+    isValidTimeAnchor(fallbackTimestamp) ? fallbackTimestamp : Date.now(),
+  );
   const temporaryFile = `${file}.${process.pid}.${randomUUID()}.tmp`;
 
-  await writeFile(temporaryFile, `${timestamp}\n`, {
-    encoding: "utf-8",
-    mode: 0o666,
-    flag: "wx",
-  });
-
   try {
-    // Missing entries, concurrent initialization, and rolling-upgrade partial
-    // entries all use the same claim protocol, so no caller can publish a
-    // different candidate while a repair is in progress.
-    return await repairTimeAnchor(file, temporaryFile);
+    await writeFile(temporaryFile, `${candidate}\n`, {
+      encoding: "utf-8",
+      mode: 0o666,
+      flag: "wx",
+    });
+
+    try {
+      // A hard link publishes the complete candidate atomically and without
+      // replacing a candidate published by another initializer.
+      await link(temporaryFile, file);
+      return candidate;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+
+      const winner = await readTimeAnchorState(file);
+      if (winner.kind === "valid") return winner.timestamp;
+      throw new Error(`時刻sidecarの公開に失敗しました: ${file}`);
+    }
   } finally {
-    // snapshot公開後もtemporaryFileは残るため削除する。cleanup失敗でsessionを壊さない。
+    // The published hard link keeps the inode alive after the tmp path is gone.
     await unlink(temporaryFile).catch(() => {});
   }
 }

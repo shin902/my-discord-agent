@@ -57,13 +57,13 @@ Started: 2026-08-28 07:00 JST (Fri)
 
 ### 保存先
 
-時刻アンカーは会話JSONLへ CustomMessage として追加しない。`data/sessions/<group>/<sessionId>.time-anchor` の sidecar に epoch milliseconds を1件だけ保存する。
+時刻アンカーは会話JSONLへ CustomMessage として追加しない。`data/sessions/<group>/<sessionId>.time-anchor` の sidecar に、既存の epoch-millisecond 形式で hour bucket を1件だけ保存する。
 
 これにより、時刻機能の導入・再開で過去の user / assistant / tool 履歴そのものを変更しない。
 
 ### 新規セッション
 
-初回 `runAgentLoop()` で現在時刻を sidecar に `wx`（既存ファイルを上書きしない）で保存する。以後は毎回同じ値を読み、同一の systemPrompt 断片を再生成する。
+初回 `runAgentLoop()` で現在時刻を hour bucket に丸め、完全に書き込んだ一意な tmp を hard-link で sidecar へ公開する。公開時の `EEXIST` では既存の値を読み、以後は毎回同じ値を使って同一の systemPrompt 断片を再生成する。
 
 ### 既存セッションの移行
 
