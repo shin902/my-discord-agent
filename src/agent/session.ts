@@ -76,8 +76,13 @@ export async function loadMessages(
 }
 
 function parseTimeAnchor(value: string): number | undefined {
-  const timestamp = Number(value.trim());
-  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : undefined;
+  const serialized = value.trim();
+  // Date.now() produces a 13-digit epoch-millisecond timestamp. Requiring the
+  // complete shape prevents a numeric prefix from being accepted as 1970 time.
+  if (!/^[1-9]\d{12}$/.test(serialized)) return undefined;
+
+  const timestamp = Number(serialized);
+  return Number.isSafeInteger(timestamp) ? timestamp : undefined;
 }
 
 type TimeAnchorState =

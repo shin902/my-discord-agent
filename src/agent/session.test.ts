@@ -142,8 +142,8 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     mockUnlink.mockResolvedValue(undefined);
   });
 
-  it("既存sidecarの時刻を再利用する", async () => {
-    mockReadFile.mockResolvedValue("123456\n");
+  it("完全なepoch-millisecond sidecarの時刻を再利用する", async () => {
+    mockReadFile.mockResolvedValue("1787868000000\n");
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
@@ -151,7 +151,7 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       999999,
     );
 
-    expect(result).toBe(123456);
+    expect(result).toBe(1787868000000);
     expect(mockWriteFile).not.toHaveBeenCalled();
     expect(mockLink).not.toHaveBeenCalled();
     expect(mockRename).not.toHaveBeenCalled();
@@ -189,7 +189,7 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       .mockRejectedValueOnce(
         Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
       )
-      .mockResolvedValueOnce("111111\n");
+      .mockResolvedValueOnce("1787869000000\n");
     mockLink.mockRejectedValue(
       Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
     );
@@ -200,26 +200,49 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       222222,
     );
 
-    expect(result).toBe(111111);
+    expect(result).toBe(1787869000000);
     expect(mockRename).not.toHaveBeenCalled();
   });
 
-  it("旧実装が残した空またはpartial sidecarは原子的に自己修復する", async () => {
-    mockReadFile.mockResolvedValue("not-a-timestamp\n");
+  it.each([
+    "1787868\n",
+    "1787868000000.5\n",
+    "1.787868e12\n",
+    "17878680000000\n",
+    "999999999999\n",
+  ])("不完全または不正なsidecar (%s)は原子的に自己修復する", async (content) => {
+    mockReadFile.mockResolvedValue(content);
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
       "session-a",
-      333333,
+      1787868000000,
     );
 
-    expect(result).toBe(333333);
+    expect(result).toBe(1787868000000);
     const temporaryFile = String(mockWriteFile.mock.calls[0]?.[0]);
     expect(mockRename).toHaveBeenCalledWith(
       temporaryFile,
       expect.stringMatching(/session-a\.time-anchor$/),
     );
     expect(mockUnlink).toHaveBeenCalledWith(temporaryFile);
+  });
+
+  it.each([
+    "1000000000000\n",
+    "9999999999999\n",
+  ])("13桁のepoch-millisecond境界値 (%s)は有効として再利用する", async (content) => {
+    mockReadFile.mockResolvedValue(content);
+
+    const result = await loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      1787868000000,
+    );
+
+    expect(result).toBe(Number(content));
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockRename).not.toHaveBeenCalled();
   });
 
   it("競合相手が不完全なsidecarを公開していても完成済みtmpで復旧する", async () => {
