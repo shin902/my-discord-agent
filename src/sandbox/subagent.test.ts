@@ -1,8 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agentRunRegistry } from "./agent-run.js";
-import { createSubagentTool } from "./subagent.js";
+import { createRootDelegationLineage, createSubagentTool } from "./subagent.js";
 
 const { runAgentMock } = vi.hoisted(() => ({
   runAgentMock: vi.fn(),
@@ -22,10 +21,7 @@ const baseTool: AgentTool = {
 };
 
 function makeParent(maxDelegationDepth = 1) {
-  return agentRunRegistry.create({
-    kind: "root",
-    maxDelegationDepth,
-  });
+  return createRootDelegationLineage(maxDelegationDepth);
 }
 
 function makeTool(parent = makeParent()) {
@@ -72,22 +68,39 @@ describe("createSubagentTool", () => {
     expect(execution.tools[0]).toBe(baseTool);
     expect(execution.tools[1]).not.toBe(tool);
 
-    const child = agentRunRegistry.get(result.details.runId);
-    expect(child).toMatchObject({
+    expect(result.details).toMatchObject({
       parentRunId: context.parentRun.id,
-      kind: "subagent",
       status: "completed",
-      delegationDepth: 1,
-      maxDelegationDepth: 1,
-      result: "child result",
     });
-    expect(child?.startedAt).toBeLessThanOrEqual(child?.completedAt ?? 0);
+    expect(result.details).not.toHaveProperty("result");
+  });
+
+  it("propagates lineage through a nested delegation", async () => {
+    const { context, tool } = makeTool(makeParent(3));
+    const first = await tool.execute("tool-call", { task: "first" });
+
+    const childTool = runAgentMock.mock.calls[0][0].tools.find(
+      (candidate: AgentTool) => candidate.name === "subagent",
+    );
+    expect(childTool).toBeDefined();
+    if (!childTool) throw new Error("nested subagent tool was not wired");
+
+    const nested = await childTool.execute("nested", { task: "second" });
+    expect(nested.details.parentRunId).toBe(first.details.runId);
+    expect(nested.details.parentRunId).not.toBe(context.parentRun.id);
+    expect(runAgentMock.mock.calls[1][0]).toMatchObject({
+      messages: [],
+      sessionId: nested.details.runId,
+    });
   });
 
   it("reports lifecycle progress and rejects recursive delegation at the depth limit", async () => {
     const parent = makeParent();
     const { tool } = makeTool(parent);
-    const updates: string[] = [];
+    const updates: Array<{
+      text: string;
+      details: Record<string, unknown>;
+    }> = [];
     runAgentMock.mockImplementation(async (options) => {
       options.onEvent({
         type: "tool_execution_start",
@@ -103,19 +116,19 @@ describe("createSubagentTool", () => {
       { task: "inspect" },
       undefined,
       (update) => {
-        updates.push(
-          update.content[0].type === "text" ? update.content[0].text : "",
-        );
+        updates.push({
+          text: update.content[0].type === "text" ? update.content[0].text : "",
+          details: update.details as Record<string, unknown>,
+        });
       },
     );
-    expect(updates.some((text) => text.includes("started"))).toBe(true);
+    expect(updates.some(({ text }) => text.includes("started"))).toBe(true);
 
-    const childId = runAgentMock.mock.calls[0][0].sessionId as string;
     const childTool = runAgentMock.mock.calls[0][0].tools[1] as AgentTool;
     await expect(
       childTool.execute("nested", { task: "nested" }),
     ).rejects.toThrow("最大深度");
-    expect(agentRunRegistry.get(childId)?.status).toBe("completed");
+    expect(updates.at(-1)?.details).toMatchObject({ status: "completed" });
   });
 
   it("shows a safe task preview and emits a terminal failed update", async () => {
@@ -151,6 +164,7 @@ describe("createSubagentTool", () => {
 
   it("marks the child failed when execution aborts", async () => {
     const { tool } = makeTool();
+    const updates: Array<{ details: Record<string, unknown> }> = [];
     const controller = new AbortController();
     runAgentMock.mockImplementation(async () => {
       controller.abort();
@@ -158,10 +172,15 @@ describe("createSubagentTool", () => {
     });
 
     await expect(
-      tool.execute("tool-call", { task: "abort me" }, controller.signal),
+      tool.execute(
+        "tool-call",
+        { task: "abort me" },
+        controller.signal,
+        (update) =>
+          updates.push({ details: update.details as Record<string, unknown> }),
+      ),
     ).rejects.toThrow("中断");
-    const childId = runAgentMock.mock.calls[0][0].sessionId as string;
-    expect(agentRunRegistry.get(childId)?.status).toBe("failed");
+    expect(updates.at(-1)?.details).toMatchObject({ status: "failed" });
   });
 
   it.each([
@@ -169,6 +188,7 @@ describe("createSubagentTool", () => {
     ["aborted", undefined, "中断されました"],
   ] as const)("marks a child with stopReason %s as failed", async (stopReason, terminalErrorMessage, expectedError) => {
     const { tool } = makeTool();
+    const updates: Array<{ details: Record<string, unknown> }> = [];
     runAgentMock.mockResolvedValue({
       response: "partial",
       agent: {},
@@ -177,24 +197,27 @@ describe("createSubagentTool", () => {
     });
 
     await expect(
-      tool.execute("tool-call", { task: "terminal" }),
+      tool.execute("tool-call", { task: "terminal" }, undefined, (update) =>
+        updates.push({ details: update.details as Record<string, unknown> }),
+      ),
     ).rejects.toThrow(expectedError);
-    const childId = runAgentMock.mock.calls[0][0].sessionId as string;
-    expect(agentRunRegistry.get(childId)?.status).toBe("failed");
+    expect(updates.at(-1)?.details).toMatchObject({ status: "failed" });
   });
 
   it("marks an empty final response as failed", async () => {
     const { tool } = makeTool();
+    const updates: Array<{ details: Record<string, unknown> }> = [];
     runAgentMock.mockResolvedValue({
       response: "  \n",
       agent: {},
       terminalStopReason: "stop",
     });
 
-    await expect(tool.execute("tool-call", { task: "empty" })).rejects.toThrow(
-      "空の応答",
-    );
-    const childId = runAgentMock.mock.calls[0][0].sessionId as string;
-    expect(agentRunRegistry.get(childId)?.status).toBe("failed");
+    await expect(
+      tool.execute("tool-call", { task: "empty" }, undefined, (update) =>
+        updates.push({ details: update.details as Record<string, unknown> }),
+      ),
+    ).rejects.toThrow("空の応答");
+    expect(updates.at(-1)?.details).toMatchObject({ status: "failed" });
   });
 });

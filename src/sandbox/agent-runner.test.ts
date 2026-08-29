@@ -41,7 +41,6 @@ const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
   "./agent-runner.js"
 );
 const { loadMessages, appendMessage } = await import("../agent/session.js");
-const { agentRunRegistry } = await import("./agent-run.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
@@ -161,11 +160,6 @@ describe("runAgentLoop", () => {
     expect(childOptions.initialState.messages).toEqual([]);
     expect(childOptions.sessionId).toBe(result.details.runId);
     expect(childOptions.sessionId).not.toBe(rootOptions.sessionId);
-    expect(agentRunRegistry.get(result.details.runId)).toMatchObject({
-      parentRunId: expect.any(String),
-      kind: "subagent",
-      status: "completed",
-    });
   });
 
   it("root Agentへ同期bot toolを配線し、完了結果を返す", async () => {
@@ -429,26 +423,6 @@ describe("runAgentLoop", () => {
     });
 
     stderrSpy.mockRestore();
-  });
-
-  it.each([
-    ["error", "provider error"],
-    ["aborted", ""],
-    ["stop", "   "],
-  ] as const)("root runのterminal outcome %sをregistryへ反映する", async (stopReason, text) => {
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return createMockAgent([], {
-        role: "assistant",
-        content: text ? [{ type: "text", text }] : [],
-        stopReason,
-      });
-    });
-
-    await runAgentLoop("test-group", `terminal-${stopReason}`, "terminal", {});
-
-    const roots = agentRunRegistry.list().filter((run) => run.kind === "root");
-    expect(roots.at(-1)?.status).toBe("failed");
   });
 
   it("グループ設定のモデルを使用する", async () => {

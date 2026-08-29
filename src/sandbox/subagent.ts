@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AgentEvent,
   AgentTool,
@@ -8,12 +9,40 @@ import type {
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { type AgentExecutionOptions, runAgent } from "./agent-execution.js";
-import {
-  type AgentRun,
-  type AgentRunStatus,
-  agentRunRegistry,
-} from "./agent-run.js";
 import { resultPreview, taskPreview } from "./subagent-preview.js";
+
+export type SubagentStatus = "running" | "completed" | "failed";
+
+/** Minimal immutable lineage passed between recursive delegations. */
+export interface DelegationLineage {
+  id: string;
+  delegationDepth: number;
+  maxDelegationDepth: number;
+}
+
+export interface SubagentRun extends DelegationLineage {
+  parentRunId: string;
+  taskPreview: string;
+}
+
+export function createRootDelegationLineage(
+  maxDelegationDepth = 1,
+): DelegationLineage {
+  return { id: randomUUID(), delegationDepth: 0, maxDelegationDepth };
+}
+
+function createSubagentRun(
+  parentRun: DelegationLineage,
+  preview: string,
+): SubagentRun {
+  return {
+    id: randomUUID(),
+    parentRunId: parentRun.id,
+    delegationDepth: parentRun.delegationDepth + 1,
+    maxDelegationDepth: parentRun.maxDelegationDepth,
+    taskPreview: preview,
+  };
+}
 
 const parameters = Type.Object({
   task: Type.String({
@@ -25,39 +54,48 @@ export type SubagentDetails = {
   worker: "ephemeral";
   runId: string;
   parentRunId: string;
-  status: AgentRunStatus;
+  status: SubagentStatus;
   taskPreview: string;
   resultPreview?: string;
 };
 
 export interface SubagentToolContext {
-  parentRun: AgentRun;
+  parentRun: DelegationLineage;
   systemPrompt: string;
   model: Model<Api>;
   tools: AgentTool[];
   thinkingLevel: ThinkingLevel;
   convertToLlm: AgentExecutionOptions["convertToLlm"];
   getApiKey: AgentExecutionOptions["getApiKey"];
-  onEvent?: (run: AgentRun, event: AgentEvent) => void;
+  onEvent?: (run: SubagentRun, event: AgentEvent) => void;
 }
 
-function details(run: AgentRun): SubagentDetails {
+function details(
+  run: SubagentRun,
+  status: SubagentStatus,
+  preview?: string,
+): SubagentDetails {
   return {
     worker: "ephemeral",
     runId: run.id,
-    parentRunId: run.parentRunId ?? "",
-    status: run.status,
-    taskPreview: run.taskPreview ?? "(unknown task)",
-    ...(run.resultPreview ? { resultPreview: run.resultPreview } : {}),
+    parentRunId: run.parentRunId,
+    status,
+    taskPreview: run.taskPreview,
+    ...(preview ? { resultPreview: preview } : {}),
   };
 }
 
 function progress(
-  run: AgentRun,
+  run: SubagentRun,
+  status: SubagentStatus,
   text: string,
+  preview: string | undefined,
   onUpdate?: AgentToolUpdateCallback<SubagentDetails>,
 ): void {
-  onUpdate?.({ content: [{ type: "text", text }], details: details(run) });
+  onUpdate?.({
+    content: [{ type: "text", text }],
+    details: details(run, status, preview),
+  });
 }
 
 export async function runEphemeralAgent(
@@ -74,12 +112,8 @@ export async function runEphemeralAgent(
     );
   }
 
-  const childRun = agentRunRegistry.create({
-    kind: "subagent",
-    parentRunId: context.parentRun.id,
-  });
-  childRun.taskPreview = taskPreview(task);
-  progress(childRun, "Subagent started", onUpdate);
+  const childRun = createSubagentRun(context.parentRun, taskPreview(task));
+  progress(childRun, "running", "Subagent started", undefined, onUpdate);
 
   try {
     const childSubagentTool = createSubagentTool({
@@ -117,16 +151,14 @@ export async function runEphemeralAgent(
       throw new Error("サブエージェントが空の応答で終了しました");
     }
 
-    childRun.resultPreview = resultPreview(execution.response);
-    agentRunRegistry.complete(childRun.id, execution.response);
-    progress(childRun, "Subagent completed", onUpdate);
+    const preview = resultPreview(execution.response);
+    progress(childRun, "completed", "Subagent completed", preview, onUpdate);
     return {
       content: [{ type: "text", text: execution.response }],
-      details: details(childRun),
+      details: details(childRun, "completed", preview),
     } satisfies AgentToolResult<SubagentDetails>;
   } catch (error) {
-    agentRunRegistry.fail(childRun.id);
-    progress(childRun, "Subagent failed", onUpdate);
+    progress(childRun, "failed", "Subagent failed", undefined, onUpdate);
     throw error;
   }
 }

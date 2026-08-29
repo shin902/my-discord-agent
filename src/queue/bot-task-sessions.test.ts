@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  formatBotTaskSessionList,
+  generateBotTaskSessionHandle,
+  generateBotTaskSessionId,
+  previewBotTaskPrompt,
+} from "./bot-task-sessions.js";
+import {
   type CreateBotTaskSessionInput,
   openRuntimeDb,
   QueueRepository,
@@ -13,7 +19,6 @@ function input(
     handle: "task-one",
     groupName: "main",
     botId: "coding",
-    channelId: "channel-1",
     createdAt: "2026-01-01T00:00:00.000Z",
     preview: "Fix the parser",
     ...overrides,
@@ -47,6 +52,76 @@ describe("Bot task sessions", () => {
 
   afterEach(() => {
     for (const repository of repositories.splice(0)) repository.close();
+  });
+
+  it("shares Task Session presentation helpers without delivery metadata", () => {
+    const session = {
+      ...input(),
+      lastUsedAt: input().createdAt,
+    };
+
+    expect(generateBotTaskSessionId()).toMatch(/^bot-task-[0-9a-f-]{36}$/);
+    expect(generateBotTaskSessionHandle()).toMatch(/^task-[0-9a-f]{12}$/);
+    expect(previewBotTaskPrompt("  first\nsecond   third  ")).toBe(
+      "first second third",
+    );
+    expect(previewBotTaskPrompt("x".repeat(101))).toBe(`${"x".repeat(97)}...`);
+
+    expect(formatBotTaskSessionList([session])).toBe(
+      "Task Session一覧（1件）:\n- task-one | coding | created: 2026-01-01T00:00:00.000Z | last-used: 2026-01-01T00:00:00.000Z | Fix the parser",
+    );
+    expect(formatBotTaskSessionList([session])).not.toContain("channel");
+  });
+
+  it("keeps legacy channel storage inert while loading and resuming sessions", () => {
+    const repository = new QueueRepository(openRuntimeDb(":memory:"));
+    repositories.push(repository);
+    repository.db
+      .prepare(
+        `INSERT INTO bot_task_sessions
+          (session_id,handle,group_name,bot_id,channel_id,source_key,created_at,last_used_at,preview)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        "bot-task-legacy",
+        "task-legacy",
+        "main",
+        "coding",
+        "old-channel",
+        null,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        "Legacy task",
+      );
+
+    const loaded = repository.findBotTaskSession(
+      "task-legacy",
+      "main",
+      "coding",
+    );
+    expect(loaded).toEqual({
+      sessionId: "bot-task-legacy",
+      handle: "task-legacy",
+      groupName: "main",
+      botId: "coding",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
+      preview: "Legacy task",
+    });
+
+    const resumed = repository.resumeBotTaskSessionAndEnqueue(
+      "task-legacy",
+      "main",
+      "coding",
+      "2026-01-02T00:00:00.000Z",
+      request("resume", "legacy-resume"),
+    );
+    expect(resumed?.session).not.toHaveProperty("channelId");
+    expect(
+      repository.db
+        .prepare("SELECT channel_id FROM bot_task_sessions WHERE session_id=?")
+        .get("bot-task-legacy"),
+    ).toEqual({ channel_id: "old-channel" });
   });
 
   it("persists metadata and isolates list/find by group and Bot ownership", () => {
@@ -114,21 +189,16 @@ describe("Bot task sessions", () => {
     expect(first.job.channelId).not.toBe(second.job.channelId);
   });
 
-  it("updates last-used and delivery channel without changing task identity", () => {
+  it("updates last-used without changing task identity", () => {
     const repository = new QueueRepository(openRuntimeDb(":memory:"));
     repositories.push(repository);
     repository.createBotTaskSession(input());
-    repository.touchBotTaskSession(
-      "bot-task-1",
-      "thread-1",
-      "2026-01-02T00:00:00.000Z",
-    );
+    repository.touchBotTaskSession("bot-task-1", "2026-01-02T00:00:00.000Z");
 
     expect(
       repository.findBotTaskSession("task-one", "main", "coding"),
     ).toMatchObject({
       sessionId: "bot-task-1",
-      channelId: "thread-1",
       lastUsedAt: "2026-01-02T00:00:00.000Z",
     });
   });
@@ -186,7 +256,6 @@ describe("Bot task sessions", () => {
         "task-one",
         "main",
         "coding",
-        "thread-1",
         "2026-01-02T00:00:00.000Z",
         request("resume", "resume-failure"),
       ),
@@ -196,7 +265,6 @@ describe("Bot task sessions", () => {
       repository.findBotTaskSession("task-one", "main", "coding"),
     ).toMatchObject({
       sessionId: "bot-task-1",
-      channelId: "channel-1",
       lastUsedAt: "2026-01-01T00:00:00.000Z",
     });
   });

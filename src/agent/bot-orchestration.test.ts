@@ -15,9 +15,6 @@ const {
   acquireLlmLock: vi.fn().mockResolvedValue(vi.fn()),
   resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
   repository: {
-    createBotTaskSession: vi.fn(),
-    findBotTaskSession: vi.fn(),
-    touchBotTaskSession: vi.fn(),
     listBotTaskSessions: vi.fn(),
     createBotTaskSessionAndAdmission: vi.fn(() => ({
       session: {
@@ -25,7 +22,6 @@ const {
         handle: "task-abc123",
         groupName: "main",
         botId: "coding",
-        channelId: "agent:main",
         createdAt: "2026-01-01T00:00:00.000Z",
         lastUsedAt: "2026-01-01T00:00:00.000Z",
         preview: "inspect",
@@ -38,7 +34,6 @@ const {
         handle: "task-abc123",
         groupName: "main",
         botId: "coding",
-        channelId: "agent:main",
         createdAt: "2026-01-01T00:00:00.000Z",
         lastUsedAt: "2026-01-01T00:00:00.000Z",
         preview: "inspect",
@@ -46,18 +41,9 @@ const {
       admission: { jobId: "admission-1", sessionId: "bot-task-1", sequence: 0 },
     })),
     admitBotTaskSessionAdmission: vi.fn().mockReturnValue(true),
+    tryAdmitBotTaskSessionAdmission: vi.fn().mockReturnValue("admitted"),
     completeBotTaskSessionAdmission: vi.fn(),
     cancelBotTaskSessionAdmission: vi.fn(),
-    tryAcquireBotTaskSessionLease: vi.fn(
-      (sessionId: string, ownerId: string) => ({
-        sessionId,
-        ownerId,
-        fencingToken: 1,
-        leaseUntil: "2099-01-01T00:00:00.000Z",
-      }),
-    ),
-    renewBotTaskSessionLease: vi.fn().mockReturnValue(true),
-    releaseBotTaskSessionLease: vi.fn(),
   },
 }));
 
@@ -137,7 +123,6 @@ function session(overrides: Record<string, unknown> = {}) {
     handle: "task-abc123",
     groupName: "main",
     botId: "coding",
-    channelId: "agent:main",
     createdAt: "2026-01-01T00:00:00.000Z",
     lastUsedAt: "2026-01-01T00:00:00.000Z",
     preview: "inspect",
@@ -153,7 +138,6 @@ describe("handleBotToolRequest", () => {
     loadBotRegistry.mockResolvedValue({
       coding: { group: "main", instructions: "code", tools: ["bot"] },
     });
-    repository.createBotTaskSession.mockReturnValue(session());
     sendMessage.mockResolvedValue("調査結果");
     const req = new MockRequest(
       JSON.stringify({
@@ -174,12 +158,6 @@ describe("handleBotToolRequest", () => {
       expect.objectContaining({ jobId: "admission-1" }),
     );
     expect(repository.completeBotTaskSessionAdmission).toHaveBeenCalledOnce();
-    expect(repository.tryAcquireBotTaskSessionLease).toHaveBeenCalledWith(
-      "bot-task-1",
-      expect.any(String),
-      expect.any(Number),
-    );
-    expect(repository.releaseBotTaskSessionLease).toHaveBeenCalledOnce();
     expect(sendMessage).toHaveBeenCalledWith(
       "main",
       "bot-task-1",
@@ -187,10 +165,8 @@ describe("handleBotToolRequest", () => {
       expect.objectContaining({ enableBotTool: false }),
     );
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
-    expect(JSON.parse(res.end.mock.calls[0][0])).toMatchObject({
+    expect(JSON.parse(res.end.mock.calls[0][0])).toEqual({
       content: "調査結果",
-      action: "run",
-      botId: "coding",
       session: "task-abc123",
     });
   });
@@ -222,7 +198,6 @@ describe("handleBotToolRequest", () => {
       "task-abc123",
       "main",
       "coding",
-      "agent:main",
       expect.any(String),
     );
     expect(repository.completeBotTaskSessionAdmission).toHaveBeenCalledOnce();
@@ -255,15 +230,14 @@ describe("handleBotToolRequest", () => {
       "main",
       "coding",
     );
-    expect(JSON.parse(res.end.mock.calls[0][0]).content).toContain(
-      "task-abc123",
-    );
+    expect(JSON.parse(res.end.mock.calls[0][0])).toEqual({
+      content: expect.stringContaining("task-abc123"),
+    });
   });
 
   it("親と同じserial providerはlockを再取得せず完了する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     sendMessage.mockResolvedValue("結果");
 
     await invoke(
@@ -280,6 +254,40 @@ describe("handleBotToolRequest", () => {
     );
 
     expect(acquireLlmLock).not.toHaveBeenCalled();
+  });
+
+  it("先行処理がある同じserial providerの同期resumeは待たずに拒否する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    repository.tryAdmitBotTaskSessionAdmission.mockReturnValueOnce("blocked");
+    const res = response();
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "resume",
+          bot: "coding",
+          session: "task-abc123",
+          prompt: "inspect",
+        }),
+      ),
+      res,
+      "p",
+    );
+
+    expect(repository.tryAdmitBotTaskSessionAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "admission-1" }),
+    );
+    expect(repository.cancelBotTaskSessionAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "admission-1" }),
+    );
+    expect(repository.admitBotTaskSessionAdmission).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    expect(JSON.parse(res.end.mock.calls[0][0]).error).toContain(
+      "先行するBot Task Session処理",
+    );
   });
 
   it("親が別のserial providerを保持中なら同期Bot呼び出しを拒否する", async () => {
@@ -307,13 +315,11 @@ describe("handleBotToolRequest", () => {
     );
     expect(acquireLlmLock).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(repository.createBotTaskSession).not.toHaveBeenCalled();
   });
 
   it("親lockなしのserial providerはlockを取得し、エラー時も解放する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     const release = vi.fn();
     acquireLlmLock.mockResolvedValueOnce(release);
     resolveProviderConcurrency.mockResolvedValueOnce("serial");
@@ -339,10 +345,34 @@ describe("handleBotToolRequest", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it("同じparallel providerでは先行処理を待って実行する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    resolveProviderConcurrency.mockResolvedValueOnce("parallel");
+    sendMessage.mockResolvedValueOnce("結果");
+
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "resume",
+          bot: "coding",
+          session: "task-abc123",
+          prompt: "inspect",
+        }),
+      ),
+      response(),
+      "p",
+    );
+
+    expect(repository.tryAdmitBotTaskSessionAdmission).not.toHaveBeenCalled();
+    expect(repository.admitBotTaskSessionAdmission).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
   it("parallel providerはlock待機なしで実行し、releaseはnoop契約に委ねる", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     resolveProviderConcurrency.mockResolvedValueOnce("parallel");
     sendMessage.mockResolvedValueOnce("結果");
 
@@ -369,7 +399,6 @@ describe("handleBotToolRequest", () => {
   it("実行中のabortでも取得済みlockを解放する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     const release = vi.fn();
     acquireLlmLock.mockResolvedValueOnce(release);
     const req = new MockRequest(
@@ -393,7 +422,6 @@ describe("handleBotToolRequest", () => {
   it("lock待機中のabortでは取得後のreleaseなしで失敗する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    repository.createBotTaskSession.mockReturnValue(session());
     acquireLlmLock.mockRejectedValueOnce(new Error("provider lock aborted"));
 
     await invoke(

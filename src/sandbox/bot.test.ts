@@ -23,11 +23,17 @@ describe("createBotTool", () => {
       groupName: "main",
     });
 
-    const resultPromise = tool.execute("call-1", {
-      action: "run",
-      bot: "coding",
-      prompt: "調査して",
-    });
+    const onUpdate = vi.fn();
+    const resultPromise = tool.execute(
+      "call-1",
+      {
+        action: "run",
+        bot: "coding",
+        prompt: "調査して",
+      },
+      undefined,
+      onUpdate,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     let settled = false;
     void resultPromise.then(() => {
@@ -40,9 +46,14 @@ describe("createBotTool", () => {
       new Response(
         JSON.stringify({
           content: "調査結果",
-          action: "run",
-          botId: "coding",
           session: "task-abc123",
+          usage: {
+            input: 10,
+            output: 20,
+            cacheRead: 30,
+            cacheWrite: 40,
+            totalTokens: 60,
+          },
         }),
         { status: 200 },
       ),
@@ -54,7 +65,15 @@ describe("createBotTool", () => {
       action: "run",
       botId: "coding",
       session: "task-abc123",
+      usage: {
+        input: 10,
+        output: 20,
+        cacheRead: 30,
+        cacheWrite: 40,
+        totalTokens: 60,
+      },
     });
+    expect(onUpdate).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledWith(
       "http://host.docker.internal:1234/__agent/bot",
       expect.objectContaining({
@@ -79,8 +98,6 @@ describe("createBotTool", () => {
         new Response(
           JSON.stringify({
             content: "Task Session一覧（1件）:",
-            action: "list",
-            botId: "coding",
           }),
           { status: 200 },
         ),

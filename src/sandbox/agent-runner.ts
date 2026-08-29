@@ -36,9 +36,12 @@ import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
-import { type AgentRun, agentRunRegistry } from "./agent-run.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
-import { createSubagentTool } from "./subagent.js";
+import {
+  createRootDelegationLineage,
+  createSubagentTool,
+  type SubagentRun,
+} from "./subagent.js";
 import { loadGroupSystemPrompt } from "./system-prompt.js";
 
 export { runEphemeralAgent } from "./subagent.js";
@@ -649,7 +652,7 @@ export async function runAgentLoop(
     messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
   }
 
-  const rootRun = agentRunRegistry.create({ kind: "root" });
+  const rootRun = createRootDelegationLineage();
   const getApiKey = (provider: string) => {
     // KnownProvider: pi-ai の環境変数マッピングを使用
     const knownKey = getEnvApiKey(provider);
@@ -666,7 +669,7 @@ export async function runAgentLoop(
     thinkingLevel: groupConfig.model?.thinkingLevel ?? "off",
     convertToLlm: defaultConvertToLlm,
     getApiKey,
-    onEvent: (run: AgentRun, event: AgentEvent) => {
+    onEvent: (run: SubagentRun, event: AgentEvent) => {
       if (event.type === "message_end" && isAssistantMessage(event.message)) {
         assistantTurns++;
         if (event.message.usage) {
@@ -682,7 +685,7 @@ export async function runAgentLoop(
         runId: run.id,
         parentRunId: run.parentRunId,
         toolName: event.toolName,
-        taskPreview: run.taskPreview ?? "(unknown task)",
+        taskPreview: run.taskPreview,
       };
       process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     },
@@ -808,18 +811,6 @@ export async function runAgentLoop(
       },
     });
     response = execution.response;
-    const rootFailed =
-      execution.terminalStopReason === "error" ||
-      execution.terminalStopReason === "aborted" ||
-      execution.response.trim() === "";
-    if (rootFailed) {
-      agentRunRegistry.fail(rootRun.id);
-    } else {
-      agentRunRegistry.complete(rootRun.id, response);
-    }
-  } catch (error) {
-    agentRunRegistry.fail(rootRun.id);
-    throw error;
   } finally {
     const timingEvent = {
       type: "agent_timing",

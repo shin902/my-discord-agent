@@ -194,6 +194,8 @@ async function stopContainer(name: string): Promise<void> {
   }
 }
 const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
+const RUNNER_CONTAINER_LABEL = "my-discord-agent.runner=true";
+const LEGACY_RUNNER_NAME_FILTER = "my-discord-agent-";
 
 function formatTimeoutLabel(ms: number): string {
   if (ms % 60_000 === 0) return `${ms / 60_000}分`;
@@ -233,7 +235,7 @@ function resolveCleanupOptions(
   };
 }
 
-function discoverManagedContainerIds(): Promise<string[]> {
+function discoverContainerIds(filter: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (error: Error | undefined, stdout = "") => {
@@ -244,7 +246,7 @@ function discoverManagedContainerIds(): Promise<string[]> {
     };
     const child = execFile(
       "docker",
-      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      ["ps", "-q", "--filter", filter],
       (error, stdout, stderr) => {
         if (error) {
           finish(
@@ -259,6 +261,16 @@ function discoverManagedContainerIds(): Promise<string[]> {
     );
     child.on("error", (error) => finish(error));
   });
+}
+
+async function discoverManagedContainerIds(): Promise<string[]> {
+  const labelled = await discoverContainerIds(
+    `label=${RUNNER_CONTAINER_LABEL}`,
+  );
+  const legacy = await discoverContainerIds(
+    `name=${LEGACY_RUNNER_NAME_FILTER}`,
+  );
+  return [...new Set([...labelled, ...legacy])];
 }
 
 function killContainerIds(ids: string[]): Promise<void> {
@@ -697,6 +709,8 @@ export async function sendMessage(
     "--pull=always",
     "--name",
     containerName,
+    "--label",
+    RUNNER_CONTAINER_LABEL,
     "--memory=512m",
     "--cpus=1",
     "--user",

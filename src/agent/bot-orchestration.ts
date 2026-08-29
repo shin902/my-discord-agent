@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
@@ -6,13 +5,15 @@ import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { findGroupByName } from "../config/groups.js";
 import { resolveProviderConcurrency } from "../config/providers.js";
-import { acquireLlmLock } from "../queue/llm-mutex.js";
-import type { BotTaskSession } from "../queue/repository.js";
-import { getQueueRepository } from "../queue/repository.js";
 import {
-  withBotTaskSessionAdmission,
-  withBotTaskSessionLease,
-} from "../queue/session-lease.js";
+  formatBotTaskSessionList,
+  generateBotTaskSessionHandle,
+  generateBotTaskSessionId,
+  previewBotTaskPrompt,
+} from "../queue/bot-task-sessions.js";
+import { acquireLlmLock } from "../queue/llm-mutex.js";
+import { getQueueRepository } from "../queue/repository.js";
+import { withBotTaskSessionAdmission } from "../queue/session-admission.js";
 import { type AgentExecutionTiming, sendMessage } from "./manager.js";
 
 const BotRequestSchema = z.object({
@@ -25,42 +26,8 @@ const BotRequestSchema = z.object({
 
 export interface BotToolResponse {
   content: string;
-  action: "run" | "resume" | "list";
-  botId: string;
   session?: string;
   usage?: AgentExecutionTiming["usage"];
-}
-
-function taskSessionId(): string {
-  return `bot-task-${randomUUID()}`;
-}
-
-function taskSessionHandle(): string {
-  return `task-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-}
-
-function taskPreview(prompt: string): string {
-  const normalized = prompt.replace(/\s+/g, " ").trim();
-  return normalized.length > 100 ? `${normalized.slice(0, 97)}...` : normalized;
-}
-
-function formatTaskSessionList(sessions: BotTaskSession[]): string {
-  if (sessions.length === 0) return "利用可能なTask Sessionはありません。";
-  const lines: string[] = [];
-  for (const session of sessions) {
-    const line = `- ${session.handle} | ${session.botId} | created: ${session.createdAt} | last-used: ${session.lastUsedAt} | ${session.preview}`;
-    if (
-      `Task Session一覧（${sessions.length}件）:\n${[...lines, line].join("\n")}`
-        .length > 1_800
-    )
-      break;
-    lines.push(line);
-  }
-  const suffix =
-    sessions.length > lines.length
-      ? `\n（他${sessions.length - lines.length}件）`
-      : "";
-  return `Task Session一覧（${sessions.length}件）:\n${lines.join("\n")}${suffix}`;
 }
 
 async function readRequestBody(req: IncomingMessage): Promise<string> {
@@ -116,11 +83,9 @@ export async function handleBotToolRequest(
         throw new Error("list では prompt と session は指定できません");
       }
       writeJson(res, 200, {
-        content: formatTaskSessionList(
+        content: formatBotTaskSessionList(
           getQueueRepository().listBotTaskSessions(group.name, request.bot),
         ),
-        action: request.action,
-        botId: request.bot,
       } satisfies BotToolResponse);
       return;
     }
@@ -155,24 +120,22 @@ export async function handleBotToolRequest(
             request.session as string,
             group.name,
             request.bot,
-            `agent:${request.groupName}`,
             now,
           )
         : repository.createBotTaskSessionAndAdmission({
-            sessionId: taskSessionId(),
-            handle: taskSessionHandle(),
+            sessionId: generateBotTaskSessionId(),
+            handle: generateBotTaskSessionHandle(),
             groupName: group.name,
             botId: request.bot,
-            channelId: `agent:${request.groupName}`,
             createdAt: now,
-            preview: taskPreview(prompt),
+            preview: previewBotTaskPrompt(prompt),
           });
     if (!admitted) throw new Error("指定されたTask Sessionは見つかりません");
     const { session, admission } = admitted;
 
     // Admission happens before the provider lock so a direct call cannot
-    // overtake an earlier queued invocation. Once admitted, provider locks are
-    // acquired before the execution lease, matching the queue path.
+    // overtake an earlier queued invocation. The ticket remains active until
+    // sendMessage has settled, so later turns cannot append concurrently.
     let execution!: { content: string; timing?: AgentExecutionTiming };
     await withBotTaskSessionAdmission(
       repository,
@@ -187,42 +150,37 @@ export async function handleBotToolRequest(
                 controller.signal,
               );
         try {
-          execution = await withBotTaskSessionLease(
-            repository,
+          let timing: AgentExecutionTiming | undefined;
+          const content = await sendMessage(
+            group.name,
             session.sessionId,
-            async (leaseSignal) => {
-              let timing: AgentExecutionTiming | undefined;
-              const content = await sendMessage(
-                group.name,
-                session.sessionId,
-                prompt,
-                {
-                  configOverride,
-                  systemPromptAppend: profile.instructions,
-                  enableBotTool: false,
-                  signal: leaseSignal,
-                  onExecutionTiming: (value) => {
-                    timing = value;
-                  },
-                },
-              );
-              if (content.trim() === "")
-                throw new Error("Botが空の応答で終了しました");
-              return { content, timing };
+            prompt,
+            {
+              configOverride,
+              systemPromptAppend: profile.instructions,
+              enableBotTool: false,
+              signal: controller.signal,
+              onExecutionTiming: (value) => {
+                timing = value;
+              },
             },
-            controller.signal,
           );
+          if (content.trim() === "")
+            throw new Error("Botが空の応答で終了しました");
+          execution = { content, timing };
         } finally {
           release?.();
         }
       },
       controller.signal,
+      {
+        failIfBlocked:
+          heldProvider === model.provider && concurrency === "serial",
+      },
     );
 
     writeJson(res, 200, {
       content: execution.content,
-      action: request.action,
-      botId: request.bot,
       session: session.handle,
       ...(execution.timing?.usage ? { usage: execution.timing.usage } : {}),
     } satisfies BotToolResponse);

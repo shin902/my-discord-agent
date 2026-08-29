@@ -1,8 +1,4 @@
-import type {
-  AgentTool,
-  AgentToolResult,
-  AgentToolUpdateCallback,
-} from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 const parameters = Type.Object({
@@ -41,8 +37,6 @@ export interface BotToolDetails {
 
 interface BotToolResponse {
   content?: unknown;
-  action?: unknown;
-  botId?: unknown;
   session?: unknown;
   usage?: unknown;
   error?: unknown;
@@ -93,7 +87,6 @@ export function createBotTool(
       _toolCallId,
       { action, bot, prompt, session },
       signal,
-      onUpdate?: AgentToolUpdateCallback<BotToolDetails>,
     ): Promise<AgentToolResult<BotToolDetails>> => {
       const response = await fetch(context.endpoint.url, {
         method: "POST",
@@ -125,10 +118,6 @@ export function createBotTool(
       }
       const resultDetails = details(action, bot, payload);
       if (resultDetails.usage) context.onUsage?.(resultDetails.usage);
-      onUpdate?.({
-        content: [{ type: "text", text: "Bot completed" }],
-        details: resultDetails,
-      });
       return {
         content: [{ type: "text", text: payload.content }],
         details: resultDetails,
