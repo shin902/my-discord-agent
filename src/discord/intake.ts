@@ -57,6 +57,11 @@ function buildThreadName(content: string, messageId: string): string {
   return `thread-${suffix}`;
 }
 
+function mentionsCurrentDiscordBot(message: Message): boolean {
+  const botUserId = message.client.user?.id;
+  return botUserId !== undefined && message.mentions.users.has(botUserId);
+}
+
 class ThreadCreationError extends Error {
   constructor(cause: unknown) {
     super("thread creation failed", { cause });
@@ -95,6 +100,17 @@ async function ingest(
 
   // ThreadCreated is a system record in the parent channel, not a user turn.
   if (message.type === MessageType.ThreadCreated && !isThread) {
+    return { status: "ignored", cursorScope: defaultCursorScope };
+  }
+
+  // Thread messages resolve their parent channel before this point, so a
+  // channel-level requiredMention policy applies equally to the channel and
+  // every thread below it. Slash commands use InteractionCreate and bypass
+  // this normal-message gate.
+  if (
+    match.channel.requiredMention === true &&
+    !mentionsCurrentDiscordBot(message)
+  ) {
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
