@@ -157,6 +157,39 @@ describe("x-saved BirdClaw ingest", () => {
     ).rejects.toThrow("outside the live database directory");
   });
 
+  it("rejects backups under symlinked configured and target DB directories", async () => {
+    const dir = makeTempDir();
+    const configuredDir = path.join(dir, "configured-data");
+    const configuredAlias = path.join(dir, "configured-alias");
+    const mountedDir = path.join(dir, "mounted-data");
+    const targetDir = path.join(dir, "host-data");
+    const configuredDbPath = path.join(configuredDir, "x-saved.sqlite");
+    const mountedDbPath = path.join(mountedDir, "x-saved.sqlite");
+    const targetPath = path.join(targetDir, "x-saved.sqlite");
+    mkdirSync(mountedDir);
+    mkdirSync(targetDir);
+    symlinkSync(mountedDir, configuredDir, "dir");
+    symlinkSync(mountedDir, configuredAlias, "dir");
+    const db = openXSavedDb(targetPath);
+    db.close();
+    symlinkSync(targetPath, mountedDbPath);
+
+    await expect(
+      backupXSavedDatabase(
+        configuredDbPath,
+        1,
+        path.join(configuredDir, "backups"),
+      ),
+    ).rejects.toThrow("outside the live database directory");
+    await expect(
+      backupXSavedDatabase(
+        configuredDbPath,
+        1,
+        path.join(configuredAlias, "backups"),
+      ),
+    ).rejects.toThrow("outside the live database directory");
+  });
+
   it("rejects symlinked backup paths inside the live database directory", async () => {
     const dir = makeTempDir();
     const liveDir = path.join(dir, "live");

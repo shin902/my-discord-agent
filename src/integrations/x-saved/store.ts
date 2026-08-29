@@ -514,13 +514,20 @@ export async function backupXSavedDatabase(
   const resolved = path.resolve(dbPath);
   const resolvedBackupDir = resolveXSavedBackupDir(backupDirOverride);
   const lexicalLiveDir = path.dirname(resolved);
+  const configuredLiveDir = await realpath(lexicalLiveDir);
   const livePath = await realpath(resolved);
-  const canonicalLiveDir = path.dirname(livePath);
+  const targetLiveDir = path.dirname(livePath);
+  if (isPathWithin(lexicalLiveDir, resolvedBackupDir)) {
+    throw new Error(
+      "x-saved backup directory must be outside the live database directory",
+    );
+  }
+
   const backupDirCandidate =
     await realpathWithNearestExistingAncestor(resolvedBackupDir);
   if (
-    isPathWithin(lexicalLiveDir, backupDirCandidate) ||
-    isPathWithin(canonicalLiveDir, backupDirCandidate)
+    isPathWithin(configuredLiveDir, backupDirCandidate) ||
+    isPathWithin(targetLiveDir, backupDirCandidate)
   ) {
     throw new Error(
       "x-saved backup directory must be outside the live database directory",
@@ -530,8 +537,8 @@ export async function backupXSavedDatabase(
   await mkdir(resolvedBackupDir, { recursive: true });
   const backupDir = await realpath(resolvedBackupDir);
   if (
-    isPathWithin(lexicalLiveDir, backupDir) ||
-    isPathWithin(canonicalLiveDir, backupDir)
+    isPathWithin(configuredLiveDir, backupDir) ||
+    isPathWithin(targetLiveDir, backupDir)
   ) {
     throw new Error(
       "x-saved backup directory must be outside the live database directory",
