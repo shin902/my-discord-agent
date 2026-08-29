@@ -1136,6 +1136,7 @@ export class QueueRepository {
         ...patch,
         sessionId,
         cronProvisioning: false,
+        cronLegacyProvisioning: false,
       };
       this.db
         .prepare("UPDATE jobs SET sequence=sequence+1 WHERE session_id=?")
@@ -1283,7 +1284,7 @@ export class QueueRepository {
       const excludedSql = excluded.length
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
         : "";
-      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread') AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
+      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronLegacyProvisioning') IS NOT 1) AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
       const exhausted = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE json_extract(j.payload_json,'$.botTaskSessionAdmission') IS NOT 1 AND ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
@@ -1915,6 +1916,23 @@ export class QueueRepository {
           "UPDATE deliveries SET status='ambiguous',lease_until=NULL,worker_id=NULL,last_error=COALESCE(last_error,'sending lease expired'),updated_at=? WHERE status='sending' AND lease_until<=?",
         )
         .run(now, now);
+      // A late item-thread promotion records the parent/thread ID on the job
+      // before delivery persistence. Recover that durable marker before a
+      // retry so a crash in the persistence window cannot send a second parent.
+      this.db
+        .prepare(
+          `UPDATE deliveries
+           SET cron_thread_id=(SELECT json_extract(j.payload_json,'$.cronThreadId') FROM jobs j WHERE j.id=deliveries.job_id),updated_at=?
+           WHERE deliveries.cron_thread_id IS NULL
+             AND deliveries.status IN ('pending','retry_wait')
+             AND EXISTS (
+               SELECT 1 FROM jobs j
+               WHERE j.id=deliveries.job_id
+                 AND json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread'
+                 AND json_extract(j.payload_json,'$.cronThreadId') IS NOT NULL
+             )`,
+        )
+        .run(now);
       const row = this.db
         .prepare(
           `SELECT candidate.* FROM deliveries AS candidate

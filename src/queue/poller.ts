@@ -796,11 +796,14 @@ async function processCronThreadDelivery(
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = cronSessionId(msg);
   try {
+    // cronProvisioning=true is the new late-materialization state: the agent
+    // runs in its temporary session and Discord is untouched until delivery.
+    // Legacy item-thread jobs without that marker still use the old provisioner.
     if (
       msg.cronDeliveryMode === "item-thread" &&
+      msg.cronProvisioning !== true &&
       (!msg.cronThreadId ||
         !msg.cronPlaceholderMessageId ||
-        msg.cronProvisioning === true ||
         msg.sessionId !== msg.cronThreadId)
     ) {
       await ensureCronItemThread(msg);
@@ -818,9 +821,13 @@ async function processCronThreadDelivery(
       }
       return;
     }
-    // RSS keeps the LLM session separate from its Discord destination so an
-    // empty/failed response cannot create an empty thread.
-    if (!msg.rssDispatchId && usesCronDestinationSession(msg)) {
+    // item-thread materializes only after a non-suppressed response exists.
+    // new-thread keeps its existing destination-session behavior.
+    if (
+      !msg.rssDispatchId &&
+      msg.cronDeliveryMode !== "item-thread" &&
+      usesCronDestinationSession(msg)
+    ) {
       await ensureCronThread(msg);
       sessionId = cronSessionId(msg);
     }
@@ -831,6 +838,8 @@ async function processCronThreadDelivery(
       groupConfig?.model,
       execution.configOverride,
     );
+    const legacyItemThread =
+      msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true;
     const response = await withLlmLock(
       lockTarget,
       async () => {
@@ -851,7 +860,7 @@ async function processCronThreadDelivery(
             toolCallKey: msg.toolCallKey,
             systemPromptAppend:
               execution.systemPromptAppend ??
-              (msg.cronNoReply && msg.cronDeliveryMode !== "item-thread"
+              (msg.cronNoReply && !legacyItemThread
                 ? NO_REPLY_SYSTEM_PROMPT
                 : undefined),
             heldLlmProvider:
@@ -877,8 +886,9 @@ async function processCronThreadDelivery(
       await failEmptyAgentResponse(msg, timing);
       return;
     }
-    const suppressDelivery =
-      msg.cronDeliveryMode !== "item-thread" && hasNoReplyMarker(response);
+    const suppressDelivery = !legacyItemThread && hasNoReplyMarker(response);
+    const lateItemThread =
+      msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning === true;
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
         msg.id,
@@ -890,11 +900,13 @@ async function processCronThreadDelivery(
           metadata: executionMetadata(timing),
           deliveryPayload: {
             groupName: msg.groupName,
-            destinationType: "new-thread",
+            destinationType: lateItemThread ? "item-thread" : "new-thread",
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
-            cronThreadId: msg.cronThreadId,
-            cronPlaceholderMessageId: msg.cronPlaceholderMessageId,
+            cronThreadId: lateItemThread ? undefined : msg.cronThreadId,
+            cronPlaceholderMessageId: lateItemThread
+              ? undefined
+              : msg.cronPlaceholderMessageId,
             ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
             ...(msg.rssDispatchId
               ? {

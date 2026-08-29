@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
@@ -59,6 +59,27 @@ export async function loadMessages(
       }
       return msg as unknown as AgentMessage;
     });
+}
+
+export async function renameSession(
+  groupName: string,
+  fromSessionId: string,
+  toSessionId: string,
+): Promise<void> {
+  validateName(groupName, "グループ名");
+  validateName(fromSessionId, "セッションID");
+  validateName(toSessionId, "セッションID");
+
+  if (fromSessionId === toSessionId) return;
+  const from = sessionPath(groupName, fromSessionId);
+  const to = sessionPath(groupName, toSessionId);
+  if (!existsSync(from)) {
+    throw new Error(`セッションが見つかりません: ${fromSessionId}`);
+  }
+  if (existsSync(to)) {
+    throw new Error(`リネーム先のセッションが既に存在します: ${toSessionId}`);
+  }
+  await rename(from, to);
 }
 
 export async function appendMessage(

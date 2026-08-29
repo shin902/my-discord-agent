@@ -74,12 +74,6 @@ const CronJobSchema = z
           "item-thread は sessionMode=destination と組み合わせてください",
       });
     }
-    if (job.deliveryMode === "item-thread" && job.noReply === true) {
-      ctx.addIssue({
-        code: "custom",
-        message: "item-thread では noReply を利用できません",
-      });
-    }
     if (job.handler != null) return;
     if (job.groupName == null || job.prompt == null || job.channelId == null) {
       ctx.addIssue({
