@@ -367,6 +367,62 @@ describe("x-saved BirdClaw ingest", () => {
     db.close();
   });
 
+  it("uses the initial import time to select only newer pending items", () => {
+    const dir = makeTempDir();
+    const targetPath = path.join(dir, "x-saved.sqlite");
+    const db = openXSavedDb(targetPath);
+    const insertItem = db.prepare(`
+      INSERT INTO x_items (
+        tweet_id, text, author_handle, url, first_seen_at, last_seen_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const insertState = db.prepare(
+      "INSERT INTO x_item_state (tweet_id, status, updated_at) VALUES (?, 'inbox', ?)",
+    );
+    insertItem.run(
+      "old",
+      "old item",
+      "author",
+      "https://x.com/i/status/old",
+      "2026-08-28T00:00:00Z",
+      "2026-08-28T00:00:00Z",
+    );
+    insertState.run("old", "2026-08-28T00:00:00Z");
+    insertItem.run(
+      "new",
+      "new item",
+      "author",
+      "https://x.com/i/status/new",
+      "2026-08-28T00:02:00Z",
+      "2026-08-28T00:02:00Z",
+    );
+    insertState.run("new", "2026-08-28T00:02:00Z");
+    markInitialImportCompleted(db, "2026-08-28T00:01:00Z");
+
+    const pendingQuery = db.prepare(`
+      SELECT i.tweet_id
+      FROM x_items i
+      JOIN x_item_state s ON s.tweet_id = i.tweet_id
+      LEFT JOIN x_meta initial_import
+        ON initial_import.key = 'initial_import_completed_at'
+      WHERE s.status = 'inbox'
+        AND (
+          initial_import.value IS NULL
+          OR i.first_seen_at > initial_import.value
+        )
+      ORDER BY i.first_seen_at ASC
+    `);
+    const pending = () => pendingQuery.all() as Array<{ tweet_id: string }>;
+
+    expect(pending()).toEqual([{ tweet_id: "new" }]);
+
+    db.prepare(
+      "DELETE FROM x_meta WHERE key = 'initial_import_completed_at'",
+    ).run();
+    expect(pending()).toEqual([{ tweet_id: "old" }, { tweet_id: "new" }]);
+    db.close();
+  });
+
   it("migrates the old management schema to the compact schema", () => {
     const dir = makeTempDir();
     const targetPath = path.join(dir, "x-saved.sqlite");

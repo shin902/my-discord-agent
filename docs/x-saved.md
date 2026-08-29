@@ -112,7 +112,7 @@ Enable the `x-saved` skill and mount only the my-discord-agent-owned directory:
 }
 ```
 
-Do not mount `~/.birdclaw` or `~/.xurl` into a sandbox. The mount must be writable if the agent should use `mark`, `tag`, or `note`.
+Do not mount `~/.birdclaw` or `~/.xurl` into a sandbox. The mount must be writable if the agent should use `mark` or `note`.
 
 Useful commands inside the skill:
 
