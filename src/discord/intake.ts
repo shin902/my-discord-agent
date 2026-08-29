@@ -8,6 +8,7 @@ import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
+import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
 
 export type DiscordMessageSource = "live" | "backfill";
 
@@ -20,25 +21,33 @@ interface IngestOptions {
   source: DiscordMessageSource;
   replyOnFailure: boolean;
   updateLiveCursor?: boolean;
+  discordBotId?: string;
 }
 
 export async function handleLiveDiscordMessage(
   message: Message,
+  discordBotId = DEFAULT_DISCORD_BOT_ID,
 ): Promise<DiscordIngestResult> {
   return ingestDiscordMessage(message, {
     source: "live",
     replyOnFailure: true,
+    discordBotId,
   });
 }
 
 export async function ingestDiscordMessage(
   message: Message,
-  options: { source: DiscordMessageSource; replyOnFailure?: boolean },
+  options: {
+    source: DiscordMessageSource;
+    replyOnFailure?: boolean;
+    discordBotId?: string;
+  },
 ): Promise<DiscordIngestResult> {
   return ingest(message, {
     source: options.source,
     replyOnFailure: options.replyOnFailure ?? false,
     updateLiveCursor: options.source === "live",
+    discordBotId: options.discordBotId,
   });
 }
 
@@ -84,6 +93,16 @@ async function ingest(
   const defaultCursorScope = isThread ? message.channelId : lookupId;
   const match = await findGroupByChannelId(lookupId);
   if (!match) return { status: "ignored" };
+
+  // Every configured Discord client can receive the same MessageCreate event.
+  // Only the client assigned to this group may enqueue its live messages.
+  if (
+    options.source === "live" &&
+    options.discordBotId !== undefined &&
+    options.discordBotId !== (match.group.bot ?? DEFAULT_DISCORD_BOT_ID)
+  ) {
+    return { status: "ignored", cursorScope: defaultCursorScope };
+  }
 
   // Historical backfill deliberately excludes bot/webhook messages so old RSS
   // webhook entries are not reintroduced into the normal agent queue.
