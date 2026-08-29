@@ -1,4 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -100,6 +107,48 @@ describe("x-saved BirdClaw ingest", () => {
     ).rejects.toThrow("outside the live database directory");
     const backupPath = await backupXSavedDatabase(targetPath, 1, backupDir);
     expect(backupPath).toBe(path.join(backupDir, path.basename(backupPath)));
+  });
+
+  it("retains only x-saved backups in a shared directory", async () => {
+    const dir = makeTempDir();
+    const liveDir = path.join(dir, "live");
+    const targetPath = path.join(liveDir, "x-saved.sqlite");
+    const backupDir = path.join(dir, "shared-backups");
+    mkdirSync(liveDir);
+    mkdirSync(backupDir);
+    writeFileSync(path.join(backupDir, "unrelated.sqlite"), "do not delete");
+    writeFileSync(path.join(backupDir, "x-saved-2020-01-01.sqlite"), "old");
+    const db = openXSavedDb(targetPath);
+    db.close();
+
+    const backupPath = await backupXSavedDatabase(targetPath, 1, backupDir);
+
+    expect(path.basename(backupPath)).toMatch(/^x-saved-.*\.sqlite$/);
+    expect(existsSync(path.join(backupDir, "unrelated.sqlite"))).toBe(true);
+    expect(existsSync(path.join(backupDir, "x-saved-2020-01-01.sqlite"))).toBe(
+      false,
+    );
+  });
+
+  it("rejects symlinked backup paths inside the live database directory", async () => {
+    const dir = makeTempDir();
+    const liveDir = path.join(dir, "live");
+    const liveAlias = path.join(dir, "live-alias");
+    const backupAlias = path.join(dir, "backup-alias");
+    mkdirSync(liveDir);
+    symlinkSync(liveDir, liveAlias, "dir");
+    symlinkSync(liveDir, backupAlias, "dir");
+    const targetPath = path.join(liveAlias, "x-saved.sqlite");
+    const db = openXSavedDb(targetPath);
+    db.close();
+
+    await expect(
+      backupXSavedDatabase(
+        targetPath,
+        1,
+        path.join(backupAlias, "new-backup-directory"),
+      ),
+    ).rejects.toThrow("outside the live database directory");
   });
 
   it("imports likes/bookmarks while preserving sticky source history and agent state", () => {
