@@ -247,7 +247,9 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     "17878680000000\n",
     "999999999999\n",
   ])("不完全または不正なsidecar (%s)は原子的に自己修復する", async (content) => {
-    mockReadFile.mockResolvedValue(content);
+    mockReadFile.mockImplementation(async (file) =>
+      String(file).endsWith(".repair") ? "1787868000000\n" : content,
+    );
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
@@ -262,11 +264,38 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       expect.stringMatching(/session-a\.time-anchor\.repair$/),
     );
     expect(mockRename).toHaveBeenCalledWith(
-      temporaryFile,
+      expect.stringMatching(/session-a\.time-anchor\.repair$/),
       expect.stringMatching(/session-a\.time-anchor$/),
     );
     expect(mockUnlink).toHaveBeenCalledWith(
       expect.stringMatching(/session-a\.time-anchor\.repair$/),
+    );
+  });
+
+  it("abandonedされたvalid claimは不正なfinalの修復に再利用する", async () => {
+    mockReadFile.mockImplementation(async (file) => {
+      if (String(file).endsWith(".repair")) return "1787868000000\n";
+      return "1787868\n";
+    });
+    mockLink.mockRejectedValue(
+      Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
+    );
+
+    const result = await loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      1787868000001,
+    );
+
+    expect(result).toBe(1787868000000);
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringMatching(/session-a\.time-anchor\.repair$/),
+      expect.stringMatching(/session-a\.time-anchor$/),
+    );
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      expect.any(String),
+      "1787868000001\n",
+      expect.objectContaining({ flag: "wx" }),
     );
   });
 
@@ -292,7 +321,9 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       .mockRejectedValueOnce(
         Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
       )
-      .mockResolvedValueOnce("");
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("1787868000000\n");
     mockLink.mockRejectedValue(
       Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
     );
@@ -305,83 +336,76 @@ describe("loadOrCreateSessionTimeAnchor", () => {
 
     expect(result).toBe(1787868000000);
     expect(mockRename).toHaveBeenCalledWith(
-      expect.stringMatching(/\.tmp$/),
+      expect.stringMatching(/session-a\.time-anchor\.repair$/),
       expect.stringMatching(/session-a\.time-anchor$/),
     );
   });
 
-  it("初期read後にwinnerが公開されたcallerはwinnerを上書きしない", async () => {
-    let initialReads = 0;
-    let durableAnchor: number | undefined;
-    let claimHeld = false;
-    let releaseInitialReads!: () => void;
-    const initialReadsReady = new Promise<void>((resolve) => {
-      releaseInitialReads = resolve;
+  it("active ownerをrecovererが先に公開しても両者は同じwinnerへ収束する", async () => {
+    let finalAnchor: number | undefined;
+    let claimAnchor: number | undefined;
+    let claimAcquired!: () => void;
+    const claimReady = new Promise<void>((resolve) => {
+      claimAcquired = resolve;
     });
-    let releaseSecondWrite!: () => void;
-    const secondWriteReady = new Promise<void>((resolve) => {
-      releaseSecondWrite = resolve;
+    let ownerCandidateRead!: () => void;
+    const ownerCandidateReady = new Promise<void>((resolve) => {
+      ownerCandidateRead = resolve;
     });
+    let claimReads = 0;
 
     mockReadFile.mockImplementation(async (file) => {
-      if (!String(file).endsWith(".time-anchor")) return "1787868\n";
-      initialReads += 1;
-      if (initialReads === 2) releaseInitialReads();
-      await initialReadsReady;
-      return durableAnchor === undefined ? "1787868\n" : `${durableAnchor}\n`;
-    });
-    mockWriteFile.mockImplementation(async (_file, content) => {
-      if (String(content).includes("1787868000001")) {
-        await secondWriteReady;
+      const filename = String(file);
+      if (filename.endsWith(".repair")) {
+        claimReads += 1;
+        if (claimReads === 1) {
+          await ownerCandidateReady;
+        }
+        if (claimAnchor === undefined) {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
+        return `${claimAnchor}\n`;
       }
+      return finalAnchor === undefined ? "1787868\n" : `${finalAnchor}\n`;
     });
     mockLink.mockImplementation(async (source, destination) => {
-      if (String(destination).endsWith(".repair")) {
-        if (claimHeld) {
-          throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
-        }
-        claimHeld = true;
-        return;
-      }
-      if (durableAnchor !== undefined) {
+      if (!String(destination).endsWith(".repair")) return;
+      if (claimAnchor !== undefined) {
         throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
       }
       const write = mockWriteFile.mock.calls.find(([file]) => file === source);
-      durableAnchor = Number(String(write?.[1]).trim());
+      claimAnchor = Number(String(write?.[1]).trim());
+      claimAcquired();
     });
     mockRename.mockImplementation(async (source, destination) => {
-      expect(String(source)).toMatch(/\.tmp$/);
+      expect(String(source)).toMatch(/session-a\.time-anchor\.repair$/);
       expect(String(destination)).toMatch(/session-a\.time-anchor$/);
-      const write = mockWriteFile.mock.calls.find(([file]) => file === source);
-      durableAnchor = Number(String(write?.[1]).trim());
-    });
-    mockUnlink.mockImplementation(async (file) => {
-      if (String(file).endsWith(".repair")) claimHeld = false;
+      if (claimAnchor === undefined) {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      finalAnchor = claimAnchor;
+      claimAnchor = undefined;
     });
 
-    const firstPromise = loadOrCreateSessionTimeAnchor(
+    const ownerPromise = loadOrCreateSessionTimeAnchor(
       "group1",
       "session-a",
       1787868000000,
     );
-    const secondPromise = loadOrCreateSessionTimeAnchor(
+    await claimReady;
+    const recovererPromise = loadOrCreateSessionTimeAnchor(
       "group1",
       "session-a",
       1787868000001,
     );
+    const recoverer = await recovererPromise;
+    ownerCandidateRead();
+    const owner = await ownerPromise;
 
-    const first = await firstPromise;
-    releaseSecondWrite();
-    const second = await secondPromise;
-
-    expect(first).toBe(1787868000000);
-    expect(second).toBe(first);
-    expect(durableAnchor).toBe(first);
+    expect(owner).toBe(1787868000000);
+    expect(recoverer).toBe(owner);
+    expect(finalAnchor).toBe(owner);
     expect(mockRename).toHaveBeenCalledTimes(1);
-    expect(mockRename).toHaveBeenCalledWith(
-      expect.stringMatching(/\.tmp$/),
-      expect.stringMatching(/session-a\.time-anchor$/),
-    );
   });
 });
 

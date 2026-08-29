@@ -115,6 +115,54 @@ async function readTimeAnchorState(file: string): Promise<TimeAnchorState> {
   }
 }
 
+async function repairInvalidTimeAnchor(
+  file: string,
+  temporaryFile: string,
+): Promise<number> {
+  // The fixed claim path is a hard link to a completely written candidate.
+  // Publishing that link lets an abandoned repair be recovered safely.
+  const claimPath = `${file}.repair`;
+  let ownsClaim = false;
+  try {
+    try {
+      await link(temporaryFile, claimPath);
+      ownsClaim = true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+
+    const deadline = Date.now() + TIME_ANCHOR_REPAIR_TIMEOUT_MS;
+    while (true) {
+      const current = await readTimeAnchorState(file);
+      if (current.kind === "valid") return current.timestamp;
+
+      // An active owner's claim and an abandoned claim are interchangeable:
+      // both point at a validated, complete candidate.
+      const candidate = await readTimeAnchorState(claimPath);
+      if (candidate.kind === "valid") {
+        try {
+          // Only the caller that renames the claim publishes the candidate.
+          // If another caller wins first, the next final read returns its value.
+          await rename(claimPath, file);
+          return candidate.timestamp;
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && code !== "EEXIST") throw err;
+        }
+      }
+
+      if (Date.now() >= deadline) {
+        throw new Error(`時刻sidecarの修復がタイムアウトしました: ${file}`);
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, TIME_ANCHOR_REPAIR_WAIT_MS),
+      );
+    }
+  } finally {
+    if (ownsClaim) await unlink(claimPath).catch(() => {});
+  }
+}
+
 /**
  * セッション開始時刻を会話JSONLとは別のsidecarへ一度だけ固定する。
  * 既存セッション移行時は caller が履歴の最古timestampを fallback として渡せる。
@@ -146,51 +194,7 @@ export async function loadOrCreateSessionTimeAnchor(
 
   try {
     if (initialState.kind === "invalid") {
-      // 固定claim pathをhard linkでno-clobberに取得し、取得後にfinalを再読する。
-      // 初期read後に別callerが公開したwinnerをrenameで上書きしない。
-      const claimPath = `${file}.repair`;
-      let ownsClaim = false;
-      try {
-        try {
-          await link(temporaryFile, claimPath);
-          ownsClaim = true;
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-        }
-
-        const deadline = Date.now() + TIME_ANCHOR_REPAIR_TIMEOUT_MS;
-        while (true) {
-          if (!ownsClaim) {
-            try {
-              await link(temporaryFile, claimPath);
-              ownsClaim = true;
-            } catch (err) {
-              if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-            }
-          }
-
-          if (ownsClaim) {
-            const current = await readTimeAnchorState(file);
-            if (current.kind === "valid") return current.timestamp;
-
-            // claim取得後も不完全なら、完成済みtmpをfinalへ原子的に公開する。
-            await rename(temporaryFile, file);
-            return timestamp;
-          }
-
-          const winner = await readTimeAnchorState(file);
-          if (winner.kind === "valid") return winner.timestamp;
-          if (Date.now() >= deadline) {
-            throw new Error(`時刻sidecarの修復がタイムアウトしました: ${file}`);
-          }
-          // claim所有者の公開完了、または異常終了を待つ。異常終了時はbounded errorにする。
-          await new Promise((resolve) =>
-            setTimeout(resolve, TIME_ANCHOR_REPAIR_WAIT_MS),
-          );
-        }
-      } finally {
-        if (ownsClaim) await unlink(claimPath).catch(() => {});
-      }
+      return await repairInvalidTimeAnchor(file, temporaryFile);
     }
 
     try {
@@ -205,9 +209,9 @@ export async function loadOrCreateSessionTimeAnchor(
       const winner = await readTimeAnchorState(file);
       if (winner.kind === "valid") return winner.timestamp;
 
-      // rolling update等で旧実装が不完全なfinalを先に作った場合も自己修復する。
-      await rename(temporaryFile, file);
-      return timestamp;
+      // rolling update等で旧実装が不完全なfinalを先に作った場合も、
+      // claim経由で同じrepair protocolへ入る。
+      return await repairInvalidTimeAnchor(file, temporaryFile);
     }
   } finally {
     // rename済みならENOENT、link済みならtmp名だけを削除する。cleanup失敗でsessionを壊さない。
