@@ -199,7 +199,7 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     ).resolves.toBe(now);
   });
 
-  it("sidecarがなければ完成済みtmpをno-clobberで原子的に公開する", async () => {
+  it("sidecarがなければclaim snapshotを原子的に公開する", async () => {
     let published = false;
     mockReadFile.mockImplementation(async (file) => {
       const filename = String(file);
@@ -381,7 +381,110 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     );
   });
 
-  it("3者競合でAのcandidateを読み中にBが公開しCが再入場しても全員Aへ収束する", async () => {
+  it("owner failure後にwaiterがclaimを引き継いでanchorを公開する", async () => {
+    const temporaryContents = new Map<string, string>();
+    let claimContent: string | undefined;
+    let finalContent = "1787868\n";
+    let snapshotContent: string | undefined;
+    let snapshotAttempts = 0;
+    let ownerPublishAttempt!: () => void;
+    const ownerPublishStarted = new Promise<void>((resolve) => {
+      ownerPublishAttempt = resolve;
+    });
+    let waiterClaimRead!: () => void;
+    const waiterClaimStarted = new Promise<void>((resolve) => {
+      waiterClaimRead = resolve;
+    });
+    let releaseOwnerFailure!: () => void;
+    const ownerFailureReleased = new Promise<void>((resolve) => {
+      releaseOwnerFailure = resolve;
+    });
+    let ownerClaimRemoved!: () => void;
+    const ownerClaimRemoval = new Promise<void>((resolve) => {
+      ownerClaimRemoved = resolve;
+    });
+    let claimReads = 0;
+
+    mockWriteFile.mockImplementation(async (file, content) => {
+      temporaryContents.set(String(file), String(content));
+    });
+    mockReadFile.mockImplementation(async (file) => {
+      const filename = String(file);
+      if (filename.endsWith(".repair")) {
+        claimReads += 1;
+        if (claimReads === 2) {
+          waiterClaimRead();
+          await ownerFailureReleased;
+          await ownerClaimRemoval;
+        }
+        if (claimContent === undefined) {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
+        return claimContent;
+      }
+      if (filename.endsWith(".time-anchor")) return finalContent;
+      const content = temporaryContents.get(filename);
+      if (content === undefined) {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      return content;
+    });
+    mockLink.mockImplementation(async (source, destination) => {
+      const destinationName = String(destination);
+      if (destinationName.endsWith(".repair")) {
+        if (claimContent !== undefined) {
+          throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+        }
+        claimContent = temporaryContents.get(String(source));
+        return;
+      }
+      if (destinationName.endsWith(".snapshot")) {
+        snapshotAttempts += 1;
+        if (snapshotAttempts === 1) {
+          ownerPublishAttempt();
+          await ownerFailureReleased;
+          throw Object.assign(new Error("I/O failure"), { code: "EIO" });
+        }
+        snapshotContent = claimContent;
+      }
+    });
+    mockRename.mockImplementation(async () => {
+      finalContent = snapshotContent ?? "";
+    });
+    mockUnlink.mockImplementation(async (file) => {
+      const filename = String(file);
+      if (filename.endsWith(".repair")) {
+        claimContent = undefined;
+        ownerClaimRemoved();
+      } else if (filename.endsWith(".tmp")) {
+        temporaryContents.delete(filename);
+      }
+    });
+
+    const ownerPromise = loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      1787868000000,
+    );
+    await ownerPublishStarted;
+
+    const waiterPromise = loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      1787868000001,
+    );
+    await waiterClaimStarted;
+    releaseOwnerFailure();
+
+    await expect(ownerPromise).rejects.toThrow("I/O failure");
+    await expect(waiterPromise).resolves.toBe(1787868000001);
+    expect(finalContent).toBe("1787868000001\n");
+    await expect(
+      loadOrCreateSessionTimeAnchor("group1", "session-a", 1787868000002),
+    ).resolves.toBe(1787868000001);
+  });
+
+  it("3者競合では先行callerのcandidateをwinnerとして共有する", async () => {
     let finalAnchor: number | undefined;
     let claimAnchor: number | undefined;
     let claimReads = 0;

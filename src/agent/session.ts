@@ -138,6 +138,18 @@ async function repairTimeAnchor(
       if (current.kind === "valid") return current.timestamp;
 
       const candidate = await readTimeAnchorState(claimPath);
+      if (candidate.kind === "missing" && !ownsClaim) {
+        try {
+          // If the previous owner disappeared before publishing, take over its
+          // completed candidate with the same no-clobber claim protocol.
+          await link(temporaryFile, claimPath);
+          ownsClaim = true;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        }
+        continue;
+      }
+
       if (candidate.kind === "valid") {
         // Never rename the reusable claim path itself. A unique hard-link
         // snapshot pins this exact inode while the atomic publication occurs;
@@ -206,7 +218,7 @@ export async function loadOrCreateSessionTimeAnchor(
     // different candidate while a repair is in progress.
     return await repairTimeAnchor(file, temporaryFile);
   } finally {
-    // rename済みならENOENT、link済みならtmp名だけを削除する。cleanup失敗でsessionを壊さない。
+    // snapshot公開後もtemporaryFileは残るため削除する。cleanup失敗でsessionを壊さない。
     await unlink(temporaryFile).catch(() => {});
   }
 }
