@@ -1,4 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -100,6 +107,108 @@ describe("x-saved BirdClaw ingest", () => {
     ).rejects.toThrow("outside the live database directory");
     const backupPath = await backupXSavedDatabase(targetPath, 1, backupDir);
     expect(backupPath).toBe(path.join(backupDir, path.basename(backupPath)));
+  });
+
+  it("retains only x-saved backups in a shared directory", async () => {
+    const dir = makeTempDir();
+    const liveDir = path.join(dir, "live");
+    const targetPath = path.join(liveDir, "x-saved.sqlite");
+    const backupDir = path.join(dir, "shared-backups");
+    mkdirSync(liveDir);
+    mkdirSync(backupDir);
+    writeFileSync(path.join(backupDir, "unrelated.sqlite"), "do not delete");
+    writeFileSync(
+      path.join(backupDir, "2020-01-01T00-00-00-000Z.sqlite"),
+      "legacy old",
+    );
+    writeFileSync(
+      path.join(backupDir, "2020-01-01T00-00-00.sqlite"),
+      "invalid legacy name",
+    );
+    const db = openXSavedDb(targetPath);
+    db.close();
+
+    const backupPath = await backupXSavedDatabase(targetPath, 1, backupDir);
+
+    expect(path.basename(backupPath)).toMatch(/^x-saved-.*\.sqlite$/);
+    expect(existsSync(path.join(backupDir, "unrelated.sqlite"))).toBe(true);
+    expect(
+      existsSync(path.join(backupDir, "2020-01-01T00-00-00-000Z.sqlite")),
+    ).toBe(false);
+    expect(existsSync(path.join(backupDir, "2020-01-01T00-00-00.sqlite"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects backup paths under the lexical DB directory when the DB is a symlink", async () => {
+    const dir = makeTempDir();
+    const hostDir = path.join(dir, "host-data");
+    const agentDir = path.join(dir, "agent-data");
+    const targetPath = path.join(hostDir, "x-saved.sqlite");
+    const mountedDbPath = path.join(agentDir, "x-saved.sqlite");
+    mkdirSync(hostDir);
+    mkdirSync(agentDir);
+    const db = openXSavedDb(targetPath);
+    db.close();
+    symlinkSync(targetPath, mountedDbPath);
+
+    await expect(
+      backupXSavedDatabase(mountedDbPath, 1, path.join(agentDir, "backups")),
+    ).rejects.toThrow("outside the live database directory");
+  });
+
+  it("rejects backups under symlinked configured and target DB directories", async () => {
+    const dir = makeTempDir();
+    const configuredDir = path.join(dir, "configured-data");
+    const configuredAlias = path.join(dir, "configured-alias");
+    const mountedDir = path.join(dir, "mounted-data");
+    const targetDir = path.join(dir, "host-data");
+    const configuredDbPath = path.join(configuredDir, "x-saved.sqlite");
+    const mountedDbPath = path.join(mountedDir, "x-saved.sqlite");
+    const targetPath = path.join(targetDir, "x-saved.sqlite");
+    mkdirSync(mountedDir);
+    mkdirSync(targetDir);
+    symlinkSync(mountedDir, configuredDir, "dir");
+    symlinkSync(mountedDir, configuredAlias, "dir");
+    const db = openXSavedDb(targetPath);
+    db.close();
+    symlinkSync(targetPath, mountedDbPath);
+
+    await expect(
+      backupXSavedDatabase(
+        configuredDbPath,
+        1,
+        path.join(configuredDir, "backups"),
+      ),
+    ).rejects.toThrow("outside the live database directory");
+    await expect(
+      backupXSavedDatabase(
+        configuredDbPath,
+        1,
+        path.join(configuredAlias, "backups"),
+      ),
+    ).rejects.toThrow("outside the live database directory");
+  });
+
+  it("rejects symlinked backup paths inside the live database directory", async () => {
+    const dir = makeTempDir();
+    const liveDir = path.join(dir, "live");
+    const liveAlias = path.join(dir, "live-alias");
+    const backupAlias = path.join(dir, "backup-alias");
+    mkdirSync(liveDir);
+    symlinkSync(liveDir, liveAlias, "dir");
+    symlinkSync(liveDir, backupAlias, "dir");
+    const targetPath = path.join(liveAlias, "x-saved.sqlite");
+    const db = openXSavedDb(targetPath);
+    db.close();
+
+    await expect(
+      backupXSavedDatabase(
+        targetPath,
+        1,
+        path.join(backupAlias, "new-backup-directory"),
+      ),
+    ).rejects.toThrow("outside the live database directory");
   });
 
   it("imports likes/bookmarks while preserving sticky source history and agent state", () => {

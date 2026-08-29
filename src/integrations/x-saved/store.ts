@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { mkdir, readdir, unlink } from "node:fs/promises";
+import { mkdir, readdir, realpath, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,9 @@ const ROOT = path.resolve(
 );
 
 const SCHEMA_VERSION = 1;
+const XSAVED_BACKUP_PREFIX = "x-saved-";
+const LEGACY_XSAVED_BACKUP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
 
 export const X_SAVED_STATUSES = [
   "inbox",
@@ -100,6 +103,36 @@ export function resolveXSavedBackupDir(override?: string): string {
       : path.resolve(ROOT, expanded);
   }
   return path.join(ROOT, "data/x-saved-backups");
+}
+
+async function realpathWithNearestExistingAncestor(
+  input: string,
+): Promise<string> {
+  let current = path.resolve(input);
+  const suffix: string[] = [];
+
+  while (true) {
+    try {
+      const canonical = await realpath(current);
+      return path.join(canonical, ...suffix.reverse());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      suffix.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+function isPathWithin(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
 }
 
 function ensureSchema(db: Database.Database): void {
@@ -480,19 +513,42 @@ export async function backupXSavedDatabase(
   }
   const resolved = path.resolve(dbPath);
   const resolvedBackupDir = resolveXSavedBackupDir(backupDirOverride);
-  const liveDir = path.dirname(resolved);
+  const lexicalLiveDir = path.dirname(resolved);
+  const configuredLiveDir = await realpath(lexicalLiveDir);
+  const livePath = await realpath(resolved);
+  const targetLiveDir = path.dirname(livePath);
+  if (isPathWithin(lexicalLiveDir, resolvedBackupDir)) {
+    throw new Error(
+      "x-saved backup directory must be outside the live database directory",
+    );
+  }
+
+  const backupDirCandidate =
+    await realpathWithNearestExistingAncestor(resolvedBackupDir);
   if (
-    resolvedBackupDir === liveDir ||
-    resolvedBackupDir.startsWith(`${liveDir}${path.sep}`)
+    isPathWithin(configuredLiveDir, backupDirCandidate) ||
+    isPathWithin(targetLiveDir, backupDirCandidate)
   ) {
     throw new Error(
       "x-saved backup directory must be outside the live database directory",
     );
   }
-  const backupDir = resolvedBackupDir;
-  await mkdir(backupDir, { recursive: true });
+
+  await mkdir(resolvedBackupDir, { recursive: true });
+  const backupDir = await realpath(resolvedBackupDir);
+  if (
+    isPathWithin(configuredLiveDir, backupDir) ||
+    isPathWithin(targetLiveDir, backupDir)
+  ) {
+    throw new Error(
+      "x-saved backup directory must be outside the live database directory",
+    );
+  }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const destination = path.join(backupDir, `${stamp}.sqlite`);
+  const destination = path.join(
+    backupDir,
+    `${XSAVED_BACKUP_PREFIX}${stamp}.sqlite`,
+  );
 
   const db = new Database(resolved, { fileMustExist: true });
   try {
@@ -502,7 +558,11 @@ export async function backupXSavedDatabase(
   }
 
   const files = (await readdir(backupDir))
-    .filter((name) => name.endsWith(".sqlite"))
+    .filter(
+      (name) =>
+        (name.startsWith(XSAVED_BACKUP_PREFIX) && name.endsWith(".sqlite")) ||
+        LEGACY_XSAVED_BACKUP_PATTERN.test(name),
+    )
     .sort()
     .reverse();
   await Promise.all(

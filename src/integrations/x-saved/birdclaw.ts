@@ -79,6 +79,17 @@ const BIRDCLAW_ENV_KEYS = [
   "XDG_CACHE_HOME",
   "NO_COLOR",
   "FORCE_COLOR",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
 ] as const;
 
 function buildBirdclawEnv(birdclawDbPath?: string): NodeJS.ProcessEnv {
