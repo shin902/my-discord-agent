@@ -155,6 +155,31 @@ describe("ingestDiscordMessage", () => {
     });
   });
 
+  it("liveではgroup担当外のDiscord Bot clientを無視する", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group", bot: "secondary" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        requiredMention: true,
+      },
+    });
+
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "message-wrong-owner", mentionsBot: true }),
+      {
+        source: "live",
+        replyOnFailure: false,
+        discordBotId: "personal",
+      },
+    );
+
+    expect(result).toMatchObject({ status: "ignored", cursorScope: "root-1" });
+    expect(
+      repo.findByIdempotencyKey("discord-message:message-wrong-owner"),
+    ).toBeUndefined();
+  });
+
   it("requiredMention=trueでは親チャンネルの非mentionメッセージを無視する", async () => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
