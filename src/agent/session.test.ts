@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
@@ -20,10 +20,6 @@ const mockAppendFile = vi.mocked(appendFile);
 const mockMkdir = vi.mocked(mkdir);
 const mockChmod = vi.mocked(chmod);
 const mockExistsSync = vi.mocked(existsSync);
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 describe("loadMessages", () => {
   beforeEach(() => {
