@@ -10,8 +10,6 @@ export type BirdclawCollection = "bookmarks" | "likes";
 export interface BirdclawCommandResult {
   ok: boolean;
   collection: BirdclawCollection;
-  fetched: number | null;
-  output: unknown;
   error: string | null;
 }
 
@@ -19,44 +17,18 @@ function birdclawBinary(): string {
   return process.env.BIRDCLAW_BIN || "birdclaw";
 }
 
-function parseJsonOutput(stdout: string): unknown {
+function parseJsonOutput(stdout: string): void {
   const trimmed = stdout.trim();
-  if (!trimmed) return {};
+  if (!trimmed) throw new Error("BirdClaw returned empty JSON output");
+  let parsed: unknown;
   try {
-    return JSON.parse(trimmed);
-  } catch {
-    return { raw: trimmed };
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    throw new Error("BirdClaw returned invalid JSON", { cause: error });
   }
-}
-
-function findFetchedCount(value: unknown): number | null {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findFetchedCount(item);
-      if (found !== null) return found;
-    }
-    return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("BirdClaw returned an invalid JSON envelope");
   }
-  if (!value || typeof value !== "object") return null;
-
-  const record = value as Record<string, unknown>;
-  for (const key of [
-    "fetched",
-    "fetchedCount",
-    "resultCount",
-    "itemsObserved",
-    "itemsFetched",
-  ]) {
-    const candidate = record[key];
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-      return candidate;
-    }
-  }
-  for (const candidate of Object.values(record)) {
-    const found = findFetchedCount(candidate);
-    if (found !== null) return found;
-  }
-  return null;
 }
 
 const BIRDCLAW_ENV_KEYS = [
@@ -108,20 +80,20 @@ function buildBirdclawEnv(birdclawDbPath?: string): NodeJS.ProcessEnv {
 async function runBirdclaw(
   args: string[],
   birdclawDbPath?: string,
-): Promise<unknown> {
+): Promise<void> {
   const { stdout } = await execFileAsync(birdclawBinary(), args, {
     env: buildBirdclawEnv(birdclawDbPath),
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
     encoding: "utf8",
   });
-  return parseJsonOutput(stdout);
+  parseJsonOutput(stdout);
 }
 
 export async function importBirdclawArchive(
   archivePath: string,
-): Promise<unknown> {
-  return runBirdclaw([
+): Promise<void> {
+  await runBirdclaw([
     "import",
     "archive",
     archivePath,
@@ -157,12 +129,10 @@ async function syncCollection(options: {
   }
 
   try {
-    const output = await runBirdclaw(args, options.birdclawDbPath);
+    await runBirdclaw(args, options.birdclawDbPath);
     return {
       ok: true,
       collection: options.collection,
-      fetched: findFetchedCount(output),
-      output,
       error: null,
     };
   } catch (error) {
@@ -170,8 +140,6 @@ async function syncCollection(options: {
     return {
       ok: false,
       collection: options.collection,
-      fetched: null,
-      output: {},
       error: message,
     };
   }

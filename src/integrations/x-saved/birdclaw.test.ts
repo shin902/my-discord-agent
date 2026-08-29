@@ -32,7 +32,7 @@ describe("BirdClaw subprocess boundary", () => {
       `#!/bin/sh
 printf '%s\\n' "$BIRDCLAW_DB_PATH" > '${envPath}'
 env | sort >> '${envPath}'
-printf '%s\\n' '{"fetched":1}'
+printf '%s\\n' '{"ok":true}'
 `,
     );
     chmodSync(binary, 0o755);

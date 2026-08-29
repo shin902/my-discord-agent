@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   backupXSavedDatabase,
   ingestBirdclawSavedItems,
-  initializeHistoricalBaseline,
+  markInitialImportCompleted,
   openXSavedDb,
   recordSyncRun,
   resolveBirdclawDbPath,
@@ -268,13 +268,13 @@ describe("x-saved BirdClaw ingest", () => {
       account: "tester",
       now: "2026-08-28T00:00:00Z",
     });
-    expect(first).toEqual({ sourceItems: 2, newItems: 2, updatedItems: 0 });
+    expect(first).toEqual({ newItems: 2 });
 
     const target = openXSavedDb(targetPath);
     const item100 = target
       .prepare(
         `SELECT text, author_handle, seen_liked, seen_bookmarked,
-                external_urls_json, baseline
+                external_urls_json
          FROM x_items WHERE tweet_id = '100'`,
       )
       .get() as {
@@ -283,7 +283,6 @@ describe("x-saved BirdClaw ingest", () => {
       seen_liked: number;
       seen_bookmarked: number;
       external_urls_json: string;
-      baseline: number;
     };
     expect(item100.text).toBe("first text");
     expect(item100.author_handle).toBe("author_a");
@@ -292,16 +291,13 @@ describe("x-saved BirdClaw ingest", () => {
     expect(JSON.parse(item100.external_urls_json)).toEqual([
       "https://example.com/article",
     ]);
-    expect(item100.baseline).toBe(0);
-
     target
       .prepare(
         `UPDATE x_item_state
-         SET status = 'try', priority = 90, summary = 'test it',
-             note = 'keep this note', updated_at = ?
+         SET status = 'try', note = ?, updated_at = ?
          WHERE tweet_id = '100'`,
       )
-      .run("2026-08-28T00:05:00Z");
+      .run("keep this note", "2026-08-28T00:05:00Z");
     target.close();
 
     const sourceAgain = new Database(sourcePath);
@@ -320,13 +316,13 @@ describe("x-saved BirdClaw ingest", () => {
       account: "@tester",
       now: "2026-08-29T00:00:00Z",
     });
-    expect(second).toEqual({ sourceItems: 2, newItems: 0, updatedItems: 2 });
+    expect(second).toEqual({ newItems: 0 });
 
     const verify = openXSavedDb(targetPath);
     const sticky = verify
       .prepare(
         `SELECT i.text, i.seen_liked, i.seen_bookmarked,
-                s.status, s.priority, s.summary, s.note
+                s.status, s.note
          FROM x_items i
          JOIN x_item_state s ON s.tweet_id = i.tweet_id
          WHERE i.tweet_id = '100'`,
@@ -336,8 +332,6 @@ describe("x-saved BirdClaw ingest", () => {
       seen_liked: number;
       seen_bookmarked: number;
       status: string;
-      priority: number;
-      summary: string;
       note: string;
     };
     expect(sticky).toEqual({
@@ -345,40 +339,98 @@ describe("x-saved BirdClaw ingest", () => {
       seen_liked: 1,
       seen_bookmarked: 1,
       status: "try",
-      priority: 90,
-      summary: "test it",
       note: "keep this note",
     });
     verify.close();
   });
 
-  it("marks the initial archive as a one-time historical baseline", () => {
+  it("records the initial import completion only once", () => {
     const dir = makeTempDir();
     const targetPath = path.join(dir, "x-saved.sqlite");
     const db = openXSavedDb(targetPath);
-    db.prepare(
-      `INSERT INTO x_items (
-        tweet_id, text, author_handle, url, seen_liked, seen_bookmarked,
-        baseline, first_seen_at, last_seen_at
-      ) VALUES ('1', 'a', 'author', 'https://x.com/author/status/1', 1, 0, 0, ?, ?)`,
-    ).run("2026-08-28T00:00:00Z", "2026-08-28T00:00:00Z");
-    db.prepare(
-      `INSERT INTO x_item_state (tweet_id, status, updated_at)
-       VALUES ('1', 'inbox', ?)`,
-    ).run("2026-08-28T00:00:00Z");
 
-    expect(initializeHistoricalBaseline(db, "2026-08-28T00:01:00Z")).toEqual({
-      applied: true,
-      count: 1,
-    });
-    expect(initializeHistoricalBaseline(db, "2026-08-29T00:01:00Z")).toEqual({
-      applied: false,
-      count: 0,
-    });
+    expect(markInitialImportCompleted(db, "2026-08-28T00:01:00Z")).toBe(true);
+    expect(markInitialImportCompleted(db, "2026-08-29T00:01:00Z")).toBe(false);
     const row = db
-      .prepare("SELECT baseline FROM x_items WHERE tweet_id = '1'")
-      .get() as { baseline: number };
-    expect(row.baseline).toBe(1);
+      .prepare(
+        "SELECT value FROM x_meta WHERE key = 'initial_import_completed_at'",
+      )
+      .get() as { value: string };
+    expect(row.value).toBe("2026-08-28T00:01:00Z");
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM pragma_table_info('x_items') WHERE name = 'baseline'",
+        )
+        .get(),
+    ).toBeUndefined();
+    db.close();
+  });
+
+  it("migrates the old management schema to the compact schema", () => {
+    const dir = makeTempDir();
+    const targetPath = path.join(dir, "x-saved.sqlite");
+    const legacy = new Database(targetPath);
+    legacy.exec(`
+      CREATE TABLE x_items (
+        tweet_id TEXT PRIMARY KEY, text TEXT NOT NULL,
+        author_handle TEXT NOT NULL DEFAULT '', url TEXT NOT NULL,
+        tweet_created_at TEXT, external_urls_json TEXT NOT NULL DEFAULT '[]',
+        seen_liked INTEGER NOT NULL DEFAULT 0,
+        seen_bookmarked INTEGER NOT NULL DEFAULT 0,
+        baseline INTEGER NOT NULL DEFAULT 0,
+        first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
+      );
+      CREATE TABLE x_item_state (
+        tweet_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+        priority INTEGER, summary TEXT, note TEXT, processed_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL);
+      CREATE TABLE x_sync_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL, status TEXT NOT NULL,
+        bookmarks_fetched INTEGER, likes_fetched INTEGER,
+        new_items INTEGER NOT NULL DEFAULT 0,
+        updated_items INTEGER NOT NULL DEFAULT 0, error TEXT,
+        details_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE x_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE INDEX idx_x_items_baseline ON x_items(baseline, first_seen_at DESC);
+      INSERT INTO x_items (
+        tweet_id, text, author_handle, url, baseline, first_seen_at, last_seen_at
+      ) VALUES ('legacy', 'old', 'author', 'https://x.com/i/status/legacy', 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z');
+      INSERT INTO x_item_state (tweet_id, status, note, updated_at)
+      VALUES ('legacy', 'keep', 'preserve', '2026-08-27T00:00:00Z');
+      INSERT INTO x_meta (key, value)
+      VALUES ('baseline_initialized_at', '2026-08-28T00:00:00Z');
+    `);
+    legacy
+      .prepare(
+        "INSERT INTO x_sync_runs (started_at, completed_at, status, new_items) VALUES (?, ?, ?, ?)",
+      )
+      .run("2026-08-28T00:00:00Z", "2026-08-28T00:00:01Z", "success", 1);
+    legacy.pragma("user_version = 1");
+    legacy.close();
+
+    const db = openXSavedDb(targetPath);
+    const item = db
+      .prepare(
+        "SELECT status, note FROM x_item_state WHERE tweet_id = 'legacy'",
+      )
+      .get();
+    expect(item).toEqual({ status: "keep", note: "preserve" });
+    expect(
+      db
+        .prepare(
+          "SELECT value FROM x_meta WHERE key = 'initial_import_completed_at'",
+        )
+        .get(),
+    ).toEqual({ value: "2026-08-28T00:00:00Z" });
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'x_tags'").get(),
+    ).toBeUndefined();
+    expect(db.pragma("user_version", { simple: true })).toBe(2);
     db.close();
   });
 
@@ -390,36 +442,30 @@ describe("x-saved BirdClaw ingest", () => {
       startedAt: "2026-08-28T04:00:00Z",
       completedAt: "2026-08-28T04:00:10Z",
       status: "partial",
-      bookmarksFetched: 12,
-      likesFetched: null,
       newItems: 3,
-      updatedItems: 20,
       error: "likes: rate limited",
-      details: { likes: { ok: false } },
     });
     expect(id).toBe(1);
     const row = db
       .prepare(
-        `SELECT status, bookmarks_fetched, likes_fetched,
-                new_items, updated_items, error, details_json
+        `SELECT status, new_items, error
          FROM x_sync_runs WHERE id = ?`,
       )
       .get(id) as {
       status: string;
-      bookmarks_fetched: number;
-      likes_fetched: null;
       new_items: number;
-      updated_items: number;
       error: string;
-      details_json: string;
     };
     expect(row.status).toBe("partial");
-    expect(row.bookmarks_fetched).toBe(12);
-    expect(row.likes_fetched).toBeNull();
     expect(row.new_items).toBe(3);
-    expect(row.updated_items).toBe(20);
     expect(row.error).toBe("likes: rate limited");
-    expect(JSON.parse(row.details_json)).toEqual({ likes: { ok: false } });
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM pragma_table_info('x_sync_runs') WHERE name LIKE '%fetched%' OR name IN ('details_json', 'updated_items')",
+        )
+        .all(),
+    ).toEqual([]);
     db.close();
   });
 });

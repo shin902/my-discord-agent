@@ -8,12 +8,11 @@ import type { CronContext } from "../runner.js";
 import handler from "./birdclaw-sync.js";
 
 const tempDirs: string[] = [];
-const originalBirdclawBin = process.env.BIRDCLAW_BIN;
+const originalEnv = { ...process.env };
 
 afterEach(() => {
   vi.restoreAllMocks();
-  if (originalBirdclawBin === undefined) delete process.env.BIRDCLAW_BIN;
-  else process.env.BIRDCLAW_BIN = originalBirdclawBin;
+  process.env = { ...originalEnv };
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -30,15 +29,12 @@ describe("birdclaw-sync cron", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-sync-test-"));
     tempDirs.push(dir);
     process.env.BIRDCLAW_BIN = path.join(dir, "missing-birdclaw");
+    process.env.X_SAVED_DB_PATH = path.join(dir, "x-saved.sqlite");
+    process.env.X_SAVED_BACKUP_DIR = path.join(dir, "backups");
 
-    await expect(
-      handler({
-        settings: {
-          xSavedDbPath: path.join(dir, "x-saved.sqlite"),
-          backupPath: path.join(dir, "backups"),
-        },
-      } as CronContext),
-    ).rejects.toThrow("outside the live database directory");
+    await expect(handler({ settings: {} } as CronContext)).rejects.toThrow(
+      "outside the live database directory",
+    );
   });
 
   it("records operational failure without throwing into the generic retry loop", async () => {
@@ -48,13 +44,9 @@ describe("birdclaw-sync cron", () => {
     process.env.BIRDCLAW_BIN = path.join(dir, "missing-birdclaw");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const ctx = {
-      settings: {
-        birdclawDbPath: path.join(dir, "missing-birdclaw.sqlite"),
-        xSavedDbPath,
-        backupKeep: 1,
-      },
-    } as CronContext;
+    process.env.BIRDCLAW_DB_PATH = path.join(dir, "missing-birdclaw.sqlite");
+    process.env.X_SAVED_DB_PATH = xSavedDbPath;
+    const ctx = { settings: {} } as CronContext;
 
     await expect(handler(ctx)).resolves.toBeUndefined();
 
