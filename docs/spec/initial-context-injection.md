@@ -57,19 +57,19 @@ Started: 2026-08-28 07:00 JST (Fri)
 
 ### 保存先
 
-時刻アンカーは会話JSONLへ CustomMessage として追加しない。`data/sessions/<group>/<sessionId>.time-anchor` の sidecar に、既存の epoch-millisecond 形式で hour bucket を1件だけ保存する。
+時刻アンカーは `session-time-anchor` の CustomMessage として会話JSONLへ1件だけ追加する。`display: false` とし、通常のLLM送信用履歴からは除外して systemPrompt の組み立てにだけ使う。
 
-これにより、時刻機能の導入・再開で過去の user / assistant / tool 履歴そのものを変更しない。
+これにより、時刻機能の導入・再開で過去の user / assistant / tool 履歴本文そのものを変更しない。
 
 ### 新規セッション
 
-初回 `runAgentLoop()` で現在時刻を hour bucket に丸め、完全に書き込んだ一意な tmp を hard-link で sidecar へ公開する。公開時の `EEXIST` では既存の値を読み、以後は毎回同じ値を使って同一の systemPrompt 断片を再生成する。
+初回 `runAgentLoop()` で現在時刻を hour bucket に丸め、`session-time-anchor` をJSONLへ追記する。以後は毎回同じ値を読み、同一の systemPrompt 断片を再生成する。
 
 ### 既存セッションの移行
 
-sidecar がまだ無い既存セッションでは、保存済みJSONLメッセージの **最古 timestamp** を開始時刻として sidecar に一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
+`session-time-anchor` がまだ無い既存セッションでは、保存済みJSONLメッセージの **最古 timestamp** を開始時刻として一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
 
-同一セッションの初期化が競合して `EEXIST` になった場合は、先に作成された sidecar を正本として読み直す。
+同一セッションの初期化競合については、既存のJSONL追記と同じ保証範囲で扱う。
 
 ## `date` ツールとの責務分離
 
@@ -103,7 +103,7 @@ MEMORY.md / SELF.md はここへ重複注入せず、context-bootstrap 経由で
 
 JSONL内の bootstrap 系（`agents-snapshot` / `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。旧形式セッションの移行で bootstrap が JSONL 末尾に追記されても、移行ターンと次ターン以降で LLM-visible ordering が変わらないようにするため。
 
-時刻アンカーは sidecar のため、この並べ替え対象にはならない。
+時刻アンカーは systemPrompt にだけ使うため、この並べ替え対象にはならない。
 
 ## セッションモード別の考慮事項
 

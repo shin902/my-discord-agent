@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { formatSessionTimeAnchor } from "../time/context.js";
 import { defaultConvertToLlm } from "./agent-runner.js";
 
 const { AgentMock } = vi.hoisted(() => ({
@@ -34,19 +35,19 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
 vi.mock("../agent/session.js", () => ({
   loadMessages: vi.fn(),
   appendMessage: vi.fn(),
-  loadOrCreateSessionTimeAnchor: vi.fn().mockResolvedValue(1787868000000),
 }));
 
 const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
   "./agent-runner.js"
 );
-const { loadMessages, appendMessage, loadOrCreateSessionTimeAnchor } =
-  await import("../agent/session.js");
+const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
 function datePromptJST(): string {
-  return "## Session time anchor\n\nStarted: 2026-08-28 07:00 JST (Fri)";
+  return formatSessionTimeAnchor(
+    Math.floor(Date.now() / (60 * 60 * 1000)) * (60 * 60 * 1000),
+  );
 }
 
 function createMockAgent(deltas: string[], endMessage: unknown) {
@@ -75,7 +76,6 @@ describe("runAgentLoop", () => {
     lastAgentOptions = undefined;
     vi.mocked(loadMessages).mockResolvedValue([]);
     vi.mocked(appendMessage).mockResolvedValue(undefined);
-    vi.mocked(loadOrCreateSessionTimeAnchor).mockResolvedValue(1787868000000);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -109,10 +109,14 @@ describe("runAgentLoop", () => {
     );
 
     expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
-    expect(loadOrCreateSessionTimeAnchor).toHaveBeenCalledWith(
+    expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
-      expect.any(Number),
+      expect.objectContaining({
+        role: "custom",
+        customType: "session-time-anchor",
+        display: false,
+      }),
     );
     expect(lastAgentOptions).toMatchObject({
       initialState: {
@@ -127,6 +131,64 @@ describe("runAgentLoop", () => {
       role: "assistant",
       content: [{ type: "text", text: "Hello world" }],
     });
+  });
+
+  it("既存のsession-time-anchorを再利用し、fallbackを評価しない", async () => {
+    const anchor = {
+      role: "custom" as const,
+      customType: "session-time-anchor" as const,
+      content: "1787868000000",
+      display: false,
+    };
+    Object.defineProperty(anchor, "timestamp", {
+      get: () => {
+        throw new Error("fallback was evaluated");
+      },
+    });
+    vi.mocked(loadMessages).mockResolvedValue([anchor] as never);
+
+    await expect(
+      runAgentLoop("test-group", "session-1", "こんにちは", {}),
+    ).resolves.toBe("OK");
+    expect(appendMessage).not.toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({ customType: "session-time-anchor" }),
+    );
+  });
+
+  it("既存メッセージの最古timestampを移行時のanchorへ保存する", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      { role: "user", content: "old", timestamp: 1787868000123 },
+    ] as never);
+
+    await runAgentLoop("test-group", "session-1", "こんにちは", {});
+
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        customType: "session-time-anchor",
+        content: "1787868000000",
+        display: false,
+      }),
+    );
+  });
+
+  it("不正なsession-time-anchorは明示的に拒否する", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      {
+        role: "custom",
+        customType: "session-time-anchor",
+        content: "invalid",
+        display: false,
+      },
+    ] as never);
+
+    await expect(
+      runAgentLoop("test-group", "session-1", "こんにちは", {}),
+    ).rejects.toThrow("セッション時刻アンカーが不正です");
+    expect(appendMessage).not.toHaveBeenCalled();
   });
 
   it("request-scoped instructionsをsystem promptだけに追加する", async () => {
@@ -415,7 +477,10 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          (call[2] as { role: string }).role === "custom",
+          (call[2] as { role: string; customType?: string }).role ===
+            "custom" &&
+          (call[2] as { role: string; customType?: string }).customType !==
+            "session-time-anchor",
       );
     expect(promptCalls).toHaveLength(1);
     expect(promptCalls[0][2]).toMatchObject({
@@ -424,7 +489,7 @@ describe("runAgentLoop", () => {
     });
   });
 
-  it("新規セッションで AGENTS.md も MEMORY.md もない場合は custom メッセージを追加しない", async () => {
+  it("新規セッションで AGENTS.md も MEMORY.md もない場合は bootstrap custom メッセージを追加しない", async () => {
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
       content: [{ type: "text", text: "OK" }],
@@ -443,7 +508,8 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          call[2].role === "custom",
+          call[2].role === "custom" &&
+          call[2].customType !== "session-time-anchor",
       );
     expect(bootstrapCalls).toHaveLength(0);
 
@@ -527,7 +593,10 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          (call[2] as { role: string }).role === "custom",
+          (call[2] as { role: string; customType?: string }).role ===
+            "custom" &&
+          (call[2] as { role: string; customType?: string }).customType !==
+            "session-time-anchor",
       );
     expect(promptAppends).toHaveLength(0);
 
@@ -576,7 +645,10 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "role" in call[2] &&
-          (call[2] as { role: string }).role === "custom",
+          (call[2] as { role: string; customType?: string }).role ===
+            "custom" &&
+          (call[2] as { role: string; customType?: string }).customType !==
+            "session-time-anchor",
       );
     expect(promptAppends).toHaveLength(0);
   });
@@ -1211,7 +1283,6 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
     vi.clearAllMocks();
     vi.mocked(loadMessages).mockResolvedValue([]);
     vi.mocked(appendMessage).mockResolvedValue(undefined);
-    vi.mocked(loadOrCreateSessionTimeAnchor).mockResolvedValue(1787868000000);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -1283,7 +1354,6 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     vi.clearAllMocks();
     vi.mocked(loadMessages).mockResolvedValue([]);
     vi.mocked(appendMessage).mockResolvedValue(undefined);
-    vi.mocked(loadOrCreateSessionTimeAnchor).mockResolvedValue(1787868000000);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -1417,6 +1487,13 @@ describe("defaultConvertToLlm", () => {
     content: "## エージェント設定\n\nテスト",
     timestamp: 500,
   };
+  const sessionTimeAnchorMsg = {
+    role: "custom" as const,
+    customType: "session-time-anchor" as const,
+    content: "1787868000000",
+    display: false,
+    timestamp: 1787868000000,
+  };
   const memoryBootstrapMsg = {
     role: "custom" as const,
     customType: "memory-bootstrap" as const,
@@ -1447,6 +1524,11 @@ describe("defaultConvertToLlm", () => {
 
   it("agents-snapshot メッセージは LLM 送信用メッセージから常に除外する", () => {
     const result = defaultConvertToLlm([agentsSnapshotMsg] as never);
+    expect(result).toHaveLength(0);
+  });
+
+  it("session-time-anchor メッセージは LLM 送信用メッセージから常に除外する", () => {
+    const result = defaultConvertToLlm([sessionTimeAnchorMsg] as never);
     expect(result).toHaveLength(0);
   });
 

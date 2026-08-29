@@ -19,11 +19,7 @@ import {
 import { z } from "zod";
 
 import { resolveModel } from "../agent/model.js";
-import {
-  appendMessage,
-  loadMessages,
-  loadOrCreateSessionTimeAnchor,
-} from "../agent/session.js";
+import { appendMessage, loadMessages } from "../agent/session.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
 import {
@@ -53,13 +49,14 @@ import { isTransientError } from "../utils/error.js";
 //   ユーザーの生発言（`./command スキル名 ...`）とは別メッセージとして保存することで、
 //   JSONL履歴上でも「ユーザーが何を打ったか」と「LLMに渡った指示内容」を区別できるようにする。
 //
-// セッション時刻アンカーは会話JSONLを書き換えないため、CustomMessageではなく
-// `<sessionId>.time-anchor` sidecarに固定化し、systemPromptからだけ参照する。
+// セッション時刻アンカーも CustomMessage として JSONL に固定化するが、
+// LLM には渡さず systemPrompt からだけ参照する。
 //
 // display フラグについて: 標準 CustomMessage の必須フィールドで、pi-coding-agent 系 TUI が
 // チャット表示の可否判定に使う。LLM 送信可否（defaultConvertToLlm 側で制御）とは別概念。
 // うちはその TUI を使わないため実質無効だが、いずれも裏方メッセージなので意味的に false 固定。
 const AGENTS_SNAPSHOT_TYPE = "agents-snapshot";
+const SESSION_TIME_ANCHOR_TYPE = "session-time-anchor";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 const SELF_BOOTSTRAP_TYPE = "self-bootstrap";
 const SKILL_INVOCATION_TYPE = "skill-invocation";
@@ -69,6 +66,10 @@ const SKILL_INVOCATION_TYPE = "skill-invocation";
 // [object Object] 化しないよう型上も string に絞る
 type AgentsSnapshotMessage = Omit<CustomMessage, "content"> & {
   customType: typeof AGENTS_SNAPSHOT_TYPE;
+  content: string;
+};
+type SessionTimeAnchorMessage = Omit<CustomMessage, "content"> & {
+  customType: typeof SESSION_TIME_ANCHOR_TYPE;
   content: string;
 };
 // MEMORY.md / SELF.md 共通の context-bootstrap メッセージ型（詳細は ContextBootstrapChannel 定義を参照）
@@ -186,6 +187,12 @@ function isAgentsSnapshotMessage(
   return getCustomType(msg) === AGENTS_SNAPSHOT_TYPE;
 }
 
+function isSessionTimeAnchorMessage(
+  msg: AgentMessage,
+): msg is SessionTimeAnchorMessage {
+  return getCustomType(msg) === SESSION_TIME_ANCHOR_TYPE;
+}
+
 function isSkillInvocationMessage(
   msg: AgentMessage,
 ): msg is SkillInvocationMessage {
@@ -255,6 +262,55 @@ function findEarliestMessageTimestamp(
     if (earliest === undefined || timestamp < earliest) earliest = timestamp;
   }
   return earliest;
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+const MIN_TIME_ANCHOR_MS = 946_684_800_000; // 2000-01-01T00:00:00Z
+
+function canonicalHour(timestamp: number): number {
+  return Math.floor(timestamp / HOUR_MS) * HOUR_MS;
+}
+
+function parseSessionTimeAnchor(message: SessionTimeAnchorMessage): number {
+  const serialized = message.content.trim();
+  const timestamp = Number(serialized);
+  if (
+    String(timestamp) !== serialized ||
+    !Number.isSafeInteger(timestamp) ||
+    timestamp < MIN_TIME_ANCHOR_MS ||
+    !Number.isFinite(new Date(timestamp).getTime())
+  ) {
+    throw new Error("セッション時刻アンカーが不正です");
+  }
+  return canonicalHour(timestamp);
+}
+
+async function loadOrCreateSessionTimeAnchor(
+  groupName: string,
+  sessionId: string,
+  messages: AgentMessage[],
+  fallbackTimestamp: () => number,
+): Promise<number> {
+  const existing = messages.find(isSessionTimeAnchorMessage);
+  if (existing) return parseSessionTimeAnchor(existing);
+
+  const fallback = fallbackTimestamp();
+  const candidate = canonicalHour(
+    Number.isSafeInteger(fallback) &&
+      fallback >= MIN_TIME_ANCHOR_MS &&
+      Number.isFinite(new Date(fallback).getTime())
+      ? fallback
+      : Date.now(),
+  );
+  const anchorMessage: SessionTimeAnchorMessage = {
+    role: "custom",
+    customType: SESSION_TIME_ANCHOR_TYPE,
+    content: `${candidate}`,
+    display: false,
+    timestamp: candidate,
+  };
+  await appendMessage(groupName, sessionId, anchorMessage);
+  return candidate;
 }
 
 function formatBootstrapSection(
@@ -358,7 +414,7 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
 }
 
 /** AgentMessage[] を LLM 送信用 Message[] に変換する。
- * - agentsSnapshot: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
+ * - agentsSnapshot / session-time-anchor: systemPrompt の組み立てにのみ使うため、チャット履歴からは常に除外する。
  * - contextBootstrap（memoryBootstrap / selfBootstrap）: customType ごとに最初の1件のみ
  *   user として展開し、残りは除外する（セッションあたり1件しか書き込まれないため、
  *   実質的にフィルタが発動するケースはない）。
@@ -369,7 +425,8 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   const bootstrapSeen = new Set<string>();
   return messages.flatMap((msg) => {
-    if (isAgentsSnapshotMessage(msg)) return [];
+    if (isAgentsSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg))
+      return [];
     const customType = getCustomType(msg);
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];
@@ -401,12 +458,11 @@ export async function runAgentLoop(
   systemPromptAppend?: string,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
-  const fallbackSessionTimestamp =
-    findEarliestMessageTimestamp(rawMessages) ?? Date.now();
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
     groupName,
     sessionId,
-    fallbackSessionTimestamp,
+    rawMessages,
+    () => findEarliestMessageTimestamp(rawMessages) ?? Date.now(),
   );
   const sessionTimeAnchorContent = formatSessionTimeAnchor(
     sessionAnchorTimestamp,
@@ -415,6 +471,7 @@ export async function runAgentLoop(
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
   // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
   let messages = rawMessages.filter((m) => {
+    if (isSessionTimeAnchorMessage(m)) return false;
     if (!isAssistantMessage(m)) return true;
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });

@@ -2,9 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
-  writeFile: vi.fn(),
-  link: vi.fn(),
-  unlink: vi.fn(),
   appendFile: vi.fn(),
   mkdir: vi.fn(),
   chmod: vi.fn(),
@@ -14,16 +11,11 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
 }));
 
-const { readFile, writeFile, link, unlink, appendFile, mkdir, chmod } =
-  await import("node:fs/promises");
+const { readFile, appendFile, mkdir, chmod } = await import("node:fs/promises");
 const { existsSync } = await import("node:fs");
-const { loadMessages, appendMessage, loadOrCreateSessionTimeAnchor } =
-  await import("./session.js");
+const { loadMessages, appendMessage } = await import("./session.js");
 
 const mockReadFile = vi.mocked(readFile);
-const mockWriteFile = vi.mocked(writeFile);
-const mockLink = vi.mocked(link);
-const mockUnlink = vi.mocked(unlink);
 const mockAppendFile = vi.mocked(appendFile);
 const mockMkdir = vi.mocked(mkdir);
 const mockChmod = vi.mocked(chmod);
@@ -129,127 +121,6 @@ describe("loadMessages", () => {
   it("空のセッションIDはエラー", async () => {
     await expect(loadMessages("group1", "")).rejects.toThrow(
       "不正なセッションID",
-    );
-  });
-});
-
-describe("loadOrCreateSessionTimeAnchor", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockMkdir.mockResolvedValue(undefined);
-    mockChmod.mockResolvedValue(undefined);
-    mockWriteFile.mockResolvedValue(undefined);
-    mockLink.mockResolvedValue(undefined);
-    mockUnlink.mockResolvedValue(undefined);
-  });
-
-  it("valid sidecar is reused at canonical hour granularity", async () => {
-    mockReadFile.mockResolvedValue("1787868000123\n");
-
-    const result = await loadOrCreateSessionTimeAnchor(
-      "group1",
-      "session-a",
-      999999,
-    );
-
-    expect(result).toBe(1787868000000);
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(mockLink).not.toHaveBeenCalled();
-  });
-
-  it("missing sidecar is published from a complete tmp without rename", async () => {
-    mockReadFile.mockRejectedValue(
-      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-    );
-
-    const result = await loadOrCreateSessionTimeAnchor(
-      "group1",
-      "session-a",
-      1787868000123,
-    );
-
-    expect(result).toBe(1787868000000);
-    const temporaryFile = String(mockWriteFile.mock.calls[0]?.[0]);
-    expect(temporaryFile).toMatch(/session-a\.time-anchor\..+\.tmp$/);
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      temporaryFile,
-      "1787868000000\n",
-      { encoding: "utf-8", mode: 0o666, flag: "wx" },
-    );
-    expect(mockLink).toHaveBeenCalledWith(
-      temporaryFile,
-      expect.stringMatching(/session-a\.time-anchor$/),
-    );
-    expect(mockUnlink).toHaveBeenCalledWith(temporaryFile);
-  });
-
-  it("initialization race reads the winner after EEXIST", async () => {
-    mockReadFile
-      .mockRejectedValueOnce(
-        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-      )
-      .mockResolvedValueOnce("1787871600123\n");
-    mockLink.mockRejectedValue(
-      Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
-    );
-
-    await expect(
-      loadOrCreateSessionTimeAnchor("group1", "session-a", 1787868000000),
-    ).resolves.toBe(1787871600000);
-    expect(mockUnlink).toHaveBeenCalledWith(expect.stringMatching(/\.tmp$/));
-  });
-
-  it("boundary fallback remains valid when the sidecar is reloaded", async () => {
-    mockReadFile
-      .mockRejectedValueOnce(
-        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-      )
-      .mockResolvedValueOnce("999997200000\n");
-
-    await expect(
-      loadOrCreateSessionTimeAnchor("group1", "session-a", 1_000_000_000_000),
-    ).resolves.toBe(999_997_200_000);
-    await expect(
-      loadOrCreateSessionTimeAnchor("group1", "session-a"),
-    ).resolves.toBe(999_997_200_000);
-  });
-
-  it("invalid sidecar fails clearly without repair machinery", async () => {
-    mockReadFile.mockResolvedValue("1787868\n");
-
-    await expect(
-      loadOrCreateSessionTimeAnchor("group1", "session-a"),
-    ).rejects.toThrow("時刻sidecarが不正です");
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(mockLink).not.toHaveBeenCalled();
-  });
-
-  it("tmp is cleaned when writing the candidate fails", async () => {
-    const error = new Error("write failed");
-    mockReadFile.mockRejectedValue(
-      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-    );
-    mockWriteFile.mockRejectedValue(error);
-
-    await expect(
-      loadOrCreateSessionTimeAnchor("group1", "session-a"),
-    ).rejects.toBe(error);
-    expect(mockUnlink).toHaveBeenCalledWith(expect.stringMatching(/\.tmp$/));
-  });
-
-  it("invalid fallback uses the current hour", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(1787868000123);
-    mockReadFile.mockRejectedValue(
-      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-    );
-
-    await expect(
-      loadOrCreateSessionTimeAnchor("group1", "session-a", 444444),
-    ).resolves.toBe(1787868000000);
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.any(String),
-      "1787868000000\n",
-      expect.objectContaining({ flag: "wx" }),
     );
   });
 });
