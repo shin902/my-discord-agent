@@ -30,6 +30,14 @@ export interface IngestResult {
   updatedItems: number;
 }
 
+/** A failure reading BirdClaw is an operational source failure, not a target DB failure. */
+export class BirdclawSourceError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "BirdclawSourceError";
+  }
+}
+
 export interface SyncRunRecord {
   startedAt: string;
   completedAt: string;
@@ -81,6 +89,17 @@ export function resolveBirdclawDbPath(override?: string): string {
     ? path.resolve(expandHome(process.env.BIRDCLAW_HOME))
     : path.join(os.homedir(), ".birdclaw");
   return path.join(birdclawHome, "birdclaw.sqlite");
+}
+
+export function resolveXSavedBackupDir(override?: string): string {
+  const configured = override ?? process.env.X_SAVED_BACKUP_DIR;
+  if (configured) {
+    const expanded = expandHome(configured);
+    return path.isAbsolute(expanded)
+      ? path.resolve(expanded)
+      : path.resolve(ROOT, expanded);
+  }
+  return path.join(ROOT, "data/x-saved-backups");
 }
 
 function ensureSchema(db: Database.Database): void {
@@ -313,17 +332,28 @@ export function ingestBirdclawSavedItems(options?: {
 }): IngestResult {
   const now = options?.now ?? new Date().toISOString();
   const sourcePath = resolveBirdclawDbPath(options?.birdclawDbPath);
-  const sourceDb = new Database(sourcePath, {
-    readonly: true,
-    fileMustExist: true,
-  });
+  let sourceDb: Database.Database | undefined;
+  let rows: BirdclawRow[];
+  try {
+    sourceDb = new Database(sourcePath, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    rows = loadBirdclawRows(sourceDb, options?.account);
+  } catch (error) {
+    throw new BirdclawSourceError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  } finally {
+    sourceDb?.close();
+  }
+
   const ownsTarget = options?.xSavedDb === undefined;
   const targetDb =
     options?.xSavedDb ??
     openXSavedDb(resolveXSavedDbPath(options?.xSavedDbPath));
-
   try {
-    const rows = loadBirdclawRows(sourceDb, options?.account);
     const existingRows = targetDb
       .prepare("SELECT tweet_id FROM x_items")
       .all() as ExistingItemRow[];
@@ -331,29 +361,12 @@ export function ingestBirdclawSavedItems(options?: {
 
     const upsertItem = targetDb.prepare(`
       INSERT INTO x_items (
-        tweet_id,
-        text,
-        author_handle,
-        url,
-        tweet_created_at,
-        external_urls_json,
-        seen_liked,
-        seen_bookmarked,
-        baseline,
-        first_seen_at,
-        last_seen_at
+        tweet_id, text, author_handle, url, tweet_created_at,
+        external_urls_json, seen_liked, seen_bookmarked, baseline,
+        first_seen_at, last_seen_at
       ) VALUES (
-        @tweetId,
-        @text,
-        @authorHandle,
-        @url,
-        @tweetCreatedAt,
-        @externalUrlsJson,
-        @seenLiked,
-        @seenBookmarked,
-        0,
-        @now,
-        @now
+        @tweetId, @text, @authorHandle, @url, @tweetCreatedAt,
+        @externalUrlsJson, @seenLiked, @seenBookmarked, 0, @now, @now
       )
       ON CONFLICT(tweet_id) DO UPDATE SET
         text = excluded.text,
@@ -400,13 +413,8 @@ export function ingestBirdclawSavedItems(options?: {
     });
     write();
 
-    return {
-      sourceItems: rows.length,
-      newItems,
-      updatedItems,
-    };
+    return { sourceItems: rows.length, newItems, updatedItems };
   } finally {
-    sourceDb.close();
     if (ownsTarget) targetDb.close();
   }
 }
@@ -465,12 +473,23 @@ export function recordSyncRun(
 export async function backupXSavedDatabase(
   dbPath = resolveXSavedDbPath(),
   keep = 14,
+  backupDirOverride?: string,
 ): Promise<string> {
   if (!Number.isInteger(keep) || keep < 1) {
     throw new Error("x-saved backup retention must be a positive integer");
   }
   const resolved = path.resolve(dbPath);
-  const backupDir = path.join(path.dirname(resolved), "backups");
+  const resolvedBackupDir = resolveXSavedBackupDir(backupDirOverride);
+  const liveDir = path.dirname(resolved);
+  if (
+    resolvedBackupDir === liveDir ||
+    resolvedBackupDir.startsWith(`${liveDir}${path.sep}`)
+  ) {
+    throw new Error(
+      "x-saved backup directory must be outside the live database directory",
+    );
+  }
+  const backupDir = resolvedBackupDir;
   await mkdir(backupDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const destination = path.join(backupDir, `${stamp}.sqlite`);

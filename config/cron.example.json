@@ -85,7 +85,8 @@
       "mode": "xurl",
       "limit": 100,
       "maxPages": 3,
-      "backupKeep": 14
+      "backupKeep": 14,
+      "backupPath": "data/x-saved-backups"
     }
   },
   {

@@ -3,7 +3,7 @@ import { runXSavedSync } from "../../integrations/x-saved/sync.js";
 import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 
-const SettingsSchema = z.object({
+const SettingsSchema = z.strictObject({
   mode: z.enum(["auto", "xurl", "bird"]).default("xurl"),
   limit: z.number().int().positive().max(1000).default(100),
   maxPages: z.number().int().positive().max(100).default(3),
@@ -11,6 +11,7 @@ const SettingsSchema = z.object({
   birdclawDbPath: z.string().min(1).optional(),
   xSavedDbPath: z.string().min(1).optional(),
   backupKeep: z.number().int().positive().max(365).default(14),
+  backupPath: z.string().min(1).optional(),
 });
 
 export default async function handler(ctx: CronContext): Promise<void> {
@@ -23,29 +24,20 @@ export default async function handler(ctx: CronContext): Promise<void> {
     );
   }
 
-  try {
-    const result = await runXSavedSync(settings);
-    const summary = {
-      status: result.status,
-      bookmarksFetched: result.bookmarksFetched,
-      likesFetched: result.likesFetched,
-      sourceItems: result.sourceItems,
-      newItems: result.newItems,
-      updatedItems: result.updatedItems,
-      backupPath: result.backupPath,
-      errors: result.errors,
-    };
-    if (result.status === "success") {
-      console.log("[birdclaw-sync] completed", summary);
-    } else {
-      console.error("[birdclaw-sync] completed with errors", summary);
-    }
-  } catch (error) {
-    // Do not throw operational BirdClaw/X failures into the generic cron retry
-    // loop. The next scheduled run is the recovery boundary for this source.
-    console.error(
-      "[birdclaw-sync] failed; waiting for the next scheduled run:",
-      error,
-    );
+  const result = await runXSavedSync(settings);
+  const summary = {
+    status: result.status,
+    bookmarksFetched: result.bookmarksFetched,
+    likesFetched: result.likesFetched,
+    sourceItems: result.sourceItems,
+    newItems: result.newItems,
+    updatedItems: result.updatedItems,
+    backupPath: result.backupPath,
+    errors: result.errors,
+  };
+  if (result.status === "success") {
+    console.log("[birdclaw-sync] completed", summary);
+  } else {
+    console.error("[birdclaw-sync] completed with errors", summary);
   }
 }

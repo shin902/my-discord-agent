@@ -53,9 +53,10 @@ export BIRDCLAW_BIN=/opt/homebrew/bin/birdclaw
 export BIRDCLAW_HOME=$HOME/.birdclaw
 export BIRDCLAW_DB_PATH=$HOME/.birdclaw/birdclaw.sqlite
 export X_SAVED_DB_PATH=/path/to/my-discord-agent/data/x-saved/x-saved.sqlite
+export X_SAVED_BACKUP_DIR=/var/lib/my-discord-agent/x-saved-backups
 ```
 
-`BIRDCLAW_DISABLE_LIVE_WRITES=1` is forced by the integration when invoking BirdClaw.
+`BIRDCLAW_DISABLE_LIVE_WRITES=1` is forced by the integration when invoking BirdClaw. Backups are kept outside the live database directory by default (`data/x-saved-backups`), so they are not included in the `data/x-saved` sandbox mount. Set `X_SAVED_BACKUP_DIR` (or the cron `settings.backupPath`) to a host-only directory when using a different layout.
 
 ## 2. Import the historical archive once
 
@@ -95,12 +96,13 @@ Enable a handler job based on the `x-saved-sync` example in `config/cron.example
     "mode": "xurl",
     "limit": 100,
     "maxPages": 3,
-    "backupKeep": 14
+    "backupKeep": 14,
+    "backupPath": "data/x-saved-backups"
   }
 }
 ```
 
-The handler runs bookmarks and likes independently with `--early-stop --refresh`, ingests whatever BirdClaw has locally, records the result in `x_sync_runs`, and keeps rolling SQLite backups under `data/x-saved/backups/`.
+The handler runs bookmarks and likes independently with `--early-stop --refresh`, ingests whatever BirdClaw has locally, records the result in `x_sync_runs`, and keeps rolling SQLite backups under the host-only `data/x-saved-backups/` directory by default. The backup directory must be outside the live database directory and is never mounted into the agent sandbox.
 
 Operational X/BirdClaw failures are logged and recorded but are not thrown into the generic once-per-minute cron retry loop. Recovery happens on the next scheduled run. Invalid static cron settings still fail as a non-retryable configuration error.
 
