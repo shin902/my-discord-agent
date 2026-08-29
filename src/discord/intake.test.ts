@@ -218,7 +218,10 @@ describe("ingestDiscordMessage", () => {
     );
 
     expect(mocks.findGroup).toHaveBeenCalledWith("root-1");
-    expect(result).toMatchObject({ status: "ignored", cursorScope: "thread-1" });
+    expect(result).toMatchObject({
+      status: "ignored",
+      cursorScope: "thread-1",
+    });
     expect(
       repo.findByIdempotencyKey("discord-message:thread-message-no-mention"),
     ).toBeUndefined();
