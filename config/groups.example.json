@@ -13,6 +13,7 @@
       {
         "channelId": "YOUR_RESTRICTED_CHANNEL_ID",
         "sessionMode": "shared",
+        "requiredMention": true,
         "tools": ["read"],
         "skills": [],
         "mounts": []

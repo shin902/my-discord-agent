@@ -30,7 +30,7 @@ export function registerHandlers(
   });
 
   client.on(Events.MessageCreate, (message: Message) =>
-    handleLiveDiscordMessage(message).catch((error) =>
+    handleLiveDiscordMessage(message, discordBotId).catch((error) =>
       console.error("[handler] メッセージ取り込みに失敗しました:", error),
     ),
   );

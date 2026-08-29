@@ -49,6 +49,7 @@ function makeMessage(options: {
   parentId?: string | null;
   isBot?: boolean;
   webhookId?: string | null;
+  mentionsBot?: boolean;
   thread?: { id: string } | null;
   fetchedThread?: { id: string } | null;
   startThread?: ReturnType<typeof vi.fn>;
@@ -58,6 +59,12 @@ function makeMessage(options: {
     channelId: options.channelId ?? "root-1",
     author: { bot: options.isBot ?? false },
     webhookId: options.webhookId ?? null,
+    client: { user: { id: "bot-user" } },
+    mentions: {
+      users: new Map(
+        options.mentionsBot ? [["bot-user", { id: "bot-user" }]] : [],
+      ),
+    },
     channel: {
       isThread: () => options.isThread ?? false,
       parentId: options.parentId ?? null,
@@ -146,6 +153,103 @@ describe("ingestDiscordMessage", () => {
         mounts: [{ host: "channel", container: "/channel" }],
       },
     });
+  });
+
+  it("liveではgroup担当外のDiscord Bot clientを無視する", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group", bot: "secondary" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        requiredMention: true,
+      },
+    });
+
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "message-wrong-owner", mentionsBot: true }),
+      {
+        source: "live",
+        replyOnFailure: false,
+        discordBotId: "personal",
+      },
+    );
+
+    expect(result).toMatchObject({ status: "ignored", cursorScope: "root-1" });
+    expect(
+      repo.findByIdempotencyKey("discord-message:message-wrong-owner"),
+    ).toBeUndefined();
+  });
+
+  it("requiredMention=trueでは親チャンネルの非mentionメッセージを無視する", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        requiredMention: true,
+      },
+    });
+
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "message-no-mention" }),
+      { source: "live", replyOnFailure: false },
+    );
+
+    expect(result).toMatchObject({ status: "ignored", cursorScope: "root-1" });
+    expect(
+      repo.findByIdempotencyKey("discord-message:message-no-mention"),
+    ).toBeUndefined();
+  });
+
+  it("requiredMention=trueでもBot mentionがあれば親チャンネルでenqueueする", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        requiredMention: true,
+      },
+    });
+
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "message-mentioned", mentionsBot: true }),
+      { source: "live", replyOnFailure: false },
+    );
+
+    expect(result).toMatchObject({ status: "enqueued", cursorScope: "root-1" });
+    expect(
+      repo.findByIdempotencyKey("discord-message:message-mentioned"),
+    ).toBeDefined();
+  });
+
+  it("requiredMentionはthreadでも親チャンネル設定を使う", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "thread",
+        requiredMention: true,
+      },
+    });
+
+    const result = await ingestDiscordMessage(
+      makeMessage({
+        id: "thread-message-no-mention",
+        channelId: "thread-1",
+        isThread: true,
+        parentId: "root-1",
+      }),
+      { source: "live", replyOnFailure: false },
+    );
+
+    expect(mocks.findGroup).toHaveBeenCalledWith("root-1");
+    expect(result).toMatchObject({
+      status: "ignored",
+      cursorScope: "thread-1",
+    });
+    expect(
+      repo.findByIdempotencyKey("discord-message:thread-message-no-mention"),
+    ).toBeUndefined();
   });
 
   it.each([
