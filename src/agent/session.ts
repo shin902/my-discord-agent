@@ -115,12 +115,13 @@ async function readTimeAnchorState(file: string): Promise<TimeAnchorState> {
   }
 }
 
-async function repairInvalidTimeAnchor(
+async function repairTimeAnchor(
   file: string,
   temporaryFile: string,
 ): Promise<number> {
-  // The fixed claim path is a hard link to a completely written candidate.
-  // Publishing that link lets an abandoned repair be recovered safely.
+  // The fixed claim is a hard link to a complete candidate. Every publisher
+  // uses that inode, so concurrent and recovered publishers cannot introduce a
+  // different value for this session.
   const claimPath = `${file}.repair`;
   let ownsClaim = false;
   try {
@@ -136,18 +137,25 @@ async function repairInvalidTimeAnchor(
       const current = await readTimeAnchorState(file);
       if (current.kind === "valid") return current.timestamp;
 
-      // An active owner's claim and an abandoned claim are interchangeable:
-      // both point at a validated, complete candidate.
       const candidate = await readTimeAnchorState(claimPath);
       if (candidate.kind === "valid") {
+        // Never rename the reusable claim path itself. A unique hard-link
+        // snapshot pins this exact inode while the atomic publication occurs;
+        // an abandoned claim remains available for later crash recovery.
+        const snapshotPath = `${claimPath}.${process.pid}.${randomUUID()}.snapshot`;
         try {
-          // Only the caller that renames the claim publishes the candidate.
-          // If another caller wins first, the next final read returns its value.
-          await rename(claimPath, file);
-          return candidate.timestamp;
+          await link(claimPath, snapshotPath);
+          const beforePublish = await readTimeAnchorState(file);
+          if (beforePublish.kind === "valid") return beforePublish.timestamp;
+
+          await rename(snapshotPath, file);
+          const winner = await readTimeAnchorState(file);
+          if (winner.kind === "valid") return winner.timestamp;
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
           if (code !== "ENOENT" && code !== "EEXIST") throw err;
+        } finally {
+          await unlink(snapshotPath).catch(() => {});
         }
       }
 
@@ -193,26 +201,10 @@ export async function loadOrCreateSessionTimeAnchor(
   });
 
   try {
-    if (initialState.kind === "invalid") {
-      return await repairInvalidTimeAnchor(file, temporaryFile);
-    }
-
-    try {
-      // hard link は同一ディレクトリ内でno-clobberに公開できる。
-      // publish前にtmpへのwriteが完了しているため、final名からpartial内容は見えない。
-      await link(temporaryFile, file);
-      return timestamp;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-
-      // 同一セッションの初期化が競合した場合は、先に公開された有効値を正本にする。
-      const winner = await readTimeAnchorState(file);
-      if (winner.kind === "valid") return winner.timestamp;
-
-      // rolling update等で旧実装が不完全なfinalを先に作った場合も、
-      // claim経由で同じrepair protocolへ入る。
-      return await repairInvalidTimeAnchor(file, temporaryFile);
-    }
+    // Missing entries, concurrent initialization, and rolling-upgrade partial
+    // entries all use the same claim protocol, so no caller can publish a
+    // different candidate while a repair is in progress.
+    return await repairTimeAnchor(file, temporaryFile);
   } finally {
     // rename済みならENOENT、link済みならtmp名だけを削除する。cleanup失敗でsessionを壊さない。
     await unlink(temporaryFile).catch(() => {});

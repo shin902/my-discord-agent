@@ -170,9 +170,16 @@ describe("loadOrCreateSessionTimeAnchor", () => {
   ])("不正なfallback (%s)はDate.now()へ置換し、保存値を再利用できる", async (fallback) => {
     const now = 1787868000123;
     vi.spyOn(Date, "now").mockReturnValue(now);
-    mockReadFile.mockRejectedValue(
-      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-    );
+    let published = false;
+    mockReadFile.mockImplementation(async (file) => {
+      const filename = String(file);
+      if (filename.endsWith(".repair")) return `${now}\n`;
+      if (published) return `${now}\n`;
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+    mockRename.mockImplementation(async () => {
+      published = true;
+    });
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
@@ -187,16 +194,22 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       flag: "wx",
     });
 
-    mockReadFile.mockResolvedValue(`${now}\n`);
     await expect(
       loadOrCreateSessionTimeAnchor("group1", "session-a", 444444),
     ).resolves.toBe(now);
   });
 
   it("sidecarがなければ完成済みtmpをno-clobberで原子的に公開する", async () => {
-    mockReadFile.mockRejectedValue(
-      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-    );
+    let published = false;
+    mockReadFile.mockImplementation(async (file) => {
+      const filename = String(file);
+      if (filename.endsWith(".repair")) return "1787868000000\n";
+      if (published) return "1787868000000\n";
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+    mockRename.mockImplementation(async () => {
+      published = true;
+    });
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
@@ -215,6 +228,14 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     );
     expect(mockLink).toHaveBeenCalledWith(
       temporaryFile,
+      expect.stringMatching(/session-a\.time-anchor\.repair$/),
+    );
+    expect(mockLink).toHaveBeenCalledWith(
+      expect.stringMatching(/session-a\.time-anchor\.repair$/),
+      expect.stringMatching(/\.snapshot$/),
+    );
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringMatching(/\.snapshot$/),
       expect.stringMatching(/session-a\.time-anchor$/),
     );
     expect(mockUnlink).toHaveBeenCalledWith(temporaryFile);
@@ -247,9 +268,15 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     "17878680000000\n",
     "999999999999\n",
   ])("不完全または不正なsidecar (%s)は原子的に自己修復する", async (content) => {
-    mockReadFile.mockImplementation(async (file) =>
-      String(file).endsWith(".repair") ? "1787868000000\n" : content,
-    );
+    let published = false;
+    mockReadFile.mockImplementation(async (file) => {
+      const filename = String(file);
+      if (filename.endsWith(".repair")) return "1787868000000\n";
+      return published ? "1787868000000\n" : content;
+    });
+    mockRename.mockImplementation(async () => {
+      published = true;
+    });
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
@@ -264,22 +291,28 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       expect.stringMatching(/session-a\.time-anchor\.repair$/),
     );
     expect(mockRename).toHaveBeenCalledWith(
-      expect.stringMatching(/session-a\.time-anchor\.repair$/),
+      expect.stringMatching(/\.snapshot$/),
       expect.stringMatching(/session-a\.time-anchor$/),
     );
     expect(mockUnlink).toHaveBeenCalledWith(
-      expect.stringMatching(/session-a\.time-anchor\.repair$/),
+      expect.stringMatching(/\.snapshot$/),
     );
   });
 
   it("abandonedされたvalid claimは不正なfinalの修復に再利用する", async () => {
+    let published = false;
     mockReadFile.mockImplementation(async (file) => {
       if (String(file).endsWith(".repair")) return "1787868000000\n";
-      return "1787868\n";
+      return published ? "1787868000000\n" : "1787868\n";
     });
-    mockLink.mockRejectedValue(
-      Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
-    );
+    mockLink.mockImplementation(async (_source, destination) => {
+      if (String(destination).endsWith(".repair")) {
+        throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      }
+    });
+    mockRename.mockImplementation(async () => {
+      published = true;
+    });
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
@@ -288,8 +321,12 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     );
 
     expect(result).toBe(1787868000000);
-    expect(mockRename).toHaveBeenCalledWith(
+    expect(mockLink).toHaveBeenCalledWith(
       expect.stringMatching(/session-a\.time-anchor\.repair$/),
+      expect.stringMatching(/\.snapshot$/),
+    );
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringMatching(/\.snapshot$/),
       expect.stringMatching(/session-a\.time-anchor$/),
     );
     expect(mockWriteFile).toHaveBeenCalledWith(
@@ -317,16 +354,19 @@ describe("loadOrCreateSessionTimeAnchor", () => {
   });
 
   it("競合相手が不完全なsidecarを公開していても完成済みtmpで復旧する", async () => {
-    mockReadFile
-      .mockRejectedValueOnce(
-        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-      )
-      .mockResolvedValueOnce("")
-      .mockResolvedValueOnce("")
-      .mockResolvedValueOnce("1787868000000\n");
-    mockLink.mockRejectedValue(
-      Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
-    );
+    let published = false;
+    mockReadFile.mockImplementation(async (file) => {
+      if (String(file).endsWith(".repair")) return "1787868000000\n";
+      return published ? "1787868000000\n" : "";
+    });
+    mockLink.mockImplementation(async (_source, destination) => {
+      if (String(destination).endsWith(".repair")) {
+        throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      }
+    });
+    mockRename.mockImplementation(async () => {
+      published = true;
+    });
 
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
@@ -336,76 +376,81 @@ describe("loadOrCreateSessionTimeAnchor", () => {
 
     expect(result).toBe(1787868000000);
     expect(mockRename).toHaveBeenCalledWith(
-      expect.stringMatching(/session-a\.time-anchor\.repair$/),
+      expect.stringMatching(/\.snapshot$/),
       expect.stringMatching(/session-a\.time-anchor$/),
     );
   });
 
-  it("active ownerをrecovererが先に公開しても両者は同じwinnerへ収束する", async () => {
+  it("3者競合でAのcandidateを読み中にBが公開しCが再入場しても全員Aへ収束する", async () => {
     let finalAnchor: number | undefined;
     let claimAnchor: number | undefined;
-    let claimAcquired!: () => void;
-    const claimReady = new Promise<void>((resolve) => {
-      claimAcquired = resolve;
-    });
-    let ownerCandidateRead!: () => void;
-    const ownerCandidateReady = new Promise<void>((resolve) => {
-      ownerCandidateRead = resolve;
-    });
     let claimReads = 0;
+    let candidatePaused!: () => void;
+    const candidateReady = new Promise<void>((resolve) => {
+      candidatePaused = resolve;
+    });
+    let releaseCandidate!: () => void;
+    const candidateRelease = new Promise<void>((resolve) => {
+      releaseCandidate = resolve;
+    });
 
     mockReadFile.mockImplementation(async (file) => {
       const filename = String(file);
       if (filename.endsWith(".repair")) {
         claimReads += 1;
         if (claimReads === 1) {
-          await ownerCandidateReady;
-        }
-        if (claimAnchor === undefined) {
-          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+          candidatePaused();
+          await candidateRelease;
         }
         return `${claimAnchor}\n`;
       }
-      return finalAnchor === undefined ? "1787868\n" : `${finalAnchor}\n`;
+      if (finalAnchor !== undefined) return `${finalAnchor}\n`;
+      return "1787868\n";
     });
     mockLink.mockImplementation(async (source, destination) => {
-      if (!String(destination).endsWith(".repair")) return;
+      const destinationName = String(destination);
+      if (!destinationName.endsWith(".repair")) return;
       if (claimAnchor !== undefined) {
         throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
       }
       const write = mockWriteFile.mock.calls.find(([file]) => file === source);
       claimAnchor = Number(String(write?.[1]).trim());
-      claimAcquired();
     });
     mockRename.mockImplementation(async (source, destination) => {
-      expect(String(source)).toMatch(/session-a\.time-anchor\.repair$/);
+      expect(String(source)).toMatch(/\.snapshot$/);
       expect(String(destination)).toMatch(/session-a\.time-anchor$/);
-      if (claimAnchor === undefined) {
-        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-      }
       finalAnchor = claimAnchor;
-      claimAnchor = undefined;
     });
 
-    const ownerPromise = loadOrCreateSessionTimeAnchor(
+    const aPromise = loadOrCreateSessionTimeAnchor(
       "group1",
       "session-a",
       1787868000000,
     );
-    await claimReady;
-    const recovererPromise = loadOrCreateSessionTimeAnchor(
+    await candidateReady;
+
+    const b = await loadOrCreateSessionTimeAnchor(
       "group1",
       "session-a",
       1787868000001,
     );
-    const recoverer = await recovererPromise;
-    ownerCandidateRead();
-    const owner = await ownerPromise;
+    const c = await loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      1787868000002,
+    );
+    releaseCandidate();
+    const a = await aPromise;
 
-    expect(owner).toBe(1787868000000);
-    expect(recoverer).toBe(owner);
-    expect(finalAnchor).toBe(owner);
+    expect(a).toBe(1787868000000);
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+    expect(finalAnchor).toBe(a);
     expect(mockRename).toHaveBeenCalledTimes(1);
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringMatching(/\.snapshot$/),
+      expect.stringMatching(/session-a\.time-anchor$/),
+    );
   });
 });
 
