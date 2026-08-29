@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Client } from "discord.js";
+import { ChannelType, type Client } from "discord.js";
 import { renameSession } from "../agent/session.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
@@ -81,6 +81,7 @@ type DeliveryMessage = {
 };
 type DeliveryTarget = {
   id?: unknown;
+  type?: number;
   isSendable?: () => boolean;
   send: (payload: unknown) => Promise<DeliveryMessage>;
   edit?: (payload: unknown) => Promise<unknown>;
@@ -181,6 +182,16 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         : { parse: [], repliedUser: false };
 
       if (isItemThread && !threadId) {
+        if (
+          target.type !== undefined &&
+          target.type !== ChannelType.GuildText &&
+          target.type !== ChannelType.GuildAnnouncement
+        ) {
+          throw new DeliveryError(
+            "non-retryable",
+            "destination does not support message threads",
+          );
+        }
         mutationAttempted = true;
         const parent = await target.send(
           allowMention ? content : { content, allowedMentions },
@@ -357,10 +368,45 @@ export class DeliveryWorker {
         promoteCronItemSession: async (threadId) => {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);
-          if (job.sessionId === threadId) return;
+          const promotedConversationPath = job.conversationPath
+            ? `data/sessions/${job.groupName}/${threadId}.jsonl`
+            : undefined;
+          if (job.sessionId === threadId) {
+            if (
+              promotedConversationPath &&
+              job.conversationPath !== promotedConversationPath
+            ) {
+              const changed = this.repository.db
+                .prepare(
+                  "UPDATE jobs SET conversation_path=?,updated_at=? WHERE id=?",
+                )
+                .run(
+                  promotedConversationPath,
+                  new Date().toISOString(),
+                  job.id,
+                );
+              if (changed.changes !== 1)
+                throw new Error(`unknown job ${job.id}`);
+            }
+            return;
+          }
           const originalSessionId = job.sessionId;
+          const originalConversationPath = job.conversationPath;
           await renameSession(job.groupName, originalSessionId, threadId);
           try {
+            if (promotedConversationPath) {
+              const changed = this.repository.db
+                .prepare(
+                  "UPDATE jobs SET conversation_path=?,updated_at=? WHERE id=?",
+                )
+                .run(
+                  promotedConversationPath,
+                  new Date().toISOString(),
+                  job.id,
+                );
+              if (changed.changes !== 1)
+                throw new Error(`unknown job ${job.id}`);
+            }
             const promoted = this.repository.provisionCronJob(
               job.id,
               threadId,
@@ -370,6 +416,19 @@ export class DeliveryWorker {
             );
             if (!promoted) throw new Error(`unknown job ${job.id}`);
           } catch (error) {
+            if (originalConversationPath) {
+              try {
+                this.repository.db
+                  .prepare(
+                    "UPDATE jobs SET conversation_path=?,updated_at=? WHERE id=?",
+                  )
+                  .run(
+                    originalConversationPath,
+                    new Date().toISOString(),
+                    job.id,
+                  );
+              } catch {}
+            }
             await renameSession(
               job.groupName,
               threadId,
