@@ -22,11 +22,7 @@ vi.mock("../discord/client.js", () => ({
   getDiscordClients: () => new Map([["group", client]]),
 }));
 
-import {
-  DeliveryError,
-  DeliveryWorker,
-  DiscordDeliveryAdapter,
-} from "./delivery.js";
+import { DeliveryWorker, DiscordDeliveryAdapter } from "./delivery.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 function deliveryRow(payload: Record<string, unknown>) {
@@ -97,11 +93,7 @@ describe("late item-thread delivery", () => {
           cronJobId: "daily",
         }),
       ),
-    ).rejects.toEqual(
-      expect.objectContaining<Partial<DeliveryError>>({
-        kind: "non-retryable",
-      }),
-    );
+    ).rejects.toMatchObject({ kind: "non-retryable" });
     expect(send).not.toHaveBeenCalled();
     expect(renameSession).not.toHaveBeenCalled();
   });
