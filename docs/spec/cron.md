@@ -70,7 +70,7 @@ data/cron/
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
 | `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
-| `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false`。`item-thread`では利用不可 |
+| `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false` |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
 | `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
 | `model` | オプション | object | AgentConfig。`provider` / `modelId` / `thinkingLevel`。group/channelのmodelオブジェクトを完全置換 |
@@ -102,7 +102,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 |---|---|---|
 | `deliveryMode` | `direct` | `channelId` が指すチャンネルまたは既存スレッドへ直接投稿する |
 | `deliveryMode` | `new-thread` | `channelId` を親チャンネルとして毎回新規スレッドを作成し、そこへ投稿する |
-| `deliveryMode` | `item-thread` | 処理前に仮メッセージと1項目用スレッドを確保し、仮メッセージを回答先頭で編集する。handlerなしジョブではpollerがAI前に確保する |
+| `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答が存在する場合だけ親メッセージを投稿して、そのmessage IDへsessionを昇格してから1項目用スレッドを作成する |
 | `sessionMode` | `per-run` | 実行ごとに一意なセッションIDを生成する |
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドIDをセッションIDとして使う |
 
@@ -114,9 +114,9 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `direct` + `destination` | 投稿先単位で履歴を継続する |
 | `new-thread` + `destination` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
-| `item-thread` + `destination` | 1項目ごとに仮メッセージと独立スレッドを先に確保し、そのスレッドをAI・ユーザー返信のセッションにする。`item-thread` は `destination` 必須 |
+| `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` 必須 |
 
-応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。ただし、事前にplaceholderとthreadを確保する`item-thread`では`noReply: true`を設定エラーとし、AGENTS.mdなどによってmarkerが出ても通常の応答テキストとして配送する。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
+応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` は配送方式を解釈せず、設定された `deliveryMode` / `sessionMode` を `enqueueCronInbox()` に渡す。各方式の投稿先準備・配送はcron enqueue/pollerの共通処理が担う。
 
@@ -136,7 +136,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - `appendInbox`
 - ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
-複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { threadName })` で登録・provisioningできる。ただしこのhelperは非推奨で、handler側がpollerとの競合を含む利用責任を負う。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から投入され、投入ごとに新しいjob identityを作り、pollerがAI実行前にprovisioningする。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
+複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { threadName })` で登録・provisioningできる。ただしこのhelperは旧placeholder方式の互換用として非推奨で、handler側がpollerとの競合を含む利用責任を負う。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から投入され、投入ごとに一時sessionを作る。AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession JSONLとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 
 ---
 
@@ -167,7 +167,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 1. 未読メールを取得して本文を取得する。
 2. `enqueueCronInbox()` にメールIDを付けてjobを投入する。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。jobにはACK対象のメールID以外のmail固有冪等キーやsource照合情報を付けず、前回のjob・placeholder・スレッドを検索しない。
-3. cron enqueue/pollerが設定された方式に従って投稿先を準備し、providerのconcurrency設定とセッション順序を保ったままAI・deliveryを実行する。`item-thread` ではAI実行前に仮メッセージと独立スレッドを確保する。
+3. cron enqueue/pollerが設定された方式に従ってproviderのconcurrency設定とセッション順序を保ったままAIを実行し、delivery workerが投稿先を確定する。`item-thread` は一時sessionでAIを実行し、通常応答がある場合だけ親メッセージ→session昇格→thread作成の順でmaterializeする。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
 AI・Discord delivery・既読化のいずれかが失敗したメールは未読のまま残る。次回実行では過去jobを再開・照合せず新しいjobと投稿先を作るため、失敗した試行のDiscord投稿が残る場合は重複しうる。このjob境界の性質はmail固有の既知の残余リスクであり、RSS dispatchなど別目的の冪等性は維持する。
@@ -184,7 +184,7 @@ AI・Discord delivery・既読化のいずれかが失敗したメールは未�
 
 ## スコープ外（別途検討）
 
-- **一般deliveryのリトライ上限**: placeholderの最終回答編集は3回の固定上限を持つ。その他のdeliveryの再試行上限は未定義で、連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
+- **一般deliveryのリトライ上限**: 旧placeholder方式の最終回答編集は3回の固定上限を持つ。その他のdeliveryの再試行上限は未定義で、連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
 
 - **`allowedTools` / `allowedSkills`**: ジョブごとにグループ設定のツール・スキルをオーバーライドする機能（issue #73）。`InboxMessage` と `sendMessage` 両方への対応が必要なため別途実装。
 
