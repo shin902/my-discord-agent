@@ -12,6 +12,8 @@ const ROOT = path.resolve(
 
 const SCHEMA_VERSION = 1;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
+const LEGACY_XSAVED_BACKUP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
 
 export const X_SAVED_STATUSES = [
   "inbox",
@@ -511,11 +513,15 @@ export async function backupXSavedDatabase(
   }
   const resolved = path.resolve(dbPath);
   const resolvedBackupDir = resolveXSavedBackupDir(backupDirOverride);
+  const lexicalLiveDir = path.dirname(resolved);
   const livePath = await realpath(resolved);
-  const liveDir = path.dirname(livePath);
+  const canonicalLiveDir = path.dirname(livePath);
   const backupDirCandidate =
     await realpathWithNearestExistingAncestor(resolvedBackupDir);
-  if (isPathWithin(liveDir, backupDirCandidate)) {
+  if (
+    isPathWithin(lexicalLiveDir, backupDirCandidate) ||
+    isPathWithin(canonicalLiveDir, backupDirCandidate)
+  ) {
     throw new Error(
       "x-saved backup directory must be outside the live database directory",
     );
@@ -523,7 +529,10 @@ export async function backupXSavedDatabase(
 
   await mkdir(resolvedBackupDir, { recursive: true });
   const backupDir = await realpath(resolvedBackupDir);
-  if (isPathWithin(liveDir, backupDir)) {
+  if (
+    isPathWithin(lexicalLiveDir, backupDir) ||
+    isPathWithin(canonicalLiveDir, backupDir)
+  ) {
     throw new Error(
       "x-saved backup directory must be outside the live database directory",
     );
@@ -544,7 +553,8 @@ export async function backupXSavedDatabase(
   const files = (await readdir(backupDir))
     .filter(
       (name) =>
-        name.startsWith(XSAVED_BACKUP_PREFIX) && name.endsWith(".sqlite"),
+        (name.startsWith(XSAVED_BACKUP_PREFIX) && name.endsWith(".sqlite")) ||
+        LEGACY_XSAVED_BACKUP_PATTERN.test(name),
     )
     .sort()
     .reverse();

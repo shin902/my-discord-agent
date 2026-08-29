@@ -117,7 +117,14 @@ describe("x-saved BirdClaw ingest", () => {
     mkdirSync(liveDir);
     mkdirSync(backupDir);
     writeFileSync(path.join(backupDir, "unrelated.sqlite"), "do not delete");
-    writeFileSync(path.join(backupDir, "x-saved-2020-01-01.sqlite"), "old");
+    writeFileSync(
+      path.join(backupDir, "2020-01-01T00-00-00-000Z.sqlite"),
+      "legacy old",
+    );
+    writeFileSync(
+      path.join(backupDir, "2020-01-01T00-00-00.sqlite"),
+      "invalid legacy name",
+    );
     const db = openXSavedDb(targetPath);
     db.close();
 
@@ -125,9 +132,29 @@ describe("x-saved BirdClaw ingest", () => {
 
     expect(path.basename(backupPath)).toMatch(/^x-saved-.*\.sqlite$/);
     expect(existsSync(path.join(backupDir, "unrelated.sqlite"))).toBe(true);
-    expect(existsSync(path.join(backupDir, "x-saved-2020-01-01.sqlite"))).toBe(
-      false,
+    expect(
+      existsSync(path.join(backupDir, "2020-01-01T00-00-00-000Z.sqlite")),
+    ).toBe(false);
+    expect(existsSync(path.join(backupDir, "2020-01-01T00-00-00.sqlite"))).toBe(
+      true,
     );
+  });
+
+  it("rejects backup paths under the lexical DB directory when the DB is a symlink", async () => {
+    const dir = makeTempDir();
+    const hostDir = path.join(dir, "host-data");
+    const agentDir = path.join(dir, "agent-data");
+    const targetPath = path.join(hostDir, "x-saved.sqlite");
+    const mountedDbPath = path.join(agentDir, "x-saved.sqlite");
+    mkdirSync(hostDir);
+    mkdirSync(agentDir);
+    const db = openXSavedDb(targetPath);
+    db.close();
+    symlinkSync(targetPath, mountedDbPath);
+
+    await expect(
+      backupXSavedDatabase(mountedDbPath, 1, path.join(agentDir, "backups")),
+    ).rejects.toThrow("outside the live database directory");
   });
 
   it("rejects symlinked backup paths inside the live database directory", async () => {
