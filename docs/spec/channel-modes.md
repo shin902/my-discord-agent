@@ -10,6 +10,10 @@ Channel が持つ `sessionMode` で動作が決まる。
 | `thread` | 無視（メンションも含む） | 全メッセージに反応 |
 | `auto-thread` | 任意のメッセージでスレッドを自動作成 | 全メッセージに反応 |
 
+`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
+
+Slash command は通常メッセージの取り込み経路を通らないため、`requiredMention` の対象外。現在の `/bot` と、将来追加する `/new` などのコマンドもメンション不要で利用できる設計とする。
+
 ---
 
 ## `thread` モードの注意点
@@ -55,6 +59,8 @@ Webhook IDは、Discordで発行されるWebhook URL `https://discord.com/api/we
      → 常に処理し、同じスレッド内で返信
 ```
 
+`requiredMention: true` の場合は上記の各通常メッセージについてメンション条件も満たす必要がある。
+
 ### スレッド名の生成
 
 URL の有無で名前を変える。
@@ -82,12 +88,12 @@ const URL_PATTERN = /https?:\/\/[^\s<>()]+/giu;
 
 ### `engageMode`
 
-パブリックサーバーや複数用途のチャンネルで使う場合に必要になる可能性がある。現在はプライベートサーバー限定のため未実装。
+`requiredMention` で mention-only は扱えるようになった。将来、正規表現など別のengagement policyが実際に必要になった場合だけ、これを一般化する候補として `engageMode` を残す。
 
 | 値 | 動作 |
 |---|---|
-| `mention` | ボットへのメンション時のみ反応 |
-| `always` | チャンネルの全メッセージに反応（現行の動作） |
+| `mention` | ボットへのメンション時のみ反応（現状は `requiredMention: true` で表現可能） |
+| `always` | チャンネルの全メッセージに反応（現行デフォルト） |
 | `pattern` | `engagePattern` の正規表現にマッチしたメッセージに反応 |
 
 > 参考: `docs/clone/nanoclaw/src/types.ts` の `EngageMode`
