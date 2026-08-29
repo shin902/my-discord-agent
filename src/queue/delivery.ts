@@ -84,6 +84,7 @@ type DeliveryTarget = {
   type?: number;
   isSendable?: () => boolean;
   send: (payload: unknown) => Promise<DeliveryMessage>;
+  startThread?: (options: { name: string }) => Promise<DeliveryTarget>;
   edit?: (payload: unknown) => Promise<unknown>;
   messages?: { fetch: (id: string) => Promise<DeliveryTarget> };
   threads?: { create: (options: { name: string }) => Promise<DeliveryTarget> };
@@ -159,9 +160,29 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           }
         }
       } else if (isItemThread && threadId) {
-        target = (await client.channels.fetch(
-          threadId,
-        )) as unknown as DeliveryTarget;
+        // The job stores the parent/thread ID before delivery persistence. If
+        // recovery finds that marker while the thread itself is not visible
+        // yet, fetch the parent message and finish starting the same thread.
+        try {
+          target = (await client.channels.fetch(
+            threadId,
+          )) as unknown as DeliveryTarget;
+        } catch (error) {
+          const channel = (await client.channels.fetch(
+            destinationId,
+          )) as unknown as DeliveryTarget | null;
+          const parent = await channel?.messages?.fetch(threadId);
+          if (!parent?.startThread) throw error;
+          target = await parent.startThread({
+            name: `cron-${String(payload.cronJobId ?? row.jobId).slice(0, 90)}`,
+          });
+          const createdThreadId = String(target.id ?? threadId);
+          if (createdThreadId !== threadId) {
+            throw new Error(
+              `item-thread ID mismatch: message=${threadId} thread=${createdThreadId}`,
+            );
+          }
+        }
       } else {
         target = (client.channels.cache.get(destinationId) ??
           (await client.channels.fetch(
@@ -206,9 +227,10 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         try {
           // Start Thread from Message uses the source message ID as the thread
           // ID. Promote the session before the thread becomes visible so an
-          // immediate user reply always finds the renamed JSONL.
+          // immediate user reply always finds the renamed JSONL. The remote
+          // thread is started before delivery persistence so a retry can use
+          // the durable job marker if persistence fails.
           await context.promoteCronItemSession?.(parentId);
-          await context.persistCronThread?.(parentId);
         } catch (error) {
           throw new DeliveryError(
             "unknown",
@@ -236,6 +258,15 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           throw new DeliveryError(
             "unknown",
             `failed to start item-thread ${parentId}`,
+            error,
+          );
+        }
+        try {
+          await context.persistCronThread?.(parentId);
+        } catch (error) {
+          throw new DeliveryError(
+            "unknown",
+            `failed to persist item-thread ${parentId}`,
             error,
           );
         }

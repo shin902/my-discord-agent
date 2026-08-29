@@ -1267,6 +1267,37 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
     }
   });
 
+  it("blocks legacy item-thread provisioning until the handler commits its thread", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const legacy = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "cron-item",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+        cronDeliveryMode: "item-thread",
+        cronSessionMode: "destination",
+        cronThread: true,
+        cronJobId: "item-job",
+        cronProvisioning: true,
+        cronLegacyProvisioning: true,
+      }).job;
+      expect(repo.claim("worker")).toBeUndefined();
+      expect(
+        repo.provisionCronJob(legacy.id, "thread-1", {
+          cronThreadId: "thread-1",
+        }),
+      ).toMatchObject({
+        cronLegacyProvisioning: false,
+        cronProvisioning: false,
+      });
+      expect(repo.claim("worker")?.job.id).toBe(legacy.id);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("claims declarative item-thread jobs so the poller can provision before AI", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

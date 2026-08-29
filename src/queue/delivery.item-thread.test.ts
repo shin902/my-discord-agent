@@ -35,7 +35,10 @@ function deliveryRow(payload: Record<string, unknown>) {
   };
 }
 
-function enqueueLateItemThread(repo: QueueRepository, withConversationPath: boolean) {
+function enqueueLateItemThread(
+  repo: QueueRepository,
+  withConversationPath: boolean,
+) {
   const enqueued = repo.enqueue({
     channelId: "channel",
     groupName: "group",
@@ -128,6 +131,61 @@ describe("late item-thread delivery", () => {
         externalMessageId: "123",
       });
     } finally {
+      repo.close();
+    }
+  });
+
+  it("recovers the durable item-thread marker after delivery persistence fails", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const jobId = enqueueLateItemThread(repo, true);
+    const startThread = vi.fn().mockResolvedValue({ id: "789" });
+    const parentSend = vi.fn().mockResolvedValue({
+      id: "789",
+      startThread,
+    });
+    const parent = {
+      type: ChannelType.GuildText,
+      isSendable: () => true,
+      send: parentSend,
+    };
+    const threadSend = vi.fn().mockResolvedValue({ id: "message-1" });
+    const thread = {
+      id: "789",
+      isSendable: () => true,
+      send: threadSend,
+    };
+    client.channels.fetch
+      .mockResolvedValueOnce(parent)
+      .mockResolvedValueOnce(thread);
+    const persistSpy = vi
+      .spyOn(repo, "setDeliveryThread")
+      .mockImplementation(() => {
+        throw new Error("delivery persistence interrupted");
+      });
+
+    try {
+      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+        ready: () => true,
+      });
+      await worker.runOnce();
+      expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+      expect(repo.get(jobId)).toMatchObject({ cronThreadId: "789" });
+
+      const delivery = repo.getDelivery(jobId);
+      if (!delivery) throw new Error("expected delivery");
+      repo.resolveAmbiguousDelivery(delivery.id, "retry");
+      await worker.runOnce();
+
+      expect(parentSend).toHaveBeenCalledOnce();
+      expect(startThread).toHaveBeenCalledOnce();
+      expect(threadSend).toHaveBeenCalledOnce();
+      expect(repo.getDelivery(jobId)).toMatchObject({
+        status: "sent",
+        cronThreadId: "789",
+      });
+      expect(persistSpy).toHaveBeenCalledOnce();
+    } finally {
+      persistSpy.mockRestore();
       repo.close();
     }
   });
