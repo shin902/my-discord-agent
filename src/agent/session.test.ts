@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
@@ -30,6 +30,10 @@ const mockAppendFile = vi.mocked(appendFile);
 const mockMkdir = vi.mocked(mkdir);
 const mockChmod = vi.mocked(chmod);
 const mockExistsSync = vi.mocked(existsSync);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("loadMessages", () => {
   beforeEach(() => {
@@ -157,6 +161,38 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     expect(mockRename).not.toHaveBeenCalled();
   });
 
+  it.each([
+    444444,
+    1787868000000.5,
+    0,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])("不正なfallback (%s)はDate.now()へ置換し、保存値を再利用できる", async (fallback) => {
+    const now = 1787868000123;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    mockReadFile.mockRejectedValue(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+
+    const result = await loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      fallback,
+    );
+
+    expect(result).toBe(now);
+    expect(mockWriteFile).toHaveBeenCalledWith(expect.any(String), `${now}\n`, {
+      encoding: "utf-8",
+      mode: 0o666,
+      flag: "wx",
+    });
+
+    mockReadFile.mockResolvedValue(`${now}\n`);
+    await expect(
+      loadOrCreateSessionTimeAnchor("group1", "session-a", 444444),
+    ).resolves.toBe(now);
+  });
+
   it("sidecarがなければ完成済みtmpをno-clobberで原子的に公開する", async () => {
     mockReadFile.mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
@@ -222,10 +258,16 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     expect(result).toBe(1787868000000);
     const temporaryFile = String(mockWriteFile.mock.calls[0]?.[0]);
     expect(mockRename).toHaveBeenCalledWith(
+      expect.stringMatching(/session-a\.time-anchor$/),
+      expect.stringMatching(/\.repair$/),
+    );
+    expect(mockLink).toHaveBeenCalledWith(
       temporaryFile,
       expect.stringMatching(/session-a\.time-anchor$/),
     );
-    expect(mockUnlink).toHaveBeenCalledWith(temporaryFile);
+    expect(mockUnlink).toHaveBeenCalledWith(
+      expect.stringMatching(/session-a\.time-anchor\..+\.repair$/),
+    );
   });
 
   it.each([
@@ -258,14 +300,69 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     const result = await loadOrCreateSessionTimeAnchor(
       "group1",
       "session-a",
-      444444,
+      1787868000000,
     );
 
-    expect(result).toBe(444444);
+    expect(result).toBe(1787868000000);
     expect(mockRename).toHaveBeenCalledWith(
       expect.stringMatching(/\.tmp$/),
       expect.stringMatching(/session-a\.time-anchor$/),
     );
+  });
+
+  it("並行するsidecar修復callerは同じwinnerへ収束する", async () => {
+    let durableAnchor: number | undefined;
+    let invalidSidecarPresent = true;
+    let initialReads = 0;
+    let releaseInitialReads!: () => void;
+    const initialReadsReady = new Promise<void>((resolve) => {
+      releaseInitialReads = resolve;
+    });
+    mockReadFile.mockImplementation(async (file) => {
+      if (String(file).endsWith(".time-anchor")) {
+        if (durableAnchor !== undefined) return `${durableAnchor}\n`;
+        if (invalidSidecarPresent) {
+          initialReads += 1;
+          if (initialReads === 2) releaseInitialReads();
+          await initialReadsReady;
+          return "1787868\n";
+        }
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      return "1787868\n";
+    });
+    mockRename.mockImplementation(async (source, destination) => {
+      if (String(source).endsWith(".time-anchor")) {
+        if (!invalidSidecarPresent) {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }
+        invalidSidecarPresent = false;
+        return;
+      }
+      throw new Error(`unexpected rename: ${source} -> ${destination}`);
+    });
+    mockLink.mockImplementation(async (temporaryFile, destination) => {
+      if (durableAnchor !== undefined) {
+        throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      }
+      const write = mockWriteFile.mock.calls.find(
+        ([file]) => file === temporaryFile,
+      );
+      durableAnchor = Number(String(write?.[1]).trim());
+      expect(String(destination)).toMatch(/session-a\.time-anchor$/);
+    });
+
+    const [first, second] = await Promise.all([
+      loadOrCreateSessionTimeAnchor("group1", "session-a", 1787868000000),
+      loadOrCreateSessionTimeAnchor("group1", "session-a", 1787868000001),
+    ]);
+
+    expect(first).toBe(1787868000000);
+    expect(second).toBe(first);
+    expect(durableAnchor).toBe(first);
+    expect(initialReads).toBe(2);
+    expect(mockRename).toHaveBeenCalled();
+    expect(mockLink).toHaveBeenCalled();
   });
 });
 

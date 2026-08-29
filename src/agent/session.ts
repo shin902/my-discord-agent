@@ -75,14 +75,23 @@ export async function loadMessages(
     });
 }
 
+const TIME_ANCHOR_PATTERN = /^[1-9]\d{12}$/;
+
+function isValidTimeAnchor(timestamp: number): boolean {
+  return (
+    Number.isSafeInteger(timestamp) &&
+    TIME_ANCHOR_PATTERN.test(String(timestamp))
+  );
+}
+
 function parseTimeAnchor(value: string): number | undefined {
   const serialized = value.trim();
   // Date.now() produces a 13-digit epoch-millisecond timestamp. Requiring the
   // complete shape prevents a numeric prefix from being accepted as 1970 time.
-  if (!/^[1-9]\d{12}$/.test(serialized)) return undefined;
+  if (!TIME_ANCHOR_PATTERN.test(serialized)) return undefined;
 
   const timestamp = Number(serialized);
-  return Number.isSafeInteger(timestamp) ? timestamp : undefined;
+  return isValidTimeAnchor(timestamp) ? timestamp : undefined;
 }
 
 type TimeAnchorState =
@@ -122,10 +131,9 @@ export async function loadOrCreateSessionTimeAnchor(
   const initialState = await readTimeAnchorState(file);
   if (initialState.kind === "valid") return initialState.timestamp;
 
-  const timestamp =
-    Number.isFinite(fallbackTimestamp) && fallbackTimestamp > 0
-      ? fallbackTimestamp
-      : Date.now();
+  const timestamp = isValidTimeAnchor(fallbackTimestamp)
+    ? fallbackTimestamp
+    : Date.now();
   const temporaryFile = `${file}.${process.pid}.${randomUUID()}.tmp`;
 
   await writeFile(temporaryFile, `${timestamp}\n`, {
@@ -136,9 +144,53 @@ export async function loadOrCreateSessionTimeAnchor(
 
   try {
     if (initialState.kind === "invalid") {
-      // 旧実装が残した空/partial sidecarは完成済みtmpで原子的に置換する。
-      await rename(temporaryFile, file);
-      return timestamp;
+      // 不完全なfinalを一意なclaim pathへrenameして修復権を取得する。
+      // 完成済みtmpのlink公開はno-clobberなので、競合callerも同じwinnerへ収束する。
+      const claimPath = `${file}.${process.pid}.${randomUUID()}.repair`;
+      while (true) {
+        let claimed = false;
+        try {
+          await rename(file, claimPath);
+          claimed = true;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        }
+
+        if (claimed) {
+          try {
+            try {
+              await link(temporaryFile, file);
+              return timestamp;
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+            }
+
+            const winner = await readTimeAnchorState(file);
+            if (winner.kind === "valid") return winner.timestamp;
+          } finally {
+            await unlink(claimPath).catch(() => {});
+          }
+        } else {
+          const winner = await readTimeAnchorState(file);
+          if (winner.kind === "valid") return winner.timestamp;
+
+          try {
+            await link(temporaryFile, file);
+            return timestamp;
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === "EEXIST") {
+              const winner = await readTimeAnchorState(file);
+              if (winner.kind === "valid") return winner.timestamp;
+            } else if (code !== "ENOENT") {
+              throw err;
+            }
+          }
+        }
+
+        // 競合相手がclaim/publicationの途中なら、finalが再び観測可能になるまで待つ。
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
     }
 
     try {
