@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 import handler from "./birdclaw-sync.js";
 
@@ -19,6 +20,27 @@ afterEach(() => {
 });
 
 describe("birdclaw-sync cron", () => {
+  it("rejects unknown settings instead of silently ignoring them", async () => {
+    await expect(
+      handler({ settings: { maxPage: 1 } } as CronContext),
+    ).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it("propagates local database failures into the scheduler retry loop", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-sync-test-"));
+    tempDirs.push(dir);
+    process.env.BIRDCLAW_BIN = path.join(dir, "missing-birdclaw");
+
+    await expect(
+      handler({
+        settings: {
+          xSavedDbPath: path.join(dir, "x-saved.sqlite"),
+          backupPath: path.join(dir, "backups"),
+        },
+      } as CronContext),
+    ).rejects.toThrow("outside the live database directory");
+  });
+
   it("records operational failure without throwing into the generic retry loop", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-sync-test-"));
     tempDirs.push(dir);

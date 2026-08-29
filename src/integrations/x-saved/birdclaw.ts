@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { resolveBirdclawDbPath } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -58,16 +59,47 @@ function findFetchedCount(value: unknown): number | null {
   return null;
 }
 
+const BIRDCLAW_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "TERM",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "NO_COLOR",
+  "FORCE_COLOR",
+] as const;
+
+function buildBirdclawEnv(birdclawDbPath?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of BIRDCLAW_ENV_KEYS) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  if (process.env.BIRDCLAW_HOME !== undefined) {
+    env.BIRDCLAW_HOME = process.env.BIRDCLAW_HOME;
+  }
+  env.BIRDCLAW_DISABLE_LIVE_WRITES = "1";
+  env.BIRDCLAW_DB_PATH = resolveBirdclawDbPath(birdclawDbPath);
+  return env;
+}
+
 async function runBirdclaw(
   args: string[],
   birdclawDbPath?: string,
 ): Promise<unknown> {
   const { stdout } = await execFileAsync(birdclawBinary(), args, {
-    env: {
-      ...process.env,
-      BIRDCLAW_DISABLE_LIVE_WRITES: "1",
-      ...(birdclawDbPath ? { BIRDCLAW_DB_PATH: birdclawDbPath } : {}),
-    },
+    env: buildBirdclawEnv(birdclawDbPath),
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
     encoding: "utf8",
@@ -144,10 +176,18 @@ export async function syncBirdclawSavedCollections(options: {
   bookmarks: BirdclawCommandResult;
   likes: BirdclawCommandResult;
 }> {
+  const birdclawDbPath = options.birdclawDbPath
+    ? resolveBirdclawDbPath(options.birdclawDbPath)
+    : undefined;
   const bookmarks = await syncCollection({
     ...options,
+    birdclawDbPath,
     collection: "bookmarks",
   });
-  const likes = await syncCollection({ ...options, collection: "likes" });
+  const likes = await syncCollection({
+    ...options,
+    birdclawDbPath,
+    collection: "likes",
+  });
   return { bookmarks, likes };
 }

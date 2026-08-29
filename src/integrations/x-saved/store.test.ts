@@ -4,10 +4,13 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  backupXSavedDatabase,
   ingestBirdclawSavedItems,
   initializeHistoricalBaseline,
   openXSavedDb,
   recordSyncRun,
+  resolveBirdclawDbPath,
+  resolveXSavedBackupDir,
 } from "./store.js";
 
 const tempDirs: string[] = [];
@@ -76,6 +79,29 @@ function createBirdclawFixture(dbPath: string): Database.Database {
 }
 
 describe("x-saved BirdClaw ingest", () => {
+  it("normalizes BirdClaw home paths and keeps backups outside the live DB mount", async () => {
+    const dir = makeTempDir();
+    const targetPath = path.join(dir, "x-saved.sqlite");
+    const backupDir = path.join(
+      path.dirname(dir),
+      `${path.basename(dir)}-host-only-backups`,
+    );
+    const db = openXSavedDb(targetPath);
+    db.close();
+
+    expect(resolveBirdclawDbPath("~/birdclaw.sqlite")).toBe(
+      path.join(os.homedir(), "birdclaw.sqlite"),
+    );
+    expect(resolveXSavedBackupDir()).toContain(
+      path.join("data", "x-saved-backups"),
+    );
+    await expect(
+      backupXSavedDatabase(targetPath, 1, path.join(dir, "backups")),
+    ).rejects.toThrow("outside the live database directory");
+    const backupPath = await backupXSavedDatabase(targetPath, 1, backupDir);
+    expect(backupPath).toBe(path.join(backupDir, path.basename(backupPath)));
+  });
+
   it("imports likes/bookmarks while preserving sticky source history and agent state", () => {
     const dir = makeTempDir();
     const sourcePath = path.join(dir, "birdclaw.sqlite");

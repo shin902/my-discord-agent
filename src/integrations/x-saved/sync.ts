@@ -1,12 +1,14 @@
 import {
-  syncBirdclawSavedCollections,
   type BirdclawTransport,
+  syncBirdclawSavedCollections,
 } from "./birdclaw.js";
 import {
+  BirdclawSourceError,
   backupXSavedDatabase,
   ingestBirdclawSavedItems,
   openXSavedDb,
   recordSyncRun,
+  resolveBirdclawDbPath,
   resolveXSavedDbPath,
   type XSavedSyncStatus,
 } from "./store.js";
@@ -19,6 +21,7 @@ export interface XSavedSyncOptions {
   birdclawDbPath?: string;
   xSavedDbPath?: string;
   backupKeep?: number;
+  backupPath?: string;
 }
 
 export interface XSavedSyncResult {
@@ -39,12 +42,13 @@ export async function runXSavedSync(
 ): Promise<XSavedSyncResult> {
   const startedAt = new Date().toISOString();
   const xSavedDbPath = resolveXSavedDbPath(options.xSavedDbPath);
+  const birdclawDbPath = resolveBirdclawDbPath(options.birdclawDbPath);
   const syncResult = await syncBirdclawSavedCollections({
     mode: options.mode ?? "xurl",
     limit: options.limit ?? 100,
     maxPages: options.maxPages ?? 3,
     account: options.account,
-    birdclawDbPath: options.birdclawDbPath,
+    birdclawDbPath,
   });
 
   const errors = [syncResult.bookmarks.error, syncResult.likes.error].filter(
@@ -65,7 +69,7 @@ export async function runXSavedSync(
   try {
     try {
       const ingest = ingestBirdclawSavedItems({
-        birdclawDbPath: options.birdclawDbPath,
+        birdclawDbPath,
         xSavedDb: targetDb,
         account: options.account,
       });
@@ -73,22 +77,16 @@ export async function runXSavedSync(
       newItems = ingest.newItems;
       updatedItems = ingest.updatedItems;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push(`ingest: ${message}`);
+      if (!(error instanceof BirdclawSourceError)) throw error;
+      errors.push(`ingest: ${error.message}`);
       status = "failed";
     }
 
-    try {
-      backupPath = await backupXSavedDatabase(
-        xSavedDbPath,
-        options.backupKeep ?? 14,
-      );
-    } catch (error) {
-      errors.push(
-        `backup: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      if (status === "success") status = "partial";
-    }
+    backupPath = await backupXSavedDatabase(
+      xSavedDbPath,
+      options.backupKeep ?? 14,
+      options.backupPath,
+    );
 
     const completedAt = new Date().toISOString();
     recordSyncRun(targetDb, {
