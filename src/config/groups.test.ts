@@ -76,7 +76,7 @@ describe("loadGroups", () => {
     });
   });
 
-  it("channelごとのAgentConfig overrideをパースできる", async () => {
+  it("channelごとのAgentConfig overrideとrequiredMentionをパースできる", async () => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
@@ -86,6 +86,7 @@ describe("loadGroups", () => {
           {
             channelId: "channel",
             sessionMode: "shared",
+            requiredMention: true,
             model: { provider: "channel-provider", modelId: "channel-model" },
             tools: [],
             skills: "*",
@@ -98,6 +99,7 @@ describe("loadGroups", () => {
     ]);
     const groups = await loadGroups();
     expect(groups[0].channels[0]).toMatchObject({
+      requiredMention: true,
       model: { provider: "channel-provider", modelId: "channel-model" },
       tools: [],
       skills: "*",
