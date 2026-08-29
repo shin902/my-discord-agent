@@ -63,9 +63,16 @@ def parse_papers(xml: bytes) -> list[dict[str, object]]:
     root = ET.fromstring(xml)
     deduplicated: dict[str, dict[str, object]] = {}
     for entry in root.findall(f"{ATOM}entry"):
-        raw_id = (entry.findtext(f"{ATOM}id") or "").rstrip("/").split("/")[-1]
-        match = re.match(r"^(.*?)(?:v(\d+))?$", raw_id)
-        arxiv_id = match.group(1) if match else raw_id
+        raw_id = (entry.findtext(f"{ATOM}id") or "").rstrip("/")
+        abs_marker = "/abs/"
+        abs_index = raw_id.find(abs_marker)
+        id_with_version = (
+            raw_id[abs_index + len(abs_marker) :]
+            if abs_index >= 0
+            else raw_id
+        )
+        match = re.match(r"^(.*?)(?:v(\d+))?$", id_with_version)
+        arxiv_id = match.group(1) if match else id_with_version
         version = int(match.group(2)) if match and match.group(2) else None
         title = " ".join((entry.findtext(f"{ATOM}title") or "").split())
         abstract = " ".join((entry.findtext(f"{ATOM}summary") or "").split())

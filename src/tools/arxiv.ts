@@ -65,9 +65,12 @@ function extractAuthors(item: FeedParser.Item): string[] {
 
 function parseArxivId(value: string): { id: string; version: number | null } {
   const cleaned = value.trim().replace(/\/$/, "");
-  const last = cleaned.split("/").at(-1) ?? cleaned;
-  const match = last.match(/^(.*?)(?:v(\d+))?$/);
-  if (!match) return { id: last, version: null };
+  const absPath = "/abs/";
+  const absIndex = cleaned.indexOf(absPath);
+  const idWithVersion =
+    absIndex >= 0 ? cleaned.slice(absIndex + absPath.length) : cleaned;
+  const match = idWithVersion.match(/^(.*?)(?:v(\d+))?$/);
+  if (!match) return { id: idWithVersion, version: null };
   return {
     id: match[1],
     version: match[2] ? Number(match[2]) : null,
@@ -135,7 +138,7 @@ function parseDate(value: string, label: string): string {
 function formatNaturalLanguageQuery(query: string): string {
   const normalized = normalizeWhitespace(query).replace(/["\\]/g, " ").trim();
   if (!normalized) throw new Error("検索クエリが空です");
-  return `all:\"${normalized}\"`;
+  return `all:"${normalized}"`;
 }
 
 export function buildArxivSearchQuery(
@@ -179,6 +182,39 @@ export function buildArxivApiUrl(input: {
   return `${ARXIV_API_URL}?${params.toString()}`;
 }
 
+async function readResponseText(response: Response): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(
+      `arXiv API 応答がサイズ上限を超えています: ${contentLength} bytes`,
+    );
+  }
+
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("arXiv API 応答がサイズ上限を超えています");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
+    "utf8",
+  );
+}
+
 async function fetchArxiv(input: {
   queries: readonly string[];
   from?: string;
@@ -194,24 +230,21 @@ async function fetchArxiv(input: {
     },
     signal: AbortSignal.timeout(30_000),
   });
+  let text: string;
+  try {
+    text = await readResponseText(response);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("サイズ上限")) {
+      throw error;
+    }
+    throw new Error(`arXiv API 応答の読み取りに失敗しました: ${String(error)}`);
+  }
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
     throw new Error(
       `arXiv API エラー ${response.status}: ${text.slice(0, 200)}`,
     );
   }
-  const contentLength = Number(response.headers.get("content-length") ?? "0");
-  if (contentLength > MAX_RESPONSE_BYTES) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new Error(
-      `arXiv API 応答がサイズ上限を超えています: ${contentLength} bytes`,
-    );
-  }
-  const xml = await response.text();
-  if (Buffer.byteLength(xml, "utf8") > MAX_RESPONSE_BYTES) {
-    throw new Error("arXiv API 応答がサイズ上限を超えています");
-  }
-  const papers = await parseArxivFeed(xml);
+  const papers = await parseArxivFeed(text);
   const deduplicated = new Map<string, ArxivPaper>();
   for (const paper of papers) {
     const key = paper.id || paper.url;
