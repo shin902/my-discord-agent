@@ -188,15 +188,30 @@ describe("loadOrCreateSessionTimeAnchor", () => {
       .mockRejectedValueOnce(
         Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
       )
-      .mockResolvedValueOnce("1787869000123\n");
+      .mockResolvedValueOnce("1787871600123\n");
     mockLink.mockRejectedValue(
       Object.assign(new Error("EEXIST"), { code: "EEXIST" }),
     );
 
     await expect(
       loadOrCreateSessionTimeAnchor("group1", "session-a", 1787868000000),
-    ).resolves.toBe(1787868000000);
+    ).resolves.toBe(1787871600000);
     expect(mockUnlink).toHaveBeenCalledWith(expect.stringMatching(/\.tmp$/));
+  });
+
+  it("boundary fallback remains valid when the sidecar is reloaded", async () => {
+    mockReadFile
+      .mockRejectedValueOnce(
+        Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+      )
+      .mockResolvedValueOnce("999997200000\n");
+
+    await expect(
+      loadOrCreateSessionTimeAnchor("group1", "session-a", 1_000_000_000_000),
+    ).resolves.toBe(999_997_200_000);
+    await expect(
+      loadOrCreateSessionTimeAnchor("group1", "session-a"),
+    ).resolves.toBe(999_997_200_000);
   });
 
   it("invalid sidecar fails clearly without repair machinery", async () => {

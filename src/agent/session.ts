@@ -74,13 +74,14 @@ export async function loadMessages(
     });
 }
 
-const TIME_ANCHOR_PATTERN = /^[1-9]\d{12}$/;
 const HOUR_MS = 60 * 60 * 1000;
+const MIN_TIME_ANCHOR_MS = 946_684_800_000; // 2000-01-01T00:00:00Z
 
 function isValidTimeAnchor(timestamp: number): boolean {
   return (
     Number.isSafeInteger(timestamp) &&
-    TIME_ANCHOR_PATTERN.test(String(timestamp))
+    timestamp >= MIN_TIME_ANCHOR_MS &&
+    Number.isFinite(new Date(timestamp).getTime())
   );
 }
 
@@ -90,11 +91,10 @@ function canonicalHour(timestamp: number): number {
 
 function parseTimeAnchor(value: string): number | undefined {
   const serialized = value.trim();
-  // Keep the existing epoch-millisecond file format, but expose and write only
-  // the hour bucket needed by the session prompt.
-  if (!TIME_ANCHOR_PATTERN.test(serialized)) return undefined;
-
+  // Keep decimal epoch milliseconds on disk, but expose and write only the
+  // hour bucket needed by the session prompt.
   const timestamp = Number(serialized);
+  if (String(timestamp) !== serialized) return undefined;
   return isValidTimeAnchor(timestamp) ? canonicalHour(timestamp) : undefined;
 }
 
