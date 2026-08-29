@@ -464,7 +464,7 @@ describe("sendMessage: Docker 起動構成", () => {
       .mockImplementationOnce((_command, _args, callback) => {
         callback?.(
           null,
-          "/my-discord-agent-main-session-1700000000000\n/my-discord-agent-registry\n",
+          "/my-discord-agent-main-session-1700000000000\n/my-discord-agent-registry-2\n",
           "",
         );
         return { on: vi.fn() };
@@ -474,7 +474,11 @@ describe("sendMessage: Docker 起動構成", () => {
         return { on: vi.fn() };
       })
       .mockImplementationOnce((_command, _args, callback) => {
-        callback?.(null, "", "");
+        callback?.(null, "registry\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "/my-discord-agent-registry-2\n", "");
         return { on: vi.fn() };
       });
     const { killAllRunningContainers } = await import("./manager.js");
@@ -485,6 +489,13 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(spawnMock).toHaveBeenCalledWith("docker", ["kill", "runner"], {
       stdio: "ignore",
     });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      6,
+      "docker",
+      ["inspect", "--format", "{{.Name}}", "registry"],
+      expect.any(Function),
+    );
   });
 
   it("strict startup cleanup は停止確認のdiscovery失敗を隠さない", async () => {

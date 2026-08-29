@@ -200,7 +200,7 @@ const LEGACY_RUNNER_NAME_FILTER = "my-discord-agent-";
 // execution-start timestamp. Inspect candidates before killing them so that
 // similarly prefixed infrastructure containers (for example, the registry)
 // are not treated as runners.
-const LEGACY_RUNNER_NAME_PATTERN = /^my-discord-agent-.+-\d+$/;
+const LEGACY_RUNNER_NAME_PATTERN = /^my-discord-agent-.+-\d{13}$/;
 
 function formatTimeoutLabel(ms: number): string {
   if (ms % 60_000 === 0) return `${ms / 60_000}分`;
