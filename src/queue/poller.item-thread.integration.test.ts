@@ -17,13 +17,17 @@ vi.mock("../config/default-model.js", () => ({
     modelId: "glm-4.7-flash",
   }),
 }));
-vi.mock("../config/groups.js", () => ({
-  findGroupByName: vi.fn().mockResolvedValue({
-    name: "group",
-    channels: [],
-    allowMention: false,
-  }),
-}));
+vi.mock("../config/groups.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config/groups.js")>();
+  return {
+    ...actual,
+    findGroupByName: vi.fn().mockResolvedValue({
+      name: "group",
+      channels: [],
+      allowMention: false,
+    }),
+  };
+});
 vi.mock("../config/providers.js", () => ({
   resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
 }));

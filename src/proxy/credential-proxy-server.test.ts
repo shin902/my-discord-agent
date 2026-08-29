@@ -711,6 +711,129 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
   });
 });
 
+describe("internal agent route: scoped authorization", () => {
+  let serverRequestHandler:
+    | ((req: IncomingMessage, res: ServerResponse) => void)
+    | undefined;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doMock("node:http", () => ({
+      createServer: vi.fn((handler) => {
+        serverRequestHandler = handler;
+        return {
+          on: vi.fn(),
+          listen: vi.fn((_port: number, _host: string, cb: () => void) => cb()),
+          address: vi.fn(() => ({ port: 12345 })),
+        };
+      }),
+      request: vi.fn(),
+    }));
+    vi.doMock("node:https", () => ({ request: vi.fn() }));
+    vi.doMock("../config/credential-proxy.js", () => ({
+      loadCredentialProxy: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../config/proxy-config.js", () => ({
+      loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
+    }));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.resetModules();
+  });
+
+  async function setup() {
+    const proxy = await import("./credential-proxy-server.js");
+    await proxy.initCredentialProxyServer();
+    return proxy;
+  }
+
+  it("valid tokenはscopeとheld providerをhandlerへ渡す", async () => {
+    const proxy = await setup();
+    const handler = vi.fn().mockResolvedValue(undefined);
+    proxy.registerInternalRequestHandler(handler);
+    const config = proxy.createInternalRequestConfig("main", "openai");
+    expect(config).toMatchObject({ port: 12345, token: expect.any(String) });
+
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      makeRes() as unknown as ServerResponse,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(handler).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "main",
+      "openai",
+    );
+
+    config?.revoke();
+    const revokedResponse = makeRes();
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      revokedResponse as unknown as ServerResponse,
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(revokedResponse.writeHead).toHaveBeenCalledWith(404);
+    expect(revokedResponse.end).toHaveBeenCalledWith("Not Found");
+  });
+
+  it("run中は15分を超えてもtokenが有効で、revoke後は無効になる", async () => {
+    vi.useFakeTimers();
+    const proxy = await setup();
+    const handler = vi.fn().mockResolvedValue(undefined);
+    proxy.registerInternalRequestHandler(handler);
+    const config = proxy.createInternalRequestConfig("main");
+    expect(config).toBeDefined();
+
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      makeRes() as unknown as ServerResponse,
+    );
+    vi.advanceTimersByTime(15 * 60_000 + 1);
+    expect(handler).toHaveBeenCalledOnce();
+
+    config?.revoke();
+    config?.revoke();
+    const revokedResponse = makeRes();
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", {
+        "x-agent-internal-token": config?.token ?? "",
+      }),
+      revokedResponse as unknown as ServerResponse,
+    );
+    expect(handler).toHaveBeenCalledOnce();
+    expect(revokedResponse.writeHead).toHaveBeenCalledWith(404);
+  });
+
+  it.each([
+    "",
+    "invalid-token",
+  ])("missing/invalid tokenは内部routeを拒否する (%s)", async (token) => {
+    const proxy = await setup();
+    const handler = vi.fn().mockResolvedValue(undefined);
+    proxy.registerInternalRequestHandler(handler);
+    const res = makeRes();
+
+    serverRequestHandler?.(
+      makeReq("/__agent/bot", token ? { "x-agent-internal-token": token } : {}),
+      res as unknown as ServerResponse,
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.writeHead).toHaveBeenCalledWith(404);
+    expect(res.end).toHaveBeenCalledWith("Not Found");
+  });
+});
+
 describe("initCredentialProxyServer: Google Auth 初期化", () => {
   const originalEnv = process.env;
   const GOOGLE_CREDS: CredentialEntry[] = [

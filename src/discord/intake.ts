@@ -8,6 +8,7 @@ import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
+import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
 
 export type DiscordMessageSource = "live" | "backfill";
 
@@ -20,25 +21,33 @@ interface IngestOptions {
   source: DiscordMessageSource;
   replyOnFailure: boolean;
   updateLiveCursor?: boolean;
+  discordBotId?: string;
 }
 
 export async function handleLiveDiscordMessage(
   message: Message,
+  discordBotId = DEFAULT_DISCORD_BOT_ID,
 ): Promise<DiscordIngestResult> {
   return ingestDiscordMessage(message, {
     source: "live",
     replyOnFailure: true,
+    discordBotId,
   });
 }
 
 export async function ingestDiscordMessage(
   message: Message,
-  options: { source: DiscordMessageSource; replyOnFailure?: boolean },
+  options: {
+    source: DiscordMessageSource;
+    replyOnFailure?: boolean;
+    discordBotId?: string;
+  },
 ): Promise<DiscordIngestResult> {
   return ingest(message, {
     source: options.source,
     replyOnFailure: options.replyOnFailure ?? false,
     updateLiveCursor: options.source === "live",
+    discordBotId: options.discordBotId,
   });
 }
 
@@ -55,6 +64,11 @@ function buildThreadName(content: string, messageId: string): string {
     }
   }
   return `thread-${suffix}`;
+}
+
+function mentionsCurrentDiscordBot(message: Message): boolean {
+  const botUserId = message.client.user?.id;
+  return botUserId !== undefined && message.mentions.users.has(botUserId);
 }
 
 class ThreadCreationError extends Error {
@@ -80,6 +94,16 @@ async function ingest(
   const match = await findGroupByChannelId(lookupId);
   if (!match) return { status: "ignored" };
 
+  // Every configured Discord client can receive the same MessageCreate event.
+  // Only the client assigned to this group may enqueue its live messages.
+  if (
+    options.source === "live" &&
+    options.discordBotId !== undefined &&
+    options.discordBotId !== (match.group.bot ?? DEFAULT_DISCORD_BOT_ID)
+  ) {
+    return { status: "ignored", cursorScope: defaultCursorScope };
+  }
+
   // Historical backfill deliberately excludes bot/webhook messages so old RSS
   // webhook entries are not reintroduced into the normal agent queue.
   const isAllowedLiveBotMessage =
@@ -95,6 +119,17 @@ async function ingest(
 
   // ThreadCreated is a system record in the parent channel, not a user turn.
   if (message.type === MessageType.ThreadCreated && !isThread) {
+    return { status: "ignored", cursorScope: defaultCursorScope };
+  }
+
+  // Thread messages resolve their parent channel before this point, so a
+  // channel-level requiredMention policy applies equally to the channel and
+  // every thread below it. Slash commands use InteractionCreate and bypass
+  // this normal-message gate.
+  if (
+    match.channel.requiredMention === true &&
+    !mentionsCurrentDiscordBot(message)
+  ) {
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 

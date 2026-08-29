@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConvertToLlm } from "./agent-runner.js";
 
 const { AgentMock } = vi.hoisted(() => ({
@@ -76,6 +77,10 @@ function createMockAgent(deltas: string[], endMessage: unknown) {
 }
 
 describe("runAgentLoop", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     lastAgentOptions = undefined;
@@ -127,6 +132,97 @@ describe("runAgentLoop", () => {
       role: "assistant",
       content: [{ type: "text", text: "Hello world" }],
     });
+  });
+
+  it("root Agentへsubagent toolを配線し、実行時に独立childを作る", async () => {
+    await runAgentLoop("test-group", "session-1", "delegate", {});
+
+    const rootOptions = lastAgentOptions as {
+      initialState: { messages: unknown[]; tools: AgentTool[] };
+      sessionId?: string;
+    };
+    const subagentTool = rootOptions.initialState.tools.find(
+      (tool) => tool.name === "subagent",
+    );
+    expect(subagentTool).toBeDefined();
+    if (!subagentTool) throw new Error("subagent tool was not wired");
+
+    const result = await subagentTool.execute("tool-call", {
+      task: "inspect independently",
+    });
+
+    expect(result.content).toEqual([{ type: "text", text: "OK" }]);
+    expect(AgentMock).toHaveBeenCalledTimes(2);
+    const childOptions = AgentMock.mock.calls[1][0] as {
+      initialState: { messages: unknown[] };
+      sessionId?: string;
+    };
+    expect(childOptions.initialState.messages).toEqual([]);
+    expect(childOptions.sessionId).toBe(result.details.runId);
+    expect(childOptions.sessionId).not.toBe(rootOptions.sessionId);
+  });
+
+  it("root Agentへ同期bot toolを配線し、完了結果を返す", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: "Bot result",
+          action: "run",
+          botId: "coding",
+          session: "task-abc123",
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "delegate",
+      { tools: ["bot"] },
+      undefined,
+      undefined,
+      { url: "http://host.docker.internal:1234/__agent/bot", token: "secret" },
+    );
+    const rootOptions = lastAgentOptions as {
+      initialState: { tools: AgentTool[] };
+    };
+    const botTool = rootOptions.initialState.tools.find(
+      (tool) => tool.name === "bot",
+    );
+    expect(botTool).toBeDefined();
+    if (!botTool) throw new Error("bot tool was not wired");
+
+    const result = await botTool.execute("tool-call", {
+      action: "run",
+      bot: "coding",
+      prompt: "inspect",
+    });
+    expect(result.content).toEqual([{ type: "text", text: "Bot result" }]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://host.docker.internal:1234/__agent/bot",
+      expect.any(Object),
+    );
+  });
+
+  it("明示的なbot設定がなければendpointがあってもbot toolを渡さない", async () => {
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "delegate",
+      {},
+      undefined,
+      undefined,
+      { url: "http://host.docker.internal:1234/__agent/bot", token: "secret" },
+    );
+
+    const rootOptions = lastAgentOptions as {
+      initialState: { tools: AgentTool[] };
+    };
+    expect(
+      rootOptions.initialState.tools.some((tool) => tool.name === "bot"),
+    ).toBe(false);
   });
 
   it("request-scoped instructionsをsystem promptだけに追加する", async () => {
@@ -230,6 +326,105 @@ describe("runAgentLoop", () => {
     stderrSpy.mockRestore();
   });
 
+  it("同期subagentのassistant turnsとusageをroot timingへ合算する", async () => {
+    let rootOptions: {
+      initialState: { tools: AgentTool[] };
+    } | null = null;
+    const createAgent = (
+      message: {
+        role: "assistant";
+        content: unknown[];
+        usage: unknown;
+        stopReason: string;
+      },
+      invokeSubagent = false,
+    ) => {
+      const subscribers: Array<(event: unknown) => void> = [];
+      return {
+        subscribe: vi.fn((cb: (event: unknown) => void) =>
+          subscribers.push(cb),
+        ),
+        prompt: vi.fn(async () => {
+          if (invokeSubagent) {
+            const subagent = rootOptions?.initialState.tools.find(
+              (tool) => tool.name === "subagent",
+            );
+            if (!subagent) throw new Error("subagent tool was not wired");
+            await subagent.execute("delegate", { task: "child task" });
+          }
+          for (const cb of subscribers) {
+            cb({ type: "message_end", message });
+          }
+        }),
+      };
+    };
+
+    AgentMock.mockImplementation(function (options: unknown) {
+      if (!rootOptions) {
+        rootOptions = options as typeof rootOptions;
+        return createAgent(
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "root" }],
+            usage: {
+              input: 10,
+              output: 2,
+              cacheRead: 3,
+              cacheWrite: 1,
+              totalTokens: 16,
+            },
+            stopReason: "stop",
+          },
+          true,
+        );
+      }
+      return createAgent({
+        role: "assistant",
+        content: [{ type: "text", text: "child" }],
+        usage: {
+          input: 100,
+          output: 20,
+          cacheRead: 30,
+          cacheWrite: 4,
+          totalTokens: 154,
+        },
+        stopReason: "stop",
+      });
+    });
+
+    const written: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    await runAgentLoop("test-group", "session-1", "delegate", {});
+
+    const timingLine = written.find((line) =>
+      line.includes('"type":"agent_timing"'),
+    );
+    expect(timingLine).toBeDefined();
+    if (!timingLine) throw new Error("timingLine not found");
+    const timing = JSON.parse(
+      timingLine.slice("__DISCORD_EVENT__:".length).trimEnd(),
+    );
+    expect(timing).toMatchObject({
+      assistantTurns: 2,
+      usage: {
+        input: 110,
+        output: 22,
+        cacheRead: 33,
+        cacheWrite: 5,
+        totalTokens: 170,
+      },
+      stopReason: "stop",
+    });
+
+    stderrSpy.mockRestore();
+  });
+
   it("グループ設定のモデルを使用する", async () => {
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
@@ -283,7 +478,7 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("新規セッションでは AGENTS.md は agents-snapshot として、MEMORY.md は memory-bootstrap として保存する", async () => {
+  it("新規セッションでは AGENTS.md は system-prompt-snapshot として、MEMORY.md は memory-bootstrap として保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -305,13 +500,13 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // agents-snapshot が appendMessage で保存される（system role 維持のため AGENTS.md 原文をそのまま保持）
+    // system-prompt-snapshot が appendMessage で保存される（system role 維持のため AGENTS.md 原文をそのまま保持）
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "custom",
-        customType: "agents-snapshot",
+        customType: "system-prompt-snapshot",
         content: "カスタムプロンプト",
       }),
     );
@@ -326,13 +521,13 @@ describe("runAgentLoop", () => {
       }),
     );
 
-    // messages 配列の先頭に agents-snapshot、続いて memory-bootstrap が含まれる
+    // messages 配列の先頭に system-prompt-snapshot、続いて memory-bootstrap が含まれる
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({
       role: "custom",
-      customType: "agents-snapshot",
+      customType: "system-prompt-snapshot",
     });
     expect(messages[1]).toMatchObject({
       role: "custom",
@@ -340,7 +535,7 @@ describe("runAgentLoop", () => {
     });
   });
 
-  it("新規セッションでは SELF.md も memory-bootstrap と同様に self-bootstrap として保存する（agents-snapshot・memory-bootstrap に続いて3番目）", async () => {
+  it("新規セッションでは SELF.md も memory-bootstrap と同様に self-bootstrap として保存する（system-prompt-snapshot・memory-bootstrap に続いて3番目）", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -385,16 +580,16 @@ describe("runAgentLoop", () => {
       }),
     );
 
-    // messages 配列は agents-snapshot → memory-bootstrap → self-bootstrap の順で並ぶ
+    // messages 配列は system-prompt-snapshot → memory-bootstrap → self-bootstrap の順で並ぶ
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
-    expect(messages[0]).toMatchObject({ customType: "agents-snapshot" });
+    expect(messages[0]).toMatchObject({ customType: "system-prompt-snapshot" });
     expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
     expect(messages[2]).toMatchObject({ customType: "self-bootstrap" });
   });
 
-  it("新規セッションで AGENTS.md はあるが MEMORY.md がない場合は agents-snapshot のみ保存する", async () => {
+  it("新規セッションで AGENTS.md はあるが MEMORY.md がない場合は system-prompt-snapshot のみ保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -424,7 +619,7 @@ describe("runAgentLoop", () => {
       );
     expect(promptCalls).toHaveLength(1);
     expect(promptCalls[0][2]).toMatchObject({
-      customType: "agents-snapshot",
+      customType: "system-prompt-snapshot",
       content: "カスタムプロンプト",
     });
   });
@@ -459,7 +654,7 @@ describe("runAgentLoop", () => {
     expect(messages).toHaveLength(0);
   });
 
-  it("新規セッションで AGENTS.md が空文字の場合でも agents-snapshot を保存し、次回以降は再読み込みしない", async () => {
+  it("新規セッションで AGENTS.md が空文字の場合でも system-prompt-snapshot を保存し、次回以降は再読み込みしない", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "" as never;
@@ -478,7 +673,7 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // 空文字でも「ファイルは存在する」という状態を agents-snapshot として固定化する
+    // 空文字でも「ファイルは存在する」という状態を system-prompt-snapshot として固定化する
     const snapshotCalls = vi
       .mocked(appendMessage)
       .mock.calls.filter(
@@ -486,17 +681,18 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "customType" in call[2] &&
-          (call[2] as { customType: string }).customType === "agents-snapshot",
+          (call[2] as { customType: string }).customType ===
+            "system-prompt-snapshot",
       );
     expect(snapshotCalls).toHaveLength(1);
     expect(snapshotCalls[0][2]).toMatchObject({
-      customType: "agents-snapshot",
+      customType: "system-prompt-snapshot",
       content: "",
     });
   });
 
-  it("既存セッション（agents-snapshot と memory-bootstrap あり）では AGENTS.md / MEMORY.md を読み込まない", async () => {
-    const agentsSnapshotMsg = {
+  it("既存セッション（legacy agents-snapshot と memory-bootstrap あり）を再利用する", async () => {
+    const systemPromptSnapshotMsg = {
       role: "custom",
       customType: "agents-snapshot",
       content: "古いプロンプト",
@@ -509,7 +705,7 @@ describe("runAgentLoop", () => {
       timestamp: Date.now() - 1000,
     };
     vi.mocked(loadMessages).mockResolvedValue([
-      agentsSnapshotMsg,
+      systemPromptSnapshotMsg,
       memoryBootstrapMsg,
     ] as never);
 
@@ -716,13 +912,13 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).not.toContain("旧記憶");
     expect(systemPrompt).not.toContain("## Memory (MEMORY.md)");
 
-    // agents-snapshot として JSONL に書き込まれ、次回以降は再読み込みされない
+    // system-prompt-snapshot として JSONL に書き込まれ、次回以降は再読み込みされない
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "custom",
-        customType: "agents-snapshot",
+        customType: "system-prompt-snapshot",
         content: "旧形式プロンプト",
       }),
     );
@@ -737,22 +933,22 @@ describe("runAgentLoop", () => {
       }),
     );
 
-    // Agent に渡す messages の先頭に agents-snapshot、続いて memory-bootstrap が入る
+    // Agent に渡す messages の先頭に system-prompt-snapshot、続いて memory-bootstrap が入る
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
-    expect(messages[0]).toMatchObject({ customType: "agents-snapshot" });
+    expect(messages[0]).toMatchObject({ customType: "system-prompt-snapshot" });
     expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
-    // 既存履歴1件 + agents-snapshot 1件 + memory-bootstrap 1件
+    // 既存履歴1件 + system-prompt-snapshot 1件 + memory-bootstrap 1件
     expect(messages).toHaveLength(3);
   });
 
-  it("ロード時に JSONL 末尾にある agents-snapshot / memory-bootstrap を先頭へ並べ替える（移行ターン以降のキャッシュ整合性）", async () => {
+  it("ロード時に JSONL 末尾にある system-prompt-snapshot / memory-bootstrap を先頭へ並べ替える（移行ターン以降のキャッシュ整合性）", async () => {
     // 旧形式セッションの移行ターン直後を模した JSONL の中身。
     // appendMessage で末尾追記されているため、bootstrap 系が履歴の途中に挟まっている。
-    const agentsSnapshotMsg = {
+    const systemPromptSnapshotMsg = {
       role: "custom",
-      customType: "agents-snapshot",
+      customType: "system-prompt-snapshot",
       content: "保存済みプロンプト",
       timestamp: 1000,
     };
@@ -775,7 +971,7 @@ describe("runAgentLoop", () => {
         content: [{ type: "text", text: "旧assistant2" }],
         timestamp: 4,
       },
-      agentsSnapshotMsg,
+      systemPromptSnapshotMsg,
       memoryBootstrapMsg,
       { role: "user", content: "移行ターンのuser", timestamp: 1002 },
       {
@@ -800,7 +996,7 @@ describe("runAgentLoop", () => {
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
-    expect(messages[0]).toMatchObject({ customType: "agents-snapshot" });
+    expect(messages[0]).toMatchObject({ customType: "system-prompt-snapshot" });
     expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
     expect(messages[2]).toMatchObject({ role: "user", content: "旧user1" });
     expect(messages[3]).toMatchObject({ role: "assistant" });
@@ -955,7 +1151,7 @@ describe("runAgentLoop", () => {
   it("メッセージ履歴を Agent に引き継ぐ", async () => {
     const bootstrapMsg = {
       role: "custom",
-      customType: "agents-snapshot",
+      customType: "system-prompt-snapshot",
       content: "古いプロンプト",
       timestamp: Date.now() - 1000,
     };
@@ -1435,9 +1631,9 @@ describe("waitForNetwork", () => {
 });
 
 describe("defaultConvertToLlm", () => {
-  const agentsSnapshotMsg = {
+  const systemPromptSnapshotMsg = {
     role: "custom" as const,
-    customType: "agents-snapshot" as const,
+    customType: "system-prompt-snapshot" as const,
     content: "## エージェント設定\n\nテスト",
     timestamp: 500,
   };
@@ -1469,8 +1665,17 @@ describe("defaultConvertToLlm", () => {
     },
   };
 
-  it("agents-snapshot メッセージは LLM 送信用メッセージから常に除外する", () => {
-    const result = defaultConvertToLlm([agentsSnapshotMsg] as never);
+  it("system-prompt-snapshot メッセージは LLM 送信用メッセージから常に除外する", () => {
+    const result = defaultConvertToLlm([systemPromptSnapshotMsg] as never);
+    expect(result).toHaveLength(0);
+  });
+
+  it("legacy agents-snapshot メッセージも LLM 送信用メッセージから除外する", () => {
+    const legacySnapshot = {
+      ...systemPromptSnapshotMsg,
+      customType: "agents-snapshot",
+    };
+    const result = defaultConvertToLlm([legacySnapshot] as never);
     expect(result).toHaveLength(0);
   });
 
@@ -1526,9 +1731,9 @@ describe("defaultConvertToLlm", () => {
     });
   });
 
-  it("agents-snapshot は除外し、memory-bootstrap と通常メッセージはそのまま通す", () => {
+  it("system-prompt-snapshot は除外し、memory-bootstrap と通常メッセージはそのまま通す", () => {
     const result = defaultConvertToLlm([
-      agentsSnapshotMsg,
+      systemPromptSnapshotMsg,
       memoryBootstrapMsg,
       userMsg,
       assistantMsg,
@@ -1670,7 +1875,7 @@ describe("defaultConvertToLlm", () => {
     expect(result).toHaveLength(2);
   });
 
-  it("agents-snapshot/memory-bootstrap 以外の role はライブラリ標準の convertToLlm に委譲する", () => {
+  it("system-prompt-snapshot/memory-bootstrap 以外の role はライブラリ標準の convertToLlm に委譲する", () => {
     const bashExecutionMsg = {
       role: "bashExecution" as const,
       command: "echo hi",

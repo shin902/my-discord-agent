@@ -7,8 +7,15 @@ import {
   sendMessage,
 } from "../agent/manager.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
+import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
-import { findGroupByName, type ModelConfig } from "../config/groups.js";
+import { loadGroupSystemPrompt } from "../config/group-config.js";
+import {
+  type AgentConfig,
+  findGroupByName,
+  type GroupConfig,
+  type ModelConfig,
+} from "../config/groups.js";
 import {
   type ProviderConcurrency,
   resolveProviderConcurrency,
@@ -71,7 +78,7 @@ function executionMetadata(timing: ResponseTiming): ExecutionMetadata {
         stopReason: execution.stopReason,
         usage: execution.usage,
         timing: execution,
-        agentsSnapshotHash: execution.agentsSnapshotHash,
+        systemPromptSnapshotHash: execution.systemPromptSnapshotHash,
         memorySnapshotHash: execution.memorySnapshotHash,
         snapshotHash: execution.snapshotHash,
         toolCallKey: execution.toolCallKey,
@@ -378,8 +385,22 @@ async function sendDiscordEvent(
       } else {
         text = `🔧 \`${event.toolName}\``;
       }
-    } else {
+    } else if (event.type === "subagent_tool_start") {
+      text = `🤖 ${event.worker} \`${event.runId.slice(0, 8)}\`: 🔧 \`${event.toolName}\``;
+    } else if (event.type === "subagent_update") {
+      const detail =
+        event.status === "completed" && event.resultPreview
+          ? `完了: ${event.resultPreview}`
+          : event.status === "failed"
+            ? "失敗"
+            : event.taskPreview;
+      text = `🤖 ${event.worker} \`${event.runId.slice(0, 8)}\`: ${detail}`;
+    } else if (event.type === "error") {
       text = `⚠️ エラー: ${event.message}`;
+    } else {
+      // Keep the runtime boundary defensive if an untyped event reaches this
+      // function despite the DiscordEvent union and manager validation.
+      return;
     }
 
     const DISCORD_MAX = 2000;
@@ -420,12 +441,39 @@ interface LlmLockTarget {
   concurrency: ProviderConcurrency;
 }
 
+async function resolveBotExecution(
+  msg: InboxMessage,
+  groupConfig: GroupConfig | undefined,
+): Promise<{
+  configOverride?: Partial<AgentConfig>;
+  systemPromptAppend?: string;
+}> {
+  if (!msg.botId) return { configOverride: msg.configOverride };
+  if (!groupConfig)
+    throw new NonRetryableError(
+      `Bot ${msg.botId} のグループ設定が未定義です: ${msg.groupName}`,
+    );
+  const registry = await loadBotRegistry();
+  try {
+    const profile = resolveBotProfile(registry, msg.botId, groupConfig.name);
+    return {
+      configOverride: resolveAgentConfig(groupConfig, profile),
+      systemPromptAppend: profile.instructions,
+    };
+  } catch (error) {
+    throw new NonRetryableError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 async function resolveLlmLockTarget(
   msg: InboxMessage,
   groupModel?: ModelConfig,
+  configOverride = msg.configOverride,
 ): Promise<LlmLockTarget> {
   const model = await resolveModelConfig(
-    resolveAgentConfig({ model: groupModel }, msg.configOverride).model,
+    resolveAgentConfig({ model: groupModel }, configOverride).model,
   );
   return {
     provider: model.provider,
@@ -784,7 +832,12 @@ async function processCronThreadDelivery(
       sessionId = cronSessionId(msg);
     }
     const groupConfig = await findGroupByName(msg.groupName);
-    const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
+    const execution = await resolveBotExecution(msg, groupConfig);
+    const lockTarget = await resolveLlmLockTarget(
+      msg,
+      groupConfig?.model,
+      execution.configOverride,
+    );
     const legacyItemThread =
       msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true;
     const response = await withLlmLock(
@@ -798,17 +851,23 @@ async function processCronThreadDelivery(
             },
             onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
             signal,
-            configOverride: msg.configOverride,
-            agentsSnapshotContent: msg.agentsSnapshotContent,
-            agentsSnapshotPresent: msg.agentsSnapshotPresent,
+            configOverride: execution.configOverride,
+            systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
+            systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
             memorySnapshotPresent: msg.memorySnapshotPresent,
             memorySnapshotContent: msg.memorySnapshotContent,
             snapshotHash: msg.snapshotHash,
             toolCallKey: msg.toolCallKey,
             systemPromptAppend:
-              msg.cronNoReply && !legacyItemThread
+              execution.systemPromptAppend ??
+              (msg.cronNoReply && !legacyItemThread
                 ? NO_REPLY_SYSTEM_PROMPT
+                : undefined),
+            heldLlmProvider:
+              lockTarget.concurrency === "serial"
+                ? lockTarget.provider
                 : undefined,
+            ...(msg.botId ? { enableBotTool: false } : {}),
           });
         } finally {
           timing.agentTotalMs = Date.now() - agentStartedAt;
@@ -903,23 +962,24 @@ async function processCronThreadDelivery(
   }
 }
 async function captureFrozenIdentity(msg: InboxMessage): Promise<{
-  agentsSnapshotContent?: string;
+  systemPromptSnapshotContent?: string;
   memorySnapshotContent?: string;
-  agentsSnapshotPresent: boolean;
+  systemPromptSnapshotPresent: boolean;
   memorySnapshotPresent: boolean;
   snapshotPresent: boolean;
   snapshotHash: string;
   toolCallKey: string;
 }> {
-  const base = path.resolve("groups", msg.groupName);
   const readOptional = async (file: string) =>
     readFile(file, "utf8").catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     });
-  let agentsSnapshotContent = await readOptional(path.join(base, "AGENTS.md"));
+  let systemPromptSnapshotContent =
+    (await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
+    undefined;
   let memorySnapshotContent = await readOptional(
-    path.join(base, "memory", "MEMORY.md"),
+    path.join("groups", msg.groupName, "memory", "MEMORY.md"),
   );
   const sessionRaw = await readOptional(
     path.resolve("data", "sessions", msg.groupName, `${msg.sessionId}.jsonl`),
@@ -931,8 +991,11 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
           customType?: string;
           content?: unknown;
         };
-        if (entry.customType === "agents-snapshot")
-          agentsSnapshotContent = String(entry.content ?? "");
+        if (
+          entry.customType === "system-prompt-snapshot" ||
+          entry.customType === "agents-snapshot"
+        )
+          systemPromptSnapshotContent = String(entry.content ?? "");
         if (entry.customType === "memory-bootstrap")
           memorySnapshotContent = String(entry.content ?? "");
       } catch {
@@ -940,9 +1003,9 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
       }
     }
   }
-  const agentsSnapshotPresent = agentsSnapshotContent !== undefined;
+  const systemPromptSnapshotPresent = systemPromptSnapshotContent !== undefined;
   const memorySnapshotPresent = memorySnapshotContent !== undefined;
-  const snapshotPresent = agentsSnapshotPresent || memorySnapshotPresent;
+  const snapshotPresent = systemPromptSnapshotPresent || memorySnapshotPresent;
   const canonicalMemory =
     memorySnapshotContent === undefined
       ? ""
@@ -951,16 +1014,16 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
         : `## Memory (MEMORY.md)\n\n${Array.from(memorySnapshotContent).slice(0, 2000).join("")}${Array.from(memorySnapshotContent).length > 2000 ? "\n\n[Warning: Memory (MEMORY.md) exceeds the limit (2000 characters). Delete or summarize old content to keep it organized]" : ""}`;
   const snapshotHash = createHash("sha256")
     .update(
-      `${agentsSnapshotPresent ? "1" : "0"}:${agentsSnapshotContent ?? ""}:${memorySnapshotPresent ? "1" : "0"}:${canonicalMemory}`,
+      `${systemPromptSnapshotPresent ? "1" : "0"}:${systemPromptSnapshotContent ?? ""}:${memorySnapshotPresent ? "1" : "0"}:${canonicalMemory}`,
     )
     .digest("hex");
   const toolCallKey = createHash("sha256")
     .update(`${msg.id}:${msg.groupName}:${msg.sessionId}:${snapshotHash}`)
     .digest("hex");
   return {
-    agentsSnapshotContent,
+    systemPromptSnapshotContent,
     memorySnapshotContent,
-    agentsSnapshotPresent,
+    systemPromptSnapshotPresent,
     memorySnapshotPresent,
     snapshotPresent,
     snapshotHash,
@@ -976,11 +1039,11 @@ export async function processMessage(
       const identity =
         msg.snapshotHash &&
         msg.toolCallKey &&
-        msg.agentsSnapshotPresent !== undefined
+        msg.systemPromptSnapshotPresent !== undefined
           ? {
-              agentsSnapshotContent: msg.agentsSnapshotContent,
+              systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
               memorySnapshotContent: msg.memorySnapshotContent,
-              agentsSnapshotPresent: msg.agentsSnapshotPresent,
+              systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
               memorySnapshotPresent: msg.memorySnapshotPresent ?? false,
               snapshotPresent: msg.snapshotPresent ?? false,
               snapshotHash: msg.snapshotHash,
@@ -1047,7 +1110,12 @@ export async function processMessage(
     const replyMessageId = msg.messageId;
 
     try {
-      const lockTarget = await resolveLlmLockTarget(msg, groupConfig?.model);
+      const execution = await resolveBotExecution(msg, groupConfig);
+      const lockTarget = await resolveLlmLockTarget(
+        msg,
+        groupConfig.model,
+        execution.configOverride,
+      );
       response = await withLlmLock(
         lockTarget,
         async () => {
@@ -1081,17 +1149,22 @@ export async function processMessage(
                   msg,
                   msg.sessionId,
                 ),
-                agentsSnapshotContent: msg.agentsSnapshotContent,
-                agentsSnapshotPresent: msg.agentsSnapshotPresent,
+                systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
+                systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
                 memorySnapshotPresent: msg.memorySnapshotPresent,
                 memorySnapshotContent: msg.memorySnapshotContent,
                 snapshotHash: msg.snapshotHash,
                 toolCallKey: msg.toolCallKey,
-                systemPromptAppend: msg.cronNoReply
-                  ? NO_REPLY_SYSTEM_PROMPT
-                  : undefined,
+                systemPromptAppend:
+                  execution.systemPromptAppend ??
+                  (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
                 signal,
-                configOverride: msg.configOverride,
+                configOverride: execution.configOverride,
+                heldLlmProvider:
+                  lockTarget.concurrency === "serial"
+                    ? lockTarget.provider
+                    : undefined,
+                ...(msg.botId ? { enableBotTool: false } : {}),
               },
             );
           } finally {

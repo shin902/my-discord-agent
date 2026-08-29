@@ -174,11 +174,19 @@ const makeProc = (
 
 describe("sendMessage: Docker 起動構成", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
+  let execFileMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    execFileMock = vi.fn((_command, _args, callback) => {
+      callback?.(null, "", "");
+      return { on: vi.fn() };
+    });
+    vi.doMock("node:child_process", () => ({
+      spawn: spawnMock,
+      execFile: execFileMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -202,6 +210,9 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toContain("--pull=always");
     expect(args).toContain("--memory=512m");
     expect(args).toContain("--cpus=1");
+    expect(args).toEqual(
+      expect.arrayContaining(["--label", "my-discord-agent.runner=true"]),
+    );
   });
 
   it("SIGKILL などで null 終了したコンテナは成功レスポンスにせず再試行可能なエラーにする", async () => {
@@ -356,6 +367,109 @@ describe("sendMessage: Docker 起動構成", () => {
     const { killAllRunningContainers } = await import("./manager.js");
     await killAllRunningContainers();
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("strict startup cleanup はDockerのdiscovery失敗を伝播する", async () => {
+    execFileMock.mockImplementationOnce((_command, _args, callback) => {
+      callback?.(new Error("docker daemon unavailable"), "", "daemon down");
+      return { on: vi.fn() };
+    });
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).rejects.toThrow("container cleanup discovery failed");
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("strict startup cleanup はlabelと旧nameの管理コンテナを重複なく停止する", async () => {
+    execFileMock
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "labelled\nshared\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "legacy\nshared\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "", "");
+        return { on: vi.fn() };
+      });
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).resolves.toBeUndefined();
+    expect(spawnMock).toHaveBeenCalledWith(
+      "docker",
+      ["kill", "labelled", "shared", "legacy"],
+      { stdio: "ignore" },
+    );
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      1,
+      "docker",
+      ["ps", "-q", "--filter", "label=my-discord-agent.runner=true"],
+      expect.any(Function),
+    );
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      expect.any(Function),
+    );
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      3,
+      "docker",
+      ["ps", "-q", "--filter", "label=my-discord-agent.runner=true"],
+      expect.any(Function),
+    );
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      4,
+      "docker",
+      ["ps", "-q", "--filter", "name=my-discord-agent-"],
+      expect.any(Function),
+    );
+    expect(execFileMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("strict startup cleanup は停止確認のdiscovery失敗を隠さない", async () => {
+    execFileMock
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "container-1\n", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(null, "", "");
+        return { on: vi.fn() };
+      })
+      .mockImplementationOnce((_command, _args, callback) => {
+        callback?.(new Error("docker daemon unavailable"), "", "daemon down");
+        return { on: vi.fn() };
+      });
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).rejects.toThrow("container cleanup discovery failed");
+  });
+
+  it("strict startup cleanup は個別のdocker kill失敗を隠さない", async () => {
+    execFileMock.mockImplementationOnce((_command, _args, callback) => {
+      callback?.(null, "container-1\n", "");
+      return { on: vi.fn() };
+    });
+    spawnMock.mockReturnValueOnce(makeProc(1));
+    const { killAllRunningContainers } = await import("./manager.js");
+
+    await expect(
+      killAllRunningContainers({ includeOrphans: true, strict: true }),
+    ).rejects.toThrow("container cleanup kill failed");
+    expect(execFileMock).toHaveBeenCalledTimes(2);
   });
 
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {
@@ -961,12 +1075,21 @@ describe("sendMessage: 設定バリデーション", () => {
 describe("sendMessage: configOverride", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
   let ensureGroupSkillsMock: ReturnType<typeof vi.fn>;
+  let createInternalRequestConfigMock: ReturnType<typeof vi.fn>;
 
   const setup = async () => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
+    createInternalRequestConfigMock = vi.fn(() => ({
+      port: 12345,
+      token: "internal-token",
+      revoke: vi.fn(),
+    }));
     vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("../proxy/credential-proxy-server.js", () => ({
+      createInternalRequestConfig: createInternalRequestConfigMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -991,7 +1114,51 @@ describe("sendMessage: configOverride", () => {
 
   afterEach(() => {
     vi.doUnmock("../config/group-config.js");
+    vi.doUnmock("../proxy/credential-proxy-server.js");
     vi.resetModules();
+  });
+
+  it("botがeffective toolsにない場合はendpointとtokenを渡さない", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi");
+
+    expect(createInternalRequestConfigMock).not.toHaveBeenCalled();
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.botToolEndpoint).toBeUndefined();
+  });
+
+  it("botがeffective toolsに明示された場合だけendpointとtokenを渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["bot"] },
+    });
+
+    expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
+      "test-group",
+      undefined,
+    );
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.botToolEndpoint).toEqual({
+      url: "http://host.docker.internal:12345/__agent/bot",
+      token: "internal-token",
+    });
+  });
+
+  it("groupのbot設定はchannel相当のtools上書きで無効化される", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["read"] },
+    });
+
+    expect(createInternalRequestConfigMock).not.toHaveBeenCalled();
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.botToolEndpoint).toBeUndefined();
   });
 
   it("configOverride が payload の groupConfig を上書きする", async () => {
@@ -1102,6 +1269,49 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     await sendMessage("g", "s", "hi", onDiscordEvent);
 
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
+  });
+
+  it("subagentイベントは転送し、未知イベントは無視する", async () => {
+    const events = [
+      {
+        type: "subagent_tool_start",
+        worker: "ephemeral",
+        runId: "child-123",
+        parentRunId: "root-123",
+        toolName: "read",
+        taskPreview: "調査タスク",
+      },
+      {
+        type: "subagent_update",
+        worker: "ephemeral",
+        runId: "child-123",
+        parentRunId: "root-123",
+        status: "completed",
+        taskPreview: "調査タスク",
+        resultPreview: "調査完了",
+      },
+      { type: "future_event", message: "must be ignored" },
+      {
+        type: "subagent_update",
+        worker: "ephemeral",
+        runId: "child-123",
+        parentRunId: "root-123",
+        status: "running",
+        taskPreview: "@everyone unsafe",
+      }, // unsafe taskPreview: must be ignored
+    ];
+    const sendMessage = await setupWithStderr(
+      events
+        .map((event) => `__DISCORD_EVENT__:${JSON.stringify(event)}\n`)
+        .join(""),
+    );
+
+    const onDiscordEvent = vi.fn();
+    await sendMessage("g", "s", "hi", onDiscordEvent);
+
+    expect(onDiscordEvent).toHaveBeenCalledTimes(2);
+    expect(onDiscordEvent).toHaveBeenNthCalledWith(1, events[0]);
+    expect(onDiscordEvent).toHaveBeenNthCalledWith(2, events[1]);
   });
 
   it("agent_timing はDiscordへ転送せず実行時間へ統合する", async () => {

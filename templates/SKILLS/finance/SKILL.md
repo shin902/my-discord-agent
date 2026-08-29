@@ -9,6 +9,27 @@ Manage income, expenses, and subscriptions by operating the SQLite database at `
 
 Database path: `/workspace/finance.db`
 
+## Subscription history model
+
+Treat `subscriptions` as an append-only state history.
+
+- Never `UPDATE` or delete an existing subscription state row during normal operation.
+- Registration, renewal, price changes, cycle changes, category changes, cancellation, and reactivation all create a new row with `INSERT`.
+- Rows with the same `name` are successive snapshots of the same logical subscription.
+- The row with the largest `id` for each `name` is its current state.
+- Older rows are history and must remain queryable.
+- `recorded_at` records when the snapshot was written. Existing databases may have legacy rows where it is `NULL`.
+
+For an existing database created before `recorded_at` was introduced, check the schema once and add the column if it is missing:
+
+```bash
+if ! sqlite3 /workspace/finance.db "SELECT name FROM pragma_table_info('subscriptions') WHERE name = 'recorded_at';" | grep -q '^recorded_at$'; then
+  sqlite3 /workspace/finance.db "ALTER TABLE subscriptions ADD COLUMN recorded_at TEXT;"
+fi
+```
+
+Do not backfill legacy rows with guessed timestamps.
+
 ## Operation reference
 
 ### Record income and expenses
@@ -68,26 +89,48 @@ LIMIT 10;
 
 ```bash
 sqlite3 /workspace/finance.db "
-INSERT INTO subscriptions (name, amount, cycle, next_date, category)
-VALUES ('Netflix', -1490, 'monthly', '2026-07-15', 'エンタメ');
+INSERT INTO subscriptions (name, amount, cycle, next_date, category, active, recorded_at)
+VALUES ('Netflix', -1490, 'monthly', '2026-07-15', 'エンタメ', 1, CURRENT_TIMESTAMP);
 "
 ```
 
-### Query subscriptions
+### Query current subscriptions
+
+Always reduce subscription history to the latest row per `name` before answering current-state questions.
 
 ```bash
 # List active subscriptions
 sqlite3 /workspace/finance.db "
+WITH current_subscriptions AS (
+  SELECT s.*
+  FROM subscriptions AS s
+  JOIN (
+    SELECT name, MAX(id) AS id
+    FROM subscriptions
+    GROUP BY name
+  ) AS latest
+    ON latest.id = s.id
+)
 SELECT name, amount, cycle, next_date, category
-FROM subscriptions
+FROM current_subscriptions
 WHERE active = 1
 ORDER BY next_date;
 "
 
 # Subscriptions renewing within the next 7 days
 sqlite3 /workspace/finance.db "
+WITH current_subscriptions AS (
+  SELECT s.*
+  FROM subscriptions AS s
+  JOIN (
+    SELECT name, MAX(id) AS id
+    FROM subscriptions
+    GROUP BY name
+  ) AS latest
+    ON latest.id = s.id
+)
 SELECT name, amount, next_date
-FROM subscriptions
+FROM current_subscriptions
 WHERE active = 1
   AND next_date BETWEEN date('now') AND date('now', '+7 days')
 ORDER BY next_date;
@@ -95,38 +138,88 @@ ORDER BY next_date;
 
 # Total monthly-equivalent cost
 sqlite3 /workspace/finance.db "
+WITH current_subscriptions AS (
+  SELECT s.*
+  FROM subscriptions AS s
+  JOIN (
+    SELECT name, MAX(id) AS id
+    FROM subscriptions
+    GROUP BY name
+  ) AS latest
+    ON latest.id = s.id
+)
 SELECT
   SUM(CASE WHEN cycle = 'monthly' THEN amount
            WHEN cycle = 'yearly'  THEN CAST(amount * 1.0 / 12 AS INTEGER)
            WHEN cycle = 'weekly'  THEN CAST(amount * 52.0 / 12 AS INTEGER)
            ELSE amount END) AS monthly_cost
-FROM subscriptions
+FROM current_subscriptions
 WHERE active = 1;
 "
 ```
 
-### Update a subscription's next_date (after renewal)
+### Query subscription history
 
 ```bash
 sqlite3 /workspace/finance.db "
-UPDATE subscriptions
-SET next_date = date(next_date, '+1 month')
-WHERE name = 'Netflix';
+SELECT id, recorded_at, name, amount, cycle, next_date, category, active
+FROM subscriptions
+WHERE name = 'Netflix'
+ORDER BY id;
 "
 ```
 
-Choose `'+1 month'`, `'+1 year'`, or `'+7 days'` according to `cycle`.
+### Record a renewal
+
+Copy the latest state into a new row and advance only `next_date`.
+
+```bash
+sqlite3 /workspace/finance.db "
+INSERT INTO subscriptions (name, amount, cycle, next_date, category, active, recorded_at)
+SELECT
+  name,
+  amount,
+  cycle,
+  CASE cycle
+    WHEN 'monthly' THEN date(next_date, '+1 month')
+    WHEN 'yearly'  THEN date(next_date, '+1 year')
+    WHEN 'weekly'  THEN date(next_date, '+7 days')
+    ELSE next_date
+  END,
+  category,
+  active,
+  CURRENT_TIMESTAMP
+FROM subscriptions
+WHERE id = (
+  SELECT MAX(id)
+  FROM subscriptions
+  WHERE name = 'Netflix'
+);
+"
+```
 
 ### Cancel a subscription
 
+Copy the latest state into a new row with `active = 0` instead of overwriting the old row.
+
 ```bash
 sqlite3 /workspace/finance.db "
-UPDATE subscriptions SET active = 0 WHERE name = 'Netflix';
+INSERT INTO subscriptions (name, amount, cycle, next_date, category, active, recorded_at)
+SELECT name, amount, cycle, next_date, category, 0, CURRENT_TIMESTAMP
+FROM subscriptions
+WHERE id = (
+  SELECT MAX(id)
+  FROM subscriptions
+  WHERE name = 'Netflix'
+);
 "
 ```
+
+Use the same append-only copy-and-change pattern for price, cycle, category, and reactivation changes.
 
 ## Notes
 
 - Use the category string exactly as specified by the user; do not normalize it.
 - Monetary amounts are always integers in yen.
-- If the schema is missing columns, you may add them with `ALTER TABLE`.
+- Use `name` as the logical subscription identity, matching the existing finance skill behavior. If duplicate subscriptions with the same name need to be tracked independently in the future, introduce a stable subscription key then rather than complicating the current schema preemptively.
+- If the schema is missing columns, you may add them with `ALTER TABLE`, but do not mutate historical subscription rows during normal operation.
