@@ -257,16 +257,16 @@ describe("loadOrCreateSessionTimeAnchor", () => {
 
     expect(result).toBe(1787868000000);
     const temporaryFile = String(mockWriteFile.mock.calls[0]?.[0]);
-    expect(mockRename).toHaveBeenCalledWith(
-      expect.stringMatching(/session-a\.time-anchor$/),
-      expect.stringMatching(/\.repair$/),
-    );
     expect(mockLink).toHaveBeenCalledWith(
+      temporaryFile,
+      expect.stringMatching(/session-a\.time-anchor\.repair$/),
+    );
+    expect(mockRename).toHaveBeenCalledWith(
       temporaryFile,
       expect.stringMatching(/session-a\.time-anchor$/),
     );
     expect(mockUnlink).toHaveBeenCalledWith(
-      expect.stringMatching(/session-a\.time-anchor\..+\.repair$/),
+      expect.stringMatching(/session-a\.time-anchor\.repair$/),
     );
   });
 
@@ -310,59 +310,78 @@ describe("loadOrCreateSessionTimeAnchor", () => {
     );
   });
 
-  it("並行するsidecar修復callerは同じwinnerへ収束する", async () => {
-    let durableAnchor: number | undefined;
-    let invalidSidecarPresent = true;
+  it("初期read後にwinnerが公開されたcallerはwinnerを上書きしない", async () => {
     let initialReads = 0;
+    let durableAnchor: number | undefined;
+    let claimHeld = false;
     let releaseInitialReads!: () => void;
     const initialReadsReady = new Promise<void>((resolve) => {
       releaseInitialReads = resolve;
     });
-    mockReadFile.mockImplementation(async (file) => {
-      if (String(file).endsWith(".time-anchor")) {
-        if (durableAnchor !== undefined) return `${durableAnchor}\n`;
-        if (invalidSidecarPresent) {
-          initialReads += 1;
-          if (initialReads === 2) releaseInitialReads();
-          await initialReadsReady;
-          return "1787868\n";
-        }
-        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-      }
-      return "1787868\n";
+    let releaseSecondWrite!: () => void;
+    const secondWriteReady = new Promise<void>((resolve) => {
+      releaseSecondWrite = resolve;
     });
-    mockRename.mockImplementation(async (source, destination) => {
-      if (String(source).endsWith(".time-anchor")) {
-        if (!invalidSidecarPresent) {
-          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+
+    mockReadFile.mockImplementation(async (file) => {
+      if (!String(file).endsWith(".time-anchor")) return "1787868\n";
+      initialReads += 1;
+      if (initialReads === 2) releaseInitialReads();
+      await initialReadsReady;
+      return durableAnchor === undefined ? "1787868\n" : `${durableAnchor}\n`;
+    });
+    mockWriteFile.mockImplementation(async (_file, content) => {
+      if (String(content).includes("1787868000001")) {
+        await secondWriteReady;
+      }
+    });
+    mockLink.mockImplementation(async (source, destination) => {
+      if (String(destination).endsWith(".repair")) {
+        if (claimHeld) {
+          throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
         }
-        invalidSidecarPresent = false;
+        claimHeld = true;
         return;
       }
-      throw new Error(`unexpected rename: ${source} -> ${destination}`);
-    });
-    mockLink.mockImplementation(async (temporaryFile, destination) => {
       if (durableAnchor !== undefined) {
         throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
       }
-      const write = mockWriteFile.mock.calls.find(
-        ([file]) => file === temporaryFile,
-      );
+      const write = mockWriteFile.mock.calls.find(([file]) => file === source);
       durableAnchor = Number(String(write?.[1]).trim());
+    });
+    mockRename.mockImplementation(async (source, destination) => {
+      expect(String(source)).toMatch(/\.tmp$/);
       expect(String(destination)).toMatch(/session-a\.time-anchor$/);
+      const write = mockWriteFile.mock.calls.find(([file]) => file === source);
+      durableAnchor = Number(String(write?.[1]).trim());
+    });
+    mockUnlink.mockImplementation(async (file) => {
+      if (String(file).endsWith(".repair")) claimHeld = false;
     });
 
-    const [first, second] = await Promise.all([
-      loadOrCreateSessionTimeAnchor("group1", "session-a", 1787868000000),
-      loadOrCreateSessionTimeAnchor("group1", "session-a", 1787868000001),
-    ]);
+    const firstPromise = loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      1787868000000,
+    );
+    const secondPromise = loadOrCreateSessionTimeAnchor(
+      "group1",
+      "session-a",
+      1787868000001,
+    );
+
+    const first = await firstPromise;
+    releaseSecondWrite();
+    const second = await secondPromise;
 
     expect(first).toBe(1787868000000);
     expect(second).toBe(first);
     expect(durableAnchor).toBe(first);
-    expect(initialReads).toBe(2);
-    expect(mockRename).toHaveBeenCalled();
-    expect(mockLink).toHaveBeenCalled();
+    expect(mockRename).toHaveBeenCalledTimes(1);
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringMatching(/\.tmp$/),
+      expect.stringMatching(/session-a\.time-anchor$/),
+    );
   });
 });
 

@@ -76,6 +76,8 @@ export async function loadMessages(
 }
 
 const TIME_ANCHOR_PATTERN = /^[1-9]\d{12}$/;
+const TIME_ANCHOR_REPAIR_WAIT_MS = 10;
+const TIME_ANCHOR_REPAIR_TIMEOUT_MS = 1000;
 
 function isValidTimeAnchor(timestamp: number): boolean {
   return (
@@ -144,52 +146,50 @@ export async function loadOrCreateSessionTimeAnchor(
 
   try {
     if (initialState.kind === "invalid") {
-      // 不完全なfinalを一意なclaim pathへrenameして修復権を取得する。
-      // 完成済みtmpのlink公開はno-clobberなので、競合callerも同じwinnerへ収束する。
-      const claimPath = `${file}.${process.pid}.${randomUUID()}.repair`;
-      while (true) {
-        let claimed = false;
+      // 固定claim pathをhard linkでno-clobberに取得し、取得後にfinalを再読する。
+      // 初期read後に別callerが公開したwinnerをrenameで上書きしない。
+      const claimPath = `${file}.repair`;
+      let ownsClaim = false;
+      try {
         try {
-          await rename(file, claimPath);
-          claimed = true;
+          await link(temporaryFile, claimPath);
+          ownsClaim = true;
         } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
         }
 
-        if (claimed) {
-          try {
+        const deadline = Date.now() + TIME_ANCHOR_REPAIR_TIMEOUT_MS;
+        while (true) {
+          if (!ownsClaim) {
             try {
-              await link(temporaryFile, file);
-              return timestamp;
+              await link(temporaryFile, claimPath);
+              ownsClaim = true;
             } catch (err) {
               if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
             }
-
-            const winner = await readTimeAnchorState(file);
-            if (winner.kind === "valid") return winner.timestamp;
-          } finally {
-            await unlink(claimPath).catch(() => {});
           }
-        } else {
+
+          if (ownsClaim) {
+            const current = await readTimeAnchorState(file);
+            if (current.kind === "valid") return current.timestamp;
+
+            // claim取得後も不完全なら、完成済みtmpをfinalへ原子的に公開する。
+            await rename(temporaryFile, file);
+            return timestamp;
+          }
+
           const winner = await readTimeAnchorState(file);
           if (winner.kind === "valid") return winner.timestamp;
-
-          try {
-            await link(temporaryFile, file);
-            return timestamp;
-          } catch (err) {
-            const code = (err as NodeJS.ErrnoException).code;
-            if (code === "EEXIST") {
-              const winner = await readTimeAnchorState(file);
-              if (winner.kind === "valid") return winner.timestamp;
-            } else if (code !== "ENOENT") {
-              throw err;
-            }
+          if (Date.now() >= deadline) {
+            throw new Error(`時刻sidecarの修復がタイムアウトしました: ${file}`);
           }
+          // claim所有者の公開完了、または異常終了を待つ。異常終了時はbounded errorにする。
+          await new Promise((resolve) =>
+            setTimeout(resolve, TIME_ANCHOR_REPAIR_WAIT_MS),
+          );
         }
-
-        // 競合相手がclaim/publicationの途中なら、finalが再び観測可能になるまで待つ。
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      } finally {
+        if (ownsClaim) await unlink(claimPath).catch(() => {});
       }
     }
 
