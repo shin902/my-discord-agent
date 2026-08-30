@@ -299,7 +299,7 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
   if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
   try {
     const config = await loadAgentMemoryConfig();
-    if (!config.enabled) {
+    if (!config.enabled || !config.eligibleGroups.includes(msg.groupName)) {
       console.log(`[agent-memory] shadow job skipped (disabled): ${msg.id}`);
       await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
         empty: true,
@@ -326,46 +326,43 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
   }
 }
 
-async function enqueueMemoryShadow(
+async function prepareMemoryShadowJob(
   msg: InboxMessage,
   assistantContent: string,
-): Promise<void> {
-  try {
-    const config = await loadAgentMemoryConfig();
-    if (!isAgentMemoryEligible(config, msg)) return;
-    const userId = msg.userId;
-    if (!userId) return;
-    const submission = buildAgentMemorySubmission({
-      teamId: config.teamId,
-      agentId: config.agentId,
-      userId,
-      sessionId: msg.sessionId,
-      userContent: msg.content,
-      assistantContent,
-      userTimestamp: msg.timestamp,
-      assistantTimestamp: new Date().toISOString(),
-    });
-    const repository = getQueueRepository();
-    const result = repository.enqueue(
-      {
-        channelId: msg.channelId,
-        groupName: msg.groupName,
-        sessionId: `memory-shadow:${msg.sessionId}`,
-        content: "memory-shadow",
-        timestamp: new Date().toISOString(),
-        memoryShadow: submission,
-      },
-      {
-        idempotencyKey: `agent-memory-shadow:${msg.id}`,
-      },
-    );
-    console.log(
-      `[agent-memory] shadow job enqueued: ${JSON.stringify({ sourceJobId: msg.id, jobId: result.job.id, inserted: result.inserted, groupName: msg.groupName, userId })}`,
-    );
-  } catch (error) {
-    // Shadow mode is strictly best-effort and must not affect the Discord response.
-    console.error(`[agent-memory] shadow job enqueue failed: ${msg.id}`, error);
-  }
+): Promise<
+  | {
+      payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
+      options: { idempotencyKey: string };
+      userId: string;
+    }
+  | undefined
+> {
+  const config = await loadAgentMemoryConfig();
+  if (!isAgentMemoryEligible(config, msg)) return undefined;
+  const userId = msg.userId;
+  if (!userId) return undefined;
+  const submission = buildAgentMemorySubmission({
+    teamId: config.teamId,
+    agentId: config.agentId,
+    userId,
+    sessionId: msg.sessionId,
+    userContent: msg.content,
+    assistantContent,
+    userTimestamp: msg.timestamp,
+    assistantTimestamp: new Date().toISOString(),
+  });
+  return {
+    payload: {
+      channelId: msg.channelId,
+      groupName: msg.groupName,
+      sessionId: `memory-shadow:${msg.sessionId}`,
+      content: "memory-shadow",
+      timestamp: new Date().toISOString(),
+      memoryShadow: submission,
+    },
+    options: { idempotencyKey: `agent-memory-shadow:${msg.id}` },
+    userId,
+  };
 }
 
 function resolveDiscordClient(groupName: string) {
@@ -1311,6 +1308,23 @@ export async function processMessage(
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
     }
+    let shadowJob:
+      | {
+          payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
+          options: { idempotencyKey: string };
+          userId: string;
+        }
+      | undefined;
+    try {
+      shadowJob = await prepareMemoryShadowJob(msg, response);
+    } catch (error) {
+      // Shadow mode is best-effort; configuration/preparation failures must not
+      // prevent the normal response from reaching its terminal state.
+      console.error(
+        `[agent-memory] shadow job preparation failed: ${msg.id}`,
+        error,
+      );
+    }
     await getQueueRepository().commitResult(
       msg.id,
       msg.fencingToken,
@@ -1334,13 +1348,24 @@ export async function processMessage(
               }
             : {}),
         },
+        ...(shadowJob
+          ? {
+              shadowJob: {
+                payload: shadowJob.payload,
+                options: shadowJob.options,
+              },
+            }
+          : {}),
       },
     );
     if (suppressDelivery) await finalizeSuppressedSource(msg);
-    // Only the local queue admission is awaited so a successful response cannot
-    // lose its shadow job on process exit. The queued worker owns remote I/O and
-    // its failure cannot change this job's result.
-    await enqueueMemoryShadow(msg, response);
+    if (shadowJob) {
+      console.log(
+        `[agent-memory] shadow job admitted: ${JSON.stringify({ sourceJobId: msg.id, groupName: msg.groupName, userId: shadowJob.userId })}`,
+      );
+    }
+    // The source result, delivery rows, and local shadow admission commit
+    // atomically. The queued worker owns remote MemoryCore I/O separately.
     outcome = "success";
     stopTyping();
   } finally {

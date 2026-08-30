@@ -227,6 +227,11 @@ export interface EnqueueResult {
   inserted: boolean;
 }
 
+export interface ShadowJobAdmission {
+  payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
+  options?: { idempotencyKey?: string; maxAttempts?: number };
+}
+
 export interface BotTaskSessionEnqueueResult {
   session: BotTaskSession;
   enqueue: EnqueueResult;
@@ -1515,6 +1520,7 @@ export class QueueRepository {
       suppressDelivery?: boolean;
       metadata?: ExecutionMetadata;
       deliveryPayload?: unknown;
+      shadowJob?: ShadowJobAdmission;
     } = {},
   ): DeliveryRow | undefined {
     const at = nowIso();
@@ -1619,6 +1625,14 @@ export class QueueRepository {
             "UPDATE idempotency_keys SET status='completed',completed_at=? WHERE key=?",
           )
           .run(at, row.idempotency_key);
+      // Shadow admission shares this transaction with the source result and
+      // delivery rows. Remote MemoryCore I/O happens later when this job is
+      // independently claimed.
+      if (options.shadowJob)
+        this.enqueueInTransaction(
+          options.shadowJob.payload,
+          options.shadowJob.options,
+        );
       // An empty response enqueues no delivery chunks, so no DeliveryRow is
       // created. Return undefined instead of a fabricated "sent" row; every
       // caller either ignores the return value or only forwards real rows.

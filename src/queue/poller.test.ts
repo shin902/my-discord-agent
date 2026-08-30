@@ -1706,6 +1706,41 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+  it("skips a queued shadow job when its group is no longer eligible", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://localhost:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: [],
+      timeoutMs: 1000,
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const msg = makeMsg({
+      groupName: "revoked-group",
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "discord-session-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
+      empty: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("retries shadow submission failures without changing the normal job", async () => {
     loadAgentMemoryConfig.mockResolvedValue({
       enabled: true,
@@ -1767,7 +1802,8 @@ describe("processMessage - durable result", () => {
       settled = true;
     });
 
-    await vi.waitFor(() => expect(commitInboxResult).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(commitInboxResult).not.toHaveBeenCalled();
     expect(settled).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
 
@@ -1784,14 +1820,19 @@ describe("processMessage - durable result", () => {
     await processing;
 
     expect(settled).toBe(true);
-    expect(enqueue).toHaveBeenCalledWith(
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "AI response",
       expect.objectContaining({
-        memoryShadow: expect.objectContaining({
-          scope: expect.objectContaining({ userId: "discord-user-1" }),
-        }),
-      }),
-      expect.objectContaining({
-        idempotencyKey: "agent-memory-shadow:inbox-1",
+        shadowJob: {
+          payload: expect.objectContaining({
+            memoryShadow: expect.objectContaining({
+              scope: expect.objectContaining({ userId: "discord-user-1" }),
+            }),
+          }),
+          options: { idempotencyKey: "agent-memory-shadow:inbox-1" },
+        },
       }),
     );
     // TencentDB is contacted only by the separately claimed shadow job.
