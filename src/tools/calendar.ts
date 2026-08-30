@@ -200,6 +200,12 @@ const createEventParameters = Type.Object({
   attendees: Type.Optional(
     Type.Array(Type.String(), { description: "参加者のメールアドレス一覧" }),
   ),
+  recurrence: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        '繰り返しルール（RFC 5545形式、例: ["RRULE:FREQ=WEEKLY;BYDAY=MO"]）',
+    }),
+  ),
   calendarId: calendarIdParameter,
 });
 
@@ -217,6 +223,7 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
       description,
       location,
       attendees,
+      recurrence,
       calendarId = "primary",
     },
   ) => {
@@ -230,6 +237,7 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
     if (attendees && attendees.length > 0) {
       body.attendees = attendees.map((email) => ({ email }));
     }
+    if (recurrence && recurrence.length > 0) body.recurrence = recurrence;
 
     const event = (await calendarRequest(
       "POST",

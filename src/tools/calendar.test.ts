@@ -240,6 +240,23 @@ describe("create-event", () => {
     ]);
   });
 
+  it("recurrence を Body に含める", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "evt-recurring", summary: "定例予定" }),
+    });
+    const { createEventTool } = await import("./calendar.js");
+    await createEventTool.execute("id", {
+      summary: "定例予定",
+      start: "2025-01-06T10:00:00+09:00",
+      end: "2025-01-06T11:00:00+09:00",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.recurrence).toEqual(["RRULE:FREQ=WEEKLY;BYDAY=MO"]);
+  });
+
   it("POST エラー時は例外を投げる", async () => {
     fetchMock.mockResolvedValue({
       ok: false,
