@@ -85,6 +85,42 @@ function createBirdclawFixture(dbPath: string): Database.Database {
   return db;
 }
 
+function createCurrentBirdclawFixture(dbPath: string): Database.Database {
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE accounts (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL
+    );
+    CREATE TABLE profiles (id TEXT PRIMARY KEY, handle TEXT NOT NULL);
+    CREATE TABLE tweets (
+      id TEXT PRIMARY KEY,
+      author_profile_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      entities_json TEXT NOT NULL DEFAULT '{}',
+      deleted_at TEXT,
+      superseded_at TEXT
+    );
+    CREATE TABLE tweet_collections (
+      account_id TEXT NOT NULL,
+      tweet_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      collected_at TEXT,
+      PRIMARY KEY (account_id, tweet_id, kind)
+    );
+    INSERT INTO accounts VALUES ('acct_primary', 'Test User', 'tester');
+    INSERT INTO profiles VALUES ('profile_a', 'author_a');
+    INSERT INTO tweets VALUES (
+      '300', 'profile_a', 'current schema', '2026-08-22T00:00:00Z',
+      '{}', NULL, NULL
+    );
+    INSERT INTO tweet_collections VALUES (
+      'acct_primary', '300', 'likes', '2026-08-23T00:00:00Z'
+    );
+  `);
+  return db;
+}
+
 function createLegacyXSavedFixture(
   dbPath: string,
   baselineMode: "historical" | "keep-backlog",
@@ -251,6 +287,38 @@ describe("x-saved BirdClaw ingest", () => {
         path.join(backupAlias, "new-backup-directory"),
       ),
     ).rejects.toThrow("outside the live database directory");
+  });
+
+  it("imports collection-only rows from the current BirdClaw schema", () => {
+    const dir = makeTempDir();
+    const sourcePath = path.join(dir, "birdclaw.sqlite");
+    const targetPath = path.join(dir, "x-saved.sqlite");
+    createCurrentBirdclawFixture(sourcePath).close();
+
+    expect(
+      ingestBirdclawSavedItems({
+        birdclawDbPath: sourcePath,
+        xSavedDbPath: targetPath,
+        account: "tester",
+        now: "2026-08-28T00:00:00Z",
+      }),
+    ).toEqual({ newItems: 1 });
+
+    const target = openXSavedDb(targetPath);
+    expect(
+      target
+        .prepare(
+          `SELECT text, author_handle, seen_liked, seen_bookmarked
+           FROM x_items WHERE tweet_id = '300'`,
+        )
+        .get(),
+    ).toEqual({
+      text: "current schema",
+      author_handle: "author_a",
+      seen_liked: 1,
+      seen_bookmarked: 0,
+    });
+    target.close();
   });
 
   it("imports likes/bookmarks while preserving sticky source history and agent state", () => {
