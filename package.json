@@ -14,7 +14,7 @@
     "restart": "pnpm sandbox build && pnpm build && node dist/index.js",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && python3 -m unittest templates/SKILLS/interest-profile/scripts/test_extract_interests.py",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint src/ .pi/extensions/",
