@@ -15,6 +15,7 @@ import {
   readEventTool,
   updateEventTool,
 } from "./calendar.js";
+import { dateTool } from "./date.js";
 import {
   editTool,
   globTool,
@@ -48,6 +49,7 @@ const CONTEXT_CREATED_TOOLS = new Set(["bot"]);
 
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
+  date: dateTool,
   "agent-reach": agentReachTool,
   "arxiv-search": arxivSearchTool,
   "arxiv-survey": arxivSurveyTool,

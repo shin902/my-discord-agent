@@ -10,6 +10,7 @@
 |---------|------|
 | `bot` | toolsへ明示的に追加したAgentだけが利用できる、Bot RegistryのBotを `run` / `resume` / `list` で呼び出す組み込みオーケストレーションツール。`run` / `resume` は同じtool call内で完了まで待機し、結果を返す（キュー投入や非同期実行はしない） |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
+| `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
 | `arxiv-search` | arXivを自然言語クエリで検索。投稿日範囲と並び順を指定でき、正規化した論文メタデータをJSONで返す |
 | `arxiv-survey` | 1〜8個の自然言語クエリをOR条件でまとめてarXiv検索。期間指定の定期サーベイ向け |

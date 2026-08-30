@@ -33,6 +33,7 @@ import {
 } from "../skills/command.js";
 import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
+import { formatSessionTimeAnchor } from "../time/context.js";
 import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
@@ -65,6 +66,7 @@ export { runEphemeralAgent } from "./subagent.js";
 const SYSTEM_PROMPT_SNAPSHOT_TYPE = "system-prompt-snapshot";
 // Sessions written before the generic name was introduced remain readable.
 const LEGACY_SYSTEM_PROMPT_SNAPSHOT_TYPE = "agents-snapshot";
+const SESSION_TIME_ANCHOR_TYPE = "session-time-anchor";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 const SELF_BOOTSTRAP_TYPE = "self-bootstrap";
 const SKILL_INVOCATION_TYPE = "skill-invocation";
@@ -74,6 +76,10 @@ const SKILL_INVOCATION_TYPE = "skill-invocation";
 // [object Object] 化しないよう型上も string に絞る
 type SystemPromptSnapshotMessage = Omit<CustomMessage, "content"> & {
   customType: typeof SYSTEM_PROMPT_SNAPSHOT_TYPE;
+  content: string;
+};
+type SessionTimeAnchorMessage = Omit<CustomMessage, "content"> & {
+  customType: typeof SESSION_TIME_ANCHOR_TYPE;
   content: string;
 };
 // MEMORY.md / SELF.md 共通の context-bootstrap メッセージ型（詳細は ContextBootstrapChannel 定義を参照）
@@ -198,6 +204,12 @@ function isSystemPromptSnapshotMessage(
   );
 }
 
+function isSessionTimeAnchorMessage(
+  msg: AgentMessage,
+): msg is SessionTimeAnchorMessage {
+  return getCustomType(msg) === SESSION_TIME_ANCHOR_TYPE;
+}
+
 function isSkillInvocationMessage(
   msg: AgentMessage,
 ): msg is SkillInvocationMessage {
@@ -253,17 +265,65 @@ function snapshotHash(content: string | null): string | undefined {
     : createHash("sha256").update(content).digest("hex");
 }
 
-function formatDateForPrompt(): string {
-  const now = new Date();
-  const today = now.toLocaleDateString("en-CA", {
-    timeZone: "Asia/Tokyo",
-  });
-  // 「明日」「来週の月曜」等の相対日付を解決できるよう曜日も渡す
-  const weekday = now.toLocaleDateString("en-US", {
-    timeZone: "Asia/Tokyo",
-    weekday: "short",
-  });
-  return `## Today's date\n\n${today} (${weekday}) JST`;
+function findEarliestMessageTimestamp(
+  messages: AgentMessage[],
+): number | undefined {
+  let earliest: number | undefined;
+  for (const message of messages) {
+    const timestamp = message.timestamp;
+    if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) continue;
+    if (earliest === undefined || timestamp < earliest) earliest = timestamp;
+  }
+  return earliest;
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+const MIN_TIME_ANCHOR_MS = 946_684_800_000;
+
+function canonicalHour(timestamp: number): number {
+  return Math.floor(timestamp / HOUR_MS) * HOUR_MS;
+}
+
+function parseSessionTimeAnchor(message: SessionTimeAnchorMessage): number {
+  const serialized = message.content.trim();
+  const timestamp = Number(serialized);
+  if (
+    String(timestamp) !== serialized ||
+    !Number.isSafeInteger(timestamp) ||
+    timestamp < MIN_TIME_ANCHOR_MS ||
+    !Number.isFinite(new Date(timestamp).getTime())
+  ) {
+    throw new Error("セッション時刻アンカーが不正です");
+  }
+  return canonicalHour(timestamp);
+}
+
+async function loadOrCreateSessionTimeAnchor(
+  groupName: string,
+  sessionId: string,
+  messages: AgentMessage[],
+  fallbackTimestamp: () => number,
+): Promise<number> {
+  const existing = messages.find(isSessionTimeAnchorMessage);
+  if (existing) return parseSessionTimeAnchor(existing);
+
+  const fallback = fallbackTimestamp();
+  const candidate = canonicalHour(
+    Number.isSafeInteger(fallback) &&
+      fallback >= MIN_TIME_ANCHOR_MS &&
+      Number.isFinite(new Date(fallback).getTime())
+      ? fallback
+      : Date.now(),
+  );
+  const anchorMessage: SessionTimeAnchorMessage = {
+    role: "custom",
+    customType: SESSION_TIME_ANCHOR_TYPE,
+    content: `${candidate}`,
+    display: false,
+    timestamp: candidate,
+  };
+  await appendMessage(groupName, sessionId, anchorMessage);
+  return candidate;
 }
 
 function formatBootstrapSection(
@@ -378,7 +438,8 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   const bootstrapSeen = new Set<string>();
   return messages.flatMap((msg) => {
-    if (isSystemPromptSnapshotMessage(msg)) return [];
+    if (isSystemPromptSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg))
+      return [];
     const customType = getCustomType(msg);
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];
@@ -411,6 +472,15 @@ export async function runAgentLoop(
   botToolEndpoint?: BotToolEndpoint,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
+  const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
+    groupName,
+    sessionId,
+    rawMessages,
+    () => findEarliestMessageTimestamp(rawMessages) ?? Date.now(),
+  );
+  const sessionTimeAnchorContent = formatSessionTimeAnchor(
+    sessionAnchorTimestamp,
+  );
 
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
   // LLM コンテキストには含めない（空の assistant ターンとして混入するのを防ぐ）
@@ -517,7 +587,6 @@ export async function runAgentLoop(
   );
 
   const skillPrompt = formatSkillsForPrompt(skills);
-  const datePrompt = formatDateForPrompt();
 
   const systemPromptSnapshotHash = snapshotHash(
     identity?.systemPromptSnapshotPresent !== undefined
@@ -588,9 +657,9 @@ export async function runAgentLoop(
           : (existingSystemPromptSnapshot?.content ?? null)));
   const fullSystemPrompt = [
     systemPromptContent ?? DEFAULT_SYSTEM_PROMPT,
+    sessionTimeAnchorContent,
     skillPrompt,
     systemPromptAppend,
-    datePrompt,
   ]
     .filter(Boolean)
     .join("\n\n");
