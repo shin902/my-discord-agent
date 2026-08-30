@@ -6,12 +6,15 @@ import {
 import { openRuntimeDb, QueueRepository } from "../queue/repository.js";
 import {
   AgentMemoryClient,
+  AgentMemoryHttpError,
+  buildAgentMemoryAdmission,
   buildAgentMemorySubmission,
+  isCurrentAgentMemoryAdmission,
 } from "./agent-memory.js";
 
 const config = AgentMemoryConfigSchema.parse({
   enabled: true,
-  baseUrl: "http://memory.test",
+  baseUrl: "http://127.0.0.1:8420",
   serviceId: "space-1",
   bearerTokenEnv: "TDAI_TEST_TOKEN",
   teamId: "team-1",
@@ -39,13 +42,32 @@ describe("Agent Memory shadow boundary", () => {
     expect(parsed).not.toHaveProperty("bearerTokenEnv");
   });
 
-  it("rejects unsafe MemoryCore base URLs", () => {
-    expect(() =>
-      AgentMemoryConfigSchema.parse({ baseUrl: "ftp://memory" }),
-    ).toThrow();
-    expect(() =>
-      AgentMemoryConfigSchema.parse({ baseUrl: "http://user:pass@memory" }),
-    ).toThrow();
+  it("accepts only loopback HTTP and HTTPS URLs without query or fragment", () => {
+    for (const baseUrl of [
+      "http://localhost:8420",
+      "http://127.0.0.1:8420",
+      "http://[::1]:8420",
+      "https://memory.example.test",
+    ]) {
+      expect(() => AgentMemoryConfigSchema.parse({ baseUrl })).not.toThrow();
+    }
+    for (const baseUrl of [
+      "ftp://memory",
+      "http://memory.example.test",
+      "http://user:pass@memory",
+      "http://localhost:8420?token=secret",
+      "http://localhost:8420#fragment",
+    ]) {
+      expect(() => AgentMemoryConfigSchema.parse({ baseUrl })).toThrow();
+    }
+  });
+
+  it("classifies permanent HTTP failures separately from retryable failures", () => {
+    expect(new AgentMemoryHttpError("bad request", 400).retryable).toBe(false);
+    expect(new AgentMemoryHttpError("timeout", 408).retryable).toBe(true);
+    expect(new AgentMemoryHttpError("rate limited", 429).retryable).toBe(true);
+    expect(new AgentMemoryHttpError("server error", 503).retryable).toBe(true);
+    expect(new AgentMemoryHttpError("network").retryable).toBe(true);
   });
 
   it("requires explicit enabled eligible groups and normal-chat identity", () => {
@@ -63,6 +85,41 @@ describe("Agent Memory shadow boundary", () => {
       isAgentMemoryEligible(config, { ...normalMessage, authorIsBot: true }),
     ).toBe(false);
     expect(isAgentMemoryEligible(config, { groupName: "private" })).toBe(false);
+  });
+
+  it("binds queued admissions to destination and scope fingerprints", () => {
+    const admission = buildAgentMemoryAdmission({
+      groupName: "private",
+      channelId: "channel-1",
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "space-1",
+      teamId: "team-1",
+      agentId: "agent-1",
+      userId: "discord-user-1",
+      sessionId: "session-1",
+    });
+    expect(
+      isCurrentAgentMemoryAdmission(admission, config, {
+        groupName: "private",
+        channelId: "channel-1",
+      }),
+    ).toBe(true);
+    expect(
+      isCurrentAgentMemoryAdmission(
+        admission,
+        { ...config, teamId: "rotated" },
+        {
+          groupName: "private",
+          channelId: "channel-1",
+        },
+      ),
+    ).toBe(false);
+    expect(
+      isCurrentAgentMemoryAdmission(admission, config, {
+        groupName: "private",
+        channelId: "other-channel",
+      }),
+    ).toBe(false);
   });
 
   it("maps one completed user/assistant turn to the v3 L0 contract", () => {
@@ -126,7 +183,7 @@ describe("Agent Memory shadow boundary", () => {
       ).addConversation(submission),
     ).resolves.toMatchObject({ totalCount: 2 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://memory.test/v3/conversation/add",
+      "http://127.0.0.1:8420/v3/conversation/add",
       expect.objectContaining({
         headers: expect.not.objectContaining({
           authorization: expect.anything(),
@@ -167,7 +224,7 @@ describe("Agent Memory shadow boundary", () => {
       totalCount: 2,
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://memory.test/v3/conversation/add",
+      "http://127.0.0.1:8420/v3/conversation/add",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({

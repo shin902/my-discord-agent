@@ -32,7 +32,10 @@ import {
 } from "../discord/client.js";
 import {
   AgentMemoryClient,
+  AgentMemoryHttpError,
+  buildAgentMemoryAdmission,
   buildAgentMemorySubmission,
+  isCurrentAgentMemoryAdmission,
 } from "../memory/agent-memory.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
@@ -299,8 +302,20 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
   if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
   try {
     const config = await loadAgentMemoryConfig();
-    if (!config.enabled || !config.eligibleGroups.includes(msg.groupName)) {
-      console.log(`[agent-memory] shadow job skipped (disabled): ${msg.id}`);
+    const admission = msg.memoryShadowAdmission;
+    if (
+      !config.enabled ||
+      !config.eligibleGroups.includes(msg.groupName) ||
+      admission === undefined ||
+      !isCurrentAgentMemoryAdmission(admission, config, msg) ||
+      msg.memoryShadow.scope.teamId !== admission.teamId ||
+      msg.memoryShadow.scope.agentId !== admission.agentId ||
+      msg.memoryShadow.scope.userId !== admission.userId ||
+      msg.memoryShadow.scope.sessionId !== admission.sessionId
+    ) {
+      console.log(
+        `[agent-memory] shadow job skipped (disabled/revoked/rotated): ${msg.id}`,
+      );
       await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
         empty: true,
       });
@@ -317,7 +332,23 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
     );
   } catch (error) {
     console.error(`[agent-memory] shadow submission failed: ${msg.id}`, error);
-    getQueueRepository().failAttempt(msg.id, error, msg.fencingToken);
+    if (error instanceof AgentMemoryHttpError && !error.retryable) {
+      getQueueRepository().deadLetter(
+        msg.id,
+        msg.fencingToken,
+        "non_retryable",
+        String(error),
+      );
+    } else if (error instanceof NonRetryableError) {
+      getQueueRepository().deadLetter(
+        msg.id,
+        msg.fencingToken,
+        "non_retryable",
+        String(error),
+      );
+    } else {
+      getQueueRepository().failAttempt(msg.id, error, msg.fencingToken);
+    }
     const after = getQueueRepository().get(msg.id);
     if (after?.status === "dead_letter")
       console.error(
@@ -338,7 +369,8 @@ async function prepareMemoryShadowJob(
   | undefined
 > {
   const config = await loadAgentMemoryConfig();
-  if (!isAgentMemoryEligible(config, msg)) return undefined;
+  if (!isAgentMemoryEligible(config, msg) || msg.content.trim().length === 0)
+    return undefined;
   const userId = msg.userId;
   if (!userId) return undefined;
   const submission = buildAgentMemorySubmission({
@@ -359,6 +391,16 @@ async function prepareMemoryShadowJob(
       content: "memory-shadow",
       timestamp: new Date().toISOString(),
       memoryShadow: submission,
+      memoryShadowAdmission: buildAgentMemoryAdmission({
+        groupName: msg.groupName,
+        channelId: msg.channelId,
+        baseUrl: config.baseUrl,
+        serviceId: config.serviceId,
+        teamId: config.teamId,
+        agentId: config.agentId,
+        userId,
+        sessionId: msg.sessionId,
+      }),
     },
     options: { idempotencyKey: `agent-memory-shadow:${msg.id}` },
     userId,

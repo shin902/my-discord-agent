@@ -1,17 +1,28 @@
 import { z } from "zod";
-import { loadRawConfig } from "./config.js";
+import { loadRawConfigFresh } from "./config.js";
 
-const AgentMemoryBaseUrlSchema = z
-  .string()
-  .url()
-  .refine((value) => {
-    const url = new URL(value);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      url.username === "" &&
-      url.password === ""
-    );
-  }, "must be an HTTP(S) URL without embedded credentials");
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+const AgentMemoryBaseUrlSchema = z.string().refine((value) => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  )
+    return false;
+  return url.protocol === "https:" || isLoopbackHostname(url.hostname);
+}, "must be HTTPS or unauthenticated loopback HTTP without credentials/query/fragment");
 
 export const AgentMemoryConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -66,7 +77,7 @@ export function isAgentMemoryEligible(
 // agentMemory is a cohesive object, so parse the whole section while preserving
 // the same fallback-on-invalid behavior used by other config loaders.
 export async function loadAgentMemoryConfig(): Promise<AgentMemoryConfig> {
-  const raw = await loadRawConfig();
+  const raw = await loadRawConfigFresh();
   const parsed = AgentMemoryConfigSchema.safeParse(raw.agentMemory ?? {});
   if (!parsed.success) {
     console.warn(

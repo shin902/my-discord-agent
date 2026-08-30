@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { AgentMemoryConfig } from "../config/agent-memory.js";
+import { NonRetryableError } from "../utils/error.js";
 
 export interface AgentMemoryMessage {
   role: "user" | "assistant";
@@ -18,10 +20,68 @@ export interface AgentMemorySubmission {
   messages: AgentMemoryMessage[];
 }
 
+export interface AgentMemoryAdmission {
+  groupName: string;
+  channelId: string;
+  baseUrl: string;
+  serviceId: string;
+  teamId: string;
+  agentId: string;
+  userId: string;
+  sessionId: string;
+  fingerprint: string;
+}
+
+function admissionFingerprint(
+  input: Omit<AgentMemoryAdmission, "fingerprint">,
+): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+export function buildAgentMemoryAdmission(
+  input: Omit<AgentMemoryAdmission, "fingerprint">,
+): AgentMemoryAdmission {
+  return { ...input, fingerprint: admissionFingerprint(input) };
+}
+
+export function isCurrentAgentMemoryAdmission(
+  admission: AgentMemoryAdmission,
+  config: AgentMemoryConfig,
+  message: { groupName: string; channelId: string },
+): boolean {
+  const current = buildAgentMemoryAdmission({
+    groupName: message.groupName,
+    channelId: message.channelId,
+    baseUrl: config.baseUrl,
+    serviceId: config.serviceId,
+    teamId: config.teamId,
+    agentId: config.agentId,
+    userId: admission.userId,
+    sessionId: admission.sessionId,
+  });
+  return (
+    admission.fingerprint === current.fingerprint &&
+    JSON.stringify(admission) === JSON.stringify(current)
+  );
+}
+
 export interface AgentMemorySubmissionResult {
   requestId?: string;
   acceptedIds: string[];
   totalCount: number;
+}
+
+export class AgentMemoryHttpError extends Error {
+  readonly retryable: boolean;
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "AgentMemoryHttpError";
+    this.status = status;
+    this.retryable =
+      status === undefined || status === 408 || status === 429 || status >= 500;
+  }
 }
 
 interface ApiEnvelope {
@@ -44,32 +104,32 @@ export class AgentMemoryClient {
       ? process.env[this.config.bearerTokenEnv]
       : undefined;
     if (this.config.bearerTokenEnv && !token) {
-      throw new Error(`${this.config.bearerTokenEnv} is not set`);
+      throw new NonRetryableError(`${this.config.bearerTokenEnv} is not set`);
     }
+    const endpoint = new URL(this.config.baseUrl);
+    endpoint.pathname = `${endpoint.pathname.replace(/\/$/u, "")}/v3/conversation/add`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
       "x-tdai-service-id": this.config.serviceId,
     };
     if (token) headers.authorization = `Bearer ${token}`;
-    const response = await fetch(
-      `${this.config.baseUrl.replace(/\/$/u, "")}/v3/conversation/add`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          session_id: submission.scope.sessionId,
-          team_id: submission.scope.teamId,
-          agent_id: submission.scope.agentId,
-          user_id: submission.scope.userId,
-          messages: submission.messages,
-        }),
-        signal: AbortSignal.timeout(this.config.timeoutMs),
-      },
-    );
+    const response = await fetch(endpoint.toString(), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        session_id: submission.scope.sessionId,
+        team_id: submission.scope.teamId,
+        agent_id: submission.scope.agentId,
+        user_id: submission.scope.userId,
+        messages: submission.messages,
+      }),
+      signal: AbortSignal.timeout(this.config.timeoutMs),
+    });
     const body = (await response.json().catch(() => ({}))) as ApiEnvelope;
     if (!response.ok || body.code !== 0) {
-      throw new Error(
+      throw new AgentMemoryHttpError(
         `Agent Memory conversation/add failed (${response.status}): ${body.message ?? "unknown error"}`,
+        response.status,
       );
     }
     const acceptedIds = Array.isArray(body.data?.accepted_ids)

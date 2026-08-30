@@ -66,13 +66,10 @@ export async function loadDiscordConfig(): Promise<DiscordConfig> {
   return config;
 }
 
-// config/config.json（defaultModel・proxy・agent）を読み込む
-export async function loadRawConfig(): Promise<Record<string, unknown>> {
-  if (_raw !== null) return _raw;
+async function readRawConfigFromDisk(): Promise<Record<string, unknown>> {
   try {
     const text = await readFile(CONFIG_PATH, "utf-8");
-    _raw = TopLevelSchema.parse(JSON.parse(text));
-    return _raw;
+    return TopLevelSchema.parse(JSON.parse(text));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(
@@ -81,6 +78,18 @@ export async function loadRawConfig(): Promise<Record<string, unknown>> {
     }
     throw err;
   }
+}
+
+// config/config.json（defaultModel・proxy・agent）を読み込む
+export async function loadRawConfig(): Promise<Record<string, unknown>> {
+  if (_raw !== null) return _raw;
+  _raw = await readRawConfigFromDisk();
+  return _raw;
+}
+
+/** Read config.json without changing the process-wide startup config cache. */
+export async function loadRawConfigFresh(): Promise<Record<string, unknown>> {
+  return readRawConfigFromDisk();
 }
 
 async function readJsonArrayFile(
