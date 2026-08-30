@@ -1,0 +1,22 @@
+services:
+  memory-core:
+    image: agentmemory/memory-core:1.0.1
+    container_name: my-discord-agent-memory-core
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MEMORY_CORE_PORT:-8420}:8420"
+    environment:
+      TDAI_GATEWAY_CONFIG: /data/config/tdai-gateway.yaml
+      TDAI_GATEWAY_HOST: 0.0.0.0
+      TDAI_GATEWAY_PORT: 8420
+      TDAI_GATEWAY_API_KEY: ${MEMORY_CORE_GATEWAY_API_KEY:-}
+      TDAI_DATA_DIR: /data/tdai-memory
+      TDAI_LLM_API_KEY: ${TDAI_LLM_API_KEY:-}
+      TDAI_LLM_BASE_URL: ${TDAI_LLM_BASE_URL:-https://api.openai.com/v1}
+      TDAI_LLM_MODEL: ${TDAI_LLM_MODEL:-gpt-4o-mini}
+    volumes:
+      - ./config/memory-core.example.yaml:/data/config/tdai-gateway.yaml:ro
+      - memory-core-data:/data/tdai-memory
+
+volumes:
+  memory-core-data:

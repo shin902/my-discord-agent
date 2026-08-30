@@ -147,7 +147,26 @@ pnpm sandbox build
 
 `src/sandbox/` やコンテナ内で使うコードを変更した場合は再ビルドしてください。
 
-### 5. 起動
+### 5. MemoryCore sidecarを起動（任意）
+
+TencentDB Agent Memoryを使う場合は、公式MemoryCore imageをsidecarとして起動します。cloneや自前buildは不要です。
+
+```bash
+# .env の TDAI_LLM_API_KEY / TDAI_LLM_BASE_URL / TDAI_LLM_MODEL を設定してから
+pnpm memory-core up -d
+curl http://127.0.0.1:8420/health
+```
+
+停止・ログ確認:
+
+```bash
+pnpm memory-core down
+pnpm memory-core logs -f memory-core
+```
+
+永続データはDocker volumeに保存されます。詳細と`agentMemory`の有効化手順は [docs/config.md](docs/config.md#memorycore-sidecarの起動) を参照してください。
+
+### 6. 起動
 
 開発時:
 
