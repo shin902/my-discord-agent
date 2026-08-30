@@ -5,6 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 
 import { agentReachTool } from "./agent-reach.js";
+import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import {
   listIssueCommentsTool,
   listPullRequestCommentsTool,
@@ -16,6 +17,13 @@ import { resolveTools } from "./registry.js";
 describe("resolveTools", () => {
   it("agent-reach を解決して agentReachTool を返す", () => {
     expect(resolveTools(["agent-reach"])).toEqual([agentReachTool]);
+  });
+
+  it("arxiv-search / arxiv-survey を解決する", () => {
+    expect(resolveTools(["arxiv-search", "arxiv-survey"])).toEqual([
+      arxivSearchTool,
+      arxivSurveyTool,
+    ]);
   });
 
   it("list-issue-comments を解決して listIssueCommentsTool を返す", () => {
@@ -32,6 +40,10 @@ describe("resolveTools", () => {
     expect(resolveTools(["list-pull-request-comments"])).toEqual([
       listPullRequestCommentsTool,
     ]);
+  });
+
+  it("context-createdなbotはregistryで検証されるが生成しない", () => {
+    expect(resolveTools(["bot"])).toEqual([]);
   });
 
   it("空配列は空配列を返す", () => {

@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { agentReachTool } from "./agent-reach.js";
+import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { bashTool } from "./bash.js";
 import {
   browserlessContentTool,
@@ -42,10 +43,16 @@ import {
 } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
+// Context-created tools are validated here but instantiated by their runtime
+// owner, not by the static registry.
+const CONTEXT_CREATED_TOOLS = new Set(["bot"]);
+
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,
   date: dateTool,
   "agent-reach": agentReachTool,
+  "arxiv-search": arxivSearchTool,
+  "arxiv-survey": arxivSurveyTool,
   read: readTool,
   write: writeTool,
   list: listTool,
@@ -80,6 +87,7 @@ const TOOLS: Record<string, AgentTool> = {
 
 export function resolveTools(toolNames: string[]): AgentTool[] {
   return toolNames.flatMap((name) => {
+    if (CONTEXT_CREATED_TOOLS.has(name)) return [];
     const tool = TOOLS[name];
     if (!tool) throw new Error(`不明なツール名: ${name}`);
     return [wrapToolOutput(tool)];

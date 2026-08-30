@@ -1,9 +1,10 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
+import { validateAgentConfig } from "../config/agent-validation.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -13,6 +14,7 @@ import {
   type GroupConfig,
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
+import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
@@ -24,9 +26,28 @@ import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
 
 export { resolveBaseUrl, resolveModel, validateModel };
 
+export type AgentRunStatus = "running" | "completed" | "failed";
+
 export type DiscordEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | {
+      type: "subagent_tool_start";
+      worker: "ephemeral";
+      runId: string;
+      parentRunId: string;
+      toolName: string;
+      taskPreview: string;
+    }
+  | {
+      type: "subagent_update";
+      worker: "ephemeral";
+      runId: string;
+      parentRunId: string;
+      status: AgentRunStatus;
+      taskPreview: string;
+      resultPreview?: string;
+    };
 
 export interface AgentTokenUsage {
   input: number;
@@ -42,7 +63,7 @@ interface AgentTimingEvent {
   assistantTurns: number;
   usage?: AgentTokenUsage;
   stopReason?: string;
-  agentsSnapshotHash?: string;
+  systemPromptSnapshotHash?: string;
   memorySnapshotHash?: string;
   snapshotHash?: string;
   toolCallKey?: string;
@@ -60,7 +81,7 @@ export interface AgentExecutionTiming {
   assistantTurns?: number;
   usage?: AgentTokenUsage;
   stopReason?: string;
-  agentsSnapshotHash?: string;
+  systemPromptSnapshotHash?: string;
   memorySnapshotHash?: string;
   snapshotHash?: string;
   toolCallKey?: string;
@@ -75,6 +96,60 @@ declare global {
   }
 }
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isAgentRunStatus(value: unknown): value is AgentRunStatus {
+  return value === "running" || value === "completed" || value === "failed";
+}
+
+function isSafeSubagentPreview(
+  value: unknown,
+  maxLength: number,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= maxLength &&
+    !/[\r\n@]/.test(value)
+  );
+}
+
+function isDiscordEvent(value: unknown): value is DiscordEvent {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  switch (value.type) {
+    case "tool_start":
+      return typeof value.toolName === "string";
+    case "error":
+      return typeof value.message === "string";
+    case "subagent_tool_start":
+      return (
+        value.worker === "ephemeral" &&
+        typeof value.runId === "string" &&
+        typeof value.parentRunId === "string" &&
+        typeof value.toolName === "string" &&
+        isSafeSubagentPreview(value.taskPreview, 120)
+      );
+    case "subagent_update":
+      return (
+        value.worker === "ephemeral" &&
+        typeof value.runId === "string" &&
+        typeof value.parentRunId === "string" &&
+        isAgentRunStatus(value.status) &&
+        isSafeSubagentPreview(value.taskPreview, 120) &&
+        (value.resultPreview === undefined ||
+          isSafeSubagentPreview(value.resultPreview, 200))
+      );
+    default:
+      return false;
+  }
+}
+
+function isAgentTimingEvent(value: unknown): value is AgentTimingEvent {
+  return isRecord(value) && value.type === "agent_timing";
+}
+
 async function stopContainer(name: string): Promise<void> {
   const killResult = await new Promise<number>((resolve) => {
     const kill = spawn("docker", ["kill", name], { stdio: "ignore" });
@@ -119,6 +194,8 @@ async function stopContainer(name: string): Promise<void> {
   }
 }
 const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
+const RUNNER_CONTAINER_LABEL = "my-discord-agent.runner=true";
+const LEGACY_RUNNER_NAME_FILTER = "my-discord-agent-";
 
 function formatTimeoutLabel(ms: number): string {
   if (ms % 60_000 === 0) return `${ms / 60_000}分`;
@@ -140,19 +217,115 @@ const runningContainers = new Map<string, ChildProcess>();
  * 実行中の全エージェントコンテナ（および対応する docker run クライアント
  * プロセス）を停止する。SIGTERM/SIGINT 受信時に index.ts から呼び出される想定。
  */
-export function killAllRunningContainers(): Promise<void> {
-  const entries = [...runningContainers.entries()];
-  if (entries.length === 0) return Promise.resolve();
-  console.error(
-    `[manager] シャットダウン: 実行中のコンテナ ${entries.length} 件を停止します`,
-    entries.map(([name]) => name),
+export interface KillAllRunningContainersOptions {
+  /** Also discover containers left by a previous host process. */
+  includeOrphans?: boolean;
+  /** Reject unless Docker proves discovery and termination succeeded. */
+  strict?: boolean;
+}
+
+function resolveCleanupOptions(
+  options: boolean | KillAllRunningContainersOptions,
+): Required<KillAllRunningContainersOptions> {
+  if (typeof options === "boolean")
+    return { includeOrphans: options, strict: false };
+  return {
+    includeOrphans: options.includeOrphans ?? false,
+    strict: options.strict ?? false,
+  };
+}
+
+function discoverContainerIds(filter: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error: Error | undefined, stdout = "") => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve(stdout.trim() ? stdout.trim().split(/\s+/) : []);
+    };
+    const child = execFile(
+      "docker",
+      ["ps", "-q", "--filter", filter],
+      (error, stdout, stderr) => {
+        if (error) {
+          finish(
+            new Error(
+              `container cleanup discovery failed: ${stderr?.trim() || error.message}`,
+            ),
+          );
+          return;
+        }
+        finish(undefined, stdout);
+      },
+    );
+    child.on("error", (error) => finish(error));
+  });
+}
+
+async function discoverManagedContainerIds(): Promise<string[]> {
+  const labelled = await discoverContainerIds(
+    `label=${RUNNER_CONTAINER_LABEL}`,
   );
-  return Promise.all(
+  const legacy = await discoverContainerIds(
+    `name=${LEGACY_RUNNER_NAME_FILTER}`,
+  );
+  return [...new Set([...labelled, ...legacy])];
+}
+
+function killContainerIds(ids: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const killProc = spawn("docker", ["kill", ...ids], { stdio: "ignore" });
+    const on =
+      typeof killProc.once === "function"
+        ? killProc.once.bind(killProc)
+        : killProc.on.bind(killProc);
+    on("close", (code: number | null) => {
+      if (code === 0) resolve();
+      else
+        reject(new Error(`container cleanup kill failed: exit=${code ?? 1}`));
+    });
+    on("error", (error: Error) => reject(error));
+  });
+}
+
+async function killOrphansStrict(): Promise<void> {
+  const ids = await discoverManagedContainerIds();
+  if (ids.length === 0) return;
+  await killContainerIds(ids);
+  const remaining = await discoverManagedContainerIds();
+  if (remaining.length > 0)
+    throw new Error(
+      `container cleanup failed: ${remaining.length} managed container(s) remain`,
+    );
+}
+
+async function killOrphansBestEffort(): Promise<void> {
+  try {
+    const ids = await discoverManagedContainerIds();
+    if (ids.length > 0) await killContainerIds(ids);
+  } catch {
+    // Shutdown is best effort; startup uses killOrphansStrict instead.
+  }
+}
+
+export function killAllRunningContainers(
+  options: boolean | KillAllRunningContainersOptions = false,
+): Promise<void> {
+  const { includeOrphans, strict } = resolveCleanupOptions(options);
+  const entries = [...runningContainers.entries()];
+  const killManaged = includeOrphans
+    ? strict
+      ? killOrphansStrict()
+      : killOrphansBestEffort()
+    : Promise.resolve();
+  const killTracked = Promise.all(
     entries.map(([name, proc]) => {
       // pull 中でコンテナがまだ存在しない場合に備え、クライアントプロセスも直接殺す。
       // コンテナが既に起動済みの場合はクライアント kill だけでは止まらないため
       // docker kill も併用する（無関係な場合は失敗するだけで無害）。
       proc.kill("SIGKILL");
+      if (strict) return stopContainer(name);
       return new Promise<void>((resolve) => {
         const killProc = spawn("docker", ["kill", name], {
           stdio: "ignore",
@@ -161,7 +334,8 @@ export function killAllRunningContainers(): Promise<void> {
         killProc.on("error", () => resolve());
       });
     }),
-  ).then(() => {
+  );
+  return Promise.all([killManaged, killTracked]).then(() => {
     // proc の close イベントでも削除されるが、呼び出し元から見て
     // 「killAllRunningContainers 完了時点で registry が空」を保証するため明示的に消す
     for (const [name] of entries) {
@@ -231,19 +405,10 @@ export async function validateGroupConfig(
   group: GroupConfig,
   defaultModel: { provider: string; modelId: string },
 ): Promise<void> {
-  const validateConfig = async (config: AgentConfig): Promise<void> => {
-    await validateModel(
-      config.model?.provider ?? defaultModel.provider,
-      config.model?.modelId ?? defaultModel.modelId,
-    );
-    resolveTools(config.tools ?? []);
-    buildExtraMountArgs(config.mounts ?? []);
-  };
-
-  await validateConfig(resolveAgentConfig(group));
+  await validateAgentConfig(resolveAgentConfig(group), defaultModel);
   await Promise.all(
     group.channels.map((channel) =>
-      validateConfig(resolveAgentConfig(group, channel)),
+      validateAgentConfig(resolveAgentConfig(group, channel), defaultModel),
     ),
   );
   extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));
@@ -318,14 +483,18 @@ export interface SendMessageOptions {
   onContainerStarted?: () => void | Promise<void>;
   signal?: AbortSignal;
   configOverride?: Partial<AgentConfig>;
-  agentsSnapshotContent?: string;
-  agentsSnapshotPresent?: boolean;
+  systemPromptSnapshotContent?: string;
+  systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
   memorySnapshotContent?: string;
   snapshotHash?: string;
   toolCallKey?: string;
   /** Request-scoped instructions appended to the sandbox system prompt. */
   systemPromptAppend?: string;
+  /** Disable nested agent-facing Bot delegation for a Bot execution. */
+  enableBotTool?: boolean;
+  /** Provider whose serial LLM lock is held by the caller, if any. */
+  heldLlmProvider?: string;
 }
 
 export function sendMessage(
@@ -372,13 +541,15 @@ export async function sendMessage(
     onExecutionTiming,
     onContainerStarted,
     signal,
-    agentsSnapshotContent,
-    agentsSnapshotPresent,
+    systemPromptSnapshotContent,
+    systemPromptSnapshotPresent,
     memorySnapshotPresent,
     memorySnapshotContent,
     snapshotHash,
     toolCallKey,
     systemPromptAppend,
+    enableBotTool,
+    heldLlmProvider,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -482,6 +653,11 @@ export async function sendMessage(
     // ディレクトリが存在しない場合はマウントしない
   }
 
+  const agentTimeoutMs = await loadAgentTimeoutMs();
+  const internalRequest =
+    enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
+      ? createInternalRequestConfig?.(groupName, heldLlmProvider)
+      : undefined;
   const payload = JSON.stringify({
     groupName,
     sessionId,
@@ -496,13 +672,25 @@ export async function sendMessage(
         ? { toolLogArgs: groupsEntry.toolLogArgs }
         : {}),
     },
-    ...(agentsSnapshotContent !== undefined ? { agentsSnapshotContent } : {}),
-    ...(agentsSnapshotPresent !== undefined ? { agentsSnapshotPresent } : {}),
+    ...(systemPromptSnapshotContent !== undefined
+      ? { systemPromptSnapshotContent }
+      : {}),
+    ...(systemPromptSnapshotPresent !== undefined
+      ? { systemPromptSnapshotPresent }
+      : {}),
     ...(memorySnapshotPresent !== undefined ? { memorySnapshotPresent } : {}),
     ...(memorySnapshotContent !== undefined ? { memorySnapshotContent } : {}),
     ...(snapshotHash !== undefined ? { snapshotHash } : {}),
     ...(toolCallKey !== undefined ? { toolCallKey } : {}),
     ...(systemPromptAppend !== undefined ? { systemPromptAppend } : {}),
+    ...(enableBotTool !== false && internalRequest
+      ? {
+          botToolEndpoint: {
+            url: `http://host.docker.internal:${internalRequest.port}/__agent/bot`,
+            token: internalRequest.token,
+          },
+        }
+      : {}),
   });
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない
@@ -521,6 +709,8 @@ export async function sendMessage(
     "--pull=always",
     "--name",
     containerName,
+    "--label",
+    RUNNER_CONTAINER_LABEL,
     "--memory=512m",
     "--cpus=1",
     "--user",
@@ -543,9 +733,8 @@ export async function sendMessage(
     "/app/runner.mjs",
   ];
 
-  const agentTimeoutMs = await loadAgentTimeoutMs();
   const dockerStartedAt = Date.now();
-  return new Promise((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
     let timeoutHandle: NodeJS.Timeout | undefined;
@@ -614,8 +803,11 @@ export async function sendMessage(
               assistantTurns: agentTiming.assistantTurns,
               usage: agentTiming.usage,
               stopReason: agentTiming.stopReason,
-              ...(agentTiming.agentsSnapshotHash !== undefined
-                ? { agentsSnapshotHash: agentTiming.agentsSnapshotHash }
+              ...(agentTiming.systemPromptSnapshotHash !== undefined
+                ? {
+                    systemPromptSnapshotHash:
+                      agentTiming.systemPromptSnapshotHash,
+                  }
                 : {}),
               ...(agentTiming.memorySnapshotHash !== undefined
                 ? { memorySnapshotHash: agentTiming.memorySnapshotHash }
@@ -661,18 +853,18 @@ export async function sendMessage(
       }
       if (line.startsWith(DISCORD_EVENT_PREFIX)) {
         try {
-          const event = JSON.parse(line.slice(DISCORD_EVENT_PREFIX.length)) as
-            | DiscordEvent
-            | AgentTimingEvent;
-          if (event.type === "agent_timing") {
-            agentTiming = event;
+          const parsed: unknown = JSON.parse(
+            line.slice(DISCORD_EVENT_PREFIX.length),
+          );
+          if (isAgentTimingEvent(parsed)) {
+            agentTiming = parsed;
             agentTimingReceivedAt = Date.now();
-          } else {
-            if (event.type === "error") runnerError = event.message;
-            onDiscordEvent?.(event);
+          } else if (isDiscordEvent(parsed)) {
+            if (parsed.type === "error") runnerError = parsed.message;
+            onDiscordEvent?.(parsed);
           }
         } catch {
-          // ignore malformed events
+          // ignore malformed or unknown events
         }
       } else {
         // docker run --pull=always は pull 完了時に Status 行を出力する。
@@ -798,5 +990,7 @@ export async function sendMessage(
             ),
         );
       });
+  }).finally(() => {
+    internalRequest?.revoke();
   });
 }

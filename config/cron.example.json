@@ -77,6 +77,57 @@
     }
   },
   {
+    "id": "x-saved-sync",
+    "schedule": "0 4 * * *",
+    "enabled": false,
+    "handler": "jobs/birdclaw-sync.ts",
+    "settings": {
+      "mode": "xurl",
+      "limit": 100,
+      "maxPages": 3,
+      "backupKeep": 14,
+      "backupPath": "data/x-saved-backups"
+    }
+  },
+  {
+    "id": "x-saved-daily",
+    "schedule": "15 4 * * *",
+    "enabled": false,
+    "groupName": "my-group",
+    "channelId": "YOUR_CHANNEL_ID",
+    "prompt": "x-savedスキルでstatusを確認してからpendingを最大20件処理してください。投稿本文だけで判断できない重要候補だけagent-reachでリンク先を確認し、確認した各項目をreviewed/keep/try/ignoreのいずれかへ必ずmarkしてください。keep/tryのうち今見る価値があるものだけ簡潔に報告し、何もなければ独立行で<NO_REPLY>と返してください。同期が失敗・古い場合は新着0件と断定せず同期異常を報告してください。",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
+    "noReply": true,
+    "tools": ["bash"],
+    "skills": ["x-saved", "agent-reach"],
+    "mounts": [
+      {
+        "host": "data/x-saved",
+        "container": "/x-saved"
+      }
+    ]
+  },
+  {
+    "id": "x-saved-weekly",
+    "schedule": "30 9 * * 0",
+    "enabled": false,
+    "groupName": "my-group",
+    "channelId": "YOUR_CHANNEL_ID",
+    "prompt": "x-savedスキルを使い、keep/tryの保存項目を検索して今週あらためて見る価値が高いものを整理してください。特に未実施のtryや繰り返し現れる技術テーマを優先し、価値があるものだけ最大5件報告してください。なければ独立行で<NO_REPLY>と返してください。",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
+    "noReply": true,
+    "tools": ["bash"],
+    "skills": ["x-saved"],
+    "mounts": [
+      {
+        "host": "data/x-saved",
+        "container": "/x-saved"
+      }
+    ]
+  },
+  {
     "id": "memory-daily",
     "schedule": "0 23 * * *",
     "enabled": true,

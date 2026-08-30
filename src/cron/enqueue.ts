@@ -194,6 +194,7 @@ export async function provisionCronItemThread(
     cronThread: true,
     cronThreadId: threadId,
     cronPlaceholderMessageId: placeholderId,
+    cronLegacyProvisioning: false,
   });
   if (!provisioned) {
     throw new Error(`[cron-item-thread] job ${job.id} が見つかりません`);
@@ -204,6 +205,7 @@ export async function provisionCronItemThread(
 async function registerCronItemThread(
   ctx: CronEnqueueContext,
   content: string,
+  legacyProvisioning = false,
 ): Promise<QueueJob | undefined> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
@@ -228,6 +230,7 @@ async function registerCronItemThread(
     cronThread: true,
     cronJobId: ctx.id,
     cronProvisioning: true,
+    ...(legacyProvisioning ? { cronLegacyProvisioning: true } : {}),
     idempotencyKey: key,
     ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
@@ -247,7 +250,11 @@ export async function enqueueCronItemThread(
   content: string,
   options: CronItemThreadOptions = {},
 ): Promise<void> {
-  const job = await registerCronItemThread(ctx, content);
+  // Keep the compatibility path out of poller claims until its synchronous
+  // placeholder/thread provisioning has committed the destination. Declarative
+  // enqueueCronInbox() intentionally leaves this marker absent so the poller
+  // can materialize the item thread lazily.
+  const job = await registerCronItemThread(ctx, content, true);
   if (!job) return;
 
   const repository = getQueueRepository();

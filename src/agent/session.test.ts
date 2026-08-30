@@ -5,20 +5,26 @@ vi.mock("node:fs/promises", () => ({
   appendFile: vi.fn(),
   mkdir: vi.fn(),
   chmod: vi.fn(),
+  rename: vi.fn(),
 }));
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
 }));
 
-const { readFile, appendFile, mkdir, chmod } = await import("node:fs/promises");
+const { readFile, appendFile, mkdir, chmod, rename } = await import(
+  "node:fs/promises"
+);
 const { existsSync } = await import("node:fs");
-const { loadMessages, appendMessage } = await import("./session.js");
+const { loadMessages, appendMessage, renameSession } = await import(
+  "./session.js"
+);
 
 const mockReadFile = vi.mocked(readFile);
 const mockAppendFile = vi.mocked(appendFile);
 const mockMkdir = vi.mocked(mkdir);
 const mockChmod = vi.mocked(chmod);
+const mockRename = vi.mocked(rename);
 const mockExistsSync = vi.mocked(existsSync);
 
 describe("loadMessages", () => {
@@ -118,6 +124,35 @@ describe("loadMessages", () => {
     await expect(loadMessages("group1", "")).rejects.toThrow(
       "不正なセッションID",
     );
+  });
+});
+
+describe("renameSession", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRename.mockResolvedValue(undefined);
+  });
+
+  it("一時session JSONLをthread IDへrenameする", async () => {
+    mockExistsSync.mockImplementation((file) =>
+      String(file).endsWith("cron-temp.jsonl"),
+    );
+
+    await renameSession("group1", "cron-temp", "1234567890");
+
+    expect(mockRename).toHaveBeenCalledWith(
+      expect.stringContaining("cron-temp.jsonl"),
+      expect.stringContaining("1234567890.jsonl"),
+    );
+  });
+
+  it("rename先が既に存在する場合は上書きしない", async () => {
+    mockExistsSync.mockReturnValue(true);
+
+    await expect(
+      renameSession("group1", "cron-temp", "1234567890"),
+    ).rejects.toThrow("リネーム先のセッションが既に存在します");
+    expect(mockRename).not.toHaveBeenCalled();
   });
 });
 

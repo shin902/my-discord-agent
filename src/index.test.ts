@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   registerHandlers: vi.fn(),
   backfillDiscordMessages: vi.fn(),
   loadDiscordConfig: vi.fn(),
+  loadBotRegistry: vi.fn(),
   startPoller: vi.fn(),
   stopPoller: vi.fn(),
   startDeliveryWorker: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   initManager: vi.fn(),
   killAllRunningContainers: vi.fn(),
   validateGroupConfig: vi.fn(),
+  validateBotConfigs: vi.fn(),
   loadDefaultModel: vi.fn(),
   loadAndValidateCron: vi.fn(),
   stopCron: vi.fn(),
@@ -44,6 +46,10 @@ vi.mock("./discord/backfill.js", () => ({
 }));
 vi.mock("./config/config.js", () => ({
   loadDiscordConfig: mocks.loadDiscordConfig,
+}));
+vi.mock("./config/bots.js", () => ({
+  loadBotRegistry: mocks.loadBotRegistry,
+  validateBotConfigs: mocks.validateBotConfigs,
 }));
 vi.mock("./queue/poller.js", () => ({
   startPoller: mocks.startPoller,
@@ -71,6 +77,7 @@ vi.mock("./config/default-model.js", () => ({
 }));
 vi.mock("./proxy/credential-proxy-server.js", () => ({
   initCredentialProxyServer: vi.fn().mockResolvedValue(0),
+  registerInternalRequestHandler: vi.fn(),
 }));
 vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),
@@ -106,11 +113,14 @@ describe("index: 起動時バリデーション", () => {
       isReady: vi.fn().mockReturnValue(true),
     });
     mocks.loadDiscordConfig.mockResolvedValue({ bots: {} });
+    mocks.loadBotRegistry.mockResolvedValue({});
     mocks.backfillDiscordMessages.mockResolvedValue(undefined);
     mocks.loadGroups.mockResolvedValue([]);
     mocks.loadProviders.mockResolvedValue([]);
     mocks.initManager.mockResolvedValue(undefined);
     mocks.initGroupPrompts.mockResolvedValue(undefined);
+    mocks.validateGroupConfig.mockResolvedValue(undefined);
+    mocks.validateBotConfigs.mockResolvedValue(undefined);
     mocks.loadDefaultModel.mockResolvedValue({
       provider: "zai",
       modelId: "glm-4.7-flash",
@@ -145,6 +155,36 @@ describe("index: 起動時バリデーション", () => {
     );
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
     expect(mockExit).toHaveBeenCalledWith(1);
+  });
+
+  it("不正な Bot profile は [startup] ログを出して process.exit(1) する", async () => {
+    mocks.loadBotRegistry.mockRejectedValue(
+      new Error("bots.coding.instructions は必須です"),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.initDiscordClients).not.toHaveBeenCalled();
+  });
+
+  it("不正な Bot の effective config は Discord 初期化前に停止する", async () => {
+    mocks.loadGroups.mockResolvedValue([
+      {
+        name: "main",
+        channels: [],
+        model: { provider: "zai", modelId: "glm-4.7-flash" },
+      },
+    ]);
+    mocks.loadBotRegistry.mockResolvedValue({
+      coding: { group: "main", instructions: "worker" },
+    });
+    mocks.validateBotConfigs.mockRejectedValue(
+      new Error("Bot coding の設定が不正です: 不明なツール名: missing-tool"),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.initDiscordClients).not.toHaveBeenCalled();
   });
 
   it("不明なプロバイダーは [startup] ログを出して process.exit(1) する", async () => {
@@ -228,6 +268,20 @@ describe("index: 起動時バリデーション", () => {
     expect(mockExit).toHaveBeenCalledWith(1);
   });
 
+  it("strictな起動時コンテナcleanup失敗ではqueue recoveryへ進まない", async () => {
+    mocks.killAllRunningContainers.mockRejectedValueOnce(
+      new Error("container cleanup discovery failed"),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledWith({
+      includeOrphans: true,
+      strict: true,
+    });
+    expect(mocks.initializeQueue).not.toHaveBeenCalled();
+  });
+
   it("有効な設定では registerHandlers・startPoller・startDeliveryWorker・login が呼ばれる", async () => {
     mocks.loadGroups.mockResolvedValue([
       {
@@ -239,6 +293,19 @@ describe("index: 起動時バリデーション", () => {
 
     await import("./index.js");
 
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledWith({
+      includeOrphans: true,
+      strict: true,
+    });
+    expect(mocks.initializeQueue).toHaveBeenCalledOnce();
+    expect(
+      mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.initializeQueue.mock.invocationCallOrder[0]);
+    expect(mocks.registerHandlers).toHaveBeenCalledWith(
+      mocks.discordClients.get("personal"),
+      expect.any(Function),
+      "personal",
+    );
     expect(mocks.registerHandlers).toHaveBeenCalledOnce();
     expect(mocks.startPoller).toHaveBeenCalledOnce();
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
@@ -260,6 +327,18 @@ describe("index: 起動時バリデーション", () => {
     await import("./index.js");
 
     expect(mocks.registerHandlers).toHaveBeenCalledTimes(2);
+    expect(mocks.registerHandlers).toHaveBeenNthCalledWith(
+      1,
+      mocks.discordClients.get("personal"),
+      expect.any(Function),
+      "personal",
+    );
+    expect(mocks.registerHandlers).toHaveBeenNthCalledWith(
+      2,
+      mocks.discordClients.get("secondary"),
+      expect.any(Function),
+      "secondary",
+    );
     const firstReady = mocks.registerHandlers.mock
       .calls[0]?.[1] as () => Promise<void>;
     const secondReady = mocks.registerHandlers.mock
@@ -297,7 +376,7 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.stopCron).toHaveBeenCalledOnce();
     expect(mocks.stopPoller).toHaveBeenCalledOnce();
     expect(mocks.stopDeliveryWorker).toHaveBeenCalledOnce();
-    expect(mocks.killAllRunningContainers).toHaveBeenCalledOnce();
+    expect(mocks.killAllRunningContainers).toHaveBeenCalledTimes(2);
     expect(mocks.stopCron.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.stopPoller.mock.invocationCallOrder[0],
     );
@@ -305,7 +384,7 @@ describe("index: 起動時バリデーション", () => {
       mocks.stopDeliveryWorker.mock.invocationCallOrder[0],
     );
     expect(mocks.stopDeliveryWorker.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+      mocks.killAllRunningContainers.mock.invocationCallOrder[1],
     );
   });
 

@@ -210,8 +210,8 @@ describe("loadAndValidateCron", () => {
       prompt: "summarize item",
       channelId: "ch-123",
     },
-    { id: "handler", handler: "jobs/rss-dispatch.ts" },
-  ])("$id item-thread で noReply を拒否する", async (job) => {
+    { id: "handler", handler: "__fixtures__/test-handler.ts" },
+  ])("$id item-thread で noReply を受理する", async (job) => {
     mockReadFile.mockResolvedValueOnce(
       JSON.stringify([
         {
@@ -224,9 +224,7 @@ describe("loadAndValidateCron", () => {
       ]),
     );
 
-    await expect(loadAndValidateCron()).rejects.toThrow(
-      "item-thread では noReply を利用できません",
-    );
+    await expect(loadAndValidateCron()).resolves.toHaveLength(1);
   });
 
   it("item-thread は destination 以外のsessionModeを拒否する", async () => {

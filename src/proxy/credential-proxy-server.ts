@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
 import * as https from "node:https";
@@ -23,6 +24,52 @@ class UpstreamTimeoutError extends Error {
 }
 
 let proxyPort: number | null = null;
+interface InternalRequestAuthorization {
+  scope: string;
+  /** Provider whose serial lock is held by the parent run, if any. */
+  heldProvider?: string;
+}
+const internalRequestTokens = new Map<string, InternalRequestAuthorization>();
+let internalRequestHandler:
+  | ((
+      req: IncomingMessage,
+      res: ServerResponse,
+      scope: string,
+      heldProvider?: string,
+    ) => Promise<void>)
+  | null = null;
+
+export interface InternalRequestConfig {
+  port: number;
+  token: string;
+  revoke: () => void;
+}
+
+/** Register the host-only handler used by sandbox agent tools. */
+export function registerInternalRequestHandler(
+  handler: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    scope: string,
+    heldProvider?: string,
+  ) => Promise<void>,
+): void {
+  internalRequestHandler = handler;
+}
+
+/** Issue a group-scoped credential for one sandbox run. The caller must revoke it when the run ends. */
+export function createInternalRequestConfig(
+  scope: string,
+  heldProvider?: string,
+): InternalRequestConfig | undefined {
+  if (proxyPort === null) return undefined;
+  const token = randomUUID();
+  internalRequestTokens.set(token, { scope, heldProvider });
+  const revoke = () => {
+    internalRequestTokens.delete(token);
+  };
+  return { port: proxyPort, token, revoke };
+}
 
 export function getProxyPort(): number {
   if (proxyPort === null)
@@ -239,6 +286,32 @@ export function createRequestHandler(
   timeoutMs: number,
 ) {
   return (req: IncomingMessage, res: ServerResponse) => {
+    const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (pathname === "/__agent/bot") {
+      const token = req.headers["x-agent-internal-token"];
+      const authorization =
+        typeof token === "string"
+          ? internalRequestTokens.get(token)
+          : undefined;
+      if (internalRequestHandler && authorization !== undefined) {
+        internalRequestHandler(
+          req,
+          res,
+          authorization.scope,
+          authorization.heldProvider,
+        ).catch((err) => {
+          if (!res.headersSent) {
+            console.error(`[credential-proxy] internal request failed: ${err}`);
+            res.writeHead(500);
+            res.end("Internal Server Error");
+          }
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
     handleRequest(creds, timeoutMs, req, res).catch((err) => {
       if (!res.headersSent) {
         console.error(`[credential-proxy] unhandled error: ${err}`);

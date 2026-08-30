@@ -2,6 +2,60 @@ import { describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
+describe("QueueRepository payload", () => {
+  it("normalizes legacy system prompt snapshot fields when reading payload_json", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+      });
+      repo.db.prepare("UPDATE jobs SET payload_json=? WHERE id=?").run(
+        JSON.stringify({
+          ...enqueued.job,
+          agentsSnapshotContent: "legacy prompt",
+          agentsSnapshotPresent: true,
+        }),
+        enqueued.job.id,
+      );
+
+      expect(repo.get(enqueued.job.id)).toMatchObject({
+        systemPromptSnapshotContent: "legacy prompt",
+        systemPromptSnapshotPresent: true,
+      });
+      expect(repo.get(enqueued.job.id)).not.toHaveProperty(
+        "agentsSnapshotContent",
+      );
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("round-trips botId in payload_json without a schema column", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const enqueued = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+        botId: "coding",
+      });
+      expect(repo.get(enqueued.job.id)?.botId).toBe("coding");
+      const columns = repo.db
+        .prepare("PRAGMA table_info(jobs)")
+        .all() as Array<{ name: string }>;
+      expect(columns.some((column) => column.name === "bot_id")).toBe(false);
+    } finally {
+      repo.close();
+    }
+  });
+});
+
 describe("QueueRepository lease renewal", () => {
   it("extends a claimed lease with its fencing token", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
@@ -374,7 +428,7 @@ describe("durable Phase 2 result state", () => {
       repo.markRunning(enqueued.job.id, expectDefined(claimed).fencingToken, {
         termination: "close",
         exitCode: 0,
-        agentsSnapshotHash: "agents-hash",
+        systemPromptSnapshotHash: "agents-hash",
         memorySnapshotHash: "memory-hash",
         toolCallKey: "tool-key",
       });
@@ -393,7 +447,7 @@ describe("durable Phase 2 result state", () => {
         resultJson: JSON.stringify("canonical"),
         succeeded: true,
         terminalState: "succeeded",
-        agentsSnapshotHash: "agents-hash",
+        systemPromptSnapshotHash: "agents-hash",
         toolCallKey: "tool-key",
       });
       expect(repo.getDelivery(enqueued.job.id)).toMatchObject({
@@ -906,7 +960,7 @@ describe("QueueRepository - single-owner retry policy", () => {
           timing,
           snapshotHash: "snap",
           memorySnapshotHash: "mem",
-          agentsSnapshotHash: "agents",
+          systemPromptSnapshotHash: "agents",
           toolCallKey: "tool",
         },
       });
@@ -937,7 +991,7 @@ describe("QueueRepository - single-owner retry policy", () => {
         "termination",
         "stopReason",
         "timing",
-        "agentsSnapshotHash",
+        "systemPromptSnapshotHash",
         "memorySnapshotHash",
         "snapshotHash",
         "toolCallKey",
@@ -1262,6 +1316,37 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
         },
       });
       expect(repo.listTerminalCronJobs().map((job) => job.id)).toHaveLength(2);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("blocks legacy item-thread provisioning until the handler commits its thread", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const legacy = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "cron-item",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+        cronDeliveryMode: "item-thread",
+        cronSessionMode: "destination",
+        cronThread: true,
+        cronJobId: "item-job",
+        cronProvisioning: true,
+        cronLegacyProvisioning: true,
+      }).job;
+      expect(repo.claim("worker")).toBeUndefined();
+      expect(
+        repo.provisionCronJob(legacy.id, "thread-1", {
+          cronThreadId: "thread-1",
+        }),
+      ).toMatchObject({
+        cronLegacyProvisioning: false,
+        cronProvisioning: false,
+      });
+      expect(repo.claim("worker")?.job.id).toBe(legacy.id);
     } finally {
       repo.close();
     }

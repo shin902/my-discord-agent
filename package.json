@@ -8,6 +8,7 @@
     "build:runner": "esbuild src/sandbox/agent-runner.ts --bundle --platform=node --target=node22 --format=esm --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --outfile=dist/sandbox/runner.bundle.mjs",
     "sandbox": "bash scripts/sandbox.sh",
     "reddit:login": "tsx scripts/reddit-cookie-login.ts",
+    "x-saved:setup": "tsx scripts/x-saved-setup.ts",
     "runner:image:build": "pnpm build:runner && docker build -t localhost:5050/my-discord-agent-runner:latest . && docker push localhost:5050/my-discord-agent-runner:latest",
     "restart": "pnpm sandbox build && pnpm build && node dist/index.js",
     "start": "node --env-file-if-exists=.env dist/index.js",

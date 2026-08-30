@@ -41,10 +41,13 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   cycle       TEXT    NOT NULL,  -- 'monthly' | 'yearly' | 'weekly'
   next_date   TEXT    NOT NULL,  -- YYYY-MM-DD
   category    TEXT,
-  active      INTEGER NOT NULL DEFAULT 1
+  active      INTEGER NOT NULL DEFAULT 1,
+  recorded_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 "
 ```
+
+`subscriptions` is an append-only state history. Do not overwrite a previous subscription row when its renewal date, price, cycle, category, or active status changes. Insert a new row instead. The latest row for each `name` is the current state; older rows are historical snapshots.
 
 ### 3. Verify and report
 

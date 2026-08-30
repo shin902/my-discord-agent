@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SendMessageOptions } from "../agent/manager.js";
+import type { DiscordEvent, SendMessageOptions } from "../agent/manager.js";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -19,6 +19,12 @@ vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const acknowledgeEmail = vi.hoisted(() => vi.fn());
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 const settleRssDispatch = vi.hoisted(() => vi.fn());
+const loadBotRegistry = vi.hoisted(() => vi.fn());
+const resolveBotProfile = vi.hoisted(() => vi.fn());
+vi.mock("../config/bots.js", () => ({
+  loadBotRegistry,
+  resolveBotProfile,
+}));
 vi.mock("./reconciliation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./reconciliation.js")>();
   settleRssDispatch.mockImplementation(actual.settleRssDispatch);
@@ -30,7 +36,10 @@ vi.mock("../config/default-model.js", () => ({
     modelId: model?.modelId ?? "glm-4.7-flash",
   })),
 }));
-vi.mock("../config/groups.js", () => ({ findGroupByName: vi.fn() }));
+vi.mock("../config/groups.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config/groups.js")>();
+  return { ...actual, findGroupByName: vi.fn() };
+});
 vi.mock("../config/providers.js", () => ({
   resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
 }));
@@ -119,6 +128,8 @@ beforeEach(() => {
   patchJobPayload.mockReset();
   vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
+  loadBotRegistry.mockReset();
+  resolveBotProfile.mockReset();
 });
 
 afterEach(async () => {
@@ -191,6 +202,75 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
 }
 
 const EMPTY_AGENT_RESPONSES = ["", "   ", "\r\n", "\t"] as const;
+
+describe("processMessage - Bot execution resolution", () => {
+  beforeEach(() => {
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => false,
+      isTextBased: () => false,
+    } as never);
+  });
+
+  it("uses group-to-Bot config and Bot model for lock without channel overrides", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      model: { provider: "group-provider", modelId: "group-model" },
+    });
+    loadBotRegistry.mockResolvedValue({ coding: {} });
+    resolveBotProfile.mockReturnValue({
+      group: "default",
+      instructions: "coding instructions",
+      model: { provider: "bot-provider", modelId: "bot-model" },
+      tools: ["read"],
+    });
+    vi.mocked(sendMessage).mockResolvedValue("response");
+    const msg = makeMsg({
+      botId: "coding",
+      configOverride: {
+        model: { provider: "channel-provider", modelId: "channel-model" },
+        tools: ["channel-tool"],
+      },
+    });
+
+    await processMessage(msg);
+
+    expect(resolveProviderConcurrency).toHaveBeenCalledWith("bot-provider");
+    const options = vi.mocked(sendMessage).mock.calls[0]?.[3] as
+      | SendMessageOptions
+      | undefined;
+    expect(options?.configOverride).toEqual({
+      model: { provider: "bot-provider", modelId: "bot-model" },
+      tools: ["read"],
+    });
+    expect(options?.systemPromptAppend).toBe("coding instructions");
+    expect(options?.enableBotTool).toBe(false);
+  });
+
+  it("dead-letters an unknown Bot instead of retrying", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
+    loadBotRegistry.mockResolvedValue({});
+    resolveBotProfile.mockImplementation(() => {
+      throw new Error("Bot が未定義です: missing");
+    });
+    const msg = makeMsg({ botId: "missing" });
+
+    await processMessage(msg);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "non_retryable",
+      expect.stringContaining("Bot が未定義です: missing"),
+      expect.anything(),
+    );
+    expect(failAttempt).not.toHaveBeenCalled();
+  });
+});
 
 describe("processMessage - terminal queue transitions", () => {
   beforeEach(() => {
@@ -926,7 +1006,7 @@ describe("poller lease renewal", () => {
       isTextBased: () => false,
     } as never);
     const msg = makeMsg({
-      agentsSnapshotPresent: false,
+      systemPromptSnapshotPresent: false,
       memorySnapshotPresent: false,
       snapshotPresent: false,
       snapshotHash: "snapshot",
@@ -1331,6 +1411,97 @@ describe("processMessage - Discord イベント通知", () => {
         allowedMentions: { parse: [], repliedUser: false },
       });
     });
+  });
+
+  it("subagent_tool_start イベントはエラーではなく進捗として送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "subagent_tool_start",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          toolName: "read",
+          taskPreview: "inspect task",
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "🤖 ephemeral `child-12`: 🔧 `read`",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
+  });
+
+  it("subagent_update イベントはエラーではなく状態更新として送信される", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "subagent_update",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          status: "completed",
+          taskPreview: "inspect task",
+          resultPreview: "調査完了",
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "🤖 ephemeral `child-12`: 完了: 調査完了",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
+  });
+
+  it("subagent_update のrunning状態では安全なtask previewを送信する", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "subagent_update",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          status: "running",
+          taskPreview: "調査タスク",
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "🤖 ephemeral `child-12`: 調査タスク",
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
+  });
+
+  it("未知のDiscordイベントはエラー通知に変換されない", async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "future_event",
+        } as unknown as DiscordEvent);
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg());
+
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("cronJobId が設定されている（direct cron）場合、tool_start イベントは送信されない", async () => {

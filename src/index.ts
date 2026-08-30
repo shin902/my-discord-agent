@@ -1,9 +1,11 @@
 import "dotenv/config";
+import { handleBotToolRequest } from "./agent/bot-orchestration.js";
 import {
   initManager,
   killAllRunningContainers,
   validateGroupConfig,
 } from "./agent/manager.js";
+import { loadBotRegistry, validateBotConfigs } from "./config/bots.js";
 import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
@@ -23,7 +25,10 @@ import {
   loginDiscordClients,
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
-import { initCredentialProxyServer } from "./proxy/credential-proxy-server.js";
+import {
+  initCredentialProxyServer,
+  registerInternalRequestHandler,
+} from "./proxy/credential-proxy-server.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
@@ -34,20 +39,26 @@ import { getQueueRepository } from "./queue/repository.js";
 const groups = await loadGroups();
 try {
   const discordConfig = await loadDiscordConfig();
+  const botRegistry = await loadBotRegistry();
   for (const group of groups) {
     if (group.bot && !(group.bot in discordConfig.bots))
       throw new Error(
         `Group ${group.name} のDiscord Botが未定義です: ${group.bot}`,
       );
   }
-  await initDiscordClients();
   await ensureGroupDirs(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
+  registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort);
+  // Stop containers left by a previous process before recovering its
+  // direct-admission markers.
+  await killAllRunningContainers({ includeOrphans: true, strict: true });
   await initGroupPrompts(groups);
   await loadProviders();
   const defaultModel = await loadDefaultModel();
   await Promise.all(groups.map((g) => validateGroupConfig(g, defaultModel)));
+  await validateBotConfigs(groups, botRegistry, defaultModel);
+  await initDiscordClients();
   const queueRepository = getQueueRepository();
   await initializeQueue(queueRepository);
   const cronJobs = await loadAndValidateCron();
@@ -103,8 +114,8 @@ const runStartupBackfillOnce = async (): Promise<void> => {
   await backfillDiscordMessages(groups);
   console.log("[discord-backfill] 起動時履歴復旧が完了しました");
 };
-for (const discordClient of getDiscordClients().values()) {
-  registerHandlers(discordClient, runStartupBackfillOnce);
+for (const [discordBotId, discordClient] of getDiscordClients()) {
+  registerHandlers(discordClient, runStartupBackfillOnce, discordBotId);
 }
 startPoller();
 startDeliveryWorker(getQueueRepository());

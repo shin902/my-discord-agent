@@ -6,7 +6,7 @@
 
 ```
 config/
-  config.json              # defaultModel・proxy・agent などの設定
+  config.json              # Bot profile・defaultModel・proxy・agent などの設定
   config.example.json
   providers.json           # AI プロバイダーごとの実行ポリシー（省略可）
   providers.example.json
@@ -29,7 +29,7 @@ AgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマ
 | `config/credentials.json` | ✓ | 配列 | AI プロバイダー・外部サービスの接続設定 |
 | `config/groups.json` | ✓ | 配列 | チャンネル → グループのマッピング |
 | `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義 |
-| `config/config.json` | ✓ | オブジェクト | `defaultModel`（必須）・proxy・agent 設定 |
+| `config/config.json` | ✓ | オブジェクト | Bot profile・`defaultModel`（必須）・proxy・agent 設定 |
 
 > **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
 
@@ -96,7 +96,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "chat",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily-search"],
+    "tools": ["tavily-search", "bot"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [
@@ -104,6 +104,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
       {
         "channelId": "222",
         "sessionMode": "shared",
+        "requiredMention": true,
         "tools": ["read"],
         "skills": [],
         "mounts": []
@@ -129,8 +130,9 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
 | `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
+| `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
-| `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。channelで指定するとgroupの配列を完全置換 |
+| `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` は明示時だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
 | `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル。channelで指定するとgroupの指定を完全置換 |
@@ -195,12 +197,12 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `deliveryMode` | `direct` | `channelId` へ直接投稿する。通常チャンネルだけでなく既存スレッドのIDも指定可能 |
 | `deliveryMode` | `new-thread` | `channelId` を親として実行ごとに新しいスレッドを作成する |
-| `deliveryMode` | `item-thread` | 処理前に仮メッセージと1項目用スレッドを確保し、回答先頭で仮メッセージを編集する。`sessionMode` は `destination` 必須 |
+| `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答がある場合だけ親メッセージを投稿してmessage/thread IDへsessionを昇格してから1項目用スレッドを作成する。`sessionMode` は `destination` 必須 |
 | `sessionMode` | `per-run` | cron実行ごとに独立したセッションIDを生成する |
 | `sessionMode` | `destination` | 実際の投稿先チャンネルまたはスレッドのIDをセッションIDにする |
-| `noReply` | `true` | このcronリクエストのsystem promptへ、通知不要時に独立行 `<NO_REPLY>` を返す指示を追加する（`item-thread`では利用不可） |
+| `noReply` | `true` | このcronリクエストのsystem promptへ、通知不要時に独立行 `<NO_REPLY>` を返す指示を追加する。`item-thread`でも利用可能 |
 
-独立行 `<NO_REPLY>` の応答は通常会話、および`direct`/`new-thread` cronで正常完了し、Discordへ配送しない。inlineの言及は通常どおり配送する。`noReply`の既定値は`false`で、AGENTS.mdなどに同じ指示を書く場合は不要。`item-thread`では`noReply: true`を設定エラーとし、AGENTS.mdなどによってmarkerが出ても通常の応答テキストとして既存placeholderへ配送する。Mail/RSSは無配信時も処理済みとしてsourceを確定する。Mailの既読化に失敗した場合は未読のまま次回cronで再取得し、RSSの確定に失敗した場合はclaimを解放して次回cronで再取得する。`new-thread` + `destination` は既存のsession ID契約を守るためAI実行前にスレッドを作るので、NO_REPLY時は投稿のないスレッドが残る。
+独立行 `<NO_REPLY>` の応答は通常会話、および`direct`/`new-thread`/`item-thread` cronで正常完了し、Discordへ配送しない。inlineの言及は通常どおり配送する。`noReply`の既定値は`false`で、AGENTS.mdなどに同じ指示を書く場合は不要。`item-thread`はAI実行後までDiscord状態を作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSSは無配信時も処理済みとしてsourceを確定する。Mailの既読化に失敗した場合は未読のまま次回cronで再取得し、RSSの確定に失敗した場合はclaimを解放して次回cronで再取得する。`new-thread` + `destination` は既存のsession ID契約を守るためAI実行前にスレッドを作るので、NO_REPLY時は投稿のないスレッドが残る。
 
 既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 
@@ -302,6 +304,16 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 ```json
 {
+  "bots": {
+    "coding": {
+      "group": "default",
+      "instructions": "コード変更を担当する worker",
+      "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+      "tools": ["read", "write", "edit"],
+      "skills": [],
+      "mounts": []
+    }
+  },
   "defaultModel": { "provider": "zai", "modelId": "glm-4.7-flash" },
   "proxy": { "requestTimeoutMs": 120000 },
   "agent": { "timeoutMs": 600000 }
@@ -310,9 +322,12 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 | キー | 必須 | 内容 |
 |---|---|---|
+| `bots` | — | 名前付き Bot profile の map。各 profile は `group` と空でない `instructions`（ともに必須）、AgentConfig（`model` / `tools` / `skills` / `mounts`）を持つ |
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
+
+Botのauthority modelと、`bot` capabilityを明示的に許可する理由は [エンティティモデルのauthority境界](spec/entity-model.md#agentgroupとbotのauthority境界) を参照。`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig はその group の設定を上書きし、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示する。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。メインAgentには同じBot Registryを呼び出す組み込み `bot` toolが、effective `tools` に正確な名前 `bot` を明示した場合だけ提供され、`action=run|resume|list` を指定できる。Bot profileやqueued/direct Bot childの実行では再帰的な `bot` toolを常に無効化する。`run` / `resume` はキューへ積まず、同じtool call内でsandbox実行の完了まで待って結果を返す（非同期handle返却やpollingは行わない）。親Agentが現在保持しているものと同じserial providerをBotが使い、対象Task Sessionに先行処理がある場合は、deadlockを避けるため同期Bot呼び出しを待機せず拒否する。親が保持していないproviderでも、異なるserial providerを対象とする場合は既存のdeadlock防止ガードにより拒否する。parallel providerは通常どおり実行する。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同じordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しない。プロセス起動時は管理対象コンテナ（現行labelと旧形式の名前のものを含む）の停止を確認した後、前回プロセスの未完了admissionとqueue実行を回収する。Dockerのdiscoveryまたは停止確認に失敗した場合は起動を中止し、実行状態を回収しない。
 
 ## 環境変数
 

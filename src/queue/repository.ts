@@ -4,14 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { splitMessage } from "../utils/splitMessage.js";
-import type { InboxMessage } from "./types.js";
+import { type InboxMessage, normalizeInboxMessagePayload } from "./types.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 4;
+export const QUEUE_SCHEMA_VERSION = 5;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -41,7 +41,7 @@ export interface ExecutionMetadata {
   usage?: unknown;
   timing?: unknown;
   error?: unknown;
-  agentsSnapshotHash?: string;
+  systemPromptSnapshotHash?: string;
   memorySnapshotHash?: string;
   snapshotHash?: string;
   toolCallKey?: string;
@@ -154,12 +154,13 @@ const EXECUTION_METADATA_FIELDS: readonly ExecutionMetadataField[] = [
       m.timing === undefined ? null : JSON.stringify(m.timing),
   },
   {
-    field: "agentsSnapshotHash",
+    field: "systemPromptSnapshotHash",
+    // Keep the deployed column name as a storage compatibility boundary.
     column: "agents_snapshot_hash",
-    setValue: (m) => m.agentsSnapshotHash || undefined,
-    // commitResult historically fell back from agentsSnapshotHash to
+    setValue: (m) => m.systemPromptSnapshotHash || undefined,
+    // commitResult historically fell back from systemPromptSnapshotHash to
     // snapshotHash; keep that method-specific collapse here.
-    coalesceValue: (m) => m.agentsSnapshotHash ?? m.snapshotHash ?? null,
+    coalesceValue: (m) => m.systemPromptSnapshotHash ?? m.snapshotHash ?? null,
   },
   {
     field: "memorySnapshotHash",
@@ -224,6 +225,65 @@ const TRANSACTION_ROLLBACK = Symbol("queue.transaction.rollback");
 export interface EnqueueResult {
   job: QueueJob;
   inserted: boolean;
+}
+
+export interface BotTaskSessionEnqueueResult {
+  session: BotTaskSession;
+  enqueue: EnqueueResult;
+}
+
+export interface BotTaskSession {
+  sessionId: string;
+  handle: string;
+  groupName: string;
+  botId: string;
+  createdAt: string;
+  lastUsedAt: string;
+  preview: string;
+}
+
+export interface BotTaskSessionAdmission {
+  jobId: string;
+  sessionId: string;
+  sequence: number;
+}
+
+export type BotTaskSessionPayload = Omit<
+  InboxMessage,
+  "id" | "retries" | "enqueuedAt" | "sessionId"
+>;
+
+export interface CreateBotTaskSessionInput {
+  sessionId: string;
+  handle: string;
+  groupName: string;
+  botId: string;
+  sourceKey?: string;
+  createdAt: string;
+  preview: string;
+}
+
+interface BotTaskSessionRow {
+  session_id: string;
+  handle: string;
+  group_name: string;
+  bot_id: string;
+  channel_id: string;
+  created_at: string;
+  last_used_at: string;
+  preview: string;
+}
+
+function parseBotTaskSession(row: BotTaskSessionRow): BotTaskSession {
+  return {
+    sessionId: row.session_id,
+    handle: row.handle,
+    groupName: row.group_name,
+    botId: row.bot_id,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    preview: row.preview,
+  };
 }
 export interface LegacyMigrationResult {
   migrated: number;
@@ -332,7 +392,9 @@ function jsonOrUndefined(value: string | null): unknown {
   }
 }
 function parsePayload(row: JobRow): QueueJob {
-  const payload = JSON.parse(row.payload_json) as InboxMessage;
+  const payload = normalizeInboxMessagePayload(
+    JSON.parse(row.payload_json) as InboxMessage,
+  );
   const active = row.status === "claimed" || row.status === "running";
   return {
     ...payload,
@@ -364,7 +426,7 @@ function parsePayload(row: JobRow): QueueJob {
     succeeded: row.succeeded === 1,
     ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}),
     ...(row.agents_snapshot_hash
-      ? { agentsSnapshotHash: row.agents_snapshot_hash }
+      ? { systemPromptSnapshotHash: row.agents_snapshot_hash }
       : {}),
     ...(row.memory_snapshot_hash
       ? { memorySnapshotHash: row.memory_snapshot_hash }
@@ -526,6 +588,24 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
     "DROP INDEX IF EXISTS deliveries_job; CREATE UNIQUE INDEX IF NOT EXISTS deliveries_host_unique ON deliveries(host_unique_key) WHERE host_unique_key IS NOT NULL; UPDATE deliveries SET response_index=0 WHERE response_index IS NULL; UPDATE deliveries SET host_unique_key=job_id || ':0' WHERE host_unique_key IS NULL;",
   );
 }
+function createBotTaskSessionTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bot_task_sessions (
+      session_id TEXT PRIMARY KEY,
+      handle TEXT NOT NULL UNIQUE,
+      group_name TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      -- Legacy physical column; delivery belongs to jobs/deliveries.
+      channel_id TEXT NOT NULL,
+      source_key TEXT UNIQUE,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT NOT NULL,
+      preview TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS bot_task_sessions_owner
+      ON bot_task_sessions(group_name, bot_id, last_used_at DESC);
+  `);
+}
 function repairRuntimeSchema(db: Database.Database): void {
   if (jobsTableIsLegacy(db)) rebuildLegacyQueueSchema(db);
   applyDurableRuntimeColumns(db);
@@ -535,6 +615,7 @@ function repairRuntimeSchema(db: Database.Database): void {
   addMissingColumns(db, "discord_sync_cursors", [
     { name: "initialized", ddl: "initialized INTEGER NOT NULL DEFAULT 1" },
   ]);
+  createBotTaskSessionTable(db);
 }
 // Versioned schema migrations. Every step is idempotent; the value recorded in
 // schema_meta('schema_version') gates which steps still need to run. Stores stamped
@@ -570,6 +651,13 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     summary: "persist empty Discord backfill initialization",
     up(db) {
       repairRuntimeSchema(db);
+    },
+  },
+  {
+    version: 5,
+    summary: "add Bot task session metadata",
+    up(db) {
+      createBotTaskSessionTable(db);
     },
   },
 ];
@@ -730,6 +818,308 @@ export class QueueRepository {
       .all() as JobRow[];
     return rows.map(parsePayload);
   }
+  private createBotTaskSessionInTransaction(
+    input: CreateBotTaskSessionInput,
+  ): BotTaskSession {
+    if (input.sourceKey) {
+      const existing = this.db
+        .prepare("SELECT * FROM bot_task_sessions WHERE source_key=?")
+        .get(input.sourceKey) as BotTaskSessionRow | undefined;
+      if (existing) return parseBotTaskSession(existing);
+    }
+    this.db
+      .prepare(
+        `INSERT INTO bot_task_sessions
+          (session_id,handle,group_name,bot_id,channel_id,source_key,created_at,last_used_at,preview)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        input.sessionId,
+        input.handle,
+        input.groupName,
+        input.botId,
+        // Legacy channel_id is not part of Task Session metadata. Keep writing
+        // an inert value so pre-existing NOT NULL schemas remain insertable.
+        "",
+        input.sourceKey ?? null,
+        input.createdAt,
+        input.createdAt,
+        input.preview,
+      );
+    const created = this.db
+      .prepare("SELECT * FROM bot_task_sessions WHERE session_id=?")
+      .get(input.sessionId) as BotTaskSessionRow | undefined;
+    if (!created)
+      throw new Error(
+        `failed to read back Bot task session ${input.sessionId}`,
+      );
+    return parseBotTaskSession(created);
+  }
+  createBotTaskSession(input: CreateBotTaskSessionInput): BotTaskSession {
+    return this.inImmediateTransaction(() =>
+      this.createBotTaskSessionInTransaction(input),
+    );
+  }
+  private createBotTaskSessionAdmissionInTransaction(
+    sessionId: string,
+    groupName: string,
+    createdAt: string,
+  ): BotTaskSessionAdmission {
+    const jobId = `bot-admission-${randomUUID()}`;
+    const sequenceRow = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
+      )
+      .get(sessionId) as { sequence: number };
+    const payload: InboxMessage = {
+      id: jobId,
+      // Admission tickets are not delivered; this legacy payload field is
+      // intentionally empty and is never used as a Task Session destination.
+      channelId: "",
+      groupName,
+      sessionId,
+      content: "",
+      timestamp: createdAt,
+      enqueuedAt: createdAt,
+      retries: 0,
+      botTaskSessionAdmission: true,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO jobs (id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        jobId,
+        null,
+        JSON.stringify(payload),
+        sessionId,
+        sequenceRow.sequence,
+        "queued",
+        0,
+        1,
+        createdAt,
+        createdAt,
+      );
+    return { jobId, sessionId, sequence: sequenceRow.sequence };
+  }
+  createBotTaskSessionAndAdmission(input: CreateBotTaskSessionInput): {
+    session: BotTaskSession;
+    admission: BotTaskSessionAdmission;
+  } {
+    return this.inImmediateTransaction(() => {
+      const session = this.createBotTaskSessionInTransaction(input);
+      const admission = this.createBotTaskSessionAdmissionInTransaction(
+        session.sessionId,
+        session.groupName,
+        input.createdAt,
+      );
+      return { session, admission };
+    });
+  }
+  resumeBotTaskSessionAndAdmission(
+    handle: string,
+    groupName: string,
+    botId: string,
+    lastUsedAt: string,
+  ):
+    | { session: BotTaskSession; admission: BotTaskSessionAdmission }
+    | undefined {
+    return this.inImmediateTransaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
+        )
+        .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
+      if (!row) return undefined;
+      this.touchBotTaskSessionInTransaction(row.session_id, lastUsedAt);
+      const session = parseBotTaskSession({
+        ...row,
+        last_used_at: lastUsedAt,
+      });
+      const admission = this.createBotTaskSessionAdmissionInTransaction(
+        session.sessionId,
+        groupName,
+        lastUsedAt,
+      );
+      return { session, admission };
+    });
+  }
+  admitBotTaskSessionAdmission(admission: BotTaskSessionAdmission): boolean {
+    return this.inImmediateTransaction(() => {
+      const blocked = this.db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE session_id=? AND sequence<? AND status NOT IN ('completed','dead_letter') LIMIT 1",
+        )
+        .get(admission.sessionId, admission.sequence);
+      if (blocked) return false;
+      const result = this.db
+        .prepare(
+          "UPDATE jobs SET status='running',updated_at=? WHERE id=? AND session_id=? AND sequence=? AND status='queued' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+        )
+        .run(
+          nowIso(),
+          admission.jobId,
+          admission.sessionId,
+          admission.sequence,
+        );
+      return result.changes === 1;
+    });
+  }
+  /**
+   * Admit a direct invocation only if it is immediately eligible. The admission
+   * ticket is terminally cancelled in the same transaction when blocked, so it
+   * cannot hold later work after the caller fails fast.
+   */
+  tryAdmitBotTaskSessionAdmission(
+    admission: BotTaskSessionAdmission,
+  ): "admitted" | "blocked" | "unavailable" {
+    return this.inImmediateTransaction(() => {
+      const blocked = this.db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE session_id=? AND sequence<? AND status NOT IN ('completed','dead_letter') LIMIT 1",
+        )
+        .get(admission.sessionId, admission.sequence);
+      if (blocked) {
+        const at = nowIso();
+        this.db
+          .prepare(
+            "UPDATE jobs SET status='dead_letter',completed_at=?,updated_at=?,terminal_reason='cancelled' WHERE id=? AND session_id=? AND sequence=? AND status='queued' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+          )
+          .run(
+            at,
+            at,
+            admission.jobId,
+            admission.sessionId,
+            admission.sequence,
+          );
+        return "blocked";
+      }
+      const result = this.db
+        .prepare(
+          "UPDATE jobs SET status='running',updated_at=? WHERE id=? AND session_id=? AND sequence=? AND status='queued' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+        )
+        .run(
+          nowIso(),
+          admission.jobId,
+          admission.sessionId,
+          admission.sequence,
+        );
+      return result.changes === 1 ? "admitted" : "unavailable";
+    });
+  }
+  completeBotTaskSessionAdmission(admission: BotTaskSessionAdmission): void {
+    this.db
+      .prepare(
+        "UPDATE jobs SET status='completed',completed_at=?,updated_at=? WHERE id=? AND session_id=? AND sequence=? AND status='running' AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+      )
+      .run(
+        nowIso(),
+        nowIso(),
+        admission.jobId,
+        admission.sessionId,
+        admission.sequence,
+      );
+  }
+  cancelBotTaskSessionAdmission(admission: BotTaskSessionAdmission): void {
+    this.db
+      .prepare(
+        "UPDATE jobs SET status='dead_letter',completed_at=?,updated_at=?,terminal_reason='cancelled' WHERE id=? AND session_id=? AND sequence=? AND status IN ('queued','running') AND json_extract(payload_json,'$.botTaskSessionAdmission')=1",
+      )
+      .run(
+        nowIso(),
+        nowIso(),
+        admission.jobId,
+        admission.sessionId,
+        admission.sequence,
+      );
+  }
+  createBotTaskSessionAndEnqueue(
+    input: CreateBotTaskSessionInput,
+    payload: BotTaskSessionPayload,
+    options: { idempotencyKey?: string; maxAttempts?: number } = {},
+  ): BotTaskSessionEnqueueResult {
+    return this.inImmediateTransaction(() => {
+      const session = this.createBotTaskSessionInTransaction(input);
+      const enqueue = this.enqueueInTransaction(
+        { ...payload, sessionId: session.sessionId },
+        options,
+      );
+      return { session, enqueue };
+    });
+  }
+  findBotTaskSession(
+    handle: string,
+    groupName: string,
+    botId: string,
+  ): BotTaskSession | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
+      )
+      .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
+    return row ? parseBotTaskSession(row) : undefined;
+  }
+  listBotTaskSessions(groupName: string, botId: string): BotTaskSession[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM bot_task_sessions WHERE group_name=? AND bot_id=? ORDER BY last_used_at DESC, created_at DESC",
+      )
+      .all(groupName, botId) as BotTaskSessionRow[];
+    return rows.map(parseBotTaskSession);
+  }
+  private touchBotTaskSessionInTransaction(
+    sessionId: string,
+    lastUsedAt: string,
+  ): void {
+    this.db
+      .prepare("UPDATE bot_task_sessions SET last_used_at=? WHERE session_id=?")
+      .run(lastUsedAt, sessionId);
+  }
+  touchBotTaskSession(sessionId: string, lastUsedAt: string): void {
+    this.inImmediateTransaction(() =>
+      this.touchBotTaskSessionInTransaction(sessionId, lastUsedAt),
+    );
+  }
+  recoverBotTaskSessionAdmissions(): void {
+    this.inImmediateTransaction(() => {
+      const now = nowIso();
+      this.db
+        .prepare(
+          "UPDATE jobs SET status='dead_letter',completed_at=?,updated_at=?,terminal_reason='startup-recovery' WHERE json_extract(payload_json,'$.botTaskSessionAdmission')=1 AND status IN ('queued','running')",
+        )
+        .run(now, now);
+    });
+  }
+  resumeBotTaskSessionAndEnqueue(
+    handle: string,
+    groupName: string,
+    botId: string,
+    lastUsedAt: string,
+    payload: BotTaskSessionPayload,
+    options: { idempotencyKey?: string; maxAttempts?: number } = {},
+  ): BotTaskSessionEnqueueResult | undefined {
+    return this.inImmediateTransaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
+        )
+        .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
+      if (!row) return undefined;
+      this.touchBotTaskSessionInTransaction(row.session_id, lastUsedAt);
+      const enqueue = this.enqueueInTransaction(
+        { ...payload, sessionId: row.session_id },
+        options,
+      );
+      const updated = this.db
+        .prepare("SELECT * FROM bot_task_sessions WHERE session_id=?")
+        .get(row.session_id) as BotTaskSessionRow | undefined;
+      if (!updated)
+        throw new Error(
+          `failed to read back Bot task session ${row.session_id}`,
+        );
+      return { session: parseBotTaskSession(updated), enqueue };
+    });
+  }
   /** Atomically provision a cron job and move it into the destination session ordering. */
   provisionCronJob(
     id: string,
@@ -746,6 +1136,7 @@ export class QueueRepository {
         ...patch,
         sessionId,
         cronProvisioning: false,
+        cronLegacyProvisioning: false,
       };
       this.db
         .prepare("UPDATE jobs SET sequence=sequence+1 WHERE session_id=?")
@@ -783,67 +1174,73 @@ export class QueueRepository {
       return parsePayload(updated);
     });
   }
-  enqueue(
+  private enqueueInTransaction(
     payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
     options: { idempotencyKey?: string; maxAttempts?: number } = {},
   ): EnqueueResult {
     const key = options.idempotencyKey ?? payload.idempotencyKey;
-    return this.inImmediateTransaction<EnqueueResult>(() => {
-      if (key) {
-        const idem = this.db
-          .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
-          .get(key) as
-          | { key: string; job_id: string | null; status: string }
-          | undefined;
-        if (idem) {
-          const existing = idem.job_id ? this.get(idem.job_id) : undefined;
-          return {
-            job: existing ?? syntheticCompleted(payload, key),
-            inserted: false,
-          };
-        }
+    if (key) {
+      const idem = this.db
+        .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
+        .get(key) as
+        | { key: string; job_id: string | null; status: string }
+        | undefined;
+      if (idem) {
+        const existing = idem.job_id ? this.get(idem.job_id) : undefined;
+        return {
+          job: existing ?? syntheticCompleted(payload, key),
+          inserted: false,
+        };
       }
-      const id = `job-${randomUUID()}`;
-      const timestamp = nowIso();
-      const sequenceRow = this.db
-        .prepare(
-          "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
-        )
-        .get(payload.sessionId) as { sequence: number };
-      const record = {
+    }
+    const id = `job-${randomUUID()}`;
+    const timestamp = nowIso();
+    const sequenceRow = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(sequence),-1)+1 AS sequence FROM jobs WHERE session_id=?",
+      )
+      .get(payload.sessionId) as { sequence: number };
+    const record = {
+      id,
+      retries: 0,
+      ...payload,
+      enqueuedAt: timestamp,
+      ...(key ? { idempotencyKey: key } : {}),
+    } as InboxMessage;
+    this.db
+      .prepare(
+        `INSERT INTO jobs (id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
         id,
-        retries: 0,
-        ...payload,
-        enqueuedAt: timestamp,
-        ...(key ? { idempotencyKey: key } : {}),
-      } as InboxMessage;
+        key ?? null,
+        JSON.stringify(record),
+        payload.sessionId,
+        sequenceRow.sequence,
+        "queued",
+        0,
+        options.maxAttempts ?? 10,
+        timestamp,
+        timestamp,
+      );
+    if (key)
       this.db
         .prepare(
-          `INSERT INTO jobs (id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          "INSERT INTO idempotency_keys(key,job_id,status,created_at) VALUES(?,?,?,?)",
         )
-        .run(
-          id,
-          key ?? null,
-          JSON.stringify(record),
-          payload.sessionId,
-          sequenceRow.sequence,
-          "queued",
-          0,
-          options.maxAttempts ?? 10,
-          timestamp,
-          timestamp,
-        );
-      if (key)
-        this.db
-          .prepare(
-            "INSERT INTO idempotency_keys(key,job_id,status,created_at) VALUES(?,?,?,?)",
-          )
-          .run(key, id, "active", timestamp);
-      const job = this.get(id);
-      if (job === undefined)
-        throw new Error(`failed to read back enqueued job ${id}`);
-      return { job, inserted: true };
-    });
+        .run(key, id, "active", timestamp);
+    const job = this.get(id);
+    if (job === undefined)
+      throw new Error(`failed to read back enqueued job ${id}`);
+    return { job, inserted: true };
+  }
+  enqueue(
+    payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
+    options: { idempotencyKey?: string; maxAttempts?: number } = {},
+  ): EnqueueResult {
+    return this.inImmediateTransaction(() =>
+      this.enqueueInTransaction(payload, options),
+    );
   }
   /**
    * Run one queue write as a BEGIN IMMEDIATE transaction with the historical
@@ -887,17 +1284,17 @@ export class QueueRepository {
       const excludedSql = excluded.length
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
         : "";
-      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread') AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
+      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronLegacyProvisioning') IS NOT 1) AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
       const exhausted = this.db
         .prepare(
-          `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
+          `SELECT j.* FROM jobs j WHERE json_extract(j.payload_json,'$.botTaskSessionAdmission') IS NOT 1 AND ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
         )
         .all(now, now, ...excluded) as JobRow[];
       for (const row of exhausted)
         this.deadLetterExhaustedInTransaction(row, "max_attempts");
       const row = this.db
         .prepare(
-          `SELECT j.* FROM jobs j WHERE ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs blocker WHERE json_extract(blocker.payload_json,'$.cronProvisioning')=1 AND json_extract(blocker.payload_json,'$.cronThreadId')=j.session_id) AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
+          `SELECT j.* FROM jobs j WHERE json_extract(j.payload_json,'$.botTaskSessionAdmission') IS NOT 1 AND ${eligible} AND j.attempts<j.max_attempts${excludedSql} AND NOT EXISTS (SELECT 1 FROM jobs blocker WHERE json_extract(blocker.payload_json,'$.cronProvisioning')=1 AND json_extract(blocker.payload_json,'$.cronThreadId')=j.session_id) AND NOT EXISTS (SELECT 1 FROM jobs prior WHERE prior.session_id=j.session_id AND prior.sequence<j.sequence AND prior.status NOT IN ('completed','dead_letter')) ORDER BY j.created_at,j.sequence LIMIT 1`,
         )
         .get(now, now, ...excluded) as JobRow | undefined;
       if (!row) return undefined;
@@ -987,7 +1384,7 @@ export class QueueRepository {
       "usage",
       "timing",
       "error",
-      "agentsSnapshotHash",
+      "systemPromptSnapshotHash",
       "memorySnapshotHash",
       "workspacePath",
       "conversationPath",
@@ -1026,7 +1423,7 @@ export class QueueRepository {
       "usage",
       "timing",
       "error",
-      "agentsSnapshotHash",
+      "systemPromptSnapshotHash",
       "memorySnapshotHash",
       "workspacePath",
       "conversationPath",
@@ -1059,9 +1456,9 @@ export class QueueRepository {
     identity: {
       snapshotHash?: string;
       toolCallKey?: string;
-      agentsSnapshotContent?: string;
+      systemPromptSnapshotContent?: string;
       memorySnapshotContent?: string;
-      agentsSnapshotPresent?: boolean;
+      systemPromptSnapshotPresent?: boolean;
       memorySnapshotPresent?: boolean;
       snapshotPresent?: boolean;
     } = {},
@@ -1078,14 +1475,14 @@ export class QueueRepository {
     if (!row) throw new Error(`stale fencing token for job ${id}`);
     const payload = {
       ...(JSON.parse(row.payload_json) as Record<string, unknown>),
-      ...(identity.agentsSnapshotContent !== undefined
-        ? { agentsSnapshotContent: identity.agentsSnapshotContent }
+      ...(identity.systemPromptSnapshotContent !== undefined
+        ? { systemPromptSnapshotContent: identity.systemPromptSnapshotContent }
         : {}),
       ...(identity.memorySnapshotContent !== undefined
         ? { memorySnapshotContent: identity.memorySnapshotContent }
         : {}),
-      ...(identity.agentsSnapshotPresent !== undefined
-        ? { agentsSnapshotPresent: identity.agentsSnapshotPresent }
+      ...(identity.systemPromptSnapshotPresent !== undefined
+        ? { systemPromptSnapshotPresent: identity.systemPromptSnapshotPresent }
         : {}),
       ...(identity.memorySnapshotPresent !== undefined
         ? { memorySnapshotPresent: identity.memorySnapshotPresent }
@@ -1519,6 +1916,23 @@ export class QueueRepository {
           "UPDATE deliveries SET status='ambiguous',lease_until=NULL,worker_id=NULL,last_error=COALESCE(last_error,'sending lease expired'),updated_at=? WHERE status='sending' AND lease_until<=?",
         )
         .run(now, now);
+      // A late item-thread promotion records the parent/thread ID on the job
+      // before delivery persistence. Recover that durable marker before a
+      // retry so a crash in the persistence window cannot send a second parent.
+      this.db
+        .prepare(
+          `UPDATE deliveries
+           SET cron_thread_id=(SELECT json_extract(j.payload_json,'$.cronThreadId') FROM jobs j WHERE j.id=deliveries.job_id),updated_at=?
+           WHERE deliveries.cron_thread_id IS NULL
+             AND deliveries.status IN ('pending','retry_wait')
+             AND EXISTS (
+               SELECT 1 FROM jobs j
+               WHERE j.id=deliveries.job_id
+                 AND json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread'
+                 AND json_extract(j.payload_json,'$.cronThreadId') IS NOT NULL
+             )`,
+        )
+        .run(now);
       const row = this.db
         .prepare(
           `SELECT candidate.* FROM deliveries AS candidate

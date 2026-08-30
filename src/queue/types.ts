@@ -29,7 +29,9 @@ export interface InboxMessage {
   cronThread?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
-  /** Placeholder message created before cron AI execution. */
+  /** Legacy item-thread path: block poller claims until synchronous provisioning completes. */
+  cronLegacyProvisioning?: boolean;
+  /** Placeholder message created before cron AI execution by the legacy provisioning path. */
   cronPlaceholderMessageId?: string;
   /** Mail message to acknowledge only after every Discord delivery is sent. */
   mailEmailId?: string;
@@ -38,12 +40,16 @@ export interface InboxMessage {
   cronFailureNotified?: boolean;
   rssDispatchId?: string;
   rssStatePath?: string;
+  /** A one-shot persistent Bot profile selected by a Discord command. */
+  botId?: string;
+  /** Internal durable admission marker; never claimed as an executable job. */
+  botTaskSessionAdmission?: boolean;
   /** AgentConfig fields selected by Discord channel intake or a cron job. */
   configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];
-  agentsSnapshotContent?: string;
+  systemPromptSnapshotContent?: string;
   memorySnapshotContent?: string;
-  agentsSnapshotPresent?: boolean;
+  systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
   snapshotPresent?: boolean;
   snapshotHash?: string;
@@ -52,6 +58,32 @@ export interface InboxMessage {
   fencingToken?: number;
   workerId?: string;
   lastError?: string;
+}
+
+/** Normalize payload fields written before system-prompt snapshot terminology was introduced. */
+export function normalizeInboxMessagePayload(
+  payload: InboxMessage,
+): InboxMessage {
+  const normalized = { ...payload } as InboxMessage &
+    Record<string, unknown> & {
+      agentsSnapshotContent?: string;
+      agentsSnapshotPresent?: boolean;
+    };
+  if (
+    normalized.systemPromptSnapshotContent === undefined &&
+    normalized.agentsSnapshotContent !== undefined
+  ) {
+    normalized.systemPromptSnapshotContent = normalized.agentsSnapshotContent;
+  }
+  if (
+    normalized.systemPromptSnapshotPresent === undefined &&
+    normalized.agentsSnapshotPresent !== undefined
+  ) {
+    normalized.systemPromptSnapshotPresent = normalized.agentsSnapshotPresent;
+  }
+  delete normalized.agentsSnapshotContent;
+  delete normalized.agentsSnapshotPresent;
+  return normalized;
 }
 
 export type QueueInput = Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
