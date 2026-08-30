@@ -86,7 +86,7 @@ llm:
 
 ```bash
 pnpm memory-core up -d
-curl http://127.0.0.1:8420/health
+curl "http://127.0.0.1:${MEMORY_CORE_PORT:-8420}/health"
 
 # 運用コマンド
 pnpm memory-core ps
@@ -94,7 +94,7 @@ pnpm memory-core logs -f memory-core
 pnpm memory-core down
 ```
 
-Gateway認証はローカルloopback運用では未設定にできます。`MEMORY_CORE_GATEWAY_API_KEY`を設定して認証を有効にする場合は、`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。
+Gateway認証はローカルloopback運用では未設定にできます。`MEMORY_CORE_GATEWAY_API_KEY`を設定して認証を有効にする場合は、`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。`MEMORY_CORE_PORT`を変更した場合は、`agentMemory.baseUrl`のポートも同じ値に合わせてください。
 
 ```json
 {
