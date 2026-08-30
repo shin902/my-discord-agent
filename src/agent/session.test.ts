@@ -386,6 +386,87 @@ describe("SQLite session trajectory store", () => {
     await expect(session.loadMessages(group, "old")).resolves.toHaveLength(2);
   });
 
+  it("validな既存DBではmalformedかつ奇妙な名前のJSONLをopaqueに退避する", async () => {
+    const group = "opaque-existing";
+    await session.appendMessage(group, "canonical", {
+      role: "user",
+      content: "SQLite only",
+      timestamp: 25,
+    });
+    markMigrated(group);
+    const filename = ".._not-a-session!.jsonl";
+    const legacyPath = path.join(root, group, filename);
+    await writeFile(legacyPath, "not-json\n{broken");
+
+    await expect(
+      session.migrateLegacySessionStores([group]),
+    ).resolves.toBeUndefined();
+
+    await expect(access(legacyPath)).rejects.toThrow();
+    await expect(findBackup(filename)).resolves.toContain(
+      `${path.sep}${group}${path.sep}${filename}`,
+    );
+    await expect(
+      session.loadMessages(group, "canonical"),
+    ).resolves.toHaveLength(1);
+  });
+
+  it.each([
+    {
+      group: "version-zero-marker",
+      setup(db: Database.Database) {
+        db.exec(`
+          CREATE TABLE session_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          INSERT INTO session_store_metadata VALUES ('legacy_jsonl_imported', '1');
+        `);
+      },
+      error: "schema version",
+    },
+    {
+      group: "version-one-missing-table",
+      setup(db: Database.Database) {
+        db.pragma("user_version = 1");
+        db.exec(`
+          CREATE TABLE session_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          INSERT INTO session_store_metadata VALUES ('legacy_jsonl_imported', '1');
+        `);
+      },
+      error: "schemaが不正",
+    },
+    {
+      group: "incompatible-schema",
+      setup(db: Database.Database) {
+        db.pragma("user_version = 1");
+        db.exec(`
+          CREATE TABLE sessions (id TEXT PRIMARY KEY, kind TEXT, created_at INTEGER, updated_at INTEGER);
+          CREATE TABLE session_entries (id INTEGER PRIMARY KEY, session_id TEXT, sequence INTEGER);
+          CREATE TABLE session_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          INSERT INTO session_store_metadata VALUES ('legacy_jsonl_imported', '1');
+        `);
+      },
+      error: "schemaが不正",
+    },
+  ])("既存DB $group を修復せず拒否しJSONLを残す", async ({
+    group,
+    setup,
+    error,
+  }) => {
+    const dir = path.join(root, group);
+    await mkdir(dir, { recursive: true });
+    const db = new Database(path.join(dir, "sessions.sqlite"));
+    setup(db);
+    db.close();
+    const legacyPath = path.join(dir, "retained.jsonl");
+    await writeFile(legacyPath, "malformed legacy payload");
+
+    await expect(session.migrateLegacySessionStores([group])).rejects.toThrow(
+      error,
+    );
+    await expect(readFile(legacyPath, "utf-8")).resolves.toBe(
+      "malformed legacy payload",
+    );
+  });
+
   it("import済みmarkerがあればJSONL suffixを比較せず退避する", async () => {
     const group = "marker-suffix";
     await session.appendMessage(group, "old", {

@@ -60,7 +60,7 @@ groups/
 
 session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。
 
-queue worker・Discord intakeを開始する前のstartup migrationで、停止済みrunnerを待ってから設定済みの全groupを一括処理する。groupごとに一時DBへlegacy `*.jsonl`をtransactional importし、同じtransactionで`legacy_jsonl_imported=1` markerを保存する。session/entry件数と`PRAGMA integrity_check`を検証し、file sync後に`sessions.sqlite`へatomic renameしてdirectoryをsyncする。JSONLがないgroupにもmarker付きDBを作る。
+queue worker・Discord intakeを開始する前のstartup migrationで、停止済みrunnerを待ってから設定済みの全groupを一括処理する。migrationにはinter-process lockがなく、groupごとの一時DB pathも固定のため、全instanceを停止して単一のstartup ownerだけで実行する。複数instanceの同時起動やrolling startupでmigrationを実行してはならない。groupごとに一時DBへlegacy `*.jsonl`をtransactional importし、同じtransactionで`legacy_jsonl_imported=1` markerを保存する。session/entry件数と`PRAGMA integrity_check`を検証し、file sync後に`sessions.sqlite`へatomic renameしてdirectoryをsyncする。JSONLがないgroupにもmarker付きDBを作る。
 
 既存DBはschema・integrity・markerだけを検証する。marker付きDBと残存JSONLの内容は比較・mergeせず、markerがない、または不正なDBではcleanup前に起動を中止する。これは旧group単位lazy migrationのmarkerと互換である。
 

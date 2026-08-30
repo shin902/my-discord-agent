@@ -138,15 +138,19 @@ interface LegacySessionInput {
   messages: Record<string, unknown>[];
 }
 
-async function readLegacyInputs(dir: string): Promise<LegacySessionInput[]> {
-  const files = (await readdir(dir, { withFileTypes: true }))
+async function listLegacyFiles(dir: string): Promise<string[]> {
+  return (await readdir(dir, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((entry) => path.join(dir, entry.name));
+}
+
+async function readLegacyInputs(dir: string): Promise<LegacySessionInput[]> {
+  const files = await listLegacyFiles(dir);
   return Promise.all(
-    files.map(async (file) => {
-      const sessionId = file.name.slice(0, -".jsonl".length);
+    files.map(async (filePath) => {
+      const sessionId = path.basename(filePath, ".jsonl");
       validateName(sessionId, "セッションID");
-      const filePath = path.join(dir, file.name);
       const lines = (await readFile(filePath, "utf-8"))
         .split("\n")
         .filter((line) => line.trim());
@@ -203,6 +207,117 @@ function importLegacyInputs(
   })();
 }
 
+function validateExistingSchema(db: Database.Database): void {
+  const version = db.pragma("user_version", { simple: true }) as number;
+  if (version !== SCHEMA_VERSION) {
+    throw new Error(
+      `未対応のsession DB schema versionです: ${version} (対応: ${SCHEMA_VERSION})`,
+    );
+  }
+
+  const expectedColumns: Record<
+    string,
+    Array<[string, string, number, string | null, number]>
+  > = {
+    sessions: [
+      ["id", "TEXT", 0, null, 1],
+      ["kind", "TEXT", 1, "'conversation'", 0],
+      ["created_at", "INTEGER", 1, null, 0],
+      ["updated_at", "INTEGER", 1, null, 0],
+    ],
+    session_entries: [
+      ["id", "INTEGER", 0, null, 1],
+      ["session_id", "TEXT", 1, null, 0],
+      ["sequence", "INTEGER", 1, null, 0],
+      ["entry_type", "TEXT", 1, null, 0],
+      ["payload_json", "TEXT", 1, null, 0],
+      ["created_at", "INTEGER", 1, null, 0],
+    ],
+    session_store_metadata: [
+      ["key", "TEXT", 0, null, 1],
+      ["value", "TEXT", 1, null, 0],
+    ],
+  };
+  for (const [table, expected] of Object.entries(expectedColumns)) {
+    const actual = db.pragma(`table_info(${table})`) as Array<{
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | null;
+      pk: number;
+    }>;
+    const columns = actual.map(({ name, type, notnull, dflt_value, pk }) => [
+      name,
+      type,
+      notnull,
+      dflt_value,
+      pk,
+    ]);
+    if (JSON.stringify(columns) !== JSON.stringify(expected)) {
+      throw new Error(`session DB schemaが不正です: ${table} columns`);
+    }
+  }
+
+  const tableSql = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_entries'",
+    )
+    .get() as { sql: string } | undefined;
+  if (!tableSql?.sql.toUpperCase().includes("AUTOINCREMENT")) {
+    throw new Error(
+      "session DB schemaが不正です: session_entries AUTOINCREMENT",
+    );
+  }
+  const foreignKeys = db.pragma("foreign_key_list(session_entries)") as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_update: string;
+    on_delete: string;
+  }>;
+  if (
+    foreignKeys.length !== 1 ||
+    foreignKeys[0].table !== "sessions" ||
+    foreignKeys[0].from !== "session_id" ||
+    foreignKeys[0].to !== "id" ||
+    foreignKeys[0].on_update !== "CASCADE" ||
+    foreignKeys[0].on_delete !== "CASCADE"
+  ) {
+    throw new Error("session DB schemaが不正です: session_entries foreign key");
+  }
+  const indexes = db.pragma("index_list(session_entries)") as Array<{
+    name: string;
+    unique: number;
+  }>;
+  const hasIndex = (name: string, unique: number, columns: string[]) => {
+    const index = indexes.find((candidate) => candidate.name === name);
+    if (!index || index.unique !== unique) return false;
+    const actual = (
+      db.pragma(`index_info(${name})`) as Array<{ name: string }>
+    ).map((column) => column.name);
+    return JSON.stringify(actual) === JSON.stringify(columns);
+  };
+  const hasSequenceUnique = indexes.some((index) => {
+    if (index.unique !== 1) return false;
+    const columns = (
+      db.pragma(`index_info(${index.name})`) as Array<{ name: string }>
+    ).map((column) => column.name);
+    return (
+      JSON.stringify(columns) === JSON.stringify(["session_id", "sequence"])
+    );
+  });
+  if (
+    !hasIndex("session_entries_session_id_id", 0, ["session_id", "id"]) ||
+    !hasSequenceUnique
+  ) {
+    throw new Error("session DB schemaが不正です: session_entries indexes");
+  }
+  const foreignKeyFailures = db.pragma("foreign_key_check") as unknown[];
+  if (foreignKeyFailures.length > 0) {
+    throw new Error("session DB foreign key check failed");
+  }
+}
+
 function verifyMigratedDatabase(
   db: Database.Database,
   expected?: { sessions: number; entries: number },
@@ -255,9 +370,10 @@ export async function migrateLegacySessionStores(
   for (const groupName of groupNames) {
     validateName(groupName, "グループ名");
     const dir = await ensureDir(groupName);
-    const inputs = await readLegacyInputs(dir);
     const dbPath = path.join(dir, DB_FILENAME);
+    let inputs: LegacySessionInput[];
     if (!existsSync(dbPath)) {
+      inputs = await readLegacyInputs(dir);
       const tempPath = path.join(dir, `${DB_FILENAME}.migrating`);
       await rm(tempPath, { force: true });
       const db = new Database(tempPath);
@@ -284,12 +400,18 @@ export async function migrateLegacySessionStores(
     } else {
       const db = new Database(dbPath, { fileMustExist: true });
       try {
-        initializeSchema(db);
+        validateExistingSchema(db);
         verifyMigratedDatabase(db);
         await chmod(dbPath, 0o666).catch(() => {});
       } finally {
         db.close();
       }
+      inputs = (await listLegacyFiles(dir)).map((file) => ({
+        sessionId: "",
+        file,
+        payloads: [],
+        messages: [],
+      }));
     }
     legacyInputs.push({ groupName, inputs });
   }
