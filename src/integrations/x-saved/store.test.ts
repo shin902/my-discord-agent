@@ -116,12 +116,19 @@ function createLegacyXSavedFixture(
     );
     CREATE TABLE x_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE INDEX idx_x_items_baseline ON x_items(baseline, first_seen_at DESC);
-    INSERT INTO x_items (
-      tweet_id, text, author_handle, url, baseline, first_seen_at, last_seen_at
-    ) VALUES ('legacy', 'old', 'author', 'https://x.com/i/status/legacy', 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z');
-    INSERT INTO x_item_state (tweet_id, status, note, updated_at)
-    VALUES ('legacy', 'keep', 'preserve', '2026-08-27T00:00:00Z');
   `);
+  legacy
+    .prepare(
+      `INSERT INTO x_items (
+        tweet_id, text, author_handle, url, baseline, first_seen_at, last_seen_at
+      ) VALUES ('legacy', 'old', 'author', 'https://x.com/i/status/legacy', ?, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z')`,
+    )
+    .run(baselineMode === "historical" ? 1 : 0);
+  legacy
+    .prepare(
+      "INSERT INTO x_item_state (tweet_id, status, note, updated_at) VALUES ('legacy', ?, 'preserve', '2026-08-27T00:00:00Z')",
+    )
+    .run(baselineMode === "historical" ? "keep" : "inbox");
   legacy
     .prepare("INSERT INTO x_meta (key, value) VALUES ('baseline_mode', ?)")
     .run(baselineMode);
@@ -543,10 +550,13 @@ describe("x-saved BirdClaw ingest", () => {
     expect(
       db
         .prepare(
-          "SELECT status, note FROM x_item_state WHERE tweet_id = 'legacy'",
+          `SELECT i.baseline, s.status, s.note
+           FROM x_items i
+           JOIN x_item_state s ON s.tweet_id = i.tweet_id
+           WHERE i.tweet_id = 'legacy'`,
         )
         .get(),
-    ).toEqual({ status: "keep", note: "preserve" });
+    ).toEqual({ baseline: 0, status: "inbox", note: "preserve" });
     expect(
       db
         .prepare(
@@ -561,6 +571,21 @@ describe("x-saved BirdClaw ingest", () => {
         )
         .all(),
     ).toEqual([]);
+    const pending = db
+      .prepare(`
+        SELECT i.tweet_id
+        FROM x_items i
+        JOIN x_item_state s ON s.tweet_id = i.tweet_id
+        LEFT JOIN x_meta initial_import
+          ON initial_import.key = 'initial_import_completed_at'
+        WHERE s.status = 'inbox'
+          AND (
+            initial_import.value IS NULL
+            OR i.first_seen_at > initial_import.value
+          )
+      `)
+      .all();
+    expect(pending).toEqual([{ tweet_id: "legacy" }]);
     expect(
       db
         .prepare(
