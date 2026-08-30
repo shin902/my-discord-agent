@@ -47,12 +47,15 @@ session-logs 等は `role == "user"` を実ユーザー発言として扱う。�
 
 LLMへ「このセッションがいつ始まったか」という時間軸の基準だけを与えつつ、毎ターン変動する現在時刻でsystem prompt cacheを壊さない。
 
-形式は次のような hour 単位の固定値とする。
+LLMに見せる形式は次のような hour 単位の固定値とする。これは現在時刻ではないことを明示し、現在日時が必要な場合は `date` ツールを使わせる。
 
 ```text
-## Session time anchor
+## Fixed session start time
 
 Started: 2026-08-28 07:00 JST (Fri)
+
+This is the fixed session start time, not the current time.
+Use the `date` tool when current time matters.
 ```
 
 ### 保存先
@@ -73,7 +76,7 @@ Started: 2026-08-28 07:00 JST (Fri)
 
 ## `date` ツールとの責務分離
 
-固定アンカーは「セッション開始時点」の情報であり、現在時刻ではない。
+固定アンカーは「セッション開始時点」の情報であり、現在時刻ではない。この区別は system prompt 内にも明示する。
 
 現在の月日・曜日・時分秒が必要な場合は `date` ツールを使う。`date` は Bash やネットワークに依存せず、Asia/Tokyo（JST, UTC+09:00）の正確な日時とUTC時刻を返す。
 
@@ -84,7 +87,7 @@ Started: 2026-08-28 07:00 JST (Fri)
 通常は次の順で組み立てる。
 
 1. `agents-snapshot` の内容、または AGENTS.md 不在時の `DEFAULT_SYSTEM_PROMPT`
-2. 固定 `Session time anchor`
+2. 固定 `Fixed session start time`
 3. `formatSkillsForPrompt()` のスキル一覧（有効な場合）
 4. request-scoped `systemPromptAppend`（cron の NO_REPLY 指示など、有効な場合）
 
@@ -94,7 +97,7 @@ MEMORY.md / SELF.md はここへ重複注入せず、context-bootstrap 経由で
 
 ファイル不存在（`null`）と空文字（`""`）を区別する。
 
-- **AGENTS.md が空文字**: `agents-snapshot` を空内容で保存し、DEFAULT_SYSTEM_PROMPT も除外する。結果として systemPrompt は固定time anchor（+ skills / request append）のみになる。
+- **AGENTS.md が空文字**: `agents-snapshot` を空内容で保存し、DEFAULT_SYSTEM_PROMPT も除外する。結果として systemPrompt は固定session start time（+ skills / request append）のみになる。
 - **MEMORY.md / SELF.md が空文字**: 対応する bootstrap を空内容で保存し、「存在するが空」の状態を固定する。
 
 空文字でもスナップショット/bootstrapを保存しないと「内容なし」と「未注入」を区別できず、毎ターン再読込する非対称性が生じるため、この挙動は意図的である。
@@ -107,7 +110,7 @@ JSONL内の bootstrap 系（`agents-snapshot` / `memory-bootstrap` / `self-boots
 
 ## セッションモード別の考慮事項
 
-- **shared**: チャンネル全体で1セッション。長期間使い回しても開始アンカーは固定される。正確な現在時刻は `date` を使う。
+- **shared**: チャンネル全体で1セッション。長期間使い回しても開始アンカーは固定される。アンカーは現在時刻ではないため、正確な現在日時は `date` を使う。
 - **thread**: スレッドごとにセッション開始アンカーを1件作る。
 - **auto-thread**: 新スレッド作成時のセッションに対してアンカーを1件作る。
 

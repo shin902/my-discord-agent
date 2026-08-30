@@ -10,7 +10,7 @@ describe("time context formatting", () => {
 
   it("formats a fixed hour-level JST session anchor", () => {
     expect(formatSessionTimeAnchor(timestamp)).toBe(
-      "## Session time anchor\n\nStarted: 2026-08-28 07:00 JST (Fri)",
+      "## Fixed session start time\n\nStarted: 2026-08-28 07:00 JST (Fri)\n\nThis is the fixed session start time, not the current time.\nUse the `date` tool when current time matters.",
     );
   });
 
