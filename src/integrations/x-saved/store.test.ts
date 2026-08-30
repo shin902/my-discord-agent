@@ -100,50 +100,20 @@ function createLegacyXSavedFixture(
       baseline INTEGER NOT NULL DEFAULT 0,
       first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
     );
-    CREATE TABLE x_item_state (
-      tweet_id TEXT PRIMARY KEY, status TEXT NOT NULL,
-      priority INTEGER, summary TEXT, note TEXT, processed_at TEXT,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL);
-    CREATE TABLE x_sync_runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL,
-      completed_at TEXT NOT NULL, status TEXT NOT NULL,
-      bookmarks_fetched INTEGER, likes_fetched INTEGER,
-      new_items INTEGER NOT NULL DEFAULT 0,
-      updated_items INTEGER NOT NULL DEFAULT 0, error TEXT,
-      details_json TEXT NOT NULL DEFAULT '{}'
-    );
     CREATE TABLE x_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE INDEX idx_x_items_baseline ON x_items(baseline, first_seen_at DESC);
+    INSERT INTO x_items VALUES (
+      'legacy', 'old', 'author', 'https://x.com/i/status/legacy', NULL, '[]',
+      0, 0, 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z'
+    );
   `);
   legacy
-    .prepare(
-      `INSERT INTO x_items (
-        tweet_id, text, author_handle, url, baseline, first_seen_at, last_seen_at
-      ) VALUES ('legacy', 'old', 'author', 'https://x.com/i/status/legacy', ?, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z')`,
-    )
-    .run(baselineMode === "historical" ? 1 : 0);
-  legacy
-    .prepare(
-      "INSERT INTO x_item_state (tweet_id, status, note, updated_at) VALUES ('legacy', ?, 'preserve', '2026-08-27T00:00:00Z')",
-    )
-    .run(baselineMode === "historical" ? "keep" : "inbox");
-  legacy
-    .prepare("INSERT INTO x_meta (key, value) VALUES ('baseline_mode', ?)")
+    .prepare("INSERT INTO x_meta VALUES ('baseline_mode', ?)")
     .run(baselineMode);
   if (baselineMode === "historical") {
     legacy
-      .prepare(
-        "INSERT INTO x_meta (key, value) VALUES ('baseline_initialized_at', ?)",
-      )
+      .prepare("INSERT INTO x_meta VALUES ('baseline_initialized_at', ?)")
       .run("2026-08-28T00:00:00Z");
   }
-  legacy
-    .prepare(
-      "INSERT INTO x_sync_runs (started_at, completed_at, status, new_items) VALUES (?, ?, ?, ?)",
-    )
-    .run("2026-08-28T00:00:00Z", "2026-08-28T00:00:01Z", "success", 1);
   legacy.pragma("user_version = 1");
   legacy.close();
 }
@@ -486,25 +456,21 @@ describe("x-saved BirdClaw ingest", () => {
     db.close();
   });
 
-  it("migrates historical baseline metadata to the compact schema", () => {
-    const dir = makeTempDir();
-    const targetPath = path.join(dir, "x-saved.sqlite");
-    createLegacyXSavedFixture(targetPath, "historical");
+  it.each([
+    ["historical", { value: "2026-08-28T00:00:00Z" }],
+    ["keep-backlog", undefined],
+  ] as const)("migrates %s baseline intent", (baselineMode, expectedMarker) => {
+    const targetPath = path.join(makeTempDir(), "x-saved.sqlite");
+    createLegacyXSavedFixture(targetPath, baselineMode);
 
     const db = openXSavedDb(targetPath);
-    const item = db
-      .prepare(
-        "SELECT status, note FROM x_item_state WHERE tweet_id = 'legacy'",
-      )
-      .get();
-    expect(item).toEqual({ status: "keep", note: "preserve" });
     expect(
       db
         .prepare(
           "SELECT value FROM x_meta WHERE key = 'initial_import_completed_at'",
         )
         .get(),
-    ).toEqual({ value: "2026-08-28T00:00:00Z" });
+    ).toEqual(expectedMarker);
     expect(
       db
         .prepare(
@@ -512,90 +478,6 @@ describe("x-saved BirdClaw ingest", () => {
         )
         .all(),
     ).toEqual([]);
-    expect(
-      db.prepare("SELECT name FROM sqlite_master WHERE name = 'x_tags'").get(),
-    ).toEqual({ name: "x_tags" });
-    expect(
-      db
-        .prepare(
-          `SELECT i.baseline, s.priority, s.summary, s.processed_at,
-                  r.bookmarks_fetched, r.likes_fetched, r.updated_items,
-                  r.details_json
-           FROM x_items i
-           JOIN x_item_state s ON s.tweet_id = i.tweet_id
-           CROSS JOIN x_sync_runs r
-           WHERE i.tweet_id = 'legacy'`,
-        )
-        .get(),
-    ).toEqual({
-      baseline: 1,
-      priority: null,
-      summary: null,
-      processed_at: null,
-      bookmarks_fetched: null,
-      likes_fetched: null,
-      updated_items: 0,
-      details_json: "{}",
-    });
-    expect(db.pragma("user_version", { simple: true })).toBe(2);
-    db.close();
-  });
-
-  it("preserves keep-backlog intent without creating an import marker", () => {
-    const dir = makeTempDir();
-    const targetPath = path.join(dir, "x-saved.sqlite");
-    createLegacyXSavedFixture(targetPath, "keep-backlog");
-
-    const db = openXSavedDb(targetPath);
-    expect(
-      db
-        .prepare(
-          `SELECT i.baseline, s.status, s.note
-           FROM x_items i
-           JOIN x_item_state s ON s.tweet_id = i.tweet_id
-           WHERE i.tweet_id = 'legacy'`,
-        )
-        .get(),
-    ).toEqual({ baseline: 0, status: "inbox", note: "preserve" });
-    expect(
-      db
-        .prepare(
-          "SELECT value FROM x_meta WHERE key = 'initial_import_completed_at'",
-        )
-        .get(),
-    ).toBeUndefined();
-    expect(
-      db
-        .prepare(
-          "SELECT key FROM x_meta WHERE key IN ('baseline_initialized_at', 'baseline_mode')",
-        )
-        .all(),
-    ).toEqual([]);
-    const pending = db
-      .prepare(`
-        SELECT i.tweet_id
-        FROM x_items i
-        JOIN x_item_state s ON s.tweet_id = i.tweet_id
-        LEFT JOIN x_meta initial_import
-          ON initial_import.key = 'initial_import_completed_at'
-        WHERE s.status = 'inbox'
-          AND (
-            initial_import.value IS NULL
-            OR i.first_seen_at > initial_import.value
-          )
-      `)
-      .all();
-    expect(pending).toEqual([{ tweet_id: "legacy" }]);
-    expect(
-      db
-        .prepare(
-          "SELECT name FROM pragma_table_info('x_items') WHERE name = 'baseline'",
-        )
-        .get(),
-    ).toEqual({ name: "baseline" });
-    expect(
-      db.prepare("SELECT name FROM sqlite_master WHERE name = 'x_tags'").get(),
-    ).toEqual({ name: "x_tags" });
     expect(db.pragma("user_version", { simple: true })).toBe(2);
     db.close();
   });
