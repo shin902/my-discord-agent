@@ -325,26 +325,8 @@ function loadBirdclawRows(
 ): BirdclawRow[] {
   assertBirdclawSchema(sourceDb);
   const accountId = resolveBirdclawAccountId(sourceDb, account);
-  const tweetColumns = new Set(
-    (
-      sourceDb.prepare("PRAGMA table_info(tweets)").all() as Array<{
-        name: string;
-      }>
-    ).map((column) => column.name),
-  );
-  const collectionAccountClause = accountId
-    ? "AND c.account_id = @accountId"
-    : "";
-  const legacyTweetAccountClause =
-    accountId && tweetColumns.has("account_id")
-      ? "AND t.account_id = @accountId"
-      : "";
-  const legacyLikedClause = tweetColumns.has("liked")
-    ? `OR (t.liked = 1 ${legacyTweetAccountClause})`
-    : "";
-  const legacyBookmarkedClause = tweetColumns.has("bookmarked")
-    ? `OR (t.bookmarked = 1 ${legacyTweetAccountClause})`
-    : "";
+  const collectionAccountClause = accountId ? "AND c.account_id = ?" : "";
+  const tweetAccountClause = accountId ? "AND t.account_id = ?" : "";
 
   const query = `
     WITH source AS (
@@ -361,7 +343,7 @@ function loadBirdclawRows(
               AND c.kind = 'likes'
               ${collectionAccountClause}
           )
-          ${legacyLikedClause}
+          OR (t.liked = 1 ${tweetAccountClause})
         THEN 1 ELSE 0 END AS liked,
         CASE WHEN
           EXISTS (
@@ -370,7 +352,7 @@ function loadBirdclawRows(
               AND c.kind = 'bookmarks'
               ${collectionAccountClause}
           )
-          ${legacyBookmarkedClause}
+          OR (t.bookmarked = 1 ${tweetAccountClause})
         THEN 1 ELSE 0 END AS bookmarked
       FROM tweets t
       LEFT JOIN profiles p ON p.id = t.author_profile_id
@@ -384,7 +366,9 @@ function loadBirdclawRows(
 
   const statement = sourceDb.prepare(query);
   return (
-    accountId ? statement.all({ accountId }) : statement.all()
+    accountId
+      ? statement.all(accountId, accountId, accountId, accountId)
+      : statement.all()
   ) as BirdclawRow[];
 }
 
