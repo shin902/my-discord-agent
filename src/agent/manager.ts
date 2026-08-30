@@ -196,6 +196,11 @@ async function stopContainer(name: string): Promise<void> {
 const RUNNER_IMAGE = "localhost:5050/my-discord-agent-runner:latest";
 const RUNNER_CONTAINER_LABEL = "my-discord-agent.runner=true";
 const LEGACY_RUNNER_NAME_FILTER = "my-discord-agent-";
+// Legacy runners predate the label, but their names still end with the
+// execution-start timestamp. Inspect candidates before killing them so that
+// similarly prefixed infrastructure containers (for example, the registry)
+// are not treated as runners.
+const LEGACY_RUNNER_NAME_PATTERN = /^my-discord-agent-.+-\d{13}$/;
 
 function formatTimeoutLabel(ms: number): string {
   if (ms % 60_000 === 0) return `${ms / 60_000}分`;
@@ -263,13 +268,62 @@ function discoverContainerIds(filter: string): Promise<string[]> {
   });
 }
 
+function inspectContainerNames(ids: string[]): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error: Error | undefined, stdout = "") => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        reject(error);
+        return;
+      }
+      const names = stdout.trim() ? stdout.trim().split(/\s+/) : [];
+      if (names.length !== ids.length) {
+        reject(
+          new Error(
+            `container cleanup inspect returned ${names.length} name(s) for ${ids.length} container(s)`,
+          ),
+        );
+        return;
+      }
+      resolve(names.map((name) => name.replace(/^\/+/, "")));
+    };
+    const child = execFile(
+      "docker",
+      ["inspect", "--format", "{{.Name}}", ...ids],
+      (error, stdout, stderr) => {
+        if (error) {
+          finish(
+            new Error(
+              `container cleanup inspect failed: ${stderr?.trim() || error.message}`,
+            ),
+          );
+          return;
+        }
+        finish(undefined, stdout);
+      },
+    );
+    child.on("error", (error) => finish(error));
+  });
+}
+
+async function discoverLegacyRunnerIds(): Promise<string[]> {
+  const candidates = await discoverContainerIds(
+    `name=${LEGACY_RUNNER_NAME_FILTER}`,
+  );
+  if (candidates.length === 0) return [];
+  const names = await inspectContainerNames(candidates);
+  return candidates.filter((_, index) =>
+    LEGACY_RUNNER_NAME_PATTERN.test(names[index]),
+  );
+}
+
 async function discoverManagedContainerIds(): Promise<string[]> {
   const labelled = await discoverContainerIds(
     `label=${RUNNER_CONTAINER_LABEL}`,
   );
-  const legacy = await discoverContainerIds(
-    `name=${LEGACY_RUNNER_NAME_FILTER}`,
-  );
+  const legacy = await discoverLegacyRunnerIds();
   return [...new Set([...labelled, ...legacy])];
 }
 
