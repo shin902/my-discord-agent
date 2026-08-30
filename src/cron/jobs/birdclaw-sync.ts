@@ -5,6 +5,12 @@ import type { CronContext } from "../runner.js";
 
 const SettingsSchema = z.strictObject({
   account: z.string().min(1).optional(),
+  // Keep accepting settings from the pre-MVP cron configuration during rollout.
+  mode: z.enum(["auto", "xurl", "bird"]).optional(),
+  limit: z.number().int().positive().max(1000).optional(),
+  maxPages: z.number().int().positive().max(100).optional(),
+  backupKeep: z.number().int().positive().max(365).optional(),
+  backupPath: z.string().min(1).optional(),
 });
 
 export default async function handler(ctx: CronContext): Promise<void> {

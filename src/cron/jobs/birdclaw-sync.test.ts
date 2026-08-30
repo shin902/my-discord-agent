@@ -25,6 +25,26 @@ describe("birdclaw-sync cron", () => {
     ).rejects.toBeInstanceOf(NonRetryableError);
   });
 
+  it("accepts legacy settings during the configuration rollout", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-sync-test-"));
+    tempDirs.push(dir);
+    process.env.BIRDCLAW_BIN = path.join(dir, "missing-birdclaw");
+    process.env.X_SAVED_DB_PATH = path.join(dir, "x-saved.sqlite");
+    process.env.X_SAVED_BACKUP_DIR = path.join(dir, "backups");
+
+    await expect(
+      handler({
+        settings: {
+          mode: "xurl",
+          limit: 100,
+          maxPages: 3,
+          backupKeep: 14,
+          backupPath: path.join(dir, "backups"),
+        },
+      } as CronContext),
+    ).rejects.toThrow("outside the live database directory");
+  });
+
   it("propagates local database failures into the scheduler retry loop", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-sync-test-"));
     tempDirs.push(dir);

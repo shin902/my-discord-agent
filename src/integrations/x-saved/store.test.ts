@@ -485,7 +485,29 @@ describe("x-saved BirdClaw ingest", () => {
     ).toEqual({ value: "2026-08-28T00:00:00Z" });
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE name = 'x_tags'").get(),
-    ).toBeUndefined();
+    ).toEqual({ name: "x_tags" });
+    expect(
+      db
+        .prepare(
+          `SELECT i.baseline, s.priority, s.summary, s.processed_at,
+                  r.bookmarks_fetched, r.likes_fetched, r.updated_items,
+                  r.details_json
+           FROM x_items i
+           JOIN x_item_state s ON s.tweet_id = i.tweet_id
+           CROSS JOIN x_sync_runs r
+           WHERE i.tweet_id = 'legacy'`,
+        )
+        .get(),
+    ).toEqual({
+      baseline: 1,
+      priority: null,
+      summary: null,
+      processed_at: null,
+      bookmarks_fetched: null,
+      likes_fetched: null,
+      updated_items: 0,
+      details_json: "{}",
+    });
     expect(db.pragma("user_version", { simple: true })).toBe(2);
     db.close();
   });

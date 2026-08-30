@@ -193,16 +193,8 @@ function migrateSchemaV1(db: Database.Database): void {
       ).run(initialImportCompletedAt);
     }
 
-    db.exec("DROP INDEX IF EXISTS idx_x_items_baseline");
-    db.exec("ALTER TABLE x_items DROP COLUMN baseline");
-    db.exec("ALTER TABLE x_item_state DROP COLUMN priority");
-    db.exec("ALTER TABLE x_item_state DROP COLUMN summary");
-    db.exec("ALTER TABLE x_item_state DROP COLUMN processed_at");
-    db.exec("DROP TABLE x_tags");
-    db.exec("ALTER TABLE x_sync_runs DROP COLUMN bookmarks_fetched");
-    db.exec("ALTER TABLE x_sync_runs DROP COLUMN likes_fetched");
-    db.exec("ALTER TABLE x_sync_runs DROP COLUMN updated_items");
-    db.exec("ALTER TABLE x_sync_runs DROP COLUMN details_json");
+    // Keep the legacy columns and x_tags table so already-installed versions of
+    // the x-saved skill remain usable while the schema rolls forward.
     db.exec(
       "DELETE FROM x_meta WHERE key IN ('baseline_initialized_at', 'baseline_mode')",
     );
