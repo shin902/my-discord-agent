@@ -186,6 +186,8 @@ async function ingest(
       groupName: match.group.name,
       sessionId,
       messageId: replyMessageId,
+      userId: message.author.id,
+      authorIsBot: message.author.bot,
       content: message.content,
       timestamp: message.createdAt.toISOString(),
       idempotencyKey: `discord-message:${message.id}`,

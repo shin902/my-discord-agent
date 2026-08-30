@@ -19,12 +19,19 @@ vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const acknowledgeEmail = vi.hoisted(() => vi.fn());
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 const settleRssDispatch = vi.hoisted(() => vi.fn());
+const loadAgentMemoryConfig = vi.hoisted(() => vi.fn());
+const isAgentMemoryEligible = vi.hoisted(() => vi.fn());
 const loadBotRegistry = vi.hoisted(() => vi.fn());
 const resolveBotProfile = vi.hoisted(() => vi.fn());
 vi.mock("../config/bots.js", () => ({
   loadBotRegistry,
   resolveBotProfile,
 }));
+vi.mock("../config/agent-memory.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../config/agent-memory.js")>();
+  return { ...actual, loadAgentMemoryConfig, isAgentMemoryEligible };
+});
 vi.mock("./reconciliation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./reconciliation.js")>();
   settleRssDispatch.mockImplementation(actual.settleRssDispatch);
@@ -69,6 +76,7 @@ const {
   getJob,
   listTerminalCronJobs,
   patchJobPayload,
+  enqueue,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
   commitInboxResult: vi.fn(),
@@ -81,6 +89,7 @@ const {
   getJob: vi.fn(),
   listTerminalCronJobs: vi.fn().mockReturnValue([]),
   patchJobPayload: vi.fn(),
+  enqueue: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -95,6 +104,7 @@ vi.mock("./repository.js", () => ({
     get: getJob,
     listTerminalCronJobs,
     patchJobPayload,
+    enqueue,
   }),
 }));
 
@@ -118,6 +128,7 @@ beforeEach(() => {
   claim.mockReset();
   claim.mockReturnValue(undefined);
   deadLetter.mockClear();
+  failAttempt.mockReset();
   heartbeat.mockReset();
   markRunning.mockReset();
   updateRunning.mockClear();
@@ -126,6 +137,22 @@ beforeEach(() => {
   listTerminalCronJobs.mockReset();
   listTerminalCronJobs.mockReturnValue([]);
   patchJobPayload.mockReset();
+  enqueue.mockReset();
+  enqueue.mockReturnValue({ job: { id: "memory-job-1" }, inserted: true });
+  delete process.env.TDAI_TEST_TOKEN;
+  loadAgentMemoryConfig.mockReset();
+  loadAgentMemoryConfig.mockResolvedValue({
+    enabled: false,
+    baseUrl: "http://localhost:8420",
+    serviceId: "default",
+    bearerTokenEnv: "TDAI_TEST_TOKEN",
+    teamId: "team",
+    agentId: "agent",
+    eligibleGroups: [],
+    timeoutMs: 1000,
+  });
+  isAgentMemoryEligible.mockReset();
+  isAgentMemoryEligible.mockReturnValue(false);
   vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
   loadBotRegistry.mockReset();
@@ -182,6 +209,10 @@ function claimRssArticles(
   } finally {
     db.close();
   }
+}
+
+function msgTimestamp(): string {
+  return "2026-08-30T00:00:00.000Z";
 }
 
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
@@ -1675,6 +1706,88 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+  it("retries shadow submission failures without changing the normal job", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://localhost:8420",
+      serviceId: "default",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    process.env.TDAI_TEST_TOKEN = "secret";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: 503, message: "unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "discord-session-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+    });
+
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledWith(msg.id, expect.any(Error), 4);
+    expect(commitInboxResult).not.toHaveBeenCalled();
+  });
+
+  it("queues shadow capture without waiting for memory configuration", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("AI response");
+    let resolveConfig: (value: unknown) => void = () => {};
+    loadAgentMemoryConfig.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConfig = resolve;
+      }),
+    );
+    isAgentMemoryEligible.mockReturnValue(true);
+    const msg = makeMsg({ userId: "discord-user-1" });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    resolveConfig({
+      enabled: true,
+      baseUrl: "http://localhost:8420",
+      serviceId: "default",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalled());
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memoryShadow: expect.objectContaining({
+          scope: expect.objectContaining({ userId: "discord-user-1" }),
+        }),
+      }),
+      expect.objectContaining({
+        idempotencyKey: "agent-memory-shadow:inbox-1",
+      }),
+    );
+  });
+
   it("通常会話でも独立NO_REPLY行を無配信にする", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",

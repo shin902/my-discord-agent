@@ -6,6 +6,10 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
+import {
+  isAgentMemoryEligible,
+  loadAgentMemoryConfig,
+} from "../config/agent-memory.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
@@ -26,6 +30,10 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import {
+  AgentMemoryClient,
+  buildAgentMemorySubmission,
+} from "../memory/agent-memory.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
@@ -285,6 +293,79 @@ const LEASE_RENEWAL_MS = 20_000;
 
 function discordReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
+}
+
+async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
+  if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
+  try {
+    const config = await loadAgentMemoryConfig();
+    if (!config.enabled) {
+      console.log(`[agent-memory] shadow job skipped (disabled): ${msg.id}`);
+      await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
+        empty: true,
+      });
+      return;
+    }
+    const result = await new AgentMemoryClient(config).addConversation(
+      msg.memoryShadow,
+    );
+    await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
+      empty: true,
+    });
+    console.log(
+      `[agent-memory] shadow submission accepted: ${JSON.stringify({ jobId: msg.id, requestId: result.requestId, totalCount: result.totalCount })}`,
+    );
+  } catch (error) {
+    console.error(`[agent-memory] shadow submission failed: ${msg.id}`, error);
+    getQueueRepository().failAttempt(msg.id, error, msg.fencingToken);
+    const after = getQueueRepository().get(msg.id);
+    if (after?.status === "dead_letter")
+      console.error(
+        `[agent-memory] shadow submission dead-lettered: ${msg.id}`,
+      );
+  }
+}
+
+async function enqueueMemoryShadow(
+  msg: InboxMessage,
+  assistantContent: string,
+): Promise<void> {
+  try {
+    const config = await loadAgentMemoryConfig();
+    if (!isAgentMemoryEligible(config, msg)) return;
+    const userId = msg.userId;
+    if (!userId) return;
+    const submission = buildAgentMemorySubmission({
+      teamId: config.teamId,
+      agentId: config.agentId,
+      userId,
+      sessionId: msg.sessionId,
+      userContent: msg.content,
+      assistantContent,
+      userTimestamp: msg.timestamp,
+      assistantTimestamp: new Date().toISOString(),
+    });
+    const repository = getQueueRepository();
+    const result = repository.enqueue(
+      {
+        channelId: msg.channelId,
+        groupName: msg.groupName,
+        sessionId: `memory-shadow:${msg.sessionId}`,
+        content: "memory-shadow",
+        timestamp: new Date().toISOString(),
+        memoryShadow: submission,
+      },
+      {
+        idempotencyKey: `agent-memory-shadow:${msg.id}`,
+      },
+    );
+    console.log(
+      `[agent-memory] shadow job enqueued: ${JSON.stringify({ sourceJobId: msg.id, jobId: result.job.id, inserted: result.inserted, groupName: msg.groupName, userId })}`,
+    );
+  } catch (error) {
+    // Shadow mode is strictly best-effort and must not affect the Discord response.
+    console.error(`[agent-memory] shadow job enqueue failed: ${msg.id}`, error);
+  }
 }
 
 function resolveDiscordClient(groupName: string) {
@@ -1034,6 +1115,10 @@ export async function processMessage(
   msg: InboxMessage,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (msg.memoryShadow !== undefined) {
+    await processMemoryShadowJob(msg);
+    return;
+  }
   if (msg.fencingToken !== undefined) {
     try {
       const identity =
@@ -1252,6 +1337,9 @@ export async function processMessage(
       },
     );
     if (suppressDelivery) await finalizeSuppressedSource(msg);
+    // Agent Memory capture is an independent durable job. Never await it on the
+    // normal Discord response path or let its failure change this job's result.
+    void enqueueMemoryShadow(msg, response);
     outcome = "success";
     stopTyping();
   } finally {

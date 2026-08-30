@@ -26,5 +26,15 @@
   },
   "agent": {
     "timeoutMs": 600000
+  },
+  "agentMemory": {
+    "enabled": false,
+    "baseUrl": "http://localhost:8420",
+    "serviceId": "default",
+    "bearerTokenEnv": "TDAI_MEMORY_API_KEY",
+    "teamId": "my-discord-agent",
+    "agentId": "main",
+    "eligibleGroups": [],
+    "timeoutMs": 10000
   }
 }

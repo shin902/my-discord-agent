@@ -1,4 +1,5 @@
 import type { AgentConfig } from "../config/groups.js";
+import type { AgentMemorySubmission } from "../memory/agent-memory.js";
 
 export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
 export type CronSessionMode = "per-run" | "destination";
@@ -16,6 +17,10 @@ export interface InboxMessage {
   groupName: string;
   sessionId: string;
   messageId?: string;
+  /** Discord author identity used only for explicitly enabled memory scopes. */
+  userId?: string;
+  /** True for Discord bot/webhook authors; excluded from shadow capture. */
+  authorIsBot?: boolean;
   content: string;
   timestamp: string;
   enqueuedAt?: string;
@@ -44,6 +49,8 @@ export interface InboxMessage {
   botId?: string;
   /** Internal durable admission marker; never claimed as an executable job. */
   botTaskSessionAdmission?: boolean;
+  /** Internal asynchronous L0 shadow submission; never delivered to Discord. */
+  memoryShadow?: AgentMemorySubmission;
   /** AgentConfig fields selected by Discord channel intake or a cron job. */
   configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];
