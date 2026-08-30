@@ -214,6 +214,74 @@ describe("SQLite session trajectory store", () => {
     await expect(session.loadMessages(group, "old")).resolves.toHaveLength(2);
   });
 
+  it("import済みmarkerがあってもJSONLの追記suffixをSQLiteへ反映する", async () => {
+    const group = "marker-suffix";
+    await session.appendMessage(group, "old", {
+      role: "user",
+      content: "prefix",
+      timestamp: 30,
+    });
+    const db = new Database(path.join(root, group, "sessions.sqlite"));
+    db.exec(`
+      CREATE TABLE session_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO session_store_metadata VALUES ('legacy_jsonl_imported', '1');
+    `);
+    db.close();
+    const legacyPath = path.join(root, group, "old.jsonl");
+    await writeFile(
+      legacyPath,
+      '{"role":"user","content":"prefix","timestamp":30}\n{"role":"assistant","content":"suffix","timestamp":31}\n',
+    );
+
+    await session.migrateLegacySessionStores([group]);
+
+    await expect(session.loadMessages(group, "old")).resolves.toHaveLength(2);
+    await expect(access(legacyPath)).rejects.toThrow();
+  });
+
+  it("rename済みsessionとの対応が一意ならJSONL suffixを新identityへ反映する", async () => {
+    const group = "renamed-legacy";
+    await session.appendMessage(group, "temporary", {
+      role: "user",
+      content: "prefix",
+      timestamp: 40,
+    });
+    await session.renameSession(group, "temporary", "item-thread");
+    const legacyPath = path.join(root, group, "temporary.jsonl");
+    await writeFile(
+      legacyPath,
+      '{"role":"user","content":"prefix","timestamp":40}\n{"role":"assistant","content":"after rename","timestamp":41}\n',
+    );
+
+    await session.migrateLegacySessionStores([group]);
+
+    await expect(
+      session.loadMessages(group, "item-thread"),
+    ).resolves.toHaveLength(2);
+    await expect(access(legacyPath)).rejects.toThrow();
+  });
+
+  it("rename済みsessionとの対応が曖昧ならJSONLを保持して失敗する", async () => {
+    const group = "ambiguous-legacy";
+    for (const id of ["first", "second"]) {
+      await session.appendMessage(group, id, {
+        role: "user",
+        content: "same prefix",
+        timestamp: 50,
+      });
+    }
+    const legacyPath = path.join(root, group, "old-name.jsonl");
+    await writeFile(
+      legacyPath,
+      '{"role":"user","content":"same prefix","timestamp":50}\n',
+    );
+
+    await expect(session.migrateLegacySessionStores([group])).rejects.toThrow(
+      "対応を一意に確認できません",
+    );
+    await expect(access(legacyPath)).resolves.toBeUndefined();
+  });
+
   it("path traversalと未知のschema versionを拒否する", async () => {
     await expect(
       session.loadMessages("../../etc/passwd", "session"),

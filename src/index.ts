@@ -48,13 +48,12 @@ try {
       );
   }
   await ensureGroupDirs(groups.map((g) => g.name));
-  await migrateLegacySessionStores(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
   registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort);
-  // Stop containers left by a previous process before recovering its
-  // direct-admission markers.
+  // Stop managed and orphan containers before reading legacy session files.
   await killAllRunningContainers({ includeOrphans: true, strict: true });
+  await migrateLegacySessionStores(groups.map((g) => g.name));
   await initGroupPrompts(groups);
   await loadProviders();
   const defaultModel = await loadDefaultModel();

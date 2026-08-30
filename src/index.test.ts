@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   initGroupPrompts: vi.fn(),
   initManager: vi.fn(),
   killAllRunningContainers: vi.fn(),
+  migrateLegacySessionStores: vi.fn(),
   validateGroupConfig: vi.fn(),
   validateBotConfigs: vi.fn(),
   loadDefaultModel: vi.fn(),
@@ -71,6 +72,9 @@ vi.mock("./agent/manager.js", () => ({
   initManager: mocks.initManager,
   killAllRunningContainers: mocks.killAllRunningContainers,
   validateGroupConfig: mocks.validateGroupConfig,
+}));
+vi.mock("./agent/session.js", () => ({
+  migrateLegacySessionStores: mocks.migrateLegacySessionStores,
 }));
 vi.mock("./config/default-model.js", () => ({
   loadDefaultModel: mocks.loadDefaultModel,
@@ -127,6 +131,7 @@ describe("index: 起動時バリデーション", () => {
     });
     mocks.loadAndValidateCron.mockResolvedValue([]);
     mocks.killAllRunningContainers.mockResolvedValue(undefined);
+    mocks.migrateLegacySessionStores.mockResolvedValue(undefined);
     mocks.queueRepository.listRssStatePaths.mockReturnValue([]);
     mocks.runRuntimeOperator.mockResolvedValue({
       health: { ok: true },
@@ -300,6 +305,11 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.initializeQueue).toHaveBeenCalledOnce();
     expect(
       mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mocks.migrateLegacySessionStores.mock.invocationCallOrder[0],
+    );
+    expect(
+      mocks.migrateLegacySessionStores.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.initializeQueue.mock.invocationCallOrder[0]);
     expect(mocks.registerHandlers).toHaveBeenCalledWith(
       mocks.discordClients.get("personal"),

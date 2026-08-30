@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import {
   chmod,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -190,50 +191,99 @@ function importLegacyInputs(
   })();
 }
 
-function verifyLegacyInputs(
+function payloadPrefixMatches(
+  databasePayloads: string[],
+  input: LegacySessionInput,
+): boolean {
+  const sharedLength = Math.min(databasePayloads.length, input.payloads.length);
+  return databasePayloads
+    .slice(0, sharedLength)
+    .every((payload, index) =>
+      isDeepStrictEqual(JSON.parse(payload), input.messages[index]),
+    );
+}
+
+function verifyAndReconcileLegacyInputs(
   db: Database.Database,
   inputs: LegacySessionInput[],
 ): void {
   const integrity = db.pragma("integrity_check", { simple: true });
   if (integrity !== "ok")
     throw new Error(`session DB integrity check failed: ${integrity}`);
-  const metadataTable = db
-    .prepare(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_store_metadata'",
-    )
-    .get();
-  const priorLazyImport = metadataTable
-    ? (
-        db
-          .prepare(
-            "SELECT value FROM session_store_metadata WHERE key='legacy_jsonl_imported'",
-          )
-          .get() as { value?: string } | undefined
-      )?.value === "1"
-    : false;
-  if (priorLazyImport) return;
 
   const selectPayloads = db.prepare(
     "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
   );
-  for (const input of inputs) {
-    const rows = selectPayloads.all(input.sessionId) as Array<{
-      payload_json: string;
-    }>;
-    const payloads = rows.map((row) => row.payload_json);
-    if (
-      payloads.length < input.payloads.length ||
-      payloads
-        .slice(0, input.messages.length)
-        .some(
-          (payload, index) =>
-            !isDeepStrictEqual(JSON.parse(payload), input.messages[index]),
-        )
-    ) {
-      throw new Error(
-        `legacy session JSONLとsession DBが一致しません: ${input.file} (DB ${payloads.length} entries / JSONL ${input.payloads.length} entries)`,
-      );
+  const selectSessionIds = db.prepare("SELECT id FROM sessions ORDER BY id");
+  const selectExactSession = db.prepare("SELECT 1 FROM sessions WHERE id=?");
+  const insertEntry = db.prepare(`
+    INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const updateSession = db.prepare(
+    "UPDATE sessions SET updated_at=? WHERE id=?",
+  );
+
+  db.transaction(() => {
+    for (const input of inputs) {
+      const exactSession = selectExactSession.get(input.sessionId);
+      let sessionId = exactSession ? input.sessionId : undefined;
+      let payloads = sessionId
+        ? (
+            selectPayloads.all(sessionId) as Array<{ payload_json: string }>
+          ).map((row) => row.payload_json)
+        : [];
+
+      if (!sessionId && input.payloads.length > 0) {
+        const candidates = (
+          selectSessionIds.all() as Array<{ id: string }>
+        ).flatMap(({ id }) => {
+          const candidatePayloads = (
+            selectPayloads.all(id) as Array<{ payload_json: string }>
+          ).map((row) => row.payload_json);
+          return candidatePayloads.length > 0 &&
+            payloadPrefixMatches(candidatePayloads, input)
+            ? [{ id, payloads: candidatePayloads }]
+            : [];
+        });
+        if (candidates.length === 1) {
+          sessionId = candidates[0].id;
+          payloads = candidates[0].payloads;
+        }
+      }
+
+      if (!sessionId || !payloadPrefixMatches(payloads, input)) {
+        throw new Error(
+          `legacy session JSONLとsession DBの対応を一意に確認できません: ${input.file}`,
+        );
+      }
+
+      input.messages.slice(payloads.length).forEach((message, offset) => {
+        const index = payloads.length + offset;
+        insertEntry.run(
+          sessionId,
+          index + 1,
+          entryType(message),
+          input.payloads[index],
+          messageTimestamp(message),
+        );
+      });
+      if (input.messages.length > payloads.length) {
+        updateSession.run(
+          messageTimestamp(input.messages[input.messages.length - 1]),
+          sessionId,
+        );
+      }
     }
+  })();
+}
+
+async function syncPath(target: string): Promise<void> {
+  const handle = await open(target, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 
@@ -254,9 +304,11 @@ export async function migrateLegacySessionStores(
       try {
         initializeSchema(db);
         importLegacyInputs(db, inputs);
-        verifyLegacyInputs(db, inputs);
+        verifyAndReconcileLegacyInputs(db, inputs);
         db.close();
+        await syncPath(tempPath);
         await rename(tempPath, dbPath);
+        await syncPath(dir);
         await chmod(dbPath, 0o666).catch(() => {});
         migrations.push({ inputs });
         continue;
@@ -269,7 +321,7 @@ export async function migrateLegacySessionStores(
     db = new Database(dbPath, { fileMustExist: true });
     try {
       initializeSchema(db);
-      verifyLegacyInputs(db, inputs);
+      verifyAndReconcileLegacyInputs(db, inputs);
       await chmod(dbPath, 0o666).catch(() => {});
       migrations.push({ inputs });
     } finally {
@@ -277,11 +329,16 @@ export async function migrateLegacySessionStores(
     }
   }
 
+  const deletedDirectories = new Set<string>();
   await Promise.all(
     migrations.flatMap(({ inputs }) =>
-      inputs.map((input) => unlink(input.file)),
+      inputs.map(async (input) => {
+        await unlink(input.file);
+        deletedDirectories.add(path.dirname(input.file));
+      }),
     ),
   );
+  await Promise.all([...deletedDirectories].map(syncPath));
 }
 
 async function openDatabase(groupName: string): Promise<Database.Database> {
