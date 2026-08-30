@@ -17,6 +17,14 @@ type CalendarEvent = {
   attendees?: Array<{ email?: string; responseStatus?: string }>;
 };
 
+type CalendarListEntry = {
+  id?: string;
+  summary?: string;
+  primary?: boolean;
+  accessRole?: string;
+  timeZone?: string;
+};
+
 // status を持つことで、呼び出し側がエラーメッセージの文字列形式に依存せず
 // HTTPステータス（404 など）で分岐できるようにする
 class CalendarApiError extends Error {
@@ -82,6 +90,42 @@ const calendarIdParameter = Type.Optional(
       "カレンダーID（デフォルト: primary。共有カレンダーのメールアドレスも指定可）",
   }),
 );
+
+const listCalendarsParameters = Type.Object({});
+
+export const listCalendarsTool: AgentTool<typeof listCalendarsParameters> = {
+  name: "list-calendars",
+  label: "List Calendars",
+  description:
+    "Google カレンダーのカレンダー一覧を取得する。カレンダーID・名前・アクセス権・タイムゾーンを返す",
+  parameters: listCalendarsParameters,
+  execute: async () => {
+    const data = (await calendarFetch("/users/me/calendarList")) as {
+      items?: CalendarListEntry[];
+    };
+    const calendars = data.items ?? [];
+    const lines: string[] = ["## カレンダー一覧", ""];
+
+    for (const calendar of calendars) {
+      const primary = calendar.primary ? "（デフォルト）" : "";
+      lines.push(`### ${calendar.summary ?? "(名前なし)"}${primary}`);
+      lines.push(`- ID: \`${calendar.id ?? "(不明)"}\``);
+      if (calendar.accessRole) {
+        lines.push(`- アクセス権: ${calendar.accessRole}`);
+      }
+      if (calendar.timeZone) {
+        lines.push(`- タイムゾーン: ${calendar.timeZone}`);
+      }
+      lines.push("");
+    }
+    if (calendars.length === 0) lines.push("(カレンダーはありません)");
+
+    return {
+      content: [{ type: "text", text: lines.join("\n") }],
+      details: { count: calendars.length },
+    };
+  },
+};
 
 const listEventsParameters = Type.Object({
   timeMin: Type.Optional(

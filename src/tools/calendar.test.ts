@@ -29,6 +29,58 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("list-calendars", () => {
+  it("カレンダー一覧を正しくフォーマットする", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: "primary@example.com",
+            summary: "メインカレンダー",
+            primary: true,
+            accessRole: "owner",
+            timeZone: "Asia/Tokyo",
+          },
+        ],
+      }),
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+    const text = firstText(result);
+
+    expect(text).toContain("メインカレンダー（デフォルト）");
+    expect(text).toContain("primary@example.com");
+    expect(text).toContain("owner");
+    expect(text).toContain("Asia/Tokyo");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://proxy.test/google-calendar/users/me/calendarList",
+    );
+  });
+
+  it("items がないとき「カレンダーはありません」を返す", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+
+    expect(firstText(result)).toContain("カレンダーはありません");
+    expect(result.details).toEqual({ count: 0 });
+  });
+
+  it("Calendar API エラー時は例外を投げる", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => "Forbidden",
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    await expect(listCalendarsTool.execute("id", {})).rejects.toThrow("403");
+  });
+});
+
 describe("list-events", () => {
   const makeEventList = (overrides: Record<string, unknown>[] = []) => ({
     items: [

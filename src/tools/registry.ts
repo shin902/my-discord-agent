@@ -11,6 +11,7 @@ import {
 import {
   createEventTool,
   deleteEventTool,
+  listCalendarsTool,
   listEventsTool,
   readEventTool,
   updateEventTool,
@@ -68,6 +69,7 @@ const TOOLS: Record<string, AgentTool> = {
   "read-pull-request": readPullRequestTool,
   "comment-issue": commentIssueTool,
   "clone-repository": cloneRepositoryTool,
+  "list-calendars": listCalendarsTool,
   "list-events": listEventsTool,
   "read-event": readEventTool,
   "create-event": createEventTool,
