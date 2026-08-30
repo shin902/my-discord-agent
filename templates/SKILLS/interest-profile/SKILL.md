@@ -5,12 +5,12 @@ description: "Generate and update a user interest profile from conversation hist
 
 # Interest profile generation skill
 
-Analyze this group's Discord session logs (`/sessions/{group}/{sessionId}.jsonl`) and accumulate or update the user's interest profile in `INTERESTS.md` (the project root).
+Analyze this group's Discord session database (`/sessions/{group}/sessions.sqlite`) and accumulate or update the user's interest profile in `INTERESTS.md` (the project root).
 
 The sole responsibility of this skill is **to extract and accumulate interests from conversation history**.
 As the user continues ordinary conversations with this agent on Discord, the profile grows automatically from that history. Asking about an article, researching a topic, or expressing an opinion—these everyday conversations become signals directly.
 
-The log location and format follow the same assumptions as the [session-logs](../session-logs/SKILL.md) skill (`/sessions/{group}/{sessionId}.jsonl`, one message per line, and unwrapped `{"role", "content", "timestamp"}`).
+The session location and format follow the same assumptions as the [session-logs](../session-logs/SKILL.md) skill: each group has `/sessions/{group}/sessions.sqlite`, and unwrapped `{"role", "content", "timestamp"}` messages are stored in `session_entries.payload_json`. Incremental reads use each session's `sequence` cursor.
 
 This skill has two modes:
 
@@ -44,7 +44,7 @@ python3 SKILLS/interest-profile/scripts/extract_interests.py \
 ```
 
 **Note:**
-- `--logs-dir` is optional. When omitted, inspect the container mount at `/sessions` (`/sessions/{group}/{sessionId}.jsonl`).
+- `--logs-dir` is optional. When omitted, inspect each group database at `/sessions/{group}/sessions.sqlite`. The pending state records the last scanned `session_entries.sequence` for each session.
 - Do not update `last-sync.json` at this stage. Use `--state-out` only to write the "state to advance" to the pending file (`last-sync.json.pending`), then promote it atomically (commit) in Section 5 after all processing completes successfully. This preserves the transaction boundary, so the cursor does not advance if an intermediate step fails.
 
 Consume the script's output (a JSON array). If zero messages are extracted, you may finish after performing only the Section 5 state update, since there are no new signals.

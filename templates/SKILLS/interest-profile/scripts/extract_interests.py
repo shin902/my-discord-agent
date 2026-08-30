@@ -38,7 +38,8 @@ from pathlib import Path
 MIN_LENGTH = 20
 
 # 状態ファイル (last-sync.json) のスキーマバージョン。
-# version 2: session_id を "{group}/{ファイル名}" 形式でキーイングする（現行）。
+# version 3: SQLite session_entries の sequence をセッションごとに保持する（現行）。
+# version 2: JSONL の行数を "{group}/{ファイル名}" ごとに保持する。
 # version 1相当（旧Claude Code会話ログ対象版）はフラットな "{ファイル名}" キーで、
 # schema_version フィールド自体を持たない。
 SCHEMA_VERSION = 3
@@ -257,35 +258,45 @@ def main():
     all_messages = []
     new_state = dict(sessions_state)
 
+    limit_reached = False
     db_files = sorted(logs_dir.glob("*/sessions.sqlite"))
     for db_path in db_files:
         group = db_path.parent.name
         connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
-            rows = connection.execute(
-                "SELECT session_id, sequence, payload_json FROM session_entries ORDER BY session_id, sequence"
-            )
-            for raw_session_id, sequence, payload_json in rows:
+            raw_session_ids = [
+                row[0] for row in connection.execute("SELECT id FROM sessions ORDER BY id")
+            ]
+            for raw_session_id in raw_session_ids:
                 session_id = f"{group}/{raw_session_id}"
                 prev_sequence = sessions_state.get(session_id, {}).get("sequence", 0)
-                if sequence <= prev_sequence:
-                    continue
-                new_state[session_id] = {"sequence": sequence}
-                try:
-                    obj = json.loads(payload_json)
-                except json.JSONDecodeError:
-                    continue
-                if obj.get("role") != "user":
-                    continue
-                content = normalize_content(obj.get("content", ""))
-                if content is None or content.startswith(NOISE_PREFIXES) or len(content) <= MIN_LENGTH:
-                    continue
-                all_messages.append({
-                    "ts": ts_ms_to_iso(obj.get("timestamp")),
-                    "session_id": session_id,
-                    "content": content[:2000],
-                })
-            if args.max_messages > 0 and len(all_messages) >= args.max_messages:
+                rows = connection.execute(
+                    "SELECT sequence, payload_json FROM session_entries "
+                    "WHERE session_id = ? AND sequence > ? ORDER BY sequence",
+                    (raw_session_id, prev_sequence),
+                )
+                for sequence, payload_json in rows:
+                    new_state[session_id] = {"sequence": sequence}
+                    try:
+                        obj = json.loads(payload_json)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("role") != "user":
+                        continue
+                    content = normalize_content(obj.get("content", ""))
+                    if content is None or content.startswith(NOISE_PREFIXES) or len(content) <= MIN_LENGTH:
+                        continue
+                    all_messages.append({
+                        "ts": ts_ms_to_iso(obj.get("timestamp")),
+                        "session_id": session_id,
+                        "content": content[:2000],
+                    })
+                    if args.max_messages > 0 and len(all_messages) >= args.max_messages:
+                        limit_reached = True
+                        break
+                if limit_reached:
+                    break
+            if limit_reached:
                 break
         finally:
             connection.close()

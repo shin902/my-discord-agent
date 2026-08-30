@@ -1,2 +1,5 @@
 *
 !dist/sandbox/runner.bundle.mjs
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
