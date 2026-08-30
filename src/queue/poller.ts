@@ -6,12 +6,17 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
+import {
+  isAgentMemoryEligible,
+  loadAgentMemoryConfig,
+} from "../config/agent-memory.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { loadGroupSystemPrompt } from "../config/group-config.js";
 import {
   type AgentConfig,
+  findGroupByChannelIdFresh,
   findGroupByName,
   type GroupConfig,
   type ModelConfig,
@@ -26,6 +31,13 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import {
+  AgentMemoryClient,
+  AgentMemoryHttpError,
+  buildAgentMemoryAdmission,
+  buildAgentMemorySubmission,
+  isCurrentAgentMemoryAdmission,
+} from "../memory/agent-memory.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
@@ -285,6 +297,125 @@ const LEASE_RENEWAL_MS = 20_000;
 
 function discordReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
+}
+
+async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
+  if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
+  try {
+    const config = await loadAgentMemoryConfig();
+    const routingChannelId = msg.routingChannelId ?? msg.channelId;
+    const currentMapping = await findGroupByChannelIdFresh(routingChannelId);
+    const admission = msg.memoryShadowAdmission;
+    if (
+      !config.enabled ||
+      !config.eligibleGroups.includes(msg.groupName) ||
+      currentMapping?.group.name !== msg.groupName ||
+      admission === undefined ||
+      !isCurrentAgentMemoryAdmission(admission, config, {
+        groupName: msg.groupName,
+        routingChannelId,
+        channelId: msg.channelId,
+      }) ||
+      msg.memoryShadow.scope.teamId !== admission.teamId ||
+      msg.memoryShadow.scope.agentId !== admission.agentId ||
+      msg.memoryShadow.scope.userId !== admission.userId ||
+      msg.memoryShadow.scope.sessionId !== admission.sessionId
+    ) {
+      console.log(
+        `[agent-memory] shadow job skipped (disabled/revoked/rotated): ${msg.id}`,
+      );
+      await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
+        suppressDelivery: true,
+      });
+      return;
+    }
+    const result = await new AgentMemoryClient(config).addConversation(
+      msg.memoryShadow,
+    );
+    await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
+      suppressDelivery: true,
+    });
+    console.log(
+      `[agent-memory] shadow submission accepted: ${JSON.stringify({ jobId: msg.id, requestId: result.requestId, totalCount: result.totalCount })}`,
+    );
+  } catch (error) {
+    console.error(`[agent-memory] shadow submission failed: ${msg.id}`, error);
+    if (error instanceof AgentMemoryHttpError && !error.retryable) {
+      getQueueRepository().deadLetter(
+        msg.id,
+        msg.fencingToken,
+        "non_retryable",
+        String(error),
+      );
+    } else if (error instanceof NonRetryableError) {
+      getQueueRepository().deadLetter(
+        msg.id,
+        msg.fencingToken,
+        "non_retryable",
+        String(error),
+      );
+    } else {
+      getQueueRepository().failAttempt(msg.id, error, msg.fencingToken);
+    }
+    const after = getQueueRepository().get(msg.id);
+    if (after?.status === "dead_letter")
+      console.error(
+        `[agent-memory] shadow submission dead-lettered: ${msg.id}`,
+      );
+  }
+}
+
+async function prepareMemoryShadowJob(
+  msg: InboxMessage,
+  assistantContent: string,
+): Promise<
+  | {
+      payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
+      options: { idempotencyKey: string };
+    }
+  | undefined
+> {
+  const config = await loadAgentMemoryConfig();
+  if (!isAgentMemoryEligible(config, msg) || msg.content.trim().length === 0)
+    return undefined;
+  const userId = msg.userId;
+  if (!userId) return undefined;
+  const submission = buildAgentMemorySubmission({
+    teamId: config.teamId,
+    agentId: config.agentId,
+    userId,
+    sessionId: msg.sessionId,
+    userContent: msg.content,
+    assistantContent,
+    userTimestamp: msg.timestamp,
+    assistantTimestamp: new Date().toISOString(),
+  });
+  return {
+    payload: {
+      channelId: msg.channelId,
+      groupName: msg.groupName,
+      routingChannelId: msg.routingChannelId ?? msg.channelId,
+      sessionId: `memory-shadow:${msg.sessionId}`,
+      content: "memory-shadow",
+      timestamp: new Date().toISOString(),
+      memoryShadow: submission,
+      memoryShadowAdmission: buildAgentMemoryAdmission({
+        groupName: msg.groupName,
+        routingChannelId: msg.routingChannelId ?? msg.channelId,
+        channelId: msg.channelId,
+        baseUrl: config.baseUrl,
+        serviceId: config.serviceId,
+        teamId: config.teamId,
+        agentId: config.agentId,
+        ...(config.bearerTokenEnv
+          ? { bearerTokenEnv: config.bearerTokenEnv }
+          : {}),
+        userId,
+        sessionId: msg.sessionId,
+      }),
+    },
+    options: { idempotencyKey: `agent-memory-shadow:${msg.id}` },
+  };
 }
 
 function resolveDiscordClient(groupName: string) {
@@ -1053,6 +1184,10 @@ export async function processMessage(
   msg: InboxMessage,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (msg.memoryShadow !== undefined) {
+    await processMemoryShadowJob(msg);
+    return;
+  }
   if (msg.fencingToken !== undefined) {
     try {
       const identity =
@@ -1248,6 +1383,22 @@ export async function processMessage(
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
     }
+    let shadowJob:
+      | {
+          payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
+          options: { idempotencyKey: string };
+        }
+      | undefined;
+    try {
+      shadowJob = await prepareMemoryShadowJob(msg, response);
+    } catch (error) {
+      // Shadow mode is best-effort; configuration/preparation failures must not
+      // prevent the normal response from reaching its terminal state.
+      console.error(
+        `[agent-memory] shadow job preparation failed: ${msg.id}`,
+        error,
+      );
+    }
     await getQueueRepository().commitResult(
       msg.id,
       msg.fencingToken,
@@ -1271,9 +1422,24 @@ export async function processMessage(
               }
             : {}),
         },
+        ...(shadowJob
+          ? {
+              shadowJob: {
+                payload: shadowJob.payload,
+                options: shadowJob.options,
+              },
+            }
+          : {}),
       },
     );
     if (suppressDelivery) await finalizeSuppressedSource(msg);
+    if (shadowJob) {
+      console.log(
+        `[agent-memory] shadow job admitted: ${JSON.stringify({ sourceJobId: msg.id, groupName: msg.groupName })}`,
+      );
+    }
+    // The source result, delivery rows, and local shadow admission commit
+    // atomically. The queued worker owns remote MemoryCore I/O separately.
     outcome = "success";
     stopTyping();
   } finally {

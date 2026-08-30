@@ -460,6 +460,121 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("commits source result, delivery, and shadow admission in one transaction", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const source = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "source-session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "source-result" },
+      );
+      const claimed = expectDefined(repo.claim("worker-a", 1_000));
+      repo.commitResult(source.job.id, claimed.fencingToken, "canonical", {
+        deliveryPayload: {
+          destinationType: "channel",
+          destinationId: "channel",
+        },
+        shadowJob: {
+          payload: {
+            channelId: "channel",
+            groupName: "group",
+            sessionId: "memory-shadow:source-session",
+            content: "memory-shadow",
+            timestamp: new Date().toISOString(),
+            memoryShadow: {
+              scope: {
+                teamId: "team",
+                agentId: "agent",
+                userId: "user",
+                sessionId: "source-session",
+              },
+              messages: [],
+            },
+          },
+          options: { idempotencyKey: "agent-memory-shadow:source-result" },
+        },
+      });
+
+      expect(repo.get(source.job.id)).toMatchObject({
+        status: "completed",
+        terminalState: "succeeded",
+        succeeded: true,
+      });
+      expect(repo.getDelivery(source.job.id)).toBeDefined();
+      expect(
+        repo.findByIdempotencyKey("agent-memory-shadow:source-result"),
+      ).toMatchObject({
+        status: "queued",
+        memoryShadow: expect.any(Object),
+      });
+
+      const shadow = expectDefined(
+        repo.findByIdempotencyKey("agent-memory-shadow:source-result"),
+      );
+      const shadowClaim = expectDefined(repo.claim("worker-b", 1_000));
+      repo.commitResult(shadow.id, shadowClaim.fencingToken, "", {
+        suppressDelivery: true,
+      });
+      expect(repo.get(shadow.id)).toMatchObject({
+        status: "completed",
+        terminalState: "succeeded",
+        succeeded: true,
+      });
+      expect(repo.getDelivery(shadow.id)).toBeUndefined();
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("rolls back source completion and delivery when shadow admission fails", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const source = repo.enqueue(
+        {
+          channelId: "channel",
+          groupName: "group",
+          sessionId: "source-session",
+          content: "content",
+          timestamp: new Date().toISOString(),
+        },
+        { idempotencyKey: "source-rollback" },
+      );
+      const claimed = expectDefined(repo.claim("worker-a", 1_000));
+      expect(() =>
+        repo.commitResult(source.job.id, claimed.fencingToken, "canonical", {
+          shadowJob: {
+            payload: {
+              channelId: "channel",
+              groupName: "group",
+              sessionId: undefined,
+              content: "memory-shadow",
+              timestamp: new Date().toISOString(),
+              memoryShadow: undefined,
+            } as never,
+          },
+        }),
+      ).toThrow();
+
+      expect(repo.get(source.job.id)).toMatchObject({
+        status: "running",
+        succeeded: false,
+      });
+      expect(repo.get(source.job.id)?.resultJson).toBeUndefined();
+      expect(repo.listDeliveries()).toHaveLength(0);
+      expect(repo.getIdempotencyRecord("source-rollback")).toMatchObject({
+        status: "active",
+        jobId: source.job.id,
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("claims same-time, same-index deliveries in creation order", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {

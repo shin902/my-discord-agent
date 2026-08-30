@@ -29,9 +29,41 @@ AgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマ
 | `config/credentials.json` | ✓ | 配列 | AI プロバイダー・外部サービスの接続設定 |
 | `config/groups.json` | ✓ | 配列 | チャンネル → グループのマッピング |
 | `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義 |
-| `config/config.json` | ✓ | オブジェクト | Bot profile・`defaultModel`（必須）・proxy・agent 設定 |
+| `config/config.json` | ✓ | オブジェクト | Bot profile・`defaultModel`（必須）・proxy・agent・Agent Memory 設定 |
 
 > **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
+
+## config/config.json の `agentMemory`
+
+TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明示的に有効化する設定です。既定では無効です。`eligibleGroups` に列挙したグループは、運用者がprivateな通常Discord会話として明示的に適格と宣言した場合だけ対象になります。cron、public scope、Bot、Subagent、mail/RSSのジョブは対象外です。
+
+```json
+{
+  "agentMemory": {
+    "enabled": true,
+    "baseUrl": "http://127.0.0.1:8420",
+    "serviceId": "default",
+    "teamId": "my-discord-agent",
+    "agentId": "main",
+    "eligibleGroups": ["private-chat"],
+    "timeoutMs": 10000
+  }
+}
+```
+
+通常のprivate chatが正常完了すると、durable queueに保存された入力payloadと完了済みagent resultからuser/assistantの1往復を組み立て、runtime.sqliteの独立したshadow jobへ登録します。session JSONLは引き続き会話のcanonical raw historyとして保持しますが、shadow submissionの入力として読み直す経路ではありません。shadow jobは `POST /v3/conversation/add`（L0）へ `team_id`、`agent_id`、`user_id`、`session_id` を付けて非同期送信します。送信結果は `[agent-memory]` の構造化ログと通常queueのjob statusで確認できます。TencentDBが停止・タイムアウトしても通常のDiscord応答は成功したままで、shadow jobだけがqueueのretry/dead-letter対象になります。
+
+ローカルのMemoryCoreは認証なしで接続できます。認証を有効にした環境では、`bearerTokenEnv` にBearer tokenを保持する環境変数名を指定してください。未指定時は`Authorization`ヘッダーを送信しません。非loopbackの接続先はHTTPSを必須とし、認証なしHTTPは文字列どおりの`127.0.0.1`または`[::1]`に限定します（`localhost`はDNS解決を検証しないため許可しません）。token自体やその他のsecretを設定ファイルへ書かないでください。現在はshadow writeのみで、recall、embedding、Ruri prefix、context injectionは行いません。TencentDB v3の`conversation/add`契約にはクライアント指定のmessage/request IDやidempotency keyはなく、accepted IDはサーバー生成です（[v3 API仕様](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/MemoryCore/v3-api-memorycore-doc.md)）。そのためshadow送信はローカルqueueのidempotencyによるat-least-once配送で、応答受領後のprocess crashではMemoryCore側に重複L0が発生し得ます。これはupstream契約上の制約であり、未対応のrequest fieldを独自追加して重複排除を主張しません。
+
+| キー | 必須 | 内容 |
+|---|---|---|
+| `enabled` | — | `true` のときだけshadow modeを動かす。既定は`false` |
+| `baseUrl` | — | TencentDB MemoryCoreのURL。HTTPはloopbackのみ、非loopbackはHTTPSのみ。query/fragmentと埋め込みcredentialは禁止。`/v3/conversation/add`を安全に追加して呼び出す |
+| `serviceId` | — | `x-tdai-service-id`へ送るMemoryCoreのinstance ID |
+| `bearerTokenEnv` | — | 任意。Bearer tokenを読む環境変数名。未指定なら認証なし |
+| `teamId` / `agentId` | — | 全対象会話へ付与する固定isolation identity |
+| `eligibleGroups` | — | shadow writeを許可するprivate group名の明示リスト。既定は空 |
+| `timeoutMs` | — | MemoryCore HTTP timeout（1〜120000ms、既定10000） |
 
 ## config/providers.json
 

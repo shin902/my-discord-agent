@@ -1,6 +1,6 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { loadRawGroups } from "./config.js";
+import { loadRawGroups, loadRawGroupsFresh } from "./config.js";
 
 const THINKING_LEVELS = [
   "off",
@@ -66,6 +66,10 @@ const GroupConfigSchema = AgentRuntimeConfigSchema.extend({
 
 const GroupsConfigSchema = z.array(GroupConfigSchema);
 
+function parseGroups(raw: unknown): GroupConfig[] {
+  return GroupsConfigSchema.parse(raw);
+}
+
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
@@ -79,8 +83,13 @@ let _groups: GroupConfig[] | null = null;
 export async function loadGroups(): Promise<GroupConfig[]> {
   if (_groups !== null) return _groups;
   const raw = await loadRawGroups();
-  _groups = GroupsConfigSchema.parse(raw);
+  _groups = parseGroups(raw);
   return _groups;
+}
+
+/** Read the current groups mapping without changing startup routing cache. */
+export async function loadGroupsFresh(): Promise<GroupConfig[]> {
+  return parseGroups(await loadRawGroupsFresh());
 }
 
 export async function findGroupByName(
@@ -94,9 +103,22 @@ export async function findGroupByChannelId(
   channelId: string,
 ): Promise<{ group: GroupConfig; channel: ChannelConfig } | null> {
   const groups = await loadGroups();
+  return findGroupByChannelIdIn(groups, channelId);
+}
+
+function findGroupByChannelIdIn(
+  groups: GroupConfig[],
+  channelId: string,
+): { group: GroupConfig; channel: ChannelConfig } | null {
   for (const group of groups) {
     const channel = group.channels.find((c) => c.channelId === channelId);
     if (channel) return { group, channel };
   }
   return null;
+}
+
+export async function findGroupByChannelIdFresh(
+  channelId: string,
+): Promise<{ group: GroupConfig; channel: ChannelConfig } | null> {
+  return findGroupByChannelIdIn(await loadGroupsFresh(), channelId);
 }

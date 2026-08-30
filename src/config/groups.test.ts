@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const setupRawGroups = async (raw: unknown) => {
+const setupRawGroups = async (raw: unknown, freshRaw: unknown = raw) => {
   vi.resetModules();
   vi.doMock("./config.js", () => ({
     loadRawGroups: vi.fn().mockResolvedValue(raw),
+    loadRawGroupsFresh: vi.fn().mockResolvedValue(freshRaw),
   }));
   return import("./groups.js");
 };
@@ -154,5 +155,35 @@ describe("findGroupByName", () => {
       { name: "chat", channels: [] },
     ]);
     expect(await findGroupByName("nonexistent")).toBeUndefined();
+  });
+});
+
+describe("findGroupByChannelIdFresh", () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("reads the current channel mapping without relying on the startup cache", async () => {
+    const { loadGroups, findGroupByChannelIdFresh } = await setupRawGroups(
+      [{ name: "stale", channels: [] }],
+      [
+        {
+          name: "current",
+          channels: [{ channelId: "channel", sessionMode: "shared" }],
+        },
+      ],
+    );
+    await loadGroups();
+    await expect(findGroupByChannelIdFresh("channel")).resolves.toMatchObject({
+      group: { name: "current" },
+      channel: { channelId: "channel" },
+    });
+  });
+
+  it("returns null when the current mapping is missing", async () => {
+    const { findGroupByChannelIdFresh } = await setupRawGroups([
+      { name: "current", channels: [] },
+    ]);
+    await expect(findGroupByChannelIdFresh("channel")).resolves.toBeNull();
   });
 });

@@ -26,5 +26,14 @@
   },
   "agent": {
     "timeoutMs": 600000
+  },
+  "agentMemory": {
+    "enabled": false,
+    "baseUrl": "http://127.0.0.1:8420",
+    "serviceId": "default",
+    "teamId": "my-discord-agent",
+    "agentId": "main",
+    "eligibleGroups": [],
+    "timeoutMs": 10000
   }
 }

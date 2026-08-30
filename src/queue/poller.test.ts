@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiscordEvent, SendMessageOptions } from "../agent/manager.js";
+import { buildAgentMemoryAdmission } from "../memory/agent-memory.js";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -19,12 +20,20 @@ vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const acknowledgeEmail = vi.hoisted(() => vi.fn());
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 const settleRssDispatch = vi.hoisted(() => vi.fn());
+const loadAgentMemoryConfig = vi.hoisted(() => vi.fn());
+const findGroupByChannelIdFresh = vi.hoisted(() => vi.fn());
+const isAgentMemoryEligible = vi.hoisted(() => vi.fn());
 const loadBotRegistry = vi.hoisted(() => vi.fn());
 const resolveBotProfile = vi.hoisted(() => vi.fn());
 vi.mock("../config/bots.js", () => ({
   loadBotRegistry,
   resolveBotProfile,
 }));
+vi.mock("../config/agent-memory.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../config/agent-memory.js")>();
+  return { ...actual, loadAgentMemoryConfig, isAgentMemoryEligible };
+});
 vi.mock("./reconciliation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./reconciliation.js")>();
   settleRssDispatch.mockImplementation(actual.settleRssDispatch);
@@ -38,7 +47,7 @@ vi.mock("../config/default-model.js", () => ({
 }));
 vi.mock("../config/groups.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/groups.js")>();
-  return { ...actual, findGroupByName: vi.fn() };
+  return { ...actual, findGroupByName: vi.fn(), findGroupByChannelIdFresh };
 });
 vi.mock("../config/providers.js", () => ({
   resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
@@ -69,6 +78,7 @@ const {
   getJob,
   listTerminalCronJobs,
   patchJobPayload,
+  enqueue,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
   commitInboxResult: vi.fn(),
@@ -81,6 +91,7 @@ const {
   getJob: vi.fn(),
   listTerminalCronJobs: vi.fn().mockReturnValue([]),
   patchJobPayload: vi.fn(),
+  enqueue: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -95,6 +106,7 @@ vi.mock("./repository.js", () => ({
     get: getJob,
     listTerminalCronJobs,
     patchJobPayload,
+    enqueue,
   }),
 }));
 
@@ -118,6 +130,7 @@ beforeEach(() => {
   claim.mockReset();
   claim.mockReturnValue(undefined);
   deadLetter.mockClear();
+  failAttempt.mockReset();
   heartbeat.mockReset();
   markRunning.mockReset();
   updateRunning.mockClear();
@@ -126,6 +139,27 @@ beforeEach(() => {
   listTerminalCronJobs.mockReset();
   listTerminalCronJobs.mockReturnValue([]);
   patchJobPayload.mockReset();
+  enqueue.mockReset();
+  enqueue.mockReturnValue({ job: { id: "memory-job-1" }, inserted: true });
+  delete process.env.TDAI_TEST_TOKEN;
+  loadAgentMemoryConfig.mockReset();
+  findGroupByChannelIdFresh.mockReset();
+  findGroupByChannelIdFresh.mockResolvedValue({
+    group: { name: "default", channels: [] },
+    channel: { channelId: "ch-1", sessionMode: "shared" },
+  });
+  loadAgentMemoryConfig.mockResolvedValue({
+    enabled: false,
+    baseUrl: "http://127.0.0.1:8420",
+    serviceId: "default",
+    bearerTokenEnv: "TDAI_TEST_TOKEN",
+    teamId: "team",
+    agentId: "agent",
+    eligibleGroups: [],
+    timeoutMs: 1000,
+  });
+  isAgentMemoryEligible.mockReset();
+  isAgentMemoryEligible.mockReturnValue(false);
   vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
   loadBotRegistry.mockReset();
@@ -184,6 +218,10 @@ function claimRssArticles(
   }
 }
 
+function msgTimestamp(): string {
+  return "2026-08-30T00:00:00.000Z";
+}
+
 function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
   const now = new Date().toISOString();
   return {
@@ -199,6 +237,35 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
     retries: 0,
     ...overrides,
   };
+}
+
+function makeMemoryAdmission(
+  overrides: Partial<{
+    groupName: string;
+    routingChannelId: string;
+    channelId: string;
+    baseUrl: string;
+    serviceId: string;
+    bearerTokenEnv: string | undefined;
+    teamId: string;
+    agentId: string;
+    userId: string;
+    sessionId: string;
+  }> = {},
+) {
+  return buildAgentMemoryAdmission({
+    groupName: "default",
+    routingChannelId: "ch-1",
+    channelId: "ch-1",
+    baseUrl: "http://127.0.0.1:8420",
+    serviceId: "default",
+    bearerTokenEnv: undefined,
+    teamId: "team",
+    agentId: "agent",
+    userId: "discord-user-1",
+    sessionId: "ch-1",
+    ...overrides,
+  });
 }
 
 const EMPTY_AGENT_RESPONSES = ["", "   ", "\r\n", "\t"] as const;
@@ -1758,6 +1825,398 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+  it("skips a queued shadow job when its group is no longer eligible", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: [],
+      timeoutMs: 1000,
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const msg = makeMsg({
+      groupName: "revoked-group",
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "discord-session-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+      memoryShadowAdmission: makeMemoryAdmission({
+        groupName: "revoked-group",
+        sessionId: "discord-session-1",
+      }),
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
+      suppressDelivery: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips a queued shadow job when its admission scope or destination was rotated", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "rotated-team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "ch-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+      memoryShadowAdmission: makeMemoryAdmission(),
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
+      suppressDelivery: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips a queued shadow job when its channel mapping is missing or changed", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "ch-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+      memoryShadowAdmission: makeMemoryAdmission(),
+    });
+    findGroupByChannelIdFresh.mockResolvedValueOnce(null);
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
+      suppressDelivery: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips a queued shadow job when its channel moves to another group", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    findGroupByChannelIdFresh.mockResolvedValueOnce({
+      group: { name: "other-group", channels: [] },
+      channel: { channelId: "ch-1", sessionMode: "shared" },
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "ch-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+      memoryShadowAdmission: makeMemoryAdmission(),
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
+      suppressDelivery: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips empty-text and attachment-only turns", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    isAgentMemoryEligible.mockReturnValue(true);
+
+    await processMessage(
+      makeMsg({
+        userId: "discord-user-1",
+        content: "   ",
+        attachments: [
+          {
+            url: "https://example.test/file",
+            name: "file",
+            contentType: "text/plain",
+            size: 1,
+          },
+        ],
+      }),
+    );
+
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      "inbox-1",
+      4,
+      "AI response",
+      expect.not.objectContaining({ shadowJob: expect.anything() }),
+    );
+  });
+
+  it("retries shadow submission failures without changing the normal job", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    process.env.TDAI_TEST_TOKEN = "secret";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: 503, message: "unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "discord-session-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+      memoryShadowAdmission: makeMemoryAdmission({
+        bearerTokenEnv: "TDAI_TEST_TOKEN",
+        sessionId: "discord-session-1",
+      }),
+    });
+
+    await processMessage(msg);
+
+    expect(failAttempt).toHaveBeenCalledWith(msg.id, expect.any(Error), 4);
+    expect(commitInboxResult).not.toHaveBeenCalled();
+  });
+
+  it("dead-letters permanent MemoryCore 4xx failures without retry", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ code: 400, message: "do-not-persist-this-secret" }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "ch-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+      memoryShadowAdmission: makeMemoryAdmission(),
+    });
+
+    await processMessage(msg);
+
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "non_retryable",
+      "AgentMemoryHttpError: Agent Memory conversation/add failed (400, code 400)",
+    );
+    expect(deadLetter.mock.calls[0]?.[3]).not.toContain(
+      "do-not-persist-this-secret",
+    );
+    expect(failAttempt).not.toHaveBeenCalled();
+  });
+
+  it("commits successful shadow jobs as succeeded with delivery suppressed", async () => {
+    loadAgentMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: 0, data: { total_count: 2 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "ch-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+      memoryShadowAdmission: makeMemoryAdmission(),
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
+      suppressDelivery: true,
+    });
+  });
+
+  it("waits for local shadow queue admission but not TencentDB HTTP", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+      allowMention: false,
+    });
+    vi.mocked(sendMessage).mockResolvedValue("AI response");
+    let resolveConfig: (value: unknown) => void = () => {};
+    loadAgentMemoryConfig.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConfig = resolve;
+      }),
+    );
+    isAgentMemoryEligible.mockReturnValue(true);
+    const shadowBaseUrl = "http://source-shadow-job.test";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const msg = makeMsg({
+      channelId: "thread-1",
+      routingChannelId: "root-1",
+      sessionId: "thread-1",
+      userId: "discord-user-1",
+      memoryShadowAdmission: makeMemoryAdmission({
+        routingChannelId: "root-1",
+        channelId: "thread-1",
+        sessionId: "thread-1",
+      }),
+    });
+    let settled = false;
+    const processing = processMessage(msg).then(() => {
+      settled = true;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(settled).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+
+    resolveConfig({
+      enabled: true,
+      baseUrl: shadowBaseUrl,
+      serviceId: "default",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    });
+    await processing;
+
+    expect(settled).toBe(true);
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "AI response",
+      expect.objectContaining({
+        shadowJob: {
+          payload: expect.objectContaining({
+            memoryShadow: expect.objectContaining({
+              scope: expect.objectContaining({ userId: "discord-user-1" }),
+            }),
+          }),
+          options: { idempotencyKey: "agent-memory-shadow:inbox-1" },
+        },
+      }),
+    );
+    // TencentDB is contacted only by the separately claimed shadow job.
+    const sourceShadowRequests = fetchMock.mock.calls.filter(
+      ([url]) => url === `${shadowBaseUrl}/v3/conversation/add`,
+    );
+    expect(sourceShadowRequests).toHaveLength(0);
+  });
+
   it("通常会話でも独立NO_REPLY行を無配信にする", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
