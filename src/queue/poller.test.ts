@@ -1359,6 +1359,7 @@ describe("processMessage - Discord イベント通知", () => {
       send: mockSend,
     } as never);
     mockSend.mockClear();
+    commitInboxResult.mockClear();
   });
 
   it("tool_start イベント（args あり）で 🔧 ツール名 + 引数が送信される", async () => {
@@ -1541,6 +1542,7 @@ describe("processMessage - Discord イベント通知", () => {
     await processMessage(msg);
 
     expect(mockSend).not.toHaveBeenCalled();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
     expect(commitInboxResult).toHaveBeenCalledWith(
       msg.id,
       msg.fencingToken,
@@ -1552,6 +1554,48 @@ describe("processMessage - Discord イベント通知", () => {
         }),
       }),
     );
+  });
+
+  it.each([
+    ["tool_start", { type: "tool_start", toolName: "bash" }],
+    [
+      "subagent_tool_start",
+      {
+        type: "subagent_tool_start",
+        worker: "ephemeral",
+        runId: "child-123456789",
+        parentRunId: "root-123",
+        toolName: "read",
+        taskPreview: "inspect task",
+      },
+    ],
+    [
+      "subagent_update",
+      {
+        type: "subagent_update",
+        worker: "ephemeral",
+        runId: "child-123456789",
+        parentRunId: "root-123",
+        status: "completed",
+        taskPreview: "inspect task",
+        resultPreview: "調査完了",
+      },
+    ],
+  ] as const)("legacy cron payload の %s は進捗通知を送信しない", async (_eventName, event) => {
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.(event);
+        return "AI response";
+      },
+    );
+
+    await processMessage(
+      makeMsg({
+        cronJobId: "daily-report",
+      }),
+    );
+
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("direct cron でも error イベントは送信される", async () => {
