@@ -5,6 +5,7 @@ import {
   killAllRunningContainers,
   validateGroupConfig,
 } from "./agent/manager.js";
+import { migrateLegacySessionStores } from "./agent/session.js";
 import { loadBotRegistry, validateBotConfigs } from "./config/bots.js";
 import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
@@ -47,6 +48,7 @@ try {
       );
   }
   await ensureGroupDirs(groups.map((g) => g.name));
+  await migrateLegacySessionStores(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
   registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort);

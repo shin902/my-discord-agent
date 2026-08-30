@@ -16,7 +16,7 @@ data/
   sessions/
     <groupName>/
       sessions.sqlite   # group単位のcanonical session trajectory
-      *.jsonl           # migration後もrollback/監査用に残すlegacy原本
+      *.jsonl           # startup migration完了前だけ存在するlegacy原本
   queue/
     inbox.jsonl         # メッセージキュー（既存実装）
     dead-letter.jsonl   # 処理失敗メッセージ（既存実装）
@@ -58,7 +58,9 @@ groups/
 
 session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。
 
-初回アクセス時に同じgroup directoryのlegacy `*.jsonl`をtransaction内で一度だけimportする。壊れた行があればfile/lineを示して全importをrollbackし、原本は変更・削除しない。import完了後はSQLiteだけをcanonicalとし、残存JSONLへfallback/dual-writeしない。旧binaryとのmixed-version運用は避ける。
+queue worker・Discord intakeを開始する前のstartup migrationで、設定済みの全groupを一括処理する。groupごとに一時DBへlegacy `*.jsonl`をtransactional importし、payload一致と`PRAGMA integrity_check`を検証してから`sessions.sqlite`へatomic renameする。既存DBがある再実行時もJSONLとの一致を検証する。全groupの検証が成功した後だけlegacy JSONLを一括削除し、途中失敗時は起動を中止して全JSONL原本を残す。
+
+migration完了後はSQLiteだけをcanonicalとし、JSONLへのfallback/dual-writeは行わない。旧binaryとのmixed-version運用は避ける。
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。backupは稼働停止中にDBをcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 

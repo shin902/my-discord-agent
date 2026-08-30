@@ -1,5 +1,15 @@
-import { chmod, mkdir, readdir, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  unlink,
+} from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 
@@ -104,10 +114,6 @@ function initializeSchema(db: Database.Database): void {
       );
       CREATE INDEX IF NOT EXISTS session_entries_session_id_id
         ON session_entries(session_id, id);
-      CREATE TABLE IF NOT EXISTS session_store_metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
       PRAGMA user_version = 1;
     `);
   }
@@ -115,28 +121,49 @@ function initializeSchema(db: Database.Database): void {
   db.pragma("busy_timeout = 5000");
 }
 
-async function importLegacyJsonl(
-  db: Database.Database,
-  dir: string,
-): Promise<void> {
-  const imported = db
-    .prepare(
-      "SELECT value FROM session_store_metadata WHERE key='legacy_jsonl_imported'",
-    )
-    .get() as { value: string } | undefined;
-  if (imported?.value === "1") return;
+interface LegacySessionInput {
+  sessionId: string;
+  file: string;
+  payloads: string[];
+  messages: Record<string, unknown>[];
+}
 
+async function readLegacyInputs(dir: string): Promise<LegacySessionInput[]> {
   const files = (await readdir(dir, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const inputs = await Promise.all(
-    files.map(async (file) => ({
-      sessionId: file.name.slice(0, -".jsonl".length),
-      file: path.join(dir, file.name),
-      text: await readFile(path.join(dir, file.name), "utf-8"),
-    })),
+  return Promise.all(
+    files.map(async (file) => {
+      const sessionId = file.name.slice(0, -".jsonl".length);
+      validateName(sessionId, "セッションID");
+      const filePath = path.join(dir, file.name);
+      const lines = (await readFile(filePath, "utf-8"))
+        .split("\n")
+        .filter((line) => line.trim());
+      const messages = lines.map((line, index) => {
+        try {
+          return sanitizeMessage(parseStoredMessage(line));
+        } catch (error) {
+          throw new Error(
+            `legacy session JSONLの読み込みに失敗しました: ${filePath}:${index + 1}`,
+            { cause: error },
+          );
+        }
+      });
+      return {
+        sessionId,
+        file: filePath,
+        messages,
+        payloads: messages.map((message) => JSON.stringify(message)),
+      };
+    }),
   );
+}
 
+function importLegacyInputs(
+  db: Database.Database,
+  inputs: LegacySessionInput[],
+): void {
   const insertSession = db.prepare(
     "INSERT INTO sessions(id, created_at, updated_at) VALUES (?, ?, ?)",
   );
@@ -144,47 +171,117 @@ async function importLegacyJsonl(
     INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at)
     VALUES (?, ?, ?, ?, ?)
   `);
-  const markImported = db.prepare(
-    "INSERT INTO session_store_metadata(key, value) VALUES ('legacy_jsonl_imported', '1')",
-  );
-
   db.transaction(() => {
-    const alreadyImported = db
-      .prepare(
-        "SELECT value FROM session_store_metadata WHERE key='legacy_jsonl_imported'",
-      )
-      .get() as { value: string } | undefined;
-    if (alreadyImported?.value === "1") return;
-
     for (const input of inputs) {
-      validateName(input.sessionId, "セッションID");
-      const lines = input.text.split("\n").filter((line) => line.trim());
-      const messages = lines.map((line, index) => {
-        try {
-          return sanitizeMessage(parseStoredMessage(line));
-        } catch (error) {
-          throw new Error(
-            `legacy session JSONLの読み込みに失敗しました: ${input.file}:${index + 1}`,
-            { cause: error },
-          );
-        }
-      });
-      const timestamps = messages.map(messageTimestamp);
+      const timestamps = input.messages.map(messageTimestamp);
       const createdAt = timestamps[0] ?? Date.now();
       const updatedAt = timestamps.at(-1) ?? createdAt;
       insertSession.run(input.sessionId, createdAt, updatedAt);
-      messages.forEach((message, index) => {
+      input.messages.forEach((message, index) => {
         insertEntry.run(
           input.sessionId,
           index + 1,
           entryType(message),
-          JSON.stringify(message),
+          input.payloads[index],
           timestamps[index],
         );
       });
     }
-    markImported.run();
   })();
+}
+
+function verifyLegacyInputs(
+  db: Database.Database,
+  inputs: LegacySessionInput[],
+): void {
+  const integrity = db.pragma("integrity_check", { simple: true });
+  if (integrity !== "ok")
+    throw new Error(`session DB integrity check failed: ${integrity}`);
+  const metadataTable = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_store_metadata'",
+    )
+    .get();
+  const priorLazyImport = metadataTable
+    ? (
+        db
+          .prepare(
+            "SELECT value FROM session_store_metadata WHERE key='legacy_jsonl_imported'",
+          )
+          .get() as { value?: string } | undefined
+      )?.value === "1"
+    : false;
+  if (priorLazyImport) return;
+
+  const selectPayloads = db.prepare(
+    "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
+  );
+  for (const input of inputs) {
+    const rows = selectPayloads.all(input.sessionId) as Array<{
+      payload_json: string;
+    }>;
+    const payloads = rows.map((row) => row.payload_json);
+    if (
+      payloads.length < input.payloads.length ||
+      payloads
+        .slice(0, input.messages.length)
+        .some(
+          (payload, index) =>
+            !isDeepStrictEqual(JSON.parse(payload), input.messages[index]),
+        )
+    ) {
+      throw new Error(
+        `legacy session JSONLとsession DBが一致しません: ${input.file} (DB ${payloads.length} entries / JSONL ${input.payloads.length} entries)`,
+      );
+    }
+  }
+}
+
+export async function migrateLegacySessionStores(
+  groupNames: string[],
+): Promise<void> {
+  const migrations: Array<{ inputs: LegacySessionInput[] }> = [];
+  for (const groupName of groupNames) {
+    validateName(groupName, "グループ名");
+    const dir = await ensureDir(groupName);
+    const inputs = await readLegacyInputs(dir);
+    const dbPath = path.join(dir, DB_FILENAME);
+    let db: Database.Database;
+    if (!existsSync(dbPath)) {
+      const tempPath = path.join(dir, `${DB_FILENAME}.migrating`);
+      await rm(tempPath, { force: true });
+      db = new Database(tempPath);
+      try {
+        initializeSchema(db);
+        importLegacyInputs(db, inputs);
+        verifyLegacyInputs(db, inputs);
+        db.close();
+        await rename(tempPath, dbPath);
+        await chmod(dbPath, 0o666).catch(() => {});
+        migrations.push({ inputs });
+        continue;
+      } catch (migrationError) {
+        if (db.open) db.close();
+        await rm(tempPath, { force: true });
+        throw migrationError;
+      }
+    }
+    db = new Database(dbPath, { fileMustExist: true });
+    try {
+      initializeSchema(db);
+      verifyLegacyInputs(db, inputs);
+      await chmod(dbPath, 0o666).catch(() => {});
+      migrations.push({ inputs });
+    } finally {
+      db.close();
+    }
+  }
+
+  await Promise.all(
+    migrations.flatMap(({ inputs }) =>
+      inputs.map((input) => unlink(input.file)),
+    ),
+  );
 }
 
 async function openDatabase(groupName: string): Promise<Database.Database> {
@@ -193,7 +290,6 @@ async function openDatabase(groupName: string): Promise<Database.Database> {
   const db = new Database(dbPath);
   try {
     initializeSchema(db);
-    await importLegacyJsonl(db, dir);
     await chmod(dbPath, 0o666).catch(() => {});
     return db;
   } catch (error) {

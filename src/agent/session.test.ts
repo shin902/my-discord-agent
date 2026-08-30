@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -139,50 +146,72 @@ describe("SQLite session trajectory store", () => {
     ).resolves.toHaveLength(1);
   });
 
-  it("legacy JSONLを一度だけtransactionalにimportし原本を保持する", async () => {
-    const dir = path.join(root, "legacy");
-    await writeFile(path.join(root, ".keep"), "");
-    await import("node:fs/promises").then(({ mkdir }) =>
-      mkdir(dir, { recursive: true }),
-    );
-    const legacyPath = path.join(dir, "old-session.jsonl");
-    const original =
-      '{"role":"user","content":"old","timestamp":10}\n' +
-      '{"role":"assistant","content":"reply","timestamp":11}\n';
-    await writeFile(legacyPath, original);
+  it("起動migrationで全groupをimportしてからlegacy JSONLを一括削除する", async () => {
+    const groups = ["legacy-a", "legacy-b"];
+    for (const [index, group] of groups.entries()) {
+      const dir = path.join(root, group);
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        path.join(dir, `session-${index}.jsonl`),
+        `${JSON.stringify({ role: "user", content: group, timestamp: index + 10 })}\n`,
+      );
+    }
+
+    await session.migrateLegacySessionStores(groups);
 
     await expect(
-      session.loadMessages("legacy", "old-session"),
-    ).resolves.toEqual([
-      { role: "user", content: "old", timestamp: 10 },
-      { role: "assistant", content: "reply", timestamp: 11 },
-    ]);
-    expect(await readFile(legacyPath, "utf-8")).toBe(original);
-
-    await writeFile(
-      legacyPath,
-      `${original}{"role":"user","content":"late","timestamp":12}\n`,
-    );
-    expect(await session.loadMessages("legacy", "old-session")).toHaveLength(2);
+      session.loadMessages("legacy-a", "session-0"),
+    ).resolves.toEqual([{ role: "user", content: "legacy-a", timestamp: 10 }]);
+    await expect(
+      session.loadMessages("legacy-b", "session-1"),
+    ).resolves.toEqual([{ role: "user", content: "legacy-b", timestamp: 11 }]);
+    await expect(
+      access(path.join(root, "legacy-a", "session-0.jsonl")),
+    ).rejects.toThrow();
+    await expect(
+      access(path.join(root, "legacy-b", "session-1.jsonl")),
+    ).rejects.toThrow();
   });
 
-  it("壊れたlegacy JSONLは行番号付きで拒否し部分importしない", async () => {
-    const { mkdir } = await import("node:fs/promises");
-    const dir = path.join(root, "broken");
-    await mkdir(dir, { recursive: true });
+  it("いずれかのJSONLが壊れていれば全groupのlegacy原本を残す", async () => {
+    const validDir = path.join(root, "batch-valid");
+    const brokenDir = path.join(root, "batch-broken");
+    await mkdir(validDir, { recursive: true });
+    await mkdir(brokenDir, { recursive: true });
+    const validPath = path.join(validDir, "valid.jsonl");
+    const brokenPath = path.join(brokenDir, "bad.jsonl");
+    await writeFile(validPath, '{"role":"user","content":"ok"}\n');
+    await writeFile(brokenPath, '{"role":"user","content":"ok"}\nnot-json\n');
+
+    await expect(
+      session.migrateLegacySessionStores(["batch-valid", "batch-broken"]),
+    ).rejects.toThrow(/bad\.jsonl:2/);
+    await expect(readFile(validPath, "utf-8")).resolves.toContain("ok");
+    await expect(readFile(brokenPath, "utf-8")).resolves.toContain("not-json");
+  });
+
+  it("既存SQLiteがlegacy JSONLと一致すれば検証後に原本を削除する", async () => {
+    const group = "existing-db";
+    await session.appendMessage(group, "old", {
+      role: "user",
+      content: "already imported",
+      timestamp: 20,
+    });
+    await session.appendMessage(group, "old", {
+      role: "user",
+      content: "new SQLite-only entry",
+      timestamp: 21,
+    });
+    const legacyPath = path.join(root, group, "old.jsonl");
     await writeFile(
-      path.join(dir, "bad.jsonl"),
-      '{"role":"user","content":"ok"}\nnot-json\n',
+      legacyPath,
+      '{"role":"user","content":"already imported","timestamp":20}\n',
     );
 
-    await expect(session.loadMessages("broken", "bad")).rejects.toThrow(
-      /bad\.jsonl:2/,
-    );
-    const db = dbFor("broken");
-    expect(db.prepare("SELECT COUNT(*) AS count FROM sessions").get()).toEqual({
-      count: 0,
-    });
-    db.close();
+    await session.migrateLegacySessionStores([group]);
+
+    await expect(access(legacyPath)).rejects.toThrow();
+    await expect(session.loadMessages(group, "old")).resolves.toHaveLength(2);
   });
 
   it("path traversalと未知のschema versionを拒否する", async () => {
