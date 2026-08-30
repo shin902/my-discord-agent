@@ -288,17 +288,20 @@ function validateExistingSchema(db: Database.Database): void {
   const indexes = db.pragma("index_list(session_entries)") as Array<{
     name: string;
     unique: number;
+    origin: string;
+    partial: number;
   }>;
   const hasIndex = (name: string, unique: number, columns: string[]) => {
     const index = indexes.find((candidate) => candidate.name === name);
-    if (!index || index.unique !== unique) return false;
+    if (!index || index.unique !== unique || index.partial !== 0) return false;
     const actual = (
       db.pragma(`index_info(${name})`) as Array<{ name: string }>
     ).map((column) => column.name);
     return JSON.stringify(actual) === JSON.stringify(columns);
   };
   const hasSequenceUnique = indexes.some((index) => {
-    if (index.unique !== 1) return false;
+    if (index.unique !== 1 || index.origin !== "u" || index.partial !== 0)
+      return false;
     const columns = (
       db.pragma(`index_info(${index.name})`) as Array<{ name: string }>
     ).map((column) => column.name);

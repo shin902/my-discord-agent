@@ -446,6 +446,34 @@ describe("SQLite session trajectory store", () => {
       },
       error: "schemaが不正",
     },
+    {
+      group: "replacement-partial-index",
+      setup(db: Database.Database) {
+        db.pragma("user_version = 1");
+        db.exec(`
+          CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL DEFAULT 'conversation',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          CREATE TABLE session_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
+            sequence INTEGER NOT NULL,
+            entry_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+          );
+          CREATE INDEX session_entries_session_id_id ON session_entries(session_id, id);
+          CREATE UNIQUE INDEX replacement_sequence_unique
+            ON session_entries(session_id, sequence) WHERE sequence >= 0;
+          CREATE TABLE session_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          INSERT INTO session_store_metadata VALUES ('legacy_jsonl_imported', '1');
+        `);
+      },
+      error: "session_entries indexes",
+    },
   ])("既存DB $group を修復せず拒否しJSONLを残す", async ({
     group,
     setup,
