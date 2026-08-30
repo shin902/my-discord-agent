@@ -1504,23 +1504,57 @@ describe("processMessage - Discord イベント通知", () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
-  it("cronJobId が設定されている（direct cron）場合、tool_start イベントは送信されない", async () => {
+  it("direct cron のツール・subagent進捗は送信せず、最終応答は配送キューへ確定する", async () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
-        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+        const onDiscordEvent = (options as SendMessageOptions | undefined)
+          ?.onDiscordEvent;
+        onDiscordEvent?.({
           type: "tool_start",
           toolName: "bash",
+        });
+        onDiscordEvent?.({
+          type: "subagent_tool_start",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          toolName: "read",
+          taskPreview: "inspect task",
+        });
+        onDiscordEvent?.({
+          type: "subagent_update",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          status: "completed",
+          taskPreview: "inspect task",
+          resultPreview: "調査完了",
         });
         return "AI response";
       },
     );
+    const msg = makeMsg({
+      cronJobId: "daily-report",
+      cronDeliveryMode: "direct",
+    });
 
-    await processMessage(makeMsg({ cronJobId: "daily-report" }));
+    await processMessage(msg);
 
     expect(mockSend).not.toHaveBeenCalled();
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "AI response",
+      expect.objectContaining({
+        deliveryPayload: expect.objectContaining({
+          destinationType: "channel",
+          destinationId: msg.channelId,
+        }),
+      }),
+    );
   });
 
-  it("cronJobId が設定されていても error イベントは送信される", async () => {
+  it("direct cron でも error イベントは送信される", async () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
         (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
@@ -1531,7 +1565,12 @@ describe("processMessage - Discord イベント通知", () => {
       },
     );
 
-    await processMessage(makeMsg({ cronJobId: "daily-report" }));
+    await processMessage(
+      makeMsg({
+        cronJobId: "daily-report",
+        cronDeliveryMode: "direct",
+      }),
+    );
 
     await vi.waitFor(() => {
       expect(mockSend).toHaveBeenCalledWith({
