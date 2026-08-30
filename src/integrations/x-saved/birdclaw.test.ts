@@ -32,7 +32,7 @@ describe("BirdClaw subprocess boundary", () => {
       `#!/bin/sh
 printf '%s\\n' "$BIRDCLAW_DB_PATH" > '${envPath}'
 env | sort >> '${envPath}'
-printf '%s\\n' '{"fetched":1}'
+printf '%s\\n' '{"ok":true}'
 `,
     );
     chmodSync(binary, 0o755);
@@ -83,5 +83,38 @@ printf '%s\\n' '{"fetched":1}'
     expect(childEnv).toContain("SSL_CERT_DIR=/etc/ssl/custom-certs");
     expect(childEnv).toContain("NODE_EXTRA_CA_CERTS=/etc/ssl/extra-ca.pem");
     expect(childEnv).toContain("BIRDCLAW_DISABLE_LIVE_WRITES=1");
+  });
+
+  it.each([
+    ["empty output", "", "empty JSON output"],
+    ["invalid JSON", "not-json", "invalid JSON"],
+    ["non-object JSON", "[]", "invalid JSON envelope"],
+  ])("rejects %s without returning the raw payload", async (_label, output, expectedError) => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-output-test-"));
+    tempDirs.push(dir);
+    const binary = path.join(dir, "birdclaw");
+    writeFileSync(
+      binary,
+      `#!/bin/sh
+printf '%s' ${JSON.stringify(output)}
+`,
+    );
+    chmodSync(binary, 0o755);
+    process.env.BIRDCLAW_BIN = binary;
+
+    const result = await syncBirdclawSavedCollections({
+      mode: "xurl",
+      limit: 1,
+      maxPages: 1,
+    });
+
+    for (const collection of [result.bookmarks, result.likes]) {
+      expect(collection.ok).toBe(false);
+      expect(collection.error).toContain(expectedError);
+      expect(collection).not.toHaveProperty("output");
+    }
+    if (output) {
+      expect(JSON.stringify(result)).not.toContain(output);
+    }
   });
 });

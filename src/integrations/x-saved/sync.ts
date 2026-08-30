@@ -29,10 +29,6 @@ export interface XSavedSyncResult {
   startedAt: string;
   completedAt: string;
   newItems: number;
-  updatedItems: number;
-  sourceItems: number;
-  bookmarksFetched: number | null;
-  likesFetched: number | null;
   errors: string[];
   backupPath: string | null;
 }
@@ -60,9 +56,7 @@ export async function runXSavedSync(
       : errors.length === 1
         ? "partial"
         : "failed";
-  let sourceItems = 0;
   let newItems = 0;
-  let updatedItems = 0;
   let backupPath: string | null = null;
 
   const targetDb = openXSavedDb(xSavedDbPath);
@@ -73,9 +67,7 @@ export async function runXSavedSync(
         xSavedDb: targetDb,
         account: options.account,
       });
-      sourceItems = ingest.sourceItems;
       newItems = ingest.newItems;
-      updatedItems = ingest.updatedItems;
     } catch (error) {
       if (!(error instanceof BirdclawSourceError)) throw error;
       errors.push(`ingest: ${error.message}`);
@@ -93,16 +85,8 @@ export async function runXSavedSync(
       startedAt,
       completedAt,
       status,
-      bookmarksFetched: syncResult.bookmarks.fetched,
-      likesFetched: syncResult.likes.fetched,
       newItems,
-      updatedItems,
       error: errors.length > 0 ? errors.join("\n") : null,
-      details: {
-        bookmarks: syncResult.bookmarks.output,
-        likes: syncResult.likes.output,
-        backupPath,
-      },
     });
 
     return {
@@ -110,10 +94,6 @@ export async function runXSavedSync(
       startedAt,
       completedAt,
       newItems,
-      updatedItems,
-      sourceItems,
-      bookmarksFetched: syncResult.bookmarks.fetched,
-      likesFetched: syncResult.likes.fetched,
       errors,
       backupPath,
     };

@@ -80,14 +80,7 @@
     "id": "x-saved-sync",
     "schedule": "0 4 * * *",
     "enabled": false,
-    "handler": "jobs/birdclaw-sync.ts",
-    "settings": {
-      "mode": "xurl",
-      "limit": 100,
-      "maxPages": 3,
-      "backupKeep": 14,
-      "backupPath": "data/x-saved-backups"
-    }
+    "handler": "jobs/birdclaw-sync.ts"
   },
   {
     "id": "x-saved-daily",

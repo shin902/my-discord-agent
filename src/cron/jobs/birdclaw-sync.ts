@@ -4,13 +4,14 @@ import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 
 const SettingsSchema = z.strictObject({
-  mode: z.enum(["auto", "xurl", "bird"]).default("xurl"),
-  limit: z.number().int().positive().max(1000).default(100),
-  maxPages: z.number().int().positive().max(100).default(3),
   account: z.string().min(1).optional(),
+  // Keep accepting settings from the pre-MVP cron configuration during rollout.
+  mode: z.enum(["auto", "xurl", "bird"]).optional(),
+  limit: z.number().int().positive().max(1000).optional(),
+  maxPages: z.number().int().positive().max(100).optional(),
   birdclawDbPath: z.string().min(1).optional(),
   xSavedDbPath: z.string().min(1).optional(),
-  backupKeep: z.number().int().positive().max(365).default(14),
+  backupKeep: z.number().int().positive().max(365).optional(),
   backupPath: z.string().min(1).optional(),
 });
 
@@ -27,11 +28,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const result = await runXSavedSync(settings);
   const summary = {
     status: result.status,
-    bookmarksFetched: result.bookmarksFetched,
-    likesFetched: result.likesFetched,
-    sourceItems: result.sourceItems,
     newItems: result.newItems,
-    updatedItems: result.updatedItems,
     backupPath: result.backupPath,
     errors: result.errors,
   };

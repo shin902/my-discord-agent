@@ -10,7 +10,7 @@ const ROOT = path.resolve(
   "../../..",
 );
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
@@ -28,9 +28,7 @@ export type XSavedStatus = (typeof X_SAVED_STATUSES)[number];
 export type XSavedSyncStatus = "success" | "partial" | "failed";
 
 export interface IngestResult {
-  sourceItems: number;
   newItems: number;
-  updatedItems: number;
 }
 
 /** A failure reading BirdClaw is an operational source failure, not a target DB failure. */
@@ -45,12 +43,8 @@ export interface SyncRunRecord {
   startedAt: string;
   completedAt: string;
   status: XSavedSyncStatus;
-  bookmarksFetched?: number | null;
-  likesFetched?: number | null;
   newItems: number;
-  updatedItems: number;
   error?: string | null;
-  details?: unknown;
 }
 
 interface BirdclawRow {
@@ -135,14 +129,7 @@ function isPathWithin(parent: string, candidate: string): boolean {
   );
 }
 
-function ensureSchema(db: Database.Database): void {
-  const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > SCHEMA_VERSION) {
-    throw new Error(
-      `x-saved schema version ${version} is newer than supported ${SCHEMA_VERSION}`,
-    );
-  }
-
+function createSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS x_items (
       tweet_id TEXT PRIMARY KEY,
@@ -153,7 +140,6 @@ function ensureSchema(db: Database.Database): void {
       external_urls_json TEXT NOT NULL DEFAULT '[]',
       seen_liked INTEGER NOT NULL DEFAULT 0 CHECK (seen_liked IN (0, 1)),
       seen_bookmarked INTEGER NOT NULL DEFAULT 0 CHECK (seen_bookmarked IN (0, 1)),
-      baseline INTEGER NOT NULL DEFAULT 0 CHECK (baseline IN (0, 1)),
       first_seen_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL
     );
@@ -162,17 +148,8 @@ function ensureSchema(db: Database.Database): void {
       tweet_id TEXT PRIMARY KEY REFERENCES x_items(tweet_id) ON DELETE CASCADE,
       status TEXT NOT NULL DEFAULT 'inbox'
         CHECK (status IN ('inbox', 'reviewed', 'keep', 'try', 'done', 'ignore')),
-      priority INTEGER CHECK (priority IS NULL OR (priority >= 0 AND priority <= 100)),
-      summary TEXT,
       note TEXT,
-      processed_at TEXT,
       updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS x_tags (
-      tweet_id TEXT NOT NULL REFERENCES x_items(tweet_id) ON DELETE CASCADE,
-      tag TEXT NOT NULL,
-      PRIMARY KEY (tweet_id, tag)
     );
 
     CREATE TABLE IF NOT EXISTS x_sync_runs (
@@ -180,12 +157,8 @@ function ensureSchema(db: Database.Database): void {
       started_at TEXT NOT NULL,
       completed_at TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failed')),
-      bookmarks_fetched INTEGER,
-      likes_fetched INTEGER,
       new_items INTEGER NOT NULL DEFAULT 0,
-      updated_items INTEGER NOT NULL DEFAULT 0,
-      error TEXT,
-      details_json TEXT NOT NULL DEFAULT '{}'
+      error TEXT
     );
 
     CREATE TABLE IF NOT EXISTS x_meta (
@@ -195,19 +168,62 @@ function ensureSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_x_items_last_seen
       ON x_items(last_seen_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_x_items_baseline
-      ON x_items(baseline, first_seen_at DESC);
     CREATE INDEX IF NOT EXISTS idx_x_item_state_status
       ON x_item_state(status, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_x_tags_tag
-      ON x_tags(tag, tweet_id);
     CREATE INDEX IF NOT EXISTS idx_x_sync_runs_completed
       ON x_sync_runs(completed_at DESC);
   `);
+}
 
+function migrateSchemaV1(db: Database.Database): void {
+  const migrate = db.transaction(() => {
+    const baselineMode = db
+      .prepare("SELECT value FROM x_meta WHERE key = 'baseline_mode'")
+      .get() as { value: string } | undefined;
+    const legacyMarker = db
+      .prepare("SELECT value FROM x_meta WHERE key = 'baseline_initialized_at'")
+      .get() as { value: string } | undefined;
+    const inferredMarker = db
+      .prepare(
+        "SELECT MAX(first_seen_at) AS value FROM x_items WHERE baseline = 1",
+      )
+      .get() as { value: string | null };
+    const initialImportCompletedAt =
+      baselineMode?.value === "keep-backlog"
+        ? undefined
+        : (legacyMarker?.value ?? inferredMarker.value);
+    if (initialImportCompletedAt) {
+      db.prepare(
+        "INSERT OR IGNORE INTO x_meta (key, value) VALUES ('initial_import_completed_at', ?)",
+      ).run(initialImportCompletedAt);
+    }
+
+    // Keep the legacy columns and x_tags table so already-installed versions of
+    // the x-saved skill remain usable while the schema rolls forward.
+    db.exec(
+      "DELETE FROM x_meta WHERE key IN ('baseline_initialized_at', 'baseline_mode')",
+    );
+  });
+  migrate();
+}
+
+function ensureSchema(db: Database.Database): void {
+  const version = db.pragma("user_version", { simple: true }) as number;
+  if (version > SCHEMA_VERSION) {
+    throw new Error(
+      `x-saved schema version ${version} is newer than supported ${SCHEMA_VERSION}`,
+    );
+  }
   if (version === 0) {
+    createSchema(db);
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
+    return;
+  }
+  if (version === 1) {
+    migrateSchemaV1(db);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
+  createSchema(db);
 }
 
 export function openXSavedDb(
@@ -395,11 +411,11 @@ export function ingestBirdclawSavedItems(options?: {
     const upsertItem = targetDb.prepare(`
       INSERT INTO x_items (
         tweet_id, text, author_handle, url, tweet_created_at,
-        external_urls_json, seen_liked, seen_bookmarked, baseline,
+        external_urls_json, seen_liked, seen_bookmarked,
         first_seen_at, last_seen_at
       ) VALUES (
         @tweetId, @text, @authorHandle, @url, @tweetCreatedAt,
-        @externalUrlsJson, @seenLiked, @seenBookmarked, 0, @now, @now
+        @externalUrlsJson, @seenLiked, @seenBookmarked, @now, @now
       )
       ON CONFLICT(tweet_id) DO UPDATE SET
         text = excluded.text,
@@ -413,12 +429,11 @@ export function ingestBirdclawSavedItems(options?: {
     `);
     const ensureState = targetDb.prepare(`
       INSERT OR IGNORE INTO x_item_state (
-        tweet_id, status, priority, summary, note, processed_at, updated_at
-      ) VALUES (?, 'inbox', NULL, NULL, NULL, NULL, ?)
+        tweet_id, status, note, updated_at
+      ) VALUES (?, 'inbox', NULL, ?)
     `);
 
     let newItems = 0;
-    let updatedItems = 0;
     const write = targetDb.transaction(() => {
       for (const row of rows) {
         const authorHandle = row.author_handle ?? "";
@@ -440,35 +455,27 @@ export function ingestBirdclawSavedItems(options?: {
           now,
         });
         ensureState.run(tweetId, now);
-        if (existing.has(tweetId)) updatedItems += 1;
-        else newItems += 1;
+        if (!existing.has(tweetId)) newItems += 1;
       }
     });
     write();
 
-    return { sourceItems: rows.length, newItems, updatedItems };
+    return { newItems };
   } finally {
     if (ownsTarget) targetDb.close();
   }
 }
 
-export function initializeHistoricalBaseline(
+export function markInitialImportCompleted(
   db: Database.Database,
-  now = new Date().toISOString(),
-): { applied: boolean; count: number } {
-  const current = db
-    .prepare("SELECT value FROM x_meta WHERE key = 'baseline_initialized_at'")
-    .get() as { value: string } | undefined;
-  if (current) return { applied: false, count: 0 };
-
-  const result = db.transaction(() => {
-    const update = db.prepare("UPDATE x_items SET baseline = 1").run();
-    db.prepare(
-      "INSERT INTO x_meta (key, value) VALUES ('baseline_initialized_at', ?)",
-    ).run(now);
-    return update.changes;
-  })();
-  return { applied: true, count: result };
+  completedAt = new Date().toISOString(),
+): boolean {
+  const result = db
+    .prepare(
+      "INSERT OR IGNORE INTO x_meta (key, value) VALUES ('initial_import_completed_at', ?)",
+    )
+    .run(completedAt);
+  return result.changes > 0;
 }
 
 export function recordSyncRun(
@@ -481,24 +488,16 @@ export function recordSyncRun(
         started_at,
         completed_at,
         status,
-        bookmarks_fetched,
-        likes_fetched,
         new_items,
-        updated_items,
-        error,
-        details_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        error
+      ) VALUES (?, ?, ?, ?, ?)`,
     )
     .run(
       record.startedAt,
       record.completedAt,
       record.status,
-      record.bookmarksFetched ?? null,
-      record.likesFetched ?? null,
       record.newItems,
-      record.updatedItems,
       record.error ?? null,
-      JSON.stringify(record.details ?? {}),
     );
   return Number(result.lastInsertRowid);
 }
