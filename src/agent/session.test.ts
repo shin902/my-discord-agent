@@ -13,6 +13,7 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const fsMock = vi.hoisted(() => ({
+  events: [] as string[],
   failingUnlinkPath: undefined as string | undefined,
   syncedPaths: new Set<string>(),
 }));
@@ -25,7 +26,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (target === fsMock.failingUnlinkPath) {
         throw new Error(`injected unlink failure: ${String(target)}`);
       }
-      return actual.unlink(target);
+      await actual.unlink(target);
+      fsMock.events.push(`unlink:${String(target)}`);
     },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
@@ -35,6 +37,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
             return async () => {
               await target.sync();
               fsMock.syncedPaths.add(String(args[0]));
+              fsMock.events.push(`sync:${String(args[0])}`);
             };
           }
           const value = Reflect.get(target, property, target);
@@ -216,15 +219,31 @@ describe("SQLite session trajectory store", () => {
     await writeFile(deletedPath, '{"role":"user","content":"deleted"}\n');
     await writeFile(retainedPath, '{"role":"user","content":"retained"}\n');
     fsMock.failingUnlinkPath = retainedPath;
+    fsMock.events.length = 0;
     fsMock.syncedPaths.clear();
 
     try {
-      await expect(
-        session.migrateLegacySessionStores([
-          "unlink-success",
-          "unlink-failure",
-        ]),
-      ).rejects.toThrow("injected unlink failure");
+      await session
+        .migrateLegacySessionStores(["unlink-success", "unlink-failure"])
+        .catch((error: unknown) => {
+          fsMock.events.push("rejected");
+          throw error;
+        })
+        .then(
+          () => expect.fail("migration should reject"),
+          (error: unknown) =>
+            expect(error).toHaveProperty(
+              "message",
+              expect.stringContaining("injected unlink failure"),
+            ),
+        );
+      const deletionStart = fsMock.events.indexOf(`unlink:${deletedPath}`);
+      expect(deletionStart).toBeGreaterThanOrEqual(0);
+      expect(fsMock.events.slice(deletionStart)).toEqual([
+        `unlink:${deletedPath}`,
+        `sync:${syncedDir}`,
+        "rejected",
+      ]);
       expect(fsMock.syncedPaths).toContain(syncedDir);
       await expect(access(deletedPath)).rejects.toThrow();
       await expect(access(retainedPath)).resolves.toBeUndefined();
