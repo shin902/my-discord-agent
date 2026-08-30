@@ -2,7 +2,8 @@ import { type Client, Events, type Message } from "discord.js";
 import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
 import {
   handleBotCommand,
-  synchronizeBotCommandWithRetry,
+  handleSkillCommand,
+  synchronizeDiscordCommandsWithRetry,
 } from "./commands.js";
 import { handleLiveDiscordMessage } from "./intake.js";
 
@@ -14,8 +15,8 @@ export function registerHandlers(
 ): void {
   client.once(Events.ClientReady, (c) => {
     console.log(`起動しました: ${c.user.tag}`);
-    void synchronizeBotCommandWithRetry(c).catch((error) =>
-      console.error("[handler] /bot コマンドの同期を断念しました:", error),
+    void synchronizeDiscordCommandsWithRetry(c).catch((error) =>
+      console.error("[handler] Discordコマンドの同期を断念しました:", error),
     );
     if (onReady) {
       void Promise.resolve()
@@ -36,10 +37,15 @@ export function registerHandlers(
   );
 
   client.on(Events.InteractionCreate, (interaction) => {
-    if (!interaction.isChatInputCommand() || interaction.commandName !== "bot")
-      return;
-    void handleBotCommand(interaction, discordBotId).catch((error) =>
-      console.error("[handler] /bot コマンドの処理に失敗しました:", error),
-    );
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName === "bot") {
+      void handleBotCommand(interaction, discordBotId).catch((error) =>
+        console.error("[handler] /bot コマンドの処理に失敗しました:", error),
+      );
+    } else if (interaction.commandName === "skill") {
+      void handleSkillCommand(interaction, discordBotId).catch((error) =>
+        console.error("[handler] /skill コマンドの処理に失敗しました:", error),
+      );
+    }
   });
 }

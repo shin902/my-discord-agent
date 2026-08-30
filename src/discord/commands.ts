@@ -4,6 +4,7 @@ import {
   type Client,
   SlashCommandBuilder,
 } from "discord.js";
+import { pickAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import {
@@ -39,50 +40,70 @@ export const BOT_COMMAND = new SlashCommandBuilder()
     option.setName("session").setDescription("resumeするTask Session handle"),
   );
 
-/** Synchronize the single command owned by this application. */
-export async function synchronizeBotCommand(client: Client): Promise<void> {
+export const SKILL_COMMAND = new SlashCommandBuilder()
+  .setName("skill")
+  .setDescription("指定したスキルを明示的に実行します")
+  .addStringOption((option) =>
+    option
+      .setName("skill")
+      .setDescription("実行するスキル名")
+      .setRequired(true),
+  )
+  .addStringOption((option) =>
+    option.setName("prompt").setDescription("スキルへの追加指示"),
+  );
+
+const DISCORD_COMMANDS = [BOT_COMMAND, SKILL_COMMAND];
+
+/** Synchronize commands owned by this application without replacing unrelated commands. */
+export async function synchronizeDiscordCommands(
+  client: Client,
+): Promise<void> {
   if (!client.application)
     throw new Error("Discord application が未初期化です");
-  const command = BOT_COMMAND.toJSON();
-  const existing = (await client.application.commands.fetch()).find(
-    (registered) =>
-      registered.name === command.name &&
-      registered.type === ApplicationCommandType.ChatInput,
-  );
-  if (existing) {
-    await client.application.commands.edit(existing.id, command);
-  } else {
-    await client.application.commands.create(command);
+  const existingCommands = await client.application.commands.fetch();
+  for (const definition of DISCORD_COMMANDS) {
+    const command = definition.toJSON();
+    const existing = existingCommands.find(
+      (registered) =>
+        registered.name === command.name &&
+        registered.type === ApplicationCommandType.ChatInput,
+    );
+    if (existing) {
+      await client.application.commands.edit(existing.id, command);
+    } else {
+      await client.application.commands.create(command);
+    }
   }
 }
 
-export interface BotCommandSyncRetryOptions {
+export interface DiscordCommandSyncRetryOptions {
   maxAttempts?: number;
   retryDelayMs?: number;
 }
 
 /** Retry command registration briefly because ClientReady can precede API readiness. */
-export async function synchronizeBotCommandWithRetry(
+export async function synchronizeDiscordCommandsWithRetry(
   client: Client,
-  options: BotCommandSyncRetryOptions = {},
+  options: DiscordCommandSyncRetryOptions = {},
 ): Promise<void> {
   const maxAttempts = options.maxAttempts ?? 3;
   const retryDelayMs = options.retryDelayMs ?? 1_000;
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(
-      `[discord-command] /bot 同期を試行します (${attempt}/${maxAttempts})`,
+      `[discord-command] コマンド同期を試行します (${attempt}/${maxAttempts})`,
     );
     try {
-      await synchronizeBotCommand(client);
+      await synchronizeDiscordCommands(client);
       console.log(
-        `[discord-command] /bot 同期に成功しました (${attempt}/${maxAttempts})`,
+        `[discord-command] コマンド同期に成功しました (${attempt}/${maxAttempts})`,
       );
       return;
     } catch (error) {
       lastError = error;
       console.error(
-        `[discord-command] /bot 同期に失敗しました (${attempt}/${maxAttempts}):`,
+        `[discord-command] コマンド同期に失敗しました (${attempt}/${maxAttempts}):`,
         error,
       );
       if (attempt < maxAttempts) {
@@ -127,6 +148,85 @@ async function replyEphemeral(
 
 function validSessionHandle(handle: string): boolean {
   return /^[A-Za-z0-9_-]{8,64}$/.test(handle);
+}
+
+function validSkillName(name: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(name);
+}
+
+/** Enqueue a forced skill invocation through the normal conversation path. */
+export async function handleSkillCommand(
+  interaction: ChatInputCommandInteraction,
+  discordBotId = DEFAULT_DISCORD_BOT_ID,
+): Promise<void> {
+  const skillName = interaction.options.getString("skill", true).trim();
+  const prompt = interaction.options.getString("prompt")?.trim() ?? "";
+  if (!validSkillName(skillName)) {
+    await replyEphemeral(
+      interaction,
+      "スキル名には英数字、ハイフン、アンダースコアのみ使用できます。",
+    );
+    return;
+  }
+
+  const channel = interaction.channel as InteractionChannel | null;
+  const isThread = channel?.isThread?.() === true;
+  const lookupId = await interactionGroupLookupId(interaction);
+  const match = await findGroupByChannelId(lookupId);
+  if (!match) {
+    await replyEphemeral(
+      interaction,
+      "このチャンネルはAgentGroupに未登録です。",
+    );
+    return;
+  }
+
+  const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
+  if (discordBotId !== expectedDiscordBotId) {
+    await replyEphemeral(
+      interaction,
+      "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
+    );
+    return;
+  }
+
+  if (match.channel.sessionMode === "shared" && isThread) {
+    await replyEphemeral(
+      interaction,
+      "このコマンドは親チャンネルで実行してください。",
+    );
+    return;
+  }
+  if (match.channel.sessionMode !== "shared" && !isThread) {
+    await replyEphemeral(
+      interaction,
+      "このコマンドはスレッド内で実行してください。",
+    );
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const configOverride = pickAgentConfig(match.channel);
+    await getQueueRepository().enqueue({
+      channelId: interaction.channelId,
+      groupName: match.group.name,
+      routingChannelId: lookupId,
+      sessionId: interaction.channelId,
+      content: `./command ${skillName}${prompt ? ` ${prompt}` : ""}`,
+      timestamp: new Date().toISOString(),
+      idempotencyKey: `discord-interaction:${interaction.id}`,
+      ...(Object.keys(configOverride).length > 0 ? { configOverride } : {}),
+    });
+    await interaction.editReply({
+      content: `スキル「${skillName}」の実行を受け付けました。`,
+    });
+  } catch (error) {
+    await replyEphemeral(
+      interaction,
+      `スキルの実行を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /** Enqueue a Bot request while retaining the normal delivery path. */

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   createBotTaskSessionAndEnqueue: vi.fn(),
   resumeBotTaskSessionAndEnqueue: vi.fn(),
   listBotTaskSessions: vi.fn(),
+  enqueue: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", async (importOriginal) => {
@@ -22,14 +23,17 @@ vi.mock("../queue/repository.js", () => ({
     createBotTaskSessionAndEnqueue: mocks.createBotTaskSessionAndEnqueue,
     resumeBotTaskSessionAndEnqueue: mocks.resumeBotTaskSessionAndEnqueue,
     listBotTaskSessions: mocks.listBotTaskSessions,
+    enqueue: mocks.enqueue,
   }),
 }));
 
 const {
   BOT_COMMAND,
+  SKILL_COMMAND,
   handleBotCommand,
-  synchronizeBotCommand,
-  synchronizeBotCommandWithRetry,
+  handleSkillCommand,
+  synchronizeDiscordCommands,
+  synchronizeDiscordCommandsWithRetry,
 } = await import("./commands.js");
 
 function makeInteraction(options: {
@@ -55,6 +59,32 @@ function makeInteraction(options: {
         if (name === "session") return options.session;
         return options.prompt ?? "Do it";
       },
+    },
+    deferred: false,
+    replied: false,
+    deferReply: vi.fn().mockResolvedValue(undefined),
+    editReply: vi.fn().mockResolvedValue(undefined),
+    reply: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function makeSkillInteraction(options: {
+  skill?: string;
+  prompt?: string;
+  channelId?: string;
+  isThread?: boolean;
+  parentId?: string | null;
+}) {
+  return {
+    id: "skill-interaction-1",
+    channelId: options.channelId ?? "channel-1",
+    channel: {
+      isThread: () => options.isThread ?? false,
+      parentId: options.parentId ?? null,
+    },
+    options: {
+      getString: (name: string) =>
+        name === "skill" ? (options.skill ?? "session-logs") : options.prompt,
     },
     deferred: false,
     replied: false,
@@ -112,39 +142,65 @@ describe("BOT_COMMAND", () => {
   });
 });
 
-describe("synchronizeBotCommand", () => {
-  it("creates /bot without replacing unrelated application commands", async () => {
+describe("SKILL_COMMAND", () => {
+  it("defines a required skill and optional prompt without autocomplete", () => {
+    const json = SKILL_COMMAND.toJSON();
+    expect(json.name).toBe("skill");
+    expect(json.options).toEqual([
+      expect.objectContaining({
+        name: "skill",
+        type: 3,
+        required: true,
+        autocomplete: undefined,
+      }),
+      expect.objectContaining({
+        name: "prompt",
+        type: 3,
+        required: false,
+      }),
+    ]);
+  });
+});
+
+describe("synchronizeDiscordCommands", () => {
+  it("creates /bot and /skill without replacing unrelated commands", async () => {
     const fetch = vi.fn().mockResolvedValue([]);
     const create = vi.fn().mockResolvedValue(undefined);
     const set = vi.fn();
 
-    await synchronizeBotCommand({
+    await synchronizeDiscordCommands({
       application: { commands: { fetch, create, set } },
     } as never);
 
     expect(fetch).toHaveBeenCalledOnce();
     expect(create).toHaveBeenCalledWith(BOT_COMMAND.toJSON());
+    expect(create).toHaveBeenCalledWith(SKILL_COMMAND.toJSON());
     expect(set).not.toHaveBeenCalled();
   });
 
-  it("edits an existing /bot command instead of creating a duplicate", async () => {
+  it("edits existing owned commands instead of creating duplicates", async () => {
     const fetch = vi.fn().mockResolvedValue([
       { id: "bot-command-id", name: "bot", type: 1 },
+      { id: "skill-command-id", name: "skill", type: 1 },
       { id: "unrelated-id", name: "other", type: 1 },
     ]);
     const edit = vi.fn().mockResolvedValue(undefined);
     const create = vi.fn();
 
-    await synchronizeBotCommand({
+    await synchronizeDiscordCommands({
       application: { commands: { fetch, edit, create } },
     } as never);
 
     expect(edit).toHaveBeenCalledWith("bot-command-id", BOT_COMMAND.toJSON());
+    expect(edit).toHaveBeenCalledWith(
+      "skill-command-id",
+      SKILL_COMMAND.toJSON(),
+    );
     expect(create).not.toHaveBeenCalled();
   });
 });
 
-describe("synchronizeBotCommandWithRetry", () => {
+describe("synchronizeDiscordCommandsWithRetry", () => {
   it("retries transient synchronization failures and eventually succeeds", async () => {
     const fetch = vi
       .fn()
@@ -152,13 +208,13 @@ describe("synchronizeBotCommandWithRetry", () => {
       .mockResolvedValue([]);
     const create = vi.fn().mockResolvedValue(undefined);
 
-    await synchronizeBotCommandWithRetry(
+    await synchronizeDiscordCommandsWithRetry(
       { application: { commands: { fetch, create } } } as never,
       { maxAttempts: 3, retryDelayMs: 0 },
     );
 
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(create).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledTimes(2);
   });
 
   it("stops after the bounded number of attempts", async () => {
@@ -166,12 +222,93 @@ describe("synchronizeBotCommandWithRetry", () => {
     const fetch = vi.fn().mockRejectedValue(error);
 
     await expect(
-      synchronizeBotCommandWithRetry(
+      synchronizeDiscordCommandsWithRetry(
         { application: { commands: { fetch } } } as never,
         { maxAttempts: 3, retryDelayMs: 0 },
       ),
     ).rejects.toBe(error);
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("handleSkillCommand", () => {
+  it("enqueues the existing ./command form in a shared session", async () => {
+    const interaction = makeSkillInteraction({
+      skill: "session-logs",
+      prompt: "昨日の作業を探して",
+    });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.enqueue).toHaveBeenCalledWith({
+      channelId: "channel-1",
+      groupName: "main",
+      routingChannelId: "channel-1",
+      sessionId: "channel-1",
+      content: "./command session-logs 昨日の作業を探して",
+      timestamp: expect.any(String),
+      idempotencyKey: "discord-interaction:skill-interaction-1",
+      configOverride: {
+        model: { provider: "channel-provider", modelId: "channel-model" },
+      },
+    });
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "スキル「session-logs」の実行を受け付けました。",
+    });
+  });
+
+  it("resolves a thread through its parent and keeps the thread session", async () => {
+    mocks.findGroupByChannelId.mockResolvedValueOnce({
+      group: { name: "main" },
+      channel: { channelId: "parent-channel", sessionMode: "thread" },
+    });
+    const interaction = makeSkillInteraction({
+      skill: "agent-reach",
+      channelId: "thread-1",
+      isThread: true,
+      parentId: "parent-channel",
+    });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.findGroupByChannelId).toHaveBeenCalledWith("parent-channel");
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "thread-1",
+        routingChannelId: "parent-channel",
+        sessionId: "thread-1",
+        content: "./command agent-reach",
+      }),
+    );
+  });
+
+  it("rejects invalid skill names before enqueueing", async () => {
+    const interaction = makeSkillInteraction({ skill: "../secret" });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "スキル名には英数字、ハイフン、アンダースコアのみ使用できます。",
+      ephemeral: true,
+    });
+  });
+
+  it("rejects parent-channel execution for thread-based sessions", async () => {
+    mocks.findGroupByChannelId.mockResolvedValueOnce({
+      group: { name: "main" },
+      channel: { channelId: "channel-1", sessionMode: "auto-thread" },
+    });
+    const interaction = makeSkillInteraction({ skill: "session-logs" });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "このコマンドはスレッド内で実行してください。",
+      ephemeral: true,
+    });
   });
 });
 

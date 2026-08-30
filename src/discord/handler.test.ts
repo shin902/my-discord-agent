@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockClient = { once: vi.fn(), on: vi.fn() };
 const mockHandleBotCommand = vi.hoisted(() => vi.fn());
-const mockSynchronizeBotCommandWithRetry = vi.hoisted(() => vi.fn());
+const mockHandleSkillCommand = vi.hoisted(() => vi.fn());
+const mockSynchronizeDiscordCommandsWithRetry = vi.hoisted(() => vi.fn());
 vi.mock("./client.js", () => ({ DEFAULT_DISCORD_BOT_ID: "personal" }));
 vi.mock("./commands.js", () => ({
   handleBotCommand: mockHandleBotCommand,
-  synchronizeBotCommandWithRetry: mockSynchronizeBotCommandWithRetry,
+  handleSkillCommand: mockHandleSkillCommand,
+  synchronizeDiscordCommandsWithRetry: mockSynchronizeDiscordCommandsWithRetry,
 }));
 
 const mockAppendInbox = vi.hoisted(() => vi.fn());
@@ -77,7 +79,10 @@ function makeMockMessage(opts: {
 describe("registerHandlers - InteractionCreate", () => {
   beforeEach(() => {
     mockHandleBotCommand.mockReset().mockResolvedValue(undefined);
-    mockSynchronizeBotCommandWithRetry.mockReset().mockResolvedValue(undefined);
+    mockHandleSkillCommand.mockReset().mockResolvedValue(undefined);
+    mockSynchronizeDiscordCommandsWithRetry
+      .mockReset()
+      .mockResolvedValue(undefined);
   });
 
   it("passes the receiving Discord Bot identity to command handling", () => {
@@ -97,13 +102,36 @@ describe("registerHandlers - InteractionCreate", () => {
 
     expect(mockHandleBotCommand).toHaveBeenCalledWith(interaction, "secondary");
   });
+
+  it("dispatches /skill with the receiving Discord Bot identity", () => {
+    const client = { once: vi.fn(), on: vi.fn() };
+    registerHandlers(client as never, undefined, "secondary");
+    const handler = client.on.mock.calls.find(
+      ([event]) => event === "interactionCreate",
+    )?.[1] as ((interaction: unknown) => void) | undefined;
+    if (!handler)
+      throw new Error("interactionCreate handler was not registered");
+    const interaction = {
+      isChatInputCommand: () => true,
+      commandName: "skill",
+    };
+
+    handler(interaction);
+
+    expect(mockHandleSkillCommand).toHaveBeenCalledWith(
+      interaction,
+      "secondary",
+    );
+  });
 });
 
 describe("registerHandlers - MessageCreate", () => {
   beforeEach(() => {
     mockFindGroup.mockReset();
     mockAppendInbox.mockReset().mockResolvedValue(undefined);
-    mockSynchronizeBotCommandWithRetry.mockReset().mockResolvedValue(undefined);
+    mockSynchronizeDiscordCommandsWithRetry
+      .mockReset()
+      .mockResolvedValue(undefined);
   });
 
   it("起動時バックフィルが未完了でもライブMessageCreateを処理する", async () => {
