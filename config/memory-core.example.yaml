@@ -9,9 +9,9 @@ data:
   baseDir: /data/tdai-memory
 
 llm:
-  baseUrl: "${TDAI_LLM_BASE_URL}"
-  apiKey: "${TDAI_LLM_API_KEY}"
-  model: "${TDAI_LLM_MODEL}"
+  baseUrl: "https://api.openai.com/v1"
+  apiKey: "replace-me"
+  model: "gpt-4o-mini"
   maxTokens: 32000
   timeoutMs: 300000
 

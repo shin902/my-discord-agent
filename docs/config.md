@@ -69,13 +69,17 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
 
 `compose.memory-core.yaml`はMemoryCore単体を公式image `agentmemory/memory-core:1.0.1`から起動します。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストへの公開はloopbackのみに限定され、MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
 
-`.env`へMemoryCore内部の抽出・統合に使うOpenAI-compatible LLMを設定します。これらの値だけがMemoryCore containerへ渡され、Discord tokenやmy-discord-agent本体のprovider credentialは渡されません。
+exampleをGit管理外の実設定へコピーし、MemoryCore内部の抽出・統合に使うOpenAI-compatible LLMを`config/memory-core.yaml`の`llm`へ設定します。このファイルにはAPI keyが含まれるためcommitしないでください。
 
-```dotenv
-TDAI_LLM_API_KEY=replace-me
-TDAI_LLM_BASE_URL=https://api.openai.com/v1
-TDAI_LLM_MODEL=gpt-4o-mini
-# MEMORY_CORE_PORT=8420
+```bash
+cp config/memory-core.example.yaml config/memory-core.yaml
+```
+
+```yaml
+llm:
+  baseUrl: "https://api.openai.com/v1"
+  apiKey: "replace-me"
+  model: "gpt-4o-mini"
 ```
 
 起動してhealth endpointを確認します。
@@ -103,7 +107,7 @@ Gateway認証はローカルloopback運用では未設定にできます。`MEMO
 }
 ```
 
-MemoryCoreのpipeline設定は [`config/memory-core.example.yaml`](../config/memory-core.example.yaml) にあります。image tagはデータ形式のmigration notesを確認してから明示的に更新し、`latest`へは変更しないでください。volumeを削除する`down -v`は保存済みmemoryを消すため、通常の停止には使わないでください。
+Composeは`config/memory-core.yaml`を読み取り専用でマウントします。設定項目の雛形は [`config/memory-core.example.yaml`](../config/memory-core.example.yaml) にあります。image tagはデータ形式のmigration notesを確認してから明示的に更新し、`latest`へは変更しないでください。volumeを削除する`down -v`は保存済みmemoryを消すため、通常の停止には使わないでください。
 
 ## config/providers.json
 

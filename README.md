@@ -152,7 +152,8 @@ pnpm sandbox build
 TencentDB Agent Memoryを使う場合は、公式MemoryCore imageをsidecarとして起動します。cloneや自前buildは不要です。
 
 ```bash
-# .env の TDAI_LLM_API_KEY / TDAI_LLM_BASE_URL / TDAI_LLM_MODEL を設定してから
+cp config/memory-core.example.yaml config/memory-core.yaml
+# config/memory-core.yaml の llm 設定を編集してから
 pnpm memory-core up -d
 curl http://127.0.0.1:8420/health
 ```
