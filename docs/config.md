@@ -86,7 +86,7 @@ llm:
 
 ```bash
 pnpm memory-core up -d
-curl "http://127.0.0.1:${MEMORY_CORE_PORT:-8420}/health"
+curl "http://$(pnpm --silent memory-core port memory-core 8420)/health"
 
 # 運用コマンド
 pnpm memory-core ps
