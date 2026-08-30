@@ -89,6 +89,20 @@ function appendPath(basePath: string, restPath: string): string {
   return `${basePath.replace(/\/$/, "")}/${restPath.replace(/^\//, "")}`;
 }
 
+function containsPathTraversal(path: string): boolean {
+  let decoded = path;
+  // Decode repeatedly so an upstream's additional decode cannot reveal a hidden separator or dot segment.
+  while (true) {
+    const next = decoded.replace(/%([0-9a-f]{2})/gi, (_, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+    if (next === decoded) break;
+    decoded = next;
+  }
+
+  return decoded.replaceAll("\\", "/").split("/").includes("..");
+}
+
 async function handleRequest(
   creds: CredentialEntry[],
   timeoutMs: number,
@@ -96,6 +110,12 @@ async function handleRequest(
   res: ServerResponse,
 ): Promise<void> {
   const url = req.url ?? "/";
+  const rawPathname = url.split("?", 1)[0] ?? "/";
+  if (containsPathTraversal(rawPathname)) {
+    res.writeHead(400);
+    res.end("Invalid request path");
+    return;
+  }
   const parsedReqUrl = new URL(url, "http://localhost");
   const pathname = parsedReqUrl.pathname;
   const search = parsedReqUrl.search;

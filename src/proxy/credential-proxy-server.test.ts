@@ -124,6 +124,42 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
     expect(opts.path).toBe("/v1/chat/completions?stream=true");
   });
 
+  it.each([
+    "/openai/../admin",
+    "/openai/%2e%2e/admin",
+    "/openai/..%2fadmin",
+    "/openai/%2e%2e%5cadmin",
+    "/openai/%252e%252e%252fadmin",
+    "/openai/%25%32%65%25%32%65%25%32%66admin",
+  ])("path traversal を upstream へ転送しない (%s)", async (path) => {
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(CREDS, 30000);
+    const res = makeRes();
+
+    handler(makeReq(path), res as unknown as ServerResponse);
+
+    expect(res.writeHead).toHaveBeenCalledWith(400);
+    expect(res.end).toHaveBeenCalledWith("Invalid request path");
+    expect(requestMock).not.toHaveBeenCalled();
+  });
+
+  it("通常のドットを含む path はそのまま転送する", async () => {
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(CREDS, 30000);
+
+    handler(
+      makeReq("/openai/files/archive..json"),
+      makeRes() as unknown as ServerResponse,
+    );
+
+    const opts = requestMock.mock.calls[0][0];
+    expect(opts.path).toBe("/v1/files/archive..json");
+  });
+
   it("host ヘッダは upstream に転送しない", async () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
