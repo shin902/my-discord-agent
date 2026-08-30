@@ -242,6 +242,7 @@ function makeMsg(overrides?: Partial<InboxMessage>): InboxMessage {
 function makeMemoryAdmission(
   overrides: Partial<{
     groupName: string;
+    routingChannelId: string;
     channelId: string;
     baseUrl: string;
     serviceId: string;
@@ -254,6 +255,7 @@ function makeMemoryAdmission(
 ) {
   return buildAgentMemoryAdmission({
     groupName: "default",
+    routingChannelId: "ch-1",
     channelId: "ch-1",
     baseUrl: "http://127.0.0.1:8420",
     serviceId: "default",
@@ -2153,7 +2155,17 @@ describe("processMessage - durable result", () => {
     isAgentMemoryEligible.mockReturnValue(true);
     const shadowBaseUrl = "http://source-shadow-job.test";
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    const msg = makeMsg({ userId: "discord-user-1" });
+    const msg = makeMsg({
+      channelId: "thread-1",
+      routingChannelId: "root-1",
+      sessionId: "thread-1",
+      userId: "discord-user-1",
+      memoryShadowAdmission: makeMemoryAdmission({
+        routingChannelId: "root-1",
+        channelId: "thread-1",
+        sessionId: "thread-1",
+      }),
+    });
     let settled = false;
     const processing = processMessage(msg).then(() => {
       settled = true;

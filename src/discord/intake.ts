@@ -3,6 +3,10 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
+import {
+  isAgentMemoryEligible,
+  loadAgentMemoryConfig,
+} from "../config/agent-memory.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
@@ -181,13 +185,29 @@ async function ingest(
         : undefined;
 
     const channelConfigOverride = pickAgentConfig(match.channel);
+    let memoryUserId: string | undefined;
+    try {
+      const memoryConfig = await loadAgentMemoryConfig();
+      if (
+        isAgentMemoryEligible(memoryConfig, {
+          groupName: match.group.name,
+          userId: message.author.bot ? undefined : message.author.id,
+          authorIsBot: message.author.bot,
+        })
+      ) {
+        memoryUserId = message.author.id;
+      }
+    } catch (error) {
+      // Memory capture is best-effort and must never block Discord intake.
+      console.error("[handler] Agent Memory eligibility check failed:", error);
+    }
     const payload: QueueInput = {
       channelId: inboxChannelId,
       groupName: match.group.name,
+      routingChannelId: lookupId,
       sessionId,
       messageId: replyMessageId,
-      userId: message.author.id,
-      authorIsBot: message.author.bot,
+      ...(memoryUserId ? { userId: memoryUserId } : {}),
       content: message.content,
       timestamp: message.createdAt.toISOString(),
       idempotencyKey: `discord-message:${message.id}`,

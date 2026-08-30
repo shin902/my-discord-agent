@@ -126,6 +126,7 @@ describe("Agent Memory shadow boundary", () => {
   it("binds queued admissions to destination and scope fingerprints", () => {
     const admission = buildAgentMemoryAdmission({
       groupName: "private",
+      routingChannelId: "channel-1",
       channelId: "channel-1",
       baseUrl: "http://127.0.0.1:8420",
       serviceId: "space-1",
@@ -138,6 +139,7 @@ describe("Agent Memory shadow boundary", () => {
     expect(
       isCurrentAgentMemoryAdmission(admission, config, {
         groupName: "private",
+        routingChannelId: "channel-1",
         channelId: "channel-1",
       }),
     ).toBe(true);
@@ -147,6 +149,7 @@ describe("Agent Memory shadow boundary", () => {
         { ...config, bearerTokenEnv: "ROTATED_TOKEN" },
         {
           groupName: "private",
+          routingChannelId: "channel-1",
           channelId: "channel-1",
         },
       ),
@@ -157,6 +160,7 @@ describe("Agent Memory shadow boundary", () => {
         { ...config, teamId: "rotated" },
         {
           groupName: "private",
+          routingChannelId: "channel-1",
           channelId: "channel-1",
         },
       ),
@@ -164,6 +168,7 @@ describe("Agent Memory shadow boundary", () => {
     expect(
       isCurrentAgentMemoryAdmission(admission, config, {
         groupName: "private",
+        routingChannelId: "channel-1",
         channelId: "other-channel",
       }),
     ).toBe(false);
@@ -317,6 +322,29 @@ describe("Agent Memory shadow boundary", () => {
     expect(first.inserted).toBe(true);
     expect(duplicate.inserted).toBe(false);
     expect(duplicate.job.id).toBe(first.job.id);
+  });
+
+  it("classifies a transient envelope code on an HTTP 200 response as retryable", async () => {
+    process.env.TDAI_TEST_TOKEN = "secret";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: 503, message: "busy" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const submission = buildAgentMemorySubmission({
+      teamId: "team-1",
+      agentId: "agent-1",
+      userId: "discord-user-1",
+      sessionId: "discord-session-1",
+      userContent: "hello",
+      assistantContent: "hi",
+      userTimestamp: "2026-08-30T00:00:00.000Z",
+      assistantTimestamp: "2026-08-30T00:00:01.000Z",
+    });
+    await expect(
+      new AgentMemoryClient(config).addConversation(submission),
+    ).rejects.toMatchObject({ retryable: true, status: 200 });
   });
 
   it("surfaces service failure for the independent retryable job boundary", async () => {

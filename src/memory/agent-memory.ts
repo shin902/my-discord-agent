@@ -22,6 +22,8 @@ export interface AgentMemorySubmission {
 
 export interface AgentMemoryAdmission {
   groupName: string;
+  /** Configured channel used for fresh group mapping validation. */
+  routingChannelId: string;
   channelId: string;
   baseUrl: string;
   serviceId: string;
@@ -48,10 +50,11 @@ export function buildAgentMemoryAdmission(
 export function isCurrentAgentMemoryAdmission(
   admission: AgentMemoryAdmission,
   config: AgentMemoryConfig,
-  message: { groupName: string; channelId: string },
+  message: { groupName: string; routingChannelId: string; channelId: string },
 ): boolean {
   const current = buildAgentMemoryAdmission({
     groupName: message.groupName,
+    routingChannelId: message.routingChannelId,
     channelId: message.channelId,
     baseUrl: config.baseUrl,
     serviceId: config.serviceId,
@@ -145,10 +148,14 @@ export class AgentMemoryClient {
       throw error;
     }
     const body = (await response.json().catch(() => ({}))) as ApiEnvelope;
-    if (!response.ok || body.code !== 0) {
+    const errorCode = body.code === undefined ? response.status : body.code;
+    if (!response.ok || errorCode !== 0) {
+      const retryable =
+        errorCode === 408 || errorCode === 429 || errorCode >= 500;
       throw new AgentMemoryHttpError(
-        `Agent Memory conversation/add failed (${response.status}): ${body.message ?? "unknown error"}`,
+        `Agent Memory conversation/add failed (${response.status}): ${body.message ?? "unknown error"} (code ${errorCode})`,
         response.status,
+        retryable,
       );
     }
     const acceptedIds = Array.isArray(body.data?.accepted_ids)

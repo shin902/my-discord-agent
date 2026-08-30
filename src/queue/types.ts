@@ -20,10 +20,8 @@ export interface InboxMessage {
   groupName: string;
   sessionId: string;
   messageId?: string;
-  /** Discord author identity used only for explicitly enabled memory scopes. */
+  /** Discord author identity, persisted only for eligible Agent Memory captures. */
   userId?: string;
-  /** True for Discord bot/webhook authors; excluded from shadow capture. */
-  authorIsBot?: boolean;
   content: string;
   timestamp: string;
   enqueuedAt?: string;
@@ -54,8 +52,10 @@ export interface InboxMessage {
   botTaskSessionAdmission?: boolean;
   /** Internal asynchronous L0 shadow submission; never delivered to Discord. */
   memoryShadow?: AgentMemorySubmission;
-  /** Config and destination fingerprint captured atomically with admission. */
+  /** Config, routing, and destination fingerprint captured atomically with admission. */
   memoryShadowAdmission?: AgentMemoryAdmission;
+  /** Configured channel used to resolve group membership; differs from thread destination. */
+  routingChannelId?: string;
   /** AgentConfig fields selected by Discord channel intake or a cron job. */
   configOverride?: Partial<AgentConfig>;
   attachments?: AttachmentRef[];

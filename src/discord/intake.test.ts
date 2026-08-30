@@ -5,11 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findGroup: vi.fn(),
   getRepo: vi.fn(),
+  loadMemoryConfig: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", () => ({
   findGroupByChannelId: mocks.findGroup,
 }));
+
+vi.mock("../config/agent-memory.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../config/agent-memory.js")>();
+  return { ...actual, loadAgentMemoryConfig: mocks.loadMemoryConfig };
+});
 
 vi.mock("../queue/repository.js", async (importOriginal) => {
   const actual =
@@ -40,6 +47,15 @@ beforeEach(() => {
     group: { name: "group" },
     channel: { channelId: "root-1", sessionMode: "auto-thread" },
   });
+  mocks.loadMemoryConfig.mockResolvedValue({
+    enabled: false,
+    baseUrl: "http://127.0.0.1:8420",
+    serviceId: "default",
+    teamId: "team",
+    agentId: "agent",
+    eligibleGroups: [],
+    timeoutMs: 1000,
+  });
 });
 
 function makeMessage(options: {
@@ -57,7 +73,7 @@ function makeMessage(options: {
   return {
     id: options.id,
     channelId: options.channelId ?? "root-1",
-    author: { bot: options.isBot ?? false },
+    author: { id: "user-id", bot: options.isBot ?? false },
     webhookId: options.webhookId ?? null,
     client: { user: { id: "bot-user" } },
     mentions: {
@@ -98,9 +114,77 @@ describe("ingestDiscordMessage", () => {
     expect(job).toMatchObject({
       idempotencyKey: "discord-message:message-new",
       channelId: "thread-new",
+      routingChannelId: "root-1",
       sessionId: "thread-new",
     });
     expect(job?.messageId).toBeUndefined();
+  });
+
+  it("persists memory identity only for an explicitly eligible normal user turn", async () => {
+    mocks.loadMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["group"],
+      timeoutMs: 1000,
+    });
+    await ingestDiscordMessage(
+      makeMessage({
+        id: "eligible",
+        startThread: vi.fn().mockResolvedValue({ id: "thread-eligible" }),
+      }),
+      {
+        source: "backfill",
+        replyOnFailure: false,
+      },
+    );
+    const eligible = repo.findByIdempotencyKey("discord-message:eligible");
+    expect(eligible).toMatchObject({ userId: "user-id" });
+    expect(eligible).not.toHaveProperty("authorIsBot");
+
+    mocks.loadMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: [],
+      timeoutMs: 1000,
+    });
+    await ingestDiscordMessage(
+      makeMessage({
+        id: "ineligible",
+        startThread: vi.fn().mockResolvedValue({ id: "thread-ineligible" }),
+      }),
+      {
+        source: "live",
+        replyOnFailure: false,
+      },
+    );
+    const ineligible = repo.findByIdempotencyKey("discord-message:ineligible");
+    expect(ineligible).not.toHaveProperty("userId");
+    expect(ineligible).not.toHaveProperty("authorIsBot");
+  });
+
+  it("does not block intake when Agent Memory eligibility loading fails", async () => {
+    mocks.loadMemoryConfig.mockRejectedValue(new Error("config unavailable"));
+    await ingestDiscordMessage(
+      makeMessage({
+        id: "memory-config-failed",
+        startThread: vi
+          .fn()
+          .mockResolvedValue({ id: "thread-memory-config-failed" }),
+      }),
+      {
+        source: "live",
+        replyOnFailure: false,
+      },
+    );
+    expect(
+      repo.findByIdempotencyKey("discord-message:memory-config-failed"),
+    ).toBeDefined();
   });
 
   it("auto-threadで既存スレッドを再利用し、startThreadを呼ばない", async () => {
@@ -220,6 +304,34 @@ describe("ingestDiscordMessage", () => {
     expect(
       repo.findByIdempotencyKey("discord-message:message-mentioned"),
     ).toBeDefined();
+  });
+
+  it("thread messages retain the thread destination while routing by the parent channel", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: { channelId: "root-1", sessionMode: "thread" },
+    });
+    const result = await ingestDiscordMessage(
+      makeMessage({
+        id: "thread-message",
+        channelId: "thread-1",
+        isThread: true,
+        parentId: "root-1",
+      }),
+      { source: "live", replyOnFailure: false },
+    );
+
+    expect(result).toMatchObject({
+      status: "enqueued",
+      cursorScope: "thread-1",
+    });
+    expect(
+      repo.findByIdempotencyKey("discord-message:thread-message"),
+    ).toMatchObject({
+      channelId: "thread-1",
+      routingChannelId: "root-1",
+      sessionId: "thread-1",
+    });
   });
 
   it("requiredMentionはthreadでも親チャンネル設定を使う", async () => {

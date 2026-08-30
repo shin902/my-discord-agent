@@ -303,14 +303,19 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
   if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
   try {
     const config = await loadAgentMemoryConfig();
-    const currentMapping = await findGroupByChannelIdFresh(msg.channelId);
+    const routingChannelId = msg.routingChannelId ?? msg.channelId;
+    const currentMapping = await findGroupByChannelIdFresh(routingChannelId);
     const admission = msg.memoryShadowAdmission;
     if (
       !config.enabled ||
       !config.eligibleGroups.includes(msg.groupName) ||
       currentMapping?.group.name !== msg.groupName ||
       admission === undefined ||
-      !isCurrentAgentMemoryAdmission(admission, config, msg) ||
+      !isCurrentAgentMemoryAdmission(admission, config, {
+        groupName: msg.groupName,
+        routingChannelId,
+        channelId: msg.channelId,
+      }) ||
       msg.memoryShadow.scope.teamId !== admission.teamId ||
       msg.memoryShadow.scope.agentId !== admission.agentId ||
       msg.memoryShadow.scope.userId !== admission.userId ||
@@ -367,7 +372,6 @@ async function prepareMemoryShadowJob(
   | {
       payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
       options: { idempotencyKey: string };
-      userId: string;
     }
   | undefined
 > {
@@ -390,12 +394,14 @@ async function prepareMemoryShadowJob(
     payload: {
       channelId: msg.channelId,
       groupName: msg.groupName,
+      routingChannelId: msg.routingChannelId ?? msg.channelId,
       sessionId: `memory-shadow:${msg.sessionId}`,
       content: "memory-shadow",
       timestamp: new Date().toISOString(),
       memoryShadow: submission,
       memoryShadowAdmission: buildAgentMemoryAdmission({
         groupName: msg.groupName,
+        routingChannelId: msg.routingChannelId ?? msg.channelId,
         channelId: msg.channelId,
         baseUrl: config.baseUrl,
         serviceId: config.serviceId,
@@ -409,7 +415,6 @@ async function prepareMemoryShadowJob(
       }),
     },
     options: { idempotencyKey: `agent-memory-shadow:${msg.id}` },
-    userId,
   };
 }
 
@@ -1382,7 +1387,6 @@ export async function processMessage(
       | {
           payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
           options: { idempotencyKey: string };
-          userId: string;
         }
       | undefined;
     try {
@@ -1431,7 +1435,7 @@ export async function processMessage(
     if (suppressDelivery) await finalizeSuppressedSource(msg);
     if (shadowJob) {
       console.log(
-        `[agent-memory] shadow job admitted: ${JSON.stringify({ sourceJobId: msg.id, groupName: msg.groupName, userId: shadowJob.userId })}`,
+        `[agent-memory] shadow job admitted: ${JSON.stringify({ sourceJobId: msg.id, groupName: msg.groupName })}`,
       );
     }
     // The source result, delivery rows, and local shadow admission commit
