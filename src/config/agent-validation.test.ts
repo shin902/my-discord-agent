@@ -42,9 +42,9 @@ describe("validateAgentConfig", () => {
     ).rejects.toThrow("不明なモデル");
   });
 
-  it("accepts bot as a recognized context-created tool", async () => {
+  it("accepts context-created tools as recognized tools", async () => {
     await expect(
-      validateAgentConfig({ tools: ["bot"] }, defaultModel),
+      validateAgentConfig({ tools: ["bot", "subagent"] }, defaultModel),
     ).resolves.toBeUndefined();
   });
 
