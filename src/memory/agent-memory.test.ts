@@ -37,14 +37,13 @@ describe("Agent Memory shadow boundary", () => {
     const parsed = AgentMemoryConfigSchema.parse({});
     expect(parsed).toMatchObject({
       enabled: false,
-      baseUrl: "http://localhost:8420",
+      baseUrl: "http://127.0.0.1:8420",
     });
     expect(parsed).not.toHaveProperty("bearerTokenEnv");
   });
 
   it("accepts only loopback HTTP and HTTPS URLs without query or fragment", () => {
     for (const baseUrl of [
-      "http://localhost:8420",
       "http://127.0.0.1:8420",
       "http://[::1]:8420",
       "https://memory.example.test",
@@ -55,8 +54,9 @@ describe("Agent Memory shadow boundary", () => {
       "ftp://memory",
       "http://memory.example.test",
       "http://user:pass@memory",
-      "http://localhost:8420?token=secret",
-      "http://localhost:8420#fragment",
+      "http://127.0.0.1:8420?token=secret",
+      "http://127.0.0.1:8420#fragment",
+      "http://localhost:8420",
     ]) {
       expect(() => AgentMemoryConfigSchema.parse({ baseUrl })).toThrow();
     }
@@ -68,6 +68,42 @@ describe("Agent Memory shadow boundary", () => {
     expect(new AgentMemoryHttpError("rate limited", 429).retryable).toBe(true);
     expect(new AgentMemoryHttpError("server error", 503).retryable).toBe(true);
     expect(new AgentMemoryHttpError("network").retryable).toBe(true);
+  });
+
+  it("rejects a redirect response without following it", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://unexpected.example/collect" },
+      }),
+    );
+    process.env.TDAI_TEST_TOKEN = "secret";
+    const submission = buildAgentMemorySubmission({
+      teamId: "team-1",
+      agentId: "agent-1",
+      userId: "discord-user-1",
+      sessionId: "session-1",
+      userContent: "hello",
+      assistantContent: "hi",
+      userTimestamp: "2026-08-30T00:00:00.000Z",
+      assistantTimestamp: "2026-08-30T00:00:01.000Z",
+    });
+
+    await expect(
+      new AgentMemoryClient(config).addConversation(submission),
+    ).rejects.toMatchObject({ status: 302, retryable: false });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: "error" });
+
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new TypeError("fetch failed"), {
+        cause: new Error("unexpected redirect"),
+      }),
+    );
+    await expect(
+      new AgentMemoryClient(config).addConversation(submission),
+    ).rejects.toMatchObject({ retryable: false });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("requires explicit enabled eligible groups and normal-chat identity", () => {
@@ -93,6 +129,7 @@ describe("Agent Memory shadow boundary", () => {
       channelId: "channel-1",
       baseUrl: "http://127.0.0.1:8420",
       serviceId: "space-1",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
       teamId: "team-1",
       agentId: "agent-1",
       userId: "discord-user-1",
@@ -104,6 +141,16 @@ describe("Agent Memory shadow boundary", () => {
         channelId: "channel-1",
       }),
     ).toBe(true);
+    expect(
+      isCurrentAgentMemoryAdmission(
+        admission,
+        { ...config, bearerTokenEnv: "ROTATED_TOKEN" },
+        {
+          groupName: "private",
+          channelId: "channel-1",
+        },
+      ),
+    ).toBe(false);
     expect(
       isCurrentAgentMemoryAdmission(
         admission,

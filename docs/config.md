@@ -41,7 +41,7 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
 {
   "agentMemory": {
     "enabled": true,
-    "baseUrl": "http://localhost:8420",
+    "baseUrl": "http://127.0.0.1:8420",
     "serviceId": "default",
     "teamId": "my-discord-agent",
     "agentId": "main",
@@ -51,9 +51,9 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
 }
 ```
 
-通常のprivate chatが正常完了すると、session JSONLの原文を正本として、user/assistantの1往復をruntime.sqliteの独立したshadow jobへ登録します。shadow jobは `POST /v3/conversation/add`（L0）へ `team_id`、`agent_id`、`user_id`、`session_id` を付けて非同期送信します。送信結果は `[agent-memory]` の構造化ログと通常queueのjob statusで確認できます。TencentDBが停止・タイムアウトしても通常のDiscord応答は成功したままで、shadow jobだけがqueueのretry/dead-letter対象になります。
+通常のprivate chatが正常完了すると、durable queueに保存された入力payloadと完了済みagent resultからuser/assistantの1往復を組み立て、runtime.sqliteの独立したshadow jobへ登録します。session JSONLは引き続き会話のcanonical raw historyとして保持しますが、shadow submissionの入力として読み直す経路ではありません。shadow jobは `POST /v3/conversation/add`（L0）へ `team_id`、`agent_id`、`user_id`、`session_id` を付けて非同期送信します。送信結果は `[agent-memory]` の構造化ログと通常queueのjob statusで確認できます。TencentDBが停止・タイムアウトしても通常のDiscord応答は成功したままで、shadow jobだけがqueueのretry/dead-letter対象になります。
 
-ローカルのMemoryCoreは認証なしで接続できます。認証を有効にした環境では、`bearerTokenEnv` にBearer tokenを保持する環境変数名を指定してください。未指定時は`Authorization`ヘッダーを送信しません。非loopbackの接続先はHTTPSを必須とし、HTTPは`localhost`・`127.0.0.1`・`::1`に限定します。token自体やその他のsecretを設定ファイルへ書かないでください。現在はshadow writeのみで、recall、embedding、Ruri prefix、context injectionは行いません。TencentDB v3の`conversation/add`契約にはクライアント指定のmessage/request IDやidempotency keyはなく、accepted IDはサーバー生成です（[v3 API仕様](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/MemoryCore/v3-api-memorycore-doc.md)）。そのためshadow送信はローカルqueueのidempotencyによるat-least-once配送で、応答受領後のprocess crashではMemoryCore側に重複L0が発生し得ます。これはupstream契約上の制約であり、未対応のrequest fieldを独自追加して重複排除を主張しません。
+ローカルのMemoryCoreは認証なしで接続できます。認証を有効にした環境では、`bearerTokenEnv` にBearer tokenを保持する環境変数名を指定してください。未指定時は`Authorization`ヘッダーを送信しません。非loopbackの接続先はHTTPSを必須とし、認証なしHTTPは文字列どおりの`127.0.0.1`または`[::1]`に限定します（`localhost`はDNS解決を検証しないため許可しません）。token自体やその他のsecretを設定ファイルへ書かないでください。現在はshadow writeのみで、recall、embedding、Ruri prefix、context injectionは行いません。TencentDB v3の`conversation/add`契約にはクライアント指定のmessage/request IDやidempotency keyはなく、accepted IDはサーバー生成です（[v3 API仕様](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/MemoryCore/v3-api-memorycore-doc.md)）。そのためshadow送信はローカルqueueのidempotencyによるat-least-once配送で、応答受領後のprocess crashではMemoryCore側に重複L0が発生し得ます。これはupstream契約上の制約であり、未対応のrequest fieldを独自追加して重複排除を主張しません。
 
 | キー | 必須 | 内容 |
 |---|---|---|

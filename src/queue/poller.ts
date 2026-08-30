@@ -16,6 +16,7 @@ import { resolveModelConfig } from "../config/default-model.js";
 import { loadGroupSystemPrompt } from "../config/group-config.js";
 import {
   type AgentConfig,
+  findGroupByChannelIdFresh,
   findGroupByName,
   type GroupConfig,
   type ModelConfig,
@@ -302,10 +303,12 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
   if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
   try {
     const config = await loadAgentMemoryConfig();
+    const currentMapping = await findGroupByChannelIdFresh(msg.channelId);
     const admission = msg.memoryShadowAdmission;
     if (
       !config.enabled ||
       !config.eligibleGroups.includes(msg.groupName) ||
+      currentMapping?.group.name !== msg.groupName ||
       admission === undefined ||
       !isCurrentAgentMemoryAdmission(admission, config, msg) ||
       msg.memoryShadow.scope.teamId !== admission.teamId ||
@@ -317,7 +320,7 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
         `[agent-memory] shadow job skipped (disabled/revoked/rotated): ${msg.id}`,
       );
       await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
-        empty: true,
+        suppressDelivery: true,
       });
       return;
     }
@@ -325,7 +328,7 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
       msg.memoryShadow,
     );
     await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
-      empty: true,
+      suppressDelivery: true,
     });
     console.log(
       `[agent-memory] shadow submission accepted: ${JSON.stringify({ jobId: msg.id, requestId: result.requestId, totalCount: result.totalCount })}`,
@@ -398,6 +401,9 @@ async function prepareMemoryShadowJob(
         serviceId: config.serviceId,
         teamId: config.teamId,
         agentId: config.agentId,
+        ...(config.bearerTokenEnv
+          ? { bearerTokenEnv: config.bearerTokenEnv }
+          : {}),
         userId,
         sessionId: msg.sessionId,
       }),

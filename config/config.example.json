@@ -29,7 +29,7 @@
   },
   "agentMemory": {
     "enabled": false,
-    "baseUrl": "http://localhost:8420",
+    "baseUrl": "http://127.0.0.1:8420",
     "serviceId": "default",
     "teamId": "my-discord-agent",
     "agentId": "main",

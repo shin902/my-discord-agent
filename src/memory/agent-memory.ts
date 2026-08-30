@@ -25,6 +25,7 @@ export interface AgentMemoryAdmission {
   channelId: string;
   baseUrl: string;
   serviceId: string;
+  bearerTokenEnv?: string;
   teamId: string;
   agentId: string;
   userId: string;
@@ -54,6 +55,7 @@ export function isCurrentAgentMemoryAdmission(
     channelId: message.channelId,
     baseUrl: config.baseUrl,
     serviceId: config.serviceId,
+    ...(config.bearerTokenEnv ? { bearerTokenEnv: config.bearerTokenEnv } : {}),
     teamId: config.teamId,
     agentId: config.agentId,
     userId: admission.userId,
@@ -75,12 +77,16 @@ export class AgentMemoryHttpError extends Error {
   readonly retryable: boolean;
   readonly status?: number;
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, retryable?: boolean) {
     super(message);
     this.name = "AgentMemoryHttpError";
     this.status = status;
     this.retryable =
-      status === undefined || status === 408 || status === 429 || status >= 500;
+      retryable ??
+      (status === undefined ||
+        status === 408 ||
+        status === 429 ||
+        status >= 500);
   }
 }
 
@@ -113,18 +119,31 @@ export class AgentMemoryClient {
       "x-tdai-service-id": this.config.serviceId,
     };
     if (token) headers.authorization = `Bearer ${token}`;
-    const response = await fetch(endpoint.toString(), {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        session_id: submission.scope.sessionId,
-        team_id: submission.scope.teamId,
-        agent_id: submission.scope.agentId,
-        user_id: submission.scope.userId,
-        messages: submission.messages,
-      }),
-      signal: AbortSignal.timeout(this.config.timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetch(endpoint.toString(), {
+        method: "POST",
+        redirect: "error",
+        headers,
+        body: JSON.stringify({
+          session_id: submission.scope.sessionId,
+          team_id: submission.scope.teamId,
+          agent_id: submission.scope.agentId,
+          user_id: submission.scope.userId,
+          messages: submission.messages,
+        }),
+        signal: AbortSignal.timeout(this.config.timeoutMs),
+      });
+    } catch (error) {
+      const cause = error instanceof Error ? error.cause : undefined;
+      if (cause instanceof Error && cause.message === "unexpected redirect")
+        throw new AgentMemoryHttpError(
+          "Agent Memory conversation/add rejected a redirect",
+          undefined,
+          false,
+        );
+      throw error;
+    }
     const body = (await response.json().catch(() => ({}))) as ApiEnvelope;
     if (!response.ok || body.code !== 0) {
       throw new AgentMemoryHttpError(

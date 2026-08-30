@@ -115,6 +115,14 @@ export async function loadRawGroups(): Promise<unknown> {
   );
 }
 
+/** Read groups.json without changing the process-wide routing cache. */
+export async function loadRawGroupsFresh(): Promise<unknown> {
+  return readJsonArrayFile(
+    GROUPS_PATH,
+    "config/groups.json が見つかりません。config/groups.example.json をコピーして作成してください",
+  );
+}
+
 // config/credentials.json を読み込む
 export async function loadRawCredentials(): Promise<unknown> {
   return readJsonArrayFile(

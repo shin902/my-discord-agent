@@ -4,6 +4,42 @@ import { collectObservability, inspectRuntime } from "./observability.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("queue observability", () => {
+  it("does not count a successful suppressed shadow job as an empty response", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const shadow = repo.enqueue({
+        channelId: "c",
+        groupName: "g",
+        sessionId: "memory-shadow:s",
+        content: "memory-shadow",
+        timestamp: new Date().toISOString(),
+        memoryShadow: {
+          scope: {
+            teamId: "team",
+            agentId: "agent",
+            userId: "user",
+            sessionId: "s",
+          },
+          messages: [],
+        },
+      }).job;
+      const claim = expectDefined(repo.claim("worker", 1_000));
+      repo.commitResult(shadow.id, claim.fencingToken, "", {
+        suppressDelivery: true,
+      });
+
+      const snapshot = collectObservability(repo.db);
+      expect(snapshot.agent).toMatchObject({
+        jobs: 1,
+        completed: 1,
+        failed: 0,
+        emptyResponses: 0,
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("excludes admission tickets from queue and agent observability", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const at = new Date("2025-01-01T00:00:00.000Z");

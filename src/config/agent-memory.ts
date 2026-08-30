@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { loadRawConfigFresh } from "./config.js";
 
-function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+function isLiteralLoopbackHostname(hostname: string): boolean {
+  return hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
 const AgentMemoryBaseUrlSchema = z.string().refine((value) => {
@@ -21,12 +20,12 @@ const AgentMemoryBaseUrlSchema = z.string().refine((value) => {
     url.hash !== ""
   )
     return false;
-  return url.protocol === "https:" || isLoopbackHostname(url.hostname);
+  return url.protocol === "https:" || isLiteralLoopbackHostname(url.hostname);
 }, "must be HTTPS or unauthenticated loopback HTTP without credentials/query/fragment");
 
 export const AgentMemoryConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  baseUrl: AgentMemoryBaseUrlSchema.default("http://localhost:8420"),
+  baseUrl: AgentMemoryBaseUrlSchema.default("http://127.0.0.1:8420"),
   serviceId: z.string().min(1).default("default"),
   // Local MemoryCore is unauthenticated by default; protected deployments may
   // opt in by naming an environment variable containing a bearer token.

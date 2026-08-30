@@ -502,6 +502,7 @@ describe("durable Phase 2 result state", () => {
 
       expect(repo.get(source.job.id)).toMatchObject({
         status: "completed",
+        terminalState: "succeeded",
         succeeded: true,
       });
       expect(repo.getDelivery(source.job.id)).toBeDefined();
@@ -511,6 +512,20 @@ describe("durable Phase 2 result state", () => {
         status: "queued",
         memoryShadow: expect.any(Object),
       });
+
+      const shadow = expectDefined(
+        repo.findByIdempotencyKey("agent-memory-shadow:source-result"),
+      );
+      const shadowClaim = expectDefined(repo.claim("worker-b", 1_000));
+      repo.commitResult(shadow.id, shadowClaim.fencingToken, "", {
+        suppressDelivery: true,
+      });
+      expect(repo.get(shadow.id)).toMatchObject({
+        status: "completed",
+        terminalState: "succeeded",
+        succeeded: true,
+      });
+      expect(repo.getDelivery(shadow.id)).toBeUndefined();
     } finally {
       repo.close();
     }
