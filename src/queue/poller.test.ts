@@ -16,6 +16,12 @@ import { DeliveryError } from "./delivery.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+const loadMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+vi.mock("../agent/session.js", () => ({
+  loadMessages,
+  sessionConversationPath: (groupName: string, sessionId: string) =>
+    `data/sessions/${groupName}/sessions.sqlite#session=${sessionId}`,
+}));
 const acknowledgeEmail = vi.hoisted(() => vi.fn());
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 const settleRssDispatch = vi.hoisted(() => vi.fn());
@@ -451,7 +457,7 @@ describe("processMessage - terminal queue transitions", () => {
       expect.objectContaining({
         startedAt: expect.any(String),
         workspacePath: `groups/${msg.groupName}`,
-        conversationPath: `data/sessions/${msg.groupName}/${msg.sessionId}.jsonl`,
+        conversationPath: `data/sessions/${msg.groupName}/sessions.sqlite#session=${msg.sessionId}`,
       }),
     );
   });
@@ -476,7 +482,7 @@ describe("processMessage - terminal queue transitions", () => {
       msg.fencingToken,
       expect.objectContaining({
         workspacePath: `groups/${msg.groupName}`,
-        conversationPath: `data/sessions/${msg.groupName}/thread-1.jsonl`,
+        conversationPath: `data/sessions/${msg.groupName}/sessions.sqlite#session=thread-1`,
       }),
     );
   });

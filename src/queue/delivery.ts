@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ChannelType, type Client } from "discord.js";
-import { renameSession } from "../agent/session.js";
+import { renameSession, sessionConversationPath } from "../agent/session.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
@@ -400,7 +400,7 @@ export class DeliveryWorker {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);
           const promotedConversationPath = job.conversationPath
-            ? `data/sessions/${job.groupName}/${threadId}.jsonl`
+            ? sessionConversationPath(job.groupName, threadId)
             : undefined;
           if (job.sessionId === threadId) {
             if (

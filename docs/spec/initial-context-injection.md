@@ -60,17 +60,17 @@ Use the `date` tool when current time matters.
 
 ### 保存先
 
-時刻アンカーは `session-time-anchor` の CustomMessage として会話JSONLへ1件だけ追加する。`display: false` とし、通常のLLM送信用履歴からは除外して systemPrompt の組み立てにだけ使う。
+時刻アンカーは `session-time-anchor` の CustomMessageとしてsession trajectoryへ1件だけ追加する。`display: false` とし、通常のLLM送信用履歴からは除外して systemPrompt の組み立てにだけ使う。
 
 これにより、時刻機能の導入・再開で過去の user / assistant / tool 履歴本文そのものを変更しない。
 
 ### 新規セッション
 
-初回 `runAgentLoop()` で現在時刻を hour bucket に丸め、`session-time-anchor` をJSONLへ追記する。以後は毎回同じ値を読み、同一の systemPrompt 断片を再生成する。
+初回 `runAgentLoop()` で現在時刻を hour bucket に丸め、`session-time-anchor` を`sessions.sqlite`のappend-only entryとして追記する。以後は毎回同じ値を読み、同一の systemPrompt 断片を再生成する。
 
 ### 既存セッションの移行
 
-`session-time-anchor` がまだ無い既存セッションでは、保存済みJSONLメッセージの **最古 timestamp** を開始時刻として一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
+`session-time-anchor` がまだ無い既存セッションでは、保存済みtrajectory entryの **最古 timestamp** を開始時刻として一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
 
 同一セッションの初期化競合については、既存のJSONL追記と同じ保証範囲で扱う。
 
@@ -104,7 +104,7 @@ MEMORY.md / SELF.md はここへ重複注入せず、context-bootstrap 経由で
 
 ## ロード時の並べ替え
 
-JSONL内の bootstrap 系（`system-prompt-snapshot` / `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。旧形式セッションの移行で bootstrap が JSONL 末尾に追記されても、移行ターンと次ターン以降で LLM-visible ordering が変わらないようにするため。
+trajectory内の bootstrap 系（`system-prompt-snapshot` / `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。旧形式セッションの移行で bootstrap がtrajectory末尾に追記されても、移行ターンと次ターン以降で LLM-visible ordering が変わらないようにするため。
 
 時刻アンカーは systemPrompt にだけ使うため、この並べ替え対象にはならない。
 

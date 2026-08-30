@@ -136,7 +136,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - `appendInbox`
 - ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
-複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { threadName })` で登録・provisioningできる。ただしこのhelperは旧placeholder方式の互換用として非推奨で、handler側がpollerとの競合を含む利用責任を負う。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から投入され、投入ごとに一時sessionを作る。AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession JSONLとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
+複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { threadName })` で登録・provisioningできる。ただしこのhelperは旧placeholder方式の互換用として非推奨で、handler側がpollerとの競合を含む利用責任を負う。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から投入され、投入ごとに一時sessionを作る。AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession DB上のidentityとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 
 ---
 

@@ -1,240 +1,212 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import Database from "better-sqlite3";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-vi.mock("node:fs/promises", () => ({
-  readFile: vi.fn(),
-  appendFile: vi.fn(),
-  mkdir: vi.fn(),
-  chmod: vi.fn(),
-  rename: vi.fn(),
-}));
+let root: string;
+let session: typeof import("./session.js");
 
-vi.mock("node:fs", () => ({
-  existsSync: vi.fn(),
-}));
-
-const { readFile, appendFile, mkdir, chmod, rename } = await import(
-  "node:fs/promises"
-);
-const { existsSync } = await import("node:fs");
-const { loadMessages, appendMessage, renameSession } = await import(
-  "./session.js"
-);
-
-const mockReadFile = vi.mocked(readFile);
-const mockAppendFile = vi.mocked(appendFile);
-const mockMkdir = vi.mocked(mkdir);
-const mockChmod = vi.mocked(chmod);
-const mockRename = vi.mocked(rename);
-const mockExistsSync = vi.mocked(existsSync);
-
-describe("loadMessages", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("JSONL を正しくパースして返す", async () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFile.mockResolvedValue(
-      '{"role":"user","content":"hello"}\n{"role":"assistant","content":"hi"}\n',
-    );
-
-    const result = await loadMessages("group1", "session-a");
-
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({ role: "user", content: "hello" });
-    expect(result[1]).toEqual({ role: "assistant", content: "hi" });
-  });
-
-  it("ファイルが存在しない場合は空配列を返す", async () => {
-    mockExistsSync.mockReturnValue(false);
-
-    const result = await loadMessages("group1", "session-a");
-
-    expect(result).toEqual([]);
-    expect(mockReadFile).not.toHaveBeenCalled();
-  });
-
-  it("空ファイルは空配列を返す", async () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFile.mockResolvedValue("");
-
-    const result = await loadMessages("group1", "session-a");
-
-    expect(result).toEqual([]);
-  });
-
-  it("空白行のみのファイルは空配列を返す", async () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFile.mockResolvedValue("\n\n   \n");
-
-    const result = await loadMessages("group1", "session-a");
-
-    expect(result).toEqual([]);
-  });
-
-  it("reasoning フィールドを除去する", async () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFile.mockResolvedValue(
-      '{"role":"assistant","reasoning":"内部思考","content":"hi"}\n',
-    );
-
-    const result = await loadMessages("group1", "session-x");
-
-    expect(result[0]).not.toHaveProperty("reasoning");
-    expect(result[0]).toMatchObject({ role: "assistant", content: "hi" });
-  });
-
-  it("content 内の thinking ブロックを除去する", async () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFile.mockResolvedValue(
-      '{"role":"assistant","content":[{"type":"thinking","thinking":"思考中"},{"type":"text","text":"hi"}]}\n',
-    );
-
-    const result = await loadMessages("group1", "session-x");
-
-    const assistantMsg = result[0] as {
-      role: "assistant";
-      content: Array<{ type: string }>;
-    };
-    const content = assistantMsg.content;
-    expect(content.some((b) => b.type === "thinking")).toBe(false);
-    expect(content).toHaveLength(1);
-    expect(content[0]).toEqual({ type: "text", text: "hi" });
-  });
-
-  it("パストラバーサルを含むグループ名はエラー", async () => {
-    await expect(loadMessages("../../etc/passwd", "session-a")).rejects.toThrow(
-      "不正なグループ名",
-    );
-  });
-
-  it("パストラバーサルを含むセッションIDはエラー", async () => {
-    await expect(loadMessages("group1", "../secret")).rejects.toThrow(
-      "不正なセッションID",
-    );
-  });
-
-  it("空のグループ名はエラー", async () => {
-    await expect(loadMessages("", "session-a")).rejects.toThrow(
-      "不正なグループ名",
-    );
-  });
-
-  it("空のセッションIDはエラー", async () => {
-    await expect(loadMessages("group1", "")).rejects.toThrow(
-      "不正なセッションID",
-    );
-  });
+beforeAll(async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "session-store-test-"));
+  process.env.SESSIONS_DIR = root;
+  session = await import("./session.js");
 });
 
-describe("renameSession", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockRename.mockResolvedValue(undefined);
+afterAll(async () => {
+  session.closeSessionDatabasesForTests();
+  delete process.env.SESSIONS_DIR;
+  await rm(root, { recursive: true, force: true });
+});
+
+function dbFor(group: string): Database.Database {
+  return new Database(path.join(root, group, "sessions.sqlite"), {
+    readonly: true,
   });
+}
 
-  it("一時session JSONLをthread IDへrenameする", async () => {
-    mockExistsSync.mockImplementation((file) =>
-      String(file).endsWith("cron-temp.jsonl"),
-    );
-
-    await renameSession("group1", "cron-temp", "1234567890");
-
-    expect(mockRename).toHaveBeenCalledWith(
-      expect.stringContaining("cron-temp.jsonl"),
-      expect.stringContaining("1234567890.jsonl"),
-    );
-  });
-
-  it("rename先が既に存在する場合は上書きしない", async () => {
-    mockExistsSync.mockReturnValue(true);
-
+describe("SQLite session trajectory store", () => {
+  it("存在しないsessionは空配列を返し、per-group DBを作成する", async () => {
     await expect(
-      renameSession("group1", "cron-temp", "1234567890"),
-    ).rejects.toThrow("リネーム先のセッションが既に存在します");
-    expect(mockRename).not.toHaveBeenCalled();
+      session.loadMessages("empty-group", "missing"),
+    ).resolves.toEqual([]);
+    const db = dbFor("empty-group");
+    expect(db.pragma("user_version", { simple: true })).toBe(1);
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all(),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "sessions" }),
+        expect.objectContaining({ name: "session_entries" }),
+      ]),
+    );
+    db.close();
   });
-});
 
-describe("appendMessage", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockMkdir.mockResolvedValue(undefined);
-    mockChmod.mockResolvedValue(undefined);
-    mockAppendFile.mockResolvedValue(undefined);
-  });
-
-  it("メッセージを追記する", async () => {
-    await appendMessage("group1", "session-a", {
+  it("messageを順序どおり追記しreasoning/thinkingを保存しない", async () => {
+    await session.appendMessage("group1", "session-a", {
       role: "user",
       content: "hello",
       timestamp: 123,
     });
-
-    expect(mockMkdir).toHaveBeenCalledWith(expect.stringContaining("group1"), {
-      recursive: true,
-      mode: 0o777,
-    });
-    expect(mockAppendFile).toHaveBeenCalledWith(
-      expect.stringContaining("session-a.jsonl"),
-      '{"role":"user","content":"hello","timestamp":123}\n',
-      { encoding: "utf-8", mode: 0o666 },
-    );
-  });
-
-  it("reasoning フィールドを保存しない", async () => {
-    await appendMessage("group1", "session-a", {
+    await session.appendMessage("group1", "session-a", {
       role: "assistant",
-      reasoning: "内部思考",
-      content: "hi",
-      timestamp: 123,
-    } as unknown as Parameters<typeof appendMessage>[2]);
-
-    const saved = JSON.parse(
-      (mockAppendFile.mock.calls[0][1] as string).trim(),
-    );
-    expect(saved).not.toHaveProperty("reasoning");
-    expect(saved.content).toBe("hi");
-  });
-
-  it("content 内の thinking ブロックを保存しない", async () => {
-    await appendMessage("group1", "session-a", {
-      role: "assistant",
+      reasoning: "internal",
+      reasoning_content: "legacy",
       content: [
-        { type: "thinking", thinking: "思考中" },
+        { type: "thinking", thinking: "secret" },
         { type: "text", text: "hi" },
       ],
-      timestamp: 123,
-    } as unknown as Parameters<typeof appendMessage>[2]);
+      timestamp: 124,
+    } as unknown as AgentMessage);
 
-    const saved = JSON.parse(
-      (mockAppendFile.mock.calls[0][1] as string).trim(),
+    const messages = await session.loadMessages("group1", "session-a");
+    expect(messages).toEqual([
+      { role: "user", content: "hello", timestamp: 123 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+        timestamp: 124,
+      },
+    ]);
+
+    const db = dbFor("group1");
+    expect(
+      db
+        .prepare(
+          "SELECT sequence, entry_type FROM session_entries WHERE session_id=? ORDER BY sequence",
+        )
+        .all("session-a"),
+    ).toEqual([
+      { sequence: 1, entry_type: "user" },
+      { sequence: 2, entry_type: "assistant" },
+    ]);
+    db.close();
+  });
+
+  it("並行appendを壊さず一意なsequenceとして保存する", async () => {
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        session.appendMessage("concurrent", "shared", {
+          role: "user",
+          content: `message-${index}`,
+          timestamp: index,
+        }),
+      ),
     );
-    expect(saved.content).toHaveLength(1);
-    expect(saved.content[0]).toEqual({ type: "text", text: "hi" });
+    const messages = await session.loadMessages("concurrent", "shared");
+    expect(messages).toHaveLength(20);
+    expect(
+      new Set(
+        messages.map((message) => (message as { content?: unknown }).content),
+      ).size,
+    ).toBe(20);
   });
 
-  it("パストラバーサルを含むグループ名はエラー", async () => {
+  it("session identityをtransactionでrenameしentryを維持する", async () => {
+    await session.appendMessage("rename-group", "cron-temp", {
+      role: "user",
+      content: "hello",
+      timestamp: 123,
+    });
+    await session.renameSession("rename-group", "cron-temp", "1234567890");
+
     await expect(
-      appendMessage("../../etc/passwd", "session-a", {
-        role: "user",
-        content: "x",
-        timestamp: 123,
-      }),
+      session.loadMessages("rename-group", "cron-temp"),
+    ).resolves.toEqual([]);
+    await expect(
+      session.loadMessages("rename-group", "1234567890"),
+    ).resolves.toEqual([{ role: "user", content: "hello", timestamp: 123 }]);
+  });
+
+  it("rename先が存在する場合は上書きしない", async () => {
+    await session.appendMessage("rename-conflict", "from", {
+      role: "user",
+      content: "from",
+      timestamp: 1,
+    });
+    await session.appendMessage("rename-conflict", "to", {
+      role: "user",
+      content: "to",
+      timestamp: 2,
+    });
+    await expect(
+      session.renameSession("rename-conflict", "from", "to"),
+    ).rejects.toThrow("リネーム先のセッションが既に存在します");
+    await expect(
+      session.loadMessages("rename-conflict", "from"),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("legacy JSONLを一度だけtransactionalにimportし原本を保持する", async () => {
+    const dir = path.join(root, "legacy");
+    await writeFile(path.join(root, ".keep"), "");
+    await import("node:fs/promises").then(({ mkdir }) =>
+      mkdir(dir, { recursive: true }),
+    );
+    const legacyPath = path.join(dir, "old-session.jsonl");
+    const original =
+      '{"role":"user","content":"old","timestamp":10}\n' +
+      '{"role":"assistant","content":"reply","timestamp":11}\n';
+    await writeFile(legacyPath, original);
+
+    await expect(
+      session.loadMessages("legacy", "old-session"),
+    ).resolves.toEqual([
+      { role: "user", content: "old", timestamp: 10 },
+      { role: "assistant", content: "reply", timestamp: 11 },
+    ]);
+    expect(await readFile(legacyPath, "utf-8")).toBe(original);
+
+    await writeFile(
+      legacyPath,
+      `${original}{"role":"user","content":"late","timestamp":12}\n`,
+    );
+    expect(await session.loadMessages("legacy", "old-session")).toHaveLength(2);
+  });
+
+  it("壊れたlegacy JSONLは行番号付きで拒否し部分importしない", async () => {
+    const { mkdir } = await import("node:fs/promises");
+    const dir = path.join(root, "broken");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, "bad.jsonl"),
+      '{"role":"user","content":"ok"}\nnot-json\n',
+    );
+
+    await expect(session.loadMessages("broken", "bad")).rejects.toThrow(
+      /bad\.jsonl:2/,
+    );
+    const db = dbFor("broken");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM sessions").get()).toEqual({
+      count: 0,
+    });
+    db.close();
+  });
+
+  it("path traversalと未知のschema versionを拒否する", async () => {
+    await expect(
+      session.loadMessages("../../etc/passwd", "session"),
     ).rejects.toThrow("不正なグループ名");
-    expect(mockMkdir).not.toHaveBeenCalled();
-    expect(mockAppendFile).not.toHaveBeenCalled();
+    await expect(session.loadMessages("group", "../secret")).rejects.toThrow(
+      "不正なセッションID",
+    );
+
+    const { mkdir } = await import("node:fs/promises");
+    const dir = path.join(root, "future");
+    await mkdir(dir, { recursive: true });
+    const db = new Database(path.join(dir, "sessions.sqlite"));
+    db.pragma("user_version = 99");
+    db.close();
+    await expect(session.loadMessages("future", "session")).rejects.toThrow(
+      "未対応のsession DB schema version",
+    );
   });
 
-  it("パストラバーサルを含むセッションIDはエラー", async () => {
-    await expect(
-      appendMessage("group1", "../secret", {
-        role: "user",
-        content: "x",
-        timestamp: 123,
-      }),
-    ).rejects.toThrow("不正なセッションID");
-    expect(mockMkdir).not.toHaveBeenCalled();
-    expect(mockAppendFile).not.toHaveBeenCalled();
+  it("conversation pathはDBと論理session identityを表す", () => {
+    expect(session.sessionConversationPath("group1", "session-a")).toBe(
+      "data/sessions/group1/sessions.sqlite#session=session-a",
+    );
   });
 });
