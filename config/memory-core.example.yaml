@@ -10,10 +10,10 @@ data:
 
 llm:
   baseUrl: "https://api.openai.com/v1"
-  apiKey: "replace-me"
+  apiKey: "${TDAI_LLM_API_KEY}"
   model: "gpt-4o-mini"
-  maxTokens: 32000
-  timeoutMs: 300000
+  maxTokens: 4096
+  timeoutMs: 120000
 
 memory:
   promptMode: chat
@@ -34,7 +34,7 @@ memory:
     l2MinIntervalSeconds: 900
     l2MaxIntervalSeconds: 3600
   recall:
-    enabled: true
+    enabled: false
     maxResults: 5
     scoreThreshold: 0.3
     strategy: hybrid

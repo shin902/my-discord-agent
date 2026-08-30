@@ -153,7 +153,7 @@ TencentDB Agent Memoryを使う場合は、公式MemoryCore imageをsidecarと�
 
 ```bash
 cp config/memory-core.example.yaml config/memory-core.yaml
-# config/memory-core.yaml の llm 設定を編集してから
+# .env の MEMORY_CORE_LLM_API_KEY と、必要に応じて llm の接続先・model を設定してから
 pnpm memory-core up -d
 curl "http://$(pnpm --silent memory-core port memory-core 8420)/health"
 ```
