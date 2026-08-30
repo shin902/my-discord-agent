@@ -361,6 +361,25 @@ function startTypingLoop(groupName: string, channelId: string): () => void {
   };
 }
 
+function isDiscordProgressEvent(event: DiscordEvent): boolean {
+  return (
+    event.type === "tool_start" ||
+    event.type === "subagent_tool_start" ||
+    event.type === "subagent_update"
+  );
+}
+
+function isDirectCronMessage(msg: InboxMessage): boolean {
+  // Legacy cron payloads may not have cronDeliveryMode, but cron messages that
+  // do not use either thread route have always used direct channel delivery.
+  return (
+    msg.cronJobId !== undefined &&
+    msg.cronDeliveryMode !== "new-thread" &&
+    msg.cronDeliveryMode !== "item-thread" &&
+    msg.cronThread !== true
+  );
+}
+
 async function sendDiscordEvent(
   groupName: string,
   channelId: string,
@@ -1128,9 +1147,12 @@ export async function processMessage(
               msg.content,
               {
                 onDiscordEvent: (event) => {
-                  // cron direct のツールコール通知はチャットが溜まるため抑制する
-                  // (cron thread deliveryではここに到達せず専用フローで処理される)
-                  if (msg.cronJobId && event.type === "tool_start") {
+                  // direct cron の実行進捗はチャネルを埋めるため抑制する。
+                  // エラーは必要な通知として維持し、thread delivery は専用フローに委ねる。
+                  if (
+                    isDirectCronMessage(msg) &&
+                    isDiscordProgressEvent(event)
+                  ) {
                     return;
                   }
                   void sendDiscordEvent(
