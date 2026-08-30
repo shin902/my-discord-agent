@@ -85,6 +85,62 @@ function createBirdclawFixture(dbPath: string): Database.Database {
   return db;
 }
 
+function createLegacyXSavedFixture(
+  dbPath: string,
+  baselineMode: "historical" | "keep-backlog",
+): void {
+  const legacy = new Database(dbPath);
+  legacy.exec(`
+    CREATE TABLE x_items (
+      tweet_id TEXT PRIMARY KEY, text TEXT NOT NULL,
+      author_handle TEXT NOT NULL DEFAULT '', url TEXT NOT NULL,
+      tweet_created_at TEXT, external_urls_json TEXT NOT NULL DEFAULT '[]',
+      seen_liked INTEGER NOT NULL DEFAULT 0,
+      seen_bookmarked INTEGER NOT NULL DEFAULT 0,
+      baseline INTEGER NOT NULL DEFAULT 0,
+      first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
+    );
+    CREATE TABLE x_item_state (
+      tweet_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+      priority INTEGER, summary TEXT, note TEXT, processed_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL);
+    CREATE TABLE x_sync_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL, status TEXT NOT NULL,
+      bookmarks_fetched INTEGER, likes_fetched INTEGER,
+      new_items INTEGER NOT NULL DEFAULT 0,
+      updated_items INTEGER NOT NULL DEFAULT 0, error TEXT,
+      details_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE x_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE INDEX idx_x_items_baseline ON x_items(baseline, first_seen_at DESC);
+    INSERT INTO x_items (
+      tweet_id, text, author_handle, url, baseline, first_seen_at, last_seen_at
+    ) VALUES ('legacy', 'old', 'author', 'https://x.com/i/status/legacy', 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z');
+    INSERT INTO x_item_state (tweet_id, status, note, updated_at)
+    VALUES ('legacy', 'keep', 'preserve', '2026-08-27T00:00:00Z');
+  `);
+  legacy
+    .prepare("INSERT INTO x_meta (key, value) VALUES ('baseline_mode', ?)")
+    .run(baselineMode);
+  if (baselineMode === "historical") {
+    legacy
+      .prepare(
+        "INSERT INTO x_meta (key, value) VALUES ('baseline_initialized_at', ?)",
+      )
+      .run("2026-08-28T00:00:00Z");
+  }
+  legacy
+    .prepare(
+      "INSERT INTO x_sync_runs (started_at, completed_at, status, new_items) VALUES (?, ?, ?, ?)",
+    )
+    .run("2026-08-28T00:00:00Z", "2026-08-28T00:00:01Z", "success", 1);
+  legacy.pragma("user_version = 1");
+  legacy.close();
+}
+
 describe("x-saved BirdClaw ingest", () => {
   it("normalizes BirdClaw home paths and keeps backups outside the live DB mount", async () => {
     const dir = makeTempDir();
@@ -423,51 +479,10 @@ describe("x-saved BirdClaw ingest", () => {
     db.close();
   });
 
-  it("migrates the old management schema to the compact schema", () => {
+  it("migrates historical baseline metadata to the compact schema", () => {
     const dir = makeTempDir();
     const targetPath = path.join(dir, "x-saved.sqlite");
-    const legacy = new Database(targetPath);
-    legacy.exec(`
-      CREATE TABLE x_items (
-        tweet_id TEXT PRIMARY KEY, text TEXT NOT NULL,
-        author_handle TEXT NOT NULL DEFAULT '', url TEXT NOT NULL,
-        tweet_created_at TEXT, external_urls_json TEXT NOT NULL DEFAULT '[]',
-        seen_liked INTEGER NOT NULL DEFAULT 0,
-        seen_bookmarked INTEGER NOT NULL DEFAULT 0,
-        baseline INTEGER NOT NULL DEFAULT 0,
-        first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
-      );
-      CREATE TABLE x_item_state (
-        tweet_id TEXT PRIMARY KEY, status TEXT NOT NULL,
-        priority INTEGER, summary TEXT, note TEXT, processed_at TEXT,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL);
-      CREATE TABLE x_sync_runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL,
-        completed_at TEXT NOT NULL, status TEXT NOT NULL,
-        bookmarks_fetched INTEGER, likes_fetched INTEGER,
-        new_items INTEGER NOT NULL DEFAULT 0,
-        updated_items INTEGER NOT NULL DEFAULT 0, error TEXT,
-        details_json TEXT NOT NULL DEFAULT '{}'
-      );
-      CREATE TABLE x_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE INDEX idx_x_items_baseline ON x_items(baseline, first_seen_at DESC);
-      INSERT INTO x_items (
-        tweet_id, text, author_handle, url, baseline, first_seen_at, last_seen_at
-      ) VALUES ('legacy', 'old', 'author', 'https://x.com/i/status/legacy', 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z');
-      INSERT INTO x_item_state (tweet_id, status, note, updated_at)
-      VALUES ('legacy', 'keep', 'preserve', '2026-08-27T00:00:00Z');
-      INSERT INTO x_meta (key, value)
-      VALUES ('baseline_initialized_at', '2026-08-28T00:00:00Z');
-    `);
-    legacy
-      .prepare(
-        "INSERT INTO x_sync_runs (started_at, completed_at, status, new_items) VALUES (?, ?, ?, ?)",
-      )
-      .run("2026-08-28T00:00:00Z", "2026-08-28T00:00:01Z", "success", 1);
-    legacy.pragma("user_version = 1");
-    legacy.close();
+    createLegacyXSavedFixture(targetPath, "historical");
 
     const db = openXSavedDb(targetPath);
     const item = db
@@ -483,6 +498,13 @@ describe("x-saved BirdClaw ingest", () => {
         )
         .get(),
     ).toEqual({ value: "2026-08-28T00:00:00Z" });
+    expect(
+      db
+        .prepare(
+          "SELECT key FROM x_meta WHERE key IN ('baseline_initialized_at', 'baseline_mode')",
+        )
+        .all(),
+    ).toEqual([]);
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE name = 'x_tags'").get(),
     ).toEqual({ name: "x_tags" });
@@ -508,6 +530,47 @@ describe("x-saved BirdClaw ingest", () => {
       updated_items: 0,
       details_json: "{}",
     });
+    expect(db.pragma("user_version", { simple: true })).toBe(2);
+    db.close();
+  });
+
+  it("preserves keep-backlog intent without creating an import marker", () => {
+    const dir = makeTempDir();
+    const targetPath = path.join(dir, "x-saved.sqlite");
+    createLegacyXSavedFixture(targetPath, "keep-backlog");
+
+    const db = openXSavedDb(targetPath);
+    expect(
+      db
+        .prepare(
+          "SELECT status, note FROM x_item_state WHERE tweet_id = 'legacy'",
+        )
+        .get(),
+    ).toEqual({ status: "keep", note: "preserve" });
+    expect(
+      db
+        .prepare(
+          "SELECT value FROM x_meta WHERE key = 'initial_import_completed_at'",
+        )
+        .get(),
+    ).toBeUndefined();
+    expect(
+      db
+        .prepare(
+          "SELECT key FROM x_meta WHERE key IN ('baseline_initialized_at', 'baseline_mode')",
+        )
+        .all(),
+    ).toEqual([]);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM pragma_table_info('x_items') WHERE name = 'baseline'",
+        )
+        .get(),
+    ).toEqual({ name: "baseline" });
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'x_tags'").get(),
+    ).toEqual({ name: "x_tags" });
     expect(db.pragma("user_version", { simple: true })).toBe(2);
     db.close();
   });

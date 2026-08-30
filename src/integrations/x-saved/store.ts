@@ -177,6 +177,9 @@ function createSchema(db: Database.Database): void {
 
 function migrateSchemaV1(db: Database.Database): void {
   const migrate = db.transaction(() => {
+    const baselineMode = db
+      .prepare("SELECT value FROM x_meta WHERE key = 'baseline_mode'")
+      .get() as { value: string } | undefined;
     const legacyMarker = db
       .prepare("SELECT value FROM x_meta WHERE key = 'baseline_initialized_at'")
       .get() as { value: string } | undefined;
@@ -186,7 +189,9 @@ function migrateSchemaV1(db: Database.Database): void {
       )
       .get() as { value: string | null };
     const initialImportCompletedAt =
-      legacyMarker?.value ?? inferredMarker.value;
+      baselineMode?.value === "keep-backlog"
+        ? undefined
+        : (legacyMarker?.value ?? inferredMarker.value);
     if (initialImportCompletedAt) {
       db.prepare(
         "INSERT OR IGNORE INTO x_meta (key, value) VALUES ('initial_import_completed_at', ?)",

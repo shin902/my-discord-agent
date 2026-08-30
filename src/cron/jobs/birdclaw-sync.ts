@@ -9,6 +9,8 @@ const SettingsSchema = z.strictObject({
   mode: z.enum(["auto", "xurl", "bird"]).optional(),
   limit: z.number().int().positive().max(1000).optional(),
   maxPages: z.number().int().positive().max(100).optional(),
+  birdclawDbPath: z.string().min(1).optional(),
+  xSavedDbPath: z.string().min(1).optional(),
   backupKeep: z.number().int().positive().max(365).optional(),
   backupPath: z.string().min(1).optional(),
 });
