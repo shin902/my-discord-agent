@@ -1933,6 +1933,12 @@ export class QueueRepository {
              )`,
         )
         .run(now);
+      // `created_at` is millisecond precision and `response_index` is scoped
+      // to a job, so neither column alone fully orders candidates. deliveries
+      // uses SQLite's implicit rowid as its durable insertion order; unlike
+      // the UUID primary key, it is not random and is preserved by SQLite
+      // backups. This keeps same-time candidates in creation order without
+      // another schema/migration column.
       const row = this.db
         .prepare(
           `SELECT candidate.* FROM deliveries AS candidate
@@ -1945,7 +1951,7 @@ export class QueueRepository {
                  AND predecessor.status NOT IN ('sent')
                  AND NOT (EXISTS (SELECT 1 FROM jobs rss_job WHERE rss_job.id=candidate.job_id AND json_extract(rss_job.payload_json,'$.rssDispatchId') IS NOT NULL) AND predecessor.status='failed')
              )
-           ORDER BY candidate.created_at,candidate.response_index LIMIT 1`,
+           ORDER BY candidate.created_at,candidate.response_index,candidate.rowid LIMIT 1`,
         )
         .get(now) as Record<string, unknown> | undefined;
       if (!row) return undefined;
