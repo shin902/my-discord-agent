@@ -37,7 +37,7 @@ AgentGroup（エージェント設定プロファイル）
 
 - AgentがBotを呼ぶには、effective `tools` に `bot` を明示的に許可する必要がある。許可されていないrunにはBot呼び出しendpointやcapabilityを公開しない。
 - 同じgroupの範囲内なら、Botがcallerと異なる、またはcallerより多いtools・skills・mountsを持っていても、それだけで権限昇格とはみなさない。`bot` の許可が任意のgroupや権限へのアクセスを意味するわけではない。
-- `Subagent` は従来どおりcallerのeffective authorityを上限とするephemeral delegationであり、Botとは権限モデルが異なる。
+- `Subagent` はeffective `tools` に正確な `subagent` を明示的に許可したrunだけが利用できる。callerのeffective authorityを上限とするephemeral delegationであり、Botとは権限モデルが異なる。許可されていないrunにはsubagentのschemaやcapabilityを公開しない。
 - 別group、host操作、高いtrust classやgroupで未許可のcapabilityへの移行は、通常のBot delegationではなく別のapproval / authorization boundaryで扱う。
 
 現在、AgentGroupのceilingがBot profileのtools・skills・mounts等により機械的に証明されるわけではなく、同一group内の設定を運用者が管理する。public利用、複数ユーザー、外部入力起点のdelegationでは、group-level declaration、起動時validation、tool proxy policyなど、より強い検証を追加する必要がある。

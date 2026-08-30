@@ -759,7 +759,10 @@ export async function runAgentLoop(
       process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     },
   };
-  const subagentTool = createSubagentTool(delegationContext);
+  const subagentTool =
+    groupConfig.tools?.includes("subagent") === true
+      ? createSubagentTool(delegationContext)
+      : undefined;
   const botTool =
     botToolEndpoint && groupConfig.tools?.includes("bot") === true
       ? createBotTool({
@@ -771,7 +774,11 @@ export async function runAgentLoop(
           },
         })
       : undefined;
-  const agentTools = [...tools, subagentTool, ...(botTool ? [botTool] : [])];
+  const agentTools = [
+    ...tools,
+    ...(subagentTool ? [subagentTool] : []),
+    ...(botTool ? [botTool] : []),
+  ];
   delegationContext.tools = agentTools;
 
   const pendingAppends: Promise<void>[] = [];

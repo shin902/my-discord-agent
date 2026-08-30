@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { formatSessionTimeAnchor } from "../time/context.js";
 import { defaultConvertToLlm } from "./agent-runner.js";
 
@@ -196,8 +197,21 @@ describe("runAgentLoop", () => {
     expect(appendMessage).not.toHaveBeenCalled();
   });
 
-  it("root Agentへsubagent toolを配線し、実行時に独立childを作る", async () => {
+  it("tools未指定のroot Agentへsubagent toolを公開しない", async () => {
     await runAgentLoop("test-group", "session-1", "delegate", {});
+
+    const rootOptions = lastAgentOptions as {
+      initialState: { tools: AgentTool[] };
+    };
+    expect(
+      rootOptions.initialState.tools.some((tool) => tool.name === "subagent"),
+    ).toBe(false);
+  });
+
+  it("root Agentへ明示したsubagent toolを配線し、実行時に独立childを作る", async () => {
+    await runAgentLoop("test-group", "session-1", "delegate", {
+      tools: ["subagent"],
+    });
 
     const rootOptions = lastAgentOptions as {
       initialState: { messages: unknown[]; tools: AgentTool[] };
@@ -222,6 +236,22 @@ describe("runAgentLoop", () => {
     expect(childOptions.initialState.messages).toEqual([]);
     expect(childOptions.sessionId).toBe(result.details.runId);
     expect(childOptions.sessionId).not.toBe(rootOptions.sessionId);
+  });
+
+  it("channelのtools完全置換でroot Agentのsubagent toolを無効化する", async () => {
+    const effectiveConfig = resolveAgentConfig(
+      { tools: ["subagent"] },
+      { tools: ["read"] },
+    );
+
+    await runAgentLoop("test-group", "session-1", "delegate", effectiveConfig);
+
+    const rootOptions = lastAgentOptions as {
+      initialState: { tools: AgentTool[] };
+    };
+    expect(
+      rootOptions.initialState.tools.some((tool) => tool.name === "subagent"),
+    ).toBe(false);
   });
 
   it("root Agentへ同期bot toolを配線し、完了結果を返す", async () => {
@@ -462,7 +492,9 @@ describe("runAgentLoop", () => {
         return true;
       });
 
-    await runAgentLoop("test-group", "session-1", "delegate", {});
+    await runAgentLoop("test-group", "session-1", "delegate", {
+      tools: ["subagent"],
+    });
 
     const timingLine = written.find((line) =>
       line.includes('"type":"agent_timing"'),
