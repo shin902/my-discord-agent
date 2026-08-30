@@ -42,8 +42,8 @@ describe("resolveTools", () => {
     ]);
   });
 
-  it("context-createdなbotはregistryで検証されるが生成しない", () => {
-    expect(resolveTools(["bot"])).toEqual([]);
+  it("context-createdなbotとsubagentはregistryで検証されるが生成しない", () => {
+    expect(resolveTools(["bot", "subagent"])).toEqual([]);
   });
 
   it("空配列は空配列を返す", () => {

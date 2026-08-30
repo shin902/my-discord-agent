@@ -45,7 +45,7 @@ import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 // Context-created tools are validated here but instantiated by their runtime
 // owner, not by the static registry.
-const CONTEXT_CREATED_TOOLS = new Set(["bot"]);
+const CONTEXT_CREATED_TOOLS = new Set(["bot", "subagent"]);
 
 const TOOLS: Record<string, AgentTool> = {
   bash: bashTool,

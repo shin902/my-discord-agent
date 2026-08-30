@@ -1,6 +1,6 @@
 # エージェントのツールとスキル
 
-エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skillsは指定時に完全置換する。`bot` は明示的にtoolsへ追加したAgentだけが利用できます。
+エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skillsは指定時に完全置換する。context-created toolの `bot` と `subagent` は、正確な名前をtoolsへ明示的に追加したAgentだけが利用できます。
 
 ## ツール
 
@@ -9,6 +9,7 @@
 | ツール名 | 概要 |
 |---------|------|
 | `bot` | toolsへ明示的に追加したAgentだけが利用できる、Bot RegistryのBotを `run` / `resume` / `list` で呼び出す組み込みオーケストレーションツール。`run` / `resume` は同じtool call内で完了まで待機し、結果を返す（キュー投入や非同期実行はしない） |
+| `subagent` | toolsへ正確に明示したAgentだけが利用できる、自己完結したタスクをephemeral subagentへ委譲する組み込みツール。親の実行設定を引き継ぎ、bounded recursive delegationを行う。 |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |

@@ -540,7 +540,9 @@ function rebuildLegacyQueueSchema(db: Database.Database): void {
       .get()
   ) {
     db.exec(`INSERT INTO deliveries(id,job_id,status,payload_json,attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at)
-      SELECT id,job_id,status,payload_json,attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at FROM deliveries_legacy`);
+      SELECT id,job_id,status,payload_json,attempts,next_attempt_at,lease_until,worker_id,fencing_token,last_error,created_at,updated_at
+      FROM deliveries_legacy
+      ORDER BY deliveries_legacy.rowid`);
   }
   if (
     db
@@ -1947,6 +1949,12 @@ export class QueueRepository {
              )`,
         )
         .run(now);
+      // `created_at` is millisecond precision and `response_index` is scoped
+      // to a job, so neither column alone fully orders candidates. `deliveries`
+      // uses SQLite's implicit rowid as its insertion order; SQLite serialize
+      // backups preserve those rowids, but arbitrary table rebuilds or VACUUM
+      // do not necessarily do so. Legacy table copies above therefore preserve
+      // their source rowid order explicitly.
       const row = this.db
         .prepare(
           `SELECT candidate.* FROM deliveries AS candidate
@@ -1959,7 +1967,7 @@ export class QueueRepository {
                  AND predecessor.status NOT IN ('sent')
                  AND NOT (EXISTS (SELECT 1 FROM jobs rss_job WHERE rss_job.id=candidate.job_id AND json_extract(rss_job.payload_json,'$.rssDispatchId') IS NOT NULL) AND predecessor.status='failed')
              )
-           ORDER BY candidate.created_at,candidate.response_index LIMIT 1`,
+           ORDER BY candidate.created_at,candidate.response_index,candidate.rowid LIMIT 1`,
         )
         .get(now) as Record<string, unknown> | undefined;
       if (!row) return undefined;

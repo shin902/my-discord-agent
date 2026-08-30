@@ -312,6 +312,77 @@ describe("runtime schema migration", () => {
     }
   });
 
+  it("preserves legacy delivery row order when rebuilding the queue schema", () => {
+    const db = new Database(":memory:");
+    let repo: QueueRepository | undefined;
+    const sameCreatedAt = "2026-01-01T00:00:00.000Z";
+    try {
+      db.exec(LEGACY_V1_SCHEMA);
+      db.exec("PRAGMA reverse_unordered_selects=ON");
+      const insertJob = db.prepare(
+        "INSERT INTO jobs(id,payload_json,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?, 'queued',0,10,?,?)",
+      );
+      const payload = (id: string) =>
+        JSON.stringify({
+          id,
+          channelId: "channel",
+          groupName: "group",
+          sessionId: id,
+          content: "content",
+          timestamp: sameCreatedAt,
+          retries: 0,
+        });
+      insertJob.run(
+        "legacy-first-job",
+        payload("legacy-first-job"),
+        sameCreatedAt,
+        sameCreatedAt,
+      );
+      insertJob.run(
+        "legacy-second-job",
+        payload("legacy-second-job"),
+        sameCreatedAt,
+        sameCreatedAt,
+      );
+      const insertDelivery = db.prepare(
+        "INSERT INTO deliveries(id,job_id,status,created_at,updated_at) VALUES (?,?, 'pending',?,?)",
+      );
+      insertDelivery.run(
+        "legacy-first-delivery",
+        "legacy-first-job",
+        sameCreatedAt,
+        sameCreatedAt,
+      );
+      insertDelivery.run(
+        "legacy-second-delivery",
+        "legacy-second-job",
+        sameCreatedAt,
+        sameCreatedAt,
+      );
+
+      configureRuntimeDb(db);
+
+      expect(
+        db.prepare("SELECT id FROM deliveries ORDER BY rowid").all(),
+      ).toEqual([
+        { id: "legacy-first-delivery" },
+        { id: "legacy-second-delivery" },
+      ]);
+      repo = new QueueRepository(db);
+      expect(
+        repo.claimDelivery("delivery-worker", 1_000, new Date(sameCreatedAt))
+          ?.row.id,
+      ).toBe("legacy-first-delivery");
+      expect(
+        repo.claimDelivery("delivery-worker-2", 1_000, new Date(sameCreatedAt))
+          ?.row.id,
+      ).toBe("legacy-second-delivery");
+    } finally {
+      if (repo) repo.close();
+      else db.close();
+    }
+  });
+
   it("repairs a current-version store that is missing the durable delivery columns and the idempotency completed_at column", () => {
     const db = new Database(":memory:");
     try {

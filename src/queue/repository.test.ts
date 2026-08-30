@@ -575,6 +575,103 @@ describe("durable Phase 2 result state", () => {
     }
   });
 
+  it("claims same-time, same-index deliveries in creation order", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const firstJob = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session-a",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const firstClaim = expectDefined(repo.claim("worker-a", 1_000));
+      const firstDelivery = expectDefined(
+        repo.commitResult(
+          firstJob.job.id,
+          firstClaim.fencingToken,
+          "a".repeat(2_001),
+          {
+            deliveryPayload: {
+              destinationType: "channel",
+              destinationId: "channel",
+            },
+          },
+        ),
+      );
+      const firstChunks = repo
+        .listDeliveries()
+        .filter((row) => row.jobId === firstJob.job.id);
+      expect(firstChunks).toHaveLength(2);
+
+      const secondJob = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session-b",
+        content: "content",
+        timestamp: new Date().toISOString(),
+      });
+      const secondClaim = expectDefined(repo.claim("worker-b", 1_000));
+      const secondDelivery = expectDefined(
+        repo.commitResult(
+          secondJob.job.id,
+          secondClaim.fencingToken,
+          "second",
+          {
+            deliveryPayload: {
+              destinationType: "channel",
+              destinationId: "channel",
+            },
+          },
+        ),
+      );
+      const sameCreatedAt = "2026-01-01T00:00:00.000Z";
+      repo.db
+        .prepare("UPDATE deliveries SET created_at=? WHERE id IN (?,?)")
+        .run(sameCreatedAt, firstDelivery.id, secondDelivery.id);
+      repo.db
+        .prepare(
+          "UPDATE deliveries SET status='retry_wait',next_attempt_at=?,lease_until=?,worker_id=? WHERE id=?",
+        )
+        .run(
+          new Date(0).toISOString(),
+          new Date(0).toISOString(),
+          "stale-worker",
+          firstDelivery.id,
+        );
+
+      expect(
+        repo.db
+          .prepare(
+            "SELECT job_id,response_index,created_at FROM deliveries WHERE id IN (?,?) ORDER BY rowid",
+          )
+          .all(firstDelivery.id, secondDelivery.id),
+      ).toEqual([
+        {
+          job_id: firstJob.job.id,
+          response_index: 0,
+          created_at: sameCreatedAt,
+        },
+        {
+          job_id: secondJob.job.id,
+          response_index: 0,
+          created_at: sameCreatedAt,
+        },
+      ]);
+
+      expect(
+        repo.claimDelivery("delivery-worker", 1_000, new Date(sameCreatedAt))
+          ?.row.id,
+      ).toBe(firstDelivery.id);
+      expect(
+        repo.claimDelivery("delivery-worker-2", 1_000, new Date(sameCreatedAt))
+          ?.row.id,
+      ).toBe(secondDelivery.id);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("claims only the lowest eligible chunk per job while allowing other jobs to proceed", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
