@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   chmod,
@@ -7,10 +8,8 @@ import {
   readFile,
   rename,
   rm,
-  unlink,
 } from "node:fs/promises";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 
@@ -115,9 +114,19 @@ function initializeSchema(db: Database.Database): void {
       );
       CREATE INDEX IF NOT EXISTS session_entries_session_id_id
         ON session_entries(session_id, id);
+      CREATE TABLE IF NOT EXISTS session_store_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
       PRAGMA user_version = 1;
     `);
   }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_store_metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
 }
@@ -188,94 +197,43 @@ function importLegacyInputs(
         );
       });
     }
+    db.prepare(
+      "INSERT OR REPLACE INTO session_store_metadata(key, value) VALUES ('legacy_jsonl_imported', '1')",
+    ).run();
   })();
 }
 
-function payloadPrefixMatches(
-  databasePayloads: string[],
-  input: LegacySessionInput,
-): boolean {
-  const sharedLength = Math.min(databasePayloads.length, input.payloads.length);
-  return databasePayloads
-    .slice(0, sharedLength)
-    .every((payload, index) =>
-      isDeepStrictEqual(JSON.parse(payload), input.messages[index]),
-    );
-}
-
-function verifyAndReconcileLegacyInputs(
+function verifyMigratedDatabase(
   db: Database.Database,
-  inputs: LegacySessionInput[],
+  expected?: { sessions: number; entries: number },
 ): void {
   const integrity = db.pragma("integrity_check", { simple: true });
   if (integrity !== "ok")
     throw new Error(`session DB integrity check failed: ${integrity}`);
-
-  const selectPayloads = db.prepare(
-    "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
-  );
-  const selectSessionIds = db.prepare("SELECT id FROM sessions ORDER BY id");
-  const selectExactSession = db.prepare("SELECT 1 FROM sessions WHERE id=?");
-  const insertEntry = db.prepare(`
-    INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  const updateSession = db.prepare(
-    "UPDATE sessions SET updated_at=? WHERE id=?",
-  );
-
-  db.transaction(() => {
-    for (const input of inputs) {
-      const exactSession = selectExactSession.get(input.sessionId);
-      let sessionId = exactSession ? input.sessionId : undefined;
-      let payloads = sessionId
-        ? (
-            selectPayloads.all(sessionId) as Array<{ payload_json: string }>
-          ).map((row) => row.payload_json)
-        : [];
-
-      if (!sessionId && input.payloads.length > 0) {
-        const candidates = (
-          selectSessionIds.all() as Array<{ id: string }>
-        ).flatMap(({ id }) => {
-          const candidatePayloads = (
-            selectPayloads.all(id) as Array<{ payload_json: string }>
-          ).map((row) => row.payload_json);
-          return candidatePayloads.length > 0 &&
-            payloadPrefixMatches(candidatePayloads, input)
-            ? [{ id, payloads: candidatePayloads }]
-            : [];
-        });
-        if (candidates.length === 1) {
-          sessionId = candidates[0].id;
-          payloads = candidates[0].payloads;
-        }
-      }
-
-      if (!sessionId || !payloadPrefixMatches(payloads, input)) {
-        throw new Error(
-          `legacy session JSONLとsession DBの対応を一意に確認できません: ${input.file}`,
-        );
-      }
-
-      input.messages.slice(payloads.length).forEach((message, offset) => {
-        const index = payloads.length + offset;
-        insertEntry.run(
-          sessionId,
-          index + 1,
-          entryType(message),
-          input.payloads[index],
-          messageTimestamp(message),
-        );
-      });
-      if (input.messages.length > payloads.length) {
-        updateSession.run(
-          messageTimestamp(input.messages[input.messages.length - 1]),
-          sessionId,
-        );
-      }
+  const marker = db
+    .prepare(
+      "SELECT value FROM session_store_metadata WHERE key='legacy_jsonl_imported'",
+    )
+    .get() as { value: string } | undefined;
+  if (marker?.value !== "1") {
+    throw new Error(
+      "session DBに有効なlegacy JSONL migration markerがありません",
+    );
+  }
+  if (expected) {
+    const sessions = db
+      .prepare("SELECT COUNT(*) AS count FROM sessions")
+      .get() as { count: number };
+    const entries = db
+      .prepare("SELECT COUNT(*) AS count FROM session_entries")
+      .get() as { count: number };
+    if (
+      sessions.count !== expected.sessions ||
+      entries.count !== expected.entries
+    ) {
+      throw new Error("legacy session JSONL import件数の検証に失敗しました");
     }
-  })();
+  }
 }
 
 async function syncPath(target: string): Promise<void> {
@@ -290,61 +248,79 @@ async function syncPath(target: string): Promise<void> {
 export async function migrateLegacySessionStores(
   groupNames: string[],
 ): Promise<void> {
-  const migrations: Array<{ inputs: LegacySessionInput[] }> = [];
+  const legacyInputs: Array<{
+    groupName: string;
+    inputs: LegacySessionInput[];
+  }> = [];
   for (const groupName of groupNames) {
     validateName(groupName, "グループ名");
     const dir = await ensureDir(groupName);
     const inputs = await readLegacyInputs(dir);
     const dbPath = path.join(dir, DB_FILENAME);
-    let db: Database.Database;
     if (!existsSync(dbPath)) {
       const tempPath = path.join(dir, `${DB_FILENAME}.migrating`);
       await rm(tempPath, { force: true });
-      db = new Database(tempPath);
+      const db = new Database(tempPath);
       try {
         initializeSchema(db);
         importLegacyInputs(db, inputs);
-        verifyAndReconcileLegacyInputs(db, inputs);
+        verifyMigratedDatabase(db, {
+          sessions: inputs.length,
+          entries: inputs.reduce(
+            (sum, input) => sum + input.messages.length,
+            0,
+          ),
+        });
         db.close();
         await syncPath(tempPath);
         await rename(tempPath, dbPath);
         await syncPath(dir);
         await chmod(dbPath, 0o666).catch(() => {});
-        migrations.push({ inputs });
-        continue;
       } catch (migrationError) {
         if (db.open) db.close();
         await rm(tempPath, { force: true });
         throw migrationError;
       }
+    } else {
+      const db = new Database(dbPath, { fileMustExist: true });
+      try {
+        initializeSchema(db);
+        verifyMigratedDatabase(db);
+        await chmod(dbPath, 0o666).catch(() => {});
+      } finally {
+        db.close();
+      }
     }
-    db = new Database(dbPath, { fileMustExist: true });
-    try {
-      initializeSchema(db);
-      verifyAndReconcileLegacyInputs(db, inputs);
-      await chmod(dbPath, 0o666).catch(() => {});
-      migrations.push({ inputs });
-    } finally {
-      db.close();
-    }
+    legacyInputs.push({ groupName, inputs });
   }
 
-  const deletedDirectories = new Set<string>();
-  const unlinkResults = await Promise.allSettled(
-    migrations.flatMap(({ inputs }) =>
-      inputs.map(async (input) => {
-        await unlink(input.file);
-        deletedDirectories.add(path.dirname(input.file));
-      }),
-    ),
+  const files = legacyInputs.flatMap(({ groupName, inputs }) =>
+    inputs.map((input) => ({ groupName, source: input.file })),
   );
-  const syncResults = await Promise.allSettled(
-    [...deletedDirectories].map(syncPath),
+  if (files.length === 0) return;
+  const date = new Date().toISOString().slice(0, 10);
+  const batch = randomUUID();
+  const backupRoot = path.join(
+    path.dirname(SESSIONS_DIR),
+    "session-jsonl-backup",
+    date,
+    batch,
   );
-  const failure = [...unlinkResults, ...syncResults].find(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
-  if (failure) throw failure.reason;
+  for (const file of files) {
+    const destinationDir = path.join(backupRoot, file.groupName);
+    const destination = path.join(destinationDir, path.basename(file.source));
+    try {
+      await mkdir(destinationDir, { recursive: true });
+      if (existsSync(destination))
+        throw new Error(`backup先が既に存在します: ${destination}`);
+      await rename(file.source, destination);
+    } catch (error) {
+      console.warn(
+        `[session-migration] SQLite migrationは完了しましたが、legacy JSONLをbackupへ移動できませんでした: ${file.source}`,
+        error,
+      );
+    }
+  }
 }
 
 async function openDatabase(groupName: string): Promise<Database.Database> {

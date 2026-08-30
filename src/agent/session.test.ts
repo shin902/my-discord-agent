@@ -2,6 +2,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   writeFile,
@@ -13,21 +14,32 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const fsMock = vi.hoisted(() => ({
-  events: [] as string[],
-  failingUnlinkPath: undefined as string | undefined,
+  failingRenamePath: undefined as string | undefined,
+  renameErrorCode: undefined as string | undefined,
   syncedPaths: new Set<string>(),
 }));
+
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...actual,
+    randomUUID: () => "00000000-0000-4000-8000-000000000000",
+  };
+});
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    unlink: async (target: Parameters<typeof actual.unlink>[0]) => {
-      if (target === fsMock.failingUnlinkPath) {
-        throw new Error(`injected unlink failure: ${String(target)}`);
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      if (args[0] === fsMock.failingRenamePath) {
+        const error = new Error(
+          `injected rename failure: ${String(args[0])}`,
+        ) as NodeJS.ErrnoException;
+        error.code = fsMock.renameErrorCode;
+        throw error;
       }
-      await actual.unlink(target);
-      fsMock.events.push(`unlink:${String(target)}`);
+      await actual.rename(...args);
     },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
@@ -37,7 +49,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
             return async () => {
               await target.sync();
               fsMock.syncedPaths.add(String(args[0]));
-              fsMock.events.push(`sync:${String(args[0])}`);
             };
           }
           const value = Reflect.get(target, property, target);
@@ -48,11 +59,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
+let testRoot: string;
 let root: string;
 let session: typeof import("./session.js");
 
 beforeAll(async () => {
-  root = await mkdtemp(path.join(os.tmpdir(), "session-store-test-"));
+  testRoot = await mkdtemp(path.join(os.tmpdir(), "session-store-test-"));
+  root = path.join(testRoot, "sessions");
   process.env.SESSIONS_DIR = root;
   session = await import("./session.js");
 });
@@ -60,13 +73,22 @@ beforeAll(async () => {
 afterAll(async () => {
   session.closeSessionDatabasesForTests();
   delete process.env.SESSIONS_DIR;
-  await rm(root, { recursive: true, force: true });
+  await rm(testRoot, { recursive: true, force: true });
 });
 
 function dbFor(group: string): Database.Database {
   return new Database(path.join(root, group, "sessions.sqlite"), {
     readonly: true,
   });
+}
+
+function markMigrated(group: string): void {
+  const db = new Database(path.join(root, group, "sessions.sqlite"));
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT OR REPLACE INTO session_store_metadata VALUES ('legacy_jsonl_imported', '1');
+  `);
+  db.close();
 }
 
 describe("SQLite session trajectory store", () => {
@@ -182,7 +204,25 @@ describe("SQLite session trajectory store", () => {
     ).resolves.toHaveLength(1);
   });
 
-  it("起動migrationで全groupをimportしてからlegacy JSONLを一括削除する", async () => {
+  async function findBackup(filename: string): Promise<string | undefined> {
+    const backupRoot = path.join(root, "..", "session-jsonl-backup");
+    async function walk(dir: string): Promise<string | undefined> {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(
+        () => [],
+      );
+      for (const entry of entries) {
+        const candidate = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          const found = await walk(candidate);
+          if (found) return found;
+        } else if (entry.name === filename) return candidate;
+      }
+      return undefined;
+    }
+    return walk(backupRoot);
+  }
+
+  it("起動migrationで全groupをimportしmarker付きDBを作ってJSONLを退避する", async () => {
     const groups = ["legacy-a", "legacy-b"];
     for (const [index, group] of groups.entries()) {
       const dir = path.join(root, group);
@@ -207,48 +247,93 @@ describe("SQLite session trajectory store", () => {
     await expect(
       access(path.join(root, "legacy-b", "session-1.jsonl")),
     ).rejects.toThrow();
+    for (const group of groups) {
+      const db = dbFor(group);
+      expect(
+        db
+          .prepare(
+            "SELECT value FROM session_store_metadata WHERE key='legacy_jsonl_imported'",
+          )
+          .get(),
+      ).toEqual({ value: "1" });
+      db.close();
+    }
+    const backup = await findBackup("session-0.jsonl");
+    expect(backup).toContain(`${path.sep}legacy-a${path.sep}`);
+    await expect(readFile(backup as string, "utf-8")).resolves.toContain(
+      '"content":"legacy-a"',
+    );
   });
 
-  it("一部のJSONL削除が失敗しても削除成功したdirectoryをsyncしてから失敗する", async () => {
-    const syncedDir = path.join(root, "unlink-success");
-    const failedDir = path.join(root, "unlink-failure");
-    await mkdir(syncedDir, { recursive: true });
-    await mkdir(failedDir, { recursive: true });
-    const deletedPath = path.join(syncedDir, "deleted.jsonl");
-    const retainedPath = path.join(failedDir, "retained.jsonl");
-    await writeFile(deletedPath, '{"role":"user","content":"deleted"}\n');
-    await writeFile(retainedPath, '{"role":"user","content":"retained"}\n');
-    fsMock.failingUnlinkPath = retainedPath;
-    fsMock.events.length = 0;
-    fsMock.syncedPaths.clear();
+  it("JSONLがないgroupにもmarker付きDBを作りstale tempを置換する", async () => {
+    const group = "empty-migration";
+    const dir = path.join(root, group);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "sessions.sqlite.migrating"), "stale");
 
+    await session.migrateLegacySessionStores([group]);
+
+    const db = dbFor(group);
+    expect(
+      db
+        .prepare(
+          "SELECT value FROM session_store_metadata WHERE key='legacy_jsonl_imported'",
+        )
+        .get(),
+    ).toEqual({ value: "1" });
+    db.close();
+  });
+
+  it("退避失敗はwarningにして原本を残し次回retryする", async () => {
+    const group = "move-failure";
+    const dir = path.join(root, group);
+    await mkdir(dir, { recursive: true });
+    const legacyPath = path.join(dir, "retained.jsonl");
+    await writeFile(legacyPath, '{"role":"user","content":"retained"}\n');
+    fsMock.failingRenamePath = legacyPath;
+    fsMock.renameErrorCode = "EXDEV";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      await session
-        .migrateLegacySessionStores(["unlink-success", "unlink-failure"])
-        .catch((error: unknown) => {
-          fsMock.events.push("rejected");
-          throw error;
-        })
-        .then(
-          () => expect.fail("migration should reject"),
-          (error: unknown) =>
-            expect(error).toHaveProperty(
-              "message",
-              expect.stringContaining("injected unlink failure"),
-            ),
-        );
-      const deletionStart = fsMock.events.indexOf(`unlink:${deletedPath}`);
-      expect(deletionStart).toBeGreaterThanOrEqual(0);
-      expect(fsMock.events.slice(deletionStart)).toEqual([
-        `unlink:${deletedPath}`,
-        `sync:${syncedDir}`,
-        "rejected",
-      ]);
-      expect(fsMock.syncedPaths).toContain(syncedDir);
-      await expect(access(deletedPath)).rejects.toThrow();
-      await expect(access(retainedPath)).resolves.toBeUndefined();
+      await expect(
+        session.migrateLegacySessionStores([group]),
+      ).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("backupへ移動できませんでした"),
+        expect.objectContaining({ code: "EXDEV" }),
+      );
+      await expect(access(legacyPath)).resolves.toBeUndefined();
+      fsMock.failingRenamePath = undefined;
+      await session.migrateLegacySessionStores([group]);
+      await expect(access(legacyPath)).rejects.toThrow();
     } finally {
-      fsMock.failingUnlinkPath = undefined;
+      fsMock.failingRenamePath = undefined;
+      fsMock.renameErrorCode = undefined;
+      warn.mockRestore();
+    }
+  });
+
+  it("既存backupを上書きせずsourceを保持する", async () => {
+    const group = "no-overwrite";
+    const dir = path.join(root, group);
+    await mkdir(dir, { recursive: true });
+    const source = path.join(dir, "same.jsonl");
+    await writeFile(source, '{"role":"user","content":"original"}\n');
+    await session.migrateLegacySessionStores([group]);
+    const backup = await findBackup("same.jsonl");
+    await writeFile(source, '{"role":"user","content":"new"}\n');
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await session.migrateLegacySessionStores([group]);
+      await expect(readFile(backup as string, "utf-8")).resolves.toContain(
+        "original",
+      );
+      await expect(readFile(source, "utf-8")).resolves.toContain("new");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("backupへ移動できませんでした"),
+        expect.any(Error),
+      );
+    } finally {
+      warn.mockRestore();
     }
   });
 
@@ -267,9 +352,15 @@ describe("SQLite session trajectory store", () => {
     ).rejects.toThrow(/bad\.jsonl:2/);
     await expect(readFile(validPath, "utf-8")).resolves.toContain("ok");
     await expect(readFile(brokenPath, "utf-8")).resolves.toContain("not-json");
+    await writeFile(brokenPath, '{"role":"user","content":"fixed"}\n');
+    await expect(
+      session.migrateLegacySessionStores(["batch-valid", "batch-broken"]),
+    ).resolves.toBeUndefined();
+    await expect(access(validPath)).rejects.toThrow();
+    await expect(access(brokenPath)).rejects.toThrow();
   });
 
-  it("既存SQLiteがlegacy JSONLと一致すれば検証後に原本を削除する", async () => {
+  it("markerなし既存SQLiteは失敗しJSONLを移動しない", async () => {
     const group = "existing-db";
     await session.appendMessage(group, "old", {
       role: "user",
@@ -287,25 +378,22 @@ describe("SQLite session trajectory store", () => {
       '{"role":"user","content":"already imported","timestamp":20}\n',
     );
 
-    await session.migrateLegacySessionStores([group]);
+    await expect(session.migrateLegacySessionStores([group])).rejects.toThrow(
+      "migration markerがありません",
+    );
 
-    await expect(access(legacyPath)).rejects.toThrow();
+    await expect(access(legacyPath)).resolves.toBeUndefined();
     await expect(session.loadMessages(group, "old")).resolves.toHaveLength(2);
   });
 
-  it("import済みmarkerがあってもJSONLの追記suffixをSQLiteへ反映する", async () => {
+  it("import済みmarkerがあればJSONL suffixを比較せず退避する", async () => {
     const group = "marker-suffix";
     await session.appendMessage(group, "old", {
       role: "user",
       content: "prefix",
       timestamp: 30,
     });
-    const db = new Database(path.join(root, group, "sessions.sqlite"));
-    db.exec(`
-      CREATE TABLE session_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO session_store_metadata VALUES ('legacy_jsonl_imported', '1');
-    `);
-    db.close();
+    markMigrated(group);
     const legacyPath = path.join(root, group, "old.jsonl");
     await writeFile(
       legacyPath,
@@ -314,11 +402,11 @@ describe("SQLite session trajectory store", () => {
 
     await session.migrateLegacySessionStores([group]);
 
-    await expect(session.loadMessages(group, "old")).resolves.toHaveLength(2);
+    await expect(session.loadMessages(group, "old")).resolves.toHaveLength(1);
     await expect(access(legacyPath)).rejects.toThrow();
   });
 
-  it("rename済みsessionとの対応が一意ならJSONL suffixを新identityへ反映する", async () => {
+  it("marker付きDBではrename済みJSONLも内容推測せず退避する", async () => {
     const group = "renamed-legacy";
     await session.appendMessage(group, "temporary", {
       role: "user",
@@ -326,6 +414,7 @@ describe("SQLite session trajectory store", () => {
       timestamp: 40,
     });
     await session.renameSession(group, "temporary", "item-thread");
+    markMigrated(group);
     const legacyPath = path.join(root, group, "temporary.jsonl");
     await writeFile(
       legacyPath,
@@ -336,11 +425,11 @@ describe("SQLite session trajectory store", () => {
 
     await expect(
       session.loadMessages(group, "item-thread"),
-    ).resolves.toHaveLength(2);
+    ).resolves.toHaveLength(1);
     await expect(access(legacyPath)).rejects.toThrow();
   });
 
-  it("rename済みsessionとの対応が曖昧ならJSONLを保持して失敗する", async () => {
+  it("marker付きDBでは曖昧なJSONLも比較せず退避する", async () => {
     const group = "ambiguous-legacy";
     for (const id of ["first", "second"]) {
       await session.appendMessage(group, id, {
@@ -349,16 +438,17 @@ describe("SQLite session trajectory store", () => {
         timestamp: 50,
       });
     }
+    markMigrated(group);
     const legacyPath = path.join(root, group, "old-name.jsonl");
     await writeFile(
       legacyPath,
       '{"role":"user","content":"same prefix","timestamp":50}\n',
     );
 
-    await expect(session.migrateLegacySessionStores([group])).rejects.toThrow(
-      "対応を一意に確認できません",
-    );
-    await expect(access(legacyPath)).resolves.toBeUndefined();
+    await expect(
+      session.migrateLegacySessionStores([group]),
+    ).resolves.toBeUndefined();
+    await expect(access(legacyPath)).rejects.toThrow();
   });
 
   it("path traversalと未知のschema versionを拒否する", async () => {
