@@ -100,11 +100,20 @@ function createLegacyXSavedFixture(
       baseline INTEGER NOT NULL DEFAULT 0,
       first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
     );
+    CREATE TABLE x_item_state (
+      tweet_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+      note TEXT, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL);
     CREATE TABLE x_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT INTO x_items VALUES (
       'legacy', 'old', 'author', 'https://x.com/i/status/legacy', NULL, '[]',
       0, 0, 1, '2026-08-27T00:00:00Z', '2026-08-27T00:00:00Z'
     );
+    INSERT INTO x_item_state VALUES (
+      'legacy', 'keep', 'preserve', '2026-08-27T00:00:00Z'
+    );
+    INSERT INTO x_tags VALUES ('legacy', 'saved');
   `);
   legacy
     .prepare("INSERT INTO x_meta VALUES ('baseline_mode', ?)")
@@ -464,6 +473,16 @@ describe("x-saved BirdClaw ingest", () => {
     createLegacyXSavedFixture(targetPath, baselineMode);
 
     const db = openXSavedDb(targetPath);
+    expect(
+      db
+        .prepare(
+          "SELECT status, note FROM x_item_state WHERE tweet_id = 'legacy'",
+        )
+        .get(),
+    ).toEqual({ status: "keep", note: "preserve" });
+    expect(
+      db.prepare("SELECT tag FROM x_tags WHERE tweet_id = 'legacy'").get(),
+    ).toEqual({ tag: "saved" });
     expect(
       db
         .prepare(
