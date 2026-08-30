@@ -10,7 +10,40 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+const fsMock = vi.hoisted(() => ({
+  failingUnlinkPath: undefined as string | undefined,
+  syncedPaths: new Set<string>(),
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    unlink: async (target: Parameters<typeof actual.unlink>[0]) => {
+      if (target === fsMock.failingUnlinkPath) {
+        throw new Error(`injected unlink failure: ${String(target)}`);
+      }
+      return actual.unlink(target);
+    },
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === "sync") {
+            return async () => {
+              await target.sync();
+              fsMock.syncedPaths.add(String(args[0]));
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    },
+  };
+});
 
 let root: string;
 let session: typeof import("./session.js");
@@ -171,6 +204,33 @@ describe("SQLite session trajectory store", () => {
     await expect(
       access(path.join(root, "legacy-b", "session-1.jsonl")),
     ).rejects.toThrow();
+  });
+
+  it("一部のJSONL削除が失敗しても削除成功したdirectoryをsyncしてから失敗する", async () => {
+    const syncedDir = path.join(root, "unlink-success");
+    const failedDir = path.join(root, "unlink-failure");
+    await mkdir(syncedDir, { recursive: true });
+    await mkdir(failedDir, { recursive: true });
+    const deletedPath = path.join(syncedDir, "deleted.jsonl");
+    const retainedPath = path.join(failedDir, "retained.jsonl");
+    await writeFile(deletedPath, '{"role":"user","content":"deleted"}\n');
+    await writeFile(retainedPath, '{"role":"user","content":"retained"}\n');
+    fsMock.failingUnlinkPath = retainedPath;
+    fsMock.syncedPaths.clear();
+
+    try {
+      await expect(
+        session.migrateLegacySessionStores([
+          "unlink-success",
+          "unlink-failure",
+        ]),
+      ).rejects.toThrow("injected unlink failure");
+      expect(fsMock.syncedPaths).toContain(syncedDir);
+      await expect(access(deletedPath)).rejects.toThrow();
+      await expect(access(retainedPath)).resolves.toBeUndefined();
+    } finally {
+      fsMock.failingUnlinkPath = undefined;
+    }
   });
 
   it("いずれかのJSONLが壊れていれば全groupのlegacy原本を残す", async () => {

@@ -330,7 +330,7 @@ export async function migrateLegacySessionStores(
   }
 
   const deletedDirectories = new Set<string>();
-  await Promise.all(
+  const unlinkResults = await Promise.allSettled(
     migrations.flatMap(({ inputs }) =>
       inputs.map(async (input) => {
         await unlink(input.file);
@@ -338,7 +338,13 @@ export async function migrateLegacySessionStores(
       }),
     ),
   );
-  await Promise.all([...deletedDirectories].map(syncPath));
+  const syncResults = await Promise.allSettled(
+    [...deletedDirectories].map(syncPath),
+  );
+  const failure = [...unlinkResults, ...syncResults].find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failure) throw failure.reason;
 }
 
 async function openDatabase(groupName: string): Promise<Database.Database> {
