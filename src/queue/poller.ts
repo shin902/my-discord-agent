@@ -1337,9 +1337,10 @@ export async function processMessage(
       },
     );
     if (suppressDelivery) await finalizeSuppressedSource(msg);
-    // Agent Memory capture is an independent durable job. Never await it on the
-    // normal Discord response path or let its failure change this job's result.
-    void enqueueMemoryShadow(msg, response);
+    // Only the local queue admission is awaited so a successful response cannot
+    // lose its shadow job on process exit. The queued worker owns remote I/O and
+    // its failure cannot change this job's result.
+    await enqueueMemoryShadow(msg, response);
     outcome = "success";
     stopTyping();
   } finally {

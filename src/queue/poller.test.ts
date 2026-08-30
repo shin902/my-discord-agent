@@ -1745,7 +1745,7 @@ describe("processMessage - durable result", () => {
     expect(commitInboxResult).not.toHaveBeenCalled();
   });
 
-  it("queues shadow capture without waiting for memory configuration", async () => {
+  it("waits for local shadow queue admission but not TencentDB HTTP", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
@@ -1759,15 +1759,21 @@ describe("processMessage - durable result", () => {
       }),
     );
     isAgentMemoryEligible.mockReturnValue(true);
+    const shadowBaseUrl = "http://source-shadow-job.test";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
     const msg = makeMsg({ userId: "discord-user-1" });
+    let settled = false;
+    const processing = processMessage(msg).then(() => {
+      settled = true;
+    });
 
-    await processMessage(msg);
-
-    expect(commitInboxResult).toHaveBeenCalled();
+    await vi.waitFor(() => expect(commitInboxResult).toHaveBeenCalled());
+    expect(settled).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
+
     resolveConfig({
       enabled: true,
-      baseUrl: "http://localhost:8420",
+      baseUrl: shadowBaseUrl,
       serviceId: "default",
       bearerTokenEnv: "TDAI_TEST_TOKEN",
       teamId: "team",
@@ -1775,7 +1781,9 @@ describe("processMessage - durable result", () => {
       eligibleGroups: ["default"],
       timeoutMs: 1000,
     });
-    await vi.waitFor(() => expect(enqueue).toHaveBeenCalled());
+    await processing;
+
+    expect(settled).toBe(true);
     expect(enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         memoryShadow: expect.objectContaining({
@@ -1786,6 +1794,11 @@ describe("processMessage - durable result", () => {
         idempotencyKey: "agent-memory-shadow:inbox-1",
       }),
     );
+    // TencentDB is contacted only by the separately claimed shadow job.
+    const sourceShadowRequests = fetchMock.mock.calls.filter(
+      ([url]) => url === `${shadowBaseUrl}/v3/conversation/add`,
+    );
+    expect(sourceShadowRequests).toHaveLength(0);
   });
 
   it("通常会話でも独立NO_REPLY行を無配信にする", async () => {
