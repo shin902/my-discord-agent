@@ -28,9 +28,12 @@ export function formatSessionTimeAnchor(timestamp: number): string {
   const parts = formatParts(timestamp);
   const weekday = formatWeekday(timestamp);
   return [
-    "## Session time anchor",
+    "## Fixed session start time",
     "",
     `Started: ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:00 ${AGENT_TIME_ZONE_LABEL} (${weekday})`,
+    "",
+    "This is the fixed session start time, not the current time.",
+    "Use the `date` tool when current time matters.",
   ].join("\n");
 }
 
