@@ -6,6 +6,7 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
+import { loadMessages, sessionConversationPath } from "../agent/session.js";
 import {
   isAgentMemoryEligible,
   loadAgentMemoryConfig,
@@ -793,7 +794,7 @@ function markRunningWhenContainerStarted(
       getQueueRepository().markRunning(msg.id, msg.fencingToken, {
         startedAt: new Date().toISOString(),
         workspacePath: `groups/${msg.groupName}`,
-        conversationPath: `data/sessions/${msg.groupName}/${sessionId}.jsonl`,
+        conversationPath: sessionConversationPath(msg.groupName, sessionId),
       });
     }
   };
@@ -1131,27 +1132,18 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   let memorySnapshotContent = await readOptional(
     path.join("groups", msg.groupName, "memory", "MEMORY.md"),
   );
-  const sessionRaw = await readOptional(
-    path.resolve("data", "sessions", msg.groupName, `${msg.sessionId}.jsonl`),
-  );
-  if (sessionRaw) {
-    for (const line of sessionRaw.split(/\r?\n/)) {
-      try {
-        const entry = JSON.parse(line) as {
-          customType?: string;
-          content?: unknown;
-        };
-        if (
-          entry.customType === "system-prompt-snapshot" ||
-          entry.customType === "agents-snapshot"
-        )
-          systemPromptSnapshotContent = String(entry.content ?? "");
-        if (entry.customType === "memory-bootstrap")
-          memorySnapshotContent = String(entry.content ?? "");
-      } catch {
-        /* ignore malformed historical lines */
-      }
-    }
+  const sessionMessages = await loadMessages(msg.groupName, msg.sessionId);
+  for (const entry of sessionMessages as Array<{
+    customType?: string;
+    content?: unknown;
+  }>) {
+    if (
+      entry.customType === "system-prompt-snapshot" ||
+      entry.customType === "agents-snapshot"
+    )
+      systemPromptSnapshotContent = String(entry.content ?? "");
+    if (entry.customType === "memory-bootstrap")
+      memorySnapshotContent = String(entry.content ?? "");
   }
   const systemPromptSnapshotPresent = systemPromptSnapshotContent !== undefined;
   const memorySnapshotPresent = memorySnapshotContent !== undefined;

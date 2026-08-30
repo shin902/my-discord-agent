@@ -32,7 +32,7 @@ Discord受信
        └─ queue/inbox.ts  (appendInbox: data/queue/inbox.jsonl へ追記)
             └─ queue/poller.ts (1秒ごとに peekAllUnclaimedInbox() で未claim分を取得)
                  ├─ agent/manager.ts  (sendMessage: サンドボックスコンテナを起動)
-                 │    ├─ agent/session.ts  (会話履歴を data/sessions/{group}/{sessionId}.jsonl に JSONL 永続化)
+                 │    ├─ agent/session.ts  (会話履歴を data/sessions/{group}/sessions.sqlite に永続化)
                  │    └─ config/group-config.ts (groups/{name}/group.json + AGENTS.md をキャッシュ読み込み)
                  └─ discord/client.ts  (返信送信)
 
@@ -56,7 +56,7 @@ Discord受信
 
 **インボックスのファイルミューテックス（inbox.ts の `withFileLock`）**: `readFile→writeFile` 間に `appendInbox` が割り込むとメッセージが消失するため、Promise チェーンで全ファイル操作を直列化している。
 
-**エージェントの使い捨て生成（manager.ts）**: `Agent` はリクエストごとに JSONL から履歴を読み込んで生成し、終了後は破棄。ステートレスにすることでセッション管理を単純化している。
+**エージェントの使い捨て生成（manager.ts）**: `Agent` はリクエストごとにgroup単位のSQLiteから履歴を読み込んで生成し、終了後は破棄。ステートレスにすることでセッション管理を単純化している。
 
 **キャッシュ戦略（group-config.ts）**: `initGroupConfigs()` で起動時に全グループ設定を一括ロードしてメモリキャッシュ。再起動するまでファイルの変更は反映されない。
 
@@ -81,7 +81,7 @@ src/cron/jobs/*.ts          # 共有 cron ハンドラー（コミット対象�
 src/cron/jobs/local/*.ts    # 個人ワークフロー固有の cron ハンドラー（gitignore）
 data/queue/inbox.jsonl      # 処理待ちメッセージキュー（自動生成）
 data/queue/dead-letter.jsonl# リトライ上限超えたメッセージ（自動生成）
-data/sessions/{group}/{sessionId}.jsonl  # 会話履歴（自動生成）
+data/sessions/{group}/sessions.sqlite   # group単位の会話履歴（自動生成）
 ```
 
 設定ファイルの詳細リファレンスは `docs/config.md` を参照。通常のDiscord会話はAgentConfigを `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順に解決する。

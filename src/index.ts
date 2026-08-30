@@ -5,6 +5,7 @@ import {
   killAllRunningContainers,
   validateGroupConfig,
 } from "./agent/manager.js";
+import { migrateLegacySessionStores } from "./agent/session.js";
 import { loadBotRegistry, validateBotConfigs } from "./config/bots.js";
 import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
@@ -50,9 +51,9 @@ try {
   const proxyPort = await initCredentialProxyServer();
   registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort);
-  // Stop containers left by a previous process before recovering its
-  // direct-admission markers.
+  // Stop managed and orphan containers before reading legacy session files.
   await killAllRunningContainers({ includeOrphans: true, strict: true });
+  await migrateLegacySessionStores(groups.map((g) => g.name));
   await initGroupPrompts(groups);
   await loadProviders();
   const defaultModel = await loadDefaultModel();

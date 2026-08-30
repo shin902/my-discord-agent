@@ -157,7 +157,7 @@ cronで使う場合も既読状態は保存せず、実行ごとに期間を明�
 
 **場所:** `templates/SKILLS/session-logs/SKILL.md`
 
-自分自身の過去のセッションログ(`/sessions/*/*.jsonl`)を jq/grep で検索・集計するスキル。`MEMORY.md` に無い過去の会話について聞かれたときに使う。PR #87 のセッションマウント絞り込みにより、自グループのログのみが見える。
+自分自身の過去のsession trajectory（`/sessions/*/sessions.sqlite`）をPython標準の`sqlite3`でread-only検索・集計するスキル。`MEMORY.md` に無い過去の会話について聞かれたときに使う。group単位のmountにより他groupや`runtime.sqlite`は見えない。
 
 ### 日次記録・週次MEMORY.md更新(memory-daily / memory-weekly cron)
 

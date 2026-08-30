@@ -933,6 +933,26 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   (async () => {
     await waitForNetwork();
     process.stderr.write("__AGENT_READY__\n");
+    if (process.argv.includes("--session-store-smoke")) {
+      const groupName = "runner-smoke";
+      const sessionId = "append-load";
+      const message: AgentMessage = {
+        role: "user",
+        content: "runner image session store smoke test",
+        timestamp: Date.now(),
+      };
+      await appendMessage(groupName, sessionId, message);
+      const loaded = await loadMessages(groupName, sessionId);
+      if (
+        loaded.length !== 1 ||
+        loaded[0]?.role !== "user" ||
+        loaded[0].content !== "runner image session store smoke test"
+      ) {
+        throw new Error("session store smoke test append/load mismatch");
+      }
+      process.stderr.write("__SESSION_STORE_SMOKE_OK__\n");
+      return;
+    }
     const raw = await text(process.stdin);
     const payload = PayloadSchema.parse(JSON.parse(raw || "{}"));
     const response = await runAgentLoop(

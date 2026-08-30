@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-Discordエージェントのセッションログ (.jsonl) から未処理のユーザーメッセージを差分抽出するスクリプト。
+Discordエージェントのsessions.sqliteから未処理のユーザーメッセージを差分抽出するスクリプト。
 
-ログはサンドボックスコンテナ内の /sessions/{group}/{sessionId}.jsonl にマウントされている
-（src/agent/manager.ts の `-v data/sessions/{group}:/sessions/{group}` 参照）。
-各行は AgentMessage がラップ無しでそのまま1オブジェクト/行になっている
-（{"role": "user"|"assistant"|"toolResult", "content": [...], "timestamp": <epoch ms>}）。
+DBはサンドボックスコンテナ内の /sessions/{group}/sessions.sqlite にマウントされる。
+session_entries.payload_jsonにはAgentMessageがラップ無しで保存される。
 
 抽出と状態コミットを「単一実行＋成功後コミット」の2フェーズで行う:
 
@@ -32,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,10 +38,11 @@ from pathlib import Path
 MIN_LENGTH = 20
 
 # 状態ファイル (last-sync.json) のスキーマバージョン。
-# version 2: session_id を "{group}/{ファイル名}" 形式でキーイングする（現行）。
+# version 3: SQLite session_entries の sequence をセッションごとに保持する（現行）。
+# version 2: JSONL の行数を "{group}/{ファイル名}" ごとに保持する。
 # version 1相当（旧Claude Code会話ログ対象版）はフラットな "{ファイル名}" キーで、
 # schema_version フィールド自体を持たない。
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # role: "user" だが人間の発言ではない cron 合成メッセージのプレフィックス。
 # src/cron/jobs/mail.ts:215-216 でメールスレッド初期化時に、エージェントへ文脈を
@@ -258,42 +258,48 @@ def main():
     all_messages = []
     new_state = dict(sessions_state)
 
-    # /sessions/{group}/{sessionId}.jsonl の2階層を走査する。
-    # session_id は "{group}/{ファイル名}" にしておく。コンテナ起動時には
-    # manager.ts がそのグループ専用ディレクトリのみを /sessions/{group} に
-    # マウントするため、1回の実行で複数グループが混在することは現状ない。
-    # ただしこの形式にしておけば last-sync.json / interest-log.jsonl 上で
-    # どのグループのログか目視で判別しやすくなる。
-    jsonl_files = sorted(logs_dir.glob("*/*.jsonl"), key=lambda p: p.stat().st_mtime)
-
-    for filepath in jsonl_files:
-        session_id = f"{filepath.parent.name}/{filepath.stem}"
-        current_mtime = filepath.stat().st_mtime
-        prev = sessions_state.get(session_id, {})
-        prev_mtime = prev.get("mtime", 0)
-        prev_lines = prev.get("lines_read", 0)
-
-        if current_mtime <= prev_mtime:
-            new_state[session_id] = prev
-            continue
-
-        # 同一 open で得た走査行数を lines_read にする（出力範囲としおりが必ず一致）。
-        messages, total_lines = extract_from_session(filepath, session_id, skip_lines=prev_lines)
-        if total_lines < prev_lines:
-            # ファイルが短縮/書き換えされている（append-only 前提が崩れた）。
-            # しおりより短いので skip 済みのまま 0 件になる。安全側に全行を読み直す
-            # （二重取得は起こりうるが取りこぼしより許容できる）。
-            messages, total_lines = extract_from_session(filepath, session_id, skip_lines=0)
-        all_messages.extend(messages)
-
-        new_state[session_id] = {
-            "mtime": current_mtime,
-            "lines_read": total_lines,
-        }
-
-        # ソフトキャップ: 上限超過セッションの途中で切らず、そのセッションを読み切ってから止める
-        if args.max_messages > 0 and len(all_messages) >= args.max_messages:
-            break
+    limit_reached = False
+    db_files = sorted(logs_dir.glob("*/sessions.sqlite"))
+    for db_path in db_files:
+        group = db_path.parent.name
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            raw_session_ids = [
+                row[0] for row in connection.execute("SELECT id FROM sessions ORDER BY id")
+            ]
+            for raw_session_id in raw_session_ids:
+                session_id = f"{group}/{raw_session_id}"
+                prev_sequence = sessions_state.get(session_id, {}).get("sequence", 0)
+                rows = connection.execute(
+                    "SELECT sequence, payload_json FROM session_entries "
+                    "WHERE session_id = ? AND sequence > ? ORDER BY sequence",
+                    (raw_session_id, prev_sequence),
+                )
+                for sequence, payload_json in rows:
+                    new_state[session_id] = {"sequence": sequence}
+                    try:
+                        obj = json.loads(payload_json)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("role") != "user":
+                        continue
+                    content = normalize_content(obj.get("content", ""))
+                    if content is None or content.startswith(NOISE_PREFIXES) or len(content) <= MIN_LENGTH:
+                        continue
+                    all_messages.append({
+                        "ts": ts_ms_to_iso(obj.get("timestamp")),
+                        "session_id": session_id,
+                        "content": content[:2000],
+                    })
+                    if args.max_messages > 0 and len(all_messages) >= args.max_messages:
+                        limit_reached = True
+                        break
+                if limit_reached:
+                    break
+            if limit_reached:
+                break
+        finally:
+            connection.close()
 
     json.dump(all_messages, sys.stdout, ensure_ascii=False, indent=2)
 

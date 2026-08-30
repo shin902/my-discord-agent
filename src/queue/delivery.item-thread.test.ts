@@ -2,7 +2,11 @@ import { ChannelType } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renameSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-vi.mock("../agent/session.js", () => ({ renameSession }));
+vi.mock("../agent/session.js", () => ({
+  renameSession,
+  sessionConversationPath: (groupName: string, sessionId: string) =>
+    `data/sessions/${groupName}/sessions.sqlite#session=${sessionId}`,
+}));
 
 const acknowledgeEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
@@ -57,7 +61,10 @@ function enqueueLateItemThread(
     enqueued.job.id,
     claim.fencingToken,
     withConversationPath
-      ? { conversationPath: "data/sessions/group/cron-temp.jsonl" }
+      ? {
+          conversationPath:
+            "data/sessions/group/sessions.sqlite#session=cron-temp",
+        }
       : {},
   );
   repo.commitResult(enqueued.job.id, claim.fencingToken, "response", {
@@ -121,7 +128,7 @@ describe("late item-thread delivery", () => {
       expect(renameSession).toHaveBeenCalledWith("group", "cron-temp", "123");
       expect(repo.get(jobId)).toMatchObject({
         sessionId: "123",
-        conversationPath: "data/sessions/group/123.jsonl",
+        conversationPath: "data/sessions/group/sessions.sqlite#session=123",
         cronThreadId: "123",
       });
       expect(startThread).toHaveBeenCalledOnce();
