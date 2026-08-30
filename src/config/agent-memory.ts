@@ -44,6 +44,8 @@ export function isAgentMemoryEligible(
   config: AgentMemoryConfig,
   message: {
     groupName: string;
+    /** Discord MessageType numeric value; only Default and Reply are conversational. */
+    messageType?: number;
     userId?: string;
     authorIsBot?: boolean;
     botId?: string;
@@ -59,6 +61,7 @@ export function isAgentMemoryEligible(
   return (
     config.enabled &&
     config.eligibleGroups.includes(message.groupName) &&
+    (message.messageType === 0 || message.messageType === 19) &&
     message.userId !== undefined &&
     message.userId.length > 0 &&
     message.authorIsBot !== true &&

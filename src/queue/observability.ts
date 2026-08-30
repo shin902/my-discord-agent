@@ -93,7 +93,7 @@ function ageValues(db: Database.Database, sql: string): number[] {
 }
 const QUEUE_JOB_PREDICATE =
   "json_extract(payload_json,'$.botTaskSessionAdmission') IS NOT 1";
-const AGENT_EXECUTION_JOB_PREDICATE = `${QUEUE_JOB_PREDICATE} AND json_extract(payload_json,'$.memoryShadow') IS NOT 1`;
+const AGENT_EXECUTION_JOB_PREDICATE = `${QUEUE_JOB_PREDICATE} AND json_type(payload_json,'$.memoryShadow') IS NULL`;
 
 function counts(
   db: Database.Database,

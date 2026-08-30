@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { Message } from "discord.js";
+import { type Message, MessageType } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -64,6 +64,7 @@ function makeMessage(options: {
   isThread?: boolean;
   parentId?: string | null;
   isBot?: boolean;
+  type?: MessageType;
   webhookId?: string | null;
   mentionsBot?: boolean;
   thread?: { id: string } | null;
@@ -74,6 +75,7 @@ function makeMessage(options: {
     id: options.id,
     channelId: options.channelId ?? "root-1",
     author: { id: "user-id", bot: options.isBot ?? false },
+    type: options.type ?? MessageType.Default,
     webhookId: options.webhookId ?? null,
     client: { user: { id: "bot-user" } },
     mentions: {
@@ -166,6 +168,44 @@ describe("ingestDiscordMessage", () => {
     const ineligible = repo.findByIdempotencyKey("discord-message:ineligible");
     expect(ineligible).not.toHaveProperty("userId");
     expect(ineligible).not.toHaveProperty("authorIsBot");
+  });
+
+  it("persists identity for Reply but not command-like message types", async () => {
+    mocks.loadMemoryConfig.mockResolvedValue({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["group"],
+      timeoutMs: 1000,
+    });
+
+    await ingestDiscordMessage(
+      makeMessage({
+        id: "100000000000000001",
+        type: MessageType.Reply,
+        startThread: vi.fn().mockResolvedValue({ id: "thread-reply" }),
+      }),
+      { source: "live", replyOnFailure: false },
+    );
+    expect(
+      repo.findByIdempotencyKey("discord-message:100000000000000001"),
+    ).toMatchObject({
+      userId: "user-id",
+    });
+
+    await ingestDiscordMessage(
+      makeMessage({
+        id: "100000000000000002",
+        type: MessageType.ChatInputCommand,
+        startThread: vi.fn().mockResolvedValue({ id: "thread-command" }),
+      }),
+      { source: "live", replyOnFailure: false },
+    );
+    expect(
+      repo.findByIdempotencyKey("discord-message:100000000000000002"),
+    ).not.toHaveProperty("userId");
   });
 
   it("does not block intake when Agent Memory eligibility loading fails", async () => {

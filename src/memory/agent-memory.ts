@@ -94,8 +94,7 @@ export class AgentMemoryHttpError extends Error {
 }
 
 interface ApiEnvelope {
-  code?: number;
-  message?: string;
+  code?: unknown;
   request_id?: string;
   data?: {
     accepted_ids?: unknown;
@@ -148,12 +147,19 @@ export class AgentMemoryClient {
       throw error;
     }
     const body = (await response.json().catch(() => ({}))) as ApiEnvelope;
-    const errorCode = body.code === undefined ? response.status : body.code;
+    const envelopeCode =
+      typeof body.code === "number" &&
+      Number.isSafeInteger(body.code) &&
+      body.code >= 0 &&
+      body.code <= 999_999
+        ? body.code
+        : undefined;
+    const errorCode = envelopeCode ?? response.status;
     if (!response.ok || errorCode !== 0) {
       const retryable =
         errorCode === 408 || errorCode === 429 || errorCode >= 500;
       throw new AgentMemoryHttpError(
-        `Agent Memory conversation/add failed (${response.status}): ${body.message ?? "unknown error"} (code ${errorCode})`,
+        `Agent Memory conversation/add failed (${response.status}, code ${envelopeCode ?? "unknown"})`,
         response.status,
         retryable,
       );

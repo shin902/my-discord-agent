@@ -2068,10 +2068,13 @@ describe("processMessage - durable result", () => {
       timeoutMs: 1000,
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ code: 400, message: "invalid" }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ code: 400, message: "do-not-persist-this-secret" }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     );
     const msg = makeMsg({
       memoryShadow: {
@@ -2095,7 +2098,10 @@ describe("processMessage - durable result", () => {
       msg.id,
       msg.fencingToken,
       "non_retryable",
-      expect.stringContaining("conversation/add failed (400)"),
+      "AgentMemoryHttpError: Agent Memory conversation/add failed (400, code 400)",
+    );
+    expect(deadLetter.mock.calls[0]?.[3]).not.toContain(
+      "do-not-persist-this-secret",
     );
     expect(failAttempt).not.toHaveBeenCalled();
   });

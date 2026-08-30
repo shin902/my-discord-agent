@@ -4,7 +4,7 @@ import { collectObservability, inspectRuntime } from "./observability.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("queue observability", () => {
-  it("does not count a successful suppressed shadow job as an empty response", () => {
+  it("includes shadow jobs in queue metrics but excludes them from agent metrics", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
       const shadow = repo.enqueue({
@@ -23,17 +23,47 @@ describe("queue observability", () => {
           messages: [],
         },
       }).job;
-      const claim = expectDefined(repo.claim("worker", 1_000));
-      repo.commitResult(shadow.id, claim.fencingToken, "", {
+      const shadowClaim = expectDefined(repo.claim("worker", 1_000));
+      repo.commitResult(shadow.id, shadowClaim.fencingToken, "", {
         suppressDelivery: true,
       });
 
+      const failedShadow = repo.enqueue({
+        channelId: "c",
+        groupName: "g",
+        sessionId: "memory-shadow:failed",
+        content: "memory-shadow",
+        timestamp: new Date().toISOString(),
+        memoryShadow: {
+          scope: {
+            teamId: "team",
+            agentId: "agent",
+            userId: "user",
+            sessionId: "failed",
+          },
+          messages: [],
+        },
+      }).job;
+      const failedClaim = expectDefined(repo.claim("worker", 1_000));
+      repo.deadLetter(
+        failedShadow.id,
+        failedClaim.fencingToken,
+        "non_retryable",
+        "safe static error",
+      );
+
       const snapshot = collectObservability(repo.db);
-      expect(snapshot.agent).toMatchObject({
-        jobs: 1,
+      expect(snapshot.queue.byStatus).toEqual({
         completed: 1,
+        dead_letter: 1,
+      });
+      expect(snapshot.queue.latencyMs.count).toBe(1);
+      expect(snapshot.agent).toMatchObject({
+        jobs: 0,
+        completed: 0,
         failed: 0,
         emptyResponses: 0,
+        latencyMs: { count: 0 },
       });
     } finally {
       repo.close();

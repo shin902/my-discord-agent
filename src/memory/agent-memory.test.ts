@@ -24,6 +24,7 @@ const config = AgentMemoryConfigSchema.parse({
 
 const normalMessage = {
   groupName: "private",
+  messageType: 0,
   userId: "discord-user-1",
 };
 
@@ -106,8 +107,20 @@ describe("Agent Memory shadow boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("requires explicit enabled eligible groups and normal-chat identity", () => {
+  it("requires explicit enabled eligible groups and conversational message types", () => {
     expect(isAgentMemoryEligible(config, normalMessage)).toBe(true);
+    expect(
+      isAgentMemoryEligible(config, { ...normalMessage, messageType: 19 }),
+    ).toBe(true);
+    expect(
+      isAgentMemoryEligible(config, { ...normalMessage, messageType: 20 }),
+    ).toBe(false);
+    expect(
+      isAgentMemoryEligible(config, {
+        ...normalMessage,
+        messageType: undefined,
+      }),
+    ).toBe(false);
     expect(
       isAgentMemoryEligible(config, { ...normalMessage, groupName: "public" }),
     ).toBe(false);
@@ -347,6 +360,73 @@ describe("Agent Memory shadow boundary", () => {
     ).rejects.toMatchObject({ retryable: true, status: 200 });
   });
 
+  it("does not expose an echoed response message in the error", async () => {
+    process.env.TDAI_TEST_TOKEN = "secret";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: 400,
+          message: "do-not-persist-this-secret",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const submission = buildAgentMemorySubmission({
+      teamId: "team-1",
+      agentId: "agent-1",
+      userId: "discord-user-1",
+      sessionId: "discord-session-1",
+      userContent: "hello",
+      assistantContent: "hi",
+      userTimestamp: "2026-08-30T00:00:00.000Z",
+      assistantTimestamp: "2026-08-30T00:00:01.000Z",
+    });
+
+    const result = await new AgentMemoryClient(config)
+      .addConversation(submission)
+      .then(
+        () => null,
+        (value: unknown) => value,
+      );
+    expect(result).toBeInstanceOf(Error);
+    const error = result as Error;
+    expect(error.message).not.toContain("do-not-persist-this-secret");
+    expect(error.message).toContain("400");
+    expect(error.message).toContain("code 400");
+  });
+
+  it("ignores nonnumeric envelope codes without leaking their value", async () => {
+    process.env.TDAI_TEST_TOKEN = "secret";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "503", message: "secret" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const submission = buildAgentMemorySubmission({
+      teamId: "team-1",
+      agentId: "agent-1",
+      userId: "discord-user-1",
+      sessionId: "discord-session-1",
+      userContent: "hello",
+      assistantContent: "hi",
+      userTimestamp: "2026-08-30T00:00:00.000Z",
+      assistantTimestamp: "2026-08-30T00:00:01.000Z",
+    });
+
+    const result = await new AgentMemoryClient(config)
+      .addConversation(submission)
+      .then(
+        () => null,
+        (value: unknown) => value,
+      );
+    expect(result).toBeInstanceOf(AgentMemoryHttpError);
+    const error = result as AgentMemoryHttpError;
+    expect(error.retryable).toBe(false);
+    expect(error.message).toContain("code unknown");
+    expect(error.message).not.toContain("secret");
+  });
+
   it("surfaces service failure for the independent retryable job boundary", async () => {
     process.env.TDAI_TEST_TOKEN = "secret";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -367,6 +447,6 @@ describe("Agent Memory shadow boundary", () => {
     });
     await expect(
       new AgentMemoryClient(config).addConversation(submission),
-    ).rejects.toThrow("conversation/add failed (503)");
+    ).rejects.toThrow("conversation/add failed (503, code 503)");
   });
 });

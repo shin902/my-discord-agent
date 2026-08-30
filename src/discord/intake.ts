@@ -191,6 +191,7 @@ async function ingest(
       if (
         isAgentMemoryEligible(memoryConfig, {
           groupName: match.group.name,
+          messageType: message.type,
           userId: message.author.bot ? undefined : message.author.id,
           authorIsBot: message.author.bot,
         })
