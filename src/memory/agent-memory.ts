@@ -40,17 +40,22 @@ export class AgentMemoryClient {
   async addConversation(
     submission: AgentMemorySubmission,
   ): Promise<AgentMemorySubmissionResult> {
-    const token = process.env[this.config.bearerTokenEnv];
-    if (!token) throw new Error(`${this.config.bearerTokenEnv} is not set`);
+    const token = this.config.bearerTokenEnv
+      ? process.env[this.config.bearerTokenEnv]
+      : undefined;
+    if (this.config.bearerTokenEnv && !token) {
+      throw new Error(`${this.config.bearerTokenEnv} is not set`);
+    }
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-tdai-service-id": this.config.serviceId,
+    };
+    if (token) headers.authorization = `Bearer ${token}`;
     const response = await fetch(
       `${this.config.baseUrl.replace(/\/$/u, "")}/v3/conversation/add`,
       {
         method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-          "x-tdai-service-id": this.config.serviceId,
-        },
+        headers,
         body: JSON.stringify({
           session_id: submission.scope.sessionId,
           team_id: submission.scope.teamId,

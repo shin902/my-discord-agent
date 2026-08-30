@@ -1,11 +1,25 @@
 import { z } from "zod";
 import { loadRawConfig } from "./config.js";
 
+const AgentMemoryBaseUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === ""
+    );
+  }, "must be an HTTP(S) URL without embedded credentials");
+
 export const AgentMemoryConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  baseUrl: z.string().url().default("http://localhost:8420"),
+  baseUrl: AgentMemoryBaseUrlSchema.default("http://localhost:8420"),
   serviceId: z.string().min(1).default("default"),
-  bearerTokenEnv: z.string().min(1).default("TDAI_MEMORY_API_KEY"),
+  // Local MemoryCore is unauthenticated by default; protected deployments may
+  // opt in by naming an environment variable containing a bearer token.
+  bearerTokenEnv: z.string().min(1).optional(),
   teamId: z.string().min(1).default("default"),
   agentId: z.string().min(1).default("my-discord-agent"),
   // Operators explicitly declare these groups private and eligible for shadow capture.

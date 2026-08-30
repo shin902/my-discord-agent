@@ -30,6 +30,24 @@ afterEach(() => {
 });
 
 describe("Agent Memory shadow boundary", () => {
+  it("defaults to unauthenticated local MemoryCore", () => {
+    const parsed = AgentMemoryConfigSchema.parse({});
+    expect(parsed).toMatchObject({
+      enabled: false,
+      baseUrl: "http://localhost:8420",
+    });
+    expect(parsed).not.toHaveProperty("bearerTokenEnv");
+  });
+
+  it("rejects unsafe MemoryCore base URLs", () => {
+    expect(() =>
+      AgentMemoryConfigSchema.parse({ baseUrl: "ftp://memory" }),
+    ).toThrow();
+    expect(() =>
+      AgentMemoryConfigSchema.parse({ baseUrl: "http://user:pass@memory" }),
+    ).toThrow();
+  });
+
   it("requires explicit enabled eligible groups and normal-chat identity", () => {
     expect(isAgentMemoryEligible(config, normalMessage)).toBe(true);
     expect(
@@ -81,7 +99,43 @@ describe("Agent Memory shadow boundary", () => {
     });
   });
 
-  it("submits the documented endpoint and isolation fields", async () => {
+  it("submits to a local unauthenticated MemoryCore without Authorization", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: 0, data: { total_count: 2 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const submission = buildAgentMemorySubmission({
+      teamId: "team-1",
+      agentId: "agent-1",
+      userId: "discord-user-1",
+      sessionId: "discord-session-1",
+      userContent: "hello",
+      assistantContent: "hi",
+      userTimestamp: "2026-08-30T00:00:00.000Z",
+      assistantTimestamp: "2026-08-30T00:00:01.000Z",
+    });
+
+    await expect(
+      new AgentMemoryClient(
+        AgentMemoryConfigSchema.parse({
+          ...config,
+          bearerTokenEnv: undefined,
+        }),
+      ).addConversation(submission),
+    ).resolves.toMatchObject({ totalCount: 2 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://memory.test/v3/conversation/add",
+      expect.objectContaining({
+        headers: expect.not.objectContaining({
+          authorization: expect.anything(),
+        }),
+      }),
+    );
+  });
+
+  it("submits the documented endpoint and isolation fields when authentication is configured", async () => {
     process.env.TDAI_TEST_TOKEN = "secret";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
