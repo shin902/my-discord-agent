@@ -7,6 +7,7 @@
     "build": "tsc",
     "build:runner": "esbuild src/sandbox/agent-runner.ts --bundle --platform=node --target=node22 --format=esm --external:better-sqlite3 --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --outfile=dist/sandbox/runner.bundle.mjs",
     "sandbox": "bash scripts/sandbox.sh",
+    "memory-core": "docker compose -f compose.memory-core.yaml",
     "reddit:login": "tsx scripts/reddit-cookie-login.ts",
     "x-saved:setup": "tsx scripts/x-saved-setup.ts",
     "runner:image:build": "pnpm build:runner && docker build -t localhost:5050/my-discord-agent-runner:latest . && docker push localhost:5050/my-discord-agent-runner:latest",

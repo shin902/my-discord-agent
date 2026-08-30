@@ -10,6 +10,7 @@ config/*
 !config/credentials.example.json
 !config/groups.example.json
 !config/cron.example.json
+!config/memory-core.example.yaml
 
 groups/*/
 

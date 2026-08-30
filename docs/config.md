@@ -65,6 +65,52 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
 | `eligibleGroups` | — | shadow writeを許可するprivate group名の明示リスト。既定は空 |
 | `timeoutMs` | — | MemoryCore HTTP timeout（1〜120000ms、既定10000） |
 
+### MemoryCore sidecarの起動
+
+`compose.memory-core.yaml`はMemoryCore単体を公式image `agentmemory/memory-core:1.0.1`から起動します。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストへの公開はloopbackのみに限定され、MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
+
+exampleをGit管理外の実設定へコピーし、MemoryCore内部の抽出・統合に使うOpenAI-compatible LLMの接続先とmodelを`config/memory-core.yaml`の`llm`へ設定します。API keyは追跡対象外のYAMLへ書かず、`.env`の`MEMORY_CORE_LLM_API_KEY`へ設定してください。ComposeがこれをMemoryCore内の`TDAI_LLM_API_KEY`として渡します。
+
+```bash
+cp config/memory-core.example.yaml config/memory-core.yaml
+```
+
+```yaml
+llm:
+  baseUrl: "https://api.openai.com/v1"
+  apiKey: "${TDAI_LLM_API_KEY}"
+  model: "gpt-4o-mini"
+```
+
+exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`でも抽出thresholdが`1 → 2 → 4 → 5`と増えるため、最初の会話後から抽出が始まり得ます。厳密な5会話ごとのbatchではありません。また、初期rolloutはmy-discord-agentからL0をshadow writeするだけなので、exampleの`memory.recall.enabled`は`false`です。
+
+起動してhealth endpointを確認します。
+
+```bash
+pnpm memory-core up -d
+curl "http://$(pnpm --silent memory-core port memory-core 8420)/health"
+
+# 運用コマンド
+pnpm memory-core ps
+pnpm memory-core logs -f memory-core
+pnpm memory-core down
+```
+
+Gateway認証はローカルloopback運用では未設定にできます。`MEMORY_CORE_GATEWAY_API_KEY`を設定して認証を有効にする場合は、`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。`MEMORY_CORE_PORT`を変更した場合は、`agentMemory.baseUrl`のポートも同じ値に合わせてください。
+
+```json
+{
+  "agentMemory": {
+    "enabled": true,
+    "baseUrl": "http://127.0.0.1:8420",
+    "bearerTokenEnv": "MEMORY_CORE_GATEWAY_API_KEY",
+    "eligibleGroups": ["private-chat"]
+  }
+}
+```
+
+Composeは`config/memory-core.yaml`を読み取り専用でマウントします。設定項目の雛形は [`config/memory-core.example.yaml`](../config/memory-core.example.yaml) にあります。image tagはデータ形式のmigration notesを確認してから明示的に更新し、`latest`へは変更しないでください。volumeを削除する`down -v`は保存済みmemoryを消すため、通常の停止には使わないでください。
+
 ## config/providers.json
 
 AI プロバイダーごとの同時実行ポリシー。ファイルを省略した場合や provider のエントリがない場合は、安全側の `serial` を使う。複数実行できる provider だけ `parallel` を明示する。
