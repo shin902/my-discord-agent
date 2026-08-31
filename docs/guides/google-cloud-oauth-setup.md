@@ -65,7 +65,7 @@ GOOGLE_CALENDAR_CLIENT_SECRET=手順3で控えたクライアントシークレ�
 
 ## 5. 初回起動時のデバイスコード認証フロー
 
-calendar 系ツール（`list-events` 等）を最初に呼んだタイミングで、ホストプロセスの標準出力に以下のようなログが表示される：
+calendar 系ツール（`list-calendars`、`list-events` 等）を最初に呼んだタイミングで、ホストプロセスの標準出力に以下のようなログが表示される：
 
 ```
 [google-auth:google-calendar] 認証が必要です
