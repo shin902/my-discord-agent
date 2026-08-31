@@ -71,6 +71,14 @@ function toEventDateTime(value: string): EventDateTime {
   return DATE_ONLY.test(value) ? { date: value } : { dateTime: value };
 }
 
+function assertValidTimeZone(timeZone: string): void {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format();
+  } catch {
+    throw new Error(`無効な IANA タイムゾーンです: ${timeZone}`);
+  }
+}
+
 function formatDateTime(dt: EventDateTime | undefined): string {
   if (!dt) return "(不明)";
   return dt.date ?? dt.dateTime ?? "(不明)";
@@ -206,6 +214,12 @@ const createEventParameters = Type.Object({
         '繰り返しルール（RFC 5545形式、例: ["RRULE:FREQ=WEEKLY;BYDAY=MO"]）',
     }),
   ),
+  timeZone: Type.Optional(
+    Type.String({
+      description:
+        "IANAタイムゾーン（例: Asia/Tokyo）。繰り返しの日時付き予定では必須。終日予定では不要で送信せず、通常の単発予定では省略可能",
+    }),
+  ),
   calendarId: calendarIdParameter,
 });
 
@@ -224,13 +238,34 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
       location,
       attendees,
       recurrence,
+      timeZone,
       calendarId = "primary",
     },
   ) => {
+    const startDateTime = toEventDateTime(start);
+    const endDateTime = toEventDateTime(end);
+    const isRecurring = recurrence !== undefined && recurrence.length > 0;
+    const isTimedEvent =
+      startDateTime.dateTime !== undefined &&
+      endDateTime.dateTime !== undefined;
+
+    if (isRecurring && isTimedEvent && timeZone === undefined) {
+      throw new Error(
+        "日時付きの繰り返し予定には IANA タイムゾーン（timeZone）が必要です",
+      );
+    }
+    if (timeZone !== undefined) {
+      assertValidTimeZone(timeZone);
+      if (isTimedEvent) {
+        startDateTime.timeZone = timeZone;
+        endDateTime.timeZone = timeZone;
+      }
+    }
+
     const body: Record<string, unknown> = {
       summary,
-      start: toEventDateTime(start),
-      end: toEventDateTime(end),
+      start: startDateTime,
+      end: endDateTime,
     };
     if (description) body.description = description;
     if (location) body.location = location;

@@ -251,10 +251,68 @@ describe("create-event", () => {
       start: "2025-01-06T10:00:00+09:00",
       end: "2025-01-06T11:00:00+09:00",
       recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+      timeZone: "Asia/Tokyo",
     });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
     expect(body.recurrence).toEqual(["RRULE:FREQ=WEEKLY;BYDAY=MO"]);
+    expect(body.start).toEqual({
+      dateTime: "2025-01-06T10:00:00+09:00",
+      timeZone: "Asia/Tokyo",
+    });
+    expect(body.end).toEqual({
+      dateTime: "2025-01-06T11:00:00+09:00",
+      timeZone: "Asia/Tokyo",
+    });
+  });
+
+  it("日時付きの繰り返し予定は timeZone を必須にする", async () => {
+    const { createEventTool } = await import("./calendar.js");
+    await expect(
+      createEventTool.execute("id", {
+        summary: "定例予定",
+        start: "2025-01-06T10:00:00+09:00",
+        end: "2025-01-06T11:00:00+09:00",
+        recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+      }),
+    ).rejects.toThrow("IANA タイムゾーン");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("終日イベントの timeZone は送信せず、繰り返しでも必須にしない", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "evt-recurring-allday",
+        summary: "定例終日予定",
+      }),
+    });
+    const { createEventTool } = await import("./calendar.js");
+    await createEventTool.execute("id", {
+      summary: "定例終日予定",
+      start: "2025-01-06",
+      end: "2025-01-07",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+      timeZone: "Asia/Tokyo",
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.start).toEqual({ date: "2025-01-06" });
+    expect(body.end).toEqual({ date: "2025-01-07" });
+  });
+
+  it("timeZone は IANA タイムゾーンとして検証する", async () => {
+    const { createEventTool } = await import("./calendar.js");
+    await expect(
+      createEventTool.execute("id", {
+        summary: "定例予定",
+        start: "2025-01-06T10:00:00+09:00",
+        end: "2025-01-06T11:00:00+09:00",
+        recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+        timeZone: "not/a-time-zone",
+      }),
+    ).rejects.toThrow("無効な IANA タイムゾーン");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("POST エラー時は例外を投げる", async () => {
