@@ -117,9 +117,6 @@ vi.mock("./repository.js", () => ({
 }));
 
 const { sendMessage } = await import("../agent/manager.js");
-const actualAgentMemory = await vi.importActual<
-  typeof import("../config/agent-memory.js")
->("../config/agent-memory.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const client = discordClient;
@@ -2167,9 +2164,7 @@ describe("processMessage - durable result", () => {
         resolveConfig = resolve;
       }),
     );
-    isAgentMemoryEligible.mockImplementation(
-      actualAgentMemory.isAgentMemoryEligible,
-    );
+    isAgentMemoryEligible.mockReturnValue(true);
     const shadowBaseUrl = "http://source-shadow-job.test";
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const msg = makeMsg({
@@ -2177,7 +2172,6 @@ describe("processMessage - durable result", () => {
       routingChannelId: "root-1",
       sessionId: "thread-1",
       userId: "discord-user-1",
-      content: "./command session-logs",
       memoryShadowAdmission: makeMemoryAdmission({
         routingChannelId: "root-1",
         channelId: "thread-1",
@@ -2227,76 +2221,6 @@ describe("processMessage - durable result", () => {
       ([url]) => url === `${shadowBaseUrl}/v3/conversation/add`,
     );
     expect(sourceShadowRequests).toHaveLength(0);
-  });
-
-  it("does not create a shadow for an ineligible group", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "default",
-      channels: [],
-      allowMention: false,
-    });
-    vi.mocked(sendMessage).mockResolvedValue("AI response");
-    loadAgentMemoryConfig.mockResolvedValue({
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      serviceId: "default",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: ["default"],
-      timeoutMs: 1000,
-    });
-    isAgentMemoryEligible.mockImplementation(
-      actualAgentMemory.isAgentMemoryEligible,
-    );
-    const msg = makeMsg({
-      groupName: "other-group",
-      userId: "discord-user-1",
-    });
-
-    await processMessage(msg);
-
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(commitInboxResult).toHaveBeenCalledWith(
-      msg.id,
-      msg.fencingToken,
-      "AI response",
-      expect.not.objectContaining({ shadowJob: expect.anything() }),
-    );
-  });
-
-  it("does not create a shadow for special jobs", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "default",
-      channels: [],
-      allowMention: false,
-    });
-    vi.mocked(sendMessage).mockResolvedValue("AI response");
-    loadAgentMemoryConfig.mockResolvedValue({
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      serviceId: "default",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: ["default"],
-      timeoutMs: 1000,
-    });
-    isAgentMemoryEligible.mockImplementation(
-      actualAgentMemory.isAgentMemoryEligible,
-    );
-    const msg = makeMsg({
-      userId: "discord-user-1",
-      cronJobId: "cron-1",
-    });
-
-    await processMessage(msg);
-
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(commitInboxResult).toHaveBeenCalledWith(
-      msg.id,
-      msg.fencingToken,
-      "AI response",
-      expect.not.objectContaining({ shadowJob: expect.anything() }),
-    );
   });
 
   it("通常会話でも独立NO_REPLY行を無配信にする", async () => {

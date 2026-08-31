@@ -120,7 +120,7 @@ describe("Agent Memory shadow boundary", () => {
         ...normalMessage,
         messageType: undefined,
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isAgentMemoryEligible(config, { ...normalMessage, groupName: "public" }),
     ).toBe(false);

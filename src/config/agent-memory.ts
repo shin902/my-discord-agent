@@ -58,18 +58,10 @@ export function isAgentMemoryEligible(
     memoryShadow?: unknown;
   },
 ): boolean {
-  const conversationalTurn =
-    message.messageType === 0 ||
-    message.messageType === 19 ||
-    // Queue messages do not persist Discord MessageType. A userId is only
-    // written by intake after the source-level eligibility check, so its
-    // presence is the durable marker for that conversational source.
-    (message.messageType === undefined && message.userId !== undefined);
-
   return (
     config.enabled &&
     config.eligibleGroups.includes(message.groupName) &&
-    conversationalTurn &&
+    (message.messageType === 0 || message.messageType === 19) &&
     message.userId !== undefined &&
     message.userId.length > 0 &&
     message.authorIsBot !== true &&
