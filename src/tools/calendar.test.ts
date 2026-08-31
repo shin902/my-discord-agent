@@ -59,6 +59,27 @@ describe("list-calendars", () => {
     );
   });
 
+  it("summaryOverride が summary より優先される", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            summary: "元のカレンダー名",
+            summaryOverride: "表示名のカレンダー",
+          },
+        ],
+      }),
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+    const text = firstText(result);
+
+    expect(text).toContain("### 表示名のカレンダー");
+    expect(text).not.toContain("### 元のカレンダー名");
+  });
+
   it("複数ページを取得し、pageToken を引き継いで最後で停止する", async () => {
     fetchMock
       .mockResolvedValueOnce({
@@ -89,6 +110,32 @@ describe("list-calendars", () => {
       2,
       "http://proxy.test/google-calendar/users/me/calendarList?pageToken=page%20token%2F%3D%3F",
     );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("同じ nextPageToken が返っても追加取得せず結果を保持する", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-1", summary: "1ページ目" }],
+          nextPageToken: "same-token",
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-2", summary: "2ページ目" }],
+          nextPageToken: "same-token",
+        }),
+      });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+
+    expect(firstText(result)).toContain("1ページ目");
+    expect(firstText(result)).toContain("2ページ目");
+    expect(result.details).toEqual({ count: 2 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

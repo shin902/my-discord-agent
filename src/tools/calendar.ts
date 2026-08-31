@@ -20,6 +20,7 @@ type CalendarEvent = {
 type CalendarListEntry = {
   id?: string;
   summary?: string;
+  summaryOverride?: string;
   primary?: boolean;
   accessRole?: string;
   timeZone?: string;
@@ -132,7 +133,9 @@ export const listCalendarsTool: AgentTool<typeof listCalendarsParameters> = {
 
     for (const calendar of calendars) {
       const primary = calendar.primary ? "（デフォルト）" : "";
-      lines.push(`### ${calendar.summary ?? "(名前なし)"}${primary}`);
+      lines.push(
+        `### ${calendar.summaryOverride ?? calendar.summary ?? "(名前なし)"}${primary}`,
+      );
       lines.push(`- ID: \`${calendar.id ?? "(不明)"}\``);
       if (calendar.accessRole) {
         lines.push(`- アクセス権: ${calendar.accessRole}`);
