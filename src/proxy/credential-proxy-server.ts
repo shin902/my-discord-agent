@@ -89,18 +89,26 @@ function appendPath(basePath: string, restPath: string): string {
   return `${basePath.replace(/\/$/, "")}/${restPath.replace(/^\//, "")}`;
 }
 
+const MAX_PATH_DECODING_PASSES = 8;
+
 function containsPathTraversal(path: string): boolean {
   let decoded = path;
-  // Decode repeatedly so an upstream's additional decode cannot reveal a hidden separator or dot segment.
-  while (true) {
+  for (let pass = 0; pass < MAX_PATH_DECODING_PASSES; pass++) {
     const next = decoded.replace(/%([0-9a-f]{2})/gi, (_, hex: string) =>
       String.fromCharCode(Number.parseInt(hex, 16)),
     );
-    if (next === decoded) break;
+    if (next.replaceAll("\\", "/").split("/").includes("..")) {
+      return true;
+    }
+    if (next === decoded) {
+      return false;
+    }
     decoded = next;
   }
 
-  return decoded.replaceAll("\\", "/").split("/").includes("..");
+  // Avoid attacker-controlled decode work and never forward a value whose deeper
+  // upstream decoding could reveal traversal.
+  return /%[0-9a-f]{2}/i.test(decoded);
 }
 
 async function handleRequest(
