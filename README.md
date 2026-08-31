@@ -109,6 +109,12 @@ AgentConfigの継承は実行経路ごとに分かれます。通常のDiscord�
 - pnpm
 - Docker
 
+既存の mise 環境でこのブランチを pull して更新した場合は、`pnpm` コマンドやサービスの再起動・更新操作を実行する前に、リポジトリ直下で Node.js を強制再インストールしてください。これにより `mise.toml` の Corepack 設定が既存の Node.js にも反映されます。
+
+```bash
+mise install --force node
+```
+
 ### 1. 依存関係をインストール
 
 ```bash
