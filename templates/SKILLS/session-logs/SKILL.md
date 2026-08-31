@@ -33,7 +33,7 @@ PY
 
 ## Extract or search messages
 
-Filter in SQL before parsing JSON so large histories are not loaded unnecessarily.
+Use SQL to narrow on structured columns such as `session_id`, `entry_type`, and `created_at`. Do not prefilter keyword searches with `payload_json LIKE`: JSON escaping and SQLite's ASCII-only default case folding can drop valid decoded-text matches. Decode candidate payloads first, then search the extracted text in Python.
 
 ```bash
 python3 - <<'PY'
@@ -49,15 +49,13 @@ for db in Path('/sessions').glob('*/sessions.sqlite'):
     if session_id:
         clauses.append('session_id = ?')
         params.append(session_id)
-    if needle:
-        clauses.append('payload_json LIKE ?')
-        params.append(f'%{needle}%')
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ''
     sql = f'''SELECT session_id, sequence, entry_type, payload_json, created_at
               FROM session_entries {where}
               ORDER BY session_id, sequence'''
 
+    folded_needle = needle.casefold()
     for sid, sequence, entry_type, payload, created_at in con.execute(sql, params):
         message = json.loads(payload)
         content = message.get('content', '')
@@ -67,11 +65,11 @@ for db in Path('/sessions').glob('*/sessions.sqlite'):
             text = '\n'.join(filter(None, texts))
         else:
             text = str(content)
-        if needle and needle.lower() not in text.lower():
+        if needle and folded_needle not in text.casefold():
             continue
         print(f'{db.parent.name}/{sid}#{sequence}\t{entry_type}\t{created_at}\t{text}')
     con.close()
 PY
 ```
 
-For time ranges, convert the requested boundaries to Unix milliseconds and constrain `created_at` in SQL. Narrow by `session_id`, `entry_type`, and `created_at` before loading large payload sets. Summarize results; do not paste large raw histories.
+For time ranges, convert the requested boundaries to Unix milliseconds and constrain `created_at` in SQL. Narrow by `session_id`, `entry_type`, and `created_at` before decoding large payload sets. Summarize results; do not paste large raw histories.
