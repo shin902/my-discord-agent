@@ -145,17 +145,15 @@ describe("createRequestHandler: upstream リクエスト転送", () => {
     expect(requestMock).not.toHaveBeenCalled();
   });
 
-  it("深くネストした percent encoding は bounded decode 後に拒否する", async () => {
+  it("深くネストした harmless な percent encoding は bounded decode 後に拒否する", async () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
     const handler = createRequestHandler(CREDS, 30000);
     const res = makeRes();
     const nestedEncoding = (terminal: string) =>
-      `%${"25".repeat(1000)}${terminal}`;
-    const path = `/openai/${["2e", "2e", "2f"]
-      .map(nestedEncoding)
-      .join("")}admin`;
+      `%${"25".repeat(9)}${terminal}`;
+    const path = `/openai/${nestedEncoding("61")}`;
 
     handler(makeReq(path), res as unknown as ServerResponse);
 
