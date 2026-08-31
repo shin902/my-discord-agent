@@ -96,20 +96,34 @@ describe("splitMessage", () => {
     }
   });
 
-  it("同一行で閉じるバッククォートはコードフェンスとして扱わない", () => {
+  it("同一行で閉じるバッククォートは通常の分割として扱う", () => {
     const inlineCode = "```hello```";
     const text = `${inlineCode}\n${"x".repeat(500)}`;
 
     const result = splitMessage(text, 100);
 
-    expect(result.join("")).toContain(inlineCode);
-    expect(result.filter((chunk) => chunk.includes(inlineCode))).toHaveLength(
-      1,
+    expect(result).toEqual([
+      inlineCode,
+      ...Array.from({ length: 5 }, () => "x".repeat(100)),
+    ]);
+  });
+
+  it("4つ以上のバッククォートを使うコードフェンスを保って分割", () => {
+    const text = `説明\n\`\`\`\`ts\n${"x".repeat(220)}\n\`\`\`\`\`\n\n完了`;
+
+    const result = splitMessage(text, 80);
+
+    expect(result.every((chunk) => chunk.length <= 80)).toBe(true);
+    expect(
+      result
+        .slice(1, -1)
+        .every(
+          (chunk) => chunk.startsWith("````ts\n") && chunk.endsWith("\n````"),
+        ),
+    ).toBe(true);
+    expect(result.at(-1)).toBe(
+      `\`\`\`\`ts\n${"x".repeat(16)}\n\`\`\`\`\`\n\n完了`,
     );
-    expect(result.slice(1).every((chunk) => !chunk.includes("hello"))).toBe(
-      true,
-    );
-    expect(result.every((chunk) => chunk.length <= 100)).toBe(true);
   });
 
   it("複数のコードブロックと通常文をまたいで分割", () => {

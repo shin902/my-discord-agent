@@ -2,12 +2,24 @@ const DISCORD_MAX_LENGTH = 2000;
 
 type FenceState = {
   openingLine: string;
+  delimiter: string;
 };
 
 type SplitPoint = {
   index: number;
   state: FenceState | null;
 };
+
+function openingFence(line: string): FenceState | null {
+  const match = line.match(/^(`{3,})([^`\r\n]*)$/);
+  if (!match) return null;
+  return { openingLine: line, delimiter: match[1] };
+}
+
+function isClosingFence(line: string, state: FenceState): boolean {
+  const match = line.match(/^(`{3,})[ \t]*$/);
+  return match !== null && match[1].length >= state.delimiter.length;
+}
 
 function fenceAt(
   text: string,
@@ -22,20 +34,28 @@ function fenceAt(
   const lineWithoutCr = line.endsWith("\r") ? line.slice(0, -1) : line;
 
   if (state) {
-    if (!/^```[ \t]*$/.test(lineWithoutCr)) return null;
+    if (!isClosingFence(lineWithoutCr, state)) return null;
     return { index: end, state: null };
   }
 
-  if (!/^```[^`\r\n]*$/.test(lineWithoutCr)) return null;
-  return {
-    index: end,
-    state: { openingLine: lineWithoutCr },
-  };
+  const opening = openingFence(lineWithoutCr);
+  return opening ? { index: end, state: opening } : null;
+}
+
+function hasOpeningFence(text: string): boolean {
+  let index = 0;
+  while (index < text.length) {
+    if (fenceAt(text, index, null)?.state) return true;
+    const newlineIndex = text.indexOf("\n", index);
+    if (newlineIndex === -1) return false;
+    index = newlineIndex + 1;
+  }
+  return false;
 }
 
 function closingFence(content: string, state: FenceState | null): string {
   if (!state) return "";
-  return content.endsWith("\n") ? "```" : "\n```";
+  return content.endsWith("\n") ? state.delimiter : `\n${state.delimiter}`;
 }
 
 function splitFencedMessage(text: string, maxLength: number): string[] {
@@ -122,7 +142,7 @@ export function splitMessage(
 ): string[] {
   if (text.length <= maxLength) return [text];
 
-  return /(?:^|\n)```/.test(text)
+  return hasOpeningFence(text)
     ? splitFencedMessage(text, maxLength)
     : splitPlainMessage(text, maxLength);
 }
