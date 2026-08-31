@@ -29,6 +29,157 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("list-calendars", () => {
+  it("カレンダー一覧を正しくフォーマットする", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: "primary@example.com",
+            summary: "メインカレンダー",
+            primary: true,
+            accessRole: "owner",
+            timeZone: "Asia/Tokyo",
+          },
+        ],
+      }),
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+    const text = firstText(result);
+
+    expect(text).toContain("メインカレンダー（デフォルト）");
+    expect(text).toContain("primary@example.com");
+    expect(text).toContain("owner");
+    expect(text).toContain("Asia/Tokyo");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://proxy.test/google-calendar/users/me/calendarList",
+    );
+  });
+
+  it("summaryOverride が summary より優先される", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            summary: "元のカレンダー名",
+            summaryOverride: "表示名のカレンダー",
+          },
+        ],
+      }),
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+    const text = firstText(result);
+
+    expect(text).toContain("### 表示名のカレンダー");
+    expect(text).not.toContain("### 元のカレンダー名");
+  });
+
+  it("複数ページを取得し、pageToken を引き継いで最後で停止する", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-1", summary: "1ページ目" }],
+          nextPageToken: "page token/=?",
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-2", summary: "2ページ目" }],
+        }),
+      });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+
+    expect(firstText(result)).toContain("1ページ目");
+    expect(firstText(result)).toContain("2ページ目");
+    expect(result.details).toEqual({ count: 2 });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://proxy.test/google-calendar/users/me/calendarList",
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://proxy.test/google-calendar/users/me/calendarList?pageToken=page%20token%2F%3D%3F",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("同じ nextPageToken が返っても追加取得せず結果を保持する", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-1", summary: "1ページ目" }],
+          nextPageToken: "same-token",
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-2", summary: "2ページ目" }],
+          nextPageToken: "same-token",
+        }),
+      });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+
+    expect(firstText(result)).toContain("1ページ目");
+    expect(firstText(result)).toContain("2ページ目");
+    expect(result.details).toEqual({ count: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "",
+    42,
+    null,
+  ])("空または不正な nextPageToken (%s) では追加取得しない", async (nextPageToken) => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [{ id: "calendar-1", summary: "カレンダー" }],
+        nextPageToken,
+      }),
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    await listCalendarsTool.execute("id", {});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("items がないとき「カレンダーはありません」を返す", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+
+    expect(firstText(result)).toContain("カレンダーはありません");
+    expect(result.details).toEqual({ count: 0 });
+  });
+
+  it("Calendar API エラー時は例外を投げる", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => "Forbidden",
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    await expect(listCalendarsTool.execute("id", {})).rejects.toThrow("403");
+  });
+});
+
 describe("list-events", () => {
   const makeEventList = (overrides: Record<string, unknown>[] = []) => ({
     items: [

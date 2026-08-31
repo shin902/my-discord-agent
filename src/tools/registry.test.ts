@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { agentReachTool } from "./agent-reach.js";
 import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
+import { listCalendarsTool } from "./calendar.js";
 import {
   listIssueCommentsTool,
   listPullRequestCommentsTool,
@@ -24,6 +25,10 @@ describe("resolveTools", () => {
       arxivSearchTool,
       arxivSurveyTool,
     ]);
+  });
+
+  it("list-calendars を解決して listCalendarsTool を返す", () => {
+    expect(resolveTools(["list-calendars"])).toEqual([listCalendarsTool]);
   });
 
   it("list-issue-comments を解決して listIssueCommentsTool を返す", () => {
