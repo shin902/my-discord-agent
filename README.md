@@ -129,6 +129,12 @@ cp config/providers.example.json config/providers.json
 
 `.env` と各 JSON を利用環境に合わせて編集してください。
 
+既存の mise 環境をこの変更へ更新する場合は、リポジトリ直下で Node.js を強制再インストールしてください。これにより `mise.toml` の Corepack 設定が既存の Node.js にも反映されます。
+
+```bash
+mise install --force node
+```
+
 `config/cron.json` は省略できます。cron を使う場合は `config/cron.example.json` を参考に必要なジョブだけを設定してください。example には有効化済みのカスタム handler も含まれるため、そのままコピーして `pnpm dev` を実行するのではなく、不要なジョブを無効化し、開発時は handler パスを実在する `.ts` ファイルに合わせてください。
 
 ### 3. ローカル OCI レジストリを起動
