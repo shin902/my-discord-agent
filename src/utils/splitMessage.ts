@@ -26,7 +26,7 @@ function fenceAt(
     return { index: end, state: null };
   }
 
-  if (!lineWithoutCr.startsWith("```")) return null;
+  if (!/^```[^`\r\n]*$/.test(lineWithoutCr)) return null;
   return {
     index: end,
     state: { openingLine: lineWithoutCr },

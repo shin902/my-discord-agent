@@ -96,6 +96,22 @@ describe("splitMessage", () => {
     }
   });
 
+  it("同一行で閉じるバッククォートはコードフェンスとして扱わない", () => {
+    const inlineCode = "```hello```";
+    const text = `${inlineCode}\n${"x".repeat(500)}`;
+
+    const result = splitMessage(text, 100);
+
+    expect(result.join("")).toContain(inlineCode);
+    expect(result.filter((chunk) => chunk.includes(inlineCode))).toHaveLength(
+      1,
+    );
+    expect(result.slice(1).every((chunk) => !chunk.includes("hello"))).toBe(
+      true,
+    );
+    expect(result.every((chunk) => chunk.length <= 100)).toBe(true);
+  });
+
   it("複数のコードブロックと通常文をまたいで分割", () => {
     const text = [
       "説明".repeat(30),
