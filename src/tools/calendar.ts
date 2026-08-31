@@ -15,6 +15,7 @@ type CalendarEvent = {
   end?: EventDateTime;
   htmlLink?: string;
   attendees?: Array<{ email?: string; responseStatus?: string }>;
+  recurrence?: string[];
 };
 
 // status を持つことで、呼び出し側がエラーメッセージの文字列形式に依存せず
@@ -77,6 +78,34 @@ function assertValidTimeZone(timeZone: string): void {
   } catch {
     throw new Error(`無効な IANA タイムゾーンです: ${timeZone}`);
   }
+}
+
+const RECURRENCE_PROPERTY_NAMES = new Set([
+  "RRULE",
+  "EXRULE",
+  "RDATE",
+  "EXDATE",
+]);
+
+function assertValidRecurrence(recurrence: string[]): void {
+  for (const line of recurrence) {
+    const match = /^([A-Za-z][A-Za-z0-9-]*)(?:;[^:]*)?:/.exec(line);
+    const propertyName = match?.[1].toUpperCase();
+    if (!propertyName || !RECURRENCE_PROPERTY_NAMES.has(propertyName)) {
+      throw new Error(
+        `繰り返しルールには RRULE、EXRULE、RDATE、EXDATE のみ指定できます: ${line}`,
+      );
+    }
+  }
+}
+
+function withTimeZone(
+  dateTime: EventDateTime,
+  timeZone: string | undefined,
+): EventDateTime {
+  return dateTime.dateTime !== undefined && timeZone !== undefined
+    ? { ...dateTime, timeZone }
+    : dateTime;
 }
 
 function formatDateTime(dt: EventDateTime | undefined): string {
@@ -211,7 +240,7 @@ const createEventParameters = Type.Object({
   recurrence: Type.Optional(
     Type.Array(Type.String(), {
       description:
-        '繰り返しルール（RFC 5545形式、例: ["RRULE:FREQ=WEEKLY;BYDAY=MO"]）',
+        '繰り返しルールのコンテンツ行（RRULE、EXRULE、RDATE、EXDATEのみ。例: ["RRULE:FREQ=WEEKLY;BYDAY=MO", "RDATE;TZID=Asia/Tokyo:20250106T100000"]）',
     }),
   ),
   timeZone: Type.Optional(
@@ -245,9 +274,18 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
     const startDateTime = toEventDateTime(start);
     const endDateTime = toEventDateTime(end);
     const isRecurring = recurrence !== undefined && recurrence.length > 0;
+    const startIsDateOnly = startDateTime.date !== undefined;
+    const endIsDateOnly = endDateTime.date !== undefined;
     const isTimedEvent =
       startDateTime.dateTime !== undefined &&
       endDateTime.dateTime !== undefined;
+
+    if (startIsDateOnly !== endIsDateOnly) {
+      throw new Error(
+        "予定の start と end は、終日（YYYY-MM-DD）または日時付きの同じ形式で指定してください",
+      );
+    }
+    if (isRecurring) assertValidRecurrence(recurrence);
 
     if (isRecurring && isTimedEvent && timeZone === undefined) {
       throw new Error(
@@ -306,6 +344,12 @@ const updateEventParameters = Type.Object({
   attendees: Type.Optional(
     Type.Array(Type.String(), { description: "参加者のメールアドレス一覧" }),
   ),
+  timeZone: Type.Optional(
+    Type.String({
+      description:
+        "IANAタイムゾーン（例: Asia/Tokyo）。時刻付きの再作成では必須",
+    }),
+  ),
   calendarId: calendarIdParameter,
 });
 
@@ -362,6 +406,7 @@ async function recreateEventForTypeChange(params: {
   description?: string;
   location?: string;
   attendees?: string[];
+  timeZone?: string;
 }) {
   const {
     eventId,
@@ -373,6 +418,7 @@ async function recreateEventForTypeChange(params: {
     description,
     location,
     attendees,
+    timeZone,
   } = params;
 
   const recreateBody: Record<string, unknown> = {};
@@ -382,8 +428,21 @@ async function recreateEventForTypeChange(params: {
     }
   }
   recreateBody.summary = summary ?? current.summary;
-  recreateBody.start = finalStart;
-  recreateBody.end = finalEnd;
+  const isTimedEvent =
+    finalStart?.dateTime !== undefined && finalEnd?.dateTime !== undefined;
+  if (isTimedEvent && current.recurrence?.length && timeZone === undefined) {
+    throw new Error(
+      "日時付きの繰り返し予定を再作成するには IANA タイムゾーン（timeZone）が必要です",
+    );
+  }
+  recreateBody.start =
+    isTimedEvent && timeZone !== undefined
+      ? withTimeZone(finalStart, timeZone)
+      : finalStart;
+  recreateBody.end =
+    isTimedEvent && timeZone !== undefined
+      ? withTimeZone(finalEnd, timeZone)
+      : finalEnd;
   const finalDescription = description ?? current.description;
   if (finalDescription !== undefined)
     recreateBody.description = finalDescription;
@@ -488,13 +547,20 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
       description,
       location,
       attendees,
+      timeZone,
       calendarId = "primary",
     },
   ) => {
+    if (timeZone !== undefined) assertValidTimeZone(timeZone);
+
     const body: Record<string, unknown> = {};
     if (summary !== undefined) body.summary = summary;
-    if (start !== undefined) body.start = toEventDateTime(start);
-    if (end !== undefined) body.end = toEventDateTime(end);
+    if (start !== undefined) {
+      body.start = withTimeZone(toEventDateTime(start), timeZone);
+    }
+    if (end !== undefined) {
+      body.end = withTimeZone(toEventDateTime(end), timeZone);
+    }
     if (description !== undefined) body.description = description;
     if (location !== undefined) body.location = location;
     if (attendees !== undefined) {
@@ -567,6 +633,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
         description,
         location,
         attendees,
+        timeZone,
       });
     }
   },

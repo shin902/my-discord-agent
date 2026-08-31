@@ -250,12 +250,18 @@ describe("create-event", () => {
       summary: "定例予定",
       start: "2025-01-06T10:00:00+09:00",
       end: "2025-01-06T11:00:00+09:00",
-      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+      recurrence: [
+        "RRULE:FREQ=WEEKLY;BYDAY=MO",
+        "rdate;TZID=Asia/Tokyo:20250113T100000",
+      ],
       timeZone: "Asia/Tokyo",
     });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
-    expect(body.recurrence).toEqual(["RRULE:FREQ=WEEKLY;BYDAY=MO"]);
+    expect(body.recurrence).toEqual([
+      "RRULE:FREQ=WEEKLY;BYDAY=MO",
+      "rdate;TZID=Asia/Tokyo:20250113T100000",
+    ]);
     expect(body.start).toEqual({
       dateTime: "2025-01-06T10:00:00+09:00",
       timeZone: "Asia/Tokyo",
@@ -264,6 +270,34 @@ describe("create-event", () => {
       dateTime: "2025-01-06T11:00:00+09:00",
       timeZone: "Asia/Tokyo",
     });
+  });
+
+  it("DTSTART などの未対応の繰り返し行は POST 前に拒否する", async () => {
+    const { createEventTool } = await import("./calendar.js");
+    await expect(
+      createEventTool.execute("id", {
+        summary: "定例予定",
+        start: "2025-01-06",
+        end: "2025-01-07",
+        recurrence: ["DTSTART:20250106T100000"],
+      }),
+    ).rejects.toThrow("RRULE、EXRULE、RDATE、EXDATE");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["開始が日時、終了が終日", "2025-01-06T10:00:00+09:00", "2025-01-07"],
+    ["開始が終日、終了が日時", "2025-01-06", "2025-01-07T11:00:00+09:00"],
+  ])("start/end の形式が混在する場合は POST 前に拒否する（%s）", async (_label, start, end) => {
+    const { createEventTool } = await import("./calendar.js");
+    await expect(
+      createEventTool.execute("id", {
+        summary: "混在予定",
+        start,
+        end,
+      }),
+    ).rejects.toThrow("同じ形式");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("日時付きの繰り返し予定は timeZone を必須にする", async () => {
@@ -468,17 +502,68 @@ describe("update-event", () => {
       eventId: "evt-001",
       start: "2026-06-19T14:50:00+09:00",
       end: "2026-06-19T16:50:00+09:00",
+      timeZone: "Asia/Tokyo",
     });
 
     const [, createInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     const createBody = JSON.parse(createInit.body as string);
     expect(createBody.recurrence).toEqual(["RRULE:FREQ=WEEKLY"]);
+    expect(createBody.start).toEqual({
+      dateTime: "2026-06-19T14:50:00+09:00",
+      timeZone: "Asia/Tokyo",
+    });
+    expect(createBody.end).toEqual({
+      dateTime: "2026-06-19T16:50:00+09:00",
+      timeZone: "Asia/Tokyo",
+    });
     expect(createBody.reminders).toEqual({
       useDefault: false,
       overrides: [{ method: "popup", minutes: 10 }],
     });
     expect(createBody.colorId).toBe("5");
     expect(createBody.conferenceData).toBeUndefined();
+  });
+
+  it("時刻付きの繰り返し予定の再作成は timeZone なしで POST しない", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () =>
+          JSON.stringify({ error: { message: "Invalid start time." } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: "evt-001",
+          recurrence: ["RRULE:FREQ=WEEKLY"],
+          start: { date: "2026-06-19" },
+          end: { date: "2026-06-20" },
+        }),
+      });
+
+    const { updateEventTool } = await import("./calendar.js");
+    await expect(
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+      }),
+    ).rejects.toThrow("timeZone");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("update-event の timeZone は無効な IANA タイムゾーンを拒否する", async () => {
+    const { updateEventTool } = await import("./calendar.js");
+    await expect(
+      updateEventTool.execute("id", {
+        eventId: "evt-001",
+        start: "2026-06-19T14:50:00+09:00",
+        end: "2026-06-19T16:50:00+09:00",
+        timeZone: "not/a-time-zone",
+      }),
+    ).rejects.toThrow("無効な IANA タイムゾーン");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("繰り返しイベントのインスタンスを再作成する場合、recurringEventId/originalStartTime を引き継がない", async () => {
