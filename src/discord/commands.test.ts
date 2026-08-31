@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   resumeBotTaskSessionAndEnqueue: vi.fn(),
   listBotTaskSessions: vi.fn(),
   enqueue: vi.fn(),
+  loadMemoryConfig: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", async (importOriginal) => {
@@ -18,6 +19,11 @@ vi.mock("../config/bots.js", () => ({
   loadBotRegistry: mocks.loadBotRegistry,
   resolveBotProfile: mocks.resolveBotProfile,
 }));
+vi.mock("../config/agent-memory.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../config/agent-memory.js")>();
+  return { ...actual, loadAgentMemoryConfig: mocks.loadMemoryConfig };
+});
 vi.mock("../queue/repository.js", () => ({
   getQueueRepository: () => ({
     createBotTaskSessionAndEnqueue: mocks.createBotTaskSessionAndEnqueue,
@@ -74,10 +80,16 @@ function makeSkillInteraction(options: {
   channelId?: string;
   isThread?: boolean;
   parentId?: string | null;
+  userId?: string;
+  userIsBot?: boolean;
 }) {
   return {
     id: "skill-interaction-1",
     channelId: options.channelId ?? "channel-1",
+    user: {
+      id: options.userId ?? "user-1",
+      bot: options.userIsBot ?? false,
+    },
     channel: {
       isThread: () => options.isThread ?? false,
       parentId: options.parentId ?? null,
@@ -125,6 +137,15 @@ beforeEach(() => {
   }));
   mocks.resumeBotTaskSessionAndEnqueue.mockReturnValue(undefined);
   mocks.listBotTaskSessions.mockReturnValue([]);
+  mocks.loadMemoryConfig.mockResolvedValue({
+    enabled: false,
+    baseUrl: "http://127.0.0.1:8420",
+    serviceId: "default",
+    teamId: "team",
+    agentId: "agent",
+    eligibleGroups: [],
+    timeoutMs: 1000,
+  });
 });
 
 describe("BOT_COMMAND", () => {
@@ -256,6 +277,54 @@ describe("handleSkillCommand", () => {
     expect(interaction.editReply).toHaveBeenCalledWith({
       content: "スキル「session-logs」の実行を受け付けました。",
     });
+  });
+
+  it("persists the invoking user for an eligible Agent Memory turn", async () => {
+    mocks.loadMemoryConfig.mockResolvedValueOnce({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["main"],
+      timeoutMs: 1000,
+    });
+    const interaction = makeSkillInteraction({ userId: "eligible-user" });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "eligible-user" }),
+    );
+  });
+
+  it("does not persist the invoking user for an ineligible Agent Memory turn", async () => {
+    mocks.loadMemoryConfig.mockResolvedValueOnce({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "default",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["other-group"],
+      timeoutMs: 1000,
+    });
+    const interaction = makeSkillInteraction({ userId: "ineligible-user" });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.not.objectContaining({ userId: expect.anything() }),
+    );
+  });
+
+  it("still enqueues when Agent Memory config loading fails", async () => {
+    mocks.loadMemoryConfig.mockRejectedValueOnce(new Error("config failed"));
+    const interaction = makeSkillInteraction({ userId: "user-config-failed" });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.enqueue).toHaveBeenCalledOnce();
+    expect(mocks.enqueue.mock.calls[0]?.[0]).not.toHaveProperty("userId");
   });
 
   it("resolves a thread through its parent and keeps the thread session", async () => {

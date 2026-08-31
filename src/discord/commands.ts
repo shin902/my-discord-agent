@@ -4,6 +4,10 @@ import {
   type Client,
   SlashCommandBuilder,
 } from "discord.js";
+import {
+  isAgentMemoryEligible,
+  loadAgentMemoryConfig,
+} from "../config/agent-memory.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { findGroupByChannelId } from "../config/groups.js";
@@ -208,11 +212,32 @@ export async function handleSkillCommand(
   await interaction.deferReply({ ephemeral: true });
   try {
     const configOverride = pickAgentConfig(match.channel);
+    let memoryUserId: string | undefined;
+    try {
+      const memoryConfig = await loadAgentMemoryConfig();
+      const user = interaction.user;
+      if (
+        isAgentMemoryEligible(memoryConfig, {
+          groupName: match.group.name,
+          // /skill is the slash-command equivalent of the conversational
+          // ./command path, so it is represented as a Default user turn.
+          messageType: 0,
+          userId: user.id,
+          authorIsBot: user.bot,
+        })
+      ) {
+        memoryUserId = user.id;
+      }
+    } catch (error) {
+      // Memory capture is best-effort and must never block command enqueueing.
+      console.error("[handler] Agent Memory eligibility check failed:", error);
+    }
     await getQueueRepository().enqueue({
       channelId: interaction.channelId,
       groupName: match.group.name,
       routingChannelId: lookupId,
       sessionId: interaction.channelId,
+      ...(memoryUserId ? { userId: memoryUserId } : {}),
       content: `./command ${skillName}${prompt ? ` ${prompt}` : ""}`,
       timestamp: new Date().toISOString(),
       idempotencyKey: `discord-interaction:${interaction.id}`,
