@@ -59,6 +59,58 @@ describe("list-calendars", () => {
     );
   });
 
+  it("複数ページを取得し、pageToken を引き継いで最後で停止する", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-1", summary: "1ページ目" }],
+          nextPageToken: "page token/=?",
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: "calendar-2", summary: "2ページ目" }],
+        }),
+      });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    const result = await listCalendarsTool.execute("id", {});
+
+    expect(firstText(result)).toContain("1ページ目");
+    expect(firstText(result)).toContain("2ページ目");
+    expect(result.details).toEqual({ count: 2 });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://proxy.test/google-calendar/users/me/calendarList",
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://proxy.test/google-calendar/users/me/calendarList?pageToken=page%20token%2F%3D%3F",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "",
+    42,
+    null,
+  ])("空または不正な nextPageToken (%s) では追加取得しない", async (nextPageToken) => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [{ id: "calendar-1", summary: "カレンダー" }],
+        nextPageToken,
+      }),
+    });
+    const { listCalendarsTool } = await import("./calendar.js");
+
+    await listCalendarsTool.execute("id", {});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("items がないとき「カレンダーはありません」を返す", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
     const { listCalendarsTool } = await import("./calendar.js");

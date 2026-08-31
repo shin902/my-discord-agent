@@ -100,10 +100,34 @@ export const listCalendarsTool: AgentTool<typeof listCalendarsParameters> = {
     "Google カレンダーのカレンダー一覧を取得する。カレンダーID・名前・アクセス権・タイムゾーンを返す",
   parameters: listCalendarsParameters,
   execute: async () => {
-    const data = (await calendarFetch("/users/me/calendarList")) as {
-      items?: CalendarListEntry[];
-    };
-    const calendars = data.items ?? [];
+    const calendars: CalendarListEntry[] = [];
+    const seenPageTokens = new Set<string>();
+    let pageToken: string | undefined;
+
+    while (true) {
+      if (pageToken !== undefined) {
+        if (seenPageTokens.has(pageToken)) break;
+        seenPageTokens.add(pageToken);
+      }
+
+      const path =
+        pageToken === undefined
+          ? "/users/me/calendarList"
+          : `/users/me/calendarList?pageToken=${encodeURIComponent(pageToken)}`;
+      const data = (await calendarFetch(path)) as {
+        items?: CalendarListEntry[];
+        nextPageToken?: unknown;
+      };
+      if (Array.isArray(data.items)) calendars.push(...data.items);
+
+      const nextPageToken =
+        typeof data.nextPageToken === "string" && data.nextPageToken.length > 0
+          ? data.nextPageToken
+          : undefined;
+      if (nextPageToken === undefined) break;
+      pageToken = nextPageToken;
+    }
+
     const lines: string[] = ["## カレンダー一覧", ""];
 
     for (const calendar of calendars) {
