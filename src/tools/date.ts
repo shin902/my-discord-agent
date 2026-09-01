@@ -14,7 +14,7 @@ export const dateTool: AgentTool<typeof dateParams> = {
   name: "date",
   label: "現在日時",
   description:
-    "現在の正確な日時を取得する。『今日』『明日』『今』『何時』など現在時刻に依存する判断では、セッション開始時刻ではなくこのツールで確認する",
+    "Get the exact current date and time. Use this tool instead of the fixed session start time whenever a decision depends on the current time, such as today, tomorrow, now, or the current clock time.",
   parameters: dateParams,
   execute: async () => {
     const timestamp = Date.now();
