@@ -42,6 +42,7 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
   "agentMemory": {
     "enabled": true,
     "baseUrl": "http://127.0.0.1:8420",
+    "bearerTokenEnv": "MEMORY_CORE_GATEWAY_API_KEY",
     "serviceId": "default",
     "teamId": "my-discord-agent",
     "agentId": "main",
@@ -99,7 +100,7 @@ exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`�
 
 ```bash
 pnpm memory-core up -d
-curl http://127.0.0.1:8420/health
+curl "http://127.0.0.1:${MEMORY_CORE_PORT:-8420}/health"
 
 # 運用コマンド
 pnpm memory-core ps
@@ -107,7 +108,7 @@ pnpm memory-core logs -f memory-core
 pnpm memory-core down
 ```
 
-`MEMORY_CORE_GATEWAY_API_KEY`を`.env`へ設定するとGateway共有鍵認証が有効になります。`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。v3 data-planeは共有鍵認証を無効にしてもBearer形式のヘッダーが必要です。`MEMORY_CORE_PORT`を変更した場合は、Composeが使うGateway portと`agentMemory.baseUrl`のポートを同じ値に合わせてください。
+`MEMORY_CORE_GATEWAY_API_KEY`を`.env`へ設定するとGateway共有鍵認証が有効になります。`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。v3 data-planeは共有鍵認証を無効にしてもBearer形式のヘッダーが必要です。`MEMORY_CORE_PORT`を変更する場合は、シェル環境変数にも同じ値を設定してhealth commandへ反映し、Composeが使うGateway portと`agentMemory.baseUrl`のポートを同じ値に合わせてください。
 
 ```json
 {
