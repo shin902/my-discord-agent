@@ -3,10 +3,10 @@ import { Type } from "typebox";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const searchParams = Type.Object({
-  query: Type.String({ description: "検索クエリ" }),
+  query: Type.String({ description: "Search query." }),
   max_results: Type.Optional(
     Type.Integer({
-      description: "最大件数（デフォルト: 5、最大: 10）",
+      description: "Maximum number of results. Defaults to 5; maximum 10.",
       minimum: 1,
       maximum: 10,
     }),
@@ -14,19 +14,20 @@ const searchParams = Type.Object({
   search_depth: Type.Optional(
     Type.Union([Type.Literal("basic"), Type.Literal("advanced")], {
       description:
-        "検索の深さ（basic: 高速、advanced: 詳細だが低速。デフォルト: basic）",
+        "Search depth: basic is faster, advanced is more detailed but slower. Defaults to basic.",
     }),
   ),
   include_answer: Type.Optional(
     Type.Boolean({
-      description: "AIによる要約回答を含めるか（デフォルト: true）",
+      description:
+        "Whether to include an AI-generated answer summary. Defaults to true.",
     }),
   ),
   topic: Type.Optional(
     Type.Union(
       [Type.Literal("general"), Type.Literal("news"), Type.Literal("finance")],
       {
-        description: "検索トピック（デフォルト: general）",
+        description: "Search topic. Defaults to general.",
       },
     ),
   ),
@@ -48,7 +49,7 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
   name: "tavily-search",
   label: "Tavily Search",
   description:
-    "ウェブ検索を実行して結果を返す。最新の情報やファクトチェックに使う",
+    "Run a web search and return results. Use it for current information and fact-checking.",
   parameters: searchParams,
   execute: async (
     _toolCallId,
@@ -102,15 +103,19 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
 };
 
 const extractParams = Type.Object({
-  urls: Type.Array(Type.String(), { description: "本文を抽出するURLの一覧" }),
+  urls: Type.Array(Type.String(), {
+    description: "URLs whose page content should be extracted.",
+  }),
   extract_depth: Type.Optional(
     Type.Union([Type.Literal("basic"), Type.Literal("advanced")], {
       description:
-        "抽出の深さ（basic: 高速、advanced: 詳細だが低速。デフォルト: basic）",
+        "Extraction depth: basic is faster, advanced is more detailed but slower. Defaults to basic.",
     }),
   ),
   include_images: Type.Optional(
-    Type.Boolean({ description: "画像URLを含めるか（デフォルト: false）" }),
+    Type.Boolean({
+      description: "Whether to include image URLs. Defaults to false.",
+    }),
   ),
 });
 
@@ -133,7 +138,7 @@ export const tavilyExtractTool: AgentTool<typeof extractParams> = {
   name: "tavily-extract",
   label: "Tavily Extract",
   description:
-    "指定したURLのページ本文を抽出する。検索結果のページを詳しく読むときに使う",
+    "Extract page content from specified URLs. Use it to read search-result pages in detail.",
   parameters: extractParams,
   execute: async (
     _toolCallId,
@@ -176,38 +181,41 @@ export const tavilyExtractTool: AgentTool<typeof extractParams> = {
 };
 
 const crawlParams = Type.Object({
-  url: Type.String({ description: "クロールを開始するルートURL" }),
+  url: Type.String({ description: "Root URL where crawling should start." }),
   max_depth: Type.Optional(
     Type.Integer({
-      description: "クロールする深さ（1〜5、デフォルト: 1）",
+      description: "Crawl depth from 1 to 5. Defaults to 1.",
       minimum: 1,
       maximum: 5,
     }),
   ),
   max_breadth: Type.Optional(
     Type.Integer({
-      description: "1ページあたりにたどるリンク数（1〜500、デフォルト: 20）",
+      description:
+        "Number of links to follow per page, from 1 to 500. Defaults to 20.",
       minimum: 1,
       maximum: 500,
     }),
   ),
   limit: Type.Optional(
     Type.Integer({
-      description: "処理するページ総数の上限（デフォルト: 50）",
+      description: "Maximum total number of pages to process. Defaults to 50.",
       minimum: 1,
     }),
   ),
   instructions: Type.Optional(
-    Type.String({ description: "クロール対象を絞り込む自然言語の指示" }),
+    Type.String({
+      description: "Natural-language instructions used to narrow the crawl target.",
+    }),
   ),
   select_paths: Type.Optional(
     Type.Array(Type.String(), {
-      description: "クロール対象URLを絞り込むパスの正規表現パターン",
+      description: "Regular expression patterns used to limit crawled URL paths.",
     }),
   ),
   extract_depth: Type.Optional(
     Type.Union([Type.Literal("basic"), Type.Literal("advanced")], {
-      description: "各ページの抽出の深さ（デフォルト: basic）",
+      description: "Extraction depth for each page. Defaults to basic.",
     }),
   ),
 });
@@ -226,7 +234,7 @@ export const tavilyCrawlTool: AgentTool<typeof crawlParams> = {
   name: "tavily-crawl",
   label: "Tavily Crawl",
   description:
-    "指定URLを起点にサイト内のページをクロールし、各ページの本文を取得する",
+    "Crawl pages within a site starting from a specified URL and extract the content of each page.",
   parameters: crawlParams,
   execute: async (
     _toolCallId,
@@ -275,41 +283,42 @@ export const tavilyCrawlTool: AgentTool<typeof crawlParams> = {
 };
 
 const mapParams = Type.Object({
-  url: Type.String({ description: "マッピングを開始するベースURL" }),
+  url: Type.String({ description: "Base URL where mapping should start." }),
   max_depth: Type.Optional(
     Type.Integer({
-      description: "マッピングする深さ（1〜5、デフォルト: 1）",
+      description: "Mapping depth from 1 to 5. Defaults to 1.",
       minimum: 1,
       maximum: 5,
     }),
   ),
   max_breadth: Type.Optional(
     Type.Integer({
-      description: "1ページあたりにたどるリンク数（1〜500、デフォルト: 20）",
+      description:
+        "Number of links to follow per page, from 1 to 500. Defaults to 20.",
       minimum: 1,
       maximum: 500,
     }),
   ),
   limit: Type.Optional(
     Type.Integer({
-      description: "処理するURL総数の上限（デフォルト: 50）",
+      description: "Maximum total number of URLs to process. Defaults to 50.",
       minimum: 1,
     }),
   ),
   instructions: Type.Optional(
     Type.String({
       description:
-        "マッピング対象を絞り込む自然言語の指示（指定するとコスト2倍）",
+        "Natural-language instructions used to narrow the mapping target. Using this option doubles the cost.",
     }),
   ),
   select_paths: Type.Optional(
     Type.Array(Type.String(), {
-      description: "対象URLを絞り込むパスの正規表現パターン",
+      description: "Regular expression patterns used to limit URL paths.",
     }),
   ),
   select_domains: Type.Optional(
     Type.Array(Type.String(), {
-      description: "対象URLを絞り込むドメインの正規表現パターン",
+      description: "Regular expression patterns used to limit URL domains.",
     }),
   ),
 });
@@ -323,7 +332,7 @@ export const tavilyMapTool: AgentTool<typeof mapParams> = {
   name: "tavily-map",
   label: "Tavily Map",
   description:
-    "サイト内のURL構造をマッピングして一覧を取得する（ページ本文は取得しない）",
+    "Map a site's URL structure and return the URLs without fetching page content.",
   parameters: mapParams,
   execute: async (
     _toolCallId,
