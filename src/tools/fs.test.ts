@@ -347,7 +347,7 @@ describe("read", () => {
     expect(readTool.description).toContain("startLine");
     expect(readTool.description).toContain("lineCount");
     expect(readTool.description).toContain("tailCount");
-    expect(readTool.description).toContain("順番");
+    expect(readTool.description).toContain("consecutive bounded ranges");
   });
 
   it("パストラバーサルを拒否", async () => {
