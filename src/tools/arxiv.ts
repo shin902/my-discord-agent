@@ -270,22 +270,22 @@ const sortParam = (defaultSort: ArxivSort) =>
         Type.Literal("updated"),
       ],
       {
-        description: `並び順（デフォルト: ${defaultSort}）`,
+        description: `Sort order. Defaults to ${defaultSort}.`,
       },
     ),
   );
 
 const searchParams = Type.Object({
   query: Type.String({
-    description: "arXivを検索する自然言語クエリ",
+    description: "Natural-language query to search on arXiv.",
     minLength: 1,
     maxLength: 500,
   }),
-  from: dateParam("投稿日範囲の開始日（YYYY-MM-DD）"),
-  to: dateParam("投稿日範囲の終了日（YYYY-MM-DD）"),
+  from: dateParam("Start of the submission-date range in YYYY-MM-DD format."),
+  to: dateParam("End of the submission-date range in YYYY-MM-DD format."),
   max_results: Type.Optional(
     Type.Integer({
-      description: "最大件数（デフォルト: 10、最大: 50）",
+      description: "Maximum number of results. Defaults to 10; maximum 50.",
       minimum: 1,
       maximum: 50,
     }),
@@ -297,7 +297,7 @@ export const arxivSearchTool: AgentTool<typeof searchParams> = {
   name: "arxiv-search",
   label: "arXiv Search",
   description:
-    "arXivの論文を自然言語クエリで検索する。投稿日範囲を指定した検索にも対応する",
+    "Search arXiv papers with a natural-language query. Supports filtering by submission date range.",
   parameters: searchParams,
   execute: async (
     _toolCallId,
@@ -319,15 +319,15 @@ export const arxivSearchTool: AgentTool<typeof searchParams> = {
 
 const surveyParams = Type.Object({
   queries: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
-    description: "まとめて調査するarXiv検索クエリ（OR検索）",
+    description: "arXiv search queries to survey together using OR.",
     minItems: 1,
     maxItems: 8,
   }),
-  from: dateParam("投稿日範囲の開始日（YYYY-MM-DD）"),
-  to: dateParam("投稿日範囲の終了日（YYYY-MM-DD）"),
+  from: dateParam("Start of the submission-date range in YYYY-MM-DD format."),
+  to: dateParam("End of the submission-date range in YYYY-MM-DD format."),
   max_results: Type.Optional(
     Type.Integer({
-      description: "最大件数（デフォルト: 30、最大: 50）",
+      description: "Maximum number of results. Defaults to 30; maximum 50.",
       minimum: 1,
       maximum: 50,
     }),
@@ -339,7 +339,7 @@ export const arxivSurveyTool: AgentTool<typeof surveyParams> = {
   name: "arxiv-survey",
   label: "arXiv Survey",
   description:
-    "複数の検索クエリをOR条件でまとめてarXiv調査する。期間指定の定期サーベイに使う",
+    "Survey arXiv with multiple queries combined using OR. Useful for recurring or date-bounded literature surveys.",
   parameters: surveyParams,
   execute: async (
     _toolCallId,
