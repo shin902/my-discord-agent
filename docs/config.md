@@ -69,7 +69,7 @@ MemoryCore v3のデータ面は、Gateway共有鍵の設定有無にかかわら
 
 `compose.memory-core.yaml`はMemoryCore単体を公式image `agentmemory/memory-core:1.0.1`から起動します。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストのCLIProxyAPIが`127.0.0.1:8317`で待ち受けるため、MemoryCoreはhost networkで起動します。MemoryCore自身のGatewayは`127.0.0.1`にbindし、ホスト外部へ公開しません。MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
 
-exampleをGit管理外の実設定へコピーし、MemoryCore内部の抽出・統合に使うOpenAI-compatible LLMの接続先とmodelを`config/memory-core.yaml`の`llm`へ設定します。API keyは追跡対象外のYAMLへ書かず、`.env`の`MEMORY_CORE_LLM_API_KEY`へ設定してください。ComposeがこれをMemoryCore内の`TDAI_LLM_API_KEY`として渡します。
+exampleをGit管理外の実設定へコピーします。exampleは、ホスト上のCLIProxyAPI（`127.0.0.1:8317`）をMemoryCoreのOpenAI-compatible LLMとして使う標準構成です。`network_mode: host`により、MemoryCore内の`127.0.0.1`はホストのCLIProxyAPIを指します。`MEMORY_CORE_LLM_API_KEY`にはCLIProxyAPIのAPI keyを設定してください。Composeがその値をMemoryCore内の`TDAI_LLM_API_KEY`として渡し、YAMLの`${TDAI_LLM_API_KEY}`へ展開します。直接OpenAIなど別のproviderを使う場合だけ、コピー後に`llm.baseUrl`と`llm.model`を変更します。API key自体は追跡対象外のYAMLへ書きません。
 
 ```bash
 cp config/memory-core.example.yaml config/memory-core.yaml
@@ -77,9 +77,9 @@ cp config/memory-core.example.yaml config/memory-core.yaml
 
 ```yaml
 llm:
-  baseUrl: "https://api.openai.com/v1"
+  baseUrl: "http://127.0.0.1:8317/v1"
   apiKey: "${TDAI_LLM_API_KEY}"
-  model: "gpt-4o-mini"
+  model: "gpt-5.6-luna"
 ```
 
 exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`でも抽出thresholdが`1 → 2 → 4 → 5`と増えるため、最初の会話後から抽出が始まり得ます。厳密な5会話ごとのbatchではありません。また、初期rolloutはmy-discord-agentからL0をshadow writeするだけなので、exampleの`memory.recall.enabled`は`false`です。
