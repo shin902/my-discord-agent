@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AgentMemoryConfigSchema,
@@ -185,6 +186,35 @@ describe("Agent Memory shadow boundary", () => {
         channelId: "other-channel",
       }),
     ).toBe(false);
+  });
+
+  it("accepts a legacy admission whose token field follows agentId", () => {
+    const legacyFields = {
+      groupName: "private",
+      routingChannelId: "channel-1",
+      channelId: "channel-1",
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "space-1",
+      teamId: "team-1",
+      agentId: "agent-1",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
+      userId: "discord-user-1",
+      sessionId: "session-1",
+    };
+    const admission = {
+      ...legacyFields,
+      fingerprint: createHash("sha256")
+        .update(JSON.stringify(legacyFields))
+        .digest("hex"),
+    };
+
+    expect(
+      isCurrentAgentMemoryAdmission(admission, config, {
+        groupName: "private",
+        routingChannelId: "channel-1",
+        channelId: "channel-1",
+      }),
+    ).toBe(true);
   });
 
   it("maps one completed user/assistant turn to the v3 L0 contract", () => {

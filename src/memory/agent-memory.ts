@@ -64,9 +64,19 @@ export function isCurrentAgentMemoryAdmission(
     userId: admission.userId,
     sessionId: admission.sessionId,
   });
+  const { fingerprint, ...admissionFields } = admission;
   return (
-    admission.fingerprint === current.fingerprint &&
-    JSON.stringify(admission) === JSON.stringify(current)
+    fingerprint === admissionFingerprint(admissionFields) &&
+    admissionFields.groupName === current.groupName &&
+    admissionFields.routingChannelId === current.routingChannelId &&
+    admissionFields.channelId === current.channelId &&
+    admissionFields.baseUrl === current.baseUrl &&
+    admissionFields.serviceId === current.serviceId &&
+    admissionFields.bearerTokenEnv === current.bearerTokenEnv &&
+    admissionFields.teamId === current.teamId &&
+    admissionFields.agentId === current.agentId &&
+    admissionFields.userId === current.userId &&
+    admissionFields.sessionId === current.sessionId
   );
 }
 

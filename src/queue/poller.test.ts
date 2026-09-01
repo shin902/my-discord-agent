@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiscordEvent, SendMessageOptions } from "../agent/manager.js";
-import { buildAgentMemoryAdmission } from "../memory/agent-memory.js";
+import type { AgentMemoryConfig } from "../config/agent-memory.js";
+import {
+  buildAgentMemoryAdmission,
+  isCurrentAgentMemoryAdmission,
+} from "../memory/agent-memory.js";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -2171,6 +2175,16 @@ describe("processMessage - durable result", () => {
       actualAgentMemory.isAgentMemoryEligible,
     );
     const shadowBaseUrl = "http://source-shadow-job.test";
+    const shadowConfig: AgentMemoryConfig = {
+      enabled: true,
+      baseUrl: shadowBaseUrl,
+      serviceId: "default",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
+      teamId: "team",
+      agentId: "agent",
+      eligibleGroups: ["default"],
+      timeoutMs: 1000,
+    };
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const msg = makeMsg({
       channelId: "thread-1",
@@ -2194,16 +2208,7 @@ describe("processMessage - durable result", () => {
     expect(settled).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
 
-    resolveConfig({
-      enabled: true,
-      baseUrl: shadowBaseUrl,
-      serviceId: "default",
-      bearerTokenEnv: "TDAI_TEST_TOKEN",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: ["default"],
-      timeoutMs: 1000,
-    });
+    resolveConfig(shadowConfig);
     await processing;
 
     expect(settled).toBe(true);
@@ -2222,6 +2227,31 @@ describe("processMessage - durable result", () => {
         },
       }),
     );
+    const commitOptions = vi
+      .mocked(commitInboxResult)
+      .mock.calls.find(([id]) => id === msg.id)?.[3] as
+      | {
+          shadowJob?: {
+            payload?: {
+              memoryShadowAdmission?: Parameters<
+                typeof isCurrentAgentMemoryAdmission
+              >[0];
+            };
+          };
+        }
+      | undefined;
+    const generatedAdmission =
+      commitOptions?.shadowJob?.payload?.memoryShadowAdmission;
+    expect(generatedAdmission).toBeDefined();
+    if (!generatedAdmission)
+      throw new Error("shadow admission was not committed");
+    expect(
+      isCurrentAgentMemoryAdmission(generatedAdmission, shadowConfig, {
+        groupName: "default",
+        routingChannelId: "root-1",
+        channelId: "thread-1",
+      }),
+    ).toBe(true);
     // TencentDB is contacted only by the separately claimed shadow job.
     const sourceShadowRequests = fetchMock.mock.calls.filter(
       ([url]) => url === `${shadowBaseUrl}/v3/conversation/add`,
