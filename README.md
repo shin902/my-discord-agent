@@ -159,9 +159,9 @@ TencentDB Agent Memoryを使う場合は、公式MemoryCore imageをsidecarと�
 
 ```bash
 cp config/memory-core.example.yaml config/memory-core.yaml
-# .env の MEMORY_CORE_LLM_API_KEY に利用するproviderのAPI keyを設定し、
+# .env の MEMORY_CORE_LLM_API_KEY にproviderのAPI keyを設定し、
+# TDAI_LLM_API_BASE_URLは必要に応じて接続先へ変更する
 # MEMORY_CORE_GATEWAY_API_KEYも設定してから起動
-# CLIProxyAPIを使う場合の設定変更は docs/config.md を参照
 pnpm memory-core up -d
 curl http://127.0.0.1:8420/health
 ```

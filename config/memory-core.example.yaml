@@ -9,7 +9,7 @@ data:
   baseDir: /data/tdai-memory
 
 llm:
-  # Default: connect directly to an OpenAI-compatible provider.
+  # Compose overrides this from TDAI_LLM_API_BASE_URL; direct OpenAI is the default.
   baseUrl: "https://api.openai.com/v1"
   apiKey: "${TDAI_LLM_API_KEY}"
   model: "gpt-4o-mini"
