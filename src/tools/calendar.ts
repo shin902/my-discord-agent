@@ -304,7 +304,7 @@ const createEventParameters = Type.Object({
     description:
       "End date/time in ISO 8601 format, for example 2025-01-01T11:00:00+09:00. Use YYYY-MM-DD for an all-day event.",
   }),
-  description: Type.Optional(Type.String({ description: "Event description." })),
+  description: Type.Optional(Type.String({ description: "Event notes." })),
   location: Type.Optional(Type.String({ description: "Event location." })),
   attendees: Type.Optional(
     Type.Array(Type.String(), {
@@ -417,7 +417,7 @@ const updateEventParameters = Type.Object({
       description: "End date/time in ISO 8601 format or YYYY-MM-DD.",
     }),
   ),
-  description: Type.Optional(Type.String({ description: "Event description." })),
+  description: Type.Optional(Type.String({ description: "Event notes." })),
   location: Type.Optional(Type.String({ description: "Event location." })),
   attendees: Type.Optional(
     Type.Array(Type.String(), {
