@@ -50,8 +50,7 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
     description:
       "Read a file in the workspace or an additional mounted path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, startLine alone for the suffix from that line, or tailCount for lines from the end. tailCount cannot be combined with startLine or lineCount. For large files, read consecutive bounded ranges instead of the whole file.",
     parameters: {
-      path:
-        "Path to read, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      path: "Path to read, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
       startLine:
         "1-based line number to start reading from, through EOF unless lineCount is also set.",
       lineCount:
@@ -64,8 +63,7 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
     description:
       "Create or overwrite a file in the workspace or an additional mounted path.",
     parameters: {
-      path:
-        "Path to write, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      path: "Path to write, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
       content: "Content to write.",
     },
   },
@@ -73,15 +71,13 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
     description:
       "List files and directories in the workspace or an additional mounted path.",
     parameters: {
-      path:
-        "Directory path to list, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
+      path: "Directory path to list, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
     },
   },
   edit: {
     description: "Edit part of a file by replacing a string.",
     parameters: {
-      path:
-        "Path to edit, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      path: "Path to edit, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
       oldString: "String to replace.",
       newString: "Replacement string.",
     },
@@ -90,16 +86,14 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
     description: "Find files using a glob pattern.",
     parameters: {
       pattern: "Glob pattern, for example **/*.ts.",
-      path:
-        "Base directory for the search, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
+      path: "Base directory for the search, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
     },
   },
   grep: {
     description: "Search files with a regular expression.",
     parameters: {
       pattern: "Regular expression pattern to search for.",
-      path:
-        "File or directory to search, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      path: "File or directory to search, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
       glob: "Optional glob pattern used to filter files, for example *.ts.",
       maxResults: "Maximum number of matches to return. Defaults to 200.",
     },
@@ -220,15 +214,14 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
       summary: "Event title.",
       start:
         "Start date/time in ISO 8601 format, or YYYY-MM-DD for an all-day event.",
-      end:
-        "End date/time in ISO 8601 format, or YYYY-MM-DD for an all-day event.",
+      end: "End date/time in ISO 8601 format, or YYYY-MM-DD for an all-day event.",
       description: "Event description.",
       location: "Event location.",
       attendees: "List of attendee email addresses.",
       calendarId:
         "Calendar ID. Defaults to primary; a shared calendar email address is also accepted.",
       recurrence:
-        "Recurrence content lines using only RRULE, EXRULE, RDATE, or EXDATE, for example [\"RRULE:FREQ=WEEKLY;BYDAY=MO\", \"RDATE;TZID=Asia/Tokyo:20250106T100000\"].",
+        'Recurrence content lines using only RRULE, EXRULE, RDATE, or EXDATE, for example ["RRULE:FREQ=WEEKLY;BYDAY=MO", "RDATE;TZID=Asia/Tokyo:20250106T100000"].',
       timeZone:
         "IANA time zone such as Asia/Tokyo. Required for recurring timed events, unnecessary for all-day events, and optional for ordinary one-off timed events.",
     },
@@ -241,8 +234,7 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
       summary: "Event title.",
       start:
         "Start date/time in ISO 8601 format, or YYYY-MM-DD for an all-day event.",
-      end:
-        "End date/time in ISO 8601 format, or YYYY-MM-DD for an all-day event.",
+      end: "End date/time in ISO 8601 format, or YYYY-MM-DD for an all-day event.",
       description: "Event description.",
       location: "Event location.",
       attendees: "List of attendee email addresses.",
@@ -267,7 +259,7 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
     parameters: {
       url: "URL to scrape.",
       formats:
-        "Output formats such as html, markdown, screenshot, pdf, or links. Defaults to [\"markdown\"].",
+        'Output formats such as html, markdown, screenshot, pdf, or links. Defaults to ["markdown"].',
     },
   },
   "browserless-search": {
@@ -277,14 +269,13 @@ const ENGLISH_TOOL_SCHEMAS: Readonly<Record<string, ToolSchemaDescriptions>> = {
       limit: "Maximum number of results. Defaults to 3; maximum 3.",
       lang: "Language code. Defaults to ja.",
       sources:
-        "Search sources such as web, news, or images. Defaults to [\"web\"].",
+        'Search sources such as web, news, or images. Defaults to ["web"].',
     },
   },
   "browserless-function": {
     description: "Run Puppeteer code in a browser and return JSON.",
     parameters: {
-      code:
-        "Puppeteer code to execute in the form export default async ({page}) => {...}.",
+      code: "Puppeteer code to execute in the form export default async ({page}) => {...}.",
       context: "Additional context passed to the code.",
     },
   },
