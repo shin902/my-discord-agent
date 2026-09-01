@@ -505,7 +505,7 @@ const grepParameters = Type.Object({
   }),
   glob: Type.Optional(
     Type.String({
-      description: "Optional glob pattern used to filter files, for example *.ts.",
+      description: "Glob pattern to filter files, for example *.ts.",
     }),
   ),
   maxResults: Type.Optional(
