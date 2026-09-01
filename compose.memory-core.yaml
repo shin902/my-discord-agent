@@ -2,9 +2,10 @@ services:
   memory-core:
     image: agentmemory/memory-core:1.0.1
     restart: unless-stopped
-    # The local CLIProxyAPI listens on host loopback (127.0.0.1:8317).
-    # Host networking lets MemoryCore reach it without exposing CLIProxyAPI
-    # on the LAN. Keep the MemoryCore gateway loopback-only below.
+    # Host networking also supports an optional host-local CLIProxyAPI at
+    # 127.0.0.1:8317 without exposing that proxy on the LAN. Direct or remote
+    # OpenAI-compatible providers continue to work with this sidecar too.
+    # Keep the MemoryCore gateway loopback-only below.
     network_mode: host
     environment:
       TDAI_GATEWAY_CONFIG: /data/config/tdai-gateway.yaml

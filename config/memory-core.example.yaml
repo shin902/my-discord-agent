@@ -9,11 +9,10 @@ data:
   baseDir: /data/tdai-memory
 
 llm:
-  # The standard local setup uses the host's CLIProxyAPI via host networking.
-  baseUrl: "http://127.0.0.1:8317/v1"
+  # Default: connect directly to an OpenAI-compatible provider.
+  baseUrl: "https://api.openai.com/v1"
   apiKey: "${TDAI_LLM_API_KEY}"
-  # Verified with the repository's local CLIProxyAPI setup.
-  model: "gpt-5.6-luna"
+  model: "gpt-4o-mini"
   maxTokens: 4096
   timeoutMs: 120000
 
