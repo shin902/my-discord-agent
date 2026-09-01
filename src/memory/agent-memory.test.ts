@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AgentMemoryConfigSchema,
@@ -187,8 +188,8 @@ describe("Agent Memory shadow boundary", () => {
     ).toBe(false);
   });
 
-  it("accepts an admission whose optional token field was serialized in a different order", () => {
-    const admission = buildAgentMemoryAdmission({
+  it("accepts a legacy admission whose token field follows agentId", () => {
+    const legacyFields = {
       groupName: "private",
       routingChannelId: "channel-1",
       channelId: "channel-1",
@@ -199,7 +200,13 @@ describe("Agent Memory shadow boundary", () => {
       bearerTokenEnv: "TDAI_TEST_TOKEN",
       userId: "discord-user-1",
       sessionId: "session-1",
-    });
+    };
+    const admission = {
+      ...legacyFields,
+      fingerprint: createHash("sha256")
+        .update(JSON.stringify(legacyFields))
+        .digest("hex"),
+    };
 
     expect(
       isCurrentAgentMemoryAdmission(admission, config, {
