@@ -7,10 +7,10 @@ const parameters = Type.Object({
     Type.Literal("resume"),
     Type.Literal("list"),
   ]),
-  bot: Type.String({ description: "利用するBot ID" }),
-  prompt: Type.Optional(Type.String({ description: "Botへの依頼内容" })),
+  bot: Type.String({ description: "Bot ID to use." }),
+  prompt: Type.Optional(Type.String({ description: "Task or request to send to the Bot." })),
   session: Type.Optional(
-    Type.String({ description: "resumeするTask Session handle" }),
+    Type.String({ description: "Task Session handle to resume." }),
   ),
 });
 
@@ -81,7 +81,7 @@ export function createBotTool(
     name: "bot",
     label: "Bot",
     description:
-      "既存のBotへ同期的に依頼し、実行完了後の結果を受け取る。run/resumeは同じtool call内で完了まで待機する。",
+      "Delegate work synchronously to an existing Bot and receive the result after it finishes. run and resume wait for completion within the same tool call.",
     parameters,
     execute: async (
       _toolCallId,
