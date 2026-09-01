@@ -187,6 +187,29 @@ describe("Agent Memory shadow boundary", () => {
     ).toBe(false);
   });
 
+  it("accepts an admission whose optional token field was serialized in a different order", () => {
+    const admission = buildAgentMemoryAdmission({
+      groupName: "private",
+      routingChannelId: "channel-1",
+      channelId: "channel-1",
+      baseUrl: "http://127.0.0.1:8420",
+      serviceId: "space-1",
+      teamId: "team-1",
+      agentId: "agent-1",
+      bearerTokenEnv: "TDAI_TEST_TOKEN",
+      userId: "discord-user-1",
+      sessionId: "session-1",
+    });
+
+    expect(
+      isCurrentAgentMemoryAdmission(admission, config, {
+        groupName: "private",
+        routingChannelId: "channel-1",
+        channelId: "channel-1",
+      }),
+    ).toBe(true);
+  });
+
   it("maps one completed user/assistant turn to the v3 L0 contract", () => {
     expect(
       buildAgentMemorySubmission({

@@ -406,11 +406,11 @@ async function prepareMemoryShadowJob(
         channelId: msg.channelId,
         baseUrl: config.baseUrl,
         serviceId: config.serviceId,
-        teamId: config.teamId,
-        agentId: config.agentId,
         ...(config.bearerTokenEnv
           ? { bearerTokenEnv: config.bearerTokenEnv }
           : {}),
+        teamId: config.teamId,
+        agentId: config.agentId,
         userId,
         sessionId: msg.sessionId,
       }),
