@@ -205,12 +205,14 @@ const crawlParams = Type.Object({
   ),
   instructions: Type.Optional(
     Type.String({
-      description: "Natural-language instructions used to narrow the crawl target.",
+      description:
+        "Natural-language instructions used to narrow the crawl target.",
     }),
   ),
   select_paths: Type.Optional(
     Type.Array(Type.String(), {
-      description: "Regular expression patterns used to limit crawled URL paths.",
+      description:
+        "Regular expression patterns used to limit crawled URL paths.",
     }),
   ),
   extract_depth: Type.Optional(
