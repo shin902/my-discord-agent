@@ -6,14 +6,14 @@ import { execAsync } from "./exec.js";
 const TIMEOUT_MS = 30_000;
 
 const parameters = Type.Object({
-  command: Type.String({ description: "実行するシェルコマンド" }),
+  command: Type.String({ description: "Shell command to execute." }),
 });
 
 export const bashTool: AgentTool<typeof parameters> = {
   name: "bash",
   label: "Bash",
   description:
-    "シェルコマンドを実行する（タイムアウト30秒・出力上限1MB）。出力が大きくなるコマンドはファイルへリダイレクトし、read で必要な部分だけ読むこと。URL からのコンテンツ取得は、agent-reach 等の専用手段があればそちらを優先する",
+    "Run a shell command with a 30-second timeout and a 1 MB output limit. Redirect commands with large output to a file and use read to inspect only the needed parts. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
   parameters,
   execute: async (_toolCallId, { command }) => {
     try {
