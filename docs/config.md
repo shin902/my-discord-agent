@@ -71,7 +71,7 @@ MemoryCore v3のデータ面は、Gateway共有鍵の設定有無にかかわら
 
 exampleをGit管理外の実設定へコピーします。exampleは、直接OpenAIなどのOpenAI-compatible providerを使う汎用構成です。`MEMORY_CORE_LLM_API_KEY`には選択したproviderのAPI keyを設定してください。Composeがその値をMemoryCore内の`TDAI_LLM_API_KEY`として渡し、YAMLの`${TDAI_LLM_API_KEY}`へ展開します。API key自体は追跡対象外のYAMLへ書きません。
 
-ホスト上のCLIProxyAPIを使う場合だけ、コピー後に`llm.baseUrl`と`llm.model`を次のように変更します。`network_mode: host`により、MemoryCore内の`127.0.0.1`はホストのCLIProxyAPIを指します。CLIProxyAPIを使わない場合は、この変更は不要です。`gpt-5.6-luna`はこの環境のCLIProxyAPIで確認した例なので、利用中のproxyが提供するmodelへ置き換えてください。
+ホスト上のCLIProxyAPIを使う場合だけ、コピー後に`llm.baseUrl`を`http://127.0.0.1:8317/v1`へ変更します。`network_mode: host`により、MemoryCore内の`127.0.0.1`はホストのCLIProxyAPIを指します。`llm.model`にはCLIProxyAPIが提供する任意のmodel IDを設定してください（`/v1/models`で確認できます）。CLIProxyAPIを使わない場合は、この変更は不要です。
 
 ```bash
 cp config/memory-core.example.yaml config/memory-core.yaml
@@ -92,7 +92,7 @@ CLIProxyAPIを使う場合の差し替え例:
 llm:
   baseUrl: "http://127.0.0.1:8317/v1"
   apiKey: "${TDAI_LLM_API_KEY}"
-  model: "gpt-5.6-luna"
+  model: "your-model-id" # CLIProxyAPIが提供する任意のmodel IDへ変更
 ```
 
 exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`でも抽出thresholdが`1 → 2 → 4 → 5`と増えるため、最初の会話後から抽出が始まり得ます。厳密な5会話ごとのbatchではありません。また、初期rolloutはmy-discord-agentからL0をshadow writeするだけなので、exampleの`memory.recall.enabled`は`false`です。
