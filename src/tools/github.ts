@@ -96,18 +96,18 @@ async function fetchIssueOnly(
 
 const listIssuesParameters = Type.Object({
   owner: Type.String({
-    description: "リポジトリオーナー（ユーザー名/Organization名）",
+    description: "Repository owner (user or organization name).",
   }),
-  repo: Type.String({ description: "リポジトリ名" }),
+  repo: Type.String({ description: "Repository name." }),
   state: Type.Optional(
     Type.Union(
       [Type.Literal("open"), Type.Literal("closed"), Type.Literal("all")],
-      { description: "Issue の状態（デフォルト: open）" },
+      { description: "Issue state to include. Defaults to open." },
     ),
   ),
   limit: Type.Optional(
     Type.Integer({
-      description: "取得件数（デフォルト: 10、最大: 50）",
+      description: "Number of issues to return. Defaults to 10; maximum 50.",
       minimum: 1,
       maximum: 50,
     }),
@@ -141,7 +141,7 @@ export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
   name: "list-issues",
   label: "List GitHub Issues",
   description:
-    "指定リポジトリの Issue 一覧を取得する。番号・タイトル・状態・ラベル・コメント数を返す（Pull Request は除外）",
+    "List issues in a repository, returning their number, title, state, labels, and comment count. Pull requests are excluded.",
   parameters: listIssuesParameters,
   execute: async (_toolCallId, { owner, repo, state = "open", limit = 10 }) => {
     const filtered = await fetchIssuesUntilLimit(
@@ -175,16 +175,16 @@ export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
 
 const readIssueParameters = Type.Object({
   owner: Type.String({
-    description: "リポジトリオーナー（ユーザー名/Organization名）",
+    description: "Repository owner (user or organization name).",
   }),
-  repo: Type.String({ description: "リポジトリ名" }),
-  issue_number: Type.Integer({ description: "Issue 番号", minimum: 1 }),
+  repo: Type.String({ description: "Repository name." }),
+  issue_number: Type.Integer({ description: "Issue number.", minimum: 1 }),
 });
 
 export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   name: "read-issue",
   label: "Read GitHub Issue",
-  description: "指定した Issue の本文全文を取得する",
+  description: "Read the full body of a specified GitHub issue.",
   parameters: readIssueParameters,
   execute: async (_toolCallId, { owner, repo, issue_number }) => {
     const issue = await fetchIssueOnly(owner, repo, issue_number);
@@ -229,10 +229,13 @@ type GitHubPullRequest = {
 
 const readPullRequestParameters = Type.Object({
   owner: Type.String({
-    description: "リポジトリオーナー（ユーザー名/Organization名）",
+    description: "Repository owner (user or organization name).",
   }),
-  repo: Type.String({ description: "リポジトリ名" }),
-  pull_number: Type.Integer({ description: "Pull Request 番号", minimum: 1 }),
+  repo: Type.String({ description: "Repository name." }),
+  pull_number: Type.Integer({
+    description: "Pull request number.",
+    minimum: 1,
+  }),
 });
 
 function formatPullRequestField(value: string | undefined): string {
@@ -244,7 +247,7 @@ export const readPullRequestTool: AgentTool<typeof readPullRequestParameters> =
     name: "read-pull-request",
     label: "Read GitHub Pull Request",
     description:
-      "指定した GitHub Pull Request の本文とメタ情報を取得し、Markdown で返す",
+      "Read the body and metadata of a specified GitHub pull request and return them as Markdown.",
     parameters: readPullRequestParameters,
     execute: async (_toolCallId, { owner, repo, pull_number }) => {
       const pullRequest = (await githubFetch(
@@ -310,10 +313,10 @@ async function fetchAllGitHubPages<T>(
 
 const listIssueCommentsParameters = Type.Object({
   owner: Type.String({
-    description: "リポジトリオーナー（ユーザー名/Organization名）",
+    description: "Repository owner (user or organization name).",
   }),
-  repo: Type.String({ description: "リポジトリ名" }),
-  issue_number: Type.Integer({ description: "Issue 番号", minimum: 1 }),
+  repo: Type.String({ description: "Repository name." }),
+  issue_number: Type.Integer({ description: "Issue number.", minimum: 1 }),
 });
 
 export const listIssueCommentsTool: AgentTool<
@@ -322,7 +325,7 @@ export const listIssueCommentsTool: AgentTool<
   name: "list-issue-comments",
   label: "List GitHub Issue Comments",
   description:
-    "指定した GitHub Issue の全コメントを取得し、作者・投稿日時・更新日時・本文を Markdown で返す",
+    "List all comments on a GitHub issue and return the author, created time, updated time, and body as Markdown.",
   parameters: listIssueCommentsParameters,
   execute: async (_toolCallId, { owner, repo, issue_number }) => {
     const comments = await fetchAllGitHubPages<GitHubIssueComment>(
@@ -367,10 +370,13 @@ type GitHubPullRequestReviewComment = GitHubIssueComment & {
 
 const listPullRequestCommentsParameters = Type.Object({
   owner: Type.String({
-    description: "リポジトリオーナー（ユーザー名/Organization名）",
+    description: "Repository owner (user or organization name).",
   }),
-  repo: Type.String({ description: "リポジトリ名" }),
-  pull_number: Type.Integer({ description: "Pull Request 番号", minimum: 1 }),
+  repo: Type.String({ description: "Repository name." }),
+  pull_number: Type.Integer({
+    description: "Pull request number.",
+    minimum: 1,
+  }),
 });
 
 function formatGitHubField(value: string | number | null | undefined): string {
@@ -403,7 +409,7 @@ export const listPullRequestCommentsTool: AgentTool<
   name: "list-pull-request-comments",
   label: "List GitHub Pull Request Comments",
   description:
-    "指定した Pull Request の会話コメント・レビュー・インラインレビューコメントを全件取得し、Markdown で返す",
+    "List all conversation comments, reviews, and inline review comments on a pull request and return them as Markdown.",
   parameters: listPullRequestCommentsParameters,
   execute: async (_toolCallId, { owner, repo, pull_number }) => {
     const conversationComments = await fetchAllGitHubPages<GitHubIssueComment>(
@@ -488,12 +494,12 @@ type GitHubComment = {
 
 const commentIssueParameters = Type.Object({
   owner: Type.String({
-    description: "リポジトリオーナー（ユーザー名/Organization名）",
+    description: "Repository owner (user or organization name).",
   }),
-  repo: Type.String({ description: "リポジトリ名" }),
-  issue_number: Type.Integer({ description: "Issue 番号", minimum: 1 }),
+  repo: Type.String({ description: "Repository name." }),
+  issue_number: Type.Integer({ description: "Issue number.", minimum: 1 }),
   body: Type.String({
-    description: `コメント本文（Markdown可、最大 ${MAX_COMMENT_CHARS} 文字）`,
+    description: `Comment body in Markdown, up to ${MAX_COMMENT_CHARS.toLocaleString("en-US")} characters.`,
     minLength: 1,
     maxLength: MAX_COMMENT_CHARS,
   }),
@@ -503,7 +509,7 @@ export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
   name: "comment-issue",
   label: "Comment on GitHub Issue",
   description:
-    "指定した Issue にコメントを投稿する。GitHub 上に公開される書き込み操作のため、明示的に指示された Issue 以外には投稿しないこと",
+    "Post a comment to a specified GitHub issue. This is a public write operation, so post only to the issue explicitly requested by the user.",
   parameters: commentIssueParameters,
   execute: async (_toolCallId, { owner, repo, issue_number, body }) => {
     if (body.length === 0) {
