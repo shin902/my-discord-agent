@@ -23,11 +23,11 @@ async function post(path: string, body: unknown): Promise<string> {
 }
 
 const smartScrapeParams = Type.Object({
-  url: Type.String({ description: "スクレイプする URL" }),
+  url: Type.String({ description: "URL to scrape." }),
   formats: Type.Optional(
     Type.Array(Type.String(), {
       description:
-        '取得形式（html / markdown / screenshot / pdf / links、デフォルト: ["markdown"]）',
+        'Output formats such as html, markdown, screenshot, pdf, or links. Defaults to ["markdown"].',
     }),
   ),
 });
@@ -36,7 +36,7 @@ export const browserlessSmartScrapeTool: AgentTool<typeof smartScrapeParams> = {
   name: "browserless-smart-scrape",
   label: "Browserless Smart Scrape",
   description:
-    "URL からコンテンツをスクレイプする。JS 描画・ブロック回避の自動フォールバック付き → JSON。⚠️出力が数万トークン級になりうるため、コンテキストの小さいモデル（ローカルLLM等）では使用禁止",
+    "Scrape content from a URL with automatic fallbacks for JavaScript rendering and blocking, returning JSON. Output can reach tens of thousands of tokens, so do not use it with small-context models such as local LLMs.",
   parameters: smartScrapeParams,
   execute: async (_id, { url, formats }) => {
     const text = await post("/smart-scrape", {
@@ -48,20 +48,21 @@ export const browserlessSmartScrapeTool: AgentTool<typeof smartScrapeParams> = {
 };
 
 const searchParams = Type.Object({
-  query: Type.String({ description: "検索クエリ" }),
+  query: Type.String({ description: "Search query." }),
   limit: Type.Optional(
     Type.Number({
-      description: "最大件数（デフォルト: 3、最大: 3）",
+      description: "Maximum number of results. Defaults to 3; maximum 3.",
       minimum: 1,
       maximum: 3,
     }),
   ),
   lang: Type.Optional(
-    Type.String({ description: "言語コード（デフォルト: ja）" }),
+    Type.String({ description: "Language code. Defaults to ja." }),
   ),
   sources: Type.Optional(
     Type.Array(Type.String(), {
-      description: '検索ソース（web / news / images、デフォルト: ["web"]）',
+      description:
+        'Search sources such as web, news, or images. Defaults to ["web"].',
     }),
   ),
 });
@@ -69,7 +70,7 @@ const searchParams = Type.Object({
 export const browserlessSearchTool: AgentTool<typeof searchParams> = {
   name: "browserless-search",
   label: "Browserless Search",
-  description: "ウェブ検索を実行して結果を返す → JSON",
+  description: "Run a web search and return the results as JSON.",
   parameters: searchParams,
   execute: async (_id, { query, limit, lang, sources }) => {
     const text = await post("/search", {
@@ -85,11 +86,11 @@ export const browserlessSearchTool: AgentTool<typeof searchParams> = {
 const functionParams = Type.Object({
   code: Type.String({
     description:
-      "実行する Puppeteer コード（export default async ({page}) => {...} 形式）",
+      "Puppeteer code to execute in the form export default async ({page}) => {...}.",
   }),
   context: Type.Optional(
     Type.Record(Type.String(), Type.Unknown(), {
-      description: "コードに渡す追加コンテキスト",
+      description: "Additional context passed to the code.",
     }),
   ),
 });
@@ -97,7 +98,7 @@ const functionParams = Type.Object({
 export const browserlessFunctionTool: AgentTool<typeof functionParams> = {
   name: "browserless-function",
   label: "Browserless Function",
-  description: "Puppeteer コードをブラウザで実行 → JSON",
+  description: "Run Puppeteer code in a browser and return JSON.",
   parameters: functionParams,
   execute: async (_id, { code, context }) => {
     const text = await post("/function", { code, context });
@@ -109,14 +110,16 @@ export const browserlessFunctionTool: AgentTool<typeof functionParams> = {
 };
 
 const contentParams = Type.Object({
-  url: Type.String({ description: "HTML を取得する URL" }),
+  url: Type.String({
+    description: "URL whose rendered HTML should be fetched.",
+  }),
 });
 
 export const browserlessContentTool: AgentTool<typeof contentParams> = {
   name: "browserless-content",
   label: "Browserless Content",
   description:
-    "JavaScript 描画後の HTML 全文を取得 → HTML 文字列。⚠️出力が数万トークン級になりうるため、コンテキストの小さいモデル（ローカルLLM等）では使用禁止",
+    "Fetch the full HTML after JavaScript rendering. Output can reach tens of thousands of tokens, so do not use it with small-context models such as local LLMs.",
   parameters: contentParams,
   execute: async (_id, { url }) => {
     const html = await post("/content", { url });

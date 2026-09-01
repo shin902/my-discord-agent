@@ -1289,14 +1289,14 @@ export function getCleanupPaths(
 }
 
 const parameters = Type.Object({
-  url: Type.String({ description: "取得するURL" }),
+  url: Type.String({ description: "URL to fetch." }),
 });
 
 export const agentReachTool: AgentTool<typeof parameters> = {
   name: "agent-reach",
   label: "Agent Reach",
   description:
-    "youtube, github, reddit, x, rss, webページの情報を取得してmarkdownとして返す。左のサービスのURLから情報を取得するときは必ず使うこと。",
+    "Fetch information from YouTube, GitHub, Reddit, X, RSS, or general web pages and return it as Markdown. Always use this tool when retrieving information from URLs on those services.",
   parameters,
   execute: async (_toolCallId, { url }, signal?: AbortSignal) => {
     const normalizedUrl = normalizeUrl(url);
@@ -1317,7 +1317,6 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       if (!hasFxContent(fx)) {
         throw new Error("FxTwitter API returned no post or article content");
       }
-
       return {
         content: [{ type: "text", text: formatFxPost(fx) }],
         details: {

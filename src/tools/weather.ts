@@ -77,7 +77,8 @@ async function geocodeLocation(location: string): Promise<Place> {
 
 const currentWeatherParams = Type.Object({
   location: Type.String({
-    description: "天気を取得する地名（例: 東京、Tokyo、大阪）",
+    description:
+      "Place name whose current weather should be fetched, for example Tokyo or Osaka.",
   }),
 });
 
@@ -97,7 +98,7 @@ export const getCurrentWeatherTool: AgentTool<typeof currentWeatherParams> = {
   name: "get-current-weather",
   label: "現在の天気",
   description:
-    "指定した地名の現在の天気・気温・湿度・風速を取得する。最新の天気状況を答える際に使う",
+    "Get the current weather, temperature, humidity, and wind speed for a specified place. Use it when answering about current weather conditions.",
   parameters: currentWeatherParams,
   execute: async (_toolCallId, { location }) => {
     const place = await geocodeLocation(location);
@@ -136,11 +137,12 @@ export const getCurrentWeatherTool: AgentTool<typeof currentWeatherParams> = {
 
 const forecastParams = Type.Object({
   location: Type.String({
-    description: "天気予報を取得する地名（例: 東京、Tokyo、大阪）",
+    description:
+      "Place name whose weather forecast should be fetched, for example Tokyo or Osaka.",
   }),
   days: Type.Optional(
     Type.Integer({
-      description: "予報日数（デフォルト: 3、最大: 7）",
+      description: "Number of forecast days. Defaults to 3; maximum 7.",
       minimum: 1,
       maximum: 7,
     }),
@@ -162,7 +164,7 @@ export const getWeatherForecastTool: AgentTool<typeof forecastParams> = {
   name: "get-weather-forecast",
   label: "天気予報",
   description:
-    "指定した地名の数日間の天気予報（最高/最低気温・降水確率）を取得する",
+    "Get a multi-day weather forecast for a specified place, including high and low temperatures and precipitation probability.",
   parameters: forecastParams,
   execute: async (_toolCallId, { location, days = 3 }) => {
     const forecastDays = Math.min(Math.max(days, 1), 7);

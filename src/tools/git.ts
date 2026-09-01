@@ -161,18 +161,19 @@ function validateCloneDepth(depth: number | undefined): void {
 
 const cloneRepositoryParameters = Type.Object({
   owner: Type.String({
-    description: "リポジトリオーナー（ユーザー名/Organization名）",
+    description: "Repository owner (user or organization name).",
   }),
-  repo: Type.String({ description: "リポジトリ名" }),
+  repo: Type.String({ description: "Repository name." }),
   directory: Type.Optional(
     Type.String({
       description:
-        "clone 先ディレクトリ（省略時は /tmp/{repo}。/tmp を基準にする相対パスのみ指定可能）",
+        "Destination directory. Defaults to /tmp/{repo}; only paths relative to /tmp are allowed.",
     }),
   ),
   depth: Type.Optional(
     Type.Integer({
-      description: "shallow clone の履歴深さ（正の整数。省略時は全履歴）",
+      description:
+        "History depth for a shallow clone. Must be a positive integer; omit it to clone full history.",
       minimum: 1,
     }),
   ),
@@ -183,7 +184,7 @@ export const cloneRepositoryTool: AgentTool<typeof cloneRepositoryParameters> =
     name: "clone-repository",
     label: "Clone GitHub Repository",
     description:
-      "GitHub リポジトリをエージェントコンテナ内へ clone する（directory 省略時は一時的な /tmp/{repo}、指定時も /tmp 基準の相対パスに限定。depth 省略時は全履歴、指定時のみ shallow clone。クレデンシャルプロキシ経由でトークンを安全に注入し、エージェントにトークン自体は渡さない）",
+      "Clone a GitHub repository into the agent container. The destination defaults to temporary /tmp/{repo} and, when specified, must be relative to /tmp. Omitting depth clones full history; setting depth performs a shallow clone. Credentials are injected through a proxy and are never exposed to the agent.",
     parameters: cloneRepositoryParameters,
     execute: async (_toolCallId, { owner, repo, directory, depth }) => {
       assertValidRepoPart(owner, "owner");

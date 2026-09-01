@@ -32,7 +32,7 @@ async function graphPatch(path: string, body: unknown): Promise<void> {
 const listEmailsParameters = Type.Object({
   limit: Type.Optional(
     Type.Integer({
-      description: "取得件数（デフォルト: 10、最大: 50）",
+      description: "Number of emails to return. Defaults to 10; maximum 50.",
       minimum: 1,
       maximum: 50,
     }),
@@ -40,12 +40,12 @@ const listEmailsParameters = Type.Object({
   folder: Type.Optional(
     Type.String({
       description:
-        "フォルダ名（inbox / sentitems / drafts 等、デフォルト: inbox）",
+        "Mail folder name such as inbox, sentitems, or drafts. Defaults to inbox.",
     }),
   ),
   unreadOnly: Type.Optional(
     Type.Boolean({
-      description: "true のとき未読メールのみ取得する（デフォルト: false）",
+      description: "When true, return only unread emails. Defaults to false.",
     }),
   ),
 });
@@ -54,7 +54,7 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
   name: "list-emails",
   label: "List Emails",
   description:
-    "Outlook メールの一覧を取得する。件名・送信者・受信日時・本文プレビューを返す",
+    "List Outlook emails with subject, sender, received time, and body preview.",
   parameters: listEmailsParameters,
   execute: async (
     _toolCallId,
@@ -101,10 +101,10 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
 };
 
 const readEmailParameters = Type.Object({
-  id: Type.String({ description: "メールID（list-emails で取得した id）" }),
+  id: Type.String({ description: "Email ID returned by list-emails." }),
   markAsRead: Type.Optional(
     Type.Boolean({
-      description: "既読にマークするか（デフォルト: true）",
+      description: "Whether to mark the email as read. Defaults to true.",
     }),
   ),
 });
@@ -113,7 +113,7 @@ export const readEmailTool: AgentTool<typeof readEmailParameters> = {
   name: "read-email",
   label: "Read Email",
   description:
-    "指定したメールの全文を取得する。list-emails で得た id を渡す。デフォルトで既読にマークする",
+    "Read the full content of an email using an ID returned by list-emails. Marks the email as read by default.",
   parameters: readEmailParameters,
   execute: async (_toolCallId, { id, markAsRead = true }) => {
     const select =

@@ -63,23 +63,26 @@ function fullPath(safePath: string): string {
 const readParameters = Type.Object({
   path: Type.String({
     description:
-      "読み込むファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
+      "Path to read, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
   }),
   startLine: Type.Optional(
     Type.Integer({
-      description: "読み始める行番号（1始まり。指定した行から末尾まで）",
+      description:
+        "1-based line number to start reading from, through EOF unless lineCount is also set.",
       minimum: 1,
     }),
   ),
   lineCount: Type.Optional(
     Type.Integer({
-      description: "返す行数（1以上。startLine 省略時は先頭から）",
+      description:
+        "Number of lines to return. If startLine is omitted, reading starts at the beginning.",
       minimum: 1,
     }),
   ),
   tailCount: Type.Optional(
     Type.Integer({
-      description: "末尾から返す行数（1以上。startLine/lineCount と併用不可）",
+      description:
+        "Number of lines to return from the end. Cannot be combined with startLine or lineCount.",
       minimum: 1,
     }),
   ),
@@ -279,7 +282,7 @@ export const readTool: AgentTool<typeof readParameters> = {
   name: "read",
   label: "Read File",
   description:
-    "ワークスペース内のファイル内容を読み込む。startLine（1始まり）とlineCountで行範囲を指定でき、lineCountだけなら先頭から、startLineだけなら指定行から末尾までを返す。tailCountで末尾から読めるが、startLine/lineCountとは併用できない。結果にはファイル全体の文字数・行数と今回の読み込み範囲が含まれる。大きなファイルは先頭から順番に範囲を指定して読み進める",
+    "Read a file in the workspace or an additional mounted path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, startLine alone for the suffix from that line, or tailCount for lines from the end. tailCount cannot be combined with startLine or lineCount. The result includes file size, total line count, and the returned range. For large files, read consecutive bounded ranges instead of the whole file.",
   parameters: readParameters,
   execute: async (_toolCallId, { path, startLine, lineCount, tailCount }) => {
     const safePath = sanitizePath(path);
@@ -349,15 +352,16 @@ export const readTool: AgentTool<typeof readParameters> = {
 const writeParameters = Type.Object({
   path: Type.String({
     description:
-      "書き込むファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
+      "Path to write, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
   }),
-  content: Type.String({ description: "書き込む内容" }),
+  content: Type.String({ description: "Content to write." }),
 });
 
 export const writeTool: AgentTool<typeof writeParameters> = {
   name: "write",
   label: "Write File",
-  description: "ワークスペース内にファイルを作成または上書きする",
+  description:
+    "Create or overwrite a file in the workspace or an additional mounted path.",
   parameters: writeParameters,
   execute: async (_toolCallId, { path, content }) => {
     const safePath = sanitizePath(path);
@@ -385,7 +389,7 @@ export const writeTool: AgentTool<typeof writeParameters> = {
 const listParameters = Type.Object({
   path: Type.String({
     description:
-      "一覧するディレクトリのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス。空文字でルート）",
+      "Directory path to list, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
     default: "",
   }),
 });
@@ -393,7 +397,8 @@ const listParameters = Type.Object({
 export const listTool: AgentTool<typeof listParameters> = {
   name: "list",
   label: "List Files",
-  description: "ワークスペース内のファイル・ディレクトリ一覧を取得する",
+  description:
+    "List files and directories in the workspace or an additional mounted path.",
   parameters: listParameters,
   execute: async (_toolCallId, { path }) => {
     const safePath = sanitizePath(path);
@@ -413,16 +418,16 @@ export const listTool: AgentTool<typeof listParameters> = {
 const editParameters = Type.Object({
   path: Type.String({
     description:
-      "編集するファイルのパス（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
+      "Path to edit, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
   }),
-  oldString: Type.String({ description: "置換対象の文字列" }),
-  newString: Type.String({ description: "置換後の文字列" }),
+  oldString: Type.String({ description: "String to replace." }),
+  newString: Type.String({ description: "Replacement string." }),
 });
 
 export const editTool: AgentTool<typeof editParameters> = {
   name: "edit",
   label: "Edit File",
-  description: "ワークスペース内のファイルの一部を文字列置換で編集する",
+  description: "Edit part of a file by replacing a string.",
   parameters: editParameters,
   execute: async (_toolCallId, { path, oldString, newString }) => {
     const safePath = sanitizePath(path);
@@ -460,11 +465,11 @@ export const editTool: AgentTool<typeof editParameters> = {
 
 const globParameters = Type.Object({
   pattern: Type.String({
-    description: "glob パターン（例: **/*.ts）",
+    description: "Glob pattern, for example **/*.ts.",
   }),
   path: Type.String({
     description:
-      "検索のベースディレクトリ（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス。空文字でルート）",
+      "Base directory for the search, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
     default: "",
   }),
 });
@@ -472,7 +477,7 @@ const globParameters = Type.Object({
 export const globTool: AgentTool<typeof globParameters> = {
   name: "glob",
   label: "Glob",
-  description: "ワークスペース内のファイルを glob パターンで検索する",
+  description: "Find files using a glob pattern.",
   parameters: globParameters,
   execute: async (_toolCallId, { pattern, path }) => {
     const safePath = sanitizePath(path ?? "");
@@ -492,20 +497,20 @@ export const globTool: AgentTool<typeof globParameters> = {
 
 const grepParameters = Type.Object({
   pattern: Type.String({
-    description: "検索する正規表現パターン",
+    description: "Regular expression pattern to search for.",
   }),
   path: Type.String({
     description:
-      "検索対象のファイルまたはディレクトリ（ワークスペースルートからの相対パス、または /obsidian など追加マウントを含む絶対パス）",
+      "File or directory to search, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
   }),
   glob: Type.Optional(
     Type.String({
-      description: "ファイルフィルタの glob パターン（例: *.ts）",
+      description: "Glob pattern to filter files, for example *.ts.",
     }),
   ),
   maxResults: Type.Optional(
     Type.Number({
-      description: `返す最大マッチ件数（デフォルト: ${GREP_MAX_RESULTS}）`,
+      description: `Maximum number of matches to return. Defaults to ${GREP_MAX_RESULTS}.`,
       minimum: 1,
     }),
   ),
@@ -514,7 +519,7 @@ const grepParameters = Type.Object({
 export const grepTool: AgentTool<typeof grepParameters> = {
   name: "grep",
   label: "Grep",
-  description: "ワークスペース内のファイルを正規表現で検索する",
+  description: "Search files with a regular expression.",
   parameters: grepParameters,
   execute: async (
     _toolCallId,

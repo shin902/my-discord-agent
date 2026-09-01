@@ -46,7 +46,7 @@ function createSubagentRun(
 
 const parameters = Type.Object({
   task: Type.String({
-    description: "サブエージェントへ委譲する自己完結したタスク",
+    description: "Self-contained task to delegate to the subagent.",
   }),
 });
 
@@ -171,7 +171,7 @@ export function createSubagentTool(
     name: "subagent",
     label: "Subagent",
     description:
-      "自己完結したタスクをephemeral subagentへ委譲し、結果を受け取る。親の実行設定を引き継ぐが、会話履歴と永続memoryは共有しない。",
+      "Delegate a self-contained task to an ephemeral subagent and receive its result. The subagent inherits the parent execution settings but does not share conversation history or persistent memory.",
     parameters,
     execute: async (_toolCallId, { task }, signal, onUpdate) =>
       runEphemeralAgent(context, task, signal, onUpdate),

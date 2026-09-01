@@ -125,7 +125,7 @@ function formatDateTime(dt: EventDateTime | undefined): string {
 const calendarIdParameter = Type.Optional(
   Type.String({
     description:
-      "カレンダーID（デフォルト: primary。共有カレンダーのメールアドレスも指定可）",
+      "Calendar ID. Defaults to primary; a shared calendar email address is also accepted.",
   }),
 );
 
@@ -135,7 +135,7 @@ export const listCalendarsTool: AgentTool<typeof listCalendarsParameters> = {
   name: "list-calendars",
   label: "List Calendars",
   description:
-    "Google カレンダーのカレンダー一覧を取得する。カレンダーID・名前・アクセス権・タイムゾーンを返す",
+    "List Google Calendars with their ID, name, access role, and time zone.",
   parameters: listCalendarsParameters,
   execute: async () => {
     const calendars: CalendarListEntry[] = [];
@@ -194,15 +194,16 @@ export const listCalendarsTool: AgentTool<typeof listCalendarsParameters> = {
 const listEventsParameters = Type.Object({
   timeMin: Type.Optional(
     Type.String({
-      description: "取得範囲の開始（ISO 8601、省略時は現在時刻）",
+      description:
+        "Start of the time range in ISO 8601 format. Defaults to the current time.",
     }),
   ),
   timeMax: Type.Optional(
-    Type.String({ description: "取得範囲の終了（ISO 8601）" }),
+    Type.String({ description: "End of the time range in ISO 8601 format." }),
   ),
   maxResults: Type.Optional(
     Type.Integer({
-      description: "取得件数（デフォルト: 10、最大: 50）",
+      description: "Number of events to return. Defaults to 10; maximum 50.",
       minimum: 1,
       maximum: 50,
     }),
@@ -214,7 +215,7 @@ export const listEventsTool: AgentTool<typeof listEventsParameters> = {
   name: "list-events",
   label: "List Calendar Events",
   description:
-    "Google カレンダーの予定一覧を取得する。タイトル・開始/終了時刻・場所を返す",
+    "List Google Calendar events with their title, start and end time, and location.",
   parameters: listEventsParameters,
   execute: async (
     _toolCallId,
@@ -251,7 +252,7 @@ export const listEventsTool: AgentTool<typeof listEventsParameters> = {
 };
 
 const readEventParameters = Type.Object({
-  eventId: Type.String({ description: "予定ID（list-events で取得した id）" }),
+  eventId: Type.String({ description: "Event ID returned by list-events." }),
   calendarId: calendarIdParameter,
 });
 
@@ -259,7 +260,7 @@ export const readEventTool: AgentTool<typeof readEventParameters> = {
   name: "read-event",
   label: "Read Calendar Event",
   description:
-    "指定した予定の詳細を取得する。list-events で得た eventId を渡す",
+    "Read the details of a calendar event using an eventId returned by list-events.",
   parameters: readEventParameters,
   execute: async (_toolCallId, { eventId, calendarId = "primary" }) => {
     const event = (await calendarFetch(
@@ -294,30 +295,32 @@ export const readEventTool: AgentTool<typeof readEventParameters> = {
 };
 
 const createEventParameters = Type.Object({
-  summary: Type.String({ description: "予定のタイトル" }),
+  summary: Type.String({ description: "Event title." }),
   start: Type.String({
     description:
-      "開始日時（ISO 8601、例: 2025-01-01T10:00:00+09:00）。終日予定の場合は YYYY-MM-DD",
+      "Start date/time in ISO 8601 format, for example 2025-01-01T10:00:00+09:00. Use YYYY-MM-DD for an all-day event.",
   }),
   end: Type.String({
     description:
-      "終了日時（ISO 8601、例: 2025-01-01T11:00:00+09:00）。終日予定の場合は YYYY-MM-DD",
+      "End date/time in ISO 8601 format, for example 2025-01-01T11:00:00+09:00. Use YYYY-MM-DD for an all-day event.",
   }),
-  description: Type.Optional(Type.String({ description: "予定の説明" })),
-  location: Type.Optional(Type.String({ description: "場所" })),
+  description: Type.Optional(Type.String({ description: "Event notes." })),
+  location: Type.Optional(Type.String({ description: "Event location." })),
   attendees: Type.Optional(
-    Type.Array(Type.String(), { description: "参加者のメールアドレス一覧" }),
+    Type.Array(Type.String(), {
+      description: "List of attendee email addresses.",
+    }),
   ),
   recurrence: Type.Optional(
     Type.Array(Type.String(), {
       description:
-        '繰り返しルールのコンテンツ行（RRULE、EXRULE、RDATE、EXDATEのみ。例: ["RRULE:FREQ=WEEKLY;BYDAY=MO", "RDATE;TZID=Asia/Tokyo:20250106T100000"]）',
+        'Recurrence content lines using only RRULE, EXRULE, RDATE, or EXDATE, for example ["RRULE:FREQ=WEEKLY;BYDAY=MO", "RDATE;TZID=Asia/Tokyo:20250106T100000"].',
     }),
   ),
   timeZone: Type.Optional(
     Type.String({
       description:
-        "IANAタイムゾーン（例: Asia/Tokyo）。繰り返しの日時付き予定では必須。終日予定では不要で送信せず、通常の単発予定では省略可能",
+        "IANA time zone such as Asia/Tokyo. Required for recurring timed events, unnecessary for all-day events, and optional for ordinary one-off timed events.",
     }),
   ),
   calendarId: calendarIdParameter,
@@ -326,7 +329,7 @@ const createEventParameters = Type.Object({
 export const createEventTool: AgentTool<typeof createEventParameters> = {
   name: "create-event",
   label: "Create Calendar Event",
-  description: "Google カレンダーに新しい予定を作成する",
+  description: "Create a new Google Calendar event.",
   parameters: createEventParameters,
   execute: async (
     _toolCallId,
@@ -402,23 +405,29 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
 };
 
 const updateEventParameters = Type.Object({
-  eventId: Type.String({ description: "更新する予定のID" }),
-  summary: Type.Optional(Type.String({ description: "予定のタイトル" })),
+  eventId: Type.String({ description: "ID of the event to update." }),
+  summary: Type.Optional(Type.String({ description: "Event title." })),
   start: Type.Optional(
-    Type.String({ description: "開始日時（ISO 8601 または YYYY-MM-DD）" }),
+    Type.String({
+      description: "Start date/time in ISO 8601 format or YYYY-MM-DD.",
+    }),
   ),
   end: Type.Optional(
-    Type.String({ description: "終了日時（ISO 8601 または YYYY-MM-DD）" }),
+    Type.String({
+      description: "End date/time in ISO 8601 format or YYYY-MM-DD.",
+    }),
   ),
-  description: Type.Optional(Type.String({ description: "予定の説明" })),
-  location: Type.Optional(Type.String({ description: "場所" })),
+  description: Type.Optional(Type.String({ description: "Event notes." })),
+  location: Type.Optional(Type.String({ description: "Event location." })),
   attendees: Type.Optional(
-    Type.Array(Type.String(), { description: "参加者のメールアドレス一覧" }),
+    Type.Array(Type.String(), {
+      description: "List of attendee email addresses.",
+    }),
   ),
   timeZone: Type.Optional(
     Type.String({
       description:
-        "IANAタイムゾーン（例: Asia/Tokyo）。時刻付きの再作成では必須",
+        "IANA time zone such as Asia/Tokyo. Required when recreating a timed event.",
     }),
   ),
   calendarId: calendarIdParameter,
@@ -606,7 +615,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
   name: "update-event",
   label: "Update Calendar Event",
   description:
-    "既存の予定を更新する。指定したフィールドのみ変更し、他は維持する。終日↔時刻指定の変更時は予定を削除・再作成するため eventId が変わる（繰り返し設定・通知設定は引き継ぐが、Google Meet 等の conferenceData は引き継がれない）",
+    "Update only the specified fields of an existing event. Changing between an all-day event and a timed event recreates the event and therefore changes its eventId. Recurrence and notification settings are retained, but conferenceData such as Google Meet is not.",
   parameters: updateEventParameters,
   execute: async (
     _toolCallId,
@@ -711,7 +720,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
 };
 
 const deleteEventParameters = Type.Object({
-  eventId: Type.String({ description: "削除する予定のID" }),
+  eventId: Type.String({ description: "ID of the event to delete." }),
   calendarId: calendarIdParameter,
 });
 
@@ -719,7 +728,7 @@ export const deleteEventTool: AgentTool<typeof deleteEventParameters> = {
   name: "delete-event",
   label: "Delete Calendar Event",
   description:
-    "指定した予定を削除する。取り消しできないため、実行前に必ず対象の予定名・日時をユーザーに示して最終確認すること",
+    "Delete a specified calendar event. This cannot be undone, so show the event name and time to the user and obtain final confirmation before executing it.",
   parameters: deleteEventParameters,
   execute: async (_toolCallId, { eventId, calendarId = "primary" }) => {
     await calendarRequest(
