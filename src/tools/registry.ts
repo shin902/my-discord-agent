@@ -36,6 +36,7 @@ import {
 } from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
+import { applyEnglishToolSchema } from "./schema-language.js";
 import {
   tavilyCrawlTool,
   tavilyExtractTool,
@@ -92,6 +93,6 @@ export function resolveTools(toolNames: string[]): AgentTool[] {
     if (CONTEXT_CREATED_TOOLS.has(name)) return [];
     const tool = TOOLS[name];
     if (!tool) throw new Error(`不明なツール名: ${name}`);
-    return [wrapToolOutput(tool)];
+    return [wrapToolOutput(applyEnglishToolSchema(tool))];
   });
 }
