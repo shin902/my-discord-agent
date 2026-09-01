@@ -42,6 +42,7 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
   "agentMemory": {
     "enabled": true,
     "baseUrl": "http://127.0.0.1:8420",
+    "bearerTokenEnv": "MEMORY_CORE_GATEWAY_API_KEY",
     "serviceId": "default",
     "teamId": "my-discord-agent",
     "agentId": "main",
@@ -53,34 +54,45 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
 
 通常のprivate chatが正常完了すると、durable queueに保存された入力payloadと完了済みagent resultからuser/assistantの1往復を組み立て、runtime.sqliteの独立したshadow jobへ登録します。session JSONLは引き続き会話のcanonical raw historyとして保持しますが、shadow submissionの入力として読み直す経路ではありません。shadow jobは `POST /v3/conversation/add`（L0）へ `team_id`、`agent_id`、`user_id`、`session_id` を付けて非同期送信します。送信結果は `[agent-memory]` の構造化ログと通常queueのjob statusで確認できます。TencentDBが停止・タイムアウトしても通常のDiscord応答は成功したままで、shadow jobだけがqueueのretry/dead-letter対象になります。
 
-ローカルのMemoryCoreは認証なしで接続できます。認証を有効にした環境では、`bearerTokenEnv` にBearer tokenを保持する環境変数名を指定してください。未指定時は`Authorization`ヘッダーを送信しません。非loopbackの接続先はHTTPSを必須とし、認証なしHTTPは文字列どおりの`127.0.0.1`または`[::1]`に限定します（`localhost`はDNS解決を検証しないため許可しません）。token自体やその他のsecretを設定ファイルへ書かないでください。現在はshadow writeのみで、recall、embedding、Ruri prefix、context injectionは行いません。TencentDB v3の`conversation/add`契約にはクライアント指定のmessage/request IDやidempotency keyはなく、accepted IDはサーバー生成です（[v3 API仕様](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/MemoryCore/v3-api-memorycore-doc.md)）。そのためshadow送信はローカルqueueのidempotencyによるat-least-once配送で、応答受領後のprocess crashではMemoryCore側に重複L0が発生し得ます。これはupstream契約上の制約であり、未対応のrequest fieldを独自追加して重複排除を主張しません。
+MemoryCore v3のデータ面は、Gateway共有鍵の設定有無にかかわらず、`Authorization: Bearer <token>` と `x-tdai-service-id` を要求します。`bearerTokenEnv` にBearer tokenを保持する環境変数名を指定してください。token自体やその他のsecretを設定ファイルへ書かないでください。非loopbackの接続先はHTTPSを必須とし、認証なしHTTPは文字列どおりの`127.0.0.1`または`[::1]`に限定します（`localhost`はDNS解決を検証しないため許可しません）。現在はshadow writeのみで、recall、embedding、Ruri prefix、context injectionは行いません。TencentDB v3の`conversation/add`契約にはクライアント指定のmessage/request IDやidempotency keyはなく、accepted IDはサーバー生成です（[v3 API仕様](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/MemoryCore/v3-api-memorycore-doc.md)）。そのためshadow送信はローカルqueueのidempotencyによるat-least-once配送で、応答受領後のprocess crashではMemoryCore側に重複L0が発生し得ます。これはupstream契約上の制約であり、未対応のrequest fieldを独自追加して重複排除を主張しません。
 
 | キー | 必須 | 内容 |
 |---|---|---|
 | `enabled` | — | `true` のときだけshadow modeを動かす。既定は`false` |
 | `baseUrl` | — | TencentDB MemoryCoreのURL。HTTPはloopbackのみ、非loopbackはHTTPSのみ。query/fragmentと埋め込みcredentialは禁止。`/v3/conversation/add`を安全に追加して呼び出す |
 | `serviceId` | — | `x-tdai-service-id`へ送るMemoryCoreのinstance ID |
-| `bearerTokenEnv` | — | 任意。Bearer tokenを読む環境変数名。未指定なら認証なし |
+| `bearerTokenEnv` | — | Bearer tokenを読む環境変数名。v3 data-planeを使う場合は実質必須。Gateway共有鍵を有効にする場合は同じ値を使う |
 | `teamId` / `agentId` | — | 全対象会話へ付与する固定isolation identity |
 | `eligibleGroups` | — | shadow writeを許可するprivate group名の明示リスト。既定は空 |
 | `timeoutMs` | — | MemoryCore HTTP timeout（1〜120000ms、既定10000） |
 
 ### MemoryCore sidecarの起動
 
-`compose.memory-core.yaml`はMemoryCore単体を公式image `agentmemory/memory-core:1.0.1`から起動します。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストへの公開はloopbackのみに限定され、MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
+`compose.memory-core.yaml`はMemoryCore単体を公式image `agentmemory/memory-core:1.0.1`から起動します。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストのCLIProxyAPIが`127.0.0.1:8317`で待ち受けるため、MemoryCoreはhost networkで起動します。MemoryCore自身のGatewayは`127.0.0.1`にbindし、ホスト外部へ公開しません。MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
 
-exampleをGit管理外の実設定へコピーし、MemoryCore内部の抽出・統合に使うOpenAI-compatible LLMの接続先とmodelを`config/memory-core.yaml`の`llm`へ設定します。API keyは追跡対象外のYAMLへ書かず、`.env`の`MEMORY_CORE_LLM_API_KEY`へ設定してください。ComposeがこれをMemoryCore内の`TDAI_LLM_API_KEY`として渡します。
+exampleをGit管理外の実設定へコピーします。exampleは、直接OpenAIなどのOpenAI-compatible providerを使う汎用構成です。Composeは`.env`の`TDAI_LLM_API_BASE_URL`をMemoryCoreが認識する`TDAI_LLM_BASE_URL`へ渡し、未設定時は`https://api.openai.com/v1`を使います。`MEMORY_CORE_LLM_API_KEY`は選択したproviderのAPI keyとして`TDAI_LLM_API_KEY`へ渡します。API key自体は追跡対象外のYAMLへ書きません。
+
+ホスト上のCLIProxyAPIを使う場合だけ、`.env`の`TDAI_LLM_API_BASE_URL`を`http://127.0.0.1:8317/v1`へ変更します。ComposeがMemoryCoreの`TDAI_LLM_BASE_URL`へ変換して渡し、`network_mode: host`によりMemoryCore内の`127.0.0.1`はホストのCLIProxyAPIを指します。CLIProxyAPIにはMemoryCore専用のAPI keyを追加し、その同じ値を`.env`の`MEMORY_CORE_LLM_API_KEY`へ設定してください。既存の`CLIPROXY_API_KEY`を流用する必要はありません。`llm.model`にはCLIProxyAPIが提供する任意のmodel IDを設定してください（`/v1/models`で確認できます）。CLIProxyAPIを使わない場合は、`TDAI_LLM_API_BASE_URL`の変更は不要です。詳細は[CLIProxyAPIのAPI key設定](guides/codex-oauth-cliproxyapi.md#configyaml-の設定)を参照してください。
 
 ```bash
 cp config/memory-core.example.yaml config/memory-core.yaml
 ```
 
-```yaml
-llm:
-  baseUrl: "https://api.openai.com/v1"
-  apiKey: "${TDAI_LLM_API_KEY}"
-  model: "gpt-4o-mini"
+直接providerを使う場合（`TDAI_LLM_API_BASE_URL`の初期値）:
+
+```env
+TDAI_LLM_API_BASE_URL=https://api.openai.com/v1
+MEMORY_CORE_LLM_API_KEY=<provider-api-key>
 ```
+
+CLIProxyAPIを使う場合は、`TDAI_LLM_API_BASE_URL`を変更し、`llm.model`へCLIProxyAPIが提供する任意のmodel IDを設定します。
+
+```env
+TDAI_LLM_API_BASE_URL=http://127.0.0.1:8317/v1
+MEMORY_CORE_LLM_API_KEY=<memory-core-dedicated-key>
+```
+
+CLIProxyAPI側の`api-keys`へ`<memory-core-dedicated-key>`を追加します。既存の`CLIPROXY_API_KEY`とは分けて管理します。
 
 exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`でも抽出thresholdが`1 → 2 → 4 → 5`と増えるため、最初の会話後から抽出が始まり得ます。厳密な5会話ごとのbatchではありません。また、初期rolloutはmy-discord-agentからL0をshadow writeするだけなので、exampleの`memory.recall.enabled`は`false`です。
 
@@ -88,7 +100,8 @@ exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`�
 
 ```bash
 pnpm memory-core up -d
-curl "http://$(pnpm --silent memory-core port memory-core 8420)/health"
+memory_core_port="${MEMORY_CORE_PORT:-$(awk -F= '$1 == "MEMORY_CORE_PORT" { print $2; exit }' .env 2>/dev/null)}"
+curl "http://127.0.0.1:${memory_core_port:-8420}/health"
 
 # 運用コマンド
 pnpm memory-core ps
@@ -96,7 +109,7 @@ pnpm memory-core logs -f memory-core
 pnpm memory-core down
 ```
 
-Gateway認証はローカルloopback運用では未設定にできます。`MEMORY_CORE_GATEWAY_API_KEY`を設定して認証を有効にする場合は、`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。`MEMORY_CORE_PORT`を変更した場合は、`agentMemory.baseUrl`のポートも同じ値に合わせてください。
+`MEMORY_CORE_GATEWAY_API_KEY`を`.env`へ設定するとGateway共有鍵認証が有効になります。`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。v3 data-planeは共有鍵認証を無効にしてもBearer形式のヘッダーが必要です。`MEMORY_CORE_PORT`を変更する場合、上記health commandはシェル環境変数を優先し、未設定なら`.env`の値を読み取ります。Composeが使うGateway portと`agentMemory.baseUrl`のポートは同じ値に合わせてください。
 
 ```json
 {
