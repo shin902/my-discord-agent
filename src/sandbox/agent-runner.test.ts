@@ -59,6 +59,7 @@ function createMockAgent(deltas: string[], endMessage: unknown) {
   const subscribers: Array<(event: unknown) => void> = [];
   return {
     subscribe: vi.fn((cb: (event: unknown) => void) => subscribers.push(cb)),
+    abort: vi.fn(),
     prompt: vi.fn(async () => {
       for (const delta of deltas) {
         for (const cb of subscribers) {
@@ -115,6 +116,28 @@ describe("runAgentLoop", () => {
         content: [{ type: "text", text: "OK" }],
       });
     });
+  });
+
+  it("aborted signal is wired to Pi Agent.abort", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "stop",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      controller.signal,
+    );
+
+    const agent = AgentMock.mock.results[0]?.value as {
+      abort: ReturnType<typeof vi.fn>;
+    };
+    expect(agent.abort).toHaveBeenCalledOnce();
   });
 
   it("メッセージを送信して返答テキストを返す", async () => {

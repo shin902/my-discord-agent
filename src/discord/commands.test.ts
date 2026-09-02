@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   listBotTaskSessions: vi.fn(),
   enqueue: vi.fn(),
   loadMemoryConfig: vi.fn(),
+  stopAgentRun: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", async (importOriginal) => {
@@ -25,6 +26,9 @@ vi.mock("../config/agent-memory.js", async (importOriginal) => {
     await importOriginal<typeof import("../config/agent-memory.js")>();
   return { ...actual, loadAgentMemoryConfig: mocks.loadMemoryConfig };
 });
+vi.mock("../agent/manager.js", () => ({
+  stopAgentRun: mocks.stopAgentRun,
+}));
 vi.mock("../queue/repository.js", () => ({
   getQueueRepository: () => ({
     createBotTaskSessionAndEnqueue: mocks.createBotTaskSessionAndEnqueue,
@@ -34,11 +38,16 @@ vi.mock("../queue/repository.js", () => ({
   }),
 }));
 
-const { handleBotCommand, handleSkillCommand, handleSteerCommand } =
-  await import("./command-handlers.js");
+const {
+  handleBotCommand,
+  handleSkillCommand,
+  handleStopCommand,
+  handleSteerCommand,
+} = await import("./command-handlers.js");
 const { command: botCommand } = await import("./commands/bot.js");
 const { command: skillCommand } = await import("./commands/skill.js");
 const { command: steerCommand } = await import("./commands/steer.js");
+const { command: stopCommand } = await import("./commands/stop.js");
 const {
   deployDiscordCommands,
   deployDiscordCommandsToBots,
@@ -147,6 +156,7 @@ beforeEach(() => {
   }));
   mocks.resumeBotTaskSessionAndEnqueue.mockReturnValue(undefined);
   mocks.listBotTaskSessions.mockReturnValue([]);
+  mocks.stopAgentRun.mockResolvedValue({ status: "no-active-run" });
   mocks.loadMemoryConfig.mockResolvedValue({
     enabled: false,
     baseUrl: "http://127.0.0.1:8420",
@@ -246,14 +256,54 @@ describe("steer command", () => {
   });
 });
 
+describe("stop command", () => {
+  it("stops the exact active session and displays the cooperative result", async () => {
+    mocks.stopAgentRun.mockResolvedValueOnce({ status: "aborted" });
+    const interaction = makeInteraction({ channelId: "session-1" });
+
+    await handleStopCommand(interaction as never);
+
+    expect(mocks.stopAgentRun).toHaveBeenCalledWith("main", "session-1");
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "実行を停止しました（協調的abort）。",
+    });
+  });
+
+  it.each([
+    ["force-killed", "実行を停止しました（force-killed）。"],
+    ["no-active-run", "停止対象の実行中Agentはありません。"],
+    ["cleanup-failure", "実行停止後の後始末に失敗しました。"],
+  ] as const)("displays %s result", async (status, content) => {
+    mocks.stopAgentRun.mockResolvedValueOnce({
+      status,
+      ...(status === "cleanup-failure" ? { error: "cleanup failed" } : {}),
+    });
+    const interaction = makeInteraction({ channelId: "session-1" });
+
+    await handleStopCommand(interaction as never);
+
+    expect(interaction.editReply).toHaveBeenCalledWith({ content });
+  });
+
+  it("does not stop a run received by the wrong Discord Bot", async () => {
+    const interaction = makeInteraction({ channelId: "session-1" });
+
+    await handleStopCommand(interaction as never, "secondary");
+
+    expect(mocks.stopAgentRun).not.toHaveBeenCalled();
+  });
+});
+
 describe("command registry", () => {
   it("discovers each command module by its chat-input name", () => {
     expect(DISCORD_COMMANDS.map(({ data }) => data.toJSON().name)).toEqual([
       "bot",
       "skill",
       "steer",
+      "stop",
     ]);
     expect(getDiscordCommand("bot")?.execute).toEqual(expect.any(Function));
+    expect(getDiscordCommand("stop")?.execute).toEqual(expect.any(Function));
     expect(getDiscordCommand("missing")).toBeUndefined();
   });
 });
@@ -276,6 +326,7 @@ describe("deployDiscordCommands", () => {
           botCommand.data.toJSON(),
           skillCommand.data.toJSON(),
           steerCommand.data.toJSON(),
+          stopCommand.data.toJSON(),
         ],
       },
     );
@@ -295,6 +346,7 @@ describe("deployDiscordCommands", () => {
         botCommand.data.toJSON(),
         skillCommand.data.toJSON(),
         steerCommand.data.toJSON(),
+        stopCommand.data.toJSON(),
       ],
     });
   });

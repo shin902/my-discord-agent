@@ -97,7 +97,7 @@ LLM の自律判断を待たず、ユーザーが特定のスキルを確実に�
 
 Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加指示>` から利用できる。`prompt` は省略可能。`shared` は親チャンネル、それ以外のセッションモードは対象スレッド内で実行する。スキル名の補完は行わないため、実行時の `skills` 設定で許可した名前を入力する。
 
-実行中のAgentへ方針転換を送るには `/steer instruction:<指示>` を使う。対象チャンネルの同一 `(groupName, sessionId)` に実行中Agentがない場合は失敗し、通常メッセージとしてqueueへは投入しない。steer内容はcanonical session trajectoryへ `steering-instruction` として保存される。
+実行中のAgentへ方針転換を送るには `/steer instruction:<指示>` を使う。対象チャンネルの同一 `(groupName, sessionId)` に実行中Agentがない場合は失敗し、通常メッセージとしてqueueへは投入しない。steer内容はcanonical session trajectoryへ `steering-instruction` として保存される。実行を停止するには `/stop` を使う。まずrunner内のcooperative abortを試し、短い猶予後も終了しない場合だけrunnerを強制停止する。結果がない場合や後始末に失敗した場合も明示的に表示される。
 
 | 例 | 動作 |
 |----|------|
