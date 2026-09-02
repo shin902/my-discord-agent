@@ -4,12 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockClient = { once: vi.fn(), on: vi.fn() };
 const mockHandleBotCommand = vi.hoisted(() => vi.fn());
 const mockHandleSkillCommand = vi.hoisted(() => vi.fn());
-const mockSynchronizeDiscordCommandsWithRetry = vi.hoisted(() => vi.fn());
+const mockCreateDiscordInteractionRouter = vi.hoisted(() =>
+  vi.fn((discordBotId: string) => (interaction: { commandName: string }) => {
+    if (interaction.commandName === "bot")
+      mockHandleBotCommand(interaction, discordBotId);
+    if (interaction.commandName === "skill")
+      mockHandleSkillCommand(interaction, discordBotId);
+  }),
+);
 vi.mock("./client.js", () => ({ DEFAULT_DISCORD_BOT_ID: "personal" }));
-vi.mock("./commands.js", () => ({
-  handleBotCommand: mockHandleBotCommand,
-  handleSkillCommand: mockHandleSkillCommand,
-  synchronizeDiscordCommandsWithRetry: mockSynchronizeDiscordCommandsWithRetry,
+vi.mock("./interaction-router.js", () => ({
+  createDiscordInteractionRouter: mockCreateDiscordInteractionRouter,
 }));
 
 const mockAppendInbox = vi.hoisted(() => vi.fn());
@@ -80,9 +85,7 @@ describe("registerHandlers - InteractionCreate", () => {
   beforeEach(() => {
     mockHandleBotCommand.mockReset().mockResolvedValue(undefined);
     mockHandleSkillCommand.mockReset().mockResolvedValue(undefined);
-    mockSynchronizeDiscordCommandsWithRetry
-      .mockReset()
-      .mockResolvedValue(undefined);
+    mockCreateDiscordInteractionRouter.mockClear();
   });
 
   it("passes the receiving Discord Bot identity to command handling", () => {
@@ -129,9 +132,7 @@ describe("registerHandlers - MessageCreate", () => {
   beforeEach(() => {
     mockFindGroup.mockReset();
     mockAppendInbox.mockReset().mockResolvedValue(undefined);
-    mockSynchronizeDiscordCommandsWithRetry
-      .mockReset()
-      .mockResolvedValue(undefined);
+    mockCreateDiscordInteractionRouter.mockClear();
   });
 
   it("起動時バックフィルが未完了でもライブMessageCreateを処理する", async () => {

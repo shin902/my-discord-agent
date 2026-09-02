@@ -14,6 +14,7 @@
     "runner:image:smoke": "bash scripts/runner-image-smoke.sh",
     "restart": "pnpm sandbox build && pnpm build && node dist/index.js",
     "start": "node --env-file-if-exists=.env dist/index.js",
+    "discord:deploy": "tsx scripts/deploy-discord-commands.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run && python3 -m unittest templates/SKILLS/interest-profile/scripts/test_extract_interests.py",
     "format": "biome format --write .",

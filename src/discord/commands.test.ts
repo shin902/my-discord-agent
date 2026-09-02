@@ -33,14 +33,19 @@ vi.mock("../queue/repository.js", () => ({
   }),
 }));
 
+const { handleBotCommand, handleSkillCommand } = await import(
+  "./command-handlers.js"
+);
+const { command: botCommand } = await import("./commands/bot.js");
+const { command: skillCommand } = await import("./commands/skill.js");
 const {
-  BOT_COMMAND,
-  SKILL_COMMAND,
-  handleBotCommand,
-  handleSkillCommand,
-  synchronizeDiscordCommands,
-  synchronizeDiscordCommandsWithRetry,
-} = await import("./commands.js");
+  deployDiscordCommands,
+  deployDiscordCommandsToBots,
+  resolveDiscordCommandDeployTargets,
+} = await import("./deploy-commands.js");
+const { DISCORD_COMMANDS, getDiscordCommand } = await import(
+  "./command-registry.js"
+);
 
 function makeInteraction(options: {
   bot?: string;
@@ -148,9 +153,9 @@ beforeEach(() => {
   });
 });
 
-describe("BOT_COMMAND", () => {
+describe("bot command definition", () => {
   it("defines bot, action, prompt, and session options", () => {
-    const json = BOT_COMMAND.toJSON();
+    const json = botCommand.data.toJSON();
     expect(json.name).toBe("bot");
     expect(json.options).toEqual(
       expect.arrayContaining([
@@ -163,9 +168,9 @@ describe("BOT_COMMAND", () => {
   });
 });
 
-describe("SKILL_COMMAND", () => {
+describe("skill command definition", () => {
   it("defines a required skill and optional prompt without autocomplete", () => {
-    const json = SKILL_COMMAND.toJSON();
+    const json = skillCommand.data.toJSON();
     expect(json.name).toBe("skill");
     expect(json.options).toEqual([
       expect.objectContaining({
@@ -183,72 +188,193 @@ describe("SKILL_COMMAND", () => {
   });
 });
 
-describe("synchronizeDiscordCommands", () => {
-  it("creates /bot and /skill without replacing unrelated commands", async () => {
-    const fetch = vi.fn().mockResolvedValue([]);
-    const create = vi.fn().mockResolvedValue(undefined);
-    const set = vi.fn();
-
-    await synchronizeDiscordCommands({
-      application: { commands: { fetch, create, set } },
-    } as never);
-
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledWith(BOT_COMMAND.toJSON());
-    expect(create).toHaveBeenCalledWith(SKILL_COMMAND.toJSON());
-    expect(set).not.toHaveBeenCalled();
-  });
-
-  it("edits existing owned commands instead of creating duplicates", async () => {
-    const fetch = vi.fn().mockResolvedValue([
-      { id: "bot-command-id", name: "bot", type: 1 },
-      { id: "skill-command-id", name: "skill", type: 1 },
-      { id: "unrelated-id", name: "other", type: 1 },
+describe("command registry", () => {
+  it("discovers each command module by its chat-input name", () => {
+    expect(DISCORD_COMMANDS.map(({ data }) => data.toJSON().name)).toEqual([
+      "bot",
+      "skill",
     ]);
-    const edit = vi.fn().mockResolvedValue(undefined);
-    const create = vi.fn();
-
-    await synchronizeDiscordCommands({
-      application: { commands: { fetch, edit, create } },
-    } as never);
-
-    expect(edit).toHaveBeenCalledWith("bot-command-id", BOT_COMMAND.toJSON());
-    expect(edit).toHaveBeenCalledWith(
-      "skill-command-id",
-      SKILL_COMMAND.toJSON(),
-    );
-    expect(create).not.toHaveBeenCalled();
+    expect(getDiscordCommand("bot")?.execute).toEqual(expect.any(Function));
+    expect(getDiscordCommand("missing")).toBeUndefined();
   });
 });
 
-describe("synchronizeDiscordCommandsWithRetry", () => {
-  it("retries transient synchronization failures and eventually succeeds", async () => {
-    const fetch = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValue([]);
-    const create = vi.fn().mockResolvedValue(undefined);
+describe("deployDiscordCommands", () => {
+  it("bulk-overwrites the complete registry in a guild scope", async () => {
+    const put = vi.fn().mockResolvedValue([]);
+    await deployDiscordCommands({
+      applicationId: "application-1",
+      token: "token",
+      scope: "guild",
+      guildId: "guild-1",
+      rest: { put } as never,
+    });
 
-    await synchronizeDiscordCommandsWithRetry(
-      { application: { commands: { fetch, create } } } as never,
-      { maxAttempts: 3, retryDelayMs: 0 },
+    expect(put).toHaveBeenCalledWith(
+      "/applications/application-1/guilds/guild-1/commands",
+      { body: [botCommand.data.toJSON(), skillCommand.data.toJSON()] },
     );
-
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(create).toHaveBeenCalledTimes(2);
   });
 
-  it("stops after the bounded number of attempts", async () => {
-    const error = new Error("permanent");
-    const fetch = vi.fn().mockRejectedValue(error);
+  it("bulk-overwrites the complete registry in the separate global scope", async () => {
+    const put = vi.fn().mockResolvedValue([]);
+    await deployDiscordCommands({
+      applicationId: "application-1",
+      token: "token",
+      scope: "global",
+      rest: { put } as never,
+    });
+
+    expect(put).toHaveBeenCalledWith("/applications/application-1/commands", {
+      body: [botCommand.data.toJSON(), skillCommand.data.toJSON()],
+    });
+  });
+
+  it("requires an explicit deploy scope", async () => {
+    await expect(
+      deployDiscordCommands({
+        applicationId: "application-1",
+        token: "token",
+      } as never),
+    ).rejects.toThrow("usage");
+  });
+
+  it("requires a guild id for guild-scope deploys", async () => {
+    await expect(
+      deployDiscordCommands({
+        applicationId: "application-1",
+        token: "token",
+        scope: "guild",
+      }),
+    ).rejects.toThrow("guildId");
+  });
+
+  it("deploys the same registry to every configured Bot application", async () => {
+    const deploy = vi
+      .fn()
+      .mockResolvedValue([
+        botCommand.data.toJSON(),
+        skillCommand.data.toJSON(),
+      ]);
+    const results = await deployDiscordCommandsToBots({
+      targets: [
+        { botId: "personal", applicationId: "application-1", token: "one" },
+        { botId: "public", applicationId: "application-2", token: "two" },
+      ],
+      scope: "global",
+      deploy,
+    });
+
+    expect(deploy).toHaveBeenCalledTimes(2);
+    expect(deploy).toHaveBeenNthCalledWith(1, {
+      applicationId: "application-1",
+      token: "one",
+      scope: "global",
+    });
+    expect(deploy).toHaveBeenNthCalledWith(2, {
+      applicationId: "application-2",
+      token: "two",
+      scope: "global",
+    });
+    expect(results).toEqual([
+      {
+        botId: "personal",
+        applicationId: "application-1",
+        status: "succeeded",
+        commandCount: 2,
+      },
+      {
+        botId: "public",
+        applicationId: "application-2",
+        status: "succeeded",
+        commandCount: 2,
+      },
+    ]);
+  });
+
+  it("attempts every Bot and reports partial failures without exposing tokens", async () => {
+    const deploy = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("request failed with secret-one"))
+      .mockResolvedValueOnce([]);
 
     await expect(
-      synchronizeDiscordCommandsWithRetry(
-        { application: { commands: { fetch } } } as never,
-        { maxAttempts: 3, retryDelayMs: 0 },
+      deployDiscordCommandsToBots({
+        targets: [
+          {
+            botId: "personal",
+            applicationId: "application-1",
+            token: "secret-one",
+          },
+          {
+            botId: "public",
+            applicationId: "application-2",
+            token: "secret-two",
+          },
+        ],
+        scope: "guild",
+        guildId: "guild-1",
+        deploy,
+      }),
+    ).rejects.toMatchObject({
+      results: [
+        expect.objectContaining({
+          botId: "personal",
+          status: "failed",
+          error: "request failed with [REDACTED]",
+        }),
+        expect.objectContaining({ botId: "public", status: "succeeded" }),
+      ],
+    });
+    expect(deploy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("resolveDiscordCommandDeployTargets", () => {
+  it("resolves the implicit default and configured Bot applications", () => {
+    expect(
+      resolveDiscordCommandDeployTargets(
+        {
+          bots: {
+            public: {
+              tokenEnv: "PUBLIC_TOKEN",
+              applicationId: "public-application",
+            },
+          },
+        },
+        {
+          DISCORD_APPLICATION_ID: "default-application",
+          DISCORD_BOT_TOKEN: "default-token",
+          PUBLIC_TOKEN: "public-token",
+        },
       ),
-    ).rejects.toBe(error);
-    expect(fetch).toHaveBeenCalledTimes(3);
+    ).toEqual([
+      {
+        botId: "personal",
+        applicationId: "default-application",
+        token: "default-token",
+      },
+      {
+        botId: "public",
+        applicationId: "public-application",
+        token: "public-token",
+      },
+    ]);
+  });
+
+  it("rejects an additional Bot without an application ID", () => {
+    expect(() =>
+      resolveDiscordCommandDeployTargets(
+        {
+          bots: { public: { tokenEnv: "PUBLIC_TOKEN" } },
+        },
+        {
+          DISCORD_APPLICATION_ID: "default-application",
+          DISCORD_BOT_TOKEN: "default-token",
+          PUBLIC_TOKEN: "public-token",
+        },
+      ),
+    ).toThrow("applicationId");
   });
 });
 
@@ -358,9 +484,9 @@ describe("handleSkillCommand", () => {
     await handleSkillCommand(interaction as never);
 
     expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "スキル名には英数字、ハイフン、アンダースコアのみ使用できます。",
-      ephemeral: true,
     });
   });
 
@@ -374,9 +500,9 @@ describe("handleSkillCommand", () => {
     await handleSkillCommand(interaction as never);
 
     expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "このコマンドはスレッド内で実行してください。",
-      ephemeral: true,
     });
   });
 });
@@ -440,10 +566,10 @@ describe("handleBotCommand", () => {
     await handleBotCommand(interaction as never, "secondary");
 
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content:
         "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
-      ephemeral: true,
     });
   });
 
@@ -533,11 +659,8 @@ describe("handleBotCommand", () => {
 
     if (session.includes("/")) {
       expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-      expect(interaction.reply).toHaveBeenCalledWith(
-        expect.objectContaining({
-          content: expect.any(String),
-          ephemeral: true,
-        }),
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.any(String) }),
       );
     } else {
       expect(mocks.resumeBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
@@ -576,9 +699,8 @@ describe("handleBotCommand", () => {
     expect(mocks.listBotTaskSessions).toHaveBeenCalledWith("main", "coding");
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: expect.stringContaining("task-one"),
-      ephemeral: true,
     });
   });
 
@@ -592,10 +714,9 @@ describe("handleBotCommand", () => {
 
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "Bot が未定義です: missing",
-      ephemeral: true,
     });
-    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
   });
 });

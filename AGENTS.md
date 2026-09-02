@@ -64,3 +64,10 @@ Use example files and the relevant docs as the source of truth; do not guess con
 ## Documentation
 
 When behavior, configuration, examples, or operator workflows change, use the `update-docs` skill to check whether repository documentation must change too.
+
+## Discord command extension contract
+
+- Add one module under `src/discord/commands/` exporting `command: DiscordCommandDefinition`; its `data` is a `SlashCommandBuilder` and its `execute(interaction, context)` delegates through the Discord adapter (`src/discord/command-handlers.ts`) to the plain-request use cases in `src/application/discord-command-service.ts`. Register the module in `src/discord/command-registry.ts`; adapters must not import config, queue repositories, sessions, or `AgentManager`.
+- `src/discord/interaction-router.ts` owns lookup and unexpected-error logging. Commands decide when to defer and use `editReply`; validation and expected failures use an ephemeral `reply` (or edit after defer). The runtime only registers the router and does not deploy commands.
+- `src/discord/command-registry.ts` is the authoritative source for every Slash Command in this application. Deploy uses Discord bulk overwrite to replace the same complete command set in the selected global or guild scope for every configured Discord application; commands registered manually or by another system in that same scope are intentionally removed on the next deploy. Deploy scope is mandatory, and runtime startup does not deploy commands. The implicit default Bot uses `DISCORD_APPLICATION_ID` / `DISCORD_BOT_TOKEN`; additional Bot applications use `discord.bots` application IDs and token environment references.
+- Verify with `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Deploy independently with `pnpm discord:deploy -- global` or `pnpm discord:deploy -- guild <guild-id>` using `DISCORD_APPLICATION_ID` and `DISCORD_BOT_TOKEN`; guild deploy is for fast checks, global deploy can take time to propagate.

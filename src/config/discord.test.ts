@@ -69,4 +69,29 @@ describe("loadDiscordConfig", () => {
       'Discord Bot "takop" の環境変数 TAKOP_BOT_TOKEN が設定されていません',
     );
   });
+
+  it("accepts a non-secret application ID in Bot configuration", async () => {
+    await expect(
+      loadDiscordConfig(
+        {
+          discord: {
+            bots: {
+              takop: {
+                tokenEnv: "TAKOP_BOT_TOKEN",
+                applicationId: "takop-application",
+              },
+            },
+          },
+        },
+        "takop-token",
+      ),
+    ).resolves.toEqual({
+      bots: {
+        takop: {
+          tokenEnv: "TAKOP_BOT_TOKEN",
+          applicationId: "takop-application",
+        },
+      },
+    });
+  });
 });

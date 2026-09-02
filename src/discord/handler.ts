@@ -1,11 +1,7 @@
 import { type Client, Events, type Message } from "discord.js";
-import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
-import {
-  handleBotCommand,
-  handleSkillCommand,
-  synchronizeDiscordCommandsWithRetry,
-} from "./commands.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { handleLiveDiscordMessage } from "./intake.js";
+import { createDiscordInteractionRouter } from "./interaction-router.js";
 
 /** Discordイベントハンドラーを指定したClientへ登録する。 */
 export function registerHandlers(
@@ -15,9 +11,6 @@ export function registerHandlers(
 ): void {
   client.once(Events.ClientReady, (c) => {
     console.log(`起動しました: ${c.user.tag}`);
-    void synchronizeDiscordCommandsWithRetry(c).catch((error) =>
-      console.error("[handler] Discordコマンドの同期を断念しました:", error),
-    );
     if (onReady) {
       void Promise.resolve()
         .then(onReady)
@@ -36,16 +29,9 @@ export function registerHandlers(
     ),
   );
 
+  const routeInteraction = createDiscordInteractionRouter(discordBotId);
   client.on(Events.InteractionCreate, (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-    if (interaction.commandName === "bot") {
-      void handleBotCommand(interaction, discordBotId).catch((error) =>
-        console.error("[handler] /bot コマンドの処理に失敗しました:", error),
-      );
-    } else if (interaction.commandName === "skill") {
-      void handleSkillCommand(interaction, discordBotId).catch((error) =>
-        console.error("[handler] /skill コマンドの処理に失敗しました:", error),
-      );
-    }
+    routeInteraction(interaction);
   });
 }

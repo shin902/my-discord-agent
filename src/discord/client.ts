@@ -1,9 +1,10 @@
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 import { loadDiscordConfig } from "../config/config.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import type { GroupConfig } from "../config/groups.js";
 import { findGroupByName } from "../config/groups.js";
 
-export const DEFAULT_DISCORD_BOT_ID = "personal";
+export { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 
 export function createDiscordClient(): Client {
   return new Client({
