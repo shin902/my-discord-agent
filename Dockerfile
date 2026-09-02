@@ -26,5 +26,6 @@ RUN python3 -m venv /opt/venv && \
     md2html-phuker
 
 ENV PATH="/opt/venv/bin:$PATH"
+ENV TZ="Asia/Tokyo"
 
 COPY dist/sandbox/runner.bundle.mjs ./runner.mjs
