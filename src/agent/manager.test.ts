@@ -271,7 +271,7 @@ describe("sendMessage: Docker 起動構成", () => {
       kill: vi.fn(),
     };
     spawnMock.mockReturnValueOnce(proc);
-    const { sendMessage } = await import("./manager.js");
+    const { sendMessage, stopAgentRun } = await import("./manager.js");
     const { steerActiveRun } = await import("./active-run-registry.js");
     const result = sendMessage("test-group", "session-1", "hi");
 
@@ -281,8 +281,11 @@ describe("sendMessage: Docker 起動構成", () => {
       delivery = await steerActiveRun("test-group", "session-1", "change");
     }
     expect(delivery).toBe("rejected");
+    const stopping = stopAgentRun("test-group", "session-1");
+    expect(proc.stdin.write).toHaveBeenCalledWith('{"type":"abort"}\n');
     closeHandler?.(0);
-    await expect(result).resolves.toBe("");
+    await expect(stopping).resolves.toEqual({ status: "aborted" });
+    await expect(result).rejects.toThrow("停止が要求されました");
   });
 
   it("runnerのsteer ackを受け取るまでDiscord向け成功を返さない", async () => {
@@ -760,8 +763,7 @@ describe("sendMessage: Docker 起動構成", () => {
     await running.catch(() => {});
   });
 
-  it("pre-ready stop queues abort after payload and starts grace after delivery", async () => {
-    vi.useFakeTimers();
+  it("runner ready前はactive runとして扱わず、ready後にcontrol可能になる", async () => {
     let readyHandler: ((chunk: Buffer) => void) | undefined;
     let closeHandler: ((code: number | null) => void) | undefined;
     const proc = makeProc();
@@ -782,29 +784,23 @@ describe("sendMessage: Docker 起動構成", () => {
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
 
-    const stopping = stopAgentRun("test-group", "session-1");
-    await Promise.resolve();
+    await expect(stopAgentRun("test-group", "session-1")).resolves.toEqual({
+      status: "no-active-run",
+    });
     expect(proc.stdin.write).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(proc.kill).not.toHaveBeenCalledWith("SIGKILL");
 
     readyHandler?.(Buffer.from("__AGENT_READY__\n"));
     await Promise.resolve();
     await Promise.resolve();
-    expect(proc.stdin.write).toHaveBeenCalledTimes(2);
     expect(JSON.parse(proc.stdin.write.mock.calls[0]?.[0] as string)).toEqual(
       expect.objectContaining({ content: "hi" }),
     );
-    expect(proc.stdin.write.mock.calls[1]?.[0]).toBe('{"type":"abort"}\n');
 
-    await vi.advanceTimersByTimeAsync(999);
-    expect(proc.kill).not.toHaveBeenCalledWith("SIGKILL");
-    await vi.advanceTimersByTimeAsync(1);
-    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
-    closeHandler?.(null);
-    await stopping.catch(() => {});
+    const stopping = stopAgentRun("test-group", "session-1");
+    expect(proc.stdin.write).toHaveBeenCalledWith('{"type":"abort"}\n');
+    closeHandler?.(0);
+    await expect(stopping).resolves.toEqual({ status: "aborted" });
     await running.catch(() => {});
-    vi.useRealTimers();
   });
 
   it("abort timeout falls back to hard kill and cleanup", async () => {

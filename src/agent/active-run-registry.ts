@@ -2,6 +2,11 @@ export type ActiveRunControl = (
   instruction: string,
 ) => Promise<boolean> | boolean;
 export type ActiveRunSteerResult = "accepted" | "unavailable" | "rejected";
+export type ActiveRunStopResult =
+  | { status: "aborted" }
+  | { status: "force-killed" }
+  | { status: "cleanup-failure"; error: string };
+export type ActiveRunStop = () => Promise<ActiveRunStopResult>;
 
 export interface ActiveRunHandle {
   steer(instruction: string): Promise<boolean> | boolean;
@@ -9,6 +14,8 @@ export interface ActiveRunHandle {
 
 type ActiveRun = {
   handle: ActiveRunHandle;
+  stop?: ActiveRunStop;
+  stopPromise?: Promise<ActiveRunStopResult>;
 };
 
 const activeRuns = new Map<string, ActiveRun>();
@@ -22,12 +29,13 @@ export function registerActiveRun(
   groupName: string,
   sessionId: string,
   control: ActiveRunControl,
+  stop?: ActiveRunStop,
 ): () => void {
   const key = runKey(groupName, sessionId);
   if (activeRuns.has(key)) {
     throw new Error(`active run already exists: ${groupName}/${sessionId}`);
   }
-  const run = { handle: { steer: control } };
+  const run = { handle: { steer: control }, stop };
   activeRuns.set(key, run);
   return () => {
     if (activeRuns.get(key) === run) activeRuns.delete(key);
@@ -58,6 +66,28 @@ export async function steerActiveRun(
     console.error("[active-run] steering delivery failed:", error);
     return "rejected";
   }
+}
+
+/** Stop only the exact active (group, session) run. */
+export async function stopActiveRun(
+  groupName: string,
+  sessionId: string,
+): Promise<ActiveRunStopResult | undefined> {
+  const run = activeRuns.get(runKey(groupName, sessionId));
+  if (!run?.stop) return undefined;
+  if (run.stopPromise) return run.stopPromise;
+
+  const stopPromise = run.stop();
+  run.stopPromise = stopPromise;
+  void stopPromise
+    .finally(() => {
+      if (run.stopPromise === stopPromise) run.stopPromise = undefined;
+    })
+    .catch(() => {
+      // The caller observes the original stop promise; this prevents the
+      // cleanup callback chain from becoming an unhandled rejection.
+    });
+  return stopPromise;
 }
 
 /** Test/operator visibility without exposing runner handles. */
