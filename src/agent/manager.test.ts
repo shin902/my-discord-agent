@@ -741,7 +741,8 @@ describe("sendMessage: Docker 起動構成", () => {
   it("同じ group/session の active run は Agent.abort を優先する", async () => {
     let closeHandler: ((code: number | null) => void) | undefined;
     const proc = makeProc();
-    proc.stdin.write.mockReturnValue(true);
+    // Writable.write(false) indicates backpressure, not delivery failure.
+    proc.stdin.write.mockReturnValue(false);
     proc.on = vi.fn((event: string, cb: (code: number | null) => void) => {
       if (event === "close") closeHandler = cb;
       return proc;
