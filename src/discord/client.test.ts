@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const originalPersonalToken = process.env.DISCORD_BOT_TOKEN;
+const originalTakopToken = process.env.TAKOP_BOT_TOKEN;
+
 const mocks = vi.hoisted(() => ({
   loadDiscordConfig: vi.fn(),
   findGroupByName: vi.fn(),
@@ -21,13 +24,23 @@ const {
   getDiscordClientForGroupName,
   getDiscordClients,
   initDiscordClients,
+  loginDiscordClients,
 } = await import("./client.js");
 
 describe("Discord client registry", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mocks.loadDiscordConfig.mockResolvedValue({
-      bots: { takop: { tokenEnv: "TAKOP_BOT_TOKEN" } },
+      bots: {
+        personal: {
+          applicationId: "personal-application",
+          tokenEnv: "DISCORD_BOT_TOKEN",
+        },
+        takop: {
+          applicationId: "takop-application",
+          tokenEnv: "TAKOP_BOT_TOKEN",
+        },
+      },
     });
     mocks.findGroupByName.mockResolvedValue({
       name: "takop",
@@ -39,14 +52,36 @@ describe("Discord client registry", () => {
 
   afterEach(async () => {
     await destroyDiscordClients();
+    if (originalPersonalToken === undefined)
+      delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = originalPersonalToken;
+    if (originalTakopToken === undefined) delete process.env.TAKOP_BOT_TOKEN;
+    else process.env.TAKOP_BOT_TOKEN = originalTakopToken;
   });
 
-  it("implicit default bot and additional bots are both registered", () => {
+  it("configured personal and additional bots are both registered", () => {
     expect(getDiscordClients().size).toBe(2);
+    expect(getDiscordClients().has(DEFAULT_DISCORD_BOT_ID)).toBe(true);
     expect(getDiscordClient(DEFAULT_DISCORD_BOT_ID)).toBe(
       getDefaultDiscordClient(),
     );
     expect(getDiscordClient("takop")).not.toBe(getDefaultDiscordClient());
+  });
+
+  it("logs in each configured Bot using its tokenEnv", async () => {
+    process.env.DISCORD_BOT_TOKEN = "personal-token";
+    process.env.TAKOP_BOT_TOKEN = "takop-token";
+    const personalLogin = vi
+      .spyOn(getDiscordClient("personal"), "login")
+      .mockResolvedValue("personal-user");
+    const takopLogin = vi
+      .spyOn(getDiscordClient("takop"), "login")
+      .mockResolvedValue("takop-user");
+
+    await loginDiscordClients();
+
+    expect(personalLogin).toHaveBeenCalledWith("personal-token");
+    expect(takopLogin).toHaveBeenCalledWith("takop-token");
   });
 
   it("group bot selects the additional bot and omission selects default", () => {

@@ -1,6 +1,5 @@
 import { type APIApplicationCommand, REST, Routes } from "discord.js";
 import type { DiscordConfig } from "../config/config.js";
-import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { getDiscordCommandData } from "./command-registry.js";
 
 export type DiscordCommandDeployScope = "global" | "guild";
@@ -130,46 +129,18 @@ function validateDeployScope(
   }
 }
 
-/** Resolve the default Bot and every configured additional Bot for deploy. */
+/** Resolve every configured Discord Bot for deploy. */
 export function resolveDiscordCommandDeployTargets(
   config: DiscordConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): DiscordCommandDeployTarget[] {
-  const defaultApplicationId = env.DISCORD_APPLICATION_ID;
-  const defaultToken = env.DISCORD_BOT_TOKEN;
-  if (!defaultApplicationId) {
-    throw new Error("DISCORD_APPLICATION_ID が設定されていません");
-  }
-  if (!defaultToken) {
-    throw new Error("DISCORD_BOT_TOKEN が設定されていません");
-  }
-
-  const targets: DiscordCommandDeployTarget[] = [
-    {
-      botId: DEFAULT_DISCORD_BOT_ID,
-      applicationId: defaultApplicationId,
-      token: defaultToken,
-    },
-  ];
-  for (const [botId, bot] of Object.entries(config.bots)) {
-    if (botId === DEFAULT_DISCORD_BOT_ID) {
-      throw new Error(
-        `Discord Bot ID は予約されています: ${DEFAULT_DISCORD_BOT_ID}`,
-      );
-    }
-    const applicationId = bot.applicationId;
-    if (!applicationId) {
-      throw new Error(
-        `Discord Bot "${botId}" の applicationId が設定されていません`,
-      );
-    }
+  return Object.entries(config.bots).map(([botId, bot]) => {
     const token = env[bot.tokenEnv];
     if (!token) {
       throw new Error(
         `Discord Bot "${botId}" の環境変数 ${bot.tokenEnv} が設定されていません`,
       );
     }
-    targets.push({ botId, applicationId, token });
-  }
-  return targets;
+    return { botId, applicationId: bot.applicationId, token };
+  });
 }

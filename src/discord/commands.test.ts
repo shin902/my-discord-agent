@@ -452,11 +452,15 @@ describe("deployDiscordCommands", () => {
 });
 
 describe("resolveDiscordCommandDeployTargets", () => {
-  it("resolves the implicit default and configured Bot applications", () => {
+  it("resolves every configured Bot application", () => {
     expect(
       resolveDiscordCommandDeployTargets(
         {
           bots: {
+            personal: {
+              tokenEnv: "DISCORD_BOT_TOKEN",
+              applicationId: "personal-application",
+            },
             public: {
               tokenEnv: "PUBLIC_TOKEN",
               applicationId: "public-application",
@@ -464,16 +468,15 @@ describe("resolveDiscordCommandDeployTargets", () => {
           },
         },
         {
-          DISCORD_APPLICATION_ID: "default-application",
-          DISCORD_BOT_TOKEN: "default-token",
+          DISCORD_BOT_TOKEN: "personal-token",
           PUBLIC_TOKEN: "public-token",
         },
       ),
     ).toEqual([
       {
         botId: "personal",
-        applicationId: "default-application",
-        token: "default-token",
+        applicationId: "personal-application",
+        token: "personal-token",
       },
       {
         botId: "public",
@@ -481,21 +484,6 @@ describe("resolveDiscordCommandDeployTargets", () => {
         token: "public-token",
       },
     ]);
-  });
-
-  it("rejects an additional Bot without an application ID", () => {
-    expect(() =>
-      resolveDiscordCommandDeployTargets(
-        {
-          bots: { public: { tokenEnv: "PUBLIC_TOKEN" } },
-        },
-        {
-          DISCORD_APPLICATION_ID: "default-application",
-          DISCORD_BOT_TOKEN: "default-token",
-          PUBLIC_TOKEN: "public-token",
-        },
-      ),
-    ).toThrow("applicationId");
   });
 });
 

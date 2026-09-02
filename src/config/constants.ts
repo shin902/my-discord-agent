@@ -1,2 +1,2 @@
-/** Identifier reserved for the default Discord Bot configured by environment variables. */
+/** Identity of the default Discord Bot entry in the discord.bots map. */
 export const DEFAULT_DISCORD_BOT_ID = "personal";
