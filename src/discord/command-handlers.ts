@@ -2,6 +2,7 @@ import type { ChatInputCommandInteraction } from "discord.js";
 import {
   executeBotCommand,
   executeSkillCommand,
+  executeSteerCommand,
 } from "../application/discord-command-service.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { splitMessage } from "../utils/splitMessage.js";
@@ -61,6 +62,26 @@ export async function handleSkillCommand(
     idempotencyKey: `discord-interaction:${interaction.id}`,
     userId: interaction.user.id,
     userIsBot: interaction.user.bot,
+  });
+  await editReply(interaction, result);
+}
+
+/** Adapt a Discord interaction into the steering application use case. */
+export async function handleSteerCommand(
+  interaction: ChatInputCommandInteraction,
+  discordBotId = DEFAULT_DISCORD_BOT_ID,
+): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const channel = interaction.channel as InteractionChannel | null;
+  const isThread = channel?.isThread?.() === true;
+  const groupNameLookupId = await interactionGroupLookupId(interaction);
+  const instruction = interaction.options.getString("instruction", true).trim();
+  const result = await executeSteerCommand({
+    discordBotId,
+    channelId: interaction.channelId,
+    routingChannelId: groupNameLookupId,
+    isThread,
+    instruction,
   });
   await editReply(interaction, result);
 }

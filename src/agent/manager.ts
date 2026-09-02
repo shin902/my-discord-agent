@@ -22,6 +22,7 @@ import { NonRetryableError, TransientError } from "../utils/error.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
+import { registerActiveRun } from "./active-run-registry.js";
 import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
 
 export { resolveBaseUrl, resolveModel, validateModel };
@@ -791,12 +792,36 @@ export async function sendMessage(
   return new Promise<string>((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
+    let initialPayloadSent = false;
+    let controlClosed = false;
+    const pendingControlLines: string[] = [];
+    const sendControl = (instruction: string): void => {
+      if (controlClosed) return;
+      const line = `${JSON.stringify({ type: "steer", instruction })}\n`;
+      if (!initialPayloadSent) {
+        pendingControlLines.push(line);
+      } else {
+        proc.stdin.write(line);
+      }
+    };
+    const unregisterActiveRun = registerActiveRun(
+      groupName,
+      sessionId,
+      sendControl,
+    );
+    const cleanupActiveRunControl = (): void => {
+      if (controlClosed) return;
+      controlClosed = true;
+      pendingControlLines.length = 0;
+      unregisterActiveRun();
+    };
     let timeoutHandle: NodeJS.Timeout | undefined;
     const cancelActiveRun = () => {
       if (cleanupActive) return;
       cleanupActive = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       signal?.removeEventListener("abort", cancelActiveRun);
+      cleanupActiveRunControl();
       runningContainers.delete(containerName);
       proc.kill("SIGKILL");
       void stopContainer(containerName).then(
@@ -955,6 +980,7 @@ export async function sendMessage(
         try {
           await stopContainer(containerName);
         } catch (cleanupError) {
+          cleanupActiveRunControl();
           runningContainers.delete(containerName);
           signal?.removeEventListener("abort", cancelActiveRun);
           reject(
@@ -964,6 +990,7 @@ export async function sendMessage(
           );
           return;
         }
+        cleanupActiveRunControl();
         runningContainers.delete(containerName);
         signal?.removeEventListener("abort", cancelActiveRun);
         reject(
@@ -979,6 +1006,7 @@ export async function sendMessage(
       if (requiresReadyHandshake) cleanupActive = true;
       signal?.removeEventListener("abort", cancelActiveRun);
       clearTimeout(timeoutHandle);
+      cleanupActiveRunControl();
       runningContainers.delete(containerName);
       if (stderrTail) {
         processStderrLine(stderrTail);
@@ -1013,6 +1041,7 @@ export async function sendMessage(
       cleanupActive = true;
       signal?.removeEventListener("abort", cancelActiveRun);
       clearTimeout(timeoutHandle);
+      cleanupActiveRunControl();
       runningContainers.delete(containerName);
       reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
@@ -1024,14 +1053,17 @@ export async function sendMessage(
           cancelActiveRun();
           return;
         }
-        proc.stdin.write(payload);
-        proc.stdin.end();
+        proc.stdin.write(`${payload}\n`);
+        initialPayloadSent = true;
+        for (const line of pendingControlLines.splice(0))
+          proc.stdin.write(line);
       })
       .catch((error) => {
         if (cleanupActive) return;
         cleanupActive = true;
         clearTimeout(timeoutHandle);
         signal?.removeEventListener("abort", cancelActiveRun);
+        cleanupActiveRunControl();
         runningContainers.delete(containerName);
         proc.kill("SIGKILL");
         void stopContainer(containerName).then(

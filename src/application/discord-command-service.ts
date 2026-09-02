@@ -1,3 +1,4 @@
+import { steerActiveRun } from "../agent/active-run-registry.js";
 import {
   isAgentMemoryEligible,
   loadAgentMemoryConfig,
@@ -38,6 +39,14 @@ export interface BotCommandRequest {
   idempotencyKey: string;
 }
 
+export interface SteerCommandRequest {
+  discordBotId: string;
+  channelId: string;
+  routingChannelId: string;
+  isThread: boolean;
+  instruction: string;
+}
+
 function validSessionHandle(handle: string): boolean {
   return /^[A-Za-z0-9_-]{8,64}$/.test(handle);
 }
@@ -45,6 +54,8 @@ function validSessionHandle(handle: string): boolean {
 function validSkillName(name: string): boolean {
   return /^[A-Za-z0-9_-]+$/.test(name);
 }
+
+const MAX_STEERING_INSTRUCTION_LENGTH = 4000;
 
 /** Execute the skill use case without depending on Discord.js. */
 export async function executeSkillCommand(
@@ -115,6 +126,36 @@ export interface BotCommandResult {
 
 function botCommandResult(content: string, accepted = false): BotCommandResult {
   return { content, accepted };
+}
+
+/** Execute a steering instruction without enqueueing a normal message. */
+export async function executeSteerCommand(
+  request: SteerCommandRequest,
+): Promise<string> {
+  const instruction = request.instruction.trim();
+  if (!instruction) return "方針転換の指示を入力してください。";
+  if (instruction.length > MAX_STEERING_INSTRUCTION_LENGTH) {
+    return `方針転換の指示は${MAX_STEERING_INSTRUCTION_LENGTH}文字以内で入力してください。`;
+  }
+
+  const match = await findGroupByChannelId(request.routingChannelId);
+  if (!match) return "このチャンネルはAgentGroupに未登録です。";
+
+  const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
+  if (request.discordBotId !== expectedDiscordBotId) {
+    return "このDiscord BotはこのチャンネルのAgentGroupを担当していません。";
+  }
+  if (match.channel.sessionMode === "shared" && request.isThread) {
+    return "このコマンドは親チャンネルで実行してください。";
+  }
+  if (match.channel.sessionMode !== "shared" && !request.isThread) {
+    return "このコマンドはスレッド内で実行してください。";
+  }
+
+  if (!steerActiveRun(match.group.name, request.channelId, instruction)) {
+    return "steer対象の実行中Agentがありません。";
+  }
+  return "実行中Agentへ方針転換を送りました。";
 }
 
 /** Execute the Bot task-session use case without depending on Discord.js. */

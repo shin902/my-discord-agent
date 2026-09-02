@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { readFile } from "node:fs/promises";
-import { text } from "node:stream/consumers";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
+  type Agent,
   type AgentEvent,
   type AgentMessage,
   type AgentTool,
@@ -38,6 +39,7 @@ import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
+import { createSteeringController } from "./steering.js";
 import {
   createRootDelegationLineage,
   createSubagentTool,
@@ -463,6 +465,7 @@ export async function runAgentLoop(
   identity?: FrozenExecutionIdentity,
   systemPromptAppend?: string,
   botToolEndpoint?: BotToolEndpoint,
+  onAgentCreated?: (agent: Agent) => void,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
@@ -801,6 +804,7 @@ export async function runAgentLoop(
       convertToLlm: defaultConvertToLlm,
       getApiKey,
       sessionId,
+      onAgentCreated,
       onEvent: (event) => {
         if (event.type === "message_end") {
           pendingAppends.push(
@@ -946,8 +950,36 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.stderr.write("__SESSION_STORE_SMOKE_OK__\n");
       return;
     }
-    const raw = await text(process.stdin);
-    const payload = PayloadSchema.parse(JSON.parse(raw || "{}"));
+    const input = createInterface({ input: process.stdin });
+    const firstLine = await new Promise<string>((resolve, reject) => {
+      input.once("line", resolve);
+      input.once("error", reject);
+    });
+    const payload = PayloadSchema.parse(JSON.parse(firstLine || "{}"));
+
+    const steering = createSteeringController(
+      payload.groupName,
+      payload.sessionId,
+    );
+    input.on("line", (line) => {
+      try {
+        const control = JSON.parse(line) as {
+          type?: unknown;
+          instruction?: unknown;
+        };
+        if (
+          control.type === "steer" &&
+          typeof control.instruction === "string" &&
+          control.instruction.length > 0 &&
+          control.instruction.length <= 4000
+        ) {
+          steering.receive(control.instruction);
+        }
+      } catch {
+        // Ignore malformed control frames; stdin is not a general command API.
+      }
+    });
+
     const response = await runAgentLoop(
       payload.groupName,
       payload.sessionId,
@@ -956,7 +988,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       payload,
       payload.systemPromptAppend,
       payload.botToolEndpoint,
+      (agent) => steering.attach(agent),
     );
+    await steering.waitForPersistence();
     // pi-agent-core/pi-ai 側がHTTPクライアントのkeep-aliveソケット等を残し、
     // イベントループが自然に空にならずプロセスがexitしないケースがある。
     // ホスト側（manager.ts）は proc の close イベントを10分タイムアウトで

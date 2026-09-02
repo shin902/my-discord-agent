@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerActiveRun } from "../agent/active-run-registry.js";
 
 const mocks = vi.hoisted(() => ({
   findGroupByChannelId: vi.fn(),
@@ -33,11 +34,11 @@ vi.mock("../queue/repository.js", () => ({
   }),
 }));
 
-const { handleBotCommand, handleSkillCommand } = await import(
-  "./command-handlers.js"
-);
+const { handleBotCommand, handleSkillCommand, handleSteerCommand } =
+  await import("./command-handlers.js");
 const { command: botCommand } = await import("./commands/bot.js");
 const { command: skillCommand } = await import("./commands/skill.js");
+const { command: steerCommand } = await import("./commands/steer.js");
 const {
   deployDiscordCommands,
   deployDiscordCommandsToBots,
@@ -52,6 +53,7 @@ function makeInteraction(options: {
   prompt?: string;
   action?: string;
   session?: string;
+  instruction?: string;
   channelId?: string;
   isThread?: boolean;
   parentId?: string | null;
@@ -68,6 +70,8 @@ function makeInteraction(options: {
         if (name === "bot") return options.bot ?? "coding";
         if (name === "action") return options.action;
         if (name === "session") return options.session;
+        if (name === "instruction")
+          return options.instruction ?? "Change direction";
         return options.prompt ?? "Do it";
       },
     },
@@ -189,11 +193,49 @@ describe("skill command definition", () => {
   });
 });
 
+describe("steer command", () => {
+  it("defines a required instruction option", () => {
+    const json = steerCommand.data.toJSON();
+    expect(json.name).toBe("steer");
+    expect(json.options).toEqual([
+      expect.objectContaining({
+        name: "instruction",
+        type: 3,
+        required: true,
+        max_length: 4000,
+      }),
+    ]);
+  });
+
+  it("delivers to the active session without enqueueing", async () => {
+    const control = vi.fn();
+    const cleanup = registerActiveRun("main", "channel-1", control);
+    const interaction = makeInteraction({ instruction: "Please stop" });
+    await handleSteerCommand(interaction as never);
+    expect(control).toHaveBeenCalledWith("Please stop");
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "実行中Agentへ方針転換を送りました。",
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("displays the no-active-run result without enqueueing", async () => {
+    const interaction = makeInteraction({ instruction: "Please stop" });
+    await handleSteerCommand(interaction as never);
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "steer対象の実行中Agentがありません。",
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+});
+
 describe("command registry", () => {
   it("discovers each command module by its chat-input name", () => {
     expect(DISCORD_COMMANDS.map(({ data }) => data.toJSON().name)).toEqual([
       "bot",
       "skill",
+      "steer",
     ]);
     expect(getDiscordCommand("bot")?.execute).toEqual(expect.any(Function));
     expect(getDiscordCommand("missing")).toBeUndefined();
@@ -213,7 +255,13 @@ describe("deployDiscordCommands", () => {
 
     expect(put).toHaveBeenCalledWith(
       "/applications/application-1/guilds/guild-1/commands",
-      { body: [botCommand.data.toJSON(), skillCommand.data.toJSON()] },
+      {
+        body: [
+          botCommand.data.toJSON(),
+          skillCommand.data.toJSON(),
+          steerCommand.data.toJSON(),
+        ],
+      },
     );
   });
 
@@ -227,7 +275,11 @@ describe("deployDiscordCommands", () => {
     });
 
     expect(put).toHaveBeenCalledWith("/applications/application-1/commands", {
-      body: [botCommand.data.toJSON(), skillCommand.data.toJSON()],
+      body: [
+        botCommand.data.toJSON(),
+        skillCommand.data.toJSON(),
+        steerCommand.data.toJSON(),
+      ],
     });
   });
 

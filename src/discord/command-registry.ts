@@ -1,6 +1,7 @@
 import type { DiscordCommandDefinition } from "./command-contract.js";
 import { command as botCommand } from "./commands/bot.js";
 import { command as skillCommand } from "./commands/skill.js";
+import { command as steerCommand } from "./commands/steer.js";
 
 /**
  * The authoritative list of every Slash Command owned by this application.
@@ -9,6 +10,7 @@ import { command as skillCommand } from "./commands/skill.js";
 export const DISCORD_COMMANDS: readonly DiscordCommandDefinition[] = [
   botCommand,
   skillCommand,
+  steerCommand,
 ];
 
 const commandsByName = new Map(
