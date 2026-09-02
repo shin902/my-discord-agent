@@ -2,7 +2,10 @@ import type { DiscordCommandDefinition } from "./command-contract.js";
 import { command as botCommand } from "./commands/bot.js";
 import { command as skillCommand } from "./commands/skill.js";
 
-/** All Discord commands are discovered by adding a module to this registry. */
+/**
+ * The authoritative list of every Slash Command owned by this application.
+ * Deploy replaces the complete command set in each selected scope from here.
+ */
 export const DISCORD_COMMANDS: readonly DiscordCommandDefinition[] = [
   botCommand,
   skillCommand,

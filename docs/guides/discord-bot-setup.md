@@ -64,7 +64,7 @@ DISCORD_APPLICATION_ID=... DISCORD_BOT_TOKEN=... pnpm discord:deploy -- global
 DISCORD_APPLICATION_ID=... DISCORD_BOT_TOKEN=... pnpm discord:deploy -- guild <guild-id>
 ```
 
-guild command は対象サーバーへ直ちに反映され、global command は Discord 側の反映に時間がかかる場合があります。command の追加・定義は `src/discord/commands/` と registry の contract に従います。
+guild command は対象サーバーへ直ちに反映され、global command は Discord 側の反映に時間がかかる場合があります。`src/discord/command-registry.ts` がこのapplicationの全Slash Commandの唯一の正本であり、deployは選択したglobalまたはguild scopeのcommand一覧を完全置換します。別の仕組みや手動で同じscopeへ登録したcommandは、次回deploy時に削除されます。commandの追加・定義は `src/discord/commands/` とregistryのcontractに従います。
 
 
 

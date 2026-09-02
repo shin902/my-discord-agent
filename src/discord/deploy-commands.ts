@@ -1,68 +1,5 @@
-import {
-  type APIApplicationCommand,
-  type Client,
-  REST,
-  Routes,
-} from "discord.js";
-import { DISCORD_COMMANDS, getDiscordCommandData } from "./command-registry.js";
-
-export interface DiscordCommandSyncRetryOptions {
-  maxAttempts?: number;
-  retryDelayMs?: number;
-}
-
-/** Synchronize known commands without replacing unrelated application commands. */
-export async function synchronizeDiscordCommands(
-  client: Client,
-): Promise<void> {
-  if (!client.application)
-    throw new Error("Discord application が未初期化です");
-  const existingCommands = await client.application.commands.fetch();
-  for (const definition of DISCORD_COMMANDS) {
-    const command = definition.data.toJSON();
-    const existing = existingCommands.find(
-      (registered) =>
-        registered.name === command.name && registered.type === command.type,
-    );
-    if (existing) {
-      await client.application.commands.edit(existing.id, command);
-    } else {
-      await client.application.commands.create(command);
-    }
-  }
-}
-
-/** Retry runtime command synchronization for callers that still opt into it. */
-export async function synchronizeDiscordCommandsWithRetry(
-  client: Client,
-  options: DiscordCommandSyncRetryOptions = {},
-): Promise<void> {
-  const maxAttempts = options.maxAttempts ?? 3;
-  const retryDelayMs = options.retryDelayMs ?? 1_000;
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    console.log(
-      `[discord-command] コマンド同期を試行します (${attempt}/${maxAttempts})`,
-    );
-    try {
-      await synchronizeDiscordCommands(client);
-      console.log(
-        `[discord-command] コマンド同期に成功しました (${attempt}/${maxAttempts})`,
-      );
-      return;
-    } catch (error) {
-      lastError = error;
-      console.error(
-        `[discord-command] コマンド同期に失敗しました (${attempt}/${maxAttempts}):`,
-        error,
-      );
-      if (attempt < maxAttempts) {
-        await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
-      }
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
+import { type APIApplicationCommand, REST, Routes } from "discord.js";
+import { getDiscordCommandData } from "./command-registry.js";
 
 export type DiscordCommandDeployScope = "global" | "guild";
 
@@ -74,7 +11,12 @@ export interface DiscordCommandDeployOptions {
   rest?: REST;
 }
 
-/** Deploy command definitions through REST, independently of the runtime Client. */
+/**
+ * Replace every command in one application or guild scope from the registry.
+ * The registry is the authoritative source; commands registered elsewhere in
+ * the same scope are intentionally removed by Discord's bulk-overwrite API.
+ * Runtime startup does not call this function.
+ */
 export async function deployDiscordCommands(
   options: DiscordCommandDeployOptions,
 ): Promise<APIApplicationCommand[]> {
