@@ -295,6 +295,9 @@ describe("sendMessage: Docker 起動構成", () => {
       stdin: {
         write: vi.fn((line: string, callback?: (error?: Error) => void) => {
           callback?.();
+          if (line.includes('"content"')) {
+            stderrHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
+          }
           if (line.startsWith('{"type":"steer"')) {
             const requestId = (JSON.parse(line) as { requestId: string })
               .requestId;
@@ -315,10 +318,7 @@ describe("sendMessage: Docker 起動構成", () => {
       },
       stderr: {
         on: vi.fn((event: string, callback: (chunk: Buffer) => void) => {
-          if (event === "data") {
-            stderrHandler = callback;
-            callback(Buffer.from("__AGENT_ACTIVE__\n"));
-          }
+          if (event === "data") stderrHandler = callback;
         }),
       },
       on: vi.fn((event: string, callback: (code: number | null) => void) => {
@@ -743,7 +743,11 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("同じ group/session の active run は Agent.abort を優先する", async () => {
     let closeHandler: ((code: number | null) => void) | undefined;
+    let activeHandler: ((chunk: Buffer) => void) | undefined;
     const proc = makeProc();
+    proc.stderr.on = vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+      if (event === "data") activeHandler = cb;
+    }) as never;
     // Writable.write(false) indicates backpressure, not delivery failure.
     proc.stdin.write.mockReturnValue(false);
     proc.on = vi.fn((event: string, cb: (code: number | null) => void) => {
@@ -755,6 +759,10 @@ describe("sendMessage: Docker 起動構成", () => {
     const running = sendMessage("test-group", "session-1", "hi");
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(proc.stdin.write.mock.calls[0]?.[0]).toContain('"content":"hi"'),
+    );
+    activeHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
 
     const stopping = stopAgentRun("test-group", "session-1");
     expect(proc.stdin.write).toHaveBeenCalledWith('{"type":"abort"}\n');
@@ -778,12 +786,16 @@ describe("sendMessage: Docker 起動構成", () => {
     }) as never;
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
+    const { steerActiveRun } = await import("./active-run-registry.js");
     const running = sendMessage("test-group", "session-1", "hi", {
       onContainerStarted: vi.fn(),
     });
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
 
+    await expect(
+      steerActiveRun("test-group", "session-1", "before active"),
+    ).resolves.toBe("unavailable");
     await expect(stopAgentRun("test-group", "session-1")).resolves.toEqual({
       status: "no-active-run",
     });
@@ -795,6 +807,10 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(JSON.parse(proc.stdin.write.mock.calls[0]?.[0] as string)).toEqual(
       expect.objectContaining({ content: "hi" }),
     );
+    await expect(
+      steerActiveRun("test-group", "session-1", "before active"),
+    ).resolves.toBe("unavailable");
+    readyHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
 
     const stopping = stopAgentRun("test-group", "session-1");
     expect(proc.stdin.write).toHaveBeenCalledWith('{"type":"abort"}\n');
@@ -806,7 +822,11 @@ describe("sendMessage: Docker 起動構成", () => {
   it("abort timeout falls back to hard kill and cleanup", async () => {
     vi.useFakeTimers();
     let closeHandler: ((code: number | null) => void) | undefined;
+    let activeHandler: ((chunk: Buffer) => void) | undefined;
     const proc = makeProc();
+    proc.stderr.on = vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+      if (event === "data") activeHandler = cb;
+    }) as never;
     proc.stdin.write.mockReturnValue(true);
     proc.on = vi.fn((event: string, cb: (code: number | null) => void) => {
       if (event === "close") closeHandler = cb;
@@ -824,6 +844,10 @@ describe("sendMessage: Docker 起動構成", () => {
     const running = sendMessage("test-group", "session-1", "hi");
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(proc.stdin.write.mock.calls[0]?.[0]).toContain('"content":"hi"'),
+    );
+    activeHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
 
     const stopping = stopAgentRun("test-group", "session-1");
     await vi.advanceTimersByTimeAsync(1_000);
@@ -836,7 +860,11 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("cleanup failure keeps the active registry entry until runner close", async () => {
     let closeHandler: ((code: number | null) => void) | undefined;
+    let activeHandler: ((chunk: Buffer) => void) | undefined;
     const proc = makeProc();
+    proc.stderr.on = vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+      if (event === "data") activeHandler = cb;
+    }) as never;
     proc.stdin.write.mockReturnValue(true);
     proc.on = vi.fn((event: string, cb: (code: number | null) => void) => {
       if (event === "close") closeHandler = cb;
@@ -848,6 +876,10 @@ describe("sendMessage: Docker 起動構成", () => {
     const running = sendMessage("test-group", "session-1", "hi");
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(proc.stdin.write.mock.calls[0]?.[0]).toContain('"content":"hi"'),
+    );
+    activeHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
 
     const stopping = stopAgentRun("test-group", "session-1");
     await expect(stopping).resolves.toMatchObject({

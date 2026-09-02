@@ -1037,7 +1037,23 @@ export async function sendMessage(
         }
         return;
       }
-      if (line === AGENT_ACTIVE_MARKER) return;
+      if (line === AGENT_ACTIVE_MARKER) {
+        if (!controlClosed) {
+          try {
+            unregisterActiveRun = registerActiveRun(
+              groupName,
+              sessionId,
+              sendControl,
+              stopCurrentRun,
+            );
+          } catch (error) {
+            cleanupActiveRunControl(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
+        }
+        return;
+      }
       if (line === RUNNER_RUN_COMPLETE_MARKER) {
         // runAgentLoop は完了しており、以後の steer は Agent が再開しないため拒否する。
         cleanupActiveRunControl();
@@ -1213,20 +1229,6 @@ export async function sendMessage(
         });
         if (cleanupActive) return;
         initialPayloadSent = true;
-        if (!controlClosed) {
-          try {
-            unregisterActiveRun = registerActiveRun(
-              groupName,
-              sessionId,
-              sendControl,
-              stopCurrentRun,
-            );
-          } catch (error) {
-            cleanupActiveRunControl(
-              error instanceof Error ? error : new Error(String(error)),
-            );
-          }
-        }
       })
       .catch((error) => {
         if (cleanupActive) return;
