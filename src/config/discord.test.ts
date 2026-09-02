@@ -42,10 +42,9 @@ afterEach(async () => {
 
 describe("loadDiscordConfig", () => {
   it("requires an explicit personal Bot configuration", async () => {
-    await expect(loadDiscordConfig({ defaultModel: {} })).rejects.toThrow(
-      'Discord Bot "personal" の設定がありません',
-    );
-    await expect(loadDiscordConfig({ discord: {} })).rejects.toThrow(
+    await expect(loadDiscordConfig({ defaultModel: {} })).rejects.toThrow();
+    await expect(loadDiscordConfig({ discord: {} })).rejects.toThrow();
+    await expect(loadDiscordConfig({ discord: { bots: {} } })).rejects.toThrow(
       'Discord Bot "personal" の設定がありません',
     );
   });

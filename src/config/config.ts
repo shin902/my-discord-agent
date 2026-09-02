@@ -27,7 +27,7 @@ const DiscordBotConfigSchema = z.object({
 });
 
 export const DiscordConfigSchema = z.object({
-  bots: z.record(z.string().min(1), DiscordBotConfigSchema).default({}),
+  bots: z.record(z.string().min(1), DiscordBotConfigSchema),
 });
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
 
