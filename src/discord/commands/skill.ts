@@ -18,5 +18,3 @@ export const command: DiscordCommandDefinition = {
   execute: (interaction, context) =>
     handleSkillCommand(interaction, context.discordBotId),
 };
-
-export default command;

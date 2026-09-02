@@ -17,5 +17,3 @@ export interface DiscordCommandDefinition {
     context: DiscordCommandContext,
   ) => Promise<void>;
 }
-
-export type DiscordCommand = DiscordCommandDefinition;

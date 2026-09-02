@@ -28,5 +28,3 @@ export const command: DiscordCommandDefinition = {
   execute: (interaction, context) =>
     handleBotCommand(interaction, context.discordBotId),
 };
-
-export default command;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockExecute = vi.hoisted(() => vi.fn());
 const mockGetDiscordCommand = vi.hoisted(() => vi.fn());
@@ -12,6 +12,10 @@ const { createDiscordInteractionRouter, routeDiscordInteraction } =
 beforeEach(() => {
   mockExecute.mockReset().mockResolvedValue(undefined);
   mockGetDiscordCommand.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("routeDiscordInteraction", () => {
@@ -59,7 +63,6 @@ describe("createDiscordInteractionRouter", () => {
       content: "コマンドの処理中に予期しないエラーが発生しました。",
       ephemeral: true,
     });
-    vi.restoreAllMocks();
   });
 
   it("edits a deferred interaction for an unexpected error", async () => {
@@ -83,7 +86,6 @@ describe("createDiscordInteractionRouter", () => {
       content: "コマンドの処理中に予期しないエラーが発生しました。",
     });
     expect(interaction.reply).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
   });
 
   it("logs unexpected command failures without constructing runtime services", async () => {
@@ -102,6 +104,5 @@ describe("createDiscordInteractionRouter", () => {
       "[handler] /example コマンドの処理に失敗しました:",
       error,
     );
-    errorSpy.mockRestore();
   });
 });
