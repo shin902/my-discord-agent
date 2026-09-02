@@ -513,6 +513,7 @@ export async function runAgentLoop(
   systemPromptAppend?: string,
   botToolEndpoint?: BotToolEndpoint,
   onAgentCreated?: (agent: Agent) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
@@ -851,6 +852,7 @@ export async function runAgentLoop(
       convertToLlm: defaultConvertToLlm,
       getApiKey,
       sessionId,
+      signal,
       onAgentCreated,
       onEvent: (event) => {
         if (
@@ -1023,6 +1025,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       return;
     }
     const payload = await payloadPromise;
+    const abortController = new AbortController();
 
     const steering = createSteeringController(
       payload.groupName,
@@ -1045,6 +1048,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             requestId?: unknown;
             instruction?: unknown;
           };
+          if (control.type === "abort") {
+            abortController.abort();
+            return;
+          }
           if (typeof control.requestId !== "string") return;
           const validInstruction =
             control.type === "steer" &&
@@ -1075,6 +1082,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           steering.attach(agent);
           process.stderr.write("__AGENT_ACTIVE__\n");
         },
+        abortController.signal,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

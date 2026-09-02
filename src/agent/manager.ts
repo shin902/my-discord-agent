@@ -23,7 +23,11 @@ import { NonRetryableError, TransientError } from "../utils/error.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
-import { registerActiveRun } from "./active-run-registry.js";
+import {
+  type ActiveRunStopResult,
+  registerActiveRun,
+  stopActiveRun,
+} from "./active-run-registry.js";
 import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
 
 export { resolveBaseUrl, resolveModel, validateModel };
@@ -222,6 +226,21 @@ let storedProxyPort: number | null = null;
 // `docker kill <name>` だけでは何も止められない。クライアントプロセス自体も
 // 直接 kill することで、pull 中・コンテナ起動後どちらのフェーズでも確実に止める。
 const runningContainers = new Map<string, ChildProcess>();
+
+const STOP_GRACE_MS = 1_000;
+export type StopAgentRunResult =
+  | { status: "no-active-run" }
+  | ActiveRunStopResult;
+
+/** Stop only the currently active runner for the exact group/session pair. */
+export async function stopAgentRun(
+  groupName: string,
+  sessionId: string,
+): Promise<StopAgentRunResult> {
+  return (
+    (await stopActiveRun(groupName, sessionId)) ?? { status: "no-active-run" }
+  );
+}
 
 /**
  * 実行中の全エージェントコンテナ（および対応する docker run クライアント
@@ -798,6 +817,12 @@ export async function sendMessage(
     runningContainers.set(containerName, proc);
     let initialPayloadSent = false;
     let controlClosed = false;
+    let resolveFinished!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      resolveFinished = resolve;
+    });
+    let stopRequested = false;
+    let forceKillRequested = false;
     const pendingSteers = new Map<
       string,
       {
@@ -816,15 +841,22 @@ export async function sendMessage(
       if (error) pending.reject(error);
       else pending.resolve(accepted);
     };
-    const writeControlLine = (requestId: string, line: string): void => {
+    const closeControlChannel = (reason?: Error): void => {
+      if (controlClosed) return;
+      controlClosed = true;
+      const failure =
+        reason ?? new Error("runner closed before steering was acknowledged");
+      for (const requestId of pendingSteers.keys()) {
+        settleSteer(requestId, false, failure);
+      }
+    };
+    const writeControlLine = (line: string): void => {
       try {
         proc.stdin.write(line, (error?: Error | null) => {
-          if (error) settleSteer(requestId, false, error);
+          if (error) closeControlChannel(error);
         });
       } catch (error) {
-        settleSteer(
-          requestId,
-          false,
+        closeControlChannel(
           error instanceof Error ? error : new Error(String(error)),
         );
       }
@@ -840,20 +872,48 @@ export async function sendMessage(
       const delivery = new Promise<boolean>((resolve, reject) => {
         pendingSteers.set(requestId, { resolve, reject });
       });
-      writeControlLine(requestId, line);
+      writeControlLine(line);
       return delivery;
     };
-    let unregisterActiveRun: (() => void) | undefined;
-    const cleanupActiveRunControl = (reason?: Error): void => {
-      if (controlClosed) return;
-      controlClosed = true;
-      unregisterActiveRun?.();
-      unregisterActiveRun = undefined;
-      const failure =
-        reason ?? new Error("runner closed before steering was acknowledged");
-      for (const requestId of pendingSteers.keys()) {
-        settleSteer(requestId, false, failure);
+    const stopCurrentRun = async (): Promise<ActiveRunStopResult> => {
+      stopRequested = true;
+      let controlSent = false;
+      try {
+        proc.stdin.write('{"type":"abort"}\n');
+        controlSent = true;
+      } catch {
+        // A closed control channel is handled by the hard-kill fallback below.
       }
+      if (controlSent) {
+        let timer: NodeJS.Timeout | undefined;
+        const timedOut = new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), STOP_GRACE_MS);
+        });
+        const stopped = finished.then(() => true as const);
+        const cooperative = await Promise.race([stopped, timedOut]);
+        if (timer) clearTimeout(timer);
+        if (cooperative) return { status: "aborted" };
+      }
+
+      forceKillRequested = true;
+      proc.kill("SIGKILL");
+      try {
+        await stopContainer(containerName);
+        await finished;
+        return { status: "force-killed" };
+      } catch (error) {
+        return {
+          status: "cleanup-failure",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
+    let unregisterActiveRun = (): void => {};
+    const cleanupActiveRunControl = (reason?: Error): void => {
+      closeControlChannel(reason);
+      unregisterActiveRun();
+      unregisterActiveRun = () => {};
+      resolveFinished();
     };
     let timeoutHandle: NodeJS.Timeout | undefined;
     const cancelActiveRun = () => {
@@ -908,6 +968,7 @@ export async function sendMessage(
       const timing: AgentExecutionTiming = {
         termination,
         ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(forceKillRequested ? { stopReason: "force-killed" } : {}),
         preparationMs: dockerStartedAt - executionStartedAt,
         dockerRunMs: finishedAt - dockerStartedAt,
         ...(pullCompletedAt !== undefined
@@ -921,7 +982,9 @@ export async function sendMessage(
               promptMs: agentTiming.promptMs,
               assistantTurns: agentTiming.assistantTurns,
               usage: agentTiming.usage,
-              stopReason: agentTiming.stopReason,
+              stopReason: forceKillRequested
+                ? "force-killed"
+                : agentTiming.stopReason,
               ...(agentTiming.systemPromptSnapshotHash !== undefined
                 ? {
                     systemPromptSnapshotHash:
@@ -975,12 +1038,13 @@ export async function sendMessage(
         return;
       }
       if (line === AGENT_ACTIVE_MARKER) {
-        if (!unregisterActiveRun) {
+        if (!controlClosed) {
           try {
             unregisterActiveRun = registerActiveRun(
               groupName,
               sessionId,
               sendControl,
+              stopCurrentRun,
             );
           } catch (error) {
             cleanupActiveRunControl(
@@ -1103,6 +1167,8 @@ export async function sendMessage(
             `agent error: ${runnerError ?? "assistant stopReason=error"}`,
           ),
         );
+      } else if (stopRequested) {
+        reject(new NonRetryableError("エージェントの停止が要求されました"));
       } else if (code === 0) resolve(stdout.trim());
       else if (code === 2) reject(new TransientError(plainStderr.trim()));
       else if (code === null)
@@ -1132,7 +1198,7 @@ export async function sendMessage(
         // the corresponding request instead of reporting a false success.
         if (cleanupActive) return;
         if (initialPayloadSent) {
-          cleanupActiveRunControl(err);
+          closeControlChannel(err);
           return;
         }
         cleanupActive = true;

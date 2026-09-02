@@ -3,6 +3,7 @@ import {
   executeBotCommand,
   executeSkillCommand,
   executeSteerCommand,
+  executeStopCommand,
 } from "../application/discord-command-service.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { splitMessage } from "../utils/splitMessage.js";
@@ -62,6 +63,24 @@ export async function handleSkillCommand(
     idempotencyKey: `discord-interaction:${interaction.id}`,
     userId: interaction.user.id,
     userIsBot: interaction.user.bot,
+  });
+  await editReply(interaction, result);
+}
+
+/** Adapt a Discord interaction into the stop application use case. */
+export async function handleStopCommand(
+  interaction: ChatInputCommandInteraction,
+  discordBotId = DEFAULT_DISCORD_BOT_ID,
+): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const channel = interaction.channel as InteractionChannel | null;
+  const isThread = channel?.isThread?.() === true;
+  const routingChannelId = await interactionGroupLookupId(interaction);
+  const result = await executeStopCommand({
+    discordBotId,
+    channelId: interaction.channelId,
+    routingChannelId,
+    isThread,
   });
   await editReply(interaction, result);
 }

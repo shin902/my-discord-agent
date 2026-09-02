@@ -1,4 +1,5 @@
 import { acquireActiveRun } from "../agent/active-run-registry.js";
+import { stopAgentRun } from "../agent/manager.js";
 import {
   isAgentMemoryEligible,
   loadAgentMemoryConfig,
@@ -45,6 +46,13 @@ export interface SteerCommandRequest {
   routingChannelId: string;
   isThread: boolean;
   instruction: string;
+}
+
+export interface StopCommandRequest {
+  discordBotId: string;
+  channelId: string;
+  routingChannelId: string;
+  isThread: boolean;
 }
 
 function validSessionHandle(handle: string): boolean {
@@ -126,6 +134,43 @@ export interface BotCommandResult {
 
 function botCommandResult(content: string, accepted = false): BotCommandResult {
   return { content, accepted };
+}
+
+/** Stop the active agent run for the exact Discord group/session scope. */
+export async function executeStopCommand(
+  request: StopCommandRequest,
+): Promise<string> {
+  const match = await findGroupByChannelId(request.routingChannelId);
+  if (!match) return "このチャンネルはAgentGroupに未登録です。";
+
+  const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
+  if (request.discordBotId !== expectedDiscordBotId) {
+    return "このDiscord BotはこのチャンネルのAgentGroupを担当していません。";
+  }
+  if (match.channel.sessionMode === "shared" && request.isThread) {
+    return "このコマンドは親チャンネルで実行してください。";
+  }
+  if (match.channel.sessionMode !== "shared" && !request.isThread) {
+    return "このコマンドはスレッド内で実行してください。";
+  }
+
+  try {
+    const result = await stopAgentRun(match.group.name, request.channelId);
+    switch (result.status) {
+      case "aborted":
+        return "実行を停止しました（協調的abort）。";
+      case "force-killed":
+        return "実行を停止しました（force-killed）。";
+      case "no-active-run":
+        return "停止対象の実行中Agentはありません。";
+      case "cleanup-failure":
+        console.error("[discord-stop] runner cleanup failed:", result.error);
+        return "実行停止後の後始末に失敗しました。";
+    }
+  } catch (error) {
+    console.error("[discord-stop] stop failed:", error);
+    return "Agentの停止に失敗しました。";
+  }
 }
 
 /** Execute a steering instruction without enqueueing a normal message. */
