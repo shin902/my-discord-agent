@@ -38,6 +38,54 @@ describe("routeDiscordInteraction", () => {
 });
 
 describe("createDiscordInteractionRouter", () => {
+  it("replies ephemerally when an unexpected error occurs before acknowledgement", async () => {
+    const error = new Error("unexpected");
+    mockGetDiscordCommand.mockReturnValue({
+      execute: vi.fn().mockRejectedValue(error),
+    });
+    const interaction = {
+      commandName: "example",
+      deferred: false,
+      replied: false,
+      reply: vi.fn().mockResolvedValue(undefined),
+      editReply: vi.fn(),
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    createDiscordInteractionRouter("personal")(interaction as never);
+    await vi.waitFor(() => expect(interaction.reply).toHaveBeenCalled());
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "コマンドの処理中に予期しないエラーが発生しました。",
+      ephemeral: true,
+    });
+    vi.restoreAllMocks();
+  });
+
+  it("edits a deferred interaction for an unexpected error", async () => {
+    const error = new Error("unexpected");
+    mockGetDiscordCommand.mockReturnValue({
+      execute: vi.fn().mockRejectedValue(error),
+    });
+    const interaction = {
+      commandName: "example",
+      deferred: true,
+      replied: false,
+      reply: vi.fn(),
+      editReply: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    createDiscordInteractionRouter("personal")(interaction as never);
+    await vi.waitFor(() => expect(interaction.editReply).toHaveBeenCalled());
+
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "コマンドの処理中に予期しないエラーが発生しました。",
+    });
+    expect(interaction.reply).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
   it("logs unexpected command failures without constructing runtime services", async () => {
     const error = new Error("unexpected");
     mockGetDiscordCommand.mockReturnValue({
