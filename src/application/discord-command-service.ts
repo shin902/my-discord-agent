@@ -4,6 +4,7 @@ import {
 } from "../config/agent-memory.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import {
   formatBotTaskSessionList,
@@ -13,17 +14,6 @@ import {
 } from "../queue/bot-task-sessions.js";
 import type { BotTaskSession } from "../queue/repository.js";
 import { getQueueRepository } from "../queue/repository.js";
-
-const DEFAULT_DISCORD_BOT_ID = "personal";
-
-export interface DiscordCommandResult {
-  status: "accepted" | "rejected";
-  content: string;
-}
-
-export interface DiscordCommandLifecycle {
-  beforeEnqueue?: () => Promise<void>;
-}
 
 export interface SkillCommandRequest {
   discordBotId: string;
@@ -48,14 +38,6 @@ export interface BotCommandRequest {
   idempotencyKey: string;
 }
 
-function rejected(content: string): DiscordCommandResult {
-  return { status: "rejected", content };
-}
-
-function accepted(content: string): DiscordCommandResult {
-  return { status: "accepted", content };
-}
-
 function validSessionHandle(handle: string): boolean {
   return /^[A-Za-z0-9_-]{8,64}$/.test(handle);
 }
@@ -67,29 +49,24 @@ function validSkillName(name: string): boolean {
 /** Execute the skill use case without depending on Discord.js. */
 export async function executeSkillCommand(
   request: SkillCommandRequest,
-  lifecycle: DiscordCommandLifecycle = {},
-): Promise<DiscordCommandResult> {
+): Promise<string> {
   if (!validSkillName(request.skillName)) {
-    return rejected(
-      "スキル名には英数字、ハイフン、アンダースコアのみ使用できます。",
-    );
+    return "スキル名には英数字、ハイフン、アンダースコアのみ使用できます。";
   }
 
   const match = await findGroupByChannelId(request.routingChannelId);
-  if (!match) return rejected("このチャンネルはAgentGroupに未登録です。");
+  if (!match) return "このチャンネルはAgentGroupに未登録です。";
 
   const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
   if (request.discordBotId !== expectedDiscordBotId) {
-    return rejected(
-      "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
-    );
+    return "このDiscord BotはこのチャンネルのAgentGroupを担当していません。";
   }
 
   if (match.channel.sessionMode === "shared" && request.isThread) {
-    return rejected("このコマンドは親チャンネルで実行してください。");
+    return "このコマンドは親チャンネルで実行してください。";
   }
   if (match.channel.sessionMode !== "shared" && !request.isThread) {
-    return rejected("このコマンドはスレッド内で実行してください。");
+    return "このコマンドはスレッド内で実行してください。";
   }
 
   try {
@@ -114,7 +91,6 @@ export async function executeSkillCommand(
       console.error("[handler] Agent Memory eligibility check failed:", error);
     }
 
-    await lifecycle.beforeEnqueue?.();
     await getQueueRepository().enqueue({
       channelId: request.channelId,
       groupName: match.group.name,
@@ -126,34 +102,29 @@ export async function executeSkillCommand(
       idempotencyKey: request.idempotencyKey,
       ...(Object.keys(configOverride).length > 0 ? { configOverride } : {}),
     });
-    return accepted(`スキル「${request.skillName}」の実行を受け付けました。`);
+    return `スキル「${request.skillName}」の実行を受け付けました。`;
   } catch (error) {
-    return rejected(
-      `スキルの実行を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    return `スキルの実行を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
 
 /** Execute the Bot task-session use case without depending on Discord.js. */
 export async function executeBotCommand(
   request: BotCommandRequest,
-  lifecycle: DiscordCommandLifecycle = {},
-): Promise<DiscordCommandResult> {
+): Promise<string> {
   const match = await findGroupByChannelId(request.routingChannelId);
-  if (!match) return rejected("このチャンネルはAgentGroupに未登録です。");
+  if (!match) return "このチャンネルはAgentGroupに未登録です。";
 
   const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
   if (request.discordBotId !== expectedDiscordBotId) {
-    return rejected(
-      "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
-    );
+    return "このDiscord BotはこのチャンネルのAgentGroupを担当していません。";
   }
 
   try {
     const registry = await loadBotRegistry();
     resolveBotProfile(registry, request.botId, match.group.name);
   } catch (error) {
-    return rejected(error instanceof Error ? error.message : String(error));
+    return error instanceof Error ? error.message : String(error);
   }
 
   if (
@@ -161,39 +132,34 @@ export async function executeBotCommand(
     request.action !== "resume" &&
     request.action !== "list"
   ) {
-    return rejected("action は run、resume、list のいずれかです。");
+    return "action は run、resume、list のいずれかです。";
   }
   if (request.action === "list") {
     if (request.prompt || request.sessionHandle) {
-      return rejected("list では prompt と session は指定できません。");
+      return "list では prompt と session は指定できません。";
     }
     try {
       const sessions = getQueueRepository().listBotTaskSessions(
         match.group.name,
         request.botId,
       );
-      return accepted(formatBotTaskSessionList(sessions));
+      return formatBotTaskSessionList(sessions);
     } catch (error) {
-      return rejected(
-        `Task Session一覧を取得できませんでした: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return `Task Session一覧を取得できませんでした: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
-  if (!request.prompt) return rejected("prompt は必須です。");
+  if (!request.prompt) return "prompt は必須です。";
   if (request.action === "run" && request.sessionHandle) {
-    return rejected(
-      "新規実行では session を指定できません。resume を使用してください。",
-    );
+    return "新規実行では session を指定できません。resume を使用してください。";
   }
   if (
     request.action === "resume" &&
     !validSessionHandle(request.sessionHandle)
   ) {
-    return rejected("不正または空のTask Session handleです。");
+    return "不正または空のTask Session handleです。";
   }
 
   try {
-    await lifecycle.beforeEnqueue?.();
     const repository = getQueueRepository();
     const now = new Date().toISOString();
     const payload = {
@@ -213,7 +179,7 @@ export async function executeBotCommand(
         now,
         payload,
       );
-      if (!result) return rejected("指定されたTask Sessionは見つかりません。");
+      if (!result) return "指定されたTask Sessionは見つかりません。";
       session = result.session;
     } else {
       const result = repository.createBotTaskSessionAndEnqueue(
@@ -230,12 +196,8 @@ export async function executeBotCommand(
       );
       session = result.session;
     }
-    return accepted(
-      `Botへの依頼を受け付けました。Task Session: ${session.handle}`,
-    );
+    return `Botへの依頼を受け付けました。Task Session: ${session.handle}`;
   } catch (error) {
-    return rejected(
-      `Botへの依頼を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    return `Botへの依頼を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`;
   }
 }

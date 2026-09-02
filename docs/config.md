@@ -395,7 +395,7 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 ### `discord`
 
-Discord runtime は暗黙のデフォルト Bot（ID は `personal`）と、`discord.bots` に列挙した追加 Bot を使用します。各追加 Bot の `tokenEnv` はトークンを読む環境変数名（トークン値は設定ファイルへ書かない）です。Slash Command deploy には各追加 Bot の非機密な `applicationId` を設定します。環境変数で管理する場合は `applicationIdEnv` を使えます。`pnpm discord:deploy -- global` または `pnpm discord:deploy -- guild <guild-id>` は、同じ `src/discord/command-registry.ts` の command set を全 Bot application の選択 scope へ bulk overwrite します。
+Discord runtime は暗黙のデフォルト Bot（ID は `personal`）と、`discord.bots` に列挙した追加 Bot を使用します。各追加 Bot の `tokenEnv` はトークンを読む環境変数名（トークン値は設定ファイルへ書かない）です。Slash Command deploy には各追加 Bot の非機密な `applicationId` を設定します。`pnpm discord:deploy -- global` または `pnpm discord:deploy -- guild <guild-id>` は、同じ `src/discord/command-registry.ts` の command set を全 Bot application の選択 scope へ bulk overwrite します。
 
 ```json
 {

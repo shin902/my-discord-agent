@@ -1,5 +1,5 @@
 import { type Client, Events, type Message } from "discord.js";
-import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { handleLiveDiscordMessage } from "./intake.js";
 import { createDiscordInteractionRouter } from "./interaction-router.js";
 

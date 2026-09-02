@@ -1,6 +1,6 @@
 import { type APIApplicationCommand, REST, Routes } from "discord.js";
 import type { DiscordConfig } from "../config/config.js";
-import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { getDiscordCommandData } from "./command-registry.js";
 
 export type DiscordCommandDeployScope = "global" | "guild";
@@ -157,12 +157,10 @@ export function resolveDiscordCommandDeployTargets(
         `Discord Bot ID は予約されています: ${DEFAULT_DISCORD_BOT_ID}`,
       );
     }
-    const applicationId =
-      bot.applicationId ??
-      (bot.applicationIdEnv ? env[bot.applicationIdEnv] : undefined);
+    const applicationId = bot.applicationId;
     if (!applicationId) {
       throw new Error(
-        `Discord Bot "${botId}" の applicationId が設定されていません（applicationId または applicationIdEnv が必要です）`,
+        `Discord Bot "${botId}" の applicationId が設定されていません`,
       );
     }
     const token = env[bot.tokenEnv];

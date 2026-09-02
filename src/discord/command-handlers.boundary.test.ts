@@ -30,14 +30,8 @@ function makeInteraction(options: Record<string, string | undefined>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.executeSkillCommand.mockResolvedValue({
-    status: "rejected",
-    content: "invalid",
-  });
-  mocks.executeBotCommand.mockResolvedValue({
-    status: "rejected",
-    content: "invalid",
-  });
+  mocks.executeSkillCommand.mockResolvedValue("invalid");
+  mocks.executeBotCommand.mockResolvedValue("invalid");
 });
 
 describe("Discord command adapter boundary", () => {
@@ -49,20 +43,19 @@ describe("Discord command adapter boundary", () => {
 
     await handleSkillCommand(interaction as never, "secondary");
 
-    expect(mocks.executeSkillCommand).toHaveBeenCalledWith(
-      {
-        discordBotId: "secondary",
-        channelId: "channel-1",
-        routingChannelId: "channel-1",
-        isThread: false,
-        skillName: "session-logs",
-        prompt: "find",
-        idempotencyKey: "discord-interaction:interaction-1",
-        userId: "user-1",
-        userIsBot: false,
-      },
-      expect.objectContaining({ beforeEnqueue: expect.any(Function) }),
-    );
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({ content: "invalid" });
+    expect(mocks.executeSkillCommand).toHaveBeenCalledWith({
+      discordBotId: "secondary",
+      channelId: "channel-1",
+      routingChannelId: "channel-1",
+      isThread: false,
+      skillName: "session-logs",
+      prompt: "find",
+      idempotencyKey: "discord-interaction:interaction-1",
+      userId: "user-1",
+      userIsBot: false,
+    });
     expect(mocks.executeSkillCommand.mock.calls[0]?.[0]).not.toHaveProperty(
       "interaction",
     );
@@ -78,18 +71,17 @@ describe("Discord command adapter boundary", () => {
 
     await handleBotCommand(interaction as never, "secondary");
 
-    expect(mocks.executeBotCommand).toHaveBeenCalledWith(
-      {
-        discordBotId: "secondary",
-        channelId: "channel-1",
-        routingChannelId: "channel-1",
-        botId: "coding",
-        action: "resume",
-        prompt: "continue",
-        sessionHandle: "task-1234",
-        idempotencyKey: "discord-interaction:interaction-1",
-      },
-      expect.objectContaining({ beforeEnqueue: expect.any(Function) }),
-    );
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({ content: "invalid" });
+    expect(mocks.executeBotCommand).toHaveBeenCalledWith({
+      discordBotId: "secondary",
+      channelId: "channel-1",
+      routingChannelId: "channel-1",
+      botId: "coding",
+      action: "resume",
+      prompt: "continue",
+      sessionHandle: "task-1234",
+      idempotencyKey: "discord-interaction:interaction-1",
+    });
   });
 });

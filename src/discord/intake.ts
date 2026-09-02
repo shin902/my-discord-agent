@@ -8,11 +8,11 @@ import {
   loadAgentMemoryConfig,
 } from "../config/agent-memory.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
-import { DEFAULT_DISCORD_BOT_ID } from "./client.js";
 
 export type DiscordMessageSource = "live" | "backfill";
 

@@ -21,11 +21,8 @@ const TopLevelSchema = z.record(z.string(), z.unknown());
 
 const DiscordBotConfigSchema = z.object({
   tokenEnv: z.string().min(1),
-  // Application IDs are not credentials, so they may be kept in config. An
-  // environment reference is also supported for deployments that centralize
-  // all Discord settings in the environment.
+  // Application IDs are not credentials, so they may be kept in config.
   applicationId: z.string().min(1).optional(),
-  applicationIdEnv: z.string().min(1).optional(),
 });
 
 export const DiscordConfigSchema = z.object({

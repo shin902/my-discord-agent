@@ -52,7 +52,7 @@ Discord アカウントでログイン。
 
 ## 6. Slash Command の登録
 
-Slash Command の登録は Bot runtime の起動とは分離しています。デプロイ対象を設定した全 Bot application へ、同じ registry を一括登録します。デフォルト Bot（`personal`）の application ID とトークンは環境変数へ設定してください。追加 Bot は `config/config.json` の `discord.bots.<id>` に `applicationId`（または `applicationIdEnv`）と `tokenEnv` を設定します。トークン値は設定ファイルへ書きません。
+Slash Command の登録は Bot runtime の起動とは分離しています。デプロイ対象を設定した全 Bot application へ、同じ registry を一括登録します。デフォルト Bot（`personal`）の application ID とトークンは環境変数へ設定してください。追加 Bot は `config/config.json` の `discord.bots.<id>` に `applicationId` と `tokenEnv` を設定します。トークン値は設定ファイルへ書きません。
 
 ```bash
 DISCORD_APPLICATION_ID=... DISCORD_BOT_TOKEN=... pnpm discord:deploy -- global

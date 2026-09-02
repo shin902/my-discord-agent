@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const originalConfigPath = process.env.CONFIG_PATH;
 const originalDefaultToken = process.env.DISCORD_BOT_TOKEN;
 const originalAdditionalToken = process.env.TAKOP_BOT_TOKEN;
-const originalApplicationId = process.env.PUBLIC_APPLICATION_ID;
 const tempDirs: string[] = [];
 
 async function loadDiscordConfig(
@@ -33,9 +32,6 @@ afterEach(async () => {
   else process.env.DISCORD_BOT_TOKEN = originalDefaultToken;
   if (originalAdditionalToken === undefined) delete process.env.TAKOP_BOT_TOKEN;
   else process.env.TAKOP_BOT_TOKEN = originalAdditionalToken;
-  if (originalApplicationId === undefined)
-    delete process.env.PUBLIC_APPLICATION_ID;
-  else process.env.PUBLIC_APPLICATION_ID = originalApplicationId;
   await Promise.all(
     tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
   );

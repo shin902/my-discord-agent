@@ -362,31 +362,6 @@ describe("resolveDiscordCommandDeployTargets", () => {
     ]);
   });
 
-  it("supports application IDs referenced by an environment variable", () => {
-    expect(
-      resolveDiscordCommandDeployTargets(
-        {
-          bots: {
-            public: {
-              tokenEnv: "PUBLIC_TOKEN",
-              applicationIdEnv: "PUBLIC_APPLICATION_ID",
-            },
-          },
-        },
-        {
-          DISCORD_APPLICATION_ID: "default-application",
-          DISCORD_BOT_TOKEN: "default-token",
-          PUBLIC_APPLICATION_ID: "public-application",
-          PUBLIC_TOKEN: "public-token",
-        },
-      )[1],
-    ).toEqual({
-      botId: "public",
-      applicationId: "public-application",
-      token: "public-token",
-    });
-  });
-
   it("rejects an additional Bot without an application ID", () => {
     expect(() =>
       resolveDiscordCommandDeployTargets(
@@ -509,9 +484,9 @@ describe("handleSkillCommand", () => {
     await handleSkillCommand(interaction as never);
 
     expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "スキル名には英数字、ハイフン、アンダースコアのみ使用できます。",
-      ephemeral: true,
     });
   });
 
@@ -525,9 +500,9 @@ describe("handleSkillCommand", () => {
     await handleSkillCommand(interaction as never);
 
     expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "このコマンドはスレッド内で実行してください。",
-      ephemeral: true,
     });
   });
 });
@@ -591,10 +566,10 @@ describe("handleBotCommand", () => {
     await handleBotCommand(interaction as never, "secondary");
 
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content:
         "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
-      ephemeral: true,
     });
   });
 
@@ -684,11 +659,8 @@ describe("handleBotCommand", () => {
 
     if (session.includes("/")) {
       expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-      expect(interaction.reply).toHaveBeenCalledWith(
-        expect.objectContaining({
-          content: expect.any(String),
-          ephemeral: true,
-        }),
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.any(String) }),
       );
     } else {
       expect(mocks.resumeBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
@@ -727,9 +699,8 @@ describe("handleBotCommand", () => {
     expect(mocks.listBotTaskSessions).toHaveBeenCalledWith("main", "coding");
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: expect.stringContaining("task-one"),
-      ephemeral: true,
     });
   });
 
@@ -743,10 +714,9 @@ describe("handleBotCommand", () => {
 
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.reply).toHaveBeenCalledWith({
+    expect(interaction.editReply).toHaveBeenCalledWith({
       content: "Bot が未定義です: missing",
-      ephemeral: true,
     });
-    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
   });
 });
