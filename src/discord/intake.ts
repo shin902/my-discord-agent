@@ -86,7 +86,11 @@ async function ingest(
   message: Message,
   options: IngestOptions,
 ): Promise<DiscordIngestResult> {
+  // Discord.js can expose a null channel for messages whose channel was
+  // deleted or is no longer resolvable. Backfill must skip such messages and
+  // advance the cursor instead of aborting the whole channel scan.
   let channel = message.channel;
+  if (!channel) return { status: "ignored", cursorScope: message.channelId };
   if (channel.isThread() && !channel.parentId) {
     channel = await channel.fetch().catch(() => channel);
   }

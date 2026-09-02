@@ -62,6 +62,7 @@ function makeMessage(options: {
   id: string;
   channelId?: string;
   isThread?: boolean;
+  channel?: { isThread: () => boolean; parentId: string | null } | null;
   parentId?: string | null;
   isBot?: boolean;
   type?: MessageType;
@@ -83,10 +84,13 @@ function makeMessage(options: {
         options.mentionsBot ? [["bot-user", { id: "bot-user" }]] : [],
       ),
     },
-    channel: {
-      isThread: () => options.isThread ?? false,
-      parentId: options.parentId ?? null,
-    },
+    channel:
+      options.channel === undefined
+        ? {
+            isThread: () => options.isThread ?? false,
+            parentId: options.parentId ?? null,
+          }
+        : options.channel,
     content: "hello",
     createdAt: new Date("2026-08-11T00:00:00.000Z"),
     attachments: new Map(),
@@ -98,6 +102,21 @@ function makeMessage(options: {
 }
 
 describe("ingestDiscordMessage", () => {
+  it("channelが解決できないメッセージを無視してカーソル範囲を返す", async () => {
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "message-without-channel", channel: null }),
+      { source: "backfill", replyOnFailure: false },
+    );
+
+    expect(result).toEqual({
+      status: "ignored",
+      cursorScope: "root-1",
+    });
+    expect(
+      repo.findByIdempotencyKey("discord-message:message-without-channel"),
+    ).toBeUndefined();
+  });
+
   it("auto-threadで新規スレッドを作成し、実際の冪等キーでenqueueする", async () => {
     const startThread = vi.fn().mockResolvedValue({ id: "thread-new" });
     const message = makeMessage({
