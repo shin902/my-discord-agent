@@ -19,10 +19,17 @@ export const CRON_PATH =
 
 const TopLevelSchema = z.record(z.string(), z.unknown());
 
+const DiscordBotConfigSchema = z.object({
+  tokenEnv: z.string().min(1),
+  // Application IDs are not credentials, so they may be kept in config. An
+  // environment reference is also supported for deployments that centralize
+  // all Discord settings in the environment.
+  applicationId: z.string().min(1).optional(),
+  applicationIdEnv: z.string().min(1).optional(),
+});
+
 export const DiscordConfigSchema = z.object({
-  bots: z
-    .record(z.string().min(1), z.object({ tokenEnv: z.string().min(1) }))
-    .default({}),
+  bots: z.record(z.string().min(1), DiscordBotConfigSchema).default({}),
 });
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
 

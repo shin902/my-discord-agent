@@ -393,6 +393,25 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 `groups.json` / `credentials.json` / `cron.json` に分離されていない残りの設定。トップレベルはオブジェクト。
 
+### `discord`
+
+Discord runtime は暗黙のデフォルト Bot（ID は `personal`）と、`discord.bots` に列挙した追加 Bot を使用します。各追加 Bot の `tokenEnv` はトークンを読む環境変数名（トークン値は設定ファイルへ書かない）です。Slash Command deploy には各追加 Bot の非機密な `applicationId` を設定します。環境変数で管理する場合は `applicationIdEnv` を使えます。`pnpm discord:deploy -- global` または `pnpm discord:deploy -- guild <guild-id>` は、同じ `src/discord/command-registry.ts` の command set を全 Bot application の選択 scope へ bulk overwrite します。
+
+```json
+{
+  "discord": {
+    "bots": {
+      "public": {
+        "applicationId": "YOUR_PUBLIC_DISCORD_APPLICATION_ID",
+        "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN"
+      }
+    }
+  }
+}
+```
+
+デフォルト Bot の `DISCORD_APPLICATION_ID` / `DISCORD_BOT_TOKEN` と追加 Bot の token 環境変数は deploy と runtime の実行環境に設定してください。deploy の scope 引数は省略できず、省略時は usage error になります。
+
 ```json
 {
   "bots": {
@@ -424,7 +443,8 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 
 | 変数 | 用途 |
 |---|---|
-| `DISCORD_BOT_TOKEN` | Discord Bot トークン（必須） |
+| `DISCORD_APPLICATION_ID` | デフォルト Bot（`personal`）の Discord application ID（deploy時に必須） |
+| `DISCORD_BOT_TOKEN` | デフォルト Bot トークン（必須） |
 | `CONFIG_PATH` | `config/config.json` のパスを上書きする（省略時はプロジェクトルートの `config/config.json`） |
 | `PROVIDERS_PATH` | `config/providers.json` のパスを上書きする |
 | `CREDENTIALS_PATH` | `config/credentials.json` のパスを上書きする |

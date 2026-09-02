@@ -38,7 +38,11 @@ const { handleBotCommand, handleSkillCommand } = await import(
 );
 const { command: botCommand } = await import("./commands/bot.js");
 const { command: skillCommand } = await import("./commands/skill.js");
-const { deployDiscordCommands } = await import("./deploy-commands.js");
+const {
+  deployDiscordCommands,
+  deployDiscordCommandsToBots,
+  resolveDiscordCommandDeployTargets,
+} = await import("./deploy-commands.js");
 const { DISCORD_COMMANDS, getDiscordCommand } = await import(
   "./command-registry.js"
 );
@@ -217,12 +221,22 @@ describe("deployDiscordCommands", () => {
     await deployDiscordCommands({
       applicationId: "application-1",
       token: "token",
+      scope: "global",
       rest: { put } as never,
     });
 
     expect(put).toHaveBeenCalledWith("/applications/application-1/commands", {
       body: [botCommand.data.toJSON(), skillCommand.data.toJSON()],
     });
+  });
+
+  it("requires an explicit deploy scope", async () => {
+    await expect(
+      deployDiscordCommands({
+        applicationId: "application-1",
+        token: "token",
+      } as never),
+    ).rejects.toThrow("usage");
   });
 
   it("requires a guild id for guild-scope deploys", async () => {
@@ -233,6 +247,159 @@ describe("deployDiscordCommands", () => {
         scope: "guild",
       }),
     ).rejects.toThrow("guildId");
+  });
+
+  it("deploys the same registry to every configured Bot application", async () => {
+    const deploy = vi
+      .fn()
+      .mockResolvedValue([
+        botCommand.data.toJSON(),
+        skillCommand.data.toJSON(),
+      ]);
+    const results = await deployDiscordCommandsToBots({
+      targets: [
+        { botId: "personal", applicationId: "application-1", token: "one" },
+        { botId: "public", applicationId: "application-2", token: "two" },
+      ],
+      scope: "global",
+      deploy,
+    });
+
+    expect(deploy).toHaveBeenCalledTimes(2);
+    expect(deploy).toHaveBeenNthCalledWith(1, {
+      applicationId: "application-1",
+      token: "one",
+      scope: "global",
+    });
+    expect(deploy).toHaveBeenNthCalledWith(2, {
+      applicationId: "application-2",
+      token: "two",
+      scope: "global",
+    });
+    expect(results).toEqual([
+      {
+        botId: "personal",
+        applicationId: "application-1",
+        status: "succeeded",
+        commandCount: 2,
+      },
+      {
+        botId: "public",
+        applicationId: "application-2",
+        status: "succeeded",
+        commandCount: 2,
+      },
+    ]);
+  });
+
+  it("attempts every Bot and reports partial failures without exposing tokens", async () => {
+    const deploy = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("request failed with secret-one"))
+      .mockResolvedValueOnce([]);
+
+    await expect(
+      deployDiscordCommandsToBots({
+        targets: [
+          {
+            botId: "personal",
+            applicationId: "application-1",
+            token: "secret-one",
+          },
+          {
+            botId: "public",
+            applicationId: "application-2",
+            token: "secret-two",
+          },
+        ],
+        scope: "guild",
+        guildId: "guild-1",
+        deploy,
+      }),
+    ).rejects.toMatchObject({
+      results: [
+        expect.objectContaining({
+          botId: "personal",
+          status: "failed",
+          error: "request failed with [REDACTED]",
+        }),
+        expect.objectContaining({ botId: "public", status: "succeeded" }),
+      ],
+    });
+    expect(deploy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("resolveDiscordCommandDeployTargets", () => {
+  it("resolves the implicit default and configured Bot applications", () => {
+    expect(
+      resolveDiscordCommandDeployTargets(
+        {
+          bots: {
+            public: {
+              tokenEnv: "PUBLIC_TOKEN",
+              applicationId: "public-application",
+            },
+          },
+        },
+        {
+          DISCORD_APPLICATION_ID: "default-application",
+          DISCORD_BOT_TOKEN: "default-token",
+          PUBLIC_TOKEN: "public-token",
+        },
+      ),
+    ).toEqual([
+      {
+        botId: "personal",
+        applicationId: "default-application",
+        token: "default-token",
+      },
+      {
+        botId: "public",
+        applicationId: "public-application",
+        token: "public-token",
+      },
+    ]);
+  });
+
+  it("supports application IDs referenced by an environment variable", () => {
+    expect(
+      resolveDiscordCommandDeployTargets(
+        {
+          bots: {
+            public: {
+              tokenEnv: "PUBLIC_TOKEN",
+              applicationIdEnv: "PUBLIC_APPLICATION_ID",
+            },
+          },
+        },
+        {
+          DISCORD_APPLICATION_ID: "default-application",
+          DISCORD_BOT_TOKEN: "default-token",
+          PUBLIC_APPLICATION_ID: "public-application",
+          PUBLIC_TOKEN: "public-token",
+        },
+      )[1],
+    ).toEqual({
+      botId: "public",
+      applicationId: "public-application",
+      token: "public-token",
+    });
+  });
+
+  it("rejects an additional Bot without an application ID", () => {
+    expect(() =>
+      resolveDiscordCommandDeployTargets(
+        {
+          bots: { public: { tokenEnv: "PUBLIC_TOKEN" } },
+        },
+        {
+          DISCORD_APPLICATION_ID: "default-application",
+          DISCORD_BOT_TOKEN: "default-token",
+          PUBLIC_TOKEN: "public-token",
+        },
+      ),
+    ).toThrow("applicationId");
   });
 });
 

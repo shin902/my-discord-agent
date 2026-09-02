@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockClient = { once: vi.fn(), on: vi.fn() };
 const mockHandleBotCommand = vi.hoisted(() => vi.fn());
 const mockHandleSkillCommand = vi.hoisted(() => vi.fn());
-const mockSynchronizeDiscordCommandsWithRetry = vi.hoisted(() => vi.fn());
 const mockCreateDiscordInteractionRouter = vi.hoisted(() =>
   vi.fn((discordBotId: string) => (interaction: { commandName: string }) => {
     if (interaction.commandName === "bot")
@@ -86,22 +85,7 @@ describe("registerHandlers - InteractionCreate", () => {
   beforeEach(() => {
     mockHandleBotCommand.mockReset().mockResolvedValue(undefined);
     mockHandleSkillCommand.mockReset().mockResolvedValue(undefined);
-    mockSynchronizeDiscordCommandsWithRetry
-      .mockReset()
-      .mockResolvedValue(undefined);
     mockCreateDiscordInteractionRouter.mockClear();
-  });
-
-  it("does not deploy commands during runtime startup", () => {
-    const client = { once: vi.fn(), on: vi.fn() };
-    registerHandlers(client as never);
-    const readyHandler = client.once.mock.calls[0]?.[1] as (client: {
-      user: { tag: string };
-    }) => void;
-
-    readyHandler({ user: { tag: "test-bot" } });
-
-    expect(mockSynchronizeDiscordCommandsWithRetry).not.toHaveBeenCalled();
   });
 
   it("passes the receiving Discord Bot identity to command handling", () => {
@@ -148,9 +132,6 @@ describe("registerHandlers - MessageCreate", () => {
   beforeEach(() => {
     mockFindGroup.mockReset();
     mockAppendInbox.mockReset().mockResolvedValue(undefined);
-    mockSynchronizeDiscordCommandsWithRetry
-      .mockReset()
-      .mockResolvedValue(undefined);
     mockCreateDiscordInteractionRouter.mockClear();
   });
 

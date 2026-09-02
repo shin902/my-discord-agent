@@ -1,7 +1,10 @@
 {
   "discord": {
     "bots": {
-      "public": { "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN" }
+      "public": {
+        "applicationId": "YOUR_PUBLIC_DISCORD_APPLICATION_ID",
+        "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN"
+      }
     }
   },
   "bots": {
