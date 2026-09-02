@@ -1,4 +1,5 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,6 +99,8 @@ declare global {
 }
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 const RUNNER_RUN_COMPLETE_MARKER = "__AGENT_RUN_COMPLETE__";
+const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
+const STEER_ACK_TIMEOUT_MS = 10_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -795,26 +798,80 @@ export async function sendMessage(
     runningContainers.set(containerName, proc);
     let initialPayloadSent = false;
     let controlClosed = false;
-    const pendingControlLines: string[] = [];
-    const sendControl = (instruction: string): void => {
-      if (controlClosed) return;
-      const line = `${JSON.stringify({ type: "steer", instruction })}\n`;
-      if (!initialPayloadSent) {
-        pendingControlLines.push(line);
-      } else {
-        proc.stdin.write(line);
+    const pendingControlLines: Array<{ requestId: string; line: string }> = [];
+    const pendingSteers = new Map<
+      string,
+      {
+        resolve: (accepted: boolean) => void;
+        reject: (error: Error) => void;
+        timeout: NodeJS.Timeout;
       }
+    >();
+    const settleSteer = (
+      requestId: string,
+      accepted: boolean,
+      error?: Error,
+    ): void => {
+      const pending = pendingSteers.get(requestId);
+      if (!pending) return;
+      pendingSteers.delete(requestId);
+      clearTimeout(pending.timeout);
+      if (error) pending.reject(error);
+      else pending.resolve(accepted);
+    };
+    const writeControlLine = (requestId: string, line: string): void => {
+      try {
+        proc.stdin.write(line, (error?: Error | null) => {
+          if (error) settleSteer(requestId, false, error);
+        });
+      } catch (error) {
+        settleSteer(
+          requestId,
+          false,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    };
+    const sendControl = (instruction: string): Promise<boolean> => {
+      if (controlClosed) return Promise.resolve(false);
+      const requestId = randomUUID();
+      const line = `${JSON.stringify({
+        type: "steer",
+        requestId,
+        instruction,
+      })}\n`;
+      const delivery = new Promise<boolean>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          settleSteer(
+            requestId,
+            false,
+            new Error("steering acknowledgement timed out"),
+          );
+        }, STEER_ACK_TIMEOUT_MS);
+        pendingSteers.set(requestId, { resolve, reject, timeout });
+      });
+      if (!initialPayloadSent) {
+        pendingControlLines.push({ requestId, line });
+      } else {
+        writeControlLine(requestId, line);
+      }
+      return delivery;
     };
     const unregisterActiveRun = registerActiveRun(
       groupName,
       sessionId,
       sendControl,
     );
-    const cleanupActiveRunControl = (): void => {
+    const cleanupActiveRunControl = (reason?: Error): void => {
       if (controlClosed) return;
       controlClosed = true;
       pendingControlLines.length = 0;
       unregisterActiveRun();
+      const failure =
+        reason ?? new Error("runner closed before steering was acknowledged");
+      for (const requestId of pendingSteers.keys()) {
+        settleSteer(requestId, false, failure);
+      }
     };
     let timeoutHandle: NodeJS.Timeout | undefined;
     const cancelActiveRun = () => {
@@ -917,6 +974,24 @@ export async function sendMessage(
     };
 
     const processStderrLine = (line: string): void => {
+      if (line.startsWith(STEER_ACK_PREFIX)) {
+        try {
+          const parsed: unknown = JSON.parse(
+            line.slice(STEER_ACK_PREFIX.length),
+          );
+          if (
+            isRecord(parsed) &&
+            typeof parsed.requestId === "string" &&
+            typeof parsed.accepted === "boolean"
+          ) {
+            settleSteer(parsed.requestId, parsed.accepted);
+          }
+        } catch {
+          // Ignore malformed control acknowledgements; the request will fail
+          // when the runner closes instead of being reported as accepted.
+        }
+        return;
+      }
       if (line === RUNNER_RUN_COMPLETE_MARKER) {
         // runAgentLoop は完了しており、以後の steer は Agent が再開しないため拒否する。
         cleanupActiveRunControl();
@@ -1047,11 +1122,30 @@ export async function sendMessage(
       cleanupActive = true;
       signal?.removeEventListener("abort", cancelActiveRun);
       clearTimeout(timeoutHandle);
-      cleanupActiveRunControl();
+      cleanupActiveRunControl(err);
       runningContainers.delete(containerName);
       reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
     });
+    if (typeof proc.stdin.on === "function") {
+      proc.stdin.on("error", (err: Error) => {
+        // A late steer can race runner exit. Always consume the stream error so
+        // EPIPE cannot become an uncaught host-process exception, and reject
+        // the corresponding request instead of reporting a false success.
+        if (cleanupActive) return;
+        if (initialPayloadSent) {
+          cleanupActiveRunControl(err);
+          return;
+        }
+        cleanupActive = true;
+        signal?.removeEventListener("abort", cancelActiveRun);
+        clearTimeout(timeoutHandle);
+        cleanupActiveRunControl(err);
+        runningContainers.delete(containerName);
+        reportExecutionTiming(Date.now(), "spawn-error");
+        reject(err);
+      });
+    }
     readyPromise
       .then(() => {
         if (cleanupActive) return;
@@ -1059,10 +1153,22 @@ export async function sendMessage(
           cancelActiveRun();
           return;
         }
-        proc.stdin.write(`${payload}\n`);
+        proc.stdin.write(`${payload}\n`, (error?: Error | null) => {
+          if (!error || cleanupActive) return;
+          cleanupActive = true;
+          signal?.removeEventListener("abort", cancelActiveRun);
+          clearTimeout(timeoutHandle);
+          cleanupActiveRunControl(error);
+          runningContainers.delete(containerName);
+          reportExecutionTiming(Date.now(), "spawn-error");
+          reject(error);
+        });
+        if (cleanupActive) return;
         initialPayloadSent = true;
-        for (const line of pendingControlLines.splice(0))
-          proc.stdin.write(line);
+        for (const { requestId, line } of pendingControlLines.splice(0)) {
+          if (cleanupActive) break;
+          writeControlLine(requestId, line);
+        }
       })
       .catch((error) => {
         if (cleanupActive) return;

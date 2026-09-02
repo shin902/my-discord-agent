@@ -39,9 +39,12 @@ vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn(),
 }));
 
-const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
-  "./agent-runner.js"
-);
+const {
+  createRunnerLineRouter,
+  runAgentLoop,
+  waitForNetwork,
+  DEFAULT_SYSTEM_PROMPT,
+} = await import("./agent-runner.js");
 const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
@@ -71,6 +74,23 @@ function createMockAgent(deltas: string[], endMessage: unknown) {
     }),
   };
 }
+
+describe("runner stdin transport", () => {
+  it("routes payload and a same-chunk steer without losing the steer", () => {
+    const payload = vi.fn();
+    const control = vi.fn();
+    const router = createRunnerLineRouter(payload);
+
+    router.handleLine('{"content":"payload"}');
+    router.handleLine('{"type":"steer","requestId":"r1","instruction":"late"}');
+    router.setControlHandler(control);
+
+    expect(payload).toHaveBeenCalledWith('{"content":"payload"}');
+    expect(control).toHaveBeenCalledWith(
+      '{"type":"steer","requestId":"r1","instruction":"late"}',
+    );
+  });
+});
 
 describe("runAgentLoop", () => {
   afterEach(() => {

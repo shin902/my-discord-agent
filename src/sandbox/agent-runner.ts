@@ -125,6 +125,40 @@ const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 const NETWORK_READY_HOST = "r.jina.ai";
 const NETWORK_READY_TIMEOUT_MS = 10_000;
 const NETWORK_READY_RETRY_MS = 500;
+const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
+
+type RunnerLineHandler = (line: string) => void;
+
+/**
+ * Route the first stdin line as the run payload and retain every subsequent
+ * line until the control handler is installed. Readline can deliver the
+ * payload and an immediately-following steer in one chunk, so installing a
+ * second `line` listener after awaiting the payload would lose that steer.
+ */
+export function createRunnerLineRouter(onPayloadLine: RunnerLineHandler): {
+  handleLine: RunnerLineHandler;
+  setControlHandler: (handler: RunnerLineHandler) => void;
+} {
+  let payloadSeen = false;
+  let controlHandler: RunnerLineHandler | undefined;
+  const pendingControlLines: string[] = [];
+
+  return {
+    handleLine(line) {
+      if (!payloadSeen) {
+        payloadSeen = true;
+        onPayloadLine(line);
+        return;
+      }
+      if (controlHandler) controlHandler(line);
+      else pendingControlLines.push(line);
+    },
+    setControlHandler(handler) {
+      controlHandler = handler;
+      for (const line of pendingControlLines.splice(0)) handler(line);
+    },
+  };
+}
 
 /** 外部ホスト名解決ができるまで待機する（最大 timeoutMs、失敗時はそのまま続行） */
 export async function waitForNetwork(options?: {
@@ -929,6 +963,24 @@ const PayloadSchema = z.object({
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   (async () => {
     await waitForNetwork();
+    const input = createInterface({ input: process.stdin });
+    let resolvePayload!: (payload: z.infer<typeof PayloadSchema>) => void;
+    let rejectPayload!: (error: unknown) => void;
+    const payloadPromise = new Promise<z.infer<typeof PayloadSchema>>(
+      (resolve, reject) => {
+        resolvePayload = resolve;
+        rejectPayload = reject;
+      },
+    );
+    const lineRouter = createRunnerLineRouter((line) => {
+      try {
+        resolvePayload(PayloadSchema.parse(JSON.parse(line || "{}")));
+      } catch (error) {
+        rejectPayload(error);
+      }
+    });
+    input.on("line", lineRouter.handleLine);
+    input.on("error", rejectPayload);
     process.stderr.write("__AGENT_READY__\n");
     if (process.argv.includes("--session-store-smoke")) {
       const groupName = "runner-smoke";
@@ -948,48 +1000,66 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         throw new Error("session store smoke test append/load mismatch");
       }
       process.stderr.write("__SESSION_STORE_SMOKE_OK__\n");
+      input.close();
       return;
     }
-    const input = createInterface({ input: process.stdin });
-    const firstLine = await new Promise<string>((resolve, reject) => {
-      input.once("line", resolve);
-      input.once("error", reject);
-    });
-    const payload = PayloadSchema.parse(JSON.parse(firstLine || "{}"));
+    const payload = await payloadPromise;
 
     const steering = createSteeringController(
       payload.groupName,
       payload.sessionId,
     );
-    input.on("line", (line) => {
-      try {
-        const control = JSON.parse(line) as {
-          type?: unknown;
-          instruction?: unknown;
-        };
-        if (
-          control.type === "steer" &&
-          typeof control.instruction === "string" &&
-          control.instruction.length > 0 &&
-          control.instruction.length <= 4000
-        ) {
-          steering.receive(control.instruction);
+    const sendSteerAck = (requestId: string, accepted: boolean): void => {
+      process.stderr.write(
+        `${STEER_ACK_PREFIX}${JSON.stringify({
+          type: "steer_ack",
+          requestId,
+          accepted,
+        })}\n`,
+      );
+    };
+    lineRouter.setControlHandler((line) => {
+      void (async () => {
+        try {
+          const control = JSON.parse(line) as {
+            type?: unknown;
+            requestId?: unknown;
+            instruction?: unknown;
+          };
+          if (typeof control.requestId !== "string") return;
+          const validInstruction =
+            control.type === "steer" &&
+            typeof control.instruction === "string" &&
+            control.instruction.length > 0 &&
+            control.instruction.length <= 4000;
+          const accepted = validInstruction
+            ? await steering.receive(control.instruction as string)
+            : false;
+          sendSteerAck(control.requestId, accepted);
+        } catch {
+          // Ignore malformed control frames; stdin is not a general command API.
         }
-      } catch {
-        // Ignore malformed control frames; stdin is not a general command API.
-      }
+      })();
     });
 
-    const response = await runAgentLoop(
-      payload.groupName,
-      payload.sessionId,
-      payload.content,
-      payload.groupConfig,
-      payload,
-      payload.systemPromptAppend,
-      payload.botToolEndpoint,
-      (agent) => steering.attach(agent),
-    );
+    let response: string;
+    try {
+      response = await runAgentLoop(
+        payload.groupName,
+        payload.sessionId,
+        payload.content,
+        payload.groupConfig,
+        payload,
+        payload.systemPromptAppend,
+        payload.botToolEndpoint,
+        (agent) => steering.attach(agent),
+      );
+    } catch (error) {
+      // Initialization failures must reject pre-attach requests without
+      // persisting a steer that never reached an Agent.
+      steering.close();
+      throw error;
+    }
     // Stop accepting steering before waiting for trajectory persistence;
     // Agent.steer() cannot resume a completed run.
     steering.close();

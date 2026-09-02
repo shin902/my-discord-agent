@@ -1,4 +1,7 @@
-export type ActiveRunControl = (instruction: string) => void;
+export type ActiveRunControl = (
+  instruction: string,
+) => Promise<boolean> | boolean;
+export type ActiveRunSteerResult = "accepted" | "unavailable" | "rejected";
 
 type ActiveRun = {
   groupName: string;
@@ -30,15 +33,19 @@ export function registerActiveRun(
 }
 
 /** Deliver steering only to the exact active (group, session) run. */
-export function steerActiveRun(
+export async function steerActiveRun(
   groupName: string,
   sessionId: string,
   instruction: string,
-): boolean {
+): Promise<ActiveRunSteerResult> {
   const run = activeRuns.get(runKey(groupName, sessionId));
-  if (!run) return false;
-  run.control(instruction);
-  return true;
+  if (!run) return "unavailable";
+  try {
+    return (await run.control(instruction)) === false ? "rejected" : "accepted";
+  } catch (error) {
+    console.error("[active-run] steering delivery failed:", error);
+    return "rejected";
+  }
 }
 
 /** Test/operator visibility without exposing runner handles. */

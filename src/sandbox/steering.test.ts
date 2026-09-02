@@ -19,7 +19,9 @@ describe("steering controller", () => {
     const controller = createSteeringController("group", "session");
     controller.attach({ steer });
 
-    controller.receive("API層は触らずUIだけ修正して");
+    await expect(
+      controller.receive("API層は触らずUIだけ修正して"),
+    ).resolves.toBe(true);
     await controller.waitForPersistence();
 
     expect(steer).toHaveBeenCalledWith(
@@ -40,17 +42,67 @@ describe("steering controller", () => {
     );
   });
 
-  it("queues a steering instruction until the Agent is created", () => {
-    const steer = vi.fn();
+  it("does not persist or ACK before a pre-attach steer is handed to Agent", async () => {
+    const order: string[] = [];
+    vi.mocked(appendMessage).mockImplementation(async () => {
+      order.push("persist");
+    });
+    const steer = vi.fn(() => {
+      order.push("steer");
+    });
     const controller = createSteeringController("group", "session");
-    controller.receive("queued");
+    const delivery = controller.receive("queued");
+
     expect(steer).not.toHaveBeenCalled();
+    expect(appendMessage).not.toHaveBeenCalled();
     controller.attach({ steer });
+
+    await expect(delivery).resolves.toBe(true);
     expect(steer).toHaveBeenCalledWith(
       expect.objectContaining({
         content: [{ type: "text", text: "queued" }],
       }),
     );
+    expect(appendMessage).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["persist", "steer"]);
+  });
+
+  it("settles an in-flight steer false on close without injecting it", async () => {
+    let resolveAppend!: () => void;
+    vi.mocked(appendMessage).mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveAppend = resolve;
+      }),
+    );
+    const steer = vi.fn();
+    const controller = createSteeringController("group", "session");
+    const delivery = controller.receive("closing");
+    controller.attach({ steer });
+    controller.close();
+
+    await expect(delivery).resolves.toBe(false);
+    resolveAppend();
+    await controller.waitForPersistence();
+    expect(steer).not.toHaveBeenCalled();
+  });
+
+  it("does not inject a steer when canonical persistence fails", async () => {
+    vi.mocked(appendMessage).mockRejectedValueOnce(new Error("disk full"));
+    const steer = vi.fn();
+    const controller = createSteeringController("group", "session");
+    controller.attach({ steer });
+
+    await expect(controller.receive("unpersisted")).resolves.toBe(false);
+    expect(steer).not.toHaveBeenCalled();
+  });
+
+  it("settles a pre-attach request false when the run closes", async () => {
+    const controller = createSteeringController("group", "session");
+    const delivery = controller.receive("never attached");
+    controller.close();
+
+    await expect(delivery).resolves.toBe(false);
+    expect(appendMessage).not.toHaveBeenCalled();
   });
 
   it("rejects steering received after the Agent run is closed", async () => {
@@ -58,7 +110,7 @@ describe("steering controller", () => {
     const controller = createSteeringController("group", "session");
     controller.attach({ steer });
     controller.close();
-    controller.receive("too late");
+    await expect(controller.receive("too late")).resolves.toBe(false);
     await controller.waitForPersistence();
 
     expect(steer).not.toHaveBeenCalled();

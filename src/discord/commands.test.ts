@@ -228,6 +228,22 @@ describe("steer command", () => {
     });
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
+
+  it("does not report success when the runner rejects delivery", async () => {
+    const cleanup = registerActiveRun(
+      "main",
+      "channel-1",
+      vi.fn().mockResolvedValue(false),
+    );
+    const interaction = makeInteraction({ instruction: "Please stop" });
+    await handleSteerCommand(interaction as never);
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content:
+        "方針転換をAgentへ届けられませんでした。Agentが終了した可能性があります。",
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    cleanup();
+  });
 });
 
 describe("command registry", () => {

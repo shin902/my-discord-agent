@@ -152,8 +152,16 @@ export async function executeSteerCommand(
     return "このコマンドはスレッド内で実行してください。";
   }
 
-  if (!steerActiveRun(match.group.name, request.channelId, instruction)) {
+  const delivery = await steerActiveRun(
+    match.group.name,
+    request.channelId,
+    instruction,
+  );
+  if (delivery === "unavailable") {
     return "steer対象の実行中Agentがありません。";
+  }
+  if (delivery === "rejected") {
+    return "方針転換をAgentへ届けられませんでした。Agentが終了した可能性があります。";
   }
   return "実行中Agentへ方針転換を送りました。";
 }
