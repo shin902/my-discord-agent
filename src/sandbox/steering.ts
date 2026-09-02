@@ -8,6 +8,7 @@ type SteeringAgent = Pick<Agent, "steer">;
 export interface SteeringController {
   receive(instruction: string): void;
   attach(agent: SteeringAgent): void;
+  close(): void;
   waitForPersistence(): Promise<void>;
 }
 
@@ -17,11 +18,13 @@ export function createSteeringController(
   sessionId: string,
 ): SteeringController {
   let agent: SteeringAgent | undefined;
+  let closed = false;
   const pending: AgentMessage[] = [];
   const persistence: Promise<void>[] = [];
 
   return {
     receive(instruction) {
+      if (closed) return;
       const timestamp = Date.now();
       const message: AgentMessage = {
         role: "user",
@@ -43,6 +46,10 @@ export function createSteeringController(
     attach(nextAgent) {
       agent = nextAgent;
       for (const message of pending.splice(0)) agent.steer(message);
+    },
+    close() {
+      closed = true;
+      pending.length = 0;
     },
     async waitForPersistence() {
       await Promise.all(persistence);

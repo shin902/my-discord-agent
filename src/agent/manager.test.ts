@@ -224,6 +224,19 @@ describe("sendMessage: Docker 起動構成", () => {
     );
   });
 
+  it("runner完了通知後はsteerを受け付けない", async () => {
+    spawnMock.mockReturnValueOnce(
+      makeProc(0, "response", "__AGENT_RUN_COMPLETE__\n"),
+    );
+    const { sendMessage } = await import("./manager.js");
+    const { steerActiveRun } = await import("./active-run-registry.js");
+
+    await expect(sendMessage("test-group", "session-1", "hi")).resolves.toBe(
+      "response",
+    );
+    expect(steerActiveRun("test-group", "session-1", "too late")).toBe(false);
+  });
+
   it("image pull とコンテナ内処理の所要時間を通知する", async () => {
     spawnMock.mockReturnValueOnce(
       makeProc(

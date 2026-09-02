@@ -97,6 +97,7 @@ declare global {
   }
 }
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+const RUNNER_RUN_COMPLETE_MARKER = "__AGENT_RUN_COMPLETE__";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -916,6 +917,11 @@ export async function sendMessage(
     };
 
     const processStderrLine = (line: string): void => {
+      if (line === RUNNER_RUN_COMPLETE_MARKER) {
+        // runAgentLoop は完了しており、以後の steer は Agent が再開しないため拒否する。
+        cleanupActiveRunControl();
+        return;
+      }
       if (line === "__AGENT_READY__") {
         if (!readySettled) {
           Promise.resolve(onContainerStarted?.())

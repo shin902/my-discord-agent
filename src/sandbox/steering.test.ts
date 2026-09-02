@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appendMessage } from "../agent/session.js";
 import {
   createSteeringController,
@@ -8,6 +8,10 @@ import {
 vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn().mockResolvedValue(undefined),
 }));
+
+beforeEach(() => {
+  vi.mocked(appendMessage).mockClear();
+});
 
 describe("steering controller", () => {
   it("calls Agent.steer and persists the exact distinguishable instruction", async () => {
@@ -47,5 +51,17 @@ describe("steering controller", () => {
         content: [{ type: "text", text: "queued" }],
       }),
     );
+  });
+
+  it("rejects steering received after the Agent run is closed", async () => {
+    const steer = vi.fn();
+    const controller = createSteeringController("group", "session");
+    controller.attach({ steer });
+    controller.close();
+    controller.receive("too late");
+    await controller.waitForPersistence();
+
+    expect(steer).not.toHaveBeenCalled();
+    expect(appendMessage).not.toHaveBeenCalled();
   });
 });

@@ -990,6 +990,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       payload.botToolEndpoint,
       (agent) => steering.attach(agent),
     );
+    // Stop accepting steering before waiting for trajectory persistence;
+    // Agent.steer() cannot resume a completed run.
+    steering.close();
+    await new Promise<void>((resolve, reject) => {
+      process.stderr.write("__AGENT_RUN_COMPLETE__\n", (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
     await steering.waitForPersistence();
     // pi-agent-core/pi-ai 側がHTTPクライアントのkeep-aliveソケット等を残し、
     // イベントループが自然に空にならずプロセスがexitしないケースがある。
