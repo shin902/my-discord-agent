@@ -1274,10 +1274,10 @@ export async function processMessage(
               msg.content,
               {
                 onDiscordEvent: (event) => {
-                  // direct cron の実行進捗はチャネルを埋めるため抑制する。
+                  // direct cron と Bot Task の実行進捗はチャネルを埋めるため抑制する。
                   // エラーは必要な通知として維持し、thread delivery は専用フローに委ねる。
                   if (
-                    isDirectCronMessage(msg) &&
+                    (isDirectCronMessage(msg) || msg.botId !== undefined) &&
                     isDiscordProgressEvent(event)
                   ) {
                     return;

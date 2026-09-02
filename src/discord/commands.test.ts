@@ -532,12 +532,14 @@ describe("handleBotCommand", () => {
         botId: "coding",
       }),
     );
-    expect(interaction.editReply).toHaveBeenCalledWith({
+    expect(interaction.reply).toHaveBeenCalledWith({
       content: expect.stringMatching(
-        /^Botへの依頼を受け付けました。Task Session: task-/,
+        /^Bot: coding\nPrompt: Fix it\nBotへの依頼を受け付けました。Task Session: task-/,
       ),
+      ephemeral: false,
+      allowedMentions: { parse: [], repliedUser: false },
     });
-    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.deferReply).not.toHaveBeenCalled();
   });
 
   it("accepts a command on the default Discord Bot identity", async () => {
@@ -566,10 +568,12 @@ describe("handleBotCommand", () => {
     await handleBotCommand(interaction as never, "secondary");
 
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
-    expect(interaction.editReply).toHaveBeenCalledWith({
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith({
       content:
         "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
+      ephemeral: true,
+      allowedMentions: { parse: [], repliedUser: false },
     });
   });
 
@@ -641,6 +645,12 @@ describe("handleBotCommand", () => {
         botId: "coding",
       }),
     );
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: expect.stringContaining("Bot: coding\nPrompt: Continue it\n"),
+      ephemeral: false,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   });
 
   it.each([
@@ -659,9 +669,6 @@ describe("handleBotCommand", () => {
 
     if (session.includes("/")) {
       expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalledWith(
-        expect.objectContaining({ content: expect.any(String) }),
-      );
     } else {
       expect(mocks.resumeBotTaskSessionAndEnqueue).toHaveBeenCalledWith(
         "task-missing",
@@ -670,10 +677,12 @@ describe("handleBotCommand", () => {
         expect.any(String),
         expect.objectContaining({ idempotencyKey: expect.any(String) }),
       );
-      expect(interaction.editReply).toHaveBeenCalledWith(
-        expect.objectContaining({ content: expect.any(String) }),
-      );
     }
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: expect.any(String),
+      ephemeral: true,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   });
 
   it("lists only sessions owned by the selected group and Bot", async () => {
@@ -702,9 +711,10 @@ describe("handleBotCommand", () => {
     expect(interaction.editReply).toHaveBeenCalledWith({
       content: expect.stringContaining("task-one"),
     });
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
   });
 
-  it("returns an ephemeral error for an unknown or cross-group Bot", async () => {
+  it("returns an ephemeral error for an unknown Bot", async () => {
     mocks.resolveBotProfile.mockImplementation(() => {
       throw new Error("Bot が未定義です: missing");
     });
@@ -714,9 +724,11 @@ describe("handleBotCommand", () => {
 
     expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
     expect(mocks.resumeBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith({
+    expect(interaction.reply).toHaveBeenCalledWith({
       content: "Bot が未定義です: missing",
+      ephemeral: true,
+      allowedMentions: { parse: [], repliedUser: false },
     });
-    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    expect(interaction.deferReply).not.toHaveBeenCalled();
   });
 });

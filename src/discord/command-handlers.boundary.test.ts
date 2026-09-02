@@ -31,7 +31,10 @@ function makeInteraction(options: Record<string, string | undefined>) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.executeSkillCommand.mockResolvedValue("invalid");
-  mocks.executeBotCommand.mockResolvedValue("invalid");
+  mocks.executeBotCommand.mockResolvedValue({
+    content: "invalid",
+    accepted: false,
+  });
 });
 
 describe("Discord command adapter boundary", () => {
@@ -71,8 +74,12 @@ describe("Discord command adapter boundary", () => {
 
     await handleBotCommand(interaction as never, "secondary");
 
-    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
-    expect(interaction.editReply).toHaveBeenCalledWith({ content: "invalid" });
+    expect(interaction.deferReply).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: "invalid",
+      ephemeral: true,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
     expect(mocks.executeBotCommand).toHaveBeenCalledWith({
       discordBotId: "secondary",
       channelId: "channel-1",

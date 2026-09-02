@@ -33,6 +33,14 @@ async function editReply(
   await interaction.editReply({ content });
 }
 
+function formatBotTaskReply(
+  botId: string,
+  prompt: string,
+  result: string,
+): string {
+  return `Bot: ${botId}\nPrompt: ${prompt}\n${result}`;
+}
+
 /** Adapt a Discord interaction into the skill application use case. */
 export async function handleSkillCommand(
   interaction: ChatInputCommandInteraction,
@@ -61,17 +69,34 @@ export async function handleBotCommand(
   interaction: ChatInputCommandInteraction,
   discordBotId = DEFAULT_DISCORD_BOT_ID,
 ): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  const botId = interaction.options.getString("bot", true);
+  const action = interaction.options.getString("action") ?? "run";
+  const prompt = interaction.options.getString("prompt")?.trim() ?? "";
+  const isTaskAction = action === "run" || action === "resume";
+  const isListAction = action === "list";
+  if (isListAction) await interaction.deferReply({ ephemeral: true });
   const groupNameLookupId = await interactionGroupLookupId(interaction);
   const result = await executeBotCommand({
     discordBotId,
     channelId: interaction.channelId,
     routingChannelId: groupNameLookupId,
-    botId: interaction.options.getString("bot", true),
-    action: interaction.options.getString("action") ?? "run",
-    prompt: interaction.options.getString("prompt")?.trim() ?? "",
+    botId,
+    action,
+    prompt,
     sessionHandle: interaction.options.getString("session")?.trim() ?? "",
     idempotencyKey: `discord-interaction:${interaction.id}`,
   });
-  await editReply(interaction, result);
+  const isAcceptedTask = isTaskAction && result.accepted;
+  const content = isAcceptedTask
+    ? formatBotTaskReply(botId, prompt, result.content)
+    : result.content;
+  if (isListAction) {
+    await editReply(interaction, content);
+  } else {
+    await interaction.reply({
+      content,
+      ephemeral: !isAcceptedTask,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+  }
 }
