@@ -395,12 +395,16 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 ### `discord`
 
-Discord runtime は暗黙のデフォルト Bot（ID は `personal`）と、`discord.bots` に列挙した追加 Bot を使用します。各追加 Bot の `tokenEnv` はトークンを読む環境変数名（トークン値は設定ファイルへ書かない）です。Slash Command deploy には各追加 Bot の非機密な `applicationId` を設定します。`pnpm discord:deploy -- global` または `pnpm discord:deploy -- guild <guild-id>` は、同じ `src/discord/command-registry.ts` の command set を全 Bot application の選択 scope へ bulk overwrite します。
+Discord runtime は `discord.bots` map に定義した Bot を使用します。デフォルト identity `personal` も通常の entry として必須です。各 entry の `tokenEnv` はトークンを読む環境変数名（トークン値は設定ファイルへ書かない）、`applicationId` は非機密な Discord application ID です。`pnpm discord:deploy global` または `pnpm discord:deploy guild <guild-id>` は、同じ `src/discord/command-registry.ts` の command set を全 Bot application の選択 scope へ bulk overwrite します。deploy script は存在する `.env` を自動で読み込みます。
 
 ```json
 {
   "discord": {
     "bots": {
+      "personal": {
+        "applicationId": "YOUR_PERSONAL_DISCORD_APPLICATION_ID",
+        "tokenEnv": "DISCORD_BOT_TOKEN"
+      },
       "public": {
         "applicationId": "YOUR_PUBLIC_DISCORD_APPLICATION_ID",
         "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN"
@@ -410,7 +414,7 @@ Discord runtime は暗黙のデフォルト Bot（ID は `personal`）と、`dis
 }
 ```
 
-デフォルト Bot の `DISCORD_APPLICATION_ID` / `DISCORD_BOT_TOKEN` と追加 Bot の token 環境変数は deploy と runtime の実行環境に設定してください。deploy の scope 引数は省略できず、省略時は usage error になります。
+各 Bot の `tokenEnv` で指定した環境変数を deploy と runtime の実行環境に設定してください。既存設定から移行する場合は、`DISCORD_APPLICATION_ID` を削除し、その値を `discord.bots.personal.applicationId` へ移し、`tokenEnv: "DISCORD_BOT_TOKEN"` の `personal` entry を追加します。deploy の scope 引数は省略できず、省略時は usage error になります。
 
 ```json
 {
@@ -443,8 +447,7 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 
 | 変数 | 用途 |
 |---|---|
-| `DISCORD_APPLICATION_ID` | デフォルト Bot（`personal`）の Discord application ID（deploy時に必須） |
-| `DISCORD_BOT_TOKEN` | デフォルト Bot トークン（必須） |
+| `DISCORD_BOT_TOKEN` | `discord.bots.personal.tokenEnv` の標準値。`personal` Bot トークン（必須） |
 | `CONFIG_PATH` | `config/config.json` のパスを上書きする（省略時はプロジェクトルートの `config/config.json`） |
 | `PROVIDERS_PATH` | `config/providers.json` のパスを上書きする |
 | `CREDENTIALS_PATH` | `config/credentials.json` のパスを上書きする |

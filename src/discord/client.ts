@@ -24,13 +24,7 @@ export async function initDiscordClients(): Promise<void> {
   const config = await loadDiscordConfig();
   for (const existing of clients.values()) existing.destroy();
   clients.clear();
-  clients.set(DEFAULT_DISCORD_BOT_ID, createDiscordClient());
-  for (const [botId] of Object.entries(config.bots)) {
-    if (botId === DEFAULT_DISCORD_BOT_ID) {
-      throw new Error(
-        `Discord Bot ID は予約されています: ${DEFAULT_DISCORD_BOT_ID}`,
-      );
-    }
+  for (const botId of Object.keys(config.bots)) {
     clients.set(botId, createDiscordClient());
   }
 }
@@ -65,12 +59,11 @@ export async function getDiscordClientForGroupName(
 
 export async function loginDiscordClients(): Promise<void> {
   const config = await loadDiscordConfig();
-  await Promise.all([
-    getDefaultDiscordClient().login(process.env.DISCORD_BOT_TOKEN),
-    ...Object.entries(config.bots).map(([botId, bot]) =>
+  await Promise.all(
+    Object.entries(config.bots).map(([botId, bot]) =>
       getDiscordClient(botId).login(process.env[bot.tokenEnv]),
     ),
-  ]);
+  );
 }
 
 export async function destroyDiscordClients(): Promise<void> {

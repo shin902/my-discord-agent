@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { DEFAULT_DISCORD_BOT_ID } from "./constants.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const CONFIG_PATH =
@@ -22,11 +23,11 @@ const TopLevelSchema = z.record(z.string(), z.unknown());
 const DiscordBotConfigSchema = z.object({
   tokenEnv: z.string().min(1),
   // Application IDs are not credentials, so they may be kept in config.
-  applicationId: z.string().min(1).optional(),
+  applicationId: z.string().min(1),
 });
 
 export const DiscordConfigSchema = z.object({
-  bots: z.record(z.string().min(1), DiscordBotConfigSchema).default({}),
+  bots: z.record(z.string().min(1), DiscordBotConfigSchema),
 });
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
 
@@ -58,8 +59,11 @@ let _raw: Record<string, unknown> | null = null;
 export async function loadDiscordConfig(): Promise<DiscordConfig> {
   const raw = await loadRawConfig();
   const config = DiscordConfigSchema.parse(raw.discord ?? {});
-  if (!process.env.DISCORD_BOT_TOKEN)
-    throw new Error("DISCORD_BOT_TOKEN が設定されていません");
+  if (!config.bots[DEFAULT_DISCORD_BOT_ID]) {
+    throw new Error(
+      `Discord Bot "${DEFAULT_DISCORD_BOT_ID}" の設定がありません。config/config.example.json を参照してください`,
+    );
+  }
   for (const [botId, bot] of Object.entries(config.bots)) {
     if (!process.env[bot.tokenEnv]) {
       throw new Error(

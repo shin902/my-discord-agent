@@ -83,23 +83,26 @@ AgentConfigの継承は実行経路ごとに分かれます。Discordの `/stop`
 
 ### Discord Bot token
 
-最低限 `.env` に `DISCORD_BOT_TOKEN` が必要です。
-
-複数 Bot を使う場合は、`config/config.json` の `discord.bots.*.tokenEnv` に指定した環境変数も `.env` に追加してください。
-
-例:
+`config/config.json` の `discord.bots` に Discord application ごとの `applicationId`（非機密）と `tokenEnv`（トークンを読む環境変数名）を設定します。デフォルト identity `personal` も通常の Bot entry として必須です。トークン値は設定ファイルへ書かず、`tokenEnv` で指定した環境変数を `.env` に追加してください。
 
 ```json
 {
   "discord": {
     "bots": {
-      "public": { "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN" }
+      "personal": {
+        "applicationId": "YOUR_PERSONAL_DISCORD_APPLICATION_ID",
+        "tokenEnv": "DISCORD_BOT_TOKEN"
+      },
+      "public": {
+        "applicationId": "YOUR_PUBLIC_DISCORD_APPLICATION_ID",
+        "tokenEnv": "DISCORD_PUBLIC_BOT_TOKEN"
+      }
     }
   }
 }
 ```
 
-この場合は `.env` に `DISCORD_PUBLIC_BOT_TOKEN=...` も必要です。
+既存設定から移行する場合は、`DISCORD_APPLICATION_ID` を削除し、その値を `discord.bots.personal.applicationId` へ移し、`tokenEnv` を `DISCORD_BOT_TOKEN` にした `personal` entry を追加してください。
 
 ## セットアップ
 

@@ -52,16 +52,16 @@ Discord アカウントでログイン。
 
 ## 6. Slash Command の登録
 
-Slash Command の登録は Bot runtime の起動とは分離しています。デプロイ対象を設定した全 Bot application へ、同じ registry を一括登録します。デフォルト Bot（`personal`）の application ID とトークンは環境変数へ設定してください。追加 Bot は `config/config.json` の `discord.bots.<id>` に `applicationId` と `tokenEnv` を設定します。トークン値は設定ファイルへ書きません。
+Slash Command の登録は Bot runtime の起動とは分離しています。デプロイ対象を設定した全 Bot application へ、同じ registry を一括登録します。`personal` を含むすべての Bot を `config/config.json` の `discord.bots.<id>` に定義し、各 entry に非機密な `applicationId` とトークンを読む環境変数名 `tokenEnv` を設定してください。トークン値は設定ファイルへ書かず、指定した環境変数を `.env` に設定します。`personal` の標準例は `applicationId` に従来の `DISCORD_APPLICATION_ID` の値、`tokenEnv` に `DISCORD_BOT_TOKEN` を指定する形です。
 
 ```bash
-DISCORD_APPLICATION_ID=... DISCORD_BOT_TOKEN=... pnpm discord:deploy -- global
+pnpm discord:deploy global
 ```
 
-デプロイ scope は必須です。開発中に即時反映したい場合は guild deploy を使います（`guild-id` は対象サーバーの ID）。
+デプロイ scope は必須です。開発中に即時反映したい場合は guild deploy を使います（`guild-id` は対象サーバーの ID）。`.env` は deploy script が存在する場合に自動で読み込みます。
 
 ```bash
-DISCORD_APPLICATION_ID=... DISCORD_BOT_TOKEN=... pnpm discord:deploy -- guild <guild-id>
+pnpm discord:deploy guild <guild-id>
 ```
 
 一部の Bot で失敗しても全対象へのデプロイを試行し、成功・失敗した Bot ID と件数を結果に表示して非ゼロ終了します。guild command は対象サーバーへ直ちに反映され、global command は Discord 側の反映に時間がかかる場合があります。`src/discord/command-registry.ts` が全 Bot application の Slash Command の唯一の正本であり、deployは選択したglobalまたはguild scopeのcommand一覧を完全置換します。別の仕組みや手動で同じscopeへ登録したcommandは、次回deploy時に削除されます。commandの追加・定義は `src/discord/commands/` とregistryのcontractに従います。
