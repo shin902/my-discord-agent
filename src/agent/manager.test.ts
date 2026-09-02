@@ -224,6 +224,120 @@ describe("sendMessage: Docker 起動構成", () => {
     );
   });
 
+  it("runner完了通知後はsteerを受け付けない", async () => {
+    spawnMock.mockReturnValueOnce(
+      makeProc(0, "response", "__AGENT_ACTIVE__\n__AGENT_RUN_COMPLETE__\n"),
+    );
+    const { sendMessage } = await import("./manager.js");
+    const { steerActiveRun } = await import("./active-run-registry.js");
+
+    await expect(sendMessage("test-group", "session-1", "hi")).resolves.toBe(
+      "response",
+    );
+    await expect(
+      steerActiveRun("test-group", "session-1", "too late"),
+    ).resolves.toBe("unavailable");
+  });
+
+  it("steerのstdin EPIPEをホストの未処理エラーにせず配信失敗にする", async () => {
+    let closeHandler: ((code: number | null) => void) | undefined;
+    let stdinErrorHandler: ((error: Error) => void) | undefined;
+    let stderrHandler: ((chunk: Buffer) => void) | undefined;
+    const proc = {
+      stdin: {
+        write: vi.fn((line: string, callback?: (error?: Error) => void) => {
+          if (line.startsWith('{"type":"steer"')) {
+            const error = new Error("EPIPE");
+            callback?.(error);
+            stdinErrorHandler?.(error);
+          } else {
+            stderrHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
+          }
+        }),
+        end: vi.fn(),
+        on: vi.fn((event: string, callback: (error: Error) => void) => {
+          if (event === "error") stdinErrorHandler = callback;
+        }),
+      },
+      stdout: { on: vi.fn() },
+      stderr: {
+        on: vi.fn((event: string, callback: (chunk: Buffer) => void) => {
+          if (event === "data") stderrHandler = callback;
+        }),
+      },
+      on: vi.fn((event: string, callback: (code: number | null) => void) => {
+        if (event === "close") closeHandler = callback;
+      }),
+      kill: vi.fn(),
+    };
+    spawnMock.mockReturnValueOnce(proc);
+    const { sendMessage } = await import("./manager.js");
+    const { steerActiveRun } = await import("./active-run-registry.js");
+    const result = sendMessage("test-group", "session-1", "hi");
+
+    let delivery = "unavailable";
+    for (let i = 0; i < 20 && delivery === "unavailable"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      delivery = await steerActiveRun("test-group", "session-1", "change");
+    }
+    expect(delivery).toBe("rejected");
+    closeHandler?.(0);
+    await expect(result).resolves.toBe("");
+  });
+
+  it("runnerのsteer ackを受け取るまでDiscord向け成功を返さない", async () => {
+    let closeHandler: ((code: number | null) => void) | undefined;
+    let stderrHandler: ((chunk: Buffer) => void) | undefined;
+    const proc = {
+      stdin: {
+        write: vi.fn((line: string, callback?: (error?: Error) => void) => {
+          callback?.();
+          if (line.startsWith('{"type":"steer"')) {
+            const requestId = (JSON.parse(line) as { requestId: string })
+              .requestId;
+            stderrHandler?.(
+              Buffer.from(
+                `__AGENT_STEER_ACK__:${JSON.stringify({ requestId, accepted: true })}\n`,
+              ),
+            );
+          }
+        }),
+        end: vi.fn(),
+        on: vi.fn(),
+      },
+      stdout: {
+        on: vi.fn((event: string, callback: (chunk: Buffer) => void) => {
+          if (event === "data") callback(Buffer.from("response"));
+        }),
+      },
+      stderr: {
+        on: vi.fn((event: string, callback: (chunk: Buffer) => void) => {
+          if (event === "data") {
+            stderrHandler = callback;
+            callback(Buffer.from("__AGENT_ACTIVE__\n"));
+          }
+        }),
+      },
+      on: vi.fn((event: string, callback: (code: number | null) => void) => {
+        if (event === "close") closeHandler = callback;
+      }),
+      kill: vi.fn(),
+    };
+    spawnMock.mockReturnValueOnce(proc);
+    const { sendMessage } = await import("./manager.js");
+    const { steerActiveRun } = await import("./active-run-registry.js");
+    const result = sendMessage("test-group", "session-1", "hi");
+
+    let delivery = "unavailable";
+    for (let i = 0; i < 20 && delivery === "unavailable"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      delivery = await steerActiveRun("test-group", "session-1", "change");
+    }
+    expect(delivery).toBe("accepted");
+    closeHandler?.(0);
+    await expect(result).resolves.toBe("response");
+  });
+
   it("image pull とコンテナ内処理の所要時間を通知する", async () => {
     spawnMock.mockReturnValueOnce(
       makeProc(

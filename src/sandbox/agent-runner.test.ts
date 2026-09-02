@@ -39,9 +39,12 @@ vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn(),
 }));
 
-const { runAgentLoop, waitForNetwork, DEFAULT_SYSTEM_PROMPT } = await import(
-  "./agent-runner.js"
-);
+const {
+  createRunnerLineRouter,
+  runAgentLoop,
+  waitForNetwork,
+  DEFAULT_SYSTEM_PROMPT,
+} = await import("./agent-runner.js");
 const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
@@ -71,6 +74,23 @@ function createMockAgent(deltas: string[], endMessage: unknown) {
     }),
   };
 }
+
+describe("runner stdin transport", () => {
+  it("routes payload and a same-chunk steer without losing the steer", () => {
+    const payload = vi.fn();
+    const control = vi.fn();
+    const router = createRunnerLineRouter(payload);
+
+    router.handleLine('{"content":"payload"}');
+    router.handleLine('{"type":"steer","requestId":"r1","instruction":"late"}');
+    router.setControlHandler(control);
+
+    expect(payload).toHaveBeenCalledWith('{"content":"payload"}');
+    expect(control).toHaveBeenCalledWith(
+      '{"type":"steer","requestId":"r1","instruction":"late"}',
+    );
+  });
+});
 
 describe("runAgentLoop", () => {
   afterEach(() => {
@@ -1948,6 +1968,24 @@ describe("defaultConvertToLlm", () => {
 
     const result = defaultConvertToLlm([readResult] as never);
     expect(result[0].content).toEqual(readResult.content);
+  });
+
+  it("steering-instruction メッセージを user ロールに再生する", () => {
+    const steeringMessage = {
+      role: "custom" as const,
+      customType: "steering-instruction" as const,
+      content: "既存の変更を壊さずに進める",
+      display: false,
+      timestamp: 2500,
+    };
+    const result = defaultConvertToLlm([steeringMessage] as never);
+    expect(result).toEqual([
+      {
+        role: "user",
+        content: "既存の変更を壊さずに進める",
+        timestamp: 2500,
+      },
+    ]);
   });
 
   it("skill-invocation メッセージを user ロールに変換する", () => {

@@ -27,6 +27,7 @@ export interface AgentExecutionOptions {
   sessionId?: string;
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void;
+  onAgentCreated?: (agent: Agent) => void;
 }
 
 export interface AgentExecutionResult {
@@ -66,6 +67,8 @@ export async function runAgent(
     getApiKey: options.getApiKey,
     sessionId: options.sessionId,
   });
+
+  options.onAgentCreated?.(agent);
 
   const abort = () => agent.abort();
   if (options.signal?.aborted) {

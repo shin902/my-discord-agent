@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { readFile } from "node:fs/promises";
-import { text } from "node:stream/consumers";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
+  type Agent,
   type AgentEvent,
   type AgentMessage,
   type AgentTool,
@@ -38,6 +39,10 @@ import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
+import {
+  createSteeringController,
+  STEERING_INSTRUCTION_TYPE,
+} from "./steering.js";
 import {
   createRootDelegationLineage,
   createSubagentTool,
@@ -123,6 +128,40 @@ const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
 const NETWORK_READY_HOST = "r.jina.ai";
 const NETWORK_READY_TIMEOUT_MS = 10_000;
 const NETWORK_READY_RETRY_MS = 500;
+const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
+
+type RunnerLineHandler = (line: string) => void;
+
+/**
+ * Route the first stdin line as the run payload and retain every subsequent
+ * line until the control handler is installed. Readline can deliver the
+ * payload and an immediately-following steer in one chunk, so installing a
+ * second `line` listener after awaiting the payload would lose that steer.
+ */
+export function createRunnerLineRouter(onPayloadLine: RunnerLineHandler): {
+  handleLine: RunnerLineHandler;
+  setControlHandler: (handler: RunnerLineHandler) => void;
+} {
+  let payloadSeen = false;
+  let controlHandler: RunnerLineHandler | undefined;
+  const pendingControlLines: string[] = [];
+
+  return {
+    handleLine(line) {
+      if (!payloadSeen) {
+        payloadSeen = true;
+        onPayloadLine(line);
+        return;
+      }
+      if (controlHandler) controlHandler(line);
+      else pendingControlLines.push(line);
+    },
+    setControlHandler(handler) {
+      controlHandler = handler;
+      for (const line of pendingControlLines.splice(0)) handler(line);
+    },
+  };
+}
 
 /** 外部ホスト名解決ができるまで待機する（最大 timeoutMs、失敗時はそのまま続行） */
 export async function waitForNetwork(options?: {
@@ -410,6 +449,13 @@ function formatReadToolDetails(msg: AgentMessage): string | undefined {
   ].join("\n");
 }
 
+function isSteeringInstructionMessage(message: AgentMessage): boolean {
+  return (
+    message.role === "custom" &&
+    message.customType === STEERING_INSTRUCTION_TYPE
+  );
+}
+
 function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
   const metadata = formatReadToolDetails(msg);
   if (!metadata || msg.role !== "toolResult") return msg;
@@ -424,8 +470,7 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
  * - contextBootstrap（memoryBootstrap / selfBootstrap）: customType ごとに最初の1件のみ
  *   user として展開し、残りは除外する（セッションあたり1件しか書き込まれないため、
  *   実質的にフィルタが発動するケースはない）。
- * - skillInvocation: `./command` 実行ごとに作られるため、常に user として展開する
- *   （contextBootstrap と異なりセッション内に複数件存在しうる）。
+ * - skillInvocation と steering-instruction は、LLM に届く指示内容を保持するため user として展開する。
  * - それ以外（bashExecution・branchSummary・compactionSummary・他の customType 等）は
  *   pi-agent-core 標準の convertToLlm に委譲する。未知の role を無効なまま LLM へ渡さないため。 */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
@@ -442,6 +487,10 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
     }
     if (isSkillInvocationMessage(msg)) {
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
+    }
+    if (customType === STEERING_INSTRUCTION_TYPE) {
+      const content = (msg as CustomMessage).content;
+      return [{ role: "user", content, timestamp: msg.timestamp }];
     }
     return libraryConvertToLlm([decorateToolResultForLlm(msg)]);
   });
@@ -463,6 +512,7 @@ export async function runAgentLoop(
   identity?: FrozenExecutionIdentity,
   systemPromptAppend?: string,
   botToolEndpoint?: BotToolEndpoint,
+  onAgentCreated?: (agent: Agent) => void,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
@@ -801,7 +851,14 @@ export async function runAgentLoop(
       convertToLlm: defaultConvertToLlm,
       getApiKey,
       sessionId,
+      onAgentCreated,
       onEvent: (event) => {
+        if (
+          event.type === "message_end" &&
+          isSteeringInstructionMessage(event.message)
+        ) {
+          return;
+        }
         if (event.type === "message_end") {
           pendingAppends.push(
             appendMessage(groupName, sessionId, event.message),
@@ -925,6 +982,24 @@ const PayloadSchema = z.object({
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   (async () => {
     await waitForNetwork();
+    const input = createInterface({ input: process.stdin });
+    let resolvePayload!: (payload: z.infer<typeof PayloadSchema>) => void;
+    let rejectPayload!: (error: unknown) => void;
+    const payloadPromise = new Promise<z.infer<typeof PayloadSchema>>(
+      (resolve, reject) => {
+        resolvePayload = resolve;
+        rejectPayload = reject;
+      },
+    );
+    const lineRouter = createRunnerLineRouter((line) => {
+      try {
+        resolvePayload(PayloadSchema.parse(JSON.parse(line || "{}")));
+      } catch (error) {
+        rejectPayload(error);
+      }
+    });
+    input.on("line", lineRouter.handleLine);
+    input.on("error", rejectPayload);
     process.stderr.write("__AGENT_READY__\n");
     if (process.argv.includes("--session-store-smoke")) {
       const groupName = "runner-smoke";
@@ -944,19 +1019,79 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         throw new Error("session store smoke test append/load mismatch");
       }
       process.stderr.write("__SESSION_STORE_SMOKE_OK__\n");
+      input.close();
       return;
     }
-    const raw = await text(process.stdin);
-    const payload = PayloadSchema.parse(JSON.parse(raw || "{}"));
-    const response = await runAgentLoop(
+    const payload = await payloadPromise;
+
+    const steering = createSteeringController(
       payload.groupName,
       payload.sessionId,
-      payload.content,
-      payload.groupConfig,
-      payload,
-      payload.systemPromptAppend,
-      payload.botToolEndpoint,
     );
+    const sendSteerAck = (requestId: string, accepted: boolean): void => {
+      process.stderr.write(
+        `${STEER_ACK_PREFIX}${JSON.stringify({
+          type: "steer_ack",
+          requestId,
+          accepted,
+        })}\n`,
+      );
+    };
+    lineRouter.setControlHandler((line) => {
+      void (async () => {
+        try {
+          const control = JSON.parse(line) as {
+            type?: unknown;
+            requestId?: unknown;
+            instruction?: unknown;
+          };
+          if (typeof control.requestId !== "string") return;
+          const validInstruction =
+            control.type === "steer" &&
+            typeof control.instruction === "string" &&
+            control.instruction.length > 0 &&
+            control.instruction.length <= 4000;
+          const accepted = validInstruction
+            ? await steering.receive(control.instruction as string)
+            : false;
+          sendSteerAck(control.requestId, accepted);
+        } catch {
+          // Ignore malformed control frames; stdin is not a general command API.
+        }
+      })();
+    });
+
+    let response: string;
+    try {
+      response = await runAgentLoop(
+        payload.groupName,
+        payload.sessionId,
+        payload.content,
+        payload.groupConfig,
+        payload,
+        payload.systemPromptAppend,
+        payload.botToolEndpoint,
+        (agent) => {
+          steering.attach(agent);
+          process.stderr.write("__AGENT_ACTIVE__\n");
+        },
+      );
+    } catch (error) {
+      // Initialization failures must reject pre-attach requests without
+      // persisting a steer that never reached an Agent.
+      steering.close();
+      throw error;
+    }
+    // Stop accepting steering before waiting for trajectory persistence;
+    // Agent.steer() cannot resume a completed run.
+    steering.close();
+    await new Promise<void>((resolve, reject) => {
+      process.stderr.write("__AGENT_RUN_COMPLETE__\n", (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+    await steering.waitForPersistence();
     // pi-agent-core/pi-ai 側がHTTPクライアントのkeep-aliveソケット等を残し、
     // イベントループが自然に空にならずプロセスがexitしないケースがある。
     // ホスト側（manager.ts）は proc の close イベントを10分タイムアウトで

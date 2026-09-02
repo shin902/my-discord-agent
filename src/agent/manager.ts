@@ -1,4 +1,5 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,7 @@ import { NonRetryableError, TransientError } from "../utils/error.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
+import { registerActiveRun } from "./active-run-registry.js";
 import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
 
 export { resolveBaseUrl, resolveModel, validateModel };
@@ -96,6 +98,9 @@ declare global {
   }
 }
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
+const RUNNER_RUN_COMPLETE_MARKER = "__AGENT_RUN_COMPLETE__";
+const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
+const AGENT_ACTIVE_MARKER = "__AGENT_ACTIVE__";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -791,12 +796,72 @@ export async function sendMessage(
   return new Promise<string>((resolve, reject) => {
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
+    let initialPayloadSent = false;
+    let controlClosed = false;
+    const pendingSteers = new Map<
+      string,
+      {
+        resolve: (accepted: boolean) => void;
+        reject: (error: Error) => void;
+      }
+    >();
+    const settleSteer = (
+      requestId: string,
+      accepted: boolean,
+      error?: Error,
+    ): void => {
+      const pending = pendingSteers.get(requestId);
+      if (!pending) return;
+      pendingSteers.delete(requestId);
+      if (error) pending.reject(error);
+      else pending.resolve(accepted);
+    };
+    const writeControlLine = (requestId: string, line: string): void => {
+      try {
+        proc.stdin.write(line, (error?: Error | null) => {
+          if (error) settleSteer(requestId, false, error);
+        });
+      } catch (error) {
+        settleSteer(
+          requestId,
+          false,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    };
+    const sendControl = (instruction: string): Promise<boolean> => {
+      if (controlClosed || !initialPayloadSent) return Promise.resolve(false);
+      const requestId = randomUUID();
+      const line = `${JSON.stringify({
+        type: "steer",
+        requestId,
+        instruction,
+      })}\n`;
+      const delivery = new Promise<boolean>((resolve, reject) => {
+        pendingSteers.set(requestId, { resolve, reject });
+      });
+      writeControlLine(requestId, line);
+      return delivery;
+    };
+    let unregisterActiveRun: (() => void) | undefined;
+    const cleanupActiveRunControl = (reason?: Error): void => {
+      if (controlClosed) return;
+      controlClosed = true;
+      unregisterActiveRun?.();
+      unregisterActiveRun = undefined;
+      const failure =
+        reason ?? new Error("runner closed before steering was acknowledged");
+      for (const requestId of pendingSteers.keys()) {
+        settleSteer(requestId, false, failure);
+      }
+    };
     let timeoutHandle: NodeJS.Timeout | undefined;
     const cancelActiveRun = () => {
       if (cleanupActive) return;
       cleanupActive = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       signal?.removeEventListener("abort", cancelActiveRun);
+      cleanupActiveRunControl();
       runningContainers.delete(containerName);
       proc.kill("SIGKILL");
       void stopContainer(containerName).then(
@@ -891,6 +956,45 @@ export async function sendMessage(
     };
 
     const processStderrLine = (line: string): void => {
+      if (line.startsWith(STEER_ACK_PREFIX)) {
+        try {
+          const parsed: unknown = JSON.parse(
+            line.slice(STEER_ACK_PREFIX.length),
+          );
+          if (
+            isRecord(parsed) &&
+            typeof parsed.requestId === "string" &&
+            typeof parsed.accepted === "boolean"
+          ) {
+            settleSteer(parsed.requestId, parsed.accepted);
+          }
+        } catch {
+          // Ignore malformed control acknowledgements; the request will fail
+          // when the runner closes instead of being reported as accepted.
+        }
+        return;
+      }
+      if (line === AGENT_ACTIVE_MARKER) {
+        if (!unregisterActiveRun) {
+          try {
+            unregisterActiveRun = registerActiveRun(
+              groupName,
+              sessionId,
+              sendControl,
+            );
+          } catch (error) {
+            cleanupActiveRunControl(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
+        }
+        return;
+      }
+      if (line === RUNNER_RUN_COMPLETE_MARKER) {
+        // runAgentLoop は完了しており、以後の steer は Agent が再開しないため拒否する。
+        cleanupActiveRunControl();
+        return;
+      }
       if (line === "__AGENT_READY__") {
         if (!readySettled) {
           Promise.resolve(onContainerStarted?.())
@@ -955,6 +1059,7 @@ export async function sendMessage(
         try {
           await stopContainer(containerName);
         } catch (cleanupError) {
+          cleanupActiveRunControl();
           runningContainers.delete(containerName);
           signal?.removeEventListener("abort", cancelActiveRun);
           reject(
@@ -964,6 +1069,7 @@ export async function sendMessage(
           );
           return;
         }
+        cleanupActiveRunControl();
         runningContainers.delete(containerName);
         signal?.removeEventListener("abort", cancelActiveRun);
         reject(
@@ -979,6 +1085,7 @@ export async function sendMessage(
       if (requiresReadyHandshake) cleanupActive = true;
       signal?.removeEventListener("abort", cancelActiveRun);
       clearTimeout(timeoutHandle);
+      cleanupActiveRunControl();
       runningContainers.delete(containerName);
       if (stderrTail) {
         processStderrLine(stderrTail);
@@ -1013,10 +1120,30 @@ export async function sendMessage(
       cleanupActive = true;
       signal?.removeEventListener("abort", cancelActiveRun);
       clearTimeout(timeoutHandle);
+      cleanupActiveRunControl(err);
       runningContainers.delete(containerName);
       reportExecutionTiming(Date.now(), "spawn-error");
       reject(err);
     });
+    if (typeof proc.stdin.on === "function") {
+      proc.stdin.on("error", (err: Error) => {
+        // A late steer can race runner exit. Always consume the stream error so
+        // EPIPE cannot become an uncaught host-process exception, and reject
+        // the corresponding request instead of reporting a false success.
+        if (cleanupActive) return;
+        if (initialPayloadSent) {
+          cleanupActiveRunControl(err);
+          return;
+        }
+        cleanupActive = true;
+        signal?.removeEventListener("abort", cancelActiveRun);
+        clearTimeout(timeoutHandle);
+        cleanupActiveRunControl(err);
+        runningContainers.delete(containerName);
+        reportExecutionTiming(Date.now(), "spawn-error");
+        reject(err);
+      });
+    }
     readyPromise
       .then(() => {
         if (cleanupActive) return;
@@ -1024,14 +1151,25 @@ export async function sendMessage(
           cancelActiveRun();
           return;
         }
-        proc.stdin.write(payload);
-        proc.stdin.end();
+        proc.stdin.write(`${payload}\n`, (error?: Error | null) => {
+          if (!error || cleanupActive) return;
+          cleanupActive = true;
+          signal?.removeEventListener("abort", cancelActiveRun);
+          clearTimeout(timeoutHandle);
+          cleanupActiveRunControl(error);
+          runningContainers.delete(containerName);
+          reportExecutionTiming(Date.now(), "spawn-error");
+          reject(error);
+        });
+        if (cleanupActive) return;
+        initialPayloadSent = true;
       })
       .catch((error) => {
         if (cleanupActive) return;
         cleanupActive = true;
         clearTimeout(timeoutHandle);
         signal?.removeEventListener("abort", cancelActiveRun);
+        cleanupActiveRunControl();
         runningContainers.delete(containerName);
         proc.kill("SIGKILL");
         void stopContainer(containerName).then(
