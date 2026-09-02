@@ -841,15 +841,22 @@ export async function sendMessage(
       if (error) pending.reject(error);
       else pending.resolve(accepted);
     };
-    const writeControlLine = (requestId: string, line: string): void => {
+    const closeControlChannel = (reason?: Error): void => {
+      if (controlClosed) return;
+      controlClosed = true;
+      const failure =
+        reason ?? new Error("runner closed before steering was acknowledged");
+      for (const requestId of pendingSteers.keys()) {
+        settleSteer(requestId, false, failure);
+      }
+    };
+    const writeControlLine = (line: string): void => {
       try {
         proc.stdin.write(line, (error?: Error | null) => {
-          if (error) settleSteer(requestId, false, error);
+          if (error) closeControlChannel(error);
         });
       } catch (error) {
-        settleSteer(
-          requestId,
-          false,
+        closeControlChannel(
           error instanceof Error ? error : new Error(String(error)),
         );
       }
@@ -865,7 +872,7 @@ export async function sendMessage(
       const delivery = new Promise<boolean>((resolve, reject) => {
         pendingSteers.set(requestId, { resolve, reject });
       });
-      writeControlLine(requestId, line);
+      writeControlLine(line);
       return delivery;
     };
     const stopCurrentRun = async (): Promise<ActiveRunStopResult> => {
@@ -902,15 +909,6 @@ export async function sendMessage(
       }
     };
     let unregisterActiveRun = (): void => {};
-    const closeControlChannel = (reason?: Error): void => {
-      if (controlClosed) return;
-      controlClosed = true;
-      const failure =
-        reason ?? new Error("runner closed before steering was acknowledged");
-      for (const requestId of pendingSteers.keys()) {
-        settleSteer(requestId, false, failure);
-      }
-    };
     const cleanupActiveRunControl = (reason?: Error): void => {
       closeControlChannel(reason);
       unregisterActiveRun();
