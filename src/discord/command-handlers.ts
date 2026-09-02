@@ -4,6 +4,7 @@ import {
   executeSkillCommand,
 } from "../application/discord-command-service.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
+import { splitMessage } from "../utils/splitMessage.js";
 
 type InteractionChannel = {
   isThread?: () => boolean;
@@ -74,7 +75,7 @@ export async function handleBotCommand(
   const prompt = interaction.options.getString("prompt")?.trim() ?? "";
   const isTaskAction = action === "run" || action === "resume";
   const isListAction = action === "list";
-  if (isListAction) await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ ephemeral: true });
   const groupNameLookupId = await interactionGroupLookupId(interaction);
   const result = await executeBotCommand({
     discordBotId,
@@ -87,15 +88,15 @@ export async function handleBotCommand(
     idempotencyKey: `discord-interaction:${interaction.id}`,
   });
   const isAcceptedTask = isTaskAction && result.accepted;
-  const content = isAcceptedTask
-    ? formatBotTaskReply(botId, prompt, result.content)
-    : result.content;
-  if (isListAction) {
-    await editReply(interaction, content);
-  } else {
-    await interaction.reply({
-      content,
-      ephemeral: !isAcceptedTask,
+  await editReply(interaction, result.content);
+  if (!isAcceptedTask || isListAction) return;
+
+  for (const chunk of splitMessage(
+    formatBotTaskReply(botId, prompt, result.content),
+  )) {
+    await interaction.followUp({
+      content: chunk,
+      ephemeral: false,
       allowedMentions: { parse: [], repliedUser: false },
     });
   }
