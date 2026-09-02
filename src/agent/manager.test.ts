@@ -759,6 +759,53 @@ describe("sendMessage: Docker 起動構成", () => {
     await running.catch(() => {});
   });
 
+  it("pre-ready stop queues abort after payload and starts grace after delivery", async () => {
+    vi.useFakeTimers();
+    let readyHandler: ((chunk: Buffer) => void) | undefined;
+    let closeHandler: ((code: number | null) => void) | undefined;
+    const proc = makeProc();
+    proc.stdin.write.mockReturnValue(true);
+    proc.stdout.on = vi.fn() as never;
+    proc.stderr.on = vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+      if (event === "data") readyHandler = cb;
+    }) as never;
+    proc.on = vi.fn((event: string, cb: (code: number | null) => void) => {
+      if (event === "close") closeHandler = cb;
+      return proc;
+    }) as never;
+    spawnMock.mockReturnValueOnce(proc);
+    const { sendMessage, stopAgentRun } = await import("./manager.js");
+    const running = sendMessage("test-group", "session-1", "hi", {
+      onContainerStarted: vi.fn(),
+    });
+    running.catch(() => {});
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+
+    const stopping = stopAgentRun("test-group", "session-1");
+    await Promise.resolve();
+    expect(proc.stdin.write).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(proc.kill).not.toHaveBeenCalledWith("SIGKILL");
+
+    readyHandler?.(Buffer.from("__AGENT_READY__\n"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(proc.stdin.write).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(proc.stdin.write.mock.calls[0]?.[0] as string)).toEqual(
+      expect.objectContaining({ content: "hi" }),
+    );
+    expect(proc.stdin.write.mock.calls[1]?.[0]).toBe('{"type":"abort"}\n');
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(proc.kill).not.toHaveBeenCalledWith("SIGKILL");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+    closeHandler?.(null);
+    await stopping.catch(() => {});
+    await running.catch(() => {});
+    vi.useRealTimers();
+  });
+
   it("abort timeout falls back to hard kill and cleanup", async () => {
     vi.useFakeTimers();
     let closeHandler: ((code: number | null) => void) | undefined;
