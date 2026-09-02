@@ -41,6 +41,10 @@ const {
   synchronizeDiscordCommands,
   synchronizeDiscordCommandsWithRetry,
 } = await import("./commands.js");
+const { deployDiscordCommands } = await import("./deploy-commands.js");
+const { DISCORD_COMMANDS, getDiscordCommand } = await import(
+  "./command-registry.js"
+);
 
 function makeInteraction(options: {
   bot?: string;
@@ -218,6 +222,58 @@ describe("synchronizeDiscordCommands", () => {
       SKILL_COMMAND.toJSON(),
     );
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("command registry", () => {
+  it("discovers each command module by its chat-input name", () => {
+    expect(DISCORD_COMMANDS.map(({ data }) => data.toJSON().name)).toEqual([
+      "bot",
+      "skill",
+    ]);
+    expect(getDiscordCommand("bot")?.execute).toEqual(expect.any(Function));
+    expect(getDiscordCommand("missing")).toBeUndefined();
+  });
+});
+
+describe("deployDiscordCommands", () => {
+  it("deploys the registry to a guild without starting the runtime", async () => {
+    const put = vi.fn().mockResolvedValue([]);
+    await deployDiscordCommands({
+      applicationId: "application-1",
+      token: "token",
+      scope: "guild",
+      guildId: "guild-1",
+      rest: { put } as never,
+    });
+
+    expect(put).toHaveBeenCalledWith(
+      "/applications/application-1/guilds/guild-1/commands",
+      { body: [BOT_COMMAND.toJSON(), SKILL_COMMAND.toJSON()] },
+    );
+  });
+
+  it("deploys global commands through the application route", async () => {
+    const put = vi.fn().mockResolvedValue([]);
+    await deployDiscordCommands({
+      applicationId: "application-1",
+      token: "token",
+      rest: { put } as never,
+    });
+
+    expect(put).toHaveBeenCalledWith("/applications/application-1/commands", {
+      body: [BOT_COMMAND.toJSON(), SKILL_COMMAND.toJSON()],
+    });
+  });
+
+  it("requires a guild id for guild deploys", async () => {
+    await expect(
+      deployDiscordCommands({
+        applicationId: "application-1",
+        token: "token",
+        scope: "guild",
+      }),
+    ).rejects.toThrow("guildId");
   });
 });
 

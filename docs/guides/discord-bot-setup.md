@@ -50,6 +50,22 @@ Discord アカウントでログイン。
 4. 生成された URL をコピー
 5. ブラウザで URL を開き、Bot を招待するサーバーを選択
 
+## 6. Slash Command の登録
+
+Slash Command の登録は Bot runtime の起動とは分離しています。アプリケーション ID とデフォルト Bot のトークンを環境変数へ設定し、次のコマンドを実行してください。
+
+```bash
+DISCORD_APPLICATION_ID=... DISCORD_BOT_TOKEN=... pnpm discord:deploy -- global
+```
+
+開発中に即時反映したい場合は guild deploy を使います（`guild-id` は対象サーバーの ID）。
+
+```bash
+DISCORD_APPLICATION_ID=... DISCORD_BOT_TOKEN=... pnpm discord:deploy -- guild <guild-id>
+```
+
+guild command は対象サーバーへ直ちに反映され、global command は Discord 側の反映に時間がかかる場合があります。command の追加・定義は `src/discord/commands/` と registry の contract に従います。
+
 
 
 

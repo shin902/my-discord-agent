@@ -64,3 +64,9 @@ Use example files and the relevant docs as the source of truth; do not guess con
 ## Documentation
 
 When behavior, configuration, examples, or operator workflows change, use the `update-docs` skill to check whether repository documentation must change too.
+
+## Discord command extension contract
+
+- Add one module under `src/discord/commands/` exporting `command: DiscordCommandDefinition`; its `data` is a `SlashCommandBuilder` and its `execute(interaction, context)` delegates to an application/service API. Register the module in `src/discord/command-registry.ts`; do not construct queues, sessions, or `AgentManager` in a command adapter.
+- `src/discord/interaction-router.ts` owns lookup and unexpected-error logging. Commands decide when to defer and use `editReply`; validation and expected failures use an ephemeral `reply` (or edit after defer). The runtime only registers the router and does not deploy commands.
+- Verify with `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Deploy independently with `pnpm discord:deploy -- global` or `pnpm discord:deploy -- guild <guild-id>` using `DISCORD_APPLICATION_ID` and `DISCORD_BOT_TOKEN`; guild deploy is for fast checks, global deploy can take time to propagate.
