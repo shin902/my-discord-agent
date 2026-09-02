@@ -1,4 +1,4 @@
-import { steerActiveRun } from "../agent/active-run-registry.js";
+import { acquireActiveRun } from "../agent/active-run-registry.js";
 import {
   isAgentMemoryEligible,
   loadAgentMemoryConfig,
@@ -152,16 +152,15 @@ export async function executeSteerCommand(
     return "このコマンドはスレッド内で実行してください。";
   }
 
-  const delivery = await steerActiveRun(
-    match.group.name,
-    request.channelId,
-    instruction,
-  );
-  if (delivery === "unavailable") {
-    return "steer対象の実行中Agentがありません。";
-  }
-  if (delivery === "rejected") {
-    return "方針転換をAgentへ届けられませんでした。Agentが終了した可能性があります。";
+  const run = acquireActiveRun(match.group.name, request.channelId);
+  if (!run) return "steer対象の実行中Agentがありません。";
+  try {
+    const accepted = await run.steer(instruction);
+    if (accepted === false) {
+      return "方針転換をAgentへ届けられませんでした。Agentが終了した可能性があります。";
+    }
+  } catch (error) {
+    return `方針転換をAgentへ届けられませんでした: ${error instanceof Error ? error.message : String(error)}`;
   }
   return "実行中Agentへ方針転換を送りました。";
 }

@@ -100,7 +100,7 @@ declare global {
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 const RUNNER_RUN_COMPLETE_MARKER = "__AGENT_RUN_COMPLETE__";
 const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
-const STEER_ACK_TIMEOUT_MS = 10_000;
+const AGENT_ACTIVE_MARKER = "__AGENT_ACTIVE__";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -798,13 +798,11 @@ export async function sendMessage(
     runningContainers.set(containerName, proc);
     let initialPayloadSent = false;
     let controlClosed = false;
-    const pendingControlLines: Array<{ requestId: string; line: string }> = [];
     const pendingSteers = new Map<
       string,
       {
         resolve: (accepted: boolean) => void;
         reject: (error: Error) => void;
-        timeout: NodeJS.Timeout;
       }
     >();
     const settleSteer = (
@@ -815,7 +813,6 @@ export async function sendMessage(
       const pending = pendingSteers.get(requestId);
       if (!pending) return;
       pendingSteers.delete(requestId);
-      clearTimeout(pending.timeout);
       if (error) pending.reject(error);
       else pending.resolve(accepted);
     };
@@ -833,7 +830,7 @@ export async function sendMessage(
       }
     };
     const sendControl = (instruction: string): Promise<boolean> => {
-      if (controlClosed) return Promise.resolve(false);
+      if (controlClosed || !initialPayloadSent) return Promise.resolve(false);
       const requestId = randomUUID();
       const line = `${JSON.stringify({
         type: "steer",
@@ -841,32 +838,17 @@ export async function sendMessage(
         instruction,
       })}\n`;
       const delivery = new Promise<boolean>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          settleSteer(
-            requestId,
-            false,
-            new Error("steering acknowledgement timed out"),
-          );
-        }, STEER_ACK_TIMEOUT_MS);
-        pendingSteers.set(requestId, { resolve, reject, timeout });
+        pendingSteers.set(requestId, { resolve, reject });
       });
-      if (!initialPayloadSent) {
-        pendingControlLines.push({ requestId, line });
-      } else {
-        writeControlLine(requestId, line);
-      }
+      writeControlLine(requestId, line);
       return delivery;
     };
-    const unregisterActiveRun = registerActiveRun(
-      groupName,
-      sessionId,
-      sendControl,
-    );
+    let unregisterActiveRun: (() => void) | undefined;
     const cleanupActiveRunControl = (reason?: Error): void => {
       if (controlClosed) return;
       controlClosed = true;
-      pendingControlLines.length = 0;
-      unregisterActiveRun();
+      unregisterActiveRun?.();
+      unregisterActiveRun = undefined;
       const failure =
         reason ?? new Error("runner closed before steering was acknowledged");
       for (const requestId of pendingSteers.keys()) {
@@ -989,6 +971,22 @@ export async function sendMessage(
         } catch {
           // Ignore malformed control acknowledgements; the request will fail
           // when the runner closes instead of being reported as accepted.
+        }
+        return;
+      }
+      if (line === AGENT_ACTIVE_MARKER) {
+        if (!unregisterActiveRun) {
+          try {
+            unregisterActiveRun = registerActiveRun(
+              groupName,
+              sessionId,
+              sendControl,
+            );
+          } catch (error) {
+            cleanupActiveRunControl(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
         }
         return;
       }
@@ -1165,10 +1163,6 @@ export async function sendMessage(
         });
         if (cleanupActive) return;
         initialPayloadSent = true;
-        for (const { requestId, line } of pendingControlLines.splice(0)) {
-          if (cleanupActive) break;
-          writeControlLine(requestId, line);
-        }
       })
       .catch((error) => {
         if (cleanupActive) return;

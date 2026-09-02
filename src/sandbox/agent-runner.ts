@@ -39,7 +39,10 @@ import { resolveTools } from "../tools/registry.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
-import { createSteeringController } from "./steering.js";
+import {
+  createSteeringController,
+  STEERING_INSTRUCTION_TYPE,
+} from "./steering.js";
 import {
   createRootDelegationLineage,
   createSubagentTool,
@@ -446,6 +449,13 @@ function formatReadToolDetails(msg: AgentMessage): string | undefined {
   ].join("\n");
 }
 
+function isSteeringInstructionMessage(message: AgentMessage): boolean {
+  return (
+    message.role === "custom" &&
+    message.customType === STEERING_INSTRUCTION_TYPE
+  );
+}
+
 function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
   const metadata = formatReadToolDetails(msg);
   if (!metadata || msg.role !== "toolResult") return msg;
@@ -460,8 +470,7 @@ function decorateToolResultForLlm(msg: AgentMessage): AgentMessage {
  * - contextBootstrap（memoryBootstrap / selfBootstrap）: customType ごとに最初の1件のみ
  *   user として展開し、残りは除外する（セッションあたり1件しか書き込まれないため、
  *   実質的にフィルタが発動するケースはない）。
- * - skillInvocation: `./command` 実行ごとに作られるため、常に user として展開する
- *   （contextBootstrap と異なりセッション内に複数件存在しうる）。
+ * - skillInvocation と steering-instruction は、LLM に届く指示内容を保持するため user として展開する。
  * - それ以外（bashExecution・branchSummary・compactionSummary・他の customType 等）は
  *   pi-agent-core 標準の convertToLlm に委譲する。未知の role を無効なまま LLM へ渡さないため。 */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
@@ -478,6 +487,10 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
     }
     if (isSkillInvocationMessage(msg)) {
       return [{ role: "user", content: msg.content, timestamp: msg.timestamp }];
+    }
+    if (customType === STEERING_INSTRUCTION_TYPE) {
+      const content = (msg as CustomMessage).content;
+      return [{ role: "user", content, timestamp: msg.timestamp }];
     }
     return libraryConvertToLlm([decorateToolResultForLlm(msg)]);
   });
@@ -840,6 +853,12 @@ export async function runAgentLoop(
       sessionId,
       onAgentCreated,
       onEvent: (event) => {
+        if (
+          event.type === "message_end" &&
+          isSteeringInstructionMessage(event.message)
+        ) {
+          return;
+        }
         if (event.type === "message_end") {
           pendingAppends.push(
             appendMessage(groupName, sessionId, event.message),
@@ -1052,7 +1071,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         payload,
         payload.systemPromptAppend,
         payload.botToolEndpoint,
-        (agent) => steering.attach(agent),
+        (agent) => {
+          steering.attach(agent);
+          process.stderr.write("__AGENT_ACTIVE__\n");
+        },
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

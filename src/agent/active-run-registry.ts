@@ -3,10 +3,12 @@ export type ActiveRunControl = (
 ) => Promise<boolean> | boolean;
 export type ActiveRunSteerResult = "accepted" | "unavailable" | "rejected";
 
+export interface ActiveRunHandle {
+  steer(instruction: string): Promise<boolean> | boolean;
+}
+
 type ActiveRun = {
-  groupName: string;
-  sessionId: string;
-  control: ActiveRunControl;
+  handle: ActiveRunHandle;
 };
 
 const activeRuns = new Map<string, ActiveRun>();
@@ -15,7 +17,7 @@ function runKey(groupName: string, sessionId: string): string {
   return `${groupName}\u0000${sessionId}`;
 }
 
-/** Register the one runner currently executing a (group, session) pair. */
+/** Register a ready Main Agent run for one (group, session) pair. */
 export function registerActiveRun(
   groupName: string,
   sessionId: string,
@@ -25,23 +27,33 @@ export function registerActiveRun(
   if (activeRuns.has(key)) {
     throw new Error(`active run already exists: ${groupName}/${sessionId}`);
   }
-  const run = { groupName, sessionId, control };
+  const run = { handle: { steer: control } };
   activeRuns.set(key, run);
   return () => {
     if (activeRuns.get(key) === run) activeRuns.delete(key);
   };
 }
 
-/** Deliver steering only to the exact active (group, session) run. */
+/** Capture the exact ready Main Agent run, if one exists now. */
+export function acquireActiveRun(
+  groupName: string,
+  sessionId: string,
+): ActiveRunHandle | undefined {
+  return activeRuns.get(runKey(groupName, sessionId))?.handle;
+}
+
+/** Deliver steering to the one captured (group, session) run. */
 export async function steerActiveRun(
   groupName: string,
   sessionId: string,
   instruction: string,
 ): Promise<ActiveRunSteerResult> {
-  const run = activeRuns.get(runKey(groupName, sessionId));
-  if (!run) return "unavailable";
+  const handle = acquireActiveRun(groupName, sessionId);
+  if (!handle) return "unavailable";
   try {
-    return (await run.control(instruction)) === false ? "rejected" : "accepted";
+    return (await handle.steer(instruction)) === false
+      ? "rejected"
+      : "accepted";
   } catch (error) {
     console.error("[active-run] steering delivery failed:", error);
     return "rejected";
