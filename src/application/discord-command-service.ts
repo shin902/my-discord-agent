@@ -108,23 +108,37 @@ export async function executeSkillCommand(
   }
 }
 
+export interface BotCommandResult {
+  content: string;
+  accepted: boolean;
+}
+
+function botCommandResult(content: string, accepted = false): BotCommandResult {
+  return { content, accepted };
+}
+
 /** Execute the Bot task-session use case without depending on Discord.js. */
 export async function executeBotCommand(
   request: BotCommandRequest,
-): Promise<string> {
+): Promise<BotCommandResult> {
   const match = await findGroupByChannelId(request.routingChannelId);
-  if (!match) return "このチャンネルはAgentGroupに未登録です。";
+  if (!match)
+    return botCommandResult("このチャンネルはAgentGroupに未登録です。");
 
   const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
   if (request.discordBotId !== expectedDiscordBotId) {
-    return "このDiscord BotはこのチャンネルのAgentGroupを担当していません。";
+    return botCommandResult(
+      "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
+    );
   }
 
   try {
     const registry = await loadBotRegistry();
     resolveBotProfile(registry, request.botId, match.group.name);
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return botCommandResult(
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   if (
@@ -132,31 +146,35 @@ export async function executeBotCommand(
     request.action !== "resume" &&
     request.action !== "list"
   ) {
-    return "action は run、resume、list のいずれかです。";
+    return botCommandResult("action は run、resume、list のいずれかです。");
   }
   if (request.action === "list") {
     if (request.prompt || request.sessionHandle) {
-      return "list では prompt と session は指定できません。";
+      return botCommandResult("list では prompt と session は指定できません。");
     }
     try {
       const sessions = getQueueRepository().listBotTaskSessions(
         match.group.name,
         request.botId,
       );
-      return formatBotTaskSessionList(sessions);
+      return botCommandResult(formatBotTaskSessionList(sessions));
     } catch (error) {
-      return `Task Session一覧を取得できませんでした: ${error instanceof Error ? error.message : String(error)}`;
+      return botCommandResult(
+        `Task Session一覧を取得できませんでした: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
-  if (!request.prompt) return "prompt は必須です。";
+  if (!request.prompt) return botCommandResult("prompt は必須です。");
   if (request.action === "run" && request.sessionHandle) {
-    return "新規実行では session を指定できません。resume を使用してください。";
+    return botCommandResult(
+      "新規実行では session を指定できません。resume を使用してください。",
+    );
   }
   if (
     request.action === "resume" &&
     !validSessionHandle(request.sessionHandle)
   ) {
-    return "不正または空のTask Session handleです。";
+    return botCommandResult("不正または空のTask Session handleです。");
   }
 
   try {
@@ -179,7 +197,9 @@ export async function executeBotCommand(
         now,
         payload,
       );
-      if (!result) return "指定されたTask Sessionは見つかりません。";
+      if (!result) {
+        return botCommandResult("指定されたTask Sessionは見つかりません。");
+      }
       session = result.session;
     } else {
       const result = repository.createBotTaskSessionAndEnqueue(
@@ -196,8 +216,13 @@ export async function executeBotCommand(
       );
       session = result.session;
     }
-    return `Botへの依頼を受け付けました。Task Session: ${session.handle}`;
+    return botCommandResult(
+      `Botへの依頼を受け付けました。Task Session: ${session.handle}`,
+      true,
+    );
   } catch (error) {
-    return `Botへの依頼を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`;
+    return botCommandResult(
+      `Botへの依頼を受け付けられませんでした: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

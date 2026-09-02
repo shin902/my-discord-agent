@@ -4,6 +4,7 @@ import {
   executeSkillCommand,
 } from "../application/discord-command-service.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
+import { splitMessage } from "../utils/splitMessage.js";
 
 type InteractionChannel = {
   isThread?: () => boolean;
@@ -31,6 +32,14 @@ async function editReply(
   content: string,
 ): Promise<void> {
   await interaction.editReply({ content });
+}
+
+function formatBotTaskReply(
+  botId: string,
+  prompt: string,
+  result: string,
+): string {
+  return `Bot: ${botId}\nPrompt: ${prompt}\n${result}`;
 }
 
 /** Adapt a Discord interaction into the skill application use case. */
@@ -61,17 +70,34 @@ export async function handleBotCommand(
   interaction: ChatInputCommandInteraction,
   discordBotId = DEFAULT_DISCORD_BOT_ID,
 ): Promise<void> {
+  const botId = interaction.options.getString("bot", true);
+  const action = interaction.options.getString("action") ?? "run";
+  const prompt = interaction.options.getString("prompt")?.trim() ?? "";
+  const isTaskAction = action === "run" || action === "resume";
+  const isListAction = action === "list";
   await interaction.deferReply({ ephemeral: true });
   const groupNameLookupId = await interactionGroupLookupId(interaction);
   const result = await executeBotCommand({
     discordBotId,
     channelId: interaction.channelId,
     routingChannelId: groupNameLookupId,
-    botId: interaction.options.getString("bot", true),
-    action: interaction.options.getString("action") ?? "run",
-    prompt: interaction.options.getString("prompt")?.trim() ?? "",
+    botId,
+    action,
+    prompt,
     sessionHandle: interaction.options.getString("session")?.trim() ?? "",
     idempotencyKey: `discord-interaction:${interaction.id}`,
   });
-  await editReply(interaction, result);
+  const isAcceptedTask = isTaskAction && result.accepted;
+  await editReply(interaction, result.content);
+  if (!isAcceptedTask || isListAction) return;
+
+  for (const chunk of splitMessage(
+    formatBotTaskReply(botId, prompt, result.content),
+  )) {
+    await interaction.followUp({
+      content: chunk,
+      ephemeral: false,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+  }
 }

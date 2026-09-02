@@ -25,13 +25,17 @@ function makeInteraction(options: Record<string, string | undefined>) {
     deferReply: vi.fn().mockResolvedValue(undefined),
     editReply: vi.fn().mockResolvedValue(undefined),
     reply: vi.fn().mockResolvedValue(undefined),
+    followUp: vi.fn().mockResolvedValue(undefined),
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.executeSkillCommand.mockResolvedValue("invalid");
-  mocks.executeBotCommand.mockResolvedValue("invalid");
+  mocks.executeBotCommand.mockResolvedValue({
+    content: "invalid",
+    accepted: false,
+  });
 });
 
 describe("Discord command adapter boundary", () => {
@@ -73,6 +77,7 @@ describe("Discord command adapter boundary", () => {
 
     expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
     expect(interaction.editReply).toHaveBeenCalledWith({ content: "invalid" });
+    expect(interaction.followUp).not.toHaveBeenCalled();
     expect(mocks.executeBotCommand).toHaveBeenCalledWith({
       discordBotId: "secondary",
       channelId: "channel-1",

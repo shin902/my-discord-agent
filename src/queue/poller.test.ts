@@ -1678,6 +1678,85 @@ describe("processMessage - Discord イベント通知", () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  it("Bot Task の tool・subagent進捗は送信せず、最終応答は配送キューへ確定する", async () => {
+    loadBotRegistry.mockResolvedValue({ coding: {} });
+    resolveBotProfile.mockReturnValue({
+      group: "g",
+      instructions: "coding instructions",
+      model: { provider: "bot-provider", modelId: "bot-model" },
+    });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        const onDiscordEvent = (options as SendMessageOptions | undefined)
+          ?.onDiscordEvent;
+        onDiscordEvent?.({ type: "tool_start", toolName: "bash" });
+        onDiscordEvent?.({
+          type: "subagent_tool_start",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          toolName: "read",
+          taskPreview: "inspect task",
+        });
+        onDiscordEvent?.({
+          type: "subagent_update",
+          worker: "ephemeral",
+          runId: "child-123456789",
+          parentRunId: "root-123",
+          status: "completed",
+          taskPreview: "inspect task",
+          resultPreview: "調査完了",
+        });
+        return "AI response";
+      },
+    );
+
+    const msg = makeMsg({ botId: "coding" });
+    await processMessage(msg);
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "AI response",
+      expect.objectContaining({
+        deliveryPayload: expect.objectContaining({
+          destinationType: "channel",
+          destinationId: msg.channelId,
+        }),
+      }),
+    );
+  });
+
+  it("Bot Task でも error イベントは送信される", async () => {
+    loadBotRegistry.mockResolvedValue({ coding: {} });
+    resolveBotProfile.mockReturnValue({
+      group: "g",
+      instructions: "coding instructions",
+      model: { provider: "bot-provider", modelId: "bot-model" },
+    });
+    vi.mocked(sendMessage).mockImplementation(
+      async (_g, _s, _c, options: unknown) => {
+        (options as SendMessageOptions | undefined)?.onDiscordEvent?.({
+          type: "error",
+          message: "oops",
+        });
+        return "AI response";
+      },
+    );
+
+    await processMessage(makeMsg({ botId: "coding" }));
+
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledWith({
+        content: "⚠️ エラー: oops",
+        reply: { messageReference: "msg-original", failIfNotExists: false },
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    });
+  });
+
   it("direct cron でも error イベントは送信される", async () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_g, _s, _c, options: unknown) => {
