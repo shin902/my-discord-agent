@@ -83,8 +83,17 @@ function parseJsonOutput(
 ): XSavedItem[] {
   const parsed = parseJsonEnvelope(stdout);
   const payload = parsed.payload;
-  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+  if (!isRecord(payload)) {
     throw new Error("BirdClaw response is missing payload data");
+  }
+  const data = payload.data;
+  if (data === undefined) {
+    const meta = payload.meta;
+    if (isRecord(meta) && meta.result_count === 0) return [];
+    throw new Error("BirdClaw response is missing payload data");
+  }
+  if (!Array.isArray(data)) {
+    throw new Error("BirdClaw response contains invalid payload data");
   }
   const includes = isRecord(payload.includes) ? payload.includes : undefined;
   const users = new Map<string, string>();
@@ -97,7 +106,7 @@ function parseJsonOutput(
     }
   }
 
-  return payload.data.map((tweet): XSavedItem => {
+  return data.map((tweet): XSavedItem => {
     if (!isRecord(tweet)) {
       throw new Error("BirdClaw response contains an invalid tweet");
     }

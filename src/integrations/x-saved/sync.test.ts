@@ -38,7 +38,7 @@ const response = JSON.stringify({
 const emptyResponse = JSON.stringify({
   ok: true,
   source: "xurl",
-  payload: { data: [] },
+  payload: { meta: { result_count: 0 } },
 });
 
 const completeResponse = JSON.stringify({

@@ -194,10 +194,51 @@ printf '%s\\n' '{"ok":true,"payload":{"data":[{"id":"missing","text":"missing me
     ]);
   });
 
+  it("accepts a successful zero-result response without payload data", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-empty-test-"));
+    tempDirs.push(dir);
+    const binary = path.join(dir, "birdclaw");
+    const emptyResponse = JSON.stringify({
+      ok: true,
+      payload: { meta: { result_count: 0 } },
+    });
+    writeFileSync(
+      binary,
+      `#!/bin/sh
+printf '%s\\n' '${emptyResponse}'
+`,
+    );
+    chmodSync(binary, 0o755);
+    process.env.BIRDCLAW_BIN = binary;
+
+    const result = await syncBirdclawSavedCollections({
+      mode: "xurl",
+      limit: 1,
+      maxPages: 1,
+    });
+
+    expect(result.bookmarks).toMatchObject({
+      ok: true,
+      items: [],
+      error: null,
+    });
+    expect(result.likes).toMatchObject({ ok: true, items: [], error: null });
+  });
+
   it.each([
     ["empty output", "", "empty JSON output"],
     ["invalid JSON", "not-json", "invalid JSON"],
     ["non-object JSON", "[]", "invalid JSON envelope"],
+    [
+      "missing data without zero-result metadata",
+      '{"ok":true,"payload":{"meta":{"result_count":1}}}',
+      "missing payload data",
+    ],
+    [
+      "invalid data type",
+      '{"ok":true,"payload":{"data":{}}}',
+      "invalid payload data",
+    ],
   ])("rejects %s without returning the raw payload", async (_label, output, expectedError) => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-output-test-"));
     tempDirs.push(dir);
