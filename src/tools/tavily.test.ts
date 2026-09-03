@@ -124,6 +124,78 @@ describe("tavily search tool", () => {
     expect(firstText(result)).toContain("(結果なし)");
   });
 
+  it("entry.envVars を順番に見て最初に設定されたキーを使う", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: undefined,
+      TAVILY_ALIAS_KEY: "alias-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_MISSING_KEY", "TAVILY_ALIAS_KEY", "TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { tavilySearchTool } = await import("./tavily.js");
+    await tavilySearchTool.execute("id", { query: "alias" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.tavily.com/search",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer alias-secret",
+        }),
+      }),
+    );
+  });
+
+  it("proxy.requestTimeoutMs で upstream fetch を timeout し、abort reason を旧 proxy と同じ意味にする", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    vi.doMock("../config/proxy-config.js", () => ({
+      loadRequestTimeoutMs: vi.fn().mockResolvedValue(25),
+    }));
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<never>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            reject(init.signal?.reason);
+          });
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { tavilySearchTool } = await import("./tavily.js");
+      const request = tavilySearchTool.execute("id", { query: "timeout" });
+      await vi.advanceTimersByTimeAsync(25);
+      await expect(request).rejects.toThrow("upstream timeout for tavily");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.tavily.com/search",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("results が undefined でもクラッシュしない", async () => {
     process.env = {
       ...originalEnv,

@@ -148,7 +148,9 @@ const CAPABILITIES = {
   "tavily-search": {
     tool: "tavily-search",
     executor: "host",
-    factory: createStaticToolFactory(tavilySearchTool),
+    // Host results cross the Tool Proxy as raw data; the sandbox-side thin
+    // proxy applies the common output boundary after receiving them.
+    factory: () => tavilySearchTool,
     validateArgs: tavilySearchArgsValidator,
   },
 } satisfies Record<string, CapabilityDefinition>;

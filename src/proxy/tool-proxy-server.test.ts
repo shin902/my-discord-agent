@@ -271,6 +271,52 @@ describe("Tool Proxy RPC", () => {
     }
   });
 
+  it("returns oversized tavily output raw so sandbox proxy owns externalization", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    const content = "x".repeat(50_001);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          {
+            title: "large",
+            url: "https://example.com",
+            content,
+            score: 1,
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: "large" },
+      });
+      expect(response.status).toBe(200);
+      const result = response.payload.result as {
+        content: Array<{ type: string; text?: string }>;
+        details: Record<string, unknown>;
+      };
+      expect(result.content[0]?.text?.length).toBeGreaterThan(50_000);
+      expect(result.details).not.toHaveProperty("fullOutputPath");
+      expect(result.details).not.toHaveProperty("externalizedOutput");
+    } finally {
+      config.revoke();
+    }
+  });
+
   it.each([
     0, 11,
   ])("rejects out-of-range tavily-search max_results (%s) before host execution", async (max_results) => {

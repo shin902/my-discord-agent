@@ -1197,6 +1197,24 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(credentialJson).not.toContain("api.tavily.com");
   });
 
+  it("tavily-searchのalias credentialもsandboxへ渡さない", async () => {
+    process.env.TAVILY_ALIAS_KEY = "tavily-alias-secret";
+    const spawnMock = await setup([
+      {
+        provider: "tavily",
+        envVars: ["TAVILY_ALIAS_KEY"],
+        baseUrl: "https://api.tavily.com",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["tavily-search"] },
+    });
+    const credentialJson = JSON.stringify(getCredJson(spawnMock));
+    expect(credentialJson).not.toContain("tavily-alias-secret");
+    expect(credentialJson).not.toContain("api.tavily.com");
+  });
+
   it("legacy Tavily toolsが併用される場合はcredential proxy情報を維持する", async () => {
     process.env.TAVILY_API_KEY = "tavily-secret";
     const spawnMock = await setup([
