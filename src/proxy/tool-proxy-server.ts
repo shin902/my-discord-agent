@@ -4,7 +4,9 @@ import * as http from "node:http";
 import { getCapabilityDefinition } from "../tools/registry.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
-export const TOOL_PROXY_BODY_LIMIT = 64 * 1024;
+// Keep enough room for large Calendar descriptions and recurrence rules while
+// retaining a finite limit against accidentally unbounded request bodies.
+export const TOOL_PROXY_BODY_LIMIT = 1024 * 1024;
 type ToolProxyRun = {
   runId: string;
   allowedCapabilities: ReadonlySet<string>;
@@ -159,6 +161,10 @@ async function executeRequest(
   }
   if (!isRequest(body)) {
     sendJson(res, 400, { error: "Invalid Tool Proxy request" });
+    return;
+  }
+  if (runs.get(token) !== run) {
+    sendJson(res, 401, { error: "Unknown or expired run token" });
     return;
   }
   const capability = getCapabilityDefinition(body.capability);
