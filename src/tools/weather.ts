@@ -170,10 +170,7 @@ export function isWeatherForecastArgs(
   return (
     typeof args.location === "string" &&
     (args.days === undefined ||
-      (typeof args.days === "number" &&
-        Number.isSafeInteger(args.days) &&
-        args.days >= 1 &&
-        args.days <= 7))
+      (typeof args.days === "number" && Number.isSafeInteger(args.days)))
   );
 }
 

@@ -158,15 +158,58 @@ describe("Tool Proxy RPC", () => {
     }
   });
 
-  it("rejects invalid weather arguments", async () => {
+  it.each([
+    ["non-numeric", "2"],
+    ["non-integer", 1.5],
+  ])("rejects %s weather arguments", async (_label, days) => {
     const config = run(["get-current-weather", "get-weather-forecast"]);
     try {
       const response = await request(`Bearer ${config.token}`, {
         capability: "get-weather-forecast",
-        args: { location: "東京", days: 8 },
+        args: { location: "東京", days },
       });
       expect(response.status).toBe(400);
       expect(response.payload.error).toContain("Invalid arguments");
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it.each([
+    [0, 1],
+    [10, 7],
+  ])("passes out-of-range integer days (%s) to the existing executor for clamping", async (days, clampedDays) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => geocoding })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          daily: {
+            time: [],
+            temperature_2m_max: [],
+            temperature_2m_min: [],
+            precipitation_probability_max: [],
+            weather_code: [],
+          },
+          daily_units: {},
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["get-weather-forecast"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "get-weather-forecast",
+        args: { location: "東京", days },
+      });
+      expect(response.status).toBe(200);
+      expect(
+        (response.payload.result as { details: { days: number } }).details.days,
+      ).toBe(clampedDays);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining(`forecast_days=${clampedDays}`),
+      );
     } finally {
       config.revoke();
     }
