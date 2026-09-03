@@ -1,5 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { resolveBaseUrl } from "../agent/model.js";
+import { loadCredentialProxy } from "../config/credential-proxy.js";
+import { loadRequestTimeoutMs } from "../config/proxy-config.js";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const searchParams = Type.Object({
@@ -45,6 +48,31 @@ type TavilyResponse = {
   results: TavilyResult[];
 };
 
+async function loadTavilyApiConfig(): Promise<{
+  baseUrl: string;
+  apiKey: string;
+}> {
+  const entry = (await loadCredentialProxy()).find(
+    (candidate) => candidate.provider === "tavily",
+  );
+  if (!entry) {
+    throw new Error("tavily プロバイダーが credentials.json に見つかりません");
+  }
+  const baseUrl = resolveBaseUrl(entry.baseUrl);
+  if (!baseUrl) {
+    throw new Error("tavily の baseUrl に未解決のプレースホルダがあります");
+  }
+  const apiKey = entry.envVars
+    ?.map((envVar) => process.env[envVar])
+    .find((value): value is string => Boolean(value));
+  if (!apiKey) {
+    throw new Error(
+      "tavily の envVars に設定された環境変数のいずれにも値がありません",
+    );
+  }
+  return { baseUrl, apiKey };
+}
+
 export const tavilySearchTool: AgentTool<typeof searchParams> = {
   name: "tavily-search",
   label: "Tavily Search",
@@ -60,19 +88,36 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
       include_answer = true,
       topic = "general",
     },
+    signal,
   ) => {
-    const baseUrl = resolveProxyBaseUrl("tavily");
-    const res = await fetch(`${baseUrl}/search`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query,
-        max_results: Math.min(max_results, 10),
-        search_depth,
-        include_answer,
-        topic,
-      }),
-    });
+    const { baseUrl, apiKey } = await loadTavilyApiConfig();
+    const timeoutSignal = AbortSignal.timeout(await loadRequestTimeoutMs());
+    const requestSignal = signal
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal;
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl.replace(/\/$/, "")}/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          query,
+          max_results: Math.min(max_results, 10),
+          search_depth,
+          include_answer,
+          topic,
+        }),
+        signal: requestSignal,
+      });
+    } catch (error) {
+      if (timeoutSignal.aborted && !signal?.aborted) {
+        throw new Error("upstream timeout for tavily");
+      }
+      throw error;
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Tavily API エラー ${res.status}: ${text.slice(0, 200)}`);

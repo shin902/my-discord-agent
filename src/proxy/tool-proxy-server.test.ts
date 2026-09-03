@@ -8,7 +8,12 @@ import {
   TOOL_PROXY_BODY_LIMIT,
 } from "./tool-proxy-server.js";
 
+vi.mock("../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 let port: number;
+const originalEnv = process.env;
 
 beforeAll(async () => {
   await initToolProxyServer();
@@ -16,6 +21,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  process.env = originalEnv;
   vi.unstubAllGlobals();
 });
 
@@ -226,6 +232,123 @@ describe("Tool Proxy RPC", () => {
         2,
         expect.stringContaining(`forecast_days=${clampedDays}`),
       );
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it("executes tavily-search through the host handler with host-only credentials", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: "test" },
+      });
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.tavily.com/search",
+        expect.objectContaining({
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer tavily-secret",
+          },
+        }),
+      );
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it("returns oversized tavily output raw so sandbox proxy owns externalization", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    const content = "x".repeat(50_001);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          {
+            title: "large",
+            url: "https://example.com",
+            content,
+            score: 1,
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: "large" },
+      });
+      expect(response.status).toBe(200);
+      const result = response.payload.result as {
+        content: Array<{ type: string; text?: string }>;
+        details: Record<string, unknown>;
+      };
+      expect(result.content[0]?.text?.length).toBeGreaterThan(50_000);
+      expect(result.details).not.toHaveProperty("fullOutputPath");
+      expect(result.details).not.toHaveProperty("externalizedOutput");
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it.each([
+    0, 11,
+  ])("rejects out-of-range tavily-search max_results (%s) before host execution", async (max_results) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: "test", max_results },
+      });
+      expect(response.status).toBe(400);
+      expect(response.payload.error).toContain("Invalid arguments");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it("rejects invalid tavily-search arguments before host execution", async () => {
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: 42 },
+      });
+      expect(response.status).toBe(400);
+      expect(response.payload.error).toContain("Invalid arguments");
     } finally {
       config.revoke();
     }

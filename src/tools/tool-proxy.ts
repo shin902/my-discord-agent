@@ -3,6 +3,7 @@ import type {
   AgentToolResult,
   AgentToolUpdateCallback,
 } from "@earendil-works/pi-agent-core";
+import { externalizeLargeToolResult } from "./output.js";
 
 export interface ToolProxyEndpoint {
   url: string;
@@ -53,10 +54,8 @@ export function createToolProxyTool<T extends AgentTool>(
           : `Tool Proxy request failed (HTTP ${response.status})`,
       );
     }
-    // Host weather results are complete (and intentionally small), so no
-    // externalized output or shared volume is needed on this RPC path.
     void onUpdate;
-    return payload.result;
+    return externalizeLargeToolResult(payload.result);
   };
 
   return { ...tool, execute } as T;

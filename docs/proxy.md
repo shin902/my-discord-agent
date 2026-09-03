@@ -38,13 +38,13 @@ Host
 
 ### Tool Proxy（host executor）
 
-credential forwardingとは別の責務として、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行する。現在は`get-current-weather`と`get-weather-forecast`だけがこの経路を使う。
+credential forwardingとは別の責務として、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行する。現在は`get-current-weather`、`get-weather-forecast`、`tavily-search`がこの経路を使う。
 
 ```
-Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- Open-Meteo --> host weather executor
+Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- host credentials --> Open-Meteo / Tavily API
 ```
 
-run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、weather引数schemaを検証し、未認可・不明・不正な要求をfail closedする。JWT、credential proxy移行、Tool Runtime、shared volumeはこの段階では対象外。
+run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。`tavily-search`はtrusted `credentials.json`の`baseUrl`と`envVars`をhost側で読み、`envVars`を順番に見て最初に設定された値を`Authorization: Bearer`としてTavily APIへ注入する。検索結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。`tavily-extract`、`tavily-crawl`、`tavily-map`のlegacy credential-proxy経路は維持する。
 
 ### config/credentials.json
 

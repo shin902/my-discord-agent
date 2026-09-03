@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { loadRequestTimeoutMsMock } = vi.hoisted(() => ({
+  loadRequestTimeoutMsMock: vi.fn().mockResolvedValue(120_000),
+}));
+
+vi.mock("../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: loadRequestTimeoutMsMock,
+}));
+
+afterEach(() => {
+  loadRequestTimeoutMsMock.mockResolvedValue(120_000);
+});
+
 function firstText(result: {
   content: Array<{ type: string; text?: string }>;
 }): string {
@@ -39,15 +51,20 @@ describe("tavily search tool", () => {
     await expect(
       tavilySearchTool.execute("id", { query: "test" }),
     ).rejects.toThrow(
-      "tavily プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません",
+      "tavily プロバイダーが credentials.json に見つかりません",
     );
   });
 
-  it("tavily プロキシへ検索リクエストを送信する", async () => {
+  it("host APIへBearer認証付きで検索リクエストを送信する", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily/" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     const fetchMock = vi.fn().mockResolvedValue({
@@ -70,9 +87,13 @@ describe("tavily search tool", () => {
     const result = await tavilySearchTool.execute("id", { query: "テスト" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://proxy.test/tavily/search",
+      "https://api.tavily.com/search",
       expect.objectContaining({
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tavily-secret",
+        },
         body: JSON.stringify({
           query: "テスト",
           max_results: 5,
@@ -92,8 +113,13 @@ describe("tavily search tool", () => {
   it("結果が空のとき '(結果なし)' を返す", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     vi.stubGlobal(
@@ -110,11 +136,108 @@ describe("tavily search tool", () => {
     expect(firstText(result)).toContain("(結果なし)");
   });
 
+  it("entry.envVars を順番に見て最初に設定されたキーを使う", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: undefined,
+      TAVILY_ALIAS_KEY: "alias-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_MISSING_KEY", "TAVILY_ALIAS_KEY", "TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { tavilySearchTool } = await import("./tavily.js");
+    await tavilySearchTool.execute("id", { query: "alias" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.tavily.com/search",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer alias-secret",
+        }),
+      }),
+    );
+  });
+
+  it("entry.envVars のどれにも値がなければ設定不足の例外を投げる", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: undefined,
+      TAVILY_ALIAS_KEY: undefined,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_ALIAS_KEY", "TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+
+    const { tavilySearchTool } = await import("./tavily.js");
+    await expect(
+      tavilySearchTool.execute("id", { query: "missing" }),
+    ).rejects.toThrow(
+      "tavily の envVars に設定された環境変数のいずれにも値がありません",
+    );
+  });
+
+  it("proxy.requestTimeoutMs で upstream fetch を timeout し、abort reason を旧 proxy と同じ意味にする", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    loadRequestTimeoutMsMock.mockResolvedValue(25);
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<never>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            reject(init.signal?.reason);
+          });
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const { tavilySearchTool } = await import("./tavily.js");
+      const request = tavilySearchTool.execute("id", { query: "timeout" });
+      await vi.advanceTimersByTimeAsync(25);
+      await expect(request).rejects.toThrow("upstream timeout for tavily");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.tavily.com/search",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("results が undefined でもクラッシュしない", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     vi.stubGlobal(
@@ -134,8 +257,13 @@ describe("tavily search tool", () => {
   it("API エラー時に例外を投げる", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     vi.stubGlobal(
