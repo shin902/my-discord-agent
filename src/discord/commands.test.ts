@@ -73,6 +73,7 @@ function makeInteraction(options: {
     channel: {
       isThread: () => options.isThread ?? false,
       parentId: options.parentId ?? null,
+      send: vi.fn().mockResolvedValue(undefined),
     },
     options: {
       getString: (name: string) => {
@@ -87,6 +88,7 @@ function makeInteraction(options: {
     deferred: false,
     replied: false,
     deferReply: vi.fn().mockResolvedValue(undefined),
+    deleteReply: vi.fn().mockResolvedValue(undefined),
     editReply: vi.fn().mockResolvedValue(undefined),
     reply: vi.fn().mockResolvedValue(undefined),
     followUp: vi.fn().mockResolvedValue(undefined),
@@ -120,6 +122,7 @@ function makeSkillInteraction(options: {
     deferred: false,
     replied: false,
     deferReply: vi.fn().mockResolvedValue(undefined),
+    deleteReply: vi.fn().mockResolvedValue(undefined),
     editReply: vi.fn().mockResolvedValue(undefined),
     reply: vi.fn().mockResolvedValue(undefined),
   };
@@ -642,51 +645,41 @@ describe("handleBotCommand", () => {
       }),
     );
     expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content: expect.stringMatching(
-        /^Botへの依頼を受け付けました。Task Session: task-/,
-      ),
-    });
-    expect(interaction.followUp).toHaveBeenCalledWith({
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).toHaveBeenCalledOnce();
+    expect(interaction.channel.send).toHaveBeenCalledWith({
       content: expect.stringMatching(
         /^Bot: coding\nPrompt: Fix it\nBotへの依頼を受け付けました。Task Session: task-/,
       ),
-      ephemeral: false,
       allowedMentions: { parse: [], repliedUser: false },
     });
     expect(interaction.deferReply.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.findGroupByChannelId.mock.invocationCallOrder[0] ?? Infinity,
     );
-    expect(interaction.editReply.mock.invocationCallOrder[0]).toBeLessThan(
-      interaction.followUp.mock.invocationCallOrder[0] ?? Infinity,
+    expect(interaction.channel.send.mock.invocationCallOrder[0]).toBeLessThan(
+      interaction.deleteReply.mock.invocationCallOrder[0] ?? Infinity,
     );
   });
 
-  it("splits a long public Bot task context into Discord-sized followups", async () => {
+  it("splits a long public Bot task context into Discord-sized messages", async () => {
     const prompt = "x".repeat(4_500);
     const interaction = makeInteraction({ bot: "coding", prompt });
 
     await handleBotCommand(interaction as never);
 
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content: expect.stringMatching(
-        /^Botへの依頼を受け付けました。Task Session: task-/,
-      ),
-    });
-    const chunks = interaction.followUp.mock.calls.map(
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).toHaveBeenCalledOnce();
+    const chunks = interaction.channel.send.mock.calls.map(
       ([options]) => (options as { content: string }).content,
     );
-    const acceptance = (
-      interaction.editReply.mock.calls[0]?.[0] as { content: string }
-    ).content;
+    const acceptance = "Botへの依頼を受け付けました。Task Session: task-";
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.every((chunk) => chunk.length <= 2000)).toBe(true);
     expect(chunks.join("")).toContain(prompt);
     expect(chunks.join("")).toContain(acceptance);
-    for (const [options] of interaction.followUp.mock.calls) {
+    for (const [options] of interaction.channel.send.mock.calls) {
       expect(options).toEqual({
         content: expect.any(String),
-        ephemeral: false,
         allowedMentions: { parse: [], repliedUser: false },
       });
     }
@@ -795,12 +788,10 @@ describe("handleBotCommand", () => {
       }),
     );
     expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "Botへの依頼を受け付けました。Task Session: task-existing",
-    });
-    expect(interaction.followUp).toHaveBeenCalledWith({
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).toHaveBeenCalledOnce();
+    expect(interaction.channel.send).toHaveBeenCalledWith({
       content: expect.stringContaining("Bot: coding\nPrompt: Continue it\n"),
-      ephemeral: false,
       allowedMentions: { parse: [], repliedUser: false },
     });
   });

@@ -15,7 +15,11 @@ function makeInteraction(options: Record<string, string | undefined>) {
   return {
     id: "interaction-1",
     channelId: "channel-1",
-    channel: { isThread: () => false, parentId: null },
+    channel: {
+      isThread: () => false,
+      parentId: null,
+      send: vi.fn().mockResolvedValue(undefined),
+    },
     user: { id: "user-1", bot: false },
     options: {
       getString: (name: string, _required?: boolean) => options[name] ?? null,
@@ -25,6 +29,7 @@ function makeInteraction(options: Record<string, string | undefined>) {
     deferReply: vi.fn().mockResolvedValue(undefined),
     editReply: vi.fn().mockResolvedValue(undefined),
     reply: vi.fn().mockResolvedValue(undefined),
+    deleteReply: vi.fn().mockResolvedValue(undefined),
     followUp: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -65,6 +70,28 @@ describe("Discord command adapter boundary", () => {
     );
   });
 
+  it("posts an accepted Bot receipt independently and removes the ACK", async () => {
+    mocks.executeBotCommand.mockResolvedValue({
+      content: "Botへの依頼を受け付けました。Task Session: task-1234",
+      accepted: true,
+    });
+    const interaction = makeInteraction({
+      bot: "coding",
+      action: "run",
+      prompt: "do it",
+    });
+
+    await handleBotCommand(interaction as never, "secondary");
+
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.channel.send).toHaveBeenCalledWith({
+      content:
+        "Bot: coding\nPrompt: do it\nBotへの依頼を受け付けました。Task Session: task-1234",
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+    expect(interaction.deleteReply).toHaveBeenCalledOnce();
+  });
+
   it("passes a plain Bot request to the application service", async () => {
     const interaction = makeInteraction({
       bot: "coding",
@@ -77,6 +104,7 @@ describe("Discord command adapter boundary", () => {
 
     expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
     expect(interaction.editReply).toHaveBeenCalledWith({ content: "invalid" });
+    expect(interaction.deleteReply).not.toHaveBeenCalled();
     expect(interaction.followUp).not.toHaveBeenCalled();
     expect(mocks.executeBotCommand).toHaveBeenCalledWith({
       discordBotId: "secondary",

@@ -12,6 +12,10 @@ type InteractionChannel = {
   isThread?: () => boolean;
   parentId?: string | null;
   fetch?: () => Promise<unknown>;
+  send?: (options: {
+    content: string;
+    allowedMentions: { parse: never[]; repliedUser: boolean };
+  }) => Promise<unknown>;
 };
 
 async function interactionGroupLookupId(
@@ -128,16 +132,22 @@ export async function handleBotCommand(
     idempotencyKey: `discord-interaction:${interaction.id}`,
   });
   const isAcceptedTask = isTaskAction && result.accepted;
-  await editReply(interaction, result.content);
-  if (!isAcceptedTask || isListAction) return;
+  if (!isAcceptedTask || isListAction) {
+    await editReply(interaction, result.content);
+    return;
+  }
 
+  const channel = interaction.channel as InteractionChannel | null;
+  if (!channel?.send) {
+    throw new Error("Bot receipt destination is unavailable");
+  }
   for (const chunk of splitMessage(
     formatBotTaskReply(botId, prompt, result.content),
   )) {
-    await interaction.followUp({
+    await channel.send({
       content: chunk,
-      ephemeral: false,
       allowedMentions: { parse: [], repliedUser: false },
     });
   }
+  await interaction.deleteReply();
 }
