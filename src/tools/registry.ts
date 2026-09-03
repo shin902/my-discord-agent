@@ -44,54 +44,69 @@ import {
 } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
-// Context-created tools are validated here but instantiated by their runtime
-// owner, not by the static registry.
-const CONTEXT_CREATED_TOOLS = new Set(["bot", "subagent"]);
+export type AgentToolFactory = () => AgentTool | undefined;
 
-const TOOLS: Record<string, AgentTool> = {
-  bash: bashTool,
-  date: dateTool,
-  "agent-reach": agentReachTool,
-  "arxiv-search": arxivSearchTool,
-  "arxiv-survey": arxivSurveyTool,
-  read: readTool,
-  write: writeTool,
-  list: listTool,
-  edit: editTool,
-  glob: globTool,
-  grep: grepTool,
-  "list-emails": listEmailsTool,
-  "read-email": readEmailTool,
-  "list-issues": listIssuesTool,
-  "read-issue": readIssueTool,
-  "list-issue-comments": listIssueCommentsTool,
-  "list-pull-request-comments": listPullRequestCommentsTool,
-  "read-pull-request": readPullRequestTool,
-  "comment-issue": commentIssueTool,
-  "clone-repository": cloneRepositoryTool,
-  "list-calendars": listCalendarsTool,
-  "list-events": listEventsTool,
-  "read-event": readEventTool,
-  "create-event": createEventTool,
-  "update-event": updateEventTool,
-  "delete-event": deleteEventTool,
-  "browserless-smart-scrape": browserlessSmartScrapeTool,
-  "browserless-search": browserlessSearchTool,
-  "browserless-function": browserlessFunctionTool,
-  "browserless-content": browserlessContentTool,
-  "tavily-search": tavilySearchTool,
-  "tavily-extract": tavilyExtractTool,
-  "tavily-crawl": tavilyCrawlTool,
-  "tavily-map": tavilyMapTool,
-  "get-current-weather": getCurrentWeatherTool,
-  "get-weather-forecast": getWeatherForecastTool,
-};
+const createStaticToolFactory =
+  (tool: AgentTool): AgentToolFactory =>
+  () =>
+    wrapToolOutput(tool);
 
-export function resolveTools(toolNames: string[]): AgentTool[] {
+const TOOL_FACTORIES = {
+  bash: createStaticToolFactory(bashTool),
+  date: createStaticToolFactory(dateTool),
+  "agent-reach": createStaticToolFactory(agentReachTool),
+  "arxiv-search": createStaticToolFactory(arxivSearchTool),
+  "arxiv-survey": createStaticToolFactory(arxivSurveyTool),
+  read: createStaticToolFactory(readTool),
+  write: createStaticToolFactory(writeTool),
+  list: createStaticToolFactory(listTool),
+  edit: createStaticToolFactory(editTool),
+  glob: createStaticToolFactory(globTool),
+  grep: createStaticToolFactory(grepTool),
+  "list-emails": createStaticToolFactory(listEmailsTool),
+  "read-email": createStaticToolFactory(readEmailTool),
+  "list-issues": createStaticToolFactory(listIssuesTool),
+  "read-issue": createStaticToolFactory(readIssueTool),
+  "list-issue-comments": createStaticToolFactory(listIssueCommentsTool),
+  "list-pull-request-comments": createStaticToolFactory(
+    listPullRequestCommentsTool,
+  ),
+  "read-pull-request": createStaticToolFactory(readPullRequestTool),
+  "comment-issue": createStaticToolFactory(commentIssueTool),
+  "clone-repository": createStaticToolFactory(cloneRepositoryTool),
+  "list-calendars": createStaticToolFactory(listCalendarsTool),
+  "list-events": createStaticToolFactory(listEventsTool),
+  "read-event": createStaticToolFactory(readEventTool),
+  "create-event": createStaticToolFactory(createEventTool),
+  "update-event": createStaticToolFactory(updateEventTool),
+  "delete-event": createStaticToolFactory(deleteEventTool),
+  "browserless-smart-scrape": createStaticToolFactory(
+    browserlessSmartScrapeTool,
+  ),
+  "browserless-search": createStaticToolFactory(browserlessSearchTool),
+  "browserless-function": createStaticToolFactory(browserlessFunctionTool),
+  "browserless-content": createStaticToolFactory(browserlessContentTool),
+  "tavily-search": createStaticToolFactory(tavilySearchTool),
+  "tavily-extract": createStaticToolFactory(tavilyExtractTool),
+  "tavily-crawl": createStaticToolFactory(tavilyCrawlTool),
+  "tavily-map": createStaticToolFactory(tavilyMapTool),
+  "get-current-weather": createStaticToolFactory(getCurrentWeatherTool),
+  "get-weather-forecast": createStaticToolFactory(getWeatherForecastTool),
+  bot: () => undefined,
+  subagent: () => undefined,
+} satisfies Record<string, AgentToolFactory>;
+
+type ToolName = keyof typeof TOOL_FACTORIES;
+type RuntimeToolFactories = Partial<Record<ToolName, AgentToolFactory>>;
+
+export function resolveTools(
+  toolNames: string[],
+  runtimeFactories: RuntimeToolFactories = {},
+): AgentTool[] {
   return toolNames.flatMap((name) => {
-    if (CONTEXT_CREATED_TOOLS.has(name)) return [];
-    const tool = TOOLS[name];
-    if (!tool) throw new Error(`不明なツール名: ${name}`);
-    return [wrapToolOutput(tool)];
+    const defaultFactory = TOOL_FACTORIES[name as ToolName];
+    if (!defaultFactory) throw new Error(`不明なツール名: ${name}`);
+    const tool = (runtimeFactories[name as ToolName] ?? defaultFactory)();
+    return tool ? [tool] : [];
   });
 }

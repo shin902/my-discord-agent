@@ -626,10 +626,6 @@ export async function runAgentLoop(
     groupConfig.model?.modelId ?? FALLBACK_DEFAULT_MODEL.modelId,
   );
 
-  const tools = resolveTools(groupConfig.tools ?? []).filter(
-    (t) => !VM_UNSUPPORTED_TOOLS.has(t.name),
-  );
-
   const skillPrompt = formatSkillsForPrompt(skills);
 
   const systemPromptSnapshotHash = snapshotHash(
@@ -803,26 +799,23 @@ export async function runAgentLoop(
       process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     },
   };
-  const subagentTool =
-    groupConfig.tools?.includes("subagent") === true
-      ? createSubagentTool(delegationContext)
-      : undefined;
-  const botTool =
-    botToolEndpoint && groupConfig.tools?.includes("bot") === true
-      ? createBotTool({
-          endpoint: botToolEndpoint,
-          groupName,
-          onUsage: (usage) => {
-            aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
-            hasUsage = true;
-          },
-        })
-      : undefined;
-  const agentTools = [
-    ...tools,
-    ...(subagentTool ? [subagentTool] : []),
-    ...(botTool ? [botTool] : []),
-  ];
+  const agentTools = resolveTools(groupConfig.tools ?? [], {
+    subagent: () =>
+      groupConfig.tools?.includes("subagent") === true
+        ? createSubagentTool(delegationContext)
+        : undefined,
+    bot: () =>
+      botToolEndpoint && groupConfig.tools?.includes("bot") === true
+        ? createBotTool({
+            endpoint: botToolEndpoint,
+            groupName,
+            onUsage: (usage) => {
+              aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
+              hasUsage = true;
+            },
+          })
+        : undefined,
+  }).filter((t) => !VM_UNSUPPORTED_TOOLS.has(t.name));
   delegationContext.tools = agentTools;
 
   const pendingAppends: Promise<void>[] = [];

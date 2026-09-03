@@ -13,7 +13,7 @@ import {
   readPullRequestTool,
 } from "./github.js";
 import { wrapToolOutput } from "./output.js";
-import { resolveTools } from "./registry.js";
+import { type AgentToolFactory, resolveTools } from "./registry.js";
 
 describe("resolveTools", () => {
   it("agent-reach を解決して agentReachTool を返す", () => {
@@ -47,8 +47,31 @@ describe("resolveTools", () => {
     ]);
   });
 
-  it("context-createdなbotとsubagentはregistryで検証されるが生成しない", () => {
+  it("runtime factoryがないcontext-created toolは生成しない", () => {
     expect(resolveTools(["bot", "subagent"])).toEqual([]);
+  });
+
+  it("runtime factoryをstatic toolと同じ解決経路で使う", () => {
+    const createTestTool =
+      (name: string): AgentToolFactory =>
+      () => ({
+        name,
+        label: name,
+        description: name,
+        parameters: {} as never,
+        execute: vi.fn(),
+      });
+    const botFactory = createTestTool("bot");
+    const subagentFactory = createTestTool("subagent");
+
+    const tools = resolveTools(["subagent", "read", "bot"], {
+      bot: botFactory,
+      subagent: subagentFactory,
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual(["subagent", "read", "bot"]);
+    expect(tools[0]).not.toBeUndefined();
+    expect(tools[2]).not.toBeUndefined();
   });
 
   it("空配列は空配列を返す", () => {
