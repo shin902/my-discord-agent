@@ -17,14 +17,19 @@ import {
 import { wrapToolOutput } from "./output.js";
 import {
   type AgentToolFactory,
-  getRegistryNameOverlap,
   type RuntimeToolFactories,
   resolveTools,
 } from "./registry.js";
 
 describe("resolveTools", () => {
-  it("capability と tool factory の registry 名は重複しない", () => {
-    expect(getRegistryNameOverlap()).toEqual([]);
+  it("静的toolを指定順に解決する", () => {
+    expect(
+      resolveTools(["read", "date", "grep"]).map((tool) => tool.name),
+    ).toEqual(["read", "date", "grep"]);
+    expect(resolveTools(["date", "date"]).map((tool) => tool.name)).toEqual([
+      "date",
+      "date",
+    ]);
   });
 
   it("date は sandbox capability dispatcher 経由で既存toolを返す", async () => {
@@ -48,6 +53,8 @@ describe("resolveTools", () => {
       timestamp: expect.any(Number),
       localDateTime: expect.any(String),
       timezone: expect.any(String),
+      timezoneLabel: expect.any(String),
+      utcOffset: expect.any(String),
       utc: expect.any(String),
     });
   });
