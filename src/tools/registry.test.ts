@@ -169,6 +169,24 @@ describe("resolveTools", () => {
     expect(
       capability.validateArgs({ owner: "o", repo: "r", limit: "10" }),
     ).toBe(false);
+    expect(capability.validateArgs({ owner: "o", repo: "r", limit: 0 })).toBe(
+      false,
+    );
+  });
+
+  it("executorが正規化しないschema制約はhost境界で維持する", () => {
+    const capability = getCapabilityDefinition("arxiv-survey");
+    expect(capability?.executor).toBe("host");
+    if (!capability || capability.executor !== "host") return;
+    expect(
+      capability.validateArgs({
+        queries: Array.from({ length: 9 }, () => "q"),
+      }),
+    ).toBe(false);
+    expect(capability.validateArgs({ queries: ["x".repeat(501)] })).toBe(false);
+    expect(capability.validateArgs({ queries: ["q"], max_results: 99 })).toBe(
+      true,
+    );
   });
 
   it("weather capability routes through the host executor contract", () => {

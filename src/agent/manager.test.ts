@@ -1314,6 +1314,30 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ).toEqual(["reddit"]);
   });
 
+  it("host toolと同名の選択中model providerはsandboxに維持する", async () => {
+    process.env.GITHUB_MODEL_TOKEN = "model-secret";
+    const spawnMock = await setup([
+      {
+        provider: "github",
+        forceCustom: true,
+        envVars: ["GITHUB_MODEL_TOKEN"],
+        baseUrl: "https://models.example.com/v1",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        model: { provider: "github", modelId: "test-model" },
+      },
+    });
+    expect(getCredJson(spawnMock)).toEqual([
+      expect.objectContaining({
+        provider: "github",
+        baseUrl: "http://host.docker.internal:12345/github",
+      }),
+    ]);
+  });
+
   it("redditCookie フィールドが JSON に含まれない", async () => {
     const spawnMock = await setup([
       {

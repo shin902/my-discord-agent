@@ -7,33 +7,23 @@ export type CapabilityExecutor = "sandbox" | "host";
 export type AgentToolFactory = () => AgentTool | undefined;
 export type CapabilityArgsValidator = (args: unknown) => boolean;
 
-const EXECUTOR_CONSTRAINTS = new Set([
-  "minimum",
-  "maximum",
-  "exclusiveMinimum",
-  "exclusiveMaximum",
-  "multipleOf",
-  "minLength",
-  "maxLength",
-  "pattern",
-  "format",
-  "minItems",
-  "maxItems",
-]);
-
-function structuralSchema(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(structuralSchema);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => !EXECUTOR_CONSTRAINTS.has(key))
-      .map(([key, child]) => [key, structuralSchema(child)]),
-  );
-}
-
-/** Reuse the advertised schema while leaving clamps and semantic checks to the executor. */
-export function validateToolArgs(tool: AgentTool): CapabilityArgsValidator {
-  const schema = structuralSchema(tool.parameters) as TSchema;
+/** Reuse the advertised schema, relaxing only upper bounds the executor clamps. */
+export function validateToolArgs(
+  tool: AgentTool,
+  clampedMaximumProperties: readonly string[] = [],
+): CapabilityArgsValidator {
+  const parameters = tool.parameters as TSchema & {
+    properties?: Record<string, TSchema>;
+  };
+  const properties = { ...parameters.properties };
+  for (const property of clampedMaximumProperties) {
+    const propertySchema = properties[property];
+    if (!propertySchema) continue;
+    const relaxed: Record<string, unknown> = { ...propertySchema };
+    delete relaxed.maximum;
+    properties[property] = relaxed as TSchema;
+  }
+  const schema = { ...parameters, properties } as TSchema;
   return (args) => Check(schema, args);
 }
 

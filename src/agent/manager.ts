@@ -437,6 +437,7 @@ type CredentialEntry = Awaited<ReturnType<typeof loadCredentialProxy>>[number];
 function buildSanitizedCredentialJson(
   creds: CredentialEntry[],
   proxyPort: number,
+  modelProvider: string,
 ): string {
   const sanitized = [];
   const hostToolProviders = new Set([
@@ -446,7 +447,12 @@ function buildSanitizedCredentialJson(
     "google-calendar",
   ]);
   for (const entry of creds) {
-    if (hostToolProviders.has(entry.provider)) continue;
+    if (
+      hostToolProviders.has(entry.provider) &&
+      entry.provider !== modelProvider
+    ) {
+      continue;
+    }
     const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
     if (!resolvedBaseUrl) {
       console.warn(
@@ -705,7 +711,11 @@ export async function sendMessage(
   const proxyPort = storedProxyPort;
 
   const creds = await loadCredentialProxy();
-  const credentialJson = buildSanitizedCredentialJson(creds, proxyPort);
+  const credentialJson = buildSanitizedCredentialJson(
+    creds,
+    proxyPort,
+    resolvedModel.provider,
+  );
 
   let promptContent = content;
   if (attachments && attachments.length > 0) {

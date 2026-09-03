@@ -88,12 +88,15 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
     value.topic === "news" ||
     value.topic === "finance");
 
-function hostCapability(tool: AgentTool): CapabilityDefinition {
+function hostCapability(
+  tool: AgentTool,
+  clampedMaximumProperties: readonly string[] = [],
+): CapabilityDefinition {
   return {
     tool: tool.name,
     executor: "host",
     factory: () => tool,
-    validateArgs: validateToolArgs(tool),
+    validateArgs: validateToolArgs(tool, clampedMaximumProperties),
   };
 }
 
@@ -123,18 +126,18 @@ const CAPABILITIES = {
     factory: () => tavilySearchTool,
     validateArgs: tavilySearchArgsValidator,
   },
-  "arxiv-search": hostCapability(arxivSearchTool),
-  "arxiv-survey": hostCapability(arxivSurveyTool),
-  "list-issues": hostCapability(listIssuesTool),
+  "arxiv-search": hostCapability(arxivSearchTool, ["max_results"]),
+  "arxiv-survey": hostCapability(arxivSurveyTool, ["max_results"]),
+  "list-issues": hostCapability(listIssuesTool, ["limit"]),
   "read-issue": hostCapability(readIssueTool),
   "list-issue-comments": hostCapability(listIssueCommentsTool),
   "read-pull-request": hostCapability(readPullRequestTool),
   "list-pull-request-comments": hostCapability(listPullRequestCommentsTool),
   "comment-issue": hostCapability(commentIssueTool),
-  "list-emails": hostCapability(listEmailsTool),
+  "list-emails": hostCapability(listEmailsTool, ["limit"]),
   "read-email": hostCapability(readEmailTool),
   "list-calendars": hostCapability(listCalendarsTool),
-  "list-events": hostCapability(listEventsTool),
+  "list-events": hostCapability(listEventsTool, ["maxResults"]),
   "read-event": hostCapability(readEventTool),
   "create-event": hostCapability(createEventTool),
   "update-event": hostCapability(updateEventTool),
