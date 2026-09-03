@@ -97,16 +97,39 @@ const TOOL_FACTORIES = {
 } satisfies Record<string, AgentToolFactory>;
 
 type ToolName = keyof typeof TOOL_FACTORIES;
-type RuntimeToolFactories = Partial<Record<ToolName, AgentToolFactory>>;
+export type RuntimeToolName = "bot" | "subagent";
+export type RuntimeToolFactories = Partial<
+  Record<RuntimeToolName, AgentToolFactory>
+>;
+
+function isRuntimeToolName(name: string): name is RuntimeToolName {
+  return name === "bot" || name === "subagent";
+}
 
 export function resolveTools(
   toolNames: string[],
   runtimeFactories: RuntimeToolFactories = {},
 ): AgentTool[] {
-  return toolNames.flatMap((name) => {
-    const defaultFactory = TOOL_FACTORIES[name as ToolName];
-    if (!defaultFactory) throw new Error(`不明なツール名: ${name}`);
-    const tool = (runtimeFactories[name as ToolName] ?? defaultFactory)();
-    return tool ? [tool] : [];
-  });
+  const staticTools: AgentTool[] = [];
+
+  for (const name of toolNames) {
+    const factory = TOOL_FACTORIES[name as ToolName];
+    if (!factory) throw new Error(`不明なツール名: ${name}`);
+    if (!isRuntimeToolName(name)) {
+      const tool = factory();
+      if (tool) staticTools.push(tool);
+    }
+  }
+
+  const runtimeTools: AgentTool[] = [];
+  if (toolNames.includes("subagent")) {
+    const tool = (runtimeFactories.subagent ?? TOOL_FACTORIES.subagent)();
+    if (tool) runtimeTools.push(tool);
+  }
+  if (toolNames.includes("bot")) {
+    const tool = (runtimeFactories.bot ?? TOOL_FACTORIES.bot)();
+    if (tool) runtimeTools.push(tool);
+  }
+
+  return [...staticTools, ...runtimeTools];
 }
