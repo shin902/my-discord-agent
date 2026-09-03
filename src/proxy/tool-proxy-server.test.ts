@@ -8,6 +8,10 @@ import {
   TOOL_PROXY_BODY_LIMIT,
 } from "./tool-proxy-server.js";
 
+vi.mock("../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 let port: number;
 const originalEnv = process.env;
 
