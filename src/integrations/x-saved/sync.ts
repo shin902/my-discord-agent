@@ -66,20 +66,27 @@ export async function runXSavedSync(
       ...syncResult.bookmarks.items,
       ...syncResult.likes.items,
     ];
+    const hasLiveItems = syncResult.bookmarks.ok || syncResult.likes.ok;
     try {
-      const ingest =
-        syncResult.bookmarks.ok || syncResult.likes.ok
-          ? ingestXSavedItems(liveItems, { xSavedDb: targetDb })
-          : ingestBirdclawSavedItems({
-              birdclawDbPath,
-              xSavedDb: targetDb,
-              account: options.account,
-            });
-      newItems = ingest.newItems;
+      const databaseIngest = ingestBirdclawSavedItems({
+        birdclawDbPath,
+        xSavedDb: targetDb,
+        account: options.account,
+      });
+      newItems += databaseIngest.newItems;
     } catch (error) {
       if (!(error instanceof BirdclawSourceError)) throw error;
-      errors.push(`ingest: ${error.message}`);
-      status = "failed";
+      if (!hasLiveItems) {
+        errors.push(`ingest: ${error.message}`);
+        status = "failed";
+      }
+    }
+
+    if (hasLiveItems) {
+      const responseIngest = ingestXSavedItems(liveItems, {
+        xSavedDb: targetDb,
+      });
+      newItems += responseIngest.newItems;
     }
 
     backupPath = await backupXSavedDatabase(

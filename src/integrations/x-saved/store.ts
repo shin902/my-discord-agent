@@ -35,9 +35,9 @@ export interface IngestResult {
 export interface XSavedItem {
   tweetId: string;
   text: string;
-  authorHandle: string;
-  tweetCreatedAt: string | null;
-  externalUrls: string[];
+  authorHandle?: string;
+  tweetCreatedAt?: string;
+  externalUrls?: string[];
   seenLiked: boolean;
   seenBookmarked: boolean;
 }
@@ -287,18 +287,18 @@ function resolveBirdclawAccountId(
   return row.id;
 }
 
-function extractExternalUrls(raw: string | null): string[] {
-  if (!raw) return [];
+function extractExternalUrls(raw: string | null): string[] | undefined {
+  if (!raw) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return [];
+    return undefined;
   }
 
-  if (!parsed || typeof parsed !== "object") return [];
+  if (!parsed || typeof parsed !== "object") return undefined;
   const urls = (parsed as { urls?: unknown }).urls;
-  if (!Array.isArray(urls)) return [];
+  if (!Array.isArray(urls)) return undefined;
 
   const result = new Set<string>();
   for (const entry of urls) {
@@ -424,15 +424,27 @@ export function ingestXSavedItems(
         external_urls_json, seen_liked, seen_bookmarked,
         first_seen_at, last_seen_at
       ) VALUES (
-        @tweetId, @text, @authorHandle, @url, @tweetCreatedAt,
-        @externalUrlsJson, @seenLiked, @seenBookmarked, @now, @now
+        @tweetId, @text, COALESCE(@authorHandle, ''), @url, @tweetCreatedAt,
+        COALESCE(@externalUrlsJson, '[]'), @seenLiked, @seenBookmarked, @now, @now
       )
       ON CONFLICT(tweet_id) DO UPDATE SET
         text = excluded.text,
-        author_handle = excluded.author_handle,
-        url = excluded.url,
-        tweet_created_at = excluded.tweet_created_at,
-        external_urls_json = excluded.external_urls_json,
+        author_handle = CASE
+          WHEN @authorHandle IS NULL THEN x_items.author_handle
+          ELSE excluded.author_handle
+        END,
+        url = CASE
+          WHEN @authorHandle IS NULL THEN x_items.url
+          ELSE excluded.url
+        END,
+        tweet_created_at = CASE
+          WHEN @tweetCreatedAt IS NULL THEN x_items.tweet_created_at
+          ELSE excluded.tweet_created_at
+        END,
+        external_urls_json = CASE
+          WHEN @externalUrlsJson IS NULL THEN x_items.external_urls_json
+          ELSE excluded.external_urls_json
+        END,
         seen_liked = MAX(x_items.seen_liked, excluded.seen_liked),
         seen_bookmarked = MAX(x_items.seen_bookmarked, excluded.seen_bookmarked),
         last_seen_at = excluded.last_seen_at
@@ -452,10 +464,13 @@ export function ingestXSavedItems(
         upsertItem.run({
           tweetId: item.tweetId,
           text: item.text,
-          authorHandle: item.authorHandle,
+          authorHandle: item.authorHandle ?? null,
           url,
-          tweetCreatedAt: item.tweetCreatedAt,
-          externalUrlsJson: JSON.stringify(item.externalUrls),
+          tweetCreatedAt: item.tweetCreatedAt ?? null,
+          externalUrlsJson:
+            item.externalUrls === undefined
+              ? null
+              : JSON.stringify(item.externalUrls),
           seenLiked: item.seenLiked ? 1 : 0,
           seenBookmarked: item.seenBookmarked ? 1 : 0,
           now,
@@ -501,15 +516,20 @@ export function ingestBirdclawSavedItems(options?: {
   }
 
   return ingestXSavedItems(
-    rows.map((row) => ({
-      tweetId: String(row.id),
-      text: row.text ?? "",
-      authorHandle: row.author_handle ?? "",
-      tweetCreatedAt: row.created_at,
-      externalUrls: extractExternalUrls(row.entities_json),
-      seenLiked: row.liked === 1,
-      seenBookmarked: row.bookmarked === 1,
-    })),
+    rows.map((row) => {
+      const externalUrls = extractExternalUrls(row.entities_json);
+      return {
+        tweetId: String(row.id),
+        text: row.text ?? "",
+        ...(row.author_handle === null
+          ? {}
+          : { authorHandle: row.author_handle }),
+        ...(row.created_at === null ? {} : { tweetCreatedAt: row.created_at }),
+        ...(externalUrls === undefined ? {} : { externalUrls }),
+        seenLiked: row.liked === 1,
+        seenBookmarked: row.bookmarked === 1,
+      };
+    }),
     options,
   );
 }

@@ -33,8 +33,8 @@ function optionalString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function extractExternalUrls(entities: unknown): string[] {
-  if (!isRecord(entities) || !Array.isArray(entities.urls)) return [];
+function extractExternalUrls(entities: unknown): string[] | undefined {
+  if (!isRecord(entities) || !Array.isArray(entities.urls)) return undefined;
   const result = new Set<string>();
   for (const entry of entities.urls) {
     if (!isRecord(entry)) continue;
@@ -103,12 +103,15 @@ function parseJsonOutput(
     }
     const tweetId = requiredString(tweet.id, "tweet id");
     const authorId = requiredString(tweet.author_id, "tweet author id");
+    const authorHandle = users.get(authorId);
+    const tweetCreatedAt = optionalString(tweet.created_at);
+    const externalUrls = extractExternalUrls(tweet.entities);
     return {
       tweetId,
       text: requiredString(tweet.text, "tweet text"),
-      authorHandle: users.get(authorId) ?? "",
-      tweetCreatedAt: optionalString(tweet.created_at),
-      externalUrls: extractExternalUrls(tweet.entities),
+      ...(authorHandle === undefined ? {} : { authorHandle }),
+      ...(tweetCreatedAt === null ? {} : { tweetCreatedAt }),
+      ...(externalUrls === undefined ? {} : { externalUrls }),
       seenLiked: collection === "likes",
       seenBookmarked: collection === "bookmarks",
     };

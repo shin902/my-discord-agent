@@ -158,6 +158,42 @@ printf '%s\\n' '${validResponse}'
     );
   });
 
+  it("distinguishes missing optional metadata from explicit empty URLs", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-sparse-test-"));
+    tempDirs.push(dir);
+    const binary = path.join(dir, "birdclaw");
+    writeFileSync(
+      binary,
+      `#!/bin/sh
+printf '%s\\n' '{"ok":true,"payload":{"data":[{"id":"missing","text":"missing metadata","author_id":"author-1"},{"id":"empty-urls","text":"empty URLs","author_id":"author-1","entities":{"urls":[]}}]}}'
+`,
+    );
+    chmodSync(binary, 0o755);
+    process.env.BIRDCLAW_BIN = binary;
+
+    const result = await syncBirdclawSavedCollections({
+      mode: "xurl",
+      limit: 1,
+      maxPages: 1,
+    });
+
+    expect(result.bookmarks.items).toEqual([
+      {
+        tweetId: "missing",
+        text: "missing metadata",
+        seenLiked: false,
+        seenBookmarked: true,
+      },
+      {
+        tweetId: "empty-urls",
+        text: "empty URLs",
+        externalUrls: [],
+        seenLiked: false,
+        seenBookmarked: true,
+      },
+    ]);
+  });
+
   it.each([
     ["empty output", "", "empty JSON output"],
     ["invalid JSON", "not-json", "invalid JSON"],
