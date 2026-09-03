@@ -5,7 +5,6 @@ import { getCapabilityDefinition } from "../tools/registry.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
 export const TOOL_PROXY_BODY_LIMIT = 64 * 1024;
-export const TOOL_PROXY_TIMEOUT_MS = 15_000;
 type ToolProxyRun = {
   runId: string;
   allowedCapabilities: ReadonlySet<string>;
@@ -193,25 +192,12 @@ async function executeRequest(
     });
     return;
   }
-  let timeoutHandle: NodeJS.Timeout | undefined;
   try {
-    const result = await Promise.race([
-      tool.execute("tool-proxy", body.args),
-      new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(
-          () => reject(new Error("Tool Proxy executor timed out")),
-          TOOL_PROXY_TIMEOUT_MS,
-        );
-      }),
-    ]);
+    const result = await tool.execute("tool-proxy", body.args);
     sendJson(res, 200, { result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    sendJson(res, message === "Tool Proxy executor timed out" ? 504 : 502, {
-      error: message,
-    });
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
+    sendJson(res, 502, { error: message });
   }
 }
 
