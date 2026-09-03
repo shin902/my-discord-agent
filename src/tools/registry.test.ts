@@ -17,11 +17,16 @@ import {
 import { wrapToolOutput } from "./output.js";
 import {
   type AgentToolFactory,
+  getRegistryNameOverlap,
   type RuntimeToolFactories,
   resolveTools,
 } from "./registry.js";
 
 describe("resolveTools", () => {
+  it("capability と tool factory の registry 名は重複しない", () => {
+    expect(getRegistryNameOverlap()).toEqual([]);
+  });
+
   it("date は sandbox capability dispatcher 経由で既存toolを返す", async () => {
     const [tool] = resolveTools(["date"]);
 

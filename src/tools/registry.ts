@@ -106,6 +106,11 @@ const CAPABILITIES = {
   },
 } satisfies Record<string, CapabilityDefinition>;
 
+export function getRegistryNameOverlap(): string[] {
+  const factoryNames = new Set(Object.keys(TOOL_FACTORIES));
+  return Object.keys(CAPABILITIES).filter((name) => factoryNames.has(name));
+}
+
 type ToolName = keyof typeof TOOL_FACTORIES;
 
 export type { AgentToolFactory } from "./capability.js";
