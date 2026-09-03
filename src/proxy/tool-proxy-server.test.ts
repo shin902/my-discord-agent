@@ -2,6 +2,7 @@ import * as http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activeToolProxyRunCount,
+  createToolProxyRequestHandler,
   createToolProxyRun,
   getToolProxyPort,
   initToolProxyServer,
@@ -61,12 +62,13 @@ function requestInParts(
   authorization: string,
   firstPart: string,
   secondPart: string,
-  beforeComplete: () => void,
+  beforeComplete: () => Promise<void>,
+  requestPort = port,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
-        port,
+        port: requestPort,
         path: "/__tool-proxy/rpc",
         method: "POST",
         headers: {
@@ -86,12 +88,28 @@ function requestInParts(
       },
     );
     req.on("error", reject);
-    req.write(firstPart, () => {
-      setTimeout(() => {
-        beforeComplete();
-        req.end(secondPart);
-      }, 10);
-    });
+    req.write(firstPart);
+    void beforeComplete()
+      .then(() => req.end(secondPart))
+      .catch(reject);
+  });
+}
+
+async function listen(server: http.Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Test server did not receive a TCP address");
+  }
+  return address.port;
+}
+
+async function close(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
@@ -520,18 +538,33 @@ describe("Tool Proxy RPC", () => {
       capability: "get-current-weather",
       args: { location: "東京" },
     });
+    let signalBodyReadReady!: () => void;
+    const bodyReadReady = new Promise<void>((resolve) => {
+      signalBodyReadReady = resolve;
+    });
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        onBodyReadReady: signalBodyReadReady,
+      }),
+    );
+    const requestPort = await listen(server);
     try {
       const response = await requestInParts(
         `Bearer ${config.token}`,
         body.slice(0, -1),
         body.slice(-1),
-        config.revoke,
+        async () => {
+          await bodyReadReady;
+          config.revoke();
+        },
+        requestPort,
       );
       expect(response.status).toBe(401);
       expect(response.payload.error).toBe("Unknown or expired run token");
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       config.revoke();
+      await close(server);
     }
   });
 

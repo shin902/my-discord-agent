@@ -143,7 +143,7 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 
 ## config/credentials.json
 
-AI プロバイダーや外部サービス（Microsoft Graph・Browserless 等）の接続設定。トップレベルは配列。
+AI プロバイダーや外部サービス（Microsoft Graph・Google Calendar・Tavily・GitHub・Reddit 等）の接続設定。トップレベルは配列。
 詳細は `docs/config/credential-proxy.md` を参照。
 
 ```json
