@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { resolveProxyBaseUrl } from "./proxy-url.js";
+import { hostFetch } from "./host-fetch.js";
 
 const MAX_BODY_CHARS = 8000;
 const MAX_COMMENT_CHARS = 8000;
@@ -26,9 +26,8 @@ async function githubFetch(
 ): Promise<unknown> {
   assertValidRepoPart(owner, "owner");
   assertValidRepoPart(repo, "repo");
-  const baseUrl = resolveProxyBaseUrl("github");
   const path = `/repos/${owner}/${repo}${suffix}`;
-  const res = await fetch(`${baseUrl}${path}`, { headers: GITHUB_HEADERS });
+  const res = await hostFetch("github", path, { headers: GITHUB_HEADERS });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
@@ -44,9 +43,8 @@ async function githubPost(
 ): Promise<unknown> {
   assertValidRepoPart(owner, "owner");
   assertValidRepoPart(repo, "repo");
-  const baseUrl = resolveProxyBaseUrl("github");
   const path = `/repos/${owner}/${repo}${suffix}`;
-  const res = await fetch(`${baseUrl}${path}`, {
+  const res = await hostFetch("github", path, {
     method: "POST",
     headers: { ...GITHUB_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(body),

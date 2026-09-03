@@ -1,12 +1,11 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { resolveProxyBaseUrl } from "./proxy-url.js";
+import { hostFetch } from "./host-fetch.js";
 
 const MAX_BODY_CHARS = 8000;
 
 async function graphFetch(path: string): Promise<unknown> {
-  const baseUrl = resolveProxyBaseUrl("graph");
-  const res = await fetch(`${baseUrl}${path}`);
+  const res = await hostFetch("graph", path);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Graph API エラー ${res.status}: ${text.slice(0, 200)}`);
@@ -15,8 +14,7 @@ async function graphFetch(path: string): Promise<unknown> {
 }
 
 async function graphPatch(path: string, body: unknown): Promise<void> {
-  const baseUrl = resolveProxyBaseUrl("graph");
-  const res = await fetch(`${baseUrl}${path}`, {
+  const res = await hostFetch("graph", path, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

@@ -123,6 +123,54 @@ describe("resolveTools", () => {
     expect(getCapabilityDefinition("does-not-exist")).toBeUndefined();
   });
 
+  it.each([
+    "arxiv-search",
+    "arxiv-survey",
+    "list-issues",
+    "read-issue",
+    "list-issue-comments",
+    "read-pull-request",
+    "list-pull-request-comments",
+    "comment-issue",
+    "list-emails",
+    "read-email",
+    "list-calendars",
+    "list-events",
+    "read-event",
+    "create-event",
+    "update-event",
+    "delete-event",
+  ])("%s はhost capabilityである", (name) => {
+    expect(getCapabilityDefinition(name)).toMatchObject({
+      tool: name,
+      executor: "host",
+      factory: expect.any(Function),
+      validateArgs: expect.any(Function),
+    });
+  });
+
+  it("host proxyは既存Agent-facing contractを維持する", () => {
+    const [tool] = resolveTools(["arxiv-search"]);
+    expect(tool).toMatchObject({
+      name: arxivSearchTool.name,
+      label: arxivSearchTool.label,
+      description: arxivSearchTool.description,
+      parameters: arxivSearchTool.parameters,
+    });
+  });
+
+  it("schema由来のvalidationは型を検証し、executorのclampを妨げない", () => {
+    const capability = getCapabilityDefinition("list-issues");
+    expect(capability?.executor).toBe("host");
+    if (!capability || capability.executor !== "host") return;
+    expect(capability.validateArgs({ owner: "o", repo: "r", limit: 99 })).toBe(
+      true,
+    );
+    expect(
+      capability.validateArgs({ owner: "o", repo: "r", limit: "10" }),
+    ).toBe(false);
+  });
+
   it("weather capability routes through the host executor contract", () => {
     const tools = resolveTools(
       ["get-current-weather", "get-weather-forecast"],
@@ -153,35 +201,55 @@ describe("resolveTools", () => {
     expect(resolveTools(["agent-reach"])).toEqual([agentReachTool]);
   });
 
-  it("arxiv-search / arxiv-survey を解決する", () => {
-    expect(resolveTools(["arxiv-search", "arxiv-survey"])).toEqual([
-      arxivSearchTool,
-      arxivSurveyTool,
+  it("arxiv-search / arxiv-survey をhost proxyとして解決する", () => {
+    const tools = resolveTools(["arxiv-search", "arxiv-survey"]);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      arxivSearchTool.name,
+      arxivSurveyTool.name,
     ]);
+    expect(tools[0]).not.toBe(arxivSearchTool);
+    expect(tools[1]).not.toBe(arxivSurveyTool);
   });
 
-  it("list-calendars を解決して listCalendarsTool を返す", () => {
-    expect(resolveTools(["list-calendars"])).toEqual([listCalendarsTool]);
+  it("list-calendars をhost proxyとして解決する", () => {
+    const [tool] = resolveTools(["list-calendars"]);
+    expect(tool?.name).toBe(listCalendarsTool.name);
+    expect(tool).not.toBe(listCalendarsTool);
   });
 
   it("list-issue-comments を解決して listIssueCommentsTool を返す", () => {
-    expect(resolveTools(["list-issue-comments"])).toEqual([
-      listIssueCommentsTool,
-    ]);
+    const [tool] = resolveTools(["list-issue-comments"]);
+    expect(tool?.name).toBe(listIssueCommentsTool.name);
+    expect(tool).not.toBe(listIssueCommentsTool);
   });
 
   it("read-pull-request を解決して readPullRequestTool を返す", () => {
-    expect(resolveTools(["read-pull-request"])).toEqual([readPullRequestTool]);
+    const [tool] = resolveTools(["read-pull-request"]);
+    expect(tool?.name).toBe(readPullRequestTool.name);
+    expect(tool).not.toBe(readPullRequestTool);
   });
 
   it("list-pull-request-comments を解決して listPullRequestCommentsTool を返す", () => {
-    expect(resolveTools(["list-pull-request-comments"])).toEqual([
-      listPullRequestCommentsTool,
-    ]);
+    const [tool] = resolveTools(["list-pull-request-comments"]);
+    expect(tool?.name).toBe(listPullRequestCommentsTool.name);
+    expect(tool).not.toBe(listPullRequestCommentsTool);
   });
 
   it("runtime factoryがないcontext-created toolは生成しない", () => {
     expect(resolveTools(["bot", "subagent"])).toEqual([]);
+  });
+
+  it.each([
+    "tavily-extract",
+    "tavily-crawl",
+    "tavily-map",
+    "browserless-smart-scrape",
+    "browserless-search",
+    "browserless-function",
+    "browserless-content",
+    "clone-repository",
+  ])("削除済みtool %s を解決しない", (name) => {
+    expect(() => resolveTools([name])).toThrow(`不明なツール名: ${name}`);
   });
 
   it("runtime factoryをstatic toolと同じ解決経路で使う", () => {

@@ -3,12 +3,6 @@ import { agentReachTool } from "./agent-reach.js";
 import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { bashTool } from "./bash.js";
 import {
-  browserlessContentTool,
-  browserlessFunctionTool,
-  browserlessSearchTool,
-  browserlessSmartScrapeTool,
-} from "./browserless.js";
-import {
   createEventTool,
   deleteEventTool,
   listCalendarsTool,
@@ -22,6 +16,7 @@ import {
   type CapabilityDefinition,
   type CapabilityDispatchContext,
   dispatchCapability,
+  validateToolArgs,
 } from "./capability.js";
 import { dateTool } from "./date.js";
 import {
@@ -32,7 +27,6 @@ import {
   readTool,
   writeTool,
 } from "./fs.js";
-import { cloneRepositoryTool } from "./git.js";
 import {
   commentIssueTool,
   listIssueCommentsTool,
@@ -43,12 +37,7 @@ import {
 } from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
-import {
-  tavilyCrawlTool,
-  tavilyExtractTool,
-  tavilyMapTool,
-  tavilySearchTool,
-} from "./tavily.js";
+import { tavilySearchTool } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 const createStaticToolFactory =
@@ -59,40 +48,12 @@ const createStaticToolFactory =
 const TOOL_FACTORIES = {
   bash: createStaticToolFactory(bashTool),
   "agent-reach": createStaticToolFactory(agentReachTool),
-  "arxiv-search": createStaticToolFactory(arxivSearchTool),
-  "arxiv-survey": createStaticToolFactory(arxivSurveyTool),
   read: createStaticToolFactory(readTool),
   write: createStaticToolFactory(writeTool),
   list: createStaticToolFactory(listTool),
   edit: createStaticToolFactory(editTool),
   glob: createStaticToolFactory(globTool),
   grep: createStaticToolFactory(grepTool),
-  "list-emails": createStaticToolFactory(listEmailsTool),
-  "read-email": createStaticToolFactory(readEmailTool),
-  "list-issues": createStaticToolFactory(listIssuesTool),
-  "read-issue": createStaticToolFactory(readIssueTool),
-  "list-issue-comments": createStaticToolFactory(listIssueCommentsTool),
-  "list-pull-request-comments": createStaticToolFactory(
-    listPullRequestCommentsTool,
-  ),
-  "read-pull-request": createStaticToolFactory(readPullRequestTool),
-  "comment-issue": createStaticToolFactory(commentIssueTool),
-  "clone-repository": createStaticToolFactory(cloneRepositoryTool),
-  "list-calendars": createStaticToolFactory(listCalendarsTool),
-  "list-events": createStaticToolFactory(listEventsTool),
-  "read-event": createStaticToolFactory(readEventTool),
-  "create-event": createStaticToolFactory(createEventTool),
-  "update-event": createStaticToolFactory(updateEventTool),
-  "delete-event": createStaticToolFactory(deleteEventTool),
-  "browserless-smart-scrape": createStaticToolFactory(
-    browserlessSmartScrapeTool,
-  ),
-  "browserless-search": createStaticToolFactory(browserlessSearchTool),
-  "browserless-function": createStaticToolFactory(browserlessFunctionTool),
-  "browserless-content": createStaticToolFactory(browserlessContentTool),
-  "tavily-extract": createStaticToolFactory(tavilyExtractTool),
-  "tavily-crawl": createStaticToolFactory(tavilyCrawlTool),
-  "tavily-map": createStaticToolFactory(tavilyMapTool),
   bot: () => undefined,
   subagent: () => undefined,
 } satisfies Record<string, AgentToolFactory>;
@@ -127,6 +88,15 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
     value.topic === "news" ||
     value.topic === "finance");
 
+function hostCapability(tool: AgentTool): CapabilityDefinition {
+  return {
+    tool: tool.name,
+    executor: "host",
+    factory: () => tool,
+    validateArgs: validateToolArgs(tool),
+  };
+}
+
 const CAPABILITIES = {
   date: {
     tool: "date",
@@ -153,6 +123,22 @@ const CAPABILITIES = {
     factory: () => tavilySearchTool,
     validateArgs: tavilySearchArgsValidator,
   },
+  "arxiv-search": hostCapability(arxivSearchTool),
+  "arxiv-survey": hostCapability(arxivSurveyTool),
+  "list-issues": hostCapability(listIssuesTool),
+  "read-issue": hostCapability(readIssueTool),
+  "list-issue-comments": hostCapability(listIssueCommentsTool),
+  "read-pull-request": hostCapability(readPullRequestTool),
+  "list-pull-request-comments": hostCapability(listPullRequestCommentsTool),
+  "comment-issue": hostCapability(commentIssueTool),
+  "list-emails": hostCapability(listEmailsTool),
+  "read-email": hostCapability(readEmailTool),
+  "list-calendars": hostCapability(listCalendarsTool),
+  "list-events": hostCapability(listEventsTool),
+  "read-event": hostCapability(readEventTool),
+  "create-event": hostCapability(createEventTool),
+  "update-event": hostCapability(updateEventTool),
+  "delete-event": hostCapability(deleteEventTool),
 } satisfies Record<string, CapabilityDefinition>;
 
 type ToolName = keyof typeof TOOL_FACTORIES;

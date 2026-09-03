@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { resolveProxyBaseUrl } from "./proxy-url.js";
+import { hostFetch } from "./host-fetch.js";
 
 const PROVIDER = "google-calendar";
 
@@ -40,8 +40,7 @@ class CalendarApiError extends Error {
 }
 
 async function calendarFetch(path: string): Promise<unknown> {
-  const baseUrl = resolveProxyBaseUrl(PROVIDER);
-  const res = await fetch(`${baseUrl}${path}`);
+  const res = await hostFetch(PROVIDER, path);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new CalendarApiError(
@@ -57,8 +56,7 @@ async function calendarRequest(
   path: string,
   body?: unknown,
 ): Promise<unknown> {
-  const baseUrl = resolveProxyBaseUrl(PROVIDER);
-  const res = await fetch(`${baseUrl}${path}`, {
+  const res = await hostFetch(PROVIDER, path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
