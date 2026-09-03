@@ -18,6 +18,7 @@ import {
 } from "./calendar.js";
 import {
   type AgentToolFactory,
+  type CapabilityArgsValidator,
   type CapabilityDefinition,
   type CapabilityDispatchContext,
   dispatchCapability,
@@ -97,6 +98,18 @@ const TOOL_FACTORIES = {
   subagent: () => undefined,
 } satisfies Record<string, AgentToolFactory>;
 
+const isObjectArgs = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const currentWeatherArgsValidator: CapabilityArgsValidator = (value) =>
+  isObjectArgs(value) && typeof value.location === "string";
+
+const weatherForecastArgsValidator: CapabilityArgsValidator = (value) =>
+  isObjectArgs(value) &&
+  typeof value.location === "string" &&
+  (value.days === undefined ||
+    (typeof value.days === "number" && Number.isSafeInteger(value.days)));
+
 const CAPABILITIES = {
   date: {
     tool: "date",
@@ -107,11 +120,13 @@ const CAPABILITIES = {
     tool: "get-current-weather",
     executor: "host",
     factory: () => getCurrentWeatherTool,
+    validateArgs: currentWeatherArgsValidator,
   },
   "get-weather-forecast": {
     tool: "get-weather-forecast",
     executor: "host",
     factory: () => getWeatherForecastTool,
+    validateArgs: weatherForecastArgsValidator,
   },
 } satisfies Record<string, CapabilityDefinition>;
 
@@ -122,9 +137,15 @@ export type {
   CapabilityDispatchContext,
 } from "./capability.js";
 
+export function getCapabilityDefinition(
+  name: string,
+): CapabilityDefinition | undefined {
+  return CAPABILITIES[name as keyof typeof CAPABILITIES];
+}
+
 export function hostCapabilityNames(toolNames: string[]): string[] {
   return toolNames.filter((name) => {
-    const capability = CAPABILITIES[name as keyof typeof CAPABILITIES];
+    const capability = getCapabilityDefinition(name);
     return capability?.executor === "host";
   });
 }
@@ -146,7 +167,7 @@ export function resolveTools(
   const staticTools: AgentTool[] = [];
 
   for (const name of toolNames) {
-    const capability = CAPABILITIES[name as keyof typeof CAPABILITIES];
+    const capability = getCapabilityDefinition(name);
     if (capability) {
       const tool = dispatchCapability(capability, capabilityContext);
       if (tool) staticTools.push(tool);

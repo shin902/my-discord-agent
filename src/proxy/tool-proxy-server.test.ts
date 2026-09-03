@@ -139,6 +139,22 @@ describe("Tool Proxy RPC", () => {
     }
   });
 
+  it("rejects non-host capabilities even when authorized", async () => {
+    const config = run(["date"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "date",
+        args: {},
+      });
+      expect(response.status).toBe(403);
+      expect(response.payload.error).toBe(
+        "Capability is not a host capability: date",
+      );
+    } finally {
+      config.revoke();
+    }
+  });
+
   it("rejects unauthorized and unknown capabilities", async () => {
     const config = run();
     try {

@@ -1,12 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
-import {
-  getCurrentWeatherTool,
-  getWeatherForecastTool,
-  isCurrentWeatherArgs,
-  isWeatherForecastArgs,
-} from "../tools/weather.js";
+import { getCapabilityDefinition } from "../tools/registry.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
 export const TOOL_PROXY_BODY_LIMIT = 64 * 1024;
@@ -119,28 +114,6 @@ function isRequest(value: unknown): value is {
   );
 }
 
-const HOST_CAPABILITIES: Record<
-  string,
-  {
-    validate: (args: unknown) => boolean;
-    execute: (args: unknown) => Promise<unknown>;
-  }
-> = {
-  "get-current-weather": {
-    validate: isCurrentWeatherArgs,
-    execute: (args) =>
-      getCurrentWeatherTool.execute("tool-proxy", args as { location: string }),
-  },
-  "get-weather-forecast": {
-    validate: isWeatherForecastArgs,
-    execute: (args) =>
-      getWeatherForecastTool.execute(
-        "tool-proxy",
-        args as { location: string; days?: number },
-      ),
-  },
-};
-
 async function executeRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -189,9 +162,15 @@ async function executeRequest(
     sendJson(res, 400, { error: "Invalid Tool Proxy request" });
     return;
   }
-  const handler = HOST_CAPABILITIES[body.capability];
-  if (!handler) {
+  const capability = getCapabilityDefinition(body.capability);
+  if (!capability) {
     sendJson(res, 404, { error: `Unknown capability: ${body.capability}` });
+    return;
+  }
+  if (capability.executor !== "host") {
+    sendJson(res, 403, {
+      error: `Capability is not a host capability: ${body.capability}`,
+    });
     return;
   }
   if (!run.allowedCapabilities.has(body.capability)) {
@@ -200,17 +179,24 @@ async function executeRequest(
     });
     return;
   }
-  if (!handler.validate(body.args)) {
+  if (!capability.validateArgs(body.args)) {
     sendJson(res, 400, {
       error: `Invalid arguments for capability: ${body.capability}`,
     });
     return;
   }
 
+  const tool = capability.factory();
+  if (!tool) {
+    sendJson(res, 500, {
+      error: `Host capability is unavailable: ${body.capability}`,
+    });
+    return;
+  }
   let timeoutHandle: NodeJS.Timeout | undefined;
   try {
     const result = await Promise.race([
-      handler.execute(body.args),
+      tool.execute("tool-proxy", body.args),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(
           () => reject(new Error("Tool Proxy executor timed out")),

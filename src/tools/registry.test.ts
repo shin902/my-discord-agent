@@ -17,6 +17,7 @@ import {
 import { wrapToolOutput } from "./output.js";
 import {
   type AgentToolFactory,
+  getCapabilityDefinition,
   type RuntimeToolFactories,
   resolveTools,
 } from "./registry.js";
@@ -91,11 +92,28 @@ describe("resolveTools", () => {
         parameters: {} as never,
         execute: vi.fn(),
       })),
+      validateArgs: () => true,
     });
 
     await expect(tool?.execute("call-1", {})).rejects.toThrow(
       "Tool Proxy endpoint is unavailable",
     );
+  });
+
+  it("registry is the source of host weather capability definitions", () => {
+    expect(getCapabilityDefinition("get-current-weather")).toMatchObject({
+      tool: "get-current-weather",
+      executor: "host",
+      factory: expect.any(Function),
+      validateArgs: expect.any(Function),
+    });
+    expect(getCapabilityDefinition("get-weather-forecast")).toMatchObject({
+      tool: "get-weather-forecast",
+      executor: "host",
+      factory: expect.any(Function),
+      validateArgs: expect.any(Function),
+    });
+    expect(getCapabilityDefinition("does-not-exist")).toBeUndefined();
   });
 
   it("weather capability routes through the host executor contract", () => {

@@ -3,16 +3,26 @@ import { createToolProxyTool, type ToolProxyEndpoint } from "./tool-proxy.js";
 
 export type CapabilityExecutor = "sandbox" | "host";
 export type AgentToolFactory = () => AgentTool | undefined;
+export type CapabilityArgsValidator = (args: unknown) => boolean;
 
 export interface CapabilityDispatchContext {
   readonly toolProxyEndpoint?: ToolProxyEndpoint;
 }
 
-export interface CapabilityDefinition {
+type CapabilityDefinitionBase = {
   readonly tool: string;
-  readonly executor: CapabilityExecutor;
   readonly factory: AgentToolFactory;
-}
+};
+
+export type CapabilityDefinition =
+  | (CapabilityDefinitionBase & {
+      readonly executor: "sandbox";
+    })
+  | (CapabilityDefinitionBase & {
+      readonly executor: "host";
+      /** Validate the wire arguments without changing the agent-facing schema. */
+      readonly validateArgs: CapabilityArgsValidator;
+    });
 
 /**
  * Dispatch a trusted capability definition without exposing executor selection
@@ -30,10 +40,6 @@ export function dispatchCapability(
       return tool
         ? createToolProxyTool(tool, context.toolProxyEndpoint)
         : undefined;
-    }
-    default: {
-      const unreachable: never = definition.executor;
-      throw new Error(`Unknown capability executor: ${unreachable}`);
     }
   }
 }
