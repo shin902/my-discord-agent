@@ -66,7 +66,9 @@ async function loadTavilyApiConfig(): Promise<{
     ?.map((envVar) => process.env[envVar])
     .find((value): value is string => Boolean(value));
   if (!apiKey) {
-    throw new Error("TAVILY_API_KEY が設定されていません");
+    throw new Error(
+      "tavily の envVars に設定された環境変数のいずれにも値がありません",
+    );
   }
   return { baseUrl, apiKey };
 }

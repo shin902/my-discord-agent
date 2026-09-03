@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../config/proxy-config.js", () => ({
-  loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
+const { loadRequestTimeoutMsMock } = vi.hoisted(() => ({
+  loadRequestTimeoutMsMock: vi.fn().mockResolvedValue(120_000),
 }));
+
+vi.mock("../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: loadRequestTimeoutMsMock,
+}));
+
+afterEach(() => {
+  loadRequestTimeoutMsMock.mockResolvedValue(120_000);
+});
 
 function firstText(result: {
   content: Array<{ type: string; text?: string }>;
@@ -160,6 +168,28 @@ describe("tavily search tool", () => {
     );
   });
 
+  it("entry.envVars のどれにも値がなければ設定不足の例外を投げる", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: undefined,
+      TAVILY_ALIAS_KEY: undefined,
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_ALIAS_KEY", "TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+
+    const { tavilySearchTool } = await import("./tavily.js");
+    await expect(
+      tavilySearchTool.execute("id", { query: "missing" }),
+    ).rejects.toThrow(
+      "tavily の envVars に設定された環境変数のいずれにも値がありません",
+    );
+  });
+
   it("proxy.requestTimeoutMs で upstream fetch を timeout し、abort reason を旧 proxy と同じ意味にする", async () => {
     process.env = {
       ...originalEnv,
@@ -172,9 +202,7 @@ describe("tavily search tool", () => {
         },
       ]),
     };
-    vi.doMock("../config/proxy-config.js", () => ({
-      loadRequestTimeoutMs: vi.fn().mockResolvedValue(25),
-    }));
+    loadRequestTimeoutMsMock.mockResolvedValue(25);
     vi.useFakeTimers();
     const fetchMock = vi.fn(
       (_url: string, init: RequestInit) =>
