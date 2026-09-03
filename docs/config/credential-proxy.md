@@ -68,33 +68,31 @@ API キー等の環境変数名を配列で指定。設定ファイル読み込�
 { "envVars": ["OPENAI_API_KEY"], "auth": { "type": "bearer" } }
 ```
 
-Browserless のように query parameter で token を要求する API では `query-token` を指定します。
+query parameter で token を要求する API では `query-token` を指定します。
 
 ```json
 {
-  "provider": "browserless",
-  "envVars": ["BROWSERLESS_TOKEN"],
-  "baseUrl": "https://production-sfo.browserless.io",
+  "provider": "query-auth-api",
+  "envVars": ["QUERY_AUTH_API_TOKEN"],
+  "baseUrl": "https://api.example.com",
   "auth": { "type": "query-token", "queryParam": "token" }
 }
 ```
 
 `queryParam` を省略した場合は `"token"` が使われます。
 
-git の smart-HTTP プロトコル（`git clone`/`fetch` over HTTPS）のように Basic 認証が必要な API では `basic` を指定します。
+Basic 認証が必要な API では `basic` を指定します。
 
 ```json
 {
-  "provider": "github-git",
-  "envVars": ["GITHUB_CLONE_TOKEN"],
-  "baseUrl": "https://github.com",
-  "auth": { "type": "basic", "username": "x-access-token" }
+  "provider": "basic-auth-api",
+  "envVars": ["BASIC_AUTH_API_TOKEN"],
+  "baseUrl": "https://api.example.com",
+  "auth": { "type": "basic", "username": "api-user" }
 }
 ```
 
-`username` を省略した場合は GitHub の慣習（`actions/checkout` 等）に合わせて `"x-access-token"` が使われます。`Authorization: Basic base64("<username>:<token>")` として注入されます。
-
-> **`bearer` と `basic` を混同しないこと**: GitHub の REST API（`api.github.com`）は `Authorization: Bearer <token>` を受け付けるが、git smart-HTTP サーバー（`github.com` への `git clone`/`fetch`）は別エンドポイントで Bearer を受け付けず Basic 認証が必須。`auth` を省略すると `bearer` がデフォルトになるため、git smart-HTTP 向けプロバイダーでは明示的に `basic` を指定する必要がある。
+`username` を省略した場合は `"x-access-token"` が使われます。`Authorization: Basic base64("<username>:<token>")` として注入されます。
 
 ### `api`
 
