@@ -89,7 +89,6 @@ export function isCurrentWeatherArgs(
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    Object.keys(value).length === 1 &&
     typeof (value as Record<string, unknown>).location === "string"
   );
 }
@@ -169,8 +168,6 @@ export function isWeatherForecastArgs(
   }
   const args = value as Record<string, unknown>;
   return (
-    (Object.keys(args).length === 1 || Object.keys(args).length === 2) &&
-    Object.keys(args).every((key) => key === "location" || key === "days") &&
     typeof args.location === "string" &&
     (args.days === undefined ||
       (typeof args.days === "number" &&

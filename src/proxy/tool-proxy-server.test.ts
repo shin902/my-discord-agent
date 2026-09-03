@@ -218,7 +218,7 @@ describe("Tool Proxy RPC", () => {
     try {
       const current = await request(`Bearer ${config.token}`, {
         capability: "get-current-weather",
-        args: { location: "東京" },
+        args: { location: "東京", units: "celsius" },
       });
       expect(current.status).toBe(200);
       expect(
@@ -228,7 +228,7 @@ describe("Tool Proxy RPC", () => {
 
       const forecast = await request(`Bearer ${config.token}`, {
         capability: "get-weather-forecast",
-        args: { location: "東京", days: 1 },
+        args: { location: "東京", days: 1, units: "celsius" },
       });
       expect(forecast.status).toBe(200);
       expect(
