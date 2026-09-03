@@ -31,6 +31,17 @@ export interface IngestResult {
   newItems: number;
 }
 
+/** Normalized saved-post data accepted from a host-side source adapter. */
+export interface XSavedItem {
+  tweetId: string;
+  text: string;
+  authorHandle: string;
+  tweetCreatedAt: string | null;
+  externalUrls: string[];
+  seenLiked: boolean;
+  seenBookmarked: boolean;
+}
+
 /** A failure reading BirdClaw is an operational source failure, not a target DB failure. */
 export class BirdclawSourceError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -388,32 +399,15 @@ function loadBirdclawRows(
   ) as BirdclawRow[];
 }
 
-export function ingestBirdclawSavedItems(options?: {
-  birdclawDbPath?: string;
-  xSavedDb?: Database.Database;
-  xSavedDbPath?: string;
-  account?: string;
-  now?: string;
-}): IngestResult {
+export function ingestXSavedItems(
+  items: readonly XSavedItem[],
+  options?: {
+    xSavedDb?: Database.Database;
+    xSavedDbPath?: string;
+    now?: string;
+  },
+): IngestResult {
   const now = options?.now ?? new Date().toISOString();
-  const sourcePath = resolveBirdclawDbPath(options?.birdclawDbPath);
-  let sourceDb: Database.Database | undefined;
-  let rows: BirdclawRow[];
-  try {
-    sourceDb = new Database(sourcePath, {
-      readonly: true,
-      fileMustExist: true,
-    });
-    rows = loadBirdclawRows(sourceDb, options?.account);
-  } catch (error) {
-    throw new BirdclawSourceError(
-      error instanceof Error ? error.message : String(error),
-      { cause: error },
-    );
-  } finally {
-    sourceDb?.close();
-  }
-
   const ownsTarget = options?.xSavedDb === undefined;
   const targetDb =
     options?.xSavedDb ??
@@ -451,27 +445,26 @@ export function ingestBirdclawSavedItems(options?: {
 
     let newItems = 0;
     const write = targetDb.transaction(() => {
-      for (const row of rows) {
-        const authorHandle = row.author_handle ?? "";
-        const tweetId = String(row.id);
-        const url = authorHandle
-          ? `https://x.com/${authorHandle}/status/${tweetId}`
-          : `https://x.com/i/status/${tweetId}`;
+      for (const item of items) {
+        const url = item.authorHandle
+          ? `https://x.com/${item.authorHandle}/status/${item.tweetId}`
+          : `https://x.com/i/status/${item.tweetId}`;
         upsertItem.run({
-          tweetId,
-          text: row.text ?? "",
-          authorHandle,
+          tweetId: item.tweetId,
+          text: item.text,
+          authorHandle: item.authorHandle,
           url,
-          tweetCreatedAt: row.created_at,
-          externalUrlsJson: JSON.stringify(
-            extractExternalUrls(row.entities_json),
-          ),
-          seenLiked: row.liked ? 1 : 0,
-          seenBookmarked: row.bookmarked ? 1 : 0,
+          tweetCreatedAt: item.tweetCreatedAt,
+          externalUrlsJson: JSON.stringify(item.externalUrls),
+          seenLiked: item.seenLiked ? 1 : 0,
+          seenBookmarked: item.seenBookmarked ? 1 : 0,
           now,
         });
-        ensureState.run(tweetId, now);
-        if (!existing.has(tweetId)) newItems += 1;
+        ensureState.run(item.tweetId, now);
+        if (!existing.has(item.tweetId)) {
+          newItems += 1;
+          existing.add(item.tweetId);
+        }
       }
     });
     write();
@@ -480,6 +473,45 @@ export function ingestBirdclawSavedItems(options?: {
   } finally {
     if (ownsTarget) targetDb.close();
   }
+}
+
+export function ingestBirdclawSavedItems(options?: {
+  birdclawDbPath?: string;
+  xSavedDb?: Database.Database;
+  xSavedDbPath?: string;
+  account?: string;
+  now?: string;
+}): IngestResult {
+  const sourcePath = resolveBirdclawDbPath(options?.birdclawDbPath);
+  let sourceDb: Database.Database | undefined;
+  let rows: BirdclawRow[];
+  try {
+    sourceDb = new Database(sourcePath, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    rows = loadBirdclawRows(sourceDb, options?.account);
+  } catch (error) {
+    throw new BirdclawSourceError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  } finally {
+    sourceDb?.close();
+  }
+
+  return ingestXSavedItems(
+    rows.map((row) => ({
+      tweetId: String(row.id),
+      text: row.text ?? "",
+      authorHandle: row.author_handle ?? "",
+      tweetCreatedAt: row.created_at,
+      externalUrls: extractExternalUrls(row.entities_json),
+      seenLiked: row.liked === 1,
+      seenBookmarked: row.bookmarked === 1,
+    })),
+    options,
+  );
 }
 
 export function markInitialImportCompleted(

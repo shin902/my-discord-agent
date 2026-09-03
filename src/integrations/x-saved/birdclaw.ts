@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { resolveBirdclawDbPath } from "./store.js";
+import { resolveBirdclawDbPath, type XSavedItem } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -10,6 +10,7 @@ export type BirdclawCollection = "bookmarks" | "likes";
 export interface BirdclawCommandResult {
   ok: boolean;
   collection: BirdclawCollection;
+  items: XSavedItem[];
   error: string | null;
 }
 
@@ -17,7 +18,51 @@ function birdclawBinary(): string {
   return process.env.BIRDCLAW_BIN || "birdclaw";
 }
 
-function parseJsonOutput(stdout: string): void {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`BirdClaw response is missing ${field}`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function extractExternalUrls(entities: unknown): string[] {
+  if (!isRecord(entities) || !Array.isArray(entities.urls)) return [];
+  const result = new Set<string>();
+  for (const entry of entities.urls) {
+    if (!isRecord(entry)) continue;
+    const candidate = [entry.expanded_url, entry.expandedUrl, entry.url].find(
+      (value): value is string => typeof value === "string",
+    );
+    if (!candidate) continue;
+    try {
+      const url = new URL(candidate);
+      const host = url.hostname.toLowerCase();
+      if (
+        host === "x.com" ||
+        host.endsWith(".x.com") ||
+        host === "twitter.com" ||
+        host.endsWith(".twitter.com") ||
+        host === "t.co"
+      ) {
+        continue;
+      }
+      result.add(url.toString());
+    } catch {
+      // Ignore malformed URLs from the source response.
+    }
+  }
+  return [...result];
+}
+
+function parseJsonEnvelope(stdout: string): Record<string, unknown> {
   const trimmed = stdout.trim();
   if (!trimmed) throw new Error("BirdClaw returned empty JSON output");
   let parsed: unknown;
@@ -26,9 +71,48 @@ function parseJsonOutput(stdout: string): void {
   } catch (error) {
     throw new Error("BirdClaw returned invalid JSON", { cause: error });
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error("BirdClaw returned an invalid JSON envelope");
   }
+  return parsed;
+}
+
+function parseJsonOutput(
+  stdout: string,
+  collection: BirdclawCollection,
+): XSavedItem[] {
+  const parsed = parseJsonEnvelope(stdout);
+  const payload = parsed.payload;
+  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+    throw new Error("BirdClaw response is missing payload data");
+  }
+  const includes = isRecord(payload.includes) ? payload.includes : undefined;
+  const users = new Map<string, string>();
+  if (Array.isArray(includes?.users)) {
+    for (const user of includes.users) {
+      if (!isRecord(user)) continue;
+      if (typeof user.id === "string" && typeof user.username === "string") {
+        users.set(user.id, user.username);
+      }
+    }
+  }
+
+  return payload.data.map((tweet): XSavedItem => {
+    if (!isRecord(tweet)) {
+      throw new Error("BirdClaw response contains an invalid tweet");
+    }
+    const tweetId = requiredString(tweet.id, "tweet id");
+    const authorId = requiredString(tweet.author_id, "tweet author id");
+    return {
+      tweetId,
+      text: requiredString(tweet.text, "tweet text"),
+      authorHandle: users.get(authorId) ?? "",
+      tweetCreatedAt: optionalString(tweet.created_at),
+      externalUrls: extractExternalUrls(tweet.entities),
+      seenLiked: collection === "likes",
+      seenBookmarked: collection === "bookmarks",
+    };
+  });
 }
 
 const BIRDCLAW_ENV_KEYS = [
@@ -79,28 +163,39 @@ function buildBirdclawEnv(birdclawDbPath?: string): NodeJS.ProcessEnv {
 
 async function runBirdclaw(
   args: string[],
+  collection: BirdclawCollection,
   birdclawDbPath?: string,
-): Promise<void> {
+): Promise<XSavedItem[]> {
   const { stdout } = await execFileAsync(birdclawBinary(), args, {
     env: buildBirdclawEnv(birdclawDbPath),
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
     encoding: "utf8",
   });
-  parseJsonOutput(stdout);
+  return parseJsonOutput(stdout, collection);
 }
 
 export async function importBirdclawArchive(
   archivePath: string,
 ): Promise<void> {
-  await runBirdclaw([
-    "import",
-    "archive",
-    archivePath,
-    "--select",
-    "likes,bookmarks,profiles",
-    "--json",
-  ]);
+  const { stdout } = await execFileAsync(
+    birdclawBinary(),
+    [
+      "import",
+      "archive",
+      archivePath,
+      "--select",
+      "likes,bookmarks,profiles",
+      "--json",
+    ],
+    {
+      env: buildBirdclawEnv(),
+      timeout: 180_000,
+      maxBuffer: 16 * 1024 * 1024,
+      encoding: "utf8",
+    },
+  );
+  parseJsonEnvelope(stdout);
 }
 
 async function syncCollection(options: {
@@ -129,10 +224,15 @@ async function syncCollection(options: {
   }
 
   try {
-    await runBirdclaw(args, options.birdclawDbPath);
+    const items = await runBirdclaw(
+      args,
+      options.collection,
+      options.birdclawDbPath,
+    );
     return {
       ok: true,
       collection: options.collection,
+      items,
       error: null,
     };
   } catch (error) {
@@ -140,6 +240,7 @@ async function syncCollection(options: {
     return {
       ok: false,
       collection: options.collection,
+      items: [],
       error: message,
     };
   }

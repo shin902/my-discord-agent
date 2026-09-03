@@ -134,7 +134,7 @@ These are normal declarative agent cron jobs. Their `mounts` field replaces inhe
 
 ## Data ownership
 
-BirdClaw is treated as a replaceable source adapter. Only `src/integrations/x-saved/` knows its SQLite schema.
+BirdClaw is treated as a replaceable source adapter. Only `src/integrations/x-saved/` knows its SQLite schema. Live sync also normalizes the command's JSON response in memory so tweet metadata from the HTTP response is retained; the raw response is not copied into x-saved.
 
 The durable user-managed state is `data/x-saved/x-saved.sqlite`:
 

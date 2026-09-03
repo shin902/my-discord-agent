@@ -6,6 +6,7 @@ import {
   BirdclawSourceError,
   backupXSavedDatabase,
   ingestBirdclawSavedItems,
+  ingestXSavedItems,
   openXSavedDb,
   recordSyncRun,
   resolveBirdclawDbPath,
@@ -61,12 +62,19 @@ export async function runXSavedSync(
 
   const targetDb = openXSavedDb(xSavedDbPath);
   try {
+    const liveItems = [
+      ...syncResult.bookmarks.items,
+      ...syncResult.likes.items,
+    ];
     try {
-      const ingest = ingestBirdclawSavedItems({
-        birdclawDbPath,
-        xSavedDb: targetDb,
-        account: options.account,
-      });
+      const ingest =
+        syncResult.bookmarks.ok || syncResult.likes.ok
+          ? ingestXSavedItems(liveItems, { xSavedDb: targetDb })
+          : ingestBirdclawSavedItems({
+              birdclawDbPath,
+              xSavedDb: targetDb,
+              account: options.account,
+            });
       newItems = ingest.newItems;
     } catch (error) {
       if (!(error instanceof BirdclawSourceError)) throw error;

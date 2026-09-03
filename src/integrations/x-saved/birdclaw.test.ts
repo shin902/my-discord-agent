@@ -14,6 +14,40 @@ import { resolveBirdclawDbPath } from "./store.js";
 const tempDirs: string[] = [];
 const originalEnv = { ...process.env };
 
+const validResponse = JSON.stringify({
+  ok: true,
+  source: "xurl",
+  kind: "likes",
+  accountId: "acct_primary",
+  count: 1,
+  payload: {
+    data: [
+      {
+        id: "123456789012345678",
+        text: "saved post",
+        author_id: "author-1",
+        created_at: "2026-09-03T00:00:00.000Z",
+        entities: {
+          urls: [
+            {
+              url: "https://t.co/article",
+              expanded_url: "https://example.com/article",
+            },
+            {
+              url: "https://t.co/post",
+              expanded_url: "https://x.com/example/status/1",
+            },
+          ],
+        },
+      },
+    ],
+    includes: {
+      users: [{ id: "author-1", username: "author" }],
+    },
+    meta: { result_count: 1 },
+  },
+});
+
 afterEach(() => {
   process.env = { ...originalEnv };
   for (const dir of tempDirs.splice(0)) {
@@ -32,7 +66,7 @@ describe("BirdClaw subprocess boundary", () => {
       `#!/bin/sh
 printf '%s\\n' "$BIRDCLAW_DB_PATH" > '${envPath}'
 env | sort >> '${envPath}'
-printf '%s\\n' '{"ok":true}'
+printf '%s\\n' '${validResponse}'
 `,
     );
     chmodSync(binary, 0o755);
@@ -85,6 +119,45 @@ printf '%s\\n' '{"ok":true}'
     expect(childEnv).toContain("BIRDCLAW_DISABLE_LIVE_WRITES=1");
   });
 
+  it("extracts tweet metadata from the current HTTP response payload", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-response-test-"));
+    tempDirs.push(dir);
+    const binary = path.join(dir, "birdclaw");
+    writeFileSync(
+      binary,
+      `#!/bin/sh
+printf '%s\\n' '${validResponse}'
+`,
+    );
+    chmodSync(binary, 0o755);
+    process.env.BIRDCLAW_BIN = binary;
+
+    const result = await syncBirdclawSavedCollections({
+      mode: "xurl",
+      limit: 100,
+      maxPages: 3,
+    });
+
+    expect(result.bookmarks.items).toEqual([
+      expect.objectContaining({
+        tweetId: "123456789012345678",
+        text: "saved post",
+        authorHandle: "author",
+        tweetCreatedAt: "2026-09-03T00:00:00.000Z",
+        externalUrls: ["https://example.com/article"],
+        seenLiked: false,
+        seenBookmarked: true,
+      }),
+    ]);
+    expect(result.likes.items[0]).toEqual(
+      expect.objectContaining({
+        tweetId: "123456789012345678",
+        seenLiked: true,
+        seenBookmarked: false,
+      }),
+    );
+  });
+
   it.each([
     ["empty output", "", "empty JSON output"],
     ["invalid JSON", "not-json", "invalid JSON"],
@@ -113,7 +186,7 @@ printf '%s' ${JSON.stringify(output)}
       expect(collection.error).toContain(expectedError);
       expect(collection).not.toHaveProperty("output");
     }
-    if (output) {
+    if (output && output !== "[]") {
       expect(JSON.stringify(result)).not.toContain(output);
     }
   });
