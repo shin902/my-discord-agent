@@ -21,6 +21,7 @@ import {
   type RuntimeToolFactories,
   resolveTools,
 } from "./registry.js";
+import { tavilySearchTool } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 describe("resolveTools", () => {
@@ -113,6 +114,12 @@ describe("resolveTools", () => {
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
     });
+    expect(getCapabilityDefinition("tavily-search")).toMatchObject({
+      tool: "tavily-search",
+      executor: "host",
+      factory: expect.any(Function),
+      validateArgs: expect.any(Function),
+    });
     expect(getCapabilityDefinition("does-not-exist")).toBeUndefined();
   });
 
@@ -129,6 +136,17 @@ describe("resolveTools", () => {
     ]);
     expect(tools[0]).not.toBe(getCurrentWeatherTool);
     expect(tools[1]).not.toBe(getWeatherForecastTool);
+  });
+
+  it("tavily-search routes through the host executor contract", () => {
+    const [tool] = resolveTools(
+      ["tavily-search"],
+      {},
+      { toolProxyEndpoint: { url: "http://proxy/rpc", token: "token" } },
+    );
+
+    expect(tool?.name).toBe("tavily-search");
+    expect(tool).not.toBe(tavilySearchTool);
   });
 
   it("agent-reach を解決して agentReachTool を返す", () => {

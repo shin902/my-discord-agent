@@ -90,7 +90,6 @@ const TOOL_FACTORIES = {
   "browserless-search": createStaticToolFactory(browserlessSearchTool),
   "browserless-function": createStaticToolFactory(browserlessFunctionTool),
   "browserless-content": createStaticToolFactory(browserlessContentTool),
-  "tavily-search": createStaticToolFactory(tavilySearchTool),
   "tavily-extract": createStaticToolFactory(tavilyExtractTool),
   "tavily-crawl": createStaticToolFactory(tavilyCrawlTool),
   "tavily-map": createStaticToolFactory(tavilyMapTool),
@@ -110,6 +109,22 @@ const weatherForecastArgsValidator: CapabilityArgsValidator = (value) =>
   (value.days === undefined ||
     (typeof value.days === "number" && Number.isSafeInteger(value.days)));
 
+const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
+  isObjectArgs(value) &&
+  typeof value.query === "string" &&
+  (value.max_results === undefined ||
+    (typeof value.max_results === "number" &&
+      Number.isSafeInteger(value.max_results))) &&
+  (value.search_depth === undefined ||
+    value.search_depth === "basic" ||
+    value.search_depth === "advanced") &&
+  (value.include_answer === undefined ||
+    typeof value.include_answer === "boolean") &&
+  (value.topic === undefined ||
+    value.topic === "general" ||
+    value.topic === "news" ||
+    value.topic === "finance");
+
 const CAPABILITIES = {
   date: {
     tool: "date",
@@ -127,6 +142,12 @@ const CAPABILITIES = {
     executor: "host",
     factory: () => getWeatherForecastTool,
     validateArgs: weatherForecastArgsValidator,
+  },
+  "tavily-search": {
+    tool: "tavily-search",
+    executor: "host",
+    factory: createStaticToolFactory(tavilySearchTool),
+    validateArgs: tavilySearchArgsValidator,
   },
 } satisfies Record<string, CapabilityDefinition>;
 

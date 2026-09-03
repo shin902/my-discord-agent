@@ -1179,6 +1179,42 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/test");
   });
 
+  it("tavily-searchだけではTavily credential proxy情報をsandboxへ渡さない", async () => {
+    process.env.TAVILY_API_KEY = "tavily-secret";
+    const spawnMock = await setup([
+      {
+        provider: "tavily",
+        envVars: ["TAVILY_API_KEY"],
+        baseUrl: "https://api.tavily.com",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["tavily-search"] },
+    });
+    const credentialJson = JSON.stringify(getCredJson(spawnMock));
+    expect(credentialJson).not.toContain("tavily-secret");
+    expect(credentialJson).not.toContain("api.tavily.com");
+  });
+
+  it("legacy Tavily toolsが併用される場合はcredential proxy情報を維持する", async () => {
+    process.env.TAVILY_API_KEY = "tavily-secret";
+    const spawnMock = await setup([
+      {
+        provider: "tavily",
+        envVars: ["TAVILY_API_KEY"],
+        baseUrl: "https://api.tavily.com",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["tavily-search", "tavily-extract"] },
+    });
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/tavily");
+    expect(creds[0].envVars).toBeUndefined();
+  });
+
   it("proxy URL が http://host.docker.internal:{port}/{provider} 形式", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([

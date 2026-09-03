@@ -1,5 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { resolveBaseUrl } from "../agent/model.js";
+import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 const searchParams = Type.Object({
@@ -45,6 +47,29 @@ type TavilyResponse = {
   results: TavilyResult[];
 };
 
+async function loadTavilyApiConfig(): Promise<{
+  baseUrl: string;
+  apiKey: string;
+}> {
+  const entry = (await loadCredentialProxy()).find(
+    (candidate) => candidate.provider === "tavily",
+  );
+  if (!entry) {
+    throw new Error("tavily プロバイダーが credentials.json に見つかりません");
+  }
+  const baseUrl = resolveBaseUrl(entry.baseUrl);
+  if (!baseUrl) {
+    throw new Error("tavily の baseUrl に未解決のプレースホルダがあります");
+  }
+  const apiKey = entry.envVars?.includes("TAVILY_API_KEY")
+    ? process.env.TAVILY_API_KEY
+    : undefined;
+  if (!apiKey) {
+    throw new Error("TAVILY_API_KEY が設定されていません");
+  }
+  return { baseUrl, apiKey };
+}
+
 export const tavilySearchTool: AgentTool<typeof searchParams> = {
   name: "tavily-search",
   label: "Tavily Search",
@@ -61,10 +86,13 @@ export const tavilySearchTool: AgentTool<typeof searchParams> = {
       topic = "general",
     },
   ) => {
-    const baseUrl = resolveProxyBaseUrl("tavily");
-    const res = await fetch(`${baseUrl}/search`, {
+    const { baseUrl, apiKey } = await loadTavilyApiConfig();
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/search`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
         query,
         max_results: Math.min(max_results, 10),

@@ -39,15 +39,20 @@ describe("tavily search tool", () => {
     await expect(
       tavilySearchTool.execute("id", { query: "test" }),
     ).rejects.toThrow(
-      "tavily プロバイダーが CREDENTIAL_PROXY_JSON に見つかりません",
+      "tavily プロバイダーが credentials.json に見つかりません",
     );
   });
 
-  it("tavily プロキシへ検索リクエストを送信する", async () => {
+  it("host APIへBearer認証付きで検索リクエストを送信する", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily/" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     const fetchMock = vi.fn().mockResolvedValue({
@@ -70,9 +75,13 @@ describe("tavily search tool", () => {
     const result = await tavilySearchTool.execute("id", { query: "テスト" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://proxy.test/tavily/search",
+      "https://api.tavily.com/search",
       expect.objectContaining({
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tavily-secret",
+        },
         body: JSON.stringify({
           query: "テスト",
           max_results: 5,
@@ -92,8 +101,13 @@ describe("tavily search tool", () => {
   it("結果が空のとき '(結果なし)' を返す", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     vi.stubGlobal(
@@ -113,8 +127,13 @@ describe("tavily search tool", () => {
   it("results が undefined でもクラッシュしない", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     vi.stubGlobal(
@@ -134,8 +153,13 @@ describe("tavily search tool", () => {
   it("API エラー時に例外を投げる", async () => {
     process.env = {
       ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
       CREDENTIAL_PROXY_JSON: JSON.stringify([
-        { provider: "tavily", baseUrl: "http://proxy.test/tavily" },
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
       ]),
     };
     vi.stubGlobal(

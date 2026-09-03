@@ -9,6 +9,7 @@ import {
 } from "./tool-proxy-server.js";
 
 let port: number;
+const originalEnv = process.env;
 
 beforeAll(async () => {
   await initToolProxyServer();
@@ -16,6 +17,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  process.env = originalEnv;
   vi.unstubAllGlobals();
 });
 
@@ -226,6 +228,58 @@ describe("Tool Proxy RPC", () => {
         2,
         expect.stringContaining(`forecast_days=${clampedDays}`),
       );
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it("executes tavily-search through the host handler with host-only credentials", async () => {
+    process.env = {
+      ...originalEnv,
+      TAVILY_API_KEY: "tavily-secret",
+      CREDENTIAL_PROXY_JSON: JSON.stringify([
+        {
+          provider: "tavily",
+          envVars: ["TAVILY_API_KEY"],
+          baseUrl: "https://api.tavily.com",
+        },
+      ]),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: "test" },
+      });
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.tavily.com/search",
+        expect.objectContaining({
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer tavily-secret",
+          },
+        }),
+      );
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it("rejects invalid tavily-search arguments before host execution", async () => {
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: 42 },
+      });
+      expect(response.status).toBe(400);
+      expect(response.payload.error).toContain("Invalid arguments");
     } finally {
       config.revoke();
     }
