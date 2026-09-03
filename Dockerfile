@@ -14,9 +14,13 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+ARG RUNNER_SQLITE_BUILD_FROM_SOURCE=false
 RUN apk add --no-cache --virtual .native-build python3 make g++ && \
     corepack enable && \
-    npm_config_build_from_source=true npm_config_nodedir=/usr/local pnpm install --prod --frozen-lockfile && \
+    if [ "$RUNNER_SQLITE_BUILD_FROM_SOURCE" = "true" ]; then \
+      export npm_config_build_from_source=true; \
+    fi && \
+    npm_config_nodedir=/usr/local pnpm install --prod --frozen-lockfile && \
     apk del .native-build
 
 RUN python3 -m venv /opt/venv && \
