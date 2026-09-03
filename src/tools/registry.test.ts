@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import { agentReachTool } from "./agent-reach.js";
 import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { listCalendarsTool } from "./calendar.js";
+import { dispatchCapability } from "./capability.js";
+import { dateTool } from "./date.js";
 import {
   listIssueCommentsTool,
   listPullRequestCommentsTool,
@@ -20,6 +22,75 @@ import {
 } from "./registry.js";
 
 describe("resolveTools", () => {
+  it("静的toolを指定順に解決する", () => {
+    expect(
+      resolveTools(["read", "date", "grep"]).map((tool) => tool.name),
+    ).toEqual(["read", "date", "grep"]);
+    expect(resolveTools(["date", "date"]).map((tool) => tool.name)).toEqual([
+      "date",
+      "date",
+    ]);
+  });
+
+  it("date は sandbox capability dispatcher 経由で既存toolを返す", async () => {
+    const [tool] = resolveTools(["date"]);
+
+    expect(tool).toBe(dateTool);
+    expect(tool).toMatchObject({
+      name: dateTool.name,
+      label: dateTool.label,
+      description: dateTool.description,
+      parameters: dateTool.parameters,
+    });
+
+    const result = await tool.execute("call-1", {});
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("Current time:"),
+    });
+    expect(result.details).toMatchObject({
+      timestamp: expect.any(Number),
+      localDateTime: expect.any(String),
+      timezone: expect.any(String),
+      timezoneLabel: expect.any(String),
+      utcOffset: expect.any(String),
+      utc: expect.any(String),
+    });
+  });
+
+  it("sandbox capability は trusted factory を実行する", () => {
+    const tool = {
+      name: "sandbox-test",
+      label: "sandbox-test",
+      description: "sandbox-test",
+      parameters: {} as never,
+      execute: vi.fn(),
+    } satisfies AgentTool;
+    const factory = vi.fn(() => tool);
+
+    expect(
+      dispatchCapability({
+        tool: "sandbox-test",
+        executor: "sandbox",
+        factory,
+      }),
+    ).toBe(tool);
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("host capability は未実装のため fail closed する", () => {
+    expect(() =>
+      dispatchCapability({
+        tool: "host-test",
+        executor: "host",
+        factory: vi.fn(),
+      }),
+    ).toThrow(
+      'Capability "host-test" cannot be dispatched: host executor is not implemented',
+    );
+  });
+
   it("agent-reach を解決して agentReachTool を返す", () => {
     expect(resolveTools(["agent-reach"])).toEqual([agentReachTool]);
   });

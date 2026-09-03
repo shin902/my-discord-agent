@@ -16,6 +16,11 @@ import {
   readEventTool,
   updateEventTool,
 } from "./calendar.js";
+import {
+  type AgentToolFactory,
+  type CapabilityDefinition,
+  dispatchCapability,
+} from "./capability.js";
 import { dateTool } from "./date.js";
 import {
   editTool,
@@ -44,8 +49,6 @@ import {
 } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
-export type AgentToolFactory = () => AgentTool | undefined;
-
 const createStaticToolFactory =
   (tool: AgentTool): AgentToolFactory =>
   () =>
@@ -53,7 +56,6 @@ const createStaticToolFactory =
 
 const TOOL_FACTORIES = {
   bash: createStaticToolFactory(bashTool),
-  date: createStaticToolFactory(dateTool),
   "agent-reach": createStaticToolFactory(agentReachTool),
   "arxiv-search": createStaticToolFactory(arxivSearchTool),
   "arxiv-survey": createStaticToolFactory(arxivSurveyTool),
@@ -96,7 +98,18 @@ const TOOL_FACTORIES = {
   subagent: () => undefined,
 } satisfies Record<string, AgentToolFactory>;
 
+const CAPABILITIES = {
+  date: {
+    tool: "date",
+    executor: "sandbox",
+    factory: createStaticToolFactory(dateTool),
+  },
+} satisfies Record<string, CapabilityDefinition>;
+
 type ToolName = keyof typeof TOOL_FACTORIES;
+
+export type { AgentToolFactory } from "./capability.js";
+
 export type RuntimeToolName = "bot" | "subagent";
 export type RuntimeToolFactories = Partial<
   Record<RuntimeToolName, AgentToolFactory>
@@ -113,6 +126,13 @@ export function resolveTools(
   const staticTools: AgentTool[] = [];
 
   for (const name of toolNames) {
+    const capability = CAPABILITIES[name as keyof typeof CAPABILITIES];
+    if (capability) {
+      const tool = dispatchCapability(capability);
+      if (tool) staticTools.push(tool);
+      continue;
+    }
+
     const factory = TOOL_FACTORIES[name as ToolName];
     if (!factory) throw new Error(`不明なツール名: ${name}`);
     if (!isRuntimeToolName(name)) {
