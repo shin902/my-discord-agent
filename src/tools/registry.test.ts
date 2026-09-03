@@ -17,9 +17,11 @@ import {
 import { wrapToolOutput } from "./output.js";
 import {
   type AgentToolFactory,
+  getCapabilityDefinition,
   type RuntimeToolFactories,
   resolveTools,
 } from "./registry.js";
+import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 describe("resolveTools", () => {
   it("静的toolを指定順に解決する", () => {
@@ -79,16 +81,54 @@ describe("resolveTools", () => {
     expect(factory).toHaveBeenCalledOnce();
   });
 
-  it("host capability は未実装のため fail closed する", () => {
-    expect(() =>
-      dispatchCapability({
-        tool: "host-test",
-        executor: "host",
-        factory: vi.fn(),
-      }),
-    ).toThrow(
-      'Capability "host-test" cannot be dispatched: host executor is not implemented',
+  it("host capability は thin proxy を返し endpoint 未指定時は fail closed する", async () => {
+    const tool = dispatchCapability({
+      tool: "host-test",
+      executor: "host",
+      factory: vi.fn(() => ({
+        name: "host-test",
+        label: "host-test",
+        description: "host-test",
+        parameters: {} as never,
+        execute: vi.fn(),
+      })),
+      validateArgs: () => true,
+    });
+
+    await expect(tool?.execute("call-1", {})).rejects.toThrow(
+      "Tool Proxy endpoint is unavailable",
     );
+  });
+
+  it("registry is the source of host weather capability definitions", () => {
+    expect(getCapabilityDefinition("get-current-weather")).toMatchObject({
+      tool: "get-current-weather",
+      executor: "host",
+      factory: expect.any(Function),
+      validateArgs: expect.any(Function),
+    });
+    expect(getCapabilityDefinition("get-weather-forecast")).toMatchObject({
+      tool: "get-weather-forecast",
+      executor: "host",
+      factory: expect.any(Function),
+      validateArgs: expect.any(Function),
+    });
+    expect(getCapabilityDefinition("does-not-exist")).toBeUndefined();
+  });
+
+  it("weather capability routes through the host executor contract", () => {
+    const tools = resolveTools(
+      ["get-current-weather", "get-weather-forecast"],
+      {},
+      { toolProxyEndpoint: { url: "http://proxy/rpc", token: "token" } },
+    );
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "get-current-weather",
+      "get-weather-forecast",
+    ]);
+    expect(tools[0]).not.toBe(getCurrentWeatherTool);
+    expect(tools[1]).not.toBe(getWeatherForecastTool);
   });
 
   it("agent-reach を解決して agentReachTool を返す", () => {

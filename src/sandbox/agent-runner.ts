@@ -36,6 +36,7 @@ import { loadSkills, parseYamlFrontmatter } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { formatSessionTimeAnchor } from "../time/context.js";
 import { resolveTools } from "../tools/registry.js";
+import type { ToolProxyEndpoint } from "../tools/tool-proxy.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
 import { type BotToolEndpoint, createBotTool } from "./bot.js";
@@ -514,6 +515,7 @@ export async function runAgentLoop(
   botToolEndpoint?: BotToolEndpoint,
   onAgentCreated?: (agent: Agent) => void,
   signal?: AbortSignal,
+  toolProxyEndpoint?: ToolProxyEndpoint,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
@@ -799,23 +801,27 @@ export async function runAgentLoop(
       process.stderr.write(`__DISCORD_EVENT__:${JSON.stringify(payload)}\n`);
     },
   };
-  const agentTools = resolveTools(groupConfig.tools ?? [], {
-    subagent: () =>
-      groupConfig.tools?.includes("subagent") === true
-        ? createSubagentTool(delegationContext)
-        : undefined,
-    bot: () =>
-      botToolEndpoint && groupConfig.tools?.includes("bot") === true
-        ? createBotTool({
-            endpoint: botToolEndpoint,
-            groupName,
-            onUsage: (usage) => {
-              aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
-              hasUsage = true;
-            },
-          })
-        : undefined,
-  }).filter((t) => !VM_UNSUPPORTED_TOOLS.has(t.name));
+  const agentTools = resolveTools(
+    groupConfig.tools ?? [],
+    {
+      subagent: () =>
+        groupConfig.tools?.includes("subagent") === true
+          ? createSubagentTool(delegationContext)
+          : undefined,
+      bot: () =>
+        botToolEndpoint && groupConfig.tools?.includes("bot") === true
+          ? createBotTool({
+              endpoint: botToolEndpoint,
+              groupName,
+              onUsage: (usage) => {
+                aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
+                hasUsage = true;
+              },
+            })
+          : undefined,
+    },
+    { toolProxyEndpoint },
+  ).filter((t) => !VM_UNSUPPORTED_TOOLS.has(t.name));
   delegationContext.tools = agentTools;
 
   const pendingAppends: Promise<void>[] = [];
@@ -971,6 +977,9 @@ const PayloadSchema = z.object({
   botToolEndpoint: z
     .object({ url: z.string().url(), token: z.string().min(1) })
     .optional(),
+  toolProxyEndpoint: z
+    .object({ url: z.string().url(), token: z.string().min(1) })
+    .optional(),
 });
 
 // CLIエントリポイント（import時は実行しない）
@@ -1076,6 +1085,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           process.stderr.write("__AGENT_ACTIVE__\n");
         },
         abortController.signal,
+        payload.toolProxyEndpoint,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

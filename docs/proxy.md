@@ -36,6 +36,16 @@ Host
 
 コンテナには実際の API キーではなく、プロキシ URL（`http://host.docker.internal:{port}/{provider}`）を `CREDENTIAL_PROXY_JSON` 環境変数として渡す。実キーはホストプロセスのメモリにのみ存在する。
 
+### Tool Proxy（host executor）
+
+credential forwardingとは別の責務として、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行する。現在は`get-current-weather`と`get-weather-forecast`だけがこの経路を使う。
+
+```
+Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- Open-Meteo --> host weather executor
+```
+
+run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、weather引数schemaを検証し、未認可・不明・不正な要求をfail closedする。JWT、credential proxy移行、Tool Runtime、shared volumeはこの段階では対象外。
+
 ### config/credentials.json
 
 `config/credentials.example.json` をコピーして `config/credentials.json` を作成する。トップレベルは配列。
