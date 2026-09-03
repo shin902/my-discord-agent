@@ -271,6 +271,25 @@ describe("Tool Proxy RPC", () => {
     }
   });
 
+  it.each([
+    0, 11,
+  ])("rejects out-of-range tavily-search max_results (%s) before host execution", async (max_results) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["tavily-search"]);
+    try {
+      const response = await request(`Bearer ${config.token}`, {
+        capability: "tavily-search",
+        args: { query: "test", max_results },
+      });
+      expect(response.status).toBe(400);
+      expect(response.payload.error).toContain("Invalid arguments");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+    }
+  });
+
   it("rejects invalid tavily-search arguments before host execution", async () => {
     const config = run(["tavily-search"]);
     try {

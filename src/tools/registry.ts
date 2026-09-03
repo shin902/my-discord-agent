@@ -114,7 +114,9 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
   typeof value.query === "string" &&
   (value.max_results === undefined ||
     (typeof value.max_results === "number" &&
-      Number.isSafeInteger(value.max_results))) &&
+      Number.isSafeInteger(value.max_results) &&
+      value.max_results >= 1 &&
+      value.max_results <= 10)) &&
   (value.search_depth === undefined ||
     value.search_depth === "basic" ||
     value.search_depth === "advanced") &&
