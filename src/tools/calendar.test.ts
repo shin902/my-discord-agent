@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 const PROXY_CREDS = JSON.stringify([
   { provider: "google-calendar", baseUrl: "http://proxy.test/google-calendar" },
 ]);
@@ -56,6 +60,7 @@ describe("list-calendars", () => {
     expect(text).toContain("Asia/Tokyo");
     expect(fetchMock).toHaveBeenCalledWith(
       "http://proxy.test/google-calendar/users/me/calendarList",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -105,10 +110,12 @@ describe("list-calendars", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       "http://proxy.test/google-calendar/users/me/calendarList",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "http://proxy.test/google-calendar/users/me/calendarList?pageToken=page%20token%2F%3D%3F",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

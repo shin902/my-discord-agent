@@ -1215,7 +1215,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(credentialJson).not.toContain("api.tavily.com");
   });
 
-  it("legacy Tavily toolsが併用される場合はcredential proxy情報を維持する", async () => {
+  it("削除済みTavily toolは設定エラーにする", async () => {
     process.env.TAVILY_API_KEY = "tavily-secret";
     const spawnMock = await setup([
       {
@@ -1225,12 +1225,12 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["tavily-search", "tavily-extract"] },
-    });
-    const creds = getCredJson(spawnMock);
-    expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/tavily");
-    expect(creds[0].envVars).toBeUndefined();
+    await expect(
+      sendMessage("test-group", "session-1", "hi", {
+        configOverride: { tools: ["tavily-search", "tavily-extract"] },
+      }),
+    ).rejects.toThrow("不明なツール名: tavily-extract");
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("proxy URL が http://host.docker.internal:{port}/{provider} 形式", async () => {
@@ -1265,7 +1265,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(creds[0].envVars).toBeUndefined();
   });
 
-  it("google フィールドが JSON に含まれない", async () => {
+  it("google-calendar provider自体がsandboxのJSONに含まれない", async () => {
     process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
     const spawnMock = await setup([
       {
@@ -1281,8 +1281,61 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
-    expect(creds[0].google).toBeUndefined();
-    expect(creds[0].provider).toBe("google-calendar");
+    expect(creds).toEqual([]);
+  });
+
+  it("host tool providerをsandboxのcredential JSONに含めない", async () => {
+    process.env.TAVILY_API_KEY = "tavily-secret";
+    process.env.GITHUB_ISSUE_TRIAGE_TOKEN = "github-secret";
+    const spawnMock = await setup([
+      {
+        provider: "tavily",
+        envVars: ["TAVILY_API_KEY"],
+        baseUrl: "https://api.tavily.com",
+      },
+      {
+        provider: "github",
+        envVars: ["GITHUB_ISSUE_TRIAGE_TOKEN"],
+        baseUrl: "https://api.github.com",
+      },
+      { provider: "graph", baseUrl: "https://graph.microsoft.com/v1.0" },
+      {
+        provider: "google-calendar",
+        baseUrl: "https://www.googleapis.com/calendar/v3",
+      },
+      { provider: "reddit", baseUrl: "https://www.reddit.com" },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    expect(
+      getCredJson(spawnMock).map(
+        (entry: { provider: string }) => entry.provider,
+      ),
+    ).toEqual(["reddit"]);
+  });
+
+  it("host toolと同名の選択中model providerはsandboxに維持する", async () => {
+    process.env.GITHUB_MODEL_TOKEN = "model-secret";
+    const spawnMock = await setup([
+      {
+        provider: "github",
+        forceCustom: true,
+        envVars: ["GITHUB_MODEL_TOKEN"],
+        baseUrl: "https://models.example.com/v1",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        model: { provider: "github", modelId: "test-model" },
+      },
+    });
+    expect(getCredJson(spawnMock)).toEqual([
+      expect.objectContaining({
+        provider: "github",
+        baseUrl: "http://host.docker.internal:12345/github",
+      }),
+    ]);
   });
 
   it("redditCookie フィールドが JSON に含まれない", async () => {

@@ -38,13 +38,13 @@ Host
 
 ### Tool Proxy（host executor）
 
-credential forwardingとは別の責務として、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行する。現在は`get-current-weather`、`get-weather-forecast`、`tavily-search`がこの経路を使う。
+credential forwardingとは別の責務として、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行する。天気、Tavily Search、arXiv、GitHub REST、Mail、Google Calendarのツールがこの経路を使う。
 
 ```
-Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- host credentials --> Open-Meteo / Tavily API
+Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- host credentials --> external API
 ```
 
-run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。`tavily-search`はtrusted `credentials.json`の`baseUrl`と`envVars`をhost側で読み、`envVars`を順番に見て最初に設定された値を`Authorization: Bearer`としてTavily APIへ注入する。検索結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。`tavily-extract`、`tavily-crawl`、`tavily-map`のlegacy credential-proxy経路は維持する。
+run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。GitHub、Graph、Google Calendar、Tavilyのcredentialはtrusted `credentials.json`からhost側だけで解決し、これらのlegacy forwarding routeはsandboxへ渡さない。結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。
 
 ### config/credentials.json
 
@@ -69,7 +69,7 @@ run開始時にhostメモリへ短命opaque token、run identity、effective con
 - **警告ログ**: 1つも設定されていないプロバイダは静かにスキップされる。一部だけ設定されている場合は「一部の環境変数が未設定です」と警告が出る（複数変数が必要なプロバイダで不足を検出するため）。
 - 同じ環境変数が複数の provider に含まれている場合、**各 provider ごとに独立して注入される**。
 - `baseUrl` に `{ENV_VAR}` 形式のプレースホルダが含まれている場合、`process.env` の値で動的に置換される。**置換できない場合は env vars の注入も含めてその provider を完全にスキップする**（`AZURE_OPENAI_API_KEY` は設定済みでも `AZURE_OPENAI_BASE_URL` が未設定なら注入されない）。
-- `auth` を省略した場合、`envVars` の値は `Authorization: Bearer ...` として注入される。Browserless のように query parameter が必要な API は `auth: { "type": "query-token", "queryParam": "token" }` を指定する。
+- `auth` を省略した場合、`envVars` の値は `Authorization: Bearer ...` として注入される。query-token API では `auth: { "type": "query-token", "queryParam": "token" }` を指定する。
 
 ### Google OAuth（Google Calendar 等）
 
@@ -133,24 +133,6 @@ Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月�
 
 - `Issues: Read and write`: `list-issues`、`read-issue`、`list-issue-comments` は読み取りに使い、`comment-issue` は Issue コメントの投稿に使う。`comment-issue` には Issue の write 権限が必要で、読み取り専用の Issue ツールだけなら `Issues: Read` で足りる。
 - `Pull requests: Read`: `read-pull-request` は PR 本文・メタデータを、`list-pull-request-comments` は会話コメント・レビュー・レビューコメントを読み取る。これらの PR ツールは読み取り専用で、Pull requests の write 権限は必要ない。
-
-### GitHub Clone（`clone-repository` ツール用）
-
-エージェントが README 以外も参照したい場合に、リポジトリをエージェントコンテナ内へ clone する。`directory` を省略した場合は `/tmp/{repo}`、指定した場合も `/tmp` を基準とする相対パスのみ受け付け、絶対パス、`..` などで `/tmp` 外へ出る指定、clone 先までの既存パスに symlink が含まれる指定は拒否する。`depth` を省略した場合は全履歴を取得し、指定した場合のみ shallow clone する。git の smart HTTP プロトコルは通常の HTTP リクエスト/レスポンスなので、既存の汎用リバースプロキシがそのまま使えるが、**認証方式は `api.github.com`（REST API）とは異なる**点に注意。
-
-```json
-{
-  "provider": "github-git",
-  "envVars": ["GITHUB_CLONE_TOKEN"],
-  "baseUrl": "https://github.com",
-  "auth": { "type": "basic", "username": "x-access-token" }
-}
-```
-
-- GitHub REST API の Issue/PR ツールが使う `github`（`api.github.com` 向け）とは別のプロバイダー・別のトークンに分離している。REST API 用トークンに Contents 権限を持たせない（最小権限）ため。
-- `GITHUB_CLONE_TOKEN` は対象リポジトリ・`Contents: Read` 権限のみの fine-grained PAT を想定。
-- **`auth: { "type": "basic" }` が必須**: GitHub の git smart-HTTP サーバー（`github.com`、`api.github.com` とは別エンドポイント）は `Authorization: Bearer ...` を受け付けず、`Authorization: Basic base64("x-access-token:<token>")` が必要（`actions/checkout` 等と同じ方式）。`auth` を省略すると Bearer ヘッダーが注入され、プライベートリポジトリの clone が 401 で失敗する。パブリックリポジトリは無認証でも clone 自体は成立するため、トークンが実際には使われていないことに気づきにくい点に注意。
-- `clone-repository` ツールはトークンを直接受け取らず、`resolveProxyBaseUrl("github-git")` で得たプロキシURL（`http://host.docker.internal:{port}/github-git/{owner}/{repo}.git`）に対して `git clone` を実行する。`depth` を指定した場合だけ `--depth <depth>` を付ける。clone 先の `directory` は `/tmp` を基準にする相対パスに限定され、絶対パス、`..` などで `/tmp` 外へ解決される指定、clone 先までの既存パスに symlink が含まれる指定は拒否される。実トークンはホストプロセスのメモリにのみ存在し、エージェント・コンテナ内には渡らない。
 
 ### その他の pi-ai 対応プロバイダ
 

@@ -626,31 +626,29 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
   });
 
   it("auth.type=query-token はトークンを query parameter に注入する", async () => {
-    process.env.BROWSERLESS_TOKEN = "browserless-test-token";
+    process.env.QUERY_API_TOKEN = "query-test-token";
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
     const handler = createRequestHandler(
       [
         {
-          provider: "browserless",
-          envVars: ["BROWSERLESS_TOKEN"],
+          provider: "query-api",
+          envVars: ["QUERY_API_TOKEN"],
           auth: { type: "query-token" },
-          baseUrl: "https://production-sfo.browserless.io",
+          baseUrl: "https://api.example.com",
         },
       ],
       30000,
     );
     handler(
-      makeReq("/browserless/content?timeout=30000", {
+      makeReq("/query-api/content?timeout=30000", {
         authorization: "Bearer fake",
       }),
       makeRes() as unknown as ServerResponse,
     );
     const opts = httpsRequestMock.mock.calls[0][0];
-    expect(opts.path).toBe(
-      "/content?timeout=30000&token=browserless-test-token",
-    );
+    expect(opts.path).toBe("/content?timeout=30000&token=query-test-token");
     expect(opts.headers.authorization).toBeUndefined();
   });
 
@@ -679,57 +677,57 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
   });
 
   it("auth.type=basic はユーザー名とトークンを Base64 エンコードした Basic 認証を注入する", async () => {
-    process.env.GITHUB_CLONE_TOKEN = "ghp_test-token";
+    process.env.BASIC_API_TOKEN = "basic-test-token";
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
     const handler = createRequestHandler(
       [
         {
-          provider: "github-git",
-          envVars: ["GITHUB_CLONE_TOKEN"],
-          auth: { type: "basic", username: "x-access-token" },
-          baseUrl: "https://github.com",
+          provider: "basic-api",
+          envVars: ["BASIC_API_TOKEN"],
+          auth: { type: "basic", username: "api-user" },
+          baseUrl: "https://api.example.com",
         },
       ],
       30000,
     );
     handler(
-      makeReq("/github-git/owner/repo.git/info/refs", {
+      makeReq("/basic-api/resource", {
         authorization: "Bearer fake",
       }),
       makeRes() as unknown as ServerResponse,
     );
     const opts = httpsRequestMock.mock.calls[0][0];
     const expectedCredential = Buffer.from(
-      "x-access-token:ghp_test-token",
+      "api-user:basic-test-token",
     ).toString("base64");
     expect(opts.headers.authorization).toBe(`Basic ${expectedCredential}`);
   });
 
   it("auth.type=basic で username を省略した場合は x-access-token を既定値に使う", async () => {
-    process.env.GITHUB_CLONE_TOKEN = "ghp_test-token";
+    process.env.BASIC_API_TOKEN = "basic-test-token";
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
     const handler = createRequestHandler(
       [
         {
-          provider: "github-git",
-          envVars: ["GITHUB_CLONE_TOKEN"],
+          provider: "basic-api",
+          envVars: ["BASIC_API_TOKEN"],
           auth: { type: "basic" },
-          baseUrl: "https://github.com",
+          baseUrl: "https://api.example.com",
         },
       ],
       30000,
     );
     handler(
-      makeReq("/github-git/owner/repo.git/info/refs"),
+      makeReq("/basic-api/resource"),
       makeRes() as unknown as ServerResponse,
     );
     const opts = httpsRequestMock.mock.calls[0][0];
     const expectedCredential = Buffer.from(
-      "x-access-token:ghp_test-token",
+      "x-access-token:basic-test-token",
     ).toString("base64");
     expect(opts.headers.authorization).toBe(`Basic ${expectedCredential}`);
   });

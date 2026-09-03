@@ -210,10 +210,10 @@ describe("loadCredentialProxy", () => {
     vi.mocked(readFile).mockResolvedValue(
       makeConfig([
         {
-          provider: "browserless",
-          envVars: ["BROWSERLESS_TOKEN"],
+          provider: "query-api",
+          envVars: ["QUERY_API_TOKEN"],
           auth: { type: "query-token", queryParam: "token" },
-          baseUrl: "https://production-sfo.browserless.io",
+          baseUrl: "https://api.example.com",
         },
       ]),
     );
@@ -221,10 +221,10 @@ describe("loadCredentialProxy", () => {
     const result = await loadCredentialProxy();
     expect(result).toEqual([
       {
-        provider: "browserless",
-        envVars: ["BROWSERLESS_TOKEN"],
+        provider: "query-api",
+        envVars: ["QUERY_API_TOKEN"],
         auth: { type: "query-token", queryParam: "token" },
-        baseUrl: "https://production-sfo.browserless.io",
+        baseUrl: "https://api.example.com",
       },
     ]);
   });

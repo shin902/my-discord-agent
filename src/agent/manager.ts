@@ -437,20 +437,19 @@ type CredentialEntry = Awaited<ReturnType<typeof loadCredentialProxy>>[number];
 function buildSanitizedCredentialJson(
   creds: CredentialEntry[],
   proxyPort: number,
-  toolNames: string[] = [],
+  modelProvider: string,
 ): string {
   const sanitized = [];
-  const hasLegacyTavilyTool = toolNames.some((name) =>
-    ["tavily-extract", "tavily-crawl", "tavily-map"].includes(name),
-  );
+  const hostToolProviders = new Set([
+    "tavily",
+    "github",
+    "graph",
+    "google-calendar",
+  ]);
   for (const entry of creds) {
-    // tavily-search is executed by the host Tool Proxy and must not receive the
-    // legacy credential-proxy route in its sandbox. Keep it for the other
-    // Tavily tools until they are migrated independently.
     if (
-      entry.provider === "tavily" &&
-      toolNames.includes("tavily-search") &&
-      !hasLegacyTavilyTool
+      hostToolProviders.has(entry.provider) &&
+      entry.provider !== modelProvider
     ) {
       continue;
     }
@@ -715,7 +714,7 @@ export async function sendMessage(
   const credentialJson = buildSanitizedCredentialJson(
     creds,
     proxyPort,
-    effectiveConfig.tools ?? [],
+    resolvedModel.provider,
   );
 
   let promptContent = content;

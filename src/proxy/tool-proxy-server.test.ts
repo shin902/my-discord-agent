@@ -2,6 +2,7 @@ import * as http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activeToolProxyRunCount,
+  createToolProxyRequestHandler,
   createToolProxyRun,
   getToolProxyPort,
   initToolProxyServer,
@@ -54,6 +55,61 @@ function request(
     );
     req.on("error", reject);
     req.end(JSON.stringify(body));
+  });
+}
+
+function requestInParts(
+  authorization: string,
+  firstPart: string,
+  secondPart: string,
+  beforeComplete: () => Promise<void>,
+  requestPort = port,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        port: requestPort,
+        path: "/__tool-proxy/rpc",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization,
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            payload: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.write(firstPart);
+    void beforeComplete()
+      .then(() => req.end(secondPart))
+      .catch(reject);
+  });
+}
+
+async function listen(server: http.Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Test server did not receive a TCP address");
+  }
+  return address.port;
+}
+
+async function close(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
@@ -421,6 +477,45 @@ describe("Tool Proxy RPC", () => {
     }
   });
 
+  it("executes valid requests materially larger than 64 KiB", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => geocoding })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          current: {
+            time: "2026-06-13T12:00",
+            temperature_2m: 25.4,
+            apparent_temperature: 27.1,
+            relative_humidity_2m: 60,
+            wind_speed_10m: 5.2,
+            weather_code: 1,
+          },
+          current_units: {
+            temperature_2m: "°C",
+            apparent_temperature: "°C",
+            relative_humidity_2m: "%",
+            wind_speed_10m: "km/h",
+          },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run();
+    const body = {
+      capability: "get-current-weather",
+      args: { location: "x".repeat(70_000) },
+    };
+    expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(64 * 1024);
+    try {
+      const response = await request(`Bearer ${config.token}`, body);
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalled();
+    } finally {
+      config.revoke();
+    }
+  });
+
   it("returns a stable 413 for oversized bodies", async () => {
     const config = run();
     try {
@@ -432,6 +527,44 @@ describe("Tool Proxy RPC", () => {
       expect(response.payload.error).toBe("request body too large");
     } finally {
       config.revoke();
+    }
+  });
+
+  it("rejects a token revoked while an authenticated body is still being written", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run();
+    const body = JSON.stringify({
+      capability: "get-current-weather",
+      args: { location: "東京" },
+    });
+    let signalBodyReadReady!: () => void;
+    const bodyReadReady = new Promise<void>((resolve) => {
+      signalBodyReadReady = resolve;
+    });
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        onBodyReadReady: signalBodyReadReady,
+      }),
+    );
+    const requestPort = await listen(server);
+    try {
+      const response = await requestInParts(
+        `Bearer ${config.token}`,
+        body.slice(0, -1),
+        body.slice(-1),
+        async () => {
+          await bodyReadReady;
+          config.revoke();
+        },
+        requestPort,
+      );
+      expect(response.status).toBe(401);
+      expect(response.payload.error).toBe("Unknown or expired run token");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
     }
   });
 

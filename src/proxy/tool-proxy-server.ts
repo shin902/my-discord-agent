@@ -4,7 +4,9 @@ import * as http from "node:http";
 import { getCapabilityDefinition } from "../tools/registry.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
-export const TOOL_PROXY_BODY_LIMIT = 64 * 1024;
+// Keep enough room for large Calendar descriptions and recurrence rules while
+// retaining a finite limit against accidentally unbounded request bodies.
+export const TOOL_PROXY_BODY_LIMIT = 1024 * 1024;
 type ToolProxyRun = {
   runId: string;
   allowedCapabilities: ReadonlySet<string>;
@@ -69,7 +71,10 @@ function bearerToken(req: IncomingMessage): string | undefined {
   return match?.[1];
 }
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+async function readBody(
+  req: IncomingMessage,
+  onBodyReadReady?: () => void,
+): Promise<unknown> {
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -96,6 +101,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
       }
     });
     req.on("error", reject);
+    onBodyReadReady?.();
   });
 }
 
@@ -113,9 +119,15 @@ function isRequest(value: unknown): value is {
   );
 }
 
+interface ToolProxyRequestHandlerOptions {
+  /** Test synchronization point after authentication and body listeners are ready. */
+  onBodyReadReady?: () => void;
+}
+
 async function executeRequest(
   req: IncomingMessage,
   res: ServerResponse,
+  options: ToolProxyRequestHandlerOptions,
 ): Promise<void> {
   if (req.method !== "POST" || req.url?.split("?", 1)[0] !== TOOL_PROXY_PATH) {
     sendJson(res, 404, { error: "Not Found" });
@@ -144,7 +156,7 @@ async function executeRequest(
 
   let body: unknown;
   try {
-    body = await readBody(req);
+    body = await readBody(req, options.onBodyReadReady);
   } catch (error) {
     sendJson(
       res,
@@ -159,6 +171,10 @@ async function executeRequest(
   }
   if (!isRequest(body)) {
     sendJson(res, 400, { error: "Invalid Tool Proxy request" });
+    return;
+  }
+  if (runs.get(token) !== run) {
+    sendJson(res, 401, { error: "Unknown or expired run token" });
     return;
   }
   const capability = getCapabilityDefinition(body.capability);
@@ -201,9 +217,11 @@ async function executeRequest(
   }
 }
 
-export function createToolProxyRequestHandler() {
+export function createToolProxyRequestHandler(
+  options: ToolProxyRequestHandlerOptions = {},
+) {
   return (req: IncomingMessage, res: ServerResponse): void => {
-    void executeRequest(req, res).catch((_error) => {
+    void executeRequest(req, res, options).catch((_error) => {
       if (!res.headersSent)
         sendJson(res, 500, { error: "Internal Server Error" });
     });

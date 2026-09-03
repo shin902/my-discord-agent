@@ -1,9 +1,31 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { TSchema } from "typebox";
+import { Check } from "typebox/value";
 import { createToolProxyTool, type ToolProxyEndpoint } from "./tool-proxy.js";
 
 export type CapabilityExecutor = "sandbox" | "host";
 export type AgentToolFactory = () => AgentTool | undefined;
 export type CapabilityArgsValidator = (args: unknown) => boolean;
+
+/** Reuse the advertised schema, relaxing only upper bounds the executor clamps. */
+export function validateToolArgs(
+  tool: AgentTool,
+  clampedMaximumProperties: readonly string[] = [],
+): CapabilityArgsValidator {
+  const parameters = tool.parameters as TSchema & {
+    properties?: Record<string, TSchema>;
+  };
+  const properties = { ...parameters.properties };
+  for (const property of clampedMaximumProperties) {
+    const propertySchema = properties[property];
+    if (!propertySchema) continue;
+    const relaxed: Record<string, unknown> = { ...propertySchema };
+    delete relaxed.maximum;
+    properties[property] = relaxed as TSchema;
+  }
+  const schema = { ...parameters, properties } as TSchema;
+  return (args) => Check(schema, args);
+}
 
 export interface CapabilityDispatchContext {
   readonly toolProxyEndpoint?: ToolProxyEndpoint;

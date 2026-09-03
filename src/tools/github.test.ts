@@ -1,6 +1,10 @@
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 const PROXY_CREDS = JSON.stringify([
   { provider: "github", baseUrl: "http://proxy.test/github" },
 ]);

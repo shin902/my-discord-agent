@@ -28,33 +28,9 @@
 | `list-issue-comments` | GitHub Issue の全コメントを取得し、作者・日時・本文を Markdown で返す |
 | `list-pull-request-comments` | GitHub Pull Request の会話コメント・レビュー・インラインコメントを全件取得し、Markdown で返す |
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
-| `clone-repository` | Credential Proxy 経由で GitHub リポジトリを clone（`directory` 省略時は `/tmp/{repo}`、指定時も `/tmp` 基準の相対パスに限定。`depth` 省略時は全履歴、指定時のみ shallow clone） |
-| `browserless-search` | ウェブ検索を実行して結果（JSON）を返す |
-| `browserless-function` | Puppeteer コードをブラウザで実行する |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
-| `tavily-extract` | Tavily Extract API で指定URLのページ本文を抽出する |
-| `tavily-crawl` | Tavily Crawl API でサイト内をクロールし各ページの本文を取得する |
-| `tavily-map` | Tavily Map API でサイト内のURL構造をマッピングする |
 
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
-
-### Browserless ツールの使用制限
-
-`src/tools/browserless.ts` が提供するツールのうち、**以下の2つはローカル LLM では使用禁止**とする。
-
-| ツール | 理由 |
-|--------|------|
-| `browserless-content` | JavaScript 描画後の HTML 全文をそのままコンテキストに流し込む。重いサイトでは数十万トークン規模になりコンテキスト爆発する |
-| `browserless-smart-scrape` | JS ブロック回避の自動フォールバックが働くと内部的に `content` 相当の処理に落ちる。同様にコンテキストオーバーが発生する |
-
-**使って良いもの（ローカル LLM でも安全）:**
-
-| ツール | 理由 |
-|--------|------|
-| `browserless-search` | 検索結果（件数・スニペット）のみ返す。出力サイズが予測可能 |
-| `browserless-function` | Puppeteer コードで取得対象を自分で絞り込めるため、返却サイズをコントロールできる |
-
-**代替手段:** 一般的なウェブコンテンツ取得は `agent-reach` ツール（`r.jina.ai` 経由）を使う。Jina Reader はマークダウン変換済みの本文のみを返すため、HTML 全文よりも大幅にトークン数が少ない。
 
 ## Discord へのツールコール通知
 
