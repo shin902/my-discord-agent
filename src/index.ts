@@ -30,6 +30,7 @@ import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
 } from "./proxy/credential-proxy-server.js";
+import { initToolProxyServer } from "./proxy/tool-proxy-server.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
@@ -49,8 +50,9 @@ try {
   }
   await ensureGroupDirs(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
+  const toolProxyPort = await initToolProxyServer();
   registerInternalRequestHandler(handleBotToolRequest);
-  await initManager(proxyPort);
+  await initManager(proxyPort, toolProxyPort);
   // Stop managed and orphan containers before reading legacy session files.
   await killAllRunningContainers({ includeOrphans: true, strict: true });
   await migrateLegacySessionStores(groups.map((g) => g.name));

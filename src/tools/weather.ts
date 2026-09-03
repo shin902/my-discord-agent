@@ -82,6 +82,18 @@ const currentWeatherParams = Type.Object({
   }),
 });
 
+export function isCurrentWeatherArgs(
+  value: unknown,
+): value is { location: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 1 &&
+    typeof (value as Record<string, unknown>).location === "string"
+  );
+}
+
 type CurrentWeatherResponse = {
   current: {
     time: string;
@@ -148,6 +160,25 @@ const forecastParams = Type.Object({
     }),
   ),
 });
+
+export function isWeatherForecastArgs(
+  value: unknown,
+): value is { location: string; days?: number } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const args = value as Record<string, unknown>;
+  return (
+    (Object.keys(args).length === 1 || Object.keys(args).length === 2) &&
+    Object.keys(args).every((key) => key === "location" || key === "days") &&
+    typeof args.location === "string" &&
+    (args.days === undefined ||
+      (typeof args.days === "number" &&
+        Number.isSafeInteger(args.days) &&
+        args.days >= 1 &&
+        args.days <= 7))
+  );
+}
 
 type ForecastResponse = {
   daily: {

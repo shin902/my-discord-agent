@@ -19,6 +19,7 @@ import {
 import {
   type AgentToolFactory,
   type CapabilityDefinition,
+  type CapabilityDispatchContext,
   dispatchCapability,
 } from "./capability.js";
 import { dateTool } from "./date.js";
@@ -92,8 +93,6 @@ const TOOL_FACTORIES = {
   "tavily-extract": createStaticToolFactory(tavilyExtractTool),
   "tavily-crawl": createStaticToolFactory(tavilyCrawlTool),
   "tavily-map": createStaticToolFactory(tavilyMapTool),
-  "get-current-weather": createStaticToolFactory(getCurrentWeatherTool),
-  "get-weather-forecast": createStaticToolFactory(getWeatherForecastTool),
   bot: () => undefined,
   subagent: () => undefined,
 } satisfies Record<string, AgentToolFactory>;
@@ -104,11 +103,31 @@ const CAPABILITIES = {
     executor: "sandbox",
     factory: createStaticToolFactory(dateTool),
   },
+  "get-current-weather": {
+    tool: "get-current-weather",
+    executor: "host",
+    factory: () => getCurrentWeatherTool,
+  },
+  "get-weather-forecast": {
+    tool: "get-weather-forecast",
+    executor: "host",
+    factory: () => getWeatherForecastTool,
+  },
 } satisfies Record<string, CapabilityDefinition>;
 
 type ToolName = keyof typeof TOOL_FACTORIES;
 
-export type { AgentToolFactory } from "./capability.js";
+export type {
+  AgentToolFactory,
+  CapabilityDispatchContext,
+} from "./capability.js";
+
+export function hostCapabilityNames(toolNames: string[]): string[] {
+  return toolNames.filter((name) => {
+    const capability = CAPABILITIES[name as keyof typeof CAPABILITIES];
+    return capability?.executor === "host";
+  });
+}
 
 export type RuntimeToolName = "bot" | "subagent";
 export type RuntimeToolFactories = Partial<
@@ -122,13 +141,14 @@ function isRuntimeToolName(name: string): name is RuntimeToolName {
 export function resolveTools(
   toolNames: string[],
   runtimeFactories: RuntimeToolFactories = {},
+  capabilityContext: CapabilityDispatchContext = {},
 ): AgentTool[] {
   const staticTools: AgentTool[] = [];
 
   for (const name of toolNames) {
     const capability = CAPABILITIES[name as keyof typeof CAPABILITIES];
     if (capability) {
-      const tool = dispatchCapability(capability);
+      const tool = dispatchCapability(capability, capabilityContext);
       if (tool) staticTools.push(tool);
       continue;
     }

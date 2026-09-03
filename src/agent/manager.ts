@@ -16,8 +16,9 @@ import {
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
+import { createToolProxyRun } from "../proxy/tool-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
-import { resolveTools } from "../tools/registry.js";
+import { hostCapabilityNames, resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -217,6 +218,7 @@ function formatTimeoutLabel(ms: number): string {
 }
 
 let storedProxyPort: number | null = null;
+let storedToolProxyPort: number | null = null;
 
 // Bot プロセス自体の再起動・停止時、実行中の docker run 子プロセスは自動では
 // kill されず孤立しうる（Linux では init に reparent されて動き続ける）。
@@ -422,8 +424,12 @@ export function killAllRunningContainers(
   });
 }
 
-export async function initManager(proxyPort: number): Promise<void> {
+export async function initManager(
+  proxyPort: number,
+  toolProxyPort?: number,
+): Promise<void> {
   storedProxyPort = proxyPort;
+  storedToolProxyPort = toolProxyPort ?? null;
 }
 
 type CredentialEntry = Awaited<ReturnType<typeof loadCredentialProxy>>[number];
@@ -736,6 +742,14 @@ export async function sendMessage(
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
       ? createInternalRequestConfig?.(groupName, heldLlmProvider)
       : undefined;
+  const hostCapabilities = hostCapabilityNames(effectiveConfig.tools ?? []);
+  const toolProxyRun =
+    storedToolProxyPort === null || hostCapabilities.length === 0
+      ? undefined
+      : createToolProxyRun(
+          `${groupName}:${sessionId}:${randomUUID()}`,
+          hostCapabilities,
+        );
   const payload = JSON.stringify({
     groupName,
     sessionId,
@@ -766,6 +780,14 @@ export async function sendMessage(
           botToolEndpoint: {
             url: `http://host.docker.internal:${internalRequest.port}/__agent/bot`,
             token: internalRequest.token,
+          },
+        }
+      : {}),
+    ...(toolProxyRun
+      ? {
+          toolProxyEndpoint: {
+            url: toolProxyRun.url,
+            token: toolProxyRun.token,
           },
         }
       : {}),
@@ -1250,5 +1272,6 @@ export async function sendMessage(
       });
   }).finally(() => {
     internalRequest?.revoke();
+    toolProxyRun?.revoke();
   });
 }
