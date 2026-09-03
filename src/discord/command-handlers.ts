@@ -149,5 +149,9 @@ export async function handleBotCommand(
       allowedMentions: { parse: [], repliedUser: false },
     });
   }
-  await interaction.deleteReply();
+  try {
+    await interaction.deleteReply();
+  } catch (error) {
+    console.error("[handler] Bot receipt ACK cleanup failed:", error);
+  }
 }

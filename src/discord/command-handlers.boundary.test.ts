@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeSkillCommand: vi.fn(),
@@ -41,6 +41,10 @@ beforeEach(() => {
     content: "invalid",
     accepted: false,
   });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("Discord command adapter boundary", () => {
@@ -90,6 +94,32 @@ describe("Discord command adapter boundary", () => {
       allowedMentions: { parse: [], repliedUser: false },
     });
     expect(interaction.deleteReply).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an accepted command successful when ACK cleanup fails", async () => {
+    mocks.executeBotCommand.mockResolvedValue({
+      content: "Botへの依頼を受け付けました。Task Session: task-1234",
+      accepted: true,
+    });
+    const cleanupError = new Error("ephemeral reply already removed");
+    const interaction = makeInteraction({
+      bot: "coding",
+      action: "resume",
+      prompt: "continue",
+      session: "task-1234",
+    });
+    interaction.deleteReply.mockRejectedValue(cleanupError);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      handleBotCommand(interaction as never, "secondary"),
+    ).resolves.toBe(undefined);
+
+    expect(interaction.channel.send).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[handler] Bot receipt ACK cleanup failed:",
+      cleanupError,
+    );
   });
 
   it("passes a plain Bot request to the application service", async () => {
