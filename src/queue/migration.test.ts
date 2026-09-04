@@ -60,6 +60,26 @@ describe("migrateLegacyQueue", () => {
     }
   });
 
+  it("rejects a non-string Discord Bot identity used by run authority", async () => {
+    const paths = await makePaths(
+      `${JSON.stringify(message({ discordBotId: 123 }))}\n${JSON.stringify(message({ id: "valid", discordBotId: "personal" }))}\n`,
+    );
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const result = await migrateLegacyQueue(repo, {
+        inboxPath: paths.inbox,
+        deadLetterPath: paths.dead,
+        archiveDir: paths.archive,
+      });
+      expect(result.malformed).toBe(1);
+      expect(result.migrated).toBe(1);
+      expect(repo.get("legacy-1")).toBeUndefined();
+      expect(repo.list()[0]?.discordBotId).toBe("personal");
+    } finally {
+      repo.close();
+    }
+  });
+
   it("classifies malformed optional fields as dead letters without aborting", async () => {
     const paths = await makePaths(
       `${JSON.stringify(message({ retries: "not-a-number" }))}\n${JSON.stringify(message({ id: "valid" }))}\n`,

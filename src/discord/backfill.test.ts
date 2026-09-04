@@ -104,6 +104,7 @@ describe("backfillDiscordMessages", () => {
     await backfillDiscordMessages([
       {
         name: "group",
+        bot: "secondary",
         channels: [{ channelId: "root-1", sessionMode: "shared" }],
       },
     ]);
@@ -112,6 +113,15 @@ describe("backfillDiscordMessages", () => {
       "1001",
       "1002",
     ]);
+    expect(mocks.ingest).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: "1001" }),
+      {
+        source: "backfill",
+        replyOnFailure: false,
+        discordBotId: "secondary",
+      },
+    );
     expect(root.messages.fetch).toHaveBeenNthCalledWith(1, {
       after: "1000",
       limit: 100,
@@ -274,7 +284,11 @@ describe("backfillDiscordMessages", () => {
     });
     expect(mocks.ingest).toHaveBeenCalledWith(
       expect.objectContaining({ id: "1001" }),
-      { source: "backfill", replyOnFailure: false },
+      {
+        source: "backfill",
+        replyOnFailure: false,
+        discordBotId: "personal",
+      },
     );
     expect(repo.upsertDiscordCursor).toHaveBeenLastCalledWith("root-1", "1001");
   });
@@ -608,7 +622,11 @@ describe("backfillDiscordMessages", () => {
     });
     expect(mocks.ingest).toHaveBeenCalledWith(
       expect.objectContaining({ id: "4001", channelId: "thread-1" }),
-      { source: "backfill", replyOnFailure: false },
+      {
+        source: "backfill",
+        replyOnFailure: false,
+        discordBotId: "personal",
+      },
     );
   });
 
@@ -647,7 +665,11 @@ describe("backfillDiscordMessages", () => {
     });
     expect(mocks.ingest).toHaveBeenCalledWith(
       expect.objectContaining({ id: "2002", channelId: "thread-1" }),
-      { source: "backfill", replyOnFailure: false },
+      {
+        source: "backfill",
+        replyOnFailure: false,
+        discordBotId: "personal",
+      },
     );
   });
 

@@ -1144,6 +1144,39 @@ describe("processMessage - allowMention", () => {
     expect(commitInboxResult).toHaveBeenCalledOnce();
   });
 
+  it("inbound Discord identityとchannelだけをtrusted destinationとして渡す", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      allowMention: false,
+    });
+
+    await processMessage(makeMsg({ discordBotId: "secondary" }));
+
+    const options = vi.mocked(sendMessage).mock.calls[0]?.[3] as
+      | SendMessageOptions
+      | undefined;
+    expect(options?.trustedDiscordDestination).toEqual({
+      botId: "secondary",
+      channelId: "ch-1",
+    });
+  });
+
+  it("Discord identityのないrunへtrusted destinationを作らない", async () => {
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "g",
+      channels: [],
+      allowMention: false,
+    });
+
+    await processMessage(makeMsg({ cronJobId: "direct-cron" }));
+
+    const options = vi.mocked(sendMessage).mock.calls[0]?.[3] as
+      | SendMessageOptions
+      | undefined;
+    expect(options?.trustedDiscordDestination).toBeUndefined();
+  });
+
   it("attachments と configOverride を sendMessage に渡す", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",

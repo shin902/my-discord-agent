@@ -1275,6 +1275,14 @@ export async function processMessage(
                   (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
                 signal,
                 configOverride: execution.configOverride,
+                ...(msg.discordBotId !== undefined
+                  ? {
+                      trustedDiscordDestination: {
+                        botId: msg.discordBotId,
+                        channelId: msg.channelId,
+                      },
+                    }
+                  : {}),
                 heldLlmProvider:
                   lockTarget.concurrency === "serial"
                     ? lockTarget.provider

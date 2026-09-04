@@ -212,6 +212,9 @@ async function ingest(
       routingChannelId: lookupId,
       sessionId,
       messageId: replyMessageId,
+      ...(options.discordBotId !== undefined
+        ? { discordBotId: options.discordBotId }
+        : {}),
       ...(memoryUserId ? { userId: memoryUserId } : {}),
       content: message.content,
       timestamp: message.createdAt.toISOString(),

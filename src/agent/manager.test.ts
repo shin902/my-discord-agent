@@ -1571,12 +1571,21 @@ describe("sendMessage: configOverride", () => {
         tools: ["get-current-weather"],
         approvalRequiredTools: ["get-current-weather"],
       },
+      trustedDiscordDestination: {
+        botId: "personal",
+        channelId: "discord-channel",
+      },
     });
 
-    expect(createToolProxyRunMock).toHaveBeenCalledWith(
-      expect.stringContaining("test-group:session-1:"),
-      ["get-current-weather"],
-    );
+    expect(createToolProxyRunMock).toHaveBeenCalledWith({
+      runId: expect.stringContaining("test-group:session-1:"),
+      allowedCapabilities: ["get-current-weather"],
+      approvalRequiredCapabilities: ["get-current-weather"],
+      trustedDiscordDestination: {
+        botId: "personal",
+        channelId: "discord-channel",
+      },
+    });
     const run = createToolProxyRunMock.mock.results[0]?.value as {
       revoke: ReturnType<typeof vi.fn>;
     };

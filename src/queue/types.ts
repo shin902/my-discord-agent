@@ -17,6 +17,8 @@ export interface InboxMessage {
   groupName: string;
   sessionId: string;
   messageId?: string;
+  /** Discord client identity that accepted this inbound message. */
+  discordBotId?: string;
   /** Discord author identity, persisted only for eligible Agent Memory captures. */
   userId?: string;
   content: string;

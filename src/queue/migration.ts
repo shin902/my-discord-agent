@@ -61,6 +61,7 @@ function validMessage(value: unknown): value is InboxMessage {
     return false;
   for (const optional of [
     message.messageId,
+    message.discordBotId,
     message.idempotencyKey,
     message.completedAt,
     message.cronJobId,

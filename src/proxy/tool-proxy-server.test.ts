@@ -114,7 +114,10 @@ async function close(server: http.Server): Promise<void> {
 }
 
 function run(capabilities: string[] = ["get-current-weather"]) {
-  const config = createToolProxyRun("test-run", capabilities);
+  const config = createToolProxyRun({
+    runId: "test-run",
+    allowedCapabilities: capabilities,
+  });
   if (!config) throw new Error("Tool Proxy was not initialized");
   return config;
 }

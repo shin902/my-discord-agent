@@ -3,14 +3,18 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
 import { materializeCapabilityArgs } from "../tools/capability.js";
 import { getCapabilityDefinition } from "../tools/registry.js";
+import {
+  createToolProxyRunAuthority,
+  type ToolProxyRunAuthorityInput,
+  type ToolProxyRunAuthoritySnapshot,
+} from "./tool-proxy-run-authority.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
 // Keep enough room for large Calendar descriptions and recurrence rules while
 // retaining a finite limit against accidentally unbounded request bodies.
 export const TOOL_PROXY_BODY_LIMIT = 1024 * 1024;
 type ToolProxyRun = {
-  runId: string;
-  allowedCapabilities: ReadonlySet<string>;
+  authority: ToolProxyRunAuthoritySnapshot;
 };
 
 const runs = new Map<string, ToolProxyRun>();
@@ -24,20 +28,21 @@ export interface ToolProxyRunConfig {
 
 /** Register one short-lived run authority in host memory. */
 export function createToolProxyRun(
-  runId: string,
-  allowedCapabilities: Iterable<string>,
+  input: ToolProxyRunAuthorityInput,
 ): ToolProxyRunConfig | undefined {
-  if (toolProxyPort === null) return undefined;
+  const runAuthority = createToolProxyRunAuthority(input);
+  if (toolProxyPort === null) {
+    runAuthority.revoke();
+    return undefined;
+  }
   const token = randomBytes(32).toString("base64url");
-  runs.set(token, {
-    runId,
-    allowedCapabilities: new Set(allowedCapabilities),
-  });
+  runs.set(token, { authority: runAuthority.snapshot });
   let revoked = false;
   const revoke = (): void => {
     if (revoked) return;
     revoked = true;
     runs.delete(token);
+    runAuthority.revoke();
   };
   return {
     url: `http://host.docker.internal:${toolProxyPort}${TOOL_PROXY_PATH}`,
@@ -189,7 +194,7 @@ async function executeRequest(
     });
     return;
   }
-  if (!run.allowedCapabilities.has(body.capability)) {
+  if (!run.authority.allowedCapabilities.has(body.capability)) {
     sendJson(res, 403, {
       error: `Capability is not authorized: ${body.capability}`,
     });

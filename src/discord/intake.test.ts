@@ -300,6 +300,26 @@ describe("ingestDiscordMessage", () => {
     });
   });
 
+  it("liveで実際に受信したDiscord Bot identityをqueueへ保持する", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group", bot: "secondary" },
+      channel: { channelId: "root-1", sessionMode: "shared" },
+    });
+
+    await ingestDiscordMessage(makeMessage({ id: "message-trusted-bot" }), {
+      source: "live",
+      replyOnFailure: false,
+      discordBotId: "secondary",
+    });
+
+    expect(
+      repo.findByIdempotencyKey("discord-message:message-trusted-bot"),
+    ).toMatchObject({
+      channelId: "root-1",
+      discordBotId: "secondary",
+    });
+  });
+
   it("liveではgroup担当外のDiscord Bot clientを無視する", async () => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group", bot: "secondary" },

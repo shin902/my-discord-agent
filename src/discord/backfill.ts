@@ -7,6 +7,7 @@ import {
   type NewsChannel,
   type TextChannel,
 } from "discord.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import type { ChannelConfig, GroupConfig } from "../config/groups.js";
 import {
   getQueueRepository,
@@ -43,9 +44,15 @@ export async function backfillDiscordMessages(
   beginDiscordChannelBackfill(channelIds);
   for (const group of groups) {
     const discordClient = getDiscordClientForGroup(group);
+    const discordBotId = group.bot ?? DEFAULT_DISCORD_BOT_ID;
     for (const channel of group.channels) {
       try {
-        const completed = await backfillTarget(discordClient, channel, repo);
+        const completed = await backfillTarget(
+          discordClient,
+          discordBotId,
+          channel,
+          repo,
+        );
         if (completed) finishDiscordChannelBackfill(channel.channelId);
       } catch (error) {
         // A single inaccessible channel must not prevent other configured
@@ -62,6 +69,7 @@ export async function backfillDiscordMessages(
 
 async function backfillTarget(
   discordClient: import("discord.js").Client,
+  discordBotId: string,
   channel: ChannelConfig,
   repo: QueueRepository,
 ): Promise<boolean> {
@@ -95,6 +103,7 @@ async function backfillTarget(
       threads,
       repo,
       forumWasInitialized,
+      discordBotId,
       seededCursors,
     );
     return complete;
@@ -105,7 +114,7 @@ async function backfillTarget(
     channel.sessionMode !== "thread" && channel.sessionMode !== "email-mode";
 
   if (shouldReplayRoot && rootCursor && isMessageChannel(root)) {
-    await recoverMessages(root, rootCursor, repo);
+    await recoverMessages(root, rootCursor, repo, discordBotId);
   }
 
   if (channel.sessionMode === "shared") return true;
@@ -116,7 +125,7 @@ async function backfillTarget(
     const threadCursor =
       repo.getDiscordCursor(thread.id) ?? threadFallbackCursor;
     if (!threadCursor) continue;
-    await recoverMessages(thread, threadCursor, repo);
+    await recoverMessages(thread, threadCursor, repo, discordBotId);
   }
   return complete;
 }
@@ -136,13 +145,15 @@ async function backfillForumThreads(
   threads: readonly AnyThreadChannel[],
   repo: QueueRepository,
   forumWasInitialized: boolean,
+  discordBotId: string,
   seededCursors?: ReadonlyMap<string, string | undefined>,
 ): Promise<void> {
   for (const thread of threads) {
     const threadCursor = seededCursors?.has(thread.id)
       ? seededCursors.get(thread.id)
       : await ensureForumThreadCursor(thread, repo, forumWasInitialized);
-    if (threadCursor) await recoverMessages(thread, threadCursor, repo);
+    if (threadCursor)
+      await recoverMessages(thread, threadCursor, repo, discordBotId);
   }
 }
 
@@ -204,6 +215,7 @@ async function recoverMessages(
   channel: MessageChannel,
   afterMessageId: string,
   repo: QueueRepository,
+  discordBotId: string,
 ): Promise<void> {
   let cursor = afterMessageId;
   while (true) {
@@ -219,6 +231,7 @@ async function recoverMessages(
       const result = await ingestDiscordMessage(message, {
         source: "backfill",
         replyOnFailure: false,
+        discordBotId,
       });
       const scope = result.cursorScope ?? channel.id;
       repo.upsertDiscordCursor(scope, message.id);
