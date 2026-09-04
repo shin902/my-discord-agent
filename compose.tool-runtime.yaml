@@ -9,6 +9,10 @@ services:
       - ALL
     cap_add:
       - NET_ADMIN
+      # Temporary entrypoint privileges; setpriv drops these before Node starts.
+      - SETUID
+      - SETGID
+      - SETPCAP
     environment:
       PORT: "8787"
       AGENT_REACH_RUNTIME_TOKEN: "${AGENT_REACH_RUNTIME_TOKEN:?set AGENT_REACH_RUNTIME_TOKEN}"
@@ -17,6 +21,12 @@ services:
       REDDIT_COOKIE_FILE: /var/lib/reddit/reddit-cookies.json
       REDDIT_COOKIE_MAX_AGE_DAYS: "${REDDIT_COOKIE_MAX_AGE_DAYS:-7}"
       CHROMIUM_PATH: /usr/bin/chromium
+    # Do not inherit the host/Tailscale resolver, which is blocked as private
+    # overlay traffic. Public DNS remains reachable through the OUTPUT policy;
+    # the embedded 127.0.0.11 resolver is also explicitly allowed there.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     volumes:
       - type: bind
         source: ./data/reddit-browser-profile
