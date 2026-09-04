@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   executeSkillCommand: vi.fn(),
   executeBotCommand: vi.fn(),
+  executeSteerCommand: vi.fn(),
 }));
 
 vi.mock("../application/discord-command-service.js", () => mocks);
 
-const { handleBotCommand, handleSkillCommand } = await import(
-  "./command-handlers.js"
-);
+const { handleBotCommand, handleSkillCommand, handleSteerCommand } =
+  await import("./command-handlers.js");
 
 function makeInteraction(options: Record<string, string | undefined>) {
   return {
@@ -38,6 +38,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.executeSkillCommand.mockResolvedValue("invalid");
   mocks.executeBotCommand.mockResolvedValue({
+    content: "invalid",
+    accepted: false,
+  });
+  mocks.executeSteerCommand.mockResolvedValue({
     content: "invalid",
     accepted: false,
   });
@@ -120,6 +124,104 @@ describe("Discord command adapter boundary", () => {
       "[handler] Bot receipt ACK cleanup failed:",
       cleanupError,
     );
+  });
+
+  it("posts an accepted steer instruction as an independent public message", async () => {
+    const instruction = "Please ping <@123> and adjust";
+    mocks.executeSteerCommand.mockResolvedValue({
+      content: "実行中Agentへ方針転換を送りました。",
+      accepted: true,
+      instruction,
+    });
+    const interaction = makeInteraction({ instruction });
+
+    await handleSteerCommand(interaction as never, "secondary");
+
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.channel.send).toHaveBeenCalledWith({
+      content: `Steer:\n${instruction}`,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an accepted steer successful when ACK cleanup fails", async () => {
+    const instruction = "Please continue";
+    mocks.executeSteerCommand.mockResolvedValue({
+      content: "実行中Agentへ方針転換を送りました。",
+      accepted: true,
+      instruction,
+    });
+    const cleanupError = new Error("ephemeral reply already removed");
+    const interaction = makeInteraction({ instruction });
+    interaction.deleteReply.mockRejectedValue(cleanupError);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      handleSteerCommand(interaction as never, "secondary"),
+    ).resolves.toBe(undefined);
+
+    expect(interaction.channel.send).toHaveBeenCalledOnce();
+    expect(interaction.deleteReply).toHaveBeenCalledOnce();
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[handler] Steer receipt ACK cleanup failed:",
+      cleanupError,
+    );
+  });
+
+  it("keeps rejected steer results ephemeral", async () => {
+    const interaction = makeInteraction({ instruction: "No active run" });
+
+    await handleSteerCommand(interaction as never, "secondary");
+
+    expect(interaction.editReply).toHaveBeenCalledWith({ content: "invalid" });
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).not.toHaveBeenCalled();
+  });
+
+  it("splits a long steer receipt and disables mention expansion", async () => {
+    const instruction = "x".repeat(4_000);
+    mocks.executeSteerCommand.mockResolvedValue({
+      content: "実行中Agentへ方針転換を送りました。",
+      accepted: true,
+      instruction,
+    });
+    const interaction = makeInteraction({ instruction });
+
+    await handleSteerCommand(interaction as never);
+
+    const chunks = interaction.channel.send.mock.calls.map(
+      ([options]) => (options as { content: string }).content,
+    );
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 2_000)).toBe(true);
+    expect(chunks.join("")).toContain(instruction);
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    for (const [options] of interaction.channel.send.mock.calls) {
+      expect(options).toEqual({
+        content: expect.any(String),
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    }
+  });
+
+  it("fails accepted steer receipts when the channel cannot send", async () => {
+    const instruction = "Please continue";
+    mocks.executeSteerCommand.mockResolvedValue({
+      content: "実行中Agentへ方針転換を送りました。",
+      accepted: true,
+      instruction,
+    });
+    const interaction = makeInteraction({ instruction });
+    Object.assign(interaction.channel, { send: undefined });
+
+    await expect(handleSteerCommand(interaction as never)).rejects.toThrow(
+      "Steer receipt destination is unavailable",
+    );
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).not.toHaveBeenCalled();
   });
 
   it("passes a plain Bot request to the application service", async () => {
