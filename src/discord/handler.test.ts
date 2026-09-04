@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockClient = { once: vi.fn(), on: vi.fn() };
 const mockHandleBotCommand = vi.hoisted(() => vi.fn());
 const mockHandleSkillCommand = vi.hoisted(() => vi.fn());
+const mockRouteInteraction = vi.hoisted(() => vi.fn());
 const mockCreateDiscordInteractionRouter = vi.hoisted(() =>
-  vi.fn((discordBotId: string) => (interaction: { commandName: string }) => {
+  vi.fn((discordBotId: string) => (interaction: { commandName?: string }) => {
+    mockRouteInteraction(interaction, discordBotId);
     if (interaction.commandName === "bot")
       mockHandleBotCommand(interaction, discordBotId);
     if (interaction.commandName === "skill")
@@ -85,6 +87,7 @@ describe("registerHandlers - InteractionCreate", () => {
   beforeEach(() => {
     mockHandleBotCommand.mockReset().mockResolvedValue(undefined);
     mockHandleSkillCommand.mockReset().mockResolvedValue(undefined);
+    mockRouteInteraction.mockReset();
     mockCreateDiscordInteractionRouter.mockClear();
   });
 
@@ -125,6 +128,21 @@ describe("registerHandlers - InteractionCreate", () => {
       interaction,
       "secondary",
     );
+  });
+
+  it("forwards component interactions to the shared interaction router", () => {
+    const client = { once: vi.fn(), on: vi.fn() };
+    registerHandlers(client as never, undefined, "secondary");
+    const handler = client.on.mock.calls.find(
+      ([event]) => event === "interactionCreate",
+    )?.[1] as ((interaction: unknown) => void) | undefined;
+    if (!handler)
+      throw new Error("interactionCreate handler was not registered");
+    const interaction = { isButton: () => true };
+
+    handler(interaction);
+
+    expect(mockRouteInteraction).toHaveBeenCalledWith(interaction, "secondary");
   });
 });
 

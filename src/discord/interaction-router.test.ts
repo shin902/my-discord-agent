@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockExecute = vi.hoisted(() => vi.fn());
 const mockGetDiscordCommand = vi.hoisted(() => vi.fn());
+const mockRouteToolApprovalInteraction = vi.hoisted(() => vi.fn());
 vi.mock("./command-registry.js", () => ({
   getDiscordCommand: mockGetDiscordCommand,
+}));
+vi.mock("./tool-approval.js", () => ({
+  routeToolApprovalInteraction: mockRouteToolApprovalInteraction,
 }));
 
 const { createDiscordInteractionRouter, routeDiscordInteraction } =
@@ -12,6 +16,7 @@ const { createDiscordInteractionRouter, routeDiscordInteraction } =
 beforeEach(() => {
   mockExecute.mockReset().mockResolvedValue(undefined);
   mockGetDiscordCommand.mockReset();
+  mockRouteToolApprovalInteraction.mockReset().mockResolvedValue(false);
 });
 
 afterEach(() => {
@@ -48,6 +53,8 @@ describe("createDiscordInteractionRouter", () => {
       execute: vi.fn().mockRejectedValue(error),
     });
     const interaction = {
+      isButton: () => false,
+      isChatInputCommand: () => true,
       commandName: "example",
       deferred: false,
       replied: false,
@@ -71,6 +78,8 @@ describe("createDiscordInteractionRouter", () => {
       execute: vi.fn().mockRejectedValue(error),
     });
     const interaction = {
+      isButton: () => false,
+      isChatInputCommand: () => true,
       commandName: "example",
       deferred: true,
       replied: false,
@@ -96,6 +105,8 @@ describe("createDiscordInteractionRouter", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     createDiscordInteractionRouter("personal")({
+      isButton: () => false,
+      isChatInputCommand: () => true,
       commandName: "example",
     } as never);
     await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
@@ -104,5 +115,33 @@ describe("createDiscordInteractionRouter", () => {
       "[handler] /example コマンドの処理に失敗しました:",
       error,
     );
+  });
+
+  it("routes button interactions with the receiving Discord Bot identity", async () => {
+    const interaction = {
+      isButton: () => true,
+      isChatInputCommand: () => false,
+    };
+
+    createDiscordInteractionRouter("secondary")(interaction as never);
+    await vi.waitFor(() =>
+      expect(mockRouteToolApprovalInteraction).toHaveBeenCalledOnce(),
+    );
+
+    expect(mockRouteToolApprovalInteraction).toHaveBeenCalledWith(
+      interaction,
+      "secondary",
+    );
+    expect(mockGetDiscordCommand).not.toHaveBeenCalled();
+  });
+
+  it("ignores interactions that are neither buttons nor chat-input commands", () => {
+    createDiscordInteractionRouter("personal")({
+      isButton: () => false,
+      isChatInputCommand: () => false,
+    } as never);
+
+    expect(mockRouteToolApprovalInteraction).not.toHaveBeenCalled();
+    expect(mockGetDiscordCommand).not.toHaveBeenCalled();
   });
 });
