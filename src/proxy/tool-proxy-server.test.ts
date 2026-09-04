@@ -132,6 +132,58 @@ const geocoding = {
 };
 
 describe("Tool Proxy RPC", () => {
+  it("keeps an immutable authority snapshot and revokes its map entry", async () => {
+    const allowedCapabilities = ["get-current-weather"];
+    const destination = { botId: "personal", channelId: "channel-1" };
+    const config = createToolProxyRun("snapshot-run", allowedCapabilities, {
+      approvalRequiredCapabilities: allowedCapabilities,
+      trustedDiscordDestination: destination,
+    });
+    if (!config) throw new Error("Tool Proxy was not initialized");
+
+    allowedCapabilities.push("get-weather-forecast");
+    destination.botId = "mutated";
+    destination.channelId = "mutated";
+
+    expect(config.revokeSignal.aborted).toBe(false);
+    const unauthorized = await request(`Bearer ${config.token}`, {
+      capability: "get-weather-forecast",
+      args: { location: "東京" },
+    });
+    expect(unauthorized.status).toBe(403);
+
+    config.revoke();
+    config.revoke();
+    expect(config.revokeSignal.aborted).toBe(true);
+    expect(activeToolProxyRunCount()).toBe(0);
+    const revoked = await request(`Bearer ${config.token}`, {
+      capability: "get-current-weather",
+      args: { location: "東京" },
+    });
+    expect(revoked.status).toBe(401);
+  });
+
+  it("rejects approval-required capabilities outside the allowed snapshot", () => {
+    expect(() =>
+      createToolProxyRun("subset-run", ["get-current-weather"], {
+        approvalRequiredCapabilities: ["get-weather-forecast"],
+      }),
+    ).toThrow(
+      "Approval-required capability is not allowed for this run: get-weather-forecast",
+    );
+  });
+
+  it("allows a run without a trusted Discord destination", () => {
+    const config = createToolProxyRun(
+      "no-destination-run",
+      ["get-current-weather"],
+      { approvalRequiredCapabilities: ["get-current-weather"] },
+    );
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    config.revoke();
+    expect(config.revokeSignal.aborted).toBe(true);
+  });
+
   it.each([
     [undefined, "Missing or malformed bearer token"],
     ["Basic secret", "Missing or malformed bearer token"],

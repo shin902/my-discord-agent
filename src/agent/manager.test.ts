@@ -1576,6 +1576,10 @@ describe("sendMessage: configOverride", () => {
     expect(createToolProxyRunMock).toHaveBeenCalledWith(
       expect.stringContaining("test-group:session-1:"),
       ["get-current-weather"],
+      {
+        approvalRequiredCapabilities: ["get-current-weather"],
+        trustedDiscordDestination: undefined,
+      },
     );
     const run = createToolProxyRunMock.mock.results[0]?.value as {
       revoke: ReturnType<typeof vi.fn>;

@@ -8,17 +8,26 @@ export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
 // Keep enough room for large Calendar descriptions and recurrence rules while
 // retaining a finite limit against accidentally unbounded request bodies.
 export const TOOL_PROXY_BODY_LIMIT = 1024 * 1024;
-type ToolProxyRun = {
-  runId: string;
-  allowedCapabilities: ReadonlySet<string>;
-};
+export interface TrustedDiscordDestination {
+  readonly botId: string;
+  readonly channelId: string;
+}
 
-const runs = new Map<string, ToolProxyRun>();
+type ToolProxyRunSnapshot = Readonly<{
+  runId: string;
+  allowedCapabilities: readonly string[];
+  approvalRequiredCapabilities: readonly string[];
+  trustedDiscordDestination: TrustedDiscordDestination | undefined;
+  revokeSignal: AbortSignal;
+}>;
+
+const runs = new Map<string, ToolProxyRunSnapshot>();
 let toolProxyPort: number | null = null;
 
 export interface ToolProxyRunConfig {
   url: string;
   token: string;
+  revokeSignal: AbortSignal;
   revoke: () => void;
 }
 
@@ -26,22 +35,48 @@ export interface ToolProxyRunConfig {
 export function createToolProxyRun(
   runId: string,
   allowedCapabilities: Iterable<string>,
+  options: {
+    approvalRequiredCapabilities?: Iterable<string>;
+    trustedDiscordDestination?: TrustedDiscordDestination;
+  } = {},
 ): ToolProxyRunConfig | undefined {
   if (toolProxyPort === null) return undefined;
-  const token = randomBytes(32).toString("base64url");
-  runs.set(token, {
+
+  const allowed = Object.freeze([...allowedCapabilities]);
+  const approvalRequired = Object.freeze([
+    ...(options.approvalRequiredCapabilities ?? []),
+  ]);
+  for (const capability of approvalRequired) {
+    if (!allowed.includes(capability)) {
+      throw new Error(
+        `Approval-required capability is not allowed for this run: ${capability}`,
+      );
+    }
+  }
+
+  const controller = new AbortController();
+  const snapshot = Object.freeze({
     runId,
-    allowedCapabilities: new Set(allowedCapabilities),
+    allowedCapabilities: allowed,
+    approvalRequiredCapabilities: approvalRequired,
+    trustedDiscordDestination: options.trustedDiscordDestination
+      ? Object.freeze({ ...options.trustedDiscordDestination })
+      : undefined,
+    revokeSignal: controller.signal,
   });
+  const token = randomBytes(32).toString("base64url");
+  runs.set(token, snapshot);
   let revoked = false;
   const revoke = (): void => {
     if (revoked) return;
     revoked = true;
     runs.delete(token);
+    controller.abort(new Error("Run authority revoked"));
   };
   return {
     url: `http://host.docker.internal:${toolProxyPort}${TOOL_PROXY_PATH}`,
     token,
+    revokeSignal: controller.signal,
     revoke,
   };
 }
@@ -189,7 +224,7 @@ async function executeRequest(
     });
     return;
   }
-  if (!run.allowedCapabilities.has(body.capability)) {
+  if (!run.allowedCapabilities.includes(body.capability)) {
     sendJson(res, 403, {
       error: `Capability is not authorized: ${body.capability}`,
     });

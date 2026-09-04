@@ -1147,6 +1147,7 @@ describe("processMessage - allowMention", () => {
   it("attachments と configOverride を sendMessage に渡す", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
+      bot: "secondary",
       channels: [],
       allowMention: false,
     });
@@ -1171,6 +1172,10 @@ describe("processMessage - allowMention", () => {
         attachments,
         onExecutionTiming: expect.any(Function),
         configOverride,
+        trustedDiscordDestination: {
+          botId: "secondary",
+          channelId: "ch-1",
+        },
       }),
     );
   });

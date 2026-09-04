@@ -19,7 +19,10 @@ import {
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
-import { createToolProxyRun } from "../proxy/tool-proxy-server.js";
+import {
+  createToolProxyRun,
+  type TrustedDiscordDestination,
+} from "../proxy/tool-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { hostCapabilityNames, resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
@@ -583,6 +586,7 @@ export interface SendMessageOptions {
   onContainerStarted?: () => void | Promise<void>;
   signal?: AbortSignal;
   configOverride?: Partial<AgentConfig>;
+  trustedDiscordDestination?: TrustedDiscordDestination;
   systemPromptSnapshotContent?: string;
   systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
@@ -650,6 +654,7 @@ export async function sendMessage(
     systemPromptAppend,
     enableBotTool,
     heldLlmProvider,
+    trustedDiscordDestination,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -770,6 +775,11 @@ export async function sendMessage(
       : createToolProxyRun(
           `${groupName}:${sessionId}:${randomUUID()}`,
           hostCapabilities,
+          {
+            approvalRequiredCapabilities:
+              effectiveConfig.approvalRequiredTools ?? [],
+            trustedDiscordDestination,
+          },
         );
   const payload = JSON.stringify({
     groupName,
