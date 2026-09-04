@@ -73,12 +73,14 @@ LLM 実行結果と Discord 配信は分離されており、ジョブ状態は 
 | --- | --- | --- |
 | `config/config.json` | Yes | Discord application、デフォルトモデル、timeout など |
 | `config/bots.json` | No | Agent Bot profile Registry（省略時はBotなし） |
-| `config/groups.json` | Yes | チャンネル、group/channelのAgentConfig（model、tools、skills、mounts）などの設定 |
+| `config/groups.json` | Yes | チャンネル、group/channelのAgentConfig（model、tools、approvalRequiredTools、skills、mounts）などの設定 |
 | `config/credentials.json` | Yes | sandbox / proxy から利用する credential 定義 |
 | `config/providers.json` | No | Provider ごとの concurrency 設定。省略時はデフォルト値を使用 |
 | `config/cron.json` | No | cron job 定義とAgentConfig override |
 
 AgentConfigの継承は実行経路ごとに分かれます。Discordの `/stop` は現在のgroup/sessionのactive Agentへcooperative abortを送り、短い猶予後だけrunnerを強制停止します。通常のDiscord会話は `group → channel`、cronは配送先のchannel/thread設定を参照せず `group → cron job` です。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDと既存スレッドIDでAgentConfigの解決結果は変わりません。Bot profileは `group → bot` で解決され、channelの設定は継承しません。Discordの `/bot` コマンドは `action=run`（省略可）で新しいTask Sessionを作成し、`action=resume` と表示された `session` handleで明示的に続行できます。`action=list` では現在のgroupとBotが所有するTask Sessionのhandle、Bot名、作成日時、最終利用日時、previewを確認できます。メインAgentの組み込み `bot` toolからも、effective `tools` に正確な名前 `bot` を明示した場合だけ同じ `run` / `resume` / `list` を利用できます。toolの `run` / `resume` はキューへ積まず、同じtool call内でBotのsandbox実行完了まで待機して結果を返します。BotのTask Session履歴・添付領域は通常会話から分離され、返信だけは呼び出し元channel/threadへ配送されます。通常会話とcronで指定した `model` / `tools` / `skills` / `mounts` はフィールド単位で完全置換されます。親Agentがproviderを保持中にBotが異なるserial providerを対象とする場合は、deadlock防止のため同期Bot呼び出しを拒否します。同じserial providerをBotが対象とする場合は親のlockを再利用しますが、対象Task Sessionに先行処理があるとlock/orderのcycleを避けるため待機せず拒否します。parallel providerは通常どおり実行します。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同一ordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しません。起動時は管理対象コンテナの停止を確認してから、前回の未完了admissionとqueue実行を回収します。
+
+Approval対象toolの設定と安全上の注意は [エージェントのツールとスキル](docs/agent-tools-skills.md#discord-tool-approvalopt-in) を参照してください。
 
 パスは `CONFIG_PATH`、`GROUPS_PATH`、`CREDENTIALS_PATH`、`PROVIDERS_PATH`、`CRON_PATH`、`BOTS_PATH` で上書きできます。
 

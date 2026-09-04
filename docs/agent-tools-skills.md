@@ -30,6 +30,14 @@
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
+### Discord tool approval（opt-in）
+
+`approvalRequiredTools` は、effective `tools` に含まれる既知host capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox/runtime toolはconfig errorです。
+
+validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
+
+approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
+
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
 
 ## Discord へのツールコール通知
