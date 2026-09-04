@@ -31,6 +31,17 @@ export interface IngestResult {
   newItems: number;
 }
 
+/** Normalized saved-post data accepted from a host-side source adapter. */
+export interface XSavedItem {
+  tweetId: string;
+  text: string;
+  authorHandle?: string;
+  tweetCreatedAt?: string;
+  externalUrls?: string[];
+  seenLiked: boolean;
+  seenBookmarked: boolean;
+}
+
 /** A failure reading BirdClaw is an operational source failure, not a target DB failure. */
 export class BirdclawSourceError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -276,18 +287,18 @@ function resolveBirdclawAccountId(
   return row.id;
 }
 
-function extractExternalUrls(raw: string | null): string[] {
-  if (!raw) return [];
+function extractExternalUrls(raw: string | null): string[] | undefined {
+  if (!raw) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return [];
+    return undefined;
   }
 
-  if (!parsed || typeof parsed !== "object") return [];
+  if (!parsed || typeof parsed !== "object") return undefined;
   const urls = (parsed as { urls?: unknown }).urls;
-  if (!Array.isArray(urls)) return [];
+  if (!Array.isArray(urls)) return undefined;
 
   const result = new Set<string>();
   for (const entry of urls) {
@@ -388,6 +399,97 @@ function loadBirdclawRows(
   ) as BirdclawRow[];
 }
 
+export function ingestXSavedItems(
+  items: readonly XSavedItem[],
+  options?: {
+    xSavedDb?: Database.Database;
+    xSavedDbPath?: string;
+    now?: string;
+  },
+): IngestResult {
+  const now = options?.now ?? new Date().toISOString();
+  const ownsTarget = options?.xSavedDb === undefined;
+  const targetDb =
+    options?.xSavedDb ??
+    openXSavedDb(resolveXSavedDbPath(options?.xSavedDbPath));
+  try {
+    const existingRows = targetDb
+      .prepare("SELECT tweet_id FROM x_items")
+      .all() as ExistingItemRow[];
+    const existing = new Set(existingRows.map((row) => row.tweet_id));
+
+    const upsertItem = targetDb.prepare(`
+      INSERT INTO x_items (
+        tweet_id, text, author_handle, url, tweet_created_at,
+        external_urls_json, seen_liked, seen_bookmarked,
+        first_seen_at, last_seen_at
+      ) VALUES (
+        @tweetId, @text, COALESCE(@authorHandle, ''), @url, @tweetCreatedAt,
+        COALESCE(@externalUrlsJson, '[]'), @seenLiked, @seenBookmarked, @now, @now
+      )
+      ON CONFLICT(tweet_id) DO UPDATE SET
+        text = excluded.text,
+        author_handle = CASE
+          WHEN @authorHandle IS NULL THEN x_items.author_handle
+          ELSE excluded.author_handle
+        END,
+        url = CASE
+          WHEN @authorHandle IS NULL THEN x_items.url
+          ELSE excluded.url
+        END,
+        tweet_created_at = CASE
+          WHEN @tweetCreatedAt IS NULL THEN x_items.tweet_created_at
+          ELSE excluded.tweet_created_at
+        END,
+        external_urls_json = CASE
+          WHEN @externalUrlsJson IS NULL THEN x_items.external_urls_json
+          ELSE excluded.external_urls_json
+        END,
+        seen_liked = MAX(x_items.seen_liked, excluded.seen_liked),
+        seen_bookmarked = MAX(x_items.seen_bookmarked, excluded.seen_bookmarked),
+        last_seen_at = excluded.last_seen_at
+    `);
+    const ensureState = targetDb.prepare(`
+      INSERT OR IGNORE INTO x_item_state (
+        tweet_id, status, note, updated_at
+      ) VALUES (?, 'inbox', NULL, ?)
+    `);
+
+    let newItems = 0;
+    const write = targetDb.transaction(() => {
+      for (const item of items) {
+        const url = item.authorHandle
+          ? `https://x.com/${item.authorHandle}/status/${item.tweetId}`
+          : `https://x.com/i/status/${item.tweetId}`;
+        upsertItem.run({
+          tweetId: item.tweetId,
+          text: item.text,
+          authorHandle: item.authorHandle ?? null,
+          url,
+          tweetCreatedAt: item.tweetCreatedAt ?? null,
+          externalUrlsJson:
+            item.externalUrls === undefined
+              ? null
+              : JSON.stringify(item.externalUrls),
+          seenLiked: item.seenLiked ? 1 : 0,
+          seenBookmarked: item.seenBookmarked ? 1 : 0,
+          now,
+        });
+        ensureState.run(item.tweetId, now);
+        if (!existing.has(item.tweetId)) {
+          newItems += 1;
+          existing.add(item.tweetId);
+        }
+      }
+    });
+    write();
+
+    return { newItems };
+  } finally {
+    if (ownsTarget) targetDb.close();
+  }
+}
+
 export function ingestBirdclawSavedItems(options?: {
   birdclawDbPath?: string;
   xSavedDb?: Database.Database;
@@ -395,7 +497,6 @@ export function ingestBirdclawSavedItems(options?: {
   account?: string;
   now?: string;
 }): IngestResult {
-  const now = options?.now ?? new Date().toISOString();
   const sourcePath = resolveBirdclawDbPath(options?.birdclawDbPath);
   let sourceDb: Database.Database | undefined;
   let rows: BirdclawRow[];
@@ -414,72 +515,23 @@ export function ingestBirdclawSavedItems(options?: {
     sourceDb?.close();
   }
 
-  const ownsTarget = options?.xSavedDb === undefined;
-  const targetDb =
-    options?.xSavedDb ??
-    openXSavedDb(resolveXSavedDbPath(options?.xSavedDbPath));
-  try {
-    const existingRows = targetDb
-      .prepare("SELECT tweet_id FROM x_items")
-      .all() as ExistingItemRow[];
-    const existing = new Set(existingRows.map((row) => row.tweet_id));
-
-    const upsertItem = targetDb.prepare(`
-      INSERT INTO x_items (
-        tweet_id, text, author_handle, url, tweet_created_at,
-        external_urls_json, seen_liked, seen_bookmarked,
-        first_seen_at, last_seen_at
-      ) VALUES (
-        @tweetId, @text, @authorHandle, @url, @tweetCreatedAt,
-        @externalUrlsJson, @seenLiked, @seenBookmarked, @now, @now
-      )
-      ON CONFLICT(tweet_id) DO UPDATE SET
-        text = excluded.text,
-        author_handle = excluded.author_handle,
-        url = excluded.url,
-        tweet_created_at = excluded.tweet_created_at,
-        external_urls_json = excluded.external_urls_json,
-        seen_liked = MAX(x_items.seen_liked, excluded.seen_liked),
-        seen_bookmarked = MAX(x_items.seen_bookmarked, excluded.seen_bookmarked),
-        last_seen_at = excluded.last_seen_at
-    `);
-    const ensureState = targetDb.prepare(`
-      INSERT OR IGNORE INTO x_item_state (
-        tweet_id, status, note, updated_at
-      ) VALUES (?, 'inbox', NULL, ?)
-    `);
-
-    let newItems = 0;
-    const write = targetDb.transaction(() => {
-      for (const row of rows) {
-        const authorHandle = row.author_handle ?? "";
-        const tweetId = String(row.id);
-        const url = authorHandle
-          ? `https://x.com/${authorHandle}/status/${tweetId}`
-          : `https://x.com/i/status/${tweetId}`;
-        upsertItem.run({
-          tweetId,
-          text: row.text ?? "",
-          authorHandle,
-          url,
-          tweetCreatedAt: row.created_at,
-          externalUrlsJson: JSON.stringify(
-            extractExternalUrls(row.entities_json),
-          ),
-          seenLiked: row.liked ? 1 : 0,
-          seenBookmarked: row.bookmarked ? 1 : 0,
-          now,
-        });
-        ensureState.run(tweetId, now);
-        if (!existing.has(tweetId)) newItems += 1;
-      }
-    });
-    write();
-
-    return { newItems };
-  } finally {
-    if (ownsTarget) targetDb.close();
-  }
+  return ingestXSavedItems(
+    rows.map((row) => {
+      const externalUrls = extractExternalUrls(row.entities_json);
+      return {
+        tweetId: String(row.id),
+        text: row.text ?? "",
+        ...(row.author_handle === null
+          ? {}
+          : { authorHandle: row.author_handle }),
+        ...(row.created_at === null ? {} : { tweetCreatedAt: row.created_at }),
+        ...(externalUrls === undefined ? {} : { externalUrls }),
+        seenLiked: row.liked === 1,
+        seenBookmarked: row.bookmarked === 1,
+      };
+    }),
+    options,
+  );
 }
 
 export function markInitialImportCompleted(

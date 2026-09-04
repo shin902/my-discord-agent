@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   backupXSavedDatabase,
   ingestBirdclawSavedItems,
+  ingestXSavedItems,
   markInitialImportCompleted,
   openXSavedDb,
   recordSyncRun,
@@ -452,6 +453,81 @@ describe("x-saved BirdClaw ingest", () => {
       note: "keep this note",
     });
     verify.close();
+  });
+
+  it("preserves missing metadata but applies explicitly empty external URLs", () => {
+    const dir = makeTempDir();
+    const target = openXSavedDb(path.join(dir, "x-saved.sqlite"));
+
+    ingestXSavedItems(
+      [
+        {
+          tweetId: "metadata",
+          text: "complete",
+          authorHandle: "author",
+          tweetCreatedAt: "2026-08-28T00:00:00Z",
+          externalUrls: ["https://example.com/article"],
+          seenLiked: true,
+          seenBookmarked: false,
+        },
+      ],
+      { xSavedDb: target },
+    );
+    ingestXSavedItems(
+      [
+        {
+          tweetId: "metadata",
+          text: "updated",
+          seenLiked: false,
+          seenBookmarked: true,
+        },
+      ],
+      { xSavedDb: target },
+    );
+
+    expect(
+      target
+        .prepare(
+          `SELECT text, author_handle, tweet_created_at,
+                  external_urls_json, seen_liked, seen_bookmarked
+           FROM x_items WHERE tweet_id = 'metadata'`,
+        )
+        .get(),
+    ).toEqual({
+      text: "updated",
+      author_handle: "author",
+      tweet_created_at: "2026-08-28T00:00:00Z",
+      external_urls_json: '["https://example.com/article"]',
+      seen_liked: 1,
+      seen_bookmarked: 1,
+    });
+
+    ingestXSavedItems(
+      [
+        {
+          tweetId: "metadata",
+          text: "updated again",
+          authorHandle: "new-author",
+          externalUrls: [],
+          seenLiked: false,
+          seenBookmarked: false,
+        },
+      ],
+      { xSavedDb: target },
+    );
+    expect(
+      target
+        .prepare(
+          `SELECT author_handle, tweet_created_at, external_urls_json
+           FROM x_items WHERE tweet_id = 'metadata'`,
+        )
+        .get(),
+    ).toEqual({
+      author_handle: "new-author",
+      tweet_created_at: "2026-08-28T00:00:00Z",
+      external_urls_json: "[]",
+    });
+    target.close();
   });
 
   it("records the initial import completion only once", () => {
