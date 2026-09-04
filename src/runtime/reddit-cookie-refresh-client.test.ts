@@ -47,17 +47,12 @@ describe("host Reddit cookie refresh client", () => {
           }),
         }),
       )
-      .mockRejectedValueOnce(
-        new TypeError("fetch failed", {
-          cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }),
-        }),
-      )
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
     const pending = refreshRedditCookiesInRuntime();
     await vi.runAllTimersAsync();
     await expect(pending).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("stops after bounded connection retries", async () => {
@@ -75,6 +70,18 @@ describe("host Reddit cookie refresh client", () => {
     await vi.runAllTimersAsync();
     await result;
     expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it.each([
+    "ECONNRESET",
+    "ETIMEDOUT",
+  ])("does not retry ambiguous %s failures", async (code) => {
+    process.env.AGENT_REACH_REFRESH_TOKEN = "refresh-token";
+    const failure = Object.assign(new TypeError("fetch failed"), { code });
+    fetchMock.mockRejectedValueOnce(failure);
+
+    await expect(refreshRedditCookiesInRuntime()).rejects.toBe(failure);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("does not retry a generic TypeError", async () => {

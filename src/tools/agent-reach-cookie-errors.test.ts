@@ -55,6 +55,24 @@ afterEach(async () => {
 });
 
 describe("agent-reach Reddit cookie errors", () => {
+  it("malformed cookie state exposes only the fixed diagnostic", async () => {
+    await setup();
+    const cookiePath = process.env.REDDIT_COOKIE_FILE;
+    if (!cookiePath) throw new Error("cookie path was not configured");
+    const secret = "malformed-cookie-distinctive-secret";
+    await writeFile(cookiePath, `{"cookieHeader":"${secret}"`, { mode: 0o600 });
+
+    await expect(execute()).rejects.toSatisfy((error: unknown) => {
+      expect(String(error)).toContain(
+        "reddit cookie の状態が不正です (provider: reddit)",
+      );
+      expect(String(error)).not.toContain(secret);
+      expect(String(error)).not.toContain(cookiePath);
+      return true;
+    });
+    expect(execAsyncMock).not.toHaveBeenCalled();
+  });
+
   it("subprocess failure does not expose the cookie", async () => {
     await setup();
     execAsyncMock.mockRejectedValueOnce(

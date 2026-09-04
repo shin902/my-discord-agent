@@ -31,6 +31,15 @@ export class RedditCookieMissingError extends Error {
   }
 }
 
+export class RedditCookieInvalidError extends Error {
+  constructor(provider: string) {
+    super(
+      `reddit cookie の状態が不正です (provider: ${provider})。reddit-cookie-refresh を実行してください`,
+    );
+    this.name = "RedditCookieInvalidError";
+  }
+}
+
 export async function getRedditCookieHeader(
   provider: string,
   config: RedditCookieConfig,
@@ -45,18 +54,36 @@ export async function getRedditCookieHeader(
     throw new RedditCookieMissingError(provider, cookieFile);
   }
 
-  const stored = JSON.parse(raw) as StoredCookies;
+  let stored: unknown;
+  try {
+    stored = JSON.parse(raw);
+  } catch {
+    throw new RedditCookieInvalidError(provider);
+  }
   if (
-    stored.cookieHeader === "" &&
-    stored.updatedAt === "1970-01-01T00:00:00.000Z"
+    typeof stored !== "object" ||
+    stored === null ||
+    typeof (stored as Partial<StoredCookies>).cookieHeader !== "string" ||
+    typeof (stored as Partial<StoredCookies>).updatedAt !== "string" ||
+    !Number.isFinite(
+      Date.parse(String((stored as Partial<StoredCookies>).updatedAt)),
+    )
+  ) {
+    throw new RedditCookieInvalidError(provider);
+  }
+  const typedStored = stored as StoredCookies;
+  const updatedAt = typedStored.updatedAt;
+  if (
+    typedStored.cookieHeader === "" &&
+    updatedAt === "1970-01-01T00:00:00.000Z"
   ) {
     throw new RedditCookieMissingError(provider, cookieFile);
   }
-  const ageMs = Date.now() - new Date(stored.updatedAt).getTime();
+  const ageMs = Date.now() - new Date(updatedAt).getTime();
   const ageDays = ageMs / (24 * 60 * 60 * 1000);
   if (ageDays > config.maxAgeDays) {
     throw new RedditCookieStaleError(provider, ageDays, config.maxAgeDays);
   }
 
-  return stored.cookieHeader;
+  return typedStored.cookieHeader;
 }
