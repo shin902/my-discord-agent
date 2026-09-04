@@ -320,7 +320,7 @@ describe("cronジョブの configOverride", () => {
     return { mod, appendInboxMock };
   }
 
-  it("model/tools/skills 付きジョブをスキーマで受理する", async () => {
+  it("AgentConfig付きジョブをスキーマで受理する", async () => {
     const raw = [
       {
         id: "cheap-summary",
@@ -332,7 +332,8 @@ describe("cronジョブの configOverride", () => {
         deliveryMode: "direct",
         sessionMode: "per-run",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
-        tools: ["read"],
+        tools: ["get-current-weather"],
+        approvalRequiredTools: ["get-current-weather"],
         skills: ["session-logs"],
       },
     ];
@@ -342,7 +343,8 @@ describe("cronジョブの configOverride", () => {
       expect.objectContaining({
         id: "cheap-summary",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
-        tools: ["read"],
+        tools: ["get-current-weather"],
+        approvalRequiredTools: ["get-current-weather"],
         skills: ["session-logs"],
       }),
     ]);
@@ -385,7 +387,8 @@ describe("cronジョブの configOverride", () => {
       deliveryMode: "direct",
       sessionMode: "per-run",
       model: { provider: "zai", modelId: "glm-4.7-flash" },
-      tools: ["read"],
+      tools: ["get-current-weather"],
+      approvalRequiredTools: ["get-current-weather"],
       skills: ["session-logs"],
     });
 
@@ -397,7 +400,8 @@ describe("cronジョブの configOverride", () => {
         cronJobId: "cheap-summary",
         configOverride: {
           model: { provider: "zai", modelId: "glm-4.7-flash" },
-          tools: ["read"],
+          tools: ["get-current-weather"],
+          approvalRequiredTools: ["get-current-weather"],
           skills: ["session-logs"],
         },
       }),

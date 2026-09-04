@@ -1567,7 +1567,10 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["get-current-weather"] },
+      configOverride: {
+        tools: ["get-current-weather"],
+        approvalRequiredTools: ["get-current-weather"],
+      },
     });
 
     expect(createToolProxyRunMock).toHaveBeenCalledWith(
@@ -1584,6 +1587,25 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:23456/__tool-proxy/rpc",
       token: "tool-token",
     });
+    expect(payload.groupConfig.approvalRequiredTools).toEqual([
+      "get-current-weather",
+    ]);
+  });
+
+  it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {
+    const sendMessage = await setup();
+
+    await expect(
+      sendMessage("test-group", "session-1", "hi", {
+        configOverride: {
+          tools: ["read"],
+          approvalRequiredTools: ["get-current-weather"],
+        },
+      }),
+    ).rejects.toThrow(
+      "設定エラー: 承認必須ツールは有効な tools に含めてください: get-current-weather",
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("host capabilityのrun tokenは失敗時にもrevokeする", async () => {

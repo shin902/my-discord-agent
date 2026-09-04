@@ -4,6 +4,7 @@ import type { AgentConfig } from "./groups.js";
 export const AGENT_CONFIG_FIELDS = [
   "model",
   "tools",
+  "approvalRequiredTools",
   "skills",
   "mounts",
 ] as const satisfies readonly (keyof AgentConfig)[];
@@ -29,7 +30,7 @@ export function pickAgentConfig(
 export function resolveAgentConfig(
   ...layers: Array<Partial<AgentConfig> | undefined>
 ): AgentConfig {
-  const resolved: AgentConfig = {};
+  const resolved: AgentConfig = { tools: [] };
   for (const layer of layers) {
     Object.assign(resolved, pickAgentConfig(layer));
   }

@@ -5,7 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
-import { validateAgentConfig } from "../config/agent-validation.js";
+import {
+  validateAgentConfig,
+  validateApprovalRequiredTools,
+} from "../config/agent-validation.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -666,7 +669,8 @@ export async function sendMessage(
   }
 
   try {
-    resolveTools(effectiveConfig.tools ?? []);
+    resolveTools(effectiveConfig.tools);
+    validateApprovalRequiredTools(effectiveConfig);
   } catch (err) {
     throw new NonRetryableError(
       `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
