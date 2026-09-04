@@ -87,6 +87,70 @@ describe("agent-reach Tool Runtime RPC", () => {
         { url: "https://example.com" },
         expect.any(AbortSignal),
       );
+      expect((execute.mock.calls[0]?.[2] as AbortSignal).aborted).toBe(false);
+
+      const secondResponse = await request(address.port, {
+        method: "POST",
+        path: "/rpc",
+        token: "runtime-token",
+        body: { callId: "call-2", url: "https://example.com/again" },
+      });
+      expect(secondResponse.status).toBe(200);
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("request body送信後のclient disconnectで実行中のcallをabortする", async () => {
+    process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-token";
+    let executeStarted!: () => void;
+    let abortObserved!: () => void;
+    const started = new Promise<void>((resolve) => {
+      executeStarted = resolve;
+    });
+    const aborted = new Promise<void>((resolve) => {
+      abortObserved = resolve;
+    });
+    execute.mockImplementationOnce(
+      async (_id: string, _args: unknown, signal: AbortSignal) => {
+        executeStarted();
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => {
+            abortObserved();
+            resolve();
+          });
+        });
+        throw new Error("aborted");
+      },
+    );
+    const server = createAgentReachRuntimeServer();
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("not listening");
+      const req = http.request({
+        port: address.port,
+        method: "POST",
+        path: "/rpc",
+        headers: {
+          authorization: "Bearer runtime-token",
+          "content-type": "application/json",
+        },
+      });
+      req.on("error", () => {
+        // Destroying a request before the Runtime can respond is expected.
+      });
+      req.end(
+        JSON.stringify({ callId: "disconnect-me", url: "https://example.com" }),
+      );
+      await started;
+      req.destroy();
+      await aborted;
+      expect(execute.mock.calls[0]?.[2]).toMatchObject({ aborted: true });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

@@ -117,7 +117,14 @@ export async function handleAgentReachRuntimeRequest(
     return;
   }
   const controller = new AbortController();
-  req.once("aborted", () => controller.abort());
+  const abortRequest = (): void => controller.abort();
+  const abortResponse = (): void => {
+    // A response close after a successful res.end() is normal. Only abort work
+    // while this call still owns an unfinished response connection.
+    if (!res.writableEnded) controller.abort();
+  };
+  req.once("aborted", abortRequest);
+  res.once("close", abortResponse);
   calls.set(body.callId, controller);
   try {
     const result = await agentReachTool.execute(
@@ -125,12 +132,16 @@ export async function handleAgentReachRuntimeRequest(
       { url: body.url },
       controller.signal,
     );
-    json(res, 200, { result });
+    if (!res.writableEnded && !res.destroyed) json(res, 200, { result });
   } catch (error) {
-    json(res, 502, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (!res.writableEnded && !res.destroyed) {
+      json(res, 502, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   } finally {
+    req.removeListener("aborted", abortRequest);
+    res.removeListener("close", abortResponse);
     calls.delete(body.callId);
   }
 }
