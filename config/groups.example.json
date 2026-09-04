@@ -6,6 +6,7 @@
       "modelId": "glm-4.7-flash"
     },
     "tools": ["tavily-search", "agent-reach", "bot"],
+    "approvalRequiredTools": ["tavily-search"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [
@@ -15,6 +16,7 @@
         "sessionMode": "shared",
         "requiredMention": true,
         "tools": ["read"],
+        "approvalRequiredTools": [],
         "skills": [],
         "mounts": []
       }
@@ -29,7 +31,6 @@
   },
   {
     "name": "issue-triage",
-    "bot": "public",
     "tools": ["bash", "list-issues", "read-issue", "comment-issue"],
     "allowMention": false,
     "toolLogArgs": true,

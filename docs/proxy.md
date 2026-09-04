@@ -42,9 +42,15 @@ credential forwardingとは別の責務として、host executorのcapabilityは
 
 ```
 Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- host credentials --> external API
+                                                        │
+                                                        └─ opt-in時だけDiscord Approve / Deny
 ```
 
-run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。GitHub、Graph、Google Calendar、Tavilyのcredentialはtrusted `credentials.json`からhost側だけで解決し、これらのlegacy forwarding routeはsandboxへ渡さない。結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。
+run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、`approvalRequiredTools`由来のapproval対象集合、trusted Discord bot/channel、revoke signalをsnapshot登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。
+
+`approvalRequiredTools` に含まれないcapabilityは従来どおりそのまま実行する。含まれる場合は、validate後にdefault値等をmaterializeしたcanonicalな実効引数をDiscordへ表示し、長いJSONは添付する。approval専用TTLは設けずrequesting runの生存中だけ待機し、最初のnon-bot clickだけを採用する。Discord terminal updateだけには短いtimeoutを設け、更新失敗、Deny、run revoke、trusted destination欠落時は実行しない。Approve後に同じrun authorityを再確認し、表示したものと同じmaterialized invocationを一度だけexecutorへ渡す。approvalは新しいcapabilityやgrant tokenを付与する経路ではない。
+
+GitHub、Graph、Google Calendar、Tavilyのcredentialはtrusted `credentials.json`からhost側だけで解決し、これらのlegacy forwarding routeはsandboxへ渡さない。結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。
 
 ### config/credentials.json
 

@@ -30,6 +30,23 @@
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
+## Discord tool approval（opt-in）
+
+AgentConfigの `approvalRequiredTools` には、effective `tools` で既に許可した既知host capabilityのうち、tool callごとにDiscord確認を挟みたい名前だけを指定する。未指定または `[]` ならapprovalなしで、既存toolは従来どおり実行される。未知名、effective `tools` に含まれない名前、`bash` / `read`等のsandbox/runtime toolは設定エラーになる。
+
+```json
+{
+  "tools": ["tavily-search", "read"],
+  "approvalRequiredTools": ["tavily-search"]
+}
+```
+
+`approvalRequiredTools` は他のAgentConfig配列と同様に、子layerで未指定なら親から継承し、指定時は配列全体を置換する。子layerで `tools` を置換して継承中のapproval対象を外す場合は、`approvalRequiredTools: []` または新しい `tools` の部分集合も明示する。
+
+Approval画面には、Tool Proxyがvalidate後にdefault値等をmaterializeしたtool名とcanonical JSONが表示され、長いJSONは添付される。approval専用TTLはなく、requesting runが生存する間だけ待機する。最初のnon-bot clickがApprove / Denyを確定し、Discord上のterminal updateに失敗した場合は実行しない。Approve後はrun authorityを再確認し、表示した同じinvocationを一度だけ実行する。
+
+これは既存authorityへの追加確認であり、capabilityを付与する認可機構ではない。承認者allowlistやtool固有policyは持たず、trusted/privateなDiscord bot/channelを操作できるnon-bot humanが承認主体になる。public / multi-user環境ではapproval UIを安全装置として使わず、危険なmutation capability自体を `tools` へ付与しないこと。
+
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
 
 ## Discord へのツールコール通知
