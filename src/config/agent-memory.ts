@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { loadRawConfigFresh } from "./config.js";
+import { loadRawConfig } from "./config.js";
 
 function isLiteralLoopbackHostname(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "[::1]";
@@ -87,7 +87,7 @@ export function isAgentMemoryEligible(
 // agentMemory is a cohesive object, so parse the whole section while preserving
 // the same fallback-on-invalid behavior used by other config loaders.
 export async function loadAgentMemoryConfig(): Promise<AgentMemoryConfig> {
-  const raw = await loadRawConfigFresh();
+  const raw = await loadRawConfig();
   const parsed = AgentMemoryConfigSchema.safeParse(raw.agentMemory ?? {});
   if (!parsed.success) {
     console.warn(

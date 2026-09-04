@@ -94,7 +94,7 @@ HTTP bodyは次の形になる。
 - Discord message ID
 - group名、routing channel ID、配送先channel IDを独立したfieldとして送ること
 
-ただし前述のとおり、`session_id` 自体がDiscord channel/thread IDと一致する場合がある。group・channel・routing情報は、remote payloadとは別に、送信権限の再確認用metadataとしてローカルのruntime queueへ保存する。
+ただし前述のとおり、`session_id` 自体がDiscord channel/thread IDと一致する場合がある。group・channel・routing情報は通常queue metadataとして保存しますが、Agent Memory送信時の設定再確認には使いません。
 
 ## 記録されるタイミング
 
@@ -114,40 +114,19 @@ Discord delivery workerとshadow workerがそれぞれ処理
 shadow workerがMemoryCoreへPOST
 ```
 
-shadow jobは、通常Agentの最終回答が完成した後に作る。source result、Discord配送のadmission、shadow jobのadmissionは同じruntime.sqlite transactionで確定する。
+shadow jobは、通常Agentの最終回答が完成した後に作る。source result、Discord配送、shadow jobは同じruntime.sqlite transactionで確定する。
 
 一方、Discordへの実配送とMemoryCoreへのHTTP送信は別workerで進むため、どちらが先に完了するかは保証しない。「ユーザーがDiscordで回答を読んだ後に必ずmemory処理が始まる」という順序ではない。
 
 `my-discord-agent` が担当するのはL0送信までであり、MemoryCore内部のL1/L2/L3抽出をcronや優先度付きqueueで起動・停止する機能はない。MemoryCoreが使用するLLMのprovider、batch/逐次処理、同時実行数はMemoryCore側で管理する。通常回答と同時実行数1のローカルLLMを共有すると競合し得るため、現在の運用では別providerを推奨する。
 
-## 3段階の対象確認
+## 対象判定と設定のライフタイム
 
-対象判定は一度だけではない。
+対象判定はintake時とAgent回答完了時に行います。Agent Memory設定とgroup mappingはcached loaderから読み込まれ、process lifetime中はfresh readしません。設定変更、eligible group変更、channel mapping変更を反映するにはmy-discord-agentをrestartしてください。稼働中のhot reload / hot revocation / config rotation検知は保証しません。
 
-### 1. Discord intake時
+intakeでeligibleなら後続のcaptureに必要なDiscord user IDをqueue payloadへ保持します。回答完了時に同じprocess-lifetime設定でeligible、ユーザー本文と最終回答が非空ならshadow jobを作ります。各段階のconfig readやeligibility確認に失敗しても通常Discord応答は継続し、shadow captureだけを諦めます。
 
-現在のconfigでeligibleなら、後続のmemory captureに必要なDiscord user IDを通常queue payloadへ保持する。ここでeligibleでなかったメッセージは、処理中にAgent Memoryを有効化しても原則として遡及captureされない。
-
-configの読み込みやeligibility確認に失敗しても、通常のDiscord intakeは継続する。そのメッセージにはmemory用user IDを付けず、通常会話だけを処理する。
-
-### 2. Agent回答完了時
-
-configを再度読み、現在もeligibleで、ユーザー本文と最終回答が非空ならshadow jobを作る。準備処理に失敗した場合も、通常回答のcommitとDiscord配送は継続する。
-
-### 3. MemoryCore送信直前
-
-configとchannel→group mappingをfresh readし、shadow job作成時のadmissionと一致するか確認する。次の変更があった場合、待機中jobはMemoryCoreへ送らず、skipとして完了する。
-
-- `enabled=false`
-- groupを `eligibleGroups` から削除
-- channelの所属groupを変更
-- `baseUrl`、`serviceId`、`teamId`、`agentId` を変更
-- `bearerTokenEnv` で参照する環境変数名を変更
-- routing channel、destination channel、user、sessionのidentityが一致しない
-
-`bearerTokenEnv` の**名前**はadmissionに含まれるが、token値そのものは保存しない。同じ環境変数名のtoken値をrotationした場合は、送信時の新しい値を使用する。
-
-このrevalidationは未送信jobにだけ作用する。MemoryCoreがすでに受理したL0 conversationを、config変更だけで削除・更新することはない。
+`bearerTokenEnv` はselector名だけを設定・保持し、token値は送信時に環境変数から読みます。`enabled`、`eligibleGroups`、Bearer token、scopeの契約は維持します。
 
 ## 失敗・再試行・重複
 
@@ -161,10 +140,10 @@ MemoryCoreの障害は通常回答を失敗させない。
 | HTTP/APIの408、429、5xx相当 | 成功のまま | retry対象 |
 | その他の恒久的なAPI error | 成功のまま | dead-letter |
 | `bearerTokenEnv` が設定済みだが値がない | 成功のまま | non-retryable dead-letter |
-| config/group mappingが失効・変更済み | 成功のまま | remote送信せずskip/completed |
+| config/group mappingを変更（稼働中） | 成功のまま | process lifetime中は変更を検知せず、既存jobも通常どおり処理。反映にはrestartが必要 |
 | process restart | 成功のまま | runtime.sqliteから未完了jobを再開可能 |
 
-ローカルshadow admissionには `agent-memory-shadow:<source job ID>` のidempotency keyを使い、同じsource jobから複数のshadow jobを作りにくくしている。
+ローカルshadow jobには `agent-memory-shadow:<source job ID>` のidempotency keyを使い、同じsource jobから複数のshadow jobを作りにくくしている。
 
 ただしMemoryCoreのHTTP APIへclient指定のidempotency keyは送っていない。MemoryCoreが受理した後に応答だけ失われた場合や、受理後・ローカルcomplete前にprocessが停止した場合は再送され、remote側に重複L0ができる可能性がある。remote exactly-onceは保証しない。
 
@@ -194,7 +173,7 @@ Reply message自体は対象だが、Reply元の本文・author・message IDは�
 | `shadow submission accepted` | MemoryCoreの`conversation/add`が成功応答を返し、ローカルjobを完了した |
 | `shadow submission failed` | 今回のremote送信に失敗した。後続のretryまたはdead-letter判定を確認する |
 | `shadow submission dead-lettered` | retry不能またはretry上限到達によりterminal failureになった |
-| `shadow job skipped (disabled/revoked/rotated)` | 送信直前のconfig・group・admission確認が一致せず、remote送信せず完了した |
+| `shadow job skipped (disabled/not eligible)` | cached configでAgent Memoryが無効またはgroupがeligibleでなく、remote送信せず完了した |
 | `shadow job preparation failed` | 通常回答は成功したが、shadow jobを作れなかった |
 
 `admitted` と `accepted` を混同しないこと。前者はローカル永続化、後者はremote成功を表す。
