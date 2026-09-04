@@ -1,0 +1,13 @@
+{
+  "coding": {
+    "group": "default",
+    "instructions": "コード変更を担当する worker",
+    "model": {
+      "provider": "zai",
+      "modelId": "glm-4.7-flash"
+    },
+    "tools": ["read", "write", "edit"],
+    "skills": [],
+    "mounts": []
+  }
+}

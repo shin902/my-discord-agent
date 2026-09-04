@@ -71,7 +71,8 @@ LLM 実行結果と Discord 配信は分離されており、ジョブ状態は 
 
 | ファイル | 必須 | 用途 |
 | --- | --- | --- |
-| `config/config.json` | Yes | Discord Bot、Bot profile、デフォルトモデル、timeout など |
+| `config/config.json` | Yes | Discord application、デフォルトモデル、timeout など |
+| `config/bots.json` | No | Agent Bot profile Registry（省略時はBotなし） |
 | `config/groups.json` | Yes | チャンネル、group/channelのAgentConfig（model、tools、skills、mounts）などの設定 |
 | `config/credentials.json` | Yes | sandbox / proxy から利用する credential 定義 |
 | `config/providers.json` | No | Provider ごとの concurrency 設定。省略時はデフォルト値を使用 |
@@ -79,7 +80,7 @@ LLM 実行結果と Discord 配信は分離されており、ジョブ状態は 
 
 AgentConfigの継承は実行経路ごとに分かれます。Discordの `/stop` は現在のgroup/sessionのactive Agentへcooperative abortを送り、短い猶予後だけrunnerを強制停止します。通常のDiscord会話は `group → channel`、cronは配送先のchannel/thread設定を参照せず `group → cron job` です。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDと既存スレッドIDでAgentConfigの解決結果は変わりません。Bot profileは `group → bot` で解決され、channelの設定は継承しません。Discordの `/bot` コマンドは `action=run`（省略可）で新しいTask Sessionを作成し、`action=resume` と表示された `session` handleで明示的に続行できます。`action=list` では現在のgroupとBotが所有するTask Sessionのhandle、Bot名、作成日時、最終利用日時、previewを確認できます。メインAgentの組み込み `bot` toolからも、effective `tools` に正確な名前 `bot` を明示した場合だけ同じ `run` / `resume` / `list` を利用できます。toolの `run` / `resume` はキューへ積まず、同じtool call内でBotのsandbox実行完了まで待機して結果を返します。BotのTask Session履歴・添付領域は通常会話から分離され、返信だけは呼び出し元channel/threadへ配送されます。通常会話とcronで指定した `model` / `tools` / `skills` / `mounts` はフィールド単位で完全置換されます。親Agentがproviderを保持中にBotが異なるserial providerを対象とする場合は、deadlock防止のため同期Bot呼び出しを拒否します。同じserial providerをBotが対象とする場合は親のlockを再利用しますが、対象Task Sessionに先行処理があるとlock/orderのcycleを避けるため待機せず拒否します。parallel providerは通常どおり実行します。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同一ordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しません。起動時は管理対象コンテナの停止を確認してから、前回の未完了admissionとqueue実行を回収します。
 
-パスは `CONFIG_PATH`、`GROUPS_PATH`、`CREDENTIALS_PATH`、`PROVIDERS_PATH`、`CRON_PATH` で上書きできます。
+パスは `CONFIG_PATH`、`GROUPS_PATH`、`CREDENTIALS_PATH`、`PROVIDERS_PATH`、`CRON_PATH`、`BOTS_PATH` で上書きできます。
 
 ### Discord Bot token
 
@@ -103,6 +104,16 @@ AgentConfigの継承は実行経路ごとに分かれます。Discordの `/stop`
 ```
 
 既存設定から移行する場合は、`DISCORD_APPLICATION_ID` を削除し、その値を `discord.bots.personal.applicationId` へ移し、`tokenEnv` を `DISCORD_BOT_TOKEN` にした `personal` entry を追加してください。
+
+### Agent Bot profile
+
+Agent Bot profile の canonical source は `config/bots.json` です。トップレベルに Bot ID をキーとする map を置き、各 profile に `group`、空でない `instructions`、任意の `model` / `tools` / `skills` / `mounts` を指定します。`config/config.json` の `discord.bots` は Discord application 設定であり、両者はmergeされません。Botを使わない場合は `config/bots.json` を作成せずに起動できます。
+
+```bash
+cp config/bots.example.json config/bots.json
+```
+
+`group` mismatchや不正なAgentConfigは起動時に検出され、Discord client初期化前に失敗します。既存の `config/config.json` にトップレベル `bots` がある場合は、その map を `config/bots.json` へ移してから `config/config.json` から削除してください。`discord.bots` はDiscord application設定なので移動せず、2つの `bots` map がmergeされることはありません。
 
 ## セットアップ
 
@@ -129,6 +140,8 @@ pnpm install
 ```bash
 cp .env.example .env
 cp config/config.example.json config/config.json
+# Bot profileを使う場合のみ
+cp config/bots.example.json config/bots.json
 cp config/groups.example.json config/groups.json
 cp config/credentials.example.json config/credentials.json
 
