@@ -18,8 +18,16 @@ services:
       REDDIT_COOKIE_MAX_AGE_DAYS: "${REDDIT_COOKIE_MAX_AGE_DAYS:-7}"
       CHROMIUM_PATH: /usr/bin/chromium
     volumes:
-      - ./data/reddit-browser-profile:/var/lib/reddit/profile
-      - ./data/reddit-cookies.json:/var/lib/reddit/reddit-cookies.json
+      - type: bind
+        source: ./data/reddit-browser-profile
+        target: /var/lib/reddit/profile
+      - type: bind
+        source: ./data/reddit-cookies.json
+        target: /var/lib/reddit/reddit-cookies.json
+        bind:
+          # Do not let Compose create a directory for this file when the
+          # first login has not produced it yet.
+          create_host_path: false
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped

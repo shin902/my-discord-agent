@@ -46,6 +46,12 @@ export async function getRedditCookieHeader(
   }
 
   const stored = JSON.parse(raw) as StoredCookies;
+  if (
+    stored.cookieHeader === "" &&
+    stored.updatedAt === "1970-01-01T00:00:00.000Z"
+  ) {
+    throw new RedditCookieMissingError(provider, cookieFile);
+  }
   const ageMs = Date.now() - new Date(stored.updatedAt).getTime();
   const ageDays = ageMs / (24 * 60 * 60 * 1000);
   if (ageDays > config.maxAgeDays) {

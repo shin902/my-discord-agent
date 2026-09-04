@@ -23,6 +23,23 @@ describe("getRedditCookieHeader", () => {
     ).rejects.toBeInstanceOf(RedditCookieMissingError);
   });
 
+  it("空の初期化プレースホルダーは未設定として扱う", async () => {
+    vi.doMock("node:fs/promises", () => ({
+      readFile: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          cookieHeader: "",
+          updatedAt: "1970-01-01T00:00:00.000Z",
+        }),
+      ),
+    }));
+    const { getRedditCookieHeader, RedditCookieMissingError } = await import(
+      "./reddit-cookie-store.js"
+    );
+    await expect(
+      getRedditCookieHeader("reddit", CONFIG),
+    ).rejects.toBeInstanceOf(RedditCookieMissingError);
+  });
+
   it("有効期限内のクッキーヘッダーを返す", async () => {
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn().mockResolvedValue(
