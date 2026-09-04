@@ -15,6 +15,7 @@ import {
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 import { getRedditCookieHeader } from "./reddit-cookie-store.js";
+import type { TrustedDiscordDestination } from "./tool-proxy-server.js";
 
 class UpstreamTimeoutError extends Error {
   constructor(message?: string) {
@@ -28,6 +29,8 @@ interface InternalRequestAuthorization {
   scope: string;
   /** Provider whose serial lock is held by the parent run, if any. */
   heldProvider?: string;
+  /** Trusted Discord destination captured outside the sandbox. */
+  trustedDiscordDestination?: TrustedDiscordDestination;
 }
 const internalRequestTokens = new Map<string, InternalRequestAuthorization>();
 let internalRequestHandler:
@@ -36,6 +39,7 @@ let internalRequestHandler:
       res: ServerResponse,
       scope: string,
       heldProvider?: string,
+      trustedDiscordDestination?: TrustedDiscordDestination,
     ) => Promise<void>)
   | null = null;
 
@@ -52,6 +56,7 @@ export function registerInternalRequestHandler(
     res: ServerResponse,
     scope: string,
     heldProvider?: string,
+    trustedDiscordDestination?: TrustedDiscordDestination,
   ) => Promise<void>,
 ): void {
   internalRequestHandler = handler;
@@ -61,10 +66,17 @@ export function registerInternalRequestHandler(
 export function createInternalRequestConfig(
   scope: string,
   heldProvider?: string,
+  trustedDiscordDestination?: TrustedDiscordDestination,
 ): InternalRequestConfig | undefined {
   if (proxyPort === null) return undefined;
   const token = randomUUID();
-  internalRequestTokens.set(token, { scope, heldProvider });
+  internalRequestTokens.set(token, {
+    scope,
+    heldProvider,
+    ...(trustedDiscordDestination
+      ? { trustedDiscordDestination: { ...trustedDiscordDestination } }
+      : {}),
+  });
   const revoke = () => {
     internalRequestTokens.delete(token);
   };
@@ -327,6 +339,7 @@ export function createRequestHandler(
           res,
           authorization.scope,
           authorization.heldProvider,
+          authorization.trustedDiscordDestination,
         ).catch((err) => {
           if (!res.headersSent) {
             console.error(`[credential-proxy] internal request failed: ${err}`);

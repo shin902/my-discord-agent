@@ -766,7 +766,11 @@ export async function sendMessage(
   const agentTimeoutMs = await loadAgentTimeoutMs();
   const internalRequest =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
-      ? createInternalRequestConfig?.(groupName, heldLlmProvider)
+      ? createInternalRequestConfig?.(
+          groupName,
+          heldLlmProvider,
+          trustedDiscordDestination,
+        )
       : undefined;
   const hostCapabilities = hostCapabilityNames(effectiveConfig.tools ?? []);
   const toolProxyRun =
