@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockExecute = vi.hoisted(() => vi.fn());
 const mockGetDiscordCommand = vi.hoisted(() => vi.fn());
+const mockRouteToolApprovalInteraction = vi.hoisted(() => vi.fn());
 vi.mock("./command-registry.js", () => ({
   getDiscordCommand: mockGetDiscordCommand,
+}));
+vi.mock("./tool-approval.js", () => ({
+  routeToolApprovalInteraction: mockRouteToolApprovalInteraction,
 }));
 
 const { createDiscordInteractionRouter, routeDiscordInteraction } =
@@ -12,6 +16,7 @@ const { createDiscordInteractionRouter, routeDiscordInteraction } =
 beforeEach(() => {
   mockExecute.mockReset().mockResolvedValue(undefined);
   mockGetDiscordCommand.mockReset();
+  mockRouteToolApprovalInteraction.mockReset().mockResolvedValue(false);
 });
 
 afterEach(() => {
@@ -42,12 +47,28 @@ describe("routeDiscordInteraction", () => {
 });
 
 describe("createDiscordInteractionRouter", () => {
+  it("routes button interactions to tool approval and leaves chat commands unchanged", async () => {
+    const router = createDiscordInteractionRouter("secondary");
+    const button = { isButton: () => true };
+
+    router(button as never);
+    await vi.waitFor(() =>
+      expect(mockRouteToolApprovalInteraction).toHaveBeenCalledWith(
+        button,
+        "secondary",
+      ),
+    );
+    expect(mockGetDiscordCommand).not.toHaveBeenCalled();
+  });
+
   it("replies ephemerally when an unexpected error occurs before acknowledgement", async () => {
     const error = new Error("unexpected");
     mockGetDiscordCommand.mockReturnValue({
       execute: vi.fn().mockRejectedValue(error),
     });
     const interaction = {
+      isButton: () => false,
+      isChatInputCommand: () => true,
       commandName: "example",
       deferred: false,
       replied: false,
@@ -71,6 +92,8 @@ describe("createDiscordInteractionRouter", () => {
       execute: vi.fn().mockRejectedValue(error),
     });
     const interaction = {
+      isButton: () => false,
+      isChatInputCommand: () => true,
       commandName: "example",
       deferred: true,
       replied: false,
@@ -96,6 +119,8 @@ describe("createDiscordInteractionRouter", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     createDiscordInteractionRouter("personal")({
+      isButton: () => false,
+      isChatInputCommand: () => true,
       commandName: "example",
     } as never);
     await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
