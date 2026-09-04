@@ -1,6 +1,6 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { loadRawGroups, loadRawGroupsFresh } from "./config.js";
+import { loadRawGroups } from "./config.js";
 
 const THINKING_LEVELS = [
   "off",
@@ -87,11 +87,6 @@ export async function loadGroups(): Promise<GroupConfig[]> {
   return _groups;
 }
 
-/** Read the current groups mapping without changing startup routing cache. */
-export async function loadGroupsFresh(): Promise<GroupConfig[]> {
-  return parseGroups(await loadRawGroupsFresh());
-}
-
 export async function findGroupByName(
   name: string,
 ): Promise<GroupConfig | undefined> {
@@ -115,10 +110,4 @@ function findGroupByChannelIdIn(
     if (channel) return { group, channel };
   }
   return null;
-}
-
-export async function findGroupByChannelIdFresh(
-  channelId: string,
-): Promise<{ group: GroupConfig; channel: ChannelConfig } | null> {
-  return findGroupByChannelIdIn(await loadGroupsFresh(), channelId);
 }

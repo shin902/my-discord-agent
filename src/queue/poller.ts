@@ -17,7 +17,6 @@ import { resolveModelConfig } from "../config/default-model.js";
 import { loadGroupSystemPrompt } from "../config/group-config.js";
 import {
   type AgentConfig,
-  findGroupByChannelIdFresh,
   findGroupByName,
   type GroupConfig,
   type ModelConfig,
@@ -35,9 +34,7 @@ import {
 import {
   AgentMemoryClient,
   AgentMemoryHttpError,
-  buildAgentMemoryAdmission,
   buildAgentMemorySubmission,
-  isCurrentAgentMemoryAdmission,
 } from "../memory/agent-memory.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
@@ -304,26 +301,9 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
   if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
   try {
     const config = await loadAgentMemoryConfig();
-    const routingChannelId = msg.routingChannelId ?? msg.channelId;
-    const currentMapping = await findGroupByChannelIdFresh(routingChannelId);
-    const admission = msg.memoryShadowAdmission;
-    if (
-      !config.enabled ||
-      !config.eligibleGroups.includes(msg.groupName) ||
-      currentMapping?.group.name !== msg.groupName ||
-      admission === undefined ||
-      !isCurrentAgentMemoryAdmission(admission, config, {
-        groupName: msg.groupName,
-        routingChannelId,
-        channelId: msg.channelId,
-      }) ||
-      msg.memoryShadow.scope.teamId !== admission.teamId ||
-      msg.memoryShadow.scope.agentId !== admission.agentId ||
-      msg.memoryShadow.scope.userId !== admission.userId ||
-      msg.memoryShadow.scope.sessionId !== admission.sessionId
-    ) {
+    if (!config.enabled || !config.eligibleGroups.includes(msg.groupName)) {
       console.log(
-        `[agent-memory] shadow job skipped (disabled/revoked/rotated): ${msg.id}`,
+        `[agent-memory] shadow job skipped (disabled/not eligible): ${msg.id}`,
       );
       await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
         suppressDelivery: true,
@@ -400,20 +380,6 @@ async function prepareMemoryShadowJob(
       content: "memory-shadow",
       timestamp: new Date().toISOString(),
       memoryShadow: submission,
-      memoryShadowAdmission: buildAgentMemoryAdmission({
-        groupName: msg.groupName,
-        routingChannelId: msg.routingChannelId ?? msg.channelId,
-        channelId: msg.channelId,
-        baseUrl: config.baseUrl,
-        serviceId: config.serviceId,
-        ...(config.bearerTokenEnv
-          ? { bearerTokenEnv: config.bearerTokenEnv }
-          : {}),
-        teamId: config.teamId,
-        agentId: config.agentId,
-        userId,
-        sessionId: msg.sessionId,
-      }),
     },
     options: { idempotencyKey: `agent-memory-shadow:${msg.id}` },
   };
