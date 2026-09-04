@@ -116,6 +116,10 @@ export async function handleAgentReachRuntimeRequest(
     json(res, 400, { error: "Invalid agent-reach request" });
     return;
   }
+  if (calls.has(body.callId)) {
+    json(res, 409, { error: "Agent-reach call is already active" });
+    return;
+  }
   const controller = new AbortController();
   const abortRequest = (): void => controller.abort();
   const abortResponse = (): void => {
@@ -142,7 +146,7 @@ export async function handleAgentReachRuntimeRequest(
   } finally {
     req.removeListener("aborted", abortRequest);
     res.removeListener("close", abortResponse);
-    calls.delete(body.callId);
+    if (calls.get(body.callId) === controller) calls.delete(body.callId);
   }
 }
 

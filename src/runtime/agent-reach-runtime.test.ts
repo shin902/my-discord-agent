@@ -156,6 +156,78 @@ describe("agent-reach Tool Runtime RPC", () => {
     }
   });
 
+  it("重複callIdを拒否し、元のcallをabort後に再利用できる", async () => {
+    process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-token";
+    let executeStarted!: () => void;
+    let abortCount = 0;
+    const started = new Promise<void>((resolve) => {
+      executeStarted = resolve;
+    });
+    execute.mockImplementationOnce(
+      async (_id: string, _args: unknown, signal: AbortSignal) => {
+        executeStarted();
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => {
+            abortCount += 1;
+            resolve();
+          });
+        });
+        throw new Error("aborted");
+      },
+    );
+    const server = createAgentReachRuntimeServer();
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("not listening");
+      const pending = request(address.port, {
+        method: "POST",
+        path: "/rpc",
+        token: "runtime-token",
+        body: { callId: "reusable-call", url: "https://example.com" },
+      });
+      await started;
+
+      const duplicate = await request(address.port, {
+        method: "POST",
+        path: "/rpc",
+        token: "runtime-token",
+        body: { callId: "reusable-call", url: "https://example.com/duplicate" },
+      });
+      expect(duplicate).toMatchObject({
+        status: 409,
+        payload: { error: "Agent-reach call is already active" },
+      });
+      expect(execute).toHaveBeenCalledOnce();
+
+      const revoke = await request(address.port, {
+        method: "DELETE",
+        path: "/rpc/reusable-call",
+        token: "runtime-token",
+      });
+      expect(revoke.status).toBe(202);
+      expect((await pending).status).toBe(502);
+      expect(abortCount).toBe(1);
+
+      execute.mockResolvedValueOnce({
+        content: [{ type: "text", text: "reused" }],
+      });
+      const reused = await request(address.port, {
+        method: "POST",
+        path: "/rpc",
+        token: "runtime-token",
+        body: { callId: "reusable-call", url: "https://example.com/reused" },
+      });
+      expect(reused.status).toBe(200);
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("call revokeで実行中のagent-reachをabortする", async () => {
     process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-token";
     let aborted = false;
