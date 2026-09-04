@@ -273,6 +273,76 @@ describe("x-saved persistence", () => {
     target.close();
   });
 
+  it("reingests the same item without duplicating rows or resetting state", () => {
+    const dir = makeTempDir();
+    const db = openXSavedDb(path.join(dir, "x-saved.sqlite"));
+    const firstSeenAt = "2026-08-28T00:00:00Z";
+    const lastSeenAt = "2026-08-29T00:00:00Z";
+
+    expect(
+      ingestXSavedItems(
+        [
+          {
+            tweetId: "repeat",
+            text: "first text",
+            authorHandle: "author",
+            seenLiked: true,
+            seenBookmarked: false,
+          },
+        ],
+        { xSavedDb: db, now: firstSeenAt },
+      ),
+    ).toEqual({ newItems: 1 });
+    db.prepare(
+      `UPDATE x_item_state
+       SET status = 'keep', note = ?, updated_at = ?
+       WHERE tweet_id = 'repeat'`,
+    ).run("remember this", firstSeenAt);
+
+    expect(
+      ingestXSavedItems(
+        [
+          {
+            tweetId: "repeat",
+            text: "updated text",
+            authorHandle: "author",
+            seenLiked: false,
+            seenBookmarked: true,
+          },
+        ],
+        { xSavedDb: db, now: lastSeenAt },
+      ),
+    ).toEqual({ newItems: 0 });
+
+    expect(
+      db
+        .prepare(
+          `SELECT i.text, i.seen_liked, i.seen_bookmarked,
+                  i.first_seen_at, i.last_seen_at,
+                  s.status, s.note
+           FROM x_items i
+           JOIN x_item_state s ON s.tweet_id = i.tweet_id
+           WHERE i.tweet_id = 'repeat'`,
+        )
+        .get(),
+    ).toEqual({
+      text: "updated text",
+      seen_liked: 1,
+      seen_bookmarked: 1,
+      first_seen_at: firstSeenAt,
+      last_seen_at: lastSeenAt,
+      status: "keep",
+      note: "remember this",
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM x_items").get()).toEqual({
+      count: 1,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM x_item_state").get(),
+    ).toEqual({ count: 1 });
+    db.close();
+  });
+
   it("records the initial import completion only once", () => {
     const dir = makeTempDir();
     const targetPath = path.join(dir, "x-saved.sqlite");

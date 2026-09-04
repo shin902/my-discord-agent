@@ -91,7 +91,7 @@
     "enabled": false,
     "groupName": "my-group",
     "channelId": "YOUR_CHANNEL_ID",
-    "prompt": "x-savedスキルでstatusを確認してからpendingを最大20件処理してください。投稿本文だけで判断できない重要候補だけagent-reachでリンク先を確認し、確認した各項目をreviewed/keep/try/ignoreのいずれかへ必ずmarkしてください。keep/tryのうち今見る価値があるものだけ簡潔に報告し、何もなければ独立行で<NO_REPLY>と返してください。同期が失敗・古い場合は新着0件と断定せず同期異常を報告してください。",
+    "prompt": "x-savedスキルでstatusを確認してからpendingを最大20件処理してください。投稿本文だけで判断できない重要候補だけagent-reachでリンク先を確認し、確認した各項目をreviewed/keep/try/ignoreのいずれかへ必ずmarkしてください。keep/tryのうち今見る価値があるものだけ簡潔に報告し、何もなければ独立行で<NO_REPLY>と返してください。",
     "deliveryMode": "direct",
     "sessionMode": "per-run",
     "noReply": true,

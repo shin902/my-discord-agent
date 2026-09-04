@@ -39,6 +39,6 @@ Statuses:
 
 - Search local data first when the user refers to an X post they previously liked/bookmarked.
 - `seen_liked` / `seen_bookmarked` mean the relationship was observed at least once; X-side removal does not erase local history.
-- For a triage cron, call `status` first. If the latest sync failed or is stale, report that instead of claiming there were no new items.
+- For a triage cron, call `status` first to inspect the local database state.
 - Inspect external links with an allowed web-reading skill only when the post itself is insufficient to classify it.
 - In scheduled triage, process a bounded batch and mark every reviewed item. If nothing is worth surfacing, return `<NO_REPLY>` when the cron permits it.
