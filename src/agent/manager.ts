@@ -770,9 +770,13 @@ export async function sendMessage(
         );
   // Skill shell commands receive a separate least-privileged authority rather
   // than the run token that exposes all selected host capabilities.
+  const agentReachSelected =
+    effectiveConfig.tools?.includes("agent-reach") === true ||
+    effectiveConfig.skills === "*" ||
+    (Array.isArray(effectiveConfig.skills) &&
+      effectiveConfig.skills.includes("agent-reach"));
   const agentReachToolProxyRun =
-    storedToolProxyPort !== null &&
-    effectiveConfig.tools?.includes("agent-reach")
+    storedToolProxyPort !== null && agentReachSelected
       ? createToolProxyRun(
           `${groupName}:${sessionId}:${randomUUID()}:agent-reach`,
           ["agent-reach"],

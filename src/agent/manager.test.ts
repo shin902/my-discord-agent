@@ -1511,7 +1511,7 @@ describe("sendMessage: configOverride", () => {
   let createInternalRequestConfigMock: ReturnType<typeof vi.fn>;
   let createToolProxyRunMock: ReturnType<typeof vi.fn>;
 
-  const setup = async () => {
+  const setup = async (groupSkills: string[] | "*" = ["base-skill"]) => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
@@ -1544,7 +1544,7 @@ describe("sendMessage: configOverride", () => {
         channels: [],
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["read"],
-        skills: ["base-skill"],
+        skills: groupSkills,
         mounts: [{ host: "/group/repo", container: "/group-repo" }],
         allowMention: true,
       }),
@@ -1584,7 +1584,7 @@ describe("sendMessage: configOverride", () => {
     });
   });
 
-  it("agent-reach Skillには専用のagent-reach-only tokenを環境変数で渡す", async () => {
+  it("native agent-reach toolにはagent-reach-only tokenを渡す", async () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
@@ -1606,6 +1606,62 @@ describe("sendMessage: configOverride", () => {
       "AGENT_REACH_TOOL_PROXY_URL=http://host.docker.internal:23456/__tool-proxy/rpc",
     );
     expect(args).toContain("AGENT_REACH_TOOL_PROXY_TOKEN=tool-token");
+  });
+
+  it("agent-reach skillだけが選択された場合も専用tokenを渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["read"], skills: ["agent-reach"] },
+    });
+
+    expect(createToolProxyRunMock).toHaveBeenCalledOnce();
+    expect(createToolProxyRunMock).toHaveBeenCalledWith(
+      expect.stringContaining("test-group:session-1:"),
+      ["agent-reach"],
+    );
+    const run = createToolProxyRunMock.mock.results[0]?.value as {
+      revoke: ReturnType<typeof vi.fn>;
+    };
+    expect(run.revoke).toHaveBeenCalledOnce();
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toContain("AGENT_REACH_TOOL_PROXY_TOKEN=tool-token");
+  });
+
+  it("agent-reach toolとskillの両方が選択されても専用tokenを使う", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        tools: ["agent-reach", "get-current-weather"],
+        skills: ["agent-reach"],
+      },
+    });
+
+    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("test-group:session-1:"),
+      ["agent-reach", "get-current-weather"],
+    );
+    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("test-group:session-1:"),
+      ["agent-reach"],
+    );
+  });
+
+  it("agent-reach skillが全選択された場合も専用tokenを渡す", async () => {
+    const sendMessage = await setup("*");
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["read"] },
+    });
+
+    expect(createToolProxyRunMock).toHaveBeenCalledOnce();
+    expect(createToolProxyRunMock).toHaveBeenCalledWith(
+      expect.stringContaining("test-group:session-1:"),
+      ["agent-reach"],
+    );
   });
 
   it("host capabilityのrun tokenは失敗時にもrevokeする", async () => {
