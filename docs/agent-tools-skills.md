@@ -61,7 +61,7 @@
 
 `groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
-スキルと専用ツールは独立した実行経路として扱う。スキルは `bash` と同梱スクリプトを利用でき、標準出力の直接利用だけでなくファイルへのリダイレクトなど、用途に応じた柔軟なワークフローを提供する。一方、専用ツールは `bash` を許可したくない不特定多数向けのボットでも、対象機能だけを安全に許可するために使う。スキルを専用ツールの使い方だけを説明するドキュメントにはしない。
+スキルと専用ツールは入口・権限設定を分離して扱う。スキルは `bash` と同梱スクリプトを利用でき、標準出力の直接利用だけでなくファイルへのリダイレクトなど、用途に応じた柔軟なワークフローを提供する。一方、専用ツールは `bash` を許可したくない不特定多数向けのボットでも、対象機能だけを安全に許可するために使う。取得処理の実装を二重に持つという意味ではなく、スキルを専用ツールの使い方だけを説明するドキュメントにもならない。
 
 ### スキルの明示的実行（`./command`）
 
@@ -92,7 +92,7 @@ Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加�
 
 **場所:** `templates/SKILLS/agent-reach/SKILL.md`
 
-インターネット情報収集スキル。同梱の `agent-reach.sh` は Tool Proxy の `agent-reach` capability を呼ぶ薄い client で、取得結果を標準出力で直接利用したり、必要に応じてファイルへ保存したりできる。Agent sandbox から外部コマンドや直接 Internet へはアクセスしない。
+インターネット情報収集スキル。同梱の `agent-reach.sh` は Tool Proxy の `agent-reach` capability を呼ぶ薄い client で、Agent-facing の native `agent-reach` ツールとは別の入口・UX・権限設定を持つ。両者は Tool Proxy の同じ `agent-reach` capability に収束し、その host handler が専用 Tool Runtime の core `agentReachTool` を呼び出す。取得結果を標準出力で直接利用したり、必要に応じてファイルへ保存したりできる。Agent sandbox から外部コマンドや直接 Internet へはアクセスしない。
 
 `bash`を許可したくない不特定多数向けのボットでは、スキルを有効にせず、専用の`agent-reach`ツールだけを`groups[].tools`へ追加する。
 
@@ -105,17 +105,17 @@ Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加�
 | RSS | 専用 Tool Runtime の `feedparser` |
 | X/Twitter | 専用 Tool Runtime の FxTwitter (`api.fxtwitter.com`) のみ（Credential Proxy へのフォールバックなし） |
 
-スキルは同梱のシェルスクリプトを使用する。専用ツール側はシェルスクリプトに依存せず、`bash`を許可しない構成でも単独で動作する。両者の用途と実行経路は独立している。
+スキルと専用ツールは別々の Agent-facing 入口として扱う。スキルは同梱のシェルスクリプトを使用し、専用ツールは `bash` を許可しない構成でも利用できる。入口・UX・権限設定は別だが、両者は Tool Proxy の `agent-reach` capability に収束し、その host handler が専用 Tool Runtime → core `agentReachTool` を呼び出す。
 
-#### 入力・出力・エラーの parity 契約
+#### 入力・出力・エラーの共通契約
 
-これは2つの実装を同じコードにするための契約ではなく、利用者から見える挙動を揃えるための基準である。
+Agent-facing の専用ツールと Skill shell は入口・UX・権限設定と結果の envelope が異なるが、同じ Tool Proxy capability から共通の Tool Runtime → core `agentReachTool` に収束するため、取得処理の利用者向け挙動は同じである。
 
 - **入力:** どちらも1つの絶対URLを受け取り、`http` / `https` 以外は拒否する。fragment は取得先へ渡さず、リソース指定や署名に使われる可能性がある query は正規化時に削除せず、サービス固有の取得処理で扱う。正規化後のURLを同じサービス判定表（Web、YouTube、GitHub repository、Reddit、RSS、X post）で分類する。X Article の直リンクは、記事付き post の `/status/...` URLを案内する入力エラーとする。
-- **整形済み出力:** 取得本文の意味とサービス別フォーマットを共通契約とする。Web は reader 本文、YouTube・GitHub・Reddit・X は Markdown、RSS は feedparser が生成する最大20件の JSON 配列テキストを返す。X の出力には外部コンテンツへの注意書きを含める。スキルは整形済みテキストだけを stdout に出し、必要なら呼び出し側が `>` で保存できる。ツールは同じ本文を `content[0].text` に返し、正規化済みURLとサービス名を `details` に付ける（Runtime のファイルパスは返さず、ツールはワークスペースへ結果ファイルを残さない）。決定的な入力の本文は、共有 fixture で両経路の内容一致を固定する（スクリプトの stdout に付く transport 用の末尾改行は除く）。
+- **整形済み出力:** 取得本文の意味とサービス別フォーマットを共通契約とする。Web は reader 本文、YouTube・GitHub・Reddit・X は Markdown、RSS は feedparser が生成する最大20件の JSON 配列テキストを返す。X の出力には外部コンテンツへの注意書きを含める。スキルは整形済みテキストだけを stdout に出し、必要なら呼び出し側が `>` で保存できる。ツールは同じ本文を `content[0].text` に返し、正規化済みURLとサービス名を `details` に付ける（Runtime のファイルパスは返さず、ツールはワークスペースへ結果ファイルを残さない）。
 - **エラー:** 入力拒否・Tool Proxy/Runtime 設定不足・上流HTTP/JSON/取得失敗は、本文として成功扱いにせずエラーにする。ツールは例外を throw し、スキルは非0終了して診断を stderr に出す。インターフェース上の envelope（例外と終了コード/stderr）は異なるが、エラーのカテゴリと機密情報を漏らさない診断内容は共通に保つ。
 
-共有 fixture は `src/tools/__fixtures__/agent-reach/parity-cases.json` に置き、URL正規化・サービス判定・決定的なX post本文・代表的なエラーを `src/tools/agent-reach.test.ts` と `src/tools/agent-reach-shell.test.ts` の両方から検証する。今後この契約を変更する issue では、まず fixture と両方のテストを更新するが、スキルから TypeScript ツールを呼び出す実装には変更しない。
+共有 fixture は `src/tools/__fixtures__/agent-reach/parity-cases.json` に置き、URL正規化・サービス判定・決定的なX post本文・代表的なエラーなど、core `agentReachTool` の取得意味論を `src/tools/agent-reach.test.ts` から検証する。`src/tools/agent-reach-shell.test.ts` はfixtureを再実行せず、最小権限のTool Proxy transport、token/request、stdout/リダイレクト、shell-facingな失敗を検証する。今後この契約を変更する issue では、取得意味論は fixture と core test を更新し、shell側はその transport 契約だけを更新する。
 
 **テンプレートを更新した場合の注意:** `templates/SKILLS/` を変更しても、すでに各グループにコピーされた `groups/{name}/SKILLS/` は自動更新されない。テンプレートの変更を反映するには、対象グループの古いスキルフォルダを削除してから再コピーすること。
 

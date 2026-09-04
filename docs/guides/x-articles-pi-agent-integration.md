@@ -2,8 +2,8 @@
 
 ## 現在の取得経路
 
-X/Twitter の取得は `agent-reach` capability から専用 Tool Runtime へ委譲する。Agent-facing の TypeScript tool と、Tool Proxy を呼ぶ
-`templates/SKILLS/agent-reach/scripts/agent-reach.sh` の2つの入口があり、入力・出力・失敗時の振る舞いは共有 fixture で揃える。
+X/Twitter の取得には、Agent-facing の native TypeScript tool と
+`templates/SKILLS/agent-reach/scripts/agent-reach.sh` の2つの入口がある。入口・UX・権限設定は異なるが、native tool は Tool Proxy の `agent-reach` capability として呼び出され、shell も同じ capability を呼び出す。Tool Proxy の host handler が両者を専用 Tool Runtime → core `agentReachTool` へ委譲する。取得意味論は core のテストで検証し、shell はその transport と shell-facing な契約を検証する。
 
 ```text
 X の記事付き post URL
@@ -86,7 +86,7 @@ X の出力には、外部コンテンツの命令を信頼しないための注
 ## FxTwitter レスポンスの検証
 
 認証情報を扱わない場合でも、外部レスポンスをそのまま Markdown 化しない。
-TypeScript とシェルの両方で次を検証する。
+次の取得レスポンス検証は共通の core `agentReachTool` で行い、TypeScript の core テストで検証する。shell テストはこの意味論を再実行せず、Tool Proxy の request/token、stdout/リダイレクト、shell-facing な失敗を検証する。
 
 - HTTPS の FxTwitter API へ直接接続し、リダイレクトを許可しない
 - 20 秒のタイムアウト
@@ -101,10 +101,10 @@ HTTP status、FxTwitter の `code` / `message`、非 JSON、JSON パース失敗
 例外を throw し、シェルスクリプトは非 0 終了して診断を stderr に出す。
 Credential Proxy の設定不足を X/Twitter の取得エラーに利用しない。
 
-## 独立した実行経路とテンプレート
+## Agent-facing tool と Skill shell
 
 専用 `agent-reach` ツールはシェルスクリプトに依存せず、`bash` を許可しない
-グループでも動作する。`agent-reach` skill は同梱の薄いシェル client から Tool Proxy を呼び、stdout を直接利用したりファイルへリダイレクトしたりできる。取得用の `yt-dlp` や curl 等は Agent sandbox に置かない。
+グループでも動作する。`agent-reach` skill は同梱の薄いシェル client から Tool Proxy の `agent-reach` capability を呼び、stdout を直接利用したりファイルへリダイレクトしたりできる。専用ツールも同じ capability を入口とし、Tool Proxy の host handler が両者を同じ専用 Tool Runtime → core `agentReachTool` へ委譲する。入口・UX・権限設定は別だが、取得用の `yt-dlp` や curl 等は Agent sandbox に置かない。
 
 実装の対応表:
 
@@ -112,7 +112,7 @@ Credential Proxy の設定不足を X/Twitter の取得エラーに利用しな�
 |---|---|
 | TypeScript tool | `src/tools/agent-reach.ts` |
 | skill shell | `templates/SKILLS/agent-reach/scripts/agent-reach.sh` |
-| 共有 parity fixture | `src/tools/__fixtures__/agent-reach/parity-cases.json` |
+| core 取得 fixture | `src/tools/__fixtures__/agent-reach/parity-cases.json` |
 | TypeScript tests | `src/tools/agent-reach.test.ts` |
 | shell tests | `src/tools/agent-reach-shell.test.ts` |
 
@@ -125,9 +125,9 @@ rm -rf groups/{name}/SKILLS/agent-reach
 cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 ```
 
-## Parity fixture とテスト
+## Core 取得 fixture とテスト
 
-共有 fixture は少なくとも次のケースを両経路で実行する。
+共有 fixture は `src/tools/agent-reach.test.ts` から core `agentReachTool` の取得意味論を検証するために使う。shell の `src/tools/agent-reach-shell.test.ts` は fixture を実行せず、最小権限の Tool Proxy transport、token/request、stdout/リダイレクト、shell-facing な失敗を検証する。core テストで確認する代表的なケースは次のとおり。
 
 - 通常 post（trim と桁区切りを含む）
 - Article blocks（`atomic` 除外と `header-one`）
