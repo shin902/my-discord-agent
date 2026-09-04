@@ -19,11 +19,22 @@ export const agentReachCapabilityTool: AgentTool<typeof parameters> = {
   parameters,
   execute: async (_toolCallId, { url }, signal) => {
     const callId = randomUUID();
-    if (signal) {
-      const cancel = () => void cancelAgentReachRuntime(callId);
+    let cancellationRequested = false;
+    const cancel = signal
+      ? () => {
+          if (cancellationRequested) return;
+          cancellationRequested = true;
+          void cancelAgentReachRuntime(callId);
+        }
+      : undefined;
+    if (signal && cancel) {
+      signal.addEventListener("abort", cancel, { once: true });
       if (signal.aborted) cancel();
-      else signal.addEventListener("abort", cancel, { once: true });
     }
-    return executeAgentReachRuntime(url, callId, signal);
+    try {
+      return await executeAgentReachRuntime(url, callId, signal);
+    } finally {
+      if (signal && cancel) signal.removeEventListener("abort", cancel);
+    }
   },
 };
