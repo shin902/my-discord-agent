@@ -6,6 +6,7 @@ import { ensureRedditCookieFile } from "../src/proxy/reddit-cookie-file.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 const PROFILE_DIR = path.join(ROOT, "data/reddit-browser-profile");
+const COOKIE_FILE = path.join(ROOT, "data/reddit-cookies.json");
 
 // 初回セットアップ専用。モニターが接続された実機で実行し、表示されたブラウザで
 // 捨て垢に手動ログインする。以降の延命・クッキー再取得は
@@ -25,7 +26,7 @@ export async function main(): Promise<void> {
     context.on("close", () => resolve());
   });
 
-  await ensureRedditCookieFile();
+  await ensureRedditCookieFile(COOKIE_FILE);
   console.log("プロファイルを保存しました。pnpm cron か手動で reddit-cookie-refresh ジョブを実行して動作確認してください。");
 }
 
