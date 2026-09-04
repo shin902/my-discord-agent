@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
+import { materializeCapabilityArgs } from "../tools/capability.js";
 import { getCapabilityDefinition } from "../tools/registry.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
@@ -200,6 +201,7 @@ async function executeRequest(
     });
     return;
   }
+  const effectiveArgs = materializeCapabilityArgs(capability, body.args);
 
   const tool = capability.factory();
   if (!tool) {
@@ -209,7 +211,7 @@ async function executeRequest(
     return;
   }
   try {
-    const result = await tool.execute("tool-proxy", body.args);
+    const result = await tool.execute("tool-proxy", effectiveArgs);
     sendJson(res, 200, { result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

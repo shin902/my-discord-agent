@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { agentReachTool } from "./agent-reach.js";
 import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { listCalendarsTool } from "./calendar.js";
-import { dispatchCapability } from "./capability.js";
+import { dispatchCapability, materializeCapabilityArgs } from "./capability.js";
 import { dateTool } from "./date.js";
 import {
   listIssueCommentsTool,
@@ -101,24 +101,131 @@ describe("resolveTools", () => {
     );
   });
 
+  it("materializer未指定のhost capabilityはargs identityを維持する", () => {
+    const args = { value: "unchanged" };
+    const definition = {
+      tool: "host-test",
+      executor: "host" as const,
+      factory: () => undefined,
+      validateArgs: () => true,
+    };
+
+    expect(materializeCapabilityArgs(definition, args)).toBe(args);
+  });
+
+  it("host capability argsのdefault/clamp/未知property除去を一度に実効化する", () => {
+    const capability = getCapabilityDefinition("get-weather-forecast");
+    expect(capability?.executor).toBe("host");
+    if (!capability || capability.executor !== "host") return;
+    const rawArgs = { location: "東京", days: 10, ignored: "raw-only" };
+
+    expect(materializeCapabilityArgs(capability, rawArgs)).toEqual({
+      location: "東京",
+      days: 7,
+    });
+    expect(rawArgs).toEqual({
+      location: "東京",
+      days: 10,
+      ignored: "raw-only",
+    });
+    expect(materializeCapabilityArgs(capability, { location: "東京" })).toEqual(
+      { location: "東京", days: 3 },
+    );
+  });
+
+  it.each([
+    [
+      "tavily-search",
+      { query: "q" },
+      {
+        query: "q",
+        max_results: 5,
+        search_depth: "basic",
+        include_answer: true,
+        topic: "general",
+      },
+    ],
+    [
+      "arxiv-search",
+      { query: "q" },
+      { query: "q", max_results: 10, sort: "relevance" },
+    ],
+    [
+      "arxiv-survey",
+      { queries: ["q"] },
+      { queries: ["q"], max_results: 30, sort: "submitted" },
+    ],
+    [
+      "list-issues",
+      { owner: "o", repo: "r" },
+      { owner: "o", repo: "r", state: "open", limit: 10 },
+    ],
+    ["list-emails", {}, { limit: 10, folder: "inbox", unreadOnly: false }],
+    ["read-email", { id: "m" }, { id: "m", markAsRead: true }],
+    ["read-event", { eventId: "e" }, { eventId: "e", calendarId: "primary" }],
+    [
+      "create-event",
+      { summary: "s", start: "2026-09-05", end: "2026-09-06" },
+      {
+        summary: "s",
+        start: "2026-09-05",
+        end: "2026-09-06",
+        calendarId: "primary",
+      },
+    ],
+    [
+      "update-event",
+      { eventId: "e", summary: "s" },
+      { eventId: "e", summary: "s", calendarId: "primary" },
+    ],
+    ["delete-event", { eventId: "e" }, { eventId: "e", calendarId: "primary" }],
+  ])("%s は既存executorのdefaultをapproval前に実効化する", (name, raw, expected) => {
+    const capability = getCapabilityDefinition(name);
+    expect(capability?.executor).toBe("host");
+    if (!capability || capability.executor !== "host") return;
+
+    expect(materializeCapabilityArgs(capability, raw)).toEqual(expected);
+  });
+
+  it("動的defaultはmaterialize時に固定する", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-05T01:02:03.456Z"));
+    try {
+      const capability = getCapabilityDefinition("list-events");
+      expect(capability?.executor).toBe("host");
+      if (!capability || capability.executor !== "host") return;
+
+      expect(materializeCapabilityArgs(capability, {})).toEqual({
+        timeMin: "2026-09-05T01:02:03.456Z",
+        maxResults: 10,
+        calendarId: "primary",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("registry is the source of host weather capability definitions", () => {
     expect(getCapabilityDefinition("get-current-weather")).toMatchObject({
       tool: "get-current-weather",
       executor: "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
     expect(getCapabilityDefinition("get-weather-forecast")).toMatchObject({
       tool: "get-weather-forecast",
       executor: "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
     expect(getCapabilityDefinition("tavily-search")).toMatchObject({
       tool: "tavily-search",
       executor: "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
     expect(getCapabilityDefinition("does-not-exist")).toBeUndefined();
   });
@@ -146,6 +253,7 @@ describe("resolveTools", () => {
       executor: "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
   });
 
