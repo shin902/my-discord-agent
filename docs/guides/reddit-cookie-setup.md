@@ -40,7 +40,6 @@
 - ホストマシンに **モニターを接続できること**（初回ログインのみ。X11フォワーディングやVNCでも代用可）
 - `pnpm install` 後、Playwright のブラウザ本体をインストール: `npx playwright install chromium`
 - Tool Runtime 用 Docker と、`.env` の `AGENT_REACH_RUNTIME_TOKEN` / `AGENT_REACH_REFRESH_TOKEN`
-- Xvfb（Runtime の定期延命処理で使用。Arch Linux なら `sudo pacman -S xorg-server-xvfb`、Debian/Ubuntu なら `sudo apt install xvfb`）
 
 ---
 
