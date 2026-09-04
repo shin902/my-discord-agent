@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { resolveAgentConfig } from "./agent-resolution.js";
 import { validateAgentConfig } from "./agent-validation.js";
-import { loadRawConfig } from "./config.js";
+import { loadRawBots } from "./config.js";
 import { AgentConfigSchema, type GroupConfig } from "./groups.js";
 
 /** A persistent worker profile scoped to an AgentGroup. */
@@ -12,7 +12,7 @@ export const BotProfileSchema = AgentConfigSchema.extend({
 
 export type BotProfile = z.infer<typeof BotProfileSchema>;
 
-/** Named Bot profiles declared in the top-level config.json `bots` map. */
+/** Named Bot profiles declared in the dedicated bots.json registry. */
 export const BotRegistrySchema = z
   .record(z.string().min(1), BotProfileSchema)
   .default({});
@@ -65,6 +65,5 @@ export async function validateBotConfigs(
 }
 
 export async function loadBotRegistry(): Promise<BotRegistry> {
-  const raw = await loadRawConfig();
-  return BotRegistrySchema.parse(raw.bots);
+  return BotRegistrySchema.parse(await loadRawBots());
 }

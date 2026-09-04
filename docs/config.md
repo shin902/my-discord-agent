@@ -6,8 +6,10 @@
 
 ```
 config/
-  config.json              # Bot profile・defaultModel・proxy・agent などの設定
+  config.json              # Discord application・defaultModel・proxy・agent などの設定
   config.example.json
+  bots.json                # Agent Bot profile Registry（省略可）
+  bots.example.json
   providers.json           # AI プロバイダーごとの実行ポリシー（省略可）
   providers.example.json
   credentials.json         # AI プロバイダー・外部サービスの接続設定
@@ -29,7 +31,8 @@ AgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマ
 | `config/credentials.json` | ✓ | 配列 | AI プロバイダー・外部サービスの接続設定 |
 | `config/groups.json` | ✓ | 配列 | チャンネル → グループのマッピング |
 | `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義 |
-| `config/config.json` | ✓ | オブジェクト | Bot profile・`defaultModel`（必須）・proxy・agent・Agent Memory 設定 |
+| `config/config.json` | ✓ | オブジェクト | Discord application・`defaultModel`（必須）・proxy・agent・Agent Memory 設定 |
+| `config/bots.json` | — | オブジェクト | Agent Bot profile Registry（省略時は空） |
 
 > **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
 
@@ -416,32 +419,32 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 
 各 Bot の `tokenEnv` で指定した環境変数を deploy と runtime の実行環境に設定してください。既存設定から移行する場合は、`DISCORD_APPLICATION_ID` を削除し、その値を `discord.bots.personal.applicationId` へ移し、`tokenEnv: "DISCORD_BOT_TOKEN"` の `personal` entry を追加します。deploy の scope 引数は省略できず、省略時は usage error になります。
 
-```json
-{
-  "bots": {
-    "coding": {
-      "group": "default",
-      "instructions": "コード変更を担当する worker",
-      "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-      "tools": ["read", "write", "edit"],
-      "skills": [],
-      "mounts": []
-    }
-  },
-  "defaultModel": { "provider": "zai", "modelId": "glm-4.7-flash" },
-  "proxy": { "requestTimeoutMs": 120000 },
-  "agent": { "timeoutMs": 600000 }
-}
-```
-
 | キー | 必須 | 内容 |
 |---|---|---|
-| `bots` | — | 名前付き Bot profile の map。各 profile は `group` と空でない `instructions`（ともに必須）、AgentConfig（`model` / `tools` / `skills` / `mounts`）を持つ |
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 
 Botのauthority modelと、`bot` capabilityを明示的に許可する理由は [エンティティモデルのauthority境界](spec/entity-model.md#agentgroupとbotのauthority境界) を参照。`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig はその group の設定を上書きし、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。手動の`run` / `resume`では、Interaction ACKとしてephemeral responseをdeferするが、成功時の受付情報としては残さない。受付成功時はBot ID、実際に渡したprompt、Task Session情報をephemeral responseとは独立した通常の永続メッセージとして投稿し、その後ephemeral ACKを削除する。validation / enqueue等の受付失敗時は、従来どおりephemeral responseへエラーを表示する。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示し、応答はephemeralのままになる。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。Bot Task内部のtool / Subagent progressは通常channelへ送信せず、error通知と最終応答は維持する。メインAgentには同じBot Registryを呼び出す組み込み `bot` toolが、effective `tools` に正確な名前 `bot` を明示した場合だけ提供され、`action=run|resume|list` を指定できる。Bot profileやqueued/direct Bot childの実行では再帰的な `bot` toolを常に無効化する。`run` / `resume` はキューへ積まず、同じtool call内でsandbox実行の完了まで待って結果を返す（非同期handle返却やpollingは行わない）。親Agentが現在保持しているものと同じserial providerをBotが使い、対象Task Sessionに先行処理がある場合は、deadlockを避けるため同期Bot呼び出しを待機せず拒否する。親が保持していないproviderでも、異なるserial providerを対象とする場合は既存のdeadlock防止ガードにより拒否する。parallel providerは通常どおり実行する。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同じordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しない。プロセス起動時は管理対象コンテナ（現行labelと旧形式の名前のものを含む）の停止を確認した後、前回プロセスの未完了admissionとqueue実行を回収する。Dockerのdiscoveryまたは停止確認に失敗した場合は起動を中止し、実行状態を回収しない。
+
+## config/bots.json
+
+Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group` と空でない `instructions`、任意の AgentConfig（`model` / `tools` / `skills` / `mounts`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
+
+```json
+{
+  "coding": {
+    "group": "default",
+    "instructions": "コード変更を担当する worker",
+    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "tools": ["read", "write", "edit"],
+    "skills": [],
+    "mounts": []
+  }
+}
+```
+
+Bot profile の effective AgentConfig と `group` は起動時に検証されます。未定義の group や不正な profile があれば Discord client 初期化前に起動を停止します。Botを使わない場合は `bots.json` を配置せず、空の Registry として起動できます。既存の `config/config.json` にトップレベル `bots` がある場合は、その map を `config/bots.json` へ移してから `config/config.json` から削除してください。`discord.bots` はDiscord application設定なので移動せず、2つの `bots` map がmergeされることはありません。
 
 ## 環境変数
 
@@ -453,6 +456,7 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 | `CREDENTIALS_PATH` | `config/credentials.json` のパスを上書きする |
 | `GROUPS_PATH` | `config/groups.json` のパスを上書きする |
 | `CRON_PATH` | `config/cron.json` のパスを上書きする |
+| `BOTS_PATH` | `config/bots.json` のパスを上書きする |
 
 API キーなどプロバイダー固有の変数は `.env.example` を参照。
 
