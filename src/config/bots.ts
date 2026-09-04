@@ -64,6 +64,10 @@ export async function validateBotConfigs(
   );
 }
 
+let _botRegistry: BotRegistry | null = null;
+
 export async function loadBotRegistry(): Promise<BotRegistry> {
-  return BotRegistrySchema.parse(await loadRawBots());
+  if (_botRegistry !== null) return _botRegistry;
+  _botRegistry = BotRegistrySchema.parse(await loadRawBots());
+  return _botRegistry;
 }

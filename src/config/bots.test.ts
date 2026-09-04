@@ -1,22 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mockLoadRawBots = vi.hoisted(() => vi.fn());
 const validateAgentConfig = vi.hoisted(() => vi.fn());
 vi.mock("./agent-validation.js", () => ({ validateAgentConfig }));
 vi.mock("./config.js", () => ({
-  loadRawBots: vi.fn(),
+  loadRawBots: mockLoadRawBots,
   loadRawGroups: vi.fn(),
 }));
 
-const { loadRawBots } = await import("./config.js");
-const { loadBotRegistry, resolveBotProfile, validateBotConfigs } = await import(
-  "./bots.js"
-);
-const mockLoadRawBots = vi.mocked(loadRawBots);
+type BotsModule = typeof import("./bots.js");
+let loadBotRegistry: BotsModule["loadBotRegistry"];
+let resolveBotProfile: BotsModule["resolveBotProfile"];
+let validateBotConfigs: BotsModule["validateBotConfigs"];
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
   mockLoadRawBots.mockReset();
   validateAgentConfig.mockReset();
   validateAgentConfig.mockResolvedValue(undefined);
+  ({ loadBotRegistry, resolveBotProfile, validateBotConfigs } = await import(
+    "./bots.js"
+  ));
 });
 
 describe("validateBotConfigs", () => {
@@ -123,6 +127,16 @@ describe("loadBotRegistry", () => {
   it("config.json の bots map ではなく専用ファイルだけを読む", async () => {
     mockLoadRawBots.mockResolvedValue({});
 
+    await expect(loadBotRegistry()).resolves.toEqual({});
+    expect(mockLoadRawBots).toHaveBeenCalledOnce();
+  });
+
+  it("Botなし構成の空Registryを起動後もcacheする", async () => {
+    mockLoadRawBots.mockResolvedValueOnce({}).mockResolvedValueOnce({
+      coding: { group: "main", instructions: "worker" },
+    });
+
+    await expect(loadBotRegistry()).resolves.toEqual({});
     await expect(loadBotRegistry()).resolves.toEqual({});
     expect(mockLoadRawBots).toHaveBeenCalledOnce();
   });
