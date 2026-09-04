@@ -77,12 +77,6 @@
     }
   },
   {
-    "id": "x-saved-sync",
-    "schedule": "0 4 * * *",
-    "enabled": false,
-    "handler": "jobs/birdclaw-sync.ts"
-  },
-  {
     "id": "x-saved-daily",
     "schedule": "15 4 * * *",
     "enabled": false,

@@ -42,14 +42,6 @@ export interface XSavedItem {
   seenBookmarked: boolean;
 }
 
-/** A failure reading BirdClaw is an operational source failure, not a target DB failure. */
-export class BirdclawSourceError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = "BirdclawSourceError";
-  }
-}
-
 export interface SyncRunRecord {
   startedAt: string;
   completedAt: string;
@@ -58,22 +50,8 @@ export interface SyncRunRecord {
   error?: string | null;
 }
 
-interface BirdclawRow {
-  id: string;
-  text: string;
-  created_at: string | null;
-  author_handle: string | null;
-  liked: number;
-  bookmarked: number;
-  entities_json: string | null;
-}
-
 interface ExistingItemRow {
   tweet_id: string;
-}
-
-interface AccountRow {
-  id: string;
 }
 
 function expandHome(input: string): string {
@@ -88,15 +66,6 @@ export function resolveXSavedDbPath(override?: string): string {
   const configured = override ?? process.env.X_SAVED_DB_PATH;
   if (configured) return path.resolve(expandHome(configured));
   return path.join(ROOT, "data/x-saved/x-saved.sqlite");
-}
-
-export function resolveBirdclawDbPath(override?: string): string {
-  const configured = override ?? process.env.BIRDCLAW_DB_PATH;
-  if (configured) return path.resolve(expandHome(configured));
-  const birdclawHome = process.env.BIRDCLAW_HOME
-    ? path.resolve(expandHome(process.env.BIRDCLAW_HOME))
-    : path.join(os.homedir(), ".birdclaw");
-  return path.join(birdclawHome, "birdclaw.sqlite");
 }
 
 export function resolveXSavedBackupDir(override?: string): string {
@@ -249,156 +218,6 @@ export function openXSavedDb(
   return db;
 }
 
-function assertBirdclawSchema(db: Database.Database): void {
-  const required = ["accounts", "profiles", "tweets", "tweet_collections"];
-  const rows = db
-    .prepare(
-      `SELECT name FROM sqlite_master
-       WHERE type = 'table' AND name IN (${required.map(() => "?").join(", ")})`,
-    )
-    .all(...required) as Array<{ name: string }>;
-  const found = new Set(rows.map((row) => row.name));
-  const missing = required.filter((name) => !found.has(name));
-  if (missing.length > 0) {
-    throw new Error(
-      `BirdClaw database is missing expected tables: ${missing.join(", ")}`,
-    );
-  }
-}
-
-function resolveBirdclawAccountId(
-  db: Database.Database,
-  selector?: string,
-): string | null {
-  if (!selector) return null;
-  const row = db
-    .prepare(
-      `SELECT id
-       FROM accounts
-       WHERE id = ? OR lower(handle) = lower(?) OR lower(name) = lower(?)
-       LIMIT 1`,
-    )
-    .get(selector, selector.replace(/^@/, ""), selector) as
-    | AccountRow
-    | undefined;
-  if (!row) {
-    throw new Error(`BirdClaw account not found: ${selector}`);
-  }
-  return row.id;
-}
-
-function extractExternalUrls(raw: string | null): string[] | undefined {
-  if (!raw) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-
-  if (!parsed || typeof parsed !== "object") return undefined;
-  const urls = (parsed as { urls?: unknown }).urls;
-  if (!Array.isArray(urls)) return undefined;
-
-  const result = new Set<string>();
-  for (const entry of urls) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const candidate = [
-      record.expandedUrl,
-      record.expanded_url,
-      record.url,
-    ].find((value): value is string => typeof value === "string");
-    if (!candidate) continue;
-    try {
-      const url = new URL(candidate);
-      const host = url.hostname.toLowerCase();
-      if (
-        host === "x.com" ||
-        host.endsWith(".x.com") ||
-        host === "twitter.com" ||
-        host.endsWith(".twitter.com") ||
-        host === "t.co"
-      ) {
-        continue;
-      }
-      result.add(url.toString());
-    } catch {
-      // Ignore malformed archive/live URL entities.
-    }
-  }
-  return [...result];
-}
-
-function loadBirdclawRows(
-  sourceDb: Database.Database,
-  account?: string,
-): BirdclawRow[] {
-  assertBirdclawSchema(sourceDb);
-  const accountId = resolveBirdclawAccountId(sourceDb, account);
-  const tweetColumns = new Set(
-    (
-      sourceDb.prepare("PRAGMA table_info(tweets)").all() as Array<{
-        name: string;
-      }>
-    ).map((column) => column.name),
-  );
-  const collectionAccountClause = accountId
-    ? "AND c.account_id = @accountId"
-    : "";
-  const legacyTweetAccountClause =
-    accountId && tweetColumns.has("account_id")
-      ? "AND t.account_id = @accountId"
-      : "";
-  const legacyLikedClause = tweetColumns.has("liked")
-    ? `OR (t.liked = 1 ${legacyTweetAccountClause})`
-    : "";
-  const legacyBookmarkedClause = tweetColumns.has("bookmarked")
-    ? `OR (t.bookmarked = 1 ${legacyTweetAccountClause})`
-    : "";
-
-  const query = `
-    WITH source AS (
-      SELECT
-        t.id,
-        t.text,
-        t.created_at,
-        p.handle AS author_handle,
-        t.entities_json,
-        CASE WHEN
-          EXISTS (
-            SELECT 1 FROM tweet_collections c
-            WHERE c.tweet_id = t.id
-              AND c.kind = 'likes'
-              ${collectionAccountClause}
-          )
-          ${legacyLikedClause}
-        THEN 1 ELSE 0 END AS liked,
-        CASE WHEN
-          EXISTS (
-            SELECT 1 FROM tweet_collections c
-            WHERE c.tweet_id = t.id
-              AND c.kind = 'bookmarks'
-              ${collectionAccountClause}
-          )
-          ${legacyBookmarkedClause}
-        THEN 1 ELSE 0 END AS bookmarked
-      FROM tweets t
-      LEFT JOIN profiles p ON p.id = t.author_profile_id
-      WHERE t.deleted_at IS NULL
-        AND t.superseded_at IS NULL
-    )
-    SELECT * FROM source
-    WHERE liked = 1 OR bookmarked = 1
-    ORDER BY created_at ASC, id ASC
-  `;
-
-  const statement = sourceDb.prepare(query);
-  return (
-    accountId ? statement.all({ accountId }) : statement.all()
-  ) as BirdclawRow[];
-}
-
 export function ingestXSavedItems(
   items: readonly XSavedItem[],
   options?: {
@@ -488,50 +307,6 @@ export function ingestXSavedItems(
   } finally {
     if (ownsTarget) targetDb.close();
   }
-}
-
-export function ingestBirdclawSavedItems(options?: {
-  birdclawDbPath?: string;
-  xSavedDb?: Database.Database;
-  xSavedDbPath?: string;
-  account?: string;
-  now?: string;
-}): IngestResult {
-  const sourcePath = resolveBirdclawDbPath(options?.birdclawDbPath);
-  let sourceDb: Database.Database | undefined;
-  let rows: BirdclawRow[];
-  try {
-    sourceDb = new Database(sourcePath, {
-      readonly: true,
-      fileMustExist: true,
-    });
-    rows = loadBirdclawRows(sourceDb, options?.account);
-  } catch (error) {
-    throw new BirdclawSourceError(
-      error instanceof Error ? error.message : String(error),
-      { cause: error },
-    );
-  } finally {
-    sourceDb?.close();
-  }
-
-  return ingestXSavedItems(
-    rows.map((row) => {
-      const externalUrls = extractExternalUrls(row.entities_json);
-      return {
-        tweetId: String(row.id),
-        text: row.text ?? "",
-        ...(row.author_handle === null
-          ? {}
-          : { authorHandle: row.author_handle }),
-        ...(row.created_at === null ? {} : { tweetCreatedAt: row.created_at }),
-        ...(externalUrls === undefined ? {} : { externalUrls }),
-        seenLiked: row.liked === 1,
-        seenBookmarked: row.bookmarked === 1,
-      };
-    }),
-    options,
-  );
 }
 
 export function markInitialImportCompleted(

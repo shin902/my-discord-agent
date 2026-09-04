@@ -3,7 +3,7 @@ name: x-saved
 description: "Search and triage locally saved X/Twitter likes and bookmarks. Use for remembered X posts, saved-item search, recent bookmark/like review, or marking items keep/try/done/ignore."
 ---
 
-Use the local `/x-saved/x-saved.sqlite` through the bundled script. Do not access BirdClaw credentials, its host database, or X directly from this skill.
+Use the local `/x-saved/x-saved.sqlite` through the bundled script. Do not access credentials or X directly from this skill.
 
 ```bash
 python3 SKILLS/x-saved/scripts/x-saved.py status
