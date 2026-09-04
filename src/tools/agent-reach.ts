@@ -918,9 +918,22 @@ export async function buildRedditMarkdown(absPath: string): Promise<string> {
       const p = child.data as Record<string, unknown>;
       lines.push(`## ${p.title}`);
       lines.push(
-        `u/${p.author} | スコア: ${p.score} | コメント: ${p.num_comments}`,
+        `r/${p.subreddit} | u/${p.author} | スコア: ${p.score} | コメント: ${p.num_comments}`,
       );
-      lines.push(`URL: ${p.url}`);
+      const permalink =
+        typeof p.permalink === "string" && p.permalink.startsWith("/")
+          ? p.permalink
+          : undefined;
+      const threadUrl = permalink
+        ? `https://reddit.com${permalink}`
+        : undefined;
+      if (threadUrl) lines.push(`スレッド: ${threadUrl}`);
+      if (
+        typeof p.url === "string" &&
+        (permalink === undefined || !p.url.endsWith(permalink))
+      ) {
+        lines.push(`外部URL: ${p.url}`);
+      }
       lines.push("");
     }
     return lines.join("\n");

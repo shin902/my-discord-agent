@@ -37,6 +37,14 @@ describe("agent-reach.sh Tool Proxy frontend", () => {
     );
     let requestBody: Record<string, unknown> | undefined;
     let authorization = "";
+    const listingMarkdown = [
+      "# 投稿一覧",
+      "",
+      "## result",
+      "r/typescript | u/user | スコア: 42 | コメント: 7",
+      "スレッド: https://reddit.com/r/typescript/comments/abc123/result/",
+      "外部URL: https://example.com/article",
+    ].join("\n");
     const server = createServer((req, res) => {
       let body = "";
       req.on("data", (chunk) => (body += chunk));
@@ -47,7 +55,7 @@ describe("agent-reach.sh Tool Proxy frontend", () => {
         res.end(
           JSON.stringify({
             result: {
-              content: [{ type: "text", text: "# 投稿一覧\\n\\n## result" }],
+              content: [{ type: "text", text: listingMarkdown }],
             },
           }),
         );
@@ -76,7 +84,7 @@ describe("agent-reach.sh Tool Proxy frontend", () => {
       },
     );
 
-    expect(stdout).toBe("# 投稿一覧\\n\\n## result");
+    expect(stdout).toBe(listingMarkdown);
     // Authorization scope is established by manager tests that create a
     // run-scoped token with ["agent-reach"], not by this fixture server.
     expect(authorization).toBe("Bearer agent-reach-only-token");

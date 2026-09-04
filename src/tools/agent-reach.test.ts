@@ -695,6 +695,83 @@ describe("buildRedditMarkdown パース", () => {
     expect(result).toContain("構造を解析できませんでした");
   });
 
+  it("一覧: subreddit、スレッドURL、外部URLを保持する", async () => {
+    const path = await write({
+      kind: "Listing",
+      data: {
+        children: [
+          {
+            data: {
+              title: "リンク投稿",
+              subreddit: "typescript",
+              author: "user1",
+              score: 42,
+              num_comments: 7,
+              permalink: "/r/typescript/comments/abc123/link_post/",
+              url: "https://example.com/article",
+            },
+          },
+          {
+            data: {
+              title: "セルフ投稿",
+              subreddit: "typescript",
+              author: "user2",
+              score: 8,
+              num_comments: 2,
+              permalink: "/r/typescript/comments/def456/self_post/",
+              url: "https://www.reddit.com/r/typescript/comments/def456/self_post/",
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await buildRedditMarkdown(path);
+
+    expect(result).toContain(
+      "r/typescript | u/user1 | スコア: 42 | コメント: 7",
+    );
+    expect(result).toContain(
+      "スレッド: https://reddit.com/r/typescript/comments/abc123/link_post/",
+    );
+    expect(result).toContain("外部URL: https://example.com/article");
+    expect(result).toContain(
+      "スレッド: https://reddit.com/r/typescript/comments/def456/self_post/",
+    );
+    expect(result.match(/def456\/self_post\//g)).toHaveLength(1);
+  });
+
+  it.each([
+    ["空の permalink", ""],
+    ["絶対URLの permalink", "https://malicious.example/thread"],
+    ["相対パスの permalink", "r/typescript/comments/abc123/result/"],
+  ])("一覧: %s は無視して外部URLを保持する", async (_label, permalink) => {
+    const path = await write({
+      kind: "Listing",
+      data: {
+        children: [
+          {
+            data: {
+              title: "リンク投稿",
+              subreddit: "typescript",
+              author: "user",
+              score: 1,
+              num_comments: 0,
+              permalink,
+              url: "https://example.com/article",
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await buildRedditMarkdown(path);
+
+    expect(result).toContain("外部URL: https://example.com/article");
+    expect(result).not.toContain("スレッド:");
+    expect(result).not.toContain("https://reddit.com");
+  });
+
   it("スレッド: data[1]がないとコメントなしで返す", async () => {
     const path = await write([
       {
