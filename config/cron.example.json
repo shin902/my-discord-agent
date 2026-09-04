@@ -77,6 +77,15 @@
     }
   },
   {
+    "id": "x-saved-backup",
+    "schedule": "0 5 * * *",
+    "enabled": false,
+    "handler": "jobs/x-saved-backup.ts",
+    "settings": {
+      "keep": 14
+    }
+  },
+  {
     "id": "x-saved-daily",
     "schedule": "15 4 * * *",
     "enabled": false,

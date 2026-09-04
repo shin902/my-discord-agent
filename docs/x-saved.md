@@ -30,6 +30,8 @@ The default database is `data/x-saved/x-saved.sqlite`. Backups default to `data/
 
 Back up `x-saved.sqlite` and its backup files. Agent-managed status and notes cannot be reconstructed from an upstream service alone.
 
+`config/cron.example.json` contains a disabled `x-saved-backup` handler example. When enabled, it calls the generic backup operation once per schedule, retaining 14 backups by default. Set the optional `settings.keep` value to change retention; database and backup paths continue to come from `X_SAVED_DB_PATH` and `X_SAVED_BACKUP_DIR`.
+
 ## Give an agent access
 
 Enable the `x-saved` skill and mount only the application-owned directory:
