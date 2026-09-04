@@ -28,6 +28,66 @@ afterEach(async () => {
 });
 
 describe("agent-reach.sh Tool Proxy frontend", () => {
+  it("last30days Reddit search calls the agent-reach frontend without credential proxy parsing", async () => {
+    const last30daysScript = fileURLToPath(
+      new URL(
+        "../../templates/SKILLS/last30days/scripts/reddit-search.sh",
+        import.meta.url,
+      ),
+    );
+    let requestBody: Record<string, unknown> | undefined;
+    let authorization = "";
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        requestBody = JSON.parse(body) as Record<string, unknown>;
+        authorization = String(req.headers.authorization);
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            result: {
+              content: [{ type: "text", text: "# 投稿一覧\\n\\n## result" }],
+            },
+          }),
+        );
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("server did not listen");
+
+    const { stdout } = await execFileAsync(
+      "bash",
+      [last30daysScript, "tool runtime"],
+      {
+        env: {
+          ...process.env,
+          // Deliberately malformed: this frontend must not inspect or require
+          // the sandbox's legacy credential-proxy configuration.
+          CREDENTIAL_PROXY_JSON: "not-json",
+          AGENT_REACH_TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
+          AGENT_REACH_TOOL_PROXY_TOKEN: "agent-reach-only-token",
+        },
+      },
+    );
+
+    expect(stdout).toBe("# 投稿一覧\\n\\n## result");
+    // Authorization scope is established by manager tests that create a
+    // run-scoped token with ["agent-reach"], not by this fixture server.
+    expect(authorization).toBe("Bearer agent-reach-only-token");
+    expect(requestBody).toEqual({
+      capability: "agent-reach",
+      args: {
+        url: "https://www.reddit.com/search.json?q=tool+runtime&sort=top&t=month&limit=10",
+      },
+    });
+  });
+
   it("stdoutを維持しshell redirectionで保存できる", async () => {
     const server = createServer((req, res) => {
       let body = "";

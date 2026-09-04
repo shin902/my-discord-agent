@@ -1,34 +1,61 @@
 #!/bin/sh
 # reddit-search.sh <TOPIC>
-# クレデンシャルプロキシ経由で Reddit を検索する。
-# CREDENTIAL_PROXY_JSON に "reddit" プロバイダーが未設定の場合はスキップして exit 0。
+# Fetch Reddit search results through the least-privileged agent-reach Tool Proxy.
+# The result is written to stdout so the Skill can consume it normally.
 set -eu
 
 TOPIC="${1:-}"
-
-REDDIT_BASE=$(python3 -c "
-import os, json, sys
-data = json.loads(os.environ.get('CREDENTIAL_PROXY_JSON', '[]'))
-for e in data:
-    if e.get('provider') == 'reddit':
-        print(e['baseUrl']); sys.exit(0)
-" 2>/dev/null || true)
-
-if [ -z "$REDDIT_BASE" ]; then
-  echo "[Reddit] クレデンシャル未設定のためスキップ"
-  exit 0
+if [ -z "$TOPIC" ]; then
+  echo "Usage: reddit-search.sh <TOPIC>" >&2
+  exit 2
 fi
 
-curl -sG "${REDDIT_BASE}/search.json" \
-  -H "User-Agent: research-bot/1.0" \
-  --data-urlencode "q=${TOPIC}" \
-  --data-urlencode "sort=top" \
-  --data-urlencode "t=month" \
-  --data-urlencode "limit=10" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for p in data.get('data', {}).get('children', []):
-    d = p['data']
-    print(f\"[{d.get('score',0)}] r/{d['subreddit']}: {d['title']}\")
-    print(f\"  https://reddit.com{d.get('permalink','')}\")
-"
+: "${AGENT_REACH_TOOL_PROXY_URL:?AGENT_REACH_TOOL_PROXY_URL is not set}"
+: "${AGENT_REACH_TOOL_PROXY_TOKEN:?AGENT_REACH_TOOL_PROXY_TOKEN is not set}"
+
+case "$AGENT_REACH_TOOL_PROXY_URL" in
+  http://host.docker.internal:*\/__tool-proxy/rpc|http://127.0.0.1:*\/__tool-proxy/rpc) ;;
+  *) echo "invalid Tool Proxy endpoint" >&2; exit 1 ;;
+esac
+
+TOPIC="$TOPIC" node --input-type=module <<'NODE'
+const endpoint = process.env.AGENT_REACH_TOOL_PROXY_URL;
+const token = process.env.AGENT_REACH_TOOL_PROXY_TOKEN;
+const topic = process.env.TOPIC;
+const query = new URLSearchParams({
+  q: topic,
+  sort: "top",
+  t: "month",
+  limit: "10",
+});
+const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      capability: "agent-reach",
+      args: {
+        url: `https://www.reddit.com/search.json?${query.toString()}`,
+      },
+    }),
+  },
+);
+let payload;
+try {
+  payload = await response.json();
+} catch {
+  throw new Error(`Tool Proxy request failed (HTTP ${response.status})`);
+}
+if (!response.ok || payload.result === undefined) {
+  throw new Error(
+    typeof payload.error === "string"
+      ? payload.error
+      : `Tool Proxy request failed (HTTP ${response.status})`,
+  );
+}
+const text = payload.result.content?.find((part) => part.type === "text")?.text;
+if (typeof text !== "string") throw new Error("Tool Proxy returned no text result");
+process.stdout.write(text);
+NODE

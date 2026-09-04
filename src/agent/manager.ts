@@ -774,7 +774,8 @@ export async function sendMessage(
     effectiveConfig.tools?.includes("agent-reach") === true ||
     effectiveConfig.skills === "*" ||
     (Array.isArray(effectiveConfig.skills) &&
-      effectiveConfig.skills.includes("agent-reach"));
+      (effectiveConfig.skills.includes("agent-reach") ||
+        effectiveConfig.skills.includes("last30days")));
   const agentReachToolProxyRun =
     storedToolProxyPort !== null && agentReachSelected
       ? createToolProxyRun(

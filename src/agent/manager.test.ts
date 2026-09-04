@@ -1664,6 +1664,26 @@ describe("sendMessage: configOverride", () => {
     );
   });
 
+  it("last30days skillだけが選択された場合もagent-reach専用tokenを渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["read"], skills: ["last30days"] },
+    });
+
+    expect(createToolProxyRunMock).toHaveBeenCalledOnce();
+    expect(createToolProxyRunMock).toHaveBeenCalledWith(
+      expect.stringContaining("test-group:session-1:"),
+      ["agent-reach"],
+    );
+    const run = createToolProxyRunMock.mock.results[0]?.value as {
+      revoke: ReturnType<typeof vi.fn>;
+    };
+    expect(run.revoke).toHaveBeenCalledOnce();
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toContain("AGENT_REACH_TOOL_PROXY_TOKEN=tool-token");
+  });
+
   it("host capabilityのrun tokenは失敗時にもrevokeする", async () => {
     const sendMessage = await setup();
     spawnMock.mockReturnValueOnce(makeProc(1, "", "runner failed"));
