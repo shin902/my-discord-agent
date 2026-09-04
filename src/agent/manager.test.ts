@@ -1311,7 +1311,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       getCredJson(spawnMock).map(
         (entry: { provider: string }) => entry.provider,
       ),
-    ).toEqual(["reddit"]);
+    ).toEqual([]);
   });
 
   it("host toolと同名の選択中model providerはsandboxに維持する", async () => {
@@ -1338,7 +1338,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ]);
   });
 
-  it("redditCookie フィールドが JSON に含まれない", async () => {
+  it("Reddit credential は sandbox JSON に渡さない", async () => {
     const spawnMock = await setup([
       {
         provider: "reddit",
@@ -1351,9 +1351,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ]);
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const creds = getCredJson(spawnMock);
-    expect(creds[0].redditCookie).toBeUndefined();
-    expect(creds[0].provider).toBe("reddit");
+    expect(getCredJson(spawnMock)).toEqual([]);
   });
 
   it("auth フィールドが JSON に含まれない", async () => {
@@ -1584,6 +1582,30 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:23456/__tool-proxy/rpc",
       token: "tool-token",
     });
+  });
+
+  it("agent-reach Skillには専用のagent-reach-only tokenを環境変数で渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["agent-reach", "get-current-weather"] },
+    });
+
+    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("test-group:session-1:"),
+      ["agent-reach", "get-current-weather"],
+    );
+    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("test-group:session-1:"),
+      ["agent-reach"],
+    );
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toContain(
+      "AGENT_REACH_TOOL_PROXY_URL=http://host.docker.internal:23456/__tool-proxy/rpc",
+    );
+    expect(args).toContain("AGENT_REACH_TOOL_PROXY_TOKEN=tool-token");
   });
 
   it("host capabilityのrun tokenは失敗時にもrevokeする", async () => {

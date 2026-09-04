@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 
-import { agentReachTool } from "./agent-reach.js";
+import { agentReachCapabilityTool } from "./agent-reach-capability.js";
 import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { listCalendarsTool } from "./calendar.js";
 import { dispatchCapability } from "./capability.js";
@@ -215,8 +215,17 @@ describe("resolveTools", () => {
     expect(tool).not.toBe(tavilySearchTool);
   });
 
-  it("agent-reach を解決して agentReachTool を返す", () => {
-    expect(resolveTools(["agent-reach"])).toEqual([agentReachTool]);
+  it("agent-reach をhost capabilityとして解決する", () => {
+    const [tool] = resolveTools(
+      ["agent-reach"],
+      {},
+      {
+        toolProxyEndpoint: { url: "http://proxy/rpc", token: "token" },
+      },
+    );
+    expect(tool?.name).toBe(agentReachCapabilityTool.name);
+    expect(tool).not.toBe(agentReachCapabilityTool);
+    expect(getCapabilityDefinition("agent-reach")?.executor).toBe("host");
   });
 
   it("arxiv-search / arxiv-survey をhost proxyとして解決する", () => {

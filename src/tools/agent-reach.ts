@@ -7,16 +7,15 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { z } from "zod";
-
+import { getRedditCookieHeader } from "../proxy/reddit-cookie-store.js";
 import { execAsync } from "./exec.js";
-import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 // Reddit は bot 判定が厳しく、汎用的な curl の User-Agent では JS チャレンジで
 // ブロックされる。ログインに使ったブラウザに近い UA を送ることで通過率を上げる。
 const REDDIT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-const WORKSPACE = "/workspace";
+const WORKSPACE = "/tmp";
 // 外部コマンド（curl/yt-dlp等）の出力先として使う一時領域は、呼び出しごとに
 // システム一時ディレクトリの下へ独立して作成する。フェッチ結果はツールコール結果に
 // 直接返すため、呼び出し終了時にディレクトリごと削除する。
@@ -1157,6 +1156,7 @@ export function buildCommand(
   service: ServiceType,
   url: string,
   outAbsPath: string,
+  redditCookieHeader?: string,
 ): string {
   const out = shellQuote(outAbsPath);
   switch (service) {
@@ -1198,16 +1198,18 @@ export function buildCommand(
     case "x-twitter":
       throw new Error("X post は native fetch handler で処理します");
     case "reddit": {
-      // Reddit は未認証アクセスを一律ブロックするため、credential-proxy 経由で
-      // ログイン済みクッキー(www.reddit.com)を使ってアクセスする
-      // (docs/guides/reddit-cookie-setup.md 参照)
+      // Reddit cookies are read only inside the dedicated Tool Runtime. They are
+      // never sent through the sandbox credential proxy.
       const parsed = new URL(url);
       const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
       const jsonPath = pathname.endsWith(".json")
         ? pathname
         : `${pathname}.json`;
-      const proxyUrl = `${resolveProxyBaseUrl("reddit")}${jsonPath}${parsed.search}`;
-      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(proxyUrl)} -H "User-Agent: ${REDDIT_USER_AGENT}"`;
+      const redditUrl = `https://www.reddit.com${jsonPath}${parsed.search}`;
+      const cookie = redditCookieHeader
+        ? ` -H ${shellQuote(`Cookie: ${redditCookieHeader}`)}`
+        : "";
+      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(redditUrl)} -H ${shellQuote(`User-Agent: ${REDDIT_USER_AGENT}`)}${cookie}`;
     }
     case "rss": {
       const policy = networkPolicyCommands(outAbsPath);
@@ -1332,13 +1334,27 @@ export const agentReachTool: AgentTool<typeof parameters> = {
     const absPath = join(tmpDirAbs, `${service}.md`);
 
     try {
-      const cmd = buildCommand(service, normalizedUrl, absPath);
+      const redditCookieHeader =
+        service === "reddit"
+          ? await getRedditCookieHeader("reddit", {
+              cookieFile:
+                process.env.REDDIT_COOKIE_FILE ?? "data/reddit-cookies.json",
+              maxAgeDays: Number(process.env.REDDIT_COOKIE_MAX_AGE_DAYS ?? 7),
+            })
+          : undefined;
+      const cmd = buildCommand(
+        service,
+        normalizedUrl,
+        absPath,
+        redditCookieHeader,
+      );
       let stdout: string;
       try {
         ({ stdout } = await execAsync(cmd, {
           timeout: TIMEOUT_MS,
           maxBuffer: 64 * 1024 * 1024,
           cwd: WORKSPACE,
+          signal,
         }));
       } catch (err) {
         const e = err as { stdout?: string; stderr?: string; message?: string };

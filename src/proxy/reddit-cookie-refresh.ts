@@ -74,6 +74,9 @@ export async function refreshRedditCookies(
 
     const context = await chromium.launchPersistentContext(profileDir, {
       headless: false,
+      ...(process.env.CHROMIUM_PATH
+        ? { executablePath: process.env.CHROMIUM_PATH }
+        : {}),
     });
     try {
       const page = await context.newPage();

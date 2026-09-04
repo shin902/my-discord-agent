@@ -11,8 +11,8 @@ type StoredCookies = {
   updatedAt: string;
 };
 
-// reddit-cookie-refresh ジョブ（cron）が書き込み、credential-proxy が読み込む。
-// Playwright の永続プロファイルから定期的に抽出した www.reddit.com 用クッキー。
+// Tool Runtime の Reddit fetch が読み込む状態。cron maintenance が
+// Playwright の永続プロファイルから定期的に抽出した www.reddit.com 用クッキーを書き込む。
 export class RedditCookieStaleError extends Error {
   constructor(provider: string, ageDays: number, maxAgeDays: number) {
     super(
@@ -35,7 +35,9 @@ export async function getRedditCookieHeader(
   provider: string,
   config: RedditCookieConfig,
 ): Promise<string> {
-  const cookieFile = path.resolve(ROOT, config.cookieFile);
+  const cookieFile = path.isAbsolute(config.cookieFile)
+    ? config.cookieFile
+    : path.resolve(ROOT, config.cookieFile);
   let raw: string;
   try {
     raw = await readFile(cookieFile, "utf-8");

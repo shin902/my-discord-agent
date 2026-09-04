@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
@@ -238,33 +238,23 @@ describe("buildCommand シェルエスケープ", () => {
   const out = "/workspace/fetched/out.md";
 
   describe("reddit", () => {
-    beforeEach(() => {
-      process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-        { provider: "reddit", baseUrl: "http://localhost:12345/reddit" },
-      ]);
-    });
-
-    afterEach(() => {
-      delete process.env.CREDENTIAL_PROXY_JSON;
-    });
-
-    it("通常URL → .json を付与し credential-proxy 経由のcurlを生成", () => {
+    it("通常URL → .json を付与しruntimeから直接取得するcurlを生成", () => {
       const cmd = buildCommand(
         "reddit",
         "https://www.reddit.com/r/programming/comments/abc/",
         out,
       );
       expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json",
+        "https://www.reddit.com/r/programming/comments/abc.json",
       );
       expect(cmd).toContain("curl -sS");
       expect(cmd).toContain("-w '%{http_code}'");
     });
 
-    it("ルートURL → /.json を付与し credential-proxy のパスを維持", () => {
+    it("ルートURL → /.json を付与する", () => {
       const cmd = buildCommand("reddit", "https://reddit.com/", out);
-      expect(cmd).toContain("http://localhost:12345/reddit/.json");
-      expect(cmd).not.toContain("http://localhost:12345/reddit.json");
+      expect(cmd).toContain("https://www.reddit.com/.json");
+      expect(cmd).not.toContain("https://www.reddit.com.json");
     });
 
     it("既に .json で終わるURLは二重に付与しない", () => {
@@ -274,7 +264,7 @@ describe("buildCommand シェルエスケープ", () => {
         out,
       );
       expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json",
+        "https://www.reddit.com/r/programming/comments/abc.json",
       );
       expect(cmd).not.toContain(".json.json");
     });
@@ -288,7 +278,7 @@ describe("buildCommand シェルエスケープ", () => {
         out,
       );
       expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json?sort=top",
+        "https://www.reddit.com/r/programming/comments/abc.json?sort=top",
       );
     });
 
@@ -298,15 +288,15 @@ describe("buildCommand シェルエスケープ", () => {
       expect(cmd).toContain("'\\''");
     });
 
-    it("CREDENTIAL_PROXY_JSON が未設定の場合は例外を投げる", () => {
-      delete process.env.CREDENTIAL_PROXY_JSON;
-      expect(() =>
-        buildCommand(
-          "reddit",
-          "https://www.reddit.com/r/programming/comments/abc/",
-          out,
-        ),
-      ).toThrow("CREDENTIAL_PROXY_JSON が設定されていません");
+    it("runtime内cookieをcurlへ渡す", () => {
+      const cmd = buildCommand(
+        "reddit",
+        "https://www.reddit.com/r/programming/comments/abc/",
+        out,
+        "reddit_session=secret",
+      );
+      expect(cmd).toContain("Cookie: reddit_session=secret");
+      expect(cmd).not.toContain("CREDENTIAL_PROXY_JSON");
     });
   });
 

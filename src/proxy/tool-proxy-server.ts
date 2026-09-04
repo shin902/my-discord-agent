@@ -208,9 +208,19 @@ async function executeRequest(
     });
     return;
   }
+  const abortController = new AbortController();
+  const abortRequest = (): void => {
+    if (!res.writableEnded) abortController.abort();
+  };
+  req.once("aborted", abortRequest);
+  res.once("close", abortRequest);
   try {
-    const result = await tool.execute("tool-proxy", body.args);
-    sendJson(res, 200, { result });
+    const result = await tool.execute(
+      "tool-proxy",
+      body.args,
+      abortController.signal,
+    );
+    if (!res.writableEnded) sendJson(res, 200, { result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     sendJson(res, 502, { error: message });

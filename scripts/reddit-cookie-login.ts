@@ -8,7 +8,7 @@ const PROFILE_DIR = path.join(ROOT, "data/reddit-browser-profile");
 
 // 初回セットアップ専用。モニターが接続された実機で実行し、表示されたブラウザで
 // 捨て垢に手動ログインする。以降の延命・クッキー再取得は
-// src/cron/jobs/reddit-cookie-refresh.ts が定期的に行う。
+// Tool Runtime の reddit-cookie-refresh cron maintenance が定期的に行う。
 async function main() {
   console.log(`プロファイル保存先: ${PROFILE_DIR}`);
   console.log("ブラウザが起動します。reddit.com に手動でログインしてください。");

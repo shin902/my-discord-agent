@@ -445,6 +445,7 @@ function buildSanitizedCredentialJson(
     "github",
     "graph",
     "google-calendar",
+    "reddit",
   ]);
   for (const entry of creds) {
     if (
@@ -767,6 +768,16 @@ export async function sendMessage(
           `${groupName}:${sessionId}:${randomUUID()}`,
           hostCapabilities,
         );
+  // Skill shell commands receive a separate least-privileged authority rather
+  // than the run token that exposes all selected host capabilities.
+  const agentReachToolProxyRun =
+    storedToolProxyPort !== null &&
+    effectiveConfig.tools?.includes("agent-reach")
+      ? createToolProxyRun(
+          `${groupName}:${sessionId}:${randomUUID()}:agent-reach`,
+          ["agent-reach"],
+        )
+      : undefined;
   const payload = JSON.stringify({
     groupName,
     sessionId,
@@ -808,6 +819,14 @@ export async function sendMessage(
           },
         }
       : {}),
+    ...(agentReachToolProxyRun
+      ? {
+          agentReachToolProxyEndpoint: {
+            url: agentReachToolProxyRun.url,
+            token: agentReachToolProxyRun.token,
+          },
+        }
+      : {}),
   });
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない
@@ -845,6 +864,14 @@ export async function sendMessage(
     "HOME=/tmp",
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
+    ...(agentReachToolProxyRun
+      ? [
+          "-e",
+          `AGENT_REACH_TOOL_PROXY_URL=${agentReachToolProxyRun.url}`,
+          "-e",
+          `AGENT_REACH_TOOL_PROXY_TOKEN=${agentReachToolProxyRun.token}`,
+        ]
+      : []),
     RUNNER_IMAGE,
     "node",
     "/app/runner.mjs",
@@ -1290,5 +1317,6 @@ export async function sendMessage(
   }).finally(() => {
     internalRequest?.revoke();
     toolProxyRun?.revoke();
+    agentReachToolProxyRun?.revoke();
   });
 }
