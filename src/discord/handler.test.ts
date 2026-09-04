@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockClient = { once: vi.fn(), on: vi.fn() };
 const mockHandleBotCommand = vi.hoisted(() => vi.fn());
 const mockHandleSkillCommand = vi.hoisted(() => vi.fn());
+const mockHandleToolApprovalButton = vi.hoisted(() => vi.fn());
 const mockCreateDiscordInteractionRouter = vi.hoisted(() =>
   vi.fn((discordBotId: string) => (interaction: { commandName: string }) => {
     if (interaction.commandName === "bot")
@@ -15,6 +16,9 @@ const mockCreateDiscordInteractionRouter = vi.hoisted(() =>
 vi.mock("./client.js", () => ({ DEFAULT_DISCORD_BOT_ID: "personal" }));
 vi.mock("./interaction-router.js", () => ({
   createDiscordInteractionRouter: mockCreateDiscordInteractionRouter,
+}));
+vi.mock("./tool-approval.js", () => ({
+  handleToolApprovalButton: mockHandleToolApprovalButton,
 }));
 
 const mockAppendInbox = vi.hoisted(() => vi.fn());
@@ -85,6 +89,7 @@ describe("registerHandlers - InteractionCreate", () => {
   beforeEach(() => {
     mockHandleBotCommand.mockReset().mockResolvedValue(undefined);
     mockHandleSkillCommand.mockReset().mockResolvedValue(undefined);
+    mockHandleToolApprovalButton.mockReset().mockResolvedValue(true);
     mockCreateDiscordInteractionRouter.mockClear();
   });
 
@@ -104,6 +109,27 @@ describe("registerHandlers - InteractionCreate", () => {
     handler(interaction);
 
     expect(mockHandleBotCommand).toHaveBeenCalledWith(interaction, "secondary");
+  });
+
+  it("passes the receiving Discord Bot identity to approval handling", () => {
+    const client = { once: vi.fn(), on: vi.fn() };
+    registerHandlers(client as never, undefined, "secondary");
+    const handler = client.on.mock.calls.find(
+      ([event]) => event === "interactionCreate",
+    )?.[1] as ((interaction: unknown) => void) | undefined;
+    if (!handler)
+      throw new Error("interactionCreate handler was not registered");
+    const interaction = {
+      isChatInputCommand: () => false,
+      isButton: () => true,
+    };
+
+    handler(interaction);
+
+    expect(mockHandleToolApprovalButton).toHaveBeenCalledWith(
+      interaction,
+      "secondary",
+    );
   });
 
   it("dispatches /skill with the receiving Discord Bot identity", () => {

@@ -52,12 +52,13 @@ describe("loadGroups", () => {
     );
   });
 
-  it("model/tools/allowMention/toolLogArgs/skills/mounts を含むグループ設定をパースできる", async () => {
+  it("model/tools/approvalUserIds/allowMention/toolLogArgs/skills/mounts を含むグループ設定をパースできる", async () => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["tavily-search"],
+        approvalUserIds: ["operator-1"],
         allowMention: true,
         toolLogArgs: true,
         skills: ["session-logs"],
@@ -69,6 +70,7 @@ describe("loadGroups", () => {
     expect(groups[0]).toMatchObject({
       model: { provider: "zai", modelId: "glm-4.7-flash" },
       tools: ["tavily-search"],
+      approvalUserIds: ["operator-1"],
       allowMention: true,
       toolLogArgs: true,
       skills: ["session-logs"],

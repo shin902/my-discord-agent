@@ -27,7 +27,7 @@
 | `read-pull-request` | GitHub Pull Request の本文とメタ情報（base/head を含む）を Markdown で返す |
 | `list-issue-comments` | GitHub Issue の全コメントを取得し、作者・日時・本文を Markdown で返す |
 | `list-pull-request-comments` | GitHub Pull Request の会話コメント・レビュー・インラインコメントを全件取得し、Markdown で返す |
-| `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
+| `comment-issue` | Discordでの明示承認後、GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。

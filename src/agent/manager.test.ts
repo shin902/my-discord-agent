@@ -1568,11 +1568,13 @@ describe("sendMessage: configOverride", () => {
 
     await sendMessage("test-group", "session-1", "hi", {
       configOverride: { tools: ["get-current-weather"] },
+      approvalChannelId: "channel-1",
     });
 
     expect(createToolProxyRunMock).toHaveBeenCalledWith(
       expect.stringContaining("test-group:session-1:"),
       ["get-current-weather"],
+      { groupName: "test-group", channelId: "channel-1" },
     );
     const run = createToolProxyRunMock.mock.results[0]?.value as {
       revoke: ReturnType<typeof vi.fn>;

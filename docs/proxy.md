@@ -46,6 +46,8 @@ Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- host creden
 
 run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。GitHub、Graph、Google Calendar、Tavilyのcredentialはtrusted `credentials.json`からhost側だけで解決し、これらのlegacy forwarding routeはsandboxへ渡さない。結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。
 
+`comment-issue` と Calendar の `create-event` / `update-event` / `delete-event` はhost mutationとして、Discordに表示される Approve / Deny を必要とする。承認前には外部APIを呼ばず、60秒で失効する。承認はrequesting run、operation、正規化済み引数、targetに加え、送信に使ったDiscord Bot、channel、messageへ束縛され、groupの `approvalUserIds` に明示したユーザーだけが1回消費できる。allowlist未設定/空、別Bot/channel/message/user、run終了・失効、承認先を解決できない場合はfail closedし、不正なclickで正規のpending requestを消費しない。approvalはeffective toolsへcapabilityを追加しないため、public/untrusted groupにはmutation capability自体を設定しないこと。
+
 ### config/credentials.json
 
 `config/credentials.example.json` をコピーして `config/credentials.json` を作成する。トップレベルは配列。

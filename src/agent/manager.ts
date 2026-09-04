@@ -592,6 +592,8 @@ export interface SendMessageOptions {
   enableBotTool?: boolean;
   /** Provider whose serial LLM lock is held by the caller, if any. */
   heldLlmProvider?: string;
+  /** Discord destination for trusted approval UI; absence makes mutations fail closed. */
+  approvalChannelId?: string;
 }
 
 export function sendMessage(
@@ -647,6 +649,7 @@ export async function sendMessage(
     systemPromptAppend,
     enableBotTool,
     heldLlmProvider,
+    approvalChannelId,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -766,6 +769,9 @@ export async function sendMessage(
       : createToolProxyRun(
           `${groupName}:${sessionId}:${randomUUID()}`,
           hostCapabilities,
+          approvalChannelId
+            ? { groupName, channelId: approvalChannelId }
+            : undefined,
         );
   const payload = JSON.stringify({
     groupName,

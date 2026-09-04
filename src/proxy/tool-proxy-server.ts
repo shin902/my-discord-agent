@@ -1,15 +1,27 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
+import {
+  consumeToolApproval,
+  requestToolApproval,
+  type ToolApprovalBinding,
+} from "../application/tool-approval-service.js";
+import type { CapabilityDefinition } from "../tools/capability.js";
 import { getCapabilityDefinition } from "../tools/registry.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
 // Keep enough room for large Calendar descriptions and recurrence rules while
 // retaining a finite limit against accidentally unbounded request bodies.
 export const TOOL_PROXY_BODY_LIMIT = 1024 * 1024;
+export interface ToolApprovalContext {
+  groupName: string;
+  channelId: string;
+}
+
 type ToolProxyRun = {
   runId: string;
   allowedCapabilities: ReadonlySet<string>;
+  approvalContext?: ToolApprovalContext;
 };
 
 const runs = new Map<string, ToolProxyRun>();
@@ -25,12 +37,14 @@ export interface ToolProxyRunConfig {
 export function createToolProxyRun(
   runId: string,
   allowedCapabilities: Iterable<string>,
+  approvalContext?: ToolApprovalContext,
 ): ToolProxyRunConfig | undefined {
   if (toolProxyPort === null) return undefined;
   const token = randomBytes(32).toString("base64url");
   runs.set(token, {
     runId,
     allowedCapabilities: new Set(allowedCapabilities),
+    ...(approvalContext ? { approvalContext } : {}),
   });
   let revoked = false;
   const revoke = (): void => {
@@ -105,6 +119,22 @@ async function readBody(
   });
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value))
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
+      .join(",")}}`;
+  }
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined)
+    throw new Error("Capability arguments are not canonical JSON");
+  return serialized;
+}
+
 function isRequest(value: unknown): value is {
   capability: string;
   args: unknown;
@@ -122,6 +152,7 @@ function isRequest(value: unknown): value is {
 interface ToolProxyRequestHandlerOptions {
   /** Test synchronization point after authentication and body listeners are ready. */
   onBodyReadReady?: () => void;
+  resolveCapability?: (name: string) => CapabilityDefinition | undefined;
 }
 
 async function executeRequest(
@@ -177,7 +208,9 @@ async function executeRequest(
     sendJson(res, 401, { error: "Unknown or expired run token" });
     return;
   }
-  const capability = getCapabilityDefinition(body.capability);
+  const capability = (options.resolveCapability ?? getCapabilityDefinition)(
+    body.capability,
+  );
   if (!capability) {
     sendJson(res, 404, { error: `Unknown capability: ${body.capability}` });
     return;
@@ -201,6 +234,42 @@ async function executeRequest(
     return;
   }
 
+  let executionArgs = body.args;
+  if (capability.approval) {
+    if (!run.approvalContext) {
+      sendJson(res, 403, { error: "Approval destination is unavailable" });
+      return;
+    }
+    executionArgs = capability.approval.normalizeArgs(body.args);
+    if (!capability.validateArgs(executionArgs)) {
+      sendJson(res, 400, {
+        error: `Invalid normalized arguments for capability: ${body.capability}`,
+      });
+      return;
+    }
+    const binding: ToolApprovalBinding = {
+      runId: run.runId,
+      operation: body.capability,
+      invocation: canonicalJson(executionArgs),
+      target: capability.approval.target(executionArgs),
+    };
+    const approvalToken = await requestToolApproval({
+      ...binding,
+      ...run.approvalContext,
+      summary: capability.approval.summary(executionArgs),
+    });
+    if (
+      !approvalToken ||
+      !consumeToolApproval(approvalToken, binding) ||
+      req.aborted ||
+      res.destroyed ||
+      runs.get(token) !== run
+    ) {
+      sendJson(res, 403, { error: "Tool approval denied or expired" });
+      return;
+    }
+  }
+
   const tool = capability.factory();
   if (!tool) {
     sendJson(res, 500, {
@@ -209,7 +278,7 @@ async function executeRequest(
     return;
   }
   try {
-    const result = await tool.execute("tool-proxy", body.args);
+    const result = await tool.execute("tool-proxy", executionArgs);
     sendJson(res, 200, { result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

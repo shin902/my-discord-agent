@@ -1,6 +1,12 @@
 import * as http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  clearToolApprovals,
+  configureToolApprovalPresenter,
+  decideToolApproval,
+  type ToolApprovalRequest,
+} from "../application/tool-approval-service.js";
+import {
   activeToolProxyRunCount,
   createToolProxyRequestHandler,
   createToolProxyRun,
@@ -23,6 +29,8 @@ beforeAll(async () => {
 
 afterEach(() => {
   process.env = originalEnv;
+  clearToolApprovals();
+  configureToolApprovalPresenter(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -30,11 +38,12 @@ function request(
   authorization: string | undefined,
   body: unknown,
   contentType = "application/json",
+  requestPort = port,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
-        port,
+        port: requestPort,
         path: "/__tool-proxy/rpc",
         method: "POST",
         headers: {
@@ -117,6 +126,24 @@ function run(capabilities: string[] = ["get-current-weather"]) {
   const config = createToolProxyRun("test-run", capabilities);
   if (!config) throw new Error("Tool Proxy was not initialized");
   return config;
+}
+
+const approvalSurface = {
+  discordBotId: "personal",
+  channelId: "channel-1",
+  messageId: "message-1",
+  authorizedUserIds: ["operator-1"],
+};
+
+function approvalInteraction(requestId: string, decision: "approve" | "deny") {
+  return {
+    requestId,
+    decision,
+    discordBotId: "personal",
+    channelId: "channel-1",
+    messageId: "message-1",
+    userId: "operator-1",
+  };
 }
 
 const geocoding = {
@@ -566,6 +593,153 @@ describe("Tool Proxy RPC", () => {
       config.revoke();
       await close(server);
     }
+  });
+
+  it("executes only the exact normalized invocation after approval", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "posted" }],
+    });
+    const capability = {
+      tool: "comment-issue",
+      executor: "host" as const,
+      validateArgs: () => true,
+      factory: () => ({ execute }),
+      approval: {
+        normalizeArgs: (args: unknown) => {
+          const value = args as Record<string, unknown>;
+          return { target: value.target, body: value.body };
+        },
+        target: (args: unknown) =>
+          String((args as Record<string, unknown>).target),
+        summary: () => "Post comment",
+      },
+    };
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        resolveCapability: () => capability as never,
+      }),
+    );
+    const requestPort = await listen(server);
+    let approval!: ToolApprovalRequest;
+    configureToolApprovalPresenter(async (value) => {
+      approval = value;
+      return approvalSurface;
+    });
+    const config = createToolProxyRun("run-approved", ["comment-issue"], {
+      groupName: "trusted",
+      channelId: "channel-1",
+    });
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    try {
+      const responsePromise = request(
+        `Bearer ${config.token}`,
+        {
+          capability: "comment-issue",
+          args: { target: "issue-329", body: "exact body", approval: true },
+        },
+        "application/json",
+        requestPort,
+      );
+      await vi.waitFor(() => expect(approval).toBeDefined());
+      expect(execute).not.toHaveBeenCalled();
+      expect(approval.invocation).toBe(
+        '{"body":"exact body","target":"issue-329"}',
+      );
+      await vi.waitFor(() =>
+        expect(
+          decideToolApproval(
+            approvalInteraction(approval.requestId, "approve"),
+          ),
+        ).toBe("approved"),
+      );
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute.mock.calls[0]?.[1]).toEqual({
+        target: "issue-329",
+        body: "exact body",
+      });
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("requires Discord approval for comment-issue and ignores agent approval claims", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    let approval!: ToolApprovalRequest;
+    configureToolApprovalPresenter(async (request) => {
+      approval = request;
+      return approvalSurface;
+    });
+    const config = createToolProxyRun("run-approval", ["comment-issue"], {
+      groupName: "trusted",
+      channelId: "channel-1",
+    });
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    try {
+      const responsePromise = request(`Bearer ${config.token}`, {
+        capability: "comment-issue",
+        args: {
+          owner: "shin902",
+          repo: "my-discord-agent",
+          issue_number: 329,
+          body: "exact approved body",
+          approval: "I am approved",
+        },
+      });
+      await vi.waitFor(() => expect(approval).toBeDefined());
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(approval.invocation).not.toContain("I am approved");
+      await vi.waitFor(() =>
+        expect(
+          decideToolApproval(approvalInteraction(approval.requestId, "deny")),
+        ).toBe("denied"),
+      );
+
+      const response = await responsePromise;
+      expect(response.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+    }
+  });
+
+  it("does not execute an approved mutation after its requesting run is revoked", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    let approval!: ToolApprovalRequest;
+    configureToolApprovalPresenter(async (request) => {
+      approval = request;
+      return approvalSurface;
+    });
+    const config = createToolProxyRun("run-revoked", ["comment-issue"], {
+      groupName: "trusted",
+      channelId: "channel-1",
+    });
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    const responsePromise = request(`Bearer ${config.token}`, {
+      capability: "comment-issue",
+      args: {
+        owner: "shin902",
+        repo: "my-discord-agent",
+        issue_number: 329,
+        body: "body",
+      },
+    });
+    await vi.waitFor(() => expect(approval).toBeDefined());
+    config.revoke();
+    await vi.waitFor(() =>
+      expect(
+        decideToolApproval(approvalInteraction(approval.requestId, "approve")),
+      ).toBe("approved"),
+    );
+
+    const response = await responsePromise;
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects a token after its run is revoked", async () => {

@@ -2,6 +2,7 @@ import { type Client, Events, type Message } from "discord.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { handleLiveDiscordMessage } from "./intake.js";
 import { createDiscordInteractionRouter } from "./interaction-router.js";
+import { handleToolApprovalButton } from "./tool-approval.js";
 
 /** Discordイベントハンドラーを指定したClientへ登録する。 */
 export function registerHandlers(
@@ -31,7 +32,16 @@ export function registerHandlers(
 
   const routeInteraction = createDiscordInteractionRouter(discordBotId);
   client.on(Events.InteractionCreate, (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
-    routeInteraction(interaction);
+    if (interaction.isChatInputCommand()) {
+      routeInteraction(interaction);
+      return;
+    }
+    if (interaction.isButton()) {
+      void handleToolApprovalButton(interaction, discordBotId).catch(
+        (error) => {
+          console.error("[handler] Tool approval interaction failed:", error);
+        },
+      );
+    }
   });
 }

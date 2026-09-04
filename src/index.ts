@@ -6,6 +6,7 @@ import {
   validateGroupConfig,
 } from "./agent/manager.js";
 import { migrateLegacySessionStores } from "./agent/session.js";
+import { clearToolApprovals } from "./application/tool-approval-service.js";
 import { loadBotRegistry, validateBotConfigs } from "./config/bots.js";
 import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
@@ -26,6 +27,7 @@ import {
   loginDiscordClients,
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
+import { initializeDiscordToolApproval } from "./discord/tool-approval.js";
 import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
@@ -62,6 +64,7 @@ try {
   await Promise.all(groups.map((g) => validateGroupConfig(g, defaultModel)));
   await validateBotConfigs(groups, botRegistry, defaultModel);
   await initDiscordClients();
+  initializeDiscordToolApproval();
   const queueRepository = getQueueRepository();
   await initializeQueue(queueRepository);
   const cronJobs = await loadAndValidateCron();
@@ -131,6 +134,7 @@ const shutdown = async (): Promise<void> => {
   stopCron();
   stopPoller();
   stopDeliveryWorker();
+  clearToolApprovals();
   await killAllRunningContainers();
   await destroyDiscordClients();
   process.exit(0);

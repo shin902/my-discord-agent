@@ -61,6 +61,8 @@ const ChannelConfigSchema = AgentConfigSchema.extend({
 const GroupConfigSchema = AgentRuntimeConfigSchema.extend({
   name: z.string(),
   bot: z.string().min(1).optional(),
+  // Host mutations fail closed unless an explicit Discord approver is configured.
+  approvalUserIds: z.array(z.string().min(1)).optional(),
   channels: z.array(ChannelConfigSchema),
 });
 

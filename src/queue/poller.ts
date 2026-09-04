@@ -968,6 +968,7 @@ async function processCronThreadDelivery(
             },
             onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
             signal,
+            approvalChannelId: msg.channelId,
             configOverride: execution.configOverride,
             systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
             systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
@@ -1274,6 +1275,7 @@ export async function processMessage(
                   execution.systemPromptAppend ??
                   (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
                 signal,
+                approvalChannelId: msg.channelId,
                 configOverride: execution.configOverride,
                 heldLlmProvider:
                   lockTarget.concurrency === "serial"

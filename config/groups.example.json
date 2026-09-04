@@ -31,6 +31,7 @@
     "name": "issue-triage",
     "bot": "public",
     "tools": ["bash", "list-issues", "read-issue", "comment-issue"],
+    "approvalUserIds": ["YOUR_TRUSTED_DISCORD_USER_ID"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [],

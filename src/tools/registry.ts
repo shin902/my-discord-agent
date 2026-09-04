@@ -12,6 +12,7 @@ import {
 } from "./calendar.js";
 import {
   type AgentToolFactory,
+  type CapabilityApprovalPolicy,
   type CapabilityArgsValidator,
   type CapabilityDefinition,
   type CapabilityDispatchContext,
@@ -91,12 +92,41 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
 function hostCapability(
   tool: AgentTool,
   clampedMaximumProperties: readonly string[] = [],
+  approval?: CapabilityApprovalPolicy,
 ): CapabilityDefinition {
   return {
     tool: tool.name,
     executor: "host",
     factory: () => tool,
     validateArgs: validateToolArgs(tool, clampedMaximumProperties),
+    ...(approval ? { approval } : {}),
+  };
+}
+
+function approvalRequired(
+  tool: AgentTool,
+  target: (args: Record<string, unknown>) => string,
+  summary: (args: Record<string, unknown>) => string,
+  defaults: Record<string, unknown> = {},
+): CapabilityApprovalPolicy {
+  const properties = Object.keys(
+    (tool.parameters as { properties?: Record<string, unknown> }).properties ??
+      {},
+  );
+  const normalizeArgs = (value: unknown): Record<string, unknown> => {
+    const args = isObjectArgs(value) ? value : {};
+    const normalized: Record<string, unknown> = {};
+    for (const property of properties) {
+      if (Object.hasOwn(args, property)) normalized[property] = args[property];
+      else if (Object.hasOwn(defaults, property))
+        normalized[property] = defaults[property];
+    }
+    return normalized;
+  };
+  return {
+    normalizeArgs,
+    target: (args) => target(normalizeArgs(args)),
+    summary: (args) => summary(normalizeArgs(args)),
   };
 }
 
@@ -133,15 +163,54 @@ const CAPABILITIES = {
   "list-issue-comments": hostCapability(listIssueCommentsTool),
   "read-pull-request": hostCapability(readPullRequestTool),
   "list-pull-request-comments": hostCapability(listPullRequestCommentsTool),
-  "comment-issue": hostCapability(commentIssueTool),
+  "comment-issue": hostCapability(
+    commentIssueTool,
+    [],
+    approvalRequired(
+      commentIssueTool,
+      (args) =>
+        `github:${String(args.owner).toLowerCase()}/${String(args.repo).toLowerCase()}#${String(args.issue_number)}`,
+      (args) => `Comment: ${String(args.body)}`,
+    ),
+  ),
   "list-emails": hostCapability(listEmailsTool, ["limit"]),
   "read-email": hostCapability(readEmailTool),
   "list-calendars": hostCapability(listCalendarsTool),
   "list-events": hostCapability(listEventsTool, ["maxResults"]),
   "read-event": hostCapability(readEventTool),
-  "create-event": hostCapability(createEventTool),
-  "update-event": hostCapability(updateEventTool),
-  "delete-event": hostCapability(deleteEventTool),
+  "create-event": hostCapability(
+    createEventTool,
+    [],
+    approvalRequired(
+      createEventTool,
+      (args) => `google-calendar:${String(args.calendarId)}:new-event`,
+      (args) =>
+        `Create event "${String(args.summary)}" (${String(args.start)} – ${String(args.end)})`,
+      { calendarId: "primary" },
+    ),
+  ),
+  "update-event": hostCapability(
+    updateEventTool,
+    [],
+    approvalRequired(
+      updateEventTool,
+      (args) =>
+        `google-calendar:${String(args.calendarId)}:${String(args.eventId)}`,
+      (args) => `Update event ${String(args.eventId)}`,
+      { calendarId: "primary" },
+    ),
+  ),
+  "delete-event": hostCapability(
+    deleteEventTool,
+    [],
+    approvalRequired(
+      deleteEventTool,
+      (args) =>
+        `google-calendar:${String(args.calendarId)}:${String(args.eventId)}`,
+      (args) => `Delete event ${String(args.eventId)}`,
+      { calendarId: "primary" },
+    ),
+  ),
 } satisfies Record<string, CapabilityDefinition>;
 
 type ToolName = keyof typeof TOOL_FACTORIES;

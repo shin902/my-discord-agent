@@ -7,6 +7,14 @@ export type CapabilityExecutor = "sandbox" | "host";
 export type AgentToolFactory = () => AgentTool | undefined;
 export type CapabilityArgsValidator = (args: unknown) => boolean;
 
+export interface CapabilityApprovalPolicy {
+  /** Materialize the exact argument object that may execute after approval. */
+  readonly normalizeArgs: (args: unknown) => unknown;
+  /** Resolve the semantic resource independently from agent-supplied approval claims. */
+  readonly target: (args: unknown) => string;
+  readonly summary: (args: unknown) => string;
+}
+
 /** Reuse the advertised schema, relaxing only upper bounds the executor clamps. */
 export function validateToolArgs(
   tool: AgentTool,
@@ -44,6 +52,7 @@ export type CapabilityDefinition =
       readonly executor: "host";
       /** Validate the wire arguments without changing the agent-facing schema. */
       readonly validateArgs: CapabilityArgsValidator;
+      readonly approval?: CapabilityApprovalPolicy;
     });
 
 /**
