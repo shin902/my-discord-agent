@@ -110,7 +110,8 @@ Credential Proxy の設定不足を X/Twitter の取得エラーに利用しな�
 
 | 経路 | 実装 |
 |---|---|
-| TypeScript tool | `src/tools/agent-reach.ts` |
+| Agent-facing native capability | `src/tools/agent-reach-capability.ts` |
+| Runtime core implementation | `src/tools/agent-reach.ts` |
 | skill shell | `templates/SKILLS/agent-reach/scripts/agent-reach.sh` |
 | core 取得 fixture | `src/tools/__fixtures__/agent-reach/parity-cases.json` |
 | TypeScript tests | `src/tools/agent-reach.test.ts` |

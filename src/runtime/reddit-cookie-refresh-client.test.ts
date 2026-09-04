@@ -6,6 +6,7 @@ const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
 afterEach(() => {
+  vi.useRealTimers();
   fetchMock.mockReset();
   delete process.env.AGENT_REACH_RUNTIME_URL;
   delete process.env.AGENT_REACH_REFRESH_TOKEN;
@@ -33,6 +34,66 @@ describe("host Reddit cookie refresh client", () => {
       "refresh token is unavailable",
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("retries connection failures and succeeds when Runtime becomes ready", async () => {
+    vi.useFakeTimers();
+    process.env.AGENT_REACH_REFRESH_TOKEN = "refresh-token";
+    fetchMock
+      .mockRejectedValueOnce(
+        new TypeError("fetch failed", {
+          cause: Object.assign(new Error("refused"), {
+            code: "ECONNREFUSED",
+          }),
+        }),
+      )
+      .mockRejectedValueOnce(
+        new TypeError("fetch failed", {
+          cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }),
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    const pending = refreshRedditCookiesInRuntime();
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops after bounded connection retries", async () => {
+    vi.useFakeTimers();
+    process.env.AGENT_REACH_REFRESH_TOKEN = "refresh-token";
+    const failure = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("unreachable"), {
+        code: "EHOSTUNREACH",
+      }),
+    });
+    fetchMock.mockRejectedValue(failure);
+
+    const pending = refreshRedditCookiesInRuntime();
+    const result = expect(pending).rejects.toBe(failure);
+    await vi.runAllTimersAsync();
+    await result;
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("does not retry a generic TypeError", async () => {
+    process.env.AGENT_REACH_REFRESH_TOKEN = "refresh-token";
+    const failure = new TypeError("fetch failed");
+    fetchMock.mockRejectedValueOnce(failure);
+
+    await expect(refreshRedditCookiesInRuntime()).rejects.toBe(failure);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([401, 503])("does not retry an HTTP %s response", async (status) => {
+    process.env.AGENT_REACH_REFRESH_TOKEN = "refresh-token";
+    fetchMock.mockResolvedValueOnce(new Response("refresh failed", { status }));
+
+    await expect(refreshRedditCookiesInRuntime()).rejects.toThrow(
+      "refresh failed",
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("reports a failed maintenance response without treating it as success", async () => {

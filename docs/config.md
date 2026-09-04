@@ -143,7 +143,8 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 
 ## config/credentials.json
 
-AI プロバイダーや外部サービス（Microsoft Graph・Google Calendar・Tavily・GitHub・Reddit 等）の接続設定。トップレベルは配列。
+AI プロバイダーや外部サービス（Microsoft Graph・Google Calendar・Tavily・GitHub 等）の接続設定。トップレベルは配列。
+Reddit の Cookie 認証は `config/credentials.json` では管理せず、Tool Runtime の private state として扱います。詳細は [`docs/guides/reddit-cookie-setup.md`](guides/reddit-cookie-setup.md) を参照してください。
 詳細は `docs/config/credential-proxy.md` を参照。
 
 ```json
