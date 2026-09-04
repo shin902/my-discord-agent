@@ -12,5 +12,9 @@ describe("reddit cookie login script", () => {
       'const COOKIE_FILE = path.join(ROOT, "data/reddit-cookies.json");',
     );
     expect(source).toContain("await ensureRedditCookieFile(COOKIE_FILE);");
+    expect(source).toContain("Tool Runtimeを起動し");
+    expect(source).toContain("host schedulerの reddit-cookie-refresh");
+    expect(source).toContain("docs/guides/reddit-cookie-setup.md");
+    expect(source).not.toContain("pnpm cron");
   });
 });

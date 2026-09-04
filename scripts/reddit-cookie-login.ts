@@ -27,7 +27,9 @@ export async function main(): Promise<void> {
   });
 
   await ensureRedditCookieFile(COOKIE_FILE);
-  console.log("プロファイルを保存しました。pnpm cron か手動で reddit-cookie-refresh ジョブを実行して動作確認してください。");
+  console.log(
+    "プロファイルを保存しました。Tool Runtimeを起動し、host schedulerの reddit-cookie-refresh が実行されることを確認してください。詳細: docs/guides/reddit-cookie-setup.md",
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
