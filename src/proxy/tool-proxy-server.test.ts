@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { ToolApprovalRequest } from "./tool-approval.js";
 import {
   activeToolProxyRunCount,
   createToolProxyRequestHandler,
@@ -30,11 +31,12 @@ function request(
   authorization: string | undefined,
   body: unknown,
   contentType = "application/json",
+  requestPort = port,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
-        port,
+        port: requestPort,
         path: "/__tool-proxy/rpc",
         method: "POST",
         headers: {
@@ -182,6 +184,332 @@ describe("Tool Proxy RPC", () => {
     if (!config) throw new Error("Tool Proxy was not initialized");
     config.revoke();
     expect(config.revokeSignal.aborted).toBe(true);
+  });
+
+  it("does not execute an approval-required call before a decision", async () => {
+    let presented!: ToolApprovalRequest;
+    let ready!: () => void;
+    const presentedPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        presentApprovalRequest: async (request) => {
+          presented = request;
+          ready();
+        },
+      }),
+    );
+    const localPort = await listen(server);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = createToolProxyRun("approval-run", ["get-current-weather"], {
+      approvalRequiredCapabilities: ["get-current-weather"],
+      trustedDiscordDestination: { botId: "personal", channelId: "channel-1" },
+    });
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    try {
+      const responsePromise = request(
+        `Bearer ${config.token}`,
+        { capability: "get-current-weather", args: { location: "東京" } },
+        "application/json",
+        localPort,
+      );
+      await presentedPromise;
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(presented.invocation.args.value).toEqual({ location: "東京" });
+      const claim = presented.claim("approve");
+      expect(claim?.completeUiUpdate()).toBe(true);
+      const response = await responsePromise;
+      expect(response.status).toBe(502);
+      expect(fetchMock).toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("executes approved calls with the canonical materialized arguments", async () => {
+    let presented!: ToolApprovalRequest;
+    let ready!: () => void;
+    const presentedPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        presentApprovalRequest: async (request) => {
+          presented = request;
+          ready();
+        },
+      }),
+    );
+    const localPort = await listen(server);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => geocoding })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          current: {
+            time: "2026-01-01T00:00",
+            temperature_2m: 1,
+            apparent_temperature: 1,
+            relative_humidity_2m: 50,
+            wind_speed_10m: 2,
+            weather_code: 0,
+          },
+          current_units: {},
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = createToolProxyRun(
+      "canonical-run",
+      ["get-current-weather"],
+      {
+        approvalRequiredCapabilities: ["get-current-weather"],
+        trustedDiscordDestination: {
+          botId: "personal",
+          channelId: "channel-1",
+        },
+      },
+    );
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    try {
+      const responsePromise = request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-current-weather",
+          args: { location: "東京", ignored: "removed" },
+        },
+        "application/json",
+        localPort,
+      );
+      await presentedPromise;
+      expect(presented.invocation.args.json).toBe(
+        JSON.stringify({ location: "東京" }, null, 2),
+      );
+      presented.claim("approve")?.completeUiUpdate();
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining("name=%E6%9D%B1%E4%BA%AC"),
+      );
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("does not execute denied calls and fails closed when presentation fails", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        presentApprovalRequest: async () => {
+          throw new Error("private Discord detail");
+        },
+      }),
+    );
+    const localPort = await listen(server);
+    const config = createToolProxyRun("failure-run", ["get-current-weather"], {
+      approvalRequiredCapabilities: ["get-current-weather"],
+      trustedDiscordDestination: { botId: "personal", channelId: "channel-1" },
+    });
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    try {
+      const response = await request(
+        `Bearer ${config.token}`,
+        { capability: "get-current-weather", args: { location: "東京" } },
+        "application/json",
+        localPort,
+      );
+      expect(response.status).toBe(403);
+      expect(response.payload.error).toBe(
+        "Tool approval failed: get-current-weather",
+      );
+      expect(JSON.stringify(response.payload)).not.toContain("private Discord");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("does not execute denied calls or calls with a failed Discord update", async () => {
+    for (const failedUpdate of [false, true]) {
+      let presented!: ToolApprovalRequest;
+      let ready!: () => void;
+      const presentedPromise = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      const server = http.createServer(
+        createToolProxyRequestHandler({
+          presentApprovalRequest: async (request) => {
+            presented = request;
+            ready();
+          },
+        }),
+      );
+      const localPort = await listen(server);
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const config = createToolProxyRun(
+        `decision-run-${failedUpdate}`,
+        ["get-current-weather"],
+        {
+          approvalRequiredCapabilities: ["get-current-weather"],
+          trustedDiscordDestination: {
+            botId: "personal",
+            channelId: "channel-1",
+          },
+        },
+      );
+      if (!config) throw new Error("Tool Proxy was not initialized");
+      try {
+        const responsePromise = request(
+          `Bearer ${config.token}`,
+          { capability: "get-current-weather", args: { location: "東京" } },
+          "application/json",
+          localPort,
+        );
+        await presentedPromise;
+        const claim = presented.claim(failedUpdate ? "approve" : "deny");
+        expect(claim).toBeDefined();
+        if (failedUpdate) claim?.failUiUpdate(new Error("Discord timeout"));
+        else claim?.completeUiUpdate();
+        const response = await responsePromise;
+        expect(response.status).toBe(403);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        config.revoke();
+        await close(server);
+      }
+    }
+  });
+
+  it("rejects an approval after the run map entry is revoked", async () => {
+    let presented!: ToolApprovalRequest;
+    let ready!: () => void;
+    const presentedPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        presentApprovalRequest: async (request) => {
+          presented = request;
+          ready();
+        },
+      }),
+    );
+    const localPort = await listen(server);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = createToolProxyRun(
+      "approved-then-revoked",
+      ["get-current-weather"],
+      {
+        approvalRequiredCapabilities: ["get-current-weather"],
+        trustedDiscordDestination: {
+          botId: "personal",
+          channelId: "channel-1",
+        },
+      },
+    );
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    try {
+      const responsePromise = request(
+        `Bearer ${config.token}`,
+        { capability: "get-current-weather", args: { location: "東京" } },
+        "application/json",
+        localPort,
+      );
+      await presentedPromise;
+      presented.claim("approve")?.completeUiUpdate();
+      config.revoke();
+      const response = await responsePromise;
+      expect(response.status).toBe(401);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("fails closed for a pending revoke and for missing approval presentation", async () => {
+    let presented!: ToolApprovalRequest;
+    let ready!: () => void;
+    const presentedPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const server = http.createServer(
+      createToolProxyRequestHandler({
+        presentApprovalRequest: async (request) => {
+          presented = request;
+          ready();
+        },
+      }),
+    );
+    const localPort = await listen(server);
+    const config = createToolProxyRun("revoke-run", ["get-current-weather"], {
+      approvalRequiredCapabilities: ["get-current-weather"],
+      trustedDiscordDestination: { botId: "personal", channelId: "channel-1" },
+    });
+    if (!config) throw new Error("Tool Proxy was not initialized");
+    try {
+      const responsePromise = request(
+        `Bearer ${config.token}`,
+        { capability: "get-current-weather", args: { location: "東京" } },
+        "application/json",
+        localPort,
+      );
+      await presentedPromise;
+      config.revoke();
+      const response = await responsePromise;
+      expect(response.status).toBe(401);
+      expect(presented.claim("approve")).toBeUndefined();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+
+    const missingDestination = createToolProxyRun(
+      "missing-destination-run",
+      ["get-current-weather"],
+      { approvalRequiredCapabilities: ["get-current-weather"] },
+    );
+    if (!missingDestination) throw new Error("Tool Proxy was not initialized");
+    try {
+      const response = await request(`Bearer ${missingDestination.token}`, {
+        capability: "get-current-weather",
+        args: { location: "東京" },
+      });
+      expect(response.status).toBe(403);
+    } finally {
+      missingDestination.revoke();
+    }
+
+    const missingPresenter = createToolProxyRun(
+      "missing-presenter-run",
+      ["get-current-weather"],
+      {
+        approvalRequiredCapabilities: ["get-current-weather"],
+        trustedDiscordDestination: {
+          botId: "personal",
+          channelId: "channel-1",
+        },
+      },
+    );
+    if (!missingPresenter) throw new Error("Tool Proxy was not initialized");
+    try {
+      const response = await request(`Bearer ${missingPresenter.token}`, {
+        capability: "get-current-weather",
+        args: { location: "東京" },
+      });
+      expect(response.status).toBe(403);
+    } finally {
+      missingPresenter.revoke();
+    }
   });
 
   it.each([
