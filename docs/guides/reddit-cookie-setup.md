@@ -14,9 +14,10 @@
     → 表示されたブラウザで捨て垢に手動ログイン
     → ウィンドウを閉じる
 
-【Tool Runtime 起動】
+【Tool Runtime 起動と初回 refresh】
   → `docker compose -f compose.tool-runtime.yaml up -d --build`
   → Runtime は `data/reddit-browser-profile/` と `data/reddit-cookies.json` だけを read/write mount
+  → ホストで `pnpm reddit:refresh` を1回実行して Cookie を直ちに作成・確認
 
 【定期実行（cron: jobs/reddit-cookie-refresh.ts、デフォルト3日おき）】
   → host の cron scheduler が Runtime の非公開 maintenance operation を呼ぶ
@@ -49,7 +50,14 @@
 pnpm reddit:login
 ```
 
-ブラウザが起動するので、画面の指示に従って捨て垢で reddit.com にログインする。ログイン完了後、ブラウザウィンドウを閉じればプロファイル（`data/reddit-browser-profile/`）が保存される。Cookie ファイルが未作成の場合は、同じコマンドが空の初期ファイルを作成します。続けて Tool Runtime を起動してください。
+ブラウザが起動するので、画面の指示に従って捨て垢で reddit.com にログインする。ログイン完了後、ブラウザウィンドウを閉じればプロファイル（`data/reddit-browser-profile/`）が保存される。Cookie ファイルが未作成の場合は、同じコマンドが空の初期ファイルを作成します。続けて Tool Runtime を起動し、ホストで次の one-shot refresh を実行してください。
+
+```bash
+docker compose -f compose.tool-runtime.yaml up -d --build
+pnpm reddit:refresh
+```
+
+`pnpm reddit:refresh` はホストからRuntimeの非公開 maintenance endpointを1回呼び出すだけの運用コマンドです。Agent-facing toolやsandboxにはrefresh authorityを公開しません。
 
 ---
 
@@ -61,7 +69,6 @@ pnpm reddit:login
 # .env に設定:
 # AGENT_REACH_RUNTIME_TOKEN=...
 # AGENT_REACH_REFRESH_TOKEN=...
-pnpm build:tool-runtime
 docker compose -f compose.tool-runtime.yaml up -d --build
 ```
 
@@ -82,9 +89,9 @@ Reddit の Cookie を `config/credentials.json` に追加したり、Credential 
 
 ## 4. 動作確認
 
-Tool Runtime と host の cron scheduler のログを確認します。Cookie が無い・古い・セッションが失効した場合は、`reddit-cookie-refresh` の既存エラーを出して取得を失敗させます。refresh は Agent-facing capability ではないため、Agent や sandbox から任意に実行できません。
+`pnpm reddit:refresh` が成功し、`data/reddit-cookies.json` が作成・更新されたことを確認します。その後、Tool Runtime と host の cron scheduler のログを確認します。Cookie が無い・古い・セッションが失効した場合は、`reddit-cookie-refresh` の既存エラーを出して取得を失敗させます。refresh は Agent-facing capability ではないため、Agent や sandbox から任意に実行できません。
 
-動作確認や再実行は、cron 設定を有効にした host scheduler から行ってください。Runtime が停止している場合は、上記の compose コマンドで再起動します。
+再ログイン後の再実行も、ホストで `pnpm reddit:refresh` を実行してください。定期的な延命はcron設定を有効にした host scheduler が行います。Runtime が停止している場合は、上記の compose コマンドで再起動します。
 
 ---
 

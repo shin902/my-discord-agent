@@ -13,6 +13,7 @@ describe("reddit cookie login script", () => {
     );
     expect(source).toContain("await ensureRedditCookieFile(COOKIE_FILE);");
     expect(source).toContain("Tool Runtimeを起動し");
+    expect(source).toContain("pnpm reddit:refresh");
     expect(source).toContain("host schedulerの reddit-cookie-refresh");
     expect(source).toContain("docs/guides/reddit-cookie-setup.md");
     expect(source).not.toContain("pnpm cron");

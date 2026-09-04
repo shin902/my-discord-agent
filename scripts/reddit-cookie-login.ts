@@ -28,7 +28,7 @@ export async function main(): Promise<void> {
 
   await ensureRedditCookieFile(COOKIE_FILE);
   console.log(
-    "プロファイルを保存しました。Tool Runtimeを起動し、host schedulerの reddit-cookie-refresh が実行されることを確認してください。詳細: docs/guides/reddit-cookie-setup.md",
+    "プロファイルを保存しました。Tool Runtimeを起動し、ホストで pnpm reddit:refresh を1回実行してください。その後は host schedulerの reddit-cookie-refresh が定期実行します。詳細: docs/guides/reddit-cookie-setup.md",
   );
 }
 
