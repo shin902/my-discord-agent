@@ -12,12 +12,10 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   backupXSavedDatabase,
-  ingestBirdclawSavedItems,
   ingestXSavedItems,
   markInitialImportCompleted,
   openXSavedDb,
   recordSyncRun,
-  resolveBirdclawDbPath,
   resolveXSavedBackupDir,
 } from "./store.js";
 
@@ -33,93 +31,6 @@ function makeTempDir(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "x-saved-test-"));
   tempDirs.push(dir);
   return dir;
-}
-
-function createBirdclawFixture(dbPath: string): Database.Database {
-  const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE accounts (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      handle TEXT NOT NULL
-    );
-    CREATE TABLE profiles (
-      id TEXT PRIMARY KEY,
-      handle TEXT NOT NULL
-    );
-    CREATE TABLE tweets (
-      id TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL,
-      author_profile_id TEXT NOT NULL,
-      text TEXT NOT NULL,
-      created_at TEXT,
-      liked INTEGER NOT NULL DEFAULT 0,
-      bookmarked INTEGER NOT NULL DEFAULT 0,
-      entities_json TEXT NOT NULL DEFAULT '{}',
-      deleted_at TEXT,
-      superseded_at TEXT
-    );
-    CREATE TABLE tweet_collections (
-      account_id TEXT NOT NULL,
-      tweet_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      collected_at TEXT,
-      source TEXT NOT NULL DEFAULT 'test',
-      raw_json TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL DEFAULT '2026-08-28T00:00:00Z',
-      PRIMARY KEY (account_id, tweet_id, kind)
-    );
-  `);
-  db.prepare("INSERT INTO accounts (id, name, handle) VALUES (?, ?, ?)").run(
-    "acct_primary",
-    "Test User",
-    "tester",
-  );
-  db.prepare("INSERT INTO profiles (id, handle) VALUES (?, ?)").run(
-    "profile_a",
-    "author_a",
-  );
-  db.prepare("INSERT INTO profiles (id, handle) VALUES (?, ?)").run(
-    "profile_b",
-    "author_b",
-  );
-  return db;
-}
-
-function createCurrentBirdclawFixture(dbPath: string): Database.Database {
-  const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE accounts (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL
-    );
-    CREATE TABLE profiles (id TEXT PRIMARY KEY, handle TEXT NOT NULL);
-    CREATE TABLE tweets (
-      id TEXT PRIMARY KEY,
-      author_profile_id TEXT NOT NULL,
-      text TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      entities_json TEXT NOT NULL DEFAULT '{}',
-      deleted_at TEXT,
-      superseded_at TEXT
-    );
-    CREATE TABLE tweet_collections (
-      account_id TEXT NOT NULL,
-      tweet_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      collected_at TEXT,
-      PRIMARY KEY (account_id, tweet_id, kind)
-    );
-    INSERT INTO accounts VALUES ('acct_primary', 'Test User', 'tester');
-    INSERT INTO profiles VALUES ('profile_a', 'author_a');
-    INSERT INTO tweets VALUES (
-      '300', 'profile_a', 'current schema', '2026-08-22T00:00:00Z',
-      '{}', NULL, NULL
-    );
-    INSERT INTO tweet_collections VALUES (
-      'acct_primary', '300', 'likes', '2026-08-23T00:00:00Z'
-    );
-  `);
-  return db;
 }
 
 function createLegacyXSavedFixture(
@@ -164,8 +75,8 @@ function createLegacyXSavedFixture(
   legacy.close();
 }
 
-describe("x-saved BirdClaw ingest", () => {
-  it("normalizes BirdClaw home paths and keeps backups outside the live DB mount", async () => {
+describe("x-saved persistence", () => {
+  it("keeps backups outside the live DB mount", async () => {
     const dir = makeTempDir();
     const targetPath = path.join(dir, "x-saved.sqlite");
     const backupDir = path.join(
@@ -175,9 +86,6 @@ describe("x-saved BirdClaw ingest", () => {
     const db = openXSavedDb(targetPath);
     db.close();
 
-    expect(resolveBirdclawDbPath("~/birdclaw.sqlite")).toBe(
-      path.join(os.homedir(), "birdclaw.sqlite"),
-    );
     expect(resolveXSavedBackupDir()).toContain(
       path.join("data", "x-saved-backups"),
     );
@@ -290,171 +198,6 @@ describe("x-saved BirdClaw ingest", () => {
     ).rejects.toThrow("outside the live database directory");
   });
 
-  it("imports collection-only rows from the current BirdClaw schema", () => {
-    const dir = makeTempDir();
-    const sourcePath = path.join(dir, "birdclaw.sqlite");
-    const targetPath = path.join(dir, "x-saved.sqlite");
-    createCurrentBirdclawFixture(sourcePath).close();
-
-    expect(
-      ingestBirdclawSavedItems({
-        birdclawDbPath: sourcePath,
-        xSavedDbPath: targetPath,
-        account: "tester",
-        now: "2026-08-28T00:00:00Z",
-      }),
-    ).toEqual({ newItems: 1 });
-
-    const target = openXSavedDb(targetPath);
-    expect(
-      target
-        .prepare(
-          `SELECT text, author_handle, seen_liked, seen_bookmarked
-           FROM x_items WHERE tweet_id = '300'`,
-        )
-        .get(),
-    ).toEqual({
-      text: "current schema",
-      author_handle: "author_a",
-      seen_liked: 1,
-      seen_bookmarked: 0,
-    });
-    target.close();
-  });
-
-  it("imports likes/bookmarks while preserving sticky source history and agent state", () => {
-    const dir = makeTempDir();
-    const sourcePath = path.join(dir, "birdclaw.sqlite");
-    const targetPath = path.join(dir, "x-saved.sqlite");
-    const source = createBirdclawFixture(sourcePath);
-
-    source
-      .prepare(
-        `INSERT INTO tweets (
-          id, account_id, author_profile_id, text, created_at,
-          liked, bookmarked, entities_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        "100",
-        "acct_primary",
-        "profile_a",
-        "first text",
-        "2026-08-20T00:00:00Z",
-        1,
-        0,
-        JSON.stringify({
-          urls: [{ expandedUrl: "https://example.com/article" }],
-        }),
-      );
-    source
-      .prepare(
-        `INSERT INTO tweets (
-          id, account_id, author_profile_id, text, created_at,
-          liked, bookmarked, entities_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        "200",
-        "acct_primary",
-        "profile_b",
-        "second text",
-        "2026-08-21T00:00:00Z",
-        0,
-        0,
-        "{}",
-      );
-    source
-      .prepare(
-        `INSERT INTO tweet_collections (
-          account_id, tweet_id, kind, collected_at
-        ) VALUES (?, ?, ?, ?)`,
-      )
-      .run("acct_primary", "200", "bookmarks", "2026-08-22T00:00:00Z");
-    source.close();
-
-    const first = ingestBirdclawSavedItems({
-      birdclawDbPath: sourcePath,
-      xSavedDbPath: targetPath,
-      account: "tester",
-      now: "2026-08-28T00:00:00Z",
-    });
-    expect(first).toEqual({ newItems: 2 });
-
-    const target = openXSavedDb(targetPath);
-    const item100 = target
-      .prepare(
-        `SELECT text, author_handle, seen_liked, seen_bookmarked,
-                external_urls_json
-         FROM x_items WHERE tweet_id = '100'`,
-      )
-      .get() as {
-      text: string;
-      author_handle: string;
-      seen_liked: number;
-      seen_bookmarked: number;
-      external_urls_json: string;
-    };
-    expect(item100.text).toBe("first text");
-    expect(item100.author_handle).toBe("author_a");
-    expect(item100.seen_liked).toBe(1);
-    expect(item100.seen_bookmarked).toBe(0);
-    expect(JSON.parse(item100.external_urls_json)).toEqual([
-      "https://example.com/article",
-    ]);
-    target
-      .prepare(
-        `UPDATE x_item_state
-         SET status = 'try', note = ?, updated_at = ?
-         WHERE tweet_id = '100'`,
-      )
-      .run("keep this note", "2026-08-28T00:05:00Z");
-    target.close();
-
-    const sourceAgain = new Database(sourcePath);
-    sourceAgain
-      .prepare(
-        `UPDATE tweets
-         SET text = ?, liked = 0, bookmarked = 1
-         WHERE id = '100'`,
-      )
-      .run("updated text");
-    sourceAgain.close();
-
-    const second = ingestBirdclawSavedItems({
-      birdclawDbPath: sourcePath,
-      xSavedDbPath: targetPath,
-      account: "@tester",
-      now: "2026-08-29T00:00:00Z",
-    });
-    expect(second).toEqual({ newItems: 0 });
-
-    const verify = openXSavedDb(targetPath);
-    const sticky = verify
-      .prepare(
-        `SELECT i.text, i.seen_liked, i.seen_bookmarked,
-                s.status, s.note
-         FROM x_items i
-         JOIN x_item_state s ON s.tweet_id = i.tweet_id
-         WHERE i.tweet_id = '100'`,
-      )
-      .get() as {
-      text: string;
-      seen_liked: number;
-      seen_bookmarked: number;
-      status: string;
-      note: string;
-    };
-    expect(sticky).toEqual({
-      text: "updated text",
-      seen_liked: 1,
-      seen_bookmarked: 1,
-      status: "try",
-      note: "keep this note",
-    });
-    verify.close();
-  });
-
   it("preserves missing metadata but applies explicitly empty external URLs", () => {
     const dir = makeTempDir();
     const target = openXSavedDb(path.join(dir, "x-saved.sqlite"));
@@ -528,6 +271,76 @@ describe("x-saved BirdClaw ingest", () => {
       external_urls_json: "[]",
     });
     target.close();
+  });
+
+  it("reingests the same item without duplicating rows or resetting state", () => {
+    const dir = makeTempDir();
+    const db = openXSavedDb(path.join(dir, "x-saved.sqlite"));
+    const firstSeenAt = "2026-08-28T00:00:00Z";
+    const lastSeenAt = "2026-08-29T00:00:00Z";
+
+    expect(
+      ingestXSavedItems(
+        [
+          {
+            tweetId: "repeat",
+            text: "first text",
+            authorHandle: "author",
+            seenLiked: true,
+            seenBookmarked: false,
+          },
+        ],
+        { xSavedDb: db, now: firstSeenAt },
+      ),
+    ).toEqual({ newItems: 1 });
+    db.prepare(
+      `UPDATE x_item_state
+       SET status = 'keep', note = ?, updated_at = ?
+       WHERE tweet_id = 'repeat'`,
+    ).run("remember this", firstSeenAt);
+
+    expect(
+      ingestXSavedItems(
+        [
+          {
+            tweetId: "repeat",
+            text: "updated text",
+            authorHandle: "author",
+            seenLiked: false,
+            seenBookmarked: true,
+          },
+        ],
+        { xSavedDb: db, now: lastSeenAt },
+      ),
+    ).toEqual({ newItems: 0 });
+
+    expect(
+      db
+        .prepare(
+          `SELECT i.text, i.seen_liked, i.seen_bookmarked,
+                  i.first_seen_at, i.last_seen_at,
+                  s.status, s.note
+           FROM x_items i
+           JOIN x_item_state s ON s.tweet_id = i.tweet_id
+           WHERE i.tweet_id = 'repeat'`,
+        )
+        .get(),
+    ).toEqual({
+      text: "updated text",
+      seen_liked: 1,
+      seen_bookmarked: 1,
+      first_seen_at: firstSeenAt,
+      last_seen_at: lastSeenAt,
+      status: "keep",
+      note: "remember this",
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM x_items").get()).toEqual({
+      count: 1,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM x_item_state").get(),
+    ).toEqual({ count: 1 });
+    db.close();
   });
 
   it("records the initial import completion only once", () => {
