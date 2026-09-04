@@ -1355,6 +1355,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
           maxBuffer: 64 * 1024 * 1024,
           cwd: WORKSPACE,
           signal,
+          processGroup: true,
         }));
       } catch (err) {
         const e = err as { stdout?: string; stderr?: string; message?: string };
