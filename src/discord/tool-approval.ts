@@ -5,8 +5,10 @@ import {
   ButtonStyle,
 } from "discord.js";
 import {
+  cancelToolApproval,
+  claimToolApproval,
   configureToolApprovalPresenter,
-  decideToolApproval,
+  finalizeToolApproval,
   type ToolApprovalDecision,
   type ToolApprovalRequest,
 } from "../application/tool-approval-service.js";
@@ -64,9 +66,11 @@ function approvalMessage(request: ToolApprovalRequest): {
     `Expires: <t:${Math.floor(request.expiresAt / 1000)}:R>`,
   ];
   const baseContent = baseLines.join("\n");
-  if (baseContent.length <= DISCORD_CONTENT_LIMIT) {
+  const terminalStatusReservation = "\nApproved.".length;
+  if (baseContent.length + terminalStatusReservation <= DISCORD_CONTENT_LIMIT) {
     const detailsPrefix = "\nDetails: ";
-    const remaining = DISCORD_CONTENT_LIMIT - baseContent.length;
+    const remaining =
+      DISCORD_CONTENT_LIMIT - baseContent.length - terminalStatusReservation;
     if (remaining > detailsPrefix.length) {
       const details = oneLine(
         request.summary,
@@ -153,30 +157,39 @@ export async function handleToolApprovalButton(
     return true;
   }
 
-  const result = decideToolApproval({
+  const claimResult = claimToolApproval({
     ...parsed,
     discordBotId,
     channelId: interaction.channelId,
     messageId: interaction.message.id,
     userId: interaction.user.id,
   });
-  if (result === "unauthorized") {
+  if (claimResult === "unauthorized") {
     await interaction.reply({
       content: "You are not authorized for this approval request.",
       ephemeral: true,
     });
     return true;
   }
-  const status =
-    result === "approved"
-      ? `Approved by ${interaction.user.username}.`
-      : result === "denied"
-        ? `Denied by ${interaction.user.username}.`
-        : "This approval request is no longer valid.";
-  await interaction.update({
-    content: `${interaction.message.content}\n${status}`,
-    components: [buttons(parsed.requestId, true)],
-    allowedMentions: { parse: [] },
-  });
+  if (typeof claimResult === "string") {
+    await interaction.reply({
+      content: "This approval request is no longer valid.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const status = claimResult.decision === "approve" ? "Approved." : "Denied.";
+  try {
+    await interaction.update({
+      content: `${interaction.message.content}\n${status}`,
+      components: [buttons(claimResult.requestId, true)],
+      allowedMentions: { parse: [] },
+    });
+  } catch {
+    cancelToolApproval(claimResult);
+    return true;
+  }
+  finalizeToolApproval(claimResult);
   return true;
 }

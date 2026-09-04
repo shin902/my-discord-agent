@@ -25,6 +25,16 @@ export type ToolApprovalDecisionResult =
   | "unauthorized"
   | "unknown";
 
+export interface ToolApprovalClaim {
+  requestId: string;
+  decision: ToolApprovalDecision;
+}
+export type ToolApprovalClaimResult =
+  | ToolApprovalClaim
+  | "expired"
+  | "unauthorized"
+  | "unknown";
+
 export interface ToolApprovalControlSurface {
   discordBotId: string;
   channelId: string;
@@ -46,18 +56,29 @@ export type ToolApprovalPresenter = (
 ) => Promise<ToolApprovalControlSurface>;
 
 type PendingApproval = {
+  state: "pending";
   request: ToolApprovalRequest;
   controlSurface?: ToolApprovalControlSurface;
   resolve: (token: string | undefined) => void;
   timer: NodeJS.Timeout;
 };
 
+type ClaimedApproval = {
+  state: "claimed";
+  request: ToolApprovalRequest;
+  claim: ToolApprovalClaim;
+  resolve: (token: string | undefined) => void;
+  timer: NodeJS.Timeout;
+};
+
+type Approval = PendingApproval | ClaimedApproval;
+
 type ApprovalGrant = {
   binding: ToolApprovalBinding;
   expiresAt: number;
 };
 
-const pendingApprovals = new Map<string, PendingApproval>();
+const pendingApprovals = new Map<string, Approval>();
 const grants = new Map<string, ApprovalGrant>();
 let presenter: ToolApprovalPresenter | undefined;
 
@@ -103,49 +124,54 @@ export async function requestToolApproval(
 
   return await new Promise<string | undefined>((resolve) => {
     const timer = setTimeout(() => {
-      const pending = pendingApprovals.get(requestId);
-      if (!pending) return;
+      const approval = pendingApprovals.get(requestId);
+      if (!approval) return;
       pendingApprovals.delete(requestId);
-      pending.resolve(undefined);
+      approval.resolve(undefined);
     }, ttlMs);
     timer.unref();
-    pendingApprovals.set(requestId, { request, resolve, timer });
+    pendingApprovals.set(requestId, {
+      state: "pending",
+      request,
+      resolve,
+      timer,
+    });
 
     void presenter?.(request)
       .then((controlSurface) => {
-        const pending = pendingApprovals.get(requestId);
-        if (!pending) return;
+        const approval = pendingApprovals.get(requestId);
+        if (!approval || approval.state !== "pending") return;
         if (controlSurface.authorizedUserIds.length === 0) {
-          clearTimeout(pending.timer);
+          clearTimeout(approval.timer);
           pendingApprovals.delete(requestId);
-          pending.resolve(undefined);
+          approval.resolve(undefined);
           return;
         }
-        pending.controlSurface = controlSurface;
+        approval.controlSurface = controlSurface;
       })
       .catch(() => {
-        const pending = pendingApprovals.get(requestId);
-        if (!pending) return;
-        clearTimeout(pending.timer);
+        const approval = pendingApprovals.get(requestId);
+        if (!approval) return;
+        clearTimeout(approval.timer);
         pendingApprovals.delete(requestId);
-        pending.resolve(undefined);
+        approval.resolve(undefined);
       });
   });
 }
 
-/** Resolve exactly one pending request from its bound Discord control surface. */
-export function decideToolApproval(
+/** Atomically claim one pending request from its bound Discord control surface. */
+export function claimToolApproval(
   interaction: ToolApprovalInteraction,
-): ToolApprovalDecisionResult {
-  const pending = pendingApprovals.get(interaction.requestId);
-  if (!pending) return "unknown";
-  if (Date.now() >= pending.request.expiresAt) {
+): ToolApprovalClaimResult {
+  const approval = pendingApprovals.get(interaction.requestId);
+  if (!approval || approval.state !== "pending") return "unknown";
+  if (Date.now() >= approval.request.expiresAt) {
     pendingApprovals.delete(interaction.requestId);
-    clearTimeout(pending.timer);
-    pending.resolve(undefined);
+    clearTimeout(approval.timer);
+    approval.resolve(undefined);
     return "expired";
   }
-  const surface = pending.controlSurface;
+  const surface = approval.controlSurface;
   if (
     !surface ||
     !sameValue(surface.discordBotId, interaction.discordBotId) ||
@@ -156,20 +182,57 @@ export function decideToolApproval(
     return "unauthorized";
   }
 
-  pendingApprovals.delete(interaction.requestId);
-  clearTimeout(pending.timer);
-  if (interaction.decision === "deny") {
-    pending.resolve(undefined);
+  const claim: ToolApprovalClaim = {
+    requestId: interaction.requestId,
+    decision: interaction.decision,
+  };
+  pendingApprovals.set(interaction.requestId, {
+    state: "claimed",
+    request: approval.request,
+    claim,
+    resolve: approval.resolve,
+    timer: approval.timer,
+  });
+  return claim;
+}
+
+/** Finalize a previously claimed request after its Discord update succeeds. */
+export function finalizeToolApproval(
+  claim: ToolApprovalClaim,
+): ToolApprovalDecisionResult {
+  const approval = pendingApprovals.get(claim.requestId);
+  if (!approval || approval.state !== "claimed" || approval.claim !== claim)
+    return "unknown";
+
+  pendingApprovals.delete(claim.requestId);
+  clearTimeout(approval.timer);
+  if (Date.now() >= approval.request.expiresAt) {
+    approval.resolve(undefined);
+    return "expired";
+  }
+  if (claim.decision === "deny") {
+    approval.resolve(undefined);
     return "denied";
   }
 
   const token = randomBytes(32).toString("base64url");
   grants.set(token, {
-    binding: pending.request,
-    expiresAt: pending.request.expiresAt,
+    binding: approval.request,
+    expiresAt: approval.request.expiresAt,
   });
-  pending.resolve(token);
+  approval.resolve(token);
   return "approved";
+}
+
+/** Fail closed when the Discord update outcome is unknown. */
+export function cancelToolApproval(claim: ToolApprovalClaim): boolean {
+  const approval = pendingApprovals.get(claim.requestId);
+  if (!approval || approval.state !== "claimed" || approval.claim !== claim)
+    return false;
+  pendingApprovals.delete(claim.requestId);
+  clearTimeout(approval.timer);
+  approval.resolve(undefined);
+  return true;
 }
 
 /** Consume a short-lived grant once, only for its exact trusted binding. */

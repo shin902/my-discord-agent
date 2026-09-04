@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelToolApproval,
+  claimToolApproval,
   clearToolApprovals,
   configureToolApprovalPresenter,
   consumeToolApproval,
-  decideToolApproval,
+  finalizeToolApproval,
   requestToolApproval,
   type ToolApprovalBinding,
   type ToolApprovalInteraction,
@@ -32,6 +34,13 @@ const validInteraction = (
   userId: "operator-1",
   ...overrides,
 });
+
+function claimAndFinalize(
+  interaction: ToolApprovalInteraction,
+): ReturnType<typeof finalizeToolApproval> {
+  const claim = claimToolApproval(interaction);
+  return typeof claim === "string" ? claim : finalizeToolApproval(claim);
+}
 
 beforeEach(() => {
   presented = [];
@@ -64,7 +73,7 @@ async function approvedToken(
   const request = presented.at(-1);
   if (!request) throw new Error("approval was not presented");
   await vi.waitFor(() =>
-    expect(decideToolApproval(validInteraction(request.requestId))).toBe(
+    expect(claimAndFinalize(validInteraction(request.requestId))).toBe(
       "approved",
     ),
   );
@@ -74,6 +83,80 @@ async function approvedToken(
 }
 
 describe("tool approval authority", () => {
+  it("does not issue authority or resolve until a claim is finalized", async () => {
+    let settled = false;
+    const pending = requestToolApproval({
+      ...binding,
+      groupName: "trusted",
+      channelId: "channel-1",
+      summary: "wait for update",
+    }).then((token) => {
+      settled = true;
+      return token;
+    });
+    const request = presented.at(-1);
+    if (!request) throw new Error("approval was not presented");
+    const claim = await vi.waitFor(() => {
+      const result = claimToolApproval(validInteraction(request.requestId));
+      if (typeof result === "string") throw new Error(result);
+      return result;
+    });
+
+    expect(claim).toEqual({
+      requestId: request.requestId,
+      decision: "approve",
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    if (typeof claim === "string") throw new Error("approval was not claimed");
+    expect(finalizeToolApproval(claim)).toBe("approved");
+    await expect(pending).resolves.toEqual(expect.any(String));
+  });
+
+  it("cancels a claimed request without issuing authority", async () => {
+    const pending = requestToolApproval({
+      ...binding,
+      groupName: "trusted",
+      channelId: "channel-1",
+      summary: "Discord update failed",
+    });
+    const request = presented.at(-1);
+    if (!request) throw new Error("approval was not presented");
+    const claim = await vi.waitFor(() => {
+      const result = claimToolApproval(validInteraction(request.requestId));
+      if (typeof result === "string") throw new Error(result);
+      return result;
+    });
+
+    expect(cancelToolApproval(claim)).toBe(true);
+    expect(cancelToolApproval(claim)).toBe(false);
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("claims and finalizes a concurrent click only once", async () => {
+    const pending = requestToolApproval({
+      ...binding,
+      groupName: "trusted",
+      channelId: "channel-1",
+      summary: "single click",
+    });
+    const request = presented.at(-1);
+    if (!request) throw new Error("approval was not presented");
+
+    const first = await vi.waitFor(() => {
+      const result = claimToolApproval(validInteraction(request.requestId));
+      if (typeof result === "string") throw new Error(result);
+      return result;
+    });
+    const replay = claimToolApproval(validInteraction(request.requestId));
+
+    expect(replay).toBe("unknown");
+    if (typeof first === "string") throw new Error("approval was not claimed");
+    expect(finalizeToolApproval(first)).toBe("approved");
+    expect(finalizeToolApproval(first)).toBe("unknown");
+    await expect(pending).resolves.toEqual(expect.any(String));
+  });
+
   it("is issued only by a trusted decision and is single-use", async () => {
     const token = await approvedToken();
 
@@ -108,7 +191,7 @@ describe("tool approval authority", () => {
     });
     await vi.waitFor(() =>
       expect(
-        decideToolApproval(
+        claimAndFinalize(
           validInteraction(presented[0]?.requestId ?? "", {
             decision: "deny",
           }),
@@ -147,11 +230,11 @@ describe("tool approval authority", () => {
     if (!request) throw new Error("approval was not presented");
     await vi.waitFor(() =>
       expect(
-        decideToolApproval(validInteraction(request.requestId, overrides)),
+        claimAndFinalize(validInteraction(request.requestId, overrides)),
       ).toBe("unauthorized"),
     );
 
-    expect(decideToolApproval(validInteraction(request.requestId))).toBe(
+    expect(claimAndFinalize(validInteraction(request.requestId))).toBe(
       "approved",
     );
     await expect(pending).resolves.toEqual(expect.any(String));

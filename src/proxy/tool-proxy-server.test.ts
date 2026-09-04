@@ -1,9 +1,10 @@
 import * as http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  claimToolApproval,
   clearToolApprovals,
   configureToolApprovalPresenter,
-  decideToolApproval,
+  finalizeToolApproval,
   type ToolApprovalRequest,
 } from "../application/tool-approval-service.js";
 import {
@@ -144,6 +145,11 @@ function approvalInteraction(requestId: string, decision: "approve" | "deny") {
     messageId: "message-1",
     userId: "operator-1",
   };
+}
+
+function finalizeApproval(requestId: string, decision: "approve" | "deny") {
+  const claim = claimToolApproval(approvalInteraction(requestId, decision));
+  return typeof claim === "string" ? claim : finalizeToolApproval(claim);
 }
 
 const geocoding = {
@@ -646,11 +652,9 @@ describe("Tool Proxy RPC", () => {
         '{"body":"exact body","target":"issue-329"}',
       );
       await vi.waitFor(() =>
-        expect(
-          decideToolApproval(
-            approvalInteraction(approval.requestId, "approve"),
-          ),
-        ).toBe("approved"),
+        expect(finalizeApproval(approval.requestId, "approve")).toBe(
+          "approved",
+        ),
       );
 
       const response = await responsePromise;
@@ -694,9 +698,7 @@ describe("Tool Proxy RPC", () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(approval.invocation).not.toContain("I am approved");
       await vi.waitFor(() =>
-        expect(
-          decideToolApproval(approvalInteraction(approval.requestId, "deny")),
-        ).toBe("denied"),
+        expect(finalizeApproval(approval.requestId, "deny")).toBe("denied"),
       );
 
       const response = await responsePromise;
@@ -732,9 +734,7 @@ describe("Tool Proxy RPC", () => {
     await vi.waitFor(() => expect(approval).toBeDefined());
     config.revoke();
     await vi.waitFor(() =>
-      expect(
-        decideToolApproval(approvalInteraction(approval.requestId, "approve")),
-      ).toBe("approved"),
+      expect(finalizeApproval(approval.requestId, "approve")).toBe("approved"),
     );
 
     const response = await responsePromise;

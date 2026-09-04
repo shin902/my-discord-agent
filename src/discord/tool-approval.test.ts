@@ -1,15 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  cancel: vi.fn(),
+  claim: vi.fn(),
   configurePresenter: vi.fn(),
-  decide: vi.fn(),
+  finalize: vi.fn(),
   fetchChannel: vi.fn(),
   findGroupByName: vi.fn(),
 }));
 
 vi.mock("../application/tool-approval-service.js", () => ({
+  cancelToolApproval: mocks.cancel,
+  claimToolApproval: mocks.claim,
   configureToolApprovalPresenter: mocks.configurePresenter,
-  decideToolApproval: mocks.decide,
+  finalizeToolApproval: mocks.finalize,
 }));
 vi.mock("../config/constants.js", () => ({
   DEFAULT_DISCORD_BOT_ID: "personal",
@@ -28,7 +32,11 @@ const { handleToolApprovalButton, initializeDiscordToolApproval } =
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.decide.mockReturnValue("approved");
+  mocks.claim.mockReturnValue({
+    requestId: "a".repeat(32),
+    decision: "approve",
+  });
+  mocks.finalize.mockReturnValue("approved");
   mocks.findGroupByName.mockResolvedValue({
     name: "trusted",
     bot: "personal",
@@ -138,7 +146,7 @@ describe("Discord tool approval adapter", () => {
       handleToolApprovalButton(interaction as never, "personal"),
     ).resolves.toBe(true);
 
-    expect(mocks.decide).toHaveBeenCalledWith({
+    expect(mocks.claim).toHaveBeenCalledWith({
       requestId: "a".repeat(32),
       decision: "approve",
       discordBotId: "personal",
@@ -148,14 +156,44 @@ describe("Discord tool approval adapter", () => {
     });
     expect(interaction.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: "approval request\nApproved by operator.",
+        content: "approval request\nApproved.",
         components: [expect.anything()],
+      }),
+    );
+    expect(mocks.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "a".repeat(32),
+        decision: "approve",
       }),
     );
     const row = interaction.update.mock.calls[0]?.[0].components[0].toJSON();
     expect(
       row.components.every((button: { disabled?: boolean }) => button.disabled),
     ).toBe(true);
+  });
+
+  it("uses fixed denied status text", async () => {
+    mocks.claim.mockReturnValue({
+      requestId: "a".repeat(32),
+      decision: "deny",
+    });
+    const interaction = {
+      customId: `tool-approval:deny:${"a".repeat(32)}`,
+      channelId: "channel-1",
+      user: { id: "operator-1", bot: false, username: "operator" },
+      message: { id: "message-1", content: "approval request" },
+      update: vi.fn().mockResolvedValue(undefined),
+      reply: vi.fn(),
+    };
+
+    await handleToolApprovalButton(interaction as never, "personal");
+
+    expect(interaction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "approval request\nDenied." }),
+    );
+    expect(mocks.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: "deny" }),
+    );
   });
 
   it("does not let a Discord bot approve", async () => {
@@ -168,14 +206,62 @@ describe("Discord tool approval adapter", () => {
 
     await handleToolApprovalButton(interaction as never, "personal");
 
-    expect(mocks.decide).not.toHaveBeenCalled();
+    expect(mocks.claim).not.toHaveBeenCalled();
     expect(interaction.reply).toHaveBeenCalledWith(
       expect.objectContaining({ ephemeral: true }),
     );
   });
 
+  it("fails closed when Discord cannot update the approval message", async () => {
+    const claim = { requestId: "a".repeat(32), decision: "approve" };
+    mocks.claim.mockReturnValue(claim);
+    const interaction = {
+      customId: `tool-approval:approve:${"a".repeat(32)}`,
+      channelId: "channel-1",
+      user: { id: "operator-1", bot: false, username: "operator" },
+      message: { id: "message-1", content: "approval request" },
+      update: vi.fn().mockRejectedValue(new Error("Discord unavailable")),
+      reply: vi.fn(),
+    };
+
+    await expect(
+      handleToolApprovalButton(interaction as never, "personal"),
+    ).resolves.toBe(true);
+
+    expect(mocks.finalize).not.toHaveBeenCalled();
+    expect(mocks.cancel).toHaveBeenCalledWith(claim);
+  });
+
+  it("reserves room for terminal status at the Discord content limit", async () => {
+    const send = vi.fn().mockResolvedValue({
+      id: "message-1",
+      channelId: "channel-1",
+    });
+    mocks.fetchChannel.mockResolvedValue({ isSendable: () => true, send });
+    initializeDiscordToolApproval();
+    const presenter = mocks.configurePresenter.mock.calls[0]?.[0] as (
+      request: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    const invocation = "x".repeat(1_850);
+
+    await presenter({
+      requestId: "a".repeat(32),
+      runId: "run-1",
+      operation: "comment-issue",
+      invocation,
+      target: "target",
+      groupName: "trusted",
+      channelId: "channel-1",
+      summary: "summary that must be truncated",
+      expiresAt: 2_000_000_000_000,
+    });
+
+    const content = send.mock.calls[0]?.[0].content as string;
+    expect(content.length + "\nApproved.".length).toBeLessThanOrEqual(2_000);
+  });
+
   it("leaves the valid request active after an unauthorized click", async () => {
-    mocks.decide.mockReturnValue("unauthorized");
+    mocks.claim.mockReturnValue("unauthorized");
     const interaction = {
       customId: `tool-approval:approve:${"a".repeat(32)}`,
       channelId: "wrong-channel",
