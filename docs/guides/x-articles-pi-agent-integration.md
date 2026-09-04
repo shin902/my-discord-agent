@@ -2,10 +2,8 @@
 
 ## 現在の取得経路
 
-X/Twitter の取得は `src/tools/agent-reach.ts` と
-`templates/SKILLS/agent-reach/scripts/agent-reach.sh` の2経路で行う。両者は
-同じコードを共有せず、それぞれが独立して動作するが、入力・出力・失敗時の
-振る舞いは共有 fixture で揃える。
+X/Twitter の取得は `agent-reach` capability から専用 Tool Runtime へ委譲する。Agent-facing の TypeScript tool と、Tool Proxy を呼ぶ
+`templates/SKILLS/agent-reach/scripts/agent-reach.sh` の2つの入口があり、入力・出力・失敗時の振る舞いは共有 fixture で揃える。
 
 ```text
 X の記事付き post URL
@@ -106,8 +104,7 @@ Credential Proxy の設定不足を X/Twitter の取得エラーに利用しな�
 ## 独立した実行経路とテンプレート
 
 専用 `agent-reach` ツールはシェルスクリプトに依存せず、`bash` を許可しない
-グループでも動作する。`agent-reach` skill は同梱のシェルスクリプトを
-`bash` から実行し、stdout を直接利用したりファイルへリダイレクトしたりできる。
+グループでも動作する。`agent-reach` skill は同梱の薄いシェル client から Tool Proxy を呼び、stdout を直接利用したりファイルへリダイレクトしたりできる。取得用の `yt-dlp` や curl 等は Agent sandbox に置かない。
 
 実装の対応表:
 

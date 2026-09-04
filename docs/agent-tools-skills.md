@@ -92,18 +92,18 @@ Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加�
 
 **場所:** `templates/SKILLS/agent-reach/SKILL.md`
 
-インターネット情報収集スキル。同梱の `agent-reach.sh` を `bash` から実行し、取得結果を標準出力で直接利用したり、必要に応じてファイルへ保存したりできる。`agent-reach`ツールとは独立した実行経路であり、スキルからツールは呼び出さない。
+インターネット情報収集スキル。同梱の `agent-reach.sh` は Tool Proxy の `agent-reach` capability を呼ぶ薄い client で、取得結果を標準出力で直接利用したり、必要に応じてファイルへ保存したりできる。Agent sandbox から外部コマンドや直接 Internet へはアクセスしない。
 
 `bash`を許可したくない不特定多数向けのボットでは、スキルを有効にせず、専用の`agent-reach`ツールだけを`groups[].tools`へ追加する。
 
 | 対象 | 内部の取得経路 |
 |------|----------------|
-| ウェブページ | Jina Reader (`r.jina.ai`) |
-| YouTube | `yt-dlp` |
-| GitHub | GitHub REST API |
-| Reddit | Credential Proxy経由のJSON API |
-| RSS | `feedparser` |
-| X/Twitter | FxTwitter (`api.fxtwitter.com`) のみ（Credential Proxy へのフォールバックなし） |
+| ウェブページ | 専用 Tool Runtime の Jina Reader (`r.jina.ai`) |
+| YouTube | 専用 Tool Runtime の `yt-dlp` |
+| GitHub | 専用 Tool Runtime の GitHub REST API |
+| Reddit | Tool Proxy → 専用 Tool Runtime の JSON API（Runtime 内 Cookie） |
+| RSS | 専用 Tool Runtime の `feedparser` |
+| X/Twitter | 専用 Tool Runtime の FxTwitter (`api.fxtwitter.com`) のみ（Credential Proxy へのフォールバックなし） |
 
 スキルは同梱のシェルスクリプトを使用する。専用ツール側はシェルスクリプトに依存せず、`bash`を許可しない構成でも単独で動作する。両者の用途と実行経路は独立している。
 
@@ -112,8 +112,8 @@ Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加�
 これは2つの実装を同じコードにするための契約ではなく、利用者から見える挙動を揃えるための基準である。
 
 - **入力:** どちらも1つの絶対URLを受け取り、`http` / `https` 以外は拒否する。fragment は取得先へ渡さず、リソース指定や署名に使われる可能性がある query は正規化時に削除せず、サービス固有の取得処理で扱う。正規化後のURLを同じサービス判定表（Web、YouTube、GitHub repository、Reddit、RSS、X post）で分類する。X Article の直リンクは、記事付き post の `/status/...` URLを案内する入力エラーとする。
-- **整形済み出力:** 取得本文の意味とサービス別フォーマットを共通契約とする。Web は reader 本文、YouTube・GitHub・Reddit・X は Markdown、RSS は feedparser が生成する最大20件の JSON 配列テキストを返す。X の出力には外部コンテンツへの注意書きを含める。スキルは整形済みテキストだけを stdout に出し、必要なら呼び出し側が `>` で保存できる。ツールは同じ本文を `content[0].text` に返し、正規化済みURLとサービス名を `details` に付ける（ツールはワークスペースへ結果ファイルを残さない）。決定的な入力の本文は、共有 fixture で両経路の内容一致を固定する（スクリプトの stdout に付く transport 用の末尾改行は除く）。
-- **エラー:** 入力拒否・依存コマンド不足・Credential Proxy 設定不足・上流HTTP/JSON/取得失敗は、本文として成功扱いにせずエラーにする。ツールは例外を throw し、スキルは非0終了して診断を stderr に出す。インターフェース上の envelope（例外と終了コード/stderr）は異なるが、エラーのカテゴリと機密情報を漏らさない診断内容は共通に保つ。
+- **整形済み出力:** 取得本文の意味とサービス別フォーマットを共通契約とする。Web は reader 本文、YouTube・GitHub・Reddit・X は Markdown、RSS は feedparser が生成する最大20件の JSON 配列テキストを返す。X の出力には外部コンテンツへの注意書きを含める。スキルは整形済みテキストだけを stdout に出し、必要なら呼び出し側が `>` で保存できる。ツールは同じ本文を `content[0].text` に返し、正規化済みURLとサービス名を `details` に付ける（Runtime のファイルパスは返さず、ツールはワークスペースへ結果ファイルを残さない）。決定的な入力の本文は、共有 fixture で両経路の内容一致を固定する（スクリプトの stdout に付く transport 用の末尾改行は除く）。
+- **エラー:** 入力拒否・Tool Proxy/Runtime 設定不足・上流HTTP/JSON/取得失敗は、本文として成功扱いにせずエラーにする。ツールは例外を throw し、スキルは非0終了して診断を stderr に出す。インターフェース上の envelope（例外と終了コード/stderr）は異なるが、エラーのカテゴリと機密情報を漏らさない診断内容は共通に保つ。
 
 共有 fixture は `src/tools/__fixtures__/agent-reach/parity-cases.json` に置き、URL正規化・サービス判定・決定的なX post本文・代表的なエラーを `src/tools/agent-reach.test.ts` と `src/tools/agent-reach-shell.test.ts` の両方から検証する。今後この契約を変更する issue では、まず fixture と両方のテストを更新するが、スキルから TypeScript ツールを呼び出す実装には変更しない。
 

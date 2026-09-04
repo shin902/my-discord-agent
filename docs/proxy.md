@@ -95,27 +95,18 @@ Google Cloud Console での OAuth クライアント作成手順（OAuth 同意�
 - デバイスフローは `initCredentialProxyServer()`（ホスト起動時）で一度トリガーされる。これにより、Discordからの最初のカレンダー操作リクエストでデバイスフロー（最大30分）がブロックすることを避けている。認証に失敗・タイムアウトした場合はエラーログを出すのみで、ホストの起動自体は継続する（以後のカレンダー系ツール呼び出しは502になる）。
 - `msal` と同様、`google` フィールドはサンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
 
-### Reddit クッキー認証（agent-reach の reddit サービス用）
+### Reddit クッキー認証（agent-reach Tool Runtime）
 
-Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月のポリシー改定以降事実上ブロックしているため（詳細は [`docs/guides/reddit-oauth-setup.md`](./guides/reddit-oauth-setup.md)）、ログイン済みブラウザの永続プロファイルから定期的に抽出したクッキーで `www.reddit.com` にアクセスする。
+Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月のポリシー改定以降事実上ブロックしているため（詳細は [`docs/guides/reddit-oauth-setup.md`](./guides/reddit-oauth-setup.md)）、ログイン済みブラウザの Cookie を専用 Tool Runtime で使って `www.reddit.com` にアクセスする。
 
-初回ログイン手順・定期延命の仕組みは [`docs/guides/reddit-cookie-setup.md`](./guides/reddit-cookie-setup.md) を参照。
+初回ログイン・Runtime 起動・定期 refresh の手順は [`docs/guides/reddit-cookie-setup.md`](./guides/reddit-cookie-setup.md) を参照。
 
-```json
-{
-  "provider": "reddit",
-  "baseUrl": "https://www.reddit.com",
-  "redditCookie": {
-    "cookieFile": "data/reddit-cookies.json",
-    "maxAgeDays": 7
-  }
-}
-```
-
-- `pnpm reddit:login` で初回ログイン（Playwright永続プロファイル: `data/reddit-browser-profile/`）。以後は `cron`(`jobs/reddit-cookie-refresh.ts`)が定期的にセッション延命＋クッキー再抽出を行う。
-- `cookieFile` の内容が `maxAgeDays`(デフォルト7日)より古い場合、そのプロバイダーへのリクエストは 502 になる。
-- `redditCookie` フィールドは `msal` / `google` と同様、サンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
-- `agent-reach` ツールのredditサービス、互換用`agent-reach.sh`、および`last30days`スキル（`scripts/reddit-search.sh`）は`CREDENTIAL_PROXY_JSON`からプロキシURLを解決してアクセスする。
+- `pnpm reddit:login` の UX は変更しない。canonical state は `data/reddit-browser-profile/` と `data/reddit-cookies.json`。
+- `compose.tool-runtime.yaml` はこの2つのパスだけを Runtime に read/write mount する。Cookie、認証トークン、Runtime 内のファイルパスは Agent sandbox に渡さない。
+- `agent-reach` と `last30days` の Reddit 検索は Tool Proxy の `agent-reach` capability 経由で Runtime に委譲する。
+- `reddit-cookie-refresh` は host の cron scheduler から Runtime の内部 maintenance operation を呼ぶ。Agent-facing capability ではない。
+- Cookie の freshness validation、session 失効検知、missing/stale 時の error semantics は Runtime 側で維持する。
+- Reddit 用の `credentials.json` provider や `CREDENTIAL_PROXY_JSON` forwarding は使用しない。Credential Proxy の他用途（LLM 等）は引き続き有効。
 
 ### GitHub REST API（Issue/PR ツール用）
 
