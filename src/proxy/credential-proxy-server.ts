@@ -28,6 +28,8 @@ interface InternalRequestAuthorization {
   scope: string;
   /** Provider whose serial lock is held by the parent run, if any. */
   heldProvider?: string;
+  /** Trusted Discord destination inherited from the parent run, if any. */
+  approvalChannelId?: string;
 }
 const internalRequestTokens = new Map<string, InternalRequestAuthorization>();
 let internalRequestHandler:
@@ -36,6 +38,7 @@ let internalRequestHandler:
       res: ServerResponse,
       scope: string,
       heldProvider?: string,
+      approvalChannelId?: string,
     ) => Promise<void>)
   | null = null;
 
@@ -52,6 +55,7 @@ export function registerInternalRequestHandler(
     res: ServerResponse,
     scope: string,
     heldProvider?: string,
+    approvalChannelId?: string,
   ) => Promise<void>,
 ): void {
   internalRequestHandler = handler;
@@ -61,10 +65,15 @@ export function registerInternalRequestHandler(
 export function createInternalRequestConfig(
   scope: string,
   heldProvider?: string,
+  approvalChannelId?: string,
 ): InternalRequestConfig | undefined {
   if (proxyPort === null) return undefined;
   const token = randomUUID();
-  internalRequestTokens.set(token, { scope, heldProvider });
+  internalRequestTokens.set(token, {
+    scope,
+    ...(heldProvider !== undefined ? { heldProvider } : {}),
+    ...(approvalChannelId !== undefined ? { approvalChannelId } : {}),
+  });
   const revoke = () => {
     internalRequestTokens.delete(token);
   };
@@ -327,6 +336,7 @@ export function createRequestHandler(
           res,
           authorization.scope,
           authorization.heldProvider,
+          authorization.approvalChannelId,
         ).catch((err) => {
           if (!res.headersSent) {
             console.error(`[credential-proxy] internal request failed: ${err}`);

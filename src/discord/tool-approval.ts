@@ -15,6 +15,7 @@ import { findGroupByName } from "../config/groups.js";
 import { getDiscordClient } from "./client.js";
 
 const CUSTOM_ID_PREFIX = "tool-approval";
+const DISCORD_CONTENT_LIMIT = 2_000;
 
 function customId(requestId: string, decision: ToolApprovalDecision): string {
   return `${CUSTOM_ID_PREFIX}:${decision}:${requestId}`;
@@ -42,6 +43,58 @@ function oneLine(value: string, maxLength: number): string {
     : `${normalized.slice(0, maxLength - 1)}…`;
 }
 
+function invocationBlock(invocation: string): string {
+  const longestFence = Math.max(
+    2,
+    ...Array.from(invocation.matchAll(/`+/g), (match) => match[0].length),
+  );
+  const fence = "`".repeat(longestFence + 1);
+  return `Invocation (canonical normalized JSON):\n${fence}json\n${invocation}\n${fence}`;
+}
+
+function approvalMessage(request: ToolApprovalRequest): {
+  content: string;
+  files?: [{ attachment: Buffer; name: string }];
+} {
+  const baseLines = [
+    "Privileged operation approval required",
+    `Operation: ${oneLine(request.operation, 100)}`,
+    `Target: ${oneLine(request.target, 300)}`,
+    invocationBlock(request.invocation),
+    `Expires: <t:${Math.floor(request.expiresAt / 1000)}:R>`,
+  ];
+  const baseContent = baseLines.join("\n");
+  if (baseContent.length <= DISCORD_CONTENT_LIMIT) {
+    const detailsPrefix = "\nDetails: ";
+    const remaining = DISCORD_CONTENT_LIMIT - baseContent.length;
+    if (remaining > detailsPrefix.length) {
+      const details = oneLine(
+        request.summary,
+        remaining - detailsPrefix.length,
+      );
+      return { content: `${baseContent}${detailsPrefix}${details}` };
+    }
+    return { content: baseContent };
+  }
+
+  return {
+    content: [
+      "Privileged operation approval required",
+      `Operation: ${oneLine(request.operation, 100)}`,
+      `Target: ${oneLine(request.target, 300)}`,
+      "Complete canonical normalized invocation attached as approval-request.json.",
+      `Details: ${oneLine(request.summary, 400)}`,
+      `Expires: <t:${Math.floor(request.expiresAt / 1000)}:R>`,
+    ].join("\n"),
+    files: [
+      {
+        attachment: Buffer.from(request.invocation, "utf8"),
+        name: "approval-request.json",
+      },
+    ],
+  };
+}
+
 async function presentDiscordToolApproval(request: ToolApprovalRequest) {
   const group = await findGroupByName(request.groupName);
   if (!group?.approvalUserIds?.length)
@@ -53,13 +106,7 @@ async function presentDiscordToolApproval(request: ToolApprovalRequest) {
     throw new Error("Tool approval destination is not sendable");
 
   const message = await channel.send({
-    content: [
-      "Privileged operation approval required",
-      `Operation: ${oneLine(request.operation, 100)}`,
-      `Target: ${oneLine(request.target, 300)}`,
-      `Details: ${oneLine(request.summary, 1_200)}`,
-      `Expires: <t:${Math.floor(request.expiresAt / 1000)}:R>`,
-    ].join("\n"),
+    ...approvalMessage(request),
     components: [buttons(request.requestId)],
     allowedMentions: { parse: [] },
   });

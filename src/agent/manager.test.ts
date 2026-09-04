@@ -1627,6 +1627,7 @@ describe("sendMessage: configOverride", () => {
     expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
       "test-group",
       undefined,
+      undefined,
     );
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -1634,6 +1635,21 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:12345/__agent/bot",
       token: "internal-token",
     });
+  });
+
+  it("bot endpointへ親runのapproval channelをtrusted metadataとして渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["bot"] },
+      approvalChannelId: "trusted-channel",
+    });
+
+    expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
+      "test-group",
+      undefined,
+      "trusted-channel",
+    );
   });
 
   it("groupのbot設定はchannel相当のtools上書きで無効化される", async () => {

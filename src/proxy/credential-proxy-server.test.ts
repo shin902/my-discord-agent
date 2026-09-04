@@ -800,11 +800,15 @@ describe("internal agent route: scoped authorization", () => {
     return proxy;
   }
 
-  it("valid tokenはscopeとheld providerをhandlerへ渡す", async () => {
+  it("valid tokenはscopeとheld providerとapproval channelをhandlerへ渡す", async () => {
     const proxy = await setup();
     const handler = vi.fn().mockResolvedValue(undefined);
     proxy.registerInternalRequestHandler(handler);
-    const config = proxy.createInternalRequestConfig("main", "openai");
+    const config = proxy.createInternalRequestConfig(
+      "main",
+      "openai",
+      "trusted-channel",
+    );
     expect(config).toMatchObject({ port: 12345, token: expect.any(String) });
 
     serverRequestHandler?.(
@@ -820,6 +824,7 @@ describe("internal agent route: scoped authorization", () => {
       expect.anything(),
       "main",
       "openai",
+      "trusted-channel",
     );
 
     config?.revoke();

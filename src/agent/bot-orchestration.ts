@@ -58,6 +58,7 @@ export async function handleBotToolRequest(
   res: ServerResponse,
   scope?: string,
   heldProvider?: string,
+  approvalChannelId?: string,
 ): Promise<void> {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -160,6 +161,7 @@ export async function handleBotToolRequest(
               systemPromptAppend: profile.instructions,
               enableBotTool: false,
               signal: controller.signal,
+              approvalChannelId,
               onExecutionTiming: (value) => {
                 timing = value;
               },

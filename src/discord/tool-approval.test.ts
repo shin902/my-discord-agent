@@ -48,11 +48,13 @@ describe("Discord tool approval adapter", () => {
       request: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
 
+    const canonicalInvocation =
+      '{"body":"keep  exact spacing","issue_number":329}';
     const surface = await presenter({
       requestId: "a".repeat(32),
       runId: "run-1",
       operation: "comment-issue",
-      invocation: "canonical",
+      invocation: canonicalInvocation,
       target: "github:shin902/my-discord-agent#329",
       groupName: "trusted",
       channelId: "channel-1",
@@ -75,10 +77,51 @@ describe("Discord tool approval adapter", () => {
         allowedMentions: { parse: [] },
       }),
     );
+    const message = send.mock.calls[0]?.[0];
+    expect(message.content).toContain(
+      "Invocation (canonical normalized JSON):",
+    );
+    expect(message.content).toContain(canonicalInvocation);
+    expect(message.files).toBeUndefined();
     const row = send.mock.calls[0]?.[0].components[0].toJSON();
     expect(
       row.components.map((button: { label: string }) => button.label),
     ).toEqual(["Approve", "Deny"]);
+  });
+
+  it("attaches the complete invocation when the Discord body cannot contain it", async () => {
+    const send = vi.fn().mockResolvedValue({
+      id: "message-1",
+      channelId: "channel-1",
+    });
+    mocks.fetchChannel.mockResolvedValue({ isSendable: () => true, send });
+    initializeDiscordToolApproval();
+    const presenter = mocks.configurePresenter.mock.calls[0]?.[0] as (
+      request: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    const invocation = JSON.stringify({ body: "x".repeat(2_100) });
+
+    await presenter({
+      requestId: "a".repeat(32),
+      runId: "run-1",
+      operation: "comment-issue",
+      invocation,
+      target: "github:shin902/my-discord-agent#329",
+      groupName: "trusted",
+      channelId: "channel-1",
+      summary: "Comment: short summary",
+      expiresAt: 2_000_000_000_000,
+    });
+
+    const message = send.mock.calls[0]?.[0];
+    expect(message.content.length).toBeLessThanOrEqual(2_000);
+    expect(message.content).toContain(
+      "Complete canonical normalized invocation attached as approval-request.json.",
+    );
+    expect(message.files).toHaveLength(1);
+    expect(message.files[0].name).toBe("approval-request.json");
+    expect(message.files[0].attachment.toString("utf8")).toBe(invocation);
+    expect(message.allowedMentions).toEqual({ parse: [] });
   });
 
   it("accepts only a well-formed Discord button identifier and disables replay", async () => {

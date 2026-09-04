@@ -108,12 +108,14 @@ function invoke(
   res: ReturnType<typeof response>,
   heldProvider?: string,
   scope?: string,
+  approvalChannelId?: string,
 ) {
   return handleBotToolRequest(
     req as unknown as import("node:http").IncomingMessage,
     res as unknown as import("node:http").ServerResponse,
     scope,
     heldProvider,
+    approvalChannelId,
   );
 }
 
@@ -169,6 +171,30 @@ describe("handleBotToolRequest", () => {
       content: "調査結果",
       session: "task-abc123",
     });
+  });
+
+  it("callerのapproval channelだけをchild runへ引き継ぎ、body指定は無視する", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    sendMessage.mockResolvedValue("調査結果");
+    const req = new MockRequest(
+      JSON.stringify({
+        groupName: "main",
+        action: "run",
+        bot: "coding",
+        prompt: "inspect",
+        approvalChannelId: "attacker-channel",
+      }),
+    );
+
+    await invoke(req, response(), undefined, undefined, "trusted-channel");
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "main",
+      "bot-task-1",
+      "inspect",
+      expect.objectContaining({ approvalChannelId: "trusted-channel" }),
+    );
   });
 
   it("resumeは同じ所有者のTask Sessionだけを使い同期実行する", async () => {
