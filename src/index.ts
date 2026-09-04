@@ -26,6 +26,7 @@ import {
   loginDiscordClients,
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
+import { presentToolApprovalRequest } from "./discord/tool-approval.js";
 import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
@@ -50,7 +51,9 @@ try {
   }
   await ensureGroupDirs(groups.map((g) => g.name));
   const proxyPort = await initCredentialProxyServer();
-  const toolProxyPort = await initToolProxyServer();
+  const toolProxyPort = await initToolProxyServer({
+    presentApprovalRequest: presentToolApprovalRequest,
+  });
   registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort, toolProxyPort);
   // Stop managed and orphan containers before reading legacy session files.

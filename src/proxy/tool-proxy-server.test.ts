@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { ToolApprovalRequest } from "./tool-approval.js";
 import {
   activeToolProxyRunCount,
   createToolProxyRequestHandler,
@@ -30,11 +31,12 @@ function request(
   authorization: string | undefined,
   body: unknown,
   contentType = "application/json",
+  requestPort = port,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
-        port,
+        port: requestPort,
         path: "/__tool-proxy/rpc",
         method: "POST",
         headers: {
@@ -113,10 +115,23 @@ async function close(server: http.Server): Promise<void> {
   });
 }
 
-function run(capabilities: string[] = ["get-current-weather"]) {
+function run(
+  capabilities: string[] = ["get-current-weather"],
+  approvalRequiredCapabilities: string[] = [],
+  withDiscordDestination = false,
+) {
   const config = createToolProxyRun({
     runId: "test-run",
     allowedCapabilities: capabilities,
+    approvalRequiredCapabilities,
+    ...(withDiscordDestination
+      ? {
+          trustedDiscordDestination: {
+            botId: "personal",
+            channelId: "channel-1",
+          },
+        }
+      : {}),
   });
   if (!config) throw new Error("Tool Proxy was not initialized");
   return config;
@@ -580,5 +595,289 @@ describe("Tool Proxy RPC", () => {
     });
     expect(response.status).toBe(401);
     expect(activeToolProxyRunCount()).toBe(0);
+  });
+});
+
+describe("Tool Proxy approval gate", () => {
+  async function setupServer(
+    presentApprovalRequest: (request: ToolApprovalRequest) => Promise<void>,
+  ): Promise<{ server: http.Server; port: number }> {
+    const server = http.createServer(
+      createToolProxyRequestHandler({ presentApprovalRequest }),
+    );
+    return { server, port: await listen(server) };
+  }
+
+  it("keeps non-approval capabilities on the direct execution path", async () => {
+    const presenter = vi.fn();
+    const { server, port: requestPort } = await setupServer(presenter);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => geocoding })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          current: {
+            time: "2026-06-13T12:00",
+            temperature_2m: 25.4,
+            apparent_temperature: 27.1,
+            relative_humidity_2m: 60,
+            wind_speed_10m: 5.2,
+            weather_code: 1,
+          },
+          current_units: {
+            temperature_2m: "°C",
+            apparent_temperature: "°C",
+            relative_humidity_2m: "%",
+            wind_speed_10m: "km/h",
+          },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run();
+    try {
+      const response = await request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-current-weather",
+          args: { location: "東京" },
+        },
+        "application/json",
+        requestPort,
+      );
+
+      expect(response.status).toBe(200);
+      expect(presenter).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("executes the same canonical materialized invocation after the first approval wins", async () => {
+    let presentedRequest: ToolApprovalRequest | undefined;
+    const presenter = vi.fn(async (approvalRequest: ToolApprovalRequest) => {
+      presentedRequest = approvalRequest;
+      const approval = approvalRequest.claim("approve");
+      expect(approval).toBeDefined();
+      expect(approvalRequest.claim("deny")).toBeUndefined();
+      approval?.completeUiUpdate();
+    });
+    const { server, port: requestPort } = await setupServer(presenter);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => geocoding })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          daily: {
+            time: [],
+            temperature_2m_max: [],
+            temperature_2m_min: [],
+            precipitation_probability_max: [],
+            weather_code: [],
+          },
+          daily_units: {},
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(
+      ["get-weather-forecast"],
+      ["get-weather-forecast"],
+      true,
+    );
+    try {
+      const response = await request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-weather-forecast",
+          args: { location: "東京", days: 10, ignored: "wire-only" },
+        },
+        "application/json",
+        requestPort,
+      );
+
+      expect(response.status).toBe(200);
+      expect(presentedRequest?.invocation.args.value).toEqual({
+        location: "東京",
+        days: 7,
+      });
+      expect(
+        (response.payload.result as { details: { days: number } }).details.days,
+      ).toBe(7);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining("forecast_days=7"),
+      );
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("does not execute after denial", async () => {
+    const presenter = vi.fn(async (approvalRequest: ToolApprovalRequest) => {
+      approvalRequest.claim("deny")?.completeUiUpdate();
+    });
+    const { server, port: requestPort } = await setupServer(presenter);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["get-current-weather"], ["get-current-weather"], true);
+    try {
+      const response = await request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-current-weather",
+          args: { location: "東京" },
+        },
+        "application/json",
+        requestPort,
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.payload.error).toBe(
+        "Tool approval denied: get-current-weather",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it.each([
+    [
+      "presentation failure",
+      async () => {
+        throw new Error("private Discord failure");
+      },
+    ],
+    [
+      "Discord update failure",
+      async (approvalRequest: ToolApprovalRequest) => {
+        approvalRequest
+          .claim("approve")
+          ?.failUiUpdate(new Error("private Discord update failure"));
+      },
+    ],
+  ])("fails closed on %s without leaking adapter errors", async (_name, presenter) => {
+    const { server, port: requestPort } = await setupServer(presenter);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["get-current-weather"], ["get-current-weather"], true);
+    try {
+      const response = await request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-current-weather",
+          args: { location: "東京" },
+        },
+        "application/json",
+        requestPort,
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.payload.error).toBe(
+        "Tool approval failed: get-current-weather",
+      );
+      expect(JSON.stringify(response.payload)).not.toContain("private");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("fails closed when approval has no trusted Discord destination", async () => {
+    const presenter = vi.fn();
+    const { server, port: requestPort } = await setupServer(presenter);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["get-current-weather"], ["get-current-weather"]);
+    try {
+      const response = await request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-current-weather",
+          args: { location: "東京" },
+        },
+        "application/json",
+        requestPort,
+      );
+
+      expect(response.status).toBe(403);
+      expect(presenter).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("stops waiting and executing when the run is revoked", async () => {
+    let presented!: () => void;
+    const presentationStarted = new Promise<void>((resolve) => {
+      presented = resolve;
+    });
+    const presenter = vi.fn(async () => {
+      presented();
+    });
+    const { server, port: requestPort } = await setupServer(presenter);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const config = run(["get-current-weather"], ["get-current-weather"], true);
+    try {
+      const pendingResponse = request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-current-weather",
+          args: { location: "東京" },
+        },
+        "application/json",
+        requestPort,
+      );
+      await presentationStarted;
+      config.revoke();
+
+      await expect(pendingResponse).resolves.toMatchObject({
+        status: 401,
+        payload: { error: "Unknown or expired run token" },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
+  });
+
+  it("rechecks run authority after approval before execution", async () => {
+    let config!: ReturnType<typeof run>;
+    const presenter = vi.fn(async (approvalRequest: ToolApprovalRequest) => {
+      approvalRequest.claim("approve")?.completeUiUpdate();
+      config.revoke();
+    });
+    const { server, port: requestPort } = await setupServer(presenter);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    config = run(["get-current-weather"], ["get-current-weather"], true);
+    try {
+      const response = await request(
+        `Bearer ${config.token}`,
+        {
+          capability: "get-current-weather",
+          args: { location: "東京" },
+        },
+        "application/json",
+        requestPort,
+      );
+
+      expect(response.status).toBe(401);
+      expect(response.payload.error).toBe("Unknown or expired run token");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      config.revoke();
+      await close(server);
+    }
   });
 });

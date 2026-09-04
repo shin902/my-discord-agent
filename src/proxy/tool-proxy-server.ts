@@ -4,6 +4,10 @@ import * as http from "node:http";
 import { materializeCapabilityArgs } from "../tools/capability.js";
 import { getCapabilityDefinition } from "../tools/registry.js";
 import {
+  createToolApprovalRequest,
+  type ToolApprovalRequest,
+} from "./tool-approval.js";
+import {
   createToolProxyRunAuthority,
   type ToolProxyRunAuthorityInput,
   type ToolProxyRunAuthoritySnapshot,
@@ -125,9 +129,43 @@ function isRequest(value: unknown): value is {
   );
 }
 
-interface ToolProxyRequestHandlerOptions {
+export type ToolApprovalPresenter = (
+  request: ToolApprovalRequest,
+) => Promise<void>;
+
+export interface ToolProxyRequestHandlerOptions {
   /** Test synchronization point after authentication and body listeners are ready. */
   onBodyReadReady?: () => void;
+  /** Application adapter for presenting approval without coupling Proxy to Discord. */
+  presentApprovalRequest?: ToolApprovalPresenter;
+}
+
+function hasCurrentRunAuthority(
+  token: string,
+  run: ToolProxyRun,
+  capability: string,
+): boolean {
+  const current = runs.get(token);
+  return (
+    current === run &&
+    current.authority === run.authority &&
+    !run.authority.revokeSignal.aborted &&
+    run.authority.allowedCapabilities.has(capability) &&
+    run.authority.approvalRequiredCapabilities.has(capability)
+  );
+}
+
+function sendApprovalFailure(
+  res: ServerResponse,
+  token: string,
+  run: ToolProxyRun,
+  capability: string,
+): void {
+  if (runs.get(token) !== run || run.authority.revokeSignal.aborted) {
+    sendJson(res, 401, { error: "Unknown or expired run token" });
+    return;
+  }
+  sendJson(res, 403, { error: `Tool approval failed: ${capability}` });
 }
 
 async function executeRequest(
@@ -207,6 +245,38 @@ async function executeRequest(
     return;
   }
   const effectiveArgs = materializeCapabilityArgs(capability, body.args);
+  let executionArgs = effectiveArgs;
+
+  if (run.authority.approvalRequiredCapabilities.has(body.capability)) {
+    let approvalRequest: ToolApprovalRequest;
+    try {
+      approvalRequest = createToolApprovalRequest(
+        run.authority,
+        body.capability,
+        effectiveArgs,
+      );
+      if (!options.presentApprovalRequest) {
+        throw new Error("Tool approval presenter is unavailable");
+      }
+      await options.presentApprovalRequest(approvalRequest);
+      const decision = await approvalRequest.waitForDecision();
+      if (decision !== "approved") {
+        sendJson(res, 403, {
+          error: `Tool approval denied: ${body.capability}`,
+        });
+        return;
+      }
+    } catch {
+      sendApprovalFailure(res, token, run, body.capability);
+      return;
+    }
+
+    if (!hasCurrentRunAuthority(token, run, body.capability)) {
+      sendJson(res, 401, { error: "Unknown or expired run token" });
+      return;
+    }
+    executionArgs = approvalRequest.invocation.args.value;
+  }
 
   const tool = capability.factory();
   if (!tool) {
@@ -216,7 +286,7 @@ async function executeRequest(
     return;
   }
   try {
-    const result = await tool.execute("tool-proxy", effectiveArgs);
+    const result = await tool.execute("tool-proxy", executionArgs);
     sendJson(res, 200, { result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -235,9 +305,11 @@ export function createToolProxyRequestHandler(
   };
 }
 
-export async function initToolProxyServer(): Promise<number> {
+export async function initToolProxyServer(
+  options: ToolProxyRequestHandlerOptions = {},
+): Promise<number> {
   if (toolProxyPort !== null) return toolProxyPort;
-  const server = http.createServer(createToolProxyRequestHandler());
+  const server = http.createServer(createToolProxyRequestHandler(options));
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);
     server.listen(0, "0.0.0.0", () => {
