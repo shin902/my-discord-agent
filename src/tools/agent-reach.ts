@@ -1,5 +1,5 @@
 import { lookup as dnsLookup } from "node:dns/promises";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1169,7 +1169,7 @@ export function buildCommand(
   service: ServiceType,
   url: string,
   outAbsPath: string,
-  redditCookieHeader?: string,
+  redditCookieFile?: string,
 ): string {
   const out = shellQuote(outAbsPath);
   switch (service) {
@@ -1219,8 +1219,11 @@ export function buildCommand(
         ? pathname
         : `${pathname}.json`;
       const redditUrl = `https://www.reddit.com${jsonPath}${parsed.search}`;
-      const cookie = redditCookieHeader
-        ? ` -H ${shellQuote(`Cookie: ${redditCookieHeader}`)}`
+      // Pass the cookie through curl's protected header-file form. The secret
+      // must never appear in this command string or in a child argv, because
+      // command failures are surfaced to the Agent.
+      const cookie = redditCookieFile
+        ? ` -H ${shellQuote(`@${redditCookieFile}`)}`
         : "";
       return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(redditUrl)} -H ${shellQuote(`User-Agent: ${REDDIT_USER_AGENT}`)}${cookie}`;
     }
@@ -1355,11 +1358,21 @@ export const agentReachTool: AgentTool<typeof parameters> = {
               maxAgeDays: Number(process.env.REDDIT_COOKIE_MAX_AGE_DAYS ?? 7),
             })
           : undefined;
+      const redditCookieFile =
+        redditCookieHeader === undefined
+          ? undefined
+          : join(tmpDirAbs, "reddit-cookie.header");
+      if (redditCookieFile) {
+        await writeFile(redditCookieFile, `Cookie: ${redditCookieHeader}\n`, {
+          encoding: "utf-8",
+          mode: 0o600,
+        });
+      }
       const cmd = buildCommand(
         service,
         normalizedUrl,
         absPath,
-        redditCookieHeader,
+        redditCookieFile,
       );
       let stdout: string;
       try {
@@ -1372,10 +1385,14 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         }));
       } catch (err) {
         const e = err as { stdout?: string; stderr?: string; message?: string };
-        throw new Error(
-          [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
-            "フェッチ失敗",
-        );
+        const details = [e.stdout, e.stderr, e.message]
+          .filter(Boolean)
+          .join("\n")
+          // Do not let a misbehaving child echo the secret or runtime path.
+          .replaceAll(redditCookieHeader ?? "\u0000", "[redacted]")
+          .replaceAll(tmpDirAbs, "[temporary directory]")
+          .trim();
+        throw new Error(details || "フェッチ失敗");
       }
 
       if (HTTP_STATUS_SERVICES.has(service)) {

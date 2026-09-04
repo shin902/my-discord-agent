@@ -288,14 +288,16 @@ describe("buildCommand シェルエスケープ", () => {
       expect(cmd).toContain("'\\''");
     });
 
-    it("runtime内cookieをcurlへ渡す", () => {
+    it("runtime内cookieは保護されたheader file pathだけをcurlへ渡す", () => {
+      const cookieFile = "/tmp/agent-reach/reddit-cookie.header";
       const cmd = buildCommand(
         "reddit",
         "https://www.reddit.com/r/programming/comments/abc/",
         out,
-        "reddit_session=secret",
+        cookieFile,
       );
-      expect(cmd).toContain("Cookie: reddit_session=secret");
+      expect(cmd).toContain("@/tmp/agent-reach/reddit-cookie.header");
+      expect(cmd).not.toContain("Cookie:");
       expect(cmd).not.toContain("CREDENTIAL_PROXY_JSON");
     });
   });

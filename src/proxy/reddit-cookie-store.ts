@@ -23,9 +23,9 @@ export class RedditCookieStaleError extends Error {
 }
 
 export class RedditCookieMissingError extends Error {
-  constructor(provider: string, cookieFile: string) {
+  constructor(provider: string, _cookieFile: string) {
     super(
-      `reddit cookie ファイルが見つかりません (provider: ${provider}, path: ${cookieFile})。scripts/reddit-cookie-login.ts で初回ログインを行ってください`,
+      `reddit cookie ファイルが見つかりません (provider: ${provider})。scripts/reddit-cookie-login.ts で初回ログインを行ってください`,
     );
     this.name = "RedditCookieMissingError";
   }

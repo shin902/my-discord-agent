@@ -15,8 +15,10 @@ function abortError(): Error {
   return error;
 }
 
-function commandFailure(command: string): Error {
-  return new Error(`Command failed: ${command}`);
+function commandFailure(): Error {
+  // Commands can contain protected file paths (and, for callers outside this
+  // module, potentially secrets). Never expose the command text in errors.
+  return new Error("Command failed");
 }
 
 /**
@@ -127,7 +129,7 @@ export function execAsync(
         Object.assign(error, { stdout, stderr });
         reject(error);
       } else if (child.signalCode !== null || child.exitCode !== 0) {
-        const failure = commandFailure(command) as Error & {
+        const failure = commandFailure() as Error & {
           code?: number;
           signal?: NodeJS.Signals;
           killed?: boolean;
@@ -174,7 +176,7 @@ export function execAsync(
     child.once("close", maybeSettle);
 
     timeoutTimer = setTimeout(() => {
-      const error = commandFailure(command) as Error & {
+      const error = commandFailure() as Error & {
         killed?: boolean;
         signal?: NodeJS.Signals;
       };
