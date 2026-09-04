@@ -1884,6 +1884,31 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+  it("does not send a queued shadow job when Agent Memory is disabled", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const msg = makeMsg({
+      memoryShadow: {
+        scope: {
+          teamId: "team",
+          agentId: "agent",
+          userId: "discord-user-1",
+          sessionId: "discord-session-1",
+        },
+        messages: [
+          { role: "user", content: "hello", timestamp: msgTimestamp() },
+          { role: "assistant", content: "hi", timestamp: msgTimestamp() },
+        ],
+      },
+    });
+
+    await processMessage(msg);
+
+    expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
+      suppressDelivery: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("skips a queued shadow job when its group is no longer eligible", async () => {
     loadAgentMemoryConfig.mockResolvedValue({
       enabled: true,
@@ -1919,7 +1944,7 @@ describe("processMessage - durable result", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("uses the process-lifetime config without admission revalidation", async () => {
+  it("sends an eligible queued shadow job without channel mapping revalidation", async () => {
     loadAgentMemoryConfig.mockResolvedValue({
       enabled: true,
       baseUrl: "http://127.0.0.1:8420",
@@ -1929,6 +1954,7 @@ describe("processMessage - durable result", () => {
       eligibleGroups: ["default"],
       timeoutMs: 1000,
     });
+    findGroupByChannelId.mockResolvedValue(null);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ code: 0, data: { total_count: 2 } }), {
         status: 200,
@@ -1953,7 +1979,7 @@ describe("processMessage - durable result", () => {
     await processMessage(msg);
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(findGroupByChannelId).toHaveBeenCalledWith("ch-1");
+    expect(findGroupByChannelId).not.toHaveBeenCalled();
     expect(commitInboxResult).toHaveBeenCalledWith(msg.id, 4, "", {
       suppressDelivery: true,
     });

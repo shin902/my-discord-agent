@@ -17,7 +17,6 @@ import { resolveModelConfig } from "../config/default-model.js";
 import { loadGroupSystemPrompt } from "../config/group-config.js";
 import {
   type AgentConfig,
-  findGroupByChannelId,
   findGroupByName,
   type GroupConfig,
   type ModelConfig,
@@ -302,13 +301,7 @@ async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
   if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
   try {
     const config = await loadAgentMemoryConfig();
-    const routingChannelId = msg.routingChannelId ?? msg.channelId;
-    const currentMapping = await findGroupByChannelId(routingChannelId);
-    if (
-      !config.enabled ||
-      !config.eligibleGroups.includes(msg.groupName) ||
-      currentMapping?.group.name !== msg.groupName
-    ) {
+    if (!config.enabled || !config.eligibleGroups.includes(msg.groupName)) {
       console.log(
         `[agent-memory] shadow job skipped (disabled/not eligible): ${msg.id}`,
       );

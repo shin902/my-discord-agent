@@ -61,7 +61,7 @@ runtime.sqlite: shadow job
   ▼
 queue/poller.ts: memory branch
   │
-  │  cached config・group mappingでenabled/eligibleを確認
+  │  cached configでenabled・eligibleGroupsを確認
   └─ eligible         → AgentMemoryClient.addConversation
                               │
                               ▼
@@ -90,7 +90,7 @@ Agent Memoryのruntime configとgroup mappingはcached loaderから読み込み�
 
 ### 3. execution
 
-shadow jobをclaimした`processMemoryShadowJob()`はcached configで`enabled`と`eligibleGroups`だけを確認し、対象なら`AgentMemoryClient.addConversation()`を呼ぶ。scopeはsubmission payloadとして維持し、Bearer tokenは送信時にselectorの環境変数から読む。設定不一致のhot revocationを理由に実行時fresh readや送信抑止は行わない。
+shadow jobをclaimした`processMemoryShadowJob()`のexecution gateは、cached configの`enabled`と`eligibleGroups.includes(msg.groupName)`だけである。`groupName`はintake時に確定済みであり、`routingChannelId`からchannel mappingを再確認しない。対象なら`AgentMemoryClient.addConversation()`を呼ぶ。scopeはsubmission payloadとして維持し、Bearer tokenは送信時にselectorの環境変数から読む。設定不一致のhot revocationを理由に実行時fresh readや送信抑止は行わない。
 
 ## persisted payload
 
@@ -255,7 +255,7 @@ memory shadow jobは専用tableではなく、既存`jobs.payload_json`のoption
 
 ### config変更はrestartで反映する
 
-endpointやscopeを変更しても、process lifetime中はpending jobの送信時にfresh readや世代比較を行わない。設定変更を反映するにはrestartする。再起動後に未完了jobを現行設定で処理するか、`enabled` / `eligibleGroups` によりskipするかはcached configの値に従う。
+endpointやscopeを変更しても、process lifetime中はpending jobの送信時にfresh readや世代比較を行わない。設定変更を反映するにはrestartする。再起動後はpersisted shadow payloadとrestart後にcachedされた設定が共存し、設定世代を完全にはモデル化しないため、未完了jobは現行プロセスの設定で処理されるか、`enabled` / `eligibleGroups` によりskipされる。channel mappingの変更だけではpending shadow jobをskipしない。このtrade-offの根本解決（canonical trajectoryからcurrent configでexportし、disposable ledgerを使う設計）は将来のDEC-0087へ送り、今回は実装しない。
 
 ### backfill・edit/delete
 

@@ -122,11 +122,13 @@ shadow jobは、通常Agentの最終回答が完成した後に作る。source r
 
 ## 対象判定と設定のライフタイム
 
-対象判定はintake時とAgent回答完了時に行います。Agent Memory設定とgroup mappingはcached loaderから読み込まれ、process lifetime中はfresh readしません。設定変更、eligible group変更、channel mapping変更を反映するにはmy-discord-agentをrestartしてください。稼働中のhot reload / hot revocation / config rotation検知は保証しません。
+対象判定はintake時とAgent回答完了時に行います。Agent Memory設定とgroup mappingはcached loaderから読み込まれ、process lifetime中はfresh readしません。shadow executionのgateはcached configの`enabled`と`eligibleGroups.includes(msg.groupName)`だけで、`routingChannelId`からchannel mappingを再確認しません。設定変更、eligible group変更、channel mapping変更を反映するにはmy-discord-agentをrestartしてください。稼働中のhot reload / hot revocation / config rotation検知は保証しません。
 
 intakeでeligibleなら後続のcaptureに必要なDiscord user IDをqueue payloadへ保持します。回答完了時に同じprocess-lifetime設定でeligible、ユーザー本文と最終回答が非空ならshadow jobを作ります。各段階のconfig readやeligibility確認に失敗しても通常Discord応答は継続し、shadow captureだけを諦めます。
 
 `bearerTokenEnv` はselector名だけを設定・保持し、token値は送信時に環境変数から読みます。`enabled`、`eligibleGroups`、Bearer token、scopeの契約は維持します。
+
+process restart後はpersisted shadow payloadとrestart後cached configが共存し、設定世代を完全にはモデル化しません。canonical trajectoryからcurrent configでexportするdisposable ledgerへの移行は将来のDEC-0087に送り、今回は実装しません。
 
 ## 失敗・再試行・重複
 
