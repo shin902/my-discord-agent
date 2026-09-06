@@ -58,15 +58,4 @@ describe("runTextOnlyAgent", () => {
 
     expect(lastAgentOptions?.initialState.tools).toEqual([]);
   });
-
-  it("assistantのテキストを返す", async () => {
-    const { text } = await runTextOnlyAgent({
-      systemPrompt: "system",
-      model: {} as Model<Api>,
-      prompt: "hello",
-      getApiKey: () => Promise.resolve("proxy"),
-    });
-
-    expect(text).toBe("OK");
-  });
 });

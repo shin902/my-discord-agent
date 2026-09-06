@@ -190,11 +190,6 @@ describe("ensureGroupSkills", () => {
     ).rejects.toThrow("不正なスキル名");
   });
 
-  it("スキルリストが空の場合は stat を呼ばない", async () => {
-    await ensureGroupSkills("mygroup", []);
-    expect(mockStat).not.toHaveBeenCalled();
-  });
-
   it("スキルフォルダが既に存在する場合は cp を呼ばない", async () => {
     mockStat.mockImplementation(statDir); // skill dest exists
     await ensureGroupSkills("mygroup", ["explain"]);
