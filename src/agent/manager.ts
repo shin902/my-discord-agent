@@ -5,7 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
-import { validateAgentConfig } from "../config/agent-validation.js";
+import {
+  validateAgentConfig,
+  validateApprovalRequiredTools,
+} from "../config/agent-validation.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -16,7 +19,10 @@ import {
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
-import { createToolProxyRun } from "../proxy/tool-proxy-server.js";
+import {
+  createToolProxyRun,
+  type TrustedDiscordDestination,
+} from "../proxy/tool-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { hostCapabilityNames, resolveTools } from "../tools/registry.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
@@ -581,6 +587,7 @@ export interface SendMessageOptions {
   onContainerStarted?: () => void | Promise<void>;
   signal?: AbortSignal;
   configOverride?: Partial<AgentConfig>;
+  trustedDiscordDestination?: TrustedDiscordDestination;
   systemPromptSnapshotContent?: string;
   systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
@@ -648,6 +655,7 @@ export async function sendMessage(
     systemPromptAppend,
     enableBotTool,
     heldLlmProvider,
+    trustedDiscordDestination,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -667,7 +675,8 @@ export async function sendMessage(
   }
 
   try {
-    resolveTools(effectiveConfig.tools ?? []);
+    resolveTools(effectiveConfig.tools);
+    validateApprovalRequiredTools(effectiveConfig);
   } catch (err) {
     throw new NonRetryableError(
       `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
@@ -758,7 +767,11 @@ export async function sendMessage(
   const agentTimeoutMs = await loadAgentTimeoutMs();
   const internalRequest =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
-      ? createInternalRequestConfig?.(groupName, heldLlmProvider)
+      ? createInternalRequestConfig?.(
+          groupName,
+          heldLlmProvider,
+          trustedDiscordDestination,
+        )
       : undefined;
   const hostCapabilities = hostCapabilityNames(effectiveConfig.tools ?? []);
   const toolProxyRun =
@@ -767,6 +780,11 @@ export async function sendMessage(
       : createToolProxyRun(
           `${groupName}:${sessionId}:${randomUUID()}`,
           hostCapabilities,
+          {
+            approvalRequiredCapabilities:
+              effectiveConfig.approvalRequiredTools ?? [],
+            trustedDiscordDestination,
+          },
         );
   // Skill shell commands receive a separate least-privileged authority rather
   // than the run token that exposes all selected host capabilities.

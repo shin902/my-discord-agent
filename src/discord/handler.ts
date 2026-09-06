@@ -30,8 +30,5 @@ export function registerHandlers(
   );
 
   const routeInteraction = createDiscordInteractionRouter(discordBotId);
-  client.on(Events.InteractionCreate, (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
-    routeInteraction(interaction);
-  });
+  client.on(Events.InteractionCreate, routeInteraction);
 }

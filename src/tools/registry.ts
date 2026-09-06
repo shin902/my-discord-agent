@@ -16,6 +16,7 @@ import {
   type CapabilityDefinition,
   type CapabilityDispatchContext,
   dispatchCapability,
+  materializeToolArgs,
   validateToolArgs,
 } from "./capability.js";
 import { dateTool } from "./date.js";
@@ -87,15 +88,27 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
     value.topic === "news" ||
     value.topic === "finance");
 
+interface HostCapabilityOptions {
+  readonly validateArgs?: CapabilityArgsValidator;
+  readonly clampedProperties?: readonly string[];
+  readonly defaultArgs?: () => Readonly<Record<string, unknown>>;
+}
+
 function hostCapability(
   tool: AgentTool,
-  clampedMaximumProperties: readonly string[] = [],
+  options: HostCapabilityOptions = {},
 ): CapabilityDefinition {
+  const clampedProperties = options.clampedProperties ?? [];
   return {
     tool: tool.name,
     executor: "host",
     factory: () => tool,
-    validateArgs: validateToolArgs(tool, clampedMaximumProperties),
+    validateArgs:
+      options.validateArgs ?? validateToolArgs(tool, clampedProperties),
+    materializeArgs: materializeToolArgs(tool, {
+      defaultArgs: options.defaultArgs,
+      clampedProperties,
+    }),
   };
 }
 
@@ -105,42 +118,71 @@ const CAPABILITIES = {
     executor: "sandbox",
     factory: createStaticToolFactory(dateTool),
   },
-  "get-current-weather": {
-    tool: "get-current-weather",
-    executor: "host",
-    factory: () => getCurrentWeatherTool,
+  "get-current-weather": hostCapability(getCurrentWeatherTool, {
     validateArgs: currentWeatherArgsValidator,
-  },
-  "get-weather-forecast": {
-    tool: "get-weather-forecast",
-    executor: "host",
-    factory: () => getWeatherForecastTool,
+  }),
+  "get-weather-forecast": hostCapability(getWeatherForecastTool, {
     validateArgs: weatherForecastArgsValidator,
-  },
-  "tavily-search": {
-    tool: "tavily-search",
-    executor: "host",
-    // Host results cross the Tool Proxy as raw data; the sandbox-side thin
-    // proxy applies the common output boundary after receiving them.
-    factory: () => tavilySearchTool,
+    clampedProperties: ["days"],
+    defaultArgs: () => ({ days: 3 }),
+  }),
+  // Host results cross the Tool Proxy as raw data; the sandbox-side thin
+  // proxy applies the common output boundary after receiving them.
+  "tavily-search": hostCapability(tavilySearchTool, {
     validateArgs: tavilySearchArgsValidator,
-  },
-  "arxiv-search": hostCapability(arxivSearchTool, ["max_results"]),
-  "arxiv-survey": hostCapability(arxivSurveyTool, ["max_results"]),
-  "list-issues": hostCapability(listIssuesTool, ["limit"]),
+    clampedProperties: ["max_results"],
+    defaultArgs: () => ({
+      max_results: 5,
+      search_depth: "basic",
+      include_answer: true,
+      topic: "general",
+    }),
+  }),
+  "arxiv-search": hostCapability(arxivSearchTool, {
+    clampedProperties: ["max_results"],
+    defaultArgs: () => ({ max_results: 10, sort: "relevance" }),
+  }),
+  "arxiv-survey": hostCapability(arxivSurveyTool, {
+    clampedProperties: ["max_results"],
+    defaultArgs: () => ({ max_results: 30, sort: "submitted" }),
+  }),
+  "list-issues": hostCapability(listIssuesTool, {
+    clampedProperties: ["limit"],
+    defaultArgs: () => ({ state: "open", limit: 10 }),
+  }),
   "read-issue": hostCapability(readIssueTool),
   "list-issue-comments": hostCapability(listIssueCommentsTool),
   "read-pull-request": hostCapability(readPullRequestTool),
   "list-pull-request-comments": hostCapability(listPullRequestCommentsTool),
   "comment-issue": hostCapability(commentIssueTool),
-  "list-emails": hostCapability(listEmailsTool, ["limit"]),
-  "read-email": hostCapability(readEmailTool),
+  "list-emails": hostCapability(listEmailsTool, {
+    clampedProperties: ["limit"],
+    defaultArgs: () => ({ limit: 10, folder: "inbox", unreadOnly: false }),
+  }),
+  "read-email": hostCapability(readEmailTool, {
+    defaultArgs: () => ({ markAsRead: true }),
+  }),
   "list-calendars": hostCapability(listCalendarsTool),
-  "list-events": hostCapability(listEventsTool, ["maxResults"]),
-  "read-event": hostCapability(readEventTool),
-  "create-event": hostCapability(createEventTool),
-  "update-event": hostCapability(updateEventTool),
-  "delete-event": hostCapability(deleteEventTool),
+  "list-events": hostCapability(listEventsTool, {
+    clampedProperties: ["maxResults"],
+    defaultArgs: () => ({
+      timeMin: new Date().toISOString(),
+      maxResults: 10,
+      calendarId: "primary",
+    }),
+  }),
+  "read-event": hostCapability(readEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
+  "create-event": hostCapability(createEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
+  "update-event": hostCapability(updateEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
+  "delete-event": hostCapability(deleteEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
   "agent-reach": hostCapability(agentReachCapabilityTool),
 } satisfies Record<string, CapabilityDefinition>;
 

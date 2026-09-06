@@ -1,6 +1,7 @@
-import type { ChatInputCommandInteraction } from "discord.js";
+import type { ChatInputCommandInteraction, Interaction } from "discord.js";
 import type { DiscordCommandContext } from "./command-contract.js";
 import { getDiscordCommand } from "./command-registry.js";
+import { routeToolApprovalInteraction } from "./tool-approval.js";
 
 const UNEXPECTED_ERROR_MESSAGE =
   "コマンドの処理中に予期しないエラーが発生しました。";
@@ -38,8 +39,20 @@ async function replyToUnexpectedError(
 /** Build the listener used by each Discord client. */
 export function createDiscordInteractionRouter(
   discordBotId: string,
-): (interaction: ChatInputCommandInteraction) => void {
+): (interaction: Interaction) => void {
   return (interaction) => {
+    if (interaction.isButton()) {
+      void routeToolApprovalInteraction(interaction, discordBotId).catch(
+        (error) => {
+          console.error(
+            "[handler] tool approval interaction routing failed:",
+            error,
+          );
+        },
+      );
+      return;
+    }
+    if (!interaction.isChatInputCommand()) return;
     void routeDiscordInteraction(interaction, { discordBotId }).catch(
       async (error) => {
         await replyToUnexpectedError(interaction);

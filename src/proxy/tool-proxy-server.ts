@@ -1,18 +1,31 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
+import { materializeCapabilityArgs } from "../tools/capability.js";
 import { getCapabilityDefinition } from "../tools/registry.js";
+import {
+  createToolApprovalRequest,
+  type ToolApprovalRequest,
+} from "./tool-approval.js";
 
 export const TOOL_PROXY_PATH = "/__tool-proxy/rpc";
 // Keep enough room for large Calendar descriptions and recurrence rules while
 // retaining a finite limit against accidentally unbounded request bodies.
 export const TOOL_PROXY_BODY_LIMIT = 1024 * 1024;
-type ToolProxyRun = {
-  runId: string;
-  allowedCapabilities: ReadonlySet<string>;
-};
+export interface TrustedDiscordDestination {
+  readonly botId: string;
+  readonly channelId: string;
+}
 
-const runs = new Map<string, ToolProxyRun>();
+type ToolProxyRunSnapshot = Readonly<{
+  runId: string;
+  allowedCapabilities: readonly string[];
+  approvalRequiredCapabilities: readonly string[];
+  trustedDiscordDestination: TrustedDiscordDestination | undefined;
+  revokeSignal: AbortSignal;
+}>;
+
+const runs = new Map<string, ToolProxyRunSnapshot>();
 let toolProxyPort: number | null = null;
 
 export interface ToolProxyRunConfig {
@@ -25,18 +38,43 @@ export interface ToolProxyRunConfig {
 export function createToolProxyRun(
   runId: string,
   allowedCapabilities: Iterable<string>,
+  options: {
+    approvalRequiredCapabilities?: Iterable<string>;
+    trustedDiscordDestination?: TrustedDiscordDestination;
+  } = {},
 ): ToolProxyRunConfig | undefined {
   if (toolProxyPort === null) return undefined;
-  const token = randomBytes(32).toString("base64url");
-  runs.set(token, {
+
+  const allowed = Object.freeze([...allowedCapabilities]);
+  const approvalRequired = Object.freeze([
+    ...(options.approvalRequiredCapabilities ?? []),
+  ]);
+  for (const capability of approvalRequired) {
+    if (!allowed.includes(capability)) {
+      throw new Error(
+        `Approval-required capability is not allowed for this run: ${capability}`,
+      );
+    }
+  }
+
+  const controller = new AbortController();
+  const snapshot = Object.freeze({
     runId,
-    allowedCapabilities: new Set(allowedCapabilities),
+    allowedCapabilities: allowed,
+    approvalRequiredCapabilities: approvalRequired,
+    trustedDiscordDestination: options.trustedDiscordDestination
+      ? Object.freeze({ ...options.trustedDiscordDestination })
+      : undefined,
+    revokeSignal: controller.signal,
   });
+  const token = randomBytes(32).toString("base64url");
+  runs.set(token, snapshot);
   let revoked = false;
   const revoke = (): void => {
     if (revoked) return;
     revoked = true;
     runs.delete(token);
+    controller.abort(new Error("Run authority revoked"));
   };
   return {
     url: `http://host.docker.internal:${toolProxyPort}${TOOL_PROXY_PATH}`,
@@ -119,9 +157,41 @@ function isRequest(value: unknown): value is {
   );
 }
 
-interface ToolProxyRequestHandlerOptions {
+export type ToolApprovalPresenter = (
+  request: ToolApprovalRequest,
+) => Promise<void>;
+
+export interface ToolProxyRequestHandlerOptions {
   /** Test synchronization point after authentication and body listeners are ready. */
   onBodyReadReady?: () => void;
+  /** Application adapter for presenting approval without coupling Proxy to Discord. */
+  presentApprovalRequest?: ToolApprovalPresenter;
+}
+
+function runIsCurrent(
+  token: string,
+  run: ToolProxyRunSnapshot,
+  capability: string,
+): boolean {
+  return (
+    runs.get(token) === run &&
+    !run.revokeSignal.aborted &&
+    run.allowedCapabilities.includes(capability) &&
+    run.approvalRequiredCapabilities.includes(capability)
+  );
+}
+
+function approvalFailure(
+  res: ServerResponse,
+  token: string,
+  run: ToolProxyRunSnapshot,
+  capability: string,
+): void {
+  if (runs.get(token) !== run || run.revokeSignal.aborted) {
+    sendJson(res, 401, { error: "Unknown or expired run token" });
+    return;
+  }
+  sendJson(res, 403, { error: `Tool approval failed: ${capability}` });
 }
 
 async function executeRequest(
@@ -188,7 +258,7 @@ async function executeRequest(
     });
     return;
   }
-  if (!run.allowedCapabilities.has(body.capability)) {
+  if (!run.allowedCapabilities.includes(body.capability)) {
     sendJson(res, 403, {
       error: `Capability is not authorized: ${body.capability}`,
     });
@@ -199,6 +269,44 @@ async function executeRequest(
       error: `Invalid arguments for capability: ${body.capability}`,
     });
     return;
+  }
+  const effectiveArgs = materializeCapabilityArgs(capability, body.args);
+  let executionArgs = effectiveArgs;
+
+  if (run.approvalRequiredCapabilities.includes(body.capability)) {
+    if (!run.trustedDiscordDestination || !options.presentApprovalRequest) {
+      approvalFailure(res, token, run, body.capability);
+      return;
+    }
+
+    let approvalRequest: ToolApprovalRequest | undefined;
+    try {
+      approvalRequest = createToolApprovalRequest(
+        {
+          runId: run.runId,
+          capability: body.capability,
+          trustedDiscordDestination: run.trustedDiscordDestination,
+          revokeSignal: run.revokeSignal,
+        },
+        effectiveArgs,
+      );
+      await options.presentApprovalRequest(approvalRequest);
+      const decision = await approvalRequest.waitForDecision();
+      if (decision !== "approved") {
+        approvalFailure(res, token, run, body.capability);
+        return;
+      }
+    } catch (error) {
+      approvalRequest?.claim("deny")?.failUiUpdate(error);
+      approvalFailure(res, token, run, body.capability);
+      return;
+    }
+
+    if (!runIsCurrent(token, run, body.capability)) {
+      sendJson(res, 401, { error: "Unknown or expired run token" });
+      return;
+    }
+    executionArgs = approvalRequest.invocation.args.value;
   }
 
   const tool = capability.factory();
@@ -217,7 +325,7 @@ async function executeRequest(
   try {
     const result = await tool.execute(
       "tool-proxy",
-      body.args,
+      executionArgs,
       abortController.signal,
     );
     if (!res.writableEnded) sendJson(res, 200, { result });
@@ -238,9 +346,11 @@ export function createToolProxyRequestHandler(
   };
 }
 
-export async function initToolProxyServer(): Promise<number> {
+export async function initToolProxyServer(
+  options: ToolProxyRequestHandlerOptions = {},
+): Promise<number> {
   if (toolProxyPort !== null) return toolProxyPort;
-  const server = http.createServer(createToolProxyRequestHandler());
+  const server = http.createServer(createToolProxyRequestHandler(options));
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);
     server.listen(0, "0.0.0.0", () => {

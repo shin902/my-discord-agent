@@ -6,8 +6,10 @@
 
 ```
 config/
-  config.json              # Bot profile・defaultModel・proxy・agent などの設定
+  config.json              # Discord application・defaultModel・proxy・agent などの設定
   config.example.json
+  bots.json                # Agent Bot profile Registry（省略可）
+  bots.example.json
   providers.json           # AI プロバイダーごとの実行ポリシー（省略可）
   providers.example.json
   credentials.json         # AI プロバイダー・外部サービスの接続設定
@@ -21,7 +23,7 @@ groups/{name}/
   AGENTS.md                # グループのシステムプロンプト
 ```
 
-AgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → channel`、cronでは配送先のchannel/thread設定を継承せず `group → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
+AgentConfig（`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → channel`、cronでは配送先のchannel/thread設定を継承せず `group → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
 
 | ファイル | 必須 | トップレベル形式 | 内容 |
 |---|---|---|---|
@@ -29,7 +31,8 @@ AgentConfig（`model` / `tools` / `skills` / `mounts`）は、コンテナにマ
 | `config/credentials.json` | ✓ | 配列 | AI プロバイダー・外部サービスの接続設定 |
 | `config/groups.json` | ✓ | 配列 | チャンネル → グループのマッピング |
 | `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義 |
-| `config/config.json` | ✓ | オブジェクト | Bot profile・`defaultModel`（必須）・proxy・agent・Agent Memory 設定 |
+| `config/config.json` | ✓ | オブジェクト | Discord application・`defaultModel`（必須）・proxy・agent・Agent Memory 設定 |
+| `config/bots.json` | — | オブジェクト | Agent Bot profile Registry（省略時は空） |
 
 > **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
 
@@ -52,7 +55,7 @@ TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明
 }
 ```
 
-通常のprivate chatが正常完了すると、durable queueに保存された入力payloadと完了済みagent resultからuser/assistantの1往復を組み立て、runtime.sqliteの独立したshadow jobへ登録します。会話のcanonical raw historyはgroupごとの `data/sessions/<group>/sessions.sqlite` に保持しますが、shadow submissionの入力としてsession storeを読み直す経路ではありません。shadow jobは `POST /v3/conversation/add`（L0）へ `team_id`、`agent_id`、`user_id`、`session_id` を付けて非同期送信します。送信結果は `[agent-memory]` の構造化ログと通常queueのjob statusで確認できます。TencentDBが停止・タイムアウトしても通常のDiscord応答は成功したままで、shadow jobだけがqueueのretry/dead-letter対象になります。
+通常のprivate chatが正常完了すると、process lifetime中にcached Agent Memory configを使って判定し、durable queueに保存された入力payloadと完了済みagent resultからuser/assistantの1往復を組み立て、runtime.sqliteの独立したshadow jobへ登録します。group mappingはintake時のroutingに使い、Agent Memoryのshadow executionでは再確認しません。Agent Memory設定（`enabled`、`eligibleGroups`、接続先、scope、Bearer token selector）とgroup mappingはprocess lifetime中に固定され、変更を反映するにはmy-discord-agentをrestartしてください。hot reload / hot revocationは保証しません。会話のcanonical raw historyはgroupごとの `data/sessions/<group>/sessions.sqlite` に保持しますが、shadow submissionの入力としてsession storeを読み直す経路ではありません。shadow jobは `POST /v3/conversation/add`（L0）へ `team_id`、`agent_id`、`user_id`、`session_id` を付けて非同期送信します。送信結果は `[agent-memory]` の構造化ログと通常queueのjob statusで確認できます。TencentDBが停止・タイムアウトしても通常のDiscord応答は成功したままで、shadow jobだけがqueueのretry/dead-letter対象になります。
 
 MemoryCore v3のデータ面は、Gateway共有鍵の設定有無にかかわらず、`Authorization: Bearer <token>` と `x-tdai-service-id` を要求します。`bearerTokenEnv` にBearer tokenを保持する環境変数名を指定してください。token自体やその他のsecretを設定ファイルへ書かないでください。非loopbackの接続先はHTTPSを必須とし、認証なしHTTPは文字列どおりの`127.0.0.1`または`[::1]`に限定します（`localhost`はDNS解決を検証しないため許可しません）。現在はshadow writeのみで、recall、embedding、Ruri prefix、context injectionは行いません。TencentDB v3の`conversation/add`契約にはクライアント指定のmessage/request IDやidempotency keyはなく、accepted IDはサーバー生成です（[v3 API仕様](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/MemoryCore/v3-api-memorycore-doc.md)）。そのためshadow送信はローカルqueueのidempotencyによるat-least-once配送で、応答受領後のprocess crashではMemoryCore側に重複L0が発生し得ます。これはupstream契約上の制約であり、未対応のrequest fieldを独自追加して重複排除を主張しません。
 
@@ -218,6 +221,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 ]
 ```
 
+`config/groups.example.json` のchannel例で `approvalRequiredTools: []` を指定しているのは、groupから継承したapproval対象を解除し、channelの `tools: ["read"]` との不整合を避けるためです。
+
 | キー | 必須 | 内容 |
 |---|---|---|
 | `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
@@ -225,12 +230,13 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |
+| `approvalRequiredTools` | — | AgentConfig。effective `tools` に含まれる既知host capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・`tools` 外・sandbox/runtime toolは設定エラー。子layerで指定した配列は完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
 | `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル。channelで指定するとgroupの指定を完全置換 |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 
-`sessionMode` の詳細は `CLAUDE.md` を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `skills` / `mounts` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
+`sessionMode` の詳細は `CLAUDE.md` を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `approvalRequiredTools` / `skills` / `mounts` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
 
 ### 起動時Discord履歴バックフィル
 
@@ -298,7 +304,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 
-`model` / `tools` / `skills` / `mounts` を任意で指定すると、groupの既定値をそのジョブの実行時だけ上書きできる。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfigは継承しない。`skills` は配列、`[]`、`"*"` のいずれも指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
+`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts` を任意で指定すると、groupの既定値をそのジョブの実行時だけ上書きできる。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfigは継承しない。`skills` は配列、`[]`、`"*"` のいずれも指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
 
 ### jobs/mail.ts
 
@@ -417,32 +423,32 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 
 各 Bot の `tokenEnv` で指定した環境変数を deploy と runtime の実行環境に設定してください。既存設定から移行する場合は、`DISCORD_APPLICATION_ID` を削除し、その値を `discord.bots.personal.applicationId` へ移し、`tokenEnv: "DISCORD_BOT_TOKEN"` の `personal` entry を追加します。deploy の scope 引数は省略できず、省略時は usage error になります。
 
-```json
-{
-  "bots": {
-    "coding": {
-      "group": "default",
-      "instructions": "コード変更を担当する worker",
-      "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-      "tools": ["read", "write", "edit"],
-      "skills": [],
-      "mounts": []
-    }
-  },
-  "defaultModel": { "provider": "zai", "modelId": "glm-4.7-flash" },
-  "proxy": { "requestTimeoutMs": 120000 },
-  "agent": { "timeoutMs": 600000 }
-}
-```
-
 | キー | 必須 | 内容 |
 |---|---|---|
-| `bots` | — | 名前付き Bot profile の map。各 profile は `group` と空でない `instructions`（ともに必須）、AgentConfig（`model` / `tools` / `skills` / `mounts`）を持つ |
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 
 Botのauthority modelと、`bot` capabilityを明示的に許可する理由は [エンティティモデルのauthority境界](spec/entity-model.md#agentgroupとbotのauthority境界) を参照。`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。Bot profile の AgentConfig はその group の設定を上書きし、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。手動の`run` / `resume`では、Interaction ACKとしてephemeral responseをdeferするが、成功時の受付情報としては残さない。受付成功時はBot ID、実際に渡したprompt、Task Session情報をephemeral responseとは独立した通常の永続メッセージとして投稿し、その後ephemeral ACKを削除する。validation / enqueue等の受付失敗時は、従来どおりephemeral responseへエラーを表示する。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示し、応答はephemeralのままになる。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。Bot Task内部のtool / Subagent progressは通常channelへ送信せず、error通知と最終応答は維持する。メインAgentには同じBot Registryを呼び出す組み込み `bot` toolが、effective `tools` に正確な名前 `bot` を明示した場合だけ提供され、`action=run|resume|list` を指定できる。Bot profileやqueued/direct Bot childの実行では再帰的な `bot` toolを常に無効化する。`run` / `resume` はキューへ積まず、同じtool call内でsandbox実行の完了まで待って結果を返す（非同期handle返却やpollingは行わない）。親Agentが現在保持しているものと同じserial providerをBotが使い、対象Task Sessionに先行処理がある場合は、deadlockを避けるため同期Bot呼び出しを待機せず拒否する。親が保持していないproviderでも、異なるserial providerを対象とする場合は既存のdeadlock防止ガードにより拒否する。parallel providerは通常どおり実行する。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同じordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しない。プロセス起動時は管理対象コンテナ（現行labelと旧形式の名前のものを含む）の停止を確認した後、前回プロセスの未完了admissionとqueue実行を回収する。Dockerのdiscoveryまたは停止確認に失敗した場合は起動を中止し、実行状態を回収しない。
+
+## config/bots.json
+
+Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group` と空でない `instructions`、任意の AgentConfig（`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
+
+```json
+{
+  "coding": {
+    "group": "default",
+    "instructions": "コード変更を担当する worker",
+    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "tools": ["read", "write", "edit"],
+    "skills": [],
+    "mounts": []
+  }
+}
+```
+
+Bot profile の effective AgentConfig と `group` は起動時に検証されます。未定義の group や不正な profile があれば Discord client 初期化前に起動を停止します。Botを使わない場合は `bots.json` を配置せず、空の Registry として起動できます。既存の `config/config.json` にトップレベル `bots` がある場合は、その map を `config/bots.json` へ移してから `config/config.json` から削除してください。`discord.bots` はDiscord application設定なので移動せず、2つの `bots` map がmergeされることはありません。
 
 ## 環境変数
 
@@ -454,6 +460,7 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 | `CREDENTIALS_PATH` | `config/credentials.json` のパスを上書きする |
 | `GROUPS_PATH` | `config/groups.json` のパスを上書きする |
 | `CRON_PATH` | `config/cron.json` のパスを上書きする |
+| `BOTS_PATH` | `config/bots.json` のパスを上書きする |
 
 API キーなどプロバイダー固有の変数は `.env.example` を参照。
 
@@ -464,12 +471,15 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 | `credentials` | 再起動が必要（起動時に読み込みキャッシュ） |
 | `groups` | 再起動が必要（起動時に読み込みキャッシュ） |
 | `cron` | 再起動が必要（起動時に読み込みキャッシュ） |
+| `bots` | 再起動が必要（process lifetime cache） |
 
 `credentials` と `groups` は起動時に読み込みに失敗すると `process.exit(1)` するため、修正後は再起動が必要（`config/credentials.json` / `config/groups.json` 自体が存在しない場合も同様にエラーで起動失敗する）。
 
 `cron` は起動時に `loadAndValidateCron()` が一度だけ読み込んだ結果をメモリ上の `_jobs` にセットし、`tick()` はそれを毎分参照するだけでファイルの再読み込みは行わない。そのため一度起動した後は `config/cron.json` を変更しても再起動するまで反映されない（`docs/spec/cron.md` と同じ）。
 
 `config/cron.json` は省略可能な設定のため、起動時に存在しなくても `loadAndValidateCron()` はエラーにせず空配列を返し、cron が空扱いで起動する。ただしこの場合も後から `config/cron.json` を配置しても再起動しない限り反映されない。`config/credentials.json` / `config/groups.json` は必須設定のため、欠落時は process.exit(1) で起動自体が止まる点が異なる。
+
+`config/bots.json` はプロセスの存続期間中キャッシュされるため、変更後は再起動が必要。ファイルが未配置の場合は空の Registry で起動するが、起動後に配置しても再起動するまで反映されない。
 
 ## 変更履歴
 

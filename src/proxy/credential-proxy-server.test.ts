@@ -6,11 +6,13 @@ const makeReq = (
   url: string,
   headers: Record<string, string> = {},
   method = "POST",
+  body?: string,
 ) =>
   ({
     url,
     headers,
     method,
+    ...(body !== undefined ? { body } : {}),
     pipe: vi.fn(),
   }) as unknown as IncomingMessage;
 
@@ -739,13 +741,26 @@ describe("internal agent route: scoped authorization", () => {
     const proxy = await setup();
     const handler = vi.fn().mockResolvedValue(undefined);
     proxy.registerInternalRequestHandler(handler);
-    const config = proxy.createInternalRequestConfig("main", "openai");
+    const destination = { botId: "secondary", channelId: "channel-1" };
+    const config = proxy.createInternalRequestConfig(
+      "main",
+      "openai",
+      destination,
+    );
     expect(config).toMatchObject({ port: 12345, token: expect.any(String) });
 
     serverRequestHandler?.(
-      makeReq("/__agent/bot", {
-        "x-agent-internal-token": config?.token ?? "",
-      }),
+      makeReq(
+        "/__agent/bot",
+        { "x-agent-internal-token": config?.token ?? "" },
+        "POST",
+        JSON.stringify({
+          trustedDiscordDestination: {
+            botId: "forged",
+            channelId: "forged",
+          },
+        }),
+      ),
       makeRes() as unknown as ServerResponse,
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -755,6 +770,24 @@ describe("internal agent route: scoped authorization", () => {
       expect.anything(),
       "main",
       "openai",
+      {
+        botId: "secondary",
+        channelId: "channel-1",
+      },
+    );
+
+    // Neither the request body nor the original object can override token-bound context.
+    destination.botId = "forged";
+    destination.channelId = "forged";
+    expect(handler).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "main",
+      "openai",
+      {
+        botId: "secondary",
+        channelId: "channel-1",
+      },
     );
 
     config?.revoke();

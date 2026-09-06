@@ -5,6 +5,7 @@ import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { findGroupByName } from "../config/groups.js";
 import { resolveProviderConcurrency } from "../config/providers.js";
+import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import {
   formatBotTaskSessionList,
   generateBotTaskSessionHandle,
@@ -58,6 +59,7 @@ export async function handleBotToolRequest(
   res: ServerResponse,
   scope?: string,
   heldProvider?: string,
+  trustedDiscordDestination?: TrustedDiscordDestination,
 ): Promise<void> {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -160,6 +162,7 @@ export async function handleBotToolRequest(
               systemPromptAppend: profile.instructions,
               enableBotTool: false,
               signal: controller.signal,
+              trustedDiscordDestination,
               onExecutionTiming: (value) => {
                 timing = value;
               },

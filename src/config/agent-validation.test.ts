@@ -25,7 +25,8 @@ describe("validateAgentConfig", () => {
       validateAgentConfig(
         {
           model: { provider: "provider-a", modelId: "model-x" },
-          tools: ["read"],
+          tools: ["get-current-weather"],
+          approvalRequiredTools: ["get-current-weather"],
           mounts: [{ host: "groups/main", container: "/repo" }],
         },
         defaultModel,
@@ -36,7 +37,10 @@ describe("validateAgentConfig", () => {
   it("rejects an unknown effective model", async () => {
     await expect(
       validateAgentConfig(
-        { model: { provider: "provider-a", modelId: "missing" } },
+        {
+          model: { provider: "provider-a", modelId: "missing" },
+          tools: [],
+        },
         defaultModel,
       ),
     ).rejects.toThrow("不明なモデル");
@@ -54,10 +58,62 @@ describe("validateAgentConfig", () => {
     ).rejects.toThrow("不明なツール名");
   });
 
+  it("accepts omitted and empty approvalRequiredTools without approval", async () => {
+    await expect(
+      validateAgentConfig({ tools: ["read"] }, defaultModel),
+    ).resolves.toBeUndefined();
+    await expect(
+      validateAgentConfig(
+        { tools: ["read"], approvalRequiredTools: [] },
+        defaultModel,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects an unknown approval-required tool", async () => {
+    await expect(
+      validateAgentConfig(
+        {
+          tools: ["get-current-weather"],
+          approvalRequiredTools: ["missing-tool"],
+        },
+        defaultModel,
+      ),
+    ).rejects.toThrow("不明なツール名: missing-tool");
+  });
+
+  it("rejects an approval-required tool outside effective tools", async () => {
+    await expect(
+      validateAgentConfig(
+        {
+          tools: ["read"],
+          approvalRequiredTools: ["get-current-weather"],
+        },
+        defaultModel,
+      ),
+    ).rejects.toThrow(
+      "承認必須ツールは有効な tools に含めてください: get-current-weather",
+    );
+  });
+
+  it("rejects a non-host approval-required tool", async () => {
+    await expect(
+      validateAgentConfig(
+        { tools: ["read"], approvalRequiredTools: ["read"] },
+        defaultModel,
+      ),
+    ).rejects.toThrow(
+      "承認必須ツールには host capability のみ指定できます: read",
+    );
+  });
+
   it("rejects an invalid effective mount", async () => {
     await expect(
       validateAgentConfig(
-        { mounts: [{ host: "../outside", container: "/repo" }] },
+        {
+          tools: [],
+          mounts: [{ host: "../outside", container: "/repo" }],
+        },
         defaultModel,
       ),
     ).rejects.toThrow("リポジトリルート外");

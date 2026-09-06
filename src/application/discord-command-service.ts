@@ -48,6 +48,10 @@ export interface SteerCommandRequest {
   instruction: string;
 }
 
+export type SteerCommandResult =
+  | { content: string; accepted: false }
+  | { content: string; accepted: true; instruction: string };
+
 export interface StopCommandRequest {
   discordBotId: string;
   channelId: string;
@@ -173,41 +177,59 @@ export async function executeStopCommand(
   }
 }
 
+function steerCommandResult(content: string): SteerCommandResult {
+  return { content, accepted: false };
+}
+
 /** Execute a steering instruction without enqueueing a normal message. */
 export async function executeSteerCommand(
   request: SteerCommandRequest,
-): Promise<string> {
+): Promise<SteerCommandResult> {
   const instruction = request.instruction.trim();
-  if (!instruction) return "方針転換の指示を入力してください。";
+  if (!instruction)
+    return steerCommandResult("方針転換の指示を入力してください。");
   if (instruction.length > MAX_STEERING_INSTRUCTION_LENGTH) {
-    return `方針転換の指示は${MAX_STEERING_INSTRUCTION_LENGTH}文字以内で入力してください。`;
+    return steerCommandResult(
+      `方針転換の指示は${MAX_STEERING_INSTRUCTION_LENGTH}文字以内で入力してください。`,
+    );
   }
 
   const match = await findGroupByChannelId(request.routingChannelId);
-  if (!match) return "このチャンネルはAgentGroupに未登録です。";
+  if (!match)
+    return steerCommandResult("このチャンネルはAgentGroupに未登録です。");
 
   const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
   if (request.discordBotId !== expectedDiscordBotId) {
-    return "このDiscord BotはこのチャンネルのAgentGroupを担当していません。";
+    return steerCommandResult(
+      "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
+    );
   }
   if (match.channel.sessionMode === "shared" && request.isThread) {
-    return "このコマンドは親チャンネルで実行してください。";
+    return steerCommandResult("このコマンドは親チャンネルで実行してください。");
   }
   if (match.channel.sessionMode !== "shared" && !request.isThread) {
-    return "このコマンドはスレッド内で実行してください。";
+    return steerCommandResult("このコマンドはスレッド内で実行してください。");
   }
 
   const run = acquireActiveRun(match.group.name, request.channelId);
-  if (!run) return "steer対象の実行中Agentがありません。";
+  if (!run) return steerCommandResult("steer対象の実行中Agentがありません。");
   try {
     const accepted = await run.steer(instruction);
     if (accepted === false) {
-      return "方針転換をAgentへ届けられませんでした。Agentが終了した可能性があります。";
+      return steerCommandResult(
+        "方針転換をAgentへ届けられませんでした。Agentが終了した可能性があります。",
+      );
     }
   } catch (error) {
-    return `方針転換をAgentへ届けられませんでした: ${error instanceof Error ? error.message : String(error)}`;
+    return steerCommandResult(
+      `方針転換をAgentへ届けられませんでした: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-  return "実行中Agentへ方針転換を送りました。";
+  return {
+    content: "実行中Agentへ方針転換を送りました。",
+    accepted: true,
+    instruction,
+  };
 }
 
 /** Execute the Bot task-session use case without depending on Discord.js. */

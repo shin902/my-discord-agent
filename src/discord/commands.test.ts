@@ -223,12 +223,18 @@ describe("steer command", () => {
   it("delivers to the active session without enqueueing", async () => {
     const control = vi.fn();
     const cleanup = registerActiveRun("main", "channel-1", control);
-    const interaction = makeInteraction({ instruction: "Please stop" });
+    const interaction = makeInteraction({
+      instruction: "  Please stop  ",
+    });
     await handleSteerCommand(interaction as never);
     expect(control).toHaveBeenCalledWith("Please stop");
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "実行中Agentへ方針転換を送りました。",
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.channel.send).toHaveBeenCalledWith({
+      content: "Steer:\nPlease stop",
+      allowedMentions: { parse: [], repliedUser: false },
     });
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).toHaveBeenCalledOnce();
     expect(mocks.enqueue).not.toHaveBeenCalled();
     cleanup();
   });
@@ -254,6 +260,8 @@ describe("steer command", () => {
       content:
         "方針転換をAgentへ届けられませんでした。Agentが終了した可能性があります。",
     });
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).not.toHaveBeenCalled();
     expect(mocks.enqueue).not.toHaveBeenCalled();
     cleanup();
   });

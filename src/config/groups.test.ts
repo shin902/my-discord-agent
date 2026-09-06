@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const setupRawGroups = async (raw: unknown, freshRaw: unknown = raw) => {
+const setupRawGroups = async (raw: unknown) => {
   vi.resetModules();
   vi.doMock("./config.js", () => ({
     loadRawGroups: vi.fn().mockResolvedValue(raw),
-    loadRawGroupsFresh: vi.fn().mockResolvedValue(freshRaw),
   }));
   return import("./groups.js");
 };
@@ -53,12 +52,13 @@ describe("loadGroups", () => {
     );
   });
 
-  it("model/tools/allowMention/toolLogArgs/skills/mounts を含むグループ設定をパースできる", async () => {
+  it("AgentConfigとgroup限定設定を含むグループ設定をパースできる", async () => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["tavily-search"],
+        approvalRequiredTools: ["tavily-search"],
         allowMention: true,
         toolLogArgs: true,
         skills: ["session-logs"],
@@ -70,6 +70,7 @@ describe("loadGroups", () => {
     expect(groups[0]).toMatchObject({
       model: { provider: "zai", modelId: "glm-4.7-flash" },
       tools: ["tavily-search"],
+      approvalRequiredTools: ["tavily-search"],
       allowMention: true,
       toolLogArgs: true,
       skills: ["session-logs"],
@@ -83,6 +84,7 @@ describe("loadGroups", () => {
         name: "chat",
         model: { provider: "group-provider", modelId: "group-model" },
         tools: ["group-tool"],
+        approvalRequiredTools: ["group-tool"],
         channels: [
           {
             channelId: "channel",
@@ -90,6 +92,7 @@ describe("loadGroups", () => {
             requiredMention: true,
             model: { provider: "channel-provider", modelId: "channel-model" },
             tools: [],
+            approvalRequiredTools: [],
             skills: "*",
             mounts: [{ host: "channel", container: "/channel" }],
             allowMention: true,
@@ -103,6 +106,7 @@ describe("loadGroups", () => {
       requiredMention: true,
       model: { provider: "channel-provider", modelId: "channel-model" },
       tools: [],
+      approvalRequiredTools: [],
       skills: "*",
       mounts: [{ host: "channel", container: "/channel" }],
     });
@@ -125,6 +129,7 @@ describe("loadGroups", () => {
     const groups = await loadGroups();
     expect(groups[0].model).toBeUndefined();
     expect(groups[0].tools).toBeUndefined();
+    expect(groups[0].approvalRequiredTools).toBeUndefined();
     expect(groups[0].allowMention).toBeUndefined();
     expect(groups[0].toolLogArgs).toBeUndefined();
     expect(groups[0].skills).toBeUndefined();
@@ -158,32 +163,22 @@ describe("findGroupByName", () => {
   });
 });
 
-describe("findGroupByChannelIdFresh", () => {
+describe("findGroupByChannelId", () => {
   afterEach(() => {
     vi.resetModules();
   });
 
-  it("reads the current channel mapping without relying on the startup cache", async () => {
-    const { loadGroups, findGroupByChannelIdFresh } = await setupRawGroups(
-      [{ name: "stale", channels: [] }],
-      [
-        {
-          name: "current",
-          channels: [{ channelId: "channel", sessionMode: "shared" }],
-        },
-      ],
-    );
+  it("uses the cached group mapping for the process lifetime", async () => {
+    const { loadGroups, findGroupByChannelId } = await setupRawGroups([
+      {
+        name: "current",
+        channels: [{ channelId: "channel", sessionMode: "shared" }],
+      },
+    ]);
     await loadGroups();
-    await expect(findGroupByChannelIdFresh("channel")).resolves.toMatchObject({
+    await expect(findGroupByChannelId("channel")).resolves.toMatchObject({
       group: { name: "current" },
       channel: { channelId: "channel" },
     });
-  });
-
-  it("returns null when the current mapping is missing", async () => {
-    const { findGroupByChannelIdFresh } = await setupRawGroups([
-      { name: "current", channels: [] },
-    ]);
-    await expect(findGroupByChannelIdFresh("channel")).resolves.toBeNull();
   });
 });

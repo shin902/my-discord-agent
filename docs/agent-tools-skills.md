@@ -30,6 +30,14 @@
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
+### Discord tool approval（opt-in）
+
+`approvalRequiredTools` は、effective `tools` に含まれる既知host capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox/runtime toolはconfig errorです。
+
+validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
+
+approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
+
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
 
 ## Discord へのツールコール通知
@@ -73,7 +81,7 @@ LLM の自律判断を待たず、ユーザーが特定のスキルを確実に�
 
 Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加指示>` から利用できる。`prompt` は省略可能。`shared` は親チャンネル、それ以外のセッションモードは対象スレッド内で実行する。スキル名の補完は行わないため、実行時の `skills` 設定で許可した名前を入力する。
 
-実行中のAgentへ方針転換を送るには `/steer instruction:<指示>` を使う。対象チャンネルの同一 `(groupName, sessionId)` に実行中Agentがない場合は失敗し、通常メッセージとしてqueueへは投入しない。steer内容はcanonical session trajectoryへ `steering-instruction` として保存される。実行を停止するには `/stop` を使う。まずrunner内のcooperative abortを試し、短い猶予後も終了しない場合だけrunnerを強制停止する。結果がない場合や後始末に失敗した場合も明示的に表示される。
+実行中のAgentへ方針転換を送るには `/steer instruction:<指示>` を使う。対象チャンネルの同一 `(groupName, sessionId)` に実行中Agentがない場合は失敗し、通常メッセージとしてqueueへは投入しない。steer内容はcanonical session trajectoryへ `steering-instruction` として保存され、正常に受理された指示だけは `Steer:` 付きのpublic receiptとしてDiscord通常履歴にも残る。実行を停止するには `/stop` を使う。まずrunner内のcooperative abortを試し、短い猶予後も終了しない場合だけrunnerを強制停止する。結果がない場合や後始末に失敗した場合も明示的に表示される。
 
 | 例 | 動作 |
 |----|------|

@@ -106,7 +106,25 @@ export async function handleSteerCommand(
     isThread,
     instruction,
   });
-  await editReply(interaction, result);
+  if (!result.accepted) {
+    await editReply(interaction, result.content);
+    return;
+  }
+
+  if (!channel?.send) {
+    throw new Error("Steer receipt destination is unavailable");
+  }
+  for (const chunk of splitMessage(`Steer:\n${result.instruction}`)) {
+    await channel.send({
+      content: chunk,
+      allowedMentions: { parse: [], repliedUser: false },
+    });
+  }
+  try {
+    await interaction.deleteReply();
+  } catch (error) {
+    console.error("[handler] Steer receipt ACK cleanup failed:", error);
+  }
 }
 
 /** Adapt a Discord interaction into the Bot task-session application use case. */

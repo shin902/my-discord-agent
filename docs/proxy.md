@@ -44,7 +44,7 @@ credential forwardingとは別の責務として、host executorのcapabilityは
 Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- host credentials --> external API
 ```
 
-run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlistを登録し、終了時にrevokeする。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。GitHub、Graph、Google Calendar、Tavilyのcredentialはtrusted `credentials.json`からhost側だけで解決し、これらのlegacy forwarding routeはsandboxへ渡さない。結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。
+run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、approval対象集合、trusted Discord bot/channel、revoke signalをsnapshotとして登録し、終了時にrevokeする。approval対象はvalidate後にmaterializeしたcanonical argsをそのsnapshotのDiscord destinationへ表示し、Approve後にauthorityを再確認して同じinvocationを実行する。approval専用TTLやgrant tokenは設けず、Discord updateの短いtimeout以外はrequesting runの生存中だけ待機する。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。GitHub、Graph、Google Calendar、Tavilyのcredentialはtrusted `credentials.json`からhost側だけで解決し、これらのlegacy forwarding routeはsandboxへ渡さない。結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。
 
 ### config/credentials.json
 

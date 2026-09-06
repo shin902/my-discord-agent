@@ -1565,12 +1565,19 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["get-current-weather"] },
+      configOverride: {
+        tools: ["get-current-weather"],
+        approvalRequiredTools: ["get-current-weather"],
+      },
     });
 
     expect(createToolProxyRunMock).toHaveBeenCalledWith(
       expect.stringContaining("test-group:session-1:"),
       ["get-current-weather"],
+      {
+        approvalRequiredCapabilities: ["get-current-weather"],
+        trustedDiscordDestination: undefined,
+      },
     );
     const run = createToolProxyRunMock.mock.results[0]?.value as {
       revoke: ReturnType<typeof vi.fn>;
@@ -1582,6 +1589,25 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:23456/__tool-proxy/rpc",
       token: "tool-token",
     });
+    expect(payload.groupConfig.approvalRequiredTools).toEqual([
+      "get-current-weather",
+    ]);
+  });
+
+  it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {
+    const sendMessage = await setup();
+
+    await expect(
+      sendMessage("test-group", "session-1", "hi", {
+        configOverride: {
+          tools: ["read"],
+          approvalRequiredTools: ["get-current-weather"],
+        },
+      }),
+    ).rejects.toThrow(
+      "設定エラー: 承認必須ツールは有効な tools に含めてください: get-current-weather",
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("native agent-reach toolにはagent-reach-only tokenを渡す", async () => {
@@ -1595,6 +1621,10 @@ describe("sendMessage: configOverride", () => {
       1,
       expect.stringContaining("test-group:session-1:"),
       ["agent-reach", "get-current-weather"],
+      {
+        approvalRequiredCapabilities: [],
+        trustedDiscordDestination: undefined,
+      },
     );
     expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
       2,
@@ -1642,6 +1672,10 @@ describe("sendMessage: configOverride", () => {
       1,
       expect.stringContaining("test-group:session-1:"),
       ["agent-reach", "get-current-weather"],
+      {
+        approvalRequiredCapabilities: [],
+        trustedDiscordDestination: undefined,
+      },
     );
     expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
       2,
@@ -1723,6 +1757,7 @@ describe("sendMessage: configOverride", () => {
     expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
       "test-group",
       undefined,
+      undefined,
     );
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -1730,6 +1765,21 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:12345/__agent/bot",
       token: "internal-token",
     });
+  });
+
+  it("bot internal tokenにはtrusted destinationをhost側で渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["bot"] },
+      trustedDiscordDestination: { botId: "secondary", channelId: "channel-1" },
+    });
+
+    expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
+      "test-group",
+      undefined,
+      { botId: "secondary", channelId: "channel-1" },
+    );
   });
 
   it("groupのbot設定はchannel相当のtools上書きで無効化される", async () => {

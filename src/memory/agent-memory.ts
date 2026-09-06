@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { AgentMemoryConfig } from "../config/agent-memory.js";
 import { NonRetryableError } from "../utils/error.js";
 
@@ -18,66 +17,6 @@ export interface AgentMemoryScope {
 export interface AgentMemorySubmission {
   scope: AgentMemoryScope;
   messages: AgentMemoryMessage[];
-}
-
-export interface AgentMemoryAdmission {
-  groupName: string;
-  /** Configured channel used for fresh group mapping validation. */
-  routingChannelId: string;
-  channelId: string;
-  baseUrl: string;
-  serviceId: string;
-  bearerTokenEnv?: string;
-  teamId: string;
-  agentId: string;
-  userId: string;
-  sessionId: string;
-  fingerprint: string;
-}
-
-function admissionFingerprint(
-  input: Omit<AgentMemoryAdmission, "fingerprint">,
-): string {
-  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
-}
-
-export function buildAgentMemoryAdmission(
-  input: Omit<AgentMemoryAdmission, "fingerprint">,
-): AgentMemoryAdmission {
-  return { ...input, fingerprint: admissionFingerprint(input) };
-}
-
-export function isCurrentAgentMemoryAdmission(
-  admission: AgentMemoryAdmission,
-  config: AgentMemoryConfig,
-  message: { groupName: string; routingChannelId: string; channelId: string },
-): boolean {
-  const current = buildAgentMemoryAdmission({
-    groupName: message.groupName,
-    routingChannelId: message.routingChannelId,
-    channelId: message.channelId,
-    baseUrl: config.baseUrl,
-    serviceId: config.serviceId,
-    ...(config.bearerTokenEnv ? { bearerTokenEnv: config.bearerTokenEnv } : {}),
-    teamId: config.teamId,
-    agentId: config.agentId,
-    userId: admission.userId,
-    sessionId: admission.sessionId,
-  });
-  const { fingerprint, ...admissionFields } = admission;
-  return (
-    fingerprint === admissionFingerprint(admissionFields) &&
-    admissionFields.groupName === current.groupName &&
-    admissionFields.routingChannelId === current.routingChannelId &&
-    admissionFields.channelId === current.channelId &&
-    admissionFields.baseUrl === current.baseUrl &&
-    admissionFields.serviceId === current.serviceId &&
-    admissionFields.bearerTokenEnv === current.bearerTokenEnv &&
-    admissionFields.teamId === current.teamId &&
-    admissionFields.agentId === current.agentId &&
-    admissionFields.userId === current.userId &&
-    admissionFields.sessionId === current.sessionId
-  );
 }
 
 export interface AgentMemorySubmissionResult {

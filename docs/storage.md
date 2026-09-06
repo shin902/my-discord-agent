@@ -7,6 +7,7 @@
 ```
 config/
   config.json           # defaultModel / proxy / agent 設定（人が直接編集する）
+  bots.json             # Agent Bot Registry（省略可）
   providers.json        # AI provider ごとの同時実行ポリシー（省略可）
   credentials.json      # AI プロバイダー・外部サービスの接続設定
   groups.json           # チャンネル→グループのマッピング＋エージェント設定
@@ -75,5 +76,6 @@ DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.s
 | ファイル | 形式 | 操作 |
 |---|---|---|
 | `config/config.json` / `credentials.json` / `groups.json` / `cron.json` | JSON | 起動時に読み込み、変更時は全書き直し |
+| `config/bots.json` | JSON | Agent Bot Registry（省略可）。起動時に読み込み、変更時は全書き直し |
 | `data/sessions/<groupName>/sessions.sqlite` | SQLite | `sessions` identity + append-only `session_entries` |
 | `data/queue/inbox.jsonl` | JSONL | shift/prepend（既存実装） |

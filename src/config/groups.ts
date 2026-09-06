@@ -1,6 +1,6 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { loadRawGroups, loadRawGroupsFresh } from "./config.js";
+import { loadRawGroups } from "./config.js";
 
 const THINKING_LEVELS = [
   "off",
@@ -31,11 +31,26 @@ export const MountConfigSchema = z.object({
   readOnly: z.boolean().optional(),
 });
 
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
+export type MountConfig = z.infer<typeof MountConfigSchema>;
+
+/** Effective agent configuration after all trusted layers are resolved. */
+export interface AgentConfig {
+  model?: ModelConfig;
+  tools: string[];
+  approvalRequiredTools?: string[];
+  skills?: SkillSelection;
+  mounts?: MountConfig[];
+}
+
 // 各信頼済み設定階層で指定できるエージェント実行設定。
 // オブジェクト・配列を含め、階層解決時はフィールド単位で完全置換する。
+// tools は継承元で指定できるため、各入力階層では optional のままにする。
 export const AgentConfigSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
+  approvalRequiredTools: z.array(z.string()).optional(),
   skills: SkillSelectionSchema.optional(),
   mounts: z.array(MountConfigSchema).optional(),
 });
@@ -71,10 +86,6 @@ function parseGroups(raw: unknown): GroupConfig[] {
 }
 
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
-export type ModelConfig = z.infer<typeof ModelConfigSchema>;
-export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
-export type MountConfig = z.infer<typeof MountConfigSchema>;
-export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type AgentRuntimeConfig = z.infer<typeof AgentRuntimeConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 
@@ -85,11 +96,6 @@ export async function loadGroups(): Promise<GroupConfig[]> {
   const raw = await loadRawGroups();
   _groups = parseGroups(raw);
   return _groups;
-}
-
-/** Read the current groups mapping without changing startup routing cache. */
-export async function loadGroupsFresh(): Promise<GroupConfig[]> {
-  return parseGroups(await loadRawGroupsFresh());
 }
 
 export async function findGroupByName(
@@ -115,10 +121,4 @@ function findGroupByChannelIdIn(
     if (channel) return { group, channel };
   }
   return null;
-}
-
-export async function findGroupByChannelIdFresh(
-  channelId: string,
-): Promise<{ group: GroupConfig; channel: ChannelConfig } | null> {
-  return findGroupByChannelIdIn(await loadGroupsFresh(), channelId);
 }

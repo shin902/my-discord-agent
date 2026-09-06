@@ -17,6 +17,8 @@ export const PROVIDERS_PATH =
   path.join(__dirname, "../../config/providers.json");
 export const CRON_PATH =
   process.env.CRON_PATH ?? path.join(__dirname, "../../config/cron.json");
+export const BOTS_PATH =
+  process.env.BOTS_PATH ?? path.join(__dirname, "../../config/bots.json");
 
 const TopLevelSchema = z.record(z.string(), z.unknown());
 
@@ -95,11 +97,6 @@ export async function loadRawConfig(): Promise<Record<string, unknown>> {
   return _raw;
 }
 
-/** Read config.json without changing the process-wide startup config cache. */
-export async function loadRawConfigFresh(): Promise<Record<string, unknown>> {
-  return readRawConfigFromDisk();
-}
-
 async function readJsonArrayFile(
   filePath: string,
   missingFileHint: string,
@@ -117,14 +114,6 @@ async function readJsonArrayFile(
 
 // config/groups.json を読み込む
 export async function loadRawGroups(): Promise<unknown> {
-  return readJsonArrayFile(
-    GROUPS_PATH,
-    "config/groups.json が見つかりません。config/groups.example.json をコピーして作成してください",
-  );
-}
-
-/** Read groups.json without changing the process-wide routing cache. */
-export async function loadRawGroupsFresh(): Promise<unknown> {
   return readJsonArrayFile(
     GROUPS_PATH,
     "config/groups.json が見つかりません。config/groups.example.json をコピーして作成してください",
@@ -153,4 +142,14 @@ export async function loadRawProviders(): Promise<unknown> {
 export async function loadRawCron(): Promise<unknown> {
   const text = await readFile(CRON_PATH, "utf-8");
   return JSON.parse(text);
+}
+
+// config/bots.json を読み込む（Botなし構成では省略可能）
+export async function loadRawBots(): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(BOTS_PATH, "utf-8"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw err;
+  }
 }
