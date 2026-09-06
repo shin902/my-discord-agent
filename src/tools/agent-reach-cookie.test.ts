@@ -1,29 +1,46 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const dnsLookupMock = vi.hoisted(() =>
   vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
 );
+const execAsyncMock = vi.hoisted(() => vi.fn());
+const mkdtempMock = vi.hoisted(() => vi.fn());
+vi.mock("node:fs/promises", async () => {
+  const actual =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  mkdtempMock.mockImplementation(actual.mkdtemp);
+  return { ...actual, mkdtemp: mkdtempMock };
+});
 vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
+vi.mock("./exec.js", () => ({ execAsync: execAsyncMock }));
 
 import { agentReachTool } from "./agent-reach.js";
 
 const directories: string[] = [];
-const originalEnvironment = {
-  PATH: process.env.PATH,
-  REDDIT_COOKIE_FILE: process.env.REDDIT_COOKIE_FILE,
-  FAKE_CURL_CAPTURE: process.env.FAKE_CURL_CAPTURE,
-};
+const originalCookieFile = process.env.REDDIT_COOKIE_FILE;
 const COOKIE = "reddit_session=distinctive-cookie-secret";
 
-async function setup(): Promise<void> {
+afterEach(async () => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  if (originalCookieFile === undefined) delete process.env.REDDIT_COOKIE_FILE;
+  else process.env.REDDIT_COOKIE_FILE = originalCookieFile;
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+async function setupCookie(): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "agent-reach-cookie-"));
   directories.push(directory);
   const cookieFile = join(directory, "reddit-cookies.json");
-  const captureFile = join(directory, "captured-header");
-  const curl = join(directory, "curl");
   await writeFile(
     cookieFile,
     JSON.stringify({
@@ -32,48 +49,27 @@ async function setup(): Promise<void> {
     }),
     { mode: 0o600 },
   );
-  await writeFile(
-    curl,
-    `#!/bin/sh
-set -eu
-header_file=""
-out_file=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -H) header_file="$2"; shift 2 ;;
-    -o) out_file="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$header_file" ]; then cat "\${header_file#@}" > "$FAKE_CURL_CAPTURE"; fi
-printf '%s' '{"data":{"children":[]}}' > "$out_file"
-printf '200'
-`,
-    { mode: 0o700 },
-  );
-  await chmod(curl, 0o700);
-  process.env.PATH = `${directory}${delimiter}${originalEnvironment.PATH ?? ""}`;
   process.env.REDDIT_COOKIE_FILE = cookieFile;
-  process.env.FAKE_CURL_CAPTURE = captureFile;
 }
 
-afterEach(async () => {
-  for (const [key, value] of Object.entries(originalEnvironment)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+async function executeReddit(signal?: AbortSignal): Promise<unknown> {
+  return agentReachTool.execute(
+    "test",
+    { url: "https://www.reddit.com/r/test" },
+    signal,
   );
-});
+}
 
 describe("agent-reach Reddit cookie boundary", () => {
-  it("passes the cookie via a protected header file and preserves successful fetch", async () => {
-    await setup();
-
+  it("sends the cookie only as a direct fetch header", async () => {
+    await setupCookie();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"data":{"children":[]}}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     await expect(
       agentReachTool.execute("test", { url: "https://www.reddit.com/r/test" }),
     ).resolves.toMatchObject({
@@ -84,8 +80,227 @@ describe("agent-reach Reddit cookie boundary", () => {
         },
       ],
     });
-    expect(await readFile(process.env.FAKE_CURL_CAPTURE ?? "", "utf8")).toBe(
-      `Cookie: ${COOKIE}\n`,
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://www.reddit.com/r/test.json",
+      expect.objectContaining({
+        headers: { Cookie: COOKIE, "User-Agent": expect.any(String) },
+        redirect: "error",
+      }),
     );
+    expect(JSON.stringify(fetchMock.mock.calls)).toContain(COOKIE);
+  });
+
+  it.each([
+    ["https://www.reddit.com/", "https://www.reddit.com/.json"],
+    [
+      "https://www.reddit.com/r/test.json",
+      "https://www.reddit.com/r/test.json",
+    ],
+    [
+      "https://reddit.com/r/test/?sort=top#comments",
+      "https://www.reddit.com/r/test.json?sort=top",
+    ],
+  ])("canonicalizes %s to %s", async (url, expected) => {
+    await setupCookie();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"data":{"children":[]}}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await agentReachTool.execute("test", { url });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(expected);
+  });
+
+  it("preserves HTTP status semantics for text and HTML errors", async () => {
+    await setupCookie();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("<html>private details</html>", {
+          status: 503,
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+    await expect(executeReddit()).rejects.toThrow(/503/);
+  });
+
+  it("rejects successful non-JSON responses", async () => {
+    await setupCookie();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("ok", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        }),
+      ),
+    );
+    await expect(executeReddit()).rejects.toThrow("non-JSON");
+  });
+
+  it.each([
+    401, 503,
+  ])("redacts cookie from HTTP %s error bodies", async (status) => {
+    await setupCookie();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          `upstream echoed ${COOKIE} from ${process.env.REDDIT_COOKIE_FILE}`,
+          {
+            status,
+            headers: { "content-type": "text/plain" },
+          },
+        ),
+      ),
+    );
+
+    await expect(executeReddit()).rejects.toSatisfy((error: unknown) => {
+      const message = String(error);
+      expect(message).toContain(String(status));
+      expect(message).not.toContain(COOKIE);
+      expect(message).not.toContain(process.env.REDDIT_COOKIE_FILE ?? "");
+      return true;
+    });
+  });
+
+  it("rejects declared and streamed responses over the Reddit size limit", async () => {
+    await setupCookie();
+    const oversized = "x".repeat(8 * 1024 * 1024 + 1);
+    const declared = new Response(oversized, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(oversized)),
+      },
+    });
+    const streamed = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(oversized));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    for (const response of [declared, streamed]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response));
+      await expect(executeReddit()).rejects.toSatisfy((error: unknown) => {
+        expect(String(error)).toContain("too large");
+        expect(String(error)).not.toContain(COOKIE);
+        return true;
+      });
+    }
+  });
+
+  it("aborts a pending fetch at the direct-fetch timeout", async () => {
+    await setupCookie();
+    vi.useFakeTimers();
+    let observedSignal!: AbortSignal;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, options: { signal: AbortSignal }) => {
+        observedSignal = options.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => reject(new Error("fetch aborted")),
+            { once: true },
+          );
+        });
+      }),
+    );
+    const pending = executeReddit();
+    const handled = pending.catch(() => undefined);
+    await vi.waitFor(() => expect(observedSignal).toBeDefined());
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(observedSignal.aborted).toBe(true);
+    await handled;
+    await expect(pending).rejects.toThrow("fetch aborted");
+  });
+
+  it("keeps the timeout active while consuming a pending response body", async () => {
+    await setupCookie();
+    vi.useFakeTimers();
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+    let observedSignal!: AbortSignal;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, options: { signal: AbortSignal }) => {
+        observedSignal = options.signal;
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                bodyController = controller;
+                options.signal.addEventListener("abort", () => {
+                  controller.error(new Error("body aborted"));
+                });
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+        );
+      }),
+    );
+    const pending = executeReddit();
+    const handled = pending.catch((error: unknown) => error);
+    await vi.waitFor(() => expect(bodyController).toBeDefined());
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(observedSignal.aborted).toBe(true);
+    const error = await handled;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("body aborted");
+    expect(execAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("does not create Runtime scratch for successful Reddit fetches", async () => {
+    await setupCookie();
+    mkdtempMock.mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response('{"data":{"children":[]}}', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    await executeReddit();
+    expect(mkdtempMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("agent-reach-"),
+    );
+    expect(execAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates caller abort to the fetch signal", async () => {
+    await setupCookie();
+    const controller = new AbortController();
+    let observed!: AbortSignal;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, options: { signal: AbortSignal }) => {
+        observed = options.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => reject(new Error("aborted")),
+            { once: true },
+          );
+        });
+      }),
+    );
+    const pending = executeReddit(controller.signal);
+    await vi.waitFor(() => expect(observed).toBeDefined());
+    controller.abort();
+    await vi.waitFor(() => expect(observed.aborted).toBe(true));
+    await expect(pending).rejects.toThrow("aborted");
+    expect(observed.aborted).toBe(true);
   });
 });

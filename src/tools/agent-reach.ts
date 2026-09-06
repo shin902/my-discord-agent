@@ -1,5 +1,5 @@
 import { lookup as dnsLookup } from "node:dns/promises";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -834,21 +834,7 @@ export async function buildGitHubMarkdown(
 }
 
 /** Reddit JSON API レスポンスを Markdown サマリーに変換する */
-export async function buildRedditMarkdown(absPath: string): Promise<string> {
-  let raw: string;
-  try {
-    raw = await readFile(absPath, "utf-8");
-  } catch {
-    return "(Reddit JSON の読み込みに失敗しました)";
-  }
-
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
-  }
-
+export function formatRedditMarkdown(data: unknown): string {
   const lines: string[] = [];
 
   // スレッド詳細: [{post listing}, {comments listing}]
@@ -939,7 +925,22 @@ export async function buildRedditMarkdown(absPath: string): Promise<string> {
     return lines.join("\n");
   }
 
-  return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
+  return "(Reddit レスポンスの構造を解析できませんでした)";
+}
+
+/** Compatibility wrapper for callers/tests that have a JSON file. */
+export async function buildRedditMarkdown(absPath: string): Promise<string> {
+  let raw: string;
+  try {
+    raw = await readFile(absPath, "utf-8");
+  } catch {
+    return "(Reddit JSON の読み込みに失敗しました)";
+  }
+  try {
+    return formatRedditMarkdown(JSON.parse(raw));
+  } catch {
+    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
+  }
 }
 
 // fxtwitter API はクッキー不要かつ通常ポストの text だけでなく X Article 付き
@@ -1122,23 +1123,16 @@ export function formatFxPost(post: FxPost): string {
   return lines.join("\n");
 }
 
-export async function readLimitedJson(
+export async function readLimitedText(
   response: Response,
   maxBytes: number,
-): Promise<unknown> {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!/^application\/json(?:;|$)/i.test(contentType.trim())) {
-    throw new Error("Upstream returned non-JSON response");
-  }
-
+): Promise<string> {
   const contentLength = response.headers.get("content-length");
   if (contentLength && Number(contentLength) > maxBytes) {
     throw new Error("Upstream response is too large");
   }
-
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("Upstream returned an empty response");
-
+  if (!reader) return "";
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -1156,8 +1150,18 @@ export async function readLimitedJson(
   } finally {
     reader.releaseLock();
   }
+  return new TextDecoder().decode(Buffer.concat(chunks, total));
+}
 
-  const raw = new TextDecoder().decode(Buffer.concat(chunks, total));
+export async function readLimitedJson(
+  response: Response,
+  maxBytes: number,
+): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!/^application\/json(?:;|$)/i.test(contentType.trim())) {
+    throw new Error("Upstream returned non-JSON response");
+  }
+  const raw = await readLimitedText(response, maxBytes);
   try {
     return JSON.parse(raw);
   } catch {
@@ -1169,7 +1173,6 @@ export function buildCommand(
   service: ServiceType,
   url: string,
   outAbsPath: string,
-  redditCookieFile?: string,
 ): string {
   const out = shellQuote(outAbsPath);
   switch (service) {
@@ -1210,23 +1213,8 @@ export function buildCommand(
       throw new Error("X Article は native fetch handler で処理します");
     case "x-twitter":
       throw new Error("X post は native fetch handler で処理します");
-    case "reddit": {
-      // Reddit cookies are read only inside the dedicated Tool Runtime. They are
-      // never sent through the sandbox credential proxy.
-      const parsed = new URL(url);
-      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
-      const jsonPath = pathname.endsWith(".json")
-        ? pathname
-        : `${pathname}.json`;
-      const redditUrl = `https://www.reddit.com${jsonPath}${parsed.search}`;
-      // Pass the cookie through curl's protected header-file form. The secret
-      // must never appear in this command string or in a child argv, because
-      // command failures are surfaced to the Agent.
-      const cookie = redditCookieFile
-        ? ` -H ${shellQuote(`@${redditCookieFile}`)}`
-        : "";
-      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(redditUrl)} -H ${shellQuote(`User-Agent: ${REDDIT_USER_AGENT}`)}${cookie}`;
-    }
+    case "reddit":
+      throw new Error("Reddit は native fetch handler で処理します");
     case "rss": {
       const policy = networkPolicyCommands(outAbsPath);
       return (
@@ -1346,34 +1334,76 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       };
     }
 
+    const redditCookieHeader =
+      service === "reddit"
+        ? await getRedditCookieHeader("reddit", {
+            cookieFile:
+              process.env.REDDIT_COOKIE_FILE ?? "data/reddit-cookies.json",
+            maxAgeDays: Number(process.env.REDDIT_COOKIE_MAX_AGE_DAYS ?? 7),
+          })
+        : undefined;
+
+    if (service === "reddit") {
+      const parsed = new URL(normalizedUrl);
+      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+      const jsonPath = pathname.endsWith(".json")
+        ? pathname
+        : `${pathname}.json`;
+      const redditUrl = `https://www.reddit.com${jsonPath}${parsed.search}`;
+      const timeoutController = new AbortController();
+      const timeout = setTimeout(() => timeoutController.abort(), TIMEOUT_MS);
+      const requestSignal = signal
+        ? AbortSignal.any([signal, timeoutController.signal])
+        : timeoutController.signal;
+      try {
+        const response = await fetch(redditUrl, {
+          method: "GET",
+          headers: {
+            Cookie: redditCookieHeader ?? "",
+            "User-Agent": REDDIT_USER_AGENT,
+          },
+          signal: requestSignal,
+          redirect: "error",
+        });
+        const body = await readLimitedText(response, 8 * 1024 * 1024);
+        const safeBody = body
+          .replaceAll(redditCookieHeader ?? "\u0000", "[redacted]")
+          .replaceAll(
+            process.env.REDDIT_COOKIE_FILE ?? "data/reddit-cookies.json",
+            "[redacted]",
+          );
+        if (!response.ok)
+          throw new Error(
+            formatHttpError(response.status, normalizedUrl, safeBody),
+          );
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!/^application\/json(?:;|$)/i.test(contentType.trim()))
+          throw new Error("Upstream returned non-JSON response");
+        let data: unknown;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          throw new Error("Upstream returned invalid JSON");
+        }
+        return {
+          content: [{ type: "text", text: formatRedditMarkdown(data) }],
+          details: { url: normalizedUrl, service },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          message.replaceAll(redditCookieHeader ?? "\u0000", "[redacted]"),
+        );
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
     const tmpDirAbs = await mkdtemp(join(tmpdir(), "agent-reach-"));
     const absPath = join(tmpDirAbs, `${service}.md`);
 
     try {
-      const redditCookieHeader =
-        service === "reddit"
-          ? await getRedditCookieHeader("reddit", {
-              cookieFile:
-                process.env.REDDIT_COOKIE_FILE ?? "data/reddit-cookies.json",
-              maxAgeDays: Number(process.env.REDDIT_COOKIE_MAX_AGE_DAYS ?? 7),
-            })
-          : undefined;
-      const redditCookieFile =
-        redditCookieHeader === undefined
-          ? undefined
-          : join(tmpDirAbs, "reddit-cookie.header");
-      if (redditCookieFile) {
-        await writeFile(redditCookieFile, `Cookie: ${redditCookieHeader}\n`, {
-          encoding: "utf-8",
-          mode: 0o600,
-        });
-      }
-      const cmd = buildCommand(
-        service,
-        normalizedUrl,
-        absPath,
-        redditCookieFile,
-      );
+      const cmd = buildCommand(service, normalizedUrl, absPath);
       let stdout: string;
       try {
         ({ stdout } = await execAsync(cmd, {
@@ -1388,7 +1418,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         const details = [e.stdout, e.stderr, e.message]
           .filter(Boolean)
           .join("\n")
-          // Do not let a misbehaving child echo the secret or runtime path.
+          // Do not let an upstream or child error echo the secret or runtime path.
           .replaceAll(redditCookieHeader ?? "\u0000", "[redacted]")
           .replaceAll(tmpDirAbs, "[temporary directory]")
           .trim();
@@ -1404,7 +1434,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         }
       }
 
-      // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換
+      // YouTube / GitHub: 生データ → Markdown サマリーに変換
       let content: string;
       if (service === "youtube") {
         const base = absPath.replace(/\.[^.]+$/, "");
@@ -1418,8 +1448,6 @@ export const agentReachTool: AgentTool<typeof parameters> = {
           `${base}.repo.json`,
           `${base}.readme.md`,
         );
-      } else if (service === "reddit") {
-        content = await buildRedditMarkdown(absPath);
       } else {
         content = await readFile(absPath, "utf-8").catch(() => "");
       }

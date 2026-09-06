@@ -75,32 +75,23 @@ describe("agent-reach Reddit cookie errors", () => {
 
   it("subprocess failure does not expose the cookie", async () => {
     await setup();
-    execAsyncMock.mockRejectedValueOnce(
-      Object.assign(
-        new Error("Command failed: curl -H @/tmp/reddit-cookie.header"),
-        {
-          stderr: `upstream failed: ${COOKIE}`,
-        },
-      ),
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValueOnce(new Error(`upstream failed: ${COOKIE}`)),
     );
 
     await expect(execute()).rejects.toSatisfy((error: unknown) => {
       expectSafeError(error);
       return true;
     });
-    expect(execAsyncMock).toHaveBeenCalledOnce();
-    expect(execAsyncMock.mock.calls[0]?.[0]).not.toContain(COOKIE);
+    expect(execAsyncMock).not.toHaveBeenCalled();
   });
 
   it("timeout does not expose the cookie", async () => {
     await setup();
-    execAsyncMock.mockRejectedValueOnce(
-      Object.assign(
-        new Error("Command timed out: curl -H @/tmp/reddit-cookie.header"),
-        {
-          stderr: COOKIE,
-        },
-      ),
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValueOnce(new Error(`timeout: ${COOKIE}`)),
     );
 
     await expect(execute()).rejects.toSatisfy((error: unknown) => {
@@ -111,22 +102,13 @@ describe("agent-reach Reddit cookie errors", () => {
 
   it("abort does not expose the cookie", async () => {
     await setup();
-    execAsyncMock.mockImplementationOnce(
-      async (_command: string, options: { signal?: AbortSignal }) => {
-        await new Promise<void>((_resolve, reject) => {
-          const rejectAborted = () =>
-            reject(
-              Object.assign(new Error("The operation was aborted"), {
-                stderr: COOKIE,
-              }),
-            );
-          if (options.signal?.aborted) rejectAborted();
-          else
-            options.signal?.addEventListener("abort", rejectAborted, {
-              once: true,
-            });
-        });
-      },
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockRejectedValueOnce(
+          new Error(`The operation was aborted: ${COOKIE}`),
+        ),
     );
     const controller = new AbortController();
     const promise = agentReachTool.execute(
