@@ -188,10 +188,7 @@ const CAPABILITIES = {
 
 type ToolName = keyof typeof TOOL_FACTORIES;
 
-export type {
-  AgentToolFactory,
-  CapabilityDispatchContext,
-} from "./capability.js";
+export type { AgentToolFactory } from "./capability.js";
 
 export function getCapabilityDefinition(
   name: string,

@@ -3,7 +3,6 @@ import type { TSchema } from "typebox";
 import { Check, Clean, Clone } from "typebox/value";
 import { createToolProxyTool, type ToolProxyEndpoint } from "./tool-proxy.js";
 
-export type CapabilityExecutor = "sandbox" | "host";
 export type AgentToolFactory = () => AgentTool | undefined;
 export type CapabilityArgsValidator = (args: unknown) => boolean;
 export type CapabilityArgsMaterializer = (args: unknown) => unknown;

@@ -51,8 +51,6 @@ import {
 } from "./subagent.js";
 import { loadGroupSystemPrompt } from "./system-prompt.js";
 
-export { runEphemeralAgent } from "./subagent.js";
-
 // pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
 // - "system-prompt-snapshot": グループの system prompt をセッション初回に固定化するためのスナップショット。
 //   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。

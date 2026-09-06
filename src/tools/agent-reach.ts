@@ -190,11 +190,6 @@ export function isPublicIpAddress(address: string): boolean {
   return true;
 }
 
-/** Compatibility name retained for callers that used the former predicate. */
-export function isPrivateAddress(address: string): boolean {
-  return !isPublicIpAddress(address);
-}
-
 /** WHATWG URL puts brackets around IPv6 hostnames; DNS APIs do not. */
 export function getLookupHostname(parsed: URL): string {
   return parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")
@@ -928,26 +923,6 @@ export function formatRedditMarkdown(data: unknown): string {
   return "(Reddit レスポンスの構造を解析できませんでした)";
 }
 
-/** Compatibility wrapper for callers/tests that have a JSON file. */
-export async function buildRedditMarkdown(absPath: string): Promise<string> {
-  let raw: string;
-  try {
-    raw = await readFile(absPath, "utf-8");
-  } catch {
-    return "(Reddit JSON の読み込みに失敗しました)";
-  }
-  try {
-    const formatted = formatRedditMarkdown(JSON.parse(raw));
-    return formatted.startsWith(
-      "(Reddit レスポンスの構造を解析できませんでした)",
-    )
-      ? `${formatted}\n\n${raw.slice(0, 1000)}`
-      : formatted;
-  } catch {
-    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
-  }
-}
-
 // fxtwitter API はクッキー不要かつ通常ポストの text だけでなく X Article 付き
 // ポストの記事全文も tweet.article として返す。X post 取得には fx のみを使う。
 const FxArticleBlockSchema = z
@@ -1271,33 +1246,6 @@ export function formatHttpError(
   const header = `HTTPエラー ${status} (${url})`;
   const truncated = body.slice(0, 500).trim();
   return truncated ? `${header}\n${truncated}` : header;
-}
-
-/**
- * このツールコールが作成しうる中間ファイル/ディレクトリの一覧を返す。
- * 実際の実行時には、呼び出しごとの一時ディレクトリを後処理で丸ごと削除する。
- * この関数は生成されるパスを確認したい呼び出し元向けに維持している。
- */
-export function getCleanupPaths(
-  service: ServiceType,
-  absPath: string,
-): string[] {
-  const base = absPath.replace(/\.[^.]+$/, "");
-  switch (service) {
-    case "youtube":
-      return [
-        absPath,
-        `${base}.meta.json`,
-        `${base}.subs`,
-        `${base}.network-policy`,
-      ];
-    case "rss":
-      return [absPath, `${base}.network-policy`];
-    case "github-repo":
-      return [absPath, `${base}.repo.json`, `${base}.readme.md`];
-    default:
-      return [absPath];
-  }
 }
 
 const parameters = Type.Object({

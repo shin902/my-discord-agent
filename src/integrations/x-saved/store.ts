@@ -24,7 +24,6 @@ export const X_SAVED_STATUSES = [
   "ignore",
 ] as const;
 
-export type XSavedStatus = (typeof X_SAVED_STATUSES)[number];
 export type XSavedSyncStatus = "success" | "partial" | "failed";
 
 export interface IngestResult {

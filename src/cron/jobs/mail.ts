@@ -25,8 +25,6 @@ async function graphFetch(path: string): Promise<unknown> {
   return res.json();
 }
 
-export { acknowledgeEmail } from "../mail-ack.js";
-
 interface UnreadEmail {
   id: string;
   subject: string;

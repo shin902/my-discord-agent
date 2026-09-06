@@ -4,12 +4,6 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import type { DeliveryStatus, JobStatus } from "./repository.js";
 
-export type RetentionStatus =
-  | JobStatus
-  | DeliveryStatus
-  | "idempotency_key"
-  | "rss_article"
-  | "dead_letter";
 export interface RetentionPolicy {
   /** Age in milliseconds. A missing status is retained indefinitely. */
   jobs?: Partial<Record<JobStatus, number>>;
