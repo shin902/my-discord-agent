@@ -147,7 +147,6 @@ describe("Tool Proxy RPC", () => {
     destination.botId = "mutated";
     destination.channelId = "mutated";
 
-    expect(config.revokeSignal.aborted).toBe(false);
     const unauthorized = await request(`Bearer ${config.token}`, {
       capability: "get-weather-forecast",
       args: { location: "東京" },
@@ -156,7 +155,6 @@ describe("Tool Proxy RPC", () => {
 
     config.revoke();
     config.revoke();
-    expect(config.revokeSignal.aborted).toBe(true);
     expect(activeToolProxyRunCount()).toBe(0);
     const revoked = await request(`Bearer ${config.token}`, {
       capability: "get-current-weather",
@@ -175,7 +173,7 @@ describe("Tool Proxy RPC", () => {
     );
   });
 
-  it("allows a run without a trusted Discord destination", () => {
+  it("allows a run without a trusted Discord destination", async () => {
     const config = createToolProxyRun(
       "no-destination-run",
       ["get-current-weather"],
@@ -183,7 +181,11 @@ describe("Tool Proxy RPC", () => {
     );
     if (!config) throw new Error("Tool Proxy was not initialized");
     config.revoke();
-    expect(config.revokeSignal.aborted).toBe(true);
+    const revoked = await request(`Bearer ${config.token}`, {
+      capability: "get-current-weather",
+      args: { location: "東京" },
+    });
+    expect(revoked.status).toBe(401);
   });
 
   it("does not execute an approval-required call before a decision", async () => {

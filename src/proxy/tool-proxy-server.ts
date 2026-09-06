@@ -31,7 +31,6 @@ let toolProxyPort: number | null = null;
 export interface ToolProxyRunConfig {
   url: string;
   token: string;
-  revokeSignal: AbortSignal;
   revoke: () => void;
 }
 
@@ -80,7 +79,6 @@ export function createToolProxyRun(
   return {
     url: `http://host.docker.internal:${toolProxyPort}${TOOL_PROXY_PATH}`,
     token,
-    revokeSignal: controller.signal,
     revoke,
   };
 }
