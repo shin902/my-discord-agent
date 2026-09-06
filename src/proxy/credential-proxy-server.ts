@@ -14,7 +14,6 @@ import {
   initGoogleAuth,
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
-import { getRedditCookieHeader } from "./reddit-cookie-store.js";
 import type { TrustedDiscordDestination } from "./tool-proxy-server.js";
 
 class UpstreamTimeoutError extends Error {
@@ -214,25 +213,6 @@ async function handleRequest(
     }
     delete headers.authorization;
     headers.authorization = `Bearer ${token}`;
-  } else if (entry.redditCookie) {
-    // Reddit クッキー注入（agent-reach の reddit サービス用）
-    let cookieHeader: string;
-    try {
-      cookieHeader = await getRedditCookieHeader(
-        entry.provider,
-        entry.redditCookie,
-      );
-    } catch (err) {
-      console.error(
-        `[credential-proxy] reddit cookie 取得失敗: ${err instanceof Error ? err.message : err}`,
-      );
-      res.writeHead(502);
-      res.end("Reddit cookie unavailable");
-      return;
-    }
-    delete headers.authorization;
-    delete headers.cookie;
-    headers.cookie = cookieHeader;
   } else if (entry.envVars && entry.envVars.length > 0) {
     const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
@@ -402,18 +382,6 @@ export async function initCredentialProxyServer(): Promise<number> {
             `[credential-proxy] Google Auth トークン取得に失敗しました (provider: ${entry.provider}): ${err instanceof Error ? err.message : err}`,
           );
         }
-      }
-    }
-    if (entry.redditCookie) {
-      try {
-        await getRedditCookieHeader(entry.provider, entry.redditCookie);
-        console.log(
-          `[credential-proxy] Reddit cookie OK for provider: ${entry.provider}`,
-        );
-      } catch (err) {
-        console.warn(
-          `[credential-proxy] ${err instanceof Error ? err.message : err}`,
-        );
       }
     }
   }

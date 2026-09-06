@@ -1,5 +1,8 @@
 *
 !dist/sandbox/runner.bundle.mjs
+!dist/tool-runtime.mjs
+!src/**
+!scripts/tool-runtime-entrypoint.sh
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml

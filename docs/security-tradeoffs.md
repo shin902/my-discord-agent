@@ -10,7 +10,7 @@
 
 **理由:** 同一LAN上の別PCで動作するローカルLLMサーバーへの接続に必要。`allowHost()` はホスト名ベースのルールのため、プライベートIPに解決されるホストへの通信は `allowPrivate()` がないとブロックされる。
 
-**残存リスク:** サンドボックス実行前に `agent-reach.ts` と互換用 `agent-reach.sh` が入力ホスト名を解決し、全回答を検査する。RSS/feedparser と yt-dlp の子プロセスは追加の DNS 解決も同じポリシーで検査するが、curl や外部のリモート reader（Jina など）がサーバー側で行う追加接続は対象外である。ただし実行環境がサンドボックスコンテナ内であるため影響範囲は限定的。
+**残存リスク:** Agent sandbox 自体の汎用 egress はまだ閉じていない。一方、`agent-reach` の外部取得処理（RSS/feedparser、yt-dlp、curl、Jina など）は sandbox から分離した専用 Tool Runtime で実行し、Runtime 内のアプリケーション検証と outbound firewall の両方で非公開宛先を拒否する。
 
 **対策済み内容:**
 - `allowLoopback()` は不要なため削除済み（コンテナ自身への接続を排除）
@@ -22,11 +22,11 @@
 
 **場所:** `src/agent/manager.ts` — `docker run` の `args`
 
-**内容:** エージェントコンテナは `--network` 制限なしで起動するため、コンテナ内から任意のホストへの送信が可能。
+**内容:** エージェントコンテナは `--network` 制限なしで起動するため、`agent-reach` 以外のコンテナ内処理から任意のホストへの送信が可能。
 
-**理由:** エージェントの主要機能（Web検索・URL取得）にはインターネットアクセスが必須。`agent-reach`のアクセス先ドメインは大体固定されているためホワイトリストは技術的には可能だが、エージェントとしての汎用性を損なうため現時点では採用しない。
+**理由:** 一般的な Agent sandbox の egress lockdown は今回の対象外とした。`agent-reach` の public Internet 取得は専用 Tool Runtime に移し、Runtime 側では private/loopback/link-local 等を拒否する。
 
-**残存リスク:** コンテナ内で実行されるコードが任意の外部エンドポイントに接続できる。旧 microsandbox の `NetworkPolicy` による egress 制限はこの移行で失われた。
+**残存リスク:** Agent sandbox 内で実行される `bash` 等のコードは任意の外部エンドポイントに接続できる。これは今回の移行後も残る既知のリスクで、Agent sandbox 全体の egress lockdown は別作業とする。Tool Runtime 自体は専用 firewall とアプリケーション検証で private/internal destination を拒否する。
 
 **credential proxy との関係:** API キーの漏洩防止はコンテナへ直接キーを渡さない設計（`credential-proxy-server`）で対処済み。ネットワーク制限の欠如とは独立した問題。
 

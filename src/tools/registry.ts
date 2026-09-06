@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { agentReachTool } from "./agent-reach.js";
+import { agentReachCapabilityTool } from "./agent-reach-capability.js";
 import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { bashTool } from "./bash.js";
 import {
@@ -48,7 +48,6 @@ const createStaticToolFactory =
 
 const TOOL_FACTORIES = {
   bash: createStaticToolFactory(bashTool),
-  "agent-reach": createStaticToolFactory(agentReachTool),
   read: createStaticToolFactory(readTool),
   write: createStaticToolFactory(writeTool),
   list: createStaticToolFactory(listTool),
@@ -184,6 +183,7 @@ const CAPABILITIES = {
   "delete-event": hostCapability(deleteEventTool, {
     defaultArgs: () => ({ calendarId: "primary" }),
   }),
+  "agent-reach": hostCapability(agentReachCapabilityTool),
 } satisfies Record<string, CapabilityDefinition>;
 
 type ToolName = keyof typeof TOOL_FACTORIES;

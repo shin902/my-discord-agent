@@ -7,16 +7,15 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { z } from "zod";
-
+import { getRedditCookieHeader } from "../proxy/reddit-cookie-store.js";
 import { execAsync } from "./exec.js";
-import { resolveProxyBaseUrl } from "./proxy-url.js";
 
 // Reddit は bot 判定が厳しく、汎用的な curl の User-Agent では JS チャレンジで
 // ブロックされる。ログインに使ったブラウザに近い UA を送ることで通過率を上げる。
 const REDDIT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-const WORKSPACE = "/workspace";
+const WORKSPACE = "/tmp";
 // 外部コマンド（curl/yt-dlp等）の出力先として使う一時領域は、呼び出しごとに
 // システム一時ディレクトリの下へ独立して作成する。フェッチ結果はツールコール結果に
 // 直接返すため、呼び出し終了時にディレクトリごと削除する。
@@ -835,21 +834,7 @@ export async function buildGitHubMarkdown(
 }
 
 /** Reddit JSON API レスポンスを Markdown サマリーに変換する */
-export async function buildRedditMarkdown(absPath: string): Promise<string> {
-  let raw: string;
-  try {
-    raw = await readFile(absPath, "utf-8");
-  } catch {
-    return "(Reddit JSON の読み込みに失敗しました)";
-  }
-
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
-  }
-
+export function formatRedditMarkdown(data: unknown): string {
   const lines: string[] = [];
 
   // スレッド詳細: [{post listing}, {comments listing}]
@@ -919,15 +904,48 @@ export async function buildRedditMarkdown(absPath: string): Promise<string> {
       const p = child.data as Record<string, unknown>;
       lines.push(`## ${p.title}`);
       lines.push(
-        `u/${p.author} | スコア: ${p.score} | コメント: ${p.num_comments}`,
+        `r/${p.subreddit} | u/${p.author} | スコア: ${p.score} | コメント: ${p.num_comments}`,
       );
-      lines.push(`URL: ${p.url}`);
+      const permalink =
+        typeof p.permalink === "string" && p.permalink.startsWith("/")
+          ? p.permalink
+          : undefined;
+      const threadUrl = permalink
+        ? `https://reddit.com${permalink}`
+        : undefined;
+      if (threadUrl) lines.push(`スレッド: ${threadUrl}`);
+      if (
+        typeof p.url === "string" &&
+        (permalink === undefined || !p.url.endsWith(permalink))
+      ) {
+        lines.push(`外部URL: ${p.url}`);
+      }
       lines.push("");
     }
     return lines.join("\n");
   }
 
-  return `(Reddit レスポンスの構造を解析できませんでした)\n\n${raw.slice(0, 1000)}`;
+  return "(Reddit レスポンスの構造を解析できませんでした)";
+}
+
+/** Compatibility wrapper for callers/tests that have a JSON file. */
+export async function buildRedditMarkdown(absPath: string): Promise<string> {
+  let raw: string;
+  try {
+    raw = await readFile(absPath, "utf-8");
+  } catch {
+    return "(Reddit JSON の読み込みに失敗しました)";
+  }
+  try {
+    const formatted = formatRedditMarkdown(JSON.parse(raw));
+    return formatted.startsWith(
+      "(Reddit レスポンスの構造を解析できませんでした)",
+    )
+      ? `${formatted}\n\n${raw.slice(0, 1000)}`
+      : formatted;
+  } catch {
+    return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
+  }
 }
 
 // fxtwitter API はクッキー不要かつ通常ポストの text だけでなく X Article 付き
@@ -1110,23 +1128,17 @@ export function formatFxPost(post: FxPost): string {
   return lines.join("\n");
 }
 
-export async function readLimitedJson(
+export async function readLimitedText(
   response: Response,
   maxBytes: number,
-): Promise<unknown> {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!/^application\/json(?:;|$)/i.test(contentType.trim())) {
-    throw new Error("Upstream returned non-JSON response");
-  }
-
+): Promise<string> {
   const contentLength = response.headers.get("content-length");
   if (contentLength && Number(contentLength) > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
     throw new Error("Upstream response is too large");
   }
-
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("Upstream returned an empty response");
-
+  if (!reader) return "";
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -1144,8 +1156,18 @@ export async function readLimitedJson(
   } finally {
     reader.releaseLock();
   }
+  return new TextDecoder().decode(Buffer.concat(chunks, total));
+}
 
-  const raw = new TextDecoder().decode(Buffer.concat(chunks, total));
+export async function readLimitedJson(
+  response: Response,
+  maxBytes: number,
+): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!/^application\/json(?:;|$)/i.test(contentType.trim())) {
+    throw new Error("Upstream returned non-JSON response");
+  }
+  const raw = await readLimitedText(response, maxBytes);
   try {
     return JSON.parse(raw);
   } catch {
@@ -1197,18 +1219,8 @@ export function buildCommand(
       throw new Error("X Article は native fetch handler で処理します");
     case "x-twitter":
       throw new Error("X post は native fetch handler で処理します");
-    case "reddit": {
-      // Reddit は未認証アクセスを一律ブロックするため、credential-proxy 経由で
-      // ログイン済みクッキー(www.reddit.com)を使ってアクセスする
-      // (docs/guides/reddit-cookie-setup.md 参照)
-      const parsed = new URL(url);
-      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
-      const jsonPath = pathname.endsWith(".json")
-        ? pathname
-        : `${pathname}.json`;
-      const proxyUrl = `${resolveProxyBaseUrl("reddit")}${jsonPath}${parsed.search}`;
-      return `curl -sS -o ${out} -w '%{http_code}' ${shellQuote(proxyUrl)} -H "User-Agent: ${REDDIT_USER_AGENT}"`;
-    }
+    case "reddit":
+      throw new Error("Reddit は native fetch handler で処理します");
     case "rss": {
       const policy = networkPolicyCommands(outAbsPath);
       return (
@@ -1328,6 +1340,74 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       };
     }
 
+    const redditCookieHeader =
+      service === "reddit"
+        ? await getRedditCookieHeader("reddit", {
+            cookieFile:
+              process.env.REDDIT_COOKIE_FILE ?? "data/reddit-cookies.json",
+            maxAgeDays: Number(process.env.REDDIT_COOKIE_MAX_AGE_DAYS ?? 7),
+          })
+        : undefined;
+
+    if (service === "reddit") {
+      const parsed = new URL(normalizedUrl);
+      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+      const jsonPath = pathname.endsWith(".json")
+        ? pathname
+        : `${pathname}.json`;
+      const redditUrl = `https://www.reddit.com${jsonPath}${parsed.search}`;
+      const timeoutController = new AbortController();
+      const timeout = setTimeout(() => timeoutController.abort(), TIMEOUT_MS);
+      const requestSignal = signal
+        ? AbortSignal.any([signal, timeoutController.signal])
+        : timeoutController.signal;
+      const cookieFile =
+        process.env.REDDIT_COOKIE_FILE ?? "data/reddit-cookies.json";
+      const redactRedditSecrets = (text: string): string => {
+        let redacted = text;
+        if (redditCookieHeader)
+          redacted = redacted.replaceAll(redditCookieHeader, "[redacted]");
+        if (cookieFile)
+          redacted = redacted.replaceAll(cookieFile, "[redacted]");
+        return redacted;
+      };
+      try {
+        const response = await fetch(redditUrl, {
+          method: "GET",
+          headers: {
+            Cookie: redditCookieHeader ?? "",
+            "User-Agent": REDDIT_USER_AGENT,
+          },
+          signal: requestSignal,
+          redirect: "error",
+        });
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => undefined);
+          throw new Error(formatHttpError(response.status, normalizedUrl, ""));
+        }
+        const body = await readLimitedText(response, 8 * 1024 * 1024);
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!/^application\/json(?:;|$)/i.test(contentType.trim()))
+          throw new Error("Upstream returned non-JSON response");
+        let data: unknown;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          throw new Error("Upstream returned invalid JSON");
+        }
+        const markdown = redactRedditSecrets(formatRedditMarkdown(data));
+        return {
+          content: [{ type: "text", text: markdown }],
+          details: { url: normalizedUrl, service },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(redactRedditSecrets(message));
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
     const tmpDirAbs = await mkdtemp(join(tmpdir(), "agent-reach-"));
     const absPath = join(tmpDirAbs, `${service}.md`);
 
@@ -1339,13 +1419,19 @@ export const agentReachTool: AgentTool<typeof parameters> = {
           timeout: TIMEOUT_MS,
           maxBuffer: 64 * 1024 * 1024,
           cwd: WORKSPACE,
+          signal,
+          processGroup: true,
         }));
       } catch (err) {
         const e = err as { stdout?: string; stderr?: string; message?: string };
-        throw new Error(
-          [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim() ||
-            "フェッチ失敗",
-        );
+        const details = [e.stdout, e.stderr, e.message]
+          .filter(Boolean)
+          .join("\n")
+          // Do not let an upstream or child error echo the secret or runtime path.
+          .replaceAll(redditCookieHeader ?? "\u0000", "[redacted]")
+          .replaceAll(tmpDirAbs, "[temporary directory]")
+          .trim();
+        throw new Error(details || "フェッチ失敗");
       }
 
       if (HTTP_STATUS_SERVICES.has(service)) {
@@ -1357,7 +1443,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         }
       }
 
-      // YouTube / GitHub / Reddit: 生データ → Markdown サマリーに変換
+      // YouTube / GitHub: 生データ → Markdown サマリーに変換
       let content: string;
       if (service === "youtube") {
         const base = absPath.replace(/\.[^.]+$/, "");
@@ -1371,8 +1457,6 @@ export const agentReachTool: AgentTool<typeof parameters> = {
           `${base}.repo.json`,
           `${base}.readme.md`,
         );
-      } else if (service === "reddit") {
-        content = await buildRedditMarkdown(absPath);
       } else {
         content = await readFile(absPath, "utf-8").catch(() => "");
       }

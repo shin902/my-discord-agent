@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
@@ -236,79 +236,6 @@ describe("FxTwitter JSON helpers", () => {
 
 describe("buildCommand シェルエスケープ", () => {
   const out = "/workspace/fetched/out.md";
-
-  describe("reddit", () => {
-    beforeEach(() => {
-      process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-        { provider: "reddit", baseUrl: "http://localhost:12345/reddit" },
-      ]);
-    });
-
-    afterEach(() => {
-      delete process.env.CREDENTIAL_PROXY_JSON;
-    });
-
-    it("通常URL → .json を付与し credential-proxy 経由のcurlを生成", () => {
-      const cmd = buildCommand(
-        "reddit",
-        "https://www.reddit.com/r/programming/comments/abc/",
-        out,
-      );
-      expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json",
-      );
-      expect(cmd).toContain("curl -sS");
-      expect(cmd).toContain("-w '%{http_code}'");
-    });
-
-    it("ルートURL → /.json を付与し credential-proxy のパスを維持", () => {
-      const cmd = buildCommand("reddit", "https://reddit.com/", out);
-      expect(cmd).toContain("http://localhost:12345/reddit/.json");
-      expect(cmd).not.toContain("http://localhost:12345/reddit.json");
-    });
-
-    it("既に .json で終わるURLは二重に付与しない", () => {
-      const cmd = buildCommand(
-        "reddit",
-        "https://www.reddit.com/r/programming/comments/abc.json",
-        out,
-      );
-      expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json",
-      );
-      expect(cmd).not.toContain(".json.json");
-    });
-
-    it("クエリ文字列を維持する", () => {
-      const cmd = buildCommand(
-        "reddit",
-        normalizeUrl(
-          "https://www.reddit.com/r/programming/comments/abc/?sort=top#comments",
-        ),
-        out,
-      );
-      expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json?sort=top",
-      );
-    });
-
-    it("シングルクォートを含むURLをエスケープする", () => {
-      const url = "https://www.reddit.com/r/test/it's-test";
-      const cmd = buildCommand("reddit", url, out);
-      expect(cmd).toContain("'\\''");
-    });
-
-    it("CREDENTIAL_PROXY_JSON が未設定の場合は例外を投げる", () => {
-      delete process.env.CREDENTIAL_PROXY_JSON;
-      expect(() =>
-        buildCommand(
-          "reddit",
-          "https://www.reddit.com/r/programming/comments/abc/",
-          out,
-        ),
-      ).toThrow("CREDENTIAL_PROXY_JSON が設定されていません");
-    });
-  });
 
   it("youtube: 原語字幕だけを要求し、字幕取得失敗を握りつぶさない", () => {
     const cmd = buildCommand("youtube", parityCases.youtube.url, out);
@@ -703,6 +630,83 @@ describe("buildRedditMarkdown パース", () => {
     const path = await write([]);
     const result = await buildRedditMarkdown(path);
     expect(result).toContain("構造を解析できませんでした");
+  });
+
+  it("一覧: subreddit、スレッドURL、外部URLを保持する", async () => {
+    const path = await write({
+      kind: "Listing",
+      data: {
+        children: [
+          {
+            data: {
+              title: "リンク投稿",
+              subreddit: "typescript",
+              author: "user1",
+              score: 42,
+              num_comments: 7,
+              permalink: "/r/typescript/comments/abc123/link_post/",
+              url: "https://example.com/article",
+            },
+          },
+          {
+            data: {
+              title: "セルフ投稿",
+              subreddit: "typescript",
+              author: "user2",
+              score: 8,
+              num_comments: 2,
+              permalink: "/r/typescript/comments/def456/self_post/",
+              url: "https://www.reddit.com/r/typescript/comments/def456/self_post/",
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await buildRedditMarkdown(path);
+
+    expect(result).toContain(
+      "r/typescript | u/user1 | スコア: 42 | コメント: 7",
+    );
+    expect(result).toContain(
+      "スレッド: https://reddit.com/r/typescript/comments/abc123/link_post/",
+    );
+    expect(result).toContain("外部URL: https://example.com/article");
+    expect(result).toContain(
+      "スレッド: https://reddit.com/r/typescript/comments/def456/self_post/",
+    );
+    expect(result.match(/def456\/self_post\//g)).toHaveLength(1);
+  });
+
+  it.each([
+    ["空の permalink", ""],
+    ["絶対URLの permalink", "https://malicious.example/thread"],
+    ["相対パスの permalink", "r/typescript/comments/abc123/result/"],
+  ])("一覧: %s は無視して外部URLを保持する", async (_label, permalink) => {
+    const path = await write({
+      kind: "Listing",
+      data: {
+        children: [
+          {
+            data: {
+              title: "リンク投稿",
+              subreddit: "typescript",
+              author: "user",
+              score: 1,
+              num_comments: 0,
+              permalink,
+              url: "https://example.com/article",
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await buildRedditMarkdown(path);
+
+    expect(result).toContain("外部URL: https://example.com/article");
+    expect(result).not.toContain("スレッド:");
+    expect(result).not.toContain("https://reddit.com");
   });
 
   it("スレッド: data[1]がないとコメントなしで返す", async () => {

@@ -31,7 +31,7 @@ for h in data.get('hits', []):
 "
 ```
 
-### 2. Reddit (via the credential proxy)
+### 2. Reddit (via the agent-reach Tool Proxy capability)
 
 ```bash
 bash /workspace/SKILLS/last30days/scripts/reddit-search.sh "TOPIC"
@@ -77,5 +77,5 @@ Summarize the data collected from each source in the following format. The headi
 
 ## Notes
 
-- Reddit requires the `reddit` provider configuration in `credentials.json`; skip it when the configuration is missing.
+- Reddit retrieval uses the `agent-reach` Tool Proxy capability. Do not read `CREDENTIAL_PROXY_JSON` or Reddit cookie files from the sandbox; if the Tool Proxy or Runtime is unavailable, report the retrieval error.
 - If there are too few results, also use an English query.

@@ -1,0 +1,43 @@
+services:
+  agent-reach-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.tool-runtime
+    ports:
+      - "127.0.0.1:8787:8787"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      # Temporary entrypoint privileges; setpriv drops these before Node starts.
+      - SETUID
+      - SETGID
+      - SETPCAP
+    environment:
+      PORT: "8787"
+      AGENT_REACH_RUNTIME_TOKEN: "${AGENT_REACH_RUNTIME_TOKEN:?set AGENT_REACH_RUNTIME_TOKEN}"
+      AGENT_REACH_REFRESH_TOKEN: "${AGENT_REACH_REFRESH_TOKEN:?set AGENT_REACH_REFRESH_TOKEN}"
+      REDDIT_PROFILE_DIR: /var/lib/reddit/profile
+      REDDIT_COOKIE_FILE: /var/lib/reddit/reddit-cookies.json
+      REDDIT_COOKIE_MAX_AGE_DAYS: "${REDDIT_COOKIE_MAX_AGE_DAYS:-7}"
+      CHROMIUM_PATH: /usr/bin/chromium
+    # Do not inherit the host/Tailscale resolver, which is blocked as private
+    # overlay traffic. Public DNS remains reachable through the OUTPUT policy;
+    # the embedded 127.0.0.11 resolver is also explicitly allowed there.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    volumes:
+      - type: bind
+        source: ./data/reddit-browser-profile
+        target: /var/lib/reddit/profile
+      - type: bind
+        source: ./data/reddit-cookies.json
+        target: /var/lib/reddit/reddit-cookies.json
+        bind:
+          # Do not let Compose create a directory for this file when the
+          # first login has not produced it yet.
+          create_host_path: false
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

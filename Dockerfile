@@ -24,10 +24,7 @@ RUN apk add --no-cache --virtual .native-build python3 make g++ && \
     apk del .native-build
 
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir \
-    yt-dlp \
-    feedparser \
-    md2html-phuker
+    /opt/venv/bin/pip install --no-cache-dir md2html-phuker
 
 ENV PATH="/opt/venv/bin:$PATH"
 ENV TZ="Asia/Tokyo"

@@ -29,5 +29,11 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: Build Tool Runtime
+        run: pnpm build:tool-runtime
+
+      - name: Build Tool Runtime image
+        run: docker build -f Dockerfile.tool-runtime -t my-discord-agent-tool-runtime:ci .
+
       - name: Test
         run: pnpm test
