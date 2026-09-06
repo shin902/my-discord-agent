@@ -73,11 +73,11 @@ export async function getRedditCookieHeader(
   }
   const typedStored = stored as StoredCookies;
   const updatedAt = typedStored.updatedAt;
-  if (
-    typedStored.cookieHeader === "" &&
-    updatedAt === "1970-01-01T00:00:00.000Z"
-  ) {
-    throw new RedditCookieMissingError(provider, cookieFile);
+  if (typedStored.cookieHeader.trim() === "") {
+    if (updatedAt === "1970-01-01T00:00:00.000Z") {
+      throw new RedditCookieMissingError(provider, cookieFile);
+    }
+    throw new RedditCookieInvalidError(provider);
   }
   const ageMs = Date.now() - new Date(updatedAt).getTime();
   const ageDays = ageMs / (24 * 60 * 60 * 1000);

@@ -834,7 +834,7 @@ export async function buildGitHubMarkdown(
 }
 
 /** Reddit JSON API レスポンスを Markdown サマリーに変換する */
-export function formatRedditMarkdown(data: unknown, raw?: string): string {
+export function formatRedditMarkdown(data: unknown): string {
   const lines: string[] = [];
 
   // スレッド詳細: [{post listing}, {comments listing}]
@@ -925,10 +925,7 @@ export function formatRedditMarkdown(data: unknown, raw?: string): string {
     return lines.join("\n");
   }
 
-  const diagnostic = "(Reddit レスポンスの構造を解析できませんでした)";
-  return raw === undefined
-    ? diagnostic
-    : `${diagnostic}\n\n${raw.slice(0, 1000)}`;
+  return "(Reddit レスポンスの構造を解析できませんでした)";
 }
 
 /** Compatibility wrapper for callers/tests that have a JSON file. */
@@ -940,7 +937,12 @@ export async function buildRedditMarkdown(absPath: string): Promise<string> {
     return "(Reddit JSON の読み込みに失敗しました)";
   }
   try {
-    return formatRedditMarkdown(JSON.parse(raw), raw);
+    const formatted = formatRedditMarkdown(JSON.parse(raw));
+    return formatted.startsWith(
+      "(Reddit レスポンスの構造を解析できませんでした)",
+    )
+      ? `${formatted}\n\n${raw.slice(0, 1000)}`
+      : formatted;
   } catch {
     return `(JSON パース失敗)\n\n${raw.slice(0, 2000)}`;
   }
@@ -1360,10 +1362,14 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         : timeoutController.signal;
       const cookieFile =
         process.env.REDDIT_COOKIE_FILE ?? "data/reddit-cookies.json";
-      const redactRedditSecrets = (text: string): string =>
-        text
-          .replaceAll(redditCookieHeader ?? "\u0000", "[redacted]")
-          .replaceAll(cookieFile, "[redacted]");
+      const redactRedditSecrets = (text: string): string => {
+        let redacted = text;
+        if (redditCookieHeader)
+          redacted = redacted.replaceAll(redditCookieHeader, "[redacted]");
+        if (cookieFile)
+          redacted = redacted.replaceAll(cookieFile, "[redacted]");
+        return redacted;
+      };
       try {
         const response = await fetch(redditUrl, {
           method: "GET",
@@ -1374,12 +1380,11 @@ export const agentReachTool: AgentTool<typeof parameters> = {
           signal: requestSignal,
           redirect: "error",
         });
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => undefined);
+          throw new Error(formatHttpError(response.status, normalizedUrl, ""));
+        }
         const body = await readLimitedText(response, 8 * 1024 * 1024);
-        const safeBody = redactRedditSecrets(body);
-        if (!response.ok)
-          throw new Error(
-            formatHttpError(response.status, normalizedUrl, safeBody),
-          );
         const contentType = response.headers.get("content-type") ?? "";
         if (!/^application\/json(?:;|$)/i.test(contentType.trim()))
           throw new Error("Upstream returned non-JSON response");
@@ -1389,7 +1394,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         } catch {
           throw new Error("Upstream returned invalid JSON");
         }
-        const markdown = redactRedditSecrets(formatRedditMarkdown(data, body));
+        const markdown = redactRedditSecrets(formatRedditMarkdown(data));
         return {
           content: [{ type: "text", text: markdown }],
           details: { url: normalizedUrl, service },

@@ -71,6 +71,23 @@ describe("getRedditCookieHeader", () => {
     ).rejects.toBeInstanceOf(RedditCookieMissingError);
   });
 
+  it("fresh empty cookie state is rejected as invalid", async () => {
+    vi.doMock("node:fs/promises", () => ({
+      readFile: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          cookieHeader: "   ",
+          updatedAt: new Date().toISOString(),
+        }),
+      ),
+    }));
+    const { getRedditCookieHeader, RedditCookieInvalidError } = await import(
+      "./reddit-cookie-store.js"
+    );
+    await expect(
+      getRedditCookieHeader("reddit", CONFIG),
+    ).rejects.toBeInstanceOf(RedditCookieInvalidError);
+  });
+
   it("有効期限内のクッキーヘッダーを返す", async () => {
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn().mockResolvedValue(

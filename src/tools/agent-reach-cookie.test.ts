@@ -184,7 +184,7 @@ describe("agent-reach Reddit cookie boundary", () => {
       (fallback as { content: Array<{ text: string }> }).content[0]?.text,
     );
     expect(fallbackText).toContain("構造を解析できませんでした");
-    expect(fallbackText).toContain('"unexpected"');
+    expect(fallbackText).not.toContain('"unexpected"');
     expect(fallbackText).not.toContain(COOKIE);
     expect(fallbackText).not.toContain(cookiePath);
 
