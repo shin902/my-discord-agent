@@ -769,7 +769,7 @@ function syntheticCompleted(
     succeeded: true,
   };
 }
-/** Column projection shared by delivery reads (getDelivery / listDeliveries). */
+/** Column projection for delivery reads. */
 const DELIVERY_SELECT_COLUMNS =
   "id,job_id,status,payload_json,created_at,response_index,payload_hash,host_unique_key,destination_type,destination_id,reply_message_id,cron_thread_id,external_message_id,lease_until,worker_id,fencing_token,attempts,next_attempt_at,last_error";
 
@@ -1322,15 +1322,6 @@ export class QueueRepository {
     if (result.changes !== 1)
       throw new Error(`stale fencing token for job ${id}`);
   }
-  isFenced(id: string, token: number): boolean {
-    return (
-      this.db
-        .prepare(
-          "SELECT 1 FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
-        )
-        .get(id, token) !== undefined
-    );
-  }
   private updatePayload(
     id: string,
     token: number,
@@ -1820,14 +1811,6 @@ export class QueueRepository {
       )
       .run(scopeId, messageId, nowIso());
   }
-  getDelivery(jobId: string): DeliveryRow | undefined {
-    const row = this.db
-      .prepare(
-        `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries WHERE job_id=? ORDER BY response_index LIMIT 1`,
-      )
-      .get(jobId) as Record<string, unknown> | undefined;
-    return row ? this.parseDelivery(row) : undefined;
-  }
   listDeliveries(status?: DeliveryStatus): DeliveryRow[] {
     const rows = (
       status
@@ -2122,20 +2105,6 @@ export class QueueRepository {
         input.source ?? "queue",
         nowIso(),
       );
-  }
-  list(status?: JobStatus): QueueJob[] {
-    const rows = (
-      status
-        ? this.db
-            .prepare(
-              "SELECT * FROM jobs WHERE status=? ORDER BY created_at,sequence",
-            )
-            .all(status)
-        : this.db
-            .prepare("SELECT * FROM jobs ORDER BY created_at,sequence")
-            .all()
-    ) as JobRow[];
-    return rows.map(parsePayload);
   }
 }
 let defaultRepository: QueueRepository | undefined;

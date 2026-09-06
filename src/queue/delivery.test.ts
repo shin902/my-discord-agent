@@ -188,7 +188,9 @@ it("does not mark delivery sent when the placeholder cannot be edited", async ()
       workerId: "delivery-missing-placeholder",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({ status: "retry_wait" });
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({ status: "retry_wait" });
     expect(thread.send).not.toHaveBeenCalled();
   } finally {
     readySpy.mockRestore();
@@ -223,17 +225,23 @@ it.each([
       retryDelayMs: 0,
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       status: "retry_wait",
       attempts: 1,
     });
     await worker.runOnce(new Date(Date.now() + 1));
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       status: "retry_wait",
       attempts: 2,
     });
     await worker.runOnce(new Date(Date.now() + 2));
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       status: "failed",
       attempts: 3,
     });
@@ -271,12 +279,16 @@ it("marks a placeholder delivery sent when edit succeeds before the third attemp
       retryDelayMs: 0,
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       status: "retry_wait",
       attempts: 1,
     });
     await worker.runOnce(new Date(Date.now() + 1));
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       status: "sent",
       attempts: 2,
     });
@@ -298,7 +310,9 @@ it("durably persists the created thread before its first message send", async ()
   const send = vi.fn(async () => {
     // The message send must only be invoked after the thread id is already
     // durable in the delivery row (pre-send crash-safety boundary).
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       cronThreadId: "thread-1",
       status: "sending",
     });
@@ -316,7 +330,9 @@ it("durably persists the created thread before its first message send", async ()
     });
     await worker.runOnce();
     expect(send).toHaveBeenCalledOnce();
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       status: "sent",
       cronThreadId: "thread-1",
       externalMessageId: "message-1",
@@ -353,7 +369,9 @@ it("reuses the durably persisted cron thread for delivery", async () => {
       content: "response",
       allowedMentions: { parse: [], repliedUser: false },
     });
-    expect(repo.getDelivery(jobId)).toMatchObject({
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+    ).toMatchObject({
       status: "sent",
       cronThreadId: "thread-actual",
     });
@@ -383,7 +401,10 @@ it("marks transport failure during thread creation ambiguous without retrying", 
       workerId: "delivery-a",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+        ?.status,
+    ).toBe("ambiguous");
     await worker.runOnce();
     expect(create).toHaveBeenCalledOnce();
   } finally {
@@ -414,7 +435,10 @@ it("marks a 500 during thread creation ambiguous without retrying", async () => 
       workerId: "delivery-a",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+        ?.status,
+    ).toBe("ambiguous");
     await worker.runOnce();
     expect(create).toHaveBeenCalledOnce();
   } finally {
@@ -444,7 +468,10 @@ it("marks transport failure during message send ambiguous without retrying", asy
       workerId: "delivery-a",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+        ?.status,
+    ).toBe("ambiguous");
     await worker.runOnce();
     expect(send).toHaveBeenCalledOnce();
   } finally {
@@ -471,7 +498,10 @@ it("marks a 502 during message send ambiguous without retrying", async () => {
       workerId: "delivery-a",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+        ?.status,
+    ).toBe("ambiguous");
     await worker.runOnce();
     expect(send).toHaveBeenCalledOnce();
   } finally {
@@ -508,7 +538,10 @@ it("marks thread persistence failures ambiguous without creating a duplicate thr
       workerId: "delivery-a",
     });
     await worker.runOnce();
-    expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+    expect(
+      repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+        ?.status,
+    ).toBe("ambiguous");
     expect(persistSpy).toHaveBeenCalledOnce();
     expect(create).toHaveBeenCalledOnce();
     expect(thread.send).not.toHaveBeenCalled();
@@ -589,14 +622,22 @@ describe("durable delivery worker", () => {
         { workerId: "delivery-a", leaseMs: 1 },
       );
       await worker.runOnce();
-      expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("ambiguous");
       expect(send).toHaveBeenCalledTimes(1);
       repo.resolveAmbiguousDelivery(
-        expectDefined(repo.getDelivery(jobId)).id,
+        expectDefined(
+          repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+        ).id,
         "sent",
         "operator-confirmed",
       );
-      expect(repo.getDelivery(jobId)?.status).toBe("sent");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("sent");
       expect(send).toHaveBeenCalledTimes(1);
     } finally {
       repo.close();
@@ -711,7 +752,10 @@ describe("durable delivery worker", () => {
         workerId: "delivery-a",
       });
       await worker.runOnce();
-      expect(repo.getDelivery(jobId)?.status).toBe("failed");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("failed");
       const checkDb = openRssDb(rssPath);
       try {
         expect(listDispatchClaims(checkDb)).toEqual([]);
@@ -767,7 +811,10 @@ describe("durable delivery worker", () => {
         { workerId: "delivery-a" },
       );
       await worker.runOnce();
-      expect(repo.getDelivery(jobId)?.status).toBe("sending");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("sending");
       const checkDb = openRssDb(rssPath);
       try {
         expect(listDispatchClaims(checkDb)).toHaveLength(1);
@@ -797,12 +844,18 @@ describe("durable delivery worker", () => {
         retryDelayMs: 0,
       });
       await worker.runOnce();
-      expect(repo.getDelivery(jobId)?.status).toBe("retry_wait");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("retry_wait");
       repo.db
         .prepare("UPDATE deliveries SET next_attempt_at=? WHERE job_id=?")
         .run(new Date(0).toISOString(), jobId);
       await worker.runOnce();
-      expect(repo.getDelivery(jobId)?.status).toBe("sent");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("sent");
       expect(repo.get(jobId)?.attempts).toBe(1);
     } finally {
       repo.close();
@@ -919,14 +972,19 @@ describe("durable delivery worker", () => {
         retryDelayMs: 0,
       });
       await worker.runOnce();
-      const afterFailure = expectDefined(repo.getDelivery(jobId));
+      const afterFailure = expectDefined(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+      );
       expect(afterFailure.status).toBe("retry_wait");
       expect(afterFailure.cronThreadId).toBe("thread-1");
       repo.db
         .prepare("UPDATE deliveries SET next_attempt_at=? WHERE id=?")
         .run(new Date(0).toISOString(), afterFailure.id);
       await worker.runOnce();
-      expect(repo.getDelivery(jobId)?.status).toBe("sent");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("sent");
       expect(calls).toBe(2);
     } finally {
       repo.close();
