@@ -15,15 +15,6 @@ const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
 
-export const X_SAVED_STATUSES = [
-  "inbox",
-  "reviewed",
-  "keep",
-  "try",
-  "done",
-  "ignore",
-] as const;
-
 export type XSavedSyncStatus = "success" | "partial" | "failed";
 
 export interface IngestResult {
