@@ -48,7 +48,7 @@ Discord / cron / RSS / mail
        Discord
 ```
 
-エージェントとツールは Docker コンテナ内で実行されます。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
+エージェントと通常のツールは Docker コンテナ内で実行されます。認証を伴うhost capabilityや専用Tool Runtimeへの操作は [Tool Proxy](docs/proxy.md#tool-proxy) を通します。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
 
 LLM 実行結果と Discord 配信は分離されており、ジョブ状態は SQLite に保存されます。プロセス再起動時にもキューや配送状態を復旧できる構成です。
 
@@ -194,7 +194,17 @@ pnpm memory-core logs -f memory-core
 
 永続データはDocker volumeに保存されます。詳細と`agentMemory`の有効化手順は [docs/config.md](docs/config.md#memorycore-sidecarの起動) を参照してください。
 
-### 6. 起動
+### 6. Slash Command を登録
+
+runtimeの起動時にはコマンドを登録しません。初回起動前に、設定済みのBot applicationへ登録してください。
+
+```bash
+pnpm discord:deploy global
+```
+
+開発用サーバーだけへ登録する場合は、代わりに `pnpm discord:deploy guild <guild-id>` を使います。deployは選択したscopeのコマンド一覧を完全置換します。設定・反映時間・再deployの詳細は [Slash Command の登録](docs/guides/discord-bot-setup.md#6-slash-command-の登録) を参照してください。
+
+### 7. 起動
 
 開発時:
 
@@ -247,10 +257,14 @@ pnpm format
 
 ## ドキュメント
 
-- [Credential Proxy](docs/proxy.md)
-- [Research & Requirements](docs/research/README.md)
-  - [pi-agent-core](docs/research/pi/core/pi-agent-core.md)
-  - [pi-ai](docs/research/pi/ai/pi-ai.md)
+Agent向けの共通指示は [AGENTS.md](AGENTS.md)、タスク別の手順は [.pi/skills/](.pi/skills/) に集約しています。現行仕様の正本は責務ごとに以下を参照してください。
+
+- [設定リファレンス](docs/config.md) / [チャンネルモード](docs/spec/channel-modes.md)
+- [永続キュー・起動と復旧](docs/inbox-queue.md) / [保存先・データ移行](docs/storage.md)
+- [Credential設定](docs/config/credential-proxy.md) / [Credential Proxy・Tool Proxyの認証境界](docs/proxy.md)
+- [ツールとスキル](docs/agent-tools-skills.md) / [Slash Command の登録](docs/guides/discord-bot-setup.md#6-slash-command-の登録)
+
+`docs/plan/`・`docs/research/` や「歴史的」と明記した設計文書は背景資料です。旧API・旧設定の記述を現行仕様やAgentへの作業指示として扱わないでください。
 
 ## 参考リポジトリ
 
