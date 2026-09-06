@@ -141,6 +141,62 @@ describe("agent-reach Reddit cookie boundary", () => {
     await expect(executeReddit()).rejects.toThrow("non-JSON");
   });
 
+  it("redacts secrets from successful fallback and listing Markdown", async () => {
+    await setupCookie();
+    const cookiePath = process.env.REDDIT_COOKIE_FILE;
+    if (!cookiePath) throw new Error("cookie path was not configured");
+    const unknownBody = JSON.stringify({
+      unexpected: `${COOKIE} ${cookiePath}`,
+    });
+    const listingBody = JSON.stringify({
+      data: {
+        children: [
+          {
+            data: {
+              title: `${COOKIE} ${cookiePath}`,
+              subreddit: "test",
+              author: "author",
+              score: 1,
+              num_comments: 0,
+            },
+          },
+        ],
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(unknownBody, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(listingBody, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fallback = await executeReddit();
+    const fallbackText = String(
+      (fallback as { content: Array<{ text: string }> }).content[0]?.text,
+    );
+    expect(fallbackText).toContain("構造を解析できませんでした");
+    expect(fallbackText).toContain('"unexpected"');
+    expect(fallbackText).not.toContain(COOKIE);
+    expect(fallbackText).not.toContain(cookiePath);
+
+    const listing = await executeReddit();
+    const listingText = String(
+      (listing as { content: Array<{ text: string }> }).content[0]?.text,
+    );
+    expect(listingText).toContain("# [redacted] [redacted]");
+    expect(listingText).not.toContain(COOKIE);
+    expect(listingText).not.toContain(cookiePath);
+  });
+
   it.each([
     401, 503,
   ])("redacts cookie from HTTP %s error bodies", async (status) => {
@@ -237,7 +293,11 @@ describe("agent-reach Reddit cookie boundary", () => {
               start(controller) {
                 bodyController = controller;
                 options.signal.addEventListener("abort", () => {
-                  controller.error(new Error("body aborted"));
+                  controller.error(
+                    new Error(
+                      `body aborted: ${COOKIE} ${process.env.REDDIT_COOKIE_FILE}`,
+                    ),
+                  );
                 });
               },
             }),
@@ -256,7 +316,11 @@ describe("agent-reach Reddit cookie boundary", () => {
     expect(observedSignal.aborted).toBe(true);
     const error = await handled;
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe("body aborted");
+    expect((error as Error).message).toContain("body aborted");
+    expect((error as Error).message).not.toContain(COOKIE);
+    expect((error as Error).message).not.toContain(
+      process.env.REDDIT_COOKIE_FILE ?? "",
+    );
     expect(execAsyncMock).not.toHaveBeenCalled();
   });
 
