@@ -226,7 +226,8 @@ describe("agent-reach Reddit cookie boundary", () => {
   it("rejects declared and streamed responses over the Reddit size limit", async () => {
     await setupCookie();
     const oversized = "x".repeat(8 * 1024 * 1024 + 1);
-    const declared = new Response(oversized, {
+    const cancel = vi.fn();
+    const declared = new Response(new ReadableStream({ cancel }), {
       status: 200,
       headers: {
         "content-type": "application/json",
@@ -250,6 +251,7 @@ describe("agent-reach Reddit cookie boundary", () => {
         return true;
       });
     }
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("aborts a pending fetch at the direct-fetch timeout", async () => {

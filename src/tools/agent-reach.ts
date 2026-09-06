@@ -1134,6 +1134,7 @@ export async function readLimitedText(
 ): Promise<string> {
   const contentLength = response.headers.get("content-length");
   if (contentLength && Number(contentLength) > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
     throw new Error("Upstream response is too large");
   }
   const reader = response.body?.getReader();
