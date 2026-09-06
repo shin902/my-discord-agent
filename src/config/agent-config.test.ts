@@ -7,7 +7,6 @@ vi.mock("./config.js", async (importOriginal) => {
 
 describe("loadAgentTimeoutMs", () => {
   let loadAgentTimeoutMs: () => Promise<number>;
-  let DEFAULT_AGENT_TIMEOUT_MS: number;
   let mockLoadRawConfig: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -15,19 +14,21 @@ describe("loadAgentTimeoutMs", () => {
 
     const configMod = await import("./config.js");
     mockLoadRawConfig = vi.mocked(configMod.loadRawConfig);
-    mockLoadRawConfig.mockResolvedValue({});
 
-    ({ loadAgentTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } = await import(
-      "./agent-config.js"
-    ));
+    ({ loadAgentTimeoutMs } = await import("./agent-config.js"));
   });
 
   afterEach(() => {
     vi.resetModules();
   });
 
-  it("デフォルトは 600000（10分）", async () => {
-    expect(await loadAgentTimeoutMs()).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  it.each([
+    {},
+    { someOtherKey: {} },
+    { agent: {} },
+  ])("timeoutMs 未指定なら600000（10分）を返す: %j", async (config) => {
+    mockLoadRawConfig.mockResolvedValue(config);
+    expect(await loadAgentTimeoutMs()).toBe(600_000);
   });
 
   it("設定ファイルの timeoutMs が読み込まれる", async () => {
@@ -35,21 +36,11 @@ describe("loadAgentTimeoutMs", () => {
     expect(await loadAgentTimeoutMs()).toBe(300_000);
   });
 
-  it("設定ファイルに agent キーがない場合はデフォルト値を返す", async () => {
-    mockLoadRawConfig.mockResolvedValue({ someOtherKey: {} });
-    expect(await loadAgentTimeoutMs()).toBe(DEFAULT_AGENT_TIMEOUT_MS);
-  });
-
-  it("設定ファイルの timeoutMs が欠落していてもデフォルトを返す", async () => {
-    mockLoadRawConfig.mockResolvedValue({ agent: {} });
-    expect(await loadAgentTimeoutMs()).toBe(DEFAULT_AGENT_TIMEOUT_MS);
-  });
-
   it("timeoutMs が不正な値（文字列）は warn してデフォルトを返す", async () => {
     mockLoadRawConfig.mockResolvedValue({ agent: { timeoutMs: "300000" } });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    expect(await loadAgentTimeoutMs()).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+    expect(await loadAgentTimeoutMs()).toBe(600_000);
     expect(warn).toHaveBeenCalledWith(
       "[agent] 設定が不正、デフォルト使用:",
       expect.any(String),
@@ -61,7 +52,7 @@ describe("loadAgentTimeoutMs", () => {
     mockLoadRawConfig.mockResolvedValue({ agent: { timeoutMs: 0 } });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    expect(await loadAgentTimeoutMs()).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+    expect(await loadAgentTimeoutMs()).toBe(600_000);
     warn.mockRestore();
   });
 });
