@@ -122,9 +122,6 @@ const CONTEXT_BOOTSTRAP_CHANNELS: ContextBootstrapChannel[] = [
   },
 ];
 
-// VM内で使用不可のツール（ネスト不可・ネイティブバイナリ依存）
-const VM_UNSUPPORTED_TOOLS = new Set<string>([]);
-
 // コンテナ起動直後はDNSリゾルバの準備が整っていないことがあるため待機する
 const NETWORK_READY_HOST = "r.jina.ai";
 const NETWORK_READY_TIMEOUT_MS = 10_000;
@@ -821,7 +818,7 @@ export async function runAgentLoop(
           : undefined,
     },
     { toolProxyEndpoint },
-  ).filter((t) => !VM_UNSUPPORTED_TOOLS.has(t.name));
+  );
   delegationContext.tools = agentTools;
 
   const pendingAppends: Promise<void>[] = [];

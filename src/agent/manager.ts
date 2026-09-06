@@ -100,14 +100,6 @@ export interface AgentExecutionTiming {
   toolCallKey?: string;
 }
 
-declare global {
-  interface PromiseConstructor {
-    withResolvers<T>(): {
-      promise: Promise<T>;
-      resolve: (value?: T | PromiseLike<T>) => void;
-    };
-  }
-}
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 const RUNNER_RUN_COMPLETE_MARKER = "__AGENT_RUN_COMPLETE__";
 const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
@@ -602,44 +594,12 @@ export interface SendMessageOptions {
   heldLlmProvider?: string;
 }
 
-export function sendMessage(
-  groupName: string,
-  sessionId: string,
-  content: string,
-  options?: SendMessageOptions,
-): Promise<string>;
-export function sendMessage(
-  groupName: string,
-  sessionId: string,
-  content: string,
-  onDiscordEvent?: (event: DiscordEvent) => void,
-  attachments?: AttachmentRef[],
-  onExecutionTiming?: (timing: AgentExecutionTiming) => void,
-): Promise<string>;
 export async function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
-  optionsOrOnDiscordEvent?:
-    | SendMessageOptions
-    | ((event: DiscordEvent) => void),
-  legacyAttachments?: AttachmentRef[],
-  legacyOnExecutionTiming?: (timing: AgentExecutionTiming) => void,
+  options: SendMessageOptions = {},
 ): Promise<string> {
-  const isLegacyCall =
-    typeof optionsOrOnDiscordEvent === "function" ||
-    legacyAttachments !== undefined ||
-    legacyOnExecutionTiming !== undefined;
-  const options: SendMessageOptions = isLegacyCall
-    ? {
-        onDiscordEvent:
-          typeof optionsOrOnDiscordEvent === "function"
-            ? optionsOrOnDiscordEvent
-            : undefined,
-        attachments: legacyAttachments,
-        onExecutionTiming: legacyOnExecutionTiming,
-      }
-    : (optionsOrOnDiscordEvent ?? {});
   const {
     onDiscordEvent,
     attachments,

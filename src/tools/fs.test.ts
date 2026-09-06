@@ -72,11 +72,31 @@ function generatedReadSize(lineCount: number): number {
 }
 
 describe("read", () => {
-  it("ファイル内容を読み込む", async () => {
-    vi.mocked(readFile).mockResolvedValue("hello world" as never);
+  it.each([
+    { raw: "hello world", totalLines: 1 },
+    { raw: "", totalLines: 0 },
+    { raw: "\n", totalLines: 1 },
+    { raw: "line 1\n\nline 3\n", totalLines: 3 },
+    { raw: "日本語\n😀 café\n終わり", totalLines: 3 },
+  ])("全件読み取りで本文と行数メタデータを保つ: $raw", async ({
+    raw,
+    totalLines,
+  }) => {
+    vi.mocked(readFile).mockResolvedValue(raw as never);
     const result = await readTool.execute("call-1", { path: "test.txt" });
-    expect(firstText(result)).toBe("hello world");
+    expect(firstText(result)).toBe(raw);
     expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(result.details).toEqual({
+      path: "test.txt",
+      size: raw.length,
+      characters: raw.length,
+      returnedCharacters: raw.length,
+      startLine: totalLines === 0 ? 0 : 1,
+      endLine: totalLines,
+      returnedLineCount: totalLines,
+      totalLines,
+      eof: true,
+    });
   });
 
   it("長い内容も省略せずそのまま返す", async () => {

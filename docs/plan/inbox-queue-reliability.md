@@ -1,4 +1,7 @@
 # inbox.jsonl 信頼性改善計画
+
+> 歴史的な移行計画です。本文の「現状」はJSONL運用時点を指し、現行仕様ではありません。現在の状態・復旧は [永続キュー](../inbox-queue.md)、保存先・移行手順は [ストレージ設計](../storage.md) を参照してください。
+
 ## 0. 目的と前提
 - 対象は Discord 受信、cron、RSS dispatch、agent 実行、Discord 配送である。
 - 現在の `data/queue/inbox.jsonl` は、`inFlightIds`、session Promise chain、retry counter、完了 tombstone に正しさを依存している。
