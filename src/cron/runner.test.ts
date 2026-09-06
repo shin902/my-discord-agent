@@ -303,6 +303,7 @@ describe("cronジョブの configOverride", () => {
     vi.resetModules();
     vi.doMock("../config/config.js", () => ({
       loadRawCron: vi.fn().mockResolvedValue(rawCron),
+      loadRawGroups: vi.fn().mockResolvedValue([]),
     }));
     const discordClient = {};
     vi.doMock("../discord/client.js", () => ({
