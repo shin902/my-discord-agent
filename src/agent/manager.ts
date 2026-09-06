@@ -35,9 +35,7 @@ import {
   registerActiveRun,
   stopActiveRun,
 } from "./active-run-registry.js";
-import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
-
-export { resolveBaseUrl, resolveModel, validateModel };
+import { resolveBaseUrl, validateModel } from "./model.js";
 
 export type AgentRunStatus = "running" | "completed" | "failed";
 
@@ -485,8 +483,6 @@ function buildSanitizedCredentialJson(
   }
   return JSON.stringify(sanitized);
 }
-
-export { buildExtraMountArgs } from "../config/mounts.js";
 
 // groupName ごとの mounts 解決結果（docker -v 引数）のキャッシュ。
 // group-config.ts と同じ「起動時に1回だけロード、再起動まで反映されない」方針に合わせ、
