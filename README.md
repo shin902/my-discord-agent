@@ -48,7 +48,7 @@ Discord / cron / RSS / mail
        Discord
 ```
 
-エージェントとツールは Docker コンテナ内で実行されます。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
+エージェントと通常のツールは Docker コンテナ内で実行されます。認証を伴うhost capabilityや専用Tool Runtimeへの操作は [Tool Proxy](docs/proxy.md#tool-proxy) を通します。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
 
 LLM 実行結果と Discord 配信は分離されており、ジョブ状態は SQLite に保存されます。プロセス再起動時にもキューや配送状態を復旧できる構成です。
 
@@ -247,10 +247,14 @@ pnpm format
 
 ## ドキュメント
 
-- [Credential Proxy](docs/proxy.md)
-- [Research & Requirements](docs/research/README.md)
-  - [pi-agent-core](docs/research/pi/core/pi-agent-core.md)
-  - [pi-ai](docs/research/pi/ai/pi-ai.md)
+Agent向けの共通指示は [AGENTS.md](AGENTS.md)、タスク別の手順は [.pi/skills/](.pi/skills/) に集約しています。現行仕様の正本は責務ごとに以下を参照してください。
+
+- [設定リファレンス](docs/config.md) / [チャンネルモード](docs/spec/channel-modes.md)
+- [永続キュー・起動と復旧](docs/inbox-queue.md) / [保存先・データ移行](docs/storage.md)
+- [Credential設定](docs/config/credential-proxy.md) / [Credential Proxy・Tool Proxyの認証境界](docs/proxy.md)
+- [ツールとスキル](docs/agent-tools-skills.md) / [Discordコマンドの拡張・deploy](docs/guides/discord-bot-setup.md#slash-command-extension-contract)
+
+`docs/plan/`・`docs/research/` や「歴史的」と明記した設計文書は背景資料です。旧API・旧設定の記述を現行仕様やAgentへの作業指示として扱わないでください。
 
 ## 参考リポジトリ
 

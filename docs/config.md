@@ -148,7 +148,7 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 
 AI プロバイダーや外部サービス（Microsoft Graph・Google Calendar・Tavily・GitHub 等）の接続設定。トップレベルは配列。
 Reddit の Cookie 認証は `config/credentials.json` では管理せず、Tool Runtime の private state として扱います。詳細は [`docs/guides/reddit-cookie-setup.md`](guides/reddit-cookie-setup.md) を参照してください。
-詳細は `docs/config/credential-proxy.md` を参照。
+フィールドと認証値の選択規則の正本は [Credential設定リファレンス](config/credential-proxy.md)、認証境界は [proxy.md](proxy.md) を参照。
 
 ```json
 [
@@ -236,7 +236,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル。channelで指定するとgroupの指定を完全置換 |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 
-`sessionMode` の詳細は `CLAUDE.md` を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `approvalRequiredTools` / `skills` / `mounts` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
+`sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `approvalRequiredTools` / `skills` / `mounts` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
 
 ### 起動時Discord履歴バックフィル
 
@@ -481,7 +481,9 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 
 `config/bots.json` はプロセスの存続期間中キャッシュされるため、変更後は再起動が必要。ファイルが未配置の場合は空の Registry で起動するが、起動後に配置しても再起動するまで反映されない。
 
-## 変更履歴
+## 変更履歴（歴史的背景）
+
+以下は変更当時の説明です。旧パスや統合先を現行設定として使わず、現在の形式・上書き環境変数は本書の各設定節を参照してください。
 
 ### groups/{name}/group.json の統合（#93）
 

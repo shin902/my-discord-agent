@@ -1,189 +1,48 @@
-# プロキシサーバー（クレデンシャル安全挿入）
+# Credential ProxyとTool Proxyの認証境界
 
-## 目的
+この文書は認証情報と実行経路の現行仕様です。設定フィールド・既定値は [Credential設定リファレンス](config/credential-proxy.md)、設定例は [credentials.example.json](../config/credentials.example.json) を正本とします。
 
-エージェントが使う外部 API へのリクエストを中継し、APIキー等のシークレットをエージェントに直接渡さずに注入する。
+## Credential forwarding
 
-## nanoclaw の実装（OneCLI）
-
-> 参考: `docs/clone/nanoclaw/src/container-runner.ts`（OneCLI ensureAgent）
-> 参考: `docs/clone/nanoclaw/CLAUDE.md` の Secrets / Credentials / OneCLI セクション
-
-nanoclaw は **OneCLI**（`@onecli-sh/sdk`）という外部ゲートウェイを使用。
-
-```
-Agent container → OneCLI proxy（シークレット注入） → 外部API
+```text
+Agent sandbox
+  → Credential Proxyのprovider URL
+  → ホストでupstream認証を付与
+  → 設定された外部API
 ```
 
-- シークレットはOneCLIのVaultで管理。コンテナ側は値を知らない
-- エージェントグループごとに「どのシークレットを使えるか」を制御（`selective` / `all` モード）
-- 承認フロー：クレデンシャルを使うアクションにオーナー承認を要求できる
+[manager](../src/agent/manager.ts) はsandbox向けの `CREDENTIAL_PROXY_JSON` を生成します。渡すのはproxy URLへ置換した `baseUrl` とモデル設定であり、`envVars`、`auth`、`msal`、`google`、`redditCookie` は除去します。実APIキーやOAuth tokenをsandboxの環境変数へ渡しません。
 
-## 本プロジェクトの実装
+[Credential Proxy](../src/proxy/credential-proxy-server.ts) はホスト側で認証情報を解決します。`envVars` は複数secretの注入指定ではなく、先頭から最初の空でない値を選ぶ候補一覧です。認証形式と未設定時の挙動は [設定リファレンス](config/credential-proxy.md#envvarsと認証) を参照してください。
 
-### 構成
+`forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
 
-```
-Host
-  ├─ .env                              # 環境変数（ホスト側で読み込み）
-  ├─ config/credentials.json           # プロバイダ→envVar→baseUrl マッピング
-  └─ src/proxy/credential-proxy-server.ts  # ホスト側 HTTP リバースプロキシ
-       ├─ Authorization ヘッダを注入して upstream へ転送
-       └─ src/agent/manager.ts         # CREDENTIAL_PROXY_JSON 環境変数でコンテナに渡す
-            └─ Docker コンテナ
-                 └─ @earendil-works/pi-ai
-```
+Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証はありません。sandboxへのURL非公開だけをhost routeの認可とみなさないでください。ネットワーク境界の制約は [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
 
-コンテナには実際の API キーではなく、プロキシ URL（`http://host.docker.internal:{port}/{provider}`）を `CREDENTIAL_PROXY_JSON` 環境変数として渡す。実キーはホストプロセスのメモリにのみ存在する。
+## Tool Proxy
 
-### Tool Proxy（host executor）
+credential forwardingとは別に、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行します。天気、Tavily Search、arXiv、GitHub REST、Mail、Google Calendarがこの経路を使います。
 
-credential forwardingとは別の責務として、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行する。天気、Tavily Search、arXiv、GitHub REST、Mail、Google Calendarのツールがこの経路を使う。
-
-```
-Agent sandbox -- Authorization: Bearer <run token> --> Tool Proxy -- host credentials --> external API
+```text
+Agent sandbox
+  → Tool Proxy（run token・capability・引数検証）
+  → host executor / 専用Tool Runtime
+  → 外部API
 ```
 
-run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、approval対象集合、trusted Discord bot/channel、revoke signalをsnapshotとして登録し、終了時にrevokeする。approval対象はvalidate後にmaterializeしたcanonical argsをそのsnapshotのDiscord destinationへ表示し、Approve後にauthorityを再確認して同じinvocationを実行する。approval専用TTLやgrant tokenは設けず、Discord updateの短いtimeout以外はrequesting runの生存中だけ待機する。Proxyはmethod/path、`Content-Type: application/json`、token、capability、引数schemaを検証し、未認可・不明・不正な要求をfail closedする。GitHub、Graph、Google Calendar、Tavilyのcredentialはtrusted `credentials.json`からhost側だけで解決し、これらのlegacy forwarding routeはsandboxへ渡さない。結果はTool Proxyではrawのまま返し、50,000文字を超える出力の外部化はsandbox側の共通output boundaryが行う。
+run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、approval対象集合、trusted Discord bot/channel、revoke signalをsnapshotとして登録し、終了時にrevokeします。
 
-### config/credentials.json
+approval対象はvalidate後に確定したcanonical argsをsnapshotのDiscord destinationへ表示し、Approve後にauthorityを再確認して同じinvocationを実行します。approval専用TTLやgrant tokenは設けず、Discord updateの短いtimeout以外はrequesting runの生存中だけ待機します。Proxyはmethod/path、Content-Type、token、capability、引数schemaを検証し、未認可・不明・不正な要求を拒否します。
 
-`config/credentials.example.json` をコピーして `config/credentials.json` を作成する。トップレベルは配列。
+GitHub、Graph、Google Calendar、Tavilyのcredentialはhost側だけで解決します。managerは通常これらとRedditのforwarding定義をsandboxへ渡しません（同名providerが当該runのmodel providerの場合は除外対象外）。Tool Proxyの結果はrawで返し、長い出力の外部化はsandbox側の共通output boundaryが担当します。
 
-デフォルトで有効なプロバイダ（動作確認済み）：
+実装は [Tool Proxy server](../src/proxy/tool-proxy-server.ts)、tool設定・approvalの仕様は [エージェントのツールとスキル](agent-tools-skills.md) を参照してください。
 
-```json
-[
-  { "provider": "openai",      "envVars": ["OPENAI_API_KEY"],     "baseUrl": "https://api.openai.com/v1" },
-  { "provider": "anthropic",   "envVars": ["ANTHROPIC_API_KEY"],  "baseUrl": "https://api.anthropic.com" },
-  { "provider": "deepseek",    "envVars": ["DEEPSEEK_API_KEY"],   "baseUrl": "https://api.deepseek.com" },
-  { "provider": "google",      "envVars": ["GEMINI_API_KEY"],     "baseUrl": "https://generativelanguage.googleapis.com/v1beta" },
-  { "provider": "groq",        "envVars": ["GROQ_API_KEY"],       "baseUrl": "https://api.groq.com/openai/v1" },
-  { "provider": "openrouter",  "envVars": ["OPENROUTER_API_KEY"], "baseUrl": "https://openrouter.ai/api/v1" },
-  { "provider": "opencode-go", "envVars": ["OPENCODE_API_KEY"],   "baseUrl": "https://opencode.ai/zen/go/v1" }
-]
-```
+## OAuthと専用Runtime
 
-**重要な挙動**:
-- `envVars` リスト内で `process.env` に設定されている**すべて**が secret として注入される。
-- **警告ログ**: 1つも設定されていないプロバイダは静かにスキップされる。一部だけ設定されている場合は「一部の環境変数が未設定です」と警告が出る（複数変数が必要なプロバイダで不足を検出するため）。
-- 同じ環境変数が複数の provider に含まれている場合、**各 provider ごとに独立して注入される**。
-- `baseUrl` に `{ENV_VAR}` 形式のプレースホルダが含まれている場合、`process.env` の値で動的に置換される。**置換できない場合は env vars の注入も含めてその provider を完全にスキップする**（`AZURE_OPENAI_API_KEY` は設定済みでも `AZURE_OPENAI_BASE_URL` が未設定なら注入されない）。
-- `auth` を省略した場合、`envVars` の値は `Authorization: Bearer ...` として注入される。query-token API では `auth: { "type": "query-token", "queryParam": "token" }` を指定する。
+- Microsoft GraphのMSAL設定、GoogleのOAuth設定・token取得はホスト側で管理します。手順は [Azure app登録](guides/azure-app-registration.md) と [Google OAuth設定](guides/google-cloud-oauth-setup.md) を参照してください。
+- Google OAuthは起動時にtoken取得を試みます。認証が必要な場合は案内を出してバックグラウンドでdevice flowを進め、認証待ちのために起動をブロックしません。
+- Redditのcanonical認証状態は `data/reddit-browser-profile/` と `data/reddit-cookies.json` です。専用Tool Runtimeへだけmountし、Agent sandboxへCookie・認証token・Runtime内のprivate pathを渡しません。`credentials.json` のReddit forwardingは使いません。[セットアップ](guides/reddit-cookie-setup.md) と [Tool Runtime仕様](spec/agent-reach-tool-runtime.md) を参照してください。
+- CLIProxyAPIを使う構成では、ChatGPT/Codex OAuth tokenはsidecarが管理し、本アプリのCredential Proxyはsidecar用APIキーをホストで付与します。[構成手順](guides/codex-oauth-cliproxyapi.md) を参照してください。
 
-### Google OAuth（Google Calendar 等）
-
-`graph`（MSAL）と同様に、`google` フィールドを指定したプロバイダーは OAuth トークンが `Authorization: Bearer ...` として自動注入される。
-
-```json
-{
-  "provider": "google-calendar",
-  "baseUrl": "https://www.googleapis.com/calendar/v3",
-  "google": {
-    "clientId": "xxxxx.apps.googleusercontent.com",
-    "clientSecretEnvVar": "GOOGLE_CALENDAR_CLIENT_SECRET",
-    "scopes": ["https://www.googleapis.com/auth/calendar"]
-  }
-}
-```
-
-Google Cloud Console での OAuth クライアント作成手順（OAuth 同意画面のテストユーザー登録を含む）は [`docs/guides/google-cloud-oauth-setup.md`](./guides/google-cloud-oauth-setup.md) を参照。
-
-**重要な挙動**:
-- `clientSecretEnvVar` が指す環境変数が未設定の場合、そのプロバイダーの Google Auth 初期化はスキップされ、警告ログが出る（リクエストは 502 になる）。
-- 初回利用時は OAuth デバイスフローが起動し、表示される URL とコードでブラウザ認証を行う。取得したリフレッシュトークンは `data/google-token-{provider}.json`（0600）に保存され、以後はサイレント更新される。
-- デバイスフローは `initCredentialProxyServer()`（ホスト起動時）で一度トリガーされる。これにより、Discordからの最初のカレンダー操作リクエストでデバイスフロー（最大30分）がブロックすることを避けている。認証に失敗・タイムアウトした場合はエラーログを出すのみで、ホストの起動自体は継続する（以後のカレンダー系ツール呼び出しは502になる）。
-- `msal` と同様、`google` フィールドはサンドボックスコンテナに渡る `CREDENTIAL_PROXY_JSON` には含まれない（ホスト側のみで使用）。
-
-### Reddit クッキー認証（agent-reach Tool Runtime）
-
-Reddit は OAuth (`client_credentials`) の新規アプリ申請を2025年11月のポリシー改定以降事実上ブロックしているため（詳細は [`docs/guides/reddit-oauth-setup.md`](./guides/reddit-oauth-setup.md)）、ログイン済みブラウザの Cookie を専用 Tool Runtime で使って `www.reddit.com` にアクセスする。
-
-初回ログイン・Runtime 起動・定期 refresh の手順は [`docs/guides/reddit-cookie-setup.md`](./guides/reddit-cookie-setup.md) を参照。
-
-- `pnpm reddit:login` の UX は変更しない。canonical state は `data/reddit-browser-profile/` と `data/reddit-cookies.json`。
-- `compose.tool-runtime.yaml` はこの2つのパスだけを Runtime に read/write mount する。Cookie、認証トークン、Runtime 内のファイルパスは Agent sandbox に渡さない。
-- `agent-reach` と `last30days` の Reddit 検索は Tool Proxy の `agent-reach` capability 経由で Runtime に委譲する。
-- `reddit-cookie-refresh` は host の cron scheduler から Runtime の内部 maintenance operation を呼ぶ。Agent-facing capability ではない。
-- Cookie の freshness validation、session 失効検知、missing/stale 時の error semantics は Runtime 側で維持する。
-- Reddit 用の `credentials.json` provider や `CREDENTIAL_PROXY_JSON` forwarding は使用しない。Credential Proxy の他用途（LLM 等）は引き続き有効。
-
-### GitHub REST API（Issue/PR ツール用）
-
-`list-issues`、`read-issue`、`list-issue-comments`、`comment-issue`、`read-pull-request`、`list-pull-request-comments` は `api.github.com` 向けの `github` プロバイダーを使う。
-
-```json
-{
-  "provider": "github",
-  "envVars": ["GITHUB_ISSUE_TRIAGE_TOKEN"],
-  "baseUrl": "https://api.github.com"
-}
-```
-
-`GITHUB_ISSUE_TRIAGE_TOKEN` には、対象リポジトリに対する以下の fine-grained PAT 権限を設定する。
-
-- `Issues: Read and write`: `list-issues`、`read-issue`、`list-issue-comments` は読み取りに使い、`comment-issue` は Issue コメントの投稿に使う。`comment-issue` には Issue の write 権限が必要で、読み取り専用の Issue ツールだけなら `Issues: Read` で足りる。
-- `Pull requests: Read`: `read-pull-request` は PR 本文・メタデータを、`list-pull-request-comments` は会話コメント・レビュー・レビューコメントを読み取る。これらの PR ツールは読み取り専用で、Pull requests の write 権限は必要ない。
-
-### その他の pi-ai 対応プロバイダ
-
-以下のプロバイダも pi-ai では対応しているが、現状未検証・未使用のため `credentials.example.json` からは除外している。必要な env var を `.env` に設定し、`config/credentials.json` に provider エントリを手動で追加すれば利用可能（`envVars` に設定した変数のうち `process.env` にあるものが secret として注入される。`baseUrl` は各プロバイダの公式エンドポイントを指定）：
-
-| プロバイダ | pi-ai 識別子 | 環境変数 |
-| --- | --- | --- |
-| Azure OpenAI | `azure-openai-responses` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_RESOURCE_NAME`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` |
-| Google Vertex AI | `google-vertex` | `GOOGLE_CLOUD_API_KEY`, `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS` |
-| Cerebras | `cerebras` | `CEREBRAS_API_KEY` |
-| xAI | `xai` | `XAI_API_KEY` |
-| Mistral | `mistral` | `MISTRAL_API_KEY` |
-| Cloudflare Workers AI / AI Gateway | `cloudflare` | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID` |
-| MiniMax | `minimax` | `MINIMAX_API_KEY`, `MINIMAX_CN_API_KEY` |
-| Moonshot AI | `moonshot` | `MOONSHOT_API_KEY` |
-| Kimi For Coding | `kimi-for-coding` | `KIMI_API_KEY` |
-| Fireworks | `fireworks` | `FIREWORKS_API_KEY` |
-| Hugging Face | `huggingface` | `HF_TOKEN` |
-| Xiaomi MiMo | `xiaomi` | `XIAOMI_API_KEY`, `XIAOMI_TOKEN_PLAN_CN_API_KEY`, `XIAOMI_TOKEN_PLAN_AMS_API_KEY`, `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
-| GitHub Copilot | `copilot` | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` |
-| Amazon Bedrock | `amazon-bedrock` | `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_REGION` |
-| Vercel AI Gateway | `vercel-ai-gateway` | `AI_GATEWAY_API_KEY` |
-
-### カスタムプロバイダー
-
-`pi-ai` の組み込みプロバイダー以外（ローカルの llama-cpp サーバーなど）も `config/credentials.json` に定義可能。
-
-```json
-{
-  "provider": "llama-cpp",
-  "baseUrl": "http://localhost:8080/v1",
-  "api": "openai-completions"
-}
-```
-
-- `provider` は自由な名前を指定可能。`config/groups.json` の `groups[].model.provider` に同じ名前を設定する。
-- `api` はオプション。未指定時のデフォルトは `"openai-completions"`。他に `"openai-responses"`、`"openai-codex-responses"`、`"anthropic-messages"` 等が指定可能。
-- `envVars` はオプション。省略または空配列の場合、secret 注入は行われず baseUrl の解決と allowHost の登録のみ行う。これは API Key が不要なローカルサーバーに便利。
-- カスタムプロバイダーの場合、モデルIDの検証は行われず、任意の文字列を `modelId` に指定できる。
-
-### CLIProxyAPI / Codex OAuth
-
-ChatGPT/Codex OAuth はアプリ本体で扱わず、CLIProxyAPI をローカルサイドカーとして使う。`config/credentials.json` には OpenAI Responses 互換 provider として登録する。
-
-```json
-{
-  "provider": "codex-oauth",
-  "forceCustom": true,
-  "envVars": ["CLIPROXY_API_KEY"],
-  "baseUrl": "http://localhost:8317/v1",
-  "api": "openai-responses",
-  "contextWindow": 192000,
-  "maxTokens": 8192
-}
-```
-
-詳細な運用条件とスモークテストは `docs/guides/codex-oauth-cliproxyapi.md` を参照。
-
-### 将来的な拡張
-
-- OneCLI への移行
-- グループごとに異なるシークレットセットを制御
-- MCP サーバー用のプロキシ対応
+本プロジェクトはOneCLIを使用していません。旧文書の他プロジェクト比較や将来構想は現行の設定・認可仕様ではありません。

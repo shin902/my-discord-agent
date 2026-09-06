@@ -1,39 +1,45 @@
-# インボックスキューのファイルミューテックス
+# 永続キューとDiscord配送
 
-`src/queue/inbox.ts` の設計メモ。
+この文書は現行のキュー処理の入口です。正本はホスト所有の `data/runtime.sqlite` であり、JSONLファイルやメモリ上のin-flight集合ではありません。保存先・backup・旧JSONL移行は [ストレージ設計](storage.md) を参照してください。
 
-## 問題
+## 処理の流れ
 
-JSONL はインプレース更新ができないため、`removeInboxById` / `updateInboxById` はファイル全体を書き直す。
-`readFile → writeFile` の間に `appendInbox` が割り込むと、`writeFile` が `appendInbox` の書き込みを上書きしてメッセージが消える。
-
-## 解決策：Promise チェーンによる直列化
-
-```ts
-let pendingOp = Promise.resolve<void>(undefined);
-
-function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
-  const result = pendingOp.then(fn);
-  pendingOp = result.then(() => {}, () => {});
-  return result;
-}
+```text
+Discord / cron
+  → QueueRepository.enqueue
+  → runtime.sqlite: jobs
+  → poller: claim → sandboxでAgent実行
+  → 実行結果とdeliveriesを同一transactionで保存
+  → delivery worker → Discord
 ```
 
-`pendingOp` に「直前の操作が完了するまで待つ Promise」を常に持ち続けることで、全ファイル操作を自動的に直列化する。`result.then(() => {}, () => {})` は操作が失敗しても `pendingOp` が rejected のままにならないための処理（rejected のままだと後続の操作がすべてブロックされる）。
+- [QueueRepository](../src/queue/repository.ts) がenqueue、冪等性、claim、lease、fencing、結果保存、配送状態を管理します。
+- [poller](../src/queue/poller.ts) はdurable claimを取得し、[manager](../src/agent/manager.ts) を通じて使い捨てのsandbox containerを起動します。
+- [delivery worker](../src/queue/delivery.ts) は保存済みの配送内容を送信します。配送失敗を理由に完了済みAgentを再実行しません。
+- 会話履歴はgroupごとの `sessions.sqlite` に保存し、runtime DBとは分離します。
 
-`pendingOp` はモジュールスコープの変数なので、`appendInbox` / `peekAllUnclaimedInbox` / `removeInboxById` / `updateInboxById` の4関数が同じキューを共有する。
+## 状態と順序
 
-## API
+`jobs.status` の永続状態は `queued`、`retry_wait`、`claimed`、`running`、`completed`、`dead_letter` です。
 
-| 関数 | 用途 |
-|---|---|
-| `appendInbox(msg)` | Discord 受信時にキュー末尾へ追記。`id`・`retries` は自動付与 |
-| `peekAllUnclaimedInbox(excludeIds)` | `excludeIds`（in-flight 集合）に含まれない全件をファイル順のまま取得。**削除はしない** |
-| `removeInboxById(id)` | 処理が完全に終わった（成功 / dead-letter）メッセージを該当id行のみ削除 |
-| `updateInboxById(id, patch)` | リトライ時に該当id行を**位置を保ったまま**部分更新（`retries` 等） |
+claimはtransaction内でworker・lease期限・増分fencing tokenを記録します。コンテナ開始時にrunningへ進み、heartbeatでleaseを更新します。実行中の更新はstatusとfencing tokenを検証し、古いworkerによる更新を拒否します。lease切れは回収・再claimの対象です。
 
-`peekAllUnclaimedInbox` は処理中（in-flight）のメッセージをファイルから削除しない設計（#69）。これにより再起動時にも未完了のメッセージがキューに残り続け、再開できる。poller は claim したメッセージIDをメモリ上の `inFlightIds` で追跡し、処理完了時に `removeInboxById` / `updateInboxById` を呼んで初めてファイルが変化する。
+同じ `session_id` の未完了先行jobがある場合は後続をclaimしません。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使います。provider単位の実行制限はこれとは別で、[provider concurrency](spec/provider-concurrency.md) を参照してください。全チャンネルを単一のPromiseチェーンで直列化する設計ではありません。
 
-旧 `prependInbox` はリトライメッセージをキュー先頭に戻して優先的に再処理していたが、`updateInboxById` は元の位置を保ったまま更新するため、リトライ中のメッセージは（先頭に戻らず）元の位置のままになる。
+実行成功時は結果と必要なdelivery chunkを同一transactionで確定します。空応答・配送抑制ではdeliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
 
-`InboxMessage` の主要フィールド: `id`, `channelId`, `groupName`, `sessionId`, `messageId`（オプション）, `content`, `timestamp`, `retries`
+`deliveries.status` は `pending`、`retry_wait`、`sending`、`sent`、`failed`、`ambiguous` です。jobの `completed` はDiscord配送済みを意味しません。送信成否が不明な場合は `ambiguous` を区別し、Discord側を含むexactly-once配送は保証しません。
+
+SQL上の `jobs.status` が状態の正本です。旧 `claimed` 整数列は互換用の複製列であり、TypeScriptの `executionState` は派生表示です。DBを調査する際にこれらを独立した状態機械として扱わないでください。
+
+## 起動・復旧
+
+[起動処理](../src/index.ts) は、管理対象・孤立runnerの停止をstrictに確認してからsession migration、group promptの初期読み込み、設定検証を行います。その後にqueueを初期化し、前プロセスの未完了Bot admission・期限切れ実行の回収と旧queue JSONL移行を行います。
+
+cron設定を読み、RSS reconciliationとruntime health checkを実行してからpoller・delivery worker・cronを開始し、Discordへloginします。Discord ready時の履歴backfillは全Botを通じて一度だけ開始します。詳細は [起動時Discord履歴バックフィル](config.md#起動時discord履歴バックフィル) を参照してください。runnerの停止確認に失敗した場合、queue回収へは進みません。
+
+調査は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順を使います。lease、fencing、delivery、idempotencyの関係を無視した手動の `UPDATE` / `DELETE` は行わないでください。
+
+## 歴史的資料
+
+[JSONLからの移行計画](plan/inbox-queue-reliability.md) は設計時点の記録です。旧 `src/queue/inbox.ts` の `withFileLock`、`peekAllUnclaimedInbox`、`removeInboxById` は現行APIではありません。
