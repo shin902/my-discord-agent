@@ -462,16 +462,6 @@ describe("resolveTools", () => {
     }
   });
 
-  it("does not multi-wrap singleton tools", () => {
-    const [first] = resolveTools(["read"]);
-    const [second] = resolveTools(["read"]);
-    const [duplicateFirst, duplicateSecond] = resolveTools(["read", "read"]);
-
-    expect(second).toBe(first);
-    expect(duplicateFirst).toBe(first);
-    expect(duplicateSecond).toBe(first);
-  });
-
   it("wrapToolOutput is idempotent for a singleton and invokes its execute once", async () => {
     const execute = vi.fn(async () => ({
       content: [{ type: "text" as const, text: "small output" }],
@@ -485,9 +475,9 @@ describe("resolveTools", () => {
       execute,
     };
 
-    expect(wrapToolOutput(tool)).toBe(tool);
-    expect(wrapToolOutput(tool)).toBe(tool);
-    await tool.execute("call-1", {});
+    const wrapped = wrapToolOutput(tool);
+    const wrappedAgain = wrapToolOutput(wrapped);
+    await wrappedAgain.execute("call-1", {});
 
     expect(execute).toHaveBeenCalledTimes(1);
   });

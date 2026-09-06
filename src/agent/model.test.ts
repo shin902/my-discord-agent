@@ -1,5 +1,5 @@
 import type { KnownProvider, Model } from "@earendil-works/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CredentialEntry } from "../config/credential-proxy.js";
 
 vi.mock("@earendil-works/pi-ai", () => ({
@@ -379,6 +379,28 @@ describe("resolveModel", () => {
 });
 
 describe("resolveBaseUrl", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("小文字のプレースホルダも置換される", async () => {
+    const { resolveBaseUrl } = await importFresh();
+    vi.stubEnv("aws_region", "ap-northeast-1");
+    const result = resolveBaseUrl(
+      "https://bedrock-runtime.{aws_region}.amazonaws.com",
+    );
+    expect(result).toBe("https://bedrock-runtime.ap-northeast-1.amazonaws.com");
+  });
+
+  it("未解決の小文字プレースホルダがあると null を返す", async () => {
+    const { resolveBaseUrl } = await importFresh();
+    vi.stubEnv("aws_region", undefined);
+    const result = resolveBaseUrl(
+      "https://bedrock-runtime.{aws_region}.amazonaws.com",
+    );
+    expect(result).toBeNull();
+  });
+
   it("環境変数プレースホルダを解決する", async () => {
     const { resolveBaseUrl } = await importFresh();
     process.env.TEST_HOST = "localhost";

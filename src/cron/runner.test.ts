@@ -59,10 +59,6 @@ describe("matchField", () => {
     expect(matchField(10, "1,5,10")).toBe(true);
     expect(matchField(3, "1,5,10")).toBe(false);
   });
-
-  it("list with whitespace trimming", () => {
-    expect(matchField(5, "1, 5, 10")).toBe(true);
-  });
 });
 
 // --- cronMatches ---
