@@ -16,22 +16,25 @@ describe("Bot Task Session admission", () => {
   it("direct admission waits behind an earlier queued invocation in the same database", async () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
-      sessionId: "session-ordered",
-      handle: "task-ordered",
-      groupName: "main",
-      botId: "coding",
-      createdAt: new Date().toISOString(),
-      preview: "queued",
-    });
-    const queued = repository.enqueue({
-      channelId: "channel",
-      groupName: "main",
-      sessionId: session.sessionId,
-      content: "queued",
-      timestamp: new Date().toISOString(),
-      botId: "coding",
-    });
+    const { session, enqueue: queued } =
+      repository.createBotTaskSessionAndEnqueue(
+        {
+          sessionId: "session-ordered",
+          handle: "task-ordered",
+          groupName: "main",
+          botId: "coding",
+          createdAt: new Date().toISOString(),
+          preview: "queued",
+        },
+        {
+          channelId: "channel",
+          groupName: "main",
+          content: "queued",
+          timestamp: new Date().toISOString(),
+          botId: "coding",
+        },
+      );
+
     const direct = repository.resumeBotTaskSessionAndAdmission(
       session.handle,
       session.groupName,
@@ -40,6 +43,8 @@ describe("Bot Task Session admission", () => {
     );
     expect(direct).toBeDefined();
     if (!direct) throw new Error("direct admission was not created");
+    expect(queued.job.sequence).toBe(0);
+    expect(direct.admission.sequence).toBe(1);
     let directStarted = false;
     const directRun = withBotTaskSessionAdmission(
       repository,
@@ -63,22 +68,25 @@ describe("Bot Task Session admission", () => {
   it("fail-fast admissionは先行処理をterminal cancellationにして後続を塞がない", async () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
-      sessionId: "session-fail-fast",
-      handle: "task-fail-fast",
-      groupName: "main",
-      botId: "coding",
-      createdAt: new Date().toISOString(),
-      preview: "queued",
-    });
-    const first = repository.enqueue({
-      channelId: "channel",
-      groupName: "main",
-      sessionId: session.sessionId,
-      content: "queued",
-      timestamp: new Date().toISOString(),
-      botId: "coding",
-    });
+    const { session, enqueue: first } =
+      repository.createBotTaskSessionAndEnqueue(
+        {
+          sessionId: "session-fail-fast",
+          handle: "task-fail-fast",
+          groupName: "main",
+          botId: "coding",
+          createdAt: new Date().toISOString(),
+          preview: "queued",
+        },
+        {
+          channelId: "channel",
+          groupName: "main",
+          content: "queued",
+          timestamp: new Date().toISOString(),
+          botId: "coding",
+        },
+      );
+
     const direct = repository.resumeBotTaskSessionAndAdmission(
       session.handle,
       session.groupName,
@@ -87,6 +95,8 @@ describe("Bot Task Session admission", () => {
     );
     expect(direct).toBeDefined();
     if (!direct) throw new Error("direct admission was not created");
+    expect(first.job.sequence).toBe(0);
+    expect(direct.admission.sequence).toBe(1);
     const later = repository.enqueue({
       channelId: "channel",
       groupName: "main",
@@ -109,7 +119,7 @@ describe("Bot Task Session admission", () => {
   it("immediate admission succeeds when no predecessor blocks it", () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
+    const direct = repository.createBotTaskSessionAndAdmission({
       sessionId: "session-immediate",
       handle: "task-immediate",
       groupName: "main",
@@ -117,14 +127,8 @@ describe("Bot Task Session admission", () => {
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
-    const direct = repository.resumeBotTaskSessionAndAdmission(
-      session.handle,
-      session.groupName,
-      session.botId,
-      new Date().toISOString(),
-    );
-    expect(direct).toBeDefined();
-    if (!direct) throw new Error("direct admission was not created");
+
+    expect(direct.admission.sequence).toBe(0);
     expect(repository.tryAdmitBotTaskSessionAdmission(direct.admission)).toBe(
       "admitted",
     );
@@ -134,7 +138,7 @@ describe("Bot Task Session admission", () => {
   it("two direct admissions execute in acceptance order using the admission ledger", async () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
+    const first = repository.createBotTaskSessionAndAdmission({
       sessionId: "session-direct-direct",
       handle: "task-direct-direct",
       groupName: "main",
@@ -142,21 +146,18 @@ describe("Bot Task Session admission", () => {
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
-    const first = repository.resumeBotTaskSessionAndAdmission(
-      session.handle,
-      session.groupName,
-      session.botId,
-      new Date().toISOString(),
-    );
+    const session = first.session;
+
     const second = repository.resumeBotTaskSessionAndAdmission(
       session.handle,
       session.groupName,
       session.botId,
       new Date().toISOString(),
     );
-    expect(first).toBeDefined();
     expect(second).toBeDefined();
-    if (!first || !second) throw new Error("direct admission was not created");
+    if (!second) throw new Error("direct admission was not created");
+    expect(first.admission.sequence).toBe(0);
+    expect(second.admission.sequence).toBe(1);
 
     let releaseFirst!: () => void;
     let firstStarted = false;
@@ -194,7 +195,7 @@ describe("Bot Task Session admission", () => {
   it("different sessions can execute concurrently through the admission ledger", async () => {
     const repository = createRepository();
     repositories.push(repository);
-    const firstSession = repository.createBotTaskSession({
+    const first = repository.createBotTaskSessionAndAdmission({
       sessionId: "session-parallel-first",
       handle: "task-parallel-first",
       groupName: "main",
@@ -202,7 +203,7 @@ describe("Bot Task Session admission", () => {
       createdAt: new Date().toISOString(),
       preview: "first",
     });
-    const secondSession = repository.createBotTaskSession({
+    const second = repository.createBotTaskSessionAndAdmission({
       sessionId: "session-parallel-second",
       handle: "task-parallel-second",
       groupName: "main",
@@ -210,21 +211,9 @@ describe("Bot Task Session admission", () => {
       createdAt: new Date().toISOString(),
       preview: "second",
     });
-    const first = repository.resumeBotTaskSessionAndAdmission(
-      firstSession.handle,
-      firstSession.groupName,
-      firstSession.botId,
-      new Date().toISOString(),
-    );
-    const second = repository.resumeBotTaskSessionAndAdmission(
-      secondSession.handle,
-      secondSession.groupName,
-      secondSession.botId,
-      new Date().toISOString(),
-    );
-    expect(first).toBeDefined();
-    expect(second).toBeDefined();
-    if (!first || !second) throw new Error("direct admission was not created");
+
+    expect(first.admission.sequence).toBe(0);
+    expect(second.admission.sequence).toBe(0);
 
     let releaseFirst!: () => void;
     let firstStarted = false;
@@ -257,7 +246,7 @@ describe("Bot Task Session admission", () => {
   it("failed direct admission settles its ticket so a successor can execute", async () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
+    const first = repository.createBotTaskSessionAndAdmission({
       sessionId: "session-direct-failure",
       handle: "task-direct-failure",
       groupName: "main",
@@ -265,21 +254,18 @@ describe("Bot Task Session admission", () => {
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
-    const first = repository.resumeBotTaskSessionAndAdmission(
-      session.handle,
-      session.groupName,
-      session.botId,
-      new Date().toISOString(),
-    );
+    const session = first.session;
+
     const second = repository.resumeBotTaskSessionAndAdmission(
       session.handle,
       session.groupName,
       session.botId,
       new Date().toISOString(),
     );
-    expect(first).toBeDefined();
     expect(second).toBeDefined();
-    if (!first || !second) throw new Error("direct admission was not created");
+    if (!second) throw new Error("direct admission was not created");
+    expect(first.admission.sequence).toBe(0);
+    expect(second.admission.sequence).toBe(1);
 
     await expect(
       withBotTaskSessionAdmission(repository, first.admission, async () => {
@@ -300,22 +286,25 @@ describe("Bot Task Session admission", () => {
   it("aborted direct admission settles its waiting ticket and unblocks later queue work", async () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
-      sessionId: "session-direct-abort",
-      handle: "task-direct-abort",
-      groupName: "main",
-      botId: "coding",
-      createdAt: new Date().toISOString(),
-      preview: "queued",
-    });
-    const first = repository.enqueue({
-      channelId: "channel",
-      groupName: "main",
-      sessionId: session.sessionId,
-      content: "first",
-      timestamp: new Date().toISOString(),
-      botId: "coding",
-    });
+    const { session, enqueue: first } =
+      repository.createBotTaskSessionAndEnqueue(
+        {
+          sessionId: "session-direct-abort",
+          handle: "task-direct-abort",
+          groupName: "main",
+          botId: "coding",
+          createdAt: new Date().toISOString(),
+          preview: "queued",
+        },
+        {
+          channelId: "channel",
+          groupName: "main",
+          content: "first",
+          timestamp: new Date().toISOString(),
+          botId: "coding",
+        },
+      );
+
     const direct = repository.resumeBotTaskSessionAndAdmission(
       session.handle,
       session.groupName,
@@ -324,6 +313,8 @@ describe("Bot Task Session admission", () => {
     );
     expect(direct).toBeDefined();
     if (!direct) throw new Error("direct admission was not created");
+    expect(first.job.sequence).toBe(0);
+    expect(direct.admission.sequence).toBe(1);
     const later = repository.enqueue({
       channelId: "channel",
       groupName: session.groupName,
@@ -357,25 +348,27 @@ describe("Bot Task Session admission", () => {
   it("a queued retry blocks successors until it becomes terminal", () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
-      sessionId: "session-queue-retry",
-      handle: "task-queue-retry",
-      groupName: "main",
-      botId: "coding",
-      createdAt: new Date().toISOString(),
-      preview: "queued",
-    });
-    const first = repository.enqueue(
-      {
-        channelId: "channel",
-        groupName: session.groupName,
-        sessionId: session.sessionId,
-        content: "first",
-        timestamp: new Date().toISOString(),
-        botId: session.botId,
-      },
-      { maxAttempts: 2 },
-    );
+    const { session, enqueue: first } =
+      repository.createBotTaskSessionAndEnqueue(
+        {
+          sessionId: "session-queue-retry",
+          handle: "task-queue-retry",
+          groupName: "main",
+          botId: "coding",
+          createdAt: new Date().toISOString(),
+          preview: "queued",
+        },
+        {
+          channelId: "channel",
+          groupName: "main",
+          content: "first",
+          timestamp: new Date().toISOString(),
+          botId: "coding",
+        },
+        { maxAttempts: 2 },
+      );
+
+    expect(first.job.sequence).toBe(0);
     const later = repository.enqueue({
       channelId: "channel",
       groupName: session.groupName,
@@ -414,7 +407,7 @@ describe("Bot Task Session admission", () => {
   it("a later queued invocation cannot overtake an admitted direct invocation", async () => {
     const repository = createRepository();
     repositories.push(repository);
-    const session = repository.createBotTaskSession({
+    const direct = repository.createBotTaskSessionAndAdmission({
       sessionId: "session-direct-first",
       handle: "task-direct-first",
       groupName: "main",
@@ -422,14 +415,9 @@ describe("Bot Task Session admission", () => {
       createdAt: new Date().toISOString(),
       preview: "direct",
     });
-    const direct = repository.resumeBotTaskSessionAndAdmission(
-      session.handle,
-      session.groupName,
-      session.botId,
-      new Date().toISOString(),
-    );
-    expect(direct).toBeDefined();
-    if (!direct) throw new Error("direct admission was not created");
+    const session = direct.session;
+
+    expect(direct.admission.sequence).toBe(0);
     expect(repository.admitBotTaskSessionAdmission(direct.admission)).toBe(
       true,
     );

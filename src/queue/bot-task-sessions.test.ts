@@ -94,11 +94,9 @@ describe("Bot task sessions", () => {
         "Legacy task",
       );
 
-    const loaded = repository.findBotTaskSession(
-      "task-legacy",
-      "main",
-      "coding",
-    );
+    const loaded = repository
+      .listBotTaskSessions("main", "coding")
+      .find((session) => session.handle === "task-legacy");
     expect(loaded).toEqual({
       sessionId: "bot-task-legacy",
       handle: "task-legacy",
@@ -117,6 +115,15 @@ describe("Bot task sessions", () => {
       request("resume", "legacy-resume"),
     );
     expect(resumed?.session).not.toHaveProperty("channelId");
+    expect(resumed?.session).toEqual({
+      ...loaded,
+      lastUsedAt: "2026-01-02T00:00:00.000Z",
+    });
+    expect(resumed?.enqueue.job).toMatchObject({
+      sessionId: "bot-task-legacy",
+      channelId: "channel-1",
+      sequence: 0,
+    });
     expect(
       repository.db
         .prepare("SELECT channel_id FROM bot_task_sessions WHERE session_id=?")
@@ -124,11 +131,11 @@ describe("Bot task sessions", () => {
     ).toEqual({ channel_id: "old-channel" });
   });
 
-  it("persists metadata and isolates list/find by group and Bot ownership", () => {
+  it("persists metadata and isolates list/resume by group and Bot ownership", () => {
     const repository = new QueueRepository(openRuntimeDb(":memory:"));
     repositories.push(repository);
-    repository.createBotTaskSession(input());
-    repository.createBotTaskSession(
+    repository.createBotTaskSessionAndAdmission(input());
+    repository.createBotTaskSessionAndAdmission(
       input({
         sessionId: "bot-task-2",
         handle: "task-two",
@@ -136,7 +143,7 @@ describe("Bot task sessions", () => {
         preview: "Research the API",
       }),
     );
-    repository.createBotTaskSession(
+    repository.createBotTaskSessionAndAdmission(
       input({
         sessionId: "bot-task-3",
         handle: "task-three",
@@ -154,26 +161,49 @@ describe("Bot task sessions", () => {
     ]);
     expect(repository.listBotTaskSessions("main", "research")).toHaveLength(1);
     expect(repository.listBotTaskSessions("private", "coding")).toHaveLength(1);
+    for (const [handle, groupName, botId] of [
+      ["task-one", "main", "research"],
+      ["task-one", "private", "coding"],
+      ["missing", "main", "coding"],
+    ] as const) {
+      expect(
+        repository.resumeBotTaskSessionAndEnqueue(
+          handle,
+          groupName,
+          botId,
+          "2026-01-02T00:00:00.000Z",
+          request("unauthorized", "unauthorized"),
+        ),
+      ).toBeUndefined();
+      expect(
+        repository.resumeBotTaskSessionAndAdmission(
+          handle,
+          groupName,
+          botId,
+          "2026-01-02T00:00:00.000Z",
+        ),
+      ).toBeUndefined();
+    }
+    expect(repository.listBotTaskSessions("main", "coding")).toEqual([
+      { ...input(), lastUsedAt: input().createdAt },
+    ]);
     expect(
-      repository.findBotTaskSession("task-one", "main", "research"),
-    ).toBeUndefined();
-    expect(
-      repository.findBotTaskSession("task-one", "main", "coding"),
-    ).toMatchObject({ sessionId: "bot-task-1" });
+      repository.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+    ).toEqual({ count: 3 });
+    expect(repository.getIdempotencyRecord("unauthorized")).toBeUndefined();
   });
 
   it("uses the Task Session ID for queue ordering while delivery stays per request", () => {
     const repository = new QueueRepository(openRuntimeDb(":memory:"));
     repositories.push(repository);
-    const session = repository.createBotTaskSession(input());
-    const first = repository.enqueue({
-      channelId: "channel-1",
-      groupName: "main",
-      sessionId: session.sessionId,
-      content: "first",
-      timestamp: "2026-01-01T00:00:00.000Z",
-      botId: "coding",
-    });
+    const { session, enqueue: first } =
+      repository.createBotTaskSessionAndEnqueue(input(), {
+        channelId: "channel-1",
+        groupName: "main",
+        content: "first",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        botId: "coding",
+      });
     const second = repository.enqueue({
       channelId: "thread-1",
       groupName: "main",
@@ -192,15 +222,23 @@ describe("Bot task sessions", () => {
   it("updates last-used without changing task identity", () => {
     const repository = new QueueRepository(openRuntimeDb(":memory:"));
     repositories.push(repository);
-    repository.createBotTaskSession(input());
-    repository.touchBotTaskSession("bot-task-1", "2026-01-02T00:00:00.000Z");
+    const first = repository.createBotTaskSessionAndAdmission(input());
+    const resumed = repository.resumeBotTaskSessionAndAdmission(
+      "task-one",
+      "main",
+      "coding",
+      "2026-01-02T00:00:00.000Z",
+    );
 
-    expect(
-      repository.findBotTaskSession("task-one", "main", "coding"),
-    ).toMatchObject({
-      sessionId: "bot-task-1",
+    expect(resumed?.session).toEqual({
+      ...first.session,
       lastUsedAt: "2026-01-02T00:00:00.000Z",
     });
+    expect(repository.listBotTaskSessions("main", "coding")).toEqual([
+      resumed?.session,
+    ]);
+    expect(first.admission.sequence).toBe(0);
+    expect(resumed?.admission.sequence).toBe(1);
   });
 
   it("preserves source-key and idempotency behavior across retries", () => {
@@ -222,6 +260,10 @@ describe("Bot task sessions", () => {
 
     expect(second.session).toEqual(first.session);
     expect(second.enqueue.inserted).toBe(false);
+    expect(second.enqueue.job.id).toBe(first.enqueue.job.id);
+    expect(repository.listBotTaskSessions("main", "coding")).toEqual([
+      first.session,
+    ]);
     expect(
       repository.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
     ).toEqual({ count: 1 });
@@ -241,14 +283,18 @@ describe("Bot task sessions", () => {
 
     expect(repository.listBotTaskSessions("main", "coding")).toEqual([]);
     expect(
-      repository.findBotTaskSession("task-one", "main", "coding"),
-    ).toBeUndefined();
+      repository.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+    ).toEqual({ count: 0 });
+    expect(repository.getIdempotencyRecord("run-failure")).toBeUndefined();
   });
 
   it("rolls back resume metadata when its enqueue fails", () => {
     const repository = new QueueRepository(openRuntimeDb(":memory:"));
     repositories.push(repository);
-    repository.createBotTaskSession(input());
+    const first = repository.createBotTaskSessionAndEnqueue(
+      input(),
+      request("run", "run"),
+    );
     failJobInsert(repository, "resume-failure");
 
     expect(() =>
@@ -261,11 +307,57 @@ describe("Bot task sessions", () => {
       ),
     ).toThrow("forced enqueue failure");
 
+    expect(repository.listBotTaskSessions("main", "coding")).toEqual([
+      first.session,
+    ]);
+    expect(repository.getIdempotencyRecord("resume-failure")).toBeUndefined();
     expect(
-      repository.findBotTaskSession("task-one", "main", "coding"),
-    ).toMatchObject({
-      sessionId: "bot-task-1",
-      lastUsedAt: "2026-01-01T00:00:00.000Z",
-    });
+      repository.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+    ).toEqual({ count: 1 });
+  });
+
+  it("rolls back session creation and last-used when direct admission fails", () => {
+    const repository = new QueueRepository(openRuntimeDb(":memory:"));
+    repositories.push(repository);
+    const first = repository.createBotTaskSessionAndEnqueue(
+      input(),
+      request("run", "run"),
+    );
+    repository.db.exec(`
+      CREATE TRIGGER fail_bot_task_admission
+      BEFORE INSERT ON jobs
+      WHEN json_extract(NEW.payload_json, '$.botTaskSessionAdmission') = 1
+      BEGIN
+        SELECT RAISE(ABORT, 'forced admission failure');
+      END;
+    `);
+
+    expect(() =>
+      repository.createBotTaskSessionAndAdmission(
+        input({
+          sessionId: "bot-task-failure",
+          handle: "task-failure",
+          sourceKey: "admission-failure",
+        }),
+      ),
+    ).toThrow("forced admission failure");
+    expect(repository.listBotTaskSessions("main", "coding")).toEqual([
+      first.session,
+    ]);
+    expect(() =>
+      repository.resumeBotTaskSessionAndAdmission(
+        "task-one",
+        "main",
+        "coding",
+        "2026-01-02T00:00:00.000Z",
+      ),
+    ).toThrow("forced admission failure");
+    expect(repository.listBotTaskSessions("main", "coding")).toEqual([
+      first.session,
+    ]);
+    expect(
+      repository.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+    ).toEqual({ count: 1 });
+    expect(repository.get(first.enqueue.job.id)).toEqual(first.enqueue.job);
   });
 });

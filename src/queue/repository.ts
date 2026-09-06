@@ -862,11 +862,6 @@ export class QueueRepository {
       );
     return parseBotTaskSession(created);
   }
-  createBotTaskSession(input: CreateBotTaskSessionInput): BotTaskSession {
-    return this.inImmediateTransaction(() =>
-      this.createBotTaskSessionInTransaction(input),
-    );
-  }
   private createBotTaskSessionAdmissionInTransaction(
     sessionId: string,
     groupName: string,
@@ -1054,18 +1049,6 @@ export class QueueRepository {
       return { session, enqueue };
     });
   }
-  findBotTaskSession(
-    handle: string,
-    groupName: string,
-    botId: string,
-  ): BotTaskSession | undefined {
-    const row = this.db
-      .prepare(
-        "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
-      )
-      .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
-    return row ? parseBotTaskSession(row) : undefined;
-  }
   listBotTaskSessions(groupName: string, botId: string): BotTaskSession[] {
     const rows = this.db
       .prepare(
@@ -1081,11 +1064,6 @@ export class QueueRepository {
     this.db
       .prepare("UPDATE bot_task_sessions SET last_used_at=? WHERE session_id=?")
       .run(lastUsedAt, sessionId);
-  }
-  touchBotTaskSession(sessionId: string, lastUsedAt: string): void {
-    this.inImmediateTransaction(() =>
-      this.touchBotTaskSessionInTransaction(sessionId, lastUsedAt),
-    );
   }
   recoverBotTaskSessionAdmissions(): void {
     this.inImmediateTransaction(() => {
