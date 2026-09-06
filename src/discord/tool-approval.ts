@@ -7,6 +7,7 @@ import {
   type InteractionUpdateOptions,
   type Message,
   type MessageCreateOptions,
+  type MessageEditOptions,
 } from "discord.js";
 import type { ToolApprovalRequest } from "../proxy/tool-approval.js";
 import { getDiscordClient } from "./client.js";
@@ -151,17 +152,39 @@ export async function presentToolApprovalRequest(
   );
 }
 
-function updateWithTimeout<T>(operation: Promise<T>): Promise<T> {
+function updateWithTimeout(
+  operation: Promise<unknown>,
+  correctLateSuccess: () => Promise<unknown>,
+): Promise<void> {
+  let timedOut = false;
   let timer!: NodeJS.Timeout;
+  void operation.then(
+    () => {
+      if (!timedOut) return;
+      void correctLateSuccess().catch(() => undefined);
+    },
+    () => undefined,
+  );
+
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("Discord tool approval update timed out")),
-      TOOL_APPROVAL_UPDATE_TIMEOUT_MS,
-    );
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error("Discord tool approval update timed out"));
+    }, TOOL_APPROVAL_UPDATE_TIMEOUT_MS);
   });
-  return Promise.race([operation, timeout]).finally(() => {
-    clearTimeout(timer);
-  });
+  return Promise.race([operation, timeout])
+    .then(() => undefined)
+    .finally(() => {
+      clearTimeout(timer);
+    });
+}
+
+function failedPayload(item: PendingApproval): MessageEditOptions {
+  return {
+    content: `Tool approval failed / cancelled\nTool: ${item.request.invocation.capability}`,
+    components: buttons(item.requestId, true),
+    allowedMentions: { parse: [], repliedUser: false },
+  };
 }
 
 export async function routeToolApprovalInteraction(
@@ -186,6 +209,7 @@ export async function routeToolApprovalInteraction(
   try {
     await updateWithTimeout(
       interaction.update(terminalPayload(item, parsed.decision)),
+      () => interaction.message.edit(failedPayload(item)),
     );
     claim.completeUiUpdate();
   } catch (error) {

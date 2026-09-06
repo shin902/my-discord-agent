@@ -6,8 +6,11 @@ vi.mock("./client.js", () => ({
   getDiscordClient: () => ({ channels: { fetch: fetchChannel } }),
 }));
 
-const { presentToolApprovalRequest, routeToolApprovalInteraction } =
-  await import("./tool-approval.js");
+const {
+  presentToolApprovalRequest,
+  routeToolApprovalInteraction,
+  TOOL_APPROVAL_UPDATE_TIMEOUT_MS,
+} = await import("./tool-approval.js");
 const { createToolApprovalRequest } = await import("../proxy/tool-approval.js");
 
 function makeRequest(args: unknown = { eventId: "event-1" }) {
@@ -178,13 +181,14 @@ describe("routeToolApprovalInteraction", () => {
     await presentToolApprovalRequest(request);
     const payload = sendMessage.mock.calls[0]?.[0];
     const update = vi.fn().mockRejectedValue(new Error("timeout"));
+    const edit = vi.fn();
 
     await routeToolApprovalInteraction(
       {
         customId: customId(payload, 0),
         user: { bot: false },
         channelId: "channel-1",
-        message: { id: "message-1" },
+        message: { id: "message-1", edit },
         update,
       } as never,
       "personal",
@@ -194,5 +198,84 @@ describe("routeToolApprovalInteraction", () => {
       "Tool approval Discord update failed",
     );
     expect(request.claim("approve")).toBeUndefined();
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it("corrects a late successful update after timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const request = makeRequest();
+      await presentToolApprovalRequest(request);
+      const payload = sendMessage.mock.calls[0]?.[0];
+      let resolveUpdate!: () => void;
+      const update = vi.fn(
+        () => new Promise<void>((resolve) => (resolveUpdate = resolve)),
+      );
+      const edit = vi.fn().mockResolvedValue(undefined);
+      const route = routeToolApprovalInteraction(
+        {
+          customId: customId(payload, 0),
+          user: { bot: false },
+          channelId: "channel-1",
+          message: { id: "message-1", edit },
+          update,
+        } as never,
+        "personal",
+      );
+
+      await vi.advanceTimersByTimeAsync(TOOL_APPROVAL_UPDATE_TIMEOUT_MS);
+      await expect(request.waitForDecision()).rejects.toThrow(
+        "Tool approval Discord update failed",
+      );
+      await expect(route).resolves.toBe(true);
+
+      resolveUpdate();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(edit).toHaveBeenCalledOnce();
+      expect(edit.mock.calls[0]?.[0]).toMatchObject({
+        content: expect.stringContaining("Tool approval failed / cancelled"),
+        components: expect.any(Array),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a failed late correction without an unhandled rejection", async () => {
+    vi.useFakeTimers();
+    const unhandledRejection = vi.fn();
+    process.on("unhandledRejection", unhandledRejection);
+    try {
+      const request = makeRequest();
+      await presentToolApprovalRequest(request);
+      const payload = sendMessage.mock.calls[0]?.[0];
+      let resolveUpdate!: () => void;
+      const update = vi.fn(
+        () => new Promise<void>((resolve) => (resolveUpdate = resolve)),
+      );
+      const edit = vi.fn().mockRejectedValue(new Error("edit failed"));
+      const route = routeToolApprovalInteraction(
+        {
+          customId: customId(payload, 0),
+          user: { bot: false },
+          channelId: "channel-1",
+          message: { id: "message-1", edit },
+          update,
+        } as never,
+        "personal",
+      );
+
+      await vi.advanceTimersByTimeAsync(TOOL_APPROVAL_UPDATE_TIMEOUT_MS);
+      await route;
+      resolveUpdate();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(edit).toHaveBeenCalledOnce();
+      expect(unhandledRejection).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandledRejection);
+      vi.useRealTimers();
+    }
   });
 });
