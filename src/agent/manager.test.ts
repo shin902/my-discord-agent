@@ -229,14 +229,12 @@ describe("sendMessage: Docker 起動構成", () => {
       makeProc(0, "response", "__AGENT_ACTIVE__\n__AGENT_RUN_COMPLETE__\n"),
     );
     const { sendMessage } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
 
     await expect(sendMessage("test-group", "session-1", "hi")).resolves.toBe(
       "response",
     );
-    await expect(
-      steerActiveRun("test-group", "session-1", "too late"),
-    ).resolves.toBe("unavailable");
+    expect(acquireActiveRun("test-group", "session-1")).toBeUndefined();
   });
 
   it("steerのstdin EPIPEをホストの未処理エラーにせず配信失敗にする", async () => {
@@ -272,15 +270,14 @@ describe("sendMessage: Docker 起動構成", () => {
     };
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
     const result = sendMessage("test-group", "session-1", "hi");
 
-    let delivery = "unavailable";
-    for (let i = 0; i < 20 && delivery === "unavailable"; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      delivery = await steerActiveRun("test-group", "session-1", "change");
-    }
-    expect(delivery).toBe("rejected");
+    await vi.waitFor(() =>
+      expect(acquireActiveRun("test-group", "session-1")).toBeDefined(),
+    );
+    const handle = acquireActiveRun("test-group", "session-1");
+    await expect(handle?.steer("change")).rejects.toThrow("EPIPE");
     const stopping = stopAgentRun("test-group", "session-1");
     expect(proc.stdin.write).toHaveBeenCalledWith('{"type":"abort"}\n');
     closeHandler?.(0);
@@ -328,15 +325,14 @@ describe("sendMessage: Docker 起動構成", () => {
     };
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
     const result = sendMessage("test-group", "session-1", "hi");
 
-    let delivery = "unavailable";
-    for (let i = 0; i < 20 && delivery === "unavailable"; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      delivery = await steerActiveRun("test-group", "session-1", "change");
-    }
-    expect(delivery).toBe("accepted");
+    await vi.waitFor(() =>
+      expect(acquireActiveRun("test-group", "session-1")).toBeDefined(),
+    );
+    const handle = acquireActiveRun("test-group", "session-1");
+    expect(await handle?.steer("change")).toBe(true);
     closeHandler?.(0);
     await expect(result).resolves.toBe("response");
   });
@@ -356,14 +352,7 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "hi",
-      undefined,
-      undefined,
-      onExecutionTiming,
-    );
+    await sendMessage("test-group", "session-1", "hi", { onExecutionTiming });
 
     expect(onExecutionTiming).toHaveBeenCalledWith({
       termination: "close",
@@ -380,14 +369,7 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "hi",
-      undefined,
-      undefined,
-      onExecutionTiming,
-    );
+    await sendMessage("test-group", "session-1", "hi", { onExecutionTiming });
 
     const timing = onExecutionTiming.mock.calls[0][0];
     expect(timing.imagePullMs).toBeUndefined();
@@ -420,14 +402,9 @@ describe("sendMessage: Docker 起動構成", () => {
       const { sendMessage } = await import("./manager.js");
       const onExecutionTiming = vi.fn();
 
-      const result = sendMessage(
-        "test-group",
-        "session-1",
-        "hi",
-        undefined,
-        undefined,
+      const result = sendMessage("test-group", "session-1", "hi", {
         onExecutionTiming,
-      );
+      });
       const rejection = expect(result).rejects.toThrow(
         "タイムアウト後のコンテナ後始末に失敗しました",
       );
@@ -786,16 +763,14 @@ describe("sendMessage: Docker 起動構成", () => {
     }) as never;
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
     const running = sendMessage("test-group", "session-1", "hi", {
       onContainerStarted: vi.fn(),
     });
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
 
-    await expect(
-      steerActiveRun("test-group", "session-1", "before active"),
-    ).resolves.toBe("unavailable");
+    expect(acquireActiveRun("test-group", "session-1")).toBeUndefined();
     await expect(stopAgentRun("test-group", "session-1")).resolves.toEqual({
       status: "no-active-run",
     });
@@ -807,9 +782,7 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(JSON.parse(proc.stdin.write.mock.calls[0]?.[0] as string)).toEqual(
       expect.objectContaining({ content: "hi" }),
     );
-    await expect(
-      steerActiveRun("test-group", "session-1", "before active"),
-    ).resolves.toBe("unavailable");
+    expect(acquireActiveRun("test-group", "session-1")).toBeUndefined();
     readyHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
 
     const stopping = stopAgentRun("test-group", "session-1");
@@ -933,13 +906,7 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("添付ファイルを /workspace/attachments に読み取り専用でマウントする", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     expect(fetchMock).toHaveBeenCalledWith(attachments[0].url);
     const args = spawnMock.mock.calls[0][1] as string[];
@@ -955,13 +922,7 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("プロンプトに添付ファイルのパス一覧を追記する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -972,13 +933,7 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("画像添付がある場合は read ツールでの確認を促すヒントを追記する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -987,14 +942,16 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("画像以外の添付ファイルのみの場合は read ツールのヒントを追記しない", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "見て", undefined, [
-      {
-        url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
-        name: "note.txt",
-        contentType: "text/plain",
-        size: 8,
-      },
-    ]);
+    await sendMessage("test-group", "session-1", "見て", {
+      attachments: [
+        {
+          url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
+          name: "note.txt",
+          contentType: "text/plain",
+          size: 8,
+        },
+      ],
+    });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -1018,13 +975,7 @@ describe("sendMessage: 添付ファイル", () => {
   it("過去のメッセージで添付ディレクトリが作られていれば、添付なしの後続メッセージでもマウントする", async () => {
     const { sendMessage } = await import("./manager.js");
 
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     await sendMessage("test-group", "session-1", "さっきの画像について教えて");
 
@@ -1046,7 +997,9 @@ describe("sendMessage: 添付ファイル", () => {
   it("サイズが上限を超える添付ファイルはダウンロードしない", async () => {
     const { sendMessage } = await import("./manager.js");
     const tooLarge = [{ ...attachments[0], size: 11 * 1024 * 1024 }];
-    await sendMessage("test-group", "session-1", "hi", undefined, tooLarge);
+    await sendMessage("test-group", "session-1", "hi", {
+      attachments: tooLarge,
+    });
 
     expect(fetchMock).not.toHaveBeenCalled();
     const args = spawnMock.mock.calls[0][1] as string[];
@@ -1900,7 +1853,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await sendMessage("g", "s", "hi", onDiscordEvent);
+    await sendMessage("g", "s", "hi", { onDiscordEvent });
 
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
   });
@@ -1941,7 +1894,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await sendMessage("g", "s", "hi", onDiscordEvent);
+    await sendMessage("g", "s", "hi", { onDiscordEvent });
 
     expect(onDiscordEvent).toHaveBeenCalledTimes(2);
     expect(onDiscordEvent).toHaveBeenNthCalledWith(1, events[0]);
@@ -1968,14 +1921,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const onDiscordEvent = vi.fn();
     const onExecutionTiming = vi.fn();
 
-    await sendMessage(
-      "g",
-      "s",
-      "hi",
-      onDiscordEvent,
-      undefined,
-      onExecutionTiming,
-    );
+    await sendMessage("g", "s", "hi", { onDiscordEvent, onExecutionTiming });
 
     expect(onDiscordEvent).not.toHaveBeenCalled();
     expect(onExecutionTiming).toHaveBeenCalledWith(
@@ -2018,9 +1964,9 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const sendMessage = await setupWithStderr("plain error\n", 1);
 
     const onDiscordEvent = vi.fn();
-    await expect(sendMessage("g", "s", "hi", onDiscordEvent)).rejects.toThrow(
-      "plain error",
-    );
+    await expect(
+      sendMessage("g", "s", "hi", { onDiscordEvent }),
+    ).rejects.toThrow("plain error");
     expect(onDiscordEvent).not.toHaveBeenCalled();
   });
 
@@ -2032,9 +1978,9 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await expect(sendMessage("g", "s", "hi", onDiscordEvent)).rejects.toThrow(
-      /log line[\s\S]*another log/,
-    );
+    await expect(
+      sendMessage("g", "s", "hi", { onDiscordEvent }),
+    ).rejects.toThrow(/log line[\s\S]*another log/);
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
   });
 

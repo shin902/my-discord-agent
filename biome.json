@@ -22,7 +22,7 @@
             "paths": {
               "@earendil-works/pi-agent-core": {
                 "importNames": ["Agent"],
-                "message": "ツール付きAgentの生成はサンドボックスコンテナ内（src/sandbox/agent-runner.ts）に限定してください。ホスト側でツールなしのテキスト生成のみ行う場合は src/agent/textOnlyAgent.ts の runTextOnlyAgent を使ってください。"
+                "message": "ツール付きAgentの生成はサンドボックスコンテナ内（src/sandbox/agent-runner.ts）に限定してください。"
               }
             }
           }
@@ -50,7 +50,7 @@
       }
     },
     {
-      "includes": ["src/sandbox/**", "src/agent/textOnlyAgent.ts"],
+      "includes": ["src/sandbox/**"],
       "linter": {
         "rules": {
           "style": {
