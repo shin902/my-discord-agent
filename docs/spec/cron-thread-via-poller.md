@@ -20,7 +20,7 @@ cron の tick はキューへの書き込みだけ行って即終了する。ス
 
 ### 問題B の解消
 
-LLM の直列・並列実行は provider ごとの設定として別スペックで扱う。該当スペック → [provider-concurrency.md](provider-concurrency.md)
+LLM の直列・並列実行は provider ごとの設定として扱う。現行の設定は [provider concurrency設定](../config.md#configprovidersjson) を参照。
 
 ---
 

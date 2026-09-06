@@ -24,9 +24,9 @@ Discord / cron
 
 claimはtransaction内でworker・lease期限・増分fencing tokenを記録します。コンテナ開始時にrunningへ進み、heartbeatでleaseを更新します。実行中の更新はstatusとfencing tokenを検証し、古いworkerによる更新を拒否します。lease切れは回収・再claimの対象です。
 
-同じ `session_id` の未完了先行jobがある場合は後続をclaimしません。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使います。provider単位の実行制限はこれとは別で、[provider concurrency](spec/provider-concurrency.md) を参照してください。全チャンネルを単一のPromiseチェーンで直列化する設計ではありません。
+同じ `session_id` の未完了先行jobがある場合は後続をclaimしません。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使います。provider単位の実行制限はこれとは別で、[provider concurrency設定](config.md#configprovidersjson) を参照してください。全チャンネルを単一のPromiseチェーンで直列化する設計ではありません。
 
-実行成功時は結果と必要なdelivery chunkを同一transactionで確定します。空応答・配送抑制ではdeliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
+実行成功時は結果と必要なdelivery chunkを同一transactionで確定します。Agentが空応答を返した場合は、理由 `empty_response` の `dead_letter` となり、正常完了にはなりません。明示的な配送抑制（独立行の `<NO_REPLY>`）や、意図的に空の結果を確定する内部jobは、deliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
 
 `deliveries.status` は `pending`、`retry_wait`、`sending`、`sent`、`failed`、`ambiguous` です。jobの `completed` はDiscord配送済みを意味しません。送信成否が不明な場合は `ambiguous` を区別し、Discord側を含むexactly-once配送は保証しません。
 

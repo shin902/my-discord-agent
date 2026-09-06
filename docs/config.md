@@ -142,7 +142,7 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 - `serial`: 同じ provider の実行を FIFO で1件ずつ処理する
 - `parallel`: 同じ provider でも並列実行を許可する
 
-`serial` のロックは provider ごとに独立する。たとえば `local-a` と `local-b` がどちらも `serial` でも、両者は同時に実行できる。同じセッションのメッセージはこの設定とは別のセッションチェーンで常に受信順に処理される。
+`serial` のロックは provider ごとに独立する。たとえば `local-a` と `local-b` がどちらも `serial` でも、両者は同時に実行できる。同じセッションのメッセージはこの設定とは別に、`runtime.sqlite` の順序制御で未完了の先行jobを追い越さないよう処理される。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使う。詳細は [キューの状態と順序](inbox-queue.md#状態と順序) を参照。
 
 ## config/credentials.json
 
