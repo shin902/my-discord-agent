@@ -71,7 +71,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  session.closeSessionDatabasesForTests();
   delete process.env.SESSIONS_DIR;
   await rm(testRoot, { recursive: true, force: true });
 });
