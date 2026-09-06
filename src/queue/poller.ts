@@ -13,6 +13,7 @@ import {
 } from "../config/agent-memory.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
+import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { loadGroupSystemPrompt } from "../config/group-config.js";
 import {
@@ -36,12 +37,24 @@ import {
   AgentMemoryHttpError,
   buildAgentMemorySubmission,
 } from "../memory/agent-memory.js";
+import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { settleRssDispatch } from "./reconciliation.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
 import type { InboxMessage } from "./types.js";
+
+function trustedDiscordDestination(
+  groupConfig: GroupConfig | undefined,
+  channelId: string,
+): TrustedDiscordDestination | undefined {
+  if (!groupConfig) return undefined;
+  return {
+    botId: groupConfig.bot ?? DEFAULT_DISCORD_BOT_ID,
+    channelId,
+  };
+}
 
 const POLL_MS = 1000;
 const SLOW_RESPONSE_MS = 60_000;
@@ -969,6 +982,10 @@ async function processCronThreadDelivery(
             onContainerStarted: markRunningWhenContainerStarted(msg, sessionId),
             signal,
             configOverride: execution.configOverride,
+            trustedDiscordDestination: trustedDiscordDestination(
+              groupConfig,
+              msg.channelId,
+            ),
             systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
             systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
             memorySnapshotPresent: msg.memorySnapshotPresent,
@@ -1275,6 +1292,10 @@ export async function processMessage(
                   (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
                 signal,
                 configOverride: execution.configOverride,
+                trustedDiscordDestination: trustedDiscordDestination(
+                  groupConfig,
+                  msg.channelId,
+                ),
                 heldLlmProvider:
                   lockTarget.concurrency === "serial"
                     ? lockTarget.provider

@@ -7,6 +7,7 @@ describe("loadAndValidateCron", () => {
   let loadAndValidateCron: () => Promise<CronJob[]>;
   let NonRetryableError: typeof import("../utils/error.js").NonRetryableError;
   let mockReadFile: ReturnType<typeof vi.fn>;
+  let findGroupByNameMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     mockReadFile = vi.fn();
@@ -18,6 +19,13 @@ describe("loadAndValidateCron", () => {
       writeFile: vi.fn().mockResolvedValue(undefined),
       mkdir: vi.fn().mockResolvedValue(undefined),
     }));
+    vi.doMock("../config/groups.js", async () => {
+      const actual = await vi.importActual<
+        typeof import("../config/groups.js")
+      >("../config/groups.js");
+      findGroupByNameMock = vi.fn().mockResolvedValue(undefined);
+      return { ...actual, findGroupByName: findGroupByNameMock };
+    });
     const discordClient = { isReady: vi.fn(), channels: { fetch: vi.fn() } };
     vi.doMock("../discord/client.js", () => ({
       getDefaultDiscordClient: () => discordClient,
@@ -161,6 +169,117 @@ describe("loadAndValidateCron", () => {
     const result = await loadAndValidateCron();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("group-job");
+  });
+
+  it("enabled declarative jobのapprovalRequiredToolsを起動時に検証する", async () => {
+    const cases = [
+      {
+        approvalRequiredTools: ["missing-tool"],
+        tools: ["missing-tool"],
+        message: "不明なツール名: missing-tool",
+      },
+      {
+        approvalRequiredTools: ["read"],
+        tools: ["read"],
+        message: "承認必須ツールには host capability のみ指定できます: read",
+      },
+      {
+        approvalRequiredTools: ["get-current-weather"],
+        tools: ["read"],
+        message:
+          "承認必須ツールは有効な tools に含めてください: get-current-weather",
+      },
+    ];
+
+    for (const testCase of cases) {
+      vi.resetModules();
+      findGroupByNameMock.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValueOnce(
+        JSON.stringify([
+          {
+            id: "invalid-approval",
+            schedule: "5m",
+            groupName: "my-group",
+            prompt: "do something",
+            channelId: "ch-123",
+            deliveryMode: "direct",
+            sessionMode: "per-run",
+            ...testCase,
+          },
+        ]),
+      );
+      const runner = await import("./runner.js");
+
+      await expect(runner.loadAndValidateCron()).rejects.toThrow(
+        testCase.message,
+      );
+    }
+  });
+
+  it("handler付きjobのapprovalRequiredToolsは自由なjob契約として検証しない", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "handler-approval-settings",
+          schedule: "5m",
+          handler: "__fixtures__/test-handler.ts",
+          tools: ["read"],
+          approvalRequiredTools: ["missing-tool"],
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).resolves.toHaveLength(1);
+  });
+
+  it("cron jobのapprovalRequiredToolsはgroupから継承し、[]で解除する", async () => {
+    findGroupByNameMock.mockResolvedValue({
+      name: "my-group",
+      tools: ["get-current-weather"],
+      approvalRequiredTools: ["get-current-weather"],
+      channels: [],
+    });
+
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "inherited-approval",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "do something",
+          channelId: "ch-123",
+          deliveryMode: "direct",
+          sessionMode: "per-run",
+        },
+      ]),
+    );
+    const inherited = await loadAndValidateCron();
+    expect(inherited).toHaveLength(1);
+
+    vi.resetModules();
+    findGroupByNameMock.mockResolvedValue({
+      name: "my-group",
+      tools: ["get-current-weather"],
+      approvalRequiredTools: ["get-current-weather"],
+      channels: [],
+    });
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "cleared-approval",
+          schedule: "5m",
+          groupName: "my-group",
+          prompt: "do something",
+          channelId: "ch-123",
+          deliveryMode: "direct",
+          sessionMode: "per-run",
+          tools: ["read"],
+          approvalRequiredTools: [],
+        },
+      ]),
+    );
+    const cleared = await import("./runner.js");
+    await expect(cleared.loadAndValidateCron()).resolves.toHaveLength(1);
   });
 
   it("cron jobでもAgentConfigのmounts overrideを受理する", async () => {
