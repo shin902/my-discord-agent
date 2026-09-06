@@ -48,8 +48,8 @@ describe("runTextOnlyAgent", () => {
   // （ツール付きAgentの生成は src/sandbox/agent-runner.ts に限定する設計）。
   // biome の noRestrictedImports はこのファイル自体の内部実装までは検査できないため、
   // ここでランタイムの不変条件として固定する。
-  it("Agentにtoolsを一切渡さない", async () => {
-    await runTextOnlyAgent({
+  it("Agentにtoolsを一切渡さず、assistantのテキストを返す", async () => {
+    const { text } = await runTextOnlyAgent({
       systemPrompt: "system",
       model: {} as Model<Api>,
       prompt: "hello",
@@ -57,5 +57,6 @@ describe("runTextOnlyAgent", () => {
     });
 
     expect(lastAgentOptions?.initialState.tools).toEqual([]);
+    expect(text).toBe("OK");
   });
 });
