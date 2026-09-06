@@ -84,8 +84,7 @@ export type ExecutionState = "claimed" | "running";
 // 3. TS executionState/status is a read-only projection computed inside
 //    parsePayload: DB 'claimed' surfaces as status 'running' with
 //    executionState 'claimed'; DB 'running' surfaces as status 'running' with
-//    executionState 'running'. It is never persisted; complete() consumes it
-//    to decide whether a freshly claimed job still needs markRunning().
+//    executionState 'running'. It is never persisted.
 //
 // DB status is therefore the single canonical persisted state; executionState
 // is a derived view; the `claimed` integer is a legacy duplicate that remains
@@ -1637,13 +1636,6 @@ export class QueueRepository {
       lease_until: new Date(Date.now() + Math.max(1, leaseMs)).toISOString(),
       heartbeat_at: nowIso(),
     });
-  }
-  complete(id: string, token: number): void {
-    const job = this.get(id);
-    if (!job) throw new Error(`unknown job ${id}`);
-    if (job.executionState === "claimed") this.markRunning(id, token);
-    if (job.resultJson === undefined)
-      this.commitResult(id, token, "", { empty: true });
   }
   /** Record a failed execution attempt, applying durable retry policy. */
   failAttempt(

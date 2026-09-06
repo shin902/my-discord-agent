@@ -282,7 +282,13 @@ describe("reconcileRssDispatches", () => {
         idempotencyKey: dispatch.jobId,
       });
       const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      repo.markRunning(queued.job.id, expectDefined(claimed).fencingToken);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "",
+        { empty: true },
+      );
       expect(reconcileRssDispatches(repo, rssPath)).toBe(0);
       expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBe(dispatch.id);
     } finally {
@@ -409,7 +415,13 @@ describe("reconcileRssDispatches", () => {
         idempotencyKey: dispatch.jobId,
       });
       const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      repo.markRunning(queued.job.id, expectDefined(claimed).fencingToken);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "",
+        { empty: true },
+      );
       // The same path is passed twice; it must be opened and reconciled exactly once.
       expect(reconcileRssDispatches(repo, [rssPath, rssPath])).toBe(0);
     } finally {
@@ -533,9 +545,15 @@ describe("reconcileRssDispatches", () => {
         { idempotencyKey: completedDispatch.jobId },
       );
       const completedClaimed = repo.claim("worker", 60_000);
-      repo.complete(
+      repo.markRunning(
         completedQueued.job.id,
         expectDefined(completedClaimed).fencingToken,
+      );
+      repo.commitResult(
+        completedQueued.job.id,
+        expectDefined(completedClaimed).fencingToken,
+        "",
+        { empty: true },
       );
 
       const deadQueued = repo.enqueue(
@@ -585,7 +603,13 @@ describe("reconcileRssDispatches", () => {
         idempotencyKey: dispatch.jobId,
       });
       const claimed = repo.claim("worker", 60_000);
-      repo.complete(queued.job.id, expectDefined(claimed).fencingToken);
+      repo.markRunning(queued.job.id, expectDefined(claimed).fencingToken);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "",
+        { empty: true },
+      );
 
       const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
       expect(reconcileRssDispatches(repo)).toBe(0);

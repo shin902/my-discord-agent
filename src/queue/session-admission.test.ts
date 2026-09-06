@@ -55,7 +55,10 @@ describe("Bot Task Session admission", () => {
     const claimed = repository.claim("poller");
     expect(claimed?.job.id).toBe(queued.job.id);
     if (!claimed) throw new Error("queued job was not claimed");
-    repository.complete(queued.job.id, claimed.fencingToken);
+    repository.markRunning(queued.job.id, claimed.fencingToken);
+    repository.commitResult(queued.job.id, claimed.fencingToken, "", {
+      empty: true,
+    });
     await expect(directRun).resolves.toBe("direct");
     expect(directStarted).toBe(true);
   });
@@ -102,7 +105,10 @@ describe("Bot Task Session admission", () => {
     const blockedClaim = repository.claim("poller");
     expect(blockedClaim?.job.id).toBe(first.job.id);
     if (!blockedClaim) throw new Error("earlier job was not claimed");
-    repository.complete(first.job.id, blockedClaim.fencingToken);
+    repository.markRunning(first.job.id, blockedClaim.fencingToken);
+    repository.commitResult(first.job.id, blockedClaim.fencingToken, "", {
+      empty: true,
+    });
     expect(repository.claim("poller")?.job.id).toBe(later.job.id);
   });
 
@@ -350,7 +356,10 @@ describe("Bot Task Session admission", () => {
     const claimed = repository.claim("poller");
     expect(claimed?.job.id).toBe(first.job.id);
     if (!claimed) throw new Error("first queued job was not claimed");
-    repository.complete(first.job.id, claimed.fencingToken);
+    repository.markRunning(first.job.id, claimed.fencingToken);
+    repository.commitResult(first.job.id, claimed.fencingToken, "", {
+      empty: true,
+    });
     expect(repository.claim("poller")?.job.id).toBe(later.job.id);
   });
 
