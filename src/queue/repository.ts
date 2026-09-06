@@ -1329,15 +1329,6 @@ export class QueueRepository {
       return claimed ? { job: claimed, fencingToken: token } : undefined;
     });
   }
-  releaseClaim(id: string, token: number): void {
-    this.fenced(id, token, {
-      status: "queued",
-      claimed: 0,
-      lease_until: null,
-      worker_id: null,
-      next_attempt_at: null,
-    });
-  }
   private fenced(
     id: string,
     token: number,
@@ -2176,17 +2167,6 @@ export class QueueRepository {
     ) as JobRow[];
     return rows.map(parsePayload);
   }
-  listIdempotencyKeys(): Array<{
-    key: string;
-    jobId: string | null;
-    status: string;
-  }> {
-    return this.db
-      .prepare(
-        "SELECT key,job_id as jobId,status FROM idempotency_keys ORDER BY key",
-      )
-      .all() as Array<{ key: string; jobId: string | null; status: string }>;
-  }
 }
 let defaultRepository: QueueRepository | undefined;
 export function getQueueRepository(): QueueRepository {
@@ -2194,8 +2174,4 @@ export function getQueueRepository(): QueueRepository {
     defaultRepository = new QueueRepository();
   }
   return defaultRepository;
-}
-export function closeQueueRepository(): void {
-  defaultRepository?.close();
-  defaultRepository = undefined;
 }
