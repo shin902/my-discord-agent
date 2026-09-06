@@ -88,7 +88,11 @@ describe("declarative item-thread poller integration", () => {
       sessionId: "cron-item-temporary",
       cronProvisioning: true,
     });
-    expect(repository.getDelivery(item.id)).toBeUndefined();
+    expect(
+      repository
+        .listDeliveries()
+        .find((delivery) => delivery.jobId === item.id),
+    ).toBeUndefined();
     expect(repository.listDeliveries()).toHaveLength(0);
     expect(
       repository.db
@@ -134,7 +138,9 @@ describe("declarative item-thread poller integration", () => {
       sessionId: "cron-item-temporary",
       cronProvisioning: true,
     });
-    const delivery = repository.getDelivery(item.id);
+    const delivery = repository
+      .listDeliveries()
+      .find((delivery) => delivery.jobId === item.id);
     expect(delivery).toBeDefined();
     expect(delivery?.destinationType).toBe("item-thread");
     expect(delivery?.cronThreadId).toBeUndefined();

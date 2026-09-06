@@ -328,7 +328,11 @@ describe("durable Phase 2 result state", () => {
         terminalState: "empty_response",
         succeeded: false,
       });
-      expect(repo.getDelivery(enqueued.job.id)).toBeUndefined();
+      expect(
+        repo
+          .listDeliveries()
+          .find((delivery) => delivery.jobId === enqueued.job.id),
+      ).toBeUndefined();
       expect(repo.listDeliveries()).toHaveLength(0);
     } finally {
       repo.close();
@@ -361,7 +365,11 @@ describe("durable Phase 2 result state", () => {
         terminalState: "empty_response",
         succeeded: false,
       });
-      expect(repo.getDelivery(enqueued.job.id)).toBeUndefined();
+      expect(
+        repo
+          .listDeliveries()
+          .find((delivery) => delivery.jobId === enqueued.job.id),
+      ).toBeUndefined();
       expect(repo.listDeliveries()).toHaveLength(0);
       expect(
         repo.db
@@ -450,7 +458,11 @@ describe("durable Phase 2 result state", () => {
         systemPromptSnapshotHash: "agents-hash",
         toolCallKey: "tool-key",
       });
-      expect(repo.getDelivery(enqueued.job.id)).toMatchObject({
+      expect(
+        repo
+          .listDeliveries()
+          .find((delivery) => delivery.jobId === enqueued.job.id),
+      ).toMatchObject({
         id: delivery.id,
         status: "pending",
         payloadJson: JSON.stringify("canonical"),
@@ -505,7 +517,11 @@ describe("durable Phase 2 result state", () => {
         terminalState: "succeeded",
         succeeded: true,
       });
-      expect(repo.getDelivery(source.job.id)).toBeDefined();
+      expect(
+        repo
+          .listDeliveries()
+          .find((delivery) => delivery.jobId === source.job.id),
+      ).toBeDefined();
       expect(
         repo.findByIdempotencyKey("agent-memory-shadow:source-result"),
       ).toMatchObject({
@@ -525,7 +541,9 @@ describe("durable Phase 2 result state", () => {
         terminalState: "succeeded",
         succeeded: true,
       });
-      expect(repo.getDelivery(shadow.id)).toBeUndefined();
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === shadow.id),
+      ).toBeUndefined();
     } finally {
       repo.close();
     }
@@ -1441,7 +1459,6 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
           .get(first.job.id),
       ).toMatchObject({ claimed: 0 });
       // the recovered row's old fence is dead
-      expect(repo.isFenced(first.job.id, claim.fencingToken)).toBe(false);
       expect(() =>
         repo.markRunning(first.job.id, claim.fencingToken, {}),
       ).toThrow(/stale fencing/);

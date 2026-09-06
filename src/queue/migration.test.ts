@@ -54,7 +54,7 @@ describe("migrateLegacyQueue", () => {
       expect(result.malformed).toBe(1);
       expect(result.migrated).toBe(1);
       expect(repo.get("legacy-1")).toBeUndefined();
-      expect(repo.list()[0]?.botId).toBe("coding");
+      expect(repo.get("valid")?.botId).toBe("coding");
     } finally {
       repo.close();
     }
@@ -73,7 +73,9 @@ describe("migrateLegacyQueue", () => {
       });
       expect(result.malformed).toBe(1);
       expect(result.migrated).toBe(1);
-      expect(repo.list()).toHaveLength(1);
+      expect(
+        repo.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+      ).toEqual({ count: 1 });
       expect(repo.db.prepare("SELECT reason FROM dead_letters").all()).toEqual([
         { reason: "invalid_inbox_row" },
       ]);
@@ -132,7 +134,9 @@ describe("migrateLegacyQueue", () => {
       expect(await readFile(join(paths.archive, archives[0]))).toEqual(
         Buffer.from(`${JSON.stringify(message())}\n`),
       );
-      expect(repo.list()).toEqual([]);
+      expect(
+        repo.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
+      ).toEqual({ count: 0 });
       expect(
         repo.db
           .prepare(
