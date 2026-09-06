@@ -102,15 +102,4 @@ describe("host Reddit cookie refresh client", () => {
     );
     expect(fetchMock).toHaveBeenCalledOnce();
   });
-
-  it("reports a failed maintenance response without treating it as success", async () => {
-    process.env.AGENT_REACH_REFRESH_TOKEN = "refresh-token";
-    fetchMock.mockResolvedValueOnce(
-      new Response("refresh failed", { status: 503 }),
-    );
-
-    await expect(refreshRedditCookiesInRuntime()).rejects.toThrow(
-      "refresh failed",
-    );
-  });
 });

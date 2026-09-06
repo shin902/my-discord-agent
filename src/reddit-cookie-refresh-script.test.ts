@@ -1,28 +1,53 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import * as http from "node:http";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
-async function readJson(path: string): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
-}
-
 describe("reddit:refresh command", () => {
-  it("is wired to the host maintenance client", async () => {
-    const packageJson = await readJson("package.json");
-    const scripts = packageJson.scripts as Record<string, string>;
-    const source = await readFile("scripts/reddit-cookie-refresh.ts", "utf8");
-
-    expect(scripts["reddit:refresh"]).toBe(
-      "tsx scripts/reddit-cookie-refresh.ts",
+  it("refreshes through the private maintenance endpoint and reports success", async () => {
+    const requests: Array<{
+      method?: string;
+      url?: string;
+      authorization?: string;
+    }> = [];
+    const server = http.createServer((request, response) => {
+      requests.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers.authorization,
+      });
+      response.writeHead(200);
+      response.end();
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
     );
-    expect(source).toContain(
-      'from "../src/runtime/reddit-cookie-refresh-client.js"',
-    );
-    expect(source).toContain("await refreshRedditCookiesInRuntime()");
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("server did not start");
+      const { stdout } = await execFileAsync("pnpm", ["reddit:refresh"], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          AGENT_REACH_RUNTIME_URL: `http://127.0.0.1:${address.port}`,
+          AGENT_REACH_REFRESH_TOKEN: "test-refresh-authority",
+        },
+      });
+      expect(requests).toEqual([
+        {
+          method: "POST",
+          url: "/maintenance/reddit-cookie-refresh",
+          authorization: "Bearer test-refresh-authority",
+        },
+      ]);
+      expect(stdout).toContain("クッキーを更新しました");
+      expect(stdout).not.toContain("test-refresh-authority");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("fails clearly when the refresh authority is unavailable", async () => {

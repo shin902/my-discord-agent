@@ -8,7 +8,6 @@ import { grepTool, readTool } from "./fs.js";
 import {
   type ExternalizedToolOutput,
   externalizeLargeToolResult,
-  TOOL_OUTPUT_CHAR_LIMIT,
   wrapToolOutput,
 } from "./output.js";
 
@@ -75,7 +74,7 @@ function rememberOutput(path: string): void {
 
 describe("common tool output boundary", () => {
   it("leaves output at the character boundary unchanged", async () => {
-    const text = "x".repeat(TOOL_OUTPUT_CHAR_LIMIT);
+    const text = "x".repeat(50_000);
     const input = textResult(text);
 
     const result = await externalizeLargeToolResult(input);
@@ -87,7 +86,7 @@ describe("common tool output boundary", () => {
 
   it("externalizes oversized text with complete UTF-8 preservation and metadata", async () => {
     const text = `${"😀日本語 café\n".repeat(5_000)}end`;
-    expect(text.length).toBeGreaterThan(TOOL_OUTPUT_CHAR_LIMIT);
+    expect(text.length).toBeGreaterThan(50_000);
     const input = textResult(text, {
       source: "test",
       requestId: "user-secret",
@@ -116,7 +115,7 @@ describe("common tool output boundary", () => {
         totalCharacters: text.length,
         totalBytes: Buffer.byteLength(text, "utf8"),
         totalLines: 5_001,
-        inlineCharacterLimit: TOOL_OUTPUT_CHAR_LIMIT,
+        inlineCharacterLimit: 50_000,
         lifetime: "container-run",
       },
     });
@@ -140,9 +139,7 @@ describe("common tool output boundary", () => {
       count: 200,
       truncated: false,
     });
-    expect(firstText(grepResult).length).toBeGreaterThan(
-      TOOL_OUTPUT_CHAR_LIMIT,
-    );
+    expect(firstText(grepResult).length).toBeGreaterThan(50_000);
 
     const result = await externalizeLargeToolResult(grepResult);
     const details = result.details as Record<string, unknown> & {
@@ -162,7 +159,7 @@ describe("common tool output boundary", () => {
         totalCharacters: firstText(grepResult).length,
         totalBytes: Buffer.byteLength(firstText(grepResult), "utf8"),
         totalLines: 200,
-        inlineCharacterLimit: TOOL_OUTPUT_CHAR_LIMIT,
+        inlineCharacterLimit: 50_000,
         lifetime: "container-run",
       },
     });
@@ -235,10 +232,7 @@ describe("common tool output boundary", () => {
       mimeType: "image/webp",
     };
     const input: AgentToolResult<{ source: string }> = {
-      content: [
-        { type: "text", text: "x".repeat(TOOL_OUTPUT_CHAR_LIMIT) },
-        image,
-      ],
+      content: [{ type: "text", text: "x".repeat(50_000) }, image],
       details: { source: "mixed-at-boundary" },
     };
 
@@ -249,7 +243,7 @@ describe("common tool output boundary", () => {
 
   it("uses private permissions for the directory and full-output file", async () => {
     const result = await externalizeLargeToolResult(
-      textResult("x".repeat(TOOL_OUTPUT_CHAR_LIMIT + 1)),
+      textResult("x".repeat(50_000 + 1)),
     );
     const { path } = externalizedOutput(result);
     rememberOutput(path);

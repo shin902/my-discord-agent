@@ -2,7 +2,6 @@ import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TOOL_OUTPUT_CHAR_LIMIT } from "./output.js";
 import { createToolProxyTool } from "./tool-proxy.js";
 import { getCurrentWeatherTool } from "./weather.js";
 
@@ -53,7 +52,7 @@ describe("createToolProxyTool", () => {
 
   it("externalizes oversized host results in the sandbox", async () => {
     const text = "host-result\n".repeat(5_000);
-    expect(text.length).toBeGreaterThan(TOOL_OUTPUT_CHAR_LIMIT);
+    expect(text.length).toBeGreaterThan(50_000);
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
