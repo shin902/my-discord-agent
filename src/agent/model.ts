@@ -88,13 +88,12 @@ export async function resolveModel(provider: string, modelId: string) {
     );
   }
 
+  const isKnownProvider = providers.includes(provider as KnownProvider);
+
   // forceCustom: pi-ai の KnownProvider 名と衝突していても
-  // credential-proxy 経由のカスタムプロバイダー解決を強制する
-  if (
-    entry?.forceCustom ||
-    runnerCredentialProxyMode ||
-    !providers.includes(provider as KnownProvider)
-  ) {
+  // credential-proxy 経由のカスタムプロバイダー解決を強制する。
+  // Runnerでもこの明示指定と未知providerだけをcustom modelにする。
+  if (entry?.forceCustom || !isKnownProvider) {
     if (!entry) {
       throw new Error(`不明なプロバイダ: ${provider}`);
     }
@@ -106,11 +105,30 @@ export async function resolveModel(provider: string, modelId: string) {
     }
     return createCustomModel(entry, resolvedBaseUrl, modelId);
   }
+
   const model = getModels(provider as KnownProvider).find(
     (m) => m.id === modelId,
   );
   if (!model)
     throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
+
+  if (runnerCredentialProxyMode) {
+    if (!entry) {
+      throw new Error(
+        `Runner model provider ${provider} is not available through the credential proxy`,
+      );
+    }
+    const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
+    if (!resolvedBaseUrl) {
+      throw new Error(
+        `${provider}: baseUrl に未解決のプレースホルダがあります（${entry.baseUrl}）`,
+      );
+    }
+    // Preserve pi-ai's provider-specific API, metadata, and wire behavior;
+    // only redirect the selected built-in model through the host proxy.
+    return { ...model, baseUrl: resolvedBaseUrl };
+  }
+
   return model;
 }
 

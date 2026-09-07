@@ -479,9 +479,8 @@ function buildSanitizedCredentialJson(
     sanitized.push({
       ...rest,
       // The Runner firewall permits only the host Credential/Tool Proxy ports.
-      // Keep even KnownProvider models on this explicit host route so pi-ai
-      // cannot silently select a public built-in endpoint inside the sandbox.
-      forceCustom: true,
+      // KnownProvider metadata/API selection remains explicit in the Runner;
+      // its baseUrl is rewritten to this host route below.
       baseUrl: `http://host.docker.internal:${proxyPort}/${entry.provider}`,
     });
   }

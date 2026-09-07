@@ -1074,7 +1074,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/test");
-    expect(creds[0].forceCustom).toBe(true);
+    expect(creds[0].forceCustom).toBeUndefined();
   });
 
   it("tavily-searchだけではTavily credential proxy情報をsandboxへ渡さない", async () => {
@@ -1210,6 +1210,33 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
         (entry: { provider: string }) => entry.provider,
       ),
     ).toEqual([]);
+  });
+
+  it("明示されたforceCustomはsandbox向けcredential JSONでも維持する", async () => {
+    process.env.CODEX_MODEL_TOKEN = "codex-model-secret";
+    const spawnMock = await setup([
+      {
+        provider: "codex-oauth",
+        forceCustom: true,
+        envVars: ["CODEX_MODEL_TOKEN"],
+        baseUrl: "http://localhost:8317/v1",
+        api: "openai-responses",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        model: { provider: "codex-oauth", modelId: "gpt-5.6-luna" },
+      },
+    });
+    expect(getCredJson(spawnMock)).toEqual([
+      expect.objectContaining({
+        provider: "codex-oauth",
+        forceCustom: true,
+        api: "openai-responses",
+        baseUrl: "http://host.docker.internal:12345/codex-oauth",
+      }),
+    ]);
   });
 
   it("host toolと同名の選択中model providerはsandboxに維持する", async () => {

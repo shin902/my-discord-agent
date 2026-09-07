@@ -15,7 +15,7 @@ Agent sandbox
 
 [Credential Proxy](../src/proxy/credential-proxy-server.ts) はホスト側で認証情報を解決します。`envVars` は複数secretの注入指定ではなく、先頭から最初の空でない値を選ぶ候補一覧です。認証形式と未設定時の挙動は [設定リファレンス](config/credential-proxy.md#envvarsと認証) を参照してください。
 
-`forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。Runnerへ渡すsanitized credential entryにはmanagerが `forceCustom: true` を付与し、Runner内でpi-aiがpublicな組み込みendpointを選ばないようにします。Runnerでcredential entryが見つからないKnownProviderはfail closedします。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
+`forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。Runnerへ渡すsanitized credential entryは `baseUrl` だけをhost proxy URLへ置換します。Runner内では、`forceCustom: true` / unknown providerだけをカスタムモデルとして解決し、KnownProviderはpi-aiのprovider固有API・metadataを維持したまま `baseUrl` をproxyへ向けます。Runnerでcredential entryが見つからないproviderはfail closedします。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
 
 Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証はありません。sandboxへのURL非公開だけをhost routeの認可とみなさないでください。Agent Runnerのネットワークは `host.docker.internal` のhost-gatewayとmanagerがrunごとに許可したCredential Proxy / Tool Proxyポートだけへdeny-by-defaultで制限されていますが、ポート許可はHTTPのprovider/path権限を狭めません。ネットワーク境界の制約と残存リスクは [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
 

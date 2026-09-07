@@ -98,6 +98,99 @@ describe("resolveModel", () => {
     }
   });
 
+  it.each([
+    {
+      provider: "google",
+      modelId: "gemini-2.5-pro",
+      name: "Gemini 2.5 Pro",
+      api: "google-generative-ai",
+    },
+    {
+      provider: "openrouter",
+      modelId: "openai/gpt-4o",
+      name: "OpenRouter GPT-4o",
+      api: "openai-completions",
+    },
+  ])("Runner preserves $provider built-in model metadata/API while proxying baseUrl", async ({
+    provider,
+    modelId,
+    name,
+    api,
+  }) => {
+    const { resolveModel } = await importFresh();
+    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([provider] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider,
+        baseUrl: `http://host.docker.internal:8317/${provider}`,
+      },
+    ] as CredentialEntry[]);
+    vi.mocked(getModels).mockReturnValue([
+      {
+        id: modelId,
+        name,
+        api,
+        provider,
+        input: ["text", "image"],
+        reasoning: true,
+      },
+    ] as unknown as Model<never>[]);
+
+    const previous = process.env.CREDENTIAL_PROXY_JSON;
+    process.env.CREDENTIAL_PROXY_JSON = "sanitized-runner-credentials";
+    try {
+      const model = await resolveModel(provider, modelId);
+      expect(model).toMatchObject({
+        id: modelId,
+        name,
+        api,
+        provider,
+        input: ["text", "image"],
+        reasoning: true,
+        baseUrl: `http://host.docker.internal:8317/${provider}`,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.CREDENTIAL_PROXY_JSON;
+      else process.env.CREDENTIAL_PROXY_JSON = previous;
+    }
+  });
+
+  it("Runner keeps explicit codex/custom entries on createCustomModel", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue(["google"] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "codex-oauth",
+        forceCustom: true,
+        baseUrl: "http://host.docker.internal:8317/codex-oauth",
+        api: "openai-responses",
+      },
+    ] as CredentialEntry[]);
+
+    const previous = process.env.CREDENTIAL_PROXY_JSON;
+    process.env.CREDENTIAL_PROXY_JSON = "sanitized-runner-credentials";
+    try {
+      const model = await resolveModel("codex-oauth", "gpt-5.6-luna");
+      expect(model).toMatchObject({
+        provider: "codex-oauth",
+        id: "gpt-5.6-luna",
+        api: "openai-responses",
+        baseUrl: "http://host.docker.internal:8317/codex-oauth",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.CREDENTIAL_PROXY_JSON;
+      else process.env.CREDENTIAL_PROXY_JSON = previous;
+    }
+  });
+
   it("credential-proxy に定義されたカスタムプロバイダを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
