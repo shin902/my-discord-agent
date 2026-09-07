@@ -143,6 +143,8 @@ Tool版はTypeScriptのstructured arguments、Skill版はPythonのCLI arguments�
 
 cronで使う場合も既読状態は保存せず、実行ごとに期間を明示する。公開Botなど`bash`を許可しない境界ではTool版を、trustedな環境でSkillを使う場合はPython版を選べる。
 
+ただし Agent sandbox の direct-egress 閉鎖後は、Python Skill から公開 Atom API への通信は失敗します。Skill の移行は network boundary PR に含めず別 PR とするため、既存 Skill 利用を維持する導入では移行を先行させてください。Tool Proxy 経由の native Tool 版は維持します。last30days の HN/GitHub 直接取得も同様です。[影響一覧と導入順序](sandbox-command.md#direct-egress-閉鎖で壊れる機能と導入順序) を参照してください。
+
 ### session-logs
 
 **場所:** `templates/SKILLS/session-logs/SKILL.md`

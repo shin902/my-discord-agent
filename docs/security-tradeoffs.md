@@ -15,13 +15,11 @@ LLM は Credential Proxy 経由で host が設定済み upstream へ接続しま
 ### 効果の限界
 
 - 許可された LLM / 検索 / URL 取得等を使った情報持ち出しは network isolation だけでは防げません。
-- Credential Proxy の既存 forwarding は **run ごとの provider/path 認可を持ちません**。その許可 port にある他 provider route も呼べるため、Tool Proxy の capability 制限と同じ保証ではありません。URL を sandbox の設定から除くことは認可ではなく、この残存経路の整理は別作業です。
+- Credential Proxy は secret confidentiality と credential injection / forwarding を担当し、authorization plane ではありません。Agent が inference credential を利用すること自体は許可し、他の inference provider を選ぶ可能性も受け入れます。provider/model/path/method 認可、inference run token、approval、独自 rate limit は追加しません。利用自体を制限すべき credential-backed operation が残る場合は、Credential Proxy を拡張せず Tool Proxy capability へ移します。
 - host、Docker daemon、image、operator-only mounts は trust root です。危険な socket や bootstrap を置換する mount を trusted config で許せば境界を壊せます。mount policy 全面変更は行っていません。
 - container/kernel escape や parser/Chromium の侵害後の完全封じ込めは保証しません。seccomp 大規模変更、AppArmor/SELinux、Landlock、追加 sandbox、mTLS は導入していません。
 
-### Tool Runtime の将来の簡素化候補（提案のみ）
-
-URL/DNS 検証と Python subprocess guard に重複する宛先分類は、parser ごとの必要性と redirect/rebinding テストを揃えてから共通化の費用対効果を検討できます。また、現行 Runtime firewall の loopback 全許可と Docker DNS 例外は別途見直し候補です。Agent sandbox の閉鎖だけを根拠に既存 guard や認証を削除しません。
+arXiv / last30days の direct-egress 移行、generic Tool Runtime、既存 Runtime の cleanup、inbound peer attack 向けの追加 hardening は今回の対象外です。既存機能への影響と先行 PR の必要性は [導入ガイド](sandbox-command.md#direct-egress-閉鎖で壊れる機能と導入順序) を参照してください。
 
 ## credential proxy の認証なし公開
 

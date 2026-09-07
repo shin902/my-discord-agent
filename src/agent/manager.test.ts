@@ -1504,41 +1504,6 @@ describe("sendMessage: configOverride", () => {
     ]);
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
-    expect(args.some((arg) => arg.startsWith("ARXIV_TOOL_PROXY_TOKEN="))).toBe(
-      false,
-    );
-  });
-
-  it("arXiv Skillには許可されたarXivだけのauthorityとapprovalを引き継ぐ", async () => {
-    const sendMessage = await setup(["arxiv-search"]);
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: {
-        tools: ["arxiv-search", "get-current-weather"],
-        approvalRequiredTools: ["arxiv-search", "get-current-weather"],
-      },
-    });
-    expect(createToolProxyRunMock).toHaveBeenCalledWith(
-      expect.stringContaining(":arxiv"),
-      ["arxiv-search"],
-      {
-        approvalRequiredCapabilities: ["arxiv-search"],
-        trustedDiscordDestination: undefined,
-      },
-    );
-    const args = spawnMock.mock.calls[0][1] as string[];
-    expect(args).toContain("ARXIV_TOOL_PROXY_TOKEN=tool-token");
-    expect(args).toContain(
-      "ARXIV_TOOL_PROXY_URL=http://host.docker.internal:23456/__tool-proxy/rpc",
-    );
-    for (const result of createToolProxyRunMock.mock.results) {
-      expect(result.value.revoke).toHaveBeenCalledOnce();
-    }
-  });
-
-  it("arXiv Skill選択だけではauthorityを付与しない", async () => {
-    const sendMessage = await setup(["arxiv-search", "arxiv-survey"]);
-    await sendMessage("test-group", "session-1", "hi");
-    expect(createToolProxyRunMock).not.toHaveBeenCalled();
   });
 
   it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {
