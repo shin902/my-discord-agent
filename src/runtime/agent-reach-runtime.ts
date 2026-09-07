@@ -5,12 +5,6 @@ import { refreshRedditCookies } from "../proxy/reddit-cookie-refresh.js";
 import { agentReachTool } from "../tools/agent-reach.js";
 
 const port = Number(process.env.PORT ?? 8787);
-function runtimeToken(): string | undefined {
-  return process.env.AGENT_REACH_RUNTIME_TOKEN;
-}
-function refreshToken(): string | undefined {
-  return process.env.AGENT_REACH_REFRESH_TOKEN;
-}
 const calls = new Map<string, AbortController>();
 const bodyLimit = 16 * 1024;
 
@@ -21,13 +15,6 @@ function json(res: http.ServerResponse, status: number, value: unknown): void {
     "content-length": Buffer.byteLength(body),
   });
   res.end(body);
-}
-
-function bearer(req: http.IncomingMessage): string | undefined {
-  const value = req.headers.authorization;
-  return typeof value === "string" && /^Bearer \S+$/.test(value)
-    ? value.slice("Bearer ".length)
-    : undefined;
 }
 
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
@@ -74,10 +61,6 @@ export async function handleAgentReachRuntimeRequest(
     return;
   }
   if (path.startsWith("/maintenance/") && req.method === "POST") {
-    if (!refreshToken() || bearer(req) !== refreshToken()) {
-      json(res, 401, { error: "Unauthorized" });
-      return;
-    }
     if (path !== "/maintenance/reddit-cookie-refresh") {
       json(res, 404, { error: "Not Found" });
       return;
@@ -87,10 +70,6 @@ export async function handleAgentReachRuntimeRequest(
       cookieFile: process.env.REDDIT_COOKIE_FILE,
     });
     json(res, 200, { ok: true });
-    return;
-  }
-  if (!runtimeToken() || bearer(req) !== runtimeToken()) {
-    json(res, 401, { error: "Unauthorized" });
     return;
   }
   if (req.method === "DELETE" && path.startsWith("/rpc/")) {

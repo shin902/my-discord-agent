@@ -14,12 +14,6 @@ function runtimeUrl(): string {
   );
 }
 
-function runtimeToken(): string {
-  const token = process.env.AGENT_REACH_RUNTIME_TOKEN;
-  if (!token) throw new Error("Agent Reach Tool Runtime token is unavailable");
-  return token;
-}
-
 /** Execute the dedicated agent-reach runtime without exposing its filesystem. */
 export async function executeAgentReachRuntime(
   url: string,
@@ -30,7 +24,6 @@ export async function executeAgentReachRuntime(
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${runtimeToken()}`,
     },
     body: JSON.stringify({ callId, url }),
     signal,
@@ -56,6 +49,5 @@ export async function executeAgentReachRuntime(
 export async function cancelAgentReachRuntime(callId: string): Promise<void> {
   await fetch(`${runtimeUrl()}/rpc/${encodeURIComponent(callId)}`, {
     method: "DELETE",
-    headers: { authorization: `Bearer ${runtimeToken()}` },
   }).catch(() => undefined);
 }

@@ -13,10 +13,11 @@ vi.mock("../proxy/reddit-cookie-refresh.js", () => ({
 }));
 
 import { createAgentReachRuntimeServer } from "./agent-reach-runtime.js";
+import { refreshRedditCookiesInRuntime } from "./reddit-cookie-refresh-client.js";
 
 const request = (
   port: number,
-  options: { method: string; path: string; token?: string; body?: unknown },
+  options: { method: string; path: string; body?: unknown },
 ): Promise<{ status: number; payload: Record<string, unknown> }> =>
   new Promise((resolve, reject) => {
     const req = http.request(
@@ -25,9 +26,6 @@ const request = (
         method: options.method,
         path: options.path,
         headers: {
-          ...(options.token
-            ? { authorization: `Bearer ${options.token}` }
-            : {}),
           ...(options.body ? { "content-type": "application/json" } : {}),
         },
       },
@@ -50,13 +48,11 @@ const request = (
 afterEach(() => {
   execute.mockReset();
   refresh.mockReset();
-  delete process.env.AGENT_REACH_RUNTIME_TOKEN;
-  delete process.env.AGENT_REACH_REFRESH_TOKEN;
+  vi.unstubAllEnvs();
 });
 
 describe("agent-reach Tool Runtime RPC", () => {
-  it("認証済みの最小RPCだけを受け、resultにfilesystem pathを含めない", async () => {
-    process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-token";
+  it("最小RPCを受け、resultにfilesystem pathを含めない", async () => {
     execute.mockResolvedValue({
       content: [{ type: "text", text: "result" }],
       details: { service: "web" },
@@ -72,7 +68,6 @@ describe("agent-reach Tool Runtime RPC", () => {
       const response = await request(address.port, {
         method: "POST",
         path: "/rpc",
-        token: "runtime-token",
         body: { callId: "call-1", url: "https://example.com" },
       });
       expect(response.status).toBe(200);
@@ -92,7 +87,6 @@ describe("agent-reach Tool Runtime RPC", () => {
       const secondResponse = await request(address.port, {
         method: "POST",
         path: "/rpc",
-        token: "runtime-token",
         body: { callId: "call-2", url: "https://example.com/again" },
       });
       expect(secondResponse.status).toBe(200);
@@ -103,7 +97,6 @@ describe("agent-reach Tool Runtime RPC", () => {
   });
 
   it("request body送信後のclient disconnectで実行中のcallをabortする", async () => {
-    process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-token";
     let executeStarted!: () => void;
     let abortObserved!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -137,7 +130,6 @@ describe("agent-reach Tool Runtime RPC", () => {
         method: "POST",
         path: "/rpc",
         headers: {
-          authorization: "Bearer runtime-token",
           "content-type": "application/json",
         },
       });
@@ -157,7 +149,6 @@ describe("agent-reach Tool Runtime RPC", () => {
   });
 
   it("重複callIdを拒否し、元のcallをabort後に再利用できる", async () => {
-    process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-token";
     let executeStarted!: () => void;
     let abortCount = 0;
     const started = new Promise<void>((resolve) => {
@@ -186,7 +177,6 @@ describe("agent-reach Tool Runtime RPC", () => {
       const pending = request(address.port, {
         method: "POST",
         path: "/rpc",
-        token: "runtime-token",
         body: { callId: "reusable-call", url: "https://example.com" },
       });
       await started;
@@ -194,7 +184,6 @@ describe("agent-reach Tool Runtime RPC", () => {
       const duplicate = await request(address.port, {
         method: "POST",
         path: "/rpc",
-        token: "runtime-token",
         body: { callId: "reusable-call", url: "https://example.com/duplicate" },
       });
       expect(duplicate).toMatchObject({
@@ -206,7 +195,6 @@ describe("agent-reach Tool Runtime RPC", () => {
       const revoke = await request(address.port, {
         method: "DELETE",
         path: "/rpc/reusable-call",
-        token: "runtime-token",
       });
       expect(revoke.status).toBe(202);
       expect((await pending).status).toBe(502);
@@ -218,7 +206,6 @@ describe("agent-reach Tool Runtime RPC", () => {
       const reused = await request(address.port, {
         method: "POST",
         path: "/rpc",
-        token: "runtime-token",
         body: { callId: "reusable-call", url: "https://example.com/reused" },
       });
       expect(reused.status).toBe(200);
@@ -229,7 +216,6 @@ describe("agent-reach Tool Runtime RPC", () => {
   });
 
   it("call revokeで実行中のagent-reachをabortする", async () => {
-    process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-token";
     let aborted = false;
     execute.mockImplementation(
       async (_id: string, _args: unknown, signal: AbortSignal) => {
@@ -253,7 +239,6 @@ describe("agent-reach Tool Runtime RPC", () => {
       const pending = request(address.port, {
         method: "POST",
         path: "/rpc",
-        token: "runtime-token",
         body: { callId: "revoke-me", url: "https://example.com" },
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -262,7 +247,6 @@ describe("agent-reach Tool Runtime RPC", () => {
           await request(address.port, {
             method: "DELETE",
             path: "/rpc/revoke-me",
-            token: "runtime-token",
           })
         ).status,
       ).toBe(202);
@@ -273,8 +257,7 @@ describe("agent-reach Tool Runtime RPC", () => {
     }
   });
 
-  it("refreshは別tokenのmaintenance endpointだけで実行する", async () => {
-    process.env.AGENT_REACH_REFRESH_TOKEN = "refresh-token";
+  it("refreshはhost用maintenance endpointで実行する", async () => {
     const server = createAgentReachRuntimeServer();
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
@@ -287,21 +270,24 @@ describe("agent-reach Tool Runtime RPC", () => {
         (
           await request(address.port, {
             method: "POST",
-            path: "/maintenance/reddit-cookie-refresh",
-            token: "runtime-token",
+            path: "/maintenance/unknown",
           })
         ).status,
-      ).toBe(401);
+      ).toBe(404);
+      expect(refresh).not.toHaveBeenCalled();
       expect(
         (
           await request(address.port, {
             method: "POST",
             path: "/maintenance/reddit-cookie-refresh",
-            token: "refresh-token",
           })
         ).status,
       ).toBe(200);
       expect(refresh).toHaveBeenCalledOnce();
+
+      vi.stubEnv("AGENT_REACH_RUNTIME_URL", `http://127.0.0.1:${address.port}`);
+      await expect(refreshRedditCookiesInRuntime()).resolves.toBeUndefined();
+      expect(refresh).toHaveBeenCalledTimes(2);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

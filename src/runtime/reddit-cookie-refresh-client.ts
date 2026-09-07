@@ -29,15 +29,11 @@ export async function refreshRedditCookiesInRuntime(): Promise<void> {
   const baseUrl = (
     process.env.AGENT_REACH_RUNTIME_URL ?? DEFAULT_RUNTIME_URL
   ).replace(/\/$/, "");
-  const token = process.env.AGENT_REACH_REFRESH_TOKEN;
-  if (!token)
-    throw new Error("Agent Reach Tool Runtime refresh token is unavailable");
   let response: Response;
   for (let attempt = 0; ; attempt += 1) {
     try {
       response = await fetch(`${baseUrl}/maintenance/reddit-cookie-refresh`, {
         method: "POST",
-        headers: { authorization: `Bearer ${token}` },
       });
       break;
     } catch (error) {

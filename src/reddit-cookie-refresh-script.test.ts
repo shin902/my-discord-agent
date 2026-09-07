@@ -33,42 +33,25 @@ describe("reddit:refresh command", () => {
         env: {
           ...process.env,
           AGENT_REACH_RUNTIME_URL: `http://127.0.0.1:${address.port}`,
-          AGENT_REACH_REFRESH_TOKEN: "test-refresh-authority",
         },
       });
       expect(requests).toEqual([
         {
           method: "POST",
           url: "/maintenance/reddit-cookie-refresh",
-          authorization: "Bearer test-refresh-authority",
+          authorization: undefined,
         },
       ]);
       expect(stdout).toContain("クッキーを更新しました");
-      expect(stdout).not.toContain("test-refresh-authority");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
-  it("fails clearly when the refresh authority is unavailable", async () => {
-    await expect(
-      execFileAsync("pnpm", ["reddit:refresh"], {
-        cwd: process.cwd(),
-        env: { ...process.env, AGENT_REACH_REFRESH_TOKEN: undefined },
-      }),
-    ).rejects.toMatchObject({
-      code: 1,
-      stderr: expect.stringContaining(
-        "Agent Reach Tool Runtime refresh token is unavailable",
-      ),
-    });
-  });
-
-  it("redacts the refresh token from a failed endpoint response", async () => {
-    const token = "refresh-token-that-must-not-be-logged";
+  it("reports a failed endpoint response and exits unsuccessfully", async () => {
     const server = http.createServer((_request, response) => {
       response.writeHead(503, { "content-type": "text/plain" });
-      response.end(`request failed: ${token}`);
+      response.end("maintenance failed");
     });
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
@@ -82,7 +65,6 @@ describe("reddit:refresh command", () => {
         env: {
           ...process.env,
           AGENT_REACH_RUNTIME_URL: `http://127.0.0.1:${address.port}`,
-          AGENT_REACH_REFRESH_TOKEN: token,
         },
       }).then(
         () => undefined,
@@ -90,9 +72,8 @@ describe("reddit:refresh command", () => {
       );
       expect(result).toMatchObject({
         code: 1,
-        stderr: expect.stringContaining("request failed: [redacted]"),
+        stderr: expect.stringContaining("maintenance failed"),
       });
-      expect(result?.stderr).not.toContain(token);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

@@ -11,7 +11,6 @@ import { createAgentReachRuntimeServer } from "./agent-reach-runtime.js";
 
 const temporaryDirectories: string[] = [];
 const originalEnvironment = {
-  AGENT_REACH_RUNTIME_TOKEN: process.env.AGENT_REACH_RUNTIME_TOKEN,
   AGENT_REACH_RUNTIME_URL: process.env.AGENT_REACH_RUNTIME_URL,
   FAKE_YTDLP_MARKER: process.env.FAKE_YTDLP_MARKER,
   FAKE_YTDLP_STATE: process.env.FAKE_YTDLP_STATE,
@@ -155,7 +154,6 @@ wait "$child"
       { mode: 0o700 },
     );
     await chmod(fakeYtDlp, 0o700);
-    process.env.AGENT_REACH_RUNTIME_TOKEN = "runtime-test-token";
     process.env.FAKE_YTDLP_MARKER = marker;
     process.env.FAKE_YTDLP_STATE = state;
     process.env.FAKE_YTDLP_GROUP = groupMarker;

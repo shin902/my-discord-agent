@@ -40,7 +40,7 @@ Agent-facing `agent-reach` capability（`src/tools/agent-reach-capability.ts`）
 
 - ホストマシンに **モニターを接続できること**（初回ログインのみ。X11フォワーディングやVNCでも代用可）
 - `pnpm install` 後、Playwright のブラウザ本体をインストール: `npx playwright install chromium`
-- Tool Runtime 用 Docker と、`.env` の `AGENT_REACH_RUNTIME_TOKEN` / `AGENT_REACH_REFRESH_TOKEN`
+- Tool Runtime 用 Docker
 
 ---
 
@@ -57,20 +57,19 @@ docker compose -f compose.tool-runtime.yaml up -d --build
 pnpm reddit:refresh
 ```
 
-`pnpm reddit:refresh` はホストからRuntimeの非公開 maintenance endpointを1回呼び出すだけの運用コマンドです。Agent-facing toolやsandboxにはrefresh authorityを公開しません。
+`pnpm reddit:refresh` はホストからRuntimeの非公開 maintenance endpointを1回呼び出すだけの運用コマンドです。Agent-facing toolやsandboxにはmaintenance endpointを公開しません。
 
 ---
 
 ## 3. Tool Runtime と cron の設定
 
-`.env` に Runtime 用の短命ではないサービス認証トークンを設定し、Runtime を起動します。Runtime は Reddit 用 state の必要なパスだけを mount します。
+Runtime を起動します。Runtime は Reddit 用 state の必要なパスだけを mount します。
 
 ```bash
-# .env に設定:
-# AGENT_REACH_RUNTIME_TOKEN=...
-# AGENT_REACH_REFRESH_TOKEN=...
 docker compose -f compose.tool-runtime.yaml up -d --build
 ```
+
+host scheduler から Runtime への HTTP は trusted backend 内部の transport です。loopback publish と Runner からの network 分離は [Tool Runtime仕様](../spec/agent-reach-tool-runtime.md#trust--network-boundary) に従って維持してください。
 
 Reddit の Cookie を `config/credentials.json` に追加したり、Credential Proxy 用の `reddit` provider を設定したりする必要はありません。
 
