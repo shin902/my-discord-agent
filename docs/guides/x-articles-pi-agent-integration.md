@@ -104,13 +104,13 @@ Credential Proxy の設定不足を X/Twitter の取得エラーに利用しな�
 ## Agent-facing tool と Skill shell
 
 専用 `agent-reach` ツールはシェルスクリプトに依存せず、`bash` を許可しない
-グループでも動作する。`agent-reach` skill は同梱の薄いシェル client から Tool Proxy の `agent-reach` capability を呼び、stdout を直接利用したりファイルへリダイレクトしたりできる。専用ツールも同じ capability を入口とし、Tool Proxy の host handler が両者を同じ専用 Tool Runtime → core `agentReachTool` へ委譲する。入口・UX・権限設定は別だが、取得用の `yt-dlp` や curl 等は Agent sandbox に置かない。
+グループでも動作する。`agent-reach` skill は同梱の薄いシェル client から Tool Proxy の `agent-reach` capability を呼び、stdout を直接利用したりファイルへリダイレクトしたりできる。専用ツールも同じ capability を入口とし、同じrun token・認可・設定済みapprovalを通り、Tool Proxyが両者をTool callごとのRuntime → core `agentReachTool`へ委譲する。入口・UXは別だが、取得用の `yt-dlp` や curl 等は Agent sandbox に置かない。
 
 実装の対応表:
 
 | 経路 | 実装 |
 |---|---|
-| Agent-facing native capability | `src/tools/agent-reach-capability.ts` |
+| Agent-facing native capability | `src/tools/runtime-capabilities.ts` |
 | Runtime core implementation | `src/tools/agent-reach.ts` |
 | skill shell | `templates/SKILLS/agent-reach/scripts/agent-reach.sh` |
 | core 取得 fixture | `src/tools/__fixtures__/agent-reach/parity-cases.json` |

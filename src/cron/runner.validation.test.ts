@@ -181,7 +181,8 @@ describe("loadAndValidateCron", () => {
       {
         approvalRequiredTools: ["read"],
         tools: ["read"],
-        message: "承認必須ツールには host capability のみ指定できます: read",
+        message:
+          "承認必須ツールには host/runtime capability のみ指定できます: read",
       },
       {
         approvalRequiredTools: ["get-current-weather"],

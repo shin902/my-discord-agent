@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>arXiv fixture</title>
+  <id>https://export.arxiv.org/api/query</id>
+  <updated>2026-09-01T00:00:00Z</updated>
+  <entry>
+    <id>http://arxiv.org/abs/2608.12345v2</id>
+    <title>  Runtime   boundary </title>
+    <published>2026-08-20T03:00:00Z</published>
+    <author><name>Alice Example</name></author>
+    <summary> First   abstract. </summary>
+    <category term="cs.AI"/>
+  </entry>
+  <entry><title>Anonymous first</title><published>2026-08-21T00:00:00Z</published><summary>First anonymous</summary></entry>
+  <entry><title>Anonymous second</title><published>2026-08-22T00:00:00Z</published><summary>Second anonymous</summary></entry>
+</feed>

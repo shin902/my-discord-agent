@@ -215,20 +215,26 @@ async function readResponseText(response: Response): Promise<string> {
   );
 }
 
-async function fetchArxiv(input: {
-  queries: readonly string[];
-  from?: string;
-  to?: string;
-  maxResults: number;
-  sort: ArxivSort;
-}): Promise<ArxivPaper[]> {
+async function fetchArxiv(
+  input: {
+    queries: readonly string[];
+    from?: string;
+    to?: string;
+    maxResults: number;
+    sort: ArxivSort;
+  },
+  signal?: AbortSignal,
+): Promise<ArxivPaper[]> {
   const url = buildArxivApiUrl(input);
   const response = await fetch(url, {
     headers: {
       Accept: "application/atom+xml, application/xml, text/xml",
       "User-Agent": "my-discord-agent/arxiv",
     },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.any([
+      AbortSignal.timeout(30_000),
+      ...(signal ? [signal] : []),
+    ]),
   });
   let text: string;
   try {
@@ -302,14 +308,18 @@ export const arxivSearchTool: AgentTool<typeof searchParams> = {
   execute: async (
     _toolCallId,
     { query, from, to, max_results = 10, sort = "relevance" },
+    signal,
   ) => {
-    const papers = await fetchArxiv({
-      queries: [query],
-      from,
-      to,
-      maxResults: Math.min(max_results, 50),
-      sort: sort as ArxivSort,
-    });
+    const papers = await fetchArxiv(
+      {
+        queries: [query],
+        from,
+        to,
+        maxResults: Math.min(max_results, 50),
+        sort: sort as ArxivSort,
+      },
+      signal,
+    );
     return {
       content: [{ type: "text", text: JSON.stringify(papers, null, 2) }],
       details: { query, from, to, resultCount: papers.length },
@@ -344,14 +354,18 @@ export const arxivSurveyTool: AgentTool<typeof surveyParams> = {
   execute: async (
     _toolCallId,
     { queries, from, to, max_results = 30, sort = "submitted" },
+    signal,
   ) => {
-    const papers = await fetchArxiv({
-      queries,
-      from,
-      to,
-      maxResults: Math.min(max_results, 50),
-      sort: sort as ArxivSort,
-    });
+    const papers = await fetchArxiv(
+      {
+        queries,
+        from,
+        to,
+        maxResults: Math.min(max_results, 50),
+        sort: sort as ArxivSort,
+      },
+      signal,
+    );
     return {
       content: [{ type: "text", text: JSON.stringify(papers, null, 2) }],
       details: { queries, from, to, resultCount: papers.length },

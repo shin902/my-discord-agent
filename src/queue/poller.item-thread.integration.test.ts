@@ -1,4 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const state = vi.hoisted(() => ({
   repository: undefined as unknown,
@@ -42,6 +53,14 @@ vi.mock("./repository.js", async () => {
     ...actual,
     getQueueRepository: () => state.repository,
   };
+});
+
+// Keep session files outside manager.test.ts's shared-directory cleanup.
+const sessions = await mkdtemp(join(tmpdir(), "poller-item-sessions-"));
+vi.stubEnv("SESSIONS_DIR", sessions);
+afterAll(async () => {
+  vi.unstubAllEnvs();
+  await rm(sessions, { recursive: true, force: true });
 });
 
 const { sendMessage } = await import("../agent/manager.js");

@@ -24,7 +24,8 @@ import {
   type TrustedDiscordDestination,
 } from "../proxy/tool-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
-import { hostCapabilityNames, resolveTools } from "../tools/registry.js";
+import { resolveTools } from "../tools/registry.js";
+import { runCapabilityNames } from "../tools/skill-capabilities.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -729,34 +730,19 @@ export async function sendMessage(
           trustedDiscordDestination,
         )
       : undefined;
-  const hostCapabilities = hostCapabilityNames(effectiveConfig.tools ?? []);
+  const capabilities = runCapabilityNames(effectiveConfig);
   const toolProxyRun =
-    storedToolProxyPort === null || hostCapabilities.length === 0
+    storedToolProxyPort === null || capabilities.length === 0
       ? undefined
       : createToolProxyRun(
           `${groupName}:${sessionId}:${randomUUID()}`,
-          hostCapabilities,
+          capabilities,
           {
             approvalRequiredCapabilities:
               effectiveConfig.approvalRequiredTools ?? [],
             trustedDiscordDestination,
           },
         );
-  // Skill shell commands receive a separate least-privileged authority rather
-  // than the run token that exposes all selected host capabilities.
-  const agentReachSelected =
-    effectiveConfig.tools?.includes("agent-reach") === true ||
-    effectiveConfig.skills === "*" ||
-    (Array.isArray(effectiveConfig.skills) &&
-      (effectiveConfig.skills.includes("agent-reach") ||
-        effectiveConfig.skills.includes("last30days")));
-  const agentReachToolProxyRun =
-    storedToolProxyPort !== null && agentReachSelected
-      ? createToolProxyRun(
-          `${groupName}:${sessionId}:${randomUUID()}:agent-reach`,
-          ["agent-reach"],
-        )
-      : undefined;
   const payload = JSON.stringify({
     groupName,
     sessionId,
@@ -798,14 +784,6 @@ export async function sendMessage(
           },
         }
       : {}),
-    ...(agentReachToolProxyRun
-      ? {
-          agentReachToolProxyEndpoint: {
-            url: agentReachToolProxyRun.url,
-            token: agentReachToolProxyRun.token,
-          },
-        }
-      : {}),
   });
 
   // docker run --rm はクライアントプロセスを SIGKILL してもコンテナ本体を止めない
@@ -843,12 +821,12 @@ export async function sendMessage(
     "HOME=/tmp",
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
-    ...(agentReachToolProxyRun
+    ...(toolProxyRun
       ? [
           "-e",
-          `AGENT_REACH_TOOL_PROXY_URL=${agentReachToolProxyRun.url}`,
+          `TOOL_PROXY_URL=${toolProxyRun.url}`,
           "-e",
-          `AGENT_REACH_TOOL_PROXY_TOKEN=${agentReachToolProxyRun.token}`,
+          `TOOL_PROXY_TOKEN=${toolProxyRun.token}`,
         ]
       : []),
     RUNNER_IMAGE,
@@ -1296,6 +1274,5 @@ export async function sendMessage(
   }).finally(() => {
     internalRequest?.revoke();
     toolProxyRun?.revoke();
-    agentReachToolProxyRun?.revoke();
   });
 }

@@ -111,7 +111,8 @@ describe("sendMessage: Docker 起動構成", () => {
       callback?.(null, "", "");
       return { on: vi.fn() };
     });
-    vi.doMock("node:child_process", () => ({
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
       spawn: spawnMock,
       execFile: execFileMock,
     }));
@@ -801,7 +802,10 @@ describe("sendMessage: 添付ファイル", () => {
     await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -944,7 +948,10 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   const setup = async (mounts: unknown) => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -1026,7 +1033,10 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
 
   const setup = async (creds: unknown[]) => {
     const spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue(creds),
     }));
@@ -1325,7 +1335,8 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
 describe("sendMessage: 設定バリデーション", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.doMock("node:child_process", () => ({
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
       spawn: vi.fn().mockReturnValue(makeProc()),
     }));
     vi.doMock("../config/credential-proxy.js", () => ({
@@ -1406,7 +1417,10 @@ describe("sendMessage: configOverride", () => {
       token: "tool-token",
       revoke: vi.fn(),
     }));
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../proxy/credential-proxy-server.js", () => ({
       createInternalRequestConfig: createInternalRequestConfigMock,
     }));
@@ -1491,112 +1505,88 @@ describe("sendMessage: configOverride", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it("native agent-reach toolにはagent-reach-only tokenを渡す", async () => {
+  it.each([
+    {
+      tools: ["agent-reach", "get-current-weather"],
+      skills: [],
+      allowed: ["agent-reach", "get-current-weather"],
+    },
+    { tools: ["read"], skills: ["agent-reach"], allowed: ["agent-reach"] },
+    {
+      tools: ["agent-reach", "get-current-weather"],
+      skills: ["agent-reach"],
+      allowed: ["agent-reach", "get-current-weather"],
+    },
+    {
+      tools: ["read"],
+      skills: ["arxiv-search", "arxiv-survey"],
+      allowed: ["arxiv-search", "arxiv-survey"],
+    },
+    {
+      tools: ["read"],
+      skills: ["last30days"],
+      allowed: ["hackernews-search", "github-recent-search", "agent-reach"],
+    },
+  ])("tools=$tools skills=$skills share one authority and token", async ({
+    tools,
+    skills,
+    allowed,
+  }) => {
     const sendMessage = await setup();
-
+    const approvalRequiredTools = tools.includes("agent-reach")
+      ? ["agent-reach"]
+      : [];
     await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["agent-reach", "get-current-weather"] },
+      configOverride: { tools, skills, approvalRequiredTools },
     });
-
-    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
-      1,
+    expect(createToolProxyRunMock).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("test-group:session-1:"),
-      ["agent-reach", "get-current-weather"],
+      allowed,
       {
-        approvalRequiredCapabilities: [],
+        approvalRequiredCapabilities: approvalRequiredTools,
         trustedDiscordDestination: undefined,
       },
     );
-    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("test-group:session-1:"),
-      ["agent-reach"],
-    );
-    const args = spawnMock.mock.calls[0]?.[1] as string[];
-    expect(args).toContain(
-      "AGENT_REACH_TOOL_PROXY_URL=http://host.docker.internal:23456/__tool-proxy/rpc",
-    );
-    expect(args).toContain("AGENT_REACH_TOOL_PROXY_TOKEN=tool-token");
-  });
-
-  it("agent-reach skillだけが選択された場合も専用tokenを渡す", async () => {
-    const sendMessage = await setup();
-
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["read"], skills: ["agent-reach"] },
-    });
-
-    expect(createToolProxyRunMock).toHaveBeenCalledOnce();
-    expect(createToolProxyRunMock).toHaveBeenCalledWith(
-      expect.stringContaining("test-group:session-1:"),
-      ["agent-reach"],
-    );
-    const run = createToolProxyRunMock.mock.results[0]?.value as {
-      revoke: ReturnType<typeof vi.fn>;
-    };
+    const run = createToolProxyRunMock.mock.results[0].value;
     expect(run.revoke).toHaveBeenCalledOnce();
-    const args = spawnMock.mock.calls[0]?.[1] as string[];
-    expect(args).toContain("AGENT_REACH_TOOL_PROXY_TOKEN=tool-token");
-  });
-
-  it("agent-reach toolとskillの両方が選択されても専用tokenを使う", async () => {
-    const sendMessage = await setup();
-
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: {
-        tools: ["agent-reach", "get-current-weather"],
-        skills: ["agent-reach"],
-      },
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain(`TOOL_PROXY_URL=${run.url}`);
+    expect(args).toContain(`TOOL_PROXY_TOKEN=${run.token}`);
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.toolProxyEndpoint).toEqual({
+      url: run.url,
+      token: run.token,
     });
-
-    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining("test-group:session-1:"),
-      ["agent-reach", "get-current-weather"],
-      {
-        approvalRequiredCapabilities: [],
-        trustedDiscordDestination: undefined,
-      },
-    );
-    expect(createToolProxyRunMock).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("test-group:session-1:"),
-      ["agent-reach"],
-    );
+    expect(
+      Object.keys(payload).filter((key) => /ProxyEndpoint$/.test(key)),
+    ).toEqual(["toolProxyEndpoint"]);
+    expect(payload.groupConfig.tools).toEqual(tools);
+    expect(payload.groupConfig.skills).toEqual(skills);
   });
 
-  it("agent-reach skillが全選択された場合も専用tokenを渡す", async () => {
+  it("wildcard expands only built-in Skill dependencies, without granting bash", async () => {
     const sendMessage = await setup("*");
-
     await sendMessage("test-group", "session-1", "hi", {
       configOverride: { tools: ["read"] },
     });
-
-    expect(createToolProxyRunMock).toHaveBeenCalledOnce();
-    expect(createToolProxyRunMock).toHaveBeenCalledWith(
-      expect.stringContaining("test-group:session-1:"),
-      ["agent-reach"],
+    expect(createToolProxyRunMock).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      [
+        "agent-reach",
+        "arxiv-search",
+        "arxiv-survey",
+        "hackernews-search",
+        "github-recent-search",
+      ],
+      {
+        approvalRequiredCapabilities: [],
+        trustedDiscordDestination: undefined,
+      },
     );
-  });
-
-  it("last30days skillだけが選択された場合もagent-reach専用tokenを渡す", async () => {
-    const sendMessage = await setup();
-
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["read"], skills: ["last30days"] },
-    });
-
-    expect(createToolProxyRunMock).toHaveBeenCalledOnce();
-    expect(createToolProxyRunMock).toHaveBeenCalledWith(
-      expect.stringContaining("test-group:session-1:"),
-      ["agent-reach"],
-    );
-    const run = createToolProxyRunMock.mock.results[0]?.value as {
-      revoke: ReturnType<typeof vi.fn>;
-    };
-    expect(run.revoke).toHaveBeenCalledOnce();
-    const args = spawnMock.mock.calls[0]?.[1] as string[];
-    expect(args).toContain("AGENT_REACH_TOOL_PROXY_TOKEN=tool-token");
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.groupConfig.tools).toEqual(["read"]);
   });
 
   it("host capabilityのrun tokenは失敗時にもrevokeする", async () => {
@@ -1754,7 +1744,10 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const spawnMock = vi
       .fn()
       .mockReturnValue(makeProc(code, "response", stderr));
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));

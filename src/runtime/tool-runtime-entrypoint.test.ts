@@ -62,7 +62,7 @@ afterEach(async () => {
 });
 
 describe("tool runtime entrypoint identity", () => {
-  it("uses the configured Reddit state owner and drops all capabilities", async () => {
+  it("uses the host-supplied identity and drops all capabilities", async () => {
     const fixture = await setup();
     const { uid, gid } = process.getuid
       ? { uid: process.getuid(), gid: process.getgid?.() ?? process.getuid() }
@@ -72,8 +72,8 @@ describe("tool runtime entrypoint identity", () => {
       env: {
         ...process.env,
         PATH: fixture.path,
-        REDDIT_PROFILE_DIR: fixture.profile,
-        REDDIT_COOKIE_FILE: fixture.cookieFile,
+        TOOL_RUNTIME_UID: String(uid),
+        TOOL_RUNTIME_GID: String(gid),
         TOOL_RUNTIME_SETPRIV_CAPTURE: fixture.capture,
       },
     });
@@ -96,21 +96,46 @@ describe("tool runtime entrypoint identity", () => {
     );
   });
 
-  it("fails clearly when configured Reddit state paths are absent", async () => {
+  it("starts without Reddit state using the unprivileged default identity", async () => {
     const fixture = await setup();
+    await execFileAsync("sh", [entrypoint, "node", "runtime.mjs"], {
+      env: {
+        ...process.env,
+        PATH: fixture.path,
+        TOOL_RUNTIME_SETPRIV_CAPTURE: fixture.capture,
+        TOOL_RUNTIME_UID: undefined,
+        TOOL_RUNTIME_GID: undefined,
+        REDDIT_PROFILE_DIR: undefined,
+        REDDIT_COOKIE_FILE: undefined,
+      },
+    });
+    expect((await readFile(fixture.capture, "utf8")).split("\n")).toEqual(
+      expect.arrayContaining([
+        "--reuid",
+        "1000",
+        "--regid",
+        "--bounding-set=-all",
+      ]),
+    );
+  });
 
+  it.each([
+    "0",
+    "-1",
+    "1000:1000",
+    "oops",
+  ])("rejects invalid identity %s before starting Node", async (uid) => {
+    const fixture = await setup();
     await expect(
       execFileAsync("sh", [entrypoint, "node", "runtime.mjs"], {
         env: {
           ...process.env,
           PATH: fixture.path,
           TOOL_RUNTIME_SETPRIV_CAPTURE: fixture.capture,
-          REDDIT_COOKIE_FILE: fixture.cookieFile,
-          REDDIT_PROFILE_DIR: undefined,
+          TOOL_RUNTIME_UID: uid,
+          TOOL_RUNTIME_GID: "1000",
         },
       }),
-    ).rejects.toMatchObject({
-      stderr: expect.stringContaining("REDDIT_PROFILE_DIR is not set"),
-    });
+    ).rejects.toMatchObject({ stderr: expect.stringContaining("UID/GID") });
   });
 });

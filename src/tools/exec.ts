@@ -23,8 +23,8 @@ function commandFailure(): Error {
 
 /**
  * Execute a command while retaining the old exec implementation by default.
- * agent-reach opts into process groups because its runtime outlives individual
- * agent containers and must not leave yt-dlp/python descendants behind.
+ * agent-reach opts into process groups so aborted or timed-out subprocesses
+ * cannot leave yt-dlp/python descendants running during a Tool call.
  */
 export function execAsync(
   command: string,

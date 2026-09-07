@@ -96,14 +96,14 @@ describe("validateAgentConfig", () => {
     );
   });
 
-  it("rejects a non-host approval-required tool", async () => {
+  it("rejects a sandbox approval-required tool", async () => {
     await expect(
       validateAgentConfig(
         { tools: ["read"], approvalRequiredTools: ["read"] },
         defaultModel,
       ),
     ).rejects.toThrow(
-      "承認必須ツールには host capability のみ指定できます: read",
+      "承認必須ツールには host/runtime capability のみ指定できます: read",
     );
   });
 

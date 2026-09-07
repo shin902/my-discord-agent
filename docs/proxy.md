@@ -21,14 +21,16 @@ Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証
 
 ## Tool Proxy
 
-credential forwardingとは別に、host executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行します。天気、Tavily Search、arXiv、GitHub REST、Mail、Google Calendarがこの経路を使います。
+credential forwardingとは別に、host/runtime executorのcapabilityは専用RPC（`/__tool-proxy/rpc`）で実行します。天気、Tavily Search、GitHub REST、Mail、Google Calendarに加え、agent-reach・arXiv・last30daysの取得がこの経路を使います。
 
 ```text
 Agent sandbox
   → Tool Proxy（run token・capability・引数検証）
-  → host executor / 専用Tool Runtime
+  → host executor / Tool callごとの使い捨てTool Runtime
   → 外部API
 ```
+
+native ToolとSkill CLIは同じrun tokenを共有します。許可集合はeffective toolsと、trustedな組込Skill依存の和集合です。Skill本文から権限を取得せず、wildcardも組込依存だけへ展開します。
 
 run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、approval対象集合、trusted Discord bot/channel、revoke signalをsnapshotとして登録し、終了時にrevokeします。
 
@@ -38,11 +40,11 @@ GitHub、Graph、Google Calendar、Tavilyのcredentialはhost側だけで解決�
 
 実装は [Tool Proxy server](../src/proxy/tool-proxy-server.ts)、tool設定・approvalの仕様は [エージェントのツールとスキル](agent-tools-skills.md) を参照してください。
 
-## OAuthと専用Runtime
+## OAuthとTool Runtime
 
 - Microsoft GraphのMSAL設定、GoogleのOAuth設定・token取得はホスト側で管理します。手順は [Azure app登録](guides/azure-app-registration.md) と [Google OAuth設定](guides/google-cloud-oauth-setup.md) を参照してください。
 - Google OAuthは起動時にtoken取得を試みます。認証が必要な場合は案内を出してバックグラウンドでdevice flowを進め、認証待ちのために起動をブロックしません。
-- Redditのcanonical認証状態は `data/reddit-browser-profile/` と `data/reddit-cookies.json` です。専用Tool Runtimeへだけmountし、Agent sandboxへCookie・認証token・Runtime内のprivate pathを渡しません。`credentials.json` のReddit forwardingは使いません。[セットアップ](guides/reddit-cookie-setup.md) と [Tool Runtime仕様](spec/agent-reach-tool-runtime.md) を参照してください。
+- Redditのcanonical認証状態は `data/reddit-browser-profile/` と `data/reddit-cookies.json` です。必要なcallのTool Runtimeへだけmountし、Agent sandboxへCookie・認証token・Runtime内のprivate pathを渡しません。`credentials.json` のReddit forwardingは使いません。[セットアップ](guides/reddit-cookie-setup.md) と [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
 - CLIProxyAPIを使う構成では、ChatGPT/Codex OAuth tokenはsidecarが管理し、本アプリのCredential Proxyはsidecar用APIキーをホストで付与します。[構成手順](guides/codex-oauth-cliproxyapi.md) を参照してください。
 
 本プロジェクトはOneCLIを使用していません。旧文書の他プロジェクト比較や将来構想は現行の設定・認可仕様ではありません。

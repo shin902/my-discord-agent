@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
-    "build:runner": "esbuild src/sandbox/agent-runner.ts --bundle --platform=node --target=node22 --format=esm --external:better-sqlite3 --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --outfile=dist/sandbox/runner.bundle.mjs",
-    "build:tool-runtime": "esbuild src/runtime/agent-reach-runtime.ts --bundle --platform=node --target=node22 --format=esm --external:playwright --outfile=dist/tool-runtime.mjs",
+    "build:runner": "esbuild src/sandbox/agent-runner.ts --bundle --platform=node --target=node22 --format=esm --external:better-sqlite3 --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --outfile=dist/sandbox/runner.bundle.mjs && esbuild src/sandbox/tool-proxy-cli.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/sandbox/tool-proxy-cli.mjs",
+    "build:tool-runtime": "esbuild src/runtime/tool-runtime.ts --bundle --platform=node --target=node22 --format=esm --external:playwright --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --outfile=dist/tool-runtime.mjs",
     "sandbox": "bash scripts/sandbox.sh",
     "memory-core": "docker compose -f compose.memory-core.yaml",
     "reddit:login": "tsx scripts/reddit-cookie-login.ts",

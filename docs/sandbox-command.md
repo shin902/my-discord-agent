@@ -73,3 +73,7 @@ pnpm sandbox status
 - イメージ名: `localhost:5050/my-discord-agent-runner:latest`
 - エージェント実行: `src/agent/manager.ts` から Docker CLI の `docker run` を直接起動
 - レジストリは insecure（TLS なし）のため、信頼できるローカル環境でのみ使用する
+
+## Tool Runtimeの更新
+
+`pnpm sandbox build` はAgent Runnerと共通 `tool-proxy` CLIを更新します。Tool callごとのRuntime imageは別途 `Dockerfile.tool-runtime` でbuildします。host・両image・配置済みSkillを揃える手順は [Tool Runtimeの導入](spec/tool-runtime.md#導入旧構成からの移行) を参照してください。

@@ -31,13 +31,21 @@ import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
 } from "./proxy/credential-proxy-server.js";
-import { initToolProxyServer } from "./proxy/tool-proxy-server.js";
+import {
+  initToolProxyServer,
+  stopToolProxyServer,
+} from "./proxy/tool-proxy-server.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
 import { reconcileRssDispatches } from "./queue/reconciliation.js";
 import { getQueueRepository } from "./queue/repository.js";
+
+import {
+  cleanupToolRuntimes,
+  stopToolRuntimes,
+} from "./runtime/tool-runtime-client.js";
 
 const groups = await loadGroups();
 try {
@@ -57,6 +65,7 @@ try {
   registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort, toolProxyPort);
   // Stop managed and orphan containers before reading legacy session files.
+  await cleanupToolRuntimes();
   await killAllRunningContainers({ includeOrphans: true, strict: true });
   await migrateLegacySessionStores(groups.map((g) => g.name));
   await initGroupPrompts(groups);
@@ -134,7 +143,8 @@ const shutdown = async (): Promise<void> => {
   stopCron();
   stopPoller();
   stopDeliveryWorker();
-  await killAllRunningContainers();
+  await stopToolProxyServer();
+  await Promise.all([killAllRunningContainers(), stopToolRuntimes()]);
   await destroyDiscordClients();
   process.exit(0);
 };
