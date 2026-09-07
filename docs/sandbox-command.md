@@ -66,6 +66,38 @@ pnpm sandbox status
 [sandbox] Runner イメージ: あり (2026-05-16)
 ```
 
+## Network boundary の導入
+
+host と Runner image を一緒に更新してください。新 manager は古い image で起動できません。`pnpm sandbox build` で image を配布してから host を build/restart します。この変更前から動いているコンテナへルールを後付けしないため、再起動時の既存 runner cleanup を経て有効になります。
+
+Linux Docker の namespace 内で IPv4/IPv6 iptables と setpriv が利用でき、host の UID/GID が非 root であることが必要です。rootless Docker や Docker Desktop 等で同じ動作を保証していません。利用環境では以下の統合テストを実行し、失敗時に権限・network 制限を外す fallback は作らないでください。
+
+```bash
+pnpm build:runner
+docker build -t my-discord-agent-runner:network-test .
+SANDBOX_NETWORK_TEST_IMAGE=my-discord-agent-runner:network-test \
+  pnpm exec vitest run src/agent/sandbox-network.integration.test.ts
+```
+
+CI もこの Docker テストを実行します。通常の `pnpm test` では image 指定がなければ Docker 統合テストを skip します。拒否テストはテスト用 IP に接続できることを先に確認し、firewall 適用後に Node/Python/curl から失敗することを検証します。LLM のストリームと Tool Proxy → Runtime HTTP も検証しますが、CI の外部応答は fixture です。公開ページの実取得を含める場合は、追加で `AGENT_REACH_LIVE_TEST_IMAGE` に既存 Tool Runtime image を指定します（本番 Cookie/token は使いません）。
+
+### direct-egress 依存の移行
+
+| 既存依存 | 閉鎖後の経路 |
+|---|---|
+| custom / KnownProvider の LLM | Credential Proxy → 設定済み upstream。KnownProvider も接続定義必須 |
+| weather / Tavily / arXiv / GitHub / Mail / Calendar | 既存 Tool Proxy capability |
+| agent-reach / Reddit Skill | Tool Proxy → 専用 Tool Runtime |
+| Bot 内部 RPC | run token 付き既存内部 API。選択した run だけ endpoint を渡す |
+| arxiv-search / arxiv-survey Skill の Python | 同名 tool を `tools` に許可して Tool Proxy 経由。Skill 選択だけでは authority を付与しない |
+| last30days の HN/GitHub 直接 curl | 許可済み検索・取得 capability を使う |
+| 起動時の r.jina.ai DNS readiness probe | 不要になったため削除 |
+| 任意 curl / npm・pip install / remote git・gh 等 | 直接通信不可。local Git・ローカルファイル操作は引き続き可能 |
+
+既に `groups/<group>/SKILLS` へコピー済みの Skill は自動上書きされません。arXiv の2つの script と last30days の手順を、新しい template と比較して反映してください。group 固有の変更は保持します。既存の arXiv Skill 利用 run は、同名 tool の明示許可も必要です。依存追加や任意 remote Git 用の汎用通信例外は提供しません。
+
+許可・拒否範囲と残存リスクは [セキュリティ上のトレードオフ](security-tradeoffs.md#agent-sandbox-の-network-boundary) が正本です。
+
 ## 内部実装メモ
 
 - スクリプト: `scripts/sandbox.sh`

@@ -4,6 +4,7 @@
 !dist/tool-runtime.mjs
 !src/**
 !scripts/tool-runtime-entrypoint.sh
+!scripts/sandbox-entrypoint.sh
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml

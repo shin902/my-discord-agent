@@ -598,17 +598,32 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
   });
 
-  it("--user にホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
+  it("trusted bootstrapでfirewallを設定し、Agent用UID:GIDを渡す", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const args = spawnMock.mock.calls[0][1] as string[];
     const userIdx = args.indexOf("--user");
     expect(userIdx).toBeGreaterThanOrEqual(0);
-    expect(args[userIdx + 1]).toBe(
-      `${process.getuid?.()}:${process.getgid?.()}`,
+    expect(args[userIdx + 1]).toBe("0:0");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--cap-drop=ALL",
+        "--cap-add=NET_ADMIN",
+        "--cap-add=SETUID",
+        "--cap-add=SETGID",
+        "--cap-add=SETPCAP",
+        "--security-opt=no-new-privileges",
+        "--network=bridge",
+        "--dns=127.0.0.1",
+        "--entrypoint=/bin/sh",
+        "/app/sandbox-entrypoint.sh",
+      ]),
     );
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs).toContain("HOME=/tmp");
+    expect(envArgs).toContain(`SANDBOX_UID=${process.getuid?.()}`);
+    expect(envArgs).toContain(`SANDBOX_GID=${process.getgid?.()}`);
+    expect(envArgs).toContain("SANDBOX_PROXY_PORTS=12345");
   });
 
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
@@ -1487,6 +1502,43 @@ describe("sendMessage: configOverride", () => {
     expect(payload.groupConfig.approvalRequiredTools).toEqual([
       "get-current-weather",
     ]);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
+    expect(args.some((arg) => arg.startsWith("ARXIV_TOOL_PROXY_TOKEN="))).toBe(
+      false,
+    );
+  });
+
+  it("arXiv Skillには許可されたarXivだけのauthorityとapprovalを引き継ぐ", async () => {
+    const sendMessage = await setup(["arxiv-search"]);
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        tools: ["arxiv-search", "get-current-weather"],
+        approvalRequiredTools: ["arxiv-search", "get-current-weather"],
+      },
+    });
+    expect(createToolProxyRunMock).toHaveBeenCalledWith(
+      expect.stringContaining(":arxiv"),
+      ["arxiv-search"],
+      {
+        approvalRequiredCapabilities: ["arxiv-search"],
+        trustedDiscordDestination: undefined,
+      },
+    );
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("ARXIV_TOOL_PROXY_TOKEN=tool-token");
+    expect(args).toContain(
+      "ARXIV_TOOL_PROXY_URL=http://host.docker.internal:23456/__tool-proxy/rpc",
+    );
+    for (const result of createToolProxyRunMock.mock.results) {
+      expect(result.value.revoke).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("arXiv Skill選択だけではauthorityを付与しない", async () => {
+    const sendMessage = await setup(["arxiv-search", "arxiv-survey"]);
+    await sendMessage("test-group", "session-1", "hi");
+    expect(createToolProxyRunMock).not.toHaveBeenCalled();
   });
 
   it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {

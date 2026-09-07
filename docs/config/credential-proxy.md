@@ -72,6 +72,8 @@ schemaには旧 `redditCookie`（`cookieFile` 既定値 `data/reddit-cookies.jso
 
 KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。この経路はcredentialsのモデル用 `baseUrl` / `api` / `compat` 等をカスタムモデル定義として適用しません。
 
+ただし sandbox では接続先の `baseUrl` だけをホストから渡された Credential Proxy URL へ置換します。組み込みモデルの API 形式・context window 等は維持します。KnownProvider も `credentials.json` に接続定義が必要で、sandbox 用 entry がない場合は明示エラーとなります。provider SDK が `baseUrl` を利用しない独自接続方式は direct egress 拒否の対象となるため、利用する API 形式で疎通確認してください。
+
 未知のprovider名、または `forceCustom: true` の場合は、このentryからカスタムモデルを作ります。modelIdは組み込み一覧で検証せず、そのまま使用します。KnownProvider名でもproxy URL・カスタムAPI定義をモデルへ適用したい場合は `forceCustom: true` を指定します。
 
 | フィールド | カスタムモデルでの挙動 |

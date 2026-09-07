@@ -17,7 +17,7 @@ Agent sandbox
 
 `forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
 
-Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証はありません。sandboxへのURL非公開だけをhost routeの認可とみなさないでください。ネットワーク境界の制約は [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
+Agent sandbox の direct egress は host-gateway の必要な proxy TCP port に制限します。Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証はありません。sandboxへのURL非公開だけをhost routeの認可とみなさないでください。ネットワーク境界の制約は [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
 
 ## Tool Proxy
 

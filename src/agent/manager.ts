@@ -37,6 +37,7 @@ import {
   stopActiveRun,
 } from "./active-run-registry.js";
 import { resolveBaseUrl, validateModel } from "./model.js";
+import { sandboxNetworkArgs } from "./sandbox-network.js";
 
 export type AgentRunStatus = "running" | "completed" | "failed";
 
@@ -806,9 +807,15 @@ export async function sendMessage(
     RUNNER_CONTAINER_LABEL,
     "--memory=512m",
     "--cpus=1",
-    "--user",
-    `${process.getuid?.()}:${process.getgid?.()}`,
-    "--add-host=host.docker.internal:host-gateway",
+    // The trusted entrypoint installs the namespace firewall, then drops to
+    // the host identity with an empty capability bounding set before Node runs.
+    ...sandboxNetworkArgs([
+      proxyPort,
+      ...(internalRequest ? [internalRequest.port] : []),
+      ...(toolProxyRun && storedToolProxyPort !== null
+        ? [storedToolProxyPort]
+        : []),
+    ]),
     "-v",
     `${path.join(ROOT, "data/sessions", groupName)}:/sessions/${groupName}`,
     "-v",
@@ -830,6 +837,7 @@ export async function sendMessage(
         ]
       : []),
     RUNNER_IMAGE,
+    "/app/sandbox-entrypoint.sh",
     "node",
     "/app/runner.mjs",
   ];
