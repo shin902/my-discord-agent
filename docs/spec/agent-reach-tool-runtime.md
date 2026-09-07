@@ -15,4 +15,4 @@ docker compose -f compose.tool-runtime.yaml up -d --build
 
 Runtime は `data/reddit-browser-profile` と `data/reddit-cookies.json` の必要な2領域だけを読み書きマウントします。初回ログインは従来どおり `pnpm reddit:login` を使います。`reddit-cookie-refresh` cron は host scheduler から非公開 maintenance endpoint を呼び、Agent-facing capability には公開しません。
 
-Runtime の outbound firewall は Docker embedded DNS の最小例外を除き loopback、RFC1918、link-local、CGNAT、metadata相当、multicast等を拒否します。アプリケーション側でも全DNS回答とredirect先を検証します。
+Runtime の outbound firewall は public Internetを許可し、RFC1918、link-local、CGNAT、metadata相当、multicast等を拒否します。Docker embedded DNSのためloopback通信は例外許可しますが、取得先URLの宛先はアプリケーション側で全DNS回答とredirect先を検証します。
