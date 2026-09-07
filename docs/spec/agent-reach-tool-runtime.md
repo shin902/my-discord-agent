@@ -2,7 +2,7 @@
 
 `agent-reach` は Agent sandbox 内で外部コマンドを実行せず、host Tool Proxy から長寿命の専用 Tool Runtime (`compose.tool-runtime.yaml`) へ委譲します。Agent-facing tool name、URL、結果、Markdown境界は従来どおりです。
 
-Runtime の RPC は `POST /rpc` (`{callId,url}`) と、実行中 call を止める `DELETE /rpc/{callId}` だけです。Runtime は結果本文をレスポンスへ返し、Runtime 内のファイルパスを返しません。Agent run ごとに発行される Tool Proxy token と、Skill shell client 専用の `agent-reach` のみを許可する token は別です。
+Runtime の RPC は `POST /rpc` (`{callId,url}`) と、実行中 call を止める `DELETE /rpc/{callId}` だけです。POST endpoint (`/rpc` と `/maintenance/reddit-cookie-refresh`) は `Content-Type: application/json` を必須とし、異なる値を `415` で拒否します。`Origin` ヘッダー付きのPOSTも `403` で拒否します。maintenance clientは空のJSON object (`{}`) を送信します。DELETEのcall revokeはbodyやContent-Typeを要求しません。Runtime は結果本文をレスポンスへ返し、Runtime 内のファイルパスを返しません。Agent run ごとに発行される Tool Proxy token と、Skill shell client 専用の `agent-reach` のみを許可する token は別です。
 
 ## 起動
 

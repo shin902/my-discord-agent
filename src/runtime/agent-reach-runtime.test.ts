@@ -17,7 +17,12 @@ import { refreshRedditCookiesInRuntime } from "./reddit-cookie-refresh-client.js
 
 const request = (
   port: number,
-  options: { method: string; path: string; body?: unknown },
+  options: {
+    method: string;
+    path: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  },
 ): Promise<{ status: number; payload: Record<string, unknown> }> =>
   new Promise((resolve, reject) => {
     const req = http.request(
@@ -26,7 +31,10 @@ const request = (
         method: options.method,
         path: options.path,
         headers: {
-          ...(options.body ? { "content-type": "application/json" } : {}),
+          ...(options.body !== undefined
+            ? { "content-type": "application/json" }
+            : {}),
+          ...options.headers,
         },
       },
       (res) => {
@@ -41,7 +49,7 @@ const request = (
       },
     );
     req.on("error", reject);
-    if (options.body) req.end(JSON.stringify(options.body));
+    if (options.body !== undefined) req.end(JSON.stringify(options.body));
     else req.end();
   });
 
@@ -52,6 +60,66 @@ afterEach(() => {
 });
 
 describe("agent-reach Tool Runtime RPC", () => {
+  it("POST endpoints reject non-JSON and browser-originated requests", async () => {
+    const server = createAgentReachRuntimeServer();
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("not listening");
+
+      const rpcWrongContentType = await request(address.port, {
+        method: "POST",
+        path: "/rpc",
+        body: { callId: "wrong-content-type", url: "https://example.com" },
+        headers: { "content-type": "text/plain" },
+      });
+      expect(rpcWrongContentType).toMatchObject({
+        status: 415,
+        payload: { error: "Content-Type must be application/json" },
+      });
+
+      const maintenanceWrongContentType = await request(address.port, {
+        method: "POST",
+        path: "/maintenance/reddit-cookie-refresh",
+        body: {},
+        headers: { "content-type": "text/plain" },
+      });
+      expect(maintenanceWrongContentType).toMatchObject({
+        status: 415,
+        payload: { error: "Content-Type must be application/json" },
+      });
+
+      const rpcWithOrigin = await request(address.port, {
+        method: "POST",
+        path: "/rpc",
+        body: { callId: "browser-origin", url: "https://example.com" },
+        headers: { origin: "https://attacker.example" },
+      });
+      expect(rpcWithOrigin).toMatchObject({
+        status: 403,
+        payload: { error: "Origin header is not allowed" },
+      });
+
+      const maintenanceWithOrigin = await request(address.port, {
+        method: "POST",
+        path: "/maintenance/reddit-cookie-refresh",
+        body: {},
+        headers: { origin: "https://attacker.example" },
+      });
+      expect(maintenanceWithOrigin).toMatchObject({
+        status: 403,
+        payload: { error: "Origin header is not allowed" },
+      });
+      expect(execute).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("最小RPCを受け、resultにfilesystem pathを含めない", async () => {
     execute.mockResolvedValue({
       content: [{ type: "text", text: "result" }],
@@ -280,6 +348,7 @@ describe("agent-reach Tool Runtime RPC", () => {
           await request(address.port, {
             method: "POST",
             path: "/maintenance/reddit-cookie-refresh",
+            body: {},
           })
         ).status,
       ).toBe(200);

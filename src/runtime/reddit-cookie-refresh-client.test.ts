@@ -22,6 +22,8 @@ describe("host Reddit cookie refresh client", () => {
       "http://127.0.0.1:9876/maintenance/reddit-cookie-refresh",
       {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
       },
     );
   });

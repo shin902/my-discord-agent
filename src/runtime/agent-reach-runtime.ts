@@ -41,6 +41,25 @@ async function readJson(req: http.IncomingMessage): Promise<unknown> {
   });
 }
 
+function rejectInvalidPostHeaders(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): boolean {
+  const contentType = req.headers["content-type"];
+  if (
+    typeof contentType !== "string" ||
+    contentType.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+  ) {
+    json(res, 415, { error: "Content-Type must be application/json" });
+    return true;
+  }
+  if (req.headers.origin !== undefined) {
+    json(res, 403, { error: "Origin header is not allowed" });
+    return true;
+  }
+  return false;
+}
+
 function validCall(value: unknown): value is { callId: string; url: string } {
   return (
     typeof value === "object" &&
@@ -65,6 +84,7 @@ export async function handleAgentReachRuntimeRequest(
       json(res, 404, { error: "Not Found" });
       return;
     }
+    if (rejectInvalidPostHeaders(req, res)) return;
     await refreshRedditCookies({
       profileDir: process.env.REDDIT_PROFILE_DIR,
       cookieFile: process.env.REDDIT_COOKIE_FILE,
@@ -82,6 +102,7 @@ export async function handleAgentReachRuntimeRequest(
     json(res, 404, { error: "Not Found" });
     return;
   }
+  if (rejectInvalidPostHeaders(req, res)) return;
   let body: unknown;
   try {
     body = await readJson(req);

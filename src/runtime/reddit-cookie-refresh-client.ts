@@ -34,6 +34,8 @@ export async function refreshRedditCookiesInRuntime(): Promise<void> {
     try {
       response = await fetch(`${baseUrl}/maintenance/reddit-cookie-refresh`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
       });
       break;
     } catch (error) {

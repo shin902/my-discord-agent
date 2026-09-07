@@ -11,15 +11,26 @@ describe("reddit:refresh command", () => {
       method?: string;
       url?: string;
       authorization?: string;
+      contentType?: string;
+      body: string;
     }> = [];
     const server = http.createServer((request, response) => {
-      requests.push({
-        method: request.method,
-        url: request.url,
-        authorization: request.headers.authorization,
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk: string) => {
+        body += chunk;
       });
-      response.writeHead(200);
-      response.end();
+      request.on("end", () => {
+        requests.push({
+          method: request.method,
+          url: request.url,
+          authorization: request.headers.authorization,
+          contentType: request.headers["content-type"],
+          body,
+        });
+        response.writeHead(200);
+        response.end();
+      });
     });
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
@@ -40,6 +51,8 @@ describe("reddit:refresh command", () => {
           method: "POST",
           url: "/maintenance/reddit-cookie-refresh",
           authorization: undefined,
+          contentType: "application/json",
+          body: "{}",
         },
       ]);
       expect(stdout).toContain("クッキーを更新しました");
