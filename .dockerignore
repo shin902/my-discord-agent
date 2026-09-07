@@ -3,6 +3,7 @@
 !dist/tool-runtime.mjs
 !src/**
 !scripts/tool-runtime-entrypoint.sh
+!scripts/runner-entrypoint.sh
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml

@@ -18,7 +18,10 @@ import {
   type GroupConfig,
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
-import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
+import {
+  createInferenceRequestConfig,
+  createInternalRequestConfig,
+} from "../proxy/credential-proxy-server.js";
 import {
   createToolProxyRun,
   type TrustedDiscordDestination,
@@ -682,7 +685,6 @@ export async function sendMessage(
     proxyPort,
     resolvedModel.provider,
   );
-
   let promptContent = content;
   if (attachments && attachments.length > 0) {
     const saved = await downloadAttachments(groupName, sessionId, attachments);
@@ -817,6 +819,21 @@ export async function sendMessage(
       "-",
     );
 
+  const runnerUid = process.getuid?.();
+  const runnerGid = process.getgid?.();
+  if (runnerUid === undefined || runnerGid === undefined) {
+    throw new NonRetryableError(
+      "Agent sandbox requires a host with numeric UID/GID support",
+    );
+  }
+  const allowedHostPorts = [
+    proxyPort,
+    ...(toolProxyRun || agentReachToolProxyRun
+      ? [storedToolProxyPort as number]
+      : []),
+  ];
+  const inferenceRequest = createInferenceRequestConfig(resolvedModel.provider);
+
   const args = [
     "run",
     "--rm",
@@ -828,8 +845,12 @@ export async function sendMessage(
     RUNNER_CONTAINER_LABEL,
     "--memory=512m",
     "--cpus=1",
-    "--user",
-    `${process.getuid?.()}:${process.getgid?.()}`,
+    "--cap-drop=ALL",
+    "--cap-add=NET_ADMIN",
+    "--cap-add=SETUID",
+    "--cap-add=SETGID",
+    "--cap-add=SETPCAP",
+    "--security-opt=no-new-privileges=true",
     "--add-host=host.docker.internal:host-gateway",
     "-v",
     `${path.join(ROOT, "data/sessions", groupName)}:/sessions/${groupName}`,
@@ -841,6 +862,14 @@ export async function sendMessage(
     "SESSIONS_DIR=/sessions",
     "-e",
     "HOME=/tmp",
+    "-e",
+    `RUNNER_UID=${runnerUid}`,
+    "-e",
+    `RUNNER_GID=${runnerGid}`,
+    "-e",
+    `RUNNER_ALLOWED_HOST_PORTS=${[...new Set(allowedHostPorts)].join(",")}`,
+    "-e",
+    `AGENT_LLM_PROXY_TOKEN=${inferenceRequest.token}`,
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
     ...(agentReachToolProxyRun
@@ -1294,6 +1323,7 @@ export async function sendMessage(
         );
       });
   }).finally(() => {
+    inferenceRequest.revoke();
     internalRequest?.revoke();
     toolProxyRun?.revoke();
     agentReachToolProxyRun?.revoke();

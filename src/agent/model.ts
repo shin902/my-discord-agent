@@ -67,6 +67,13 @@ function createCustomModel(
     },
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
+    ...(process.env.AGENT_LLM_PROXY_TOKEN
+      ? {
+          headers: {
+            "x-agent-inference-token": process.env.AGENT_LLM_PROXY_TOKEN,
+          },
+        }
+      : {}),
     ...(compat ? { compat } : {}),
   } as Model<Api>;
 }
@@ -75,10 +82,19 @@ export async function resolveModel(provider: string, modelId: string) {
   const providers = getProviders();
   const creds = await loadCredentialProxy();
   const entry = creds.find((e) => e.provider === provider);
+  const runnerCredentialProxyMode =
+    process.env.CREDENTIAL_PROXY_JSON !== undefined;
+  const isKnownProvider = providers.includes(provider as KnownProvider);
 
-  // forceCustom: pi-ai の KnownProvider 名と衝突していても
-  // credential-proxy 経由のカスタムプロバイダー解決を強制する
-  if (entry?.forceCustom || !providers.includes(provider as KnownProvider)) {
+  if (runnerCredentialProxyMode && !entry) {
+    throw new Error(
+      `Runner model provider ${provider} is not available through the credential proxy`,
+    );
+  }
+
+  // Explicit custom providers keep their configured wire contract. Known
+  // providers retain pi-ai's model metadata and API behavior below.
+  if (entry?.forceCustom || !isKnownProvider) {
     if (!entry) {
       throw new Error(`不明なプロバイダ: ${provider}`);
     }
@@ -90,11 +106,39 @@ export async function resolveModel(provider: string, modelId: string) {
     }
     return createCustomModel(entry, resolvedBaseUrl, modelId);
   }
+
   const model = getModels(provider as KnownProvider).find(
     (m) => m.id === modelId,
   );
   if (!model)
     throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
+
+  if (runnerCredentialProxyMode) {
+    if (!entry) {
+      throw new Error(
+        `Runner model provider ${provider} is not available through the credential proxy`,
+      );
+    }
+    const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
+    if (!resolvedBaseUrl) {
+      throw new Error(
+        `${provider}: baseUrl に未解決のプレースホルダがあります（${entry.baseUrl}）`,
+      );
+    }
+    return {
+      ...model,
+      baseUrl: resolvedBaseUrl,
+      ...(process.env.AGENT_LLM_PROXY_TOKEN
+        ? {
+            headers: {
+              ...model.headers,
+              "x-agent-inference-token": process.env.AGENT_LLM_PROXY_TOKEN,
+            },
+          }
+        : {}),
+    };
+  }
+
   return model;
 }
 

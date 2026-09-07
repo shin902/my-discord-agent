@@ -44,6 +44,62 @@ describe("resolveModel", () => {
     expect(model.provider).toBe("openai");
   });
 
+  it("runnerではKnownProvider metadataを保ちbaseUrlだけproxyへ向ける", async () => {
+    const previousCredentialJson = process.env.CREDENTIAL_PROXY_JSON;
+    const previousToken = process.env.AGENT_LLM_PROXY_TOKEN;
+    process.env.CREDENTIAL_PROXY_JSON = "[]";
+    process.env.AGENT_LLM_PROXY_TOKEN = "run-token";
+    try {
+      const { resolveModel } = await importFresh();
+      const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+      const { loadCredentialProxy } = await import(
+        "../config/credential-proxy.js"
+      );
+      vi.mocked(loadCredentialProxy).mockResolvedValue([
+        {
+          provider: "openai",
+          baseUrl: "http://host.docker.internal:12345/openai",
+        },
+      ] as CredentialEntry[]);
+      vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
+      vi.mocked(getModels).mockReturnValue([
+        {
+          id: "gpt-4",
+          name: "GPT-4",
+          api: "openai-responses",
+          provider: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          reasoning: true,
+          input: ["text", "image"],
+          headers: { "x-existing": "kept" },
+          cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+          contextWindow: 123456,
+          maxTokens: 7890,
+        },
+      ] as unknown as Model<never>[]);
+
+      const model = await resolveModel("openai", "gpt-4");
+      expect(model).toMatchObject({
+        api: "openai-responses",
+        baseUrl: "http://host.docker.internal:12345/openai",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 123456,
+        maxTokens: 7890,
+        headers: {
+          "x-existing": "kept",
+          "x-agent-inference-token": "run-token",
+        },
+      });
+    } finally {
+      if (previousCredentialJson === undefined)
+        delete process.env.CREDENTIAL_PROXY_JSON;
+      else process.env.CREDENTIAL_PROXY_JSON = previousCredentialJson;
+      if (previousToken === undefined) delete process.env.AGENT_LLM_PROXY_TOKEN;
+      else process.env.AGENT_LLM_PROXY_TOKEN = previousToken;
+    }
+  });
+
   it("credential-proxy に定義されたカスタムプロバイダを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");
@@ -65,6 +121,33 @@ describe("resolveModel", () => {
     expect(model.provider).toBe("llama-cpp");
     expect(model.baseUrl).toBe("http://localhost:8080/v1");
     expect(model.input).toEqual(["text"]);
+  });
+
+  it("sandbox inference tokenをcustom model headerへ固定する", async () => {
+    const previousToken = process.env.AGENT_LLM_PROXY_TOKEN;
+    process.env.AGENT_LLM_PROXY_TOKEN = "run-token";
+    try {
+      const { resolveModel } = await importFresh();
+      const { getProviders } = await import("@earendil-works/pi-ai");
+      const { loadCredentialProxy } = await import(
+        "../config/credential-proxy.js"
+      );
+      vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+      vi.mocked(loadCredentialProxy).mockResolvedValue([
+        {
+          provider: "llama-cpp",
+          baseUrl: "http://host.docker.internal:12345/llama-cpp",
+        },
+      ] as CredentialEntry[]);
+
+      const model = await resolveModel("llama-cpp", "llama3");
+      expect(model.headers).toEqual({
+        "x-agent-inference-token": "run-token",
+      });
+    } finally {
+      if (previousToken === undefined) delete process.env.AGENT_LLM_PROXY_TOKEN;
+      else process.env.AGENT_LLM_PROXY_TOKEN = previousToken;
+    }
   });
 
   it("models[modelId].input で modelId 単位に入力モダリティを指定できる", async () => {

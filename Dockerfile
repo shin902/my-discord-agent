@@ -8,6 +8,8 @@ RUN apk add --no-cache \
     jq \
     git \
     github-cli \
+    iptables \
+    util-linux \
     tzdata \
     sqlite
 
@@ -30,3 +32,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV TZ="Asia/Tokyo"
 
 COPY dist/sandbox/runner.bundle.mjs ./runner.mjs
+COPY scripts/runner-entrypoint.sh /usr/local/bin/runner-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/runner-entrypoint"]

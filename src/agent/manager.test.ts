@@ -597,17 +597,26 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
   });
 
-  it("--user にホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
+  it("firewall setupだけにNET_ADMINを与え、runner identityと許可portを渡す", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const args = spawnMock.mock.calls[0][1] as string[];
-    const userIdx = args.indexOf("--user");
-    expect(userIdx).toBeGreaterThanOrEqual(0);
-    expect(args[userIdx + 1]).toBe(
-      `${process.getuid?.()}:${process.getgid?.()}`,
+    expect(args).not.toContain("--user");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--cap-drop=ALL",
+        "--cap-add=NET_ADMIN",
+        "--cap-add=SETUID",
+        "--cap-add=SETGID",
+        "--cap-add=SETPCAP",
+        "--security-opt=no-new-privileges=true",
+      ]),
     );
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs).toContain("HOME=/tmp");
+    expect(envArgs).toContain(`RUNNER_UID=${process.getuid?.()}`);
+    expect(envArgs).toContain(`RUNNER_GID=${process.getgid?.()}`);
+    expect(envArgs).toContain("RUNNER_ALLOWED_HOST_PORTS=12345");
   });
 
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
@@ -1045,19 +1054,26 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     return JSON.parse(credArg?.slice("CREDENTIAL_PROXY_JSON=".length) ?? "[]");
   };
 
-  it("envVars ありのエントリが proxy URL に変換される", async () => {
+  it("model providerのbaseUrlをsandbox用proxy URLへ置換する", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([
       {
-        provider: "test",
+        provider: "openai",
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        model: { provider: "openai", modelId: "gpt-4o" },
+      },
+    });
     const creds = getCredJson(spawnMock);
-    expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/test");
+    expect(creds[0]).toMatchObject({
+      baseUrl: "http://host.docker.internal:12345/openai",
+    });
+    expect(creds[0].forceCustom).toBeUndefined();
   });
 
   it("tavily-searchだけではTavily credential proxy情報をsandboxへ渡さない", async () => {
@@ -1389,6 +1405,7 @@ describe("sendMessage: 設定バリデーション", () => {
 describe("sendMessage: configOverride", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
   let ensureGroupSkillsMock: ReturnType<typeof vi.fn>;
+  let createInferenceRequestConfigMock: ReturnType<typeof vi.fn>;
   let createInternalRequestConfigMock: ReturnType<typeof vi.fn>;
   let createToolProxyRunMock: ReturnType<typeof vi.fn>;
 
@@ -1396,6 +1413,10 @@ describe("sendMessage: configOverride", () => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
+    createInferenceRequestConfigMock = vi.fn(() => ({
+      token: "inference-token",
+      revoke: vi.fn(),
+    }));
     createInternalRequestConfigMock = vi.fn(() => ({
       port: 12345,
       token: "internal-token",
@@ -1408,6 +1429,7 @@ describe("sendMessage: configOverride", () => {
     }));
     vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
     vi.doMock("../proxy/credential-proxy-server.js", () => ({
+      createInferenceRequestConfig: createInferenceRequestConfigMock,
       createInternalRequestConfig: createInternalRequestConfigMock,
     }));
     vi.doMock("../proxy/tool-proxy-server.js", () => ({
@@ -1473,6 +1495,9 @@ describe("sendMessage: configOverride", () => {
     expect(payload.groupConfig.approvalRequiredTools).toEqual([
       "get-current-weather",
     ]);
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(args).toContain("RUNNER_ALLOWED_HOST_PORTS=12345,23456");
+    expect(args).toContain("AGENT_LLM_PROXY_TOKEN=inference-token");
   });
 
   it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {

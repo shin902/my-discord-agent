@@ -14,6 +14,7 @@
     "x-saved:setup": "tsx scripts/x-saved-setup.ts",
     "runner:image:build": "pnpm build:runner && docker build -t localhost:5050/my-discord-agent-runner:latest . && docker push localhost:5050/my-discord-agent-runner:latest",
     "runner:image:smoke": "bash scripts/runner-image-smoke.sh",
+    "runner:network:smoke": "bash scripts/runner-network-smoke.sh",
     "restart": "pnpm sandbox build && pnpm build && node dist/index.js",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "discord:deploy": "node --env-file-if-exists=.env --import tsx scripts/deploy-discord-commands.ts",

@@ -11,13 +11,13 @@ Agent sandbox
   → 設定された外部API
 ```
 
-[manager](../src/agent/manager.ts) はsandbox向けの `CREDENTIAL_PROXY_JSON` を生成します。渡すのはproxy URLへ置換した `baseUrl` とモデル設定であり、`envVars`、`auth`、`msal`、`google`、`redditCookie` は除去します。実APIキーやOAuth tokenをsandboxの環境変数へ渡しません。
+[manager](../src/agent/manager.ts) はsandbox向けの `CREDENTIAL_PROXY_JSON` を生成します。渡すのはproxy URLへ置換した `baseUrl` とモデル設定であり、`envVars`、`auth`、`msal`、`google`、`redditCookie` は除去します。実APIキーやOAuth tokenをsandboxの環境変数へ渡しません。KnownProviderはpi-aiのmodel metadataとAPI定義を保ったまま`baseUrl`だけをproxyへ向け、built-in providerのpublic URLへ直接接続させません。
 
 [Credential Proxy](../src/proxy/credential-proxy-server.ts) はホスト側で認証情報を解決します。`envVars` は複数secretの注入指定ではなく、先頭から最初の空でない値を選ぶ候補一覧です。認証形式と未設定時の挙動は [設定リファレンス](config/credential-proxy.md#envvarsと認証) を参照してください。
 
 `forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
 
-Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証はありません。sandboxへのURL非公開だけをhost routeの認可とみなさないでください。ネットワーク境界の制約は [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
+Sandboxからのcredential forwardingには短命run tokenを要求し、そのrunで選択したmodel providerだけを許可します。ただしprovider内のpathをinference APIだけへ限定する専用LLM gatewayではなく、Tool Proxyのsemantic capability / schema / approvalと同じ保証ではありません。ネットワーク境界の制約は [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
 
 ## Tool Proxy
 

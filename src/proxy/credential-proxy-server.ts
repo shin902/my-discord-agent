@@ -32,6 +32,7 @@ interface InternalRequestAuthorization {
   trustedDiscordDestination?: TrustedDiscordDestination;
 }
 const internalRequestTokens = new Map<string, InternalRequestAuthorization>();
+const inferenceRequestTokens = new Map<string, string>();
 let internalRequestHandler:
   | ((
       req: IncomingMessage,
@@ -46,6 +47,25 @@ export interface InternalRequestConfig {
   port: number;
   token: string;
   revoke: () => void;
+}
+
+export interface InferenceRequestConfig {
+  token: string;
+  revoke: () => void;
+}
+
+/** Issue provider-scoped authority for one sandbox run's LLM requests. */
+export function createInferenceRequestConfig(
+  provider: string,
+): InferenceRequestConfig {
+  const token = randomUUID();
+  inferenceRequestTokens.set(token, provider);
+  return {
+    token,
+    revoke: () => {
+      inferenceRequestTokens.delete(token);
+    },
+  };
 }
 
 /** Register the host-only handler used by sandbox agent tools. */
@@ -86,6 +106,28 @@ export function getProxyPort(): number {
   if (proxyPort === null)
     throw new Error("credential proxy server は未初期化です");
   return proxyPort;
+}
+
+function isLoopbackRequest(req: IncomingMessage): boolean {
+  const address = req.socket?.remoteAddress;
+  return (
+    address === undefined ||
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address.startsWith("::ffff:127.")
+  );
+}
+
+function isAuthorizedInferenceRequest(
+  req: IncomingMessage,
+  provider: string,
+): boolean {
+  if (isLoopbackRequest(req)) return true;
+  const header = req.headers["x-agent-inference-token"];
+  const token = Array.isArray(header) ? header[0] : header;
+  return (
+    typeof token === "string" && inferenceRequestTokens.get(token) === provider
+  );
 }
 
 function getFirstSetEnvVar(envVars: string[] | undefined): string | undefined {
@@ -144,6 +186,12 @@ async function handleRequest(
     secondSlash === -1 ? pathname.slice(1) : pathname.slice(1, secondSlash);
   const restPath = secondSlash === -1 ? "/" : pathname.slice(secondSlash);
 
+  if (!isAuthorizedInferenceRequest(req, provider)) {
+    res.writeHead(404);
+    res.end("Not Found");
+    return;
+  }
+
   const entry = creds.find((e) => e.provider === provider);
   if (!entry) {
     res.writeHead(404);
@@ -174,7 +222,14 @@ async function handleRequest(
 
   const headers: Record<string, string | string[] | undefined> = {};
   for (const [k, v] of Object.entries(req.headers)) {
-    if (k.toLowerCase() !== "host") headers[k] = v;
+    const lower = k.toLowerCase();
+    if (
+      lower !== "host" &&
+      lower !== "x-agent-inference-token" &&
+      lower !== "x-agent-internal-token"
+    ) {
+      headers[k] = v;
+    }
   }
 
   if (entry.msal) {
