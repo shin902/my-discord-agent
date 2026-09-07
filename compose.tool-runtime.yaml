@@ -22,8 +22,8 @@ services:
       REDDIT_COOKIE_MAX_AGE_DAYS: "${REDDIT_COOKIE_MAX_AGE_DAYS:-7}"
       CHROMIUM_PATH: /usr/bin/chromium
     # Do not inherit the host/Tailscale resolver, which is blocked as private
-    # overlay traffic. Public DNS remains reachable through the OUTPUT policy;
-    # the embedded 127.0.0.11 resolver is also explicitly allowed there.
+    # overlay traffic. Public DNS is forwarded by Docker's embedded resolver;
+    # the runtime firewall allows its loopback traffic.
     dns:
       - 1.1.1.1
       - 8.8.8.8
