@@ -48,7 +48,7 @@ Discord / cron / RSS / mail
        Discord
 ```
 
-エージェントと通常のツールは Docker コンテナ内で実行されます。認証を伴うhost capabilityや専用Tool Runtimeへの操作は [Tool Proxy](docs/proxy.md#tool-proxy) を通します。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
+エージェントと通常のツールは、runごとに使い捨てるDocker Runnerコンテナ内で実行されます。RunnerはentrypointでIPv4/IPv6の新規egressをdeny-by-defaultにし、`host.docker.internal` のhost-gateway上でmanagerがrunごとに許可したCredential Proxy（現行LLM/Bot）とTool Proxyポートだけへ接続できます。したがってbash、Skill、curl、Python、Node、raw socketから任意public Internet、localhost、host/LAN、RFC1918、CGNAT/Tailscale、link-local/metadataへ直接接続できません。認証を伴うhost capabilityや専用Tool Runtimeへの操作は [Tool Proxy](docs/proxy.md#tool-proxy) を通します。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
 
 LLM 実行結果と Discord 配信は分離されており、ジョブ状態は SQLite に保存されます。プロセス再起動時にもキューや配送状態を復旧できる構成です。
 

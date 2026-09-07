@@ -478,6 +478,10 @@ function buildSanitizedCredentialJson(
     } = entry;
     sanitized.push({
       ...rest,
+      // The Runner firewall permits only the host Credential/Tool Proxy ports.
+      // Keep even KnownProvider models on this explicit host route so pi-ai
+      // cannot silently select a public built-in endpoint inside the sandbox.
+      forceCustom: true,
       baseUrl: `http://host.docker.internal:${proxyPort}/${entry.provider}`,
     });
   }
@@ -743,19 +747,32 @@ export async function sendMessage(
           },
         );
   // Skill shell commands receive a separate least-privileged authority rather
-  // than the run token that exposes all selected host capabilities.
-  const agentReachSelected =
+  // than the run token that exposes all selected host capabilities.  Keep this
+  // list limited to semantic capabilities used by the bundled network skills.
+  const skillToolProxyCapabilities = new Set<string>();
+  const allSkills = effectiveConfig.skills === "*";
+  const selectedSkills = Array.isArray(effectiveConfig.skills)
+    ? effectiveConfig.skills
+    : [];
+  if (
     effectiveConfig.tools?.includes("agent-reach") === true ||
-    effectiveConfig.skills === "*" ||
-    (Array.isArray(effectiveConfig.skills) &&
-      (effectiveConfig.skills.includes("agent-reach") ||
-        effectiveConfig.skills.includes("last30days")));
+    allSkills ||
+    selectedSkills.includes("agent-reach") ||
+    selectedSkills.includes("last30days")
+  ) {
+    skillToolProxyCapabilities.add("agent-reach");
+  }
+  if (allSkills || selectedSkills.includes("arxiv-search")) {
+    skillToolProxyCapabilities.add("arxiv-search");
+  }
+  if (allSkills || selectedSkills.includes("arxiv-survey")) {
+    skillToolProxyCapabilities.add("arxiv-survey");
+  }
   const agentReachToolProxyRun =
-    storedToolProxyPort !== null && agentReachSelected
-      ? createToolProxyRun(
-          `${groupName}:${sessionId}:${randomUUID()}:agent-reach`,
-          ["agent-reach"],
-        )
+    storedToolProxyPort !== null && skillToolProxyCapabilities.size > 0
+      ? createToolProxyRun(`${groupName}:${sessionId}:${randomUUID()}:skills`, [
+          ...skillToolProxyCapabilities,
+        ])
       : undefined;
   const payload = JSON.stringify({
     groupName,
@@ -817,6 +834,16 @@ export async function sendMessage(
       "-",
     );
 
+  const runnerUid = process.getuid?.() ?? 1000;
+  const runnerGid = process.getgid?.() ?? 1000;
+  const allowedHostPorts = new Set<number>([proxyPort]);
+  if (
+    storedToolProxyPort !== null &&
+    (toolProxyRun !== undefined || agentReachToolProxyRun !== undefined)
+  ) {
+    allowedHostPorts.add(storedToolProxyPort);
+  }
+
   const args = [
     "run",
     "--rm",
@@ -828,8 +855,12 @@ export async function sendMessage(
     RUNNER_CONTAINER_LABEL,
     "--memory=512m",
     "--cpus=1",
-    "--user",
-    `${process.getuid?.()}:${process.getgid?.()}`,
+    "--cap-drop=ALL",
+    "--cap-add=NET_ADMIN",
+    "--cap-add=SETUID",
+    "--cap-add=SETGID",
+    "--cap-add=SETPCAP",
+    "--security-opt=no-new-privileges=true",
     "--add-host=host.docker.internal:host-gateway",
     "-v",
     `${path.join(ROOT, "data/sessions", groupName)}:/sessions/${groupName}`,
@@ -841,6 +872,12 @@ export async function sendMessage(
     "SESSIONS_DIR=/sessions",
     "-e",
     "HOME=/tmp",
+    "-e",
+    `RUNNER_UID=${runnerUid}`,
+    "-e",
+    `RUNNER_GID=${runnerGid}`,
+    "-e",
+    `RUNNER_ALLOWED_HOST_PORTS=${[...allowedHostPorts].join(",")}`,
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
     ...(agentReachToolProxyRun

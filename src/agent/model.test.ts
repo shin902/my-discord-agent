@@ -44,6 +44,60 @@ describe("resolveModel", () => {
     expect(model.provider).toBe("openai");
   });
 
+  it("Runnerではcredential proxyにないKnownProviderの組み込みURLを拒否する", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(loadCredentialProxy).mockResolvedValue([]);
+    vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
+    vi.mocked(getModels).mockReturnValue([
+      {
+        id: "gpt-4",
+        name: "GPT-4",
+        api: "openai-chat",
+        provider: "openai",
+      },
+    ] as unknown as Model<never>[]);
+
+    const previous = process.env.CREDENTIAL_PROXY_JSON;
+    process.env.CREDENTIAL_PROXY_JSON = "[]";
+    try {
+      await expect(resolveModel("openai", "gpt-4")).rejects.toThrow(
+        "available through the credential proxy",
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CREDENTIAL_PROXY_JSON;
+      else process.env.CREDENTIAL_PROXY_JSON = previous;
+    }
+  });
+
+  it("Runnerではcredential entryをKnownProviderより優先してproxy modelにする", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "openai",
+        baseUrl: "http://host.docker.internal:8317/openai",
+      },
+    ] as CredentialEntry[]);
+
+    const previous = process.env.CREDENTIAL_PROXY_JSON;
+    process.env.CREDENTIAL_PROXY_JSON = '[{"provider":"openai"}]';
+    try {
+      const model = await resolveModel("openai", "gpt-4");
+      expect(model.baseUrl).toBe("http://host.docker.internal:8317/openai");
+    } finally {
+      if (previous === undefined) delete process.env.CREDENTIAL_PROXY_JSON;
+      else process.env.CREDENTIAL_PROXY_JSON = previous;
+    }
+  });
+
   it("credential-proxy に定義されたカスタムプロバイダを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai");

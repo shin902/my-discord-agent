@@ -70,9 +70,9 @@ schemaには旧 `redditCookie`（`cookieFile` 既定値 `data/reddit-cookies.jso
 
 ## モデル解決
 
-KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。この経路はcredentialsのモデル用 `baseUrl` / `api` / `compat` 等をカスタムモデル定義として適用しません。
+ホスト側の通常のモデル検証では、KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。この経路はcredentialsのモデル用 `baseUrl` / `api` / `compat` 等をカスタムモデル定義として適用しません。
 
-未知のprovider名、または `forceCustom: true` の場合は、このentryからカスタムモデルを作ります。modelIdは組み込み一覧で検証せず、そのまま使用します。KnownProvider名でもproxy URL・カスタムAPI定義をモデルへ適用したい場合は `forceCustom: true` を指定します。
+未知のprovider名、または `forceCustom: true` の場合は、このentryからカスタムモデルを作ります。modelIdは組み込み一覧で検証せず、そのまま使用します。KnownProvider名でもproxy URL・カスタムAPI定義をモデルへ適用したい場合は `forceCustom: true` を指定します。managerはRunner向けにsanitizedした全モデルentryへこのフラグを付与し、Runnerの `CREDENTIAL_PROXY_JSON` modeではentryを常にproxy modelとして解決します。Runnerに選択providerのentryがなければ、pi-aiの組み込みpublic endpointへフォールバックせずエラーにします。
 
 | フィールド | カスタムモデルでの挙動 |
 |---|---|

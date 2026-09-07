@@ -597,17 +597,33 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
   });
 
-  it("--user にホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
+  it("Runner entrypointへホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const args = spawnMock.mock.calls[0][1] as string[];
-    const userIdx = args.indexOf("--user");
-    expect(userIdx).toBeGreaterThanOrEqual(0);
-    expect(args[userIdx + 1]).toBe(
-      `${process.getuid?.()}:${process.getgid?.()}`,
+    expect(args).not.toContain("--user");
+    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
+    expect(envArgs).toContain(`RUNNER_UID=${process.getuid?.() ?? 1000}`);
+    expect(envArgs).toContain(`RUNNER_GID=${process.getgid?.() ?? 1000}`);
+    expect(envArgs).toContain("HOME=/tmp");
+  });
+
+  it("Runnerネットワークをcapability dropとno-new-privileges付きで起動する", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--cap-drop=ALL",
+        "--cap-add=NET_ADMIN",
+        "--cap-add=SETUID",
+        "--cap-add=SETGID",
+        "--cap-add=SETPCAP",
+        "--security-opt=no-new-privileges=true",
+      ]),
     );
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
-    expect(envArgs).toContain("HOME=/tmp");
+    expect(envArgs).toContain("RUNNER_ALLOWED_HOST_PORTS=12345");
   });
 
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
@@ -1058,6 +1074,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     await sendMessage("test-group", "session-1", "hi");
     const creds = getCredJson(spawnMock);
     expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/test");
+    expect(creds[0].forceCustom).toBe(true);
   });
 
   it("tavily-searchだけではTavily credential proxy情報をsandboxへ渡さない", async () => {
@@ -1470,6 +1487,9 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:23456/__tool-proxy/rpc",
       token: "tool-token",
     });
+    const args = spawnMock.mock.calls[0]?.[1] as string[];
+    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
+    expect(envArgs).toContain("RUNNER_ALLOWED_HOST_PORTS=12345,23456");
     expect(payload.groupConfig.approvalRequiredTools).toEqual([
       "get-current-weather",
     ]);
@@ -1575,7 +1595,24 @@ describe("sendMessage: configOverride", () => {
     expect(createToolProxyRunMock).toHaveBeenCalledOnce();
     expect(createToolProxyRunMock).toHaveBeenCalledWith(
       expect.stringContaining("test-group:session-1:"),
-      ["agent-reach"],
+      ["agent-reach", "arxiv-search", "arxiv-survey"],
+    );
+  });
+
+  it("arxiv skills receive only their matching semantic capabilities", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        tools: ["read"],
+        skills: ["arxiv-search", "arxiv-survey"],
+      },
+    });
+
+    expect(createToolProxyRunMock).toHaveBeenCalledOnce();
+    expect(createToolProxyRunMock).toHaveBeenCalledWith(
+      expect.stringContaining("test-group:session-1:"),
+      ["arxiv-search", "arxiv-survey"],
     );
   });
 

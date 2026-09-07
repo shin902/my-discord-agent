@@ -75,10 +75,26 @@ export async function resolveModel(provider: string, modelId: string) {
   const providers = getProviders();
   const creds = await loadCredentialProxy();
   const entry = creds.find((e) => e.provider === provider);
+  const runnerCredentialProxyMode =
+    process.env.CREDENTIAL_PROXY_JSON !== undefined;
+
+  // The Runner firewall exposes only the host Credential/Tool Proxy ports.
+  // Refuse a built-in pi-ai endpoint there, even when the provider name is a
+  // KnownProvider, because that endpoint would otherwise be a direct egress
+  // path that the network policy cannot approve semantically.
+  if (runnerCredentialProxyMode && !entry) {
+    throw new Error(
+      `Runner model provider ${provider} is not available through the credential proxy`,
+    );
+  }
 
   // forceCustom: pi-ai の KnownProvider 名と衝突していても
   // credential-proxy 経由のカスタムプロバイダー解決を強制する
-  if (entry?.forceCustom || !providers.includes(provider as KnownProvider)) {
+  if (
+    entry?.forceCustom ||
+    runnerCredentialProxyMode ||
+    !providers.includes(provider as KnownProvider)
+  ) {
     if (!entry) {
       throw new Error(`不明なプロバイダ: ${provider}`);
     }

@@ -3,6 +3,20 @@ set -euo pipefail
 
 image="${RUNNER_IMAGE:-my-discord-agent-runner:smoke}"
 fallback_image="${RUNNER_IMAGE_FALLBACK:-${image}-source-fallback}"
+runner_uid="$(id -u)"
+runner_gid="$(id -g)"
+runner_args=(
+  --add-host=host.docker.internal:host-gateway
+  --cap-drop=ALL
+  --cap-add=NET_ADMIN
+  --cap-add=SETUID
+  --cap-add=SETGID
+  --cap-add=SETPCAP
+  --security-opt=no-new-privileges=true
+  -e "RUNNER_UID=${runner_uid}"
+  -e "RUNNER_GID=${runner_gid}"
+  -e RUNNER_ALLOWED_HOST_PORTS=
+)
 pnpm build:runner
 
 normal_build_log="$(mktemp)"
@@ -24,12 +38,12 @@ if grep -Eqi 'gyp (info|err)|node-gyp rebuild.*(failed|error)' "$normal_build_lo
   exit 1
 fi
 
-timezone_output="$(docker run --rm "$image" sh -c 'printf "%s\n" "$TZ"; date +%Z')"
+timezone_output="$(docker run --rm "${runner_args[@]}" "$image" sh -c 'printf "%s\n" "$TZ"; date +%Z')"
 printf '%s\n' "$timezone_output"
 grep -qx 'Asia/Tokyo' <<<"$timezone_output"
 grep -qx 'JST' <<<"$timezone_output"
 
-sqlite_output="$(docker run --rm "$image" node --input-type=commonjs -e '
+sqlite_output="$(docker run --rm "${runner_args[@]}" "$image" node --input-type=commonjs -e '
   const Database = require("better-sqlite3");
   const db = new Database(":memory:");
   db.prepare("select 1 as value").get();
@@ -39,12 +53,14 @@ sqlite_output="$(docker run --rm "$image" node --input-type=commonjs -e '
 printf '%s\n' "$sqlite_output"
 grep -qx '__BETTER_SQLITE3_LOAD_OK__' <<<"$sqlite_output"
 
-output="$({ docker run --rm \
+output="$({ docker run --rm "${runner_args[@]}" \
   -e SESSIONS_DIR=/tmp/sessions \
   "$image" node /app/runner.mjs --session-store-smoke; } 2>&1)"
 printf '%s\n' "$output"
 grep -q '^__AGENT_READY__$' <<<"$output"
 grep -q '^__SESSION_STORE_SMOKE_OK__$' <<<"$output"
+
+RUNNER_IMAGE="$image" bash scripts/runner-network-smoke.sh
 
 # A source-forced build is the deterministic equivalent of a missing prebuilt
 # asset. It verifies that the retained native toolchain still provides the
@@ -54,7 +70,7 @@ docker build --no-cache \
   --build-arg RUNNER_SQLITE_BUILD_FROM_SOURCE=true \
   -t "$fallback_image" . 2>&1 | tee "$fallback_build_log"
 grep -Eqi 'gyp info|gyp err' "$fallback_build_log"
-fallback_sqlite_output="$(docker run --rm "$fallback_image" node --input-type=commonjs -e '
+fallback_sqlite_output="$(docker run --rm "${runner_args[@]}" "$fallback_image" node --input-type=commonjs -e '
   const Database = require("better-sqlite3");
   const db = new Database(":memory:");
   db.prepare("select 1 as value").get();

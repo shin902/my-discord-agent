@@ -146,6 +146,60 @@ describe("agent-reach.sh Tool Proxy frontend", () => {
     }
   });
 
+  it("arxiv Skillは公開APIへ直接接続せず、semantic Tool Proxy capabilityを呼ぶ", async () => {
+    const arxivScript = fileURLToPath(
+      new URL(
+        "../../templates/SKILLS/arxiv-search/scripts/search.py",
+        import.meta.url,
+      ),
+    );
+    let requestBody: Record<string, unknown> | undefined;
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        requestBody = JSON.parse(body) as Record<string, unknown>;
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            result: {
+              content: [{ type: "text", text: '[{"id":"paper-1"}]' }],
+            },
+          }),
+        );
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("server did not listen");
+
+    const { stdout } = await execFileAsync(
+      "python3",
+      [arxivScript, "speculative decoding", "--limit", "3"],
+      {
+        env: {
+          ...process.env,
+          AGENT_REACH_TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
+          AGENT_REACH_TOOL_PROXY_TOKEN: "arxiv-only-token",
+        },
+      },
+    );
+
+    expect(stdout).toBe('[{"id":"paper-1"}]');
+    expect(requestBody).toEqual({
+      capability: "arxiv-search",
+      args: {
+        query: "speculative decoding",
+        max_results: 3,
+        sort: "relevance",
+      },
+    });
+  });
+
   it("proxy以外へ接続せず、agent-reach capabilityだけを送る", async () => {
     let authorization = "";
     const server = createServer((req, res) => {

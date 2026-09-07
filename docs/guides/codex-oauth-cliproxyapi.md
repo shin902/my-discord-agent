@@ -151,7 +151,9 @@ CLIPROXY_API_KEY=your-local-cliproxy-key
 
 `openai-responses` は API キーを通常の Bearer credential として扱い、`/v1/responses` を呼び出す。`openai-codex-responses` は ChatGPT OAuth credential と Codex backend を直接扱うアダプターなので、このサイドカー構成には使用しない。
 
-アプリ本体（`credential-proxy-server` を含む）も CLIProxyAPI と同じ Docker ネットワーク内で起動する構成に限り、`baseUrl` に Docker のサービス名を使用できる。
+Agent RunnerはCLIProxyAPIへ直接接続しない。managerがRunner内のsanitized modelを `http://host.docker.internal:<Credential Proxy port>/codex-oauth` へ書き換え、Runner firewallはそのCredential Proxyポートだけをhost-gateway経由で許可する。Credential ProxyがホストからCLIProxyAPIへ `baseUrl` とAPIキーを転送するため、Agent sandboxにはCLIProxyAPIのAPIキーもOAuth tokenも渡らず、任意public endpointへの直接egressも残らない。
+
+アプリ本体（`credential-proxy-server` を含む）もCLIProxyAPIと同じDockerネットワーク内で起動する構成に限り、`baseUrl` にDockerのサービス名を使用できる。
 
 ```json
 "baseUrl": "http://cli-proxy-api:8317/v1"

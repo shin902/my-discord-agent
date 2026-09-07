@@ -136,11 +136,11 @@ cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 
 **場所:** `templates/SKILLS/arxiv-search/` / `templates/SKILLS/arxiv-survey/`
 
-arXivの公開Atom APIを使う、credential不要・statelessな論文検索機能。`arxiv-search` は1つの自然言語queryを検索し、`arxiv-survey` は1〜8個のqueryをOR条件で1回のAPIリクエストにまとめる。両方とも投稿日範囲（`from` / `to`）と `relevance` / `submitted` / `updated` の並び順を指定できる。
+arXivのcredential不要・statelessな論文検索機能。`arxiv-search` は1つの自然言語queryを検索し、`arxiv-survey` は1〜8個のqueryをOR条件で1回のAPIリクエストにまとめる。両方とも投稿日範囲（`from` / `to`）と `relevance` / `submitted` / `updated` の並び順を指定できる。
 
-Tool版はTypeScriptのstructured arguments、Skill版はPythonのCLI argumentsを入力に使う。Skill版は `--from` / `--to` / `--limit` / `--sort` を指定し、stdoutへJSONを返す。両実装とも `id` / `version` / `title` / `authors` / `submitted_at` / `updated_at` / `categories` / `abstract` / `url` / `pdf_url` を同じ意味で返す。
+Tool版とSkill版はどちらもhostのsemantic Tool Proxy capabilityへ収束する。Skill版のPython CLIは `--from` / `--to` / `--limit` / `--sort` を受け取り、run専用tokenで `arxiv-search` / `arxiv-survey` を呼び、stdoutへJSONを返す。Runnerから公開arXiv endpointへの直接接続やcredential受け渡しは行わない。両実装とも `id` / `version` / `title` / `authors` / `submitted_at` / `updated_at` / `categories` / `abstract` / `url` / `pdf_url` を同じ意味で返す。
 
-cronで使う場合も既読状態は保存せず、実行ごとに期間を明示する。公開Botなど`bash`を許可しない境界ではTool版を、trustedな環境でSkillを使う場合はPython版を選べる。
+cronで使う場合も既読状態は保存せず、実行ごとに期間を明示する。公開Botなど`bash`を許可しない境界ではTool版を、trustedな環境でSkillを使う場合はTool Proxy-backed Python版を選べる。
 
 ### session-logs
 
@@ -164,7 +164,7 @@ cronで使う場合も既読状態は保存せず、実行ごとに期間を明�
 
 **場所:** `templates/SKILLS/last30days/SKILL.md`
 
-指定トピックについて、HackerNews・Reddit・GitHub（いずれもAPIキー不要）から過去30日間の議論・反応を横断的に収集し、注目トピック・プラットフォーム別サマリー・センチメント・注目リンクの形式で集約するスキル。
+指定トピックについて、HackerNews・Reddit・GitHub（いずれもAPIキー不要）から過去30日間の議論・反応を横断的に収集し、注目トピック・プラットフォーム別サマリー・センチメント・注目リンクの形式で集約するスキル。API呼び出しは同梱の薄いfrontendからhostの`agent-reach` Tool Proxy capabilityへ送る。Runner内のcurlやPython/Node HTTP clientからpublic endpointへ直接接続しない。
 
 ### md2html
 

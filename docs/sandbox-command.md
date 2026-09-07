@@ -10,7 +10,7 @@
        └─ manager.ts が docker run --pull=always で取得・実行する
 ```
 
-Runner イメージの中身は `src/sandbox/agent-runner.ts` を esbuild でバンドルしたもの（`dist/sandbox/runner.bundle.mjs`）。`agent-runner.ts` を変更したらイメージを再ビルドする必要がある。
+Runner イメージの中身は `src/sandbox/agent-runner.ts` をesbuildでバンドルしたもの（`dist/sandbox/runner.bundle.mjs`）と、network policyをsetupしてからnon-rootへ降格する `scripts/runner-entrypoint.sh` です。`agent-runner.ts` またはRunner image / entrypointを変更したらイメージを再ビルドする必要があります。
 
 ## コマンド
 
@@ -29,6 +29,14 @@ pnpm sandbox clean             # ローカルのイメージを削除
 1. `esbuild` で `agent-runner.ts` をバンドル → `dist/sandbox/runner.bundle.mjs`
 2. `docker build` でイメージを作成
 3. `docker push` でローカルレジストリにプッシュ
+
+ローカルで境界を確認する場合は、イメージbuild後に次を実行します。
+
+```bash
+RUNNER_IMAGE=localhost:5050/my-discord-agent-runner:latest bash scripts/runner-network-smoke.sh
+```
+
+このsmokeは、host-gateway上のmanager許可ポートだけが通り、別host port・public・loopback・RFC1918/LAN・CGNAT/Tailscale・link-local/metadata・IPv6 loopbackが通らないことを実際のRunnerコンテナで確認します。
 
 ## よくある手順
 
@@ -72,4 +80,5 @@ pnpm sandbox status
 - レジストリコンテナ名: `my-discord-agent-registry`
 - イメージ名: `localhost:5050/my-discord-agent-runner:latest`
 - エージェント実行: `src/agent/manager.ts` から Docker CLI の `docker run` を直接起動
+- Runnerのnetwork setup: `scripts/runner-entrypoint.sh`（`iptables` / `ip6tables`、setup後に`setpriv`でcapability drop）
 - レジストリは insecure（TLS なし）のため、信頼できるローカル環境でのみ使用する

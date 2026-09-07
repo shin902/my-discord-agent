@@ -15,9 +15,9 @@ Agent sandbox
 
 [Credential Proxy](../src/proxy/credential-proxy-server.ts) はホスト側で認証情報を解決します。`envVars` は複数secretの注入指定ではなく、先頭から最初の空でない値を選ぶ候補一覧です。認証形式と未設定時の挙動は [設定リファレンス](config/credential-proxy.md#envvarsと認証) を参照してください。
 
-`forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
+`forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。Runnerへ渡すsanitized credential entryにはmanagerが `forceCustom: true` を付与し、Runner内でpi-aiがpublicな組み込みendpointを選ばないようにします。Runnerでcredential entryが見つからないKnownProviderはfail closedします。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
 
-Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証はありません。sandboxへのURL非公開だけをhost routeの認可とみなさないでください。ネットワーク境界の制約は [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
+Credential forwardingにはTool Proxyのrun単位capability認可と同じ保証はありません。sandboxへのURL非公開だけをhost routeの認可とみなさないでください。Agent Runnerのネットワークは `host.docker.internal` のhost-gatewayとmanagerがrunごとに許可したCredential Proxy / Tool Proxyポートだけへdeny-by-defaultで制限されていますが、ポート許可はHTTPのprovider/path権限を狭めません。ネットワーク境界の制約と残存リスクは [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
 
 ## Tool Proxy
 
@@ -36,7 +36,7 @@ approval対象はvalidate後に確定したcanonical argsをsnapshotのDiscord d
 
 GitHub、Graph、Google Calendar、Tavilyのcredentialはhost側だけで解決します。managerは通常これらとRedditのforwarding定義をsandboxへ渡しません（同名providerが当該runのmodel providerの場合は除外対象外）。Tool Proxyの結果はrawで返し、長い出力の外部化はsandbox側の共通output boundaryが担当します。
 
-実装は [Tool Proxy server](../src/proxy/tool-proxy-server.ts)、tool設定・approvalの仕様は [エージェントのツールとスキル](agent-tools-skills.md) を参照してください。
+Agent Runnerのnetwork setupは [runner-entrypoint.sh](../scripts/runner-entrypoint.sh) が担当し、通常のNode/bash/Python/curl/raw socketを同じkernel OUTPUT policyへ従わせます。実装は [Tool Proxy server](../src/proxy/tool-proxy-server.ts)、tool設定・approvalの仕様は [エージェントのツールとスキル](agent-tools-skills.md) を参照してください。
 
 ## OAuthと専用Runtime
 
