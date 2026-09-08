@@ -1,4 +1,5 @@
 import "dotenv/config";
+import type { Server } from "node:http";
 import { handleBotToolRequest } from "./agent/bot-orchestration.js";
 import {
   initManager,
@@ -12,6 +13,7 @@ import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { loadProviders } from "./config/providers.js";
+import { loadXSavedReceiverConfig } from "./config/x-saved.js";
 import {
   _setCronJobs,
   loadAndValidateCron,
@@ -27,6 +29,7 @@ import {
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
+import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
 import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
@@ -48,6 +51,7 @@ import {
 } from "./runtime/tool-runtime-client.js";
 
 const groups = await loadGroups();
+let xSavedReceiver: Server | undefined;
 try {
   const discordConfig = await loadDiscordConfig();
   const botRegistry = await loadBotRegistry();
@@ -116,6 +120,10 @@ try {
   for (const alert of runtimeOperator.observability.alerts)
     console.warn(`[startup] ${alert}`);
   _setCronJobs(cronJobs);
+  const xSavedConfig = await loadXSavedReceiverConfig();
+  if (xSavedConfig.enabled) {
+    xSavedReceiver = await startXSavedReceiver({ port: xSavedConfig.port });
+  }
 } catch (err) {
   console.error("[startup] 設定の読み込みに失敗しました:", err);
   process.exit(1);
@@ -140,6 +148,10 @@ void loginDiscordClients();
 // spawn した docker run 子プロセス（ひいてはコンテナ本体）は process.exit() しても
 // 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。
 const shutdown = async (): Promise<void> => {
+  if (xSavedReceiver) {
+    const server = xSavedReceiver;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
   stopCron();
   stopPoller();
   stopDeliveryWorker();

@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   registerHandlers: vi.fn(),
   backfillDiscordMessages: vi.fn(),
   loadDiscordConfig: vi.fn(),
+  loadXSavedReceiverConfig: vi.fn(),
+  startXSavedReceiver: vi.fn(),
   loadBotRegistry: vi.fn(),
   startPoller: vi.fn(),
   stopPoller: vi.fn(),
@@ -47,6 +49,12 @@ vi.mock("./discord/backfill.js", () => ({
 }));
 vi.mock("./config/config.js", () => ({
   loadDiscordConfig: mocks.loadDiscordConfig,
+}));
+vi.mock("./config/x-saved.js", () => ({
+  loadXSavedReceiverConfig: mocks.loadXSavedReceiverConfig,
+}));
+vi.mock("./integrations/x-saved/receiver.js", () => ({
+  startXSavedReceiver: mocks.startXSavedReceiver,
 }));
 vi.mock("./config/bots.js", () => ({
   loadBotRegistry: mocks.loadBotRegistry,
@@ -117,6 +125,10 @@ describe("index: 起動時バリデーション", () => {
       isReady: vi.fn().mockReturnValue(true),
     });
     mocks.loadDiscordConfig.mockResolvedValue({ bots: {} });
+    mocks.loadXSavedReceiverConfig.mockResolvedValue({
+      enabled: false,
+      port: 8787,
+    });
     mocks.loadBotRegistry.mockResolvedValue({});
     mocks.backfillDiscordMessages.mockResolvedValue(undefined);
     mocks.loadGroups.mockResolvedValue([]);
@@ -320,6 +332,35 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.startPoller).toHaveBeenCalledOnce();
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.loginDiscordClients).toHaveBeenCalledOnce();
+  });
+
+  it("starts and closes the enabled x-saved receiver", async () => {
+    const close = vi.fn((callback: () => void) => callback());
+    mocks.loadXSavedReceiverConfig.mockResolvedValue({
+      enabled: true,
+      port: 8787,
+    });
+    mocks.startXSavedReceiver.mockResolvedValue({ close });
+    const listenersBefore = process.listeners("SIGTERM");
+    await import("./index.js");
+    expect(mocks.startXSavedReceiver).toHaveBeenCalledWith({ port: 8787 });
+    mockExit.mockImplementation(() => undefined);
+    const listener = process
+      .listeners("SIGTERM")
+      .find((entry) => !listenersBefore.includes(entry));
+    listener?.("SIGTERM");
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(mockExit).toHaveBeenCalledWith(0));
+  });
+
+  it("receiver startup failure stops application startup", async () => {
+    mocks.loadXSavedReceiverConfig.mockResolvedValue({
+      enabled: true,
+      port: 8787,
+    });
+    mocks.startXSavedReceiver.mockRejectedValue(new Error("EADDRINUSE"));
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mocks.startPoller).not.toHaveBeenCalled();
   });
 
   it("複数Botがreadyになっても起動時バックフィルは一度だけ実行する", async () => {
