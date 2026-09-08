@@ -1070,6 +1070,28 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     return JSON.parse(credArg?.slice("CREDENTIAL_PROXY_JSON=".length) ?? "[]");
   };
 
+  it.each([
+    "sk-ant-oat-host-secret",
+    "api-key-host-secret",
+  ])("Anthropic SDK mode is non-secret and follows the selected credential (%s)", async (key) => {
+    process.env.TEST_ANTHROPIC_KEY = key;
+    const spawnMock = await setup([
+      {
+        provider: "anthropic",
+        envVars: ["TEST_ANTHROPIC_KEY"],
+        baseUrl: "https://api.anthropic.com",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].sdkAuth).toBe(
+      key.includes("sk-ant-oat") ? "anthropic-oauth" : undefined,
+    );
+    expect(JSON.stringify(creds)).not.toContain(key);
+    expect(JSON.stringify(creds)).not.toContain("TEST_ANTHROPIC_KEY");
+  });
+
   it("envVars ありのエントリが proxy URL に変換される", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([

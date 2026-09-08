@@ -231,6 +231,9 @@ async function getCustomProviderApiKey(
     const entries = await loadCredentialProxy();
     const entry = entries.find((e) => e.provider === provider);
     if (!entry) return undefined;
+    // Select the SDK's OAuth wire format without exposing the host token.
+    if (entry.sdkAuth === "anthropic-oauth")
+      return "sk-ant-oat-proxy-placeholder";
     if (!entry.envVars || entry.envVars.length === 0) return "local";
     for (const envVar of entry.envVars) {
       const value = process.env[envVar];

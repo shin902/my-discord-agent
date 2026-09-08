@@ -14,6 +14,7 @@ import {
   initGoogleAuth,
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
+import { nativeProviderAuth, usesAnthropicOAuth } from "./provider-auth.js";
 import type { TrustedDiscordDestination } from "./tool-proxy-server.js";
 
 class UpstreamTimeoutError extends Error {
@@ -216,6 +217,12 @@ async function handleRequest(
   } else if (entry.envVars && entry.envVars.length > 0) {
     const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
+    const nativeAuth = nativeProviderAuth(entry);
+    if (nativeAuth === "anthropic-messages") delete headers["x-api-key"];
+    if (nativeAuth === "google-generative-ai") {
+      delete headers["x-goog-api-key"];
+      parsedTarget.searchParams.delete("key");
+    }
     if (apiKey) {
       if (entry.auth?.type === "query-token") {
         parsedTarget.searchParams.set(entry.auth.queryParam ?? "token", apiKey);
@@ -228,6 +235,14 @@ async function handleRequest(
           "base64",
         );
         headers.authorization = `Basic ${basicCredential}`;
+      } else if (
+        !entry.auth &&
+        nativeAuth === "anthropic-messages" &&
+        !usesAnthropicOAuth(entry, apiKey)
+      ) {
+        headers["x-api-key"] = apiKey;
+      } else if (!entry.auth && nativeAuth === "google-generative-ai") {
+        headers["x-goog-api-key"] = apiKey;
       } else {
         headers.authorization = `Bearer ${apiKey}`;
       }

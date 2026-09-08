@@ -19,6 +19,7 @@ import {
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
+import { usesAnthropicOAuth } from "../proxy/provider-auth.js";
 import {
   createToolProxyRun,
   type TrustedDiscordDestination,
@@ -476,10 +477,14 @@ function buildSanitizedCredentialJson(
       google: _google,
       redditCookie: _redditCookie,
       auth: _auth,
+      sdkAuth: _sdkAuth,
       ...rest
     } = entry;
     sanitized.push({
       ...rest,
+      ...(usesAnthropicOAuth(entry, process.env[setEnvVars[0] ?? ""])
+        ? { sdkAuth: "anthropic-oauth" }
+        : {}),
       baseUrl: `http://host.docker.internal:${proxyPort}/${entry.provider}`,
     });
   }

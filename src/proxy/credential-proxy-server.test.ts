@@ -548,6 +548,72 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     vi.resetModules();
   });
 
+  it.each([
+    {
+      provider: "anthropic",
+      auth: undefined,
+      key: "host-key",
+      expected: { "x-api-key": "host-key" },
+    },
+    {
+      provider: "google",
+      auth: undefined,
+      key: "host-key",
+      expected: { "x-goog-api-key": "host-key" },
+    },
+    {
+      provider: "anthropic",
+      auth: { type: "bearer" as const },
+      key: "host-key",
+      expected: { authorization: "Bearer host-key" },
+    },
+    {
+      provider: "google",
+      auth: { type: "query-token" as const, queryParam: "key" },
+      key: "host-key",
+      expected: {},
+    },
+    { provider: "anthropic", auth: undefined, key: "", expected: {} },
+    { provider: "google", auth: undefined, key: "", expected: {} },
+  ])("replaces native $provider auth and honors explicit auth ($key, $auth)", async ({
+    provider,
+    auth,
+    key,
+    expected,
+  }) => {
+    process.env.NATIVE_TEST_KEY = key;
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(
+      [
+        {
+          provider,
+          baseUrl: "http://fixture.test",
+          envVars: ["NATIVE_TEST_KEY"],
+          auth,
+        },
+      ],
+      30000,
+    );
+    const nativeHeader =
+      provider === "anthropic" ? "x-api-key" : "x-goog-api-key";
+    handler(
+      makeReq(`/${provider}/messages?key=placeholder`, {
+        authorization: "Bearer placeholder",
+        [nativeHeader]: "placeholder",
+      }),
+      makeRes(),
+    );
+    const opts = requestMock.mock.calls[0][0];
+    expect(opts.headers).toEqual(expected);
+    if (provider === "google") {
+      expect(opts.path).toBe(
+        auth?.type === "query-token" ? "/messages?key=host-key" : "/messages",
+      );
+    }
+  });
+
   it("envVars に設定済みの環境変数があれば Bearer トークンを注入する", async () => {
     process.env.OPENAI_API_KEY = "sk-test-key";
     const { createRequestHandler } = await import(
