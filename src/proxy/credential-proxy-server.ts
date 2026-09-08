@@ -178,6 +178,15 @@ async function handleRequest(
     if (k.toLowerCase() !== "host") headers[k] = v;
   }
 
+  const nativeAuth = nativeProviderAuth(entry);
+  if (entry.msal || entry.google || entry.envVars?.length) {
+    if (nativeAuth === "anthropic-messages") delete headers["x-api-key"];
+    if (nativeAuth === "google-generative-ai") {
+      delete headers["x-goog-api-key"];
+      parsedTarget.searchParams.delete("key");
+    }
+  }
+
   if (entry.msal) {
     // MSALトークン注入（Graph API用）
     let token: string;
@@ -217,12 +226,6 @@ async function handleRequest(
   } else if (entry.envVars && entry.envVars.length > 0) {
     const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
-    const nativeAuth = nativeProviderAuth(entry);
-    if (nativeAuth === "anthropic-messages") delete headers["x-api-key"];
-    if (nativeAuth === "google-generative-ai") {
-      delete headers["x-goog-api-key"];
-      parsedTarget.searchParams.delete("key");
-    }
     if (apiKey) {
       if (entry.auth?.type === "query-token") {
         parsedTarget.searchParams.set(entry.auth.queryParam ?? "token", apiKey);

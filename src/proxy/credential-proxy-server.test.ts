@@ -614,6 +614,55 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     }
   });
 
+  it.each([
+    ["anthropic", "msal"],
+    ["anthropic", "google"],
+    ["google", "msal"],
+    ["google", "google"],
+  ] as const)("removes native %s placeholders before %s OAuth injection", async (provider, oauth) => {
+    vi.doMock("./graph-auth.js", () => ({
+      initGraphAuth: vi.fn(),
+      getGraphAccessToken: vi.fn().mockResolvedValue("msal-token"),
+    }));
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth: vi.fn(),
+      getGoogleAccessToken: vi.fn().mockResolvedValue("google-token"),
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const entry: CredentialEntry = {
+      provider,
+      baseUrl: "http://fixture.test",
+      ...(oauth === "msal"
+        ? { msal: { tenantId: "tenant", clientId: "client", scopes: [] } }
+        : {
+            google: {
+              clientId: "client",
+              clientSecretEnvVar: "TEST_SECRET",
+              scopes: [],
+            },
+          }),
+    };
+    const nativeHeader =
+      provider === "anthropic" ? "x-api-key" : "x-goog-api-key";
+    createRequestHandler([entry], 30000)(
+      makeReq(`/${provider}/messages?key=local&alt=sse`, {
+        authorization: "Bearer local",
+        [nativeHeader]: "local",
+      }),
+      makeRes(),
+    );
+    await vi.waitFor(() => expect(requestMock).toHaveBeenCalledOnce());
+    const opts = requestMock.mock.calls[0][0];
+    expect(opts.headers).toEqual({ authorization: `Bearer ${oauth}-token` });
+    expect(opts.path).toBe(
+      provider === "google"
+        ? "/messages?alt=sse"
+        : "/messages?key=local&alt=sse",
+    );
+  });
+
   it("envVars に設定済みの環境変数があれば Bearer トークンを注入する", async () => {
     process.env.OPENAI_API_KEY = "sk-test-key";
     const { createRequestHandler } = await import(
