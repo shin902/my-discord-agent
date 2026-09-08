@@ -21,9 +21,15 @@ const BrowserItemSchema = z
   })
   .refine((item) => {
     const match =
-      /^https:\/\/x\.com\/[A-Za-z0-9_]{1,15}\/status\/([0-9]+)$/.exec(item.url);
-    return match?.[1] === item.tweet_id;
-  }, "URL must be an X status URL for tweet_id");
+      /^https:\/\/x\.com\/([A-Za-z0-9_]{1,15})\/status\/([0-9]+)$/.exec(
+        item.url,
+      );
+    return (
+      match?.[2] === item.tweet_id &&
+      (!item.author ||
+        item.author.replace(/^@/, "").toLowerCase() === match[1]?.toLowerCase())
+    );
+  }, "URL must match tweet_id and any supplied author");
 
 const BatchSchema = z.strictObject({
   items: z.array(BrowserItemSchema).min(1).max(MAX_BATCH_SIZE),

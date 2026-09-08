@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import contractCases from "./browser-items.fixture.json" with { type: "json" };
 import { MAX_BODY_BYTES, startXSavedReceiver } from "./receiver.js";
 import { ingestXSavedItems, openXSavedDb } from "./store.js";
 
@@ -40,6 +41,26 @@ describe("x-saved receiver", () => {
       body: JSON.stringify(payload),
     });
   }
+
+  // Mirrored in x-saved-extension/tests: storage admission and receiver agree.
+  it.each(contractCases)("$name: matches extension validation", async ({
+    item: capture,
+    valid,
+  }) => {
+    const response = await post({ items: [capture] });
+    expect(response.status).toBe(valid ? 200 : 400);
+    const db = openXSavedDb(dbPath);
+    try {
+      expect(db.prepare("SELECT * FROM x_items").all()).toHaveLength(
+        valid ? 1 : 0,
+      );
+      expect(db.prepare("SELECT * FROM x_item_state").all()).toHaveLength(
+        valid ? 1 : 0,
+      );
+    } finally {
+      db.close();
+    }
+  });
 
   it("ACKs committed items, merges flags, and preserves state and omitted metadata on retries", async () => {
     const db = openXSavedDb(dbPath);
