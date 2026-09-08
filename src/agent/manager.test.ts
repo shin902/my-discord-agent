@@ -598,17 +598,32 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
   });
 
-  it("--user にホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
+  it("trusted bootstrapでfirewallを設定し、Agent用UID:GIDを渡す", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const args = spawnMock.mock.calls[0][1] as string[];
     const userIdx = args.indexOf("--user");
     expect(userIdx).toBeGreaterThanOrEqual(0);
-    expect(args[userIdx + 1]).toBe(
-      `${process.getuid?.()}:${process.getgid?.()}`,
+    expect(args[userIdx + 1]).toBe("0:0");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--cap-drop=ALL",
+        "--cap-add=NET_ADMIN",
+        "--cap-add=SETUID",
+        "--cap-add=SETGID",
+        "--cap-add=SETPCAP",
+        "--security-opt=no-new-privileges",
+        "--network=bridge",
+        "--dns=127.0.0.1",
+        "--entrypoint=/bin/sh",
+        "/app/sandbox-entrypoint.sh",
+      ]),
     );
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs).toContain("HOME=/tmp");
+    expect(envArgs).toContain(`SANDBOX_UID=${process.getuid?.()}`);
+    expect(envArgs).toContain(`SANDBOX_GID=${process.getgid?.()}`);
+    expect(envArgs).toContain("SANDBOX_PROXY_PORTS=12345");
   });
 
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
@@ -1055,6 +1070,28 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     return JSON.parse(credArg?.slice("CREDENTIAL_PROXY_JSON=".length) ?? "[]");
   };
 
+  it.each([
+    "sk-ant-oat-host-secret",
+    "api-key-host-secret",
+  ])("Anthropic SDK mode is non-secret and follows the selected credential (%s)", async (key) => {
+    process.env.TEST_ANTHROPIC_KEY = key;
+    const spawnMock = await setup([
+      {
+        provider: "anthropic",
+        envVars: ["TEST_ANTHROPIC_KEY"],
+        baseUrl: "https://api.anthropic.com",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].sdkAuth).toBe(
+      key.includes("sk-ant-oat") ? "anthropic-oauth" : undefined,
+    );
+    expect(JSON.stringify(creds)).not.toContain(key);
+    expect(JSON.stringify(creds)).not.toContain("TEST_ANTHROPIC_KEY");
+  });
+
   it("envVars ありのエントリが proxy URL に変換される", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([
@@ -1487,6 +1524,8 @@ describe("sendMessage: configOverride", () => {
     expect(payload.groupConfig.approvalRequiredTools).toEqual([
       "get-current-weather",
     ]);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
   });
 
   it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {
@@ -1552,6 +1591,7 @@ describe("sendMessage: configOverride", () => {
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain(`TOOL_PROXY_URL=${run.url}`);
     expect(args).toContain(`TOOL_PROXY_TOKEN=${run.token}`);
+    expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.toolProxyEndpoint).toEqual({

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -120,10 +119,6 @@ const CONTEXT_BOOTSTRAP_CHANNELS: ContextBootstrapChannel[] = [
   },
 ];
 
-// コンテナ起動直後はDNSリゾルバの準備が整っていないことがあるため待機する
-const NETWORK_READY_HOST = "r.jina.ai";
-const NETWORK_READY_TIMEOUT_MS = 10_000;
-const NETWORK_READY_RETRY_MS = 500;
 const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
 
 type RunnerLineHandler = (line: string) => void;
@@ -157,33 +152,6 @@ export function createRunnerLineRouter(onPayloadLine: RunnerLineHandler): {
       for (const line of pendingControlLines.splice(0)) handler(line);
     },
   };
-}
-
-/** 外部ホスト名解決ができるまで待機する（最大 timeoutMs、失敗時はそのまま続行） */
-export async function waitForNetwork(options?: {
-  host?: string;
-  timeoutMs?: number;
-  retryMs?: number;
-  lookupFn?: (host: string) => Promise<unknown>;
-  sleepFn?: (ms: number) => Promise<void>;
-}): Promise<void> {
-  const host = options?.host ?? NETWORK_READY_HOST;
-  const timeoutMs = options?.timeoutMs ?? NETWORK_READY_TIMEOUT_MS;
-  const retryMs = options?.retryMs ?? NETWORK_READY_RETRY_MS;
-  const lookupFn = options?.lookupFn ?? lookup;
-  const sleepFn =
-    options?.sleepFn ??
-    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await lookupFn(host);
-      return;
-    } catch {
-      await sleepFn(retryMs);
-    }
-  }
 }
 
 function isAssistantMessage(msg: unknown): msg is AssistantMessage {
@@ -263,6 +231,9 @@ async function getCustomProviderApiKey(
     const entries = await loadCredentialProxy();
     const entry = entries.find((e) => e.provider === provider);
     if (!entry) return undefined;
+    // Select the SDK's OAuth wire format without exposing the host token.
+    if (entry.sdkAuth === "anthropic-oauth")
+      return "sk-ant-oat-proxy-placeholder";
     if (!entry.envVars || entry.envVars.length === 0) return "local";
     for (const envVar of entry.envVars) {
       const value = process.env[envVar];
@@ -980,7 +951,6 @@ const PayloadSchema = z.object({
 // CLIエントリポイント（import時は実行しない）
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   (async () => {
-    await waitForNetwork();
     const input = createInterface({ input: process.stdin });
     let resolvePayload!: (payload: z.infer<typeof PayloadSchema>) => void;
     let rejectPayload!: (error: unknown) => void;

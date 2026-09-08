@@ -47,11 +47,14 @@ Credential forwardingの認証処理は `msal → google → envVars` の優先�
 
 | `auth.type` | upstreamへの付与 |
 |---|---|
-| 省略 / `bearer` | `Authorization: Bearer <value>` |
+| 省略 | Anthropic Messages は `x-api-key`（Anthropic OAuth token は Bearer）、Google Generative AI は `x-goog-api-key`。その他は Bearer |
+| `bearer` | `Authorization: Bearer <value>` |
 | `query-token` | `queryParam` のquery parameterへ付与。既定名は `token` |
 | `basic` | `Authorization: Basic base64("<username>:<value>")`。username既定値は `x-access-token` |
 
 OAuth設定がなく `envVars` が空でない配列の場合、forwarding時に受信したAuthorizationを除去してから認証を付与します。全候補が空ならAuthorizationを付けません。`envVars` が省略・空配列でOAuth設定もない場合は、forwarding時のAuthorizationを書き換えません。
+
+Anthropic / Google の組み込みproviderと、対応する `api` を指定したカスタムproviderでは、SDKが送る仮のnative認証ヘッダーも除去してホストの値で置換します。Googleの `key` query parameterも除去します。明示した `auth` は既定のnative認証より優先します。Anthropic OAuthではホストが生成した非秘密の `sdkAuth: "anthropic-oauth"` をsandboxへ渡し、SDKをOAuth用のリクエスト形式へ切り替えます。実tokenはホストでのみ付与し、この内部フィールドを設定ファイルへ記載する必要はありません。
 
 sandbox向け定義を生成するmanagerの挙動は次のとおりです（host専用tool providerの除外は [proxy.md](../proxy.md#tool-proxy) を参照）。
 
@@ -71,6 +74,8 @@ schemaには旧 `redditCookie`（`cookieFile` 既定値 `data/reddit-cookies.jso
 ## モデル解決
 
 KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。この経路はcredentialsのモデル用 `baseUrl` / `api` / `compat` 等をカスタムモデル定義として適用しません。
+
+ただし sandbox では接続先の `baseUrl` だけをホストから渡された Credential Proxy URL へ置換します。組み込みモデルの API 形式・context window 等は維持します。KnownProvider も `credentials.json` に接続定義が必要で、sandbox 用 entry がない場合は明示エラーとなります。provider SDK が `baseUrl` を利用しない独自接続方式は direct egress 拒否の対象となるため、利用する API 形式で疎通確認してください。
 
 未知のprovider名、または `forceCustom: true` の場合は、このentryからカスタムモデルを作ります。modelIdは組み込み一覧で検証せず、そのまま使用します。KnownProvider名でもproxy URL・カスタムAPI定義をモデルへ適用したい場合は `forceCustom: true` を指定します。
 

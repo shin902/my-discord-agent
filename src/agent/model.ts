@@ -95,6 +95,14 @@ export async function resolveModel(provider: string, modelId: string) {
   );
   if (!model)
     throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
+  // Preserve built-in model metadata, but never its direct upstream endpoint
+  // in the sandbox. Custom models already use the sanitized entry above.
+  if (process.env.CREDENTIAL_PROXY_JSON) {
+    if (!entry) {
+      throw new Error(`${provider}: sandbox requires a Credential Proxy entry`);
+    }
+    return { ...model, baseUrl: entry.baseUrl };
+  }
   return model;
 }
 

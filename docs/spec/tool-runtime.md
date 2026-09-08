@@ -48,7 +48,7 @@ Cookie更新はhostの `pnpm reddit:refresh` または既存cronから単発main
 
 ## 導入・旧構成からの移行
 
-Tool Runtime PRを先に導入し、Agent sandboxのdirect egress閉鎖（#399）はその後に導入します。本変更単独ではAgent sandbox全体のdirect egressを閉じません。
+Agent sandboxは必要なhost Proxy port以外へのdirect egressを拒否します。対象機能はTool Proxy経由で実行するため、旧構成から更新する場合は以下の移行と[network boundaryの導入](../sandbox-command.md#network-boundary-の導入)を合わせて行ってください。
 
 1. 旧hostアプリを正常停止し、**旧checkoutで**、既存と同じCompose project名・ファイルを使って `docker compose -f compose.tool-runtime.yaml down` を実行します。Redditのbind mount元は保持してください。新checkoutにはこの旧Composeファイルはありません。
 2. hostの `AGENT_REACH_RUNTIME_URL` / `AGENT_REACH_RUNTIME_TOKEN` / `AGENT_REACH_REFRESH_TOKEN` を削除します。旧Skill専用の `AGENT_REACH_TOOL_PROXY_URL` / `AGENT_REACH_TOOL_PROXY_TOKEN` も使いません。新しいservice tokenは不要です。
@@ -96,4 +96,4 @@ DOTENV_CONFIG_PATH=/dev/null \
   pnpm exec vitest run src/runtime/tool-runtime.integration.test.ts src/runtime/tool-runtime-agent.integration.test.ts
 ```
 
-公開APIのlive結果や本番Cookieは受け入れfixtureに使いません。#399との組合せではAgentのdirect egressを閉じたまま、Agent sandbox → Tool Proxy → 実際の使い捨てRuntimeの経路を追加検証します。
+公開APIのlive結果や本番Cookieは受け入れfixtureに使いません。Agentのdirect egressを閉じたまま、Agent sandbox → Tool Proxy → 実際の使い捨てRuntimeの経路を検証します。

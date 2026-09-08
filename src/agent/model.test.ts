@@ -22,6 +22,48 @@ beforeEach(() => {
 });
 
 describe("resolveModel", () => {
+  it.each([
+    ["openai", "openai-completions"],
+    ["anthropic", "anthropic-messages"],
+    ["google", "google-generative-ai"],
+  ])("sandboxでは%sのAPIとmetadataを保ちproxyへ接続する", async (provider, api) => {
+    const { resolveModel } = await importFresh();
+    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    const builtin = {
+      id: "gpt-4",
+      provider,
+      api,
+      baseUrl: "https://api.openai.com/v1",
+      contextWindow: 128000,
+    };
+    vi.mocked(getProviders).mockReturnValue([provider as KnownProvider]);
+    vi.mocked(getModels).mockReturnValue([
+      builtin,
+    ] as unknown as Model<never>[]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider,
+        baseUrl: `http://host.docker.internal:1234/${provider}`,
+      },
+    ]);
+    vi.stubEnv("CREDENTIAL_PROXY_JSON", "[]");
+    try {
+      expect(await resolveModel(provider, "gpt-4")).toEqual({
+        ...builtin,
+        baseUrl: `http://host.docker.internal:1234/${provider}`,
+      });
+      expect(builtin.baseUrl).toBe("https://api.openai.com/v1");
+      vi.mocked(loadCredentialProxy).mockResolvedValue([]);
+      await expect(resolveModel(provider, "gpt-4")).rejects.toThrow(
+        "sandbox requires",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import("@earendil-works/pi-ai");

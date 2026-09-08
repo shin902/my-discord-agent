@@ -8,6 +8,8 @@ RUN apk add --no-cache \
     jq \
     git \
     github-cli \
+    iptables \
+    util-linux \
     tzdata \
     sqlite
 
@@ -33,3 +35,4 @@ COPY dist/sandbox/runner.bundle.mjs ./runner.mjs
 
 COPY dist/sandbox/tool-proxy-cli.mjs ./tool-proxy-cli.mjs
 RUN chmod 755 /app/tool-proxy-cli.mjs && ln -s /app/tool-proxy-cli.mjs /usr/local/bin/tool-proxy
+COPY scripts/sandbox-entrypoint.sh ./sandbox-entrypoint.sh

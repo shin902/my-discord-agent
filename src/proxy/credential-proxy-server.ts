@@ -14,6 +14,7 @@ import {
   initGoogleAuth,
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
+import { nativeProviderAuth, usesAnthropicOAuth } from "./provider-auth.js";
 import type { TrustedDiscordDestination } from "./tool-proxy-server.js";
 
 class UpstreamTimeoutError extends Error {
@@ -177,6 +178,15 @@ async function handleRequest(
     if (k.toLowerCase() !== "host") headers[k] = v;
   }
 
+  const nativeAuth = nativeProviderAuth(entry);
+  if (entry.msal || entry.google || entry.envVars?.length) {
+    if (nativeAuth === "anthropic-messages") delete headers["x-api-key"];
+    if (nativeAuth === "google-generative-ai") {
+      delete headers["x-goog-api-key"];
+      parsedTarget.searchParams.delete("key");
+    }
+  }
+
   if (entry.msal) {
     // MSALトークン注入（Graph API用）
     let token: string;
@@ -228,6 +238,14 @@ async function handleRequest(
           "base64",
         );
         headers.authorization = `Basic ${basicCredential}`;
+      } else if (
+        !entry.auth &&
+        nativeAuth === "anthropic-messages" &&
+        !usesAnthropicOAuth(entry, apiKey)
+      ) {
+        headers["x-api-key"] = apiKey;
+      } else if (!entry.auth && nativeAuth === "google-generative-ai") {
+        headers["x-goog-api-key"] = apiKey;
       } else {
         headers.authorization = `Bearer ${apiKey}`;
       }
