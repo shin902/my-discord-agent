@@ -15,6 +15,10 @@
     "provider": "zai",
     "modelId": "glm-4.7-flash"
   },
+  "xSavedReceiver": {
+    "enabled": false,
+    "port": 8787
+  },
   "proxy": {
     "requestTimeoutMs": 120000
   },
