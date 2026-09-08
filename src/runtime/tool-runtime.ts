@@ -27,7 +27,8 @@ export async function executeRuntimeRequest(
           profileDir: process.env.REDDIT_PROFILE_DIR,
           cookieFile: process.env.REDDIT_COOKIE_FILE,
         });
-      } catch {
+      } catch (error) {
+        console.error("[tool-runtime] Reddit cookie refresh failed:", error);
         throw new Error(
           "Reddit cookie refresh failed; check login and Runtime diagnostics",
         );

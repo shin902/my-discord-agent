@@ -15,6 +15,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const STDERR_MAX_BYTES = 16 * 1024;
 const active = new Set<{
   controller: AbortController;
   done: Promise<unknown>;
@@ -184,9 +185,16 @@ async function runContainer(
       cancel(new Error("Tool Runtime result too large"));
     else chunks.push(chunk);
   });
-  // Drain diagnostics, but never expose Docker errors (host mounts) or private
-  // browser diagnostics to the Agent. Only structured tool results cross back.
-  child.stderr.resume();
+  // Retain a bounded prefix while continuing to drain the pipe. Diagnostics
+  // can contain host paths or private browser state: log only on the host.
+  const stderr = Buffer.alloc(STDERR_MAX_BYTES);
+  let stderrSize = 0;
+  let stderrTruncated = false;
+  child.stderr.on("data", (chunk: Buffer) => {
+    const copied = chunk.copy(stderr, stderrSize);
+    stderrSize += copied;
+    stderrTruncated ||= copied < chunk.length;
+  });
   child.stdin.on("error", () => {
     /* The close/error event supplies the outcome. */
   });
@@ -229,6 +237,13 @@ async function runContainer(
     if (!response.result || !Array.isArray(response.result.content))
       throw new Error("Invalid Tool Runtime result");
     return response.result;
+  } catch (error) {
+    if (stderrSize > 0)
+      console.error(
+        `[tool-runtime] ${name} stderr${stderrTruncated ? " (truncated at 16 KiB)" : ""}:`,
+        stderr.toString("utf8", 0, stderrSize),
+      );
+    throw error;
   } finally {
     closed = true;
     clearTimeout(timer);

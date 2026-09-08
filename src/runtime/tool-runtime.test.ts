@@ -71,15 +71,19 @@ describe("one-shot Tool Runtime protocol", () => {
     ).toHaveProperty("error");
     vi.stubEnv("REDDIT_PROFILE_DIR", "/fixture/profile");
     vi.stubEnv("REDDIT_COOKIE_FILE", "/fixture/cookies.json");
-    vi.mocked(refreshRedditCookies).mockRejectedValueOnce(
-      new Error("private browser state /fixture/profile"),
-    );
+    const diagnostic = new Error("private browser state /fixture/profile");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(refreshRedditCookies).mockRejectedValueOnce(diagnostic);
     expect(
       await executeRuntimeRequest({ maintenance: "reddit-cookie-refresh" }),
     ).toEqual({
       error:
         "Reddit cookie refresh failed; check login and Runtime diagnostics",
     });
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      "[tool-runtime] Reddit cookie refresh failed:",
+      diagnostic,
+    );
     expect(refreshRedditCookies).toHaveBeenCalledExactlyOnceWith({
       profileDir: "/fixture/profile",
       cookieFile: "/fixture/cookies.json",
