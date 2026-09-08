@@ -1,22 +1,21 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRequestHandler } from "../proxy/credential-proxy-server.js";
 import {
   createToolProxyRun,
   initToolProxyServer,
+  stopToolProxyServer,
 } from "../proxy/tool-proxy-server.js";
-import { createAgentReachRuntimeServer } from "../runtime/agent-reach-runtime.js";
-import { agentReachTool } from "../tools/agent-reach.js";
+import * as runtime from "../runtime/tool-runtime-client.js";
+import { createToolRuntimeFixture } from "../runtime/tool-runtime-fixture.js";
 import { sandboxNetworkArgs } from "./sandbox-network.js";
 
 const exec = promisify(execFile);
 const image = process.env.SANDBOX_NETWORK_TEST_IMAGE ?? "";
+const runtimeImage = process.env.TOOL_RUNTIME_TEST_IMAGE;
 const servers: Server[] = [];
 const containers: string[] = [];
 function testContainerName(): string[] {
@@ -53,7 +52,7 @@ afterEach(async () => {
   );
 });
 
-describe.skipIf(!image)(
+describe.skipIf(!image || !runtimeImage)(
   "Agent sandbox kernel network boundary (Docker)",
   () => {
     it("blocks reachable public/private/loopback addresses for arbitrary programs and cannot be removed", async () => {
@@ -199,90 +198,92 @@ describe.skipIf(!image)(
       ).rejects.toMatchObject({ stdout: "" });
     });
 
-    it("runs the real Agent loop through Credential Proxy and Tool Proxy → Runtime HTTP", async () => {
+    it("runs the real Agent loop through Credential Proxy and Tool Proxy → disposable Runtime", async () => {
       const runtimeCalls: string[] = [];
-      // Replace only the public fetch for deterministic CI. All three HTTP hops,
-      // run authorization, model streaming, tool dispatch and Runner are real.
-      vi.spyOn(agentReachTool, "execute").mockImplementation(
-        async (_id, args) => {
-          runtimeCalls.push(args.url);
-          return {
-            content: [{ type: "text", text: "fixture page" }],
-            details: {},
-          };
-        },
-      );
-      vi.stubEnv("AGENT_REACH_RUNTIME_TOKEN", "test-runtime-only-secret");
-      const runtimePort = await listen(createAgentReachRuntimeServer());
-      vi.stubEnv("AGENT_REACH_RUNTIME_URL", `http://127.0.0.1:${runtimePort}`);
-      const toolPort = await initToolProxyServer();
-      const run = createToolProxyRun("network-test", ["agent-reach"]);
-      if (!run) throw new Error("No test run authority");
-      let requests = 0;
-      const upstream = await listen(
-        createServer(async (req, res) => {
-          const chunks: Buffer[] = [];
-          for await (const chunk of req) chunks.push(chunk);
-          const body = JSON.parse(Buffer.concat(chunks).toString());
-          expect(req.headers.authorization).toBe("Bearer upstream-only-secret");
-          const toolResult = body.messages.some(
-            (m: { role: string }) => m.role === "tool",
-          );
-          requests++;
-          res.writeHead(200, { "content-type": "text/event-stream" });
-          const delta = toolResult
-            ? { role: "assistant", content: "network-ok" }
-            : {
-                role: "assistant",
-                tool_calls: [
-                  {
-                    index: 0,
-                    id: "call_fixture",
-                    type: "function",
-                    function: {
-                      name: "agent-reach",
-                      arguments: JSON.stringify({
-                        url: "https://example.com/",
-                      }),
-                    },
-                  },
-                ],
-              };
-          res.write(
-            `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`,
-          );
-          res.end(
-            `data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: {}, finish_reason: toolResult ? "stop" : "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
-          );
-        }),
-      );
-      vi.stubEnv("NETWORK_TEST_UPSTREAM_KEY", "upstream-only-secret");
-      const proxyPort = await listen(
-        createServer(
-          createRequestHandler(
-            [
-              {
-                provider: "fixture",
-                baseUrl: `http://127.0.0.1:${upstream}/v1`,
-                envVars: ["NETWORK_TEST_UPSTREAM_KEY"],
-              },
-            ],
-            10000,
-          ),
-        ),
-      );
-      const payload = {
-        groupName: "network-test",
-        sessionId: "fixture",
-        content: "Read the page",
-        groupConfig: {
-          model: { provider: "fixture", modelId: "fixture" },
-          tools: ["agent-reach"],
-          skills: [],
-        },
-        toolProxyEndpoint: run,
-      };
+      const fixture = await createToolRuntimeFixture(runtimeImage as string);
+      let revoke: (() => void) | undefined;
       try {
+        const actualExecute = runtime.executeToolRuntime;
+        vi.spyOn(runtime, "executeToolRuntime").mockImplementation(
+          (name, args, signal) => {
+            runtimeCalls.push((args as { url: string }).url);
+            return actualExecute(name, args, signal, fixture.options);
+          },
+        );
+        const toolPort = await initToolProxyServer();
+        const run = createToolProxyRun("network-test", ["agent-reach"]);
+        if (!run) throw new Error("No test run authority");
+        revoke = run.revoke;
+        let requests = 0;
+        const upstream = await listen(
+          createServer(async (req, res) => {
+            const chunks: Buffer[] = [];
+            for await (const chunk of req) chunks.push(chunk);
+            const body = JSON.parse(Buffer.concat(chunks).toString());
+            expect(req.headers.authorization).toBe(
+              "Bearer upstream-only-secret",
+            );
+            const toolResult = body.messages.some(
+              (m: { role: string }) => m.role === "tool",
+            );
+            if (toolResult)
+              expect(JSON.stringify(body.messages)).toContain(
+                "Runtime web fixture",
+              );
+            requests++;
+            res.writeHead(200, { "content-type": "text/event-stream" });
+            const delta = toolResult
+              ? { role: "assistant", content: "network-ok" }
+              : {
+                  role: "assistant",
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call_fixture",
+                      type: "function",
+                      function: {
+                        name: "agent-reach",
+                        arguments: JSON.stringify({
+                          url: "https://example.com/",
+                        }),
+                      },
+                    },
+                  ],
+                };
+            res.write(
+              `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`,
+            );
+            res.end(
+              `data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: {}, finish_reason: toolResult ? "stop" : "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
+            );
+          }),
+        );
+        vi.stubEnv("NETWORK_TEST_UPSTREAM_KEY", "upstream-only-secret");
+        const proxyPort = await listen(
+          createServer(
+            createRequestHandler(
+              [
+                {
+                  provider: "fixture",
+                  baseUrl: `http://127.0.0.1:${upstream}/v1`,
+                  envVars: ["NETWORK_TEST_UPSTREAM_KEY"],
+                },
+              ],
+              10000,
+            ),
+          ),
+        );
+        const payload = {
+          groupName: "network-test",
+          sessionId: "fixture",
+          content: "Read the page",
+          groupConfig: {
+            model: { provider: "fixture", modelId: "fixture" },
+            tools: ["agent-reach"],
+            skills: [],
+          },
+          toolProxyEndpoint: run,
+        };
         const result = await new Promise<{ stdout: string; stderr: string }>(
           (resolve, reject) => {
             const child = spawn(
@@ -331,115 +332,10 @@ describe.skipIf(!image)(
           "upstream-only-secret",
         );
       } finally {
-        run.revoke();
+        revoke?.();
+        await stopToolProxyServer();
+        await fixture.dispose();
       }
     }, 45000);
   },
-);
-
-// Operator smoke: optional public Internet dependency, never real Reddit state
-// or production service tokens. The Runtime image and its hardening are intact.
-it.skipIf(!image || !process.env.AGENT_REACH_LIVE_TEST_IMAGE)(
-  "Agent sandbox → Tool Proxy → dedicated Tool Runtime → public Internet",
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), "agent-network-live-"));
-    let containerId: string | undefined;
-    let revoke: (() => void) | undefined;
-    try {
-      await chmod(directory, 0o755);
-      await mkdir(join(directory, "profile"));
-      await writeFile(join(directory, "cookies.json"), "[]");
-      const started = await exec("docker", [
-        "run",
-        "--rm",
-        "-d",
-        "--cap-drop=ALL",
-        "--cap-add=NET_ADMIN",
-        "--cap-add=SETUID",
-        "--cap-add=SETGID",
-        "--cap-add=SETPCAP",
-        "--security-opt=no-new-privileges",
-        "--dns=1.1.1.1",
-        "-p",
-        "127.0.0.1::8787",
-        "-e",
-        "AGENT_REACH_RUNTIME_TOKEN=network-live-test-token",
-        "-e",
-        "AGENT_REACH_REFRESH_TOKEN=network-live-refresh-token",
-        "-e",
-        "REDDIT_PROFILE_DIR=/test/profile",
-        "-e",
-        "REDDIT_COOKIE_FILE=/test/cookies.json",
-        "-v",
-        `${directory}:/test`,
-        process.env.AGENT_REACH_LIVE_TEST_IMAGE ?? "",
-      ]);
-      containerId = started.stdout.trim();
-      const mapping = await exec("docker", ["port", containerId, "8787/tcp"]);
-      const runtimeUrl = `http://${mapping.stdout.trim()}`;
-      const runtimeAddress = await exec("docker", [
-        "inspect",
-        "--format",
-        "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-        containerId,
-      ]);
-      let ready = false;
-      for (let attempt = 0; attempt < 40; attempt++) {
-        ready = await fetch(`${runtimeUrl}/healthz`)
-          .then((r) => r.ok)
-          .catch(() => false);
-        if (ready) break;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      expect(ready).toBe(true);
-      vi.stubEnv("AGENT_REACH_RUNTIME_URL", runtimeUrl);
-      vi.stubEnv("AGENT_REACH_RUNTIME_TOKEN", "network-live-test-token");
-      const port = await initToolProxyServer();
-      const run = createToolProxyRun("network-live", ["agent-reach"]);
-      if (!run) throw new Error("Missing test authority");
-      revoke = run.revoke;
-      const code = `
-        (async () => {
-          const assert = require('node:assert/strict');
-          // The host proxy can reach Runtime, but the Agent cannot bypass it
-          // through either its published host port or its Docker bridge IP.
-          for (const url of ${JSON.stringify([
-            `${runtimeUrl.replace("127.0.0.1", "host.docker.internal")}/healthz`,
-            `http://${runtimeAddress.stdout.trim()}:8787/healthz`,
-          ])}) {
-            await assert.rejects(fetch(url, {signal: AbortSignal.timeout(500)}));
-          }
-          const response = await fetch(${JSON.stringify(run.url)}, {
-            method: 'POST', headers: {'content-type': 'application/json', authorization: ${JSON.stringify(`Bearer ${run.token}`)}},
-            body: JSON.stringify({capability: 'agent-reach', args: {url: 'https://example.com/'}}),
-          });
-          const payload = await response.json();
-          if (!response.ok) throw new Error(JSON.stringify(payload));
-          console.log(JSON.stringify(payload.result));
-        })().catch(e => { console.error(e); process.exit(1); });
-      `;
-      const response = await exec(
-        "docker",
-        [
-          "run",
-          "--rm",
-          ...testContainerName(),
-          ...sandboxNetworkArgs([port]),
-          image,
-          "/app/sandbox-entrypoint.sh",
-          "node",
-          "-e",
-          code,
-        ],
-        { timeout: 120000 },
-      );
-      expect(response.stdout).toContain("Example Domain");
-      expect(response.stdout).not.toContain("network-live-test-token");
-    } finally {
-      revoke?.();
-      if (containerId) await exec("docker", ["rm", "-f", containerId]);
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-  150000,
 );

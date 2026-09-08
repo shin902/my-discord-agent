@@ -1569,6 +1569,7 @@ describe("sendMessage: configOverride", () => {
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain(`TOOL_PROXY_URL=${run.url}`);
     expect(args).toContain(`TOOL_PROXY_TOKEN=${run.token}`);
+    expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.toolProxyEndpoint).toEqual({

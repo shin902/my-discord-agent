@@ -10,7 +10,7 @@
 
 firewall 設定中だけ root と NET_ADMIN / SETUID / SETGID / SETPCAP を使い、Agent・workspace・stdin を処理する前に host UID/GID（非 root）、空の capability bounding set、no_new_privs へ移ります。Agent はルール変更・raw packet 送信に必要な権限を持ちません。設定失敗・未対応 IPv6 firewall・古い image による entrypoint 不在は起動失敗となり、無制限通信への fallback はありません。ルールは container の network namespace 内だけに存在し、破棄時に消えます。運用条件と移行は [Sandbox 管理ガイド](sandbox-command.md#network-boundary-の導入) を参照してください。
 
-LLM は Credential Proxy 経由で host が設定済み upstream へ接続します。Tool Proxy は既存の run token / capability / approval を強制し、`agent-reach` は引き続き専用 Tool Runtime へ委譲します。Tool Runtime の既存 firewall、DNS/redirect 検証、subprocess guard、service/maintenance token、Cookie 境界は変更していません。
+LLM は Credential Proxy 経由で host が設定済み upstream へ接続します。Tool Proxy は既存の run token / capability / approval を強制し、`agent-reach`・arXiv・last30daysはTool callごとの使い捨てRuntimeへ委譲します。RuntimeにHTTP入口やservice/maintenance tokenはなく、Agentから直接接続する経路はありません。Tool Runtimeの既存firewall、DNS/redirect検証、subprocess guard、Cookie境界は維持します。
 
 ### 効果の限界
 
@@ -19,7 +19,7 @@ LLM は Credential Proxy 経由で host が設定済み upstream へ接続しま
 - host、Docker daemon、image、operator-only mounts は trust root です。危険な socket や bootstrap を置換する mount を trusted config で許せば境界を壊せます。mount policy 全面変更は行っていません。
 - container/kernel escape や parser/Chromium の侵害後の完全封じ込めは保証しません。seccomp 大規模変更、AppArmor/SELinux、Landlock、追加 sandbox、mTLS は導入していません。
 
-arXiv / last30days の direct-egress 移行、generic Tool Runtime、既存 Runtime の cleanup、inbound peer attack 向けの追加 hardening は今回の対象外です。既存機能への影響と先行 PR の必要性は [導入ガイド](sandbox-command.md#direct-egress-閉鎖で壊れる機能と導入順序) を参照してください。
+Tool Runtimeへ移行済みの機能と、直接通信できなくなる任意コマンドの扱いは[導入ガイド](sandbox-command.md#direct-egress-閉鎖後の実行経路)を参照してください。
 
 ## credential proxy の認証なし公開
 

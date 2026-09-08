@@ -17,6 +17,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { sandboxNetworkArgs } from "../agent/sandbox-network.js";
 import {
   createToolProxyRun,
   initToolProxyServer,
@@ -38,7 +39,6 @@ describe.skipIf(!runtimeImage || !agentImage)(
   () => {
     let fixture: Awaited<ReturnType<typeof createToolRuntimeFixture>>;
     let port: number;
-    let networkArgs: string[] = [];
     let workspace: string;
     let mountDirectory: string;
     const closers: (() => Promise<void>)[] = [];
@@ -51,13 +51,6 @@ describe.skipIf(!runtimeImage || !agentImage)(
         (name, args, signal) =>
           actualExecute(name, args, signal, fixture.options),
       );
-      if (process.env.SANDBOX_NETWORK_TEST_IMAGE) {
-        // Available in the isolated #399 combination checkout; never emulate or
-        // relax its firewall in this test.
-        const modulePath = "../agent/sandbox-network.js";
-        const { sandboxNetworkArgs } = await import(modulePath);
-        networkArgs = sandboxNetworkArgs([port]);
-      }
       workspace = join(fixture.options.root, "workspace");
       mountDirectory = join(fixture.options.root, "agent");
       await mkdir(workspace);
@@ -118,13 +111,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
         "-i",
         "--name",
         name,
-        ...(networkArgs.length
-          ? networkArgs
-          : [
-              "--user",
-              `${process.getuid?.()}:${process.getgid?.()}`,
-              "--add-host=host.docker.internal:host-gateway",
-            ]),
+        ...sandboxNetworkArgs([port]),
         "--mount",
         `type=bind,src=${mountDirectory},dst=/fixture,readonly`,
         "--mount",
@@ -134,7 +121,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
         "-e",
         `TOOL_PROXY_TOKEN=${run.token}`,
         agentImage as string,
-        ...(networkArgs.length ? ["/app/sandbox-entrypoint.sh"] : []),
+        "/app/sandbox-entrypoint.sh",
         "node",
         "/fixture/agent.mjs",
       ];
@@ -287,39 +274,34 @@ describe.skipIf(!runtimeImage || !agentImage)(
       ).rejects.toThrow("not authorized");
     }, 30_000);
 
-    it.skipIf(!process.env.SANDBOX_NETWORK_TEST_IMAGE)(
-      "keeps #399 direct egress closed while actual Runtime calls succeed",
-      async () => {
-        let reached = false;
-        const denied = createServer((_req, res) => {
-          reached = true;
-          res.end("forbidden");
+    it("keeps direct egress closed while actual Runtime calls succeed", async () => {
+      let reached = false;
+      const denied = createServer((_req, res) => {
+        reached = true;
+        res.end("forbidden");
+      });
+      await new Promise<void>((resolve) =>
+        denied.listen(0, "0.0.0.0", resolve),
+      );
+      try {
+        const address = denied.address();
+        if (!address || typeof address === "string") throw new Error("no port");
+        const agent = startAgent();
+        const result = await agent.call("bash", {
+          command: `node -e "fetch('http://host.docker.internal:${address.port}', {signal: AbortSignal.timeout(1000)}).then(() => process.exit(1)).catch(() => { console.log('blocked'); process.exit(0); })"`,
         });
-        await new Promise<void>((resolve) =>
-          denied.listen(0, "0.0.0.0", resolve),
-        );
-        try {
-          const address = denied.address();
-          if (!address || typeof address === "string")
-            throw new Error("no port");
-          const agent = startAgent();
-          const result = await agent.call("bash", {
-            command: `node -e "fetch('http://host.docker.internal:${address.port}', {signal: AbortSignal.timeout(1000)}).then(() => process.exit(1)).catch(() => { console.log('blocked'); process.exit(0); })"`,
-          });
-          expect(text(result)).toBe("blocked");
-          expect(reached).toBe(false);
-          expect(
-            text(
-              await agent.call("agent-reach", {
-                url: "https://example.com/next",
-              }),
-            ),
-          ).toBe("# Runtime web fixture");
-        } finally {
-          await new Promise<void>((resolve) => denied.close(() => resolve()));
-        }
-      },
-      30_000,
-    );
+        expect(text(result)).toBe("blocked");
+        expect(reached).toBe(false);
+        expect(
+          text(
+            await agent.call("agent-reach", {
+              url: "https://example.com/next",
+            }),
+          ),
+        ).toBe("# Runtime web fixture");
+      } finally {
+        await new Promise<void>((resolve) => denied.close(() => resolve()));
+      }
+    }, 30_000);
   },
 );
