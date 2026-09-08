@@ -1,5 +1,6 @@
 *
 !dist/sandbox/runner.bundle.mjs
+!dist/sandbox/tool-proxy-cli.mjs
 !dist/tool-runtime.mjs
 !src/**
 !scripts/tool-runtime-entrypoint.sh

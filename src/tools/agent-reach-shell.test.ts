@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const script = fileURLToPath(
@@ -14,6 +14,21 @@ const script = fileURLToPath(
     import.meta.url,
   ),
 );
+let cliDirectory: string;
+let cliPath: string;
+beforeAll(async () => {
+  cliDirectory = await mkdtemp(join(tmpdir(), "tool-proxy-cli-test-"));
+  await writeFile(
+    join(cliDirectory, "tool-proxy"),
+    `#!/bin/sh\nexec node --import tsx "${process.cwd()}/src/sandbox/tool-proxy-cli.ts" "$@"\n`,
+    { mode: 0o700 },
+  );
+  cliPath = `${cliDirectory}:${process.env.PATH}`;
+});
+afterAll(async () => {
+  await rm(cliDirectory, { recursive: true, force: true });
+});
+
 const servers: ReturnType<typeof createServer>[] = [];
 
 afterEach(async () => {
@@ -75,19 +90,20 @@ describe("agent-reach.sh Tool Proxy frontend", () => {
       {
         env: {
           ...process.env,
+          PATH: cliPath,
+          DOTENV_CONFIG_PATH: "/dev/null",
           // Deliberately malformed: this frontend must not inspect or require
           // the sandbox's legacy credential-proxy configuration.
           CREDENTIAL_PROXY_JSON: "not-json",
-          AGENT_REACH_TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
-          AGENT_REACH_TOOL_PROXY_TOKEN: "agent-reach-only-token",
+          TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
+          TOOL_PROXY_TOKEN: "shared-run-token",
         },
       },
     );
 
     expect(stdout).toBe(listingMarkdown);
-    // Authorization scope is established by manager tests that create a
-    // run-scoped token with ["agent-reach"], not by this fixture server.
-    expect(authorization).toBe("Bearer agent-reach-only-token");
+    // Manager tests establish the shared run authority; this checks transport.
+    expect(authorization).toBe("Bearer shared-run-token");
     expect(requestBody).toEqual({
       capability: "agent-reach",
       args: {
@@ -135,8 +151,10 @@ describe("agent-reach.sh Tool Proxy frontend", () => {
         {
           env: {
             ...process.env,
-            AGENT_REACH_TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
-            AGENT_REACH_TOOL_PROXY_TOKEN: "run-scoped-agent-reach-token",
+            PATH: cliPath,
+            DOTENV_CONFIG_PATH: "/dev/null",
+            TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
+            TOOL_PROXY_TOKEN: "shared-run-token",
           },
         },
       );
@@ -168,12 +186,14 @@ describe("agent-reach.sh Tool Proxy frontend", () => {
       {
         env: {
           ...process.env,
-          AGENT_REACH_TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
-          AGENT_REACH_TOOL_PROXY_TOKEN: "narrow-token",
+          PATH: cliPath,
+          DOTENV_CONFIG_PATH: "/dev/null",
+          TOOL_PROXY_URL: `http://127.0.0.1:${address.port}/__tool-proxy/rpc`,
+          TOOL_PROXY_TOKEN: "shared-run-token",
         },
       },
     );
     expect(stdout).toBe("ok");
-    expect(authorization).toBe("Bearer narrow-token");
+    expect(authorization).toBe("Bearer shared-run-token");
   });
 });

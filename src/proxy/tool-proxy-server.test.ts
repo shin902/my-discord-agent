@@ -592,7 +592,7 @@ describe("Tool Proxy RPC", () => {
       });
       expect(response.status).toBe(403);
       expect(response.payload.error).toBe(
-        "Capability is not a host capability: date",
+        "Capability is not a Proxy capability: date",
       );
     } finally {
       config.revoke();

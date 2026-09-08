@@ -230,7 +230,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |
-| `approvalRequiredTools` | — | AgentConfig。effective `tools` に含まれる既知host capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・`tools` 外・sandbox/runtime toolは設定エラー。子layerで指定した配列は完全置換 |
+| `approvalRequiredTools` | — | AgentConfig。effective `tools` に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・`tools` 外・sandbox内toolは設定エラー。子layerで指定した配列は完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
 | `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル。channelで指定するとgroupの指定を完全置換 |

@@ -1,4 +1,4 @@
-import { refreshRedditCookiesInRuntime } from "../../runtime/reddit-cookie-refresh-client.js";
+import { refreshRedditCookiesInRuntime } from "../../runtime/tool-runtime-client.js";
 import type { CronContext } from "../runner.js";
 
 export default async function handler(_ctx: CronContext): Promise<void> {

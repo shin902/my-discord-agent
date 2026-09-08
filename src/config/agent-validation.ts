@@ -16,9 +16,10 @@ export function validateApprovalRequiredTools(
         `承認必須ツールは有効な tools に含めてください: ${toolName}`,
       );
     }
-    if (getCapabilityDefinition(toolName)?.executor !== "host") {
+    const executor = getCapabilityDefinition(toolName)?.executor;
+    if (executor !== "host" && executor !== "runtime") {
       throw new Error(
-        `承認必須ツールには host capability のみ指定できます: ${toolName}`,
+        `承認必須ツールには host/runtime capability のみ指定できます: ${toolName}`,
       );
     }
   }

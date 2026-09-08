@@ -48,7 +48,7 @@ Discord / cron / RSS / mail
        Discord
 ```
 
-エージェントと通常のツールは Docker コンテナ内で実行されます。認証を伴うhost capabilityや専用Tool Runtimeへの操作は [Tool Proxy](docs/proxy.md#tool-proxy) を通します。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
+エージェントと通常のツールは Docker コンテナ内で実行されます。認証を伴うhost capabilityや使い捨てTool Runtimeへの操作は [Tool Proxy](docs/proxy.md#tool-proxy) を通します。ホスト側のファイルやプロセスへ直接アクセスさせるのではなく、必要なディレクトリだけを group ごとの mount として公開します。
 
 LLM 実行結果と Discord 配信は分離されており、ジョブ状態は SQLite に保存されます。プロセス再起動時にもキューや配送状態を復旧できる構成です。
 
@@ -256,6 +256,8 @@ pnpm format
 ```
 
 ## ドキュメント
+
+- [Tool Runtimeの実行境界・image準備・配置済みSkillの移行](docs/spec/tool-runtime.md)
 
 Agent向けの共通指示は [AGENTS.md](AGENTS.md)、タスク別の手順は [.pi/skills/](.pi/skills/) に集約しています。現行仕様の正本は責務ごとに以下を参照してください。
 

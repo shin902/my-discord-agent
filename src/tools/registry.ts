@@ -1,6 +1,4 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { agentReachCapabilityTool } from "./agent-reach-capability.js";
-import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { bashTool } from "./bash.js";
 import {
   createEventTool,
@@ -38,6 +36,7 @@ import {
 } from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
+import { RUNTIME_CAPABILITIES } from "./runtime-capabilities.js";
 import { tavilySearchTool } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
@@ -113,6 +112,7 @@ function hostCapability(
 }
 
 const CAPABILITIES = {
+  ...RUNTIME_CAPABILITIES,
   date: {
     tool: "date",
     executor: "sandbox",
@@ -137,14 +137,6 @@ const CAPABILITIES = {
       include_answer: true,
       topic: "general",
     }),
-  }),
-  "arxiv-search": hostCapability(arxivSearchTool, {
-    clampedProperties: ["max_results"],
-    defaultArgs: () => ({ max_results: 10, sort: "relevance" }),
-  }),
-  "arxiv-survey": hostCapability(arxivSurveyTool, {
-    clampedProperties: ["max_results"],
-    defaultArgs: () => ({ max_results: 30, sort: "submitted" }),
   }),
   "list-issues": hostCapability(listIssuesTool, {
     clampedProperties: ["limit"],
@@ -183,7 +175,6 @@ const CAPABILITIES = {
   "delete-event": hostCapability(deleteEventTool, {
     defaultArgs: () => ({ calendarId: "primary" }),
   }),
-  "agent-reach": hostCapability(agentReachCapabilityTool),
 } satisfies Record<string, CapabilityDefinition>;
 
 type ToolName = keyof typeof TOOL_FACTORIES;
@@ -196,10 +187,12 @@ export function getCapabilityDefinition(
   return CAPABILITIES[name as keyof typeof CAPABILITIES];
 }
 
-export function hostCapabilityNames(toolNames: string[]): string[] {
+export function proxyCapabilityNames(toolNames: string[]): string[] {
   return toolNames.filter((name) => {
     const capability = getCapabilityDefinition(name);
-    return capability?.executor === "host";
+    return (
+      capability?.executor === "host" || capability?.executor === "runtime"
+    );
   });
 }
 

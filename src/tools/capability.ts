@@ -97,7 +97,7 @@ export type CapabilityDefinition =
       readonly executor: "sandbox";
     })
   | (CapabilityDefinitionBase & {
-      readonly executor: "host";
+      readonly executor: "host" | "runtime";
       /** Validate the wire arguments without changing the agent-facing schema. */
       readonly validateArgs: CapabilityArgsValidator;
       /** Resolve effective executor arguments after validation, when needed. */
@@ -106,7 +106,7 @@ export type CapabilityDefinition =
 
 /** Materialize once when configured; otherwise preserve identity. */
 export function materializeCapabilityArgs(
-  definition: Extract<CapabilityDefinition, { executor: "host" }>,
+  definition: Extract<CapabilityDefinition, { executor: "host" | "runtime" }>,
   args: unknown,
 ): unknown {
   return definition.materializeArgs ? definition.materializeArgs(args) : args;
@@ -123,7 +123,8 @@ export function dispatchCapability(
   switch (definition.executor) {
     case "sandbox":
       return definition.factory();
-    case "host": {
+    case "host":
+    case "runtime": {
       const tool = definition.factory();
       return tool
         ? createToolProxyTool(tool, context.toolProxyEndpoint)

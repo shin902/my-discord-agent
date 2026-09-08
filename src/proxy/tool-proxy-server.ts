@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
+import { executeToolRuntime } from "../runtime/tool-runtime-client.js";
 import { materializeCapabilityArgs } from "../tools/capability.js";
 import { getCapabilityDefinition } from "../tools/registry.js";
 import {
@@ -23,10 +24,12 @@ type ToolProxyRunSnapshot = Readonly<{
   approvalRequiredCapabilities: readonly string[];
   trustedDiscordDestination: TrustedDiscordDestination | undefined;
   revokeSignal: AbortSignal;
+  revoke: () => void;
 }>;
 
 const runs = new Map<string, ToolProxyRunSnapshot>();
 let toolProxyPort: number | null = null;
+let toolProxyServer: http.Server | undefined;
 
 export interface ToolProxyRunConfig {
   url: string;
@@ -58,6 +61,14 @@ export function createToolProxyRun(
   }
 
   const controller = new AbortController();
+  const token = randomBytes(32).toString("base64url");
+  let revoked = false;
+  const revoke = (): void => {
+    if (revoked) return;
+    revoked = true;
+    runs.delete(token);
+    controller.abort(new Error("Run authority revoked"));
+  };
   const snapshot = Object.freeze({
     runId,
     allowedCapabilities: allowed,
@@ -66,16 +77,9 @@ export function createToolProxyRun(
       ? Object.freeze({ ...options.trustedDiscordDestination })
       : undefined,
     revokeSignal: controller.signal,
+    revoke,
   });
-  const token = randomBytes(32).toString("base64url");
   runs.set(token, snapshot);
-  let revoked = false;
-  const revoke = (): void => {
-    if (revoked) return;
-    revoked = true;
-    runs.delete(token);
-    controller.abort(new Error("Run authority revoked"));
-  };
   return {
     url: `http://host.docker.internal:${toolProxyPort}${TOOL_PROXY_PATH}`,
     token,
@@ -94,6 +98,7 @@ export function activeToolProxyRunCount(): number {
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  if (res.destroyed || res.writableEnded) return;
   const serialized = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -252,9 +257,9 @@ async function executeRequest(
     sendJson(res, 404, { error: `Unknown capability: ${body.capability}` });
     return;
   }
-  if (capability.executor !== "host") {
+  if (capability.executor === "sandbox") {
     sendJson(res, 403, {
-      error: `Capability is not a host capability: ${body.capability}`,
+      error: `Capability is not a Proxy capability: ${body.capability}`,
     });
     return;
   }
@@ -271,67 +276,73 @@ async function executeRequest(
     return;
   }
   const effectiveArgs = materializeCapabilityArgs(capability, body.args);
-  let executionArgs = effectiveArgs;
-
-  if (run.approvalRequiredCapabilities.includes(body.capability)) {
-    if (!run.trustedDiscordDestination || !options.presentApprovalRequest) {
-      approvalFailure(res, token, run, body.capability);
-      return;
-    }
-
-    let approvalRequest: ToolApprovalRequest | undefined;
-    try {
-      approvalRequest = createToolApprovalRequest(
-        {
-          runId: run.runId,
-          capability: body.capability,
-          trustedDiscordDestination: run.trustedDiscordDestination,
-          revokeSignal: run.revokeSignal,
-        },
-        effectiveArgs,
-      );
-      await options.presentApprovalRequest(approvalRequest);
-      const decision = await approvalRequest.waitForDecision();
-      if (decision !== "approved") {
-        approvalFailure(res, token, run, body.capability);
-        return;
-      }
-    } catch (error) {
-      approvalRequest?.claim("deny")?.failUiUpdate(error);
-      approvalFailure(res, token, run, body.capability);
-      return;
-    }
-
-    if (!runIsCurrent(token, run, body.capability)) {
-      sendJson(res, 401, { error: "Unknown or expired run token" });
-      return;
-    }
-    executionArgs = approvalRequest.invocation.args.value;
-  }
-
-  const tool = capability.factory();
-  if (!tool) {
-    sendJson(res, 500, {
-      error: `Host capability is unavailable: ${body.capability}`,
-    });
-    return;
-  }
   const abortController = new AbortController();
   const abortRequest = (): void => {
     if (!res.writableEnded) abortController.abort();
   };
   req.once("aborted", abortRequest);
   res.once("close", abortRequest);
+  const signal = AbortSignal.any([abortController.signal, run.revokeSignal]);
+  if (req.aborted || res.destroyed) abortRequest();
   try {
-    const result = await tool.execute(
-      "tool-proxy",
-      executionArgs,
-      abortController.signal,
-    );
+    let executionArgs = effectiveArgs;
+
+    if (run.approvalRequiredCapabilities.includes(body.capability)) {
+      if (!run.trustedDiscordDestination || !options.presentApprovalRequest) {
+        approvalFailure(res, token, run, body.capability);
+        return;
+      }
+
+      let approvalRequest: ToolApprovalRequest | undefined;
+      try {
+        approvalRequest = createToolApprovalRequest(
+          {
+            runId: run.runId,
+            capability: body.capability,
+            trustedDiscordDestination: run.trustedDiscordDestination,
+            revokeSignal: signal,
+          },
+          effectiveArgs,
+        );
+        await options.presentApprovalRequest(approvalRequest);
+        const decision = await approvalRequest.waitForDecision();
+        if (decision !== "approved") {
+          approvalFailure(res, token, run, body.capability);
+          return;
+        }
+      } catch (error) {
+        approvalRequest?.claim("deny")?.failUiUpdate(error);
+        approvalFailure(res, token, run, body.capability);
+        return;
+      }
+
+      if (!runIsCurrent(token, run, body.capability)) {
+        sendJson(res, 401, { error: "Unknown or expired run token" });
+        return;
+      }
+      executionArgs = approvalRequest.invocation.args.value;
+    }
+
+    const tool = capability.factory();
+    if (!tool) {
+      sendJson(res, 500, {
+        error: `Host capability is unavailable: ${body.capability}`,
+      });
+      return;
+    }
+    signal.throwIfAborted();
+    const result =
+      capability.executor === "runtime"
+        ? await executeToolRuntime(body.capability, executionArgs, signal)
+        : await tool.execute("tool-proxy", executionArgs, signal);
     if (!res.writableEnded) sendJson(res, 200, { result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    sendJson(res, 502, { error: message });
+    if (!res.destroyed && !res.writableEnded)
+      sendJson(res, 502, { error: message });
+  } finally {
+    req.off("aborted", abortRequest);
+    res.off("close", abortRequest);
   }
 }
 
@@ -351,6 +362,7 @@ export async function initToolProxyServer(
 ): Promise<number> {
   if (toolProxyPort !== null) return toolProxyPort;
   const server = http.createServer(createToolProxyRequestHandler(options));
+  toolProxyServer = server;
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);
     server.listen(0, "0.0.0.0", () => {
@@ -359,4 +371,19 @@ export async function initToolProxyServer(
     });
   });
   return getToolProxyPort();
+}
+
+/** Close admission and revoke all run authorities before host shutdown. */
+export async function stopToolProxyServer(): Promise<void> {
+  const server = toolProxyServer;
+  toolProxyServer = undefined;
+  toolProxyPort = null;
+  for (const run of [...runs.values()]) run.revoke();
+  if (server) {
+    const closed = new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    server.closeAllConnections();
+    await closed;
+  }
 }

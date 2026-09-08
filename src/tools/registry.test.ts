@@ -114,8 +114,8 @@ describe("resolveTools", () => {
 
   it("host capability argsのdefault/clamp/未知property除去を一度に実効化する", () => {
     const capability = getCapabilityDefinition("get-weather-forecast");
-    expect(capability?.executor).toBe("host");
-    if (!capability || capability.executor !== "host") return;
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
     const rawArgs = { location: "東京", days: 10, ignored: "raw-only" };
 
     expect(materializeCapabilityArgs(capability, rawArgs)).toEqual({
@@ -180,8 +180,8 @@ describe("resolveTools", () => {
     ["delete-event", { eventId: "e" }, { eventId: "e", calendarId: "primary" }],
   ])("%s は既存executorのdefaultをapproval前に実効化する", (name, raw, expected) => {
     const capability = getCapabilityDefinition(name);
-    expect(capability?.executor).toBe("host");
-    if (!capability || capability.executor !== "host") return;
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
 
     expect(materializeCapabilityArgs(capability, raw)).toEqual(expected);
   });
@@ -191,8 +191,8 @@ describe("resolveTools", () => {
     vi.setSystemTime(new Date("2026-09-05T01:02:03.456Z"));
     try {
       const capability = getCapabilityDefinition("list-events");
-      expect(capability?.executor).toBe("host");
-      if (!capability || capability.executor !== "host") return;
+      expect(["host", "runtime"]).toContain(capability?.executor);
+      if (!capability || capability.executor === "sandbox") return;
 
       expect(materializeCapabilityArgs(capability, {})).toEqual({
         timeMin: "2026-09-05T01:02:03.456Z",
@@ -246,10 +246,10 @@ describe("resolveTools", () => {
     "create-event",
     "update-event",
     "delete-event",
-  ])("%s はhost capabilityである", (name) => {
+  ])("%s はProxy capabilityである", (name) => {
     expect(getCapabilityDefinition(name)).toMatchObject({
       tool: name,
-      executor: "host",
+      executor: name.startsWith("arxiv-") ? "runtime" : "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
       materializeArgs: expect.any(Function),
@@ -268,8 +268,8 @@ describe("resolveTools", () => {
 
   it("schema由来のvalidationは型を検証し、executorのclampを妨げない", () => {
     const capability = getCapabilityDefinition("list-issues");
-    expect(capability?.executor).toBe("host");
-    if (!capability || capability.executor !== "host") return;
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
     expect(capability.validateArgs({ owner: "o", repo: "r", limit: 99 })).toBe(
       true,
     );
@@ -283,8 +283,8 @@ describe("resolveTools", () => {
 
   it("executorが正規化しないschema制約はhost境界で維持する", () => {
     const capability = getCapabilityDefinition("arxiv-survey");
-    expect(capability?.executor).toBe("host");
-    if (!capability || capability.executor !== "host") return;
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
     expect(
       capability.validateArgs({
         queries: Array.from({ length: 9 }, () => "q"),
