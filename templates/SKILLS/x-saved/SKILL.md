@@ -3,7 +3,7 @@ name: x-saved
 description: "Search and triage locally saved X/Twitter likes and bookmarks. Use for remembered X posts, saved-item search, recent bookmark/like review, or marking items keep/try/done/ignore."
 ---
 
-Use the local `/x-saved/x-saved.sqlite` through the bundled script. Do not access BirdClaw credentials, its host database, or X directly from this skill.
+Use the local `/x-saved/x-saved.sqlite` through the bundled script. Do not access credentials or X directly from this skill.
 
 ```bash
 python3 SKILLS/x-saved/scripts/x-saved.py status
@@ -39,6 +39,6 @@ Statuses:
 
 - Search local data first when the user refers to an X post they previously liked/bookmarked.
 - `seen_liked` / `seen_bookmarked` mean the relationship was observed at least once; X-side removal does not erase local history.
-- For a triage cron, call `status` first. If the latest sync failed or is stale, report that instead of claiming there were no new items.
+- For a triage cron, call `status` first to inspect the local database state.
 - Inspect external links with an allowed web-reading skill only when the post itself is insufficient to classify it.
 - In scheduled triage, process a bounded batch and mark every reviewed item. If nothing is worth surfacing, return `<NO_REPLY>` when the cron permits it.
