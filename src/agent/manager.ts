@@ -5,7 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentTimeoutMs } from "../config/agent-config.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
-import { validateAgentConfig } from "../config/agent-validation.js";
+import {
+  validateAgentConfig,
+  validateApprovalRequiredTools,
+} from "../config/agent-validation.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -16,9 +19,14 @@ import {
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
-import { createToolProxyRun } from "../proxy/tool-proxy-server.js";
+import { usesAnthropicOAuth } from "../proxy/provider-auth.js";
+import {
+  createToolProxyRun,
+  type TrustedDiscordDestination,
+} from "../proxy/tool-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
-import { hostCapabilityNames, resolveTools } from "../tools/registry.js";
+import { resolveTools } from "../tools/registry.js";
+import { runCapabilityNames } from "../tools/skill-capabilities.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,9 +37,8 @@ import {
   registerActiveRun,
   stopActiveRun,
 } from "./active-run-registry.js";
-import { resolveBaseUrl, resolveModel, validateModel } from "./model.js";
-
-export { resolveBaseUrl, resolveModel, validateModel };
+import { resolveBaseUrl, validateModel } from "./model.js";
+import { sandboxNetworkArgs } from "./sandbox-network.js";
 
 export type AgentRunStatus = "running" | "completed" | "failed";
 
@@ -94,14 +101,6 @@ export interface AgentExecutionTiming {
   toolCallKey?: string;
 }
 
-declare global {
-  interface PromiseConstructor {
-    withResolvers<T>(): {
-      promise: Promise<T>;
-      resolve: (value?: T | PromiseLike<T>) => void;
-    };
-  }
-}
 const DISCORD_EVENT_PREFIX = "__DISCORD_EVENT__:";
 const RUNNER_RUN_COMPLETE_MARKER = "__AGENT_RUN_COMPLETE__";
 const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
@@ -445,6 +444,7 @@ function buildSanitizedCredentialJson(
     "github",
     "graph",
     "google-calendar",
+    "reddit",
   ]);
   for (const entry of creds) {
     if (
@@ -477,17 +477,19 @@ function buildSanitizedCredentialJson(
       google: _google,
       redditCookie: _redditCookie,
       auth: _auth,
+      sdkAuth: _sdkAuth,
       ...rest
     } = entry;
     sanitized.push({
       ...rest,
+      ...(usesAnthropicOAuth(entry, process.env[setEnvVars[0] ?? ""])
+        ? { sdkAuth: "anthropic-oauth" }
+        : {}),
       baseUrl: `http://host.docker.internal:${proxyPort}/${entry.provider}`,
     });
   }
   return JSON.stringify(sanitized);
 }
-
-export { buildExtraMountArgs } from "../config/mounts.js";
 
 // groupName ごとの mounts 解決結果（docker -v 引数）のキャッシュ。
 // group-config.ts と同じ「起動時に1回だけロード、再起動まで反映されない」方針に合わせ、
@@ -580,6 +582,7 @@ export interface SendMessageOptions {
   onContainerStarted?: () => void | Promise<void>;
   signal?: AbortSignal;
   configOverride?: Partial<AgentConfig>;
+  trustedDiscordDestination?: TrustedDiscordDestination;
   systemPromptSnapshotContent?: string;
   systemPromptSnapshotPresent?: boolean;
   memorySnapshotPresent?: boolean;
@@ -594,44 +597,12 @@ export interface SendMessageOptions {
   heldLlmProvider?: string;
 }
 
-export function sendMessage(
-  groupName: string,
-  sessionId: string,
-  content: string,
-  options?: SendMessageOptions,
-): Promise<string>;
-export function sendMessage(
-  groupName: string,
-  sessionId: string,
-  content: string,
-  onDiscordEvent?: (event: DiscordEvent) => void,
-  attachments?: AttachmentRef[],
-  onExecutionTiming?: (timing: AgentExecutionTiming) => void,
-): Promise<string>;
 export async function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
-  optionsOrOnDiscordEvent?:
-    | SendMessageOptions
-    | ((event: DiscordEvent) => void),
-  legacyAttachments?: AttachmentRef[],
-  legacyOnExecutionTiming?: (timing: AgentExecutionTiming) => void,
+  options: SendMessageOptions = {},
 ): Promise<string> {
-  const isLegacyCall =
-    typeof optionsOrOnDiscordEvent === "function" ||
-    legacyAttachments !== undefined ||
-    legacyOnExecutionTiming !== undefined;
-  const options: SendMessageOptions = isLegacyCall
-    ? {
-        onDiscordEvent:
-          typeof optionsOrOnDiscordEvent === "function"
-            ? optionsOrOnDiscordEvent
-            : undefined,
-        attachments: legacyAttachments,
-        onExecutionTiming: legacyOnExecutionTiming,
-      }
-    : (optionsOrOnDiscordEvent ?? {});
   const {
     onDiscordEvent,
     attachments,
@@ -647,6 +618,7 @@ export async function sendMessage(
     systemPromptAppend,
     enableBotTool,
     heldLlmProvider,
+    trustedDiscordDestination,
   } = options;
   const executionStartedAt = Date.now();
   const groupsEntry = await findGroupByName(groupName);
@@ -666,7 +638,8 @@ export async function sendMessage(
   }
 
   try {
-    resolveTools(effectiveConfig.tools ?? []);
+    resolveTools(effectiveConfig.tools);
+    validateApprovalRequiredTools(effectiveConfig);
   } catch (err) {
     throw new NonRetryableError(
       `設定エラー: ${err instanceof Error ? err.message : "不明なエラー"}`,
@@ -757,15 +730,24 @@ export async function sendMessage(
   const agentTimeoutMs = await loadAgentTimeoutMs();
   const internalRequest =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
-      ? createInternalRequestConfig?.(groupName, heldLlmProvider)
+      ? createInternalRequestConfig?.(
+          groupName,
+          heldLlmProvider,
+          trustedDiscordDestination,
+        )
       : undefined;
-  const hostCapabilities = hostCapabilityNames(effectiveConfig.tools ?? []);
+  const capabilities = runCapabilityNames(effectiveConfig);
   const toolProxyRun =
-    storedToolProxyPort === null || hostCapabilities.length === 0
+    storedToolProxyPort === null || capabilities.length === 0
       ? undefined
       : createToolProxyRun(
           `${groupName}:${sessionId}:${randomUUID()}`,
-          hostCapabilities,
+          capabilities,
+          {
+            approvalRequiredCapabilities:
+              effectiveConfig.approvalRequiredTools ?? [],
+            trustedDiscordDestination,
+          },
         );
   const payload = JSON.stringify({
     groupName,
@@ -830,9 +812,15 @@ export async function sendMessage(
     RUNNER_CONTAINER_LABEL,
     "--memory=512m",
     "--cpus=1",
-    "--user",
-    `${process.getuid?.()}:${process.getgid?.()}`,
-    "--add-host=host.docker.internal:host-gateway",
+    // The trusted entrypoint installs the namespace firewall, then drops to
+    // the host identity with an empty capability bounding set before Node runs.
+    ...sandboxNetworkArgs([
+      proxyPort,
+      ...(internalRequest ? [internalRequest.port] : []),
+      ...(toolProxyRun && storedToolProxyPort !== null
+        ? [storedToolProxyPort]
+        : []),
+    ]),
     "-v",
     `${path.join(ROOT, "data/sessions", groupName)}:/sessions/${groupName}`,
     "-v",
@@ -845,7 +833,16 @@ export async function sendMessage(
     "HOME=/tmp",
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
+    ...(toolProxyRun
+      ? [
+          "-e",
+          `TOOL_PROXY_URL=${toolProxyRun.url}`,
+          "-e",
+          `TOOL_PROXY_TOKEN=${toolProxyRun.token}`,
+        ]
+      : []),
     RUNNER_IMAGE,
+    "/app/sandbox-entrypoint.sh",
     "node",
     "/app/runner.mjs",
   ];

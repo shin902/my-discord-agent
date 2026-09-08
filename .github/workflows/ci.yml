@@ -29,5 +29,21 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: Build Tool Runtime
+        run: pnpm build:tool-runtime
+
+      - name: Build Tool Runtime image
+        run: docker build -f Dockerfile.tool-runtime -t my-discord-agent-tool-runtime:ci .
+
+      - name: Build Agent Runner
+        run: pnpm build:runner
+
+      - name: Build Agent Runner image
+        run: docker build -t my-discord-agent-runner:ci .
+
       - name: Test
+        env:
+          DOTENV_CONFIG_PATH: /dev/null
+          TOOL_RUNTIME_TEST_IMAGE: my-discord-agent-tool-runtime:ci
+          SANDBOX_NETWORK_TEST_IMAGE: my-discord-agent-runner:ci
         run: pnpm test

@@ -69,4 +69,10 @@ pnpm discord:deploy guild <guild-id>
 
 
 
+## Slash Command extension contract
+
+- Add one module under `src/discord/commands/` exporting `command: DiscordCommandDefinition`; its `data` is a `SlashCommandBuilder` and its `execute(interaction, context)` delegates through the Discord adapter (`src/discord/command-handlers.ts`) to the plain-request use cases in `src/application/discord-command-service.ts`. Register the module in `src/discord/command-registry.ts`; adapters must not import config, queue repositories, sessions, or `AgentManager`.
+- `src/discord/interaction-router.ts` owns lookup and unexpected-error logging. Commands decide when to defer and use `editReply`; validation and expected failures use an ephemeral `reply` (or edit after defer). The runtime only registers the router and does not deploy commands.
+- Verify with `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Deployment is a separate operator action as described above.
+
 このドキュメントは https://github.com/karaage0703/xangi/blob/main/docs/discord-setup.md このドキュメントを元に最新の情報に変更した上でこのリポジトリ用に最適化したものです。

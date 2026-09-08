@@ -8,6 +8,8 @@ RUN apk add --no-cache \
     jq \
     git \
     github-cli \
+    iptables \
+    util-linux \
     tzdata \
     sqlite
 
@@ -24,12 +26,13 @@ RUN apk add --no-cache --virtual .native-build python3 make g++ && \
     apk del .native-build
 
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir \
-    yt-dlp \
-    feedparser \
-    md2html-phuker
+    /opt/venv/bin/pip install --no-cache-dir md2html-phuker
 
 ENV PATH="/opt/venv/bin:$PATH"
 ENV TZ="Asia/Tokyo"
 
 COPY dist/sandbox/runner.bundle.mjs ./runner.mjs
+
+COPY dist/sandbox/tool-proxy-cli.mjs ./tool-proxy-cli.mjs
+RUN chmod 755 /app/tool-proxy-cli.mjs && ln -s /app/tool-proxy-cli.mjs /usr/local/bin/tool-proxy
+COPY scripts/sandbox-entrypoint.sh ./sandbox-entrypoint.sh

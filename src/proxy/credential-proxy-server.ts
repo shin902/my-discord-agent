@@ -14,7 +14,8 @@ import {
   initGoogleAuth,
 } from "./google-auth.js";
 import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
-import { getRedditCookieHeader } from "./reddit-cookie-store.js";
+import { nativeProviderAuth, usesAnthropicOAuth } from "./provider-auth.js";
+import type { TrustedDiscordDestination } from "./tool-proxy-server.js";
 
 class UpstreamTimeoutError extends Error {
   constructor(message?: string) {
@@ -28,6 +29,8 @@ interface InternalRequestAuthorization {
   scope: string;
   /** Provider whose serial lock is held by the parent run, if any. */
   heldProvider?: string;
+  /** Trusted Discord destination captured outside the sandbox. */
+  trustedDiscordDestination?: TrustedDiscordDestination;
 }
 const internalRequestTokens = new Map<string, InternalRequestAuthorization>();
 let internalRequestHandler:
@@ -36,6 +39,7 @@ let internalRequestHandler:
       res: ServerResponse,
       scope: string,
       heldProvider?: string,
+      trustedDiscordDestination?: TrustedDiscordDestination,
     ) => Promise<void>)
   | null = null;
 
@@ -52,6 +56,7 @@ export function registerInternalRequestHandler(
     res: ServerResponse,
     scope: string,
     heldProvider?: string,
+    trustedDiscordDestination?: TrustedDiscordDestination,
   ) => Promise<void>,
 ): void {
   internalRequestHandler = handler;
@@ -61,10 +66,17 @@ export function registerInternalRequestHandler(
 export function createInternalRequestConfig(
   scope: string,
   heldProvider?: string,
+  trustedDiscordDestination?: TrustedDiscordDestination,
 ): InternalRequestConfig | undefined {
   if (proxyPort === null) return undefined;
   const token = randomUUID();
-  internalRequestTokens.set(token, { scope, heldProvider });
+  internalRequestTokens.set(token, {
+    scope,
+    heldProvider,
+    ...(trustedDiscordDestination
+      ? { trustedDiscordDestination: { ...trustedDiscordDestination } }
+      : {}),
+  });
   const revoke = () => {
     internalRequestTokens.delete(token);
   };
@@ -166,6 +178,15 @@ async function handleRequest(
     if (k.toLowerCase() !== "host") headers[k] = v;
   }
 
+  const nativeAuth = nativeProviderAuth(entry);
+  if (entry.msal || entry.google || entry.envVars?.length) {
+    if (nativeAuth === "anthropic-messages") delete headers["x-api-key"];
+    if (nativeAuth === "google-generative-ai") {
+      delete headers["x-goog-api-key"];
+      parsedTarget.searchParams.delete("key");
+    }
+  }
+
   if (entry.msal) {
     // MSALトークン注入（Graph API用）
     let token: string;
@@ -202,25 +223,6 @@ async function handleRequest(
     }
     delete headers.authorization;
     headers.authorization = `Bearer ${token}`;
-  } else if (entry.redditCookie) {
-    // Reddit クッキー注入（agent-reach の reddit サービス用）
-    let cookieHeader: string;
-    try {
-      cookieHeader = await getRedditCookieHeader(
-        entry.provider,
-        entry.redditCookie,
-      );
-    } catch (err) {
-      console.error(
-        `[credential-proxy] reddit cookie 取得失敗: ${err instanceof Error ? err.message : err}`,
-      );
-      res.writeHead(502);
-      res.end("Reddit cookie unavailable");
-      return;
-    }
-    delete headers.authorization;
-    delete headers.cookie;
-    headers.cookie = cookieHeader;
   } else if (entry.envVars && entry.envVars.length > 0) {
     const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
@@ -236,6 +238,14 @@ async function handleRequest(
           "base64",
         );
         headers.authorization = `Basic ${basicCredential}`;
+      } else if (
+        !entry.auth &&
+        nativeAuth === "anthropic-messages" &&
+        !usesAnthropicOAuth(entry, apiKey)
+      ) {
+        headers["x-api-key"] = apiKey;
+      } else if (!entry.auth && nativeAuth === "google-generative-ai") {
+        headers["x-goog-api-key"] = apiKey;
       } else {
         headers.authorization = `Bearer ${apiKey}`;
       }
@@ -327,6 +337,7 @@ export function createRequestHandler(
           res,
           authorization.scope,
           authorization.heldProvider,
+          authorization.trustedDiscordDestination,
         ).catch((err) => {
           if (!res.headersSent) {
             console.error(`[credential-proxy] internal request failed: ${err}`);
@@ -389,18 +400,6 @@ export async function initCredentialProxyServer(): Promise<number> {
             `[credential-proxy] Google Auth トークン取得に失敗しました (provider: ${entry.provider}): ${err instanceof Error ? err.message : err}`,
           );
         }
-      }
-    }
-    if (entry.redditCookie) {
-      try {
-        await getRedditCookieHeader(entry.provider, entry.redditCookie);
-        console.log(
-          `[credential-proxy] Reddit cookie OK for provider: ${entry.provider}`,
-        );
-      } catch (err) {
-        console.warn(
-          `[credential-proxy] ${err instanceof Error ? err.message : err}`,
-        );
       }
     }
   }

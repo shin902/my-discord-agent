@@ -7,7 +7,6 @@ PyYAML に依存しないよう、frontmatter で実際に使う型（文字列�
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass, field
 
 DEFAULT_TASKS_DIR = "/workspace/tasks"
@@ -120,8 +119,3 @@ def resolve_dir(argv: list[str]) -> str:
         if not a.startswith("-"):
             return a
     return DEFAULT_TASKS_DIR
-
-
-def die(msg: str) -> None:
-    print(msg, file=sys.stderr)
-    sys.exit(1)

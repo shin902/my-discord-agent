@@ -142,52 +142,6 @@ function validateReadRange({
   );
 }
 
-function splitLines(raw: string): string[] {
-  if (raw === "") return [];
-  const lines = raw.split("\n");
-  if (raw.endsWith("\n")) lines.pop();
-  return lines;
-}
-
-function selectLines(raw: string, range: ReadRange): SelectedLines {
-  const lines = splitLines(raw);
-  const totalLines = lines.length;
-  const { startLine, lineCount, tailCount } = range;
-
-  if (startLine !== undefined && startLine > totalLines) {
-    throw new Error(
-      `startLine ${startLine} は EOF を超えています（全 ${totalLines} 行）`,
-    );
-  }
-
-  let first = 0;
-  let last = totalLines;
-  if (tailCount !== undefined) {
-    first = Math.max(0, totalLines - tailCount);
-  } else if (startLine !== undefined) {
-    first = startLine - 1;
-    if (lineCount !== undefined) {
-      last = Math.min(totalLines, first + lineCount);
-    }
-  } else if (lineCount !== undefined) {
-    last = Math.min(totalLines, lineCount);
-  }
-
-  const selected = lines.slice(first, last);
-  const returnedLineCount = selected.length;
-  const actualStartLine = returnedLineCount === 0 ? 0 : first + 1;
-  const actualEndLine = returnedLineCount === 0 ? 0 : first + returnedLineCount;
-
-  return {
-    text: selected.join("\n"),
-    startLine: actualStartLine,
-    endLine: actualEndLine,
-    returnedLineCount,
-    totalLines,
-    eof: actualEndLine === totalLines,
-  };
-}
-
 /**
  * Read a ranged text result incrementally so source-file size does not affect
  * memory usage. The requested output is necessarily retained; an unbounded
@@ -331,7 +285,7 @@ export const readTool: AgentTool<typeof readParameters> = {
 
     // Unbounded reads retain the existing full-output behavior.
     const raw = await readFile(fp, "utf-8");
-    const selected = selectLines(raw, {});
+    const totalLines = countLines(raw);
     return {
       content: [{ type: "text", text: raw }],
       details: {
@@ -339,11 +293,11 @@ export const readTool: AgentTool<typeof readParameters> = {
         size: raw.length,
         characters: raw.length,
         returnedCharacters: raw.length,
-        startLine: selected.startLine,
-        endLine: selected.endLine,
-        returnedLineCount: selected.returnedLineCount,
-        totalLines: selected.totalLines,
-        eof: selected.eof,
+        startLine: totalLines === 0 ? 0 : 1,
+        endLine: totalLines,
+        returnedLineCount: totalLines,
+        totalLines,
+        eof: true,
       },
     };
   },

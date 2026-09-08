@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
   type: "json",
 };
@@ -19,11 +19,11 @@ import {
   agentReachTool,
   buildCommand,
   buildGitHubMarkdown,
-  buildRedditMarkdown,
   detectService,
   fetchFxPost,
   formatFxPost,
   formatHttpError,
+  formatRedditMarkdown,
   getHttpErrorBodyPath,
   hasFxContent,
   normalizeUrl,
@@ -237,79 +237,6 @@ describe("FxTwitter JSON helpers", () => {
 describe("buildCommand シェルエスケープ", () => {
   const out = "/workspace/fetched/out.md";
 
-  describe("reddit", () => {
-    beforeEach(() => {
-      process.env.CREDENTIAL_PROXY_JSON = JSON.stringify([
-        { provider: "reddit", baseUrl: "http://localhost:12345/reddit" },
-      ]);
-    });
-
-    afterEach(() => {
-      delete process.env.CREDENTIAL_PROXY_JSON;
-    });
-
-    it("通常URL → .json を付与し credential-proxy 経由のcurlを生成", () => {
-      const cmd = buildCommand(
-        "reddit",
-        "https://www.reddit.com/r/programming/comments/abc/",
-        out,
-      );
-      expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json",
-      );
-      expect(cmd).toContain("curl -sS");
-      expect(cmd).toContain("-w '%{http_code}'");
-    });
-
-    it("ルートURL → /.json を付与し credential-proxy のパスを維持", () => {
-      const cmd = buildCommand("reddit", "https://reddit.com/", out);
-      expect(cmd).toContain("http://localhost:12345/reddit/.json");
-      expect(cmd).not.toContain("http://localhost:12345/reddit.json");
-    });
-
-    it("既に .json で終わるURLは二重に付与しない", () => {
-      const cmd = buildCommand(
-        "reddit",
-        "https://www.reddit.com/r/programming/comments/abc.json",
-        out,
-      );
-      expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json",
-      );
-      expect(cmd).not.toContain(".json.json");
-    });
-
-    it("クエリ文字列を維持する", () => {
-      const cmd = buildCommand(
-        "reddit",
-        normalizeUrl(
-          "https://www.reddit.com/r/programming/comments/abc/?sort=top#comments",
-        ),
-        out,
-      );
-      expect(cmd).toContain(
-        "http://localhost:12345/reddit/r/programming/comments/abc.json?sort=top",
-      );
-    });
-
-    it("シングルクォートを含むURLをエスケープする", () => {
-      const url = "https://www.reddit.com/r/test/it's-test";
-      const cmd = buildCommand("reddit", url, out);
-      expect(cmd).toContain("'\\''");
-    });
-
-    it("CREDENTIAL_PROXY_JSON が未設定の場合は例外を投げる", () => {
-      delete process.env.CREDENTIAL_PROXY_JSON;
-      expect(() =>
-        buildCommand(
-          "reddit",
-          "https://www.reddit.com/r/programming/comments/abc/",
-          out,
-        ),
-      ).toThrow("CREDENTIAL_PROXY_JSON が設定されていません");
-    });
-  });
-
   it("youtube: 原語字幕だけを要求し、字幕取得失敗を握りつぶさない", () => {
     const cmd = buildCommand("youtube", parityCases.youtube.url, out);
     expect(cmd).toContain(
@@ -336,12 +263,6 @@ describe("buildCommand シェルエスケープ", () => {
     expect(cmd).toContain(".readme.md");
   });
 
-  it("github-repo: パスが /owner/repo 未満なら throw", () => {
-    expect(() =>
-      buildCommand("github-repo", "https://github.com/owner", out),
-    ).toThrow("GitHub URL からリポジトリを取得できません");
-  });
-
   it("web: 意味のある query を jina.ai への初回取得に渡す", () => {
     const cmd = buildCommand(
       "web",
@@ -353,12 +274,6 @@ describe("buildCommand シェルエスケープ", () => {
     );
     expect(cmd).toContain("curl -sS");
     expect(cmd).toContain("-w '%{http_code}'");
-  });
-
-  it("x-twitter: FxTwitter native fetch handler に委譲するため throw する", () => {
-    expect(() =>
-      buildCommand("x-twitter", "https://x.com/testuser/status/123456789", out),
-    ).toThrow("native fetch handler");
   });
 });
 
@@ -494,12 +409,8 @@ describe("getHttpErrorBodyPath", () => {
     );
   });
 
-  it.each([
-    "web",
-    "x-twitter",
-    "reddit",
-  ] as const)("%s は absPath をそのまま返す", (service) => {
-    expect(getHttpErrorBodyPath(service, absPath)).toBe(absPath);
+  it("web は absPath をそのまま返す", () => {
+    expect(getHttpErrorBodyPath("web", absPath)).toBe(absPath);
   });
 });
 
@@ -680,33 +591,87 @@ describe("buildGitHubMarkdown パース", () => {
   });
 });
 
-describe("buildRedditMarkdown パース", () => {
-  async function write(data: unknown): Promise<string> {
-    const path = join(tmpdir(), `reddit-test-${Date.now()}.json`);
-    await writeFile(path, JSON.stringify(data), "utf-8");
-    return path;
-  }
-
-  it("無効なJSONファイル → パース失敗メッセージ", async () => {
-    const path = join(tmpdir(), `reddit-test-invalid-${Date.now()}.json`);
-    await writeFile(path, "not json", "utf-8");
-    const result = await buildRedditMarkdown(path);
-    expect(result).toContain("JSON パース失敗");
-  });
-
-  it("存在しないファイル → 読み込み失敗メッセージ", async () => {
-    const result = await buildRedditMarkdown("/tmp/nonexistent-file.json");
-    expect(result).toContain("読み込みに失敗");
-  });
-
-  it("空配列 → 構造解析失敗メッセージ", async () => {
-    const path = await write([]);
-    const result = await buildRedditMarkdown(path);
+describe("formatRedditMarkdown", () => {
+  it("空配列 → 構造解析失敗メッセージ", () => {
+    const result = formatRedditMarkdown([]);
     expect(result).toContain("構造を解析できませんでした");
   });
 
-  it("スレッド: data[1]がないとコメントなしで返す", async () => {
-    const path = await write([
+  it("一覧: subreddit、スレッドURL、外部URLを保持する", () => {
+    const result = formatRedditMarkdown({
+      kind: "Listing",
+      data: {
+        children: [
+          {
+            data: {
+              title: "リンク投稿",
+              subreddit: "typescript",
+              author: "user1",
+              score: 42,
+              num_comments: 7,
+              permalink: "/r/typescript/comments/abc123/link_post/",
+              url: "https://example.com/article",
+            },
+          },
+          {
+            data: {
+              title: "セルフ投稿",
+              subreddit: "typescript",
+              author: "user2",
+              score: 8,
+              num_comments: 2,
+              permalink: "/r/typescript/comments/def456/self_post/",
+              url: "https://www.reddit.com/r/typescript/comments/def456/self_post/",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result).toContain(
+      "r/typescript | u/user1 | スコア: 42 | コメント: 7",
+    );
+    expect(result).toContain(
+      "スレッド: https://reddit.com/r/typescript/comments/abc123/link_post/",
+    );
+    expect(result).toContain("外部URL: https://example.com/article");
+    expect(result).toContain(
+      "スレッド: https://reddit.com/r/typescript/comments/def456/self_post/",
+    );
+    expect(result.match(/def456\/self_post\//g)).toHaveLength(1);
+  });
+
+  it.each([
+    ["空の permalink", ""],
+    ["絶対URLの permalink", "https://malicious.example/thread"],
+    ["相対パスの permalink", "r/typescript/comments/abc123/result/"],
+  ])("一覧: %s は無視して外部URLを保持する", (_label, permalink) => {
+    const result = formatRedditMarkdown({
+      kind: "Listing",
+      data: {
+        children: [
+          {
+            data: {
+              title: "リンク投稿",
+              subreddit: "typescript",
+              author: "user",
+              score: 1,
+              num_comments: 0,
+              permalink,
+              url: "https://example.com/article",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result).toContain("外部URL: https://example.com/article");
+    expect(result).not.toContain("スレッド:");
+    expect(result).not.toContain("https://reddit.com");
+  });
+
+  it("スレッド: data[1]がないとコメントなしで返す", () => {
+    const result = formatRedditMarkdown([
       {
         data: {
           children: [
@@ -725,13 +690,12 @@ describe("buildRedditMarkdown パース", () => {
         },
       },
     ]);
-    const result = await buildRedditMarkdown(path);
     expect(result).toContain("テスト投稿");
     expect(result).not.toContain("トップコメント");
   });
 
-  it("スレッド: data[1]にコメントがあれば含まれる", async () => {
-    const path = await write([
+  it("スレッド: data[1]にコメントがあれば含まれる", () => {
+    const result = formatRedditMarkdown([
       {
         data: {
           children: [
@@ -760,7 +724,6 @@ describe("buildRedditMarkdown パース", () => {
         },
       },
     ]);
-    const result = await buildRedditMarkdown(path);
     expect(result).toContain("トップコメント");
     expect(result).toContain("いいコメント");
   });

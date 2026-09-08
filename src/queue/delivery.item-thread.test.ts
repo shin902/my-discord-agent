@@ -132,7 +132,9 @@ describe("late item-thread delivery", () => {
         cronThreadId: "123",
       });
       expect(startThread).toHaveBeenCalledOnce();
-      expect(repo.getDelivery(jobId)).toMatchObject({
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+      ).toMatchObject({
         status: "sent",
         cronThreadId: "123",
         externalMessageId: "123",
@@ -175,10 +177,15 @@ describe("late item-thread delivery", () => {
         ready: () => true,
       });
       await worker.runOnce();
-      expect(repo.getDelivery(jobId)?.status).toBe("ambiguous");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId)
+          ?.status,
+      ).toBe("ambiguous");
       expect(repo.get(jobId)).toMatchObject({ cronThreadId: "789" });
 
-      const delivery = repo.getDelivery(jobId);
+      const delivery = repo
+        .listDeliveries()
+        .find((delivery) => delivery.jobId === jobId);
       if (!delivery) throw new Error("expected delivery");
       repo.resolveAmbiguousDelivery(delivery.id, "retry");
       await worker.runOnce();
@@ -186,7 +193,9 @@ describe("late item-thread delivery", () => {
       expect(parentSend).toHaveBeenCalledOnce();
       expect(startThread).toHaveBeenCalledOnce();
       expect(threadSend).toHaveBeenCalledOnce();
-      expect(repo.getDelivery(jobId)).toMatchObject({
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
+      ).toMatchObject({
         status: "sent",
         cronThreadId: "789",
       });

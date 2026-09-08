@@ -39,12 +39,8 @@ vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn(),
 }));
 
-const {
-  createRunnerLineRouter,
-  runAgentLoop,
-  waitForNetwork,
-  DEFAULT_SYSTEM_PROMPT,
-} = await import("./agent-runner.js");
+const { createRunnerLineRouter, runAgentLoop, DEFAULT_SYSTEM_PROMPT } =
+  await import("./agent-runner.js");
 const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
@@ -1738,42 +1734,6 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
     });
 
     stderrSpy.mockRestore();
-  });
-});
-
-describe("waitForNetwork", () => {
-  const noSleep = async () => {};
-
-  it("初回の lookup で成功すれば即座に返る", async () => {
-    const lookupFn = vi.fn().mockResolvedValue(undefined);
-    await waitForNetwork({ lookupFn, sleepFn: noSleep });
-    expect(lookupFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("失敗が続いても成功すればそこで止まる", async () => {
-    const lookupFn = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("ENOTFOUND"))
-      .mockRejectedValueOnce(new Error("ENOTFOUND"))
-      .mockResolvedValueOnce(undefined);
-    await waitForNetwork({ lookupFn, sleepFn: noSleep });
-    expect(lookupFn).toHaveBeenCalledTimes(3);
-  });
-
-  it("タイムアウトまで失敗し続けてもエラーにせず終了する", async () => {
-    const lookupFn = vi.fn().mockRejectedValue(new Error("ENOTFOUND"));
-    let now = 0;
-    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
-    const sleepFn = async () => {
-      now += 500;
-    };
-
-    await expect(
-      waitForNetwork({ lookupFn, sleepFn, timeoutMs: 1000, retryMs: 500 }),
-    ).resolves.toBeUndefined();
-    expect(lookupFn.mock.calls.length).toBeGreaterThan(1);
-
-    dateSpy.mockRestore();
   });
 });
 

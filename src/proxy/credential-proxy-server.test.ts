@@ -6,11 +6,13 @@ const makeReq = (
   url: string,
   headers: Record<string, string> = {},
   method = "POST",
+  body?: string,
 ) =>
   ({
     url,
     headers,
     method,
+    ...(body !== undefined ? { body } : {}),
     pipe: vi.fn(),
   }) as unknown as IncomingMessage;
 
@@ -518,71 +520,6 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
   });
 });
 
-describe("createRequestHandler: Reddit Cookie プロバイダー", () => {
-  let requestMock: ReturnType<typeof vi.fn>;
-
-  const REDDIT_CREDS: CredentialEntry[] = [
-    {
-      provider: "reddit",
-      baseUrl: "https://www.reddit.com",
-      redditCookie: { cookieFile: "data/reddit-cookies.json", maxAgeDays: 7 },
-    },
-  ];
-
-  beforeEach(() => {
-    vi.resetModules();
-    requestMock = vi.fn(() => ({ on: vi.fn(), pipe: vi.fn() }));
-    vi.doMock("node:http", () => ({
-      request: requestMock,
-      createServer: vi.fn(),
-    }));
-    vi.doMock("node:https", () => ({ request: requestMock }));
-  });
-
-  afterEach(() => {
-    vi.resetModules();
-  });
-
-  it("reddit プロバイダーは getRedditCookieHeader() の値を Cookie ヘッダーで注入する", async () => {
-    const getRedditCookieHeader = vi
-      .fn()
-      .mockResolvedValue("session=abc123; loid=xyz");
-    vi.doMock("./reddit-cookie-store.js", () => ({ getRedditCookieHeader }));
-    const { createRequestHandler } = await import(
-      "./credential-proxy-server.js"
-    );
-    const handler = createRequestHandler(REDDIT_CREDS, 30000);
-    const req = makeReq("/reddit/r/LocalLLaMA/comments/abc.json", {}, "GET");
-    const res = makeRes();
-    handler(req, res as unknown as ServerResponse);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(getRedditCookieHeader).toHaveBeenCalledWith(
-      "reddit",
-      REDDIT_CREDS[0]?.redditCookie,
-    );
-    const opts = requestMock.mock.calls[0]?.[0];
-    expect(opts?.headers.cookie).toBe("session=abc123; loid=xyz");
-  });
-
-  it("getRedditCookieHeader() が失敗したとき 502 を返す", async () => {
-    vi.doMock("./reddit-cookie-store.js", () => ({
-      getRedditCookieHeader: vi
-        .fn()
-        .mockRejectedValue(new Error("cookie missing")),
-    }));
-    const { createRequestHandler } = await import(
-      "./credential-proxy-server.js"
-    );
-    const handler = createRequestHandler(REDDIT_CREDS, 30000);
-    const req = makeReq("/reddit/r/LocalLLaMA/comments/abc.json", {}, "GET");
-    const res = makeRes();
-    handler(req, res as unknown as ServerResponse);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(res.writeHead).toHaveBeenCalledWith(502);
-    expect(res.end).toHaveBeenCalledWith("Reddit cookie unavailable");
-  });
-});
-
 describe("createRequestHandler: Authorization ヘッダ", () => {
   const originalEnv = process.env;
   let requestMock: ReturnType<typeof vi.fn>;
@@ -609,6 +546,121 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
   afterEach(() => {
     process.env = originalEnv;
     vi.resetModules();
+  });
+
+  it.each([
+    {
+      provider: "anthropic",
+      auth: undefined,
+      key: "host-key",
+      expected: { "x-api-key": "host-key" },
+    },
+    {
+      provider: "google",
+      auth: undefined,
+      key: "host-key",
+      expected: { "x-goog-api-key": "host-key" },
+    },
+    {
+      provider: "anthropic",
+      auth: { type: "bearer" as const },
+      key: "host-key",
+      expected: { authorization: "Bearer host-key" },
+    },
+    {
+      provider: "google",
+      auth: { type: "query-token" as const, queryParam: "key" },
+      key: "host-key",
+      expected: {},
+    },
+    { provider: "anthropic", auth: undefined, key: "", expected: {} },
+    { provider: "google", auth: undefined, key: "", expected: {} },
+  ])("replaces native $provider auth and honors explicit auth ($key, $auth)", async ({
+    provider,
+    auth,
+    key,
+    expected,
+  }) => {
+    process.env.NATIVE_TEST_KEY = key;
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const handler = createRequestHandler(
+      [
+        {
+          provider,
+          baseUrl: "http://fixture.test",
+          envVars: ["NATIVE_TEST_KEY"],
+          auth,
+        },
+      ],
+      30000,
+    );
+    const nativeHeader =
+      provider === "anthropic" ? "x-api-key" : "x-goog-api-key";
+    handler(
+      makeReq(`/${provider}/messages?key=placeholder`, {
+        authorization: "Bearer placeholder",
+        [nativeHeader]: "placeholder",
+      }),
+      makeRes(),
+    );
+    const opts = requestMock.mock.calls[0][0];
+    expect(opts.headers).toEqual(expected);
+    if (provider === "google") {
+      expect(opts.path).toBe(
+        auth?.type === "query-token" ? "/messages?key=host-key" : "/messages",
+      );
+    }
+  });
+
+  it.each([
+    ["anthropic", "msal"],
+    ["anthropic", "google"],
+    ["google", "msal"],
+    ["google", "google"],
+  ] as const)("removes native %s placeholders before %s OAuth injection", async (provider, oauth) => {
+    vi.doMock("./graph-auth.js", () => ({
+      initGraphAuth: vi.fn(),
+      getGraphAccessToken: vi.fn().mockResolvedValue("msal-token"),
+    }));
+    vi.doMock("./google-auth.js", () => ({
+      initGoogleAuth: vi.fn(),
+      getGoogleAccessToken: vi.fn().mockResolvedValue("google-token"),
+    }));
+    const { createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const entry: CredentialEntry = {
+      provider,
+      baseUrl: "http://fixture.test",
+      ...(oauth === "msal"
+        ? { msal: { tenantId: "tenant", clientId: "client", scopes: [] } }
+        : {
+            google: {
+              clientId: "client",
+              clientSecretEnvVar: "TEST_SECRET",
+              scopes: [],
+            },
+          }),
+    };
+    const nativeHeader =
+      provider === "anthropic" ? "x-api-key" : "x-goog-api-key";
+    createRequestHandler([entry], 30000)(
+      makeReq(`/${provider}/messages?key=local&alt=sse`, {
+        authorization: "Bearer local",
+        [nativeHeader]: "local",
+      }),
+      makeRes(),
+    );
+    await vi.waitFor(() => expect(requestMock).toHaveBeenCalledOnce());
+    const opts = requestMock.mock.calls[0][0];
+    expect(opts.headers).toEqual({ authorization: `Bearer ${oauth}-token` });
+    expect(opts.path).toBe(
+      provider === "google"
+        ? "/messages?alt=sse"
+        : "/messages?key=local&alt=sse",
+    );
   });
 
   it("envVars に設定済みの環境変数があれば Bearer トークンを注入する", async () => {
@@ -804,13 +856,26 @@ describe("internal agent route: scoped authorization", () => {
     const proxy = await setup();
     const handler = vi.fn().mockResolvedValue(undefined);
     proxy.registerInternalRequestHandler(handler);
-    const config = proxy.createInternalRequestConfig("main", "openai");
+    const destination = { botId: "secondary", channelId: "channel-1" };
+    const config = proxy.createInternalRequestConfig(
+      "main",
+      "openai",
+      destination,
+    );
     expect(config).toMatchObject({ port: 12345, token: expect.any(String) });
 
     serverRequestHandler?.(
-      makeReq("/__agent/bot", {
-        "x-agent-internal-token": config?.token ?? "",
-      }),
+      makeReq(
+        "/__agent/bot",
+        { "x-agent-internal-token": config?.token ?? "" },
+        "POST",
+        JSON.stringify({
+          trustedDiscordDestination: {
+            botId: "forged",
+            channelId: "forged",
+          },
+        }),
+      ),
       makeRes() as unknown as ServerResponse,
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -820,6 +885,24 @@ describe("internal agent route: scoped authorization", () => {
       expect.anything(),
       "main",
       "openai",
+      {
+        botId: "secondary",
+        channelId: "channel-1",
+      },
+    );
+
+    // Neither the request body nor the original object can override token-bound context.
+    destination.botId = "forged";
+    destination.channelId = "forged";
+    expect(handler).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "main",
+      "openai",
+      {
+        botId: "secondary",
+        channelId: "channel-1",
+      },
     );
 
     config?.revoke();
@@ -1003,78 +1086,5 @@ describe("initCredentialProxyServer: Google Auth 初期化", () => {
       expect.stringContaining("device flow timeout"),
     );
     errorSpy.mockRestore();
-  });
-});
-
-describe("initCredentialProxyServer: Reddit Cookie 初期化", () => {
-  const originalEnv = process.env;
-  const REDDIT_CREDS: CredentialEntry[] = [
-    {
-      provider: "reddit",
-      baseUrl: "https://www.reddit.com",
-      redditCookie: { cookieFile: "data/reddit-cookies.json", maxAgeDays: 7 },
-    },
-  ];
-
-  beforeEach(() => {
-    vi.resetModules();
-    process.env = { ...originalEnv };
-    vi.doMock("node:http", () => ({
-      createServer: vi.fn(() => ({
-        on: vi.fn(),
-        listen: vi.fn((_port: number, _host: string, cb: () => void) => cb()),
-        address: vi.fn(() => ({ port: 12345 })),
-      })),
-      request: vi.fn(),
-    }));
-    vi.doMock("node:https", () => ({ request: vi.fn() }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue(REDDIT_CREDS),
-    }));
-    vi.doMock("../config/proxy-config.js", () => ({
-      loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
-    }));
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-    vi.resetModules();
-  });
-
-  it("クッキーが有効なとき起動ログを出す", async () => {
-    vi.doMock("./reddit-cookie-store.js", () => ({
-      getRedditCookieHeader: vi.fn().mockResolvedValue("session=abc"),
-    }));
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    const { initCredentialProxyServer } = await import(
-      "./credential-proxy-server.js"
-    );
-    await initCredentialProxyServer();
-
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Reddit cookie OK for provider: reddit"),
-    );
-    logSpy.mockRestore();
-  });
-
-  it("クッキー取得に失敗してもサーバー起動は継続し警告を出す", async () => {
-    vi.doMock("./reddit-cookie-store.js", () => ({
-      getRedditCookieHeader: vi
-        .fn()
-        .mockRejectedValue(new Error("cookie file missing")),
-    }));
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    const { initCredentialProxyServer } = await import(
-      "./credential-proxy-server.js"
-    );
-    const port = await initCredentialProxyServer();
-
-    expect(port).toBe(12345);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("cookie file missing"),
-    );
-    warnSpy.mockRestore();
   });
 });

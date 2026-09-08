@@ -4,8 +4,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Client } from "discord.js";
 import { z } from "zod";
+import { resolveAgentConfig } from "../config/agent-resolution.js";
+import { validateApprovalRequiredTools } from "../config/agent-validation.js";
 import { loadRawCron } from "../config/config.js";
-import { AgentConfigSchema } from "../config/groups.js";
+import { AgentConfigSchema, findGroupByName } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import {
   getDefaultDiscordClient,
@@ -245,6 +247,8 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
     if (job.enabled && !job.handler) {
       if (job.tools !== undefined) resolveTools(job.tools);
       if (job.mounts !== undefined) buildExtraMountArgs(job.mounts);
+      const group = await findGroupByName(job.groupName as string);
+      validateApprovalRequiredTools(resolveAgentConfig(group, job));
     }
   }
   return jobs;

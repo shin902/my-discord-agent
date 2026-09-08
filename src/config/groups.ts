@@ -31,11 +31,26 @@ export const MountConfigSchema = z.object({
   readOnly: z.boolean().optional(),
 });
 
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
+export type MountConfig = z.infer<typeof MountConfigSchema>;
+
+/** Effective agent configuration after all trusted layers are resolved. */
+export interface AgentConfig {
+  model?: ModelConfig;
+  tools: string[];
+  approvalRequiredTools?: string[];
+  skills?: SkillSelection;
+  mounts?: MountConfig[];
+}
+
 // 各信頼済み設定階層で指定できるエージェント実行設定。
 // オブジェクト・配列を含め、階層解決時はフィールド単位で完全置換する。
+// tools は継承元で指定できるため、各入力階層では optional のままにする。
 export const AgentConfigSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
+  approvalRequiredTools: z.array(z.string()).optional(),
   skills: SkillSelectionSchema.optional(),
   mounts: z.array(MountConfigSchema).optional(),
 });
@@ -71,10 +86,6 @@ function parseGroups(raw: unknown): GroupConfig[] {
 }
 
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
-export type ModelConfig = z.infer<typeof ModelConfigSchema>;
-export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
-export type MountConfig = z.infer<typeof MountConfigSchema>;
-export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type AgentRuntimeConfig = z.infer<typeof AgentRuntimeConfigSchema>;
 export type GroupConfig = z.infer<typeof GroupConfigSchema>;
 

@@ -59,6 +59,7 @@ describe("cron AgentConfig override", () => {
         ...base,
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: [],
+        approvalRequiredTools: [],
         skills: [],
         mounts: [],
       },
@@ -69,6 +70,7 @@ describe("cron AgentConfig override", () => {
         configOverride: {
           model: { provider: "zai", modelId: "glm-4.7-flash" },
           tools: [],
+          approvalRequiredTools: [],
           skills: [],
           mounts: [],
         },

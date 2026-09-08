@@ -124,44 +124,6 @@ def save_state(state_file: Path, state: dict):
     os.replace(tmp, state_file)
 
 
-def extract_from_session(filepath: Path, session_id: str, skip_lines: int = 0):
-    """セッションを skip_lines の続きから読み、(抽出メッセージ, 走査した総行数) を返す。
-
-    総行数は「この open で実際に EOF まで読んだ行数」なので、これを lines_read に
-    使えば出力範囲としおりが必ず同一 open 内で整合する（読了後に別 open で数え直す
-    と、その隙の追記分までしおりが進み恒久的に取りこぼす TOCTOU を生むため避ける）。
-    """
-    messages = []
-    lines_total = 0
-    with open(filepath, encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            lines_total = i + 1
-            if i < skip_lines:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            if obj.get("role") != "user":
-                continue
-
-            content = normalize_content(obj.get("content", ""))
-            if content is None:
-                continue
-            if content.startswith(NOISE_PREFIXES):
-                continue
-            if len(content) <= MIN_LENGTH:
-                continue
-
-            messages.append({
-                "ts": ts_ms_to_iso(obj.get("timestamp")),
-                "session_id": session_id,
-                "content": content[:2000],
-            })
-    return messages, lines_total
-
-
 def read_recent_log(log_file: Path, days: int):
     """interest-log.jsonl のうち直近 days 日分の行だけを stdout へ出す。
 

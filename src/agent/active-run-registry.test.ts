@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  acquireActiveRun,
   activeRunCount,
   clearActiveRunsForTests,
   registerActiveRun,
-  steerActiveRun,
   stopActiveRun,
 } from "./active-run-registry.js";
 
@@ -15,28 +15,11 @@ describe("active run registry", () => {
     const cleanup = registerActiveRun("group-a", "session-a", control);
 
     await expect(
-      steerActiveRun("group-a", "session-a", "change direction"),
-    ).resolves.toBe("accepted");
+      acquireActiveRun("group-a", "session-a")?.steer("change direction"),
+    ).resolves.toBe(true);
     expect(control).toHaveBeenCalledWith("change direction");
-    await expect(
-      steerActiveRun("group-a", "session-b", "wrong session"),
-    ).resolves.toBe("unavailable");
-    await expect(
-      steerActiveRun("group-b", "session-a", "wrong group"),
-    ).resolves.toBe("unavailable");
-    cleanup();
-  });
-
-  it("reports rejected delivery without removing the active run", async () => {
-    const cleanup = registerActiveRun(
-      "group-a",
-      "session-a",
-      vi.fn().mockResolvedValue(false),
-    );
-    await expect(
-      steerActiveRun("group-a", "session-a", "rejected"),
-    ).resolves.toBe("rejected");
-    expect(activeRunCount()).toBe(1);
+    expect(acquireActiveRun("group-a", "session-b")).toBeUndefined();
+    expect(acquireActiveRun("group-b", "session-a")).toBeUndefined();
     cleanup();
   });
 
@@ -96,16 +79,12 @@ describe("active run registry", () => {
     cleanup();
   });
 
-  it("rejects steering without an active run and cleans up", async () => {
-    await expect(
-      steerActiveRun("group-a", "session-a", "no target"),
-    ).resolves.toBe("unavailable");
+  it("returns no handle without an active run and cleans up", () => {
+    expect(acquireActiveRun("group-a", "session-a")).toBeUndefined();
     const cleanup = registerActiveRun("group-a", "session-a", vi.fn());
     expect(activeRunCount()).toBe(1);
     cleanup();
     expect(activeRunCount()).toBe(0);
-    await expect(
-      steerActiveRun("group-a", "session-a", "after cleanup"),
-    ).resolves.toBe("unavailable");
+    expect(acquireActiveRun("group-a", "session-a")).toBeUndefined();
   });
 });

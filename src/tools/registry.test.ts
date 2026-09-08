@@ -2,18 +2,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { agentReachTool } from "./agent-reach.js";
-import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
-import { listCalendarsTool } from "./calendar.js";
-import { dispatchCapability } from "./capability.js";
-import { dateTool } from "./date.js";
-import {
-  listIssueCommentsTool,
-  listPullRequestCommentsTool,
-  readPullRequestTool,
-} from "./github.js";
+import { arxivSearchTool } from "./arxiv.js";
+import { dispatchCapability, materializeCapabilityArgs } from "./capability.js";
 import { wrapToolOutput } from "./output.js";
 import {
   type AgentToolFactory,
@@ -21,11 +13,11 @@ import {
   type RuntimeToolFactories,
   resolveTools,
 } from "./registry.js";
-import { tavilySearchTool } from "./tavily.js";
-import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("resolveTools", () => {
-  it("静的toolを指定順に解決する", () => {
+  it("sandbox / host toolを指定順に解決し、重複を維持する", () => {
     expect(
       resolveTools(["read", "date", "grep"]).map((tool) => tool.name),
     ).toEqual(["read", "date", "grep"]);
@@ -33,18 +25,25 @@ describe("resolveTools", () => {
       "date",
       "date",
     ]);
+    expect(
+      resolveTools([
+        "get-weather-forecast",
+        "date",
+        "get-current-weather",
+        "arxiv-survey",
+        "arxiv-search",
+      ]).map((tool) => tool.name),
+    ).toEqual([
+      "get-weather-forecast",
+      "date",
+      "get-current-weather",
+      "arxiv-survey",
+      "arxiv-search",
+    ]);
   });
 
-  it("date は sandbox capability dispatcher 経由で既存toolを返す", async () => {
+  it("date は現在時刻をAgent-facing形式で返す", async () => {
     const [tool] = resolveTools(["date"]);
-
-    expect(tool).toBe(dateTool);
-    expect(tool).toMatchObject({
-      name: dateTool.name,
-      label: dateTool.label,
-      description: dateTool.description,
-      parameters: dateTool.parameters,
-    });
 
     const result = await tool.execute("call-1", {});
     expect(result.content).toHaveLength(1);
@@ -101,24 +100,131 @@ describe("resolveTools", () => {
     );
   });
 
+  it("materializer未指定のhost capabilityはargs identityを維持する", () => {
+    const args = { value: "unchanged" };
+    const definition = {
+      tool: "host-test",
+      executor: "host" as const,
+      factory: () => undefined,
+      validateArgs: () => true,
+    };
+
+    expect(materializeCapabilityArgs(definition, args)).toBe(args);
+  });
+
+  it("host capability argsのdefault/clamp/未知property除去を一度に実効化する", () => {
+    const capability = getCapabilityDefinition("get-weather-forecast");
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
+    const rawArgs = { location: "東京", days: 10, ignored: "raw-only" };
+
+    expect(materializeCapabilityArgs(capability, rawArgs)).toEqual({
+      location: "東京",
+      days: 7,
+    });
+    expect(rawArgs).toEqual({
+      location: "東京",
+      days: 10,
+      ignored: "raw-only",
+    });
+    expect(materializeCapabilityArgs(capability, { location: "東京" })).toEqual(
+      { location: "東京", days: 3 },
+    );
+  });
+
+  it.each([
+    [
+      "tavily-search",
+      { query: "q" },
+      {
+        query: "q",
+        max_results: 5,
+        search_depth: "basic",
+        include_answer: true,
+        topic: "general",
+      },
+    ],
+    [
+      "arxiv-search",
+      { query: "q" },
+      { query: "q", max_results: 10, sort: "relevance" },
+    ],
+    [
+      "arxiv-survey",
+      { queries: ["q"] },
+      { queries: ["q"], max_results: 30, sort: "submitted" },
+    ],
+    [
+      "list-issues",
+      { owner: "o", repo: "r" },
+      { owner: "o", repo: "r", state: "open", limit: 10 },
+    ],
+    ["list-emails", {}, { limit: 10, folder: "inbox", unreadOnly: false }],
+    ["read-email", { id: "m" }, { id: "m", markAsRead: true }],
+    ["read-event", { eventId: "e" }, { eventId: "e", calendarId: "primary" }],
+    [
+      "create-event",
+      { summary: "s", start: "2026-09-05", end: "2026-09-06" },
+      {
+        summary: "s",
+        start: "2026-09-05",
+        end: "2026-09-06",
+        calendarId: "primary",
+      },
+    ],
+    [
+      "update-event",
+      { eventId: "e", summary: "s" },
+      { eventId: "e", summary: "s", calendarId: "primary" },
+    ],
+    ["delete-event", { eventId: "e" }, { eventId: "e", calendarId: "primary" }],
+  ])("%s は既存executorのdefaultをapproval前に実効化する", (name, raw, expected) => {
+    const capability = getCapabilityDefinition(name);
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
+
+    expect(materializeCapabilityArgs(capability, raw)).toEqual(expected);
+  });
+
+  it("動的defaultはmaterialize時に固定する", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-05T01:02:03.456Z"));
+    try {
+      const capability = getCapabilityDefinition("list-events");
+      expect(["host", "runtime"]).toContain(capability?.executor);
+      if (!capability || capability.executor === "sandbox") return;
+
+      expect(materializeCapabilityArgs(capability, {})).toEqual({
+        timeMin: "2026-09-05T01:02:03.456Z",
+        maxResults: 10,
+        calendarId: "primary",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("registry is the source of host weather capability definitions", () => {
     expect(getCapabilityDefinition("get-current-weather")).toMatchObject({
       tool: "get-current-weather",
       executor: "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
     expect(getCapabilityDefinition("get-weather-forecast")).toMatchObject({
       tool: "get-weather-forecast",
       executor: "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
     expect(getCapabilityDefinition("tavily-search")).toMatchObject({
       tool: "tavily-search",
       executor: "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
     expect(getCapabilityDefinition("does-not-exist")).toBeUndefined();
   });
@@ -140,12 +246,13 @@ describe("resolveTools", () => {
     "create-event",
     "update-event",
     "delete-event",
-  ])("%s はhost capabilityである", (name) => {
+  ])("%s はProxy capabilityである", (name) => {
     expect(getCapabilityDefinition(name)).toMatchObject({
       tool: name,
-      executor: "host",
+      executor: name.startsWith("arxiv-") ? "runtime" : "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
+      materializeArgs: expect.any(Function),
     });
   });
 
@@ -161,8 +268,8 @@ describe("resolveTools", () => {
 
   it("schema由来のvalidationは型を検証し、executorのclampを妨げない", () => {
     const capability = getCapabilityDefinition("list-issues");
-    expect(capability?.executor).toBe("host");
-    if (!capability || capability.executor !== "host") return;
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
     expect(capability.validateArgs({ owner: "o", repo: "r", limit: 99 })).toBe(
       true,
     );
@@ -176,8 +283,8 @@ describe("resolveTools", () => {
 
   it("executorが正規化しないschema制約はhost境界で維持する", () => {
     const capability = getCapabilityDefinition("arxiv-survey");
-    expect(capability?.executor).toBe("host");
-    if (!capability || capability.executor !== "host") return;
+    expect(["host", "runtime"]).toContain(capability?.executor);
+    if (!capability || capability.executor === "sandbox") return;
     expect(
       capability.validateArgs({
         queries: Array.from({ length: 9 }, () => "q"),
@@ -189,68 +296,57 @@ describe("resolveTools", () => {
     );
   });
 
-  it("weather capability routes through the host executor contract", () => {
-    const tools = resolveTools(
-      ["get-current-weather", "get-weather-forecast"],
-      {},
-      { toolProxyEndpoint: { url: "http://proxy/rpc", token: "token" } },
-    );
-
-    expect(tools.map((tool) => tool.name)).toEqual([
-      "get-current-weather",
-      "get-weather-forecast",
-    ]);
-    expect(tools[0]).not.toBe(getCurrentWeatherTool);
-    expect(tools[1]).not.toBe(getWeatherForecastTool);
-  });
-
-  it("tavily-search routes through the host executor contract", () => {
+  it.each([
+    { name: "get-current-weather", args: { location: "東京" } },
+    { name: "get-weather-forecast", args: { location: "東京", days: 3 } },
+    { name: "tavily-search", args: { query: "test" } },
+    { name: "agent-reach", args: { url: "https://example.com" } },
+    { name: "arxiv-search", args: { query: "test" } },
+    { name: "arxiv-survey", args: { queries: ["test"] } },
+    { name: "list-calendars", args: {} },
+    {
+      name: "list-issue-comments",
+      args: { owner: "o", repo: "r", issue_number: 1 },
+    },
+    {
+      name: "read-pull-request",
+      args: { owner: "o", repo: "r", pull_number: 1 },
+    },
+    {
+      name: "list-pull-request-comments",
+      args: { owner: "o", repo: "r", pull_number: 1 },
+    },
+  ])("$name はローカル実行せず指定したTool Proxyへ委譲する", async ({
+    name,
+    args,
+  }) => {
+    const response = {
+      content: [{ type: "text" as const, text: "host response" }],
+      details: { source: "host" },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ result: response })));
+    vi.stubGlobal("fetch", fetchMock);
     const [tool] = resolveTools(
-      ["tavily-search"],
+      [name],
       {},
-      { toolProxyEndpoint: { url: "http://proxy/rpc", token: "token" } },
+      { toolProxyEndpoint: { url: "http://proxy/rpc", token: "run-token" } },
     );
 
-    expect(tool?.name).toBe("tavily-search");
-    expect(tool).not.toBe(tavilySearchTool);
-  });
-
-  it("agent-reach を解決して agentReachTool を返す", () => {
-    expect(resolveTools(["agent-reach"])).toEqual([agentReachTool]);
-  });
-
-  it("arxiv-search / arxiv-survey をhost proxyとして解決する", () => {
-    const tools = resolveTools(["arxiv-search", "arxiv-survey"]);
-    expect(tools.map((tool) => tool.name)).toEqual([
-      arxivSearchTool.name,
-      arxivSurveyTool.name,
-    ]);
-    expect(tools[0]).not.toBe(arxivSearchTool);
-    expect(tools[1]).not.toBe(arxivSurveyTool);
-  });
-
-  it("list-calendars をhost proxyとして解決する", () => {
-    const [tool] = resolveTools(["list-calendars"]);
-    expect(tool?.name).toBe(listCalendarsTool.name);
-    expect(tool).not.toBe(listCalendarsTool);
-  });
-
-  it("list-issue-comments を解決して listIssueCommentsTool を返す", () => {
-    const [tool] = resolveTools(["list-issue-comments"]);
-    expect(tool?.name).toBe(listIssueCommentsTool.name);
-    expect(tool).not.toBe(listIssueCommentsTool);
-  });
-
-  it("read-pull-request を解決して readPullRequestTool を返す", () => {
-    const [tool] = resolveTools(["read-pull-request"]);
-    expect(tool?.name).toBe(readPullRequestTool.name);
-    expect(tool).not.toBe(readPullRequestTool);
-  });
-
-  it("list-pull-request-comments を解決して listPullRequestCommentsTool を返す", () => {
-    const [tool] = resolveTools(["list-pull-request-comments"]);
-    expect(tool?.name).toBe(listPullRequestCommentsTool.name);
-    expect(tool).not.toBe(listPullRequestCommentsTool);
+    expect(tool.name).toBe(name);
+    expect(await tool.execute("call-1", args)).toEqual(response);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, request] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://proxy/rpc");
+    expect(request).toMatchObject({
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer run-token",
+      },
+    });
+    expect(JSON.parse(request.body)).toEqual({ capability: name, args });
   });
 
   it("runtime factoryがないcontext-created toolは生成しない", () => {
@@ -366,16 +462,6 @@ describe("resolveTools", () => {
     }
   });
 
-  it("does not multi-wrap singleton tools", () => {
-    const [first] = resolveTools(["read"]);
-    const [second] = resolveTools(["read"]);
-    const [duplicateFirst, duplicateSecond] = resolveTools(["read", "read"]);
-
-    expect(second).toBe(first);
-    expect(duplicateFirst).toBe(first);
-    expect(duplicateSecond).toBe(first);
-  });
-
   it("wrapToolOutput is idempotent for a singleton and invokes its execute once", async () => {
     const execute = vi.fn(async () => ({
       content: [{ type: "text" as const, text: "small output" }],
@@ -389,9 +475,9 @@ describe("resolveTools", () => {
       execute,
     };
 
-    expect(wrapToolOutput(tool)).toBe(tool);
-    expect(wrapToolOutput(tool)).toBe(tool);
-    await tool.execute("call-1", {});
+    const wrapped = wrapToolOutput(tool);
+    const wrappedAgain = wrapToolOutput(wrapped);
+    await wrappedAgain.execute("call-1", {});
 
     expect(execute).toHaveBeenCalledTimes(1);
   });

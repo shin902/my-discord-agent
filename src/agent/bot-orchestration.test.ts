@@ -108,12 +108,17 @@ function invoke(
   res: ReturnType<typeof response>,
   heldProvider?: string,
   scope?: string,
+  trustedDiscordDestination?: {
+    botId: string;
+    channelId: string;
+  },
 ) {
   return handleBotToolRequest(
     req as unknown as import("node:http").IncomingMessage,
     res as unknown as import("node:http").ServerResponse,
     scope,
     heldProvider,
+    trustedDiscordDestination,
   );
 }
 
@@ -169,6 +174,40 @@ describe("handleBotToolRequest", () => {
       content: "調査結果",
       session: "task-abc123",
     });
+  });
+
+  it("internal contextのtrusted destinationをnested実行へ渡す", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({
+      coding: { group: "main", instructions: "code" },
+    });
+    sendMessage.mockResolvedValue("調査結果");
+    const req = new MockRequest(
+      JSON.stringify({
+        groupName: "main",
+        action: "run",
+        bot: "coding",
+        prompt: "inspect",
+      }),
+    );
+    const res = response();
+
+    await invoke(req, res, undefined, undefined, {
+      botId: "secondary",
+      channelId: "channel-1",
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "main",
+      "bot-task-1",
+      "inspect",
+      expect.objectContaining({
+        trustedDiscordDestination: {
+          botId: "secondary",
+          channelId: "channel-1",
+        },
+      }),
+    );
   });
 
   it("resumeは同じ所有者のTask Sessionだけを使い同期実行する", async () => {

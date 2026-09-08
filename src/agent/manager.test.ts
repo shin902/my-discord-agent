@@ -78,78 +78,6 @@ vi.mock("../config/default-model.js", () => ({
     ),
 }));
 
-const { resolveModel, resolveBaseUrl } = await import("./manager.js");
-
-describe("resolveBaseUrl", () => {
-  const originalEnv = process.env;
-
-  beforeEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-  });
-
-  it("プレースホルダが環境変数で置換される", () => {
-    process.env.CLOUDFLARE_ACCOUNT_ID = "abc123";
-    const result = resolveBaseUrl(
-      "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
-    );
-    expect(result).toBe(
-      "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1",
-    );
-  });
-
-  it("未解決のプレースホルダがあると null を返す", () => {
-    delete process.env.CLOUDFLARE_ACCOUNT_ID;
-    const result = resolveBaseUrl(
-      "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
-    );
-    expect(result).toBeNull();
-  });
-
-  it("小文字のプレースホルダも置換される", () => {
-    process.env.aws_region = "ap-northeast-1";
-    const result = resolveBaseUrl(
-      "https://bedrock-runtime.{aws_region}.amazonaws.com",
-    );
-    expect(result).toBe("https://bedrock-runtime.ap-northeast-1.amazonaws.com");
-  });
-
-  it("未解決の小文字プレースホルダがあると null を返す", () => {
-    delete process.env.aws_region;
-    const result = resolveBaseUrl(
-      "https://bedrock-runtime.{aws_region}.amazonaws.com",
-    );
-    expect(result).toBeNull();
-  });
-
-  it("プレースホルダがない URL はそのまま返す", () => {
-    const result = resolveBaseUrl("https://api.openai.com/v1");
-    expect(result).toBe("https://api.openai.com/v1");
-  });
-});
-
-describe("resolveModel", () => {
-  it("有効なプロバイダとモデルIDはモデルを返す", async () => {
-    const model = await resolveModel("provider-a", "model-x");
-    expect(model.id).toBe("model-x");
-  });
-
-  it("不明なプロバイダはエラー", async () => {
-    await expect(resolveModel("unknown-provider", "model-x")).rejects.toThrow(
-      "不明なプロバイダ: unknown-provider",
-    );
-  });
-
-  it("不明なモデルIDはエラー", async () => {
-    await expect(resolveModel("provider-a", "unknown-model")).rejects.toThrow(
-      "不明なモデル: unknown-model (provider: provider-a)",
-    );
-  });
-});
-
 const makeProc = (
   code: number | null = 0,
   stdout = "mocked response",
@@ -183,7 +111,8 @@ describe("sendMessage: Docker 起動構成", () => {
       callback?.(null, "", "");
       return { on: vi.fn() };
     });
-    vi.doMock("node:child_process", () => ({
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
       spawn: spawnMock,
       execFile: execFileMock,
     }));
@@ -229,14 +158,12 @@ describe("sendMessage: Docker 起動構成", () => {
       makeProc(0, "response", "__AGENT_ACTIVE__\n__AGENT_RUN_COMPLETE__\n"),
     );
     const { sendMessage } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
 
     await expect(sendMessage("test-group", "session-1", "hi")).resolves.toBe(
       "response",
     );
-    await expect(
-      steerActiveRun("test-group", "session-1", "too late"),
-    ).resolves.toBe("unavailable");
+    expect(acquireActiveRun("test-group", "session-1")).toBeUndefined();
   });
 
   it("steerのstdin EPIPEをホストの未処理エラーにせず配信失敗にする", async () => {
@@ -272,15 +199,14 @@ describe("sendMessage: Docker 起動構成", () => {
     };
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
     const result = sendMessage("test-group", "session-1", "hi");
 
-    let delivery = "unavailable";
-    for (let i = 0; i < 20 && delivery === "unavailable"; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      delivery = await steerActiveRun("test-group", "session-1", "change");
-    }
-    expect(delivery).toBe("rejected");
+    await vi.waitFor(() =>
+      expect(acquireActiveRun("test-group", "session-1")).toBeDefined(),
+    );
+    const handle = acquireActiveRun("test-group", "session-1");
+    await expect(handle?.steer("change")).rejects.toThrow("EPIPE");
     const stopping = stopAgentRun("test-group", "session-1");
     expect(proc.stdin.write).toHaveBeenCalledWith('{"type":"abort"}\n');
     closeHandler?.(0);
@@ -328,15 +254,14 @@ describe("sendMessage: Docker 起動構成", () => {
     };
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
     const result = sendMessage("test-group", "session-1", "hi");
 
-    let delivery = "unavailable";
-    for (let i = 0; i < 20 && delivery === "unavailable"; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      delivery = await steerActiveRun("test-group", "session-1", "change");
-    }
-    expect(delivery).toBe("accepted");
+    await vi.waitFor(() =>
+      expect(acquireActiveRun("test-group", "session-1")).toBeDefined(),
+    );
+    const handle = acquireActiveRun("test-group", "session-1");
+    expect(await handle?.steer("change")).toBe(true);
     closeHandler?.(0);
     await expect(result).resolves.toBe("response");
   });
@@ -356,14 +281,7 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "hi",
-      undefined,
-      undefined,
-      onExecutionTiming,
-    );
+    await sendMessage("test-group", "session-1", "hi", { onExecutionTiming });
 
     expect(onExecutionTiming).toHaveBeenCalledWith({
       termination: "close",
@@ -380,14 +298,7 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "hi",
-      undefined,
-      undefined,
-      onExecutionTiming,
-    );
+    await sendMessage("test-group", "session-1", "hi", { onExecutionTiming });
 
     const timing = onExecutionTiming.mock.calls[0][0];
     expect(timing.imagePullMs).toBeUndefined();
@@ -420,14 +331,9 @@ describe("sendMessage: Docker 起動構成", () => {
       const { sendMessage } = await import("./manager.js");
       const onExecutionTiming = vi.fn();
 
-      const result = sendMessage(
-        "test-group",
-        "session-1",
-        "hi",
-        undefined,
-        undefined,
+      const result = sendMessage("test-group", "session-1", "hi", {
         onExecutionTiming,
-      );
+      });
       const rejection = expect(result).rejects.toThrow(
         "タイムアウト後のコンテナ後始末に失敗しました",
       );
@@ -692,17 +598,32 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
   });
 
-  it("--user にホストのUID:GIDを渡し、HOME=/tmpを設定する", async () => {
+  it("trusted bootstrapでfirewallを設定し、Agent用UID:GIDを渡す", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
     const args = spawnMock.mock.calls[0][1] as string[];
     const userIdx = args.indexOf("--user");
     expect(userIdx).toBeGreaterThanOrEqual(0);
-    expect(args[userIdx + 1]).toBe(
-      `${process.getuid?.()}:${process.getgid?.()}`,
+    expect(args[userIdx + 1]).toBe("0:0");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--cap-drop=ALL",
+        "--cap-add=NET_ADMIN",
+        "--cap-add=SETUID",
+        "--cap-add=SETGID",
+        "--cap-add=SETPCAP",
+        "--security-opt=no-new-privileges",
+        "--network=bridge",
+        "--dns=127.0.0.1",
+        "--entrypoint=/bin/sh",
+        "/app/sandbox-entrypoint.sh",
+      ]),
     );
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs).toContain("HOME=/tmp");
+    expect(envArgs).toContain(`SANDBOX_UID=${process.getuid?.()}`);
+    expect(envArgs).toContain(`SANDBOX_GID=${process.getgid?.()}`);
+    expect(envArgs).toContain("SANDBOX_PROXY_PORTS=12345");
   });
 
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
@@ -786,16 +707,14 @@ describe("sendMessage: Docker 起動構成", () => {
     }) as never;
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
-    const { steerActiveRun } = await import("./active-run-registry.js");
+    const { acquireActiveRun } = await import("./active-run-registry.js");
     const running = sendMessage("test-group", "session-1", "hi", {
       onContainerStarted: vi.fn(),
     });
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
 
-    await expect(
-      steerActiveRun("test-group", "session-1", "before active"),
-    ).resolves.toBe("unavailable");
+    expect(acquireActiveRun("test-group", "session-1")).toBeUndefined();
     await expect(stopAgentRun("test-group", "session-1")).resolves.toEqual({
       status: "no-active-run",
     });
@@ -807,9 +726,7 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(JSON.parse(proc.stdin.write.mock.calls[0]?.[0] as string)).toEqual(
       expect.objectContaining({ content: "hi" }),
     );
-    await expect(
-      steerActiveRun("test-group", "session-1", "before active"),
-    ).resolves.toBe("unavailable");
+    expect(acquireActiveRun("test-group", "session-1")).toBeUndefined();
     readyHandler?.(Buffer.from("__AGENT_ACTIVE__\n"));
 
     const stopping = stopAgentRun("test-group", "session-1");
@@ -900,7 +817,10 @@ describe("sendMessage: 添付ファイル", () => {
     await rm(TEST_ATTACHMENTS_DIR, { recursive: true, force: true });
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -933,13 +853,7 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("添付ファイルを /workspace/attachments に読み取り専用でマウントする", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     expect(fetchMock).toHaveBeenCalledWith(attachments[0].url);
     const args = spawnMock.mock.calls[0][1] as string[];
@@ -955,13 +869,7 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("プロンプトに添付ファイルのパス一覧を追記する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -972,13 +880,7 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("画像添付がある場合は read ツールでの確認を促すヒントを追記する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -987,14 +889,16 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("画像以外の添付ファイルのみの場合は read ツールのヒントを追記しない", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "見て", undefined, [
-      {
-        url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
-        name: "note.txt",
-        contentType: "text/plain",
-        size: 8,
-      },
-    ]);
+    await sendMessage("test-group", "session-1", "見て", {
+      attachments: [
+        {
+          url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
+          name: "note.txt",
+          contentType: "text/plain",
+          size: 8,
+        },
+      ],
+    });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -1018,13 +922,7 @@ describe("sendMessage: 添付ファイル", () => {
   it("過去のメッセージで添付ディレクトリが作られていれば、添付なしの後続メッセージでもマウントする", async () => {
     const { sendMessage } = await import("./manager.js");
 
-    await sendMessage(
-      "test-group",
-      "session-1",
-      "見て",
-      undefined,
-      attachments,
-    );
+    await sendMessage("test-group", "session-1", "見て", { attachments });
 
     await sendMessage("test-group", "session-1", "さっきの画像について教えて");
 
@@ -1046,7 +944,9 @@ describe("sendMessage: 添付ファイル", () => {
   it("サイズが上限を超える添付ファイルはダウンロードしない", async () => {
     const { sendMessage } = await import("./manager.js");
     const tooLarge = [{ ...attachments[0], size: 11 * 1024 * 1024 }];
-    await sendMessage("test-group", "session-1", "hi", undefined, tooLarge);
+    await sendMessage("test-group", "session-1", "hi", {
+      attachments: tooLarge,
+    });
 
     expect(fetchMock).not.toHaveBeenCalled();
     const args = spawnMock.mock.calls[0][1] as string[];
@@ -1063,7 +963,10 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   const setup = async (mounts: unknown) => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -1145,7 +1048,10 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
 
   const setup = async (creds: unknown[]) => {
     const spawnMock = vi.fn().mockReturnValue(makeProc());
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue(creds),
     }));
@@ -1163,6 +1069,28 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const credArg = envArgs.find((v) => v.startsWith("CREDENTIAL_PROXY_JSON="));
     return JSON.parse(credArg?.slice("CREDENTIAL_PROXY_JSON=".length) ?? "[]");
   };
+
+  it.each([
+    "sk-ant-oat-host-secret",
+    "api-key-host-secret",
+  ])("Anthropic SDK mode is non-secret and follows the selected credential (%s)", async (key) => {
+    process.env.TEST_ANTHROPIC_KEY = key;
+    const spawnMock = await setup([
+      {
+        provider: "anthropic",
+        envVars: ["TEST_ANTHROPIC_KEY"],
+        baseUrl: "https://api.anthropic.com",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    const creds = getCredJson(spawnMock);
+    expect(creds[0].sdkAuth).toBe(
+      key.includes("sk-ant-oat") ? "anthropic-oauth" : undefined,
+    );
+    expect(JSON.stringify(creds)).not.toContain(key);
+    expect(JSON.stringify(creds)).not.toContain("TEST_ANTHROPIC_KEY");
+  });
 
   it("envVars ありのエントリが proxy URL に変換される", async () => {
     process.env.TEST_API_KEY = "test-key";
@@ -1311,7 +1239,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       getCredJson(spawnMock).map(
         (entry: { provider: string }) => entry.provider,
       ),
-    ).toEqual(["reddit"]);
+    ).toEqual([]);
   });
 
   it("host toolと同名の選択中model providerはsandboxに維持する", async () => {
@@ -1338,7 +1266,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ]);
   });
 
-  it("redditCookie フィールドが JSON に含まれない", async () => {
+  it("Reddit credential は sandbox JSON に渡さない", async () => {
     const spawnMock = await setup([
       {
         provider: "reddit",
@@ -1351,9 +1279,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ]);
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
-    const creds = getCredJson(spawnMock);
-    expect(creds[0].redditCookie).toBeUndefined();
-    expect(creds[0].provider).toBe("reddit");
+    expect(getCredJson(spawnMock)).toEqual([]);
   });
 
   it("auth フィールドが JSON に含まれない", async () => {
@@ -1446,7 +1372,8 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
 describe("sendMessage: 設定バリデーション", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.doMock("node:child_process", () => ({
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
       spawn: vi.fn().mockReturnValue(makeProc()),
     }));
     vi.doMock("../config/credential-proxy.js", () => ({
@@ -1513,7 +1440,7 @@ describe("sendMessage: configOverride", () => {
   let createInternalRequestConfigMock: ReturnType<typeof vi.fn>;
   let createToolProxyRunMock: ReturnType<typeof vi.fn>;
 
-  const setup = async () => {
+  const setup = async (groupSkills: string[] | "*" = ["base-skill"]) => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
@@ -1527,7 +1454,10 @@ describe("sendMessage: configOverride", () => {
       token: "tool-token",
       revoke: vi.fn(),
     }));
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../proxy/credential-proxy-server.js", () => ({
       createInternalRequestConfig: createInternalRequestConfigMock,
     }));
@@ -1546,7 +1476,7 @@ describe("sendMessage: configOverride", () => {
         channels: [],
         model: { provider: "zai", modelId: "glm-4.7-flash" },
         tools: ["read"],
-        skills: ["base-skill"],
+        skills: groupSkills,
         mounts: [{ host: "/group/repo", container: "/group-repo" }],
         allowMention: true,
       }),
@@ -1567,12 +1497,19 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["get-current-weather"] },
+      configOverride: {
+        tools: ["get-current-weather"],
+        approvalRequiredTools: ["get-current-weather"],
+      },
     });
 
     expect(createToolProxyRunMock).toHaveBeenCalledWith(
       expect.stringContaining("test-group:session-1:"),
       ["get-current-weather"],
+      {
+        approvalRequiredCapabilities: ["get-current-weather"],
+        trustedDiscordDestination: undefined,
+      },
     );
     const run = createToolProxyRunMock.mock.results[0]?.value as {
       revoke: ReturnType<typeof vi.fn>;
@@ -1584,6 +1521,112 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:23456/__tool-proxy/rpc",
       token: "tool-token",
     });
+    expect(payload.groupConfig.approvalRequiredTools).toEqual([
+      "get-current-weather",
+    ]);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
+  });
+
+  it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {
+    const sendMessage = await setup();
+
+    await expect(
+      sendMessage("test-group", "session-1", "hi", {
+        configOverride: {
+          tools: ["read"],
+          approvalRequiredTools: ["get-current-weather"],
+        },
+      }),
+    ).rejects.toThrow(
+      "設定エラー: 承認必須ツールは有効な tools に含めてください: get-current-weather",
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      tools: ["agent-reach", "get-current-weather"],
+      skills: [],
+      allowed: ["agent-reach", "get-current-weather"],
+    },
+    { tools: ["read"], skills: ["agent-reach"], allowed: ["agent-reach"] },
+    {
+      tools: ["agent-reach", "get-current-weather"],
+      skills: ["agent-reach"],
+      allowed: ["agent-reach", "get-current-weather"],
+    },
+    {
+      tools: ["read"],
+      skills: ["arxiv-search", "arxiv-survey"],
+      allowed: ["arxiv-search", "arxiv-survey"],
+    },
+    {
+      tools: ["read"],
+      skills: ["last30days"],
+      allowed: ["hackernews-search", "github-recent-search", "agent-reach"],
+    },
+  ])("tools=$tools skills=$skills share one authority and token", async ({
+    tools,
+    skills,
+    allowed,
+  }) => {
+    const sendMessage = await setup();
+    const approvalRequiredTools = tools.includes("agent-reach")
+      ? ["agent-reach"]
+      : [];
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools, skills, approvalRequiredTools },
+    });
+    expect(createToolProxyRunMock).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("test-group:session-1:"),
+      allowed,
+      {
+        approvalRequiredCapabilities: approvalRequiredTools,
+        trustedDiscordDestination: undefined,
+      },
+    );
+    const run = createToolProxyRunMock.mock.results[0].value;
+    expect(run.revoke).toHaveBeenCalledOnce();
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain(`TOOL_PROXY_URL=${run.url}`);
+    expect(args).toContain(`TOOL_PROXY_TOKEN=${run.token}`);
+    expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.toolProxyEndpoint).toEqual({
+      url: run.url,
+      token: run.token,
+    });
+    expect(
+      Object.keys(payload).filter((key) => /ProxyEndpoint$/.test(key)),
+    ).toEqual(["toolProxyEndpoint"]);
+    expect(payload.groupConfig.tools).toEqual(tools);
+    expect(payload.groupConfig.skills).toEqual(skills);
+  });
+
+  it("wildcard expands only built-in Skill dependencies, without granting bash", async () => {
+    const sendMessage = await setup("*");
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["read"] },
+    });
+    expect(createToolProxyRunMock).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      [
+        "agent-reach",
+        "arxiv-search",
+        "arxiv-survey",
+        "hackernews-search",
+        "github-recent-search",
+      ],
+      {
+        approvalRequiredCapabilities: [],
+        trustedDiscordDestination: undefined,
+      },
+    );
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.groupConfig.tools).toEqual(["read"]);
   });
 
   it("host capabilityのrun tokenは失敗時にもrevokeする", async () => {
@@ -1625,6 +1668,7 @@ describe("sendMessage: configOverride", () => {
     expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
       "test-group",
       undefined,
+      undefined,
     );
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -1632,6 +1676,21 @@ describe("sendMessage: configOverride", () => {
       url: "http://host.docker.internal:12345/__agent/bot",
       token: "internal-token",
     });
+  });
+
+  it("bot internal tokenにはtrusted destinationをhost側で渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["bot"] },
+      trustedDiscordDestination: { botId: "secondary", channelId: "channel-1" },
+    });
+
+    expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
+      "test-group",
+      undefined,
+      { botId: "secondary", channelId: "channel-1" },
+    );
   });
 
   it("groupのbot設定はchannel相当のtools上書きで無効化される", async () => {
@@ -1725,7 +1784,10 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const spawnMock = vi
       .fn()
       .mockReturnValue(makeProc(code, "response", stderr));
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    vi.doMock("node:child_process", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("node:child_process")>()),
+      spawn: spawnMock,
+    }));
     vi.doMock("../config/credential-proxy.js", () => ({
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
@@ -1752,7 +1814,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await sendMessage("g", "s", "hi", onDiscordEvent);
+    await sendMessage("g", "s", "hi", { onDiscordEvent });
 
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
   });
@@ -1793,7 +1855,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await sendMessage("g", "s", "hi", onDiscordEvent);
+    await sendMessage("g", "s", "hi", { onDiscordEvent });
 
     expect(onDiscordEvent).toHaveBeenCalledTimes(2);
     expect(onDiscordEvent).toHaveBeenNthCalledWith(1, events[0]);
@@ -1820,14 +1882,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const onDiscordEvent = vi.fn();
     const onExecutionTiming = vi.fn();
 
-    await sendMessage(
-      "g",
-      "s",
-      "hi",
-      onDiscordEvent,
-      undefined,
-      onExecutionTiming,
-    );
+    await sendMessage("g", "s", "hi", { onDiscordEvent, onExecutionTiming });
 
     expect(onDiscordEvent).not.toHaveBeenCalled();
     expect(onExecutionTiming).toHaveBeenCalledWith(
@@ -1870,9 +1925,9 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const sendMessage = await setupWithStderr("plain error\n", 1);
 
     const onDiscordEvent = vi.fn();
-    await expect(sendMessage("g", "s", "hi", onDiscordEvent)).rejects.toThrow(
-      "plain error",
-    );
+    await expect(
+      sendMessage("g", "s", "hi", { onDiscordEvent }),
+    ).rejects.toThrow("plain error");
     expect(onDiscordEvent).not.toHaveBeenCalled();
   });
 
@@ -1884,9 +1939,9 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await expect(sendMessage("g", "s", "hi", onDiscordEvent)).rejects.toThrow(
-      /log line[\s\S]*another log/,
-    );
+    await expect(
+      sendMessage("g", "s", "hi", { onDiscordEvent }),
+    ).rejects.toThrow(/log line[\s\S]*another log/);
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
   });
 

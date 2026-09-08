@@ -1,5 +1,7 @@
 # thinkingFormat 自動補正ロジックの完全廃止 設計ドキュメント
 
+> 歴史的な変更設計です。旧ファイル名・行番号・変更前コードを含み、現行設定の正本ではありません。現在の許容値・モデル解決は [Credential設定リファレンス](../config/credential-proxy.md) を参照してください。
+
 Issue: [#111 llama-cpp-qwen3などのプロバイダーいらない説](https://github.com/shin902/my-discord-agent/issues/111)
 
 ## 1. 背景

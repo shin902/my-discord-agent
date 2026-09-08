@@ -1,4 +1,6 @@
-# プロバイダー同時実行設計
+# プロバイダー同時実行設計（歴史的資料）
+
+この文書は設計時点の記録であり、現行仕様ではありません。以下の `sessionChain` は廃止されており、記載したファイルパスも当時のものです。現行のprovider設定は [設定リファレンス](../config.md#configprovidersjson)、SQLiteによるsession順序制御は [永続キューとDiscord配送](../inbox-queue.md#状態と順序) を参照してください。
 
 ## 解決する問題
 

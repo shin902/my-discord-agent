@@ -1,7 +1,6 @@
 export type ActiveRunControl = (
   instruction: string,
 ) => Promise<boolean> | boolean;
-export type ActiveRunSteerResult = "accepted" | "unavailable" | "rejected";
 export type ActiveRunStopResult =
   | { status: "aborted" }
   | { status: "force-killed" }
@@ -48,24 +47,6 @@ export function acquireActiveRun(
   sessionId: string,
 ): ActiveRunHandle | undefined {
   return activeRuns.get(runKey(groupName, sessionId))?.handle;
-}
-
-/** Deliver steering to the one captured (group, session) run. */
-export async function steerActiveRun(
-  groupName: string,
-  sessionId: string,
-  instruction: string,
-): Promise<ActiveRunSteerResult> {
-  const handle = acquireActiveRun(groupName, sessionId);
-  if (!handle) return "unavailable";
-  try {
-    return (await handle.steer(instruction)) === false
-      ? "rejected"
-      : "accepted";
-  } catch (error) {
-    console.error("[active-run] steering delivery failed:", error);
-    return "rejected";
-  }
 }
 
 /** Stop only the exact active (group, session) run. */

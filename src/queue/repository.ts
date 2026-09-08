@@ -84,8 +84,7 @@ export type ExecutionState = "claimed" | "running";
 // 3. TS executionState/status is a read-only projection computed inside
 //    parsePayload: DB 'claimed' surfaces as status 'running' with
 //    executionState 'claimed'; DB 'running' surfaces as status 'running' with
-//    executionState 'running'. It is never persisted; complete() consumes it
-//    to decide whether a freshly claimed job still needs markRunning().
+//    executionState 'running'. It is never persisted.
 //
 // DB status is therefore the single canonical persisted state; executionState
 // is a derived view; the `claimed` integer is a legacy duplicate that remains
@@ -770,7 +769,7 @@ function syntheticCompleted(
     succeeded: true,
   };
 }
-/** Column projection shared by delivery reads (getDelivery / listDeliveries). */
+/** Column projection for delivery reads. */
 const DELIVERY_SELECT_COLUMNS =
   "id,job_id,status,payload_json,created_at,response_index,payload_hash,host_unique_key,destination_type,destination_id,reply_message_id,cron_thread_id,external_message_id,lease_until,worker_id,fencing_token,attempts,next_attempt_at,last_error";
 
@@ -861,11 +860,6 @@ export class QueueRepository {
         `failed to read back Bot task session ${input.sessionId}`,
       );
     return parseBotTaskSession(created);
-  }
-  createBotTaskSession(input: CreateBotTaskSessionInput): BotTaskSession {
-    return this.inImmediateTransaction(() =>
-      this.createBotTaskSessionInTransaction(input),
-    );
   }
   private createBotTaskSessionAdmissionInTransaction(
     sessionId: string,
@@ -1054,18 +1048,6 @@ export class QueueRepository {
       return { session, enqueue };
     });
   }
-  findBotTaskSession(
-    handle: string,
-    groupName: string,
-    botId: string,
-  ): BotTaskSession | undefined {
-    const row = this.db
-      .prepare(
-        "SELECT * FROM bot_task_sessions WHERE handle=? AND group_name=? AND bot_id=?",
-      )
-      .get(handle, groupName, botId) as BotTaskSessionRow | undefined;
-    return row ? parseBotTaskSession(row) : undefined;
-  }
   listBotTaskSessions(groupName: string, botId: string): BotTaskSession[] {
     const rows = this.db
       .prepare(
@@ -1081,11 +1063,6 @@ export class QueueRepository {
     this.db
       .prepare("UPDATE bot_task_sessions SET last_used_at=? WHERE session_id=?")
       .run(lastUsedAt, sessionId);
-  }
-  touchBotTaskSession(sessionId: string, lastUsedAt: string): void {
-    this.inImmediateTransaction(() =>
-      this.touchBotTaskSessionInTransaction(sessionId, lastUsedAt),
-    );
   }
   recoverBotTaskSessionAdmissions(): void {
     this.inImmediateTransaction(() => {
@@ -1329,15 +1306,6 @@ export class QueueRepository {
       return claimed ? { job: claimed, fencingToken: token } : undefined;
     });
   }
-  releaseClaim(id: string, token: number): void {
-    this.fenced(id, token, {
-      status: "queued",
-      claimed: 0,
-      lease_until: null,
-      worker_id: null,
-      next_attempt_at: null,
-    });
-  }
   private fenced(
     id: string,
     token: number,
@@ -1353,15 +1321,6 @@ export class QueueRepository {
       .run({ ...update, updated_at: nowIso(), id, token });
     if (result.changes !== 1)
       throw new Error(`stale fencing token for job ${id}`);
-  }
-  isFenced(id: string, token: number): boolean {
-    return (
-      this.db
-        .prepare(
-          "SELECT 1 FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
-        )
-        .get(id, token) !== undefined
-    );
   }
   private updatePayload(
     id: string,
@@ -1647,13 +1606,6 @@ export class QueueRepository {
       heartbeat_at: nowIso(),
     });
   }
-  complete(id: string, token: number): void {
-    const job = this.get(id);
-    if (!job) throw new Error(`unknown job ${id}`);
-    if (job.executionState === "claimed") this.markRunning(id, token);
-    if (job.resultJson === undefined)
-      this.commitResult(id, token, "", { empty: true });
-  }
   /** Record a failed execution attempt, applying durable retry policy. */
   failAttempt(
     id: string,
@@ -1858,14 +1810,6 @@ export class QueueRepository {
         "INSERT INTO discord_sync_cursors(scope_id,last_message_id,updated_at,initialized) VALUES(?,?,?,1) ON CONFLICT(scope_id) DO UPDATE SET last_message_id=excluded.last_message_id,updated_at=excluded.updated_at,initialized=1",
       )
       .run(scopeId, messageId, nowIso());
-  }
-  getDelivery(jobId: string): DeliveryRow | undefined {
-    const row = this.db
-      .prepare(
-        `SELECT ${DELIVERY_SELECT_COLUMNS} FROM deliveries WHERE job_id=? ORDER BY response_index LIMIT 1`,
-      )
-      .get(jobId) as Record<string, unknown> | undefined;
-    return row ? this.parseDelivery(row) : undefined;
   }
   listDeliveries(status?: DeliveryStatus): DeliveryRow[] {
     const rows = (
@@ -2162,31 +2106,6 @@ export class QueueRepository {
         nowIso(),
       );
   }
-  list(status?: JobStatus): QueueJob[] {
-    const rows = (
-      status
-        ? this.db
-            .prepare(
-              "SELECT * FROM jobs WHERE status=? ORDER BY created_at,sequence",
-            )
-            .all(status)
-        : this.db
-            .prepare("SELECT * FROM jobs ORDER BY created_at,sequence")
-            .all()
-    ) as JobRow[];
-    return rows.map(parsePayload);
-  }
-  listIdempotencyKeys(): Array<{
-    key: string;
-    jobId: string | null;
-    status: string;
-  }> {
-    return this.db
-      .prepare(
-        "SELECT key,job_id as jobId,status FROM idempotency_keys ORDER BY key",
-      )
-      .all() as Array<{ key: string; jobId: string | null; status: string }>;
-  }
 }
 let defaultRepository: QueueRepository | undefined;
 export function getQueueRepository(): QueueRepository {
@@ -2194,8 +2113,4 @@ export function getQueueRepository(): QueueRepository {
     defaultRepository = new QueueRepository();
   }
   return defaultRepository;
-}
-export function closeQueueRepository(): void {
-  defaultRepository?.close();
-  defaultRepository = undefined;
 }

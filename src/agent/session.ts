@@ -561,5 +561,3 @@ export async function appendMessage(
     db.close();
   }
 }
-
-export function closeSessionDatabasesForTests(): void {}

@@ -1,6 +1,4 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { agentReachTool } from "./agent-reach.js";
-import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import { bashTool } from "./bash.js";
 import {
   createEventTool,
@@ -16,6 +14,7 @@ import {
   type CapabilityDefinition,
   type CapabilityDispatchContext,
   dispatchCapability,
+  materializeToolArgs,
   validateToolArgs,
 } from "./capability.js";
 import { dateTool } from "./date.js";
@@ -37,6 +36,7 @@ import {
 } from "./github.js";
 import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
+import { RUNTIME_CAPABILITIES } from "./runtime-capabilities.js";
 import { tavilySearchTool } from "./tavily.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
@@ -47,7 +47,6 @@ const createStaticToolFactory =
 
 const TOOL_FACTORIES = {
   bash: createStaticToolFactory(bashTool),
-  "agent-reach": createStaticToolFactory(agentReachTool),
   read: createStaticToolFactory(readTool),
   write: createStaticToolFactory(writeTool),
   list: createStaticToolFactory(listTool),
@@ -88,68 +87,99 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
     value.topic === "news" ||
     value.topic === "finance");
 
+interface HostCapabilityOptions {
+  readonly validateArgs?: CapabilityArgsValidator;
+  readonly clampedProperties?: readonly string[];
+  readonly defaultArgs?: () => Readonly<Record<string, unknown>>;
+}
+
 function hostCapability(
   tool: AgentTool,
-  clampedMaximumProperties: readonly string[] = [],
+  options: HostCapabilityOptions = {},
 ): CapabilityDefinition {
+  const clampedProperties = options.clampedProperties ?? [];
   return {
     tool: tool.name,
     executor: "host",
     factory: () => tool,
-    validateArgs: validateToolArgs(tool, clampedMaximumProperties),
+    validateArgs:
+      options.validateArgs ?? validateToolArgs(tool, clampedProperties),
+    materializeArgs: materializeToolArgs(tool, {
+      defaultArgs: options.defaultArgs,
+      clampedProperties,
+    }),
   };
 }
 
 const CAPABILITIES = {
+  ...RUNTIME_CAPABILITIES,
   date: {
     tool: "date",
     executor: "sandbox",
     factory: createStaticToolFactory(dateTool),
   },
-  "get-current-weather": {
-    tool: "get-current-weather",
-    executor: "host",
-    factory: () => getCurrentWeatherTool,
+  "get-current-weather": hostCapability(getCurrentWeatherTool, {
     validateArgs: currentWeatherArgsValidator,
-  },
-  "get-weather-forecast": {
-    tool: "get-weather-forecast",
-    executor: "host",
-    factory: () => getWeatherForecastTool,
+  }),
+  "get-weather-forecast": hostCapability(getWeatherForecastTool, {
     validateArgs: weatherForecastArgsValidator,
-  },
-  "tavily-search": {
-    tool: "tavily-search",
-    executor: "host",
-    // Host results cross the Tool Proxy as raw data; the sandbox-side thin
-    // proxy applies the common output boundary after receiving them.
-    factory: () => tavilySearchTool,
+    clampedProperties: ["days"],
+    defaultArgs: () => ({ days: 3 }),
+  }),
+  // Host results cross the Tool Proxy as raw data; the sandbox-side thin
+  // proxy applies the common output boundary after receiving them.
+  "tavily-search": hostCapability(tavilySearchTool, {
     validateArgs: tavilySearchArgsValidator,
-  },
-  "arxiv-search": hostCapability(arxivSearchTool, ["max_results"]),
-  "arxiv-survey": hostCapability(arxivSurveyTool, ["max_results"]),
-  "list-issues": hostCapability(listIssuesTool, ["limit"]),
+    clampedProperties: ["max_results"],
+    defaultArgs: () => ({
+      max_results: 5,
+      search_depth: "basic",
+      include_answer: true,
+      topic: "general",
+    }),
+  }),
+  "list-issues": hostCapability(listIssuesTool, {
+    clampedProperties: ["limit"],
+    defaultArgs: () => ({ state: "open", limit: 10 }),
+  }),
   "read-issue": hostCapability(readIssueTool),
   "list-issue-comments": hostCapability(listIssueCommentsTool),
   "read-pull-request": hostCapability(readPullRequestTool),
   "list-pull-request-comments": hostCapability(listPullRequestCommentsTool),
   "comment-issue": hostCapability(commentIssueTool),
-  "list-emails": hostCapability(listEmailsTool, ["limit"]),
-  "read-email": hostCapability(readEmailTool),
+  "list-emails": hostCapability(listEmailsTool, {
+    clampedProperties: ["limit"],
+    defaultArgs: () => ({ limit: 10, folder: "inbox", unreadOnly: false }),
+  }),
+  "read-email": hostCapability(readEmailTool, {
+    defaultArgs: () => ({ markAsRead: true }),
+  }),
   "list-calendars": hostCapability(listCalendarsTool),
-  "list-events": hostCapability(listEventsTool, ["maxResults"]),
-  "read-event": hostCapability(readEventTool),
-  "create-event": hostCapability(createEventTool),
-  "update-event": hostCapability(updateEventTool),
-  "delete-event": hostCapability(deleteEventTool),
+  "list-events": hostCapability(listEventsTool, {
+    clampedProperties: ["maxResults"],
+    defaultArgs: () => ({
+      timeMin: new Date().toISOString(),
+      maxResults: 10,
+      calendarId: "primary",
+    }),
+  }),
+  "read-event": hostCapability(readEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
+  "create-event": hostCapability(createEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
+  "update-event": hostCapability(updateEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
+  "delete-event": hostCapability(deleteEventTool, {
+    defaultArgs: () => ({ calendarId: "primary" }),
+  }),
 } satisfies Record<string, CapabilityDefinition>;
 
 type ToolName = keyof typeof TOOL_FACTORIES;
 
-export type {
-  AgentToolFactory,
-  CapabilityDispatchContext,
-} from "./capability.js";
+export type { AgentToolFactory } from "./capability.js";
 
 export function getCapabilityDefinition(
   name: string,
@@ -157,10 +187,12 @@ export function getCapabilityDefinition(
   return CAPABILITIES[name as keyof typeof CAPABILITIES];
 }
 
-export function hostCapabilityNames(toolNames: string[]): string[] {
+export function proxyCapabilityNames(toolNames: string[]): string[] {
   return toolNames.filter((name) => {
     const capability = getCapabilityDefinition(name);
-    return capability?.executor === "host";
+    return (
+      capability?.executor === "host" || capability?.executor === "runtime"
+    );
   });
 }
 

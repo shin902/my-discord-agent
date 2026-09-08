@@ -276,6 +276,7 @@ describe("ingestDiscordMessage", () => {
         sessionMode: "shared",
         model: { provider: "channel-provider", modelId: "channel-model" },
         tools: [],
+        approvalRequiredTools: [],
         skills: "*",
         mounts: [{ host: "channel", container: "/channel" }],
       },
@@ -292,6 +293,7 @@ describe("ingestDiscordMessage", () => {
       configOverride: {
         model: { provider: "channel-provider", modelId: "channel-model" },
         tools: [],
+        approvalRequiredTools: [],
         skills: "*",
         mounts: [{ host: "channel", container: "/channel" }],
       },

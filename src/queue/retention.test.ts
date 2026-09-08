@@ -60,7 +60,10 @@ describe("runtime retention", () => {
       });
       expect(result.deleted).toBeGreaterThan(0);
       expect(repo.get(active.id)).toBeDefined();
-      expect(repo.getDelivery(active.id)?.status).toBe("ambiguous");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === active.id)
+          ?.status,
+      ).toBe("ambiguous");
     } finally {
       repo.close();
     }
@@ -232,7 +235,10 @@ describe("runtime retention", () => {
       });
       expect(result.deleted).toBe(0);
       expect(repo.get(job.id)).toBeDefined();
-      expect(repo.getDelivery(job.id)?.status).toBe("sent");
+      expect(
+        repo.listDeliveries().find((delivery) => delivery.jobId === job.id)
+          ?.status,
+      ).toBe("sent");
     } finally {
       repo.close();
     }

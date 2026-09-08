@@ -307,18 +307,3 @@ export function inspectRuntime(
     alerts: snapshot.alerts,
   };
 }
-
-export interface StructuredLog {
-  at: string;
-  component: "queue" | "delivery" | "agent" | "rss";
-  event: string;
-  fields: Record<string, unknown>;
-}
-export function structuredLog(
-  component: StructuredLog["component"],
-  event: string,
-  fields: Record<string, unknown> = {},
-  at = new Date(),
-): StructuredLog {
-  return { at: at.toISOString(), component, event, fields };
-}

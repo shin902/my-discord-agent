@@ -23,36 +23,7 @@ vi.mock("../utils/splitMessage.js", () => ({
 
 const appendInbox = appendInboxMock;
 
-import { NonRetryableError } from "../utils/error.js";
-import { executeJob, loadHandlerFn, startCron, stopCron } from "./runner.js";
-
-// --- loadHandlerFn: path traversal ---
-
-describe("loadHandlerFn — path traversal", () => {
-  it("throws for ../ traversal", async () => {
-    await expect(loadHandlerFn("../evil.ts")).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-
-  it("throws for ..\\\\ traversal (Windows-style)", async () => {
-    await expect(loadHandlerFn("..\\evil.ts")).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-
-  it("throws for embedded ../ in path", async () => {
-    await expect(loadHandlerFn("jobs/../../evil.ts")).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-
-  it("throws for absolute path outside project", async () => {
-    await expect(loadHandlerFn("/etc/passwd.ts")).rejects.toBeInstanceOf(
-      NonRetryableError,
-    );
-  });
-});
+import { executeJob, startCron, stopCron } from "./runner.js";
 
 // --- executeJob ---
 

@@ -32,3 +32,5 @@ SKILLS/agent-reach/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx 
 1. 初回は URL の query をそのまま付けて実行する（fragment だけはスクリプトが除去する）。
 2. 失敗時に再試行する場合だけ、`utm_*`、`fbclid`、`gclid` など明らかな追跡パラメータを削除する。
 3. `id`、`sort`、検索条件、署名など内容や認証を決めるパラメータは残し、query 全体を一律に削除しない。
+
+The script uses the Runner's common `tool-proxy` CLI and the same run authority as the native Tool. If the CLI or Runtime is unavailable, report the error; do not fall back to direct Internet access.

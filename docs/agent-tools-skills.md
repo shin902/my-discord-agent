@@ -14,6 +14,8 @@
 | `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
 | `arxiv-search` | arXivを自然言語クエリで検索。投稿日範囲と並び順を指定でき、正規化した論文メタデータをJSONで返す |
+| `hackernews-search` | 直近30日のHN storyを最大10件検索。points・URL・comment数を返す |
+| `github-recent-search` | 直近30日に更新された公開GitHub Issues/PRをreactions順で最大5件検索 |
 | `arxiv-survey` | 1〜8個の自然言語クエリをOR条件でまとめてarXiv検索。期間指定の定期サーベイ向け |
 | `list-calendars` | Google Calendarのカレンダー一覧を取得。ID・表示名・アクセス権・タイムゾーンを返し、複数ページも自動的に最後まで取得する |
 | `read` | ワークスペース内のファイルを読み込む |
@@ -29,6 +31,16 @@
 | `list-pull-request-comments` | GitHub Pull Request の会話コメント・レビュー・インラインコメントを全件取得し、Markdown で返す |
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
+
+### Discord tool approval（opt-in）
+
+`approvalRequiredTools` は、effective `tools` に含まれる既知host/runtime capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
+
+Skillだけで許可されたcapabilityへのapproval設定は拡張していません。必要なら対応Toolを `tools` にも指定してください。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
+
+validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
+
+approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
 
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
 
@@ -61,7 +73,9 @@
 
 `groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
-スキルと専用ツールは独立した実行経路として扱う。スキルは `bash` と同梱スクリプトを利用でき、標準出力の直接利用だけでなくファイルへのリダイレクトなど、用途に応じた柔軟なワークフローを提供する。一方、専用ツールは `bash` を許可したくない不特定多数向けのボットでも、対象機能だけを安全に許可するために使う。スキルを専用ツールの使い方だけを説明するドキュメントにはしない。
+`tools` は選択したnative schemaを、`skills` は配置済みSkillの説明・場所をpromptへ提示します。Tool Proxyの実行権限はeffective toolsとtrustedな組込Skill依存の和集合で、同じrun tokenをnative／CLIで共有します。`skills: "*"` は組込supported skillsの依存だけへ展開し、全capability許可にはなりません。promptに載せるwildcardの説明は実際の配置済みSkillだけです。
+
+Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／redirectionを維持します。bashは自動付与しません。Toolだけを選択した場合もそのcapabilityをCLIから呼べ、Skill単独利用のためにnative schemaを追加する必要もありません。組込依存と実行境界は [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
 
 ### スキルの明示的実行（`./command`）
 
@@ -92,37 +106,32 @@ Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加�
 
 **場所:** `templates/SKILLS/agent-reach/SKILL.md`
 
-インターネット情報収集スキル。同梱の `agent-reach.sh` を `bash` から実行し、取得結果を標準出力で直接利用したり、必要に応じてファイルへ保存したりできる。`agent-reach`ツールとは独立した実行経路であり、スキルからツールは呼び出さない。
+インターネット情報収集スキル。同梱の `agent-reach.sh` は共通CLIからTool Proxyの `agent-reach` capabilityを呼びます。nativeと同じrun token・認可・設定済みapprovalを使い、Tool callごとのRuntimeで取得します。整形済み結果をstdoutで利用し、必要ならAgent sandbox内でファイルへ保存できます。
 
 `bash`を許可したくない不特定多数向けのボットでは、スキルを有効にせず、専用の`agent-reach`ツールだけを`groups[].tools`へ追加する。
 
 | 対象 | 内部の取得経路 |
 |------|----------------|
-| ウェブページ | Jina Reader (`r.jina.ai`) |
-| YouTube | `yt-dlp` |
-| GitHub | GitHub REST API |
-| Reddit | Credential Proxy経由のJSON API |
-| RSS | `feedparser` |
-| X/Twitter | FxTwitter (`api.fxtwitter.com`) のみ（Credential Proxy へのフォールバックなし） |
+| ウェブページ | Tool Runtime の Jina Reader (`r.jina.ai`) |
+| YouTube | Tool Runtime の `yt-dlp` |
+| GitHub | Tool Runtime の GitHub REST API |
+| Reddit | Tool Proxy → Tool Runtime の JSON API（Runtime 内 Cookie） |
+| RSS | Tool Runtime の `feedparser` |
+| X/Twitter | Tool Runtime の FxTwitter (`api.fxtwitter.com`) のみ（Credential Proxy へのフォールバックなし） |
 
-スキルは同梱のシェルスクリプトを使用する。専用ツール側はシェルスクリプトに依存せず、`bash`を許可しない構成でも単独で動作する。両者の用途と実行経路は独立している。
+スキルは同梱scriptを使い、native Toolはbashを許可しない構成でも利用できます。どちらも同じcapability・取得実装へ到達します。
 
-#### 入力・出力・エラーの parity 契約
+#### 入力・出力・エラーの共通契約
 
-これは2つの実装を同じコードにするための契約ではなく、利用者から見える挙動を揃えるための基準である。
+Agent-facing の専用ツールと Skill shell は入口・UX・結果の envelope が異なるが、同じ Tool Proxy capability から共通の Tool Runtime → core `agentReachTool` に収束するため、取得処理の利用者向け挙動は同じである。
 
 - **入力:** どちらも1つの絶対URLを受け取り、`http` / `https` 以外は拒否する。fragment は取得先へ渡さず、リソース指定や署名に使われる可能性がある query は正規化時に削除せず、サービス固有の取得処理で扱う。正規化後のURLを同じサービス判定表（Web、YouTube、GitHub repository、Reddit、RSS、X post）で分類する。X Article の直リンクは、記事付き post の `/status/...` URLを案内する入力エラーとする。
-- **整形済み出力:** 取得本文の意味とサービス別フォーマットを共通契約とする。Web は reader 本文、YouTube・GitHub・Reddit・X は Markdown、RSS は feedparser が生成する最大20件の JSON 配列テキストを返す。X の出力には外部コンテンツへの注意書きを含める。スキルは整形済みテキストだけを stdout に出し、必要なら呼び出し側が `>` で保存できる。ツールは同じ本文を `content[0].text` に返し、正規化済みURLとサービス名を `details` に付ける（ツールはワークスペースへ結果ファイルを残さない）。決定的な入力の本文は、共有 fixture で両経路の内容一致を固定する（スクリプトの stdout に付く transport 用の末尾改行は除く）。
-- **エラー:** 入力拒否・依存コマンド不足・Credential Proxy 設定不足・上流HTTP/JSON/取得失敗は、本文として成功扱いにせずエラーにする。ツールは例外を throw し、スキルは非0終了して診断を stderr に出す。インターフェース上の envelope（例外と終了コード/stderr）は異なるが、エラーのカテゴリと機密情報を漏らさない診断内容は共通に保つ。
+- **整形済み出力:** 取得本文の意味とサービス別フォーマットを共通契約とする。Web は reader 本文、YouTube・GitHub・Reddit・X は Markdown、RSS は feedparser が生成する最大20件の JSON 配列テキストを返す。X の出力には外部コンテンツへの注意書きを含める。スキルは整形済みテキストだけを stdout に出し、必要なら呼び出し側が `>` で保存できる。ツールは同じ本文を `content[0].text` に返し、正規化済みURLとサービス名を `details` に付ける（Runtime のファイルパスは返さず、ツールはワークスペースへ結果ファイルを残さない）。
+- **エラー:** 入力拒否・Tool Proxy/Runtime 設定不足・上流HTTP/JSON/取得失敗は、本文として成功扱いにせずエラーにする。ツールは例外を throw し、スキルは非0終了して診断を stderr に出す。インターフェース上の envelope（例外と終了コード/stderr）は異なるが、エラーのカテゴリと機密情報を漏らさない診断内容は共通に保つ。
 
-共有 fixture は `src/tools/__fixtures__/agent-reach/parity-cases.json` に置き、URL正規化・サービス判定・決定的なX post本文・代表的なエラーを `src/tools/agent-reach.test.ts` と `src/tools/agent-reach-shell.test.ts` の両方から検証する。今後この契約を変更する issue では、まず fixture と両方のテストを更新するが、スキルから TypeScript ツールを呼び出す実装には変更しない。
+共有 fixture は `src/tools/__fixtures__/agent-reach/parity-cases.json` に置き、URL正規化・サービス判定・決定的なX post本文・代表的なエラーなど、core `agentReachTool` の取得意味論を `src/tools/agent-reach.test.ts` から検証する。`src/tools/agent-reach-shell.test.ts` はfixtureを再実行せず、共通run authorityのTool Proxy transport、token/request、stdout/リダイレクト、shell-facingな失敗を検証する。今後この契約を変更する issue では、取得意味論は fixture と core test を更新し、shell側はその transport 契約だけを更新する。
 
-**テンプレートを更新した場合の注意:** `templates/SKILLS/` を変更しても、すでに各グループにコピーされた `groups/{name}/SKILLS/` は自動更新されない。テンプレートの変更を反映するには、対象グループの古いスキルフォルダを削除してから再コピーすること。
-
-```bash
-rm -rf groups/{name}/SKILLS/agent-reach
-cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
-```
+**配置済みSkillの更新:** テンプレート変更だけでは既存groupに反映されません。カスタマイズを保ちながら [差分確認と更新手順](spec/tool-runtime.md#配置済みskillの更新) に従ってscriptと手順を更新してください。
 
 ### arxiv-search / arxiv-survey
 
@@ -130,7 +139,7 @@ cp -r templates/SKILLS/agent-reach groups/{name}/SKILLS/
 
 arXivの公開Atom APIを使う、credential不要・statelessな論文検索機能。`arxiv-search` は1つの自然言語queryを検索し、`arxiv-survey` は1〜8個のqueryをOR条件で1回のAPIリクエストにまとめる。両方とも投稿日範囲（`from` / `to`）と `relevance` / `submitted` / `updated` の並び順を指定できる。
 
-Tool版はTypeScriptのstructured arguments、Skill版はPythonのCLI argumentsを入力に使う。Skill版は `--from` / `--to` / `--limit` / `--sort` を指定し、stdoutへJSONを返す。両実装とも `id` / `version` / `title` / `authors` / `submitted_at` / `updated_at` / `categories` / `abstract` / `url` / `pdf_url` を同じ意味で返す。
+Tool版はTypeScriptのstructured arguments、Skill版はPythonのCLI argumentsを入力に使う。Skill版は `--from` / `--to` / `--limit` / `--sort` を指定し、stdoutへJSONを返す。取得・Atom parserはRuntime内のnative TypeScript実装へ統一しています。双方とも `id` / `version` / `title` / `authors` / `submitted_at` / `updated_at` / `categories` / `abstract` / `url` / `pdf_url` を同じ意味で返す。
 
 cronで使う場合も既読状態は保存せず、実行ごとに期間を明示する。公開Botなど`bash`を許可しない境界ではTool版を、trustedな環境でSkillを使う場合はPython版を選べる。
 
@@ -156,7 +165,7 @@ cronで使う場合も既読状態は保存せず、実行ごとに期間を明�
 
 **場所:** `templates/SKILLS/last30days/SKILL.md`
 
-指定トピックについて、HackerNews・Reddit・GitHub（いずれもAPIキー不要）から過去30日間の議論・反応を横断的に収集し、注目トピック・プラットフォーム別サマリー・センチメント・注目リンクの形式で集約するスキル。
+指定トピックについて、HN・公開GitHub Issues/PR・Redditをそれぞれ独立したTool Proxy callで取得し、過去30日の議論・反応を既存の日本語見出しで集約します。HN/GitHub検索はcredential不要、Redditは既存CookieをRuntimeだけで使います。HN/GitHubの直接curlは同梱scriptと共通CLIへ置き換えています。
 
 ### md2html
 

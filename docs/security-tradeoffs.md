@@ -2,33 +2,24 @@
 
 意図的に受け入れたセキュリティリスクの記録。
 
-## サンドボックスのプライベートIP egress
+## Agent sandbox の network boundary
 
-**場所:** `src/agent/manager.ts` — `NetworkPolicy.builder().egress(rb => rb.allowPrivate())`
+主目的は、prompt injection や Agent の誤判断で任意プログラムを実行しても、許可された接続先以外へ直接通信できないことです。manager が起動する run 単位の Docker container に適用します。
 
-**内容:** サンドボックスコンテナからプライベートIPアドレス（`10.x.x.x`・`192.168.x.x`・`172.16-31.x.x`）への送信を許可している。
+[`sandbox-network.ts`](../src/agent/sandbox-network.ts) が Docker bridge、固定 host-gateway、必要な host TCP port と image 内の [`sandbox-entrypoint.sh`](../scripts/sandbox-entrypoint.sh) を指定します。entrypoint は IPv4/IPv6 OUTPUT を deny-by-default にし、host-gateway の Credential Proxy port と、run が利用する Tool Proxy / Bot 内部 API port だけを許可します。公開 Internet、任意 host port、localhost、RFC1918、CGNAT/Tailscale、link-local/metadata、他 Docker service は拒否します。IPv6 は全拒否、DNS/UDP に例外はなく、host 名は Docker が生成する `/etc/hosts` で解決します。
 
-**理由:** 同一LAN上の別PCで動作するローカルLLMサーバーへの接続に必要。`allowHost()` はホスト名ベースのルールのため、プライベートIPに解決されるホストへの通信は `allowPrivate()` がないとブロックされる。
+firewall 設定中だけ root と NET_ADMIN / SETUID / SETGID / SETPCAP を使い、Agent・workspace・stdin を処理する前に host UID/GID（非 root）、空の capability bounding set、no_new_privs へ移ります。Agent はルール変更・raw packet 送信に必要な権限を持ちません。設定失敗・未対応 IPv6 firewall・古い image による entrypoint 不在は起動失敗となり、無制限通信への fallback はありません。ルールは container の network namespace 内だけに存在し、破棄時に消えます。運用条件と移行は [Sandbox 管理ガイド](sandbox-command.md#network-boundary-の導入) を参照してください。
 
-**残存リスク:** サンドボックス実行前に `agent-reach.ts` と互換用 `agent-reach.sh` が入力ホスト名を解決し、全回答を検査する。RSS/feedparser と yt-dlp の子プロセスは追加の DNS 解決も同じポリシーで検査するが、curl や外部のリモート reader（Jina など）がサーバー側で行う追加接続は対象外である。ただし実行環境がサンドボックスコンテナ内であるため影響範囲は限定的。
+LLM は Credential Proxy 経由で host が設定済み upstream へ接続します。Tool Proxy は既存の run token / capability / approval を強制し、`agent-reach`・arXiv・last30daysはTool callごとの使い捨てRuntimeへ委譲します。RuntimeにHTTP入口やservice/maintenance tokenはなく、Agentから直接接続する経路はありません。Tool Runtimeの既存firewall、DNS/redirect検証、subprocess guard、Cookie境界は維持します。
 
-**対策済み内容:**
-- `allowLoopback()` は不要なため削除済み（コンテナ自身への接続を排除）
-- agent-reach の両経路で、ループバック・RFC1918・リンクローカル・未指定・CGNAT/Tailscale (`100.64.0.0/10`)・IPv6 ULA/リンクローカル・IPv4-mapped IPv6・文書化用などの IPv6 特殊用途範囲の非公開アドレスを CIDR で拒否
-- ホスト名の DNS 解決結果は全件検査し、DNS エラー・空結果・不正な回答はフェイルクローズ
-- RSS/feedparser と yt-dlp の子プロセスには DNS ガードを注入し、リダイレクト・追加取得先も解決結果と接続先を検査
+### 効果の限界
 
-## Docker コンテナの無制限ネットワークアクセス
+- 許可された LLM / 検索 / URL 取得等を使った情報持ち出しは network isolation だけでは防げません。
+- Credential Proxy は secret confidentiality と credential injection / forwarding を担当し、authorization plane ではありません。Agent が inference credential を利用すること自体は許可し、他の inference provider を選ぶ可能性も受け入れます。provider/model/path/method 認可、inference run token、approval、独自 rate limit は追加しません。利用自体を制限すべき credential-backed operation が残る場合は、Credential Proxy を拡張せず Tool Proxy capability へ移します。
+- host、Docker daemon、image、operator-only mounts は trust root です。危険な socket や bootstrap を置換する mount を trusted config で許せば境界を壊せます。mount policy 全面変更は行っていません。
+- container/kernel escape や parser/Chromium の侵害後の完全封じ込めは保証しません。seccomp 大規模変更、AppArmor/SELinux、Landlock、追加 sandbox、mTLS は導入していません。
 
-**場所:** `src/agent/manager.ts` — `docker run` の `args`
-
-**内容:** エージェントコンテナは `--network` 制限なしで起動するため、コンテナ内から任意のホストへの送信が可能。
-
-**理由:** エージェントの主要機能（Web検索・URL取得）にはインターネットアクセスが必須。`agent-reach`のアクセス先ドメインは大体固定されているためホワイトリストは技術的には可能だが、エージェントとしての汎用性を損なうため現時点では採用しない。
-
-**残存リスク:** コンテナ内で実行されるコードが任意の外部エンドポイントに接続できる。旧 microsandbox の `NetworkPolicy` による egress 制限はこの移行で失われた。
-
-**credential proxy との関係:** API キーの漏洩防止はコンテナへ直接キーを渡さない設計（`credential-proxy-server`）で対処済み。ネットワーク制限の欠如とは独立した問題。
+Tool Runtimeへ移行済みの機能と、直接通信できなくなる任意コマンドの扱いは[導入ガイド](sandbox-command.md#direct-egress-閉鎖後の実行経路)を参照してください。
 
 ## credential proxy の認証なし公開
 
