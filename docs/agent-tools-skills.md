@@ -12,6 +12,14 @@
 | `subagent` | toolsへ正確に明示したAgentだけが利用できる、自己完結したタスクをephemeral subagentへ委譲する組み込みツール。親の実行設定を引き継ぎ、bounded recursive delegationを行う。 |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
+| `finance-record-transaction` | 収入・支出を正の整数円とtypeで記録し、保存時の符号変換をTool側で行う |
+| `finance-list-transactions` | 日付範囲・category・income/expenseで収支履歴を絞り込む |
+| `finance-summary` | 期間内の収入・支出・収支と支出category別集計を返す。期間省略時は当月 |
+| `finance-add-subscription` | サブスクをappend-only snapshotとして追加する |
+| `finance-update-subscription` | 最新snapshotを元に変更後snapshotを追加し、過去rowを更新しない |
+| `finance-cancel-subscription` | 最新snapshotをactive=falseとして追加し、過去rowを削除しない |
+| `finance-list-subscriptions` | nameごとの最新snapshotから現在のサブスク状態を返す |
+| `finance-subscription-history` | 指定nameの全snapshot履歴を返す |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
 | `arxiv-search` | arXivを自然言語クエリで検索。投稿日範囲と並び順を指定でき、正規化した論文メタデータをJSONで返す |
 | `hackernews-search` | 直近30日のHN storyを最大10件検索。points・URL・comment数を返す |
@@ -192,23 +200,18 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 | `wiki-search` | `templates/SKILLS/wiki-search/` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
 | `wiki-search-fts` | `templates/SKILLS/wiki-search-fts/` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が不十分になった大規模wiki向けの移行先 |
 
-### finance系スキル（finance-setup / finance）
+### finance系Tool
 
-`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理するスキル群。
-
-| スキル | 場所 | 役割 |
-|--------|------|------|
-| `finance-setup` | `templates/SKILLS/finance-setup/` | `transactions`（収支）・`subscriptions`（サブスク）テーブルを作成する一回限りの初期化。既存DBがあれば上書きしない |
-| `finance` | `templates/SKILLS/finance/` | 収支の記録・照会、サブスクの登録・照会・更新・解約を `sqlite3` コマンド直叩きで行う |
+`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理するsandbox-local Tool群。AgentはSQLやDB pathを指定せず、最初のTool実行時にDB初期化と必要な互換migrationを内部で行う。
 
 **スキーマ:**
 
 ```sql
 transactions (id, date, amount, category, description)
-subscriptions (id, name, amount, cycle, next_date, category, active)
+subscriptions (id, name, amount, cycle, next_date, category, active, recorded_at)
 ```
 
-`amount` は収入が正・支出が負（円の整数）。`cycle` は `monthly` / `yearly` / `weekly`。カテゴリはユーザー入力をそのまま使い正規化しない。
+保存上の`amount`は収入が正・支出が負（円の整数）。Agent-facingでは正の金額とincome/expense等の意味を使い、符号変換はTool側で行う。subscriptionは同じ`name`の最大`id`をcurrent stateとするappend-only snapshot historyで、update / cancelでも既存rowを変更・削除しない。
 
 **cron連携（`src/cron/jobs/`）:**
 
@@ -218,4 +221,4 @@ subscriptions (id, name, amount, cycle, next_date, category, active)
 | `finance-subscription-reminder.ts` | `daysAhead`（デフォルト7日）以内に更新日を迎えるサブスクを通知 |
 | `_finance-db.ts` | 上記2ジョブが共有する `resolveFinanceDbPath(groupName)`。`groups/{groupName}/finance.db` を解決し、`groupName` のディレクトリトラバーサル防止とDB未作成時のエラー化を行う |
 
-両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、DBは読み取り専用（`readonly: true`）で開く。導入には `config/cron.json` にジョブ定義を追加し、対象グループで事前に `finance-setup` を実行しておく必要がある。
+両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、DBは読み取り専用（`readonly: true`）で開く。導入には `config/cron.json` にジョブ定義を追加し、対象グループでfinance Toolを一度実行してDBを初期化しておく。
