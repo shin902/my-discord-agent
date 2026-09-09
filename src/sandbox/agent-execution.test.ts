@@ -67,6 +67,7 @@ describe("runAgent", () => {
           tools: [],
           thinkingLevel: "off",
         }),
+        streamFn: expect.any(Function),
         sessionId: "child-run",
       }),
     );

@@ -1,10 +1,10 @@
 import {
   type Api,
+  type BuiltinProvider,
   getModels,
   getProviders,
-  type KnownProvider,
   type Model,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
   type CredentialEntry,
   loadCredentialProxy,
@@ -73,12 +73,13 @@ function createCustomModel(
 
 export async function resolveModel(provider: string, modelId: string) {
   const providers = getProviders();
+  const builtinProvider = provider as BuiltinProvider;
   const creds = await loadCredentialProxy();
   const entry = creds.find((e) => e.provider === provider);
 
   // forceCustom: pi-ai の KnownProvider 名と衝突していても
   // credential-proxy 経由のカスタムプロバイダー解決を強制する
-  if (entry?.forceCustom || !providers.includes(provider as KnownProvider)) {
+  if (entry?.forceCustom || !providers.includes(builtinProvider)) {
     if (!entry) {
       throw new Error(`不明なプロバイダ: ${provider}`);
     }
@@ -90,9 +91,7 @@ export async function resolveModel(provider: string, modelId: string) {
     }
     return createCustomModel(entry, resolvedBaseUrl, modelId);
   }
-  const model = getModels(provider as KnownProvider).find(
-    (m) => m.id === modelId,
-  );
+  const model = getModels(builtinProvider).find((m) => m.id === modelId);
   if (!model)
     throw new Error(`不明なモデル: ${modelId} (provider: ${provider})`);
   // Preserve built-in model metadata, but never its direct upstream endpoint

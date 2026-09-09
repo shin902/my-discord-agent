@@ -25,8 +25,8 @@
   },
   "dependencies": {
     "@azure/msal-node": "^5.2.2",
-    "@earendil-works/pi-agent-core": "latest",
-    "@earendil-works/pi-ai": "latest",
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1",
     "better-sqlite3": "^12.11.1",
     "content-type": "^2.0.0",
     "discord.js": "^14.0.0",

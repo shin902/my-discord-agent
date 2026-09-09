@@ -1,8 +1,8 @@
-import type { KnownProvider, Model } from "@earendil-works/pi-ai";
+import type { BuiltinProvider, Model } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CredentialEntry } from "../config/credential-proxy.js";
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getProviders: vi.fn(),
   getModels: vi.fn(),
 }));
@@ -28,7 +28,9 @@ describe("resolveModel", () => {
     ["google", "google-generative-ai"],
   ])("sandboxでは%sのAPIとmetadataを保ちproxyへ接続する", async (provider, api) => {
     const { resolveModel } = await importFresh();
-    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { getProviders, getModels } = await import(
+      "@earendil-works/pi-ai/compat"
+    );
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
@@ -39,7 +41,7 @@ describe("resolveModel", () => {
       baseUrl: "https://api.openai.com/v1",
       contextWindow: 128000,
     };
-    vi.mocked(getProviders).mockReturnValue([provider as KnownProvider]);
+    vi.mocked(getProviders).mockReturnValue([provider as BuiltinProvider]);
     vi.mocked(getModels).mockReturnValue([
       builtin,
     ] as unknown as Model<never>[]);
@@ -66,12 +68,14 @@ describe("resolveModel", () => {
   });
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { getProviders, getModels } = await import(
+      "@earendil-works/pi-ai/compat"
+    );
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
     vi.mocked(loadCredentialProxy).mockResolvedValue([]);
-    vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue(["openai"] as BuiltinProvider[]);
     vi.mocked(getModels).mockReturnValue([
       {
         id: "gpt-4",
@@ -88,11 +92,11 @@ describe("resolveModel", () => {
 
   it("credential-proxy に定義されたカスタムプロバイダを解決する", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "llama-cpp",
@@ -111,11 +115,11 @@ describe("resolveModel", () => {
 
   it("models[modelId].input で modelId 単位に入力モダリティを指定できる", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "llama-cpp",
@@ -134,13 +138,13 @@ describe("resolveModel", () => {
     expect(textModel.input).toEqual(["text"]);
   });
 
-  it("forceCustom: true の場合、KnownProvider と衝突していてもカスタムプロバイダーとして解決する", async () => {
+  it("forceCustom: true の場合、BuiltinProvider と衝突していてもカスタムプロバイダーとして解決する", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue(["groq"] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue(["groq"] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "groq",
@@ -156,13 +160,15 @@ describe("resolveModel", () => {
     expect(model.id).toBe("llama-3.3-70b-versatile");
   });
 
-  it("forceCustom が未指定の場合は KnownProvider 側のモデル一覧から解決する（回帰確認）", async () => {
+  it("forceCustom が未指定の場合は BuiltinProvider 側のモデル一覧から解決する（回帰確認）", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { getProviders, getModels } = await import(
+      "@earendil-works/pi-ai/compat"
+    );
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue(["groq"] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue(["groq"] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "groq",
@@ -185,11 +191,11 @@ describe("resolveModel", () => {
 
   it("compat.thinkingFormat があるカスタムプロバイダは reasoning を自動で有効にする", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom-qwen",
@@ -206,11 +212,11 @@ describe("resolveModel", () => {
 
   it("api が openai-completions 以外の場合は compat.thinkingFormat があっても compat を付与しない", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom-anthropic",
@@ -233,11 +239,11 @@ describe("resolveModel", () => {
 
   it("thinkingLevelMap を config に書いた場合、そのまま model.thinkingLevelMap に渡る", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "ollama",
@@ -262,11 +268,11 @@ describe("resolveModel", () => {
 
   it("thinkingFormat: 'openrouter' を明示した場合は thinkingLevelMap が付かない", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "my-openrouter",
@@ -286,11 +292,11 @@ describe("resolveModel", () => {
 
   it("reasoning: true を明示した場合は compat がなくても上書きされない", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom-reasoning",
@@ -307,11 +313,11 @@ describe("resolveModel", () => {
 
   it("reasoning: false を明示した場合は thinkingFormat があっても上書きされない", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom-no-reasoning",
@@ -329,11 +335,11 @@ describe("resolveModel", () => {
 
   it("thinkingLevelMap 省略時は model.thinkingLevelMap が undefined になる", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom",
@@ -352,11 +358,11 @@ describe("resolveModel", () => {
 
   it("compat に thinkingFormat がない場合は compat が undefined になる", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom",
@@ -373,11 +379,11 @@ describe("resolveModel", () => {
 
   it("不明なプロバイダはエラー", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([]);
 
     await expect(resolveModel("unknown", "model")).rejects.toThrow(
@@ -387,11 +393,11 @@ describe("resolveModel", () => {
 
   it("baseUrl に未解決のプレースホルダがある場合はエラー", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders } = await import("@earendil-works/pi-ai");
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue([] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom",
@@ -406,11 +412,13 @@ describe("resolveModel", () => {
 
   it("既知のプロバイダーでモデルが見つからない場合はエラー", async () => {
     const { resolveModel } = await importFresh();
-    const { getProviders, getModels } = await import("@earendil-works/pi-ai");
+    const { getProviders, getModels } = await import(
+      "@earendil-works/pi-ai/compat"
+    );
     const { loadCredentialProxy } = await import(
       "../config/credential-proxy.js"
     );
-    vi.mocked(getProviders).mockReturnValue(["openai"] as KnownProvider[]);
+    vi.mocked(getProviders).mockReturnValue(["openai"] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([]);
     vi.mocked(getModels).mockReturnValue([]);
 
