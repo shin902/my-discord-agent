@@ -44,7 +44,7 @@ afterEach(async () => {
   );
 });
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getProviders: () => ["provider-a", "zai"],
   getModels: (provider: string) =>
     provider === "zai"

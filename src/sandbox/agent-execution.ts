@@ -12,6 +12,7 @@ import type {
   Model,
   StopReason,
 } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 
 export interface AgentExecutionOptions {
   systemPrompt: string;
@@ -64,6 +65,7 @@ export async function runAgent(
       thinkingLevel: options.thinkingLevel,
     },
     convertToLlm: options.convertToLlm,
+    streamFn: streamSimple,
     getApiKey: options.getApiKey,
     sessionId: options.sessionId,
   });

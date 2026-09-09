@@ -10,13 +10,13 @@ import {
   type CustomMessage,
   convertToLlm as libraryConvertToLlm,
 } from "@earendil-works/pi-agent-core";
-import {
-  type AssistantMessage,
-  getEnvApiKey,
-  type Message,
-  type TextContent,
-  type Usage,
+import type {
+  AssistantMessage,
+  Message,
+  TextContent,
+  Usage,
 } from "@earendil-works/pi-ai";
+import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { z } from "zod";
 
 import { resolveModel } from "../agent/model.js";

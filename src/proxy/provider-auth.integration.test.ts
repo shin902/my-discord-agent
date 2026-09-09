@@ -1,5 +1,5 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import { getModel, streamSimple } from "@earendil-works/pi-ai";
+import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CredentialEntry } from "../config/credential-proxy.js";
 import { createRequestHandler } from "./credential-proxy-server.js";
@@ -75,7 +75,7 @@ it.each([
   const proxy = await listen(createServer(createRequestHandler([entry], 5000)));
   const builtIn =
     provider === "anthropic"
-      ? getModel("anthropic", "claude-sonnet-4-20250514")
+      ? getModel("anthropic", "claude-sonnet-4-5")
       : getModel("google", "gemini-2.5-flash");
   await streamSimple(
     { ...builtIn, baseUrl: `${proxy}/${provider}` },
