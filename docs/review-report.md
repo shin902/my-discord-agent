@@ -140,15 +140,16 @@ if (msg.retries + 1 < MAX_RETRIES) {
 ```ts
 // src/config/groups.ts
 let _groupsMtime = 0;
+const configPath = path.join(__dirname, "../../config/config.json");
 
 export async function loadGroups(): Promise<GroupConfig[]> {
-  const stats = await stat(CONFIG_PATH).catch(() => null);
+  const stats = await stat(configPath).catch(() => null);
   const mtime = stats?.mtimeMs ?? 0;
   if (_groups !== null && _groupsMtime >= mtime) return _groups;
 
   let text: string;
   try {
-    text = await readFile(CONFIG_PATH, "utf-8");
+    text = await readFile(configPath, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error("config/config.json が見つかりません");

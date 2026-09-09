@@ -456,14 +456,8 @@ Bot profile の effective AgentConfig と `group` は起動時に検証されま
 | 変数 | 用途 |
 |---|---|
 | `DISCORD_BOT_TOKEN` | `discord.bots.personal.tokenEnv` の標準値。`personal` Bot トークン（必須） |
-| `CONFIG_PATH` | `config/config.json` のパスを上書きする（省略時はプロジェクトルートの `config/config.json`） |
-| `PROVIDERS_PATH` | `config/providers.json` のパスを上書きする |
-| `CREDENTIALS_PATH` | `config/credentials.json` のパスを上書きする |
-| `GROUPS_PATH` | `config/groups.json` のパスを上書きする |
-| `CRON_PATH` | `config/cron.json` のパスを上書きする |
-| `BOTS_PATH` | `config/bots.json` のパスを上書きする |
 
-API キーなどプロバイダー固有の変数は `.env.example` を参照。
+設定ファイルはプロジェクトルートの `config/` 配下から読み込まれ、ファイルパスを環境変数で変更する機能はありません。API キーなどプロバイダー固有の変数は `.env.example` を参照。
 
 ## 再起動なしに反映されるか
 
@@ -484,7 +478,7 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 
 ## 変更履歴（歴史的背景）
 
-以下は変更当時の説明です。旧パスや統合先を現行設定として使わず、現在の形式・上書き環境変数は本書の各設定節を参照してください。
+以下は変更当時の説明です。旧パスや統合先を現行設定として使わず、現在の形式は本書の各設定節を参照してください。
 
 ### groups/{name}/group.json の統合（#93）
 
@@ -498,7 +492,7 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 旧: `config/groups.json` / `config/cron-jobs.json` / `config/credential-proxy.json` の3ファイル
 新: `config/config.json` に `groups` / `cron` / `credentials` キーとして統合
 
-**Breaking change**: `CREDENTIAL_PROXY_PATH` 環境変数を廃止。パスの上書きは `CONFIG_PATH` で行う。
+**Breaking change**: `CREDENTIAL_PROXY_PATH` 環境変数を廃止。現在は `config/` 配下の専用ファイルを読み込みます。
 
 ### config ファイルの再分割（#137）
 
@@ -507,4 +501,4 @@ API キーなどプロバイダー固有の変数は `.env.example` を参照。
 
 **理由**: 単一ファイルに役割の異なる設定（機密情報の `credentials`、人手で頻繁に編集する `groups`、運用上省略可能な `cron`）が混在しており、ファイル単位での差分管理・パス上書きがしづらかった。
 
-**Breaking change**: 後方互換なし。既存の `config/config.json` から `credentials` / `groups` / `cron` の各キーを手動で `config/credentials.json` / `config/groups.json` / `config/cron.json` に分離する必要がある。パスの上書きはそれぞれ `CREDENTIALS_PATH` / `GROUPS_PATH` / `CRON_PATH` で行う。
+**Breaking change**: 後方互換なし。既存の `config/config.json` から `credentials` / `groups` / `cron` の各キーを手動で `config/credentials.json` / `config/groups.json` / `config/cron.json` に分離する必要があります。現在はこれらの専用ファイルを `config/` 配下から読み込みます。
