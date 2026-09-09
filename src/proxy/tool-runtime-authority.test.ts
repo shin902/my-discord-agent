@@ -66,11 +66,17 @@ function cli(token: string, capability: string, args: unknown) {
     },
   );
 }
-function authority(tools: string[], skills: string[], approval: string[] = []) {
+function authority(
+  tools: string[],
+  skills: string[],
+  approval: string[] = [],
+  groupName?: string,
+) {
   const config = createToolProxyRun(
     "runtime-authority",
     runCapabilityNames({ tools, skills }),
     {
+      ...(groupName ? { groupName } : {}),
       approvalRequiredCapabilities: approval,
       trustedDiscordDestination: {
         botId: "personal",
@@ -281,6 +287,44 @@ describe("Native/Skill shared Runtime authority", () => {
       await expect(approval.waitForDecision()).rejects.toThrow("revoked");
       expect(approval.claim("approve")).toBeUndefined();
       expect(execute).not.toHaveBeenCalled();
+    } finally {
+      run.revoke();
+    }
+  });
+
+  it("passes only the trusted group context to finance Runtime calls", async () => {
+    const execute = vi.spyOn(runtime, "executeToolRuntime").mockResolvedValue({
+      content: [{ type: "text", text: "{}" }],
+      details: {},
+    });
+    const run = authority(["finance-record-transaction"], [], [], "local");
+    try {
+      await expect(
+        cli(run.token, "finance-record-transaction", {
+          type: "expense",
+          amount: 800,
+        }),
+      ).resolves.toMatchObject({ stdout: "{}" });
+      expect(execute).toHaveBeenCalledWith(
+        "finance-record-transaction",
+        { type: "expense", amount: 800 },
+        expect.any(AbortSignal),
+        { groupName: "local" },
+      );
+
+      const missingGroup = createToolProxyRun("finance-no-group", [
+        "finance-summary",
+      ]);
+      if (!missingGroup) throw new Error("not initialized");
+      try {
+        await expect(
+          cli(missingGroup.token, "finance-summary", {}),
+        ).rejects.toMatchObject({
+          stderr: expect.stringContaining("trusted group context"),
+        });
+      } finally {
+        missingGroup.revoke();
+      }
     } finally {
       run.revoke();
     }

@@ -5,6 +5,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import {
+  ensureFinanceDatabase,
+  FINANCE_RUNTIME_DB_PATH,
+  resolveFinanceDatabasePath,
+} from "../tools/finance-db.js";
 import { getRuntimeCapability } from "../tools/runtime-capabilities.js";
 import {
   TOOL_RUNTIME_INPUT_MAX_BYTES,
@@ -25,6 +30,8 @@ export interface ToolRuntimeOptions {
   /** Trusted host configuration; never taken from capability arguments. */
   root?: string;
   image?: string;
+  /** Trusted group identity used only for finance.db resolution. */
+  groupName?: string;
 }
 
 export function toolRuntimeLabel(root = ROOT): string {
@@ -83,6 +90,23 @@ async function redditMountArgs(
   }
 }
 
+async function financeMountArgs(
+  root: string,
+  groupName: string | undefined,
+  access: "read-only" | "read-write",
+): Promise<string[]> {
+  const dbPath = resolveFinanceDatabasePath(root, groupName);
+  // The bind source must exist before Docker starts. Initialization is host
+  // internal plumbing; the database remains inaccessible to the Agent.
+  ensureFinanceDatabase(dbPath);
+  return [
+    "-e",
+    `FINANCE_DB_PATH=${FINANCE_RUNTIME_DB_PATH}`,
+    "--mount",
+    `type=bind,src=${dbPath},dst=${FINANCE_RUNTIME_DB_PATH}${access === "read-only" ? ",readonly" : ""}`,
+  ];
+}
+
 export async function buildToolRuntimeArgs(
   request: ToolRuntimeRequest,
   name: string,
@@ -102,6 +126,9 @@ export async function buildToolRuntimeArgs(
     )
       ? await redditMountArgs(root, maintenance)
       : [];
+  const financeMounts = capability?.financeDb
+    ? await financeMountArgs(root, options.groupName, capability.financeDb)
+    : [];
   return [
     "run",
     "--rm",
@@ -124,6 +151,7 @@ export async function buildToolRuntimeArgs(
     "-e",
     "CHROMIUM_PATH=/usr/bin/chromium",
     ...mounts,
+    ...financeMounts,
     options.image ??
       process.env.TOOL_RUNTIME_IMAGE ??
       "my-discord-agent-tool-runtime:latest",

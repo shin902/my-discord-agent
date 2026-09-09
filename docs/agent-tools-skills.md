@@ -192,23 +192,24 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 | `wiki-search` | `templates/SKILLS/wiki-search/` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
 | `wiki-search-fts` | `templates/SKILLS/wiki-search-fts/` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が不十分になった大規模wiki向けの移行先 |
 
-### finance系スキル（finance-setup / finance）
+### finance Tools
 
-`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理するスキル群。
+収支とサブスクリプションは、Tool Proxy 経由の call 単位使い捨て Tool Runtime から、実行対象 group の `finance.db` だけを操作する。Agent-facing schema に SQL、DB path、mount、Runtime、image は含まれない。DB が無い場合の初期化と `subscriptions.recorded_at` の互換 migration は内部で行われるため、setup 操作は不要。
 
-| スキル | 場所 | 役割 |
-|--------|------|------|
-| `finance-setup` | `templates/SKILLS/finance-setup/` | `transactions`（収支）・`subscriptions`（サブスク）テーブルを作成する一回限りの初期化。既存DBがあれば上書きしない |
-| `finance` | `templates/SKILLS/finance/` | 収支の記録・照会、サブスクの登録・照会・更新・解約を `sqlite3` コマンド直叩きで行う |
+| Tool | 役割 |
+|------|------|
+| `finance-record-transaction` | `type`（`income` / `expense`）と正の整数円額から収支を1件記録。Runtime が income を正、expense を負で保存 |
+| `finance-list-transactions` | 日付、カテゴリ、種別、件数で収支履歴を絞り込み |
+| `finance-summary` | 期間の収入・支出・収支・カテゴリ別支出を集計。既定は当月 |
+| `finance-add-subscription` | サブスクを追加 |
+| `finance-update-subscription` | 最新状態を元に変更後の snapshot を追加 |
+| `finance-cancel-subscription` | `active = false` の snapshot を追加。既存行は削除・更新しない |
+| `finance-list-subscriptions` | 各 `name` の最新 snapshot による現在一覧を返す |
+| `finance-subscription-history` | 指定 `name` の全 snapshot を時系列で返す |
 
-**スキーマ:**
+`subscriptions` は `name` を論理 identity とする append-only 履歴であり、update / cancel は既存行を `UPDATE` / `DELETE` しない。過去 snapshot は history には残るが、current 一覧・reminder・月額換算には混ぜない。
 
-```sql
-transactions (id, date, amount, category, description)
-subscriptions (id, name, amount, cycle, next_date, category, active)
-```
-
-`amount` は収入が正・支出が負（円の整数）。`cycle` は `monthly` / `yearly` / `weekly`。カテゴリはユーザー入力をそのまま使い正規化しない。
+旧 `finance-setup` Skill は Agent-facing ではなく、旧配置との移行 marker としてだけ残る。直接 SQL や setup 手順は使わない。
 
 **cron連携（`src/cron/jobs/`）:**
 
@@ -216,6 +217,6 @@ subscriptions (id, name, amount, cycle, next_date, category, active)
 |--------|------|
 | `finance-monthly.ts` | 月次の収支サマリー（収入・支出・カテゴリ別支出・サブスク月額換算）をDiscordに送信 |
 | `finance-subscription-reminder.ts` | `daysAhead`（デフォルト7日）以内に更新日を迎えるサブスクを通知 |
-| `_finance-db.ts` | 上記2ジョブが共有する `resolveFinanceDbPath(groupName)`。`groups/{groupName}/finance.db` を解決し、`groupName` のディレクトリトラバーサル防止とDB未作成時のエラー化を行う |
+| `_finance-db.ts` | 上記2ジョブが共有する group 固有DB pathを内部で解決し、既存DBを読み取り専用で参照 |
 
-両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、DBは読み取り専用（`readonly: true`）で開く。導入には `config/cron.json` にジョブ定義を追加し、対象グループで事前に `finance-setup` を実行しておく必要がある。
+両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、既存DBが無い場合は通知せず non-retryable error とする。cron はこの移行のために Tool Runtime 化せず、既存の月次 report / reminder 挙動を維持する。

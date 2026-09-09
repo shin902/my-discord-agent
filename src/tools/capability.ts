@@ -102,6 +102,8 @@ export type CapabilityDefinition =
       readonly validateArgs: CapabilityArgsValidator;
       /** Resolve effective executor arguments after validation, when needed. */
       readonly materializeArgs?: CapabilityArgsMaterializer;
+      /** Trusted host-only storage boundary required by a runtime capability. */
+      readonly financeDb?: "read-only" | "read-write";
     });
 
 /** Materialize once when configured; otherwise preserve identity. */

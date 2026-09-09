@@ -14,7 +14,7 @@ export function resolveFinanceDbPath(groupName: string): string {
   const dbPath = path.join(ROOT, "groups", groupName, "finance.db");
   if (!existsSync(dbPath)) {
     throw new NonRetryableError(
-      `finance.db が見つかりません。finance-setup スキルを先に実行してください: ${dbPath}`,
+      `finance.db が見つかりません。finance Tool を実行すると必要なDBが初期化されます: ${dbPath}`,
     );
   }
   return dbPath;

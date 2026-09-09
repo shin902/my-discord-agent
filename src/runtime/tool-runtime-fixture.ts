@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 
 /** Build a separate image containing deterministic upstream responses, never production state. */
 export async function createToolRuntimeFixture(baseImage: string): Promise<{
-  options: Required<ToolRuntimeOptions>;
+  options: ToolRuntimeOptions & { root: string; image: string };
   dispose: () => Promise<void>;
 }> {
   const root = await mkdtemp(join(tmpdir(), "tool-runtime-docker-test-"));
