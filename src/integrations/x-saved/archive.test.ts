@@ -73,6 +73,35 @@ describe("archive media contract", () => {
       ),
     ).toEqual([]);
   });
+  it.each([
+    "mp4",
+    undefined,
+  ])("selects the highest safe MP4 even when an unsafe variant has higher bitrate (container=%s)", (container) => {
+    expect(
+      parseArchiveMedia(
+        fx([
+          {
+            ...movie,
+            formats: [
+              {
+                container: "mp4",
+                bitrate: 9999999,
+                url: "https://evil.example/video.mp4",
+              },
+              { container, bitrate: 2176000, url: video },
+              {
+                container: "mp4",
+                bitrate: 832000,
+                url: video.replace("1280x720", "640x360"),
+              },
+            ],
+          },
+        ]),
+        "123",
+      ),
+    ).toEqual([{ kind: "video", position: 0, source_url: video }]);
+  });
+
   it("keeps HLS-only video presence without fetching HLS", () => {
     expect(
       parseArchiveMedia(
@@ -97,6 +126,7 @@ describe("archive media contract", () => {
     fx([
       {
         ...movie,
+        url: "https://evil.example/video.mp4",
         formats: [
           {
             container: "mp4",

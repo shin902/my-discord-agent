@@ -74,7 +74,7 @@ export function parseArchiveMedia(
     const mp4 = entry.formats
       ?.filter(
         (v) =>
-          v.container === "mp4" || (!v.container && isMediaUrl(v.url, "video")),
+          (v.container === "mp4" || !v.container) && isMediaUrl(v.url, "video"),
       )
       .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
     // Some GIFs expose only url. Never fall back to HLS or an external host.
