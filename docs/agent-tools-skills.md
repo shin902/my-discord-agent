@@ -12,6 +12,14 @@
 | `subagent` | toolsへ正確に明示したAgentだけが利用できる、自己完結したタスクをephemeral subagentへ委譲する組み込みツール。親の実行設定を引き継ぎ、bounded recursive delegationを行う。 |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
+| `finance-record-transaction` | `income` / `expense` と正の整数円額から収支を1件記録。Tool実装がincomeを正、expenseを負で保存 |
+| `finance-list-transactions` | 日付、カテゴリ、種別、件数で収支履歴を絞り込み |
+| `finance-summary` | 期間の収入・支出・収支・カテゴリ別支出を集計。既定は当月 |
+| `finance-add-subscription` | サブスクを追加 |
+| `finance-update-subscription` | 最新状態を元に変更後のsnapshotを追加 |
+| `finance-cancel-subscription` | `active = false` のsnapshotを追加。既存行は削除・更新しない |
+| `finance-list-subscriptions` | 各`name`の最新snapshotによる現在一覧を返す |
+| `finance-subscription-history` | 指定`name`の全snapshotを時系列で返す |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
 | `arxiv-search` | arXivを自然言語クエリで検索。投稿日範囲と並び順を指定でき、正規化した論文メタデータをJSONで返す |
 | `hackernews-search` | 直近30日のHN storyを最大10件検索。points・URL・comment数を返す |
@@ -34,7 +42,7 @@
 
 ### Discord tool approval（opt-in）
 
-`approvalRequiredTools` は、effective `tools` に含まれる既知host/runtime capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
+`approvalRequiredTools` は、effective `tools` に含まれる既知host/runtime capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox内tool（read/bash/finance/bot/subagent等）はconfig errorです。
 
 Skillだけで許可されたcapabilityへのapproval設定は拡張していません。必要なら対応Toolを `tools` にも指定してください。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
 
@@ -73,7 +81,7 @@ approval UIは認可機構やpublic / multi-user環境の安全境界ではあ�
 
 `groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
-`tools` は選択したnative schemaを、`skills` は配置済みSkillの説明・場所をpromptへ提示します。Tool Proxyの実行権限はeffective toolsとtrustedな組込Skill依存の和集合で、同じrun tokenをnative／CLIで共有します。`skills: "*"` は組込supported skillsの依存だけへ展開し、全capability許可にはなりません。promptに載せるwildcardの説明は実際の配置済みSkillだけです。
+`tools` は選択したnative schemaを、`skills` は配置済みSkillの説明・場所をpromptへ提示します。host/runtime capabilityのTool Proxy実行権限はeffective toolsとtrustedな組込Skill依存の和集合で、同じrun tokenをnative／CLIで共有します。sandbox-local toolはRunner内で直接実行します。`skills: "*"` は組込supported skillsの依存だけへ展開し、全capability許可にはなりません。promptに載せるwildcardの説明は実際の配置済みSkillだけです。
 
 Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／redirectionを維持します。bashは自動付与しません。Toolだけを選択した場合もそのcapabilityをCLIから呼べ、Skill単独利用のためにnative schemaを追加する必要もありません。組込依存と実行境界は [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
 
@@ -194,11 +202,11 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 
 ### finance Tools
 
-収支とサブスクリプションは、Tool Proxy 経由の call 単位使い捨て Tool Runtime から、実行対象 group の `finance.db` だけを操作する。Agent-facing schema に SQL、DB path、mount、Runtime、image は含まれない。DBの初期化と `subscriptions.recorded_at` の互換migrationは内部で行われる。
+収支とサブスクリプションは、`fs` / `bash` と同じAgent Runner内のsandbox-local Toolから、現在groupのworkspaceにある`finance.db`を操作する。目的はSkillがbash/sqlite3でSQLを組み立てることによる確率的操作を、用途別schemaと固定実装で確定化すること。Agent-facing schemaにSQLやDB pathは含まれず、DBの初期化と`subscriptions.recorded_at`の互換migrationはTool内部で行われる。
 
 | Tool | 役割 |
 |------|------|
-| `finance-record-transaction` | `type`（`income` / `expense`）と正の整数円額から収支を1件記録。Runtime が income を正、expense を負で保存 |
+| `finance-record-transaction` | `type`（`income` / `expense`）と正の整数円額から収支を1件記録。Tool実装がincomeを正、expenseを負で保存 |
 | `finance-list-transactions` | 日付、カテゴリ、種別、件数で収支履歴を絞り込み |
 | `finance-summary` | 期間の収入・支出・収支・カテゴリ別支出を集計。既定は当月 |
 | `finance-add-subscription` | サブスクを追加 |
@@ -217,4 +225,4 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 | `finance-subscription-reminder.ts` | `daysAhead`（デフォルト7日）以内に更新日を迎えるサブスクを通知 |
 | `_finance-db.ts` | 上記2ジョブが共有する group 固有DB pathを内部で解決し、既存DBを読み取り専用で参照 |
 
-両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、既存DBが無い場合は通知せず non-retryable error とする。cron はこの移行のために Tool Runtime 化せず、既存の月次 report / reminder 挙動を維持する。
+両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、既存DBが無い場合は通知せず non-retryable error とする。cron はこの移行のためにsandbox-local Toolへ置き換えず、既存の月次report / reminder挙動を維持する。

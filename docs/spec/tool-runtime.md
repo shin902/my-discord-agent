@@ -1,6 +1,6 @@
 # Tool Runtime
 
-Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search` と finance の8つの capabilityを **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。
+Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search` の capabilityを **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。Financeの用途別Toolはsandbox-localであり、Tool Runtimeのcapabilityではありません。
 
 ```text
 Agent sandbox: native Tool / Skill → tool-proxy CLI
@@ -9,7 +9,7 @@ Agent sandbox: native Tool / Skill → tool-proxy CLI
   → JSON stdin → 登録済み実装 → JSON stdout → 終了・破棄
 ```
 
-RuntimeにHTTP入口・待受port・service tokenはありません。Credential Proxyの責務は変わりません。Tool名・schema・実装の対応は [共通Runtime定義](../../src/tools/runtime-capabilities.ts) をhost RegistryとRuntime dispatchで共有します。今回移していない天気・Tavily・既存GitHub Tool・Mail・Calendarはhost executorを使います。Finance capabilityは trusted run context の group から解決した `groups/{group}/finance.db` だけを固定 Runtime pathへmountし、read toolはread-only、mutation toolはread/writeで開きます。DB初期化と互換migrationはhost/Runtime内部で行い、Agentへpath・SQL・mountは公開しません。
+RuntimeにHTTP入口・待受port・service tokenはありません。Credential Proxyの責務は変わりません。Tool名・schema・実装の対応は [共通Runtime定義](../../src/tools/runtime-capabilities.ts) をhost RegistryとRuntime dispatchで共有します。今回移していない天気・Tavily・既存GitHub Tool・Mail・Calendarはhost executorを使います。FinanceのDB操作はAgent Runner内のsandbox-local Toolが現在groupのworkspaceから行うため、FinanceはこのRuntimeのcapability・起動・mount経路に含めません。
 
 ## runの権限と提示
 

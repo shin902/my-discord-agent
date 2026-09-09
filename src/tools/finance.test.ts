@@ -14,15 +14,14 @@ import {
   financeSummaryTool,
   financeUpdateSubscriptionTool,
 } from "./finance.js";
-import {
-  ensureFinanceDatabase,
-  FINANCE_RUNTIME_DB_PATH,
-} from "./finance-db.js";
+import { ensureFinanceDatabase } from "./finance-db.js";
+import { getCapabilityDefinition, resolveTools } from "./registry.js";
 
 const directories: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   await Promise.all(
     directories
       .splice(0)
@@ -34,7 +33,7 @@ async function database(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "finance-tools-"));
   directories.push(directory);
   const path = join(directory, "finance.db");
-  vi.stubEnv("FINANCE_DB_PATH", path);
+  vi.stubEnv("FINANCE_TEST_DB_PATH", path);
   return path;
 }
 
@@ -52,8 +51,8 @@ function json<T>(result: {
   return JSON.parse(text(result)) as T;
 }
 
-describe("finance runtime tools", () => {
-  it("registers exactly the eight purpose-specific tools without storage controls", () => {
+describe("finance sandbox tools", () => {
+  it("registers exactly the eight purpose-specific sandbox tools without storage controls", () => {
     expect(FINANCE_TOOLS.map((tool) => tool.name)).toEqual([
       "finance-record-transaction",
       "finance-list-transactions",
@@ -70,7 +69,72 @@ describe("finance runtime tools", () => {
         /"(?:sql|database|path|mount|runtime|image)"/i,
       );
     }
-    expect(FINANCE_RUNTIME_DB_PATH).toBe("/var/lib/finance/finance.db");
+    const names = [
+      "finance-record-transaction",
+      "finance-list-transactions",
+      "finance-summary",
+      "finance-add-subscription",
+      "finance-update-subscription",
+      "finance-cancel-subscription",
+      "finance-list-subscriptions",
+      "finance-subscription-history",
+    ];
+    expect(names.map((name) => getCapabilityDefinition(name))).toEqual(
+      names.map(() => undefined),
+    );
+    expect(resolveTools(names).map((tool) => tool.name)).toEqual([
+      "finance-record-transaction",
+      "finance-list-transactions",
+      "finance-summary",
+      "finance-add-subscription",
+      "finance-update-subscription",
+      "finance-cancel-subscription",
+      "finance-list-subscriptions",
+      "finance-subscription-history",
+    ]);
+  });
+
+  it("resolves and executes locally even when a Tool Proxy endpoint is available", async () => {
+    await database();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const [tool] = resolveTools(
+      ["finance-record-transaction"],
+      {},
+      { toolProxyEndpoint: { url: "http://proxy/rpc", token: "token" } },
+    );
+
+    const result = await tool.execute("local", {
+      type: "expense",
+      amount: 800,
+      date: "2026-09-10",
+    });
+
+    expect(tool.name).toBe("finance-record-transaction");
+    expect(json<{ amount: number }>(result).amount).toBe(-800);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("initializes a missing database when a read tool is first used", async () => {
+    const path = await database();
+
+    const summary = json<{ income: number; expense: number; net: number }>(
+      await financeSummaryTool.execute("summary", {
+        from: "2026-09-01",
+        to: "2026-09-30",
+      }),
+    );
+
+    expect(summary).toEqual({
+      from: "2026-09-01",
+      to: "2026-09-30",
+      income: 0,
+      expense: 0,
+      net: 0,
+      categories: [],
+    });
+    const db = new Database(path, { readonly: true });
+    db.close();
   });
 
   it("stores income as positive and expense as negative from positive inputs", async () => {

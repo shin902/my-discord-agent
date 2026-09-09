@@ -2,16 +2,15 @@ import { createRequire as createFinanceRequire } from "node:module";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type Database from "better-sqlite3";
 import { Type } from "typebox";
-import {
-  ensureFinanceDatabase,
-  FINANCE_RUNTIME_DB_PATH,
-} from "./finance-db.js";
+import { ensureFinanceDatabase } from "./finance-db.js";
 
 const DATE_PATTERN = "^\\d{4}-\\d{2}-\\d{2}$";
 const MAX_AMOUNT = Number.MAX_SAFE_INTEGER;
 const DEFAULT_TRANSACTION_LIMIT = 50;
 const MAX_TRANSACTION_LIMIT = 100;
 const TOKYO_TIME_ZONE = "Asia/Tokyo";
+/** The group workspace is mounted at /workspace in the Agent Runner. */
+export const FINANCE_DATABASE_PATH = "/workspace/finance.db";
 const require = createFinanceRequire(import.meta.url);
 
 type TransactionType = "income" | "expense";
@@ -144,7 +143,9 @@ function assertPositiveSafeInteger(value: number, label: string): void {
 }
 
 function databasePath(): string {
-  return process.env.FINANCE_DB_PATH ?? FINANCE_RUNTIME_DB_PATH;
+  // The test-only override keeps host-side unit tests out of /workspace. The
+  // Runner itself always uses the fixed group workspace path above.
+  return process.env.FINANCE_TEST_DB_PATH ?? FINANCE_DATABASE_PATH;
 }
 
 function withDatabase<T>(
@@ -152,7 +153,7 @@ function withDatabase<T>(
   operation: (db: Database.Database) => T,
 ): T {
   const dbPath = databasePath();
-  if (access === "read-write") ensureFinanceDatabase(dbPath);
+  ensureFinanceDatabase(dbPath);
   const DatabaseConstructor = require("better-sqlite3") as typeof Database;
   const db = new DatabaseConstructor(dbPath, {
     readonly: access === "read-only",

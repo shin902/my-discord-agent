@@ -5,11 +5,6 @@ import type Database from "better-sqlite3";
 
 const require = createFinanceDbRequire(import.meta.url);
 
-/** Fixed path inside the disposable Tool Runtime, never supplied by an agent. */
-export const FINANCE_RUNTIME_DB_PATH = "/var/lib/finance/finance.db";
-
-export type FinanceDbAccess = "read-only" | "read-write";
-
 /**
  * Create the finance schema and apply the only compatibility migration needed
  * by the append-only subscription history. Existing rows are never rewritten.
@@ -59,17 +54,4 @@ export function ensureFinanceDatabase(dbPath: string): void {
   } finally {
     db.close();
   }
-}
-
-/** Resolve only a configured group's finance database beneath the trusted root. */
-export function resolveFinanceDatabasePath(
-  root: string,
-  groupName: string | undefined,
-): string {
-  if (!groupName || !/^[a-zA-Z0-9_-]+$/.test(groupName)) {
-    throw new Error(
-      "Finance capability requires a valid trusted group context",
-    );
-  }
-  return path.resolve(root, "groups", groupName, "finance.db");
 }

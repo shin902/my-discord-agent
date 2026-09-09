@@ -26,7 +26,6 @@ import {
 } from "../proxy/tool-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
-import { getRuntimeCapability } from "../tools/runtime-capabilities.js";
 import { runCapabilityNames } from "../tools/skill-capabilities.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
@@ -738,9 +737,6 @@ export async function sendMessage(
         )
       : undefined;
   const capabilities = runCapabilityNames(effectiveConfig);
-  const hasFinanceCapability = capabilities.some(
-    (capability) => getRuntimeCapability(capability)?.financeDb !== undefined,
-  );
   const toolProxyRun =
     storedToolProxyPort === null || capabilities.length === 0
       ? undefined
@@ -748,7 +744,6 @@ export async function sendMessage(
           `${groupName}:${sessionId}:${randomUUID()}`,
           capabilities,
           {
-            ...(hasFinanceCapability ? { groupName } : {}),
             approvalRequiredCapabilities:
               effectiveConfig.approvalRequiredTools ?? [],
             trustedDiscordDestination,

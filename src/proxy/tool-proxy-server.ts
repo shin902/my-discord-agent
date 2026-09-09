@@ -20,7 +20,6 @@ export interface TrustedDiscordDestination {
 
 type ToolProxyRunSnapshot = Readonly<{
   runId: string;
-  groupName: string | undefined;
   allowedCapabilities: readonly string[];
   approvalRequiredCapabilities: readonly string[];
   trustedDiscordDestination: TrustedDiscordDestination | undefined;
@@ -43,7 +42,6 @@ export function createToolProxyRun(
   runId: string,
   allowedCapabilities: Iterable<string>,
   options: {
-    groupName?: string;
     approvalRequiredCapabilities?: Iterable<string>;
     trustedDiscordDestination?: TrustedDiscordDestination;
   } = {},
@@ -73,7 +71,6 @@ export function createToolProxyRun(
   };
   const snapshot = Object.freeze({
     runId,
-    groupName: options.groupName,
     allowedCapabilities: allowed,
     approvalRequiredCapabilities: approvalRequired,
     trustedDiscordDestination: options.trustedDiscordDestination
@@ -279,16 +276,6 @@ async function executeRequest(
     return;
   }
   const effectiveArgs = materializeCapabilityArgs(capability, body.args);
-  if (
-    capability.executor === "runtime" &&
-    capability.financeDb &&
-    !run.groupName
-  ) {
-    sendJson(res, 403, {
-      error: "Finance capability requires trusted group context",
-    });
-    return;
-  }
   const abortController = new AbortController();
   const abortRequest = (): void => {
     if (!res.writableEnded) abortController.abort();
@@ -346,12 +333,7 @@ async function executeRequest(
     signal.throwIfAborted();
     const result =
       capability.executor === "runtime"
-        ? await executeToolRuntime(
-            body.capability,
-            executionArgs,
-            signal,
-            capability.financeDb ? { groupName: run.groupName } : undefined,
-          )
+        ? await executeToolRuntime(body.capability, executionArgs, signal)
         : await tool.execute("tool-proxy", executionArgs, signal);
     if (!res.writableEnded) sendJson(res, 200, { result });
   } catch (error) {
