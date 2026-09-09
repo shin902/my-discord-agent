@@ -116,6 +116,80 @@ describe("x-saved receiver", () => {
     }
   });
 
+  it("commits optional hints before ACK without marking resolution complete", async () => {
+    const media = [
+      {
+        kind: "image",
+        position: 0,
+        source_url: "https://pbs.twimg.com/media/a.jpg",
+        alt_text: "diagram",
+      },
+      { kind: "video", position: 1 },
+    ];
+    expect((await post({ items: [{ ...item, media }] })).status).toBe(200);
+    const db = openXSavedDb(dbPath);
+    try {
+      expect(
+        db
+          .prepare(
+            "SELECT kind, position, source_url, alt_text FROM x_media ORDER BY position",
+          )
+          .all(),
+      ).toEqual([
+        {
+          kind: "image",
+          position: 0,
+          source_url: media[0].source_url,
+          alt_text: "diagram",
+        },
+        { kind: "video", position: 1, source_url: null, alt_text: null },
+      ]);
+      expect(db.prepare("SELECT media_resolved_at FROM x_items").get()).toEqual(
+        { media_resolved_at: null },
+      );
+      expect((await post({ items: [item] })).status).toBe(200);
+      expect(db.prepare("SELECT * FROM x_media").all()).toHaveLength(2);
+      expect(
+        (
+          await post({
+            items: [
+              {
+                ...item,
+                media: [
+                  {
+                    kind: "video",
+                    position: 0,
+                    source_url: "https://video.twimg.com/tweet_video/a.mp4",
+                  },
+                ],
+              },
+            ],
+          })
+        ).status,
+      ).toBe(400);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rolls back items and state on media DB failure without ACK", async () => {
+    const db = openXSavedDb(dbPath);
+    try {
+      db.exec(
+        "CREATE TRIGGER reject_media BEFORE INSERT ON x_media BEGIN SELECT RAISE(ABORT, 'failure'); END;",
+      );
+      const response = await post({
+        items: [{ ...item, media: [{ kind: "video", position: 0 }] }],
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).not.toHaveProperty("accepted");
+      expect(db.prepare("SELECT * FROM x_items").all()).toEqual([]);
+      expect(db.prepare("SELECT * FROM x_item_state").all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("accepts 50 items and deduplicates ACK keys", async () => {
     const response = await post({
       items: Array.from({ length: 50 }, () => item),

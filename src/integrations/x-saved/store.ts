@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
+import { type ArchiveMedia, MediaHintsSchema } from "./media-contract.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../..",
 );
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
@@ -30,6 +31,7 @@ export interface XSavedItem {
   externalUrls?: string[];
   seenLiked: boolean;
   seenBookmarked: boolean;
+  media?: ArchiveMedia[];
 }
 
 export interface SyncRunRecord {
@@ -122,6 +124,19 @@ function createSchema(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS x_media (
+      tweet_id TEXT NOT NULL REFERENCES x_items(tweet_id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('image', 'video')),
+      position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 15),
+      source_url TEXT,
+      alt_text TEXT,
+      local_path TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'failed')),
+      last_error TEXT,
+      PRIMARY KEY (tweet_id, kind, position)
+    );
+    CREATE INDEX IF NOT EXISTS idx_x_media_status ON x_media(status);
+
     CREATE TABLE IF NOT EXISTS x_sync_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       started_at TEXT NOT NULL,
@@ -184,16 +199,17 @@ function ensureSchema(db: Database.Database): void {
       `x-saved schema version ${version} is newer than supported ${SCHEMA_VERSION}`,
     );
   }
-  if (version === 0) {
+  db.transaction(() => {
+    if (version === 1) migrateSchemaV1(db);
     createSchema(db);
+    if (version < 3) {
+      db.exec(`ALTER TABLE x_items ADD COLUMN media_resolved_at TEXT;
+        ALTER TABLE x_items ADD COLUMN media_resolve_attempted_at TEXT;`);
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_x_items_media_resolution
+      ON x_items(media_resolve_attempted_at, tweet_id) WHERE media_resolved_at IS NULL;`);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
-    return;
-  }
-  if (version === 1) {
-    migrateSchemaV1(db);
-    db.pragma(`user_version = ${SCHEMA_VERSION}`);
-  }
-  createSchema(db);
+  })();
 }
 
 export function openXSavedDb(
@@ -202,10 +218,15 @@ export function openXSavedDb(
   const resolved = path.resolve(dbPath);
   mkdirSync(path.dirname(resolved), { recursive: true });
   const db = new Database(resolved);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  ensureSchema(db);
-  return db;
+  try {
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    ensureSchema(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export function ingestXSavedItems(
@@ -285,6 +306,12 @@ export function ingestXSavedItems(
           now,
         });
         ensureState.run(item.tweetId, now);
+        if (item.media)
+          mergeXSavedMedia(
+            targetDb,
+            item.tweetId,
+            MediaHintsSchema.parse(item.media),
+          );
         if (!existing.has(item.tweetId)) {
           newItems += 1;
           existing.add(item.tweetId);
@@ -297,6 +324,46 @@ export function ingestXSavedItems(
   } finally {
     if (ownsTarget) targetDb.close();
   }
+}
+
+/** Hints never establish completeness. Successful lookup and media commit together. */
+export function mergeXSavedMedia(
+  db: Database.Database,
+  tweetId: string,
+  media: readonly ArchiveMedia[],
+  resolvedAt?: string,
+): void {
+  db.transaction(() => {
+    const item = db
+      .prepare("SELECT media_resolved_at FROM x_items WHERE tweet_id = ?")
+      .get(tweetId) as { media_resolved_at: string | null } | undefined;
+    if (!item) throw new Error("Media has no owning Tweet");
+    if (!resolvedAt && item.media_resolved_at) return;
+    const upsert = db.prepare(`
+      INSERT INTO x_media (tweet_id, kind, position, source_url, alt_text)
+      VALUES (@tweetId, @kind, @position, @source, @alt)
+      ON CONFLICT(tweet_id, kind, position) DO UPDATE SET
+        source_url = CASE WHEN x_media.status = 'done' THEN x_media.source_url
+          WHEN @resolved THEN COALESCE(excluded.source_url, x_media.source_url)
+          ELSE COALESCE(x_media.source_url, excluded.source_url) END,
+        alt_text = CASE WHEN x_media.status = 'done' THEN x_media.alt_text
+          WHEN @resolved AND x_media.source_url IS NOT excluded.source_url THEN excluded.alt_text
+          ELSE COALESCE(NULLIF(excluded.alt_text, ''), x_media.alt_text) END
+    `);
+    for (const entry of media)
+      upsert.run({
+        tweetId,
+        kind: entry.kind,
+        position: entry.position,
+        source: entry.source_url ?? null,
+        alt: entry.alt_text ?? null,
+        resolved: resolvedAt ? 1 : 0,
+      });
+    if (resolvedAt)
+      db.prepare(
+        "UPDATE x_items SET media_resolved_at = ? WHERE tweet_id = ?",
+      ).run(resolvedAt, tweetId);
+  })();
 }
 
 export function markInitialImportCompleted(

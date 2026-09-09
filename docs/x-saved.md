@@ -2,17 +2,17 @@
 
 `x-saved` stores saved X/Twitter posts as durable local data that agents can search and triage without receiving credentials.
 
-The repository owns the local SQLite database at `data/x-saved/x-saved.sqlite`. Only that database is mounted into an agent sandbox:
+The repository owns the local SQLite database at `data/x-saved/x-saved.sqlite`. Its containing directory (database and archived media, no source credentials) is mounted into an agent sandbox:
 
 ```text
 my-discord-agent
-  data/x-saved/x-saved.sqlite
+  data/x-saved/{x-saved.sqlite,media/}
        |
        | configured mount
        v
 agent sandbox
-  /x-saved/x-saved.sqlite
-  + x-saved skill
+  /x-saved/{x-saved.sqlite,media/}
+  + x-saved skill / read
 ```
 
 The host-side receiver accepts live captures from [x-saved-extension](https://github.com/shin902/x-saved-extension), converts them to `XSavedItem`, and calls `ingestXSavedItems`. It is independent of the agent Tool Proxy and does not use BirdClaw, xurl, or X APIs. Source credentials and source databases remain outside the sandbox.
@@ -52,7 +52,11 @@ The extension commits each new capture to its IndexedDB outbox before scheduling
     "author": "@alice",
     "url": "https://x.com/alice/status/123",
     "created_at": "2026-01-01T00:00:00.000Z",
-    "kind": "like"
+    "kind": "like",
+    "media": [
+      { "kind": "image", "position": 0, "source_url": "https://pbs.twimg.com/media/Example.jpg", "alt_text": "A diagram" },
+      { "kind": "video", "position": 1 }
+    ]
   }],
   "idempotency_key": "optional-request-id"
 }
@@ -60,11 +64,55 @@ The extension commits each new capture to its IndexedDB outbox before scheduling
 
 Tweet IDs are positive decimal strings of at most 20 digits. `text` is required (empty text is valid for media-only posts), up to 100,000 characters. `url` must be an `https://x.com/<handle>/status/<tweet_id>` URL with a matching ID. `kind` is `like` or `bookmark`. `author` may be a handle with or without `@` and, when nonempty, must match the URL handle case-insensitively; `created_at` is an ISO timestamp with a timezone. Omitted or empty author/timestamp metadata is preserved in existing rows. Unknown fields and invalid items reject the entire batch before database access. External URL metadata is deliberately omitted by this adapter, preserving stored values. The extension applies the same item validation before IndexedDB persistence so invalid captures cannot enter the outbox and block later batches.
 
-Only after the SQLite transaction commits does the receiver return `200` with `{"accepted":["like:123"]}`. Keys are unique `kind:tweet_id` values. Retries rely on item-level upserts, with no request ledger. Like and Bookmark captures merge into one Tweet row; existing status and notes remain intact.
+Optional `media` is a best-effort DOM hint, never a completeness signal. Image entries require a validated HTTPS `pbs.twimg.com/media/<identifier>` URL (max 2,048 characters) and may include `alt_text` (max 10,000 characters). Video hints contain only `kind` and `position`, not source URLs. Positions are integers 0–15 across media kinds; at most 32 distinct `(kind, position)` entries are accepted. Unknown fields, duplicate keys and unsafe URLs reject the batch. Omitted or empty media does not retract existing rows.
+
+The receiver performs no network lookup/download: items, state and optional hints commit in one transaction. Only after the SQLite transaction commits does the receiver return `200` with `{"accepted":["like:123"]}`. Keys are unique `kind:tweet_id` values. Retries rely on item-level upserts, with no request ledger. Like and Bookmark captures merge into one Tweet row; existing status and notes remain intact.
 
 Errors return JSON without `accepted`: `400` for invalid JSON/batches, `413` for oversized bodies, `415` for unsupported content type/encoding, and `500` for a failed database commit. Other paths return `404`, and other methods return `405`. Web-page origins are rejected (`403`); extension service-worker requests use Chrome host permissions and need no web-page CORS access.
 
 To verify an installation, capture a Like and a Bookmark in Chrome and check the local database within a few seconds. For recovery, stop the receiver, capture another item, confirm the popup shows it pending, restart the receiver, and use `Sync pending items`. Confirm only acknowledged entries disappear. These browser/Tailnet checks require the installed extension and live runtime; automated HTTP/SQLite and extension tests cover the protocol separately.
+
+## Media archive: one host cron
+
+**Tweet ID is the canonical locator.** The extension is a sensor for collecting saved IDs, with optional first-capture hints. Its normal `kind:tweet_id` sent/inFlight/seen/outbox/ACK behavior is unchanged; there is no media-aware dedupe or enrichment replay. Already stored text-only Tweets can be backfilled without Mac re-scrolling, re-sending, or an IndexedDB reset.
+
+Enable the single disabled `x-saved-media-download` example deliberately, then restart the runtime:
+
+```json
+{
+  "id": "x-saved-media-download",
+  "schedule": "*/5 * * * *",
+  "enabled": true,
+  "handler": "jobs/x-saved-media-download.ts",
+  "settings": { "limit": 20 }
+}
+```
+
+This is a deterministic host handler, not an Agent/LLM job. Each run has two sequential phases, each bounded by the same `limit` (1–100, default 20):
+
+1. Select unresolved `x_items`, never-attempted first then oldest attempt. Update `media_resolve_attempted_at`, look up **only the Tweet ID** through `https://api.fxtwitter.com/2/status/<id>`, upsert media and set `media_resolved_at` atomically on success. Empty media is also success and is not repeatedly looked up. Failures remain unresolved and rotate behind other IDs on later runs.
+2. Download pending/failed `x_media`, pending first. Save one image or one MP4 into a sibling temporary file, count streamed bytes, then atomically rename and commit a relative `local_path` / `done`. Individual failures become `failed` with `last_error`; other files continue and failed sources retry next run. A video without direct MP4 is marked failed and excluded from repeated download attempts while its source remains absent.
+
+FxTwitter's current [v2 API schema](https://github.com/FxEmbed/FxEmbed/blob/main/docs/specs/fxtwitter-openapi.json) is validated: matching focal status ID/type/provider, ordered `media.all`, supported image/video/gif entries. Quotes, cards, avatars, thumbnails and mosaic URLs are not archive sources. The highest-bitrate direct MP4 format is selected; a direct top-level MP4 URL is usable when formats are absent. HLS-only videos retain presence metadata but cannot be archived. No HLS, ffmpeg, variant table, provider abstraction, resolver queue or second cron is involved.
+
+Like Agent Reach's existing FxTwitter fetch policy, lookup is credential-free, redirect-free, bounded to 20 seconds and 2 MiB. The archive uses v2's ID-only endpoint instead of Agent Reach's handle-based text endpoint. Only saved Tweet IDs are sent to FxTwitter, never saved-state flags, text, notes, cookies or tokens. Deleted/private/unavailable posts can remain unresolved; this public third-party service is not a completeness guarantee for inaccessible posts.
+
+### Files and trust boundary
+
+| Kind | Allowed source | Fixed limits | Local file |
+|---|---|---|---|
+| Image | `https://pbs.twimg.com/media/...` | 10 MiB, 30 seconds per attempt | `media/<tweet_id>/<position>.jpg/png/webp/gif` |
+| Video / animated GIF | `https://video.twimg.com/{ext_tw_video,amplify_video,tweet_video}/...mp4` | 512 MiB, 5 minutes | `media/<tweet_id>/<position>.mp4` |
+
+Images try `name=orig` first, then the supplied URL only if that attempt fails. Video downloads save one MP4, without re-encoding. Both stream directly to disk; no whole-binary buffering, resume or range requests. Only allowed image MIME types / `video/mp4` are accepted. URLs are revalidated before every fetch: HTTPS, exact CDN host and path, no URL credentials, non-default port or fragment, and **no redirects**. Arbitrary URLs from FxTwitter are not trusted. Numeric Tweet IDs/positions and non-symlink media directories constrain local paths. Temporary files are removed on handled failures; a process crash can leave a `.part` file, never a published partial archive.
+
+Files live beside the database under `data/x-saved/media/` (or under the configured DB parent). Completed rows/files are retained as archived snapshots on later capture or lookup, not reset or replaced; pending sources can be completed by FxTwitter. Missing incoming entries never delete media. Hints arriving after successful resolution cannot override resolved media. Media processing does not change Tweet text/timestamps, sticky history, initial-import markers, Agent status or notes.
+
+DB/schema/transaction errors fail the entire cron instead of being swallowed as per-item failures. A crash after file rename but before DB commit may cause that pending file to be downloaded again. No separate filesystem/SQLite transaction or retry ledger is added. Long sequential video downloads can delay later cron ticks under the existing runner; reduce `limit` on slow links.
+
+### Rollout
+
+Deploy the receiver before reloading the updated extension (old strict receivers reject media fields). Install updated Skill templates, retain the existing directory mount, then enable the archive cron. No production configuration is changed automatically. Verify existing IDs resolve with the browser closed, confirm image/MP4 paths, and use Agent `read` on a downloaded image. Mac Chrome/Tailscale new-capture checks are still needed for installation validation, but not for stored-ID media backfill.
 
 ## Configuration
 
@@ -77,7 +125,7 @@ export X_SAVED_BACKUP_DIR=/var/lib/my-discord-agent/x-saved-backups
 
 The default database is `data/x-saved/x-saved.sqlite`. Backups default to `data/x-saved-backups`, outside the live database directory and therefore outside the sandbox mount. The backup directory must remain outside the live database directory.
 
-Back up `x-saved.sqlite` and its backup files. Agent-managed status and notes cannot be reconstructed from an upstream service alone.
+Back up `x-saved.sqlite` and its backup files, and back up `data/x-saved/media/` separately. SQLite backups do not contain image/MP4 binaries. Agent-managed status and notes cannot be reconstructed from an upstream service alone.
 
 `config/cron.example.json` contains a disabled `x-saved-backup` handler example. When enabled, it calls the generic backup operation once per schedule, retaining 14 backups by default. Set the optional `settings.keep` value to change retention; database and backup paths continue to come from `X_SAVED_DB_PATH` and `X_SAVED_BACKUP_DIR`.
 
@@ -87,7 +135,7 @@ Enable the `x-saved` skill and mount only the application-owned directory:
 
 ```json
 {
-  "tools": ["bash"],
+  "tools": ["bash", "read"],
   "skills": ["x-saved"],
   "mounts": [
     {
@@ -111,6 +159,8 @@ python3 SKILLS/x-saved/scripts/x-saved.py mark <tweet-id> try
 python3 SKILLS/x-saved/scripts/x-saved.py note <tweet-id> "llama.cppで試す"
 ```
 
+`pending`, `recent`, `search` and `show` include media `kind`, `status`, `position`, alt text and completed `/x-saved/media/...` paths. The Skill remains usable before migration (empty media lists). Use `read` for images when they inform classification. MP4 paths are visible as archives only; no video-understanding tool or thumbnail generation is added.
+
 ## Daily and weekly triage
 
 `config/cron.example.json` contains disabled examples for:
@@ -126,9 +176,10 @@ These are normal declarative agent cron jobs. Their `mounts` field replaces inhe
 
 The durable state is `data/x-saved/x-saved.sqlite`:
 
-- `x_items` — post body, author, URL, sticky like/bookmark history, and ingest timestamps
+- `x_items` — post body, author, URL, sticky like/bookmark history, ingest timestamps, nullable `media_resolved_at` / `media_resolve_attempted_at`
 - `x_item_state` — `inbox`, `reviewed`, `keep`, `try`, `done`, or `ignore`, plus an optional note and update time
+- `x_media` — `(tweet_id, kind, position)` primary key, source/alt text, relative file path, pending/done/failed status and last error; cascading ownership by `x_items`
 - `x_sync_runs` — optional source health records, timestamps, errors, and new-item count
 - `x_meta` — metadata such as the one-time `initial_import_completed_at` marker
 
-The store preserves its schema migrations and merge/upsert behavior for existing databases. In particular, missing incoming metadata does not erase stored metadata, relationship flags remain sticky, and existing item state and notes remain unchanged.
+Schema v3 transactionally adds `x_media` and the two nullable timestamps to existing v1/v2 databases without resetting item state. DOM hints never set `media_resolved_at`. No resolver-specific table, metadata JSON, hashes, dimensions, bitrate or retry counters are stored. The store preserves its schema migrations and merge/upsert behavior for existing databases. In particular, missing incoming metadata does not erase stored metadata, relationship flags remain sticky, and existing item state and notes remain unchanged.
