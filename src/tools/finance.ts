@@ -93,6 +93,42 @@ function currentDate(): string {
   return formatCurrentDateTime(Date.now()).slice(0, 10);
 }
 
+function currentMonthRange(): { from: string; to: string } {
+  const today = currentDate();
+  const [year, month] = today.split("-");
+  return {
+    from: `${year}-${month}-01`,
+    to: new Date(Date.UTC(Number(year), Number(month), 0))
+      .toISOString()
+      .slice(0, 10),
+  };
+}
+
+function assertDate(value: string, label: string): void {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (
+    !new RegExp(DATE_PATTERN).test(value) ||
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw new Error(`${label} が不正な日付です: ${value}`);
+  }
+}
+
+function assertDateRange(from?: string, to?: string): void {
+  if (from) assertDate(from, "from");
+  if (to) assertDate(to, "to");
+  if (from && to && from > to) {
+    throw new Error("from は to 以前の日付にしてください");
+  }
+}
+
+function assertAmount(value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("amount は正の整数で指定してください");
+  }
+}
+
 function result(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
@@ -105,7 +141,7 @@ function publicTransaction(row: TransactionRow) {
     id: row.id,
     date: row.date,
     type: row.amount < 0 ? ("expense" as const) : ("income" as const),
-    amount: Math.abs(row.amount),
+    amount: row.amount,
     category: row.category,
     description: row.description,
   };
@@ -168,9 +204,11 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
     label: "Record Finance Transaction",
     description: "Record one income or expense in yen.",
     parameters: recordTransactionParameters,
-    execute: async (_id, input) =>
-      withFinanceDatabase(dbPath, (db) => {
-        const date = input.date ?? currentDate();
+    execute: async (_id, input) => {
+      assertAmount(input.amount);
+      const date = input.date ?? currentDate();
+      assertDate(date, "date");
+      return withFinanceDatabase(dbPath, (db) => {
         const signed = input.type === "expense" ? -input.amount : input.amount;
         const inserted = db
           .prepare(
@@ -185,7 +223,8 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
           )
           .get(Number(inserted.lastInsertRowid)) as TransactionRow;
         return result(publicTransaction(row));
-      }),
+      });
+    },
   };
 
   const listTransactions: AgentTool<typeof listTransactionsParameters> = {
@@ -193,8 +232,9 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
     label: "List Finance Transactions",
     description: "List income and expenses with optional filters.",
     parameters: listTransactionsParameters,
-    execute: async (_id, input) =>
-      withFinanceDatabase(dbPath, (db) => {
+    execute: async (_id, input) => {
+      assertDateRange(input.from, input.to);
+      return withFinanceDatabase(dbPath, (db) => {
         const where: string[] = [];
         const values: Array<string | number> = [];
         if (input.from) {
@@ -221,7 +261,8 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
           )
           .all(...values) as TransactionRow[];
         return result(rows.map(publicTransaction));
-      }),
+      });
+    },
   };
 
   const summary: AgentTool<typeof summaryParameters> = {
@@ -230,25 +271,23 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
     description:
       "Summarize income, expenses, net balance, and expense totals by category.",
     parameters: summaryParameters,
-    execute: async (_id, input) =>
-      withFinanceDatabase(dbPath, (db) => {
+    execute: async (_id, input) => {
+      const defaultRange = input.from || input.to ? undefined : currentMonthRange();
+      const from = input.from ?? defaultRange?.from;
+      const to = input.to ?? defaultRange?.to;
+      assertDateRange(from, to);
+      return withFinanceDatabase(dbPath, (db) => {
         const where: string[] = [];
         const values: string[] = [];
-        if (input.from) {
+        if (from) {
           where.push("date >= ?");
-          values.push(input.from);
+          values.push(from);
         }
-        if (input.to) {
+        if (to) {
           where.push("date <= ?");
-          values.push(input.to);
+          values.push(to);
         }
-        let month: string | undefined;
-        if (!input.from && !input.to) {
-          month = currentDate().slice(0, 7);
-          where.push("date LIKE ?");
-          values.push(`${month}-%`);
-        }
-        const clause = `WHERE ${where.join(" AND ")}`;
+        const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
         const totals = db
           .prepare(
             `SELECT
@@ -265,23 +304,20 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
         const categories = db
           .prepare(
             `SELECT category, SUM(amount) AS total
-             FROM transactions ${clause} AND amount < 0
+             FROM transactions ${clause}${clause ? " AND" : "WHERE"} amount < 0
              GROUP BY category ORDER BY total ASC`,
           )
           .all(...values) as Array<{ category: string | null; total: number }>;
         return result({
-          from: input.from ?? null,
-          to: input.to ?? null,
-          month: month ?? null,
+          from,
+          to,
           income: totals.income ?? 0,
-          expense: Math.abs(totals.expense ?? 0),
+          expense: totals.expense ?? 0,
           net: totals.net ?? 0,
-          categories: categories.map((row) => ({
-            category: row.category,
-            expense: Math.abs(row.total),
-          })),
+          categories,
         });
-      }),
+      });
+    },
   };
 
   const addSubscription: AgentTool<typeof addSubscriptionParameters> = {
@@ -289,8 +325,10 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
     label: "Add Finance Subscription",
     description: "Add a subscription as a new state snapshot.",
     parameters: addSubscriptionParameters,
-    execute: async (_id, input) =>
-      withFinanceDatabase(dbPath, (db) =>
+    execute: async (_id, input) => {
+      assertAmount(input.amount);
+      assertDate(input.nextDate, "nextDate");
+      return withFinanceDatabase(dbPath, (db) =>
         result(
           publicSubscription(
             insertSubscription(db, {
@@ -303,7 +341,8 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
             }),
           ),
         ),
-      ),
+      );
+    },
   };
 
   const updateSubscription: AgentTool<typeof updateSubscriptionParameters> = {
@@ -312,42 +351,42 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
     description:
       "Append a changed subscription snapshot without rewriting history.",
     parameters: updateSubscriptionParameters,
-    execute: async (_id, input) =>
-      withFinanceDatabase(dbPath, (db) => {
-        if (
-          input.amount === undefined &&
-          input.cycle === undefined &&
-          input.nextDate === undefined &&
-          input.category === undefined &&
-          input.active === undefined
-        ) {
-          throw new Error("変更する項目を1つ以上指定してください");
-        }
-        const previous = latestSubscription(db, input.name);
-        if (!previous)
-          throw new Error(`サブスクが見つかりません: ${input.name}`);
-        return result(
-          publicSubscription(
-            insertSubscription(db, {
-              name: previous.name,
-              amount:
-                input.amount === undefined ? previous.amount : -input.amount,
-              cycle: input.cycle ?? previous.cycle,
-              next_date: input.nextDate ?? previous.next_date,
-              category:
-                input.category === undefined
-                  ? previous.category
-                  : input.category,
-              active:
-                input.active === undefined
-                  ? previous.active
-                  : input.active
-                    ? 1
-                    : 0,
-            }),
-          ),
-        );
-      }),
+    execute: async (_id, input) => {
+      if (input.amount !== undefined) assertAmount(input.amount);
+      if (input.nextDate !== undefined) assertDate(input.nextDate, "nextDate");
+      if (
+        input.amount === undefined &&
+        input.cycle === undefined &&
+        input.nextDate === undefined &&
+        input.category === undefined &&
+        input.active === undefined
+      ) {
+        throw new Error("変更する項目を1つ以上指定してください");
+      }
+      return withFinanceDatabase(dbPath, (db) => {
+        const append = db.transaction(() => {
+          const previous = latestSubscription(db, input.name);
+          if (!previous)
+            throw new Error(`サブスクが見つかりません: ${input.name}`);
+          return insertSubscription(db, {
+            name: previous.name,
+            amount:
+              input.amount === undefined ? previous.amount : -input.amount,
+            cycle: input.cycle ?? previous.cycle,
+            next_date: input.nextDate ?? previous.next_date,
+            category:
+              input.category === undefined ? previous.category : input.category,
+            active:
+              input.active === undefined
+                ? previous.active
+                : input.active
+                  ? 1
+                  : 0,
+          });
+        });
+        return result(publicSubscription(append()));
+      });
+    },
   };
 
   const cancelSubscription: AgentTool<typeof subscriptionNameParameters> = {
@@ -357,21 +396,20 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
     parameters: subscriptionNameParameters,
     execute: async (_id, input) =>
       withFinanceDatabase(dbPath, (db) => {
-        const previous = latestSubscription(db, input.name);
-        if (!previous)
-          throw new Error(`サブスクが見つかりません: ${input.name}`);
-        return result(
-          publicSubscription(
-            insertSubscription(db, {
-              name: previous.name,
-              amount: previous.amount,
-              cycle: previous.cycle,
-              next_date: previous.next_date,
-              category: previous.category,
-              active: 0,
-            }),
-          ),
-        );
+        const append = db.transaction(() => {
+          const previous = latestSubscription(db, input.name);
+          if (!previous)
+            throw new Error(`サブスクが見つかりません: ${input.name}`);
+          return insertSubscription(db, {
+            name: previous.name,
+            amount: previous.amount,
+            cycle: previous.cycle,
+            next_date: previous.next_date,
+            category: previous.category,
+            active: 0,
+          });
+        });
+        return result(publicSubscription(append()));
       }),
   };
 
