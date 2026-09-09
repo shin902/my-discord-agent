@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MessageFlags } from "discord.js";
 import { describe, expect, it, vi } from "vitest";
 
 const acknowledgeEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -68,10 +69,12 @@ it("edits the parent placeholder then sends overflow chunks in response order", 
   const edit = vi.fn().mockResolvedValue(undefined);
   const parent = { messages: { fetch: vi.fn().mockResolvedValue({ edit }) } };
   const sent: string[] = [];
+  const sentPayloads: unknown[] = [];
   const thread = {
     id: "thread-1",
     isSendable: () => true,
     send: vi.fn(async (value) => {
+      sentPayloads.push(value);
       sent.push(typeof value === "string" ? value : value.content);
       return { id: `m-${sent.length}` };
     }),
@@ -89,7 +92,17 @@ it("edits the parent placeholder then sends overflow chunks in response order", 
     while (await worker.runOnce()) {}
     expect(edit).toHaveBeenCalledOnce();
     expect(edit.mock.calls[0][0].content).toHaveLength(2000);
+    expect(edit.mock.calls[0][0].flags).toBe(MessageFlags.SuppressEmbeds);
     expect(sent).toHaveLength(2);
+    expect(
+      sentPayloads.every(
+        (payload) =>
+          typeof payload === "object" &&
+          payload !== null &&
+          "flags" in payload &&
+          payload.flags === MessageFlags.SuppressEmbeds,
+      ),
+    ).toBe(true);
     expect(sent[0]).toHaveLength(2000);
     expect(sent[1]).toHaveLength(1000);
     expect(parent.messages.fetch).toHaveBeenCalledWith("placeholder-1");
@@ -368,6 +381,7 @@ it("reuses the durably persisted cron thread for delivery", async () => {
     expect(send).toHaveBeenCalledWith({
       content: "response",
       allowedMentions: { parse: [], repliedUser: false },
+      flags: MessageFlags.SuppressEmbeds,
     });
     expect(
       repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
@@ -928,13 +942,18 @@ describe("durable delivery worker", () => {
       expect(send.mock.calls[0]?.[0]).toMatchObject({
         reply: { messageReference: "original-message" },
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
       expect(
         send.mock.calls.slice(1).every(([content]) => {
           const payload = content as {
             allowedMentions?: { parse?: unknown[] };
+            flags?: number;
           };
-          return payload.allowedMentions?.parse?.length === 0;
+          return (
+            payload.allowedMentions?.parse?.length === 0 &&
+            payload.flags === MessageFlags.SuppressEmbeds
+          );
         }),
       ).toBe(true);
       expect(repo.get(jobId)?.succeeded).toBe(true);

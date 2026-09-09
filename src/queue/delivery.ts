@@ -6,6 +6,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { withDiscordSendOptions } from "../discord/send-options.js";
 import { settleRssDispatch } from "./reconciliation.js";
 
 const MAX_CRON_PLACEHOLDER_ATTEMPTS = 3;
@@ -215,7 +216,9 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         }
         mutationAttempted = true;
         const parent = await target.send(
-          allowMention ? content : { content, allowedMentions },
+          withDiscordSendOptions(
+            allowMention ? content : { content, allowedMentions },
+          ),
         );
         const parentId = String(parent.id ?? "");
         if (!parentId) {
@@ -289,7 +292,9 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         }
         mutationAttempted = true;
         try {
-          await placeholder.edit({ content, allowedMentions });
+          await placeholder.edit(
+            withDiscordSendOptions({ content, allowedMentions }),
+          );
         } catch (error) {
           throw new DeliveryError(
             "retryable",
@@ -303,17 +308,20 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const value = payload.cronPlaceholderMessageId
         ? { id: payload.cronPlaceholderMessageId }
         : reply
-          ? await target.send({
-              content,
-              reply: {
-                messageReference: payload.replyMessageId,
-                failIfNotExists: false,
-              },
-              // allowMention=true は従来の送信形式を維持する。
-              allowedMentions,
-            })
+          ? await target.send(
+              withDiscordSendOptions({
+                content,
+                reply: {
+                  messageReference: payload.replyMessageId,
+                  failIfNotExists: false,
+                },
+                allowedMentions,
+              }),
+            )
           : await target.send(
-              allowMention ? content : { content, allowedMentions },
+              withDiscordSendOptions(
+                allowMention ? content : { content, allowedMentions },
+              ),
             );
       return {
         externalMessageId: String(value?.id ?? randomUUID()),

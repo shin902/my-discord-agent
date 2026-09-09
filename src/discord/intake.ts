@@ -13,6 +13,7 @@ import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
+import { withDiscordSendOptions } from "./send-options.js";
 
 export type DiscordMessageSource = "live" | "backfill";
 
@@ -236,7 +237,11 @@ async function ingest(
     if (error instanceof ThreadCreationError) {
       if (options.replyOnFailure) {
         await message
-          .reply("スレッドの作成に失敗しました。もう一度送ってください。")
+          .reply(
+            withDiscordSendOptions(
+              "スレッドの作成に失敗しました。もう一度送ってください。",
+            ),
+          )
           .catch((replyError) =>
             console.error("[handler] reply 失敗:", replyError),
           );
@@ -248,7 +253,11 @@ async function ingest(
     if (options.replyOnFailure) {
       console.error("[handler] appendInbox 失敗:", error);
       await message
-        .reply("メッセージの受信に失敗しました。もう一度送ってください。")
+        .reply(
+          withDiscordSendOptions(
+            "メッセージの受信に失敗しました。もう一度送ってください。",
+          ),
+        )
         .catch((replyError) =>
           console.error("[handler] reply 失敗:", replyError),
         );

@@ -1,3 +1,4 @@
+import { MessageFlags } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerActiveRun } from "../agent/active-run-registry.js";
 
@@ -232,6 +233,7 @@ describe("steer command", () => {
     expect(interaction.channel.send).toHaveBeenCalledWith({
       content: "Steer:\nPlease stop",
       allowedMentions: { parse: [], repliedUser: false },
+      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.followUp).not.toHaveBeenCalled();
     expect(interaction.deleteReply).toHaveBeenCalledOnce();
@@ -467,6 +469,7 @@ describe("resolveDiscordCommandDeployTargets", () => {
     expect(
       resolveDiscordCommandDeployTargets(
         {
+          suppressEmbeds: true,
           bots: {
             personal: {
               tokenEnv: "DISCORD_BOT_TOKEN",
@@ -660,6 +663,7 @@ describe("handleBotCommand", () => {
         /^Bot: coding\nPrompt: Fix it\nBotへの依頼を受け付けました。Task Session: task-/,
       ),
       allowedMentions: { parse: [], repliedUser: false },
+      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.deferReply.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.findGroupByChannelId.mock.invocationCallOrder[0] ?? Infinity,
@@ -689,6 +693,7 @@ describe("handleBotCommand", () => {
       expect(options).toEqual({
         content: expect.any(String),
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     }
   });
@@ -801,6 +806,7 @@ describe("handleBotCommand", () => {
     expect(interaction.channel.send).toHaveBeenCalledWith({
       content: expect.stringContaining("Bot: coding\nPrompt: Continue it\n"),
       allowedMentions: { parse: [], repliedUser: false },
+      flags: MessageFlags.SuppressEmbeds,
     });
   });
 

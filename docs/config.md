@@ -407,6 +407,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 ```json
 {
   "discord": {
+    "suppressEmbeds": true,
     "bots": {
       "personal": {
         "applicationId": "YOUR_PERSONAL_DISCORD_APPLICATION_ID",
@@ -425,6 +426,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 
 | キー | 必須 | 内容 |
 |---|---|---|
+| `discord.suppressEmbeds` | — | 通常のDiscordテキスト配送でURL埋め込みを抑制する（既定: `true`）。`false` にすると従来どおり埋め込みを許可 |
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |

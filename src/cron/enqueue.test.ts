@@ -1,4 +1,4 @@
-import { ChannelType } from "discord.js";
+import { ChannelType, MessageFlags } from "discord.js";
 import { expect, it, vi } from "vitest";
 import { openRuntimeDb, QueueRepository } from "../queue/repository.js";
 import { enqueueCronInbox, provisionCronItemThread } from "./enqueue.js";
@@ -57,7 +57,10 @@ it("provisions an item thread before the caller can run AI", async () => {
       threadName: "item thread",
     });
 
-    expect(parent.send).toHaveBeenCalledWith("処理中…");
+    expect(parent.send).toHaveBeenCalledWith({
+      content: "処理中…",
+      flags: MessageFlags.SuppressEmbeds,
+    });
     expect(startThread).toHaveBeenCalledWith({
       name: "item thread",
       autoArchiveDuration: expect.any(Number),

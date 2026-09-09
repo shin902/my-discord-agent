@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { ChannelType } from "discord.js";
 import { z } from "zod";
+import { withDiscordSendOptions } from "../../discord/send-options.js";
 import { NonRetryableError } from "../../utils/error.js";
 import { splitMessage } from "../../utils/splitMessage.js";
 import type { CronContext } from "../runner.js";
@@ -114,6 +115,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
   }
 
   for (const chunk of splitMessage(report)) {
-    await channel.send(chunk);
+    await channel.send(withDiscordSendOptions(chunk));
   }
 }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withDiscordSendOptions } from "./send-options.js";
 
 const originalPersonalToken = process.env.DISCORD_BOT_TOKEN;
 const originalTakopToken = process.env.TAKOP_BOT_TOKEN;
@@ -31,6 +32,7 @@ describe("Discord client registry", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mocks.loadDiscordConfig.mockResolvedValue({
+      suppressEmbeds: true,
       bots: {
         personal: {
           applicationId: "personal-application",
@@ -66,6 +68,27 @@ describe("Discord client registry", () => {
       getDefaultDiscordClient(),
     );
     expect(getDiscordClient("takop")).not.toBe(getDefaultDiscordClient());
+  });
+
+  it("applies the configured embed suppression setting to sends", async () => {
+    mocks.loadDiscordConfig.mockResolvedValue({
+      suppressEmbeds: false,
+      bots: {
+        personal: {
+          applicationId: "personal-application",
+          tokenEnv: "DISCORD_BOT_TOKEN",
+        },
+        takop: {
+          applicationId: "takop-application",
+          tokenEnv: "TAKOP_BOT_TOKEN",
+        },
+      },
+    });
+    await initDiscordClients();
+
+    expect(withDiscordSendOptions("https://example.com")).toBe(
+      "https://example.com",
+    );
   });
 
   it("logs in each configured Bot using its tokenEnv", async () => {

@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MessageFlags } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiscordEvent, SendMessageOptions } from "../agent/manager.js";
 import type { AgentMemoryConfig } from "../config/agent-memory.js";
@@ -1435,13 +1436,16 @@ describe("processMessage - Discord イベント通知", () => {
 
     await vi.waitFor(() => {
       // allowMention が true でもツールコールはリプライしない
-      expect(mockSend).toHaveBeenCalledWith(
-        expect.stringMatching(/^🔧 `read_file` /),
-      );
+      expect(mockSend).toHaveBeenCalledWith({
+        content: expect.stringMatching(/^🔧 `read_file` /),
+        flags: MessageFlags.SuppressEmbeds,
+      });
       const call = mockSend.mock.calls.find((c) =>
-        String(c[0]).startsWith("🔧"),
+        String((c[0] as { content?: unknown }).content).startsWith("🔧"),
       );
-      expect(typeof call?.[0]).toBe("string");
+      expect(typeof (call?.[0] as { content?: unknown }).content).toBe(
+        "string",
+      );
     });
   });
 
@@ -1462,6 +1466,7 @@ describe("processMessage - Discord イベント通知", () => {
       expect(mockSend).toHaveBeenCalledWith({
         content: "🔧 `bash`",
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1487,6 +1492,7 @@ describe("processMessage - Discord イベント通知", () => {
       expect(mockSend).toHaveBeenCalledWith({
         content: "🤖 ephemeral `child-12`: 🔧 `read`",
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1513,6 +1519,7 @@ describe("processMessage - Discord イベント通知", () => {
       expect(mockSend).toHaveBeenCalledWith({
         content: "🤖 ephemeral `child-12`: 完了: 調査完了",
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1538,6 +1545,7 @@ describe("processMessage - Discord イベント通知", () => {
       expect(mockSend).toHaveBeenCalledWith({
         content: "🤖 ephemeral `child-12`: 調査タスク",
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1725,6 +1733,7 @@ describe("processMessage - Discord イベント通知", () => {
         content: "⚠️ エラー: oops",
         reply: { messageReference: "msg-original", failIfNotExists: false },
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1752,6 +1761,7 @@ describe("processMessage - Discord イベント通知", () => {
         content: "⚠️ エラー: oops",
         reply: { messageReference: "msg-original", failIfNotExists: false },
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1774,6 +1784,7 @@ describe("processMessage - Discord イベント通知", () => {
         content: "⚠️ エラー: Context window exceeded",
         reply: { messageReference: "msg-original", failIfNotExists: false },
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1801,6 +1812,7 @@ describe("processMessage - Discord イベント通知", () => {
         content: "⚠️ エラー: Context window exceeded",
         reply: { messageReference: "msg-original", failIfNotExists: false },
         allowedMentions: { repliedUser: true },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });
@@ -1828,6 +1840,7 @@ describe("processMessage - Discord イベント通知", () => {
         content: "⚠️ エラー: oops",
         reply: { messageReference: "msg-original", failIfNotExists: false },
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     });
   });

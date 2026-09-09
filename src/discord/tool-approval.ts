@@ -11,6 +11,7 @@ import {
 } from "discord.js";
 import type { ToolApprovalRequest } from "../proxy/tool-approval.js";
 import { getDiscordClient } from "./client.js";
+import { withDiscordSendOptions } from "./send-options.js";
 
 const CUSTOM_ID_PREFIX = "tool-approval";
 const MESSAGE_LIMIT = 2_000;
@@ -136,7 +137,7 @@ export async function presentToolApprovalRequest(
   const requestId = randomUUID();
   const inline = inlineArgs(request);
   const message = await channel.send(
-    initialPayload(request, requestId, inline),
+    withDiscordSendOptions(initialPayload(request, requestId, inline)),
   );
   pending.set(requestId, {
     request,

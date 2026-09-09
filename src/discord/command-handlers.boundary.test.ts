@@ -1,3 +1,4 @@
+import { MessageFlags } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -96,6 +97,7 @@ describe("Discord command adapter boundary", () => {
       content:
         "Bot: coding\nPrompt: do it\nBotへの依頼を受け付けました。Task Session: task-1234",
       allowedMentions: { parse: [], repliedUser: false },
+      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.deleteReply).toHaveBeenCalledOnce();
   });
@@ -141,6 +143,7 @@ describe("Discord command adapter boundary", () => {
     expect(interaction.channel.send).toHaveBeenCalledWith({
       content: `Steer:\n${instruction}`,
       allowedMentions: { parse: [], repliedUser: false },
+      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.followUp).not.toHaveBeenCalled();
     expect(interaction.deleteReply).toHaveBeenCalledOnce();
@@ -203,6 +206,7 @@ describe("Discord command adapter boundary", () => {
       expect(options).toEqual({
         content: expect.any(String),
         allowedMentions: { parse: [], repliedUser: false },
+        flags: MessageFlags.SuppressEmbeds,
       });
     }
   });

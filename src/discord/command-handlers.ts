@@ -7,6 +7,7 @@ import {
 } from "../application/discord-command-service.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { splitMessage } from "../utils/splitMessage.js";
+import { withDiscordSendOptions } from "./send-options.js";
 
 type InteractionChannel = {
   isThread?: () => boolean;
@@ -115,10 +116,12 @@ export async function handleSteerCommand(
     throw new Error("Steer receipt destination is unavailable");
   }
   for (const chunk of splitMessage(`Steer:\n${result.instruction}`)) {
-    await channel.send({
-      content: chunk,
-      allowedMentions: { parse: [], repliedUser: false },
-    });
+    await channel.send(
+      withDiscordSendOptions({
+        content: chunk,
+        allowedMentions: { parse: [], repliedUser: false },
+      }),
+    );
   }
   try {
     await interaction.deleteReply();
@@ -162,10 +165,12 @@ export async function handleBotCommand(
   for (const chunk of splitMessage(
     formatBotTaskReply(botId, prompt, result.content),
   )) {
-    await channel.send({
-      content: chunk,
-      allowedMentions: { parse: [], repliedUser: false },
-    });
+    await channel.send(
+      withDiscordSendOptions({
+        content: chunk,
+        allowedMentions: { parse: [], repliedUser: false },
+      }),
+    );
   }
   try {
     await interaction.deleteReply();
