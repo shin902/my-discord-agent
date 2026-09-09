@@ -13,6 +13,14 @@ python3 SKILLS/x-saved/scripts/x-saved.py search "Strix Halo" --limit 20
 python3 SKILLS/x-saved/scripts/x-saved.py show <tweet-id>
 ```
 
+## Local media archive
+
+`pending`, `recent`, `search`, and `show` include `media`: `kind`, `position`, `status`, optional alt text, and `path` (only for completed files). Paths use the existing `/x-saved/media/<tweet-id>/...` mount.
+
+- When images matter to judging a saved post (diagrams, screenshots, media-centered posts), use `read` on the downloaded image paths before classifying it. Alt text and Tweet text alone may be insufficient.
+- `video` paths point to locally archived MP4 files, including X animated GIFs. This skill does not provide video understanding/playback, thumbnails, or transcription; do not claim to have inspected a video from its metadata.
+- `pending`/`failed` or an empty media list does not prove media is absent. The deterministic host cron resolves Tweet IDs via FxTwitter and downloads files. Do not fetch missing media from this skill or request browser re-scrolling to backfill already saved IDs.
+
 ## Triage
 
 `pending` excludes items imported during the initial historical import. Newer items are eligible for triage:
