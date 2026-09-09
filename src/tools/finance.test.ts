@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import {
+  FINANCE_DATABASE_PATH,
   FINANCE_TOOLS,
   financeAddSubscriptionTool,
   financeCancelSubscriptionTool,
@@ -17,9 +19,35 @@ import {
 import { ensureFinanceDatabase } from "./finance-db.js";
 import { getCapabilityDefinition, resolveTools } from "./registry.js";
 
+const financeDbTestState = vi.hoisted(() => ({
+  path: undefined as string | undefined,
+  requestedPaths: [] as string[],
+}));
+
+vi.mock("./finance-db.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("./finance-db.js")>("./finance-db.js");
+  return {
+    ...actual,
+    ensureFinanceDatabase: (dbPath: string) => {
+      financeDbTestState.requestedPaths.push(dbPath);
+      return actual.ensureFinanceDatabase(financeDbTestState.path ?? dbPath);
+    },
+    openFinanceDatabase: (dbPath: string, options?: { readonly?: boolean }) => {
+      financeDbTestState.requestedPaths.push(dbPath);
+      return actual.openFinanceDatabase(
+        financeDbTestState.path ?? dbPath,
+        options,
+      );
+    },
+  };
+});
+
 const directories: string[] = [];
 
 afterEach(async () => {
+  financeDbTestState.path = undefined;
+  financeDbTestState.requestedPaths.length = 0;
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   await Promise.all(
@@ -33,7 +61,8 @@ async function database(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "finance-tools-"));
   directories.push(directory);
   const path = join(directory, "finance.db");
-  vi.stubEnv("FINANCE_TEST_DB_PATH", path);
+  financeDbTestState.path = path;
+  financeDbTestState.requestedPaths.length = 0;
   return path;
 }
 
@@ -113,6 +142,10 @@ describe("finance sandbox tools", () => {
     expect(tool.name).toBe("finance-record-transaction");
     expect(json<{ amount: number }>(result).amount).toBe(-800);
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(financeDbTestState.requestedPaths).toEqual([
+      FINANCE_DATABASE_PATH,
+      FINANCE_DATABASE_PATH,
+    ]);
   });
 
   it("initializes a missing database when a read tool is first used", async () => {

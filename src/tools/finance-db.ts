@@ -9,6 +9,14 @@ const require = createFinanceDbRequire(import.meta.url);
  * Create the finance schema and apply the only compatibility migration needed
  * by the append-only subscription history. Existing rows are never rewritten.
  */
+export function openFinanceDatabase(
+  dbPath: string,
+  options: Database.Options = {},
+): Database.Database {
+  const DatabaseConstructor = require("better-sqlite3") as typeof Database;
+  return new DatabaseConstructor(dbPath, options);
+}
+
 export function ensureFinanceDatabase(dbPath: string): void {
   mkdirSync(path.dirname(dbPath), { recursive: true });
   try {
@@ -19,8 +27,7 @@ export function ensureFinanceDatabase(dbPath: string): void {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  const DatabaseConstructor = require("better-sqlite3") as typeof Database;
-  const db = new DatabaseConstructor(dbPath);
+  const db = openFinanceDatabase(dbPath);
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS transactions (
