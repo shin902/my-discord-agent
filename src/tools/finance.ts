@@ -272,7 +272,8 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
       "Summarize income, expenses, net balance, and expense totals by category.",
     parameters: summaryParameters,
     execute: async (_id, input) => {
-      const defaultRange = input.from || input.to ? undefined : currentMonthRange();
+      const defaultRange =
+        input.from || input.to ? undefined : currentMonthRange();
       const from = input.from ?? defaultRange?.from;
       const to = input.to ?? defaultRange?.to;
       assertDateRange(from, to);
