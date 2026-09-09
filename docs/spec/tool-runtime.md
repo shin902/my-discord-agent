@@ -77,6 +77,8 @@ diff -ru "groups/$group/SKILLS/$skill" "templates/SKILLS/$skill"
 
 更新対象はagent-reachの `scripts/agent-reach.sh`、arXivの `scripts/search.py` / `scripts/survey.py`、last30daysの `scripts/reddit-search.sh` と新規 `hn-search.sh` / `github-search.sh`、各 `SKILL.md` です。カスタマイズが無いことを確認したファイルだけテンプレートからcopyし、独自手順は共通CLIを呼ぶよう手動で統合します。Skillフォルダを無条件に削除・上書きしないでください。
 
+Financeを旧Skillから用途別Toolへ移行するgroupでは、`skills` から `finance` / `finance-setup` を外し、必要な8つの `finance-*` Toolを `tools` に追加します。`groups/<group>/SKILLS/finance` / `finance-setup` はテンプレート削除では自動削除されないため、独自変更が無いことを確認してから退役させてください。既存の `finance.db` は移動・再作成せずそのまま再利用します。
+
 arXivのPython entrypoint・位置引数・`--from` / `--to` / `--limit` / `--sort`・JSON配列stdoutは維持します。CLIのlimitは1〜50の厳密検証、native側は50へのclampです。取得・正規化はnative TypeScriptへ統一し、旧Pythonとの差は次のとおりです。
 
 - updated欠落時は投稿日へfallbackします。
