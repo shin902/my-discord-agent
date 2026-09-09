@@ -54,7 +54,9 @@ const updateSubscriptionParameters = Type.Object({
   amount: Type.Optional(amount),
   cycle: Type.Optional(cycle),
   nextDate: optionalDate,
-  category: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])),
+  category: Type.Optional(
+    Type.Union([Type.String({ maxLength: 200 }), Type.Null()]),
+  ),
   active: Type.Optional(Type.Boolean()),
 });
 
@@ -307,7 +309,8 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
   const updateSubscription: AgentTool<typeof updateSubscriptionParameters> = {
     name: "finance-update-subscription",
     label: "Update Finance Subscription",
-    description: "Append a changed subscription snapshot without rewriting history.",
+    description:
+      "Append a changed subscription snapshot without rewriting history.",
     parameters: updateSubscriptionParameters,
     execute: async (_id, input) =>
       withFinanceDatabase(dbPath, (db) => {
@@ -321,18 +324,26 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
           throw new Error("変更する項目を1つ以上指定してください");
         }
         const previous = latestSubscription(db, input.name);
-        if (!previous) throw new Error(`サブスクが見つかりません: ${input.name}`);
+        if (!previous)
+          throw new Error(`サブスクが見つかりません: ${input.name}`);
         return result(
           publicSubscription(
             insertSubscription(db, {
               name: previous.name,
-              amount: input.amount === undefined ? previous.amount : -input.amount,
+              amount:
+                input.amount === undefined ? previous.amount : -input.amount,
               cycle: input.cycle ?? previous.cycle,
               next_date: input.nextDate ?? previous.next_date,
               category:
-                input.category === undefined ? previous.category : input.category,
+                input.category === undefined
+                  ? previous.category
+                  : input.category,
               active:
-                input.active === undefined ? previous.active : input.active ? 1 : 0,
+                input.active === undefined
+                  ? previous.active
+                  : input.active
+                    ? 1
+                    : 0,
             }),
           ),
         );
@@ -347,7 +358,8 @@ export function createFinanceTools(dbPath = FINANCE_DATABASE_PATH) {
     execute: async (_id, input) =>
       withFinanceDatabase(dbPath, (db) => {
         const previous = latestSubscription(db, input.name);
-        if (!previous) throw new Error(`サブスクが見つかりません: ${input.name}`);
+        if (!previous)
+          throw new Error(`サブスクが見つかりません: ${input.name}`);
         return result(
           publicSubscription(
             insertSubscription(db, {
