@@ -18,6 +18,7 @@ import {
   validateToolArgs,
 } from "./capability.js";
 import { dateTool } from "./date.js";
+import { financeTools } from "./finance.js";
 import {
   editTool,
   globTool,
@@ -53,6 +54,28 @@ const TOOL_FACTORIES = {
   edit: createStaticToolFactory(editTool),
   glob: createStaticToolFactory(globTool),
   grep: createStaticToolFactory(grepTool),
+  "finance-record-transaction": createStaticToolFactory(
+    financeTools.recordTransaction,
+  ),
+  "finance-list-transactions": createStaticToolFactory(
+    financeTools.listTransactions,
+  ),
+  "finance-summary": createStaticToolFactory(financeTools.summary),
+  "finance-add-subscription": createStaticToolFactory(
+    financeTools.addSubscription,
+  ),
+  "finance-update-subscription": createStaticToolFactory(
+    financeTools.updateSubscription,
+  ),
+  "finance-cancel-subscription": createStaticToolFactory(
+    financeTools.cancelSubscription,
+  ),
+  "finance-list-subscriptions": createStaticToolFactory(
+    financeTools.listSubscriptions,
+  ),
+  "finance-subscription-history": createStaticToolFactory(
+    financeTools.subscriptionHistory,
+  ),
   bot: () => undefined,
   subagent: () => undefined,
 } satisfies Record<string, AgentToolFactory>;
