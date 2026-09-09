@@ -81,7 +81,7 @@ describe("finance sandbox tools", () => {
       await tools.listTransactions.execute("list", {}),
     );
     expect(listed).toMatchObject([
-      { type: "expense", amount: 300 },
+      { type: "expense", amount: -300 },
       { type: "income", amount: 1000 },
     ]);
 
@@ -89,15 +89,15 @@ describe("finance sandbox tools", () => {
       income: number;
       expense: number;
       net: number;
-      categories: Array<{ category: string; expense: number }>;
+      categories: Array<{ category: string; total: number }>;
     }>(
       await tools.summary.execute("summary", {
         from: "2026-09-01",
         to: "2026-09-30",
       }),
     );
-    expect(summary).toMatchObject({ income: 1000, expense: 300, net: 700 });
-    expect(summary.categories).toEqual([{ category: "食費", expense: 300 }]);
+    expect(summary).toMatchObject({ income: 1000, expense: -300, net: 700 });
+    expect(summary.categories).toEqual([{ category: "食費", total: -300 }]);
   });
 
   it("filters transaction history without exposing SQL", async () => {
@@ -128,8 +128,25 @@ describe("finance sandbox tools", () => {
       }),
     );
     expect(rows).toEqual([
-      expect.objectContaining({ type: "expense", amount: 200 }),
+      expect.objectContaining({ type: "expense", amount: -200 }),
     ]);
+  });
+
+  it("rejects invalid dates and reversed ranges", async () => {
+    const tools = createFinanceTools(await testDatabase());
+    await expect(
+      tools.recordTransaction.execute("bad-date", {
+        type: "expense",
+        amount: 100,
+        date: "2026-02-30",
+      }),
+    ).rejects.toThrow("date が不正な日付です");
+    await expect(
+      tools.listTransactions.execute("bad-range", {
+        from: "2026-09-30",
+        to: "2026-09-01",
+      }),
+    ).rejects.toThrow("from は to 以前の日付にしてください");
   });
 
   it("migrates a legacy database and keeps subscription changes append-only", async () => {
