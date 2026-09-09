@@ -1,10 +1,20 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import { getModel, streamSimple } from "@earendil-works/pi-ai";
+import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CredentialEntry } from "../config/credential-proxy.js";
 import { createRequestHandler } from "./credential-proxy-server.js";
 
 const servers: Server[] = [];
+
+function codexToken(accountId: string): string {
+  const encode = (value: string) => Buffer.from(value).toString("base64url");
+  return `${encode(JSON.stringify({ alg: "none", typ: "JWT" }))}.${encode(
+    JSON.stringify({
+      "https://api.openai.com/auth": { chatgpt_account_id: accountId },
+    }),
+  )}.test-signature`;
+}
+
 async function listen(server: Server) {
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -40,6 +50,20 @@ it.each([
     header: "x-goog-api-key",
   },
   {
+    provider: "openai",
+    key: "test-openai-key",
+    placeholder: "openai-placeholder",
+    header: "authorization",
+    expectedPath: "/responses",
+  },
+  {
+    provider: "openai-codex",
+    key: codexToken("host-account"),
+    placeholder: codexToken("proxy-account"),
+    header: "authorization",
+    expectedPath: "/codex/responses",
+  },
+  {
     provider: "anthropic",
     key: "sk-ant-oat-test-secret",
     placeholder: "sk-ant-oat-proxy-placeholder",
@@ -50,6 +74,7 @@ it.each([
   key,
   placeholder,
   header,
+  expectedPath,
 }) => {
   vi.stubEnv("PROVIDER_AUTH_TEST_KEY", key);
   let received:
@@ -75,26 +100,37 @@ it.each([
   const proxy = await listen(createServer(createRequestHandler([entry], 5000)));
   const builtIn =
     provider === "anthropic"
-      ? getModel("anthropic", "claude-sonnet-4-20250514")
-      : getModel("google", "gemini-2.5-flash");
+      ? getModel("anthropic", "claude-sonnet-4-5")
+      : provider === "google"
+        ? getModel("google", "gemini-2.5-flash")
+        : provider === "openai"
+          ? getModel("openai", "gpt-6-astra")
+          : getModel("openai-codex", "gpt-6-astra");
   await streamSimple(
     { ...builtIn, baseUrl: `${proxy}/${provider}` },
     {
       messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
     },
-    { apiKey: placeholder, maxTokens: 16 },
+    {
+      apiKey: placeholder,
+      maxTokens: 16,
+      ...(provider === "openai-codex" ? { transport: "sse" as const } : {}),
+    },
   ).result();
   expect(received).toBeDefined();
+  if (expectedPath) expect(received?.url).toBe(expectedPath);
   expect(received?.headers[header]).toBe(
     header === "authorization" ? `Bearer ${key}` : key,
   );
   expect(JSON.stringify(received)).not.toContain(
     placeholder === "local" ? '"local"' : placeholder,
   );
-  if (header === "authorization") {
+  if (provider === "anthropic" && header === "authorization") {
     expect(received?.headers["x-api-key"]).toBeUndefined();
     expect(received?.headers["anthropic-beta"]).toContain("oauth-2025-04-20");
     expect(received?.body).toContain("You are Claude Code");
+  } else if (header === "authorization") {
+    expect(received?.headers["x-api-key"]).toBeUndefined();
   } else {
     expect(received?.headers.authorization).toBeUndefined();
   }

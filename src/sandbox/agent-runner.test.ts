@@ -13,12 +13,14 @@ vi.mock("node:fs/promises", () => ({
   readdir: vi.fn(),
 }));
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getProviders: () => ["provider-a", "zai"],
   getModels: (provider: string) =>
     provider === "zai"
       ? [{ id: "glm-4.7-flash", name: "GLM-4.7-Flash" }]
       : [{ id: "model-x", name: "Model X" }],
+  getEnvApiKey: vi.fn(),
+  streamSimple: vi.fn(),
 }));
 
 vi.mock("../config/credential-proxy.js", () => ({

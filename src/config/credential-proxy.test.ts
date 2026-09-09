@@ -186,7 +186,12 @@ describe("loadCredentialProxy", () => {
           baseUrl: "http://localhost:11434/v1",
           compat: {
             thinkingFormat: "openrouter",
-            thinkingLevelMap: { off: "none", minimal: "low", xhigh: "high" },
+            thinkingLevelMap: {
+              off: "none",
+              minimal: "low",
+              xhigh: "high",
+              max: "max",
+            },
           },
         },
       ]),
@@ -199,7 +204,12 @@ describe("loadCredentialProxy", () => {
         baseUrl: "http://localhost:11434/v1",
         compat: {
           thinkingFormat: "openrouter",
-          thinkingLevelMap: { off: "none", minimal: "low", xhigh: "high" },
+          thinkingLevelMap: {
+            off: "none",
+            minimal: "low",
+            xhigh: "high",
+            max: "max",
+          },
         },
       },
     ]);

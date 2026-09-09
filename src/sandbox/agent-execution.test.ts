@@ -43,6 +43,7 @@ describe("runAgent", () => {
     const messages = [
       { role: "user", content: "must not be inherited" },
     ] as unknown as AgentMessage[];
+    const getApiKey = vi.fn(() => "test-key");
     const events: string[] = [];
 
     const result = await runAgent({
@@ -53,7 +54,7 @@ describe("runAgent", () => {
       thinkingLevel: "off",
       prompt: "task",
       convertToLlm: () => [],
-      getApiKey: () => undefined,
+      getApiKey,
       sessionId: "child-run",
       onEvent: (event) => events.push(event.type),
     });
@@ -67,6 +68,8 @@ describe("runAgent", () => {
           tools: [],
           thinkingLevel: "off",
         }),
+        streamFn: expect.any(Function),
+        getApiKey,
         sessionId: "child-run",
       }),
     );

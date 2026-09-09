@@ -52,6 +52,23 @@ describe("loadGroups", () => {
     );
   });
 
+  it("新しい max thinking level を含むグループ設定をパースできる", async () => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "chat",
+        model: {
+          provider: "openai",
+          modelId: "gpt-6-astra",
+          thinkingLevel: "max",
+        },
+        channels: [],
+      },
+    ]);
+
+    const groups = await loadGroups();
+    expect(groups[0].model?.thinkingLevel).toBe("max");
+  });
+
   it("AgentConfigとgroup限定設定を含むグループ設定をパースできる", async () => {
     const { loadGroups } = await setupRawGroups([
       {

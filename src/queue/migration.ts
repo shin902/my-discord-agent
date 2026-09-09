@@ -158,7 +158,7 @@ function validMessage(value: unknown): value is InboxMessage {
         return false;
       if (
         model.thinkingLevel !== undefined &&
-        !["off", "minimal", "low", "medium", "high", "xhigh"].includes(
+        !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(
           model.thinkingLevel,
         )
       )

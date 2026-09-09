@@ -40,6 +40,41 @@ function message(
 }
 
 describe("migrateLegacyQueue", () => {
+  it("accepts max thinking level in migrated model overrides", async () => {
+    const paths = await makePaths(
+      `${JSON.stringify(
+        message({
+          configOverride: {
+            model: {
+              provider: "openai",
+              modelId: "gpt-6-astra",
+              thinkingLevel: "max",
+            },
+          },
+        }),
+      )}\n`,
+    );
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const result = await migrateLegacyQueue(repo, {
+        inboxPath: paths.inbox,
+        deadLetterPath: paths.dead,
+        archiveDir: paths.archive,
+      });
+
+      expect(result).toMatchObject({ migrated: 1, malformed: 0 });
+      expect(repo.get("legacy-1")?.configOverride).toEqual({
+        model: {
+          provider: "openai",
+          modelId: "gpt-6-astra",
+          thinkingLevel: "max",
+        },
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
   it("rejects a non-string Bot ID while preserving valid rows", async () => {
     const paths = await makePaths(
       `${JSON.stringify(message({ botId: 123 }))}\n${JSON.stringify(message({ id: "valid", botId: "coding" }))}\n`,

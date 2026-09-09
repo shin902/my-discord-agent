@@ -100,6 +100,7 @@ export const CredentialEntrySchema = z.object({
           medium: z.string().optional(),
           high: z.string().optional(),
           xhigh: z.string().optional(),
+          max: z.string().optional(),
         })
         .optional(),
       // model.ts の compat スプレッド経由で pi-ai に渡り、tool_use を含む

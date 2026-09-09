@@ -98,7 +98,7 @@ KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込
 | フィールド | 意味 |
 |---|---|
 | `thinkingFormat` | `openai` / `openrouter` / `deepseek` / `zai` / `qwen-chat-template` を直接指定 |
-| `thinkingLevelMap` | `off` は必須、`minimal` / `low` / `medium` / `high` / `xhigh` は任意の文字列マッピング |
+| `thinkingLevelMap` | `off` は必須、`minimal` / `low` / `medium` / `high` / `xhigh` / `max` は任意の文字列マッピング |
 | `requiresReasoningContentOnAssistantMessages` | pi-aiへ渡すreasoning_content互換フラグ |
 
 `thinkingFormat` の名前による自動補正は行いません。`qwen` / `ollama` は許容値ではありません。`reasoning: false` を明示するか、`thinkingFormat` がない場合、modelの `compat` 自体は付与されません。`thinkingLevelMap` は `compat` から分離してmodelのトップレベルへ渡されます。
