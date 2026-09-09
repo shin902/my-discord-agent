@@ -4,27 +4,23 @@ import {
   MessageFlagsBitField,
 } from "discord.js";
 
-export const DEFAULT_DISCORD_SUPPRESS_EMBEDS = true;
-
 type DiscordMessageOptions = object;
-
-let suppressEmbeds = DEFAULT_DISCORD_SUPPRESS_EMBEDS;
-
-export function setDiscordSuppressEmbeds(value: boolean): void {
-  suppressEmbeds = value;
-}
 
 export function withDiscordSendOptions(
   payload: string,
+  suppressEmbeds: boolean,
 ): string | MessageCreateOptions;
 export function withDiscordSendOptions<T extends DiscordMessageOptions>(
   payload: T,
+  suppressEmbeds: boolean,
 ): T;
 export function withDiscordSendOptions(
   payload: string | DiscordMessageOptions,
+  suppressEmbeds: boolean,
 ): string | DiscordMessageOptions;
 export function withDiscordSendOptions(
   payload: string | DiscordMessageOptions,
+  suppressEmbeds: boolean,
 ): string | DiscordMessageOptions {
   if (!suppressEmbeds) return payload;
   if (typeof payload === "string") {

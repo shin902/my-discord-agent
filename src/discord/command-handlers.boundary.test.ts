@@ -97,7 +97,6 @@ describe("Discord command adapter boundary", () => {
       content:
         "Bot: coding\nPrompt: do it\nBotへの依頼を受け付けました。Task Session: task-1234",
       allowedMentions: { parse: [], repliedUser: false },
-      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.deleteReply).toHaveBeenCalledOnce();
   });
@@ -143,7 +142,6 @@ describe("Discord command adapter boundary", () => {
     expect(interaction.channel.send).toHaveBeenCalledWith({
       content: `Steer:\n${instruction}`,
       allowedMentions: { parse: [], repliedUser: false },
-      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.followUp).not.toHaveBeenCalled();
     expect(interaction.deleteReply).toHaveBeenCalledOnce();
@@ -202,13 +200,18 @@ describe("Discord command adapter boundary", () => {
     expect(chunks.every((chunk) => chunk.length <= 2_000)).toBe(true);
     expect(chunks.join("")).toContain(instruction);
     expect(interaction.followUp).not.toHaveBeenCalled();
-    for (const [options] of interaction.channel.send.mock.calls) {
-      expect(options).toEqual({
-        content: expect.any(String),
-        allowedMentions: { parse: [], repliedUser: false },
-        flags: MessageFlags.SuppressEmbeds,
-      });
-    }
+    const payloads = interaction.channel.send.mock.calls.map(
+      ([options]) => options as { flags?: number },
+    );
+    expect(
+      payloads
+        .slice(0, -1)
+        .every((payload) => payload.flags === MessageFlags.SuppressEmbeds),
+    ).toBe(true);
+    expect(payloads[payloads.length - 1]).toEqual({
+      content: expect.any(String),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   });
 
   it("fails accepted steer receipts when the channel cannot send", async () => {

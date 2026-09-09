@@ -32,7 +32,6 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
-import { withDiscordSendOptions } from "../discord/send-options.js";
 import {
   AgentMemoryClient,
   AgentMemoryHttpError,
@@ -543,20 +542,18 @@ async function sendDiscordEvent(
       ? { repliedUser: true }
       : { parse: [], repliedUser: false };
     await channel.send(
-      withDiscordSendOptions(
-        shouldReply
-          ? {
-              content,
-              reply: {
-                messageReference: replyMessageId,
-                failIfNotExists: false,
-              },
-              allowedMentions,
-            }
-          : allowMention
-            ? content
-            : { content, allowedMentions },
-      ),
+      shouldReply
+        ? {
+            content,
+            reply: {
+              messageReference: replyMessageId,
+              failIfNotExists: false,
+            },
+            allowedMentions,
+          }
+        : allowMention
+          ? content
+          : { content, allowedMentions },
     );
   } catch (err) {
     console.error("[poller] Discord イベント送信エラー:", err);
@@ -753,7 +750,7 @@ async function markCronFailurePlaceholder(msg: InboxMessage): Promise<boolean> {
       msg.cronPlaceholderMessageId,
     );
     if (!message?.edit) throw new Error("cron failure placeholder unavailable");
-    await message.edit(withDiscordSendOptions("⚠️ 処理に失敗しました"));
+    await message.edit("⚠️ 処理に失敗しました");
     return true;
   } catch (error) {
     console.error(

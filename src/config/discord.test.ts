@@ -70,7 +70,6 @@ describe("loadDiscordConfig", () => {
         "takop-token",
       ),
     ).resolves.toEqual({
-      suppressEmbeds: true,
       bots: {
         personal,
         takop: {
@@ -92,25 +91,6 @@ describe("loadDiscordConfig", () => {
     ).rejects.toThrow(
       'Discord Bot "personal" の環境変数 DISCORD_BOT_TOKEN が設定されていません',
     );
-  });
-
-  it.each([
-    ["omitted", undefined, true],
-    ["true", true, true],
-    ["false", false, false],
-  ] as const)("loads suppressEmbeds=%s as %s", async (_label, suppressEmbeds, expected) => {
-    const personal = {
-      applicationId: "personal-application",
-      tokenEnv: "DISCORD_BOT_TOKEN",
-    };
-    const discord = {
-      bots: { personal },
-      ...(suppressEmbeds === undefined ? {} : { suppressEmbeds }),
-    };
-
-    await expect(loadDiscordConfig({ discord })).resolves.toMatchObject({
-      suppressEmbeds: expected,
-    });
   });
 
   it("requires a non-secret application ID for every Bot", async () => {

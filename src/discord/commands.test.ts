@@ -233,7 +233,6 @@ describe("steer command", () => {
     expect(interaction.channel.send).toHaveBeenCalledWith({
       content: "Steer:\nPlease stop",
       allowedMentions: { parse: [], repliedUser: false },
-      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.followUp).not.toHaveBeenCalled();
     expect(interaction.deleteReply).toHaveBeenCalledOnce();
@@ -469,7 +468,6 @@ describe("resolveDiscordCommandDeployTargets", () => {
     expect(
       resolveDiscordCommandDeployTargets(
         {
-          suppressEmbeds: true,
           bots: {
             personal: {
               tokenEnv: "DISCORD_BOT_TOKEN",
@@ -663,7 +661,6 @@ describe("handleBotCommand", () => {
         /^Bot: coding\nPrompt: Fix it\nBotへの依頼を受け付けました。Task Session: task-/,
       ),
       allowedMentions: { parse: [], repliedUser: false },
-      flags: MessageFlags.SuppressEmbeds,
     });
     expect(interaction.deferReply.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.findGroupByChannelId.mock.invocationCallOrder[0] ?? Infinity,
@@ -689,13 +686,18 @@ describe("handleBotCommand", () => {
     expect(chunks.every((chunk) => chunk.length <= 2000)).toBe(true);
     expect(chunks.join("")).toContain(prompt);
     expect(chunks.join("")).toContain(acceptance);
-    for (const [options] of interaction.channel.send.mock.calls) {
-      expect(options).toEqual({
-        content: expect.any(String),
-        allowedMentions: { parse: [], repliedUser: false },
-        flags: MessageFlags.SuppressEmbeds,
-      });
-    }
+    const payloads = interaction.channel.send.mock.calls.map(
+      ([options]) => options as { flags?: number },
+    );
+    expect(
+      payloads
+        .slice(0, -1)
+        .every((payload) => payload.flags === MessageFlags.SuppressEmbeds),
+    ).toBe(true);
+    expect(payloads[payloads.length - 1]).toEqual({
+      content: expect.any(String),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   });
 
   it("accepts a command on the default Discord Bot identity", async () => {
@@ -806,7 +808,6 @@ describe("handleBotCommand", () => {
     expect(interaction.channel.send).toHaveBeenCalledWith({
       content: expect.stringContaining("Bot: coding\nPrompt: Continue it\n"),
       allowedMentions: { parse: [], repliedUser: false },
-      flags: MessageFlags.SuppressEmbeds,
     });
   });
 

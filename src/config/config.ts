@@ -29,7 +29,6 @@ const DiscordBotConfigSchema = z.object({
 });
 
 export const DiscordConfigSchema = z.object({
-  suppressEmbeds: z.boolean().default(true),
   bots: z.record(z.string().min(1), DiscordBotConfigSchema),
 });
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;

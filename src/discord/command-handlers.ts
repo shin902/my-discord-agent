@@ -115,12 +115,16 @@ export async function handleSteerCommand(
   if (!channel?.send) {
     throw new Error("Steer receipt destination is unavailable");
   }
-  for (const chunk of splitMessage(`Steer:\n${result.instruction}`)) {
+  const chunks = splitMessage(`Steer:\n${result.instruction}`);
+  for (const [index, chunk] of chunks.entries()) {
     await channel.send(
-      withDiscordSendOptions({
-        content: chunk,
-        allowedMentions: { parse: [], repliedUser: false },
-      }),
+      withDiscordSendOptions(
+        {
+          content: chunk,
+          allowedMentions: { parse: [], repliedUser: false },
+        },
+        index < chunks.length - 1,
+      ),
     );
   }
   try {
@@ -162,14 +166,18 @@ export async function handleBotCommand(
   if (!channel?.send) {
     throw new Error("Bot receipt destination is unavailable");
   }
-  for (const chunk of splitMessage(
+  const chunks = splitMessage(
     formatBotTaskReply(botId, prompt, result.content),
-  )) {
+  );
+  for (const [index, chunk] of chunks.entries()) {
     await channel.send(
-      withDiscordSendOptions({
-        content: chunk,
-        allowedMentions: { parse: [], repliedUser: false },
-      }),
+      withDiscordSendOptions(
+        {
+          content: chunk,
+          allowedMentions: { parse: [], repliedUser: false },
+        },
+        index < chunks.length - 1,
+      ),
     );
   }
   try {

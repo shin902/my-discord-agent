@@ -1,6 +1,5 @@
 {
   "discord": {
-    "suppressEmbeds": true,
     "bots": {
       "personal": {
         "applicationId": "YOUR_PERSONAL_DISCORD_APPLICATION_ID",

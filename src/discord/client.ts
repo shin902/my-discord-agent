@@ -3,7 +3,6 @@ import { loadDiscordConfig } from "../config/config.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import type { GroupConfig } from "../config/groups.js";
 import { findGroupByName } from "../config/groups.js";
-import { setDiscordSuppressEmbeds } from "./send-options.js";
 
 export { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 
@@ -23,7 +22,6 @@ const clients = new Map<string, Client>();
 
 export async function initDiscordClients(): Promise<void> {
   const config = await loadDiscordConfig();
-  setDiscordSuppressEmbeds(config.suppressEmbeds ?? true);
   for (const existing of clients.values()) existing.destroy();
   clients.clear();
   for (const botId of Object.keys(config.bots)) {
@@ -61,7 +59,6 @@ export async function getDiscordClientForGroupName(
 
 export async function loginDiscordClients(): Promise<void> {
   const config = await loadDiscordConfig();
-  setDiscordSuppressEmbeds(config.suppressEmbeds ?? true);
   await Promise.all(
     Object.entries(config.bots).map(([botId, bot]) =>
       getDiscordClient(botId).login(process.env[bot.tokenEnv]),

@@ -11,7 +11,6 @@ import { validateModel } from "../agent/model.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
-import { withDiscordSendOptions } from "../discord/send-options.js";
 import {
   getQueueRepository,
   type QueueJob,
@@ -173,7 +172,7 @@ export async function provisionCronItemThread(
     );
   }
 
-  const placeholder = await channel.send(withDiscordSendOptions("処理中…"));
+  const placeholder = await channel.send("処理中…");
   const placeholderId = String(placeholder.id);
   const thread = await placeholder.startThread({
     name: (options.threadName ?? `cron-${job.cronJobId ?? job.id}`).slice(

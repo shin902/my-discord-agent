@@ -36,6 +36,8 @@ export class DeliveryError extends Error {
   }
 }
 export interface DeliverySendContext {
+  /** True when this is the final persisted response chunk for the job. */
+  isFinalChunk?: boolean;
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
 }
@@ -96,6 +98,9 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     context: DeliverySendContext = {},
   ): Promise<{ externalMessageId: string; cronThreadId?: string }> {
     const payload = JSON.parse(row.payloadJson ?? "{}") as DeliveryPayload;
+    // Direct adapter calls represent a single response unless the worker
+    // supplies the durable chunk position explicitly.
+    const suppressEmbeds = context.isFinalChunk === false;
     // Discord's create/send calls are mutations whose response can be lost
     // after the server has applied the change. Transport/unknown failures
     // after either call therefore must not be retried automatically.
@@ -218,6 +223,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         const parent = await target.send(
           withDiscordSendOptions(
             allowMention ? content : { content, allowedMentions },
+            suppressEmbeds,
           ),
         );
         const parentId = String(parent.id ?? "");
@@ -293,7 +299,10 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         mutationAttempted = true;
         try {
           await placeholder.edit(
-            withDiscordSendOptions({ content, allowedMentions }),
+            withDiscordSendOptions(
+              { content, allowedMentions },
+              suppressEmbeds,
+            ),
           );
         } catch (error) {
           throw new DeliveryError(
@@ -309,18 +318,22 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         ? { id: payload.cronPlaceholderMessageId }
         : reply
           ? await target.send(
-              withDiscordSendOptions({
-                content,
-                reply: {
-                  messageReference: payload.replyMessageId,
-                  failIfNotExists: false,
+              withDiscordSendOptions(
+                {
+                  content,
+                  reply: {
+                    messageReference: payload.replyMessageId,
+                    failIfNotExists: false,
+                  },
+                  allowedMentions,
                 },
-                allowedMentions,
-              }),
+                suppressEmbeds,
+              ),
             )
           : await target.send(
               withDiscordSendOptions(
                 allowMention ? content : { content, allowedMentions },
+                suppressEmbeds,
               ),
             );
       return {
@@ -397,7 +410,16 @@ export class DeliveryWorker {
   }
   private async process(claim: DeliveryClaim): Promise<void> {
     try {
+      const responseIndex = claim.row.responseIndex ?? 0;
+      const isFinalChunk = !this.repository
+        .listDeliveries()
+        .some(
+          (delivery) =>
+            delivery.jobId === claim.row.jobId &&
+            (delivery.responseIndex ?? 0) > responseIndex,
+        );
       const sent = await this.adapter.send(claim.row, {
+        isFinalChunk,
         persistCronThread: (threadId) =>
           this.repository.setDeliveryThread(
             claim.row.id,

@@ -137,8 +137,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
       );
     }
 
-    for (const chunk of splitMessage(report)) {
-      await channel.send(withDiscordSendOptions(chunk));
+    const chunks = splitMessage(report);
+    for (const [index, chunk] of chunks.entries()) {
+      await channel.send(
+        withDiscordSendOptions(chunk, index < chunks.length - 1),
+      );
     }
   } finally {
     db?.close();

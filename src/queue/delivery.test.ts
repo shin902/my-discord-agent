@@ -95,14 +95,20 @@ it("edits the parent placeholder then sends overflow chunks in response order", 
     expect(edit.mock.calls[0][0].flags).toBe(MessageFlags.SuppressEmbeds);
     expect(sent).toHaveLength(2);
     expect(
-      sentPayloads.every(
-        (payload) =>
-          typeof payload === "object" &&
-          payload !== null &&
-          "flags" in payload &&
-          payload.flags === MessageFlags.SuppressEmbeds,
-      ),
+      sentPayloads
+        .slice(0, -1)
+        .every(
+          (payload) =>
+            typeof payload === "object" &&
+            payload !== null &&
+            "flags" in payload &&
+            payload.flags === MessageFlags.SuppressEmbeds,
+        ),
     ).toBe(true);
+    expect(sentPayloads[sentPayloads.length - 1]).toEqual({
+      content: expect.any(String),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
     expect(sent[0]).toHaveLength(2000);
     expect(sent[1]).toHaveLength(1000);
     expect(parent.messages.fetch).toHaveBeenCalledWith("placeholder-1");
@@ -381,7 +387,6 @@ it("reuses the durably persisted cron thread for delivery", async () => {
     expect(send).toHaveBeenCalledWith({
       content: "response",
       allowedMentions: { parse: [], repliedUser: false },
-      flags: MessageFlags.SuppressEmbeds,
     });
     expect(
       repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
@@ -945,7 +950,7 @@ describe("durable delivery worker", () => {
         flags: MessageFlags.SuppressEmbeds,
       });
       expect(
-        send.mock.calls.slice(1).every(([content]) => {
+        send.mock.calls.slice(1, -1).every(([content]) => {
           const payload = content as {
             allowedMentions?: { parse?: unknown[] };
             flags?: number;
@@ -956,6 +961,10 @@ describe("durable delivery worker", () => {
           );
         }),
       ).toBe(true);
+      expect(send.mock.calls[send.mock.calls.length - 1]?.[0]).toEqual({
+        content: expect.any(String),
+        allowedMentions: { parse: [], repliedUser: false },
+      });
       expect(repo.get(jobId)?.succeeded).toBe(true);
     } finally {
       readySpy.mockRestore();

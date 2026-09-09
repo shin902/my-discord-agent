@@ -1,8 +1,4 @@
-import {
-  type Message,
-  MessageFlags,
-  ThreadAutoArchiveDuration,
-} from "discord.js";
+import { type Message, ThreadAutoArchiveDuration } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockClient = { once: vi.fn(), on: vi.fn() };
@@ -396,10 +392,9 @@ describe("registerHandlers - MessageCreate", () => {
     mockAppendInbox.mockRejectedValue(new Error("disk full"));
     const msg = makeMockMessage({ isThread: false, channelId: "ch-1" });
     await getMessageHandler()(msg);
-    expect(msg.reply).toHaveBeenCalledWith({
-      content: "メッセージの受信に失敗しました。もう一度送ってください。",
-      flags: MessageFlags.SuppressEmbeds,
-    });
+    expect(msg.reply).toHaveBeenCalledWith(
+      "メッセージの受信に失敗しました。もう一度送ってください。",
+    );
   });
 
   it("thread モード: スレッドメッセージは親チャンネルIDで検索しスレッドIDをセッションIDとして積む", async () => {
@@ -491,10 +486,9 @@ describe("registerHandlers - MessageCreate", () => {
       });
       await getMessageHandler()(msg);
       expect(mockAppendInbox).not.toHaveBeenCalled();
-      expect(msg.reply).toHaveBeenCalledWith({
-        content: "スレッドの作成に失敗しました。もう一度送ってください。",
-        flags: MessageFlags.SuppressEmbeds,
-      });
+      expect(msg.reply).toHaveBeenCalledWith(
+        "スレッドの作成に失敗しました。もう一度送ってください。",
+      );
     });
 
     it("スレッド内のメッセージ: スレッドIDをそのまま channelId/sessionId として積む", async () => {
@@ -533,10 +527,9 @@ describe("registerHandlers - MessageCreate", () => {
         startThread,
       });
       await getMessageHandler()(msg);
-      expect(msg.reply).toHaveBeenCalledWith({
-        content: "メッセージの受信に失敗しました。もう一度送ってください。",
-        flags: MessageFlags.SuppressEmbeds,
-      });
+      expect(msg.reply).toHaveBeenCalledWith(
+        "メッセージの受信に失敗しました。もう一度送ってください。",
+      );
     });
 
     it("スレッド内: appendInbox が失敗した場合 reply を送信する", async () => {
@@ -552,10 +545,9 @@ describe("registerHandlers - MessageCreate", () => {
         content: "続きです",
       });
       await getMessageHandler()(msg);
-      expect(msg.reply).toHaveBeenCalledWith({
-        content: "メッセージの受信に失敗しました。もう一度送ってください。",
-        flags: MessageFlags.SuppressEmbeds,
-      });
+      expect(msg.reply).toHaveBeenCalledWith(
+        "メッセージの受信に失敗しました。もう一度送ってください。",
+      );
     });
   });
 });
