@@ -22,7 +22,9 @@ async function testDatabase() {
   return join(directory, "finance.db");
 }
 
-function json<T>(result: { content: Array<{ type: string; text?: string }> }): T {
+function json<T>(result: {
+  content: Array<{ type: string; text?: string }>;
+}): T {
   const text = result.content.find((part) => part.type === "text")?.text;
   if (!text) throw new Error("finance tool returned no text");
   return JSON.parse(text) as T;
@@ -46,7 +48,9 @@ describe("finance sandbox tools", () => {
       names.map(() => undefined),
     );
     for (const tool of FINANCE_TOOLS) {
-      expect(JSON.stringify(tool.parameters)).not.toMatch(/"(?:sql|path|database)"/i);
+      expect(JSON.stringify(tool.parameters)).not.toMatch(
+        /"(?:sql|path|database)"/i,
+      );
     }
   });
 
@@ -163,7 +167,9 @@ describe("finance sandbox tools", () => {
     await tools.cancelSubscription.execute("cancel", { name: "Legacy" });
 
     const db = new Database(dbPath, { readonly: true });
-    const columns = db.prepare("PRAGMA table_info(subscriptions)").all() as Array<{
+    const columns = db
+      .prepare("PRAGMA table_info(subscriptions)")
+      .all() as Array<{
       name: string;
     }>;
     expect(columns.map((column) => column.name)).toContain("recorded_at");
@@ -196,9 +202,7 @@ describe("finance sandbox tools", () => {
       json<Array<{ name: string; active: boolean }>>(
         await tools.listSubscriptions.execute("all", { includeInactive: true }),
       ),
-    ).toEqual([
-      expect.objectContaining({ name: "Legacy", active: false }),
-    ]);
+    ).toEqual([expect.objectContaining({ name: "Legacy", active: false })]);
   });
 
   it("adds subscriptions and rejects empty updates", async () => {
