@@ -64,7 +64,7 @@ The extension commits each new capture to its IndexedDB outbox before scheduling
 
 Tweet IDs are positive decimal strings of at most 20 digits. `text` is required (empty text is valid for media-only posts), up to 100,000 characters. `url` must be an `https://x.com/<handle>/status/<tweet_id>` URL with a matching ID. `kind` is `like` or `bookmark`. `author` may be a handle with or without `@` and, when nonempty, must match the URL handle case-insensitively; `created_at` is an ISO timestamp with a timezone. Omitted or empty author/timestamp metadata is preserved in existing rows. Unknown fields and invalid items reject the entire batch before database access. External URL metadata is deliberately omitted by this adapter, preserving stored values. The extension applies the same item validation before IndexedDB persistence so invalid captures cannot enter the outbox and block later batches.
 
-Optional `media` contains `image` or `video` entries in DOM order, with integer `position` 0–15 (zero-based across both kinds). At most 32 distinct `(kind, position)` entries are accepted, allowing accumulated observations without a general event/version system. Images require `source_url`: HTTPS, exactly `pbs.twimg.com`, a `/media/<identifier>` path (letters/digits/underscore/hyphen, optional file extension), no credentials, non-default port or fragment, and at most 2,048 characters. Optional `alt_text` is bounded to 10,000 characters. Video entries contain only `kind` and `position`; GIFs represented by video DOM are also `video`. Unknown fields/kinds, duplicate keys, and invalid media reject the whole batch before DB access. MP4/HLS/blob URLs are not accepted.
+Optional `media` contains `image` or `video` entries in DOM order, with integer `position` 0–15 (zero-based across both kinds). At most 32 distinct `(kind, position)` entries are accepted. Images require `source_url`: HTTPS, exactly `pbs.twimg.com`, a `/media/<identifier>` path (letters/digits/underscore/hyphen, optional file extension), no credentials, non-default port or fragment, and at most 2,048 characters. Optional `alt_text` is bounded to 10,000 characters. Video entries contain only `kind` and `position`; GIFs represented by video DOM are also `video`. Unknown fields/kinds, duplicate keys, and invalid media reject the whole batch before DB access. MP4/HLS/blob URLs are not accepted.
 
 `x_items`, `x_item_state`, and `x_media` are saved in the same transaction. Images are **not downloaded by the receiver**. Only after the SQLite transaction commits does the receiver return `200` with `{"accepted":["like:123"]}`. Keys are unique `kind:tweet_id` values. Retries rely on item-level upserts, with no request ledger. Like and Bookmark captures merge into one Tweet row; existing status and notes remain intact.
 
@@ -74,11 +74,29 @@ To verify an installation, capture a Like and a Bookmark in Chrome and check the
 
 ## Media backfill and image downloads
 
-Deploy the receiver update **before** the updated extension: the old fail-closed receiver rejects media payloads. Reload the built extension and existing X tabs. Revisit Likes / Bookmarks in Mac Chrome and manually scroll, including previously known Tweets. The extension's content-script memory and durable IndexedDB seen/outbox layers allow media enrichment of an existing `kind:tweet_id`; unchanged normalized media is not re-enqueued. Responsive image `name` size changes alone do not count as enrichment. Omitted/partial media does not retract prior observations. An ACK for an older in-flight capture cannot remove newer media from the outbox. No IndexedDB reset or text-only item deletion is needed.
+**Tweet ID is the canonical locator.** DOM media is an optional first-capture hint, not a completeness signal. Extension `sent`/`inFlight`, persistent `seen`, and outbox retain their original `kind:tweet_id` dedupe/ACK behavior: known Tweets do not re-enqueue for media enrichment. Media backfill does not require re-scrolling, re-sending, or resetting browser storage.
 
-A schema migration cannot recover media from old text-only rows. Manual DOM re-observation is the backfill source; there is no crawler, auto-scroll, X API, GraphQL interception, or browser credential use. Media extraction is best-effort and failure does not block the Tweet itself. No media recorded means *not observed*, not necessarily absent. Initial-import and Agent triage state remain unchanged by enrichment, so backfilled historical items remain discoverable with `show`/`search` even if excluded from `pending`.
+Enable the disabled `x-saved-media-resolve` example in `config/cron.example.json` deliberately, then restart as for other cron changes:
 
-Enable the disabled `x-saved-media-download` example in `config/cron.example.json` by copying it to your cron configuration, then restart as for other cron changes:
+```json
+{
+  "id": "x-saved-media-resolve",
+  "schedule": "*/5 * * * *",
+  "enabled": true,
+  "handler": "jobs/x-saved-media-resolve.ts",
+  "settings": { "limit": 20 }
+}
+```
+
+This deterministic host cron resolves saved Tweet IDs through the fixed public [FxTwitter API v2](https://github.com/FxEmbed/FxEmbed/blob/main/docs/specs/fxtwitter-openapi.json) endpoint `https://api.fxtwitter.com/2/status/<tweet_id>`. Neither stored URLs nor author handles are used as fetch targets. Enabling it sends Tweet IDs to FxTwitter, but no Like/Bookmark flags, text, notes, browser cookies, or credentials. Requests reject redirects and are bounded to 15 seconds / 1 MiB. Only the matching focal status's ordered `media.all` is consumed; quotes, thread posts, cards, and video source URLs are not persisted. Image URLs pass the same pbs allowlist as DOM captures. Unsupported/malformed/incomplete responses fail closed rather than marking the ID resolved.
+
+Each run handles at most `limit` IDs (1–100, default 20), including old text-only items **and items with partial DOM metadata**. `x_media_resolution` records the last attempt and successful resolution time. Success, including an empty media result, is committed atomically with media rows. Failed IDs remain unresolved, behind unattempted/older attempts for subsequent runs; failures do not invalidate Tweet ingest or block other IDs. Deleted/private/unavailable Tweets may remain unresolved: this public service is not a credentialed completeness guarantee. There is no provider framework, retry counter/backoff/lease system, or independent timer/startup drain.
+
+FxTwitter fills missing slots and corrects conflicting DOM image hints. Matching completed images retain their files even when size/format URLs differ; a different image in the same slot becomes pending rather than retaining the wrong file/alt text. A resolved slot also replaces a conflicting DOM media kind at that position; rows outside the resolved slots are not deleted. Once resolved, later DOM captures cannot override that Tweet's media. Text, first/last-seen, sticky relationships, initial-import marker, status and notes are not changed by resolution; historical results remain discoverable with `show`/`search` even if excluded from `pending`.
+
+Deploy the receiver update **before** the updated extension, because the old fail-closed receiver rejects media payloads. Reload the built extension and X tabs for new captures. Manual scrolling remains useful for collecting **previously unknown Tweet IDs**, not required for media backfill of stored IDs. Validate backfill by enabling the resolver with existing text-only rows and confirming `x_media`/`x_media_resolution` changes without any browser interaction.
+
+Separately enable the disabled `x-saved-media-download` example for image files:
 
 ```json
 {
@@ -94,7 +112,7 @@ This is a deterministic host handler, like `x-saved-backup`: no LLM, inbox job, 
 
 Completed images use temporary-file + atomic rename into `media/<tweet_id>/<position>.<ext>` beside the DB (including when `X_SAVED_DB_PATH` is overridden). Paths use validated IDs/positions, never remote URL strings. SQLite stores only the relative path, e.g. `media/123/0.jpg`. Success sets `done` and clears `last_error`; individual failures set `failed`, clear `local_path`, record a short error, and do not interrupt other images or invalidate Tweet ingest. Failed images are eligible again on the next schedule, without retry counters/backoff. DB open/schema/update failures fail the cron job under existing runner semantics. Pending rows survive restart until the next normal cron run.
 
-Videos remain `pending` with no source/local path. **Video file download and resolution are out of scope**; a future resolver can start from these `x_media` rows and the stored `x_items.url` without browser backfill. OCR, captioning, thumbnails, cleanup/retention, and automatic image-classification cron are not included.
+Videos remain `pending` with no source/local path. FxTwitter supplies their existence metadata, but **video file download/playback URL resolution is out of scope**. Tweet ID remains the locator for any future video processing. OCR, captioning, thumbnails, cleanup/retention, and automatic image-classification cron are not included.
 
 ## Configuration
 
@@ -159,7 +177,8 @@ The durable state is `data/x-saved/x-saved.sqlite`:
 - `x_items` — post body, author, URL, sticky like/bookmark history, and ingest timestamps
 - `x_item_state` — `inbox`, `reviewed`, `keep`, `try`, `done`, or `ignore`, plus an optional note and update time
 - `x_media` — append/enrichment media metadata keyed by `(tweet_id, kind, position)`, image source/alt text, relative local path, pending/done/failed status, and a short last error. No BLOBs or file-size/MIME/hash/retry fields. Video rows currently have no source URL.
+- `x_media_resolution` — per-Tweet last attempt and successful resolution timestamps; distinguishes unresolved from successfully media-less items independently of Extension state
 - `x_sync_runs` — optional source health records, timestamps, errors, and new-item count
 - `x_meta` — metadata such as the one-time `initial_import_completed_at` marker
 
-Schema v3 adds `x_media` to existing v1/v2 databases transactionally, without rewriting text or Agent state. Media omission/empty arrays never delete rows; duplicate captures remain idempotent. Completed images retain their path/status/source on ordinary re-capture; pending/failed sources and supplied alt text can be enriched. Media cascades only when the owning Tweet is explicitly deleted, not when DOM observations omit it. The store preserves its schema migrations and merge/upsert behavior for existing databases. In particular, missing incoming metadata does not erase stored metadata, relationship flags remain sticky, and existing item state and notes remain unchanged.
+Schema v4 adds `x_media` and `x_media_resolution` to existing v1/v2/v3 databases transactionally, without rewriting text or Agent state. Ordinary capture omission/empty arrays never delete rows; duplicate captures remain idempotent. Completed images retain their path/status/source on ordinary re-capture; pending/failed sources and supplied alt text can be enriched. Deleting an owning Tweet cascades to media and resolution rows; omission from DOM observations does not delete them. The store preserves its schema migrations and merge/upsert behavior for existing databases. In particular, missing incoming metadata does not erase stored metadata, relationship flags remain sticky, and existing item state and notes remain unchanged.

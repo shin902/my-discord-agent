@@ -4,14 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { type XSavedMedia, XSavedMediaSchema } from "./media.js";
+import {
+  isImageSourceUrl,
+  type XSavedMedia,
+  XSavedMediaSchema,
+} from "./media.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../..",
 );
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
@@ -138,6 +142,12 @@ function createSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_x_media_download
       ON x_media(kind, status);
+
+    CREATE TABLE IF NOT EXISTS x_media_resolution (
+      tweet_id TEXT PRIMARY KEY REFERENCES x_items(tweet_id) ON DELETE CASCADE,
+      last_attempt_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
 
     CREATE TABLE IF NOT EXISTS x_sync_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,6 +303,9 @@ export function ingestXSavedItems(
           ELSE COALESCE(excluded.source_url, x_media.source_url) END,
         alt_text = COALESCE(NULLIF(excluded.alt_text, ''), x_media.alt_text)
     `);
+    const resolvedMedia = targetDb.prepare(
+      "SELECT 1 FROM x_media_resolution WHERE tweet_id = ? AND resolved_at IS NOT NULL",
+    );
     let newItems = 0;
     const write = targetDb.transaction(() => {
       for (const item of items) {
@@ -314,7 +327,10 @@ export function ingestXSavedItems(
           now,
         });
         ensureState.run(item.tweetId, now);
-        for (const media of item.media ?? []) {
+        // DOM metadata is an initial hint, never an override of ID-resolved media.
+        for (const media of resolvedMedia.get(item.tweetId)
+          ? []
+          : (item.media ?? [])) {
           upsertMedia.run({
             tweetId: item.tweetId,
             kind: media.kind,
@@ -335,6 +351,68 @@ export function ingestXSavedItems(
   } finally {
     if (ownsTarget) targetDb.close();
   }
+}
+
+/** Commit an ID-resolved media result without re-ingesting text or Agent state. */
+export function recordResolvedXSavedMedia(
+  db: Database.Database,
+  tweetId: string,
+  media: XSavedMedia[],
+  now = new Date().toISOString(),
+): void {
+  XSavedMediaSchema.parse(media);
+  const existing = db.prepare(
+    "SELECT source_url FROM x_media WHERE tweet_id = ? AND kind = ? AND position = ?",
+  );
+  const upsert = db.prepare(`
+    INSERT INTO x_media (tweet_id, kind, position, source_url, alt_text)
+    VALUES (@tweetId, @kind, @position, @sourceUrl, @altText)
+    ON CONFLICT(tweet_id, kind, position) DO UPDATE SET
+      source_url = CASE WHEN @sameImage AND x_media.status = 'done'
+        THEN x_media.source_url ELSE excluded.source_url END,
+      alt_text = CASE WHEN @sameImage
+        THEN COALESCE(NULLIF(excluded.alt_text, ''), x_media.alt_text)
+        ELSE excluded.alt_text END,
+      local_path = CASE WHEN @sameImage THEN x_media.local_path ELSE NULL END,
+      status = CASE WHEN @sameImage THEN x_media.status ELSE 'pending' END,
+      last_error = CASE WHEN @sameImage THEN x_media.last_error ELSE NULL END
+  `);
+  const clearConflictingKind = db.prepare(
+    "DELETE FROM x_media WHERE tweet_id = ? AND position = ? AND kind IN ('image', 'video') AND kind != ?",
+  );
+  db.transaction(() => {
+    for (const entry of media) {
+      clearConflictingKind.run(tweetId, entry.position, entry.kind);
+      const previous = existing.get(tweetId, entry.kind, entry.position) as
+        | { source_url: string | null }
+        | undefined;
+      // DOM can omit whole slots, not just src attributes. FxTwitter's ordered
+      // result corrects misplaced hints; only a matching image keeps its file.
+      // pbs identity is the media path identifier, independent of size/format.
+      const imageKey = (url: string) =>
+        new URL(url).pathname.replace(/\.[A-Za-z0-9]+$/, "");
+      const sameImage =
+        entry.kind === "image" &&
+        previous?.source_url &&
+        isImageSourceUrl(previous.source_url) &&
+        imageKey(previous.source_url) === imageKey(entry.source_url);
+      upsert.run({
+        tweetId,
+        kind: entry.kind,
+        position: entry.position,
+        sourceUrl: entry.kind === "image" ? entry.source_url : null,
+        altText: entry.kind === "image" ? (entry.alt_text ?? null) : null,
+        sameImage: sameImage ? 1 : 0,
+      });
+    }
+    // Empty media is also a successful resolution, not perpetually "missing".
+    db.prepare(`
+      INSERT INTO x_media_resolution (tweet_id, last_attempt_at, resolved_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(tweet_id) DO UPDATE SET
+        last_attempt_at = excluded.last_attempt_at, resolved_at = excluded.resolved_at
+    `).run(tweetId, now, now);
+  })();
 }
 
 export function markInitialImportCompleted(

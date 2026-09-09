@@ -454,7 +454,7 @@ describe("x-saved persistence", () => {
         )
         .all(),
     ).toEqual([]);
-    expect(db.pragma("user_version", { simple: true })).toBe(3);
+    expect(db.pragma("user_version", { simple: true })).toBe(4);
     db.close();
   });
 
@@ -469,13 +469,13 @@ describe("x-saved persistence", () => {
     };
     ingestXSavedItems([item], { xSavedDb: initial });
     initial.exec(
-      "UPDATE x_item_state SET status = 'keep', note = 'preserve'; DROP TABLE x_media; PRAGMA user_version = 2",
+      "UPDATE x_item_state SET status = 'keep', note = 'preserve'; DROP TABLE x_media; DROP TABLE x_media_resolution; PRAGMA user_version = 2",
     );
     const before = initial.prepare("SELECT * FROM x_items").get();
     initial.close();
     const db = openXSavedDb(dbPath);
     try {
-      expect(db.pragma("user_version", { simple: true })).toBe(3);
+      expect(db.pragma("user_version", { simple: true })).toBe(4);
       expect(db.prepare("SELECT * FROM x_items").get()).toEqual(before);
       expect(db.prepare("SELECT status, note FROM x_item_state").get()).toEqual(
         { status: "keep", note: "preserve" },
