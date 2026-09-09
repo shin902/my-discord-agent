@@ -1,5 +1,6 @@
+import { createRequire as createFinanceRequire } from "node:module";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { Type } from "typebox";
 import {
   ensureFinanceDatabase,
@@ -11,6 +12,7 @@ const MAX_AMOUNT = Number.MAX_SAFE_INTEGER;
 const DEFAULT_TRANSACTION_LIMIT = 50;
 const MAX_TRANSACTION_LIMIT = 100;
 const TOKYO_TIME_ZONE = "Asia/Tokyo";
+const require = createFinanceRequire(import.meta.url);
 
 type TransactionType = "income" | "expense";
 type SubscriptionCycle = "monthly" | "yearly" | "weekly";
@@ -151,7 +153,10 @@ function withDatabase<T>(
 ): T {
   const dbPath = databasePath();
   if (access === "read-write") ensureFinanceDatabase(dbPath);
-  const db = new Database(dbPath, { readonly: access === "read-only" });
+  const DatabaseConstructor = require("better-sqlite3") as typeof Database;
+  const db = new DatabaseConstructor(dbPath, {
+    readonly: access === "read-only",
+  });
   try {
     return operation(db);
   } finally {

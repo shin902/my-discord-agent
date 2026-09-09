@@ -194,7 +194,7 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 
 ### finance Tools
 
-収支とサブスクリプションは、Tool Proxy 経由の call 単位使い捨て Tool Runtime から、実行対象 group の `finance.db` だけを操作する。Agent-facing schema に SQL、DB path、mount、Runtime、image は含まれない。DB が無い場合の初期化と `subscriptions.recorded_at` の互換 migration は内部で行われるため、setup 操作は不要。
+収支とサブスクリプションは、Tool Proxy 経由の call 単位使い捨て Tool Runtime から、実行対象 group の `finance.db` だけを操作する。Agent-facing schema に SQL、DB path、mount、Runtime、image は含まれない。DBの初期化と `subscriptions.recorded_at` の互換migrationは内部で行われる。
 
 | Tool | 役割 |
 |------|------|
@@ -208,8 +208,6 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 | `finance-subscription-history` | 指定 `name` の全 snapshot を時系列で返す |
 
 `subscriptions` は `name` を論理 identity とする append-only 履歴であり、update / cancel は既存行を `UPDATE` / `DELETE` しない。過去 snapshot は history には残るが、current 一覧・reminder・月額換算には混ぜない。
-
-旧 `finance-setup` Skill は Agent-facing ではなく、旧配置との移行 marker としてだけ残る。直接 SQL や setup 手順は使わない。
 
 **cron連携（`src/cron/jobs/`）:**
 

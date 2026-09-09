@@ -12,9 +12,6 @@ export const SkillSchema = z.object({
 
 export type Skill = z.infer<typeof SkillSchema>;
 
-// Kept on disk as a migration marker, but never advertised to the Agent.
-const NON_AGENT_FACING_SKILLS = new Set(["finance-setup"]);
-
 export function parseYamlFrontmatter(content: string): {
   frontmatter: Record<string, string>;
   body: string;
@@ -87,7 +84,6 @@ export async function loadSkills(
     if (!entry.isDirectory()) continue;
 
     foundDirs.add(entry.name);
-    if (NON_AGENT_FACING_SKILLS.has(entry.name)) continue;
 
     const skillPath = path.join(skillsDir, entry.name, "SKILL.md");
     let content: string;

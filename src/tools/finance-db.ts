@@ -1,6 +1,9 @@
 import { lstatSync, mkdirSync } from "node:fs";
+import { createRequire as createFinanceDbRequire } from "node:module";
 import path from "node:path";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+
+const require = createFinanceDbRequire(import.meta.url);
 
 /** Fixed path inside the disposable Tool Runtime, never supplied by an agent. */
 export const FINANCE_RUNTIME_DB_PATH = "/var/lib/finance/finance.db";
@@ -21,7 +24,8 @@ export function ensureFinanceDatabase(dbPath: string): void {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  const db = new Database(dbPath);
+  const DatabaseConstructor = require("better-sqlite3") as typeof Database;
+  const db = new DatabaseConstructor(dbPath);
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS transactions (
