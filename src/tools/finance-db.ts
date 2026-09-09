@@ -30,7 +30,9 @@ export function withFinanceDatabase<T>(
       );
     `);
 
-    const columns = db.prepare("PRAGMA table_info(subscriptions)").all() as Array<{
+    const columns = db
+      .prepare("PRAGMA table_info(subscriptions)")
+      .all() as Array<{
       name: string;
     }>;
     if (!columns.some((column) => column.name === "recorded_at")) {
