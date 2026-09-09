@@ -1,7 +1,10 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CredentialEntry } from "../config/credential-proxy.js";
+import { runAgent } from "../sandbox/agent-execution.js";
 import { createRequestHandler } from "./credential-proxy-server.js";
 
 const servers: Server[] = [];
@@ -62,6 +65,7 @@ it.each([
     placeholder: codexToken("proxy-account"),
     header: "authorization",
     expectedPath: "/codex/responses",
+    expectedAccountId: "host-account",
   },
   {
     provider: "anthropic",
@@ -75,6 +79,7 @@ it.each([
   placeholder,
   header,
   expectedPath,
+  expectedAccountId,
 }) => {
   vi.stubEnv("PROVIDER_AUTH_TEST_KEY", key);
   let received:
@@ -122,6 +127,9 @@ it.each([
   expect(received?.headers[header]).toBe(
     header === "authorization" ? `Bearer ${key}` : key,
   );
+  if (expectedAccountId) {
+    expect(received?.headers["chatgpt-account-id"]).toBe(expectedAccountId);
+  }
   expect(JSON.stringify(received)).not.toContain(
     placeholder === "local" ? '"local"' : placeholder,
   );
@@ -134,4 +142,110 @@ it.each([
   } else {
     expect(received?.headers.authorization).toBeUndefined();
   }
+});
+
+it("removes a Codex account header when the host token has no account claim", async () => {
+  vi.stubEnv("PROVIDER_AUTH_TEST_KEY", "not-a-jwt");
+  let received: IncomingHttpHeaders | undefined;
+  const upstream = await listen(
+    createServer(async (req, res) => {
+      for await (const _chunk of req) {
+        // Consume the request before sending the fixture response.
+      }
+      received = req.headers;
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ error: { message: "fixture captured request" } }),
+      );
+    }),
+  );
+  const proxy = await listen(
+    createServer(
+      createRequestHandler(
+        [
+          {
+            provider: "openai-codex",
+            envVars: ["PROVIDER_AUTH_TEST_KEY"],
+            baseUrl: upstream,
+          },
+        ],
+        5000,
+      ),
+    ),
+  );
+
+  await streamSimple(
+    {
+      ...getModel("openai-codex", "gpt-6-astra"),
+      baseUrl: `${proxy}/openai-codex`,
+    },
+    {
+      messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+    },
+    {
+      apiKey: codexToken("sandbox-account"),
+      maxTokens: 16,
+      transport: "sse",
+    },
+  ).result();
+
+  expect(received?.authorization).toBe("Bearer not-a-jwt");
+  expect(received?.["chatgpt-account-id"]).toBeUndefined();
+});
+
+it("uses the production Agent stream through SSE and rewrites Codex auth at the proxy boundary", async () => {
+  const hostToken = codexToken("host-account");
+  vi.stubEnv("PROVIDER_AUTH_TEST_KEY", hostToken);
+  let received:
+    | { headers: IncomingHttpHeaders; url?: string; body: string }
+    | undefined;
+  const upstream = await listen(
+    createServer(async (req, res) => {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      received = { headers: req.headers, url: req.url, body };
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ error: { message: "fixture captured request" } }),
+      );
+    }),
+  );
+  let upgradeCount = 0;
+  const proxyServer = createServer(
+    createRequestHandler(
+      [
+        {
+          provider: "openai-codex",
+          envVars: ["PROVIDER_AUTH_TEST_KEY"],
+          baseUrl: upstream,
+        },
+      ],
+      5000,
+    ),
+  );
+  proxyServer.on("upgrade", (_req, socket) => {
+    upgradeCount += 1;
+    socket.destroy();
+  });
+  const proxy = await listen(proxyServer);
+  const builtIn = getModel("openai-codex", "gpt-6-astra");
+  const result = await runAgent({
+    systemPrompt: "system",
+    model: { ...builtIn, baseUrl: `${proxy}/openai-codex` },
+    messages: [],
+    tools: [],
+    thinkingLevel: "off",
+    prompt: "hello",
+    convertToLlm: (messages: AgentMessage[]) =>
+      messages as unknown as Message[],
+    getApiKey: () => codexToken("sandbox-placeholder"),
+  });
+
+  expect(result.terminalStopReason).toBe("error");
+  expect(upgradeCount).toBe(0);
+  expect(received).toBeDefined();
+  expect(received?.url).toBe("/codex/responses");
+  expect(received?.headers.authorization).toBe(`Bearer ${hostToken}`);
+  expect(received?.headers["chatgpt-account-id"]).toBe("host-account");
+  expect(JSON.stringify(received)).not.toContain("sandbox-placeholder");
 });

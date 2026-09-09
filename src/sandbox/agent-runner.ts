@@ -121,6 +121,12 @@ const CONTEXT_BOOTSTRAP_CHANNELS: ContextBootstrapChannel[] = [
 
 const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
 
+// pi-ai's Codex adapter requires a JWT-shaped key to derive an account header
+// before it sends a request. This placeholder is deliberately non-secret; the
+// host Credential Proxy replaces both authentication headers with host values.
+const SANDBOX_CODEX_API_KEY =
+  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoic2FuZGJveC1wbGFjZWhvbGRlciJ9fQ.sandbox-placeholder";
+
 type RunnerLineHandler = (line: string) => void;
 
 /**
@@ -234,7 +240,12 @@ async function getCustomProviderApiKey(
     // Select the SDK's OAuth wire format without exposing the host token.
     if (entry.sdkAuth === "anthropic-oauth")
       return "sk-ant-oat-proxy-placeholder";
-    if (!entry.envVars || entry.envVars.length === 0) return "local";
+    if (!entry.envVars || entry.envVars.length === 0) {
+      return entry.api === "openai-codex-responses" ||
+        (provider === "openai-codex" && entry.forceCustom !== true)
+        ? SANDBOX_CODEX_API_KEY
+        : "local";
+    }
     for (const envVar of entry.envVars) {
       const value = process.env[envVar];
       if (value) return value;

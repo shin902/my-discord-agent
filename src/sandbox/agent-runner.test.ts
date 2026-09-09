@@ -44,6 +44,7 @@ vi.mock("../agent/session.js", () => ({
 const { createRunnerLineRouter, runAgentLoop, DEFAULT_SYSTEM_PROMPT } =
   await import("./agent-runner.js");
 const { loadMessages, appendMessage } = await import("../agent/session.js");
+const { loadCredentialProxy } = await import("../config/credential-proxy.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
@@ -178,6 +179,37 @@ describe("runAgentLoop", () => {
       role: "assistant",
       content: [{ type: "text", text: "Hello world" }],
     });
+  });
+
+  it("サニタイズ済み Codex credential には SDK 用の非秘密 JWT placeholder を使う", async () => {
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "openai-codex",
+        forceCustom: true,
+        api: "openai-codex-responses",
+        baseUrl: "http://host.docker.internal:12345/openai-codex",
+      },
+    ] as never);
+
+    await runAgentLoop("test-group", "session-1", "こんにちは", {
+      model: { provider: "openai-codex", modelId: "gpt-6-astra" },
+    });
+
+    const getApiKey = (
+      lastAgentOptions as {
+        getApiKey: (provider: string) => Promise<string | undefined>;
+      }
+    ).getApiKey;
+    const apiKey = await getApiKey("openai-codex");
+    expect(apiKey).toMatch(/^[^.]+\.[^.]+\.[^.]+$/);
+    expect(apiKey).not.toBe("local");
+    expect(apiKey).not.toContain("host-secret");
+    const payload = JSON.parse(
+      Buffer.from(apiKey?.split(".")[1] ?? "", "base64url").toString("utf8"),
+    ) as Record<string, Record<string, string>>;
+    expect(payload["https://api.openai.com/auth"]?.chatgpt_account_id).toBe(
+      "sandbox-placeholder",
+    );
   });
 
   it("既存のsession-time-anchorを再利用し、fallbackを評価しない", async () => {

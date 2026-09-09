@@ -97,6 +97,48 @@ function getFirstSetEnvVar(envVars: string[] | undefined): string | undefined {
   return undefined;
 }
 
+function isOpenAICodexCredential(entry: CredentialEntry): boolean {
+  return (
+    entry.api === "openai-codex-responses" ||
+    (entry.provider === "openai-codex" && entry.forceCustom !== true)
+  );
+}
+
+function extractOpenAICodexAccountId(
+  token: string | undefined,
+): string | undefined {
+  if (!token) return undefined;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return undefined;
+    const payloadSegment = parts[1];
+    if (!payloadSegment) return undefined;
+    const payload = JSON.parse(
+      Buffer.from(payloadSegment, "base64url").toString("utf8"),
+    ) as unknown;
+    if (typeof payload !== "object" || payload === null) return undefined;
+    const auth = (payload as Record<string, unknown>)[
+      "https://api.openai.com/auth"
+    ];
+    if (typeof auth !== "object" || auth === null) return undefined;
+    const accountId = (auth as Record<string, unknown>).chatgpt_account_id;
+    return typeof accountId === "string" && accountId.length > 0
+      ? accountId
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function deleteHeaderIgnoreCase(
+  headers: Record<string, string | string[] | undefined>,
+  name: string,
+): void {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === name.toLowerCase()) delete headers[key];
+  }
+}
+
 function appendPath(basePath: string, restPath: string): string {
   return `${basePath.replace(/\/$/, "")}/${restPath.replace(/^\//, "")}`;
 }
@@ -178,6 +220,13 @@ async function handleRequest(
     if (k.toLowerCase() !== "host") headers[k] = v;
   }
 
+  const codexCredential = isOpenAICodexCredential(entry);
+  if (codexCredential) {
+    // Never trust an account header supplied by the sandbox. It is derived from
+    // the sandbox placeholder key and may not match the host credential.
+    deleteHeaderIgnoreCase(headers, "chatgpt-account-id");
+  }
+
   const nativeAuth = nativeProviderAuth(entry);
   if (entry.msal || entry.google || entry.envVars?.length) {
     if (nativeAuth === "anthropic-messages") delete headers["x-api-key"];
@@ -250,6 +299,13 @@ async function handleRequest(
         headers.authorization = `Bearer ${apiKey}`;
       }
     }
+  }
+
+  if (codexCredential) {
+    const accountId = extractOpenAICodexAccountId(
+      getFirstSetEnvVar(entry.envVars),
+    );
+    if (accountId) headers["chatgpt-account-id"] = accountId;
   }
 
   const isHttps = parsedTarget.protocol === "https:";

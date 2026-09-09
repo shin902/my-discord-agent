@@ -8,8 +8,11 @@ import {
 import type {
   Api,
   AssistantMessage,
+  AssistantMessageEventStream,
+  Context,
   Message,
   Model,
+  SimpleStreamOptions,
   StopReason,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -50,6 +53,27 @@ function textFromAssistantMessage(message: AgentMessage): string {
 }
 
 /**
+ * Credential Proxy only accepts HTTP requests, so keep Codex on its SSE path.
+ * Do not alter the options for any other provider.
+ */
+function streamSimpleForProduction(
+  model: Model<Api>,
+  context: Context,
+  options?: SimpleStreamOptions,
+): AssistantMessageEventStream {
+  if (
+    model.provider !== "openai-codex" &&
+    model.api !== "openai-codex-responses"
+  ) {
+    return streamSimple(model, context, options);
+  }
+  return streamSimple(model, context, {
+    ...options,
+    transport: "sse",
+  });
+}
+
+/**
  * Execute one in-process Agent run without session or bootstrap responsibilities.
  * Persistent callers own loading/saving their transcript around this primitive.
  */
@@ -65,7 +89,7 @@ export async function runAgent(
       thinkingLevel: options.thinkingLevel,
     },
     convertToLlm: options.convertToLlm,
-    streamFn: streamSimple,
+    streamFn: streamSimpleForProduction,
     getApiKey: options.getApiKey,
     sessionId: options.sessionId,
   });

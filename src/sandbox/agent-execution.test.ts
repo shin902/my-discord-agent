@@ -1,8 +1,15 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 
-const { AgentMock } = vi.hoisted(() => ({ AgentMock: vi.fn() }));
+const { AgentMock, streamSimpleMock } = vi.hoisted(() => ({
+  AgentMock: vi.fn(),
+  streamSimpleMock: vi.fn(),
+}));
+
+vi.mock("@earendil-works/pi-ai/compat", () => ({
+  streamSimple: streamSimpleMock,
+}));
 
 vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@earendil-works/pi-agent-core")>()),
@@ -76,6 +83,105 @@ describe("runAgent", () => {
     expect(agent.prompt).toHaveBeenCalledWith("task");
     expect(result.response).toBe("child response");
     expect(events).toEqual(["message_end"]);
+  });
+
+  it("forces Codex through SSE while preserving the production stream options", async () => {
+    vi.clearAllMocks();
+    const agent = createAgentMock();
+    AgentMock.mockImplementationOnce(function () {
+      return agent;
+    });
+    const codexModel = {
+      provider: "openai-codex",
+      id: "gpt-6-astra",
+    } as Model<Api>;
+    const controller = new AbortController();
+    const requestOptions = {
+      apiKey: "sandbox-placeholder",
+      transport: "websocket" as const,
+      headers: { "x-request": "preserve-me" },
+      maxTokens: 32,
+      signal: controller.signal,
+      sessionId: "production-run",
+    };
+
+    await runAgent({
+      systemPrompt: "system",
+      model: codexModel,
+      messages: [],
+      tools: [],
+      thinkingLevel: "off",
+      prompt: "task",
+      convertToLlm: () => [],
+      getApiKey: () => "sandbox-placeholder",
+    });
+
+    const streamFn = (
+      AgentMock.mock.calls[0]?.[0] as {
+        streamFn: (
+          model: Model<Api>,
+          context: Context,
+          options: typeof requestOptions,
+        ) => unknown;
+      }
+    ).streamFn;
+    const context = {
+      systemPrompt: "system",
+      messages: [],
+      tools: [],
+    } as Context;
+    streamFn(codexModel, context, requestOptions);
+
+    expect(streamSimpleMock).toHaveBeenCalledWith(codexModel, context, {
+      ...requestOptions,
+      transport: "sse",
+    });
+  });
+
+  it("passes non-Codex providers' stream options through unchanged", async () => {
+    vi.clearAllMocks();
+    const agent = createAgentMock();
+    AgentMock.mockImplementationOnce(function () {
+      return agent;
+    });
+    const requestOptions = {
+      apiKey: "provider-key",
+      transport: "websocket" as const,
+      headers: { "x-request": "preserve-me" },
+    };
+
+    await runAgent({
+      systemPrompt: "system",
+      model,
+      messages: [],
+      tools: [],
+      thinkingLevel: "off",
+      prompt: "task",
+      convertToLlm: () => [],
+      getApiKey: () => "provider-key",
+    });
+
+    const streamFn = (
+      AgentMock.mock.calls[0]?.[0] as {
+        streamFn: (
+          model: Model<Api>,
+          context: Context,
+          options: typeof requestOptions,
+        ) => unknown;
+      }
+    ).streamFn;
+    const context = {
+      systemPrompt: "system",
+      messages: [],
+      tools: [],
+    } as Context;
+    streamFn(model, context, requestOptions);
+
+    expect(streamSimpleMock).toHaveBeenCalledWith(
+      model,
+      context,
+      requestOptions,
+    );
   });
 
   it("exposes the terminal assistant status without changing execution errors", async () => {
