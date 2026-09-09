@@ -1,13 +1,17 @@
 import { mkdirSync } from "node:fs";
+import { createRequire as createFinanceDbRequire } from "node:module";
 import path from "node:path";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+
+const require = createFinanceDbRequire(import.meta.url);
 
 export function withFinanceDatabase<T>(
   dbPath: string,
   operation: (db: Database.Database) => T,
 ): T {
   mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new Database(dbPath);
+  const DatabaseConstructor = require("better-sqlite3") as typeof Database;
+  const db = new DatabaseConstructor(dbPath);
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS transactions (
