@@ -454,8 +454,91 @@ describe("x-saved persistence", () => {
         )
         .all(),
     ).toEqual([]);
-    expect(db.pragma("user_version", { simple: true })).toBe(2);
+    expect(db.pragma("user_version", { simple: true })).toBe(3);
     db.close();
+  });
+
+  it("upgrades a v2 text-only database without rewriting item/state and adds cascading media", () => {
+    const dbPath = path.join(makeTempDir(), "x-saved.sqlite");
+    const initial = openXSavedDb(dbPath);
+    const item = {
+      tweetId: "123",
+      text: "old",
+      seenLiked: true,
+      seenBookmarked: false,
+    };
+    ingestXSavedItems([item], { xSavedDb: initial });
+    initial.exec(
+      "UPDATE x_item_state SET status = 'keep', note = 'preserve'; DROP TABLE x_media; PRAGMA user_version = 2",
+    );
+    const before = initial.prepare("SELECT * FROM x_items").get();
+    initial.close();
+    const db = openXSavedDb(dbPath);
+    try {
+      expect(db.pragma("user_version", { simple: true })).toBe(3);
+      expect(db.prepare("SELECT * FROM x_items").get()).toEqual(before);
+      expect(db.prepare("SELECT status, note FROM x_item_state").get()).toEqual(
+        { status: "keep", note: "preserve" },
+      );
+      const image = {
+        kind: "image" as const,
+        position: 0,
+        source_url: "https://pbs.twimg.com/media/one",
+      };
+      ingestXSavedItems([{ ...item, media: [image] }], { xSavedDb: db });
+      db.exec("UPDATE x_media SET status = 'failed', last_error = 'offline'");
+      ingestXSavedItems(
+        [
+          {
+            ...item,
+            media: [
+              {
+                ...image,
+                source_url: "https://pbs.twimg.com/media/two",
+                alt_text: "New description",
+              },
+            ],
+          },
+        ],
+        { xSavedDb: db },
+      );
+      expect(
+        db.prepare("SELECT source_url, alt_text, status FROM x_media").get(),
+      ).toEqual({
+        source_url: "https://pbs.twimg.com/media/two",
+        alt_text: "New description",
+        status: "failed",
+      });
+      db.exec("DELETE FROM x_items WHERE tweet_id = '123'");
+      expect(db.prepare("SELECT * FROM x_media").all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects invalid host-adapter media before opening a database", () => {
+    const dbPath = path.join(makeTempDir(), "x-saved.sqlite");
+    expect(() =>
+      ingestXSavedItems(
+        [
+          {
+            tweetId: "123",
+            text: "x",
+            seenLiked: true,
+            seenBookmarked: false,
+            media: [
+              {
+                kind: "image",
+                position: 0,
+                source_url: "https://evil.example/media/a",
+              },
+            ],
+          },
+        ],
+        { xSavedDbPath: dbPath },
+      ),
+    ).toThrow();
+    expect(existsSync(dbPath)).toBe(false);
   });
 
   it("records sync health separately from item state", () => {

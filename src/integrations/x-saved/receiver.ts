@@ -1,5 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 import { z } from "zod";
+import { XSavedMediaSchema } from "./media.js";
 import { ingestXSavedItems, type XSavedItem } from "./store.js";
 
 export const MAX_BATCH_SIZE = 50;
@@ -18,6 +19,7 @@ const BrowserItemSchema = z
       .union([z.iso.datetime({ offset: true }), z.literal("")])
       .optional(),
     kind: z.enum(["like", "bookmark"]),
+    media: XSavedMediaSchema.optional(),
   })
   .refine((item) => {
     const match =
@@ -114,6 +116,7 @@ export async function startXSavedReceiver(options: {
       ...(item.created_at ? { tweetCreatedAt: item.created_at } : {}),
       seenLiked: item.kind === "like",
       seenBookmarked: item.kind === "bookmark",
+      ...(item.media !== undefined ? { media: item.media } : {}),
       // Browser captures carry no external URL metadata: omit it to preserve
       // any metadata already held in SQLite.
     }));

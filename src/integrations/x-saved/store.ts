@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
+import { type XSavedMedia, XSavedMediaSchema } from "./media.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../..",
 );
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
@@ -30,6 +31,7 @@ export interface XSavedItem {
   externalUrls?: string[];
   seenLiked: boolean;
   seenBookmarked: boolean;
+  media?: XSavedMedia[];
 }
 
 export interface SyncRunRecord {
@@ -122,6 +124,21 @@ function createSchema(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS x_media (
+      tweet_id TEXT NOT NULL REFERENCES x_items(tweet_id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      source_url TEXT,
+      alt_text TEXT,
+      local_path TEXT,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'done', 'failed')),
+      last_error TEXT,
+      PRIMARY KEY (tweet_id, kind, position)
+    );
+    CREATE INDEX IF NOT EXISTS idx_x_media_download
+      ON x_media(kind, status);
+
     CREATE TABLE IF NOT EXISTS x_sync_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       started_at TEXT NOT NULL,
@@ -184,16 +201,11 @@ function ensureSchema(db: Database.Database): void {
       `x-saved schema version ${version} is newer than supported ${SCHEMA_VERSION}`,
     );
   }
-  if (version === 0) {
+  db.transaction(() => {
+    if (version === 1) migrateSchemaV1(db);
     createSchema(db);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
-    return;
-  }
-  if (version === 1) {
-    migrateSchemaV1(db);
-    db.pragma(`user_version = ${SCHEMA_VERSION}`);
-  }
-  createSchema(db);
+  })();
 }
 
 export function openXSavedDb(
@@ -202,10 +214,15 @@ export function openXSavedDb(
   const resolved = path.resolve(dbPath);
   mkdirSync(path.dirname(resolved), { recursive: true });
   const db = new Database(resolved);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  ensureSchema(db);
-  return db;
+  try {
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    ensureSchema(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export function ingestXSavedItems(
@@ -216,6 +233,10 @@ export function ingestXSavedItems(
     now?: string;
   },
 ): IngestResult {
+  // Also validate host adapters before opening/writing the database.
+  for (const item of items) {
+    if (item.media !== undefined) XSavedMediaSchema.parse(item.media);
+  }
   const now = options?.now ?? new Date().toISOString();
   const ownsTarget = options?.xSavedDb === undefined;
   const targetDb =
@@ -264,6 +285,14 @@ export function ingestXSavedItems(
       ) VALUES (?, 'inbox', NULL, ?)
     `);
 
+    const upsertMedia = targetDb.prepare(`
+      INSERT INTO x_media (tweet_id, kind, position, source_url, alt_text)
+      VALUES (@tweetId, @kind, @position, @sourceUrl, @altText)
+      ON CONFLICT(tweet_id, kind, position) DO UPDATE SET
+        source_url = CASE WHEN x_media.status = 'done' THEN x_media.source_url
+          ELSE COALESCE(excluded.source_url, x_media.source_url) END,
+        alt_text = COALESCE(NULLIF(excluded.alt_text, ''), x_media.alt_text)
+    `);
     let newItems = 0;
     const write = targetDb.transaction(() => {
       for (const item of items) {
@@ -285,6 +314,15 @@ export function ingestXSavedItems(
           now,
         });
         ensureState.run(item.tweetId, now);
+        for (const media of item.media ?? []) {
+          upsertMedia.run({
+            tweetId: item.tweetId,
+            kind: media.kind,
+            position: media.position,
+            sourceUrl: media.kind === "image" ? media.source_url : null,
+            altText: media.kind === "image" ? (media.alt_text ?? null) : null,
+          });
+        }
         if (!existing.has(item.tweetId)) {
           newItems += 1;
           existing.add(item.tweetId);

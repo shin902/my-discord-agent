@@ -13,6 +13,12 @@ python3 SKILLS/x-saved/scripts/x-saved.py search "Strix Halo" --limit 20
 python3 SKILLS/x-saved/scripts/x-saved.py show <tweet-id>
 ```
 
+## Media
+
+`pending`, `recent`, `search`, and `show` include a `media` array with `kind`, `position`, and download `status`. A downloaded image has `path`, for example `/x-saved/media/123/0.jpg`, ready for the `read` tool. A `video` with `status: "pending"` and `path: null` means video exists but is **not downloaded**; no video resolver is available. Pending/failed images also have no readable path yet. Empty media does not prove the tweet has no media: older captures may need manual browser backfill.
+
+When triaging a media tweet, use `read` on downloaded images whenever they affect the content judgment, especially when the text is empty or short. Do not infer image contents from alt text alone or mark a media-only post low-value just because its download is pending. Do not fetch missing media from this skill; the host's image-only cron handles downloads.
+
 ## Triage
 
 `pending` excludes items imported during the initial historical import. Newer items are eligible for triage:

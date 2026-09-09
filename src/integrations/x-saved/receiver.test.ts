@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -5,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import contractCases from "./browser-items.fixture.json" with { type: "json" };
+import mediaCases from "./media.fixture.json" with { type: "json" };
 import { MAX_BODY_BYTES, startXSavedReceiver } from "./receiver.js";
 import { ingestXSavedItems, openXSavedDb } from "./store.js";
 
@@ -57,6 +59,120 @@ describe("x-saved receiver", () => {
       expect(db.prepare("SELECT * FROM x_item_state").all()).toHaveLength(
         valid ? 1 : 0,
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each(
+    mediaCases,
+  )("$name: matches extension media validation before DB access", async ({
+    media,
+    valid,
+  }) => {
+    const capture = { ...item, ...(media === undefined ? {} : { media }) };
+    const response = await post({ items: [item, capture] });
+    expect(response.status).toBe(valid ? 200 : 400);
+    if (!valid) {
+      expect(existsSync(dbPath)).toBe(false);
+      return;
+    }
+    const db = openXSavedDb(dbPath);
+    try {
+      expect(db.prepare("SELECT * FROM x_media").all()).toHaveLength(
+        Array.isArray(media) ? media.length : 0,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("enriches text-only items idempotently and commits media before ACK without downloading", async () => {
+    await post({ items: [item] });
+    const db = openXSavedDb(dbPath);
+    try {
+      const first = db.prepare("SELECT first_seen_at FROM x_items").get();
+      db.prepare(
+        "UPDATE x_item_state SET status = 'keep', note = 'preserve'",
+      ).run();
+      const media = [
+        {
+          kind: "image",
+          position: 0,
+          source_url: "https://pbs.twimg.com/media/a?format=jpg&name=small",
+          alt_text: "Diagram",
+        },
+        { kind: "video", position: 1 },
+      ];
+      for (let i = 0; i < 2; i++) {
+        const response = await post({
+          items: [{ ...item, kind: "bookmark", media }],
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ accepted: ["bookmark:123"] });
+        expect(
+          db
+            .prepare(
+              "SELECT kind, source_url, status FROM x_media ORDER BY position",
+            )
+            .all(),
+        ).toEqual([
+          { kind: "image", source_url: media[0].source_url, status: "pending" },
+          { kind: "video", source_url: null, status: "pending" },
+        ]);
+      }
+      expect(existsSync(path.join(directory, "media"))).toBe(false);
+      db.exec(
+        "UPDATE x_media SET status = 'done', local_path = 'media/123/0.jpg' WHERE kind = 'image'",
+      );
+      await post({ items: [item, { ...item, media: [] }, { ...item, media }] });
+      expect(db.prepare("SELECT * FROM x_media").all()).toHaveLength(2);
+      expect(
+        db
+          .prepare(
+            "SELECT status, local_path FROM x_media WHERE kind = 'image'",
+          )
+          .get(),
+      ).toEqual({ status: "done", local_path: "media/123/0.jpg" });
+      expect(db.prepare("SELECT status, note FROM x_item_state").get()).toEqual(
+        { status: "keep", note: "preserve" },
+      );
+      expect(db.prepare("SELECT first_seen_at FROM x_items").get()).toEqual(
+        first,
+      );
+      expect(
+        db.prepare("SELECT seen_liked, seen_bookmarked FROM x_items").get(),
+      ).toEqual({ seen_liked: 1, seen_bookmarked: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rolls back items, state and earlier media when a media insert fails; never ACKs", async () => {
+    const db = openXSavedDb(dbPath);
+    try {
+      db.exec(
+        "CREATE TRIGGER fail_media BEFORE INSERT ON x_media WHEN NEW.kind = 'video' BEGIN SELECT RAISE(ABORT, 'failed'); END",
+      );
+      const response = await post({
+        items: [
+          {
+            ...item,
+            media: [
+              {
+                kind: "image",
+                position: 0,
+                source_url: "https://pbs.twimg.com/media/a",
+              },
+              { kind: "video", position: 1 },
+            ],
+          },
+        ],
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).not.toHaveProperty("accepted");
+      for (const table of ["x_items", "x_item_state", "x_media"])
+        expect(db.prepare(`SELECT * FROM ${table}`).all()).toEqual([]);
     } finally {
       db.close();
     }

@@ -1,0 +1,219 @@
+[
+  { "name": "omitted", "valid": true },
+  { "name": "empty", "media": [], "valid": true },
+  {
+    "name": "mixed",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/Ab_c-1?format=jpg&name=small",
+        "alt_text": "Diagram"
+      },
+      { "kind": "video", "position": 1 }
+    ],
+    "valid": true
+  },
+  {
+    "name": "video only",
+    "media": [{ "kind": "video", "position": 0 }],
+    "valid": true
+  },
+  {
+    "name": "URL extension",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/Abc.png"
+      }
+    ],
+    "valid": true
+  },
+  { "name": "null", "media": null, "valid": false },
+  { "name": "not array", "media": {}, "valid": false },
+  {
+    "name": "unknown kind",
+    "media": [{ "kind": "gif", "position": 0 }],
+    "valid": false
+  },
+  {
+    "name": "negative position",
+    "media": [{ "kind": "video", "position": -1 }],
+    "valid": false
+  },
+  {
+    "name": "fraction position",
+    "media": [{ "kind": "video", "position": 0.5 }],
+    "valid": false
+  },
+  {
+    "name": "string position",
+    "media": [{ "kind": "video", "position": "0" }],
+    "valid": false
+  },
+  {
+    "name": "out of range position",
+    "media": [{ "kind": "video", "position": 16 }],
+    "valid": false
+  },
+  {
+    "name": "duplicate key",
+    "media": [
+      { "kind": "video", "position": 0 },
+      { "kind": "video", "position": 0 }
+    ],
+    "valid": false
+  },
+  {
+    "name": "missing source",
+    "media": [{ "kind": "image", "position": 0 }],
+    "valid": false
+  },
+  {
+    "name": "unknown field",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/a",
+        "width": 10
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "null alt",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/a",
+        "alt_text": null
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "video blob",
+    "media": [
+      { "kind": "video", "position": 0, "source_url": "blob:https://x.com/a" }
+    ],
+    "valid": false
+  },
+  {
+    "name": "video null source",
+    "media": [{ "kind": "video", "position": 0, "source_url": null }],
+    "valid": false
+  },
+  {
+    "name": "arbitrary host",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://example.com/media/a"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "host suffix",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com.evil.test/media/a"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "http",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "http://pbs.twimg.com/media/a"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "avatar path",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/profile_images/a"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "empty media path",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "credentials",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://user:pass@pbs.twimg.com/media/a"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "port",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com:8443/media/a"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "fragment",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/a#fragment"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "encoded traversal",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/%2e%2e/private"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "encoded slash",
+    "media": [
+      {
+        "kind": "image",
+        "position": 0,
+        "source_url": "https://pbs.twimg.com/media/a%2fb"
+      }
+    ],
+    "valid": false
+  }
+]

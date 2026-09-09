@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -43,13 +44,37 @@ def decode_json(value: Any, fallback: Any) -> Any:
         return fallback
 
 
-def row_to_item(row: sqlite3.Row) -> dict[str, Any]:
+def row_to_item(row: sqlite3.Row, conn: sqlite3.Connection) -> dict[str, Any]:
     item = dict(row)
     if "external_urls_json" in item:
         item["external_urls"] = decode_json(item.pop("external_urls_json"), [])
     for key in ("seen_liked", "seen_bookmarked"):
         if key in item:
             item[key] = bool(item[key])
+    item["media"] = []
+    # Permit the updated skill to read an installation before host migration.
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= 3:
+        for media_row in conn.execute(
+            "SELECT kind, position, source_url, alt_text, local_path, status, last_error "
+            "FROM x_media WHERE tweet_id = ? ORDER BY position, kind",
+            (item["tweet_id"],),
+        ):
+            media = dict(media_row)
+            relative = media["local_path"]
+            media["path"] = None
+            if (
+                media["status"] == "done"
+                and isinstance(relative, str)
+                and isinstance(media["position"], int)
+                and 0 <= media["position"] <= 15
+                and re.fullmatch(r"[1-9][0-9]{0,19}", item["tweet_id"])
+                and re.fullmatch(
+                    rf"media/{item['tweet_id']}/{media['position']}\.(jpg|png|gif|webp)",
+                    relative,
+                )
+            ):
+                media["path"] = f"/x-saved/{relative}"
+            item["media"].append(media)
     return item
 
 
@@ -158,7 +183,7 @@ def cmd_recent(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
         """,
         params,
     ).fetchall()
-    print(json.dumps({"items": [row_to_item(row) for row in rows]}, ensure_ascii=False))
+    print(json.dumps({"items": [row_to_item(row, conn) for row in rows]}, ensure_ascii=False))
 
 
 def cmd_pending(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
@@ -171,7 +196,7 @@ def cmd_pending(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
         """,
         (args.limit,),
     ).fetchall()
-    print(json.dumps({"items": [row_to_item(row) for row in rows]}, ensure_ascii=False))
+    print(json.dumps({"items": [row_to_item(row, conn) for row in rows]}, ensure_ascii=False))
 
 
 def cmd_search(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
@@ -199,7 +224,7 @@ def cmd_search(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
         """,
         params,
     ).fetchall()
-    print(json.dumps({"items": [row_to_item(row) for row in rows]}, ensure_ascii=False))
+    print(json.dumps({"items": [row_to_item(row, conn) for row in rows]}, ensure_ascii=False))
 
 
 def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
@@ -213,7 +238,7 @@ def cmd_show(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
     ).fetchone()
     if not row:
         fail(f"tweet not found: {args.tweet_id}", 1)
-    print(json.dumps(row_to_item(row), ensure_ascii=False))
+    print(json.dumps(row_to_item(row, conn), ensure_ascii=False))
 
 
 def require_item(conn: sqlite3.Connection, tweet_id: str) -> None:

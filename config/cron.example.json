@@ -86,6 +86,15 @@
     }
   },
   {
+    "id": "x-saved-media-download",
+    "schedule": "*/5 * * * *",
+    "enabled": false,
+    "handler": "jobs/x-saved-media-download.ts",
+    "settings": {
+      "limit": 20
+    }
+  },
+  {
     "id": "x-saved-daily",
     "schedule": "15 4 * * *",
     "enabled": false,
@@ -95,7 +104,7 @@
     "deliveryMode": "direct",
     "sessionMode": "per-run",
     "noReply": true,
-    "tools": ["bash"],
+    "tools": ["bash", "read"],
     "skills": ["x-saved", "agent-reach"],
     "mounts": [
       {
@@ -114,7 +123,7 @@
     "deliveryMode": "direct",
     "sessionMode": "per-run",
     "noReply": true,
-    "tools": ["bash"],
+    "tools": ["bash", "read"],
     "skills": ["x-saved"],
     "mounts": [
       {
