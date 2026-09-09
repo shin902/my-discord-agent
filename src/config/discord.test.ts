@@ -1,43 +1,35 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const originalConfigPath = process.env.CONFIG_PATH;
+vi.mock("node:fs/promises", () => ({
+  readFile: vi.fn(),
+}));
+
+const { readFile } = await import("node:fs/promises");
 const originalPersonalToken = process.env.DISCORD_BOT_TOKEN;
 const originalAdditionalToken = process.env.TAKOP_BOT_TOKEN;
-const tempDirs: string[] = [];
 
 async function loadDiscordConfig(
   raw: unknown,
   additionalToken?: string,
   personalToken: string | null = "personal-token",
 ): Promise<unknown> {
-  const dir = await mkdtemp(path.join(process.cwd(), "config-test-"));
-  tempDirs.push(dir);
-  const configPath = path.join(dir, "config.json");
-  await writeFile(configPath, JSON.stringify(raw), "utf8");
-  process.env.CONFIG_PATH = configPath;
   if (personalToken === null) delete process.env.DISCORD_BOT_TOKEN;
   else process.env.DISCORD_BOT_TOKEN = personalToken;
   if (additionalToken === undefined) delete process.env.TAKOP_BOT_TOKEN;
   else process.env.TAKOP_BOT_TOKEN = additionalToken;
   vi.resetModules();
   const config = await import("./config.js");
+  vi.mocked(readFile).mockResolvedValueOnce(JSON.stringify(raw));
   return config.loadDiscordConfig();
 }
 
-afterEach(async () => {
+afterEach(() => {
   vi.resetModules();
-  if (originalConfigPath === undefined) delete process.env.CONFIG_PATH;
-  else process.env.CONFIG_PATH = originalConfigPath;
+  vi.clearAllMocks();
   if (originalPersonalToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
   else process.env.DISCORD_BOT_TOKEN = originalPersonalToken;
   if (originalAdditionalToken === undefined) delete process.env.TAKOP_BOT_TOKEN;
   else process.env.TAKOP_BOT_TOKEN = originalAdditionalToken;
-  await Promise.all(
-    tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
-  );
-  tempDirs.length = 0;
 });
 
 describe("loadDiscordConfig", () => {

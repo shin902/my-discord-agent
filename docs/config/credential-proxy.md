@@ -15,7 +15,7 @@
 | `msal` | 任意 | Microsoft Graph用の `tenantId`、`clientId`、`scopes` |
 | `google` | 任意 | Google OAuth用の `clientId`、`clientSecretEnvVar`、`scopes` |
 
-ホストでの読み込み元は既定で `config/credentials.json`、上書きは `CREDENTIALS_PATH` です。読み込み結果はキャッシュされ、設定変更には再起動が必要です。sandboxではホストが生成した `CREDENTIAL_PROXY_JSON` を読みます。これを秘密値の受け渡し手段として使わないでください。
+ホストでは `config/credentials.json` を読み込みます。読み込み結果はキャッシュされ、設定変更には再起動が必要です。sandboxではホストが生成した `CREDENTIAL_PROXY_JSON` を読みます。これを秘密値の受け渡し手段として使わないでください。
 
 ### baseUrlのプレースホルダ
 

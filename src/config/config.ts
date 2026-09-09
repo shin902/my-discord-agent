@@ -5,20 +5,7 @@ import { z } from "zod";
 import { DEFAULT_DISCORD_BOT_ID } from "./constants.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const CONFIG_PATH =
-  process.env.CONFIG_PATH ?? path.join(__dirname, "../../config/config.json");
-export const GROUPS_PATH =
-  process.env.GROUPS_PATH ?? path.join(__dirname, "../../config/groups.json");
-export const CREDENTIALS_PATH =
-  process.env.CREDENTIALS_PATH ??
-  path.join(__dirname, "../../config/credentials.json");
-export const PROVIDERS_PATH =
-  process.env.PROVIDERS_PATH ??
-  path.join(__dirname, "../../config/providers.json");
-export const CRON_PATH =
-  process.env.CRON_PATH ?? path.join(__dirname, "../../config/cron.json");
-export const BOTS_PATH =
-  process.env.BOTS_PATH ?? path.join(__dirname, "../../config/bots.json");
+const CONFIG_DIR = path.join(__dirname, "../../config");
 
 const TopLevelSchema = z.record(z.string(), z.unknown());
 
@@ -78,7 +65,7 @@ export async function loadDiscordConfig(): Promise<DiscordConfig> {
 
 async function readRawConfigFromDisk(): Promise<Record<string, unknown>> {
   try {
-    const text = await readFile(CONFIG_PATH, "utf-8");
+    const text = await readFile(path.join(CONFIG_DIR, "config.json"), "utf-8");
     return TopLevelSchema.parse(JSON.parse(text));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -115,7 +102,7 @@ async function readJsonArrayFile(
 // config/groups.json を読み込む
 export async function loadRawGroups(): Promise<unknown> {
   return readJsonArrayFile(
-    GROUPS_PATH,
+    path.join(CONFIG_DIR, "groups.json"),
     "config/groups.json が見つかりません。config/groups.example.json をコピーして作成してください",
   );
 }
@@ -123,7 +110,7 @@ export async function loadRawGroups(): Promise<unknown> {
 // config/credentials.json を読み込む
 export async function loadRawCredentials(): Promise<unknown> {
   return readJsonArrayFile(
-    CREDENTIALS_PATH,
+    path.join(CONFIG_DIR, "credentials.json"),
     "config/credentials.json が見つかりません。config/credentials.example.json をコピーして作成してください",
   );
 }
@@ -131,7 +118,9 @@ export async function loadRawCredentials(): Promise<unknown> {
 // config/providers.json を読み込む（省略時は安全なデフォルト設定を使うため空配列）
 export async function loadRawProviders(): Promise<unknown> {
   try {
-    return JSON.parse(await readFile(PROVIDERS_PATH, "utf-8"));
+    return JSON.parse(
+      await readFile(path.join(CONFIG_DIR, "providers.json"), "utf-8"),
+    );
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
@@ -140,14 +129,16 @@ export async function loadRawProviders(): Promise<unknown> {
 
 // config/cron.json を読み込む（cron は省略可能なため、ENOENT は呼び出し側で処理する）
 export async function loadRawCron(): Promise<unknown> {
-  const text = await readFile(CRON_PATH, "utf-8");
+  const text = await readFile(path.join(CONFIG_DIR, "cron.json"), "utf-8");
   return JSON.parse(text);
 }
 
 // config/bots.json を読み込む（Botなし構成では省略可能）
 export async function loadRawBots(): Promise<unknown> {
   try {
-    return JSON.parse(await readFile(BOTS_PATH, "utf-8"));
+    return JSON.parse(
+      await readFile(path.join(CONFIG_DIR, "bots.json"), "utf-8"),
+    );
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
     throw err;

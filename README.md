@@ -82,7 +82,7 @@ AgentConfigの継承は実行経路ごとに分かれます。Discordの `/stop`
 
 Approval対象toolの設定と安全上の注意は [エージェントのツールとスキル](docs/agent-tools-skills.md#discord-tool-approvalopt-in) を参照してください。
 
-パスは `CONFIG_PATH`、`GROUPS_PATH`、`CREDENTIALS_PATH`、`PROVIDERS_PATH`、`CRON_PATH`、`BOTS_PATH` で上書きできます。
+設定ファイルはプロジェクトルートの `config/` 配下から読み込まれます。ファイルパスを環境変数で変更する機能はありません。
 
 ### Discord Bot token
 
