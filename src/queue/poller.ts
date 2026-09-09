@@ -743,7 +743,7 @@ async function markCronFailurePlaceholder(msg: InboxMessage): Promise<boolean> {
       messages?: {
         fetch: (
           id: string,
-        ) => Promise<{ edit?: (content: string) => Promise<unknown> }>;
+        ) => Promise<{ edit?: (payload: unknown) => Promise<unknown> }>;
       };
     };
     const message = await channel?.messages?.fetch(

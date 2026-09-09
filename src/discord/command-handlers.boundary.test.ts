@@ -1,3 +1,4 @@
+import { MessageFlags } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -199,12 +200,18 @@ describe("Discord command adapter boundary", () => {
     expect(chunks.every((chunk) => chunk.length <= 2_000)).toBe(true);
     expect(chunks.join("")).toContain(instruction);
     expect(interaction.followUp).not.toHaveBeenCalled();
-    for (const [options] of interaction.channel.send.mock.calls) {
-      expect(options).toEqual({
-        content: expect.any(String),
-        allowedMentions: { parse: [], repliedUser: false },
-      });
-    }
+    const payloads = interaction.channel.send.mock.calls.map(
+      ([options]) => options as { flags?: number },
+    );
+    expect(
+      payloads
+        .slice(0, -1)
+        .every((payload) => payload.flags === MessageFlags.SuppressEmbeds),
+    ).toBe(true);
+    expect(payloads[payloads.length - 1]).toEqual({
+      content: expect.any(String),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   });
 
   it("fails accepted steer receipts when the channel cannot send", async () => {

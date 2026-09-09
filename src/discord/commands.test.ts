@@ -1,3 +1,4 @@
+import { MessageFlags } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerActiveRun } from "../agent/active-run-registry.js";
 
@@ -685,12 +686,18 @@ describe("handleBotCommand", () => {
     expect(chunks.every((chunk) => chunk.length <= 2000)).toBe(true);
     expect(chunks.join("")).toContain(prompt);
     expect(chunks.join("")).toContain(acceptance);
-    for (const [options] of interaction.channel.send.mock.calls) {
-      expect(options).toEqual({
-        content: expect.any(String),
-        allowedMentions: { parse: [], repliedUser: false },
-      });
-    }
+    const payloads = interaction.channel.send.mock.calls.map(
+      ([options]) => options as { flags?: number },
+    );
+    expect(
+      payloads
+        .slice(0, -1)
+        .every((payload) => payload.flags === MessageFlags.SuppressEmbeds),
+    ).toBe(true);
+    expect(payloads[payloads.length - 1]).toEqual({
+      content: expect.any(String),
+      allowedMentions: { parse: [], repliedUser: false },
+    });
   });
 
   it("accepts a command on the default Discord Bot identity", async () => {

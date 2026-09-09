@@ -6,6 +6,7 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { withDiscordSendOptions } from "../discord/send-options.js";
 import { settleRssDispatch } from "./reconciliation.js";
 
 const MAX_CRON_PLACEHOLDER_ATTEMPTS = 3;
@@ -35,6 +36,8 @@ export class DeliveryError extends Error {
   }
 }
 export interface DeliverySendContext {
+  /** True when this is the final persisted response chunk for the job. */
+  isFinalChunk?: boolean;
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
 }
@@ -95,6 +98,9 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     context: DeliverySendContext = {},
   ): Promise<{ externalMessageId: string; cronThreadId?: string }> {
     const payload = JSON.parse(row.payloadJson ?? "{}") as DeliveryPayload;
+    // Direct adapter calls represent a single response unless the worker
+    // supplies the durable chunk position explicitly.
+    const suppressEmbeds = context.isFinalChunk === false;
     // Discord's create/send calls are mutations whose response can be lost
     // after the server has applied the change. Transport/unknown failures
     // after either call therefore must not be retried automatically.
@@ -215,7 +221,10 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         }
         mutationAttempted = true;
         const parent = await target.send(
-          allowMention ? content : { content, allowedMentions },
+          withDiscordSendOptions(
+            allowMention ? content : { content, allowedMentions },
+            suppressEmbeds,
+          ),
         );
         const parentId = String(parent.id ?? "");
         if (!parentId) {
@@ -289,7 +298,12 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         }
         mutationAttempted = true;
         try {
-          await placeholder.edit({ content, allowedMentions });
+          await placeholder.edit(
+            withDiscordSendOptions(
+              { content, allowedMentions },
+              suppressEmbeds,
+            ),
+          );
         } catch (error) {
           throw new DeliveryError(
             "retryable",
@@ -303,17 +317,24 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const value = payload.cronPlaceholderMessageId
         ? { id: payload.cronPlaceholderMessageId }
         : reply
-          ? await target.send({
-              content,
-              reply: {
-                messageReference: payload.replyMessageId,
-                failIfNotExists: false,
-              },
-              // allowMention=true は従来の送信形式を維持する。
-              allowedMentions,
-            })
+          ? await target.send(
+              withDiscordSendOptions(
+                {
+                  content,
+                  reply: {
+                    messageReference: payload.replyMessageId,
+                    failIfNotExists: false,
+                  },
+                  allowedMentions,
+                },
+                suppressEmbeds,
+              ),
+            )
           : await target.send(
-              allowMention ? content : { content, allowedMentions },
+              withDiscordSendOptions(
+                allowMention ? content : { content, allowedMentions },
+                suppressEmbeds,
+              ),
             );
       return {
         externalMessageId: String(value?.id ?? randomUUID()),
@@ -389,7 +410,16 @@ export class DeliveryWorker {
   }
   private async process(claim: DeliveryClaim): Promise<void> {
     try {
+      const responseIndex = claim.row.responseIndex ?? 0;
+      const isFinalChunk = !this.repository
+        .listDeliveries()
+        .some(
+          (delivery) =>
+            delivery.jobId === claim.row.jobId &&
+            (delivery.responseIndex ?? 0) > responseIndex,
+        );
       const sent = await this.adapter.send(claim.row, {
+        isFinalChunk,
         persistCronThread: (threadId) =>
           this.repository.setDeliveryThread(
             claim.row.id,

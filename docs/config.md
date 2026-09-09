@@ -404,6 +404,8 @@ GitHub Issue を定期的に棚卸しし、`issue-triage` グループ（`tools:
 
 Discord runtime は `discord.bots` map に定義した Bot を使用します。デフォルト identity `personal` も通常の entry として必須です。各 entry の `tokenEnv` はトークンを読む環境変数名（トークン値は設定ファイルへ書かない）、`applicationId` は非機密な Discord application ID です。`pnpm discord:deploy global` または `pnpm discord:deploy guild <guild-id>` は、同じ `src/discord/command-registry.ts` の command set を全 Bot application の選択 scope へ bulk overwrite します。deploy script は存在する `.env` を自動で読み込みます。
 
+通常のDiscordテキスト配送では、URL文字列は変更せず、長文を分割した場合に限り最後のchunk以外へ `MessageFlags.SuppressEmbeds` を付けます。最後のchunk（分割されないメッセージを含む）はリンクカードを許可します。キュー配送、コマンドの受付メッセージ、cronのメッセージでもこの挙動を使います。
+
 ```json
 {
   "discord": {
