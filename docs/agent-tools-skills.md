@@ -12,6 +12,14 @@
 | `subagent` | toolsへ正確に明示したAgentだけが利用できる、自己完結したタスクをephemeral subagentへ委譲する組み込みツール。親の実行設定を引き継ぎ、bounded recursive delegationを行う。 |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
+| `finance-record-transaction` | 正の金額と収入・支出種別を受け取り、収支を1件記録するsandbox-local tool |
+| `finance-list-transactions` | 収支履歴を日付範囲・種別・カテゴリで絞り込んで一覧するsandbox-local tool |
+| `finance-summary` | 月または日付範囲の収入・支出・収支・カテゴリ別支出を集計するsandbox-local tool |
+| `finance-add-subscription` | サブスクリプションの初期状態を登録するsandbox-local tool |
+| `finance-update-subscription` | サブスクリプションの新しい状態snapshotを追加するsandbox-local tool |
+| `finance-cancel-subscription` | サブスクリプションの解約状態snapshotを追加するsandbox-local tool |
+| `finance-list-subscriptions` | 名前ごとの最新状態（既定は有効のみ）を一覧するsandbox-local tool |
+| `finance-subscription-history` | サブスクリプション名ごとのappend-only履歴を一覧するsandbox-local tool |
 | `agent-reach` | URLを自動判定してコンテンツを取得。YouTube・Reddit・GitHub・RSS・X/Twitter・一般ウェブに対応。整形済みテキストをツール結果として直接返す |
 | `arxiv-search` | arXivを自然言語クエリで検索。投稿日範囲と並び順を指定でき、正規化した論文メタデータをJSONで返す |
 | `hackernews-search` | 直近30日のHN storyを最大10件検索。points・URL・comment数を返す |
@@ -192,23 +200,13 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 | `wiki-search` | `templates/SKILLS/wiki-search/` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
 | `wiki-search-fts` | `templates/SKILLS/wiki-search-fts/` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が不十分になった大規模wiki向けの移行先 |
 
-### finance系スキル（finance-setup / finance）
+### finance tools
 
-`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理するスキル群。
+収支・サブスクリプションは8つのsandbox-local toolで操作する。専用Skillや、AgentがSQLを組み立てる手順は提供しない。ToolがRunnerのグループworkspaceを内部で初期化し、既存DBに`recorded_at`がない場合だけ互換カラムを追加する。既存行は書き換えず、サブスクリプションの更新・解約は新しいsnapshotを追加する。
 
-| スキル | 場所 | 役割 |
-|--------|------|------|
-| `finance-setup` | `templates/SKILLS/finance-setup/` | `transactions`（収支）・`subscriptions`（サブスク）テーブルを作成する一回限りの初期化。既存DBがあれば上書きしない |
-| `finance` | `templates/SKILLS/finance/` | 収支の記録・照会、サブスクの登録・照会・更新・解約を `sqlite3` コマンド直叩きで行う |
+`finance-record-transaction` には正の整数金額と `income` / `expense` を渡す。保存時の符号はToolが決める（収入は正、支出は負）。サブスクリプションの金額も正の整数で入力し、保存時は支出として扱う。日付は `YYYY-MM-DD`、周期は `monthly` / `yearly` / `weekly`。サブスクリプションのidentityは名前で、名前ごとの最大IDが現在状態になる。
 
-**スキーマ:**
-
-```sql
-transactions (id, date, amount, category, description)
-subscriptions (id, name, amount, cycle, next_date, category, active)
-```
-
-`amount` は収入が正・支出が負（円の整数）。`cycle` は `monthly` / `yearly` / `weekly`。カテゴリはユーザー入力をそのまま使い正規化しない。
+これらのToolはTool Proxy / Tool Runtimeを経由せず、`fs` / `bash`と同じRunner内で実行される。finance capabilityを有効にするgroupはprivate/trusted用途に限定し、public groupへ追加しないこと。
 
 **cron連携（`src/cron/jobs/`）:**
 
@@ -216,6 +214,6 @@ subscriptions (id, name, amount, cycle, next_date, category, active)
 |--------|------|
 | `finance-monthly.ts` | 月次の収支サマリー（収入・支出・カテゴリ別支出・サブスク月額換算）をDiscordに送信 |
 | `finance-subscription-reminder.ts` | `daysAhead`（デフォルト7日）以内に更新日を迎えるサブスクを通知 |
-| `_finance-db.ts` | 上記2ジョブが共有する `resolveFinanceDbPath(groupName)`。`groups/{groupName}/finance.db` を解決し、`groupName` のディレクトリトラバーサル防止とDB未作成時のエラー化を行う |
+| `_finance-db.ts` | 上記2ジョブが共有するhost側DBパス解決。groupNameのディレクトリトラバーサルを防止し、DBが未作成なら非再試行エラーにする |
 
-両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、DBは読み取り専用（`readonly: true`）で開く。導入には `config/cron.json` にジョブ定義を追加し、対象グループで事前に `finance-setup` を実行しておく必要がある。
+両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、既存DBは読み取り専用で開く。DBがまだない場合は、先にいずれかのfinance Toolを実行すると初期化される。

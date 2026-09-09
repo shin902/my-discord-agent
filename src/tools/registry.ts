@@ -19,6 +19,16 @@ import {
 } from "./capability.js";
 import { dateTool } from "./date.js";
 import {
+  financeAddSubscriptionTool,
+  financeCancelSubscriptionTool,
+  financeListSubscriptionsTool,
+  financeListTransactionsTool,
+  financeRecordTransactionTool,
+  financeSubscriptionHistoryTool,
+  financeSummaryTool,
+  financeUpdateSubscriptionTool,
+} from "./finance.js";
+import {
   editTool,
   globTool,
   grepTool,
@@ -117,6 +127,46 @@ const CAPABILITIES = {
     tool: "date",
     executor: "sandbox",
     factory: createStaticToolFactory(dateTool),
+  },
+  "finance-record-transaction": {
+    tool: financeRecordTransactionTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeRecordTransactionTool),
+  },
+  "finance-list-transactions": {
+    tool: financeListTransactionsTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeListTransactionsTool),
+  },
+  "finance-summary": {
+    tool: financeSummaryTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeSummaryTool),
+  },
+  "finance-add-subscription": {
+    tool: financeAddSubscriptionTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeAddSubscriptionTool),
+  },
+  "finance-update-subscription": {
+    tool: financeUpdateSubscriptionTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeUpdateSubscriptionTool),
+  },
+  "finance-cancel-subscription": {
+    tool: financeCancelSubscriptionTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeCancelSubscriptionTool),
+  },
+  "finance-list-subscriptions": {
+    tool: financeListSubscriptionsTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeListSubscriptionsTool),
+  },
+  "finance-subscription-history": {
+    tool: financeSubscriptionHistoryTool.name,
+    executor: "sandbox",
+    factory: createStaticToolFactory(financeSubscriptionHistoryTool),
   },
   "get-current-weather": hostCapability(getCurrentWeatherTool, {
     validateArgs: currentWeatherArgsValidator,

@@ -30,6 +30,33 @@
     ]
   },
   {
+    "name": "finance",
+    "model": {
+      "provider": "zai",
+      "modelId": "glm-4.7-flash"
+    },
+    "tools": [
+      "finance-record-transaction",
+      "finance-list-transactions",
+      "finance-summary",
+      "finance-add-subscription",
+      "finance-update-subscription",
+      "finance-cancel-subscription",
+      "finance-list-subscriptions",
+      "finance-subscription-history"
+    ],
+    "skills": [],
+    "allowMention": true,
+    "toolLogArgs": false,
+    "channels": [
+      {
+        "channelId": "YOUR_FINANCE_CHANNEL_ID",
+        "sessionMode": "shared"
+      }
+    ],
+    "mounts": []
+  },
+  {
     "name": "issue-triage",
     "bot": "public",
     "tools": ["bash", "list-issues", "read-issue", "comment-issue"],
