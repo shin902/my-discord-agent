@@ -40,6 +40,8 @@ LLM の直列・並列実行は provider ごとの設定として扱う。現行
 
 キューに積まれたメッセージには `cronDeliveryMode`、`cronSessionMode`、元のジョブIDが含まれる。`new-thread` は投稿前に毎回新しいスレッドを作成する。宣言的な `item-thread` はAIの応答を配送する時点まで親メッセージとスレッドを作成せず、配送workerが親メッセージを投稿して、そのメッセージから1項目用スレッドを作成する。スレッド作成前にセッションをスレッドIDへ昇格し、直後のユーザー返信でも同じJSONLを参照できるようにする。poller は投稿方法を見て通常メッセージとは別のフローで処理し、スレッド作成後にセッション戦略を適用する。item-threadの投入は毎回新しいjob identityを使い、durableなjob/sessionおよびdeliveryのthread IDを復旧に利用する。
 
+新規の `item-thread` は late-materialization 契約だけをサポートする。AI実行前にplaceholder/threadを作成済みの旧pre-materialized queue rowや、そのplaceholderを参照する未完了deliveryを新runtimeで救済・再開する互換経路は持たない。アップグレード前に旧runtimeで該当job/deliveryをdrainし、`runtime-db` のread-only手順で未完了rowが残っていないことを確認してから切り替える。互換維持のための自動migrationやplaceholder編集fallbackは追加しない。
+
 ### スレッド名の命名規則
 
 `cron-{ジョブID}-{YYYY-MM-DD-HH-MM}` (JST) の形式。同日内の複数回実行でスレッド名が衝突しないよう分まで含める。ジョブIDが長い場合は Discord のスレッド名上限（100文字）に収まるよう末尾を切り詰める。
