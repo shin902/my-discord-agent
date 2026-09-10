@@ -185,7 +185,7 @@ AI・Discord delivery・既読化のいずれかが失敗したメールは未�
 
 ## スコープ外（別途検討）
 
-- **一般deliveryのリトライ上限**: 保存済みの旧placeholder deliveryには3回の固定上限を適用する。その他のdeliveryの再試行上限は未定義で、連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
+- **一般deliveryのリトライ上限**: deliveryの再試行上限は未定義で、連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
 
 - **`allowedTools` / `allowedSkills`**: ジョブごとにグループ設定のツール・スキルをオーバーライドする機能（issue #73）。`InboxMessage` と `sendMessage` 両方への対応が必要なため別途実装。
 
