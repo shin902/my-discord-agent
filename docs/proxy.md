@@ -44,6 +44,10 @@ GitHub、Graph、Google Calendar、Tavilyのcredentialはhost側だけで解決�
 
 実装は [Tool Proxy server](../src/proxy/tool-proxy-server.ts)、tool設定・approvalの仕様は [エージェントのツールとスキル](agent-tools-skills.md) を参照してください。
 
+## Host cronの外部APIアクセス
+
+trustedなhost cron（mailの未読・本文取得、配送後のmail ACK、issue-triageのIssue取得）は、`hostFetch("graph", ...)` / `hostFetch("github", ...)` でconfigured upstreamへ直接接続します。hostFetchがhost credentialと既存のrequest timeoutを適用し、Credential Proxyの起動・port・非LLM routeには依存しません。これは運用者が静的に設定したhost処理であり、sandboxへhostFetchやcredentialを公開する経路ではありません。Agentが起動する非LLM capabilityは引き続きTool Proxyの認可・approvalを通ります。
+
 ## OAuthとTool Runtime
 
 - Microsoft GraphのMSAL設定、GoogleのOAuth設定・token取得はホスト側で管理します。手順は [Azure app登録](guides/azure-app-registration.md) と [Google OAuth設定](guides/google-cloud-oauth-setup.md) を参照してください。
