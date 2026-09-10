@@ -206,7 +206,7 @@ describe("late item-thread delivery", () => {
     }
   });
 
-  it("keeps legacy promotion compatible when no conversation path was recorded", async () => {
+  it("keeps item-thread promotion compatible when no conversation path was recorded", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const jobId = enqueueLateItemThread(repo, false);
     const startThread = vi.fn().mockResolvedValue({ id: "456" });

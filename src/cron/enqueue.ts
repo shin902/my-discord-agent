@@ -2,20 +2,11 @@ import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  ChannelType,
-  type Client,
-  ThreadAutoArchiveDuration,
-} from "discord.js";
+import type { Client } from "discord.js";
 import { validateModel } from "../agent/model.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
-import {
-  getQueueRepository,
-  type QueueJob,
-  type QueueRepository,
-} from "../queue/repository.js";
 import type {
   CronDeliveryMode,
   CronSessionMode,
@@ -130,83 +121,10 @@ async function validateConfigOverride(ctx: CronEnqueueContext): Promise<void> {
   }
 }
 
-export interface CronItemThreadOptions {
-  threadName?: string;
-}
-
-type ItemThreadMessage = {
-  id: unknown;
-  startThread: (options: {
-    name: string;
-    autoArchiveDuration: ThreadAutoArchiveDuration;
-  }) => Promise<{ id?: unknown }>;
-};
-
-type ItemThreadChannel = {
-  type?: number;
-  send: (content: unknown) => Promise<ItemThreadMessage>;
-};
-
-/**
- * Reserve the Discord destination for one cron item and make its thread the
- * durable queue session. Handlers use this for multi-item sources; declarative
- * item-thread jobs let the poller perform the same step before AI execution.
- */
-export async function provisionCronItemThread(
-  client: Client,
-  repository: QueueRepository,
-  job: QueueJob,
-  options: Pick<CronItemThreadOptions, "threadName"> = {},
-): Promise<QueueJob> {
-  const channel = (await client.channels.fetch(
-    job.channelId,
-  )) as unknown as ItemThreadChannel | null;
-  if (
-    !channel ||
-    (channel.type !== undefined &&
-      channel.type !== ChannelType.GuildText &&
-      channel.type !== ChannelType.GuildAnnouncement)
-  ) {
-    throw new NonRetryableError(
-      `[cron-item-thread] チャンネル ${job.channelId} はスレッドをサポートしていません`,
-    );
-  }
-
-  const placeholder = await channel.send("処理中…");
-  const placeholderId = String(placeholder.id);
-  const thread = await placeholder.startThread({
-    name: (options.threadName ?? `cron-${job.cronJobId ?? job.id}`).slice(
-      0,
-      100,
-    ),
-    autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-  });
-  const threadId = String(thread.id ?? "");
-  if (!threadId) {
-    throw new NonRetryableError(
-      "[cron-item-thread] Discord thread ID が空です",
-    );
-  }
-
-  const provisioned = repository.provisionCronJob(job.id, threadId, {
-    cronDeliveryMode: "item-thread",
-    cronSessionMode: "destination",
-    cronThread: true,
-    cronThreadId: threadId,
-    cronPlaceholderMessageId: placeholderId,
-    cronLegacyProvisioning: false,
-  });
-  if (!provisioned) {
-    throw new Error(`[cron-item-thread] job ${job.id} が見つかりません`);
-  }
-  return provisioned;
-}
-
 async function registerCronItemThread(
   ctx: CronEnqueueContext,
   content: string,
-  legacyProvisioning = false,
-): Promise<QueueJob | undefined> {
+): Promise<void> {
   if (!ctx.groupName || !ctx.channelId) {
     throw new NonRetryableError(
       "[cron-item-thread] groupName / channelId が設定されていません",
@@ -216,9 +134,8 @@ async function registerCronItemThread(
 
   // RSS dispatches already own a durable idempotency key. Keep it as the
   // queue identity; the temporary sessionId below is a separate identity used
-  // only until Discord provisions the destination thread.
+  // only until Discord delivery materializes the destination thread.
   const key = ctx.idempotencyKey ?? `cron-item:${ctx.id}:${randomUUID()}`;
-  const repository = getQueueRepository();
   const configOverride = buildConfigOverride(ctx);
   const sessionId = `cron-${ctx.id}-${randomUUID()}`;
   await ctx.appendInbox({
@@ -233,37 +150,12 @@ async function registerCronItemThread(
     cronThread: true,
     cronJobId: ctx.id,
     cronProvisioning: true,
-    ...(legacyProvisioning ? { cronLegacyProvisioning: true } : {}),
     idempotencyKey: key,
     ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
     ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
     ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
-  return repository.findByIdempotencyKey(key);
-}
-
-/**
- * Register one handler item and provision its Discord thread before returning.
- *
- * @deprecated Handler-side provisioning is retained for compatibility. Callers
- * are responsible for coordinating it with poller provisioning; declarative
- * item-thread jobs should be preferred when possible.
- */
-export async function enqueueCronItemThread(
-  ctx: CronEnqueueContext,
-  content: string,
-  options: CronItemThreadOptions = {},
-): Promise<void> {
-  // Keep the compatibility path out of poller claims until its synchronous
-  // placeholder/thread provisioning has committed the destination. Declarative
-  // enqueueCronInbox() intentionally leaves this marker absent so the poller
-  // can materialize the item thread lazily.
-  const job = await registerCronItemThread(ctx, content, true);
-  if (!job) return;
-
-  const repository = getQueueRepository();
-  await provisionCronItemThread(ctx.client, repository, job, options);
 }
 
 export async function enqueueCronInbox(

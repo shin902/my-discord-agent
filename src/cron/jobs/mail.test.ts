@@ -3,13 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getProxyPort = vi.hoisted(() => vi.fn());
 vi.mock("../../proxy/credential-proxy-server.js", () => ({ getProxyPort }));
 
-const itemThreadQueue = vi.hoisted(() => ({
-  findByIdempotencyKey: vi.fn(),
-}));
-vi.mock("../../queue/repository.js", () => ({
-  getQueueRepository: () => itemThreadQueue,
-}));
-
 import type { CronContext } from "../runner.js";
 import handler from "./mail.js";
 

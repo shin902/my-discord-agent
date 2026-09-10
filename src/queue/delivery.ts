@@ -282,7 +282,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         return { externalMessageId: parentId, cronThreadId: parentId };
       }
 
-      // Legacy pre-provisioned item threads may still carry a placeholder.
+      // Persisted pre-materialized item-thread rows may still carry a placeholder.
       if (payload.cronPlaceholderMessageId && target !== undefined) {
         const channel = (await client.channels.fetch(
           destinationId,
