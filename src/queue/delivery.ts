@@ -385,6 +385,17 @@ export class DeliveryWorker {
   }
   private async process(claim: DeliveryClaim): Promise<void> {
     try {
+      const sourceJob = this.repository.get(claim.row.jobId);
+      if (
+        sourceJob?.cronDeliveryMode === "item-thread" &&
+        sourceJob.cronProvisioning !== true &&
+        claim.row.destinationType === "new-thread"
+      ) {
+        throw new DeliveryError(
+          "non-retryable",
+          "pre-materialized item-thread delivery is no longer supported",
+        );
+      }
       const responseIndex = claim.row.responseIndex ?? 0;
       const isFinalChunk = !this.repository
         .listDeliveries()
