@@ -32,14 +32,12 @@ export interface InboxMessage {
   cronThread?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
-  /** Legacy item-thread path: block poller claims until synchronous provisioning completes. */
-  cronLegacyProvisioning?: boolean;
-  /** Placeholder message created before cron AI execution by the legacy provisioning path. */
+  /** Historical pre-materialized item-thread field; current runtime rejects this delivery shape. */
   cronPlaceholderMessageId?: string;
+  /** Declarative item-thread jobs keep a temporary session until delivery materializes the destination. */
+  cronProvisioning?: boolean;
   /** Mail message to acknowledge only after every Discord delivery is sent. */
   mailEmailId?: string;
-  /** Item-thread jobs remain claimable so the poller can provision their destination before AI execution. */
-  cronProvisioning?: boolean;
   cronFailureNotified?: boolean;
   rssDispatchId?: string;
   rssStatePath?: string;

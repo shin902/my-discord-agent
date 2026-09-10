@@ -137,7 +137,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - `appendInbox`
 - ジョブ定義の全フィールド（`id`, `schedule`, `groupName?`, `prompt?`, `channelId?`, `deliveryMode?`, `sessionMode?`, `noReply?`, `mode?`, `handler?`, `settings?`）を展開して渡す
 
-複数項目を扱うhandlerは、各項目を `enqueueCronItemThread(ctx, content, { threadName })` で登録・provisioningできる。ただしこのhelperは旧placeholder方式の互換用として非推奨で、handler側がpollerとの競合を含む利用責任を負う。宣言的な `item-thread` ジョブは通常の `enqueueCronInbox()` から投入され、投入ごとに一時sessionを作る。AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession DB上のidentityとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
+複数項目を扱うhandlerも、各項目を `enqueueCronInbox()` で登録する。`item-thread` ジョブは投入ごとに一時sessionを作り、AIが通常応答を返した後、delivery workerが親メッセージを投稿し、そのmessage/thread IDへsession DB上のidentityとruntime identityを昇格してからthreadを作成する。item-threadのsource照合や完了ACKはcron基盤では行わず、必要ならhandler側で扱う。
 
 ---
 
@@ -194,7 +194,7 @@ AI・Discord delivery・既読化のいずれかが失敗したメールは未�
 
 ## スコープ外（別途検討）
 
-- **一般deliveryのリトライ上限**: 旧placeholder方式の最終回答編集は3回の固定上限を持つ。その他のdeliveryの再試行上限は未定義で、連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
+- **一般deliveryのリトライ上限**: deliveryの再試行上限は未定義で、連続失敗時に `state.json` の `retryCount` で追跡してリトライを打ち切る設計（issue #74）。
 
 - **`allowedTools` / `allowedSkills`**: ジョブごとにグループ設定のツール・スキルをオーバーライドする機能（issue #73）。`InboxMessage` と `sendMessage` 両方への対応が必要なため別途実装。
 

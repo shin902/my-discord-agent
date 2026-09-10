@@ -26,7 +26,6 @@ import {
   type ProviderConcurrency,
   resolveProviderConcurrency,
 } from "../config/providers.js";
-import { provisionCronItemThread } from "../cron/enqueue.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
@@ -671,7 +670,6 @@ async function failEmptyAgentResponse(
       executionMetadata(timing),
     );
   }
-  await finalizeCronFailure(msg);
 }
 
 async function failAttemptIfNonZeroExitCode(
@@ -685,7 +683,6 @@ async function failAttemptIfNonZeroExitCode(
   }
   if (msg.rssDispatchId) {
     await releaseRssAfterFailure(msg, "agent_exit", timing);
-    await finalizeCronFailure(msg);
   } else {
     await getQueueRepository().failAttempt(
       msg.id,
@@ -693,74 +690,12 @@ async function failAttemptIfNonZeroExitCode(
       msg.fencingToken,
       { metadata: executionMetadata(timing) },
     );
-    if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
-      await finalizeCronFailure(msg);
-    }
   }
   return true;
 }
 
 // コンテナ起動を running 状態として記録する onContainerStarted ハンドラを生成する。
 // 通常メッセージ（sessionId=msg.sessionId）と cron thread delivery（導出 sessionId）で同一。
-export async function reconcileTerminalCronFailures(): Promise<void> {
-  const repo = getQueueRepository();
-  const jobs = repo.listTerminalCronJobs();
-  for (const job of jobs) {
-    if (job.cronFailureNotified) continue;
-    await finalizeCronFailure(job);
-  }
-}
-
-function isCronItemMessage(msg: InboxMessage): boolean {
-  return msg.cronDeliveryMode === "item-thread";
-}
-
-async function finalizeCronFailure(msg: InboxMessage): Promise<void> {
-  if (!isCronItemMessage(msg)) return;
-  try {
-    await markCronFailurePlaceholder(msg);
-  } finally {
-    try {
-      getQueueRepository().patchJobPayload(msg.id, {
-        cronFailureNotified: true,
-      });
-      msg.cronFailureNotified = true;
-    } catch (error) {
-      console.error(
-        `[poller] cron failure notification state update failed (${msg.id}):`,
-        error,
-      );
-    }
-  }
-}
-
-async function markCronFailurePlaceholder(msg: InboxMessage): Promise<boolean> {
-  if (msg.cronDeliveryMode !== "item-thread") return false;
-  if (!msg.cronPlaceholderMessageId) return false;
-  try {
-    const client = await getDiscordClientForGroupName(msg.groupName);
-    const channel = (await client.channels.fetch(msg.channelId)) as unknown as {
-      messages?: {
-        fetch: (
-          id: string,
-        ) => Promise<{ edit?: (payload: unknown) => Promise<unknown> }>;
-      };
-    };
-    const message = await channel?.messages?.fetch(
-      msg.cronPlaceholderMessageId,
-    );
-    if (!message?.edit) throw new Error("cron failure placeholder unavailable");
-    await message.edit("⚠️ 処理に失敗しました");
-    return true;
-  } catch (error) {
-    console.error(
-      `[poller] cron failure placeholder 更新失敗 (${msg.id}):`,
-      error,
-    );
-    return false;
-  }
-}
-
 function markRunningWhenContainerStarted(
   msg: InboxMessage,
   sessionId: string,
@@ -891,33 +826,6 @@ async function ensureCronThread(msg: InboxMessage): Promise<void> {
   msg.sessionId = threadId;
 }
 
-async function ensureCronItemThread(msg: InboxMessage): Promise<void> {
-  if (
-    msg.cronDeliveryMode !== "item-thread" ||
-    (msg.cronThreadId &&
-      msg.cronPlaceholderMessageId &&
-      msg.cronProvisioning !== true &&
-      msg.sessionId === msg.cronThreadId)
-  )
-    return;
-  if (msg.fencingToken === undefined) return;
-  const repository = getQueueRepository();
-  const job = repository.get(msg.id);
-  if (!job)
-    throw new Error(`[cron-item-thread] job ${msg.id} が見つかりません`);
-  const client = await resolveDiscordClient(msg.groupName);
-  const provisioned = await provisionCronItemThread(client, repository, job, {
-    threadName: `cron-${String(msg.cronJobId ?? msg.id).slice(0, 90)}`,
-  });
-  msg.cronDeliveryMode = "item-thread";
-  msg.cronSessionMode = "destination";
-  msg.cronThread = true;
-  msg.cronProvisioning = false;
-  msg.cronThreadId = provisioned.cronThreadId;
-  msg.cronPlaceholderMessageId = provisioned.cronPlaceholderMessageId;
-  msg.sessionId = provisioned.sessionId;
-}
-
 async function processCronThreadDelivery(
   msg: InboxMessage,
   signal?: AbortSignal,
@@ -926,19 +834,8 @@ async function processCronThreadDelivery(
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = cronSessionId(msg);
   try {
-    // cronProvisioning=true is the new late-materialization state: the agent
-    // runs in its temporary session and Discord is untouched until delivery.
-    // Legacy item-thread jobs without that marker still use the old provisioner.
-    if (
-      msg.cronDeliveryMode === "item-thread" &&
-      msg.cronProvisioning !== true &&
-      (!msg.cronThreadId ||
-        !msg.cronPlaceholderMessageId ||
-        msg.sessionId !== msg.cronThreadId)
-    ) {
-      await ensureCronItemThread(msg);
-      sessionId = cronSessionId(msg);
-    }
+    // Declarative item-thread jobs execute in a temporary session and leave
+    // Discord untouched until the delivery worker has a response to post.
     if (!msg.cronJobId) {
       outcome = "dead-letter";
       if (msg.fencingToken !== undefined) {
@@ -947,7 +844,6 @@ async function processCronThreadDelivery(
           msg.fencingToken,
           "invalid_cron_job",
         );
-        await finalizeCronFailure(msg);
       }
       return;
     }
@@ -968,8 +864,6 @@ async function processCronThreadDelivery(
       groupConfig?.model,
       execution.configOverride,
     );
-    const legacyItemThread =
-      msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true;
     const response = await withLlmLock(
       lockTarget,
       async () => {
@@ -994,9 +888,7 @@ async function processCronThreadDelivery(
             toolCallKey: msg.toolCallKey,
             systemPromptAppend:
               execution.systemPromptAppend ??
-              (msg.cronNoReply && !legacyItemThread
-                ? NO_REPLY_SYSTEM_PROMPT
-                : undefined),
+              (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
             heldLlmProvider:
               lockTarget.concurrency === "serial"
                 ? lockTarget.provider
@@ -1020,9 +912,8 @@ async function processCronThreadDelivery(
       await failEmptyAgentResponse(msg, timing);
       return;
     }
-    const suppressDelivery = !legacyItemThread && hasNoReplyMarker(response);
-    const lateItemThread =
-      msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning === true;
+    const suppressDelivery = hasNoReplyMarker(response);
+    const lateItemThread = msg.cronDeliveryMode === "item-thread";
     if (msg.fencingToken !== undefined)
       await getQueueRepository().commitResult(
         msg.id,
@@ -1038,9 +929,6 @@ async function processCronThreadDelivery(
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
             cronThreadId: lateItemThread ? undefined : msg.cronThreadId,
-            cronPlaceholderMessageId: lateItemThread
-              ? undefined
-              : msg.cronPlaceholderMessageId,
             ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
             ...(msg.rssDispatchId
               ? {
@@ -1058,7 +946,6 @@ async function processCronThreadDelivery(
     if (msg.rssDispatchId) {
       outcome = "dead-letter";
       await releaseRssAfterFailure(msg, "agent_error", timing);
-      await finalizeCronFailure(msg);
       return;
     }
     const ambiguousMutation =
@@ -1076,7 +963,6 @@ async function processCronThreadDelivery(
           String(error),
           executionMetadata(timing),
         );
-      await finalizeCronFailure(msg);
     } else {
       outcome = "retry";
       if (msg.fencingToken !== undefined) {
@@ -1086,9 +972,6 @@ async function processCronThreadDelivery(
           msg.fencingToken,
           { metadata: executionMetadata(timing) },
         );
-        if (getQueueRepository().get(msg.id)?.status === "dead_letter") {
-          await finalizeCronFailure(msg);
-        }
       }
     }
   } finally {
@@ -1159,6 +1042,23 @@ export async function processMessage(
   msg: InboxMessage,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
+    const timing = startResponseTiming(msg);
+    if (msg.rssDispatchId) {
+      await releaseRssAfterFailure(
+        msg,
+        "unsupported_pre_materialized_item_thread",
+        timing,
+      );
+    } else if (msg.fencingToken !== undefined) {
+      await getQueueRepository().deadLetter(
+        msg.id,
+        msg.fencingToken,
+        "unsupported_pre_materialized_item_thread",
+      );
+    }
+    return;
+  }
   if (msg.memoryShadow !== undefined) {
     await processMemoryShadowJob(msg);
     return;
@@ -1431,7 +1331,6 @@ async function poll(): Promise<void> {
   while (running) {
     try {
       if (discordReady()) {
-        await reconcileTerminalCronFailures();
         const msg = await getQueueRepository().claim(
           "poller-single-host",
           LEASE_MS,

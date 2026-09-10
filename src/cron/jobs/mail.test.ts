@@ -21,13 +21,6 @@ vi.mock("../../proxy/graph-auth.js", () => ({
   getGraphAccessToken: async () => "host-graph-token",
 }));
 
-const itemThreadQueue = vi.hoisted(() => ({
-  findByIdempotencyKey: vi.fn(),
-}));
-vi.mock("../../queue/repository.js", () => ({
-  getQueueRepository: () => itemThreadQueue,
-}));
-
 import type { CronContext } from "../runner.js";
 import handler from "./mail.js";
 

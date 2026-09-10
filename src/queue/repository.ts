@@ -812,7 +812,10 @@ export class QueueRepository {
     const rows = this.db
       .prepare(
         `SELECT j.* FROM jobs j
-         WHERE json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread'
+         WHERE (
+           json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread'
+           OR json_extract(j.payload_json,'$.cronPlaceholderMessageId') IS NOT NULL
+         )
            AND (
              j.status='dead_letter'
              OR (j.status='completed' AND EXISTS (
@@ -1104,7 +1107,7 @@ export class QueueRepository {
       return { session: parseBotTaskSession(updated), enqueue };
     });
   }
-  /** Atomically provision a cron job and move it into the destination session ordering. */
+  /** Atomically move a cron job into the destination session ordering. */
   provisionCronJob(
     id: string,
     sessionId: string,
@@ -1120,7 +1123,6 @@ export class QueueRepository {
         ...patch,
         sessionId,
         cronProvisioning: false,
-        cronLegacyProvisioning: false,
       };
       this.db
         .prepare("UPDATE jobs SET sequence=sequence+1 WHERE session_id=?")
@@ -1268,7 +1270,7 @@ export class QueueRepository {
       const excludedSql = excluded.length
         ? ` AND j.id NOT IN (${excluded.map(() => "?").join(",")})`
         : "";
-      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronLegacyProvisioning') IS NOT 1) AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
+      const eligible = `(json_extract(j.payload_json,'$.cronProvisioning') IS NOT 1 OR json_extract(j.payload_json,'$.cronDeliveryMode')='item-thread') AND ((j.status IN ('queued','retry_wait') AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)) OR (j.status IN ('claimed','running') AND j.lease_until<=?))`;
       const exhausted = this.db
         .prepare(
           `SELECT j.* FROM jobs j WHERE json_extract(j.payload_json,'$.botTaskSessionAdmission') IS NOT 1 AND ${eligible} AND j.attempts>=j.max_attempts${excludedSql}`,
@@ -1990,7 +1992,7 @@ export class QueueRepository {
     if (changed.changes !== 1)
       throw new Error(`stale fencing token for delivery ${id}`);
   }
-  failRssDelivery(
+  failDeliveryBatch(
     id: string,
     token: number,
     status: "failed" | "ambiguous",

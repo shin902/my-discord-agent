@@ -1552,38 +1552,48 @@ describe("QueueRepository - execution metadata mapping semantics", () => {
     }
   });
 
-  it("blocks legacy item-thread provisioning until the handler commits its thread", () => {
+  it("includes persisted placeholder cron rows in failure reconciliation", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const legacy = repo.enqueue({
+      const item = repo.enqueue({
         channelId: "channel",
         groupName: "group",
-        sessionId: "cron-item",
-        content: "prompt",
+        sessionId: "thread-1",
+        content: "cron",
         timestamp: new Date().toISOString(),
-        cronDeliveryMode: "item-thread",
+        cronDeliveryMode: "new-thread",
         cronSessionMode: "destination",
         cronThread: true,
-        cronJobId: "item-job",
-        cronProvisioning: true,
-        cronLegacyProvisioning: true,
+        cronJobId: "mail",
+        cronThreadId: "thread-1",
+        cronPlaceholderMessageId: "placeholder-1",
       }).job;
-      expect(repo.claim("worker")).toBeUndefined();
-      expect(
-        repo.provisionCronJob(legacy.id, "thread-1", {
+      const claim = expectDefined(repo.claim("agent"));
+      repo.commitResult(item.id, claim.fencingToken, "response", {
+        deliveryPayload: {
+          groupName: "group",
+          destinationId: "channel",
+          destinationType: "new-thread",
           cronThreadId: "thread-1",
-        }),
-      ).toMatchObject({
-        cronLegacyProvisioning: false,
-        cronProvisioning: false,
+          cronPlaceholderMessageId: "placeholder-1",
+        },
       });
-      expect(repo.claim("worker")?.job.id).toBe(legacy.id);
+      const deliveryClaim = expectDefined(repo.claimDelivery("delivery"));
+      repo.updateDelivery(
+        deliveryClaim.row.id,
+        deliveryClaim.fencingToken,
+        "failed",
+      );
+
+      expect(repo.listTerminalCronJobs().map((job) => job.id)).toEqual([
+        item.id,
+      ]);
     } finally {
       repo.close();
     }
   });
 
-  it("claims declarative item-thread jobs so the poller can provision before AI", () => {
+  it("claims declarative item-thread jobs for temporary-session AI execution", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
       const item = repo.enqueue({
