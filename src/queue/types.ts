@@ -32,7 +32,7 @@ export interface InboxMessage {
   cronThread?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
-  /** Placeholder retained for delivery of pre-materialized item-thread queue rows. */
+  /** Historical pre-materialized item-thread field; current runtime rejects this delivery shape. */
   cronPlaceholderMessageId?: string;
   /** Declarative item-thread jobs keep a temporary session until delivery materializes the destination. */
   cronProvisioning?: boolean;
