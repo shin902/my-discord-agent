@@ -194,7 +194,7 @@ describe("failAttempt - options object", () => {
       repo.markRunning(enqueued.job.id, token, {
         startedAt: "2025-01-01T00:00:00.000Z",
         workspacePath: "groups/group",
-        conversationPath: "data/sessions/group/session.jsonl",
+        conversationPath: "data/sessions/group/sessions.sqlite#session=session",
       });
       repo.failAttempt(enqueued.job.id, new Error("boom"), token, {
         metadata: {
@@ -225,7 +225,9 @@ describe("failAttempt - options object", () => {
       expect(row.started_at).toBe("2025-01-01T00:00:00.000Z");
       expect(row.heartbeat_at).not.toBeNull();
       expect(row.workspace_path).toBe("groups/group");
-      expect(row.conversation_path).toBe("data/sessions/group/session.jsonl");
+      expect(row.conversation_path).toBe(
+        "data/sessions/group/sessions.sqlite#session=session",
+      );
       expect(row.exit_code).toBe(7);
       expect(row.termination).toBe("close");
       expect(row.stop_reason).toBe("error");

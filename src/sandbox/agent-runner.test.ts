@@ -204,7 +204,7 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("既存メッセージの最古timestampを移行時のanchorへ保存する", async () => {
+  it("既存メッセージの最古timestampをsession anchorへ保存する", async () => {
     vi.mocked(loadMessages).mockResolvedValue([
       { role: "user", content: "old", timestamp: 1787868000123 },
     ] as never);
@@ -932,7 +932,7 @@ describe("runAgentLoop", () => {
     expect(promptAppends).toHaveLength(0);
   });
 
-  it("memory-bootstrap のみ既存で self-bootstrap がない場合、SELF.md だけ移行対象になる（チャンネルごとに独立判定）", async () => {
+  it("memory-bootstrap のみ既存で self-bootstrap がない場合、SELF.md だけを追加する（チャンネルごとに独立判定）", async () => {
     vi.mocked(loadMessages).mockResolvedValue([
       {
         role: "custom",
@@ -961,7 +961,7 @@ describe("runAgentLoop", () => {
 
     // MEMORY.md は既存の bootstrap があるため再読み込みしない
     expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
-    // SELF.md は bootstrap がまだ無いため読み込んで移行する
+    // SELF.md は bootstrap がまだ無いため読み込んで追加する
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -984,7 +984,7 @@ describe("runAgentLoop", () => {
     expect(memoryAppends).toHaveLength(0);
   });
 
-  it("memory-bootstrap のみ既存で self-bootstrap を移行するターンでも、LLM へ渡す順序は memory-bootstrap → self-bootstrap になる", async () => {
+  it("memory-bootstrap のみ既存のターンでも、LLM へ渡す順序は memory-bootstrap → self-bootstrap になる", async () => {
     vi.mocked(loadMessages).mockResolvedValue([
       {
         role: "custom",
@@ -1011,9 +1011,8 @@ describe("runAgentLoop", () => {
 
     await runAgentLoop("test-group", "session-1", "hi", {});
 
-    // 移行ターンでも self-bootstrap が memory-bootstrap より前に来てはいけない
-    // （次ターン以降は JSONL の定義順ロードで memory-bootstrap → self-bootstrap になるため、
-    // 移行ターンだけ逆転するとプロンプトキャッシュが不安定になる）
+    // self-bootstrap が memory-bootstrap より前に来てはいけない
+    // （次回ロード時と順序が変わるとプロンプトキャッシュが不安定になる）
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
@@ -1021,7 +1020,7 @@ describe("runAgentLoop", () => {
     expect(messages[1]).toMatchObject({ customType: "self-bootstrap" });
   });
 
-  it("既存セッション（スナップショットなし・旧形式）は AGENTS.md をスナップショット化し、MEMORY.md を memory-bootstrap に移行する", async () => {
+  it("既存セッション（スナップショットなし）は AGENTS.md をスナップショット化し、MEMORY.md を memory-bootstrap に追加する", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];
@@ -1029,7 +1028,7 @@ describe("runAgentLoop", () => {
 
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
-        return "旧形式プロンプト" as never;
+        return "グループプロンプト" as never;
       }
       if (String(filePath) === "/workspace/MEMORY.md") {
         return "旧記憶" as never;
@@ -1052,22 +1051,22 @@ describe("runAgentLoop", () => {
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
-    expect(systemPrompt).toContain("旧形式プロンプト");
+    expect(systemPrompt).toContain("グループプロンプト");
     // MEMORY.md は systemPrompt には含めない（memory-bootstrap 経由で user role として渡す）
     expect(systemPrompt).not.toContain("旧記憶");
     expect(systemPrompt).not.toContain("## Memory (MEMORY.md)");
 
-    // system-prompt-snapshot として JSONL に書き込まれ、次回以降は再読み込みされない
+    // system-prompt-snapshot としてsession trajectoryへ保存され、次回以降は再読み込みされない
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "custom",
         customType: "system-prompt-snapshot",
-        content: "旧形式プロンプト",
+        content: "グループプロンプト",
       }),
     );
-    // memory-bootstrap として JSONL に書き込まれる
+    // memory-bootstrap としてsession trajectoryへ保存される
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -1088,9 +1087,8 @@ describe("runAgentLoop", () => {
     expect(messages).toHaveLength(3);
   });
 
-  it("ロード時に JSONL 末尾にある system-prompt-snapshot / memory-bootstrap を先頭へ並べ替える（移行ターン以降のキャッシュ整合性）", async () => {
-    // 旧形式セッションの移行ターン直後を模した JSONL の中身。
-    // appendMessage で末尾追記されているため、bootstrap 系が履歴の途中に挟まっている。
+  it("ロード時に途中にある system-prompt-snapshot / memory-bootstrap を先頭へ並べ替える", async () => {
+    // bootstrap系が履歴の途中に保存された場合でも、正規順序へ並べ替える。
     const systemPromptSnapshotMsg = {
       role: "custom",
       customType: "system-prompt-snapshot",
@@ -1118,10 +1116,10 @@ describe("runAgentLoop", () => {
       },
       systemPromptSnapshotMsg,
       memoryBootstrapMsg,
-      { role: "user", content: "移行ターンのuser", timestamp: 1002 },
+      { role: "user", content: "bootstrap追加時のuser", timestamp: 1002 },
       {
         role: "assistant",
-        content: [{ type: "text", text: "移行ターンのassistant" }],
+        content: [{ type: "text", text: "bootstrap追加時のassistant" }],
         timestamp: 1003,
       },
     ] as never);
@@ -1149,13 +1147,13 @@ describe("runAgentLoop", () => {
     expect(messages[5]).toMatchObject({ role: "assistant" });
     expect(messages[6]).toMatchObject({
       role: "user",
-      content: "移行ターンのuser",
+      content: "bootstrap追加時のuser",
     });
     expect(messages[7]).toMatchObject({ role: "assistant" });
     expect(messages).toHaveLength(8);
   });
 
-  it("AGENTS.md も MEMORY.md も存在しない場合は新規メッセージを追加しない（旧形式セッション）", async () => {
+  it("AGENTS.md も MEMORY.md も存在しない場合は新規メッセージを追加しない", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];

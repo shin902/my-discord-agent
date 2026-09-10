@@ -38,7 +38,7 @@ LLM の直列・並列実行は provider ごとの設定として扱う。現行
 
 ### new-thread / item-thread メッセージの識別
 
-キューに積まれたメッセージには `cronDeliveryMode`、`cronSessionMode`、元のジョブIDが含まれる。`new-thread` は投稿前に毎回新しいスレッドを作成する。宣言的な `item-thread` はAIの応答を配送する時点まで親メッセージとスレッドを作成せず、配送workerが親メッセージを投稿して、そのメッセージから1項目用スレッドを作成する。スレッド作成前にセッションをスレッドIDへ昇格し、直後のユーザー返信でも同じJSONLを参照できるようにする。poller は投稿方法を見て通常メッセージとは別のフローで処理し、スレッド作成後にセッション戦略を適用する。item-threadの投入は毎回新しいjob identityを使い、durableなjob/sessionおよびdeliveryのthread IDを復旧に利用する。なお、handlerの後方互換 `enqueueCronItemThread()` は、旧来のplaceholder/threadをAI実行前に作るprovisioning経路であり、完了までpollerのclaim対象外になる。
+キューに積まれたメッセージには `cronDeliveryMode`、`cronSessionMode`、元のジョブIDが含まれる。`new-thread` は投稿前に毎回新しいスレッドを作成する。宣言的な `item-thread` はAIの応答を配送する時点まで親メッセージとスレッドを作成せず、配送workerが親メッセージを投稿して、そのメッセージから1項目用スレッドを作成する。スレッド作成前にセッションをスレッドIDへ昇格し、直後のユーザー返信でも同じsession trajectoryを参照できるようにする。poller は投稿方法を見て通常メッセージとは別のフローで処理し、スレッド作成後にセッション戦略を適用する。item-threadの投入は毎回新しいjob identityを使い、durableなjob/sessionおよびdeliveryのthread IDを復旧に利用する。なお、handlerの後方互換 `enqueueCronItemThread()` は、旧来のplaceholder/threadをAI実行前に作るprovisioning経路であり、完了までpollerのclaim対象外になる。
 
 ### スレッド名の命名規則
 
