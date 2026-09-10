@@ -58,260 +58,31 @@ function completed(
   });
   return item.job.id;
 }
-it("edits the parent placeholder then sends overflow chunks in response order", async () => {
-  const repo = new QueueRepository(openRuntimeDb(":memory:"));
-  completed(repo, "A".repeat(5000), {
-    destinationType: "new-thread",
-    destinationId: "channel",
-    cronThreadId: "thread-1",
-    cronPlaceholderMessageId: "placeholder-1",
-  });
-  const edit = vi.fn().mockResolvedValue(undefined);
-  const parent = { messages: { fetch: vi.fn().mockResolvedValue({ edit }) } };
-  const sent: string[] = [];
-  const sentPayloads: unknown[] = [];
-  const thread = {
-    id: "thread-1",
-    isSendable: () => true,
-    send: vi.fn(async (value) => {
-      sentPayloads.push(value);
-      sent.push(typeof value === "string" ? value : value.content);
-      return { id: `m-${sent.length}` };
-    }),
-  };
-  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockImplementation(async (id) =>
-      id === "thread-1" ? (thread as never) : (parent as never),
-    );
-  try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: "delivery-order",
-    });
-    while (await worker.runOnce()) {}
-    expect(edit).toHaveBeenCalledOnce();
-    expect(edit.mock.calls[0][0].content).toHaveLength(2000);
-    expect(edit.mock.calls[0][0].flags).toBe(MessageFlags.SuppressEmbeds);
-    expect(sent).toHaveLength(2);
-    expect(
-      sentPayloads
-        .slice(0, -1)
-        .every(
-          (payload) =>
-            typeof payload === "object" &&
-            payload !== null &&
-            "flags" in payload &&
-            payload.flags === MessageFlags.SuppressEmbeds,
-        ),
-    ).toBe(true);
-    expect(sentPayloads[sentPayloads.length - 1]).toEqual({
-      content: expect.any(String),
-      allowedMentions: { parse: [], repliedUser: false },
-    });
-    expect(sent[0]).toHaveLength(2000);
-    expect(sent[1]).toHaveLength(1000);
-    expect(parent.messages.fetch).toHaveBeenCalledWith("placeholder-1");
-    expect(repo.listDeliveries().every((row) => row.status === "sent")).toBe(
-      true,
-    );
-  } finally {
-    readySpy.mockRestore();
-    fetchSpy.mockRestore();
-    repo.close();
-  }
-});
 
-it("blocks overflow when placeholder delivery is permanently failed", async () => {
-  const repo = new QueueRepository(openRuntimeDb(":memory:"));
-  completed(repo, "A".repeat(5000), {
-    destinationType: "new-thread",
-    destinationId: "channel",
-    cronThreadId: "thread-1",
-    cronPlaceholderMessageId: "placeholder-1",
-  });
-  const parent = { messages: { fetch: vi.fn().mockResolvedValue({}) } };
-  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
-  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockImplementation(async (id) =>
-      id === "thread-1" ? (thread as never) : (parent as never),
-    );
-  try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: "delivery-block-failed",
-      retryDelayMs: 0,
-    });
-    await worker.runOnce();
-    await worker.runOnce(new Date(Date.now() + 1));
-    await worker.runOnce(new Date(Date.now() + 2));
-    expect(thread.send).not.toHaveBeenCalled();
-    expect(repo.listDeliveries().some((row) => row.status === "failed")).toBe(
-      true,
-    );
-  } finally {
-    readySpy.mockRestore();
-    fetchSpy.mockRestore();
-    repo.close();
-  }
-});
-
-it("blocks overflow when a predecessor delivery is ambiguous", async () => {
-  const repo = new QueueRepository(openRuntimeDb(":memory:"));
-  const jobId = completed(repo, "A".repeat(5000), {
-    destinationType: "new-thread",
-    destinationId: "channel",
-    cronThreadId: "thread-1",
-    cronPlaceholderMessageId: "placeholder-1",
-  });
-  const first = expectDefined(repo.claimDelivery("seed"));
-  repo.updateDelivery(first.row.id, first.fencingToken, "ambiguous");
-  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
-  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockResolvedValue(thread as never);
-  try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: "delivery-block-ambiguous",
-    });
-    while (await worker.runOnce()) {}
-    expect(thread.send).not.toHaveBeenCalled();
-    expect(repo.get(jobId)).toBeDefined();
-  } finally {
-    readySpy.mockRestore();
-    fetchSpy.mockRestore();
-    repo.close();
-  }
-});
-
-it("does not mark delivery sent when the placeholder cannot be edited", async () => {
+it("rejects pre-materialized placeholder delivery without Discord mutation", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const jobId = completed(repo, "response", {
-    destinationType: "new-thread",
+    destinationType: "item-thread",
     destinationId: "channel",
     cronThreadId: "thread-1",
     cronPlaceholderMessageId: "placeholder-1",
   });
-  const parent = { messages: { fetch: vi.fn().mockResolvedValue({}) } };
-  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockImplementation(async (id) =>
-      id === "thread-1" ? (thread as never) : (parent as never),
-    );
+  const fetchSpy = vi.spyOn(client.channels, "fetch");
   try {
     const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: "delivery-missing-placeholder",
-    });
-    await worker.runOnce();
-    expect(
-      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
-    ).toMatchObject({ status: "retry_wait" });
-    expect(thread.send).not.toHaveBeenCalled();
-  } finally {
-    readySpy.mockRestore();
-    fetchSpy.mockRestore();
-    repo.close();
-  }
-});
-
-it.each([
-  Object.assign(new Error("forbidden"), { status: 403 }),
-  new TypeError("network timeout"),
-])("counts placeholder edit failures without inspecting error codes", async (error) => {
-  const repo = new QueueRepository(openRuntimeDb(":memory:"));
-  const jobId = completed(repo, "response", {
-    destinationType: "new-thread",
-    destinationId: "channel",
-    cronThreadId: "thread-1",
-    cronPlaceholderMessageId: "placeholder-1",
-  });
-  const edit = vi.fn().mockRejectedValue(error);
-  const parent = { messages: { fetch: vi.fn().mockResolvedValue({ edit }) } };
-  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
-  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockImplementation(async (id) =>
-      id === "thread-1" ? (thread as never) : (parent as never),
-    );
-  try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: "delivery-edit-retry",
+      workerId: "delivery-pre-materialized-reject",
       retryDelayMs: 0,
     });
     await worker.runOnce();
     expect(
       repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
-    ).toMatchObject({
-      status: "retry_wait",
-      attempts: 1,
-    });
+    ).toMatchObject({ status: "failed", attempts: 1 });
+    expect(fetchSpy).not.toHaveBeenCalled();
     await worker.runOnce(new Date(Date.now() + 1));
     expect(
       repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
-    ).toMatchObject({
-      status: "retry_wait",
-      attempts: 2,
-    });
-    await worker.runOnce(new Date(Date.now() + 2));
-    expect(
-      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
-    ).toMatchObject({
-      status: "failed",
-      attempts: 3,
-    });
-    expect(edit).toHaveBeenCalledTimes(3);
-  } finally {
-    readySpy.mockRestore();
-    fetchSpy.mockRestore();
-    repo.close();
-  }
-});
-
-it("marks a placeholder delivery sent when edit succeeds before the third attempt", async () => {
-  const repo = new QueueRepository(openRuntimeDb(":memory:"));
-  const jobId = completed(repo, "response", {
-    destinationType: "new-thread",
-    destinationId: "channel",
-    cronThreadId: "thread-1",
-    cronPlaceholderMessageId: "placeholder-1",
-  });
-  const edit = vi
-    .fn()
-    .mockRejectedValueOnce(Object.assign(new Error("server"), { status: 503 }))
-    .mockResolvedValueOnce(undefined);
-  const parent = { messages: { fetch: vi.fn().mockResolvedValue({ edit }) } };
-  const thread = { id: "thread-1", isSendable: () => true, send: vi.fn() };
-  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockImplementation(async (id) =>
-      id === "thread-1" ? (thread as never) : (parent as never),
-    );
-  try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
-      workerId: "delivery-edit-retry",
-      retryDelayMs: 0,
-    });
-    await worker.runOnce();
-    expect(
-      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
-    ).toMatchObject({
-      status: "retry_wait",
-      attempts: 1,
-    });
-    await worker.runOnce(new Date(Date.now() + 1));
-    expect(
-      repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
-    ).toMatchObject({
-      status: "sent",
-      attempts: 2,
-    });
-    expect(edit).toHaveBeenCalledTimes(2);
+    ).toMatchObject({ status: "failed", attempts: 1 });
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();
@@ -327,8 +98,6 @@ it("durably persists the created thread before its first message send", async ()
     cronJobId: "daily",
   });
   const send = vi.fn(async () => {
-    // The message send must only be invoked after the thread id is already
-    // durable in the delivery row (pre-send crash-safety boundary).
     expect(
       repo.listDeliveries().find((delivery) => delivery.jobId === jobId),
     ).toMatchObject({
@@ -362,6 +131,7 @@ it("durably persists the created thread before its first message send", async ()
     repo.close();
   }
 });
+
 it("reuses the durably persisted cron thread for delivery", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const send = vi.fn(async () => ({ id: "message-1" }));
@@ -400,6 +170,7 @@ it("reuses the durably persisted cron thread for delivery", async () => {
     repo.close();
   }
 });
+
 it("marks transport failure during thread creation ambiguous without retrying", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const create = vi.fn(async () => {
@@ -432,6 +203,7 @@ it("marks transport failure during thread creation ambiguous without retrying", 
     repo.close();
   }
 });
+
 it("marks a 500 during thread creation ambiguous without retrying", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const create = vi.fn(async () => {
@@ -466,6 +238,7 @@ it("marks a 500 during thread creation ambiguous without retrying", async () => 
     repo.close();
   }
 });
+
 it("marks transport failure during message send ambiguous without retrying", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const send = vi.fn(async () => {
@@ -499,6 +272,7 @@ it("marks transport failure during message send ambiguous without retrying", asy
     repo.close();
   }
 });
+
 it("marks a 502 during message send ambiguous without retrying", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const send = vi.fn(async () => {
@@ -529,6 +303,7 @@ it("marks a 502 during message send ambiguous without retrying", async () => {
     repo.close();
   }
 });
+
 it("marks thread persistence failures ambiguous without creating a duplicate thread", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const thread = {
@@ -817,7 +592,7 @@ describe("durable delivery worker", () => {
         rssStatePath: rssPath,
         rssDispatchJobId: dispatch.jobId,
       });
-      vi.spyOn(repo, "failRssDelivery").mockImplementation(() => {
+      vi.spyOn(repo, "failDeliveryBatch").mockImplementation(() => {
         throw new Error("stale fencing token");
       });
       const worker = new DeliveryWorker(
@@ -880,6 +655,7 @@ describe("durable delivery worker", () => {
       repo.close();
     }
   });
+
   it("propagates a newly created thread to every unsent split chunk", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const send = vi.fn(async () => ({

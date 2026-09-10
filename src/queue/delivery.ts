@@ -9,8 +9,6 @@ import {
 import { withDiscordSendOptions } from "../discord/send-options.js";
 import { settleRssDispatch } from "./reconciliation.js";
 
-const MAX_CRON_PLACEHOLDER_ATTEMPTS = 3;
-
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
 }
@@ -75,7 +73,6 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
-  cronPlaceholderMessageId?: string;
   mailEmailId?: string;
 }
 type DeliveryMessage = {
@@ -97,7 +94,17 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
     row: DeliveryRow,
     context: DeliverySendContext = {},
   ): Promise<{ externalMessageId: string; cronThreadId?: string }> {
-    const payload = JSON.parse(row.payloadJson ?? "{}") as DeliveryPayload;
+    const rawPayload = JSON.parse(row.payloadJson ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    if (typeof rawPayload.cronPlaceholderMessageId === "string") {
+      throw new DeliveryError(
+        "non-retryable",
+        "pre-materialized item-thread delivery is no longer supported",
+      );
+    }
+    const payload = rawPayload as DeliveryPayload;
     // Direct adapter calls represent a single response unless the worker
     // supplies the durable chunk position explicitly.
     const suppressEmbeds = context.isFinalChunk === false;
@@ -166,9 +173,9 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           }
         }
       } else if (isItemThread && threadId) {
-        // The job stores the parent/thread ID before delivery persistence. If
-        // recovery finds that marker while the thread itself is not visible
-        // yet, fetch the parent message and finish starting the same thread.
+        // The late-materialization path durably stores the parent/thread ID
+        // before delivery completion. Recovery reuses that same ID instead of
+        // creating a second parent message or thread.
         try {
           target = (await client.channels.fetch(
             threadId,
@@ -282,60 +289,28 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         return { externalMessageId: parentId, cronThreadId: parentId };
       }
 
-      // Persisted pre-materialized item-thread rows may still carry a placeholder.
-      if (payload.cronPlaceholderMessageId && target !== undefined) {
-        const channel = (await client.channels.fetch(
-          destinationId,
-        )) as unknown as DeliveryTarget | null;
-        const placeholder = await channel?.messages?.fetch(
-          payload.cronPlaceholderMessageId,
-        );
-        if (!placeholder?.edit) {
-          throw new DeliveryError(
-            "non-retryable",
-            "cron placeholder cannot be fetched or edited",
-          );
-        }
-        mutationAttempted = true;
-        try {
-          await placeholder.edit(
+      const reply = payload.replyMessageId && !threadId;
+      mutationAttempted = true;
+      const value = reply
+        ? await target.send(
             withDiscordSendOptions(
-              { content, allowedMentions },
+              {
+                content,
+                reply: {
+                  messageReference: payload.replyMessageId,
+                  failIfNotExists: false,
+                },
+                allowedMentions,
+              },
+              suppressEmbeds,
+            ),
+          )
+        : await target.send(
+            withDiscordSendOptions(
+              allowMention ? content : { content, allowedMentions },
               suppressEmbeds,
             ),
           );
-        } catch (error) {
-          throw new DeliveryError(
-            "retryable",
-            "cron placeholder edit failed",
-            error,
-          );
-        }
-      }
-      const reply = payload.replyMessageId && !threadId;
-      mutationAttempted = true;
-      const value = payload.cronPlaceholderMessageId
-        ? { id: payload.cronPlaceholderMessageId }
-        : reply
-          ? await target.send(
-              withDiscordSendOptions(
-                {
-                  content,
-                  reply: {
-                    messageReference: payload.replyMessageId,
-                    failIfNotExists: false,
-                  },
-                  allowedMentions,
-                },
-                suppressEmbeds,
-              ),
-            )
-          : await target.send(
-              withDiscordSendOptions(
-                allowMention ? content : { content, allowedMentions },
-                suppressEmbeds,
-              ),
-            );
       return {
         externalMessageId: String(value?.id ?? randomUUID()),
         ...(threadId ? { cronThreadId: threadId } : {}),
@@ -409,7 +384,18 @@ export class DeliveryWorker {
     return true;
   }
   private async process(claim: DeliveryClaim): Promise<void> {
+    const sourceJob = this.repository.get(claim.row.jobId);
+    const unsupportedPreMaterializedItemThread =
+      sourceJob?.cronDeliveryMode === "item-thread" &&
+      sourceJob.cronProvisioning !== true &&
+      claim.row.destinationType === "new-thread";
     try {
+      if (unsupportedPreMaterializedItemThread) {
+        throw new DeliveryError(
+          "non-retryable",
+          "pre-materialized item-thread delivery is no longer supported",
+        );
+      }
       const responseIndex = claim.row.responseIndex ?? 0;
       const isFinalChunk = !this.repository
         .listDeliveries()
@@ -524,28 +510,21 @@ export class DeliveryWorker {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
         const rss = this.isRss(claim.row);
-        if (rss) {
-          this.repository.failRssDelivery(
+        if (rss || unsupportedPreMaterializedItemThread) {
+          this.repository.failDeliveryBatch(
             claim.row.id,
             claim.fencingToken,
             kind === "unknown" ? "ambiguous" : "failed",
             String(error),
           );
-          this.settleRss(claim.row, "dead_letter");
+          if (rss) this.settleRss(claim.row, "dead_letter");
         } else {
-          const placeholder = this.isCronPlaceholder(claim.row);
-          const terminalPlaceholderFailure =
-            placeholder &&
-            Number(claim.row.attempts ?? 0) >= MAX_CRON_PLACEHOLDER_ATTEMPTS;
-          const status = terminalPlaceholderFailure
-            ? "failed"
-            : placeholder
-              ? "retry_wait"
-              : kind === "unknown"
-                ? "ambiguous"
-                : kind === "non-retryable"
-                  ? "failed"
-                  : "retry_wait";
+          const status =
+            kind === "unknown"
+              ? "ambiguous"
+              : kind === "non-retryable"
+                ? "failed"
+                : "retry_wait";
           this.repository.updateDelivery(
             claim.row.id,
             claim.fencingToken,
@@ -565,17 +544,6 @@ export class DeliveryWorker {
       } catch (updateError) {
         console.error("[delivery] state update failed", updateError);
       }
-    }
-  }
-  private isCronPlaceholder(row: DeliveryRow): boolean {
-    if (!row.payloadJson) return false;
-    try {
-      return (
-        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
-          .cronPlaceholderMessageId === "string"
-      );
-    } catch {
-      return false;
     }
   }
 
