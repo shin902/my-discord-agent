@@ -8,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import parityCases from "./__fixtures__/agent-reach/parity-cases.json" with {
@@ -32,6 +32,7 @@ import {
   parseXStatus,
   readLimitedJson,
 } from "./agent-reach.js";
+import { wrapToolOutput } from "./output.js";
 
 const dnsLookupMock = vi.hoisted(() =>
   vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
@@ -938,6 +939,10 @@ describe("hasFxContent", () => {
 });
 
 describe("formatFxPost", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("通常ポスト: text とメタ行を含む", () => {
     const result = formatFxPost({
       code: 200,
@@ -1004,8 +1009,8 @@ describe("formatFxPost", () => {
     expect(result).toContain("previewのみ取得できました");
   });
 
-  it("記事本文を120,000文字で切り詰め、注記を付ける", () => {
-    const fixture = parityCases.articleTruncation;
+  it("記事本文が120,000文字を超えても全文を返す", () => {
+    const fixture = parityCases.articleLargeOutput;
     const result = formatFxPost({
       code: 200,
       tweet: {
@@ -1023,9 +1028,63 @@ describe("formatFxPost", () => {
         },
       },
     });
-    expect(result).toContain(fixture.expectedNotice);
-    expect(result).toContain("x".repeat(120000));
-    expect(result).not.toContain("x".repeat(120001));
+    expect(result).toContain("x".repeat(fixture.bodyLength));
+    expect(result).not.toContain("(本文は上限により切り詰められています)");
+  });
+
+  it("120,000文字超のX Article本文を共通large-output境界へ委譲する", async () => {
+    const fixture = parityCases.articleLargeOutput;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: 200,
+              tweet: {
+                text: "",
+                article: {
+                  title: fixture.title,
+                  content: {
+                    blocks: [
+                      {
+                        type: fixture.blockType,
+                        text: "x".repeat(fixture.bodyLength),
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+
+    const wrapped = wrapToolOutput({
+      ...agentReachTool,
+    } as typeof agentReachTool);
+    const result = await wrapped.execute("large-article", {
+      url: "https://x.com/testuser/status/123",
+    });
+    const details = result.details as { fullOutputPath?: string };
+    const fullOutputPath = details.fullOutputPath;
+    if (!fullOutputPath)
+      throw new Error("Expected an externalized output path");
+
+    try {
+      expect(result.content[0]).toMatchObject({
+        type: "text",
+        text: expect.stringContaining("ツール出力が大きいため"),
+      });
+      const fullOutput = await readFile(fullOutputPath, "utf8");
+      expect(fullOutput).toContain("x".repeat(fixture.bodyLength));
+      expect(fullOutput).not.toContain(
+        "(本文は上限により切り詰められています)",
+      );
+    } finally {
+      await rm(dirname(fullOutputPath), { recursive: true, force: true });
+    }
   });
 
   it("注意書き行を常に含む", () => {

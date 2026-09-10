@@ -77,11 +77,9 @@ X の出力には、外部コンテンツの命令を信頼しないための注
 (previewのみ取得できました)
 ```
 
-記事本文は 120,000 文字を上限とし、超過時は切り詰めた後に次の注記を付ける。
+記事本文は個別の文字数で切り詰めず、取得・解析に成功した範囲を全文返す。Agent-visible な正常テキストが 50,000 文字を超える場合は、共通の [output.ts](../../src/tools/output.ts) が全文を Runner の `/tmp/my-discord-agent-tool-*/output.txt` へ保存し、モデルへ `read` / `grep` による参照方法を返す。この一時ファイルは現在の Runner 実行中だけ有効で、`/workspace` への保存は Agent が明示的に行った場合に限る。
 
-```text
-(本文は上限により切り詰められています)
-```
+これは LLM 表示の境界であり、取得時の resource / security boundary ではない。FxTwitter レスポンスの 2 MiB 上限と `content.blocks` の最大 2,000 件などの取得・解析上限は維持する。
 
 ## FxTwitter レスポンスの検証
 
