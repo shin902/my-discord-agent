@@ -36,6 +36,8 @@ jobs:
 
       - name: Build Tool Runtime image
         uses: docker/build-push-action@v6
+        env:
+          BUILDX_PROGRESS: plain
         with:
           context: .
           file: Dockerfile.tool-runtime
@@ -44,13 +46,14 @@ jobs:
           tags: my-discord-agent-tool-runtime:ci
           cache-from: type=gha,scope=tool-runtime
           cache-to: type=gha,mode=max,scope=tool-runtime
-          progress: plain
 
       - name: Build Agent Runner
         run: pnpm build:runner
 
       - name: Build Agent Runner image
         uses: docker/build-push-action@v6
+        env:
+          BUILDX_PROGRESS: plain
         with:
           context: .
           file: Dockerfile
@@ -59,7 +62,6 @@ jobs:
           tags: my-discord-agent-runner:ci
           cache-from: type=gha,scope=agent-runner
           cache-to: type=gha,mode=max,scope=agent-runner
-          progress: plain
 
       - name: Test
         env:
