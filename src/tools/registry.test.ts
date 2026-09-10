@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { arxivSearchTool } from "./arxiv.js";
@@ -79,6 +80,80 @@ describe("resolveTools", () => {
       }),
     ).toBe(tool);
     expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("sandbox capability はexecute前に共通schema validationを適用する", async () => {
+    const parameters = Type.Object({
+      mode: Type.Union([Type.Literal("fast"), Type.Literal("safe")]),
+      count: Type.Integer({ minimum: 1, maximum: 3 }),
+      label: Type.String({ minLength: 1, maxLength: 5 }),
+    });
+    const execute = vi.fn(
+      async (
+        ..._args: Parameters<AgentTool<typeof parameters>["execute"]>
+      ) => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: {},
+      }),
+    );
+    const tool = {
+      name: "sandbox-validation-test",
+      label: "sandbox-validation-test",
+      description: "sandbox-validation-test",
+      parameters,
+      execute,
+    } as AgentTool<typeof parameters>;
+    const wrapped = dispatchCapability({
+      tool: "sandbox-validation-test",
+      executor: "sandbox",
+      factory: () => tool,
+    });
+    if (!wrapped) throw new Error("sandbox test tool was not created");
+
+    for (const args of [
+      { mode: "fast", count: "1", label: "ok" },
+      { mode: "fast", count: 1 },
+      { mode: "other", count: 1, label: "ok" },
+      { mode: "fast", count: 0, label: "ok" },
+      { mode: "fast", count: 1, label: "" },
+      { mode: "fast", count: 1, label: "toolong" },
+    ]) {
+      await expect(wrapped.execute("invalid", args as never)).rejects.toThrow(
+        "Invalid arguments for tool: sandbox-validation-test",
+      );
+    }
+    expect(execute).not.toHaveBeenCalled();
+
+    const validArgs = {
+      mode: "safe",
+      count: 2,
+      label: "ok",
+      ignored: true,
+    };
+    await wrapped.execute("valid", validArgs as never);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]?.[1]).toEqual({
+      mode: "safe",
+      count: 2,
+      label: "ok",
+    });
+    expect(validArgs).toEqual({
+      mode: "safe",
+      count: 2,
+      label: "ok",
+      ignored: true,
+    });
+  });
+
+  it("registryのsandbox toolもexecute前にschema-invalid inputを拒否する", async () => {
+    const [tool] = resolveTools(["write"]);
+
+    await expect(
+      tool.execute("invalid", {
+        path: "out.txt",
+        content: 123,
+      } as never),
+    ).rejects.toThrow("Invalid arguments for tool: write");
   });
 
   it("host capability は thin proxy を返し endpoint 未指定時は fail closed する", async () => {

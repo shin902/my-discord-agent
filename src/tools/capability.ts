@@ -1,4 +1,7 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type {
+  AgentTool,
+  AgentToolUpdateCallback,
+} from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import { Check, Clean, Clone } from "typebox/value";
 import { createToolProxyTool, type ToolProxyEndpoint } from "./tool-proxy.js";
@@ -83,6 +86,44 @@ export function validateToolArgs(
   return (args) => Check(schema, args);
 }
 
+const runtimeValidatedTools = new WeakSet<object>();
+
+/**
+ * Guard direct executor calls with the same schema boundary used by proxy
+ * capabilities. TypeBox object schemas keep unknown properties accepted, so
+ * this wrapper validates the advertised properties and passes a cleaned clone
+ * to the existing executor, matching host capability materialization.
+ */
+export function wrapToolInputValidation<T extends AgentTool>(
+  tool: T,
+  validator?: CapabilityArgsValidator,
+): T {
+  if (runtimeValidatedTools.has(tool)) return tool;
+
+  const validateArgs = validator ?? validateToolArgs(tool);
+  const materializeArgs = materializeToolArgs(tool);
+  const originalExecute = tool.execute;
+  tool.execute = (async (
+    toolCallId: string,
+    args: unknown,
+    signal?: AbortSignal,
+    onUpdate?: AgentToolUpdateCallback,
+  ) => {
+    if (!validateArgs(args)) {
+      throw new Error(`Invalid arguments for tool: ${tool.name}`);
+    }
+    return originalExecute.call(
+      tool,
+      toolCallId,
+      materializeArgs(args) as never,
+      signal,
+      onUpdate,
+    );
+  }) as T["execute"];
+  runtimeValidatedTools.add(tool);
+  return tool;
+}
+
 export interface CapabilityDispatchContext {
   readonly toolProxyEndpoint?: ToolProxyEndpoint;
 }
@@ -121,8 +162,10 @@ export function dispatchCapability(
   context: CapabilityDispatchContext = {},
 ): AgentTool | undefined {
   switch (definition.executor) {
-    case "sandbox":
-      return definition.factory();
+    case "sandbox": {
+      const tool = definition.factory();
+      return tool ? wrapToolInputValidation(tool) : undefined;
+    }
     case "host":
     case "runtime": {
       const tool = definition.factory();
