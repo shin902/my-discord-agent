@@ -13,7 +13,6 @@ import {
   saveFeedEntries,
 } from "../rss/store.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
-import { DeliveryError } from "./delivery.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
