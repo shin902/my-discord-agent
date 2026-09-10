@@ -16,6 +16,7 @@ import {
   dispatchCapability,
   materializeToolArgs,
   validateToolArgs,
+  wrapToolInputValidation,
 } from "./capability.js";
 import { dateTool } from "./date.js";
 import { financeTools } from "./finance.js";
@@ -44,7 +45,7 @@ import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 const createStaticToolFactory =
   (tool: AgentTool): AgentToolFactory =>
   () =>
-    wrapToolOutput(tool);
+    wrapToolOutput(wrapToolInputValidation(tool));
 
 const TOOL_FACTORIES = {
   bash: createStaticToolFactory(bashTool),
@@ -254,11 +255,11 @@ export function resolveTools(
   const runtimeTools: AgentTool[] = [];
   if (toolNames.includes("subagent")) {
     const tool = (runtimeFactories.subagent ?? TOOL_FACTORIES.subagent)();
-    if (tool) runtimeTools.push(tool);
+    if (tool) runtimeTools.push(wrapToolInputValidation(tool));
   }
   if (toolNames.includes("bot")) {
     const tool = (runtimeFactories.bot ?? TOOL_FACTORIES.bot)();
-    if (tool) runtimeTools.push(tool);
+    if (tool) runtimeTools.push(wrapToolInputValidation(tool));
   }
 
   return [...staticTools, ...runtimeTools];

@@ -54,6 +54,23 @@ describe("finance sandbox tools", () => {
     }
   });
 
+  it("registry経由のFinance Toolはexecute前にruntime schema違反を拒否する", async () => {
+    const [tool] = resolveTools(["finance-record-transaction"]);
+    const invalidArgs: unknown[] = [
+      { type: "expense", amount: "100" },
+      { amount: 100 },
+      { type: "refund", amount: 100 },
+      { type: "expense", amount: 0 },
+      { type: "expense", amount: 100, description: "x".repeat(2001) },
+    ];
+
+    for (const args of invalidArgs) {
+      await expect(tool.execute("invalid", args as never)).rejects.toThrow(
+        "Invalid arguments for tool: finance-record-transaction",
+      );
+    }
+  });
+
   it("initializes the database and owns the income/expense sign convention", async () => {
     const dbPath = await testDatabase();
     const tools = createFinanceTools(dbPath);

@@ -40,6 +40,10 @@
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
+### sandbox Toolのruntime引数検証
+
+Registryから解決したsandbox-local Toolは、executorへ入る直前に広告済みTypeBox `parameters` を共通境界で検証します。必須項目、型、enum、範囲、文字列長などのschema違反は実行せずエラーにし、Tool固有のセキュリティ／ドメイン検証もその後のexecutorで引き続き行います。Agent runnerの通常経路にはPiの検証もありますが、直接の`execute()`呼び出しでも同じ境界を通ります。未知propertyは既存のTypeBox object方針どおりschema違反にせず、executorへ渡すclean cloneからは除去されます。組込Toolが利用する既知項目だけが実行に反映されます。host/runtime capabilityのwire引数検証とmaterializeは従来どおりTool Proxy側で行います。
+
 ### Discord tool approval（opt-in）
 
 `approvalRequiredTools` は、effective `tools` に含まれる既知host/runtime capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
