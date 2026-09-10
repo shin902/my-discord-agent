@@ -10,7 +10,7 @@ Search this group's canonical session trajectory with Python's standard-library 
 ## Storage and boundary
 
 - Database: `/sessions/*/sessions.sqlite`
-- `sessions.sqlite` is the canonical source of truth. Do not read legacy `*.jsonl` files; they may be migration leftovers or rollback backups and do not contain current SQLite-era writes.
+- `sessions.sqlite` is the canonical source of truth for the current session trajectory.
 - One database belongs to one AgentGroup; only the current group directory is mounted.
 - `sessions` holds identity metadata. `session_entries` is append-only and stores one message per row.
 - `session_entries.payload_json` is the original AgentMessage JSON. Internal entries such as `session-time-anchor` may be present.
