@@ -101,7 +101,7 @@ describe("pre-materialized item-thread compatibility removal", () => {
           .listDeliveries()
           .filter((delivery) => delivery.jobId === enqueued.job.id)
           .map((delivery) => delivery.status),
-      ).toEqual(["sent", "failed", "pending"]);
+      ).toEqual(["sent", "failed", "failed"]);
     } finally {
       repo.close();
     }

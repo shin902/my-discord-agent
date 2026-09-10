@@ -592,7 +592,7 @@ describe("durable delivery worker", () => {
         rssStatePath: rssPath,
         rssDispatchJobId: dispatch.jobId,
       });
-      vi.spyOn(repo, "failRssDelivery").mockImplementation(() => {
+      vi.spyOn(repo, "failDeliveryBatch").mockImplementation(() => {
         throw new Error("stale fencing token");
       });
       const worker = new DeliveryWorker(

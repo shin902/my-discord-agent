@@ -384,13 +384,13 @@ export class DeliveryWorker {
     return true;
   }
   private async process(claim: DeliveryClaim): Promise<void> {
+    const sourceJob = this.repository.get(claim.row.jobId);
+    const unsupportedPreMaterializedItemThread =
+      sourceJob?.cronDeliveryMode === "item-thread" &&
+      sourceJob.cronProvisioning !== true &&
+      claim.row.destinationType === "new-thread";
     try {
-      const sourceJob = this.repository.get(claim.row.jobId);
-      if (
-        sourceJob?.cronDeliveryMode === "item-thread" &&
-        sourceJob.cronProvisioning !== true &&
-        claim.row.destinationType === "new-thread"
-      ) {
+      if (unsupportedPreMaterializedItemThread) {
         throw new DeliveryError(
           "non-retryable",
           "pre-materialized item-thread delivery is no longer supported",
@@ -510,14 +510,14 @@ export class DeliveryWorker {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
         const rss = this.isRss(claim.row);
-        if (rss) {
-          this.repository.failRssDelivery(
+        if (rss || unsupportedPreMaterializedItemThread) {
+          this.repository.failDeliveryBatch(
             claim.row.id,
             claim.fencingToken,
             kind === "unknown" ? "ambiguous" : "failed",
             String(error),
           );
-          this.settleRss(claim.row, "dead_letter");
+          if (rss) this.settleRss(claim.row, "dead_letter");
         } else {
           const status =
             kind === "unknown"

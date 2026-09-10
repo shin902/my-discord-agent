@@ -1992,7 +1992,7 @@ export class QueueRepository {
     if (changed.changes !== 1)
       throw new Error(`stale fencing token for delivery ${id}`);
   }
-  failRssDelivery(
+  failDeliveryBatch(
     id: string,
     token: number,
     status: "failed" | "ambiguous",
