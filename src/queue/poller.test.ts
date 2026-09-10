@@ -82,8 +82,6 @@ const {
   markRunning,
   updateRunning,
   getJob,
-  listTerminalCronJobs,
-  patchJobPayload,
   enqueue,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
@@ -95,8 +93,6 @@ const {
   markRunning: vi.fn(),
   updateRunning: vi.fn(),
   getJob: vi.fn(),
-  listTerminalCronJobs: vi.fn().mockReturnValue([]),
-  patchJobPayload: vi.fn(),
   enqueue: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
@@ -110,8 +106,6 @@ vi.mock("./repository.js", () => ({
     deadLetter,
     updateRunning,
     get: getJob,
-    listTerminalCronJobs,
-    patchJobPayload,
     enqueue,
   }),
 }));
@@ -123,12 +117,7 @@ const actualAgentMemory = await vi.importActual<
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderConcurrency } = await import("../config/providers.js");
 const client = discordClient;
-const {
-  processMessage,
-  startPoller,
-  stopPoller,
-  reconcileTerminalCronFailures,
-} = await import("./poller.js");
+const { processMessage, startPoller, stopPoller } = await import("./poller.js");
 
 let tempDirs: string[] = [];
 
@@ -145,9 +134,6 @@ beforeEach(() => {
   updateRunning.mockClear();
   getJob.mockReset();
   getJob.mockReturnValue(undefined);
-  listTerminalCronJobs.mockReset();
-  listTerminalCronJobs.mockReturnValue([]);
-  patchJobPayload.mockReset();
   enqueue.mockReset();
   enqueue.mockReturnValue({ job: { id: "memory-job-1" }, inserted: true });
   delete process.env.TDAI_TEST_TOKEN;
@@ -356,6 +342,28 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
+  it("pre-materialized item-thread is rejected before agent execution", async () => {
+    const msg = makeMsg({
+      sessionId: "thread-1",
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronJobId: "item-job",
+      cronProvisioning: false,
+      cronThreadId: "thread-1",
+      cronPlaceholderMessageId: "placeholder-1",
+    });
+
+    await processMessage(msg);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "unsupported_pre_materialized_item_thread",
+    );
+  });
+
   it("non-retryable errors are dead-lettered once with execution metadata", async () => {
     const error = new NonRetryableError("invalid input");
     const executionTiming = {
@@ -405,7 +413,6 @@ describe("processMessage - terminal queue transitions", () => {
       msg.fencingToken,
       expect.objectContaining({ metadata: expect.any(Object) }),
     );
-    // the poller no longer makes retry-count / max-attempt dead-letter decisions
     expect(deadLetter).not.toHaveBeenCalled();
   });
 
@@ -613,16 +620,15 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
-  it("item-thread は独立NO_REPLY行を既存placeholderへ配送する", async () => {
+  it("item-thread NO_REPLY suppresses late materialization", async () => {
     const response = "summary\n<NO_REPLY>";
     vi.mocked(sendMessage).mockResolvedValue(response);
     const msg = makeMsg({
-      sessionId: "thread-1",
+      sessionId: "cron-item-job-temporary",
       cronDeliveryMode: "item-thread",
       cronSessionMode: "destination",
       cronJobId: "item-job",
-      cronThreadId: "thread-1",
-      cronPlaceholderMessageId: "placeholder-1",
+      cronProvisioning: true,
       cronNoReply: true,
     });
 
@@ -632,17 +638,19 @@ describe("processMessage - terminal queue transitions", () => {
       msg.groupName,
       msg.sessionId,
       msg.content,
-      expect.objectContaining({ systemPromptAppend: undefined }),
+      expect.objectContaining({
+        systemPromptAppend: expect.stringContaining("<NO_REPLY>"),
+      }),
     );
     expect(commitInboxResult).toHaveBeenCalledWith(
       msg.id,
       msg.fencingToken,
       response,
       expect.objectContaining({
-        suppressDelivery: false,
+        suppressDelivery: true,
         deliveryPayload: expect.objectContaining({
-          cronThreadId: "thread-1",
-          cronPlaceholderMessageId: "placeholder-1",
+          destinationType: "item-thread",
+          cronThreadId: undefined,
         }),
       }),
     );
@@ -687,7 +695,6 @@ describe("processMessage - terminal queue transitions", () => {
       cronJobId: "daily",
     });
     const create = vi.fn(async () => {
-      // Discord may have created the thread before the response was lost.
       throw new TypeError("network timeout after remote create");
     });
     vi.mocked(client.channels.fetch).mockResolvedValueOnce({
@@ -1327,7 +1334,6 @@ describe("processMessage - empty agent responses", () => {
     failAttempt.mockReset();
     freezeExecutionIdentity.mockReset();
     freezeExecutionIdentity.mockResolvedValue(undefined);
-    patchJobPayload.mockReset();
   });
 
   async function expectTerminalEmptyResponse(
@@ -1385,13 +1391,12 @@ describe("processMessage - empty agent responses", () => {
   )("cron item-thread の %j 応答は即時 terminal failure にする", async (response) => {
     await expectTerminalEmptyResponse(response, {
       id: "cron-item-thread-empty",
-      sessionId: "thread-1",
+      sessionId: "cron-item-thread-temporary",
       cronJobId: "cron-item-thread",
       cronDeliveryMode: "item-thread",
       cronSessionMode: "destination",
       cronThread: true,
-      cronThreadId: "thread-1",
-      cronPlaceholderMessageId: "placeholder-1",
+      cronProvisioning: true,
     });
   });
 });
@@ -1434,7 +1439,6 @@ describe("processMessage - Discord イベント通知", () => {
     await processMessage(makeMsg({ messageId: "msg-original" }));
 
     await vi.waitFor(() => {
-      // allowMention が true でもツールコールはリプライしない
       expect(mockSend).toHaveBeenCalledWith(
         expect.stringMatching(/^🔧 `read_file` /),
       );
@@ -1854,11 +1858,11 @@ describe("processMessage - Discord イベント通知", () => {
     });
   });
 });
+
 describe("processMessage - durable result", () => {
   beforeEach(() => {
     vi.mocked(sendMessage).mockReset();
     vi.mocked(sendMessage).mockResolvedValue("AI response");
-    vi.mocked(commitInboxResult).mockClear();
     vi.mocked(commitInboxResult).mockClear();
     vi.mocked(client.channels.fetch).mockClear();
   });
@@ -1889,6 +1893,7 @@ describe("processMessage - durable result", () => {
       }),
     );
   });
+
   it("does not send a queued shadow job when Agent Memory is disabled", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const msg = makeMsg({
@@ -1932,7 +1937,7 @@ describe("processMessage - durable result", () => {
           teamId: "team",
           agentId: "agent",
           userId: "discord-user-1",
-          sessionId: "discord-session-1",
+          sessionId: "queued-session",
         },
         messages: [
           { role: "user", content: "hello", timestamp: msgTimestamp() },
@@ -2219,7 +2224,6 @@ describe("processMessage - durable result", () => {
         },
       }),
     );
-    // TencentDB is contacted only by the separately claimed shadow job.
     const sourceShadowRequests = fetchMock.mock.calls.filter(
       ([url]) => url === `${shadowBaseUrl}/v3/conversation/add`,
     );
@@ -2457,74 +2461,6 @@ describe("processMessage - durable result", () => {
       db.close();
     }
   });
-
-  it.each([
-    "ambiguous",
-    "non-retryable",
-    "max-attempts",
-    "empty-response",
-    "nonzero-exit",
-  ] as const)("item-thread terminal path %s attempts failure notification once and persists the flag", async (path) => {
-    const msg = makeMsg({
-      id: `item-${path}`,
-      sessionId: "thread",
-      cronDeliveryMode: "item-thread",
-      cronSessionMode: "destination",
-      cronJobId: "item-job",
-      cronThreadId: "thread",
-      cronPlaceholderMessageId: "placeholder",
-    });
-    const terminalJob = {
-      ...msg,
-      status: "dead_letter",
-      cronFailureNotified: false,
-    };
-    getJob.mockReturnValue({ status: "dead_letter" });
-    listTerminalCronJobs.mockReturnValue([terminalJob]);
-    patchJobPayload.mockImplementation((_id, patch) => {
-      Object.assign(terminalJob, patch);
-    });
-    const edit = vi.fn().mockRejectedValue(new Error("edit unavailable"));
-    client.channels.fetch.mockResolvedValue({
-      messages: { fetch: vi.fn().mockResolvedValue({ edit }) },
-    });
-
-    if (path === "ambiguous") {
-      vi.mocked(sendMessage).mockRejectedValue(
-        new DeliveryError("unknown", "transport result unknown"),
-      );
-    } else if (path === "non-retryable") {
-      vi.mocked(sendMessage).mockRejectedValue(
-        new NonRetryableError("invalid item"),
-      );
-    } else if (path === "max-attempts") {
-      vi.mocked(sendMessage).mockRejectedValue(new Error("temporary"));
-    } else if (path === "empty-response") {
-      vi.mocked(sendMessage).mockResolvedValue("");
-    } else {
-      vi.mocked(sendMessage).mockImplementation(
-        async (_group, _session, _content, options: unknown) => {
-          (options as SendMessageOptions).onExecutionTiming?.({
-            termination: "close",
-            exitCode: 7,
-            preparationMs: 0,
-            dockerRunMs: 0,
-          });
-          return "partial";
-        },
-      );
-    }
-
-    await processMessage(msg);
-    await reconcileTerminalCronFailures();
-
-    expect(edit).toHaveBeenCalledOnce();
-    expect(patchJobPayload).toHaveBeenCalledOnce();
-    expect(patchJobPayload).toHaveBeenCalledWith(msg.id, {
-      cronFailureNotified: true,
-    });
-    expect(terminalJob.cronFailureNotified).toBe(true);
-  });
 });
 
 describe("processMessage - provider ごとの LLM ロック", () => {
@@ -2564,7 +2500,6 @@ describe("processMessage - provider ごとの LLM ロック", () => {
     const p2 = processMessage(makeMsg({ sessionId: "s2" }));
 
     await new Promise((r) => setTimeout(r, 20));
-    // 1つ目が解決するまで2つ目の sendMessage は開始されない
     expect(maxInFlight).toBe(1);
 
     resolveFirst("first");
