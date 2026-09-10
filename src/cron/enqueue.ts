@@ -214,7 +214,10 @@ async function registerCronItemThread(
   }
   await validateConfigOverride(ctx);
 
-  const key = `cron-item:${ctx.id}:${randomUUID()}`;
+  // RSS dispatches already own a durable idempotency key. Keep it as the
+  // queue identity; the temporary sessionId below is a separate identity used
+  // only until Discord provisions the destination thread.
+  const key = ctx.idempotencyKey ?? `cron-item:${ctx.id}:${randomUUID()}`;
   const repository = getQueueRepository();
   const configOverride = buildConfigOverride(ctx);
   const sessionId = `cron-${ctx.id}-${randomUUID()}`;
@@ -233,6 +236,8 @@ async function registerCronItemThread(
     ...(legacyProvisioning ? { cronLegacyProvisioning: true } : {}),
     idempotencyKey: key,
     ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
+    ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
+    ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
   return repository.findByIdempotencyKey(key);

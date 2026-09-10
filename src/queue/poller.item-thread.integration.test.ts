@@ -138,6 +138,9 @@ describe("declarative item-thread poller integration", () => {
       cronThread: true,
       cronJobId: "item-job",
       cronProvisioning: true,
+      idempotencyKey: "rss-dispatch-job",
+      rssDispatchId: "rss-dispatch-id",
+      rssStatePath: "data/rss.sqlite3",
     }).job;
     const claimed = repository.claim("poller");
     if (!claimed) throw new Error("expected item-thread claim");
@@ -164,6 +167,11 @@ describe("declarative item-thread poller integration", () => {
     expect(delivery?.destinationType).toBe("item-thread");
     expect(delivery?.cronThreadId).toBeUndefined();
     expect(delivery?.payloadJson).not.toContain("cronPlaceholderMessageId");
+    expect(JSON.parse(delivery?.payloadJson ?? "{}")).toMatchObject({
+      rssDispatchId: "rss-dispatch-id",
+      rssStatePath: "data/rss.sqlite3",
+      rssDispatchJobId: "rss-dispatch-job",
+    });
     expect(state.client.channels.fetch).not.toHaveBeenCalled();
   });
 });
