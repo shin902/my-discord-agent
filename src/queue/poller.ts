@@ -839,7 +839,13 @@ async function processCronThreadDelivery(
       msg.cronProvisioning !== true
     ) {
       outcome = "dead-letter";
-      if (msg.fencingToken !== undefined) {
+      if (msg.rssDispatchId) {
+        await releaseRssAfterFailure(
+          msg,
+          "unsupported_pre_materialized_item_thread",
+          timing,
+        );
+      } else if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
           msg.id,
           msg.fencingToken,

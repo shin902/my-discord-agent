@@ -363,6 +363,37 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
+  it("releases the RSS claim when rejecting a pre-materialized item-thread", async () => {
+    settleRssDispatch.mockImplementationOnce(() => 1);
+    const msg = makeMsg({
+      sessionId: "thread-1",
+      cronDeliveryMode: "item-thread",
+      cronSessionMode: "destination",
+      cronJobId: "item-job",
+      cronProvisioning: false,
+      cronThreadId: "thread-1",
+      rssDispatchId: "dispatch-1",
+      rssStatePath: "data/rss.sqlite3",
+      idempotencyKey: "dispatch-job-1",
+    });
+
+    await processMessage(msg);
+
+    expect(deadLetter).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "unsupported_pre_materialized_item_thread",
+      undefined,
+      expect.any(Object),
+    );
+    expect(settleRssDispatch).toHaveBeenCalledWith(
+      "data/rss.sqlite3",
+      "dispatch-1",
+      "dispatch-job-1",
+      "dead_letter",
+    );
+  });
+
   it("non-retryable errors are dead-lettered once with execution metadata", async () => {
     const error = new NonRetryableError("invalid input");
     const executionTiming = {
