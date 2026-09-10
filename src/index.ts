@@ -34,6 +34,7 @@ import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
 } from "./proxy/credential-proxy-server.js";
+import { initToolCredentials } from "./proxy/tool-credentials.js";
 import {
   initToolProxyServer,
   stopToolProxyServer,
@@ -62,6 +63,7 @@ try {
       );
   }
   await ensureGroupDirs(groups.map((g) => g.name));
+  await initToolCredentials();
   const proxyPort = await initCredentialProxyServer();
   const toolProxyPort = await initToolProxyServer({
     presentApprovalRequest: presentToolApprovalRequest,

@@ -265,6 +265,7 @@ describe.skipIf(!image || !runtimeImage)(
               [
                 {
                   provider: "fixture",
+                  api: "openai-completions",
                   baseUrl: `http://127.0.0.1:${upstream}/v1`,
                   envVars: ["NETWORK_TEST_UPSTREAM_KEY"],
                 },
@@ -299,7 +300,7 @@ describe.skipIf(!image || !runtimeImage)(
                 "-e",
                 "SESSIONS_DIR=/tmp/sessions",
                 "-e",
-                `CREDENTIAL_PROXY_JSON=${JSON.stringify([{ provider: "fixture", baseUrl: `http://host.docker.internal:${proxyPort}/fixture` }])}`,
+                `CREDENTIAL_PROXY_JSON=${JSON.stringify([{ provider: "fixture", api: "openai-completions", baseUrl: `http://host.docker.internal:${proxyPort}/fixture` }])}`,
                 image,
                 "/app/sandbox-entrypoint.sh",
                 "node",

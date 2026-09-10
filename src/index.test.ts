@@ -87,6 +87,9 @@ vi.mock("./agent/session.js", () => ({
 vi.mock("./config/default-model.js", () => ({
   loadDefaultModel: mocks.loadDefaultModel,
 }));
+vi.mock("./proxy/tool-credentials.js", () => ({
+  initToolCredentials: vi.fn(),
+}));
 vi.mock("./proxy/credential-proxy-server.js", () => ({
   initCredentialProxyServer: vi.fn().mockResolvedValue(0),
   registerInternalRequestHandler: vi.fn(),
