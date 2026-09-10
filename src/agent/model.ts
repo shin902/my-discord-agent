@@ -67,6 +67,13 @@ function createCustomModel(
     },
     contextWindow: entry.contextWindow ?? 128000,
     maxTokens: entry.maxTokens ?? 4096,
+    ...(process.env.AGENT_LLM_PROXY_TOKEN
+      ? {
+          headers: {
+            "x-agent-inference-token": process.env.AGENT_LLM_PROXY_TOKEN,
+          },
+        }
+      : {}),
     ...(compat ? { compat } : {}),
   } as Model<Api>;
 }
@@ -100,7 +107,18 @@ export async function resolveModel(provider: string, modelId: string) {
     if (!entry) {
       throw new Error(`${provider}: sandbox requires a Credential Proxy entry`);
     }
-    return { ...model, baseUrl: entry.baseUrl };
+    return {
+      ...model,
+      baseUrl: entry.baseUrl,
+      ...(process.env.AGENT_LLM_PROXY_TOKEN
+        ? {
+            headers: {
+              ...model.headers,
+              "x-agent-inference-token": process.env.AGENT_LLM_PROXY_TOKEN,
+            },
+          }
+        : {}),
+    };
   }
   return model;
 }

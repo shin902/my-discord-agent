@@ -1437,6 +1437,7 @@ describe("sendMessage: 設定バリデーション", () => {
 describe("sendMessage: configOverride", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
   let ensureGroupSkillsMock: ReturnType<typeof vi.fn>;
+  let createInferenceRequestConfigMock: ReturnType<typeof vi.fn>;
   let createInternalRequestConfigMock: ReturnType<typeof vi.fn>;
   let createToolProxyRunMock: ReturnType<typeof vi.fn>;
 
@@ -1444,6 +1445,10 @@ describe("sendMessage: configOverride", () => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
     ensureGroupSkillsMock = vi.fn().mockResolvedValue(undefined);
+    createInferenceRequestConfigMock = vi.fn(() => ({
+      token: "inference-token",
+      revoke: vi.fn(),
+    }));
     createInternalRequestConfigMock = vi.fn(() => ({
       port: 12345,
       token: "internal-token",
@@ -1459,6 +1464,7 @@ describe("sendMessage: configOverride", () => {
       spawn: spawnMock,
     }));
     vi.doMock("../proxy/credential-proxy-server.js", () => ({
+      createInferenceRequestConfig: createInferenceRequestConfigMock,
       createInternalRequestConfig: createInternalRequestConfigMock,
     }));
     vi.doMock("../proxy/tool-proxy-server.js", () => ({
@@ -1526,6 +1532,21 @@ describe("sendMessage: configOverride", () => {
     ]);
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
+  });
+
+  it("選択中LLM providerのinference tokenだけをsandboxへ渡し、完了時にrevokeする", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi");
+
+    expect(createInferenceRequestConfigMock).toHaveBeenCalledExactlyOnceWith(
+      "zai",
+    );
+    const inference = createInferenceRequestConfigMock.mock.results[0]
+      ?.value as { token: string; revoke: ReturnType<typeof vi.fn> };
+    expect(inference.revoke).toHaveBeenCalledOnce();
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain("AGENT_LLM_PROXY_TOKEN=inference-token");
   });
 
   it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {

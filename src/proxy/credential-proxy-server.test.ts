@@ -7,12 +7,14 @@ const makeReq = (
   headers: Record<string, string> = {},
   method = "POST",
   body?: string,
+  remoteAddress = "127.0.0.1",
 ) =>
   ({
     url,
     headers,
     method,
     ...(body !== undefined ? { body } : {}),
+    socket: { remoteAddress },
     pipe: vi.fn(),
   }) as unknown as IncomingMessage;
 
@@ -86,6 +88,80 @@ describe("createRequestHandler: エラーレスポンス", () => {
     handler(req, res as unknown as ServerResponse);
     expect(res.writeHead).toHaveBeenCalledWith(502);
     expect(res.end).toHaveBeenCalledWith(expect.stringContaining("bad"));
+  });
+});
+
+describe("createRequestHandler: sandbox inference authorization", () => {
+  let requestMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    requestMock = vi.fn(() => ({ on: vi.fn() }));
+    vi.doMock("node:http", () => ({ request: requestMock }));
+    vi.doMock("node:https", () => ({ request: vi.fn() }));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  const CREDS: CredentialEntry[] = [
+    { provider: "openai", baseUrl: "http://fake-openai.test/v1" },
+    { provider: "github", baseUrl: "http://fake-github.test" },
+  ];
+
+  it("non-loopback requestを選択中providerのrun tokenだけに制限する", async () => {
+    const { createInferenceRequestConfig, createRequestHandler } = await import(
+      "./credential-proxy-server.js"
+    );
+    const config = createInferenceRequestConfig("openai");
+    const handler = createRequestHandler(CREDS, 30000);
+
+    const denied = makeRes();
+    handler(
+      makeReq(
+        "/github/user",
+        { "x-agent-inference-token": config.token },
+        "GET",
+        undefined,
+        "172.17.0.2",
+      ),
+      denied,
+    );
+    expect(denied.writeHead).toHaveBeenCalledWith(404);
+    expect(requestMock).not.toHaveBeenCalled();
+
+    const allowed = makeRes();
+    handler(
+      makeReq(
+        "/openai/chat/completions",
+        { "x-agent-inference-token": config.token },
+        "POST",
+        undefined,
+        "172.17.0.2",
+      ),
+      allowed,
+    );
+    await vi.waitFor(() => expect(requestMock).toHaveBeenCalledOnce());
+    const upstreamOptions = requestMock.mock.calls[0]?.[0] as {
+      headers: Record<string, unknown>;
+    };
+    expect(upstreamOptions.headers["x-agent-inference-token"]).toBeUndefined();
+
+    config.revoke();
+    const revoked = makeRes();
+    handler(
+      makeReq(
+        "/openai/chat/completions",
+        { "x-agent-inference-token": config.token },
+        "POST",
+        undefined,
+        "172.17.0.2",
+      ),
+      revoked,
+    );
+    expect(revoked.writeHead).toHaveBeenCalledWith(404);
+    expect(requestMock).toHaveBeenCalledOnce();
   });
 });
 

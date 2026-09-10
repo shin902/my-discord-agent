@@ -66,6 +66,69 @@ describe("resolveModel", () => {
       vi.unstubAllEnvs();
     }
   });
+  it("sandbox inference tokenをKnownProviderのheaderへ追加し既存headerを維持する", async () => {
+    vi.stubEnv("CREDENTIAL_PROXY_JSON", "[]");
+    vi.stubEnv("AGENT_LLM_PROXY_TOKEN", "run-token");
+    try {
+      const { resolveModel } = await importFresh();
+      const { getProviders, getModels } = await import(
+        "@earendil-works/pi-ai/compat"
+      );
+      const { loadCredentialProxy } = await import(
+        "../config/credential-proxy.js"
+      );
+      vi.mocked(loadCredentialProxy).mockResolvedValue([
+        {
+          provider: "openai",
+          baseUrl: "http://host.docker.internal:1234/openai",
+        },
+      ]);
+      vi.mocked(getProviders).mockReturnValue(["openai"] as BuiltinProvider[]);
+      vi.mocked(getModels).mockReturnValue([
+        {
+          id: "gpt-4",
+          provider: "openai",
+          headers: { "x-existing": "kept" },
+        },
+      ] as unknown as Model<never>[]);
+
+      await expect(resolveModel("openai", "gpt-4")).resolves.toMatchObject({
+        baseUrl: "http://host.docker.internal:1234/openai",
+        headers: {
+          "x-existing": "kept",
+          "x-agent-inference-token": "run-token",
+        },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("sandbox inference tokenをcustom model headerへ追加する", async () => {
+    vi.stubEnv("AGENT_LLM_PROXY_TOKEN", "run-token");
+    try {
+      const { resolveModel } = await importFresh();
+      const { getProviders } = await import("@earendil-works/pi-ai/compat");
+      const { loadCredentialProxy } = await import(
+        "../config/credential-proxy.js"
+      );
+      vi.mocked(getProviders).mockReturnValue([] as BuiltinProvider[]);
+      vi.mocked(loadCredentialProxy).mockResolvedValue([
+        {
+          provider: "llama-cpp",
+          baseUrl: "http://host.docker.internal:1234/llama-cpp",
+        },
+      ] as CredentialEntry[]);
+
+      const model = await resolveModel("llama-cpp", "llama3");
+      expect(model.headers).toEqual({
+        "x-agent-inference-token": "run-token",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("既知のプロバイダーのモデルを解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import(

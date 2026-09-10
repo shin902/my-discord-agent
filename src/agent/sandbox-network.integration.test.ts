@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRequestHandler } from "../proxy/credential-proxy-server.js";
+import {
+  createInferenceRequestConfig,
+  createRequestHandler,
+} from "../proxy/credential-proxy-server.js";
 import {
   createToolProxyRun,
   initToolProxyServer,
@@ -202,6 +205,7 @@ describe.skipIf(!image || !runtimeImage)(
       const runtimeCalls: string[] = [];
       const fixture = await createToolRuntimeFixture(runtimeImage as string);
       let revoke: (() => void) | undefined;
+      let inferenceRevoke: (() => void) | undefined;
       try {
         const actualExecute = runtime.executeToolRuntime;
         vi.spyOn(runtime, "executeToolRuntime").mockImplementation(
@@ -259,6 +263,8 @@ describe.skipIf(!image || !runtimeImage)(
           }),
         );
         vi.stubEnv("NETWORK_TEST_UPSTREAM_KEY", "upstream-only-secret");
+        const inference = createInferenceRequestConfig("fixture");
+        inferenceRevoke = inference.revoke;
         const proxyPort = await listen(
           createServer(
             createRequestHandler(
@@ -299,6 +305,8 @@ describe.skipIf(!image || !runtimeImage)(
                 "-e",
                 "SESSIONS_DIR=/tmp/sessions",
                 "-e",
+                `AGENT_LLM_PROXY_TOKEN=${inference.token}`,
+                "-e",
                 `CREDENTIAL_PROXY_JSON=${JSON.stringify([{ provider: "fixture", baseUrl: `http://host.docker.internal:${proxyPort}/fixture` }])}`,
                 image,
                 "/app/sandbox-entrypoint.sh",
@@ -332,6 +340,7 @@ describe.skipIf(!image || !runtimeImage)(
           "upstream-only-secret",
         );
       } finally {
+        inferenceRevoke?.();
         revoke?.();
         await stopToolProxyServer();
         await fixture.dispose();

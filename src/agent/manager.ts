@@ -18,7 +18,10 @@ import {
   type GroupConfig,
 } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
-import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
+import {
+  createInferenceRequestConfig,
+  createInternalRequestConfig,
+} from "../proxy/credential-proxy-server.js";
 import { usesAnthropicOAuth } from "../proxy/provider-auth.js";
 import {
   createToolProxyRun,
@@ -801,6 +804,8 @@ export async function sendMessage(
       "-",
     );
 
+  const inferenceRequest = createInferenceRequestConfig(resolvedModel.provider);
+
   const args = [
     "run",
     "--rm",
@@ -831,6 +836,8 @@ export async function sendMessage(
     "SESSIONS_DIR=/sessions",
     "-e",
     "HOME=/tmp",
+    "-e",
+    `AGENT_LLM_PROXY_TOKEN=${inferenceRequest.token}`,
     "-e",
     `CREDENTIAL_PROXY_JSON=${credentialJson}`,
     ...(toolProxyRun
@@ -1285,6 +1292,7 @@ export async function sendMessage(
         );
       });
   }).finally(() => {
+    inferenceRequest.revoke();
     internalRequest?.revoke();
     toolProxyRun?.revoke();
   });

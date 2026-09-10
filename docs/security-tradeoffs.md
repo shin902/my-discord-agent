@@ -15,20 +15,18 @@ LLM は Credential Proxy 経由で host が設定済み upstream へ接続しま
 ### 効果の限界
 
 - 許可された LLM / 検索 / URL 取得等を使った情報持ち出しは network isolation だけでは防げません。
-- Credential Proxy は secret confidentiality と credential injection / forwarding を担当し、authorization plane ではありません。Agent が inference credential を利用すること自体は許可し、他の inference provider を選ぶ可能性も受け入れます。provider/model/path/method 認可、inference run token、approval、独自 rate limit は追加しません。利用自体を制限すべき credential-backed operation が残る場合は、Credential Proxy を拡張せず Tool Proxy capability へ移します。
+- Credential Proxy は主に secret confidentiality と credential injection / forwarding を担当します。sandboxからのforwardingには短命run tokenを要求し、tokenはそのrunの選択中model provider routeにだけ束縛します。他のprovider routeへのsandbox-origin requestは拒否しますが、許可されたprovider内のmodel/path/method認可、approval、独自rate limitまでは追加しません。利用自体を制限すべきcredential-backed operationが残る場合は、Credential Proxyを拡張せずTool Proxy capabilityへ移します。
 - host、Docker daemon、image、operator-only mounts は trust root です。危険な socket や bootstrap を置換する mount を trusted config で許せば境界を壊せます。mount policy 全面変更は行っていません。
 - container/kernel escape や parser/Chromium の侵害後の完全封じ込めは保証しません。seccomp 大規模変更、AppArmor/SELinux、Landlock、追加 sandbox、mTLS は導入していません。
 
 Tool Runtimeへ移行済みの機能と、直接通信できなくなる任意コマンドの扱いは[導入ガイド](sandbox-command.md#direct-egress-閉鎖後の実行経路)を参照してください。
 
-## credential proxy の認証なし公開
+## Credential Proxy の host 公開と sandbox 認証
 
 **場所:** `src/proxy/credential-proxy-server.ts` — `server.listen(0, "0.0.0.0")`
 
-**内容:** プロキシサーバーがエフェメラルポートで全インタフェースにバインドされる。認証機構はなく、ポートさえ分かれば任意のプロセスが API キーを乗せたリクエストを転送できる。
+**内容:** Linux では `--add-host=host.docker.internal:host-gateway` がDockerブリッジIP（172.17.0.1）に解決されるため `127.0.0.1` バインドではコンテナから届かず、`0.0.0.0` が必要です。hostのloopbackからのcron等のリクエストはそのまま利用でき、sandbox等の非loopback requestには短命run tokenを要求します。tokenは選択中model providerへ束縛され、別provider routeは拒否されます。
 
-**理由:** Linux では `--add-host=host.docker.internal:host-gateway` がDockerブリッジIP（172.17.0.1）に解決されるため `127.0.0.1` バインドではコンテナから届かない。`0.0.0.0` が必要。
+**残存リスク:** tokenを持つsandboxは、選択中model providerのroute内で任意のpath・methodを要求できます。Credential ProxyはLLM専用gatewayではなく、provider内の細粒度認可は行いません。また、host機に到達できる外部プロセスからプロキシポートへの接続自体は可能です。
 
-**残存リスク:** ホスト機に到達できる外部プロセスからプロキシポートへのアクセスが可能。エフェメラルポートは推測を困難にするが保証ではない。
-
-**緩和策:** 本番環境ではファイアウォールでプロキシポートへの外部アクセスを遮断すること。
+**緩和策:** 本番環境ではプロキシポートへの外部アクセスをファイアウォールで遮断し、provider内の認可が必要なcredential-backed operationはTool Proxyへ移行すること。
