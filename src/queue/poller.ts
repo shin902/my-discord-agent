@@ -834,26 +834,6 @@ async function processCronThreadDelivery(
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = cronSessionId(msg);
   try {
-    if (
-      msg.cronDeliveryMode === "item-thread" &&
-      msg.cronProvisioning !== true
-    ) {
-      outcome = "dead-letter";
-      if (msg.rssDispatchId) {
-        await releaseRssAfterFailure(
-          msg,
-          "unsupported_pre_materialized_item_thread",
-          timing,
-        );
-      } else if (msg.fencingToken !== undefined) {
-        await getQueueRepository().deadLetter(
-          msg.id,
-          msg.fencingToken,
-          "unsupported_pre_materialized_item_thread",
-        );
-      }
-      return;
-    }
     // Declarative item-thread jobs execute in a temporary session and leave
     // Discord untouched until the delivery worker has a response to post.
     if (!msg.cronJobId) {
@@ -1062,6 +1042,23 @@ export async function processMessage(
   msg: InboxMessage,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
+    const timing = startResponseTiming(msg);
+    if (msg.rssDispatchId) {
+      await releaseRssAfterFailure(
+        msg,
+        "unsupported_pre_materialized_item_thread",
+        timing,
+      );
+    } else if (msg.fencingToken !== undefined) {
+      await getQueueRepository().deadLetter(
+        msg.id,
+        msg.fencingToken,
+        "unsupported_pre_materialized_item_thread",
+      );
+    }
+    return;
+  }
   if (msg.memoryShadow !== undefined) {
     await processMemoryShadowJob(msg);
     return;

@@ -363,7 +363,8 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
-  it("releases the RSS claim when rejecting a pre-materialized item-thread", async () => {
+  it("releases the RSS claim before freezing identity when rejecting a pre-materialized item-thread", async () => {
+    loadMessages.mockClear();
     settleRssDispatch.mockImplementationOnce(() => 1);
     const msg = makeMsg({
       sessionId: "thread-1",
@@ -379,6 +380,8 @@ describe("processMessage - terminal queue transitions", () => {
 
     await processMessage(msg);
 
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(freezeExecutionIdentity).not.toHaveBeenCalled();
     expect(deadLetter).toHaveBeenCalledWith(
       msg.id,
       msg.fencingToken,
