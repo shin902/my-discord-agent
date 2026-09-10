@@ -149,6 +149,19 @@ CLIPROXY_API_KEY=your-local-cliproxy-key
 }
 ```
 
+上記は既存のcustom provider構成です。Piに組み込み済みのモデルを使う場合は、次の接続定義によりmodel identity / metadataを保持できます（`forceCustom` は指定しません）。
+
+```json
+{
+  "provider": "openai-codex",
+  "envVars": ["CLIPROXY_API_KEY"],
+  "baseUrl": "http://localhost:8317/v1",
+  "api": "openai-responses"
+}
+```
+
+この場合、モデル選択のproviderも `openai-codex` にします。metadataはPiから取得し、wire APIとgateway routeだけを変更します。Astraの実利用有効化・CLIProxyAPI release固定・実機smokeは後続の #404 で扱い、この構造の追加だけでは有効化しません。direct OpenAI APIも `provider: "openai"`、`OPENAI_API_KEY`、`https://api.openai.com/v1` を使う同じthin forwarding経路です。
+
 `openai-responses` は API キーを通常の Bearer credential として扱い、`/v1/responses` を呼び出す。`openai-codex-responses` は ChatGPT OAuth credential と Codex backend を直接扱うアダプターなので、このサイドカー構成には使用しない。
 
 アプリ本体（`credential-proxy-server` を含む）も CLIProxyAPI と同じ Docker ネットワーク内で起動する構成に限り、`baseUrl` に Docker のサービス名を使用できる。

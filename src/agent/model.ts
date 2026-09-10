@@ -9,6 +9,7 @@ import {
   type CredentialEntry,
   loadCredentialProxy,
 } from "../config/credential-proxy.js";
+import { isLlmCredential } from "../config/llm-credentials.js";
 
 export function resolveBaseUrl(baseUrl: string): string | null {
   const resolved = baseUrl.replace(/\{([A-Za-z0-9_]+)\}/g, (_, envVar) => {
@@ -76,6 +77,11 @@ export async function resolveModel(provider: string, modelId: string) {
   const builtinProvider = provider as BuiltinProvider;
   const creds = await loadCredentialProxy();
   const entry = creds.find((e) => e.provider === provider);
+  if (entry && !isLlmCredential(entry)) {
+    throw new Error(
+      `${provider}: credential entry is not an LLM route; custom models require api or forceCustom`,
+    );
+  }
 
   // forceCustom: pi-ai の KnownProvider 名と衝突していても
   // credential-proxy 経由のカスタムプロバイダー解決を強制する
@@ -100,9 +106,13 @@ export async function resolveModel(provider: string, modelId: string) {
     if (!entry) {
       throw new Error(`${provider}: sandbox requires a Credential Proxy entry`);
     }
-    return { ...model, baseUrl: entry.baseUrl };
   }
-  return model;
+  if (!entry) return model;
+  const baseUrl = resolveBaseUrl(entry.baseUrl);
+  if (!baseUrl)
+    throw new Error(`${provider}: baseUrl に未解決のプレースホルダがあります`);
+  // Route and wire API may change; Pi owns all built-in identity and metadata.
+  return { ...model, baseUrl, api: entry.api ?? model.api };
 }
 
 // 起動時バリデーション専用。無効な設定はスローして即クラッシュさせる

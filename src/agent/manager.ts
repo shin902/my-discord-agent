@@ -17,6 +17,7 @@ import {
   findGroupByName,
   type GroupConfig,
 } from "../config/groups.js";
+import { isLlmCredential } from "../config/llm-credentials.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
 import { usesAnthropicOAuth } from "../proxy/provider-auth.js";
@@ -436,23 +437,10 @@ type CredentialEntry = Awaited<ReturnType<typeof loadCredentialProxy>>[number];
 function buildSanitizedCredentialJson(
   creds: CredentialEntry[],
   proxyPort: number,
-  modelProvider: string,
 ): string {
   const sanitized = [];
-  const hostToolProviders = new Set([
-    "tavily",
-    "github",
-    "graph",
-    "google-calendar",
-    "reddit",
-  ]);
   for (const entry of creds) {
-    if (
-      hostToolProviders.has(entry.provider) &&
-      entry.provider !== modelProvider
-    ) {
-      continue;
-    }
+    if (!isLlmCredential(entry)) continue;
     const resolvedBaseUrl = resolveBaseUrl(entry.baseUrl);
     if (!resolvedBaseUrl) {
       console.warn(
@@ -684,11 +672,7 @@ export async function sendMessage(
   const proxyPort = storedProxyPort;
 
   const creds = await loadCredentialProxy();
-  const credentialJson = buildSanitizedCredentialJson(
-    creds,
-    proxyPort,
-    resolvedModel.provider,
-  );
+  const credentialJson = buildSanitizedCredentialJson(creds, proxyPort);
 
   let promptContent = content;
   if (attachments && attachments.length > 0) {

@@ -23,6 +23,75 @@ beforeEach(() => {
 
 describe("resolveModel", () => {
   it.each([
+    false,
+    true,
+  ])("preserves built-in Codex metadata with a Responses gateway (sandbox=%s)", async (sandbox) => {
+    const { resolveModel } = await importFresh();
+    const { getProviders, getModels } = await import(
+      "@earendil-works/pi-ai/compat"
+    );
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    const builtin = {
+      id: "fixture-codex",
+      name: "Pi-owned name",
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+      baseUrl: "https://backend.example.test",
+      contextWindow: 400000,
+      maxTokens: 128000,
+      reasoning: true,
+      input: ["text", "image"],
+      thinkingLevelMap: { xhigh: "max" },
+      cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+    };
+    vi.mocked(getProviders).mockReturnValue(["openai-codex"]);
+    vi.mocked(getModels).mockReturnValue([
+      builtin,
+    ] as unknown as Model<never>[]);
+    const baseUrl = sandbox
+      ? "http://host.docker.internal:1234/openai-codex"
+      : "http://localhost:8317/v1";
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "openai-codex",
+        api: "openai-responses",
+        baseUrl,
+        contextWindow: 1,
+        maxTokens: 1,
+        reasoning: false,
+      },
+    ]);
+    vi.stubEnv("CREDENTIAL_PROXY_JSON", sandbox ? "[]" : "");
+    try {
+      expect(await resolveModel("openai-codex", "fixture-codex")).toEqual({
+        ...builtin,
+        baseUrl,
+        api: "openai-responses",
+      });
+      expect(builtin.api).toBe("openai-codex-responses");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("does not resolve an integration credential as a custom model", async () => {
+    const { resolveModel } = await importFresh();
+    const { getProviders } = await import("@earendil-works/pi-ai/compat");
+    const { loadCredentialProxy } = await import(
+      "../config/credential-proxy.js"
+    );
+    vi.mocked(getProviders).mockReturnValue([]);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      { provider: "github", baseUrl: "https://api.github.com" },
+    ]);
+    await expect(resolveModel("github", "model")).rejects.toThrow(
+      "not an LLM route",
+    );
+  });
+
+  it.each([
     ["openai", "openai-completions"],
     ["anthropic", "anthropic-messages"],
     ["google", "google-generative-ai"],
@@ -401,6 +470,7 @@ describe("resolveModel", () => {
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
         provider: "custom",
+        api: "openai-completions",
         baseUrl: "http://{UNSET_HOST}/v1",
       },
     ] as CredentialEntry[]);

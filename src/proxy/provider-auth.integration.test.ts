@@ -1,5 +1,9 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
+import {
+  getModel,
+  getModels,
+  streamSimple,
+} from "@earendil-works/pi-ai/compat";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CredentialEntry } from "../config/credential-proxy.js";
 import { createRequestHandler } from "./credential-proxy-server.js";
@@ -24,6 +28,45 @@ afterEach(async () => {
         }),
     ),
   );
+});
+
+it("runs Pi's Codex identity through the Responses adapter using a plain placeholder", async () => {
+  vi.stubEnv("PROVIDER_AUTH_TEST_KEY", "local-gateway-secret");
+  let received:
+    | { headers: IncomingHttpHeaders; url?: string; body: string }
+    | undefined;
+  const upstream = await listen(
+    createServer(async (req, res) => {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      received = { headers: req.headers, url: req.url, body };
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ error: { message: "fixture captured request" } }),
+      );
+    }),
+  );
+  const entry: CredentialEntry = {
+    provider: "openai-codex",
+    api: "openai-responses",
+    baseUrl: `${upstream}/v1`,
+    envVars: ["PROVIDER_AUTH_TEST_KEY"],
+  };
+  const proxy = await listen(createServer(createRequestHandler([entry], 5000)));
+  const builtin = getModels("openai-codex")[0];
+  expect(builtin).toBeDefined();
+  if (!builtin) throw new Error("Missing built-in Codex model");
+  await streamSimple(
+    { ...builtin, api: "openai-responses", baseUrl: `${proxy}/openai-codex` },
+    {
+      messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+    },
+    { apiKey: "local", maxTokens: 16 },
+  ).result();
+  expect(received?.url).toBe("/v1/responses");
+  expect(received?.headers.authorization).toBe("Bearer local-gateway-secret");
+  expect(received?.headers["chatgpt-account-id"]).toBeUndefined();
+  expect(JSON.parse(received?.body ?? "{}").model).toBe(builtin.id);
 });
 
 it.each([

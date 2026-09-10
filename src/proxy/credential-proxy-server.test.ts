@@ -76,6 +76,7 @@ describe("createRequestHandler: エラーレスポンス", () => {
     );
     const badCreds: CredentialEntry[] = [
       {
+        api: "openai-completions",
         provider: "bad",
         baseUrl: "http://fake.test/{UNSET_VAR_XYZ}/v1" as unknown as string,
       } as CredentialEntry,
@@ -355,7 +356,7 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     vi.resetModules();
   });
 
-  it("msal プロバイダーは getGraphAccessToken(provider) のトークンを Bearer で注入する", async () => {
+  it("MSAL route is absent without acquiring a token", async () => {
     const getGraphAccessToken = vi.fn().mockResolvedValue("msal-access-token");
     vi.doMock("./graph-auth.js", () => ({
       initGraphAuth: vi.fn(),
@@ -370,12 +371,12 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     handler(req, res as unknown as ServerResponse);
     // 非同期でトークン取得するため、次の microtask まで待つ
     await new Promise((r) => setTimeout(r, 0));
-    expect(getGraphAccessToken).toHaveBeenCalledWith("graph");
-    const opts = requestMock.mock.calls[0]?.[0];
-    expect(opts?.headers.authorization).toBe("Bearer msal-access-token");
+    expect(getGraphAccessToken).not.toHaveBeenCalled();
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(res.writeHead).toHaveBeenCalledWith(404);
   });
 
-  it("getGraphAccessToken() が失敗したとき 502 を返す", async () => {
+  it("MSAL route stays absent even when authentication would fail", async () => {
     vi.doMock("./graph-auth.js", () => ({
       initGraphAuth: vi.fn(),
       getGraphAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
@@ -388,8 +389,8 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
     await new Promise((r) => setTimeout(r, 0));
-    expect(res.writeHead).toHaveBeenCalledWith(502);
-    expect(res.end).toHaveBeenCalledWith("Graph token acquisition failed");
+    expect(res.writeHead).toHaveBeenCalledWith(404);
+    expect(requestMock).not.toHaveBeenCalled();
   });
 
   it("upstreamRes の end イベントで handleRequest の Promise が解決され writeHead と pipe が呼ばれる", async () => {
@@ -409,8 +410,11 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     const { createRequestHandler } = await import(
       "./credential-proxy-server.js"
     );
-    const handler = createRequestHandler(GRAPH_CREDS, 30000);
-    const req = makeReq("/graph/me/messages");
+    const handler = createRequestHandler(
+      [{ provider: "openai", baseUrl: "http://llm.test/v1" }],
+      30000,
+    );
+    const req = makeReq("/openai/responses");
     const res = makeRes();
 
     handler(req, res as unknown as ServerResponse);
@@ -480,7 +484,7 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
     vi.resetModules();
   });
 
-  it("google プロバイダーは getGoogleAccessToken(provider) のトークンを Bearer で注入する", async () => {
+  it("Calendar route is absent without acquiring a token", async () => {
     const getGoogleAccessToken = vi
       .fn()
       .mockResolvedValue("google-access-token");
@@ -496,12 +500,12 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
     await new Promise((r) => setTimeout(r, 0));
-    expect(getGoogleAccessToken).toHaveBeenCalledWith("google-calendar");
-    const opts = requestMock.mock.calls[0]?.[0];
-    expect(opts?.headers.authorization).toBe("Bearer google-access-token");
+    expect(getGoogleAccessToken).not.toHaveBeenCalled();
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(res.writeHead).toHaveBeenCalledWith(404);
   });
 
-  it("getGoogleAccessToken() が失敗したとき 502 を返す", async () => {
+  it("Calendar route stays absent even when authentication would fail", async () => {
     vi.doMock("./google-auth.js", () => ({
       initGoogleAuth: vi.fn(),
       getGoogleAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
@@ -515,8 +519,8 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
     const res = makeRes();
     handler(req, res as unknown as ServerResponse);
     await new Promise((r) => setTimeout(r, 0));
-    expect(res.writeHead).toHaveBeenCalledWith(502);
-    expect(res.end).toHaveBeenCalledWith("Google token acquisition failed");
+    expect(res.writeHead).toHaveBeenCalledWith(404);
+    expect(requestMock).not.toHaveBeenCalled();
   });
 });
 
@@ -531,7 +535,11 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
       envVars: ["OPENAI_API_KEY"],
       baseUrl: "http://fake-openai.test/v1",
     },
-    { provider: "local-llm", baseUrl: "http://localhost:8080/v1" },
+    {
+      provider: "local-llm",
+      api: "openai-completions",
+      baseUrl: "http://localhost:8080/v1",
+    },
   ];
 
   beforeEach(() => {
@@ -619,7 +627,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     ["anthropic", "google"],
     ["google", "msal"],
     ["google", "google"],
-  ] as const)("removes native %s placeholders before %s OAuth injection", async (provider, oauth) => {
+  ] as const)("does not publish builtin %s with integration %s OAuth", async (provider, oauth) => {
     vi.doMock("./graph-auth.js", () => ({
       initGraphAuth: vi.fn(),
       getGraphAccessToken: vi.fn().mockResolvedValue("msal-token"),
@@ -646,21 +654,16 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
     };
     const nativeHeader =
       provider === "anthropic" ? "x-api-key" : "x-goog-api-key";
+    const res = makeRes();
     createRequestHandler([entry], 30000)(
       makeReq(`/${provider}/messages?key=local&alt=sse`, {
         authorization: "Bearer local",
         [nativeHeader]: "local",
       }),
-      makeRes(),
+      res,
     );
-    await vi.waitFor(() => expect(requestMock).toHaveBeenCalledOnce());
-    const opts = requestMock.mock.calls[0][0];
-    expect(opts.headers).toEqual({ authorization: `Bearer ${oauth}-token` });
-    expect(opts.path).toBe(
-      provider === "google"
-        ? "/messages?alt=sse"
-        : "/messages?key=local&alt=sse",
-    );
+    expect(res.writeHead).toHaveBeenCalledWith(404);
+    expect(requestMock).not.toHaveBeenCalled();
   });
 
   it("envVars に設定済みの環境変数があれば Bearer トークンを注入する", async () => {
@@ -686,6 +689,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
       [
         {
           provider: "query-api",
+          api: "openai-completions",
           envVars: ["QUERY_API_TOKEN"],
           auth: { type: "query-token" },
           baseUrl: "https://api.example.com",
@@ -713,6 +717,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
       [
         {
           provider: "query-api",
+          api: "openai-completions",
           envVars: ["TEST_API_KEY"],
           auth: { type: "query-token", queryParam: "api_key" },
           baseUrl: "https://api.example.com/v1?existing=true",
@@ -737,6 +742,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
       [
         {
           provider: "basic-api",
+          api: "openai-completions",
           envVars: ["BASIC_API_TOKEN"],
           auth: { type: "basic", username: "api-user" },
           baseUrl: "https://api.example.com",
@@ -766,6 +772,7 @@ describe("createRequestHandler: Authorization ヘッダ", () => {
       [
         {
           provider: "basic-api",
+          api: "openai-completions",
           envVars: ["BASIC_API_TOKEN"],
           auth: { type: "basic" },
           baseUrl: "https://api.example.com",
@@ -965,126 +972,5 @@ describe("internal agent route: scoped authorization", () => {
     expect(handler).not.toHaveBeenCalled();
     expect(res.writeHead).toHaveBeenCalledWith(404);
     expect(res.end).toHaveBeenCalledWith("Not Found");
-  });
-});
-
-describe("initCredentialProxyServer: Google Auth 初期化", () => {
-  const originalEnv = process.env;
-  const GOOGLE_CREDS: CredentialEntry[] = [
-    {
-      provider: "google-calendar",
-      baseUrl: "https://www.googleapis.com/calendar/v3",
-      google: {
-        clientId: "test-client-id",
-        clientSecretEnvVar: "GOOGLE_CALENDAR_CLIENT_SECRET",
-        scopes: ["https://www.googleapis.com/auth/calendar"],
-      },
-    },
-  ];
-
-  beforeEach(() => {
-    vi.resetModules();
-    process.env = { ...originalEnv };
-    vi.doMock("node:http", () => ({
-      createServer: vi.fn(() => ({
-        on: vi.fn(),
-        listen: vi.fn((_port: number, _host: string, cb: () => void) => cb()),
-        address: vi.fn(() => ({ port: 12345 })),
-      })),
-      request: vi.fn(),
-    }));
-    vi.doMock("node:https", () => ({ request: vi.fn() }));
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue(GOOGLE_CREDS),
-    }));
-    vi.doMock("../config/proxy-config.js", () => ({
-      loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
-    }));
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-    vi.resetModules();
-  });
-
-  it("clientSecretEnvVar が未設定のとき Google Auth をスキップして警告する", async () => {
-    delete process.env.GOOGLE_CALENDAR_CLIENT_SECRET;
-    const initGoogleAuth = vi.fn();
-    vi.doMock("./google-auth.js", () => ({
-      initGoogleAuth,
-      getGoogleAccessToken: vi.fn(),
-    }));
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    const { initCredentialProxyServer } = await import(
-      "./credential-proxy-server.js"
-    );
-    await initCredentialProxyServer();
-
-    expect(initGoogleAuth).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("GOOGLE_CALENDAR_CLIENT_SECRET"),
-    );
-    warnSpy.mockRestore();
-  });
-
-  it("clientSecretEnvVar が設定済みのとき initGoogleAuth を呼ぶ", async () => {
-    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
-    const initGoogleAuth = vi.fn();
-    vi.doMock("./google-auth.js", () => ({
-      initGoogleAuth,
-      getGoogleAccessToken: vi.fn(),
-    }));
-
-    const { initCredentialProxyServer } = await import(
-      "./credential-proxy-server.js"
-    );
-    await initCredentialProxyServer();
-
-    expect(initGoogleAuth).toHaveBeenCalledWith(
-      "google-calendar",
-      GOOGLE_CREDS[0]?.google,
-      "test-secret",
-    );
-  });
-
-  it("起動時に getGoogleAccessToken を呼んでデバイスコードフローを済ませておく", async () => {
-    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
-    const getGoogleAccessToken = vi.fn().mockResolvedValue("token");
-    vi.doMock("./google-auth.js", () => ({
-      initGoogleAuth: vi.fn(),
-      getGoogleAccessToken,
-    }));
-
-    const { initCredentialProxyServer } = await import(
-      "./credential-proxy-server.js"
-    );
-    await initCredentialProxyServer();
-
-    expect(getGoogleAccessToken).toHaveBeenCalledWith("google-calendar");
-  });
-
-  it("getGoogleAccessToken が失敗してもサーバー起動は継続する", async () => {
-    process.env.GOOGLE_CALENDAR_CLIENT_SECRET = "test-secret";
-    const getGoogleAccessToken = vi
-      .fn()
-      .mockRejectedValue(new Error("device flow timeout"));
-    vi.doMock("./google-auth.js", () => ({
-      initGoogleAuth: vi.fn(),
-      getGoogleAccessToken,
-      GoogleAuthRequiredError: class GoogleAuthRequiredError extends Error {},
-    }));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const { initCredentialProxyServer } = await import(
-      "./credential-proxy-server.js"
-    );
-    const port = await initCredentialProxyServer();
-
-    expect(port).toBe(12345);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("device flow timeout"),
-    );
-    errorSpy.mockRestore();
   });
 });
