@@ -1,8 +1,9 @@
-import { getProxyPort } from "../proxy/credential-proxy-server.js";
+import { hostFetch } from "../tools/host-fetch.js";
 
 export async function acknowledgeEmail(emailId: string): Promise<void> {
-  const res = await fetch(
-    `http://localhost:${getProxyPort()}/graph/me/messages/${encodeURIComponent(emailId)}`,
+  const res = await hostFetch(
+    "graph",
+    `/me/messages/${encodeURIComponent(emailId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

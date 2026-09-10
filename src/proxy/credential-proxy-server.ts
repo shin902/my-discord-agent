@@ -7,13 +7,8 @@ import {
   type CredentialEntry,
   loadCredentialProxy,
 } from "../config/credential-proxy.js";
+import { isLlmCredential } from "../config/llm-credentials.js";
 import { loadRequestTimeoutMs } from "../config/proxy-config.js";
-import {
-  GoogleAuthRequiredError,
-  getGoogleAccessToken,
-  initGoogleAuth,
-} from "./google-auth.js";
-import { getGraphAccessToken, initGraphAuth } from "./graph-auth.js";
 import { nativeProviderAuth, usesAnthropicOAuth } from "./provider-auth.js";
 import type { TrustedDiscordDestination } from "./tool-proxy-server.js";
 
@@ -179,7 +174,7 @@ async function handleRequest(
   }
 
   const nativeAuth = nativeProviderAuth(entry);
-  if (entry.msal || entry.google || entry.envVars?.length) {
+  if (entry.envVars?.length) {
     if (nativeAuth === "anthropic-messages") delete headers["x-api-key"];
     if (nativeAuth === "google-generative-ai") {
       delete headers["x-goog-api-key"];
@@ -187,52 +182,14 @@ async function handleRequest(
     }
   }
 
-  if (entry.msal) {
-    // MSALトークン注入（Graph API用）
-    let token: string;
-    try {
-      token = await getGraphAccessToken(entry.provider);
-    } catch (err) {
-      console.error(
-        `[credential-proxy] graph token 取得失敗: ${err instanceof Error ? err.message : err}`,
-      );
-      res.writeHead(502);
-      res.end("Graph token acquisition failed");
-      return;
-    }
-    delete headers.authorization;
-    headers.authorization = `Bearer ${token}`;
-  } else if (entry.google) {
-    // Google OAuth トークン注入（Google Calendar API 等用）
-    let token: string;
-    try {
-      token = await getGoogleAccessToken(entry.provider);
-    } catch (err) {
-      if (err instanceof GoogleAuthRequiredError) {
-        console.log(`[credential-proxy] ${err.message}`);
-        res.writeHead(502);
-        res.end(err.message);
-        return;
-      }
-      console.error(
-        `[credential-proxy] google token 取得失敗: ${err instanceof Error ? err.message : err}`,
-      );
-      res.writeHead(502);
-      res.end("Google token acquisition failed");
-      return;
-    }
-    delete headers.authorization;
-    headers.authorization = `Bearer ${token}`;
-  } else if (entry.envVars && entry.envVars.length > 0) {
+  if (entry.envVars && entry.envVars.length > 0) {
     const apiKey = getFirstSetEnvVar(entry.envVars);
     delete headers.authorization;
     if (apiKey) {
       if (entry.auth?.type === "query-token") {
         parsedTarget.searchParams.set(entry.auth.queryParam ?? "token", apiKey);
       } else if (entry.auth?.type === "basic") {
-        // git smart-HTTP（github.com への clone/fetch）は Authorization: Bearer を
-        // 受け付けず Basic 認証が必要。GitHub の慣習に合わせ username 省略時は
-        // "x-access-token" を使う（actions/checkout 等と同じ方式）
+        // Preserve the configured generic Basic credential encoding.
         const username = entry.auth.username ?? "x-access-token";
         const basicCredential = Buffer.from(`${username}:${apiKey}`).toString(
           "base64",
@@ -323,6 +280,7 @@ export function createRequestHandler(
   creds: CredentialEntry[],
   timeoutMs: number,
 ) {
+  const llmCredentials = creds.filter(isLlmCredential);
   return (req: IncomingMessage, res: ServerResponse) => {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
     if (pathname === "/__agent/bot") {
@@ -351,7 +309,7 @@ export function createRequestHandler(
       res.end("Not Found");
       return;
     }
-    handleRequest(creds, timeoutMs, req, res).catch((err) => {
+    handleRequest(llmCredentials, timeoutMs, req, res).catch((err) => {
       if (!res.headersSent) {
         console.error(`[credential-proxy] unhandled error: ${err}`);
         res.writeHead(500);
@@ -366,43 +324,6 @@ export async function initCredentialProxyServer(): Promise<number> {
     loadCredentialProxy(),
     loadRequestTimeoutMs(),
   ]);
-
-  // MSALが必要なプロバイダーを初期化
-  for (const entry of creds) {
-    if (entry.msal) {
-      await initGraphAuth(entry.provider, entry.msal);
-      console.log(
-        `[credential-proxy] Graph Auth initialized for provider: ${entry.provider}`,
-      );
-    }
-    if (entry.google) {
-      const clientSecret = process.env[entry.google.clientSecretEnvVar];
-      if (!clientSecret) {
-        console.warn(
-          `[credential-proxy] ${entry.google.clientSecretEnvVar} が未設定のため provider ${entry.provider} の Google Auth をスキップします`,
-        );
-        continue;
-      }
-      await initGoogleAuth(entry.provider, entry.google, clientSecret);
-      console.log(
-        `[credential-proxy] Google Auth initialized for provider: ${entry.provider}`,
-      );
-      // 初回利用時のデバイスコードフローを起動時にトリガーしておく。
-      // 認証未完了の場合 getGoogleAccessToken は GoogleAuthRequiredError を
-      // 即座に投げ、ポーリングはバックグラウンドで継続する（ここではブロックしない）。
-      try {
-        await getGoogleAccessToken(entry.provider);
-      } catch (err) {
-        if (err instanceof GoogleAuthRequiredError) {
-          console.log(`[credential-proxy] ${err.message}`);
-        } else {
-          console.error(
-            `[credential-proxy] Google Auth トークン取得に失敗しました (provider: ${entry.provider}): ${err instanceof Error ? err.message : err}`,
-          );
-        }
-      }
-    }
-  }
 
   const server = http.createServer(createRequestHandler(creds, timeoutMs));
 

@@ -243,9 +243,9 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
         try {
           // Start Thread from Message uses the source message ID as the thread
           // ID. Promote the session before the thread becomes visible so an
-          // immediate user reply always finds the renamed JSONL. The remote
-          // thread is started before delivery persistence so a retry can use
-          // the durable job marker if persistence fails.
+          // immediate user reply always finds the renamed session trajectory.
+          // The remote thread is started before delivery persistence so a retry
+          // can use the durable job marker if persistence fails.
           await context.promoteCronItemSession?.(parentId);
         } catch (error) {
           throw new DeliveryError(

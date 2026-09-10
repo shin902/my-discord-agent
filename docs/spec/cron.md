@@ -97,7 +97,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 
 ### deliveryMode / sessionMode
 
-投稿方法とセッションID戦略は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、cron tick はキューへの追加後に返る。
+投稿方法とセッションID戦略は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、cron tick はadmission後にハンドラー完了やキューへの追加を待たず返る。
 
 | フィールド | 値 | 動作 |
 |---|---|---|
@@ -150,6 +150,15 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 - **cron式**: チェック条件は `前回実行時刻 < 今回の予定実行時刻 ≤ 現在時刻`。これにより `0 9 * * *` が 9:00〜9:59 の間に何度もマッチする問題を防ぐ。
 - **インターバル**: チェック条件は `lastRun + interval ≤ 現在時刻`。
+
+### 実行タイミングと長時間実行
+
+- tickはジョブの走査とadmissionだけを待ち、ハンドラーPromiseの完了を待たずに返る。
+- 同じジョブの実行中は、プロセス内のin-flight管理により次のtickで重複admissionしない。ハンドラーが完了した時点でin-flightから解除する。
+- `lastRun` はハンドラーの完了時刻ではなくadmission時刻を保存する。成功または `NonRetryableError` では保存し、一時的なエラーでは更新しない。完了順が逆になっても、状態ファイルはジョブID単位の更新を直列化して他ジョブの更新を保持する。
+- cron式は現在の秒切り捨て済み分が式に一致した場合だけ実行し、遅延中に過ぎたslotを再生しない。同じslot内では完了後も再実行しない。
+- インターバルはadmission時刻を基準にし、実行中に複数回のintervalが経過しても積算catch-upしない。完了後の次のtickでは最大1回だけ実行する。
+- in-flight管理はプロセス内だけで、再起動前の実行を引き継がない。再起動時は `state.json` に保存された `lastRun` だけで重複を抑止する。
 
 `state.json` の構造例:
 

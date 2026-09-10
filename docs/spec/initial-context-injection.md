@@ -37,7 +37,7 @@ pi-agent-core 標準の `CustomMessage`（`role: "custom"`）と独自 `convertT
 
 ### なぜ生の user メッセージとして保存しないか
 
-session-logs 等は `role == "user"` を実ユーザー発言として扱う。初期コンテキストを生の user メッセージとして JSONL に書くと、日次/週次サマリーへシステム由来の文章が混入する。
+session-logs 等は `role == "user"` を実ユーザー発言として扱う。初期コンテキストを生の user メッセージとしてsession trajectoryへ保存すると、日次/週次サマリーへシステム由来の文章が混入する。
 
 保存形式を `custom`、LLM送信形式を `user` に分離することで、履歴の意味を保つ。
 
@@ -68,11 +68,11 @@ Use the `date` tool when current time matters.
 
 初回 `runAgentLoop()` で現在時刻を hour bucket に丸め、`session-time-anchor` を`sessions.sqlite`のappend-only entryとして追記する。以後は毎回同じ値を読み、同一の systemPrompt 断片を再生成する。
 
-### 既存セッションの移行
+### 既存セッション
 
 `session-time-anchor` がまだ無い既存セッションでは、保存済みtrajectory entryの **最古 timestamp** を開始時刻として一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
 
-同一セッションの初期化競合については、既存のJSONL追記と同じ保証範囲で扱う。
+同一セッションの初期化競合については、既存のsession entry追記と同じ保証範囲で扱う。
 
 ## `date` ツールとの責務分離
 
@@ -104,7 +104,7 @@ MEMORY.md / SELF.md はここへ重複注入せず、context-bootstrap 経由で
 
 ## ロード時の並べ替え
 
-trajectory内の bootstrap 系（`system-prompt-snapshot` / `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。旧形式セッションの移行で bootstrap がtrajectory末尾に追記されても、移行ターンと次ターン以降で LLM-visible ordering が変わらないようにするため。
+trajectory内の bootstrap 系（`system-prompt-snapshot` / `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。保存済みentryの途中に bootstrap が追加されても、現在のターンと次回ロード時で LLM-visible ordering が変わらないようにするため。
 
 時刻アンカーは systemPrompt にだけ使うため、この並べ替え対象にはならない。
 

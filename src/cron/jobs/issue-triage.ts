@@ -3,12 +3,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import {
   assertValidRepoPart,
   GITHUB_HEADERS,
   type GitHubIssue,
 } from "../../tools/github.js";
+import { hostFetch } from "../../tools/host-fetch.js";
 import { NonRetryableError } from "../../utils/error.js";
 import { createFileLock } from "../../utils/lock.js";
 import type { CronContext } from "../runner.js";
@@ -84,12 +84,12 @@ async function fetchIssuesByCreator(
   repo: string,
   creator: string,
 ): Promise<GitHubIssue[]> {
-  const port = getProxyPort();
   const issues: GitHubIssue[] = [];
 
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const res = await fetch(
-      `http://localhost:${port}/github/repos/${owner}/${repo}/issues?state=open&per_page=${PER_PAGE}&page=${page}&creator=${encodeURIComponent(creator)}`,
+    const res = await hostFetch(
+      "github",
+      `/repos/${owner}/${repo}/issues?state=open&per_page=${PER_PAGE}&page=${page}&creator=${encodeURIComponent(creator)}`,
       { headers: GITHUB_HEADERS },
     );
     if (!res.ok) {
@@ -173,7 +173,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
   // GitHubのユーザー名は大文字小文字を区別しないため、比較前に正規化する
   const allowed = new Set(authors.map((author) => author.toLowerCase()));
 
-  // GitHub API/proxyの一時的な障害（ネットワーク・レート制限等）はここでは握り潰さず、
+  // GitHub APIの一時的な障害（ネットワーク・レート制限等）はここでは握り潰さず、
   // そのまま呼び出し元の runner に投げて次tickでのリトライ判断に委ねる
   const issues = await fetchOpenIssues(owner, repo, authors);
 

@@ -24,6 +24,7 @@ const appendInbox: QueueProducer = async (payload) => {
 
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
+import { createFileLock } from "../utils/lock.js";
 import { enqueueCronInbox } from "./enqueue.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -111,6 +112,7 @@ const CronStateSchema = z.record(z.string(), z.object({ lastRun: z.string() }));
 type CronState = z.infer<typeof CronStateSchema>;
 
 let _state: CronState | null = null;
+const withStateLock = createFileLock();
 
 async function loadState(): Promise<CronState> {
   if (_state !== null) return _state;
@@ -128,6 +130,16 @@ async function saveState(state: CronState): Promise<void> {
   _state = state;
   await mkdir(path.dirname(STATE_PATH), { recursive: true });
   await writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf-8");
+}
+
+async function recordRun(jobId: string, admissionAt: Date): Promise<void> {
+  await withStateLock(async () => {
+    const latest = await loadState();
+    await saveState({
+      ...latest,
+      [jobId]: { lastRun: admissionAt.toISOString() },
+    });
+  });
 }
 
 // --- Schedule matching ---
@@ -277,9 +289,39 @@ export async function executeJob(job: CronJob): Promise<void> {
 // --- Scheduler ---
 
 let _jobs: CronJob[] = [];
+const _inFlight = new Set<string>();
 
 export function _setCronJobs(jobs: CronJob[]): void {
   _jobs = jobs;
+}
+
+async function runAdmittedJob(job: CronJob, admissionAt: Date): Promise<void> {
+  try {
+    await executeJob(job);
+    console.log(`[cron] "${job.id}" 完了`);
+    await recordRun(job.id, admissionAt);
+  } catch (reason) {
+    if (reason instanceof NonRetryableError) {
+      // 設定ミスなど永続的なエラーは lastRun を更新してリトライを止める
+      console.error(`[cron] "${job.id}" 非リトライエラー:`, reason);
+      await recordRun(job.id, admissionAt);
+    } else {
+      // 一時的なエラーは lastRun を更新せず次の tick でリトライ
+      console.error(
+        `[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`,
+        reason,
+      );
+    }
+  } finally {
+    _inFlight.delete(job.id);
+  }
+}
+
+function launchAdmittedJob(job: CronJob, admissionAt: Date): void {
+  void runAdmittedJob(job, admissionAt).catch((reason) => {
+    // detached chain の reject を必ず回収し、次の tick では再試行できるようにする
+    console.error(`[cron] "${job.id}" detached実行エラー:`, reason);
+  });
 }
 
 async function tick(): Promise<void> {
@@ -290,53 +332,27 @@ async function tick(): Promise<void> {
   try {
     if (_jobs.length === 0) return;
 
-    const now = new Date();
+    const admissionAt = new Date();
     const state = await loadState();
     const toRun: CronJob[] = [];
 
     for (const job of _jobs) {
-      if (!job.enabled) continue;
+      if (!job.enabled || _inFlight.has(job.id)) continue;
       const entry = state[job.id];
       const lastRun = entry ? new Date(entry.lastRun) : null;
-      if (shouldRun(job.schedule, lastRun, now)) {
+      if (shouldRun(job.schedule, lastRun, admissionAt)) {
+        _inFlight.add(job.id);
         toRun.push(job);
       }
     }
 
-    if (toRun.length === 0) return;
-
     for (const job of toRun) {
       console.log(`[cron] "${job.id}" 開始`);
+      // Handler execution is intentionally detached from the tick guard.
+      launchAdmittedJob(job, admissionAt);
     }
-
-    const results = await Promise.allSettled(
-      toRun.map((job) => executeJob(job)),
-    );
-
-    let changed = false;
-    for (let i = 0; i < toRun.length; i++) {
-      const result = results[i];
-      const job = toRun[i];
-      if (result.status === "fulfilled") {
-        console.log(`[cron] "${job.id}" 完了`);
-        state[job.id] = { lastRun: now.toISOString() };
-        changed = true;
-      } else if (result.reason instanceof NonRetryableError) {
-        // 設定ミスなど永続的なエラーは lastRun を更新してリトライを止める
-        console.error(`[cron] "${job.id}" 非リトライエラー:`, result.reason);
-        state[job.id] = { lastRun: now.toISOString() };
-        changed = true;
-      } else {
-        // 一時的なエラーは lastRun を更新せず次の tick でリトライ
-        console.error(
-          `[cron] "${job.id}" 実行エラー（次のtickでリトライ）:`,
-          result.reason,
-        );
-      }
-    }
-
-    if (changed) await saveState(state);
   } finally {
+    // Only scanning/admission is guarded; long-running handlers do not block ticks.
     _isRunning = false;
   }
 }

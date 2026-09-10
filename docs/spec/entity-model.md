@@ -17,7 +17,7 @@ AgentGroup（エージェント設定プロファイル）
   │
   └── [1対多] Bot（persistent role / config / capabilities）
         │
-        └── [1対多] Task Session（仕事単位のJSONL履歴）
+        └── [1対多] Task Session（仕事単位のsession trajectory）
               ※ delivery先のchannel/threadとは別のsessionIdを持つ
 ```
 

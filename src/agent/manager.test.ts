@@ -1078,6 +1078,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "anthropic",
+        api: "anthropic-messages",
         envVars: ["TEST_ANTHROPIC_KEY"],
         baseUrl: "https://api.anthropic.com",
       },
@@ -1092,11 +1093,33 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(JSON.stringify(creds)).not.toContain("TEST_ANTHROPIC_KEY");
   });
 
+  it("Codex identity and Responses API survive sanitization without gateway secrets or upstream URL", async () => {
+    process.env.TEST_GATEWAY_KEY = "host-gateway-secret";
+    const spawnMock = await setup([
+      {
+        provider: "openai-codex",
+        api: "openai-responses",
+        envVars: ["TEST_GATEWAY_KEY"],
+        baseUrl: "http://localhost:8317/v1",
+      },
+    ]);
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "hi");
+    expect(getCredJson(spawnMock)).toEqual([
+      {
+        provider: "openai-codex",
+        api: "openai-responses",
+        baseUrl: "http://host.docker.internal:12345/openai-codex",
+      },
+    ]);
+  });
+
   it("envVars ありのエントリが proxy URL に変換される", async () => {
     process.env.TEST_API_KEY = "test-key";
     const spawnMock = await setup([
       {
         provider: "test",
+        forceCustom: true,
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
@@ -1166,6 +1189,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "my-provider",
+        forceCustom: true,
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
@@ -1183,6 +1207,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
+        forceCustom: true,
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
@@ -1242,7 +1267,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ).toEqual([]);
   });
 
-  it("host toolと同名の選択中model providerはsandboxに維持する", async () => {
+  it("host toolと同名でも明示的なcustom LLM接続はsandboxに維持する", async () => {
     process.env.GITHUB_MODEL_TOKEN = "model-secret";
     const spawnMock = await setup([
       {
@@ -1287,6 +1312,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
+        forceCustom: true,
         envVars: ["TEST_API_KEY"],
         auth: { type: "query-token" },
         baseUrl: "https://api.example.com/v1",
@@ -1303,6 +1329,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
+        forceCustom: true,
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
         api: "openai-completions",
@@ -1322,10 +1349,15 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "good",
+        forceCustom: true,
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
-      { provider: "bad", baseUrl: "https://api.example.com/{MISSING_VAR}/v1" },
+      {
+        provider: "bad",
+        forceCustom: true,
+        baseUrl: "https://api.example.com/{MISSING_VAR}/v1",
+      },
     ]);
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
@@ -1342,7 +1374,11 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
 
   it("envVars なしのローカルLLMエントリも含まれる", async () => {
     const spawnMock = await setup([
-      { provider: "local-llm", baseUrl: "http://192.168.40.65:8080/v1" },
+      {
+        provider: "local-llm",
+        forceCustom: true,
+        baseUrl: "http://192.168.40.65:8080/v1",
+      },
     ]);
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi");
@@ -1358,6 +1394,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
+        forceCustom: true,
         envVars: ["MISSING_KEY"],
         baseUrl: "https://api.example.com/v1",
       },

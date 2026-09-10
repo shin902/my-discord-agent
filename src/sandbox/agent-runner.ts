@@ -61,7 +61,7 @@ import { loadGroupSystemPrompt } from "./system-prompt.js";
 //   SELF.md 自体はコンテキスト側の参照情報にとどめる。
 // - "skill-invocation": `./command` で明示実行されたスキルの SKILL.md 本文を注入する擬似ユーザーメッセージ。
 //   ユーザーの生発言（`./command スキル名 ...`）とは別メッセージとして保存することで、
-//   JSONL履歴上でも「ユーザーが何を打ったか」と「LLMに渡った指示内容」を区別できるようにする。
+//   session trajectory上でも「ユーザーが何を打ったか」と「LLMに渡った指示内容」を区別できるようにする。
 //
 // display フラグについて: 標準 CustomMessage の必須フィールドで、pi-coding-agent 系 TUI が
 // チャット表示の可否判定に使う。LLM 送信可否（defaultConvertToLlm 側で制御）とは別概念。
@@ -502,9 +502,8 @@ export async function runAgentLoop(
   });
 
   // bootstrap 系（system-prompt-snapshot / context-bootstrap＝memory-bootstrap・self-bootstrap）は
-  // 常に先頭に並べる。旧形式セッションの移行では appendMessage で JSONL 末尾に追記されるため、
-  // ロード後に並べ替えないと、移行ターンと次ターン以降で bootstrap の位置が変わり、
-  // LLM への見え方が非対称になる上にプロンプトキャッシュも効かなくなる。
+  // 常に先頭に並べる。保存済みentryの途中に追加された bootstrap をロード後に
+  // 並べ替え、現在のターンと次回ロード時の LLM-visible ordering を安定させる。
   const isBootstrapMessage = (m: AgentMessage) =>
     isSystemPromptSnapshotMessage(m) ||
     CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(m) ?? "");
@@ -557,7 +556,7 @@ export async function runAgentLoop(
   // 指定スキルのSKILL.md本文をそのままプロンプトへ強制注入して実行させる。
   // ユーザーの生発言は content のまま user メッセージとして残し、
   // 注入指示は別の skill-invocation custom メッセージに分離する
-  // （JSONL履歴上で「何を打ったか」と「LLMに渡った指示」を区別できるようにするため）。
+  // （session trajectory上で「何を打ったか」と「LLMに渡った指示」を区別できるようにするため）。
   let promptInput: string | AgentMessage[] = content;
   const skillCommand = parseSkillCommand(content);
   if (skillCommand) {
@@ -690,7 +689,7 @@ export async function runAgentLoop(
     newBootstrapMessages.push(systemPromptSnapshotMessage);
   }
 
-  // 新規セッション、または旧形式セッション（次回以降は新方式に移行させる）の場合、
+  // 新規セッション、または未保存のbootstrapがある既存セッションの場合、
   // MEMORY.md / SELF.md を custom メッセージとして注入する。
   // 各ファイルが空文字でも「ファイルは存在し空である」という状態を固定化するため、
   // null（値不存在）とは区別して書き込む（system prompt と同様、そうしないと毎ターン再読み込みし続ける）
@@ -708,11 +707,10 @@ export async function runAgentLoop(
     newBootstrapMessages.push(bootstrapMessage);
   }
 
-  // newBootstrapMessages を先頭へ丸ごと prepend すると、移行ターン（例: memory-bootstrap は
-  // 既存であり self-bootstrap のみ新規追加される場合）で self-bootstrap が memory-bootstrap より
-  // 前に来てしまい、次ターン以降（JSONL 再ロード時は定義順に並ぶ）と順序が食い違う。
-  // bootstrap 種別の正規順序（system-prompt-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージし、
-  // 移行ターンでも安定した順序を保つ。
+  // newBootstrapMessages を先頭へ丸ごと prepend すると、既存の memory-bootstrap に
+  // self-bootstrapだけを追加する場合などで正規順序が崩れる。次回ロード時とも
+  // 順序が食い違わないよう、bootstrap種別の正規順序
+  // （system-prompt-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージする。
   if (newBootstrapMessages.length > 0) {
     const bootstrapOrder = [
       SYSTEM_PROMPT_SNAPSHOT_TYPE as string,

@@ -1,7 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const getProxyPort = vi.hoisted(() => vi.fn());
-vi.mock("../../proxy/credential-proxy-server.js", () => ({ getProxyPort }));
+// Exercise real hostFetch; no Credential Proxy listener or port is available.
+vi.mock("../../config/credential-proxy.js", () => ({
+  loadCredentialProxy: async () => [
+    {
+      provider: "graph",
+      baseUrl: "https://graph.fixture.test/v1.0",
+      msal: {
+        tenantId: "tenant",
+        clientId: "client",
+        scopes: ["Mail.ReadWrite"],
+      },
+    },
+  ],
+}));
+vi.mock("../../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: async () => 30000,
+}));
+vi.mock("../../proxy/graph-auth.js", () => ({
+  getGraphAccessToken: async () => "host-graph-token",
+}));
 
 import type { CronContext } from "../runner.js";
 import handler from "./mail.js";
@@ -52,7 +70,6 @@ function bodyResponse(): Response {
 describe("mail cron queue boundary", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    getProxyPort.mockReturnValue(1234);
   });
 
   afterEach(() => {
@@ -83,6 +100,22 @@ describe("mail cron queue boundary", () => {
     expect(payload.mailEmailId).toBe("mail-1");
     expect(payload.cronPlaceholderMessageId).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://graph.fixture.test/v1.0/me/mailFolders/inbox/messages?$top=20&$select=id,subject,from&$orderby=receivedDateTime asc&$filter=isRead eq false",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer host-graph-token" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://graph.fixture.test/v1.0/me/messages/mail-1?$select=body",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer host-graph-token" },
+      }),
+    );
+    expect(JSON.stringify(payload)).not.toContain("host-graph-token");
   });
 
   it("enqueues the unread email again on a later cron run without cross-run lookup", async () => {
@@ -117,6 +150,19 @@ describe("mail cron queue boundary", () => {
 
     expect(appendInbox).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates unread-fetch failures without enqueueing or ACKing", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ error: "unavailable" }, 503));
+    vi.stubGlobal("fetch", fetchMock);
+    const appendInbox = vi.fn();
+    await expect(handler(makeContext(appendInbox))).rejects.toThrow(
+      "Graph API エラー 503",
+    );
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("passes through the configured item-thread mode", async () => {

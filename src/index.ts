@@ -6,7 +6,6 @@ import {
   killAllRunningContainers,
   validateGroupConfig,
 } from "./agent/manager.js";
-import { migrateLegacySessionStores } from "./agent/session.js";
 import { loadBotRegistry, validateBotConfigs } from "./config/bots.js";
 import { loadDiscordConfig } from "./config/config.js";
 import { loadDefaultModel } from "./config/default-model.js";
@@ -34,6 +33,7 @@ import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
 } from "./proxy/credential-proxy-server.js";
+import { initToolCredentials } from "./proxy/tool-credentials.js";
 import {
   initToolProxyServer,
   stopToolProxyServer,
@@ -62,16 +62,16 @@ try {
       );
   }
   await ensureGroupDirs(groups.map((g) => g.name));
+  await initToolCredentials();
   const proxyPort = await initCredentialProxyServer();
   const toolProxyPort = await initToolProxyServer({
     presentApprovalRequest: presentToolApprovalRequest,
   });
   registerInternalRequestHandler(handleBotToolRequest);
   await initManager(proxyPort, toolProxyPort);
-  // Stop managed and orphan containers before reading legacy session files.
+  // Stop managed and orphan containers before startup recovery.
   await cleanupToolRuntimes();
   await killAllRunningContainers({ includeOrphans: true, strict: true });
-  await migrateLegacySessionStores(groups.map((g) => g.name));
   await initGroupPrompts(groups);
   await loadProviders();
   const defaultModel = await loadDefaultModel();

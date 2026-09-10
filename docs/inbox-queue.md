@@ -34,7 +34,7 @@ SQL上の `jobs.status` が状態の正本です。旧 `claimed` 整数列は互
 
 ## 起動・復旧
 
-[起動処理](../src/index.ts) は、管理対象・孤立runnerの停止をstrictに確認してからsession migration、group promptの初期読み込み、設定検証を行います。その後にqueueを初期化し、前プロセスの未完了Bot admission・期限切れ実行の回収と旧queue JSONL移行を行います。
+[起動処理](../src/index.ts) は、管理対象・孤立runnerの停止をstrictに確認してからgroup promptの初期読み込み、設定検証を行います。その後にqueueを初期化し、前プロセスの未完了Bot admission・期限切れ実行の回収と旧queue JSONL移行を行います。
 
 cron設定を読み、RSS reconciliationとruntime health checkを実行してからpoller・delivery worker・cronを開始し、Discordへloginします。Discord ready時の履歴backfillは全Botを通じて一度だけ開始します。詳細は [起動時Discord履歴バックフィル](config.md#起動時discord履歴バックフィル) を参照してください。runnerの停止確認に失敗した場合、queue回収へは進みません。
 

@@ -1048,8 +1048,6 @@ export function hasFxContent(post: FxPost): boolean {
   return Boolean(article.preview_text?.trim());
 }
 
-const FX_ARTICLE_MAX_CHARS = 120_000;
-
 /** fxtwitter API レスポンスを Markdown サマリーに変換する（通常ポスト + X Article 対応） */
 export function formatFxPost(post: FxPost): string {
   const author = post.tweet.author;
@@ -1087,14 +1085,7 @@ export function formatFxPost(post: FxPost): string {
       .map((b) => (b.type === "header-one" ? `### ${b.text}` : (b.text ?? "")));
 
     if (rendered.length > 0) {
-      let body = rendered.join("\n\n");
-      let truncated = false;
-      if (body.length > FX_ARTICLE_MAX_CHARS) {
-        body = body.slice(0, FX_ARTICLE_MAX_CHARS);
-        truncated = true;
-      }
-      lines.push("", body);
-      if (truncated) lines.push("", "(本文は上限により切り詰められています)");
+      lines.push("", rendered.join("\n\n"));
     } else if (article.preview_text?.trim()) {
       lines.push("", article.preview_text, "", "(previewのみ取得できました)");
     }

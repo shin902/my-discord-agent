@@ -15,8 +15,19 @@ vi.mock("node:fs/promises", () => ({
   }),
 }));
 
-const getProxyPort = vi.fn(() => 12345);
-vi.mock("../../proxy/credential-proxy-server.js", () => ({ getProxyPort }));
+// Keep hostFetch real so the test cannot succeed via a removed proxy route.
+vi.mock("../../config/credential-proxy.js", () => ({
+  loadCredentialProxy: async () => [
+    {
+      provider: "github",
+      baseUrl: "https://github.fixture.test/api/v3",
+      envVars: ["TRIAGE_TEST_TOKEN"],
+    },
+  ],
+}));
+vi.mock("../../config/proxy-config.js", () => ({
+  loadRequestTimeoutMs: async () => 30000,
+}));
 
 const makeIssue = (overrides: Record<string, unknown> = {}) => ({
   number: 1,
@@ -48,10 +59,12 @@ describe("issue-triage handler", () => {
     store = { content: null };
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("TRIAGE_TEST_TOKEN", "host-github-token");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("channelId が無ければ NonRetryableError を投げる", async () => {
@@ -113,6 +126,17 @@ describe("issue-triage handler", () => {
     expect(arg.groupName).toBe("issue-triage");
     expect(arg.content).toContain("#1");
     expect(arg.content).toContain("テストIssue");
+    expect(JSON.stringify(arg)).not.toContain("host-github-token");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://github.fixture.test/api/v3/repos/shin902/my-discord-agent/issues?state=open&per_page=100&page=1&creator=shin902",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer host-github-token",
+          Accept: "application/vnd.github+json",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it("pull_request を含む結果は除外する", async () => {
