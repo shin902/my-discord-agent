@@ -58,16 +58,21 @@ describe("pre-materialized item-thread compatibility removal", () => {
         cronPlaceholderMessageId: "placeholder-old",
       });
       const agentClaim = expectDefined(repo.claim("agent", 60_000));
-      repo.commitResult(enqueued.job.id, agentClaim.fencingToken, "x".repeat(4001), {
-        deliveryPayload: {
-          groupName: "group",
-          destinationType: "new-thread",
-          destinationId: "channel",
-          cronJobId: "daily",
-          cronThreadId: "thread-old",
-          cronPlaceholderMessageId: "placeholder-old",
+      repo.commitResult(
+        enqueued.job.id,
+        agentClaim.fencingToken,
+        "x".repeat(4001),
+        {
+          deliveryPayload: {
+            groupName: "group",
+            destinationType: "new-thread",
+            destinationId: "channel",
+            cronJobId: "daily",
+            cronThreadId: "thread-old",
+            cronPlaceholderMessageId: "placeholder-old",
+          },
         },
-      });
+      );
 
       const deliveries = repo.listDeliveries();
       expect(deliveries).toHaveLength(3);
