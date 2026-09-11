@@ -106,7 +106,7 @@ describe("built-in domain Skill CLI frontends", () => {
       "arxiv.py",
       ["survey", "first", "second", "--limit", "4"],
       "arxiv-survey",
-      { queries: ["first", "second"], max_results: 4, sort: "submitted" },
+      { queries: ["first", "second"], max_results: 4 },
     ],
     [
       "github",

@@ -85,7 +85,7 @@ diff -ru "groups/$group/SKILLS/$skill" "templates/SKILLS/$skill"
 
 Financeを用途別ToolからSkillでも使うgroupでは、`skills` に `finance` を追加します。`finance` Skillの `scripts/finance.py` は引数をJSON化してRunner image内の `finance-cli` bridgeへ渡し、bridgeは `src/tools/finance.ts` の `createFinanceTools()` を再利用します。schema・migration・金額符号・validation・append-only subscription historyは既存Finance Tool実装を唯一の正本として、既存の `finance.db` をそのまま再利用します。Tool Proxyや外部credentialは使用しません。
 
-arXivのPython entrypoint・位置引数・`--from` / `--to` / `--limit` / `--sort`・JSON配列stdoutは維持します。CLIのlimitは1〜50の厳密検証、native側は50へのclampです。取得・正規化はnative TypeScriptへ統一し、旧Pythonとの差は次のとおりです。
+arXivのPython entrypoint・位置引数・`--from` / `--to` / `--limit` / `--sort`・JSON配列stdoutは維持します。CLIは値をJSON化してProxyへ渡し、schema・日付・sort・limitの検証と既定値・clampは共有capability層へ委譲します。取得・正規化はnative TypeScriptへ統一し、旧Pythonとの差は次のとおりです。
 
 - updated欠落時は投稿日へfallbackします。
 - ID欠落時はlinkを使い、IDもlinkも無いentryは同じ空keyとして最初の1件に重複排除します。

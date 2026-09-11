@@ -153,7 +153,7 @@ describe("arXiv Python frontend parity", () => {
     }
   });
 
-  it("preserves date/sort flags and rejects out-of-range limits before any RPC", async () => {
+  it("forwards options and leaves validation/defaults to the capability layers", async () => {
     const execute = vi.spyOn(runtime, "executeToolRuntime").mockResolvedValue({
       content: [{ type: "text", text: "[]" }],
       details: {},
@@ -169,40 +169,30 @@ describe("arXiv Python frontend parity", () => {
         [
           "q",
           "--from",
-          "2026-08-01",
+          "2026-02-30",
           "--to",
-          "2026-08-31",
+          "2026-01-01",
           "--limit",
-          "50",
+          "51",
           "--sort",
-          "updated",
+          "relevance",
         ],
         run.token,
       );
       expect(execute.mock.calls[0][1]).toEqual({
         query: "q",
-        from: "2026-08-01",
-        to: "2026-08-31",
+        from: "2026-02-30",
+        to: "2026-01-01",
         max_results: 50,
-        sort: "updated",
+        sort: "relevance",
       });
       execute.mockClear();
-      for (const argv of [
-        ["q", "--limit", "0"],
-        ["q", "--limit", "51"],
-        ["q", "--from", "2026-02-30"],
-        ["q", "--from", "2026-08-31", "--to", "2026-08-01"],
-      ])
-        await expect(
-          python("arxiv-search", argv, run.token),
-        ).rejects.toMatchObject({ code: 2 });
       await expect(
-        python(
-          "arxiv-survey",
-          Array.from({ length: 9 }, () => "q"),
-          run.token,
-        ),
-      ).rejects.toMatchObject({ code: 2 });
+        python("arxiv-search", ["q", "--limit", "0"], run.token),
+      ).rejects.toMatchObject({ code: 1 });
+      await expect(
+        python("arxiv-search", ["q", "--sort", "invalid"], run.token),
+      ).rejects.toMatchObject({ code: 1 });
       expect(execute).not.toHaveBeenCalled();
     } finally {
       run.revoke();

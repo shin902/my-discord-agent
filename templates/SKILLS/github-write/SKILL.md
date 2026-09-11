@@ -11,4 +11,4 @@ Post a Markdown comment to one Issue:
 bash SKILLS/github-write/scripts/comment-issue.sh OWNER REPO ISSUE_NUMBER "Comment body"
 ```
 
-`comment-issue.sh -h` and `comment-issue.sh --help` show the positional arguments and the `--body` alternative. The script only converts arguments to JSON and calls `tool-proxy comment-issue`; credentials, Issue/owner validation, schema validation, authorization, and the actual mutation remain in the existing capability and Tool Proxy. Confirm the repository, Issue number, and complete body before invoking it. Never use a direct GitHub API fallback.
+`comment-issue.sh -h` and `comment-issue.sh --help` show the positional arguments. The script only converts arguments to JSON and calls `tool-proxy comment-issue`; credentials, Issue/owner validation, schema validation, authorization, and the actual mutation remain in the existing capability and Tool Proxy. Confirm the repository, Issue number, and complete body before invoking it. Never use a direct GitHub API fallback.

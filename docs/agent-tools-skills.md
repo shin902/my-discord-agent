@@ -181,7 +181,7 @@ Agent-facing の専用ツールと Skill shell は入口・UX・結果の envelo
 
 各Skillの公開CLIは `-h` / `--help` を備えています。host/runtime capabilityでは、引数をJSON化して共通 `tool-proxy <capability> <json>` を呼ぶだけで、credential・認可・schema validation・clamp/default・外部API取得は既存のCapability Registry / Tool Proxy / executorへ委譲します。proxyが利用できない場合に直接外部APIへfallbackしません。複数操作のSkillは1つのPython CLIにsubcommandをまとめ、単一操作のSkillは直接shell wrapperを使います。
 
-- **tavily-search**: `scripts/search.sh QUERY`。`--max-results`、`--search-depth`、`--include-answer`、`--topic` を指定できます。Tool Proxyを直接呼びます。
+- **tavily-search**: `scripts/search.sh QUERY`。`--max-results`、`--search-depth`、`--no-include-answer`、`--topic` を指定できます。Tool Proxyを直接呼びます。省略時の既定値はTool Proxyへ委譲します。
 - **arxiv**: `scripts/arxiv.py search QUERY` または `survey QUERY...`。投稿日範囲、件数、並び順を指定できます。2 capabilityを1 Skillにまとめています。
 - **github**: `scripts/github.py issues|issue|pull-request|issue-comments|pull-request-comments ...`。read系だけを含みます。
 - **github-write**: `scripts/comment-issue.sh OWNER REPO ISSUE_NUMBER BODY`。mutationはread Skillと分離します。

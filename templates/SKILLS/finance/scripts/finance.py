@@ -1,33 +1,9 @@
 #!/usr/bin/env python3
-"""Friendly Finance CLI adapter for the image-owned finance-cli bridge."""
+"""Thin frontend for the sandbox-local Finance Tool bridge."""
 import argparse
 import json
-import subprocess
+import os
 import sys
-
-
-OPERATIONS = {
-    "record-transaction": "finance-record-transaction",
-    "list-transactions": "finance-list-transactions",
-    "summary": "finance-summary",
-    "add-subscription": "finance-add-subscription",
-    "update-subscription": "finance-update-subscription",
-    "cancel-subscription": "finance-cancel-subscription",
-    "list-subscriptions": "finance-list-subscriptions",
-    "subscription-history": "finance-subscription-history",
-}
-
-
-def invoke(operation, payload):
-    try:
-        result = subprocess.run(
-            ["finance-cli", OPERATIONS[operation], json.dumps(payload, ensure_ascii=False)],
-            check=False,
-        )
-    except FileNotFoundError:
-        print("finance-cli is unavailable; update the Runner image", file=sys.stderr)
-        return 1
-    return result.returncode
 
 
 def add_date_range(parser):
@@ -35,19 +11,21 @@ def add_date_range(parser):
     parser.add_argument("--to", dest="to_date")
 
 
-def put_if_set(payload, key, value):
-    if value is not None:
-        payload[key] = value
+def add_set(payload, args, fields):
+    for source, target in fields:
+        value = getattr(args, source)
+        if value is not None:
+            payload[target] = value
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="finance.py",
-        description="Record and review finances through the sandbox-local Finance Tool",
+        prog="finance.py", description="Use sandbox-local Finance Tools"
     )
     commands = parser.add_subparsers(dest="operation", required=True)
 
-    record = commands.add_parser("record-transaction", help="record income or expense")
+    record = commands.add_parser("record-transaction", help="record a transaction")
+    record.set_defaults(capability="finance-record-transaction")
     record.add_argument("type")
     record.add_argument("amount", type=int)
     record.add_argument("--date")
@@ -55,22 +33,26 @@ def build_parser():
     record.add_argument("--description")
 
     transactions = commands.add_parser("list-transactions", help="list transactions")
+    transactions.set_defaults(capability="finance-list-transactions")
     add_date_range(transactions)
     transactions.add_argument("--category")
     transactions.add_argument("--type")
     transactions.add_argument("--limit", type=int)
 
     summary = commands.add_parser("summary", help="summarize transactions")
+    summary.set_defaults(capability="finance-summary")
     add_date_range(summary)
 
     add = commands.add_parser("add-subscription", help="add a subscription")
+    add.set_defaults(capability="finance-add-subscription")
     add.add_argument("name")
     add.add_argument("amount", type=int)
     add.add_argument("cycle")
     add.add_argument("next_date")
     add.add_argument("--category")
 
-    update = commands.add_parser("update-subscription", help="append a subscription update")
+    update = commands.add_parser("update-subscription", help="update a subscription")
+    update.set_defaults(capability="finance-update-subscription")
     update.add_argument("name")
     update.add_argument("--amount", type=int)
     update.add_argument("--cycle")
@@ -83,77 +65,68 @@ def build_parser():
     active.add_argument("--inactive", dest="active", action="store_false")
     update.set_defaults(active=None, clear_category=False)
 
-    cancel = commands.add_parser("cancel-subscription", help="append an inactive snapshot")
+    cancel = commands.add_parser("cancel-subscription", help="cancel a subscription")
+    cancel.set_defaults(capability="finance-cancel-subscription")
     cancel.add_argument("name")
 
-    list_subscriptions = commands.add_parser(
-        "list-subscriptions", help="list current subscriptions"
+    subscriptions = commands.add_parser(
+        "list-subscriptions", help="list subscriptions"
     )
-    list_subscriptions.add_argument("--include-inactive", action="store_true")
+    subscriptions.set_defaults(capability="finance-list-subscriptions")
+    subscriptions.add_argument("--include-inactive", action="store_true")
 
     history = commands.add_parser(
-        "subscription-history", help="list subscription snapshots"
+        "subscription-history", help="list subscription history"
     )
+    history.set_defaults(capability="finance-subscription-history")
     history.add_argument("name")
-
     return parser
 
 
-def input_from_args(args):
-    operation = args.operation
-    if operation == "record-transaction":
+def main(argv=None):
+    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+    if args.operation == "record-transaction":
         payload = {"type": args.type, "amount": args.amount}
-        put_if_set(payload, "date", args.date)
-        put_if_set(payload, "category", args.category)
-        put_if_set(payload, "description", args.description)
-        return payload
-    if operation == "list-transactions":
+        add_set(payload, args, (("date", "date"), ("category", "category"), ("description", "description")))
+    elif args.operation == "list-transactions":
         payload = {}
-        for source, target in (
-            ("from_date", "from"),
-            ("to_date", "to"),
-            ("category", "category"),
-            ("type", "type"),
-            ("limit", "limit"),
-        ):
-            put_if_set(payload, target, getattr(args, source))
-        return payload
-    if operation == "summary":
+        add_set(
+            payload,
+            args,
+            (("from_date", "from"), ("to_date", "to"), ("category", "category"), ("type", "type"), ("limit", "limit")),
+        )
+    elif args.operation == "summary":
         payload = {}
-        put_if_set(payload, "from", args.from_date)
-        put_if_set(payload, "to", args.to_date)
-        return payload
-    if operation == "add-subscription":
+        add_set(payload, args, (("from_date", "from"), ("to_date", "to")))
+    elif args.operation == "add-subscription":
         payload = {
             "name": args.name,
             "amount": args.amount,
             "cycle": args.cycle,
             "nextDate": args.next_date,
         }
-        put_if_set(payload, "category", args.category)
-        return payload
-    if operation == "update-subscription":
+        add_set(payload, args, (("category", "category"),))
+    elif args.operation == "update-subscription":
         payload = {"name": args.name}
-        for source, target in (
-            ("amount", "amount"),
-            ("cycle", "cycle"),
-            ("next_date", "nextDate"),
-        ):
-            put_if_set(payload, target, getattr(args, source))
+        add_set(
+            payload,
+            args,
+            (("amount", "amount"), ("cycle", "cycle"), ("next_date", "nextDate")),
+        )
         if args.clear_category:
             payload["category"] = None
         else:
-            put_if_set(payload, "category", args.category)
-        put_if_set(payload, "active", args.active)
-        return payload
-    if operation == "list-subscriptions":
-        return {"includeInactive": True} if args.include_inactive else {}
-    return {"name": args.name}
+            add_set(payload, args, (("category", "category"),))
+        add_set(payload, args, (("active", "active"),))
+    elif args.operation == "list-subscriptions":
+        payload = {"includeInactive": True} if args.include_inactive else {}
+    else:
+        payload = {"name": args.name}
 
-
-def main(argv=None):
-    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
-    return invoke(args.operation, input_from_args(args))
+    os.execvp(
+        "finance-cli",
+        ["finance-cli", args.capability, json.dumps(payload, ensure_ascii=False)],
+    )
 
 
 if __name__ == "__main__":
