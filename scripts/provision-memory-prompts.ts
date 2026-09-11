@@ -84,12 +84,31 @@ async function request<T>(path: string, body?: object): Promise<T> {
   return envelope.data;
 }
 
+function isPromptRecord(value: unknown): value is PromptRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.memory_prompt_id === "string" &&
+    record.memory_prompt_id.trim().length > 0 &&
+    typeof record.name === "string" &&
+    record.name.trim().length > 0 &&
+    Array.from(record.name).length <= 100 &&
+    layers.some((layer) => layer === record.layer) &&
+    typeof record.prompt === "string" &&
+    record.prompt.trim().length > 0 &&
+    Array.from(record.prompt).length <= 10_000
+  );
+}
+
 async function listPrompts(layer: Layer): Promise<PromptRecord[]> {
   const prompts: PromptRecord[] = [];
   while (true) {
-    const page = await request<{ items: PromptRecord[] }>(
+    const page = await request<{ items: unknown }>(
       `/v3/memory-prompt/get?layer=${layer}&limit=100&offset=${prompts.length}`,
     );
+    if (!Array.isArray(page.items) || !page.items.every(isPromptRecord)) {
+      throw new Error("MemoryCore returned an invalid prompt list");
+    }
     prompts.push(...page.items);
     if (page.items.length < 100) return prompts;
   }
