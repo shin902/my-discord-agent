@@ -23,7 +23,7 @@ import {
   resolveProviderConcurrency,
 } from "../config/providers.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
-import { getCachedCronJob } from "../cron/runner.js";
+import { getCachedCronJob, isCronHandler } from "../cron/runner.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
@@ -971,11 +971,7 @@ export async function processMessage(
     try {
       repository.markRunning(msg.id, msg.fencingToken);
       const job = msg.cronJobId ? getCachedCronJob(msg.cronJobId) : undefined;
-      if (
-        job?.enabled &&
-        (job.handler === MEMORY_EXPORT_HANDLER ||
-          job.handler === "jobs/memory-export.js")
-      ) {
+      if (job?.enabled && (await isCronHandler(job, MEMORY_EXPORT_HANDLER))) {
         await runMemoryExport(job.id, job.settings, signal);
       }
       // Removed, disabled or repurposed cron identities terminally no-op.

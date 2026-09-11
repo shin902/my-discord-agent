@@ -233,6 +233,15 @@ export async function loadHandlerFn(
   return mod.default;
 }
 
+/** Compare the actual loader-resolved handler, including relative and runtime extension aliases. */
+export async function isCronHandler(
+  job: Pick<CronJob, "handler">,
+  handler: string,
+): Promise<boolean> {
+  if (job.handler === undefined) return false;
+  return (await loadHandlerFn(job.handler)) === (await loadHandlerFn(handler));
+}
+
 // --- Startup validation ---
 
 async function validateHandlerPath(handlerRelPath: string): Promise<void> {

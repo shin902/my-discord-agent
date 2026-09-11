@@ -158,6 +158,28 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "jobs/memory-export.ts",
+    "./jobs/memory-export.ts",
+    "jobs/./memory-export.ts",
+    "jobs//memory-export.ts",
+    "jobs/memory-export.js",
+    "./jobs/memory-export.js",
+  ])("exports with loader-accepted handler identity %s", async (handler) => {
+    const job = { ...config(), handler };
+    await startup([job]);
+    await seed("one");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => accept());
+    await executeJob(job);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const id = await processNext();
+    expect(repo.get(id)?.status).toBe("completed");
+    expect(wireContents(fetchMock)).toEqual(["user one"]);
+    expect(repo.listDeliveries()).toEqual([]);
+  });
+
   it("recovers an old claim after restart and uses only the new process cached settings", async () => {
     await seed("old-group");
     await seed("current-group", "private");
@@ -204,7 +226,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     await executeJob(config());
     const job = config();
     if (mode === "disabled") job.enabled = false;
-    if (mode === "repurposed") job.handler = "jobs/mail.ts";
+    if (mode === "repurposed") job.handler = "./jobs/mail.ts";
     await startup(mode === "removed" ? [] : [job]);
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const id = await processNext();
@@ -313,6 +335,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
         }),
     );
     const exporting = processMessage(memory.job);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const source = {
       kind: "discord" as const,
       sourceId: "two",
