@@ -1,6 +1,8 @@
 services:
   memory-core:
-    image: agentmemory/memory-core:1.0.1
+    # TencentDB Agent Memory v2.0.1 stable publishes MemoryCore as component
+    # image 1.0.1. Pin its multi-platform manifest, not a moving branch build.
+    image: agentmemory/memory-core:1.0.1@sha256:9798254a8cc06276b7c5b3c19df49f136fae25d579564e1f01f9c4b9b8cd2d11
     restart: unless-stopped
     # Host networking also supports an optional host-local CLIProxyAPI at
     # 127.0.0.1:8317 without exposing that proxy on the LAN. Direct or remote

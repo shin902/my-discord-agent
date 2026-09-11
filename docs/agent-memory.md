@@ -50,6 +50,18 @@ backendごとに `config/cron.json` へhandler付きjobを1つ定義します。
 
 MemoryCore sidecarの起動・鍵設定は [config.md](config.md#memorycore-sidecarの起動) を参照してください。
 
+### L1/L2/L3 custom prompt
+
+MemoryCore起動後、リポジトリ管理の品質promptを現在のagent scopeへprovisionします。
+
+```bash
+pnpm memory-core:prompts
+```
+
+既定のscopeはcron exampleと同じ`default` / `my-discord-agent`です。異なる運用設定では`MEMORY_CORE_TEAM_ID`と`MEMORY_CORE_AGENT_ID`を指定してください。接続先とservice IDは`MEMORY_CORE_URL`（既定`http://127.0.0.1:8420`）と`MEMORY_CORE_SERVICE_ID`（既定`default`）、認証は既存の`MEMORY_CORE_GATEWAY_API_KEY`を使います。
+
+このcommandは各layerの同名promptを作成または更新し、agent scopeへapplyした後、MemoryCoreのeffective promptを再取得して内容とsourceを確認します。L1/L2/L3 schemaやpipeline、scope自体は変更しません。
+
 cron job IDは安定したbackend / export namespaceです。同じlogical backendならIDを維持します。別のbackend、team/agent scope等へ既存履歴を再exportしたい場合は**新しいcron job ID**を使います。
 
 実行時のauthorityはstartupでロードされたcron設定cacheです。変更はrestartで反映し、process中のfresh read・hot reloadはしません。restart前にenqueueされたjobも新processのcacheで処理します。対応IDが削除、disabled、または別handlerへ変更されていれば、remote exportせず正常完了（no-op）します。handlerの同一性はcron loaderが解決した関数で判定するため、`./jobs/memory-export.ts`等の同値pathやloaderが受理する拡張子aliasでもexportできます。旧settings snapshot、generation、fingerprintの復元・比較はありません。settings不正・未設定credentialはworkerでnon-retryable failureになります。
