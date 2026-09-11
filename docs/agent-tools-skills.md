@@ -40,6 +40,14 @@
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
+### bashの出力と一時ファイル
+
+`bash` はstdout/stderrを同じpipeへ接続し、到着順にsandbox-local `/tmp` のprivate fileへストリーミング保存します（directory `0700`、file `0600`）。従来のstdout-first順序・`stderr:`ラベル・区切り改行は付けません。並行producer間の論理的な発生順序までは保証しません。
+
+小出力は従来どおり前後の空白を除いてinlineへ返し、無出力は `(出力なし)` とします。32 KiBを超える出力は先頭32 KiBのpreviewだけを返します。保存ファイルはtrimや文字コード変換をしない取得済みの全bytesです。result detailsの `fullOutputPath`、`totalBytes`、`previewBytes`、`truncated`、`lifetime: "container-run"` で参照先・サイズ・寿命を確認できます。大出力時は本文にも保存先と寿命を表示します。`read` / `grep` で必要な範囲を参照してください。
+
+非ゼロ終了、30秒timeout、abortでも取得済みoutputを保存し、失敗resultの本文にpreview・保存先・サイズ・寿命を含めます。timeout / abortはcallのprocess groupをSIGKILLで停止します。ENOSPC等の保存失敗時はproducerを停止し、partial fileとdirectoryを削除して保存先を返しません。保存開始前の失敗ならcommandを起動しません。パスは現在のAgent container run内だけ有効で、Discord turnやcontainerを跨ぐ永続性はありません。container自体が強制終了した場合の回収も保証しません。
+
 ### sandbox Toolのruntime引数検証
 
 Registryから解決したsandbox-local Toolは、executorへ入る直前に広告済みTypeBox `parameters` を共通境界で検証します。必須項目、型、enum、範囲、文字列長などのschema違反は実行せずエラーにし、Tool固有のセキュリティ／ドメイン検証もその後のexecutorで引き続き行います。Agent runnerの通常経路にはPiの検証もありますが、直接の`execute()`呼び出しでも同じ境界を通ります。未知propertyは既存のTypeBox object方針どおりschema違反にせず、executorへ渡すclean cloneからは除去されます。組込Toolが利用する既知項目だけが実行に反映されます。host/runtime capabilityのwire引数検証とmaterializeは従来どおりTool Proxy側で行います。
