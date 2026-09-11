@@ -143,6 +143,7 @@ describe("ingestDiscordMessage", () => {
         sourceId: "normal",
         actorId: "user-id",
         messageType: 0,
+        createdAt: "2026-08-11T00:00:00.000Z",
       },
     });
     expect(job?.messageId).toBeUndefined();
@@ -165,6 +166,7 @@ describe("ingestDiscordMessage", () => {
         sourceId: "100000000000000001",
         actorId: "user-id",
         messageType: 19,
+        createdAt: "2026-08-11T00:00:00.000Z",
       },
     });
 

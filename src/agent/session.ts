@@ -80,46 +80,48 @@ function messageTimestamp(message: Record<string, unknown>): number {
 }
 
 function initializeSchema(db: Database.Database): void {
-  const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > SCHEMA_VERSION) {
-    throw new Error(
-      `未対応のsession DB schema versionです: ${version} (対応: ${SCHEMA_VERSION})`,
-    );
-  }
-  if (version === 0) {
-    db.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL DEFAULT 'conversation',
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+  db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
+  // Already-current stores need no migration write lock.
+  if (db.pragma("user_version", { simple: true }) === SCHEMA_VERSION) return;
+  db.transaction(() => {
+    // Another run/container may have migrated while we waited for the lock.
+    const version = db.pragma("user_version", { simple: true }) as number;
+    if (version > SCHEMA_VERSION) {
+      throw new Error(
+        `未対応のsession DB schema versionです: ${version} (対応: ${SCHEMA_VERSION})`,
       );
-      CREATE TABLE IF NOT EXISTS session_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
-        sequence INTEGER NOT NULL,
-        entry_type TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        UNIQUE(session_id, sequence)
-      );
-      CREATE INDEX IF NOT EXISTS session_entries_session_id_id
-        ON session_entries(session_id, id);
-      PRAGMA user_version = 1;
-    `);
-  }
-  if (version < 2) {
-    db.transaction(() => {
+    }
+    if (version === 0) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL DEFAULT 'conversation',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS session_entries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          sequence INTEGER NOT NULL,
+          entry_type TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE(session_id, sequence)
+        );
+        CREATE INDEX IF NOT EXISTS session_entries_session_id_id
+          ON session_entries(session_id, id);
+        PRAGMA user_version = 1;
+      `);
+    }
+    if (version < 2) {
       db.exec(`
         ALTER TABLE session_entries ADD COLUMN source_json TEXT;
         CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
         PRAGMA user_version = 2;
       `);
-    })();
-  }
-  db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
+    }
+  }).immediate();
 }
 
 async function openDatabase(groupName: string): Promise<Database.Database> {

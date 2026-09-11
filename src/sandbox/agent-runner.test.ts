@@ -126,6 +126,7 @@ describe("runAgentLoop", () => {
       sourceId: "message",
       actorId: "human",
       messageType: 19 as const,
+      createdAt: "2026-09-01T01:00:00.000Z",
     };
     const messages = [
       { role: "user", content: "input", timestamp: 1 },

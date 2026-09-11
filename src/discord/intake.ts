@@ -200,6 +200,7 @@ async function ingest(
               sourceId: message.id,
               actorId: message.author.id,
               messageType: message.type,
+              createdAt: message.createdAt.toISOString(),
             },
           }
         : {}),

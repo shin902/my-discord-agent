@@ -58,10 +58,10 @@ cron job IDは安定したbackend / export namespaceです。同じlogical backe
 通常human Discord message（Default `0` / Reply `19`）のuser entryには、Memoryの設定と無関係に汎用provenanceを保存します。
 
 ```json
-{"kind":"discord","sourceId":"<Discord message ID>","actorId":"<Discord user ID>","messageType":0}
+{"kind":"discord","sourceId":"<Discord message ID>","actorId":"<Discord user ID>","messageType":0,"createdAt":"2026-09-01T01:00:00.000Z"}
 ```
 
-`session_entries.source_json` はnullableです。会話本文・session identityは既存columnを使い、candidate flagやbackend設定は追加しません。source metadataはLLM contextへ混ぜません。auto-thread起点でも、返信先message IDとは別に元のDiscord message IDを保持します。
+`session_entries.source_json` はnullableです。会話本文・session identityは既存columnを使い、candidate flagやbackend設定は追加しません。source metadataはLLM contextへ混ぜません。auto-thread起点でも、返信先message IDとは別に元のDiscord message IDを保持します。`createdAt`は元Discord messageの作成時刻です。exportのuser timestampにはこれを使い、startup backfill等の処理時刻と混同しません。canonical user entryのtimestampは処理時刻のまま維持し、`createdAt`のない旧provenanceだけはそのentry timestampへfallbackします。assistantはcanonical entryの生成時刻を使います。
 
 - sourced userから次のsourced userまでを探索し、最後の正常終了（`stopReason: stop`）、非空text、errorなしのassistantを対応付けます。
 - assistant未到着、error / abortedのみ、tool call途中、length終了、空responseはexportしません。次のjobが未完了turnを再評価できます。
@@ -70,7 +70,7 @@ cron job IDは安定したbackend / export namespaceです。同じlogical backe
 - 送信元はsession DBのみです。通常runtime jobのpayload/result、Discord deliveryから本文を再構築しません。本文はcanonicalに保存されたtextです（添付ファイル案内等を含む場合があります）。thinkingやtool payloadは送信しません。
 - `<NO_REPLY>` はDiscord配送の抑制であり、非空の正常assistantとして保存されていればexport対象になり得ます。
 
-session schema v1は通常の書き込み経路でv2へ更新されます。export側はDB作成・migrationをしません。provenanceのない既存履歴は本文やruntime queueから推測・backfillしません。
+session schema v1は通常の書き込み経路でv2へ更新されます。migrationはwrite lock取得後にschema versionを再確認し、同じgroupの並行run/containerによる二重ALTERを防ぎます。export側はDB作成・migrationをしません。provenanceのない既存履歴は本文やruntime queueから推測・backfillしません。
 
 ## queueと成功ledger
 

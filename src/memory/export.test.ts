@@ -93,6 +93,43 @@ describe("canonical source trajectories", () => {
     );
   });
 
+  it("exports the original Discord creation time after delayed processing, retaining canonical processing time", async () => {
+    const createdAt = "2026-09-01T01:00:00.000Z";
+    const processedAt = Date.parse("2026-09-04T09:00:00.000Z");
+    await session.appendMessage(
+      "backfill",
+      "chat",
+      {
+        ...user("delayed Discord message"),
+        timestamp: processedAt,
+      },
+      { ...source("backfilled"), createdAt },
+    );
+    await session.appendMessage("backfill", "chat", {
+      ...assistant("delayed answer"),
+      timestamp: processedAt + 1000,
+    });
+    const messages = await session.loadMessages("backfill", "chat");
+    expect(messages[0].timestamp).toBe(processedAt);
+    const backend = { exportTurn: vi.fn().mockResolvedValue(undefined) };
+    const ledger = new MemoryExportLedger(":memory:");
+    try {
+      await exportBatch("backend", ["backfill"], 50, backend, ledger);
+      expect(backend.exportTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: expect.objectContaining({ createdAt }),
+          user: { content: "delayed Discord message", timestamp: createdAt },
+          assistant: {
+            content: "delayed answer",
+            timestamp: "2026-09-04T09:00:01.000Z",
+          },
+        }),
+      );
+    } finally {
+      ledger.close();
+    }
+  });
+
   it("reads without modifying the session DB, and does not create missing groups", async () => {
     await session.appendMessage("readonly", "chat", user(), source("one"));
     await session.appendMessage("readonly", "chat", assistant("answer"));

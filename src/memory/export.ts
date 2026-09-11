@@ -47,7 +47,9 @@ export function* readCaptureTurns(
       source: trajectory.source,
       user: {
         content: userContent,
-        timestamp: new Date(trajectory.user.timestamp).toISOString(),
+        timestamp:
+          trajectory.source.createdAt ??
+          new Date(trajectory.user.timestamp).toISOString(),
       },
       assistant: {
         content: text(assistant),

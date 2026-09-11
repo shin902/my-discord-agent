@@ -6,6 +6,8 @@ export const SessionSourceSchema = z.object({
   sourceId: z.string().min(1),
   actorId: z.string().min(1),
   messageType: z.union([z.literal(0), z.literal(19)]),
+  /** Original source event time, absent in older provenance records. */
+  createdAt: z.iso.datetime().optional(),
 });
 
 export type SessionSource = z.infer<typeof SessionSourceSchema>;

@@ -912,6 +912,7 @@ describe("sendMessage: 添付ファイル", () => {
       sourceId: "message",
       actorId: "human",
       messageType: 19 as const,
+      createdAt: "2026-09-01T01:00:00.000Z",
     };
     await sendMessage("test-group", "session-1", "見て", {
       attachments,

@@ -1,6 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { once } from "node:events";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -105,6 +107,78 @@ describe("SQLite session trajectory store", () => {
     ).toBe(20);
   });
 
+  it.each([
+    0, 1,
+  ])("rechecks stale v%s under the migration write lock across concurrent connections", async (version) => {
+    const group = `migration-v${version}`;
+    await mkdir(path.join(root, group), { recursive: true });
+    const db = new Database(path.join(root, group, "sessions.sqlite"));
+    if (version === 1) {
+      db.exec(`
+        CREATE TABLE sessions(id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'conversation', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE TABLE session_entries(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE, sequence INTEGER NOT NULL, entry_type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(session_id, sequence));
+        PRAGMA user_version=1;
+        INSERT INTO sessions VALUES('old', 'conversation', 1, 1);
+        INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at) VALUES('old', 1, 'user', '{"role":"user","content":"old message","timestamp":1}', 1);
+      `);
+    }
+    db.close();
+    const gate = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(
+      new URL("./__fixtures__/session-migration.cjs", import.meta.url),
+      {
+        workerData: { root, group, version, gate: gate.buffer },
+      },
+    );
+    const signal = AbortSignal.timeout(10_000);
+    try {
+      expect(await once(worker, "message", { signal })).toEqual([
+        "stale-version-read",
+      ]);
+      await session.appendMessage(group, "main-session", {
+        role: "user",
+        content: "main message",
+        timestamp: 2,
+      });
+      const finished = once(worker, "message", { signal });
+      Atomics.store(gate, 0, 1);
+      Atomics.notify(gate, 0);
+      expect(await finished).toEqual([
+        { status: "appended", recheckedInTransaction: true },
+      ]);
+      const inspect = dbFor(group);
+      try {
+        expect(inspect.pragma("user_version", { simple: true })).toBe(2);
+        expect(
+          (
+            inspect.pragma("table_info(session_entries)") as Array<{
+              name: string;
+            }>
+          ).filter((column) => column.name === "source_json"),
+        ).toHaveLength(1);
+        expect(
+          inspect
+            .prepare("SELECT COUNT(*) AS count FROM session_entries")
+            .get(),
+        ).toEqual({ count: 2 + version });
+        if (version === 1)
+          expect(
+            inspect
+              .prepare(
+                "SELECT source_json FROM session_entries WHERE session_id='old'",
+              )
+              .get(),
+          ).toEqual({ source_json: null });
+      } finally {
+        inspect.close();
+      }
+    } finally {
+      Atomics.store(gate, 0, 1);
+      Atomics.notify(gate, 0);
+      await worker.terminate();
+    }
+  }, 15_000);
+
   it("session identityをtransactionでrenameしentryを維持する", async () => {
     await session.appendMessage("rename-group", "cron-temp", {
       role: "user",
@@ -148,7 +222,6 @@ describe("SQLite session trajectory store", () => {
       "不正なセッションID",
     );
 
-    const { mkdir } = await import("node:fs/promises");
     const dir = path.join(root, "future");
     await mkdir(dir, { recursive: true });
     const db = new Database(path.join(dir, "sessions.sqlite"));
