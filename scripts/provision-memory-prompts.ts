@@ -66,6 +66,7 @@ async function request<T>(path: string, body?: object): Promise<T> {
       headers,
       body: body ? JSON.stringify(body) : undefined,
       signal,
+      redirect: "error",
     });
     envelope = (await response.json()) as Envelope<T>;
   } catch {
