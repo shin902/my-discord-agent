@@ -82,7 +82,20 @@ describe("validateAgentConfig", () => {
     ).rejects.toThrow("不明なツール名: missing-tool");
   });
 
-  it("rejects an approval-required tool outside effective tools", async () => {
+  it("accepts an approval-required capability provided by a Skill", async () => {
+    await expect(
+      validateAgentConfig(
+        {
+          tools: ["read"],
+          skills: ["github-write"],
+          approvalRequiredTools: ["comment-issue"],
+        },
+        defaultModel,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects an approval-required tool outside effective tools and Skill dependencies", async () => {
     await expect(
       validateAgentConfig(
         {

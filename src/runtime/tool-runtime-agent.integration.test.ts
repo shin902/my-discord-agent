@@ -55,12 +55,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
       mountDirectory = join(fixture.options.root, "agent");
       await mkdir(workspace);
       await mkdir(mountDirectory);
-      for (const skill of [
-        "agent-reach",
-        "arxiv-search",
-        "arxiv-survey",
-        "last30days",
-      ])
+      for (const skill of ["agent-reach", "arxiv", "last30days"])
         await cp(
           `templates/SKILLS/${skill}`,
           join(workspace, "SKILLS", skill),
@@ -101,7 +96,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
           "read",
           "grep",
         ],
-        skills: ["last30days", "arxiv-search", "arxiv-survey"],
+        skills: ["last30days", "arxiv"],
       };
       const run = createToolProxyRun(name, runCapabilityNames(config));
       if (!run) throw new Error("Tool Proxy not initialized");
@@ -248,14 +243,14 @@ describe.skipIf(!runtimeImage || !agentImage)(
       );
       const skill = text(
         await agent.call("bash", {
-          command: "python3 SKILLS/arxiv-search/scripts/search.py runtime",
+          command: "python3 SKILLS/arxiv/scripts/search.py runtime",
         }),
       );
       expect(JSON.parse(skill)).toEqual(JSON.parse(native));
       const survey = text(
         await agent.call("bash", {
           command:
-            "python3 SKILLS/arxiv-survey/scripts/survey.py runtime boundary --limit 5",
+            "python3 SKILLS/arxiv/scripts/survey.py runtime boundary --limit 5",
         }),
       );
       expect(Array.isArray(JSON.parse(survey))).toBe(true);

@@ -191,7 +191,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "chat",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily-search", "bot"],
+    "tools": ["bash", "bot"],
+    "skills": ["tavily-search"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [
@@ -209,8 +210,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "thread",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily-search", "agent-reach", "bash", "read", "write", "edit"],
-    "skills": ["session-logs"],
+    "tools": ["bash", "read", "write", "edit"],
+    "skills": ["agent-reach", "tavily-search", "session-logs"],
     "allowMention": true,
     "toolLogArgs": true,
     "channels": [
@@ -230,10 +231,10 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |
-| `approvalRequiredTools` | — | AgentConfig。effective `tools` に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・`tools` 外・sandbox内toolは設定エラー。子layerで指定した配列は完全置換 |
+| `approvalRequiredTools` | — | AgentConfig。effective `tools` またはtrusted built-in Skillの依存に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・tools/Skill依存外・sandbox内toolは設定エラー。子layerで指定した配列は完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
-| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル。channelで指定するとgroupの指定を完全置換 |
+| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル指定。未指定または `[]` はスキルなし、配列は指定スキルのみ、`"*"` は全スキル。built-in domain Skillのhost/runtime依存はtrusted mappingからrun authorityへ追加されるが、`bash` は自動付与されない。channelで指定するとgroupの指定を完全置換 |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 
 `sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `approvalRequiredTools` / `skills` / `mounts` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。

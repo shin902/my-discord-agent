@@ -85,7 +85,7 @@ function authority(tools: string[], skills: string[], approval: string[] = []) {
 describe("Native/Skill shared Runtime authority", () => {
   it.each([
     { tools: ["arxiv-search"], skills: [] },
-    { tools: ["arxiv-search"], skills: ["arxiv-search"] },
+    { tools: ["arxiv-search"], skills: ["arxiv"] },
   ])("applies the same approval and effective args to native and CLI: %j", async ({
     tools,
     skills,
@@ -133,13 +133,18 @@ describe("Native/Skill shared Runtime authority", () => {
       content: [{ type: "text", text: "[]" }],
       details: {},
     });
-    const run = authority([], ["arxiv-search"]);
+    const run = authority([], ["arxiv"]);
     try {
       expect(
         (await cli(run.token, "arxiv-search", { query: "q" })).stdout,
       ).toBe("[]");
       await expect(
-        cli(run.token, "arxiv-survey", { queries: ["q"] }),
+        cli(run.token, "comment-issue", {
+          owner: "o",
+          repo: "r",
+          issue_number: 1,
+          body: "comment",
+        }),
       ).rejects.toMatchObject({
         stderr: expect.stringContaining("not authorized"),
       });
@@ -198,7 +203,7 @@ describe("Native/Skill shared Runtime authority", () => {
         );
         return { content: [], details: {} };
       });
-    const run = authority([], ["arxiv-search"]);
+    const run = authority([], ["arxiv"]);
     const pending = requestToolProxy(
       "arxiv-search",
       { query: "q" },
@@ -287,7 +292,7 @@ describe("Native/Skill shared Runtime authority", () => {
   });
 
   it("shutdown revokes active runs and closes new run admission", async () => {
-    const run = authority([], ["arxiv-search"]);
+    const run = authority([], ["arxiv"]);
     try {
       await stopToolProxyServer();
       expect(

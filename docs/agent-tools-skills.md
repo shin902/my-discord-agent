@@ -40,15 +40,45 @@
 | `comment-issue` | GitHub Issue に Markdown コメントを投稿 |
 | `tavily-search` | Tavily Search API でウェブ検索を実行。最新情報の取得やファクトチェックに使う |
 
+domain-specificなnative Toolは引き続き個別に `tools` へ指定できます。built-in Skillを選ぶと、下表の既存capabilityをnative schemaとして常時表示せず、Skill内の薄いCLIから利用できます。
+
+## Built-in Skillとcapability
+
+Skillの依存関係はSKILL.md本文から推測せず、trustedな `src/tools/skill-capabilities.ts` のmappingで解決します。Skillは認証情報・認可・schema validation・executorを持ちません。
+
+| Skill | 利用できる操作 |
+|---|---|
+| `agent-reach` | `agent-reach`（既存workflow） |
+| `tavily-search` | `tavily-search` |
+| `arxiv` | `arxiv-search`, `arxiv-survey` |
+| `github` | `list-issues`, `read-issue`, `read-pull-request`, `list-issue-comments`, `list-pull-request-comments` |
+| `github-write` | `comment-issue` |
+| `calendar` | `list-calendars`, `list-events`, `read-event`, `create-event`, `update-event`, `delete-event` |
+| `mail` | `list-emails`, `read-email` |
+| `weather` | `get-current-weather`, `get-weather-forecast` |
+| `finance` | 8つのFinance操作（sandbox-local、Tool Proxy依存なし） |
+| `last30days` | `hackernews-search`, `github-recent-search`, `agent-reach`（内部依存。独立Skillなし） |
+
+通常の例:
+
+```json
+{
+  "tools": ["bash", "bot"],
+  "skills": ["agent-reach", "tavily-search", "arxiv", "github", "weather"]
+}
+```
+
+Skillを有効にしても `bash` は自動付与されません。Skillのshell CLIを実行するには、信頼できるgroupで `bash` も明示してください。bashを許可しないtrust classではnative Toolを選択し、Skillのhost/runtime CLIは実行しません。ファイル操作などが必要なSkillは、必要なsandbox-local Toolも明示してください。
+
 ### sandbox Toolのruntime引数検証
 
 Registryから解決したsandbox-local Toolは、executorへ入る直前に広告済みTypeBox `parameters` を共通境界で検証します。必須項目、型、enum、範囲、文字列長などのschema違反は実行せずエラーにし、Tool固有のセキュリティ／ドメイン検証もその後のexecutorで引き続き行います。Agent runnerの通常経路にはPiの検証もありますが、直接の`execute()`呼び出しでも同じ境界を通ります。未知propertyは既存のTypeBox object方針どおりschema違反にせず、executorへ渡すclean cloneからは除去されます。組込Toolが利用する既知項目だけが実行に反映されます。host/runtime capabilityのwire引数検証とmaterializeは従来どおりTool Proxy側で行います。
 
 ### Discord tool approval（opt-in）
 
-`approvalRequiredTools` は、effective `tools` に含まれる既知host/runtime capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
+`approvalRequiredTools` は、effective `tools` またはtrusted built-in Skillの依存に含まれる既知host/runtime capabilityからユーザーが選んだtoolに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` とSkill依存のどちらにも含まれない名前・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
 
-Skillだけで許可されたcapabilityへのapproval設定は拡張していません。必要なら対応Toolを `tools` にも指定してください。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
+例えば `skills: ["github-write"]` と `approvalRequiredTools: ["comment-issue"]` の組み合わせは有効です。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
 
 validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
 
@@ -145,15 +175,25 @@ Agent-facing の専用ツールと Skill shell は入口・UX・結果の envelo
 
 **配置済みSkillの更新:** テンプレート変更だけでは既存groupに反映されません。カスタマイズを保ちながら [差分確認と更新手順](spec/tool-runtime.md#配置済みskillの更新) に従ってscriptと手順を更新してください。
 
-### arxiv-search / arxiv-survey
+### tavily-search / arxiv / github / github-write / calendar / mail / weather
 
-**場所:** `templates/SKILLS/arxiv-search/` / `templates/SKILLS/arxiv-survey/`
+**場所:** `templates/SKILLS/{tavily-search,arxiv,github,github-write,calendar,mail,weather}/`
 
-arXivの公開Atom APIを使う、credential不要・statelessな論文検索機能。`arxiv-search` は1つの自然言語queryを検索し、`arxiv-survey` は1〜8個のqueryをOR条件で1回のAPIリクエストにまとめる。両方とも投稿日範囲（`from` / `to`）と `relevance` / `submitted` / `updated` の並び順を指定できる。
+各Skillの `scripts/` は `-h` / `--help` を備えた薄いCLIです。host/runtime capabilityでは、引数をJSON化して共通 `tool-proxy <capability> <json>` を呼ぶだけで、credential・認可・schema validation・clamp/default・外部API取得は既存のCapability Registry / Tool Proxy / executorへ委譲します。proxyが利用できない場合に直接外部APIへfallbackしません。
 
-Tool版はTypeScriptのstructured arguments、Skill版はPythonのCLI argumentsを入力に使う。Skill版は `--from` / `--to` / `--limit` / `--sort` を指定し、stdoutへJSONを返す。取得・Atom parserはRuntime内のnative TypeScript実装へ統一しています。双方とも `id` / `version` / `title` / `authors` / `submitted_at` / `updated_at` / `categories` / `abstract` / `url` / `pdf_url` を同じ意味で返す。
+- **tavily-search**: `scripts/search.sh QUERY`。`--max-results`、`--search-depth`、`--include-answer`、`--topic` を指定できます。
+- **arxiv**: `scripts/search.py QUERY` と `scripts/survey.py QUERY...`。投稿日範囲、件数、並び順を指定できます。2 capabilityを1 Skillにまとめています。
+- **github**: `scripts/issues.sh OWNER REPO`、`issue.sh`、`pull-request.sh`、`issue-comments.sh`、`pull-request-comments.sh`。read系だけを含みます。
+- **github-write**: `scripts/comment-issue.sh OWNER REPO ISSUE_NUMBER BODY`。mutationはread Skillと分離します。
+- **calendar**: `scripts/calendars.sh`、`events.sh`、`event.sh`、`create.sh`、`update.sh`、`delete.sh`。read/writeを1 Skillにまとめます。read-onlyの細粒度が必要ならnative Toolを個別指定してください。
+- **mail**: `scripts/emails.sh` と `email.sh`。`email.sh` は既存どおり既定で既読化し、`--no-mark-as-read`で抑止できます。
+- **weather**: `scripts/current.sh` と `forecast.sh`。
 
-cronで使う場合も既読状態は保存せず、実行ごとに期間を明示する。公開Botなど`bash`を許可しない境界ではTool版を、trustedな環境でSkillを使う場合はPython版を選べる。
+### last30days
+
+**場所:** `templates/SKILLS/last30days/`
+
+既存workflow Skillを維持します。HN・GitHub recent・Redditを個別に取得し、過去30日の議論を集約します。`hackernews-search` と `github-recent-search` はこのSkillのtrustedな内部依存であり、独立Skillは作りません。
 
 ### session-logs
 
@@ -172,12 +212,6 @@ cronで使う場合も既読状態は保存せず、実行ごとに期間を明�
 **場所:** `templates/SKILLS/interest-profile/SKILL.md`
 
 会話履歴からユーザーの興味プロファイルを抽出・蓄積し `INTERESTS.md`（プロジェクトルート）を生成・更新するスキル。`sync`（履歴差分を分析してシグナルを `data/interests/interest-log.jsonl` に追記し再生成）と `show`（既存の `INTERESTS.md` を表示するだけ）の2モードを持つ。cron等からの自律実行時はユーザーへの確認を行わない設計。
-
-### last30days
-
-**場所:** `templates/SKILLS/last30days/SKILL.md`
-
-指定トピックについて、HN・公開GitHub Issues/PR・Redditをそれぞれ独立したTool Proxy callで取得し、過去30日の議論・反応を既存の日本語見出しで集約します。HN/GitHub検索はcredential不要、Redditは既存CookieをRuntimeだけで使います。HN/GitHubの直接curlは同梱scriptと共通CLIへ置き換えています。
 
 ### md2html
 
@@ -204,9 +238,9 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 | `wiki-search` | `templates/SKILLS/wiki-search/` | 外部依存なしの自前TFスコアリングによる軽量フルテキスト検索（数百ページ程度まで） |
 | `wiki-search-fts` | `templates/SKILLS/wiki-search-fts/` | SQLite FTS5（BM25ランキング）による検索。`wiki-search`が不十分になった大規模wiki向けの移行先 |
 
-### finance系Tool
+### finance Skill / Tool
 
-`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理するsandbox-local Tool群。AgentはSQLやDB pathを指定せず、最初のTool実行時にDB初期化と必要な互換migrationを内部で行う。
+`templates/SKILLS/finance/` の8つのscriptから、Runner imageに同梱した `finance-cli` を呼び出せます。Financeは `src/tools/finance.ts` の確定的なsandbox-local Tool実装を再利用し、Tool Proxy capabilityへ戻しません。`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理します。AgentはSQLやDB pathを指定せず、最初の実行時にDB初期化と必要な互換migrationを内部で行います。
 
 **スキーマ:**
 
@@ -225,4 +259,4 @@ subscriptions (id, name, amount, cycle, next_date, category, active, recorded_at
 | `finance-subscription-reminder.ts` | `daysAhead`（デフォルト7日）以内に更新日を迎えるサブスクを通知 |
 | `_finance-db.ts` | 上記2ジョブが共有する `resolveFinanceDbPath(groupName)`。`groups/{groupName}/finance.db` を解決し、`groupName` のディレクトリトラバーサル防止とDB未作成時のエラー化を行う |
 
-両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、DBは読み取り専用（`readonly: true`）で開く。導入には `config/cron.json` にジョブ定義を追加し、対象グループでfinance Toolを一度実行してDBを初期化しておく。
+両ジョブとも `ctx.channelId` / `ctx.groupName` が必須で、DBは読み取り専用（`readonly: true`）で開く。導入には `config/cron.json` にジョブ定義を追加し、対象グループでfinance ToolまたはSkillを一度実行してDBを初期化しておく。

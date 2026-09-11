@@ -1565,6 +1565,27 @@ describe("sendMessage: configOverride", () => {
     expect(args).toContain("SANDBOX_PROXY_PORTS=12345 23456");
   });
 
+  it("Skill依存capabilityのapprovalも同じrun authorityへ渡す", async () => {
+    const sendMessage = await setup();
+
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: {
+        tools: ["bash"],
+        skills: ["github-write"],
+        approvalRequiredTools: ["comment-issue"],
+      },
+    });
+
+    expect(createToolProxyRunMock).toHaveBeenCalledWith(
+      expect.stringContaining("test-group:session-1:"),
+      ["comment-issue"],
+      {
+        approvalRequiredCapabilities: ["comment-issue"],
+        trustedDiscordDestination: undefined,
+      },
+    );
+  });
+
   it("configOverrideの不正なapproval選択は設定エラーを返す", async () => {
     const sendMessage = await setup();
 
@@ -1595,7 +1616,7 @@ describe("sendMessage: configOverride", () => {
     },
     {
       tools: ["read"],
-      skills: ["arxiv-search", "arxiv-survey"],
+      skills: ["arxiv"],
       allowed: ["arxiv-search", "arxiv-survey"],
     },
     {
@@ -1651,8 +1672,25 @@ describe("sendMessage: configOverride", () => {
       expect.any(String),
       [
         "agent-reach",
+        "tavily-search",
         "arxiv-search",
         "arxiv-survey",
+        "list-issues",
+        "read-issue",
+        "read-pull-request",
+        "list-issue-comments",
+        "list-pull-request-comments",
+        "comment-issue",
+        "list-calendars",
+        "list-events",
+        "read-event",
+        "create-event",
+        "update-event",
+        "delete-event",
+        "list-emails",
+        "read-email",
+        "get-current-weather",
+        "get-weather-forecast",
         "hackernews-search",
         "github-recent-search",
       ],

@@ -18,15 +18,21 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 | Skill | 組込依存 |
 | --- | --- |
 | agent-reach | agent-reach |
-| arxiv-search | arxiv-search |
-| arxiv-survey | arxiv-survey |
+| tavily-search | tavily-search |
+| arxiv | arxiv-search、arxiv-survey |
+| github | list-issues、read-issue、read-pull-request、list-issue-comments、list-pull-request-comments |
+| github-write | comment-issue |
+| calendar | list-calendars、list-events、read-event、create-event、update-event、delete-event |
+| mail | list-emails、read-email |
+| weather | get-current-weather、get-weather-forecast |
 | last30days | hackernews-search、github-recent-search、agent-reach |
+| finance | sandbox-local finance-cli（Tool Proxy依存なし） |
 
 `skills: "*"` はこの表の依存だけへ展開し、他のcapabilityを許可しません。依存の解決は配置状態に左右されませんが、promptへ載せるSkill一覧は実際にインストール済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
 
-native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。Toolだけで選択されたcapabilityもCLIから利用できます。Skillだけの選択でも組込依存を使えます。
+native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。Toolだけで選択されたcapabilityもCLIから利用できます。Skill依存capabilityも同じrun authorityに含まれますが、Skillのshell CLIを実行するには `bash` を別途許可する必要があります。
 
-`approvalRequiredTools` は引き続きeffective `tools` に含まれるhost/runtime capabilityだけに指定できます。Skill単独capabilityへの設定拡張は採用していません。必要なら対応Toolを `tools` にも追加してください。設定したapprovalはnative／Skill双方に適用され、表示・承認した実効引数をそのまま実行します。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
+`approvalRequiredTools` はeffective `tools` またはtrusted Skill依存に含まれるhost/runtime capabilityへ指定できます。Skillだけで許可されたcapabilityにも、native選択時と同じapprovalが適用され、表示・承認した実効引数をそのまま実行します。Financeのsandbox-local操作はTool Proxy approval対象ではありません。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
 
 ## コンテナと成果物の寿命
 
@@ -67,17 +73,17 @@ imageが無い場合はprebuilt imageの設定エラー、CLIが無い場合はR
 
 ### 配置済みSkillの更新
 
-`ensureGroupSkills` は既存Skillを自動上書きしません。`agent-reach`、`arxiv-search`、`arxiv-survey`、`last30days` を使う各groupで、**カスタマイズとの差分を確認して**更新します。
+`ensureGroupSkills` は既存Skillを自動上書きしません。`agent-reach`、`tavily-search`、`arxiv`、`github`、`github-write`、`calendar`、`mail`、`weather`、`finance`、`last30days` を使う各groupで、**カスタマイズとの差分を確認して**更新します。
 
 ```sh
 group=YOUR_GROUP
-skill=arxiv-search
+skill=arxiv
 diff -ru "groups/$group/SKILLS/$skill" "templates/SKILLS/$skill"
 ```
 
-更新対象はagent-reachの `scripts/agent-reach.sh`、arXivの `scripts/search.py` / `scripts/survey.py`、last30daysの `scripts/reddit-search.sh` と新規 `hn-search.sh` / `github-search.sh`、各 `SKILL.md` です。カスタマイズが無いことを確認したファイルだけテンプレートからcopyし、独自手順は共通CLIを呼ぶよう手動で統合します。Skillフォルダを無条件に削除・上書きしないでください。
+更新対象は各domain Skillの `scripts/` と `SKILL.md`（特に `arxiv/scripts/search.py` / `survey.py`、各host capabilityの薄いshell frontend、financeの `finance-cli` 呼び出し）です。カスタマイズが無いことを確認したファイルだけテンプレートからcopyし、独自手順は共通CLIを呼ぶよう手動で統合します。Skillフォルダを無条件に削除・上書きしないでください。
 
-Financeを旧Skillから用途別Toolへ移行するgroupでは、`skills` から `finance` / `finance-setup` を外し、必要な8つの `finance-*` Toolを `tools` に追加します。`groups/<group>/SKILLS/finance` / `finance-setup` はテンプレート削除では自動削除されないため、独自変更が無いことを確認してから退役させてください。既存の `finance.db` は移動・再作成せずそのまま再利用します。
+Financeを用途別ToolからSkillでも使うgroupでは、`skills` に `finance` を追加します。`finance` SkillのscriptはRunner imageに同梱した `finance-cli` を通じて既存の8つのsandbox-local Toolを再利用し、SQLやDB pathを公開しません。既存の `finance.db` は移動・再作成せずそのまま再利用します。
 
 arXivのPython entrypoint・位置引数・`--from` / `--to` / `--limit` / `--sort`・JSON配列stdoutは維持します。CLIのlimitは1〜50の厳密検証、native側は50へのclampです。取得・正規化はnative TypeScriptへ統一し、旧Pythonとの差は次のとおりです。
 

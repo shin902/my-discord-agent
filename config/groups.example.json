@@ -5,7 +5,8 @@
       "provider": "zai",
       "modelId": "glm-4.7-flash"
     },
-    "tools": ["tavily-search", "agent-reach", "bot"],
+    "tools": ["bash", "bot"],
+    "skills": ["agent-reach", "tavily-search"],
     "approvalRequiredTools": ["tavily-search"],
     "allowMention": false,
     "toolLogArgs": true,
@@ -32,7 +33,8 @@
   {
     "name": "issue-triage",
     "bot": "public",
-    "tools": ["bash", "list-issues", "read-issue", "comment-issue"],
+    "tools": ["bash"],
+    "skills": ["github", "github-write"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [],

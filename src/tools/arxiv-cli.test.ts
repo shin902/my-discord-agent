@@ -58,7 +58,7 @@ function python(capability: string, args: string[], token: string) {
   const script = capability === "arxiv-search" ? "search.py" : "survey.py";
   return execFileAsync(
     "python3",
-    [`templates/SKILLS/${capability}/scripts/${script}`, ...args],
+    [`templates/SKILLS/arxiv/scripts/${script}`, ...args],
     {
       env: {
         ...process.env,
