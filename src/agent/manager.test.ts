@@ -1597,7 +1597,7 @@ describe("sendMessage: configOverride", () => {
         },
       }),
     ).rejects.toThrow(
-      "設定エラー: 承認必須ツールは有効な tools に含めてください: get-current-weather",
+      "設定エラー: 承認必須ツールは有効な tools または Skill の依存に含めてください: get-current-weather",
     );
     expect(spawnMock).not.toHaveBeenCalled();
   });
