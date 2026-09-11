@@ -18,6 +18,7 @@ config/
   groups.example.json
   cron.json                # 定期実行ジョブ定義（省略可）
   cron.example.json
+  memory-core-prompts.example.json # MemoryCore custom prompt fixture
 
 groups/{name}/
   AGENTS.md                # グループのシステムプロンプト
@@ -42,7 +43,7 @@ Memory backendごとに `handler: "jobs/memory-export.ts"` を持つjobを定義
 
 ### MemoryCore sidecarの起動
 
-`compose.memory-core.yaml`はMemoryCore単体を公式image `agentmemory/memory-core:1.0.1`から起動します。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストのCLIProxyAPIが`127.0.0.1:8317`で待ち受けるため、MemoryCoreはhost networkで起動します。MemoryCore自身のGatewayは`127.0.0.1`にbindし、ホスト外部へ公開しません。MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
+`compose.memory-core.yaml`はMemoryCore単体を既定で公式image `agentmemory/memory-core:1.0.1`から起動します。`MEMORY_CORE_IMAGE`を指定した場合だけ別tagを使います。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは通常不要です。ホストのCLIProxyAPIが`127.0.0.1:8317`で待ち受けるため、MemoryCoreはhost networkで起動します。MemoryCore自身のGatewayは`127.0.0.1`にbindし、ホスト外部へ公開しません。MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
 
 exampleをGit管理外の実設定へコピーします。exampleは、直接OpenAIなどのOpenAI-compatible providerを使う汎用構成です。Composeは`.env`の`TDAI_LLM_API_BASE_URL`をMemoryCoreが認識する`TDAI_LLM_BASE_URL`へ渡し、未設定時は`https://api.openai.com/v1`を使います。`MEMORY_CORE_LLM_API_KEY`は選択したproviderのAPI keyとして`TDAI_LLM_API_KEY`へ渡します。API key自体は追跡対象外のYAMLへ書きません。
 
@@ -69,6 +70,40 @@ MEMORY_CORE_LLM_API_KEY=<memory-core-dedicated-key>
 CLIProxyAPI側の`api-keys`へ`<memory-core-dedicated-key>`を追加します。既存の`CLIPROXY_API_KEY`とは分けて管理します。
 
 exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`でも抽出thresholdが`1 → 2 → 4 → 5`と増えるため、最初の会話後から抽出が始まり得ます。厳密な5会話ごとのbatchではありません。また、my-discord-agentはcanonical trajectoryからL0へexportするだけなので、exampleの`memory.recall.enabled`は`false`です。
+
+#### custom promptを適用する
+
+`config/memory-core-prompts.example.json` はL1/L2/L3の品質調整を定義したfixtureです。sidecar起動後に、hostのloopback endpointへ実行します。
+
+```bash
+pnpm memory-core:prompts
+```
+
+コマンドは同名・同layerのpromptを更新または作成し、`team_id` と `agent_id` のagent scopeへ適用します。別の設定を使うときは `MEMORY_CORE_PROMPTS_FILE`、`MEMORY_CORE_TEAM_ID`、`MEMORY_CORE_AGENT_ID` を指定します。v3 data-planeのBearer要件のため `MEMORY_CORE_GATEWAY_API_KEY` を環境から読みます。
+
+#### embeddingを有効化する
+
+既定は `MEMORY_CORE_EMBEDDING_PROVIDER=none` です。LLM用のCLIProxyAPI endpointにembedding APIがあるとは仮定せず、embedding専用のOpenAI-compatible endpointを使える場合だけ、次の値を`.env`へ追加してください。
+
+```env
+MEMORY_CORE_EMBEDDING_PROVIDER=openai
+MEMORY_CORE_EMBEDDING_API_BASE_URL=https://api.openai.com/v1
+MEMORY_CORE_EMBEDDING_API_KEY=<embedding-provider-key>
+MEMORY_CORE_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+exampleのdimensionは `text-embedding-3-small` と一致する `1536` です。modelを変更する場合はdimensionも同時に変更し、sidecarを再起動します。`hybrid` retrievalはTencentDB sidecarの標準dense+sparse経路に任せ、my-discord-agent側で検索・rerank・gateを実装しません。
+
+#### activity metadata patch imageを作る
+
+公式imageを変更せず、upstreamの固定commitへ3ファイルの最小patchを適用するビルドスクリプトを提供しています。
+
+```bash
+pnpm memory-core:build
+MEMORY_CORE_IMAGE=my-discord-agent-memory-core:quality pnpm memory-core up -d
+```
+
+`pnpm memory-core:build` は `feat/server_team` のcommit `0468a2a5b50eaafc54758ed1e2e6609472e5b6ce` を検証してから `patches/tencentdb-memory-core-activity-metadata.patch` を適用し、upstream `MemoryCore/Dockerfile` でimageをbuildします。patchはL1 `metadata.activity_start_time` / `metadata.activity_end_time`をL2のNew Memories Listへforwardするだけです。L0 timestampの活動時刻、L2/L3のteam+agent scope、checkpoint、標準persona.md protocolは変更しません。upstream refが別commitへ移動した場合はbuildを中断します。
 
 起動してhealth endpointを確認します。
 

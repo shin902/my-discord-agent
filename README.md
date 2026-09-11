@@ -173,7 +173,7 @@ pnpm sandbox build
 
 ### 5. MemoryCore sidecarを起動（任意）
 
-TencentDB Agent Memoryを使う場合は、公式MemoryCore imageをsidecarとして起動します。cloneや自前buildは不要です。
+TencentDB Agent Memoryを使う場合は、既定の公式MemoryCore imageをsidecarとして起動します。通常はcloneや自前buildは不要です。L1 activity metadataをL2へ渡す品質patchを使う場合だけ、`pnpm memory-core:build`で固定upstream commitからcustom imageを作成できます。
 
 ```bash
 cp config/memory-core.example.yaml config/memory-core.yaml
@@ -181,6 +181,8 @@ cp config/memory-core.example.yaml config/memory-core.yaml
 # TDAI_LLM_API_BASE_URLは必要に応じて接続先へ変更する
 # MEMORY_CORE_GATEWAY_API_KEYも設定してから起動
 pnpm memory-core up -d
+# 任意: custom promptをTencentDBへ適用
+# pnpm memory-core:prompts
 memory_core_port="${MEMORY_CORE_PORT:-$(awk -F= '$1 == "MEMORY_CORE_PORT" { print $2; exit }' .env 2>/dev/null)}"
 curl "http://127.0.0.1:${memory_core_port:-8420}/health"
 ```

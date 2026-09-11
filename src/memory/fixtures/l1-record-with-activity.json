@@ -1,0 +1,9 @@
+{
+  "id": "l1-activity-example",
+  "content": "ユーザーは2026年9月10日の夕方に読書会へ参加した。",
+  "created_at": "2026-09-11T01:00:00.000Z",
+  "metadata": {
+    "activity_start_time": "2026-09-10T18:30:00.000Z",
+    "activity_end_time": "2026-09-10T19:15:00.000Z"
+  }
+}

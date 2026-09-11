@@ -1,0 +1,66 @@
+diff --git a/MemoryCore/src/core/prompts/scene-extraction.ts b/MemoryCore/src/core/prompts/scene-extraction.ts
+index 852fc45..26a2bf3 100644
+--- a/MemoryCore/src/core/prompts/scene-extraction.ts
++++ b/MemoryCore/src/core/prompts/scene-extraction.ts
+@@ -559,0 +560,2 @@ ${memoriesJson}
++> 时间语义：若记忆包含 `metadata.activity_start_time` 或 `metadata.activity_end_time`，它们表示活动实际发生的时间范围；`created_at` 表示记忆生成时间。整合事件时优先使用活动时间，不能用生成时间臆造活动日期。
++
+diff --git a/MemoryCore/src/core/scene/scene-extractor.ts b/MemoryCore/src/core/scene/scene-extractor.ts
+index d9d434a..80bcc77 100644
+--- a/MemoryCore/src/core/scene/scene-extractor.ts
++++ b/MemoryCore/src/core/scene/scene-extractor.ts
+@@ -141 +141,9 @@ export class SceneExtractor {
+-  async extract(memories: Array<{ content: string; created_at: string; id?: string }>): Promise<ExtractionResult> {
++  async extract(memories: Array<{
++    content: string;
++    created_at: string;
++    id?: string;
++    metadata?: {
++      activity_start_time?: string;
++      activity_end_time?: string;
++    };
++  }>): Promise<ExtractionResult> {
+@@ -228,0 +237 @@ export class SceneExtractor {
++        metadata: m.metadata ?? {},
+diff --git a/MemoryCore/src/utils/pipeline-factory.ts b/MemoryCore/src/utils/pipeline-factory.ts
+index c38034f..5a88072 100644
+--- a/MemoryCore/src/utils/pipeline-factory.ts
++++ b/MemoryCore/src/utils/pipeline-factory.ts
+@@ -145,0 +146,19 @@ function profileOptionsForScope(scope: string): ProfileScopeOptions | undefined
++type ActivityTimeMetadata = {
++  activity_start_time?: string;
++  activity_end_time?: string;
++};
++
++/** Keep only activity-time metadata when forwarding L1 records into L2. */
++function pickActivityTimeMetadata(metadata: unknown): ActivityTimeMetadata {
++  if (!metadata || typeof metadata !== "object") return {};
++  const value = metadata as Record<string, unknown>;
++  return {
++    ...(typeof value.activity_start_time === "string"
++      ? { activity_start_time: value.activity_start_time }
++      : {}),
++    ...(typeof value.activity_end_time === "string"
++      ? { activity_end_time: value.activity_end_time }
++      : {}),
++  };
++}
++
+@@ -734 +753,12 @@ export function createL2Runner(opts: {
+-    let records: Array<{ content: string; created_at: string; id: string; updatedAt: string; teamId?: string; userId?: string; agentId?: string; sessionId?: string; taskId?: string }>;
++    let records: Array<{
++      content: string;
++      created_at: string;
++      id: string;
++      updatedAt: string;
++      metadata: ActivityTimeMetadata;
++      teamId?: string;
++      userId?: string;
++      agentId?: string;
++      sessionId?: string;
++      taskId?: string;
++    }>;
+@@ -764,0 +795 @@ export function createL2Runner(opts: {
++        metadata: pickActivityTimeMetadata(r.metadata),
+@@ -829,0 +861 @@ export function createL2Runner(opts: {
++        metadata: r.metadata,

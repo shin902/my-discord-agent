@@ -42,4 +42,13 @@ memory:
     timeoutMs: 5000
   storeBackend: sqlite
   embedding:
-    provider: none
+    # Compose defaults TDAI_EMBEDDING_PROVIDER to none. Set it to openai only
+    # when the endpoint, key, model, and dimensions are known to match.
+    provider: "${TDAI_EMBEDDING_PROVIDER}"
+    baseUrl: "${TDAI_EMBEDDING_API_BASE_URL}"
+    apiKey: "${TDAI_EMBEDDING_API_KEY}"
+    model: "${TDAI_EMBEDDING_MODEL}"
+    # text-embedding-3-small is 1536-dimensional. Change this together with
+    # model when using another embedding model.
+    dimensions: 1536
+    sendDimensions: true

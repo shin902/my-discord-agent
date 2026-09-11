@@ -1,6 +1,6 @@
 # Agent Memory export
 
-Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
+Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。my-discord-agentはrecall、prompt injection、embeddingを実装せず、L0→L1→L2→L3の生成・検索はTencentDB Agent Memory sidecarへ委譲します。
 
 ```text
 config/cron.json (schedule + backend settings)
@@ -47,6 +47,44 @@ backendごとに `config/cron.json` へhandler付きjobを1つ定義します。
 | `teamId` / `agentId` | TencentDB scope。既定 `default` / `my-discord-agent` |
 | `bearerTokenEnv` | Bearer tokenを読む環境変数名。値をJSONへ書かない。MemoryCore v3 data-planeでは実質必須 |
 | `timeoutMs` | 1 HTTP requestのtimeout（body読み込みを含む）。1〜120000ms、既定10000 |
+
+## 品質設定（TencentDB sidecar）
+
+### 日本語のL1/L2/L3 custom prompt
+
+upstreamの `/v3/memory-prompt/*` を使い、L1（抽出）、L2（Scene統合）、L3（persona）を日本語会話向けに調整できます。設定はTencentDBのprompt storeに保存され、my-discord-agentのqueueや独自RAGには保存しません。次のfixtureは `team_id=default` / `agent_id=my-discord-agent` に3層をagent scopeで適用します。
+
+```bash
+pnpm memory-core:prompts
+```
+
+このコマンドは `config/memory-core-prompts.example.json` を読み、同名・同layerのpromptを更新または作成してから `/v3/memory-prompt/set` で適用します。別scopeや別fixtureを使う場合は `MEMORY_CORE_PROMPTS_FILE`、`MEMORY_CORE_TEAM_ID`、`MEMORY_CORE_AGENT_ID` を指定してください。v3 data-planeのBearer要件のため `.env` の `MEMORY_CORE_GATEWAY_API_KEY` を使用します。
+
+### Embedding（optional）
+
+標準例は `none` です。CLIProxyAPI等のLLM endpointが `/embeddings` を提供するとは限らないため、未検証のembedding providerを有効化しません。dense embeddingを利用できるOpenAI-compatible endpointがある場合だけ、`.env` で次を設定してsidecarを再起動します。
+
+```env
+MEMORY_CORE_EMBEDDING_PROVIDER=openai
+MEMORY_CORE_EMBEDDING_API_BASE_URL=https://api.openai.com/v1
+MEMORY_CORE_EMBEDDING_API_KEY=<embedding-provider-key>
+MEMORY_CORE_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+`config/memory-core.example.yaml` は上記modelのdimensionを `1536` として指定しています。別modelを使う場合は、そのmodelの出力dimensionへ変更し、既存vector indexとの不一致を避けてください。TencentDB側の `hybrid` はdense+sparseを使いますが、アプリ側に独自のrecall・reranker・relevance gateは追加していません。provider未設定時は従来どおりkeyword/BM25中心で動作します。
+
+### L1→L2のactivity timestamp patch
+
+upstreamのL2 runnerは従来、L1の `created_at` だけをScene入力へ渡し、L1 `metadata.activity_start_time` / `metadata.activity_end_time` を落としていました。`created_at` は記憶生成時刻であり、Discord活動時刻ではありません。
+
+再現可能な最小patchを `patches/tencentdb-memory-core-activity-metadata.patch` に固定し、upstream `feat/server_team` commit `0468a2a5b50eaafc54758ed1e2e6609472e5b6ce` へ適用します。これはL2入力のmetadataへactivity start/endだけを追加し、checkpoint、team+agent scope、標準schema/type、persona.md protocolは変更しません。custom imageを使う場合は次を実行し、`.env` に `MEMORY_CORE_IMAGE=my-discord-agent-memory-core:quality` を設定してから起動します。
+
+```bash
+pnpm memory-core:build
+MEMORY_CORE_IMAGE=my-discord-agent-memory-core:quality pnpm memory-core up -d
+```
+
+公式imageの既定値は変更していません。custom imageを使わない場合、L1 metadataのL2入力へのforwardは行われないため、patch適用済みimageかどうかをhealthだけでなくbuildログ・image tagで確認してください。
 
 MemoryCore sidecarの起動・鍵設定は [config.md](config.md#memorycore-sidecarの起動) を参照してください。
 

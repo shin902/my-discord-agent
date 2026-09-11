@@ -12,6 +12,7 @@ config/*
 !config/cron.example.json
 !config/bots.example.json
 !config/memory-core.example.yaml
+!config/memory-core-prompts.example.json
 
 groups/*/
 
