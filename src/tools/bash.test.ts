@@ -1,96 +1,281 @@
-import type { ChildProcess } from "node:child_process";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { spawn as realSpawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { dirname } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("node:child_process", () => ({
-  exec: vi.fn(),
-}));
+vi.mock("node:child_process", async (original) => {
+  const actual = await original<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: vi.fn((command, args, options) =>
+      actual.spawn(command, args, { ...options, cwd: process.cwd() }),
+    ),
+  };
+});
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    copyFile: vi.fn(actual.copyFile),
+    mkdtemp: vi.fn(actual.mkdtemp),
+  };
+});
 
-import { exec } from "node:child_process";
+import { copyFile, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { bashTool } from "./bash.js";
+import {
+  externalizeLargeToolResult,
+  TOOL_OUTPUT_CHAR_LIMIT,
+} from "./output.js";
 
-const mockExec = vi.mocked(exec);
-
-function mockSuccess(stdout: string, stderr = "") {
-  mockExec.mockImplementation((_cmd, _opts, cb) => {
-    cb?.(null, stdout, stderr);
-    return {} as ChildProcess;
-  });
+function run(command: string, signal?: AbortSignal) {
+  return bashTool.execute("id", { command }, signal, undefined);
 }
 
-function mockFailure(err: Error) {
-  mockExec.mockImplementation((_cmd, _opts, cb) => {
-    cb?.(
-      err,
-      "",
-      (err as NodeJS.ErrnoException & { stderr?: string }).stderr ?? "",
-    );
-    return {} as ChildProcess;
-  });
-}
-
-function getText(result: Awaited<ReturnType<typeof bashTool.execute>>): string {
+function getText(result: Awaited<ReturnType<typeof run>>): string {
   const c = result.content[0];
   if (c.type !== "text") throw new Error("expected text content");
   return c.text;
 }
 
-beforeEach(() => {
+function outputDetails(result: { details: unknown }) {
+  return result.details as {
+    fullOutputPath: string;
+    totalBytes: number;
+    previewBytes: number;
+    truncated: boolean;
+    lifetime: string;
+  };
+}
+
+afterEach(async () => {
+  vi.useRealTimers();
+  for (const result of vi.mocked(mkdtemp).mock.results) {
+    if (result.type === "return") {
+      await rm(await result.value, { recursive: true, force: true });
+    }
+  }
   vi.clearAllMocks();
+  vi.mocked(open).mockReset();
+  vi.mocked(open).mockImplementation(
+    (
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      )
+    ).open,
+  );
 });
 
-describe("bashTool", () => {
-  it("コマンドの stdout を返す", async () => {
-    mockSuccess("hello\n");
-    const result = await bashTool.execute(
-      "id",
-      { command: "echo hello" },
-      undefined,
-      undefined,
-    );
+describe("bashTool streaming output", () => {
+  it("keeps small stdout inline and saves a private, exact byte copy", async () => {
+    const result = await run("printf 'hello\\n'");
     expect(getText(result)).toBe("hello");
-  });
-
-  it("stderr もキャプチャして返す", async () => {
-    mockSuccess("", "warn\n");
-    const result = await bashTool.execute(
-      "id",
-      { command: "echo warn >&2" },
-      undefined,
-      undefined,
-    );
-    expect(getText(result)).toContain("warn");
-  });
-
-  it("コマンド失敗時はエラーをスローする", async () => {
-    const err = Object.assign(new Error("failed"), {
-      stderr: "error output\n",
+    const details = outputDetails(result);
+    expect(details).toMatchObject({
+      totalBytes: 6,
+      truncated: false,
+      lifetime: "container-run",
     });
-    mockFailure(err);
-    await expect(
-      bashTool.execute("id", { command: "exit 1" }, undefined, undefined),
-    ).rejects.toThrow("error output");
+    expect(details.fullOutputPath).toMatch(
+      /^\/tmp\/my-discord-agent-bash-[^/]+\/output\.txt$/,
+    );
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe("hello\n");
+    expect((await stat(dirname(details.fullOutputPath))).mode & 0o777).toBe(
+      0o700,
+    );
+    expect((await stat(details.fullOutputPath)).mode & 0o777).toBe(0o600);
   });
 
-  it("出力なしのコマンドは (出力なし) を返す", async () => {
-    mockSuccess("", "");
-    const result = await bashTool.execute(
-      "id",
-      { command: "true" },
-      undefined,
-      undefined,
+  it("merges stdout/stderr in pipe order, without labels or inserted newlines", async () => {
+    const result = await run("printf err >&2; printf out; printf end >&2");
+    expect(getText(result)).toBe("erroutend");
+    expect(await readFile(outputDetails(result).fullOutputPath, "utf8")).toBe(
+      "erroutend",
     );
-    expect(getText(result)).toBe("(出力なし)");
   });
 
-  it("大きな出力は省略せずそのまま返す", async () => {
-    const big = "a".repeat(15_000);
-    mockSuccess(big);
-    const result = await bashTool.execute(
-      "id",
-      { command: "cat big" },
-      undefined,
-      undefined,
+  it("returns the existing no-output placeholder and moderately sized output", async () => {
+    expect(getText(await run("true"))).toBe("(出力なし)");
+    expect(getText(await run("head -c 15000 /dev/zero | tr '\\0' a"))).toBe(
+      "a".repeat(15000),
     );
-    expect(getText(result)).toBe(big);
   });
+
+  it("preserves >1 MiB from each descriptor while keeping inline output within the common boundary", async () => {
+    const size = 2 * 1024 * 1024;
+    const result = await run(
+      `head -c ${size} /dev/zero | tr '\\0' a; head -c ${size} /dev/zero | tr '\\0' b >&2; printf 終`,
+    );
+    const details = outputDetails(result);
+    expect(details).toMatchObject({
+      totalBytes: size * 2 + 3,
+      truncated: true,
+      lifetime: "container-run",
+    });
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe(
+      `${"a".repeat(size)}${"b".repeat(size)}終`,
+    );
+    expect(details.previewBytes).toBeGreaterThan(0);
+    expect(details.previewBytes).toBeLessThan(details.totalBytes);
+    expect(getText(result).length).toBeLessThanOrEqual(TOOL_OUTPUT_CHAR_LIMIT);
+    expect(getText(result)).toContain(details.fullOutputPath);
+    expect(getText(result)).toContain("current container run");
+    expect(await externalizeLargeToolResult(result)).toBe(result);
+  });
+
+  it.each([
+    0, 1,
+  ])("caps combined capture at 5 MiB (excess: %i byte)", async (excess) => {
+    const limit = 5 * 1024 * 1024;
+    const result = await run(
+      `head -c ${limit - 1} /dev/zero; head -c ${1 + excess} /dev/zero >&2`,
+    ).catch((error: Error & { details: unknown }) => error);
+    const details = outputDetails(result);
+    expect(details).toMatchObject({
+      totalBytes: limit,
+      captureLimitBytes: limit,
+      captureLimitExceeded: excess > 0,
+    });
+    expect((await stat(details.fullOutputPath)).size).toBe(limit);
+    expect(
+      (await readFile(details.fullOutputPath)).equals(Buffer.alloc(limit)),
+    ).toBe(true);
+    if (excess) {
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain(
+        "Partial output (5 MiB capture limit exceeded)",
+      );
+      expect((result as Error).message).toContain(details.fullOutputPath);
+      expect((result as Error).message.length).toBeLessThanOrEqual(
+        TOOL_OUTPUT_CHAR_LIMIT,
+      );
+    } else {
+      expect(result).not.toBeInstanceOf(Error);
+    }
+  });
+
+  it("stops an unbounded producer at the capture limit and retains partial output", async () => {
+    const error = await run("yes").catch(
+      (error: Error & { details: unknown }) => error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("capture exceeded 5 MiB");
+    const details = outputDetails(error);
+    expect((await stat(details.fullOutputPath)).size).toBe(5 * 1024 * 1024);
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe(
+      "y\n".repeat((5 * 1024 * 1024) / 2),
+    );
+    const child = vi.mocked(realSpawn).mock.results[0].value;
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  });
+
+  it("exposes the complete acquired output on non-zero exit", async () => {
+    const error = await run("printf partial; printf error >&2; exit 7").catch(
+      (error: Error & { details: unknown }) => error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("exit 7");
+    const details = outputDetails(error);
+    expect((error as Error).message).toContain(details.fullOutputPath);
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe("partialerror");
+  });
+
+  it("publishes complete output after the command cleans its capture paths", async () => {
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    // Scope the cleanup glob to this test, never other calls' saved output.
+    const prefix = `/tmp/my-discord-agent-bash-${randomUUID()}-`;
+    vi.mocked(mkdtemp).mockImplementationOnce(() => actual.mkdtemp(prefix));
+    const result = await run(
+      `for path in ${prefix}*; do test ! -e "$path" || exit 9; done; rm -rf ${prefix}*; head -c 100000 /dev/zero | tr '\\0' a`,
+    );
+    const details = outputDetails(result);
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe(
+      "a".repeat(100000),
+    );
+    expect(getText(result)).toContain(details.fullOutputPath);
+    expect(getText(result).length).toBeLessThanOrEqual(TOOL_OUTPUT_CHAR_LIMIT);
+  });
+
+  it("discards a failed publish without returning a stale locator", async () => {
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(copyFile).mockImplementationOnce(async (_source, destination) => {
+      await actual.writeFile(destination, "incomplete copy");
+      throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+    });
+    const error = await run("printf complete").catch((error: Error) => error);
+    expect((error as Error).message).toBe(
+      "Output storage failed; capture discarded",
+    );
+    expect(error).not.toHaveProperty("details.fullOutputPath");
+    for (const result of vi.mocked(mkdtemp).mock.results) {
+      await expect(stat(await result.value)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    expect(getText(await run("printf recovered"))).toBe("recovered");
+  });
+
+  it("preserves acquired output when the command times out", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = run("printf partial; sleep 60").catch(
+      (error: Error & { details: unknown }) => error,
+    );
+    // Observe the anonymous capture before advancing the command's timeout.
+    await vi.waitFor(async () => {
+      const file = await vi.mocked(open).mock.results[0]?.value;
+      expect((await file.stat()).size).toBe(7);
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    const error = await pending;
+    expect((error as Error).message).toContain("timed out");
+    const details = outputDetails(error);
+    expect((error as Error).message).toContain(details.fullOutputPath);
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe("partial");
+  });
+
+  it("does not start the command when output storage cannot be opened", async () => {
+    vi.mocked(open).mockRejectedValueOnce(
+      Object.assign(new Error("ENOSPC"), { code: "ENOSPC" }),
+    );
+    await expect(run("yes")).rejects.toThrow(
+      "Output storage failed; capture discarded",
+    );
+    expect(realSpawn).not.toHaveBeenCalled();
+    const directory = await vi.mocked(mkdtemp).mock.results[0].value;
+    await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform === "linux")(
+    "discards ENOSPC capture and stops an unbounded producer",
+    async () => {
+      const actual =
+        await vi.importActual<typeof import("node:fs/promises")>(
+          "node:fs/promises",
+        );
+      vi.mocked(open).mockImplementationOnce(async (path, flags, mode) => {
+        const partial = await actual.open(path, flags, mode);
+        await partial.writeFile("partial capture occupying disk");
+        await partial.close();
+        return actual.open("/dev/full", "w");
+      });
+      const error = await run("yes").catch((error: Error) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "Output storage failed; capture discarded",
+      );
+      expect(error).not.toHaveProperty("details.fullOutputPath");
+      const directory = await vi.mocked(mkdtemp).mock.results[0].value;
+      await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+      const child = vi.mocked(realSpawn).mock.results[0].value;
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+      expect(getText(await run("printf recovered"))).toBe("recovered");
+    },
+  );
 });
