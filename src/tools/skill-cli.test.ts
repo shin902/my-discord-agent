@@ -13,11 +13,13 @@ let path: string;
 beforeAll(async () => {
   directory = await mkdtemp("/tmp/domain-skill-cli-");
   capturePath = join(directory, "capture");
-  await writeFile(
-    join(directory, "tool-proxy"),
-    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TOOL_CAPTURE\"\nprintf 'ok'\n",
-    { mode: 0o700 },
-  );
+  for (const command of ["tool-proxy", "finance-cli"]) {
+    await writeFile(
+      join(directory, command),
+      "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TOOL_CAPTURE\"\nprintf 'ok'\n",
+      { mode: 0o700 },
+    );
+  }
   path = `${directory}:${process.env.PATH ?? ""}`;
 });
 
@@ -265,5 +267,66 @@ describe("built-in domain Skill CLI frontends", () => {
   ] as const)("%s/%s only adapts arguments for the proxy", async (skill, name, args, capability, expected) => {
     await runScript(skill, name, [...args]);
     await expect(captured()).resolves.toEqual([capability, expected]);
+  });
+
+  it("finance.py delegates all eight operations without implementing storage", async () => {
+    const cases = [
+      [
+        ["record-transaction", "expense", "100", "--category", "food"],
+        "finance-record-transaction",
+        { type: "expense", amount: 100, category: "food" },
+      ],
+      [
+        ["list-transactions", "--from", "2026-09-01", "--type", "expense"],
+        "finance-list-transactions",
+        { from: "2026-09-01", type: "expense" },
+      ],
+      [
+        ["summary", "--to", "2026-09-30"],
+        "finance-summary",
+        { to: "2026-09-30" },
+      ],
+      [
+        ["add-subscription", "Example", "980", "monthly", "2026-09-30"],
+        "finance-add-subscription",
+        {
+          name: "Example",
+          amount: 980,
+          cycle: "monthly",
+          nextDate: "2026-09-30",
+        },
+      ],
+      [
+        ["update-subscription", "Example", "--amount", "1200", "--inactive"],
+        "finance-update-subscription",
+        { name: "Example", amount: 1200, active: false },
+      ],
+      [
+        ["cancel-subscription", "Example"],
+        "finance-cancel-subscription",
+        { name: "Example" },
+      ],
+      [
+        ["list-subscriptions", "--include-inactive"],
+        "finance-list-subscriptions",
+        { includeInactive: true },
+      ],
+      [
+        ["subscription-history", "Example"],
+        "finance-subscription-history",
+        { name: "Example" },
+      ],
+    ] as const;
+    for (const [args, operation, expected] of cases) {
+      await runScript("finance", "finance.py", [...args]);
+      await expect(captured()).resolves.toEqual([operation, expected]);
+    }
+  });
+
+  it("keeps finance.py limited to argument adaptation", async () => {
+    const source = await readFile(script("finance", "finance.py"), "utf8");
+    expect(source).not.toMatch(
+      /sqlite|CREATE TABLE|ALTER TABLE|recorded_at|with_database|append-only|sign conversion/iu,
+    );
   });
 });

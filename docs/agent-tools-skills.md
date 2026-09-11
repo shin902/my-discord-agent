@@ -240,7 +240,7 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 
 ### finance Skill / Tool
 
-`templates/SKILLS/finance/scripts/finance.py` の単一CLIが、sandbox内の固定された `/workspace/finance.db` をPython標準ライブラリ `sqlite3` で直接操作します。Financeは `src/tools/finance.ts` のnative sandbox-local Toolも引き続きサポートし、両者で共有するSQLite schema・migration・金額符号・validation・append-only subscription historyを相互運用契約とします。SQLとDB pathはAgent向け契約に公開せず、Tool ProxyやRunner-global CLI、外部credentialにも依存しません。trusted/private groupのsandboxへSkillとDBを配置し、public groupへは配置しないというDEC-0135の境界を維持します。
+`templates/SKILLS/finance/scripts/finance.py` の単一CLIは、引数をJSON化してRunner image内のsandbox-local `finance-cli` bridgeへ委譲します。bridgeは `src/tools/finance.ts` の `createFinanceTools()` を再利用し、既存のFinance Tool実装をdatabase initialization・migration・validation・金額符号・append-only subscription historyの唯一の正本として維持します。FinanceはTool Proxy capabilityではなく、Skillと同じsandbox内の固定 `/workspace/finance.db` を使います。SQLとDB pathはAgent向け契約に公開せず、外部credentialにも依存しません。trusted/private groupのsandboxへSkillとDBを配置し、public groupへは配置しないというDEC-0135の境界を維持します。
 
 **スキーマ:**
 
@@ -249,7 +249,7 @@ transactions (id, date, amount, category, description)
 subscriptions (id, name, amount, cycle, next_date, category, active, recorded_at)
 ```
 
-保存上の`amount`は収入が正・支出が負（円の整数）。Agent-facingでは正の金額とincome/expense等の意味を使い、native Finance ToolとSkill CLIの各実装で同じ符号変換を行う。subscriptionは同じ`name`の最大`id`をcurrent stateとするappend-only snapshot historyで、update / cancelでも既存rowを変更・削除しない。
+保存上の`amount`は収入が正・支出が負（円の整数）。Agent-facingでは正の金額とincome/expense等の意味を使い、`src/tools/finance.ts` の既存Finance Tool実装が符号変換を行う。Skill CLIは同じAgent-facing引数をbridgeへ渡すだけで、subscriptionのappend-only snapshot historyも既存実装へ委譲する。
 
 **cron連携（`src/cron/jobs/`）:**
 

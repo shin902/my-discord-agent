@@ -222,7 +222,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 ]
 ```
 
-`config/groups.example.json` のchannel例で `approvalRequiredTools: []` を指定しているのは、groupから継承したapproval対象を解除し、channelの `tools: ["read"]` との不整合を避けるためです。Finance Skillを使う場合は、trusted/private groupで `tools: ["bash"]` と `skills: ["finance"]` を指定します。Financeはsandbox内の固定SQLiteを操作するため、public groupへ配置しないでください。
+`config/groups.example.json` のchannel例で `approvalRequiredTools: []` を指定しているのは、groupから継承したapproval対象を解除し、channelの `tools: ["read"]` との不整合を避けるためです。Finance Skillを使う場合は、trusted/private groupで `tools: ["bash"]` と `skills: ["finance"]` を指定します。Financeはsandbox内の固定SQLiteを操作し、SkillのCLIはRunner image内の `finance-cli` bridgeを介して既存のFinance Tool実装を再利用するため、public groupへ配置しないでください。
 
 | キー | 必須 | 内容 |
 |---|---|---|
