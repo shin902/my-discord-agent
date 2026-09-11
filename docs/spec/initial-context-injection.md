@@ -12,7 +12,8 @@ GitHub Issue: #117 / 初期実装 PR: #122（マージ済み）
 
 ## 基本方針
 
-- グループsystem prompt / MEMORY.md / SELF.md はセッション初回に固定し、2回目以降はファイルを再読込しない。
+- 通常sessionのグループsystem prompt / MEMORY.md / SELF.md はセッション初回に固定し、2回目以降はファイルを再読込しない。
+- Bot Task Sessionのbase roleはgroup/Main promptではなく、Task作成時の `bot.instructions` を同じgeneric snapshotへ固定する。
 - セッション開始時刻は **hour単位の固定アンカー**として systemPrompt に含める。
 - 現在日時を毎ターン systemPrompt へ再注入しない。
 - 過去の user / assistant 履歴へ timestamp を後付けしたり、LLM送信時に再renderしたりしない。
@@ -25,7 +26,7 @@ pi-agent-core 標準の `CustomMessage`（`role: "custom"`）と独自 `convertT
 
 | customType | 対象 | LLM への渡し方 |
 |---|---|---|
-| `system-prompt-snapshot` | グループsystem prompt（現在の保存元は AGENTS.md） | チャット履歴には乗せない。systemPrompt の組み立てにのみ使う |
+| `system-prompt-snapshot` | 通常sessionはグループsystem prompt（AGENTS.md）、Bot Task SessionはBot instructions | チャット履歴には乗せない。systemPrompt の組み立てにのみ使う |
 | `memory-bootstrap` | MEMORY.md | 最初の1件のみ `role: "user"` に展開 |
 | `self-bootstrap` | `/workspace/memory/SELF.md` | 最初の1件のみ `role: "user"` に展開 |
 | `skill-invocation` | `./command` で明示実行したスキル本文 | 出現するたび `role: "user"` に展開 |
@@ -40,6 +41,21 @@ pi-agent-core 標準の `CustomMessage`（`role: "custom"`）と独自 `convertT
 session-logs 等は `role == "user"` を実ユーザー発言として扱う。初期コンテキストを生の user メッセージとしてsession trajectoryへ保存すると、日次/週次サマリーへシステム由来の文章が混入する。
 
 保存形式を `custom`、LLM送信形式を `user` に分離することで、履歴の意味を保つ。
+
+## Bot Task Sessionのrole source
+
+Discord `/bot run` とagent-facing `bot run` は、Taskをruntimeのqueue/direct admissionへ公開する**前**に、`bot.instructions` をgroup内の `sessions.sqlite` へ `system-prompt-snapshot` として保存する。queue待機中に有効なprofileがAからBへ変わっても、そのTaskはAで開始する。resumeでも保存済みsnapshotをauthorityとし、現在のprofileのinstructionsで上書き・追記しない。変更後の新規TaskだけがBを保存する。
+
+Bot固有のsnapshot typeやschemaは持たない。Main Agentのsnapshot semanticsは変更しない。Botの `model` / `tools` / `skills` / `mounts` はsnapshotせず、引き続きgroup→BotのAgentConfig解決を行う。groupのtrust / authority境界、nested Bot delegationの無効化も維持する。
+
+### Legacy Task Session
+
+旧方式でもgeneric snapshotにgroup/Main promptが保存されていることがあり、既存データにはBot roleとの識別情報がない。内容から推測したり、snapshotを書き換えたりしない。
+
+- 保存済み `system-prompt-snapshot`（旧名 `agents-snapshot` も含む）はそのまま使う。旧group/Main roleの場合も保持するが、現在のBot instructionsのdynamic appendは行わない。Bot固有roleへ切り替えるには新規runを使う。
+- snapshotのないTaskは実行を拒否し、新規runを案内する。queue経由は非リトライ可能な `dead_letter`、direct経由はエラーとなる。履歴の補完・破壊的移行はしない。
+
+session time anchorは従来どおり初回runner実行時に初期化する。skills、MEMORY.md / SELF.mdのcontext-bootstrap、request-scoped `systemPromptAppend` は共通runtime layerとして維持する。
 
 ## セッション時刻アンカー
 
@@ -86,7 +102,7 @@ Use the `date` tool when current time matters.
 
 通常は次の順で組み立てる。
 
-1. `system-prompt-snapshot` の内容、またはグループsystem prompt不在時の `DEFAULT_SYSTEM_PROMPT`
+1. `system-prompt-snapshot` の内容（通常sessionでグループsystem promptが不在の場合のみ `DEFAULT_SYSTEM_PROMPT`）
 2. 固定 `Fixed session start time`
 3. `formatSkillsForPrompt()` のスキル一覧（有効な場合）
 4. request-scoped `systemPromptAppend`（cron の NO_REPLY 指示など、有効な場合）

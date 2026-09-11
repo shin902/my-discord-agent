@@ -47,6 +47,14 @@ const {
   },
 }));
 
+vi.mock("./session.js", () => ({
+  appendMessage: vi.fn().mockResolvedValue(undefined),
+  loadMessages: vi
+    .fn()
+    .mockResolvedValue([
+      { customType: "system-prompt-snapshot", content: "saved role" },
+    ]),
+}));
 vi.mock("./manager.js", () => ({ sendMessage }));
 vi.mock("../config/groups.js", () => ({ findGroupByName }));
 vi.mock("../config/bots.js", () => ({
@@ -76,6 +84,7 @@ vi.mock("../queue/repository.js", () => ({
 }));
 
 const { handleBotToolRequest } = await import("./bot-orchestration.js");
+const { appendMessage } = await import("./session.js");
 
 class MockRequest extends EventEmitter {
   headers: Record<string, string> = {};
@@ -167,13 +176,44 @@ describe("handleBotToolRequest", () => {
       "main",
       "bot-task-1",
       "inspect",
-      expect.objectContaining({ enableBotTool: false }),
+      expect.objectContaining({
+        enableBotTool: false,
+        systemPromptSnapshotContent: "saved role",
+        systemPromptSnapshotPresent: true,
+      }),
     );
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
     expect(JSON.parse(res.end.mock.calls[0][0])).toEqual({
       content: "調査結果",
       session: "task-abc123",
     });
+  });
+
+  it("snapshot保存に失敗した新規Taskをadmit・実行しない", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({
+      coding: { group: "main", instructions: "code" },
+    });
+    vi.mocked(appendMessage).mockRejectedValueOnce(
+      new Error("snapshot write failed"),
+    );
+    const res = response();
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ),
+      res,
+    );
+    expect(repository.createBotTaskSessionAndAdmission).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(JSON.parse(res.end.mock.calls[0][0]).error).toBe(
+      "snapshot write failed",
+    );
   });
 
   it("internal contextのtrusted destinationをnested実行へ渡す", async () => {

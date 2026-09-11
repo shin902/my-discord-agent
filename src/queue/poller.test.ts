@@ -132,6 +132,7 @@ beforeEach(() => {
   vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
   loadBotRegistry.mockReset();
   resolveBotProfile.mockReset();
+  loadMessages.mockResolvedValue([]);
 });
 
 afterEach(async () => {
@@ -207,6 +208,9 @@ const EMPTY_AGENT_RESPONSES = ["", "   ", "\r\n", "\t"] as const;
 
 describe("processMessage - Bot execution resolution", () => {
   beforeEach(() => {
+    loadMessages.mockResolvedValue([
+      { customType: "system-prompt-snapshot", content: "saved Bot role" },
+    ]);
     vi.mocked(client.channels.fetch).mockResolvedValue({
       isSendable: () => false,
       isTextBased: () => false,
@@ -245,7 +249,9 @@ describe("processMessage - Bot execution resolution", () => {
       model: { provider: "bot-provider", modelId: "bot-model" },
       tools: ["read"],
     });
-    expect(options?.systemPromptAppend).toBe("coding instructions");
+    expect(options?.systemPromptAppend).toBeUndefined();
+    expect(options?.systemPromptSnapshotContent).toBe("saved Bot role");
+    expect(options?.systemPromptSnapshotPresent).toBe(true);
     expect(options?.enableBotTool).toBe(false);
   });
 
@@ -1658,6 +1664,9 @@ describe("processMessage - Discord イベント通知", () => {
   });
 
   it("Bot Task の tool・subagent進捗は送信せず、最終応答は配送キューへ確定する", async () => {
+    loadMessages.mockResolvedValue([
+      { customType: "system-prompt-snapshot", content: "saved Bot role" },
+    ]);
     loadBotRegistry.mockResolvedValue({ coding: {} });
     resolveBotProfile.mockReturnValue({
       group: "g",
@@ -1709,6 +1718,9 @@ describe("processMessage - Discord イベント通知", () => {
   });
 
   it("Bot Task でも error イベントは送信される", async () => {
+    loadMessages.mockResolvedValue([
+      { customType: "system-prompt-snapshot", content: "saved Bot role" },
+    ]);
     loadBotRegistry.mockResolvedValue({ coding: {} });
     resolveBotProfile.mockReturnValue({
       group: "g",

@@ -721,6 +721,80 @@ describe("runAgentLoop", () => {
     );
   });
 
+  it("admission済みのBot role snapshotを使い、共通runtime layerだけを合成する", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      {
+        role: "custom",
+        customType: "system-prompt-snapshot",
+        content: "Bot role A",
+        display: false,
+        timestamp: 1,
+      },
+    ]);
+    vi.mocked(readdir).mockResolvedValue([
+      { name: "review", isDirectory: () => true } as unknown as Awaited<
+        ReturnType<typeof readdir>
+      >[number],
+    ]);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      switch (String(filePath)) {
+        case "/workspace/AGENTS.md":
+          return "Main/group role" as never;
+        case "/workspace/MEMORY.md":
+          return "shared memory" as never;
+        case "/workspace/memory/SELF.md":
+          return "shared self context" as never;
+        case "/workspace/SKILLS/review/SKILL.md":
+          return "---\nname: review\ndescription: Review skill\n---\n" as never;
+        default:
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+    });
+
+    await runAgentLoop(
+      "test-group",
+      "bot-task-1",
+      "work",
+      { skills: "*" },
+      {
+        systemPromptSnapshotContent: "Bot role A",
+        systemPromptSnapshotPresent: true,
+      },
+      "request-only instruction",
+    );
+
+    const { systemPrompt, messages } = (
+      lastAgentOptions as {
+        initialState: { systemPrompt: string; messages: unknown[] };
+      }
+    ).initialState;
+    expect(systemPrompt).toMatch(/^Bot role A\n\n/);
+    expect(systemPrompt).toContain(datePromptJST());
+    expect(systemPrompt).toContain("<name>review</name>");
+    expect(systemPrompt).toMatch(/request-only instruction$/);
+    expect(systemPrompt).not.toContain("Main/group role");
+    expect(systemPrompt).not.toContain(DEFAULT_SYSTEM_PROMPT);
+    expect(systemPrompt).not.toContain("shared memory");
+    expect(systemPrompt).not.toContain("shared self context");
+    expect(readFile).not.toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
+    expect(messages.slice(0, 3)).toMatchObject([
+      { customType: "system-prompt-snapshot", content: "Bot role A" },
+      {
+        customType: "memory-bootstrap",
+        content: expect.stringContaining("shared memory"),
+      },
+      {
+        customType: "self-bootstrap",
+        content: expect.stringContaining("shared self context"),
+      },
+    ]);
+    expect(appendMessage).not.toHaveBeenCalledWith(
+      "test-group",
+      "bot-task-1",
+      expect.objectContaining({ customType: "system-prompt-snapshot" }),
+    );
+  });
+
   it("新規セッションでは AGENTS.md は system-prompt-snapshot として、MEMORY.md は memory-bootstrap として保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {

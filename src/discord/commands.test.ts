@@ -21,6 +21,9 @@ vi.mock("../config/bots.js", () => ({
   loadBotRegistry: mocks.loadBotRegistry,
   resolveBotProfile: mocks.resolveBotProfile,
 }));
+vi.mock("../agent/session.js", () => ({
+  appendMessage: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../agent/manager.js", () => ({
   stopAgentRun: mocks.stopAgentRun,
 }));
@@ -33,6 +36,7 @@ vi.mock("../queue/repository.js", () => ({
   }),
 }));
 
+const { appendMessage } = await import("../agent/session.js");
 const {
   handleBotCommand,
   handleSkillCommand,
@@ -573,6 +577,18 @@ describe("handleSkillCommand", () => {
 });
 
 describe("handleBotCommand", () => {
+  it("does not enqueue a new Task when snapshot persistence fails", async () => {
+    vi.mocked(appendMessage).mockRejectedValueOnce(
+      new Error("snapshot write failed"),
+    );
+    const interaction = makeInteraction({ bot: "coding", prompt: "Fix it" });
+    await handleBotCommand(interaction as never);
+    expect(mocks.createBotTaskSessionAndEnqueue).not.toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: expect.stringContaining("snapshot write failed"),
+    });
+  });
+
   it("enqueues a one-shot Bot request without channel config inheritance", async () => {
     const interaction = makeInteraction({ bot: "coding", prompt: "Fix it" });
 
