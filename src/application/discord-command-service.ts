@@ -1,13 +1,16 @@
 import { acquireActiveRun } from "../agent/active-run-registry.js";
 import { stopAgentRun } from "../agent/manager.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
-import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
+import {
+  type BotProfile,
+  loadBotRegistry,
+  resolveBotProfile,
+} from "../config/bots.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import {
   formatBotTaskSessionList,
-  generateBotTaskSessionHandle,
-  generateBotTaskSessionId,
+  prepareBotTaskSession,
   previewBotTaskPrompt,
 } from "../queue/bot-task-sessions.js";
 import type { BotTaskSession } from "../queue/repository.js";
@@ -220,9 +223,10 @@ export async function executeBotCommand(
     );
   }
 
+  let profile: BotProfile;
   try {
     const registry = await loadBotRegistry();
-    resolveBotProfile(registry, request.botId, match.group.name);
+    profile = resolveBotProfile(registry, request.botId, match.group.name);
   } catch (error) {
     return botCommandResult(
       error instanceof Error ? error.message : String(error),
@@ -291,15 +295,16 @@ export async function executeBotCommand(
       session = result.session;
     } else {
       const result = repository.createBotTaskSessionAndEnqueue(
-        {
-          sessionId: generateBotTaskSessionId(),
-          handle: generateBotTaskSessionHandle(),
-          groupName: match.group.name,
-          botId: request.botId,
-          sourceKey: request.idempotencyKey,
-          createdAt: now,
-          preview: previewBotTaskPrompt(request.prompt),
-        },
+        await prepareBotTaskSession(
+          {
+            groupName: match.group.name,
+            botId: request.botId,
+            sourceKey: request.idempotencyKey,
+            createdAt: now,
+            preview: previewBotTaskPrompt(request.prompt),
+          },
+          profile.instructions,
+        ),
         payload,
       );
       session = result.session;

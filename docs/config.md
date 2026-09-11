@@ -411,6 +411,10 @@ Agent Bot profile の canonical source です。トップレベルに Bot ID を
 }
 ```
 
+`instructions` はTask Sessionのbase role promptであり、Main/groupのrole promptへの追記ではありません。Discord `/bot run`・agent-facing `bot run` の新規Task作成時に、queue/direct admissionより先にgeneric `system-prompt-snapshot` として `sessions.sqlite` へ固定します。profile変更後も同じTaskのresumeは保存済みinstructionsを使い、新規Taskだけが変更後のinstructionsを使います。`model` / `tools` / `skills` / `mounts` はsnapshotせず、現在のAgentConfig解決を維持します。
+
+legacy Taskの保存済みsnapshotはgroup/Main roleであっても書き換えず使用し、現在のBot instructionsも追記しません。snapshotがないTaskは実行を拒否します。新しいBot roleで実行するには新規runを使ってください。詳細は [Bot Task Sessionのrole source](spec/initial-context-injection.md#bot-task-sessionのrole-source) を参照してください。
+
 Bot profile の effective AgentConfig と `group` は起動時に検証されます。未定義の group や不正な profile があれば Discord client 初期化前に起動を停止します。Botを使わない場合は `bots.json` を配置せず、空の Registry として起動できます。既存の `config/config.json` にトップレベル `bots` がある場合は、その map を `config/bots.json` へ移してから `config/config.json` から削除してください。`discord.bots` はDiscord application設定なので移動せず、2つの `bots` map がmergeされることはありません。
 
 ## 環境変数

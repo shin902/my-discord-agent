@@ -31,6 +31,7 @@ import {
 import { MEMORY_EXPORT_HANDLER, runMemoryExport } from "../memory/export.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
+import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireLlmLock } from "./llm-mutex.js";
 import { settleRssDispatch } from "./reconciliation.js";
@@ -480,7 +481,7 @@ async function resolveBotExecution(
   groupConfig: GroupConfig | undefined,
 ): Promise<{
   configOverride?: Partial<AgentConfig>;
-  systemPromptAppend?: string;
+  systemPromptSnapshotContent?: string;
 }> {
   if (!msg.botId) return { configOverride: msg.configOverride };
   if (!groupConfig)
@@ -488,17 +489,22 @@ async function resolveBotExecution(
       `Bot ${msg.botId} のグループ設定が未定義です: ${msg.groupName}`,
     );
   const registry = await loadBotRegistry();
+  let configOverride: AgentConfig;
   try {
     const profile = resolveBotProfile(registry, msg.botId, groupConfig.name);
-    return {
-      configOverride: resolveAgentConfig(groupConfig, profile),
-      systemPromptAppend: profile.instructions,
-    };
+    configOverride = resolveAgentConfig(groupConfig, profile);
   } catch (error) {
     throw new NonRetryableError(
       error instanceof Error ? error.message : String(error),
     );
   }
+  return {
+    configOverride,
+    systemPromptSnapshotContent: await loadBotTaskSystemPrompt(
+      msg.groupName,
+      msg.sessionId,
+    ),
+  };
 }
 
 async function resolveLlmLockTarget(
@@ -785,15 +791,19 @@ async function processCronThreadDelivery(
               groupConfig,
               msg.channelId,
             ),
-            systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
-            systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
+            systemPromptSnapshotContent:
+              execution.systemPromptSnapshotContent ??
+              msg.systemPromptSnapshotContent,
+            systemPromptSnapshotPresent: msg.botId
+              ? true
+              : msg.systemPromptSnapshotPresent,
             memorySnapshotPresent: msg.memorySnapshotPresent,
             memorySnapshotContent: msg.memorySnapshotContent,
             snapshotHash: msg.snapshotHash,
             toolCallKey: msg.toolCallKey,
-            systemPromptAppend:
-              execution.systemPromptAppend ??
-              (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
+            systemPromptAppend: msg.cronNoReply
+              ? NO_REPLY_SYSTEM_PROMPT
+              : undefined,
             heldLlmProvider:
               lockTarget.concurrency === "serial"
                 ? lockTarget.provider
@@ -897,9 +907,10 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     });
-  let systemPromptSnapshotContent =
-    (await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
-    undefined;
+  let systemPromptSnapshotContent = msg.botId
+    ? await loadBotTaskSystemPrompt(msg.groupName, msg.sessionId)
+    : ((await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
+      undefined);
   let memorySnapshotContent = await readOptional(
     path.join("groups", msg.groupName, "memory", "MEMORY.md"),
   );
@@ -909,8 +920,9 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
     content?: unknown;
   }>) {
     if (
-      entry.customType === "system-prompt-snapshot" ||
-      entry.customType === "agents-snapshot"
+      !msg.botId &&
+      (entry.customType === "system-prompt-snapshot" ||
+        entry.customType === "agents-snapshot")
     )
       systemPromptSnapshotContent = String(entry.content ?? "");
     if (entry.customType === "memory-bootstrap")
@@ -1019,9 +1031,23 @@ export async function processMessage(
         `[poller] 実行 identity の保存に失敗しました (${msg.id}):`,
         error,
       );
-      await getQueueRepository().failAttempt(msg.id, error, msg.fencingToken, {
-        metadata: { error },
-      });
+      if (error instanceof NonRetryableError) {
+        await getQueueRepository().deadLetter(
+          msg.id,
+          msg.fencingToken,
+          "non_retryable",
+          error.message,
+        );
+      } else {
+        await getQueueRepository().failAttempt(
+          msg.id,
+          error,
+          msg.fencingToken,
+          {
+            metadata: { error },
+          },
+        );
+      }
       settleRssDispatchAfterQueueTransition(msg);
       return;
     }
@@ -1125,15 +1151,19 @@ export async function processMessage(
                   msg,
                   msg.sessionId,
                 ),
-                systemPromptSnapshotContent: msg.systemPromptSnapshotContent,
-                systemPromptSnapshotPresent: msg.systemPromptSnapshotPresent,
+                systemPromptSnapshotContent:
+                  execution.systemPromptSnapshotContent ??
+                  msg.systemPromptSnapshotContent,
+                systemPromptSnapshotPresent: msg.botId
+                  ? true
+                  : msg.systemPromptSnapshotPresent,
                 memorySnapshotPresent: msg.memorySnapshotPresent,
                 memorySnapshotContent: msg.memorySnapshotContent,
                 snapshotHash: msg.snapshotHash,
                 toolCallKey: msg.toolCallKey,
-                systemPromptAppend:
-                  execution.systemPromptAppend ??
-                  (msg.cronNoReply ? NO_REPLY_SYSTEM_PROMPT : undefined),
+                systemPromptAppend: msg.cronNoReply
+                  ? NO_REPLY_SYSTEM_PROMPT
+                  : undefined,
                 signal,
                 configOverride: execution.configOverride,
                 trustedDiscordDestination: trustedDiscordDestination(

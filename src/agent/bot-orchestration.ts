@@ -8,8 +8,8 @@ import { resolveProviderConcurrency } from "../config/providers.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import {
   formatBotTaskSessionList,
-  generateBotTaskSessionHandle,
-  generateBotTaskSessionId,
+  loadBotTaskSystemPrompt,
+  prepareBotTaskSession,
   previewBotTaskPrompt,
 } from "../queue/bot-task-sessions.js";
 import { acquireLlmLock } from "../queue/llm-mutex.js";
@@ -124,14 +124,17 @@ export async function handleBotToolRequest(
             request.bot,
             now,
           )
-        : repository.createBotTaskSessionAndAdmission({
-            sessionId: generateBotTaskSessionId(),
-            handle: generateBotTaskSessionHandle(),
-            groupName: group.name,
-            botId: request.bot,
-            createdAt: now,
-            preview: previewBotTaskPrompt(prompt),
-          });
+        : repository.createBotTaskSessionAndAdmission(
+            await prepareBotTaskSession(
+              {
+                groupName: group.name,
+                botId: request.bot,
+                createdAt: now,
+                preview: previewBotTaskPrompt(prompt),
+              },
+              profile.instructions,
+            ),
+          );
     if (!admitted) throw new Error("指定されたTask Sessionは見つかりません");
     const { session, admission } = admitted;
 
@@ -159,7 +162,11 @@ export async function handleBotToolRequest(
             prompt,
             {
               configOverride,
-              systemPromptAppend: profile.instructions,
+              systemPromptSnapshotContent: await loadBotTaskSystemPrompt(
+                group.name,
+                session.sessionId,
+              ),
+              systemPromptSnapshotPresent: true,
               enableBotTool: false,
               signal: controller.signal,
               trustedDiscordDestination,
