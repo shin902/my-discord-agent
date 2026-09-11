@@ -19,7 +19,12 @@ const agentId = process.env.MEMORY_CORE_AGENT_ID ?? "my-discord-agent";
 const token = process.env.MEMORY_CORE_GATEWAY_API_KEY;
 
 function memoryCoreUrl(path: string): URL {
-  const url = new URL(baseUrl);
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("Invalid MemoryCore URL configuration");
+  }
   if (
     url.username ||
     url.password ||
@@ -31,9 +36,7 @@ function memoryCoreUrl(path: string): URL {
         (url.hostname === "127.0.0.1" || url.hostname === "[::1]")
       ))
   ) {
-    throw new Error(
-      "MEMORY_CORE_URL must be HTTPS or literal loopback HTTP without credentials, query, or fragment",
-    );
+    throw new Error("Invalid MemoryCore URL configuration");
   }
   const route = new URL(path, "https://memory-core.invalid");
   url.pathname = `${url.pathname.replace(/\/$/u, "")}${route.pathname}`;
