@@ -171,6 +171,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 ---
 
+## Memory export（`jobs/memory-export.ts`）
+
+backendごとに1 jobを定義し、`settings`にbackend接続・eligible groups・batch sizeを置きます。handlerは既存runtime queueへのenqueueのみを行います。queue workerがstartup時の `_jobs` cacheからcron IDを解決し、read-only canonical session trajectoryからbounded batchをexportします。restart前のjobも新cacheが正です。同一backendの直列化・retry・lease・recoveryは既存queueへ委譲します。詳細とexampleは [Agent Memory export](../agent-memory.md) を参照してください。
+
 ## メール処理（`jobs/mail.ts`）
 
 メールハンドラーは未読メールを取得して本文とACK対象のメールIDをinboxへ投入する。AI・Discord delivery・deliveryModeに応じたスレッド作成はcron enqueue/pollerの共通処理へ任せ、mail.ts自体は配送方式を制限しない。全delivery chunkが`sent`になった後にだけメールを既読化する。

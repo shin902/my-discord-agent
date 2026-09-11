@@ -3,10 +3,6 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
-import {
-  isAgentMemoryEligible,
-  loadAgentMemoryConfig,
-} from "../config/agent-memory.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
@@ -189,30 +185,24 @@ async function ingest(
         : undefined;
 
     const channelConfigOverride = pickAgentConfig(match.channel);
-    let memoryUserId: string | undefined;
-    try {
-      const memoryConfig = await loadAgentMemoryConfig();
-      if (
-        isAgentMemoryEligible(memoryConfig, {
-          groupName: match.group.name,
-          messageType: message.type,
-          userId: message.author.bot ? undefined : message.author.id,
-          authorIsBot: message.author.bot,
-        })
-      ) {
-        memoryUserId = message.author.id;
-      }
-    } catch (error) {
-      // Memory capture is best-effort and must never block Discord intake.
-      console.error("[handler] Agent Memory eligibility check failed:", error);
-    }
     const payload: QueueInput = {
       channelId: inboxChannelId,
       groupName: match.group.name,
       routingChannelId: lookupId,
       sessionId,
       messageId: replyMessageId,
-      ...(memoryUserId ? { userId: memoryUserId } : {}),
+      ...(!message.author.bot &&
+      (message.type === MessageType.Default ||
+        message.type === MessageType.Reply)
+        ? {
+            source: {
+              kind: "discord" as const,
+              sourceId: message.id,
+              actorId: message.author.id,
+              messageType: message.type,
+            },
+          }
+        : {}),
       content: message.content,
       timestamp: message.createdAt.toISOString(),
       idempotencyKey: `discord-message:${message.id}`,

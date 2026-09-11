@@ -71,8 +71,6 @@ describe("Discord command adapter boundary", () => {
       skillName: "session-logs",
       prompt: "find",
       idempotencyKey: "discord-interaction:interaction-1",
-      userId: "user-1",
-      userIsBot: false,
     });
     expect(mocks.executeSkillCommand.mock.calls[0]?.[0]).not.toHaveProperty(
       "interaction",

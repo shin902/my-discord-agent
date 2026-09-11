@@ -30,44 +30,15 @@ AgentConfig（`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts`�
 | `config/providers.json` | — | 配列（省略時は全 provider が `serial`） | AI プロバイダーごとの同時実行ポリシー |
 | `config/credentials.json` | ✓ | 配列 | AI プロバイダー・外部サービスの接続設定 |
 | `config/groups.json` | ✓ | 配列 | チャンネル → グループのマッピング |
-| `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義 |
-| `config/config.json` | ✓ | オブジェクト | Discord application・`defaultModel`（必須）・proxy・agent・Agent Memory 設定 |
+| `config/cron.json` | — | 配列（省略時は空扱い） | 定期実行ジョブ定義・Memory export backend設定 |
+| `config/config.json` | ✓ | オブジェクト | Discord application・`defaultModel`（必須）・proxy・agent設定 |
 | `config/bots.json` | — | オブジェクト | Agent Bot profile Registry（省略時は空） |
 
 > **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
 
-## config/config.json の `agentMemory`
+## config/cron.json の Memory export
 
-TencentDB Agent Memory の shadow mode（回答へのmemory注入なし）を明示的に有効化する設定です。既定では無効です。`eligibleGroups` に列挙したグループは、運用者がprivateな通常Discord会話として明示的に適格と宣言した場合だけ対象になります。cron、public scope、Bot、Subagent、mail/RSSのジョブは対象外です。
-
-```json
-{
-  "agentMemory": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:8420",
-    "bearerTokenEnv": "MEMORY_CORE_GATEWAY_API_KEY",
-    "serviceId": "default",
-    "teamId": "my-discord-agent",
-    "agentId": "main",
-    "eligibleGroups": ["private-chat"],
-    "timeoutMs": 10000
-  }
-}
-```
-
-通常のprivate chatが正常完了すると、process lifetime中にcached Agent Memory configを使って判定し、durable queueに保存された入力payloadと完了済みagent resultからuser/assistantの1往復を組み立て、runtime.sqliteの独立したshadow jobへ登録します。group mappingはintake時のroutingに使い、Agent Memoryのshadow executionでは再確認しません。Agent Memory設定（`enabled`、`eligibleGroups`、接続先、scope、Bearer token selector）とgroup mappingはprocess lifetime中に固定され、変更を反映するにはmy-discord-agentをrestartしてください。hot reload / hot revocationは保証しません。会話のcanonical raw historyはgroupごとの `data/sessions/<group>/sessions.sqlite` に保持しますが、shadow submissionの入力としてsession storeを読み直す経路ではありません。shadow jobは `POST /v3/conversation/add`（L0）へ `team_id`、`agent_id`、`user_id`、`session_id` を付けて非同期送信します。送信結果は `[agent-memory]` の構造化ログと通常queueのjob statusで確認できます。TencentDBが停止・タイムアウトしても通常のDiscord応答は成功したままで、shadow jobだけがqueueのretry/dead-letter対象になります。
-
-MemoryCore v3のデータ面は、Gateway共有鍵の設定有無にかかわらず、`Authorization: Bearer <token>` と `x-tdai-service-id` を要求します。`bearerTokenEnv` にBearer tokenを保持する環境変数名を指定してください。token自体やその他のsecretを設定ファイルへ書かないでください。非loopbackの接続先はHTTPSを必須とし、認証なしHTTPは文字列どおりの`127.0.0.1`または`[::1]`に限定します（`localhost`はDNS解決を検証しないため許可しません）。現在はshadow writeのみで、recall、embedding、Ruri prefix、context injectionは行いません。TencentDB v3の`conversation/add`契約にはクライアント指定のmessage/request IDやidempotency keyはなく、accepted IDはサーバー生成です（[v3 API仕様](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/MemoryCore/v3-api-memorycore-doc.md)）。そのためshadow送信はローカルqueueのidempotencyによるat-least-once配送で、応答受領後のprocess crashではMemoryCore側に重複L0が発生し得ます。これはupstream契約上の制約であり、未対応のrequest fieldを独自追加して重複排除を主張しません。
-
-| キー | 必須 | 内容 |
-|---|---|---|
-| `enabled` | — | `true` のときだけshadow modeを動かす。既定は`false` |
-| `baseUrl` | — | TencentDB MemoryCoreのURL。HTTPはloopbackのみ、非loopbackはHTTPSのみ。query/fragmentと埋め込みcredentialは禁止。`/v3/conversation/add`を安全に追加して呼び出す |
-| `serviceId` | — | `x-tdai-service-id`へ送るMemoryCoreのinstance ID |
-| `bearerTokenEnv` | — | Bearer tokenを読む環境変数名。v3 data-planeを使う場合は実質必須。Gateway共有鍵を有効にする場合は同じ値を使う |
-| `teamId` / `agentId` | — | 全対象会話へ付与する固定isolation identity |
-| `eligibleGroups` | — | shadow writeを許可するprivate group名の明示リスト。既定は空 |
-| `timeoutMs` | — | MemoryCore HTTP timeout（1〜120000ms、既定10000） |
+Memory backendごとに `handler: "jobs/memory-export.ts"` を持つjobを定義し、接続先や対象groupを `settings` に置きます。cronはenqueueのみを行い、既存runtime queueがcanonical session trajectoryからのbounded export batchを処理します。設定・成功ledger・failure semantics・旧経路からのrolloutは [Agent Memory export](agent-memory.md) を参照してください。[cron example](../config/cron.example.json) はdisabledです。設定変更はrestartで反映し、queue jobは新processのstartup cacheを正とします。
 
 ### MemoryCore sidecarの起動
 
@@ -97,7 +68,7 @@ MEMORY_CORE_LLM_API_KEY=<memory-core-dedicated-key>
 
 CLIProxyAPI側の`api-keys`へ`<memory-core-dedicated-key>`を追加します。既存の`CLIPROXY_API_KEY`とは分けて管理します。
 
-exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`でも抽出thresholdが`1 → 2 → 4 → 5`と増えるため、最初の会話後から抽出が始まり得ます。厳密な5会話ごとのbatchではありません。また、初期rolloutはmy-discord-agentからL0をshadow writeするだけなので、exampleの`memory.recall.enabled`は`false`です。
+exampleの`memory.pipeline.enableWarmup: true`では、`everyNConversations: 5`でも抽出thresholdが`1 → 2 → 4 → 5`と増えるため、最初の会話後から抽出が始まり得ます。厳密な5会話ごとのbatchではありません。また、my-discord-agentはcanonical trajectoryからL0へexportするだけなので、exampleの`memory.recall.enabled`は`false`です。
 
 起動してhealth endpointを確認します。
 
@@ -112,18 +83,7 @@ pnpm memory-core logs -f memory-core
 pnpm memory-core down
 ```
 
-`MEMORY_CORE_GATEWAY_API_KEY`を`.env`へ設定するとGateway共有鍵認証が有効になります。`agentMemory.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。v3 data-planeは共有鍵認証を無効にしてもBearer形式のヘッダーが必要です。`MEMORY_CORE_PORT`を変更する場合、上記health commandはシェル環境変数を優先し、未設定なら`.env`の値を読み取ります。Composeが使うGateway portと`agentMemory.baseUrl`のポートは同じ値に合わせてください。
-
-```json
-{
-  "agentMemory": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:8420",
-    "bearerTokenEnv": "MEMORY_CORE_GATEWAY_API_KEY",
-    "eligibleGroups": ["private-chat"]
-  }
-}
-```
+`MEMORY_CORE_GATEWAY_API_KEY`を`.env`へ設定するとGateway共有鍵認証が有効になります。Memory export cron jobの`settings.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。v3 data-planeは共有鍵認証を無効にしてもBearer形式のヘッダーが必要です。`MEMORY_CORE_PORT`を変更する場合、上記health commandはシェル環境変数を優先し、未設定なら`.env`の値を読み取ります。Composeが使うGateway portと`settings.baseUrl`のポートは同じ値に合わせてください。
 
 Composeは`config/memory-core.yaml`を読み取り専用でマウントします。設定項目の雛形は [`config/memory-core.example.yaml`](../config/memory-core.example.yaml) にあります。image tagはデータ形式のmigration notesを確認してから明示的に更新し、`latest`へは変更しないでください。volumeを削除する`down -v`は保存済みmemoryを消すため、通常の停止には使わないでください。
 

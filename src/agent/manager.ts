@@ -40,6 +40,7 @@ import {
 } from "./active-run-registry.js";
 import { resolveBaseUrl, validateModel } from "./model.js";
 import { sandboxNetworkArgs } from "./sandbox-network.js";
+import type { SessionSource } from "./source.js";
 
 export type AgentRunStatus = "running" | "completed" | "failed";
 
@@ -579,6 +580,7 @@ async function downloadAttachments(
   return saved;
 }
 export interface SendMessageOptions {
+  source?: SessionSource;
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
   onExecutionTiming?: (timing: AgentExecutionTiming) => void;
@@ -753,6 +755,7 @@ export async function sendMessage(
     groupName,
     sessionId,
     content: promptContent,
+    ...(options.source ? { source: options.source } : {}),
     groupConfig: {
       ...effectiveConfig,
       model: resolvedModel,

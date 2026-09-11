@@ -291,6 +291,11 @@ export async function executeJob(job: CronJob): Promise<void> {
 let _jobs: CronJob[] = [];
 const _inFlight = new Set<string>();
 
+/** Execution authority for durable work, populated once by startup. Never reads disk. */
+export function getCachedCronJob(id: string): CronJob | undefined {
+  return _jobs.find((job) => job.id === id);
+}
+
 export function _setCronJobs(jobs: CronJob[]): void {
   _jobs = jobs;
 }

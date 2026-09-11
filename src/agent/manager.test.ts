@@ -905,6 +905,24 @@ describe("sendMessage: 添付ファイル", () => {
     ).toBe(true);
   });
 
+  it("passes generic source provenance through the runner payload independently of prompt decoration", async () => {
+    const { sendMessage } = await import("./manager.js");
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 19 as const,
+    };
+    await sendMessage("test-group", "session-1", "見て", {
+      attachments,
+      source,
+    });
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.source).toEqual(source);
+    expect(payload.content).toContain("[添付ファイル]");
+  });
+
   it("プロンプトに添付ファイルのパス一覧を追記する", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "見て", { attachments });

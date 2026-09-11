@@ -1,5 +1,22 @@
 [
   {
+    "id": "memory-tencent-main",
+    "schedule": "1m",
+    "enabled": false,
+    "handler": "jobs/memory-export.ts",
+    "settings": {
+      "type": "tencentdb",
+      "eligibleGroups": ["main"],
+      "batchSize": 50,
+      "baseUrl": "http://127.0.0.1:8420",
+      "serviceId": "default",
+      "teamId": "default",
+      "agentId": "my-discord-agent",
+      "bearerTokenEnv": "MEMORY_CORE_GATEWAY_API_KEY",
+      "timeoutMs": 10000
+    }
+  },
+  {
     "id": "daily-report",
     "schedule": "0 9 * * *",
     "enabled": true,

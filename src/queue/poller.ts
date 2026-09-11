@@ -7,10 +7,6 @@ import {
   sendMessage,
 } from "../agent/manager.js";
 import { loadMessages, sessionConversationPath } from "../agent/session.js";
-import {
-  isAgentMemoryEligible,
-  loadAgentMemoryConfig,
-} from "../config/agent-memory.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
@@ -27,15 +23,12 @@ import {
   resolveProviderConcurrency,
 } from "../config/providers.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
+import { getCachedCronJob } from "../cron/runner.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
-import {
-  AgentMemoryClient,
-  AgentMemoryHttpError,
-  buildAgentMemorySubmission,
-} from "../memory/agent-memory.js";
+import { MEMORY_EXPORT_HANDLER, runMemoryExport } from "../memory/export.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
@@ -307,94 +300,6 @@ const LEASE_RENEWAL_MS = 20_000;
 
 function discordReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
-}
-
-async function processMemoryShadowJob(msg: InboxMessage): Promise<void> {
-  if (msg.fencingToken === undefined || msg.memoryShadow === undefined) return;
-  try {
-    const config = await loadAgentMemoryConfig();
-    if (!config.enabled || !config.eligibleGroups.includes(msg.groupName)) {
-      console.log(
-        `[agent-memory] shadow job skipped (disabled/not eligible): ${msg.id}`,
-      );
-      await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
-        suppressDelivery: true,
-      });
-      return;
-    }
-    const result = await new AgentMemoryClient(config).addConversation(
-      msg.memoryShadow,
-    );
-    await getQueueRepository().commitResult(msg.id, msg.fencingToken, "", {
-      suppressDelivery: true,
-    });
-    console.log(
-      `[agent-memory] shadow submission accepted: ${JSON.stringify({ jobId: msg.id, requestId: result.requestId, totalCount: result.totalCount })}`,
-    );
-  } catch (error) {
-    console.error(`[agent-memory] shadow submission failed: ${msg.id}`, error);
-    if (error instanceof AgentMemoryHttpError && !error.retryable) {
-      getQueueRepository().deadLetter(
-        msg.id,
-        msg.fencingToken,
-        "non_retryable",
-        String(error),
-      );
-    } else if (error instanceof NonRetryableError) {
-      getQueueRepository().deadLetter(
-        msg.id,
-        msg.fencingToken,
-        "non_retryable",
-        String(error),
-      );
-    } else {
-      getQueueRepository().failAttempt(msg.id, error, msg.fencingToken);
-    }
-    const after = getQueueRepository().get(msg.id);
-    if (after?.status === "dead_letter")
-      console.error(
-        `[agent-memory] shadow submission dead-lettered: ${msg.id}`,
-      );
-  }
-}
-
-async function prepareMemoryShadowJob(
-  msg: InboxMessage,
-  assistantContent: string,
-): Promise<
-  | {
-      payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
-      options: { idempotencyKey: string };
-    }
-  | undefined
-> {
-  const config = await loadAgentMemoryConfig();
-  if (!isAgentMemoryEligible(config, msg) || msg.content.trim().length === 0)
-    return undefined;
-  const userId = msg.userId;
-  if (!userId) return undefined;
-  const submission = buildAgentMemorySubmission({
-    teamId: config.teamId,
-    agentId: config.agentId,
-    userId,
-    sessionId: msg.sessionId,
-    userContent: msg.content,
-    assistantContent,
-    userTimestamp: msg.timestamp,
-    assistantTimestamp: new Date().toISOString(),
-  });
-  return {
-    payload: {
-      channelId: msg.channelId,
-      groupName: msg.groupName,
-      routingChannelId: msg.routingChannelId ?? msg.channelId,
-      sessionId: `memory-shadow:${msg.sessionId}`,
-      content: "memory-shadow",
-      timestamp: new Date().toISOString(),
-      memoryShadow: submission,
-    },
-    options: { idempotencyKey: `agent-memory-shadow:${msg.id}` },
-  };
 }
 
 function resolveDiscordClient(groupName: string) {
@@ -1059,8 +964,36 @@ export async function processMessage(
     }
     return;
   }
-  if (msg.memoryShadow !== undefined) {
-    await processMemoryShadowJob(msg);
+  if (msg.jobKind === "memory-export") {
+    if (msg.fencingToken === undefined)
+      throw new Error(`fenced inbox message required: ${msg.id}`);
+    const repository = getQueueRepository();
+    try {
+      repository.markRunning(msg.id, msg.fencingToken);
+      const job = msg.cronJobId ? getCachedCronJob(msg.cronJobId) : undefined;
+      if (
+        job?.enabled &&
+        (job.handler === MEMORY_EXPORT_HANDLER ||
+          job.handler === "jobs/memory-export.js")
+      ) {
+        await runMemoryExport(job.id, job.settings, signal);
+      }
+      // Removed, disabled or repurposed cron identities terminally no-op.
+      repository.commitResult(msg.id, msg.fencingToken, "", {
+        suppressDelivery: true,
+      });
+    } catch (error) {
+      if (error instanceof NonRetryableError) {
+        repository.deadLetter(
+          msg.id,
+          msg.fencingToken,
+          "non_retryable",
+          String(error),
+        );
+      } else {
+        repository.failAttempt(msg.id, error, msg.fencingToken);
+      }
+    }
     return;
   }
   if (msg.fencingToken !== undefined) {
@@ -1174,6 +1107,13 @@ export async function processMessage(
                   );
                 },
                 attachments: msg.attachments,
+                source:
+                  !msg.botId &&
+                  !msg.cronJobId &&
+                  !msg.mailEmailId &&
+                  !msg.rssDispatchId
+                    ? msg.source
+                    : undefined,
                 onExecutionTiming: (executionTiming) => {
                   timing.agentExecution = executionTiming;
                 },
@@ -1262,22 +1202,6 @@ export async function processMessage(
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
     }
-    let shadowJob:
-      | {
-          payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
-          options: { idempotencyKey: string };
-        }
-      | undefined;
-    try {
-      shadowJob = await prepareMemoryShadowJob(msg, response);
-    } catch (error) {
-      // Shadow mode is best-effort; configuration/preparation failures must not
-      // prevent the normal response from reaching its terminal state.
-      console.error(
-        `[agent-memory] shadow job preparation failed: ${msg.id}`,
-        error,
-      );
-    }
     await getQueueRepository().commitResult(
       msg.id,
       msg.fencingToken,
@@ -1301,24 +1225,9 @@ export async function processMessage(
               }
             : {}),
         },
-        ...(shadowJob
-          ? {
-              shadowJob: {
-                payload: shadowJob.payload,
-                options: shadowJob.options,
-              },
-            }
-          : {}),
       },
     );
     if (suppressDelivery) await finalizeSuppressedSource(msg);
-    if (shadowJob) {
-      console.log(
-        `[agent-memory] shadow job admitted: ${JSON.stringify({ sourceJobId: msg.id, groupName: msg.groupName })}`,
-      );
-    }
-    // The source result, delivery rows, and local shadow admission commit
-    // atomically. The queued worker owns remote MemoryCore I/O separately.
     outcome = "success";
     stopTyping();
   } finally {

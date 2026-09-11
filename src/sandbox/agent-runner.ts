@@ -21,6 +21,7 @@ import { z } from "zod";
 
 import { resolveModel } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
+import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
 import {
@@ -462,6 +463,7 @@ export async function runAgentLoop(
   onAgentCreated?: (agent: Agent) => void,
   signal?: AbortSignal,
   toolProxyEndpoint?: ToolProxyEndpoint,
+  source?: SessionSource,
 ): Promise<string> {
   const rawMessages = await loadMessages(groupName, sessionId);
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
@@ -768,6 +770,7 @@ export async function runAgentLoop(
   delegationContext.tools = agentTools;
 
   const pendingAppends: Promise<void>[] = [];
+  let sourceAttached = false;
   let response = "";
   let assistantTurns = 0;
   let aggregatedUsage: AgentTokenUsage = {
@@ -804,9 +807,21 @@ export async function runAgentLoop(
           return;
         }
         if (event.type === "message_end") {
-          pendingAppends.push(
-            appendMessage(groupName, sessionId, event.message),
+          const entrySource =
+            !sourceAttached && event.message.role === "user"
+              ? source
+              : undefined;
+          if (event.message.role === "user") sourceAttached = true;
+          // Preserve event order in the canonical store, including user provenance.
+          const previous = pendingAppends.at(-1) ?? Promise.resolve();
+          const append = previous.then(() =>
+            entrySource
+              ? appendMessage(groupName, sessionId, event.message, entrySource)
+              : appendMessage(groupName, sessionId, event.message),
           );
+          // Observe rejection immediately; Promise.all below still propagates it.
+          void append.catch(() => {});
+          pendingAppends.push(append);
           if (isAssistantMessage(event.message)) {
             assistantTurns++;
             stopReason = event.message.stopReason;
@@ -900,8 +915,8 @@ export async function runAgentLoop(
         process.stderr.once("drain", resolve);
       });
     }
+    await Promise.all(pendingAppends);
   }
-  await Promise.all(pendingAppends);
   return response;
 }
 
@@ -909,6 +924,7 @@ const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
   content: z.string(),
+  source: SessionSourceSchema.optional(),
   groupConfig: AgentRuntimeConfigSchema,
   systemPromptSnapshotContent: z.string().optional(),
   systemPromptSnapshotPresent: z.boolean().optional(),
@@ -1028,6 +1044,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         },
         abortController.signal,
         payload.toolProxyEndpoint,
+        payload.source,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

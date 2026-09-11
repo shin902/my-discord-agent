@@ -192,7 +192,7 @@ pnpm memory-core down
 pnpm memory-core logs -f memory-core
 ```
 
-永続データはDocker volumeに保存されます。詳細と`agentMemory`の有効化手順は [docs/config.md](docs/config.md#memorycore-sidecarの起動) を参照してください。
+MemoryCoreの永続データはDocker volumeに保存されます。sidecarの起動は [docs/config.md](docs/config.md#memorycore-sidecarの起動)、cron + runtime queue経由のcapture設定と成功ledgerは [Agent Memory export](docs/agent-memory.md) を参照してください。
 
 ### 6. Slash Command を登録
 

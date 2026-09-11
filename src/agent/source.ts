@@ -1,0 +1,11 @@
+import { z } from "zod";
+
+/** Origin of a canonical user entry; independent of any downstream projection. */
+export const SessionSourceSchema = z.object({
+  kind: z.literal("discord"),
+  sourceId: z.string().min(1),
+  actorId: z.string().min(1),
+  messageType: z.union([z.literal(0), z.literal(19)]),
+});
+
+export type SessionSource = z.infer<typeof SessionSourceSchema>;

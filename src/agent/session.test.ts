@@ -33,7 +33,7 @@ describe("SQLite session trajectory store", () => {
       session.loadMessages("empty-group", "missing"),
     ).resolves.toEqual([]);
     const db = dbFor("empty-group");
-    expect(db.pragma("user_version", { simple: true })).toBe(1);
+    expect(db.pragma("user_version", { simple: true })).toBe(2);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all() as Array<{ name: string }>;

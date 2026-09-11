@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   resumeBotTaskSessionAndEnqueue: vi.fn(),
   listBotTaskSessions: vi.fn(),
   enqueue: vi.fn(),
-  loadMemoryConfig: vi.fn(),
   stopAgentRun: vi.fn(),
 }));
 
@@ -22,11 +21,6 @@ vi.mock("../config/bots.js", () => ({
   loadBotRegistry: mocks.loadBotRegistry,
   resolveBotProfile: mocks.resolveBotProfile,
 }));
-vi.mock("../config/agent-memory.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../config/agent-memory.js")>();
-  return { ...actual, loadAgentMemoryConfig: mocks.loadMemoryConfig };
-});
 vi.mock("../agent/manager.js", () => ({
   stopAgentRun: mocks.stopAgentRun,
 }));
@@ -161,15 +155,6 @@ beforeEach(() => {
   mocks.resumeBotTaskSessionAndEnqueue.mockReturnValue(undefined);
   mocks.listBotTaskSessions.mockReturnValue([]);
   mocks.stopAgentRun.mockResolvedValue({ status: "no-active-run" });
-  mocks.loadMemoryConfig.mockResolvedValue({
-    enabled: false,
-    baseUrl: "http://127.0.0.1:8420",
-    serviceId: "default",
-    teamId: "team",
-    agentId: "agent",
-    eligibleGroups: [],
-    timeoutMs: 1000,
-  });
 });
 
 describe("bot command definition", () => {
@@ -526,52 +511,11 @@ describe("handleSkillCommand", () => {
     });
   });
 
-  it("persists the invoking user for an eligible Agent Memory turn", async () => {
-    mocks.loadMemoryConfig.mockResolvedValueOnce({
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      serviceId: "default",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: ["main"],
-      timeoutMs: 1000,
-    });
-    const interaction = makeSkillInteraction({ userId: "eligible-user" });
-
+  it("does not label slash commands as human Discord message sources", async () => {
+    const interaction = makeSkillInteraction({ userId: "user-1" });
     await handleSkillCommand(interaction as never);
-
-    expect(mocks.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "eligible-user" }),
-    );
-  });
-
-  it("does not persist the invoking user for an ineligible Agent Memory turn", async () => {
-    mocks.loadMemoryConfig.mockResolvedValueOnce({
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      serviceId: "default",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: ["other-group"],
-      timeoutMs: 1000,
-    });
-    const interaction = makeSkillInteraction({ userId: "ineligible-user" });
-
-    await handleSkillCommand(interaction as never);
-
-    expect(mocks.enqueue).toHaveBeenCalledWith(
-      expect.not.objectContaining({ userId: expect.anything() }),
-    );
-  });
-
-  it("still enqueues when Agent Memory config loading fails", async () => {
-    mocks.loadMemoryConfig.mockRejectedValueOnce(new Error("config failed"));
-    const interaction = makeSkillInteraction({ userId: "user-config-failed" });
-
-    await handleSkillCommand(interaction as never);
-
     expect(mocks.enqueue).toHaveBeenCalledOnce();
-    expect(mocks.enqueue.mock.calls[0]?.[0]).not.toHaveProperty("userId");
+    expect(mocks.enqueue.mock.calls[0]?.[0]).not.toHaveProperty("source");
   });
 
   it("resolves a thread through its parent and keeps the thread session", async () => {

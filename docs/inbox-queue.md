@@ -17,6 +17,7 @@ Discord / cron
 - [poller](../src/queue/poller.ts) はdurable claimを取得し、[manager](../src/agent/manager.ts) を通じて使い捨てのsandbox containerを起動します。
 - [delivery worker](../src/queue/delivery.ts) は保存済みの配送内容を送信します。配送失敗を理由に完了済みAgentを再実行しません。
 - 会話履歴はgroupごとの `sessions.sqlite` に保存し、runtime DBとは分離します。
+- Memory export cronは `jobKind: memory-export` とcron IDを持つ内部jobをenqueueします。pollerはAgent実行・Discord配送を経由せず、startup cron cacheとread-only session storeからbounded batchを処理します。既存の `session_id: memory-export:<cronJobId>` ordering、heartbeat、lease、fencing、retryを使い、Memory専用queueは持ちません。詳細は [Agent Memory export](agent-memory.md) を参照してください。
 
 ## 状態と順序
 

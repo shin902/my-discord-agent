@@ -117,6 +117,81 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it.each([
+    false,
+    true,
+  ])("attaches provenance only to the input user and persists in event order (failed run=%s)", async (failed) => {
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 19 as const,
+    };
+    const messages = [
+      { role: "user", content: "input", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "answer" }],
+        stopReason: failed ? "error" : "stop",
+        timestamp: 2,
+      },
+      { role: "user", content: "later unsourced prompt", timestamp: 3 },
+    ];
+    let onEvent: (event: unknown) => void = () => {};
+    AgentMock.mockImplementation(function () {
+      return {
+        subscribe: (callback: (event: unknown) => void) => {
+          onEvent = callback;
+        },
+        prompt: async () => {
+          for (const message of messages)
+            onEvent({ type: "message_end", message });
+          if (failed) throw new Error("run failed");
+        },
+      };
+    });
+    const persisted: unknown[] = [];
+    vi.mocked(appendMessage).mockImplementation(
+      async (_group, _session, message) => {
+        if (message.role === "user")
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        if (message.role !== "custom") persisted.push(message);
+      },
+    );
+    const run = runAgentLoop(
+      "test-group",
+      "session-1",
+      "input",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      source,
+    );
+    if (failed) await expect(run).rejects.toThrow("run failed");
+    else await run;
+    expect(persisted).toEqual(messages);
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      messages[0],
+      source,
+    );
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      messages[1],
+    );
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      messages[2],
+    );
+  });
+
   it("aborted signal is wired to Pi Agent.abort", async () => {
     const controller = new AbortController();
     controller.abort();

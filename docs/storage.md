@@ -18,6 +18,7 @@ data/
   runtime.sqlite-wal    # runtime DBのWAL（存在する場合）
   runtime.sqlite-shm    # runtime DBの共有メモリ（存在する場合）
   rss.sqlite3           # RSS収集・dispatch状態（runtime DBとは別）
+  memory-export.sqlite  # backend/group/sourceごとのexport成功markerのみ
   sessions/
     <groupName>/
       sessions.sqlite   # group単位のcanonical session trajectory
@@ -67,4 +68,10 @@ session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
+`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v1→v2は通常session書き込み時に列を追加し、既存entryはNULLのまま保持します。Memory exporterはread-onlyで読み、旧履歴や存在しないDBを補完・作成しません。
+
 実装の正本は [session.ts](../src/agent/session.ts) です。
+
+## Memory export ledger
+
+`data/memory-export.sqlite` は `(backend_id, group_name, source_kind, source_id)` ごとの `exported_at` だけを持つprojectionです。queue・retry・lease等はruntime DBの責務であり、本文や設定のcopyは置きません。runtime DB backupには含まれません。稼働停止中のcopyまたはSQLite backup APIを使い、ledgerのみを消して既存backendへ再送すると重複し得る点に注意してください。再構築・運用は [Agent Memory export](agent-memory.md) を参照してください。

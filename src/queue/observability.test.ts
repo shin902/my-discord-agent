@@ -4,49 +4,35 @@ import { collectObservability, inspectRuntime } from "./observability.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("queue observability", () => {
-  it("includes shadow jobs in queue metrics but excludes them from agent metrics", () => {
+  it("includes internal jobs in queue metrics but excludes them from agent metrics", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const shadow = repo.enqueue({
-        channelId: "c",
-        groupName: "g",
-        sessionId: "memory-shadow:s",
-        content: "memory-shadow",
+      const job = repo.enqueue({
+        channelId: "",
+        groupName: "",
+        sessionId: "memory-export:backend",
+        content: "",
         timestamp: new Date().toISOString(),
-        memoryShadow: {
-          scope: {
-            teamId: "team",
-            agentId: "agent",
-            userId: "user",
-            sessionId: "s",
-          },
-          messages: [],
-        },
+        jobKind: "memory-export",
+        cronJobId: "backend",
       }).job;
-      const shadowClaim = expectDefined(repo.claim("worker", 1_000));
-      repo.commitResult(shadow.id, shadowClaim.fencingToken, "", {
+      const claim = expectDefined(repo.claim("worker", 1_000));
+      repo.commitResult(job.id, claim.fencingToken, "", {
         suppressDelivery: true,
       });
 
-      const failedShadow = repo.enqueue({
-        channelId: "c",
-        groupName: "g",
-        sessionId: "memory-shadow:failed",
-        content: "memory-shadow",
+      const failedJob = repo.enqueue({
+        channelId: "",
+        groupName: "",
+        sessionId: "memory-export:backend",
+        content: "",
         timestamp: new Date().toISOString(),
-        memoryShadow: {
-          scope: {
-            teamId: "team",
-            agentId: "agent",
-            userId: "user",
-            sessionId: "failed",
-          },
-          messages: [],
-        },
+        jobKind: "memory-export",
+        cronJobId: "backend",
       }).job;
       const failedClaim = expectDefined(repo.claim("worker", 1_000));
       repo.deadLetter(
-        failedShadow.id,
+        failedJob.id,
         failedClaim.fencingToken,
         "non_retryable",
         "safe static error",
