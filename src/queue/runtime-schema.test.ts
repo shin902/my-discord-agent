@@ -72,9 +72,9 @@ CREATE INDEX IF NOT EXISTS deliveries_claim ON deliveries(status, next_attempt_a
 CREATE INDEX IF NOT EXISTS dead_letters_job ON dead_letters(job_id, created_at);
 `;
 
-// Snapshot of the current modern jobs table shape (mirrors JOB_COLUMNS in
-// repository.ts) used to build "jobs modern, deliveries stale" and
-// "idempotency completed_at-deficient" fixtures.
+// Snapshot of the pre-v6 modern jobs table shape (before the explicit
+// suppressed-delivery metadata column) used to build "jobs modern, deliveries
+// stale" and "idempotency completed_at-deficient" fixtures.
 const MODERN_JOBS_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_json TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK(status IN ('queued','retry_wait','claimed','running','completed','dead_letter')), claimed INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 10, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, claimed_at TEXT, started_at TEXT, heartbeat_at TEXT, exit_code INTEGER, termination TEXT, stop_reason TEXT, usage_json TEXT, timing_json TEXT, error_json TEXT, result_json TEXT, result_state TEXT, terminal_reason TEXT, succeeded INTEGER NOT NULL DEFAULT 0, delivery_id TEXT, agents_snapshot_hash TEXT, memory_snapshot_hash TEXT, snapshot_hash TEXT, tool_call_key TEXT, workspace_path TEXT, conversation_path TEXT`;
 
 // The afb-era deliveries table: no durable-delivery columns, unique per job.
@@ -175,6 +175,7 @@ describe("runtime schema migration", () => {
           "claimed_at",
           "result_json",
           "result_state",
+          "delivery_suppressed",
           "delivery_id",
         ]),
       );
@@ -396,7 +397,7 @@ describe("runtime schema migration", () => {
       );
       db.exec(
         `CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-         INSERT INTO schema_meta VALUES ('schema_version','2');`,
+         INSERT INTO schema_meta VALUES ('schema_version','5');`,
       );
       db.exec(
         `INSERT INTO jobs(id,payload_json,session_id,status,created_at,updated_at) VALUES ('modern-job','{"id":"modern-job","channelId":"c","groupName":"g","sessionId":"session","content":"modern","timestamp":"2026-01-01T00:00:00.000Z","retries":0}','session','queued','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`,
@@ -411,6 +412,7 @@ describe("runtime schema migration", () => {
       expect(columnsOf(db, "deliveries")).toEqual(
         expect.arrayContaining(deliveryColumns),
       );
+      expect(columnsOf(db, "jobs")).toContain("delivery_suppressed");
       expect(columnsOf(db, "idempotency_keys")).toContain("completed_at");
       const delivery = db
         .prepare("SELECT * FROM deliveries WHERE id='d1'")

@@ -11,7 +11,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 5;
+export const QUEUE_SCHEMA_VERSION = 6;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -62,6 +62,8 @@ export interface QueueJob extends InboxMessage, ExecutionMetadata {
   terminalState?: TerminalState;
   resultJson?: string;
   succeeded: boolean;
+  /** True when the successful result intentionally creates no delivery rows. */
+  deliverySuppressed: boolean;
   deliveryId?: string;
 }
 export type ExecutionState = "claimed" | "running";
@@ -363,6 +365,7 @@ interface JobRow {
   result_state: TerminalState | null;
   terminal_reason: string | null;
   succeeded: number;
+  delivery_suppressed: number;
   delivery_id: string | null;
   agents_snapshot_hash: string | null;
   memory_snapshot_hash: string | null;
@@ -428,6 +431,7 @@ function parsePayload(row: JobRow): QueueJob {
     ...(row.result_state ? { terminalState: row.result_state } : {}),
     ...(row.terminal_reason ? { terminalReason: row.terminal_reason } : {}),
     succeeded: row.succeeded === 1,
+    deliverySuppressed: row.delivery_suppressed === 1,
     ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}),
     ...(row.agents_snapshot_hash
       ? { systemPromptSnapshotHash: row.agents_snapshot_hash }
@@ -466,7 +470,7 @@ function createBaseTables(db: Database.Database): void {
     `CREATE TABLE IF NOT EXISTS jobs (${JOB_COLUMNS}); CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','retry_wait','sending','sent','failed','ambiguous')), payload_json TEXT, response_index INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, host_unique_key TEXT, destination_type TEXT, destination_id TEXT, reply_message_id TEXT, cron_thread_id TEXT, external_message_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, status TEXT NOT NULL CHECK(status IN ('active','completed','dead_letter')), created_at TEXT NOT NULL, completed_at TEXT); CREATE TABLE IF NOT EXISTS dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, reason TEXT NOT NULL, payload_json TEXT, error TEXT, source TEXT NOT NULL, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS jobs_claim ON jobs(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS jobs_session_order ON jobs(session_id, sequence, status); CREATE INDEX IF NOT EXISTS deliveries_claim ON deliveries(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS dead_letters_job ON dead_letters(job_id, created_at);`,
   );
 }
-const JOB_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_json TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK(status IN ('queued','retry_wait','claimed','running','completed','dead_letter')), claimed INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 10, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, claimed_at TEXT, started_at TEXT, heartbeat_at TEXT, exit_code INTEGER, termination TEXT, stop_reason TEXT, usage_json TEXT, timing_json TEXT, error_json TEXT, result_json TEXT, result_state TEXT CHECK(result_state IN ('succeeded','empty_response','non_retryable','max_retries','dead_letter')), terminal_reason TEXT, succeeded INTEGER NOT NULL DEFAULT 0, delivery_id TEXT, agents_snapshot_hash TEXT, memory_snapshot_hash TEXT, snapshot_hash TEXT, tool_call_key TEXT, workspace_path TEXT, conversation_path TEXT`;
+const JOB_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_json TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK(status IN ('queued','retry_wait','claimed','running','completed','dead_letter')), claimed INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 10, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, claimed_at TEXT, started_at TEXT, heartbeat_at TEXT, exit_code INTEGER, termination TEXT, stop_reason TEXT, usage_json TEXT, timing_json TEXT, error_json TEXT, result_json TEXT, result_state TEXT CHECK(result_state IN ('succeeded','empty_response','non_retryable','max_retries','dead_letter')), terminal_reason TEXT, succeeded INTEGER NOT NULL DEFAULT 0, delivery_suppressed INTEGER NOT NULL DEFAULT 0, delivery_id TEXT, agents_snapshot_hash TEXT, memory_snapshot_hash TEXT, snapshot_hash TEXT, tool_call_key TEXT, workspace_path TEXT, conversation_path TEXT`;
 
 function tableColumnNames(db: Database.Database, table: string): Set<string> {
   return new Set(
@@ -586,6 +590,10 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
   addMissingColumns(db, "deliveries", DELIVERY_UPGRADE_COLUMNS);
   addMissingColumns(db, "jobs", [
     { name: "claimed", ddl: "claimed INTEGER NOT NULL DEFAULT 0" },
+    {
+      name: "delivery_suppressed",
+      ddl: "delivery_suppressed INTEGER NOT NULL DEFAULT 0",
+    },
   ]);
   addMissingColumns(db, "idempotency_keys", [
     { name: "completed_at", ddl: "completed_at TEXT" },
@@ -664,6 +672,13 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     summary: "add Bot task session metadata",
     up(db) {
       createBotTaskSessionTable(db);
+    },
+  },
+  {
+    version: 6,
+    summary: "persist intentionally suppressed delivery outcomes",
+    up(db) {
+      repairRuntimeSchema(db);
     },
   },
 ];
@@ -767,6 +782,7 @@ function syntheticCompleted(
     sequence: 0,
     terminalState: "succeeded",
     succeeded: true,
+    deliverySuppressed: false,
   };
 }
 /** Column projection for delivery reads. */
@@ -1366,6 +1382,7 @@ export class QueueRepository {
       "lastError",
       "sequence",
       "succeeded",
+      "deliverySuppressed",
       "terminalState",
       "resultJson",
       "deliveryId",
@@ -1395,6 +1412,7 @@ export class QueueRepository {
       "memorySnapshotHash",
       "workspacePath",
       "conversationPath",
+      "deliverySuppressed",
     ])
       delete sanitizedPatch[key];
     Object.assign(payload, sanitizedPatch);
@@ -1516,13 +1534,14 @@ export class QueueRepository {
       if (!row) throw new Error(`stale fencing token for job ${id}`);
       const changed = this.db
         .prepare(
-          `UPDATE jobs SET status='completed',lease_until=NULL,worker_id=NULL,completed_at=?,result_json=?,result_state=?,succeeded=?,delivery_id=NULL,${metadataCoalesceAssignments()} WHERE id=? AND status IN ('claimed','running') AND fencing_token=?`,
+          `UPDATE jobs SET status='completed',lease_until=NULL,worker_id=NULL,completed_at=?,result_json=?,result_state=?,succeeded=?,delivery_suppressed=?,delivery_id=NULL,${metadataCoalesceAssignments()} WHERE id=? AND status IN ('claimed','running') AND fencing_token=?`,
         )
         .run(
           at,
           resultJson,
           state,
           options.empty ? 0 : 1,
+          options.suppressDelivery ? 1 : 0,
           ...metadataCoalesceValues(m),
           id,
           token,

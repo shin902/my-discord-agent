@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type ArticleDispatch,
@@ -289,6 +289,84 @@ describe("reconcileRssDispatches", () => {
         "",
         { empty: true },
       );
+      expect(reconcileRssDispatches(repo, rssPath)).toBe(0);
+      expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBe(dispatch.id);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("recovers a suppressed RSS success after queue commit and restart", async () => {
+    const rssPath = await makeRssPath();
+    const runtimePath = join(dirname(rssPath), "runtime.sqlite");
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "suppressed");
+    const repo = new QueueRepository(runtimePath);
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "summary\n<NO_REPLY>",
+        { suppressDelivery: true },
+      );
+    } finally {
+      repo.close();
+    }
+
+    // Reopening the runtime database models a crash after the queue transaction
+    // committed but before the RSS source finalize call ran.
+    const restarted = new QueueRepository(runtimePath);
+    try {
+      expect(restarted.findByIdempotencyKey(dispatch.jobId)).toMatchObject({
+        status: "completed",
+        terminalState: "succeeded",
+        succeeded: true,
+        deliverySuppressed: true,
+      });
+      expect(restarted.listDeliveries()).toHaveLength(0);
+      expect(reconcileRssDispatches(restarted, rssPath)).toBe(1);
+      expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBeNull();
+      const check = openRssDb(rssPath);
+      try {
+        expect(listUnreadArticles(check, 10)).toEqual([]);
+      } finally {
+        check.close();
+      }
+    } finally {
+      restarted.close();
+    }
+  });
+
+  it("does not infer RSS success from an ordinary zero-delivery job", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssPath);
+    const dispatch = claimOne(rssPath, "ordinary-missing-delivery");
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const queued = repo.enqueue(queuePayload(rssPath, dispatch.id), {
+        idempotencyKey: dispatch.jobId,
+      });
+      const claimed = repo.claim("worker", 60_000);
+      repo.commitResult(
+        queued.job.id,
+        expectDefined(claimed).fencingToken,
+        "ordinary response",
+        { deliveryPayload: { destinationId: "channel" } },
+      );
+      repo.db
+        .prepare("DELETE FROM deliveries WHERE job_id=?")
+        .run(queued.job.id);
+
+      expect(repo.get(queued.job.id)).toMatchObject({
+        status: "completed",
+        terminalState: "succeeded",
+        succeeded: true,
+        deliverySuppressed: false,
+      });
       expect(reconcileRssDispatches(repo, rssPath)).toBe(0);
       expect(dispatchColumns(rssPath)[0]?.dispatch_id).toBe(dispatch.id);
     } finally {

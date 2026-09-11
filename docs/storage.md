@@ -41,7 +41,7 @@ groups/
 
 | テーブル | 責務 |
 |---|---|
-| `jobs` | 入力payload、実行状態、lease・fencing、結果、Bot同期実行のadmission |
+| `jobs` | 入力payload、実行状態、lease・fencing、結果、Bot同期実行のadmission。`delivery_suppressed` は結果commit時に配送を意図的に抑制した成功を表す |
 | `deliveries` | Discordへ送るchunkと配送状態 |
 | `idempotency_keys` | 受理済み・完了済み入力の冪等性 |
 | `dead_letters` | 処理不能・移行不正行などの記録 |
@@ -50,6 +50,8 @@ groups/
 | `schema_meta` | schema versionと旧queue移行marker |
 
 runtime DBはWALを使用します。稼働中にmain fileだけをコピーしないでください。[backup.ts](../src/queue/backup.ts) はSQLiteのserializeで整合したsnapshotを作り、別DBとしてread-onlyで開いてintegrityを検証します。session DBやRSS DB、workspace、認証stateまで含む一括backupではありません。
+
+`jobs.delivery_suppressed=1` は `<NO_REPLY>` など、結果は成功だがDiscord deliveryを意図的に作らない完了をdurably識別するruntime metadataです。RSS claimのreconciliationはこのフラグを成功根拠として使いますが、通常のdeliveryが0件になっただけでは既読化しません。既存runtime DBは起動時のschema migrationでこの列を追加します。
 
 実データの調査は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順を使ってください。通常の完了・retention・recoveryを、JSONL行の削除やad-hoc SQLで代用しないでください。
 

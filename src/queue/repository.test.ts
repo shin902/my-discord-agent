@@ -417,6 +417,7 @@ describe("durable Phase 2 result state", () => {
         resultJson: JSON.stringify("explanation\n<NO_REPLY>"),
         terminalState: "succeeded",
         succeeded: true,
+        deliverySuppressed: true,
       });
       expect(repo.listDeliveries()).toHaveLength(0);
     } finally {
