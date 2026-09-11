@@ -42,7 +42,8 @@ export function settleRssDispatch(
 
 /**
  * Resolve the two crash windows between RSS claiming, queue insertion, and read marking.
- * A completed queue job makes its articles read; a missing/failed job releases its claim.
+ * A job with terminal deliveries, or an explicit suppressed success, makes its
+ * articles read; a missing/failed job releases its claim.
  */
 export function reconcileRssDispatches(
   repo: QueueRepository = getQueueRepository(),
@@ -80,7 +81,13 @@ export function reconcileRssDispatches(
           deliveries.every((delivery) =>
             ["sent", "failed", "ambiguous"].includes(delivery.status),
           );
-        if (completed && allSent) {
+        const suppressedSuccess =
+          job?.status === "completed" &&
+          job.terminalState === "succeeded" &&
+          job.succeeded &&
+          job.deliverySuppressed &&
+          deliveries.length === 0;
+        if ((completed && allSent) || suppressedSuccess) {
           markArticlesRead(db, claim.articleIds);
           resolved++;
         } else if (
