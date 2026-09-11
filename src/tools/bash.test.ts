@@ -118,6 +118,50 @@ describe("bashTool streaming output", () => {
     expect(await externalizeLargeToolResult(result)).toBe(result);
   });
 
+  it.each([
+    0, 1,
+  ])("caps combined capture at 5 MiB (excess: %i byte)", async (excess) => {
+    const limit = 5 * 1024 * 1024;
+    const result = await run(
+      `head -c ${limit - 1} /dev/zero; head -c ${1 + excess} /dev/zero >&2`,
+    ).catch((error: Error & { details: unknown }) => error);
+    const details = outputDetails(result);
+    expect(details).toMatchObject({
+      totalBytes: limit,
+      captureLimitBytes: limit,
+      captureLimitExceeded: excess > 0,
+    });
+    expect((await stat(details.fullOutputPath)).size).toBe(limit);
+    expect(
+      (await readFile(details.fullOutputPath)).equals(Buffer.alloc(limit)),
+    ).toBe(true);
+    if (excess) {
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain(
+        "Partial output (5 MiB capture limit exceeded)",
+      );
+      expect((result as Error).message).toContain(details.fullOutputPath);
+      expect((result as Error).message.length).toBeLessThan(34_000);
+    } else {
+      expect(result).not.toBeInstanceOf(Error);
+    }
+  });
+
+  it("stops an unbounded producer at the capture limit and retains partial output", async () => {
+    const error = await run("yes").catch(
+      (error: Error & { details: unknown }) => error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("capture exceeded 5 MiB");
+    const details = outputDetails(error);
+    expect((await stat(details.fullOutputPath)).size).toBe(5 * 1024 * 1024);
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe(
+      "y\n".repeat((5 * 1024 * 1024) / 2),
+    );
+    const child = vi.mocked(realSpawn).mock.results[0].value;
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  });
+
   it("exposes the complete acquired output on non-zero exit", async () => {
     const error = await run("printf partial; printf error >&2; exit 7").catch(
       (error: Error & { details: unknown }) => error,

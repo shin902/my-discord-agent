@@ -44,7 +44,7 @@
 
 `bash` はstdout/stderrを同じpipeへ接続し、到着順にsandbox-local `/tmp` のprivate fileへストリーミング保存します（directory `0700`、file `0600`）。従来のstdout-first順序・`stderr:`ラベル・区切り改行は付けません。並行producer間の論理的な発生順序までは保証しません。
 
-小出力は従来どおり前後の空白を除いてinlineへ返し、無出力は `(出力なし)` とします。32 KiBを超える出力は先頭32 KiBのpreviewだけを返します。保存ファイルはtrimや文字コード変換をしない取得済みの全bytesです。result detailsの `fullOutputPath`、`totalBytes`、`previewBytes`、`truncated`、`lifetime: "container-run"` で参照先・サイズ・寿命を確認できます。大出力時は本文にも保存先と寿命を表示します。`read` / `grep` で必要な範囲を参照してください。
+小出力は従来どおり前後の空白を除いてinlineへ返し、無出力は `(出力なし)` とします。32 KiBを超える出力は先頭32 KiBのpreviewだけを返します。保存ファイルはtrimや文字コード変換をしない取得済みbytesです。disk保護のため、1回のcallでstdout/stderr合計 **5 MiB（5,242,880 bytes）** を超えたらprocess groupを停止し、先頭5 MiBをpartial outputとして保持します。ちょうど5 MiBなら上限超過とはしません。超過時は失敗resultの本文にpartial outputであることを明記し、detailsの `captureLimitBytes` / `captureLimitExceeded` でも確認できます。この上限はcall単位であり、run全体の合計disk quotaではありません。result detailsの `fullOutputPath`、`totalBytes`、`previewBytes`、`truncated`、`lifetime: "container-run"` で参照先・サイズ・寿命を確認できます。大出力時は本文にも保存先と寿命を表示します。`read` / `grep` で必要な範囲を参照してください。
 
 非ゼロ終了、30秒timeout、abortでも取得済みoutputを保存し、失敗resultの本文にpreview・保存先・サイズ・寿命を含めます。timeout / abortはcallのprocess groupをSIGKILLで停止します。ENOSPC等の保存失敗時はproducerを停止し、partial fileとdirectoryを削除して保存先を返しません。保存開始前の失敗ならcommandを起動しません。パスは現在のAgent container run内だけ有効で、Discord turnやcontainerを跨ぐ永続性はありません。container自体が強制終了した場合の回収も保証しません。
 

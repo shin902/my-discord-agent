@@ -8,6 +8,7 @@ import { Type } from "typebox";
 
 const TIMEOUT_MS = 30_000;
 const PREVIEW_BYTES = 32 * 1024;
+const CAPTURE_BYTES = 5 * 1024 * 1024;
 
 const parameters = Type.Object({
   command: Type.String({ description: "Shell command to execute." }),
@@ -17,7 +18,7 @@ export const bashTool: AgentTool<typeof parameters> = {
   name: "bash",
   label: "Bash",
   description:
-    "Run a shell command with a 30-second timeout. Large output returns a bounded head preview and a full output file under /tmp, valid only for the current container run. stdout/stderr share one stream. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
+    "Run a shell command with a 30-second timeout and a 5 MiB combined stdout/stderr capture limit. Exceeding the capture limit stops the command and preserves the first 5 MiB as partial output. Large output returns a bounded head preview and a full output file under /tmp, valid only for the current container run. stdout/stderr share one stream. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
   parameters,
   execute: async (_toolCallId, { command }, signal) => {
     signal?.throwIfAborted();
@@ -38,6 +39,7 @@ export const bashTool: AgentTool<typeof parameters> = {
     const preview = Buffer.alloc(PREVIEW_BYTES);
     let previewBytes = 0;
     let totalBytes = 0;
+    let captureLimitExceeded = false;
     let failure: string | undefined;
     let timer: NodeJS.Timeout | undefined;
     let onAbort: (() => void) | undefined;
@@ -83,9 +85,15 @@ export const bashTool: AgentTool<typeof parameters> = {
         async function* (source) {
           for await (const chunk of source) {
             const bytes = chunk as Buffer;
-            totalBytes += bytes.length;
-            previewBytes += bytes.copy(preview, previewBytes);
-            yield bytes;
+            const captured = bytes.subarray(0, CAPTURE_BYTES - totalBytes);
+            if (captured.length < bytes.length && !captureLimitExceeded) {
+              captureLimitExceeded = true;
+              terminate("Command stopped: output capture exceeded 5 MiB");
+            }
+            totalBytes += captured.length;
+            previewBytes += captured.copy(preview, previewBytes);
+            // Drain remaining pipe bytes after termination without saving them.
+            if (captured.length) yield captured;
           }
         },
         file.createWriteStream(),
@@ -117,11 +125,13 @@ export const bashTool: AgentTool<typeof parameters> = {
       totalBytes,
       truncated,
       previewBytes,
+      captureLimitBytes: CAPTURE_BYTES,
+      captureLimitExceeded,
       lifetime: "container-run",
     };
     const text =
       preview.subarray(0, previewBytes).toString("utf8").trim() || "(出力なし)";
-    const notice = `Full output: ${fullOutputPath}\nSize: ${totalBytes} bytes${truncated ? ` (head preview: ${previewBytes} bytes)` : ""}\nThis /tmp path is valid only for the current container run.`;
+    const notice = `${captureLimitExceeded ? "Partial output (5 MiB capture limit exceeded)" : "Full output"}: ${fullOutputPath}\nSize: ${totalBytes} bytes${truncated ? ` (head preview: ${previewBytes} bytes)` : ""}\nThis /tmp path is valid only for the current container run.`;
     if (failure) {
       // The agent SDK renders thrown errors as failed tool results, so the
       // locator must be in the message, not only attached metadata.
