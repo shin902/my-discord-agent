@@ -24,7 +24,10 @@ vi.mock("node:fs/promises", async (original) => {
 
 import { copyFile, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { bashTool } from "./bash.js";
-import { externalizeLargeToolResult } from "./output.js";
+import {
+  externalizeLargeToolResult,
+  TOOL_OUTPUT_CHAR_LIMIT,
+} from "./output.js";
 
 function run(command: string, signal?: AbortSignal) {
   return bashTool.execute("id", { command }, signal, undefined);
@@ -99,7 +102,7 @@ describe("bashTool streaming output", () => {
     );
   });
 
-  it("preserves >1 MiB from each descriptor with a bounded head preview", async () => {
+  it("preserves >1 MiB from each descriptor while keeping inline output within the common boundary", async () => {
     const size = 2 * 1024 * 1024;
     const result = await run(
       `head -c ${size} /dev/zero | tr '\\0' a; head -c ${size} /dev/zero | tr '\\0' b >&2; printf 終`,
@@ -108,13 +111,14 @@ describe("bashTool streaming output", () => {
     expect(details).toMatchObject({
       totalBytes: size * 2 + 3,
       truncated: true,
-      previewBytes: 32768,
       lifetime: "container-run",
     });
     expect(await readFile(details.fullOutputPath, "utf8")).toBe(
       `${"a".repeat(size)}${"b".repeat(size)}終`,
     );
-    expect(getText(result).length).toBeLessThan(34_000);
+    expect(details.previewBytes).toBeGreaterThan(0);
+    expect(details.previewBytes).toBeLessThan(details.totalBytes);
+    expect(getText(result).length).toBeLessThanOrEqual(TOOL_OUTPUT_CHAR_LIMIT);
     expect(getText(result)).toContain(details.fullOutputPath);
     expect(getText(result)).toContain("current container run");
     expect(await externalizeLargeToolResult(result)).toBe(result);
@@ -143,7 +147,9 @@ describe("bashTool streaming output", () => {
         "Partial output (5 MiB capture limit exceeded)",
       );
       expect((result as Error).message).toContain(details.fullOutputPath);
-      expect((result as Error).message.length).toBeLessThan(34_000);
+      expect((result as Error).message.length).toBeLessThanOrEqual(
+        TOOL_OUTPUT_CHAR_LIMIT,
+      );
     } else {
       expect(result).not.toBeInstanceOf(Error);
     }
@@ -191,7 +197,7 @@ describe("bashTool streaming output", () => {
       "a".repeat(100000),
     );
     expect(getText(result)).toContain(details.fullOutputPath);
-    expect(getText(result).length).toBeLessThan(34000);
+    expect(getText(result).length).toBeLessThanOrEqual(TOOL_OUTPUT_CHAR_LIMIT);
   });
 
   it("discards a failed publish without returning a stale locator", async () => {

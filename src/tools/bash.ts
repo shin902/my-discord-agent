@@ -15,6 +15,8 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
 const TIMEOUT_MS = 30_000;
+// Internal byte budget, not a separate inline-output policy. Leave room for
+// notices within output.ts's TOOL_OUTPUT_CHAR_LIMIT (characters, not bytes).
 const PREVIEW_BYTES = 32 * 1024;
 const CAPTURE_BYTES = 5 * 1024 * 1024;
 
