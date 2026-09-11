@@ -1,6 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { z } from "zod";
 import { readSourceTrajectories } from "../agent/session.js";
+import type { SessionExecution } from "../agent/source.js";
+import { getQueueRepository } from "../queue/repository.js";
 import { NonRetryableError } from "../utils/error.js";
 import { MemoryExportLedger } from "./export-ledger.js";
 import { TencentDbBackend } from "./tencentdb.js";
@@ -25,22 +27,23 @@ function text(message: AgentMessage): string {
 
 export function* readCaptureTurns(
   groupName: string,
+  isCommitted: (execution: SessionExecution) => boolean,
 ): Generator<MemoryCaptureTurn> {
-  for (const trajectory of readSourceTrajectories(groupName)) {
-    let assistant: AgentMessage | undefined;
+  for (const trajectory of readSourceTrajectories(groupName, isCommitted)) {
+    let assistant: Extract<AgentMessage, { role: "assistant" }> | undefined;
     for (const message of trajectory.following) {
-      // A non-conversational prompt (e.g. cron or /skill) must not supply the answer.
-      if (message.role === "user") break;
-      if (
-        message.role === "assistant" &&
-        message.stopReason === "stop" &&
-        !message.errorMessage &&
-        text(message).trim()
-      )
-        assistant = message;
+      // Match runAgent's final response; other attempts are already excluded by the store.
+      if (message.role === "assistant") assistant = message;
     }
     const userContent = text(trajectory.user);
-    if (!assistant || !userContent.trim()) continue;
+    if (
+      !assistant ||
+      assistant.stopReason !== "stop" ||
+      assistant.errorMessage ||
+      !text(assistant).trim() ||
+      !userContent.trim()
+    )
+      continue;
     yield {
       groupName,
       sessionId: trajectory.sessionId,
@@ -66,11 +69,12 @@ export async function exportBatch(
   batchSize: number,
   backend: MemoryCaptureBackend,
   ledger: MemoryExportLedger,
+  isCommitted: (execution: SessionExecution) => boolean,
   signal?: AbortSignal,
 ): Promise<void> {
   let exported = 0;
   for (const group of groups) {
-    for (const turn of readCaptureTurns(group)) {
+    for (const turn of readCaptureTurns(group, isCommitted)) {
       signal?.throwIfAborted();
       if (ledger.has(backendId, turn)) continue;
       await backend.exportTurn(turn);
@@ -98,6 +102,8 @@ export async function runMemoryExport(
       parsed.data.batchSize,
       backend,
       ledger,
+      ({ jobId, fencingToken }) =>
+        getQueueRepository().hasCommittedResult(jobId, fencingToken),
       signal,
     );
   } finally {

@@ -35,7 +35,7 @@ describe("SQLite session trajectory store", () => {
       session.loadMessages("empty-group", "missing"),
     ).resolves.toEqual([]);
     const db = dbFor("empty-group");
-    expect(db.pragma("user_version", { simple: true })).toBe(2);
+    expect(db.pragma("user_version", { simple: true })).toBe(3);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all() as Array<{ name: string }>;
@@ -108,12 +108,12 @@ describe("SQLite session trajectory store", () => {
   });
 
   it.each([
-    0, 1,
+    0, 1, 2,
   ])("rechecks stale v%s under the migration write lock across concurrent connections", async (version) => {
     const group = `migration-v${version}`;
     await mkdir(path.join(root, group), { recursive: true });
     const db = new Database(path.join(root, group, "sessions.sqlite"));
-    if (version === 1) {
+    if (version >= 1) {
       db.exec(`
         CREATE TABLE sessions(id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'conversation', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
         CREATE TABLE session_entries(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE, sequence INTEGER NOT NULL, entry_type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(session_id, sequence));
@@ -121,6 +121,11 @@ describe("SQLite session trajectory store", () => {
         INSERT INTO sessions VALUES('old', 'conversation', 1, 1);
         INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at) VALUES('old', 1, 'user', '{"role":"user","content":"old message","timestamp":1}', 1);
       `);
+    }
+    if (version === 2) {
+      db.exec(
+        "ALTER TABLE session_entries ADD COLUMN source_json TEXT; CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL; PRAGMA user_version=2;",
+      );
     }
     db.close();
     const gate = new Int32Array(new SharedArrayBuffer(4));
@@ -148,27 +153,29 @@ describe("SQLite session trajectory store", () => {
       ]);
       const inspect = dbFor(group);
       try {
-        expect(inspect.pragma("user_version", { simple: true })).toBe(2);
+        expect(inspect.pragma("user_version", { simple: true })).toBe(3);
         expect(
           (
             inspect.pragma("table_info(session_entries)") as Array<{
               name: string;
             }>
-          ).filter((column) => column.name === "source_json"),
-        ).toHaveLength(1);
+          ).filter((column) =>
+            ["source_json", "execution_json"].includes(column.name),
+          ),
+        ).toHaveLength(2);
         expect(
           inspect
             .prepare("SELECT COUNT(*) AS count FROM session_entries")
             .get(),
-        ).toEqual({ count: 2 + version });
-        if (version === 1)
+        ).toEqual({ count: version === 0 ? 2 : 3 });
+        if (version >= 1)
           expect(
             inspect
               .prepare(
-                "SELECT source_json FROM session_entries WHERE session_id='old'",
+                "SELECT source_json, execution_json FROM session_entries WHERE session_id='old'",
               )
               .get(),
-          ).toEqual({ source_json: null });
+          ).toEqual({ source_json: null, execution_json: null });
       } finally {
         inspect.close();
       }

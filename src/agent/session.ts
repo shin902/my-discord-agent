@@ -3,12 +3,17 @@ import { chmod, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
-import { type SessionSource, SessionSourceSchema } from "./source.js";
+import {
+  type SessionExecution,
+  SessionExecutionSchema,
+  type SessionSource,
+  SessionSourceSchema,
+} from "./source.js";
 
 const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -121,6 +126,16 @@ function initializeSchema(db: Database.Database): void {
         PRAGMA user_version = 2;
       `);
     }
+    if (version < 3) {
+      db.exec(`
+        ALTER TABLE session_entries ADD COLUMN execution_json TEXT;
+        CREATE INDEX session_entries_execution ON session_entries(
+          session_id, json_extract(execution_json, '$.jobId'),
+          json_extract(execution_json, '$.fencingToken'), sequence
+        ) WHERE execution_json IS NOT NULL;
+        PRAGMA user_version = 3;
+      `);
+    }
   }).immediate();
 }
 
@@ -166,10 +181,11 @@ export async function loadMessages(
   }
 }
 
-/** A user source and the following entries up to the next sourced user. */
+/** A sourced user and following entries from the same identified runtime attempt. */
 export interface SourceTrajectory {
   sessionId: string;
   source: SessionSource;
+  execution: SessionExecution;
   user: AgentMessage;
   following: AgentMessage[];
 }
@@ -177,6 +193,7 @@ export interface SourceTrajectory {
 /** Read-only, paged scan. No read transaction is held while the caller awaits I/O. */
 export function* readSourceTrajectories(
   groupName: string,
+  includeExecution: (execution: SessionExecution) => boolean,
 ): Generator<SourceTrajectory> {
   validateName(groupName, "グループ名");
   const dbPath = path.join(groupDir(groupName), DB_FILENAME);
@@ -184,21 +201,21 @@ export function* readSourceTrajectories(
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     const version = db.pragma("user_version", { simple: true }) as number;
-    // Pre-provenance history has no eligible sources; never infer them from text.
-    if (version === 1) return;
+    // Older schemas cannot establish committed attempts; never infer them from text.
+    if (version === 1 || version === 2) return;
     if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
     const sources = db.prepare(`
-      SELECT id, session_id, sequence, source_json, payload_json
-      FROM session_entries WHERE source_json IS NOT NULL AND id > ?
+      SELECT id, session_id, sequence, source_json, execution_json, payload_json
+      FROM session_entries
+      WHERE source_json IS NOT NULL AND execution_json IS NOT NULL AND id > ?
       ORDER BY id LIMIT 100
     `);
     const following = db.prepare(`
       SELECT payload_json FROM session_entries
-      WHERE session_id = ? AND sequence > ? AND sequence < COALESCE(
-        (SELECT MIN(sequence) FROM session_entries
-         WHERE session_id = ? AND sequence > ? AND entry_type = 'user' AND source_json IS NOT NULL),
-        9223372036854775807)
+      WHERE session_id = ? AND sequence > ? AND execution_json IS NOT NULL
+        AND json_extract(execution_json, '$.jobId') = ?
+        AND json_extract(execution_json, '$.fencingToken') = ?
       ORDER BY sequence
     `);
     let cursor = 0;
@@ -208,6 +225,7 @@ export function* readSourceTrajectories(
         session_id: string;
         sequence: number;
         source_json: string;
+        execution_json: string;
         payload_json: string;
       }>;
       if (rows.length === 0) return;
@@ -215,15 +233,21 @@ export function* readSourceTrajectories(
         cursor = row.id;
         const user = parseStoredMessage(row.payload_json);
         if (user.role !== "user") continue;
+        const execution = SessionExecutionSchema.parse(
+          JSON.parse(row.execution_json),
+        );
+        // Check authority before reading the response, not after taking a possibly unfinished snapshot.
+        if (!includeExecution(execution)) continue;
         const entries = following.all(
           row.session_id,
           row.sequence,
-          row.session_id,
-          row.sequence,
+          execution.jobId,
+          execution.fencingToken,
         ) as Array<{ payload_json: string }>;
         yield {
           sessionId: row.session_id,
           source: SessionSourceSchema.parse(JSON.parse(row.source_json)),
+          execution,
           user,
           following: entries.map((entry) =>
             parseStoredMessage(entry.payload_json),
@@ -278,12 +302,16 @@ export async function appendMessage(
   sessionId: string,
   message: AgentMessage,
   source?: SessionSource,
+  execution?: SessionExecution,
 ): Promise<void> {
   if (source && message.role !== "user") {
     throw new Error("source provenance requires a user entry");
   }
   const sourceJson = source
     ? JSON.stringify(SessionSourceSchema.parse(source))
+    : null;
+  const executionJson = execution
+    ? JSON.stringify(SessionExecutionSchema.parse(execution))
     : null;
   validateName(groupName, "グループ名");
   validateName(sessionId, "セッションID");
@@ -299,8 +327,8 @@ export async function appendMessage(
         ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
       `).run(sessionId, timestamp, timestamp);
       db.prepare(`
-        INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json)
-        SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?
+        INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json, execution_json)
+        SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?, ?
         FROM session_entries WHERE session_id=?
       `).run(
         sessionId,
@@ -308,6 +336,7 @@ export async function appendMessage(
         JSON.stringify(sanitized),
         timestamp,
         sourceJson,
+        executionJson,
         sessionId,
       );
     })();

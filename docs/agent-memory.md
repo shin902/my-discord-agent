@@ -7,7 +7,8 @@ config/cron.json (schedule + backend settings)
   → cron handler (enqueueのみ)
   → runtime.sqlite (queue / ordering / lease / fencing / retry / dead-letter / recovery)
   → Memory export worker
-      → data/sessions/<group>/sessions.sqlite (read-only)
+      → runtime.sqlite (source jobの成功commit / fencing一致をread-only確認)
+      → data/sessions/<group>/sessions.sqlite (本文をread-only取得)
       → Memory Backend Adapter → TencentDB / other backend
       → data/memory-export.sqlite (export成功markerのみ)
 ```
@@ -63,14 +64,17 @@ cron job IDは安定したbackend / export namespaceです。同じlogical backe
 
 `session_entries.source_json` はnullableです。会話本文・session identityは既存columnを使い、candidate flagやbackend設定は追加しません。source metadataはLLM contextへ混ぜません。auto-thread起点でも、返信先message IDとは別に元のDiscord message IDを保持します。`createdAt`は元Discord messageの作成時刻です。exportのuser timestampにはこれを使い、startup backfill等の処理時刻と混同しません。canonical user entryのtimestampは処理時刻のまま維持し、`createdAt`のない旧provenanceだけはそのentry timestampへfallbackします。assistantはcanonical entryの生成時刻を使います。
 
-- sourced userから次のsourced userまでを探索し、最後の正常終了（`stopReason: stop`）、非空text、errorなしのassistantを対応付けます。
-- assistant未到着、error / abortedのみ、tool call途中、length終了、空responseはexportしません。次のjobが未完了turnを再評価できます。
-- provenanceのないuser promptに達したら、それ以降の回答を元humanへ誤帰属させません。
+通常会話のrunのentryには、本文・sourceとは別に `execution_json: {"jobId":"<runtime job ID>","fencingToken":1}` を保存します。これは汎用の実行identityであり、成功markerではありません。LLM contextには含めず、sandboxへruntime DBを公開することもありません。
+
+- source jobがruntime DB上で成功commit済み（`completed`、`succeeded`、`result_state: succeeded`）であり、保存されたfencing tokenが一致することを**応答を読む前に**確認します。sessionに`stop`があるだけではexportしません。
+- 同じ実行identityのentryだけから最終assistantを取得し、正常終了（`stopReason: stop`）、非空text、errorなしの場合だけ対応付けます。別試行の遅延書き込みを混ぜず、最終assistantが不適格な場合も途中の`stop`へfallbackしません。
+- 未commit、assistant未到着、error / aborted、tool call途中、length終了、空responseはexportしません。後続batchで成功commit済みの試行を再評価できます。
+- 別jobのpromptや応答は実行identityで分離します。同じrun内のfollow-up promptがある場合も、Agentが返す最終assistantを使います。`./command nonexistent`等のAgent起動前に生成する応答も、user＋assistantと実行identityをcanonicalへ保存して同じ条件で判定します。
 - Bot Task、Subagent、cron、RSS、mail、Discord Bot自身の発言、slash commandには初版のDiscord会話provenanceを付けません。
 - 送信元はsession DBのみです。通常runtime jobのpayload/result、Discord deliveryから本文を再構築しません。本文はcanonicalに保存されたtextです（添付ファイル案内等を含む場合があります）。thinkingやtool payloadは送信しません。
 - `<NO_REPLY>` はDiscord配送の抑制であり、非空の正常assistantとして保存されていればexport対象になり得ます。
 
-session schema v1は通常の書き込み経路でv2へ更新されます。migrationはwrite lock取得後にschema versionを再確認し、同じgroupの並行run/containerによる二重ALTERを防ぎます。export側はDB作成・migrationをしません。provenanceのない既存履歴は本文やruntime queueから推測・backfillしません。
+session schema v1/v2は通常の書き込み経路でv3へ更新されます。migrationはwrite lock取得後にschema versionを再確認し、同じgroupの並行run/containerによる二重ALTERを防ぎます。export側はDB作成・migrationをしません。source provenanceや実行identityのない既存履歴は本文やruntime queueから推測・backfillしません。
 
 ## queueと成功ledger
 
@@ -98,7 +102,9 @@ network、timeout、408、429、5xxは既存queueのretryへ、明確な設定�
 ## 制約と運用
 
 - **at-least-once**: remote受理後・marker保存前のcrashでは重複が起こり得ます。2-phase commit、outbox、remote idempotency emulationはありません。
-- ledgerだけを削除するとremoteへ再送されます。全再構築は新しいbackend namespaceとcron IDを組み合わせるか、backend namespaceと対応markerを一緒にresetしてください。
+- ledgerだけを削除すると、成功commitを検証できるturnがremoteへ再送されます。再構築は新しいbackend namespaceとcron IDを組み合わせるか、backend namespaceと対応markerを一緒にresetしてください。
+- source jobの成功記録がruntime retention等で失われたturnは、安全側で対象外にします。export/re-exportが必要な期間はsession DBに加えて対応runtime jobも保持してください。retention archiveからの自動復元・照合はしません。
+- 確認するのはsource jobの結果commitであり、Discordの`sent`ではありません。配送retryはAgentを再実行せず、Memory exportの判定とも独立です。
 - groupは設定順、group内はsource entry追加順に走査します。batch数はremote成功turn数を制限しますが、履歴の走査量を制限するcursor stateは持ちません。大きな履歴や先頭groupの継続的な大量流入では走査コスト・後続groupの遅延が増えます。
 - 通常queue/cronと同じ単一host process・Discord readinessの起動条件を引き継ぎます。Memory専用schedulerやmulti-host lockはありません。
 - queue状態は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順で確認します。`cronJobId` / `jobKind` と通常のjob statusを使い、成功件数はledgerをread-onlyで確認します。runtime backupにsession DB・export ledgerは含まれません（[storage.md](storage.md)）。
@@ -107,4 +113,4 @@ network、timeout、408、429、5xxは既存queueのretryへ、明確な設定�
 
 旧shadow job互換実行・payload migrationはありません。**更新前に旧runtimeで未完了shadow jobをdrainし、queueに残っていないことをread-onlyで確認してから停止**してください。drainできない場合はrolloutを止め、既存queueの運用手順で対処します。ad-hocなSQL更新でleaseやdelivery状態を改変しないでください。
 
-旧top-level `config/config.json.agentMemory` を削除し、必要なbackendを `config/cron.json` に移してrestartします。旧設定は新runtimeでは参照されません。新provenanceが保存される以降の会話が対象となり、既存remote memoryはそのまま保持できます。新経路のqueue、session、ledgerを確認してから通常運用へ戻してください。
+旧top-level `config/config.json.agentMemory` を削除し、必要なbackendを `config/cron.json` に移してrestartします。旧設定は新runtimeでは参照されません。新provenanceと実行identityが保存される以降の成功commit済み会話が対象となり、既存remote memoryはそのまま保持できます。新経路のqueue、session、ledgerを確認してから通常運用へ戻してください。

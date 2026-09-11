@@ -917,10 +917,12 @@ describe("sendMessage: 添付ファイル", () => {
     await sendMessage("test-group", "session-1", "見て", {
       attachments,
       source,
+      execution: { jobId: "job", fencingToken: 2 },
     });
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.source).toEqual(source);
+    expect(payload.execution).toEqual({ jobId: "job", fencingToken: 2 });
     expect(payload.content).toContain("[添付ファイル]");
   });
 

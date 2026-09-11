@@ -68,7 +68,7 @@ session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
-`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v1→v2は通常session書き込み時に列を追加し、既存entryはNULLのまま保持します。Memory exporterはread-onlyで読み、旧履歴や存在しないDBを補完・作成しません。
+`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存します。`execution_json` は各entryを生成したruntime attempt（`jobId` / `fencingToken`）であり、成功の証明ではありません。どちらもLLM contextには含めません。schema v1→v2でsource列、v2→v3でexecution列と検索indexを通常session書き込み時に追加し、既存entryはNULLのまま保持します。migrationはwrite lock下でversionを再確認します。Memory exporterはsource jobの成功commitとfencing一致をruntime DBのmetadataだけで確認してから、対応するattemptの本文をsession DBからread-onlyで読みます。旧履歴や存在しないDBを補完・作成しません。
 
 実装の正本は [session.ts](../src/agent/session.ts) です。
 

@@ -813,6 +813,16 @@ export class QueueRepository {
       | undefined;
     return row ? parsePayload(row) : undefined;
   }
+  /** Read only outcome metadata: a completed job must also match the producing attempt. */
+  hasCommittedResult(id: string, token: number): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE id=? AND fencing_token=? AND status='completed' AND succeeded=1 AND result_state='succeeded'",
+        )
+        .get(id, token) !== undefined
+    );
+  }
   findByIdempotencyKey(key: string): QueueJob | undefined {
     const row = this.db
       .prepare("SELECT * FROM jobs WHERE idempotency_key=?")

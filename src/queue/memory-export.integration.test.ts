@@ -12,6 +12,7 @@ import {
   vi,
 } from "vitest";
 import { expectDefined } from "../test-utils.js";
+import type { QueueJob } from "./repository.js";
 
 const state = vi.hoisted(() => ({
   repository: undefined as unknown,
@@ -84,19 +85,52 @@ async function startup(jobs = [config()]): Promise<void> {
   state.loadRawCron.mockResolvedValue(jobs);
   _setCronJobs(await loadAndValidateCron());
 }
-async function seed(id: string, group = "main"): Promise<void> {
+function enqueueSource(
+  id: string,
+  group = "main",
+  content = `user ${id}`,
+): QueueJob {
+  return repo.enqueue({
+    groupName: group,
+    sessionId: "chat",
+    channelId: "channel",
+    content,
+    source: { kind: "discord", sourceId: id, actorId: "human", messageType: 0 },
+    timestamp: new Date().toISOString(),
+  }).job;
+}
+async function appendAnswer(job: QueueJob, answer: string): Promise<void> {
   await appendMessage(
-    group,
-    "chat",
-    { role: "user", content: `user ${id}`, timestamp: 1000 },
-    { kind: "discord", sourceId: id, actorId: "human", messageType: 0 },
+    job.groupName,
+    job.sessionId,
+    {
+      role: "assistant",
+      content: [{ type: "text", text: answer }],
+      stopReason: "stop",
+      timestamp: 2000,
+    } as AgentMessage,
+    undefined,
+    { jobId: job.id, fencingToken: expectDefined(job.fencingToken) },
   );
-  await appendMessage(group, "chat", {
-    role: "assistant",
-    content: [{ type: "text", text: `answer ${id}` }],
-    stopReason: "stop",
-    timestamp: 2000,
-  } as AgentMessage);
+}
+async function appendAttempt(job: QueueJob, answer: string): Promise<void> {
+  await appendMessage(
+    job.groupName,
+    job.sessionId,
+    { role: "user", content: job.content, timestamp: 1000 },
+    job.source,
+    { jobId: job.id, fencingToken: expectDefined(job.fencingToken) },
+  );
+  await appendAnswer(job, answer);
+}
+async function seed(id: string, group = "main"): Promise<void> {
+  const job = enqueueSource(id, group);
+  const claimed = expectDefined(repo.claim("seed"));
+  expect(claimed.job.id).toBe(job.id);
+  await appendAttempt(claimed.job, `answer ${id}`);
+  repo.commitResult(job.id, claimed.fencingToken, `answer ${id}`, {
+    suppressDelivery: true,
+  });
 }
 async function processNext(now = new Date()): Promise<string> {
   const claimed = expectDefined(repo.claim("test-worker", 60_000, now));
@@ -140,7 +174,9 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     await seed("one");
     await executeJob(config());
     const row = repo.db
-      .prepare("SELECT payload_json,session_id FROM jobs")
+      .prepare(
+        "SELECT payload_json,session_id FROM jobs WHERE json_extract(payload_json, '$.jobKind')='memory-export'",
+      )
       .get() as { payload_json: string; session_id: string };
     expect(row.session_id).toBe("memory-export:memory-main");
     expect(JSON.parse(row.payload_json)).toEqual({
@@ -237,6 +273,139 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     });
     expect(repo.listDeliveries()).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("exports only the committed retry, never an abandoned stop or late stale-fence response", async () => {
+    const job = enqueueSource("retried");
+    const old = expectDefined(repo.claim("crashing-worker"));
+    await appendAttempt(old.job, "abandoned response");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => accept());
+    await executeJob(config());
+    await processNext();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(repo.hasCommittedResult(job.id, old.fencingToken)).toBe(false);
+
+    // Crash before result commit; restart/recover through the ordinary queue API.
+    repo.close();
+    repo = new QueueRepository(openRuntimeDb(join(root, "runtime.sqlite")));
+    state.repository = repo;
+    const recoveredAt = new Date(Date.now() + 120_000);
+    expect(repo.recoverExpired(recoveredAt)).toBe(1);
+    const retry = expectDefined(
+      repo.claim("retry-worker", 60_000, recoveredAt),
+    );
+    expect(retry.job.id).toBe(job.id);
+    expect(retry.fencingToken).not.toBe(old.fencingToken);
+    await appendAttempt(retry.job, "committed response");
+    // Even an old runner writing AFTER the retry's response must not replace it.
+    await appendAnswer(old.job, "late abandoned response");
+    expect(() =>
+      repo.commitResult(job.id, old.fencingToken, "abandoned response"),
+    ).toThrow(/stale fencing/);
+    await executeJob(config());
+    await processNext();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    repo.commitResult(job.id, retry.fencingToken, "committed response");
+    expect(repo.hasCommittedResult(job.id, old.fencingToken)).toBe(false);
+    expect(repo.hasCommittedResult(job.id, retry.fencingToken)).toBe(true);
+    // No post-commit session marker is needed, including across another restart.
+    repo.close();
+    repo = new QueueRepository(openRuntimeDb(join(root, "runtime.sqlite")));
+    state.repository = repo;
+    await executeJob(config());
+    await processNext();
+    await executeJob(config());
+    await processNext();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(
+      payload.messages.map((message: { content: string }) => message.content),
+    ).toEqual(["user retried", "committed response"]);
+    expect(repo.listDeliveries()[0]?.payloadJson).toContain(
+      "committed response",
+    );
+  });
+
+  it.each([
+    "dead-letter",
+    "empty",
+  ])("does not export a stop entry from a %s source result", async (outcome) => {
+    const job = enqueueSource("unsuccessful");
+    const claimed = expectDefined(repo.claim("source-worker"));
+    await appendAttempt(claimed.job, "uncommitted stop");
+    if (outcome === "dead-letter")
+      repo.deadLetter(job.id, claimed.fencingToken, "agent_error");
+    else repo.commitResult(job.id, claimed.fencingToken, "", { empty: true });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    await executeJob(config());
+    await processNext();
+    expect(repo.hasCommittedResult(job.id, claimed.fencingToken)).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not infer success after the authoritative source job has been retained away", async () => {
+    const { pruneRetention } = await import("./retention.js");
+    const job = enqueueSource("retained");
+    const claimed = expectDefined(repo.claim("source-worker"));
+    await appendAttempt(claimed.job, "retained result");
+    repo.commitResult(job.id, claimed.fencingToken, "retained result", {
+      suppressDelivery: true,
+    });
+    await pruneRetention(
+      repo.db,
+      { jobs: { completed: 1 }, archiveDir: join(root, "retention-archive") },
+      { at: new Date(Date.now() + 60_000) },
+    );
+    expect(repo.get(job.id)).toBeUndefined();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    await executeJob(config());
+    await processNext();
+    expect(repo.hasCommittedResult(job.id, claimed.fencingToken)).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("captures a missing-skill local response only after the human source job commits", async () => {
+    const { runAgentLoop } = await import("../sandbox/agent-runner.js");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => accept());
+    vi.mocked(sendMessage).mockImplementationOnce(
+      async (group, sessionId, content, options = {}) => {
+        const response = await runAgentLoop(
+          group,
+          sessionId,
+          content,
+          { skills: [] },
+          options,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          options.source,
+          options.execution,
+        );
+        await executeJob(config());
+        await processNext();
+        expect(fetchMock).not.toHaveBeenCalled();
+        return response;
+      },
+    );
+    const job = enqueueSource("missing-skill", "main", "./command nonexistent");
+    await processNext();
+    expect(repo.get(job.id)?.status).toBe("completed");
+    expect(repo.listDeliveries()[0]?.payloadJson).toContain("見つかりません");
+    await executeJob(config());
+    await processNext();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(payload.messages[0].content).toBe("./command nonexistent");
+    expect(payload.messages[1].content).toContain(
+      'スキル "nonexistent" が見つかりません',
+    );
   });
 
   it("serializes batches of one backend using existing session ordering, not other backends", async () => {
@@ -359,7 +528,10 @@ describe("cron + runtime queue + canonical trajectory export", () => {
       "main",
       "normal",
       "normal user",
-      expect.objectContaining({ source }),
+      expect.objectContaining({
+        source,
+        execution: { jobId: normal.id, fencingToken: claimed.fencingToken },
+      }),
     );
     expect(fetchMock).toHaveBeenCalledOnce();
     rejectFetch(new Error("backend unavailable"));

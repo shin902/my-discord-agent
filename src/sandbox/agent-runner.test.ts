@@ -120,7 +120,8 @@ describe("runAgentLoop", () => {
   it.each([
     false,
     true,
-  ])("attaches provenance only to the input user and persists in event order (failed run=%s)", async (failed) => {
+  ])("attaches source only to the input user and execution to every event in order (failed run=%s)", async (failed) => {
+    const execution = { jobId: "source-job", fencingToken: 2 };
     const source = {
       kind: "discord" as const,
       sourceId: "message",
@@ -171,6 +172,7 @@ describe("runAgentLoop", () => {
       undefined,
       undefined,
       source,
+      execution,
     );
     if (failed) await expect(run).rejects.toThrow("run failed");
     else await run;
@@ -180,16 +182,21 @@ describe("runAgentLoop", () => {
       "session-1",
       messages[0],
       source,
+      execution,
     );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       messages[1],
+      undefined,
+      execution,
     );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       messages[2],
+      undefined,
+      execution,
     );
   });
 
@@ -1643,15 +1650,60 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 0 as const,
+    };
+    const execution = { jobId: "source-job", fencingToken: 1 };
     const result = await runAgentLoop(
       "test-group",
       "session-1",
       "./command unknown",
       {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      source,
+      execution,
     );
 
     expect(result).toContain("見つかりません");
+    expect(AgentMock).not.toHaveBeenCalled();
     expect(mockAgent.prompt).not.toHaveBeenCalled();
+    const entries = vi
+      .mocked(appendMessage)
+      .mock.calls.filter((call) => call[2].role !== "custom");
+    expect(entries).toEqual([
+      [
+        "test-group",
+        "session-1",
+        {
+          role: "user",
+          content: "./command unknown",
+          timestamp: expect.any(Number),
+        },
+        source,
+        execution,
+      ],
+      [
+        "test-group",
+        "session-1",
+        expect.objectContaining({
+          role: "assistant",
+          content: [{ type: "text", text: result }],
+          stopReason: "stop",
+          timestamp: expect.any(Number),
+          usage: expect.objectContaining({ totalTokens: 0 }),
+        }),
+        undefined,
+        execution,
+      ],
+    ]);
   });
 
   it("convertToLlm が Agent に渡される", async () => {

@@ -1103,6 +1103,14 @@ export async function processMessage(
                   );
                 },
                 attachments: msg.attachments,
+                ...(msg.fencingToken !== undefined
+                  ? {
+                      execution: {
+                        jobId: msg.id,
+                        fencingToken: msg.fencingToken,
+                      },
+                    }
+                  : {}),
                 source:
                   !msg.botId &&
                   !msg.cronJobId &&
