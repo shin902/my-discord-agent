@@ -38,6 +38,36 @@ afterEach(async () => {
 
 describe("execAsync process groups", () => {
   it.runIf(process.platform !== "win32")(
+    "streams output without retaining it when requested",
+    async () => {
+      const script =
+        "process.stdout.write('x'.repeat(2_000_000)); process.stderr.write('y'.repeat(2_000_000));";
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      const result = await execAsync(
+        `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+        {
+          timeout: 10_000,
+          maxBuffer: Number.POSITIVE_INFINITY,
+          cwd: process.cwd(),
+          processGroup: true,
+          collectOutput: false,
+          onStdout: (chunk) => {
+            stdoutBytes += Buffer.byteLength(chunk);
+          },
+          onStderr: (chunk) => {
+            stderrBytes += Buffer.byteLength(chunk);
+          },
+        },
+      );
+
+      expect(result).toEqual({ stdout: "", stderr: "" });
+      expect(stdoutBytes).toBe(2_000_000);
+      expect(stderrBytes).toBe(2_000_000);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "abort terminates the shell and its descendant process",
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "exec-process-group-"));

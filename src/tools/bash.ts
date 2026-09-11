@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
+import { createBashOutputCapture } from "./bash-output.js";
 import { execAsync } from "./exec.js";
 
 const TIMEOUT_MS = 30_000;
@@ -13,27 +14,46 @@ export const bashTool: AgentTool<typeof parameters> = {
   name: "bash",
   label: "Bash",
   description:
-    "Run a shell command with a 30-second timeout and a 1 MB output limit. Redirect commands with large output to a file and use read to inspect only the needed parts. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
+    "Run a shell command with a 30-second timeout. Large output is streamed to a private sandbox-local temporary file and returned with a bounded head/tail preview. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
   parameters,
-  execute: async (_toolCallId, { command }) => {
+  execute: async (_toolCallId, { command }, signal) => {
+    const output = await createBashOutputCapture();
+    let keepOutput = false;
     try {
-      const { stdout, stderr } = await execAsync(command, {
-        timeout: TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-        cwd: "/workspace",
-      });
-      const text = [stdout, stderr ? `stderr:\n${stderr}` : ""]
-        .filter(Boolean)
-        .join("\n")
-        .trim();
-      return {
-        content: [{ type: "text", text: text || "(出力なし)" }],
-        details: { command },
-      };
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; message?: string };
-      const output = [e.stdout, e.stderr].filter(Boolean).join("\n").trim();
-      throw new Error(output || e.message || "コマンド実行エラー");
+      let executionError: unknown;
+      try {
+        await execAsync(command, {
+          timeout: TIMEOUT_MS,
+          maxBuffer: Number.POSITIVE_INFINITY,
+          cwd: "/workspace",
+          signal,
+          processGroup: true,
+          collectOutput: false,
+          onStdout: output.onStdout,
+          onStderr: output.onStderr,
+        });
+      } catch (error) {
+        executionError = error;
+      }
+
+      let closeError: unknown;
+      try {
+        await output.finish();
+      } catch (error) {
+        closeError = error;
+      }
+
+      if (executionError || closeError) {
+        const error = await output.error(closeError ?? executionError);
+        keepOutput = output.hasOutput && !output.storageFailure;
+        throw error;
+      }
+
+      const result = await output.result({ command });
+      keepOutput = output.isLarge;
+      return result;
+    } finally {
+      if (!keepOutput) await output.cleanup().catch(() => {});
     }
   },
 };

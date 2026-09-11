@@ -1,5 +1,11 @@
 import { exec, spawn } from "node:child_process";
 
+export type ExecOutputCallback = (
+  chunk: string,
+  stream: NodeJS.ReadableStream,
+  reportError?: (error: Error) => void,
+) => void;
+
 export type ExecOptions = {
   timeout: number;
   maxBuffer: number;
@@ -7,6 +13,11 @@ export type ExecOptions = {
   signal?: AbortSignal;
   /** Run the shell and its descendants in a call-scoped Unix process group. */
   processGroup?: boolean;
+  /** Receive decoded output while the process is running. */
+  onStdout?: ExecOutputCallback;
+  onStderr?: ExecOutputCallback;
+  /** Skip retaining output in memory when callbacks own persistence. */
+  collectOutput?: boolean;
 };
 
 function abortError(): Error {
@@ -150,10 +161,24 @@ export function execAsync(
     const onAbort = (): void => requestTermination(abortError());
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
+    const reportOutputError = (value: unknown): void => {
+      const error = value instanceof Error ? value : new Error(String(value));
+      requestTermination(error);
+    };
+
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
       stdoutBytes += Buffer.byteLength(chunk);
-      stdout += chunk;
+      if (options.collectOutput !== false) stdout += chunk;
+      try {
+        options.onStdout?.(
+          chunk,
+          child.stdout as NodeJS.ReadableStream,
+          reportOutputError,
+        );
+      } catch (error) {
+        reportOutputError(error);
+      }
       if (stdoutBytes > options.maxBuffer && !terminationRequested) {
         requestTermination(new Error("stdout maxBuffer length exceeded"));
       }
@@ -161,7 +186,16 @@ export function execAsync(
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => {
       stderrBytes += Buffer.byteLength(chunk);
-      stderr += chunk;
+      if (options.collectOutput !== false) stderr += chunk;
+      try {
+        options.onStderr?.(
+          chunk,
+          child.stderr as NodeJS.ReadableStream,
+          reportOutputError,
+        );
+      } catch (error) {
+        reportOutputError(error);
+      }
       if (stderrBytes > options.maxBuffer && !terminationRequested) {
         requestTermination(new Error("stderr maxBuffer length exceeded"));
       }
