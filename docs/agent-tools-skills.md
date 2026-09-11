@@ -42,11 +42,11 @@
 
 ### bashの出力と一時ファイル
 
-`bash` はstdout/stderrを同じpipeへ接続し、到着順にsandbox-local `/tmp` のprivate fileへストリーミング保存します（directory `0700`、file `0600`）。従来のstdout-first順序・`stderr:`ラベル・区切り改行は付けません。並行producer間の論理的な発生順序までは保証しません。
+`bash` はstdout/stderrを同じpipeへ接続し、到着順にsandbox-local `/tmp` のprivate fileへストリーミング保存します（directory `0700`、file `0600`）。従来のstdout-first順序・`stderr:`ラベル・区切り改行は付けません。並行producer間の論理的な発生順序までは保証しません。command起動前にcaptureのpathをunlinkし、実行中はanonymous file descriptorだけを保持します。commandと出力streamの終了後、Linuxの `/proc/self/fd` 経由で最大5 MiBを新しいprivate fileへcopyしてからpathを公開するため、実行中の通常の `/tmp` cleanupではcaptureを失いません。copy中の一時disk使用量は最大約10 MiBです。これは同じUIDの悪意あるprocessや、公開後のfile削除に対するsecurity boundaryではありません。
 
 小出力は従来どおり前後の空白を除いてinlineへ返し、無出力は `(出力なし)` とします。32 KiBを超える出力は先頭32 KiBのpreviewだけを返します。保存ファイルはtrimや文字コード変換をしない取得済みbytesです。disk保護のため、1回のcallでstdout/stderr合計 **5 MiB（5,242,880 bytes）** を超えたらprocess groupを停止し、先頭5 MiBをpartial outputとして保持します。ちょうど5 MiBなら上限超過とはしません。超過時は失敗resultの本文にpartial outputであることを明記し、detailsの `captureLimitBytes` / `captureLimitExceeded` でも確認できます。この上限はcall単位であり、run全体の合計disk quotaではありません。result detailsの `fullOutputPath`、`totalBytes`、`previewBytes`、`truncated`、`lifetime: "container-run"` で参照先・サイズ・寿命を確認できます。大出力時は本文にも保存先と寿命を表示します。`read` / `grep` で必要な範囲を参照してください。
 
-非ゼロ終了、30秒timeout、abortでも取得済みoutputを保存し、失敗resultの本文にpreview・保存先・サイズ・寿命を含めます。timeout / abortはcallのprocess groupをSIGKILLで停止します。ENOSPC等の保存失敗時はproducerを停止し、partial fileとdirectoryを削除して保存先を返しません。保存開始前の失敗ならcommandを起動しません。パスは現在のAgent container run内だけ有効で、Discord turnやcontainerを跨ぐ永続性はありません。container自体が強制終了した場合の回収も保証しません。
+非ゼロ終了、30秒timeout、abortでも取得済みoutputを保存し、失敗resultの本文にpreview・保存先・サイズ・寿命を含めます。timeout / abortはcallのprocess groupをSIGKILLで停止します。ENOSPC等の保存失敗時はproducerを停止し、anonymous captureをcloseして解放します。終了後のpublish失敗も不完全なfileとdirectoryを削除し、保存先を返しません。保存開始前の失敗ならcommandを起動しません。パスは現在のAgent container run内だけ有効で、Discord turnやcontainerを跨ぐ永続性はありません。container自体が強制終了した場合の回収も保証しません。
 
 ### sandbox Toolのruntime引数検証
 

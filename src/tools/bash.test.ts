@@ -1,4 +1,5 @@
 import { spawn as realSpawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -16,11 +17,12 @@ vi.mock("node:fs/promises", async (original) => {
   return {
     ...actual,
     open: vi.fn(actual.open),
+    copyFile: vi.fn(actual.copyFile),
     mkdtemp: vi.fn(actual.mkdtemp),
   };
 });
 
-import { mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
+import { copyFile, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { bashTool } from "./bash.js";
 import { externalizeLargeToolResult } from "./output.js";
 
@@ -173,15 +175,56 @@ describe("bashTool streaming output", () => {
     expect(await readFile(details.fullOutputPath, "utf8")).toBe("partialerror");
   });
 
+  it("publishes complete output after the command cleans its capture paths", async () => {
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    // Scope the cleanup glob to this test, never other calls' saved output.
+    const prefix = `/tmp/my-discord-agent-bash-${randomUUID()}-`;
+    vi.mocked(mkdtemp).mockImplementationOnce(() => actual.mkdtemp(prefix));
+    const result = await run(
+      `for path in ${prefix}*; do test ! -e "$path" || exit 9; done; rm -rf ${prefix}*; head -c 100000 /dev/zero | tr '\\0' a`,
+    );
+    const details = outputDetails(result);
+    expect(await readFile(details.fullOutputPath, "utf8")).toBe(
+      "a".repeat(100000),
+    );
+    expect(getText(result)).toContain(details.fullOutputPath);
+    expect(getText(result).length).toBeLessThan(34000);
+  });
+
+  it("discards a failed publish without returning a stale locator", async () => {
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(copyFile).mockImplementationOnce(async (_source, destination) => {
+      await actual.writeFile(destination, "incomplete copy");
+      throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+    });
+    const error = await run("printf complete").catch((error: Error) => error);
+    expect((error as Error).message).toBe(
+      "Output storage failed; capture discarded",
+    );
+    expect(error).not.toHaveProperty("details.fullOutputPath");
+    for (const result of vi.mocked(mkdtemp).mock.results) {
+      await expect(stat(await result.value)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    expect(getText(await run("printf recovered"))).toBe("recovered");
+  });
+
   it("preserves acquired output when the command times out", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const pending = run("printf partial; sleep 60").catch(
       (error: Error & { details: unknown }) => error,
     );
-    // Wait for capture rather than guessing when the shell has produced output.
+    // Observe the anonymous capture before advancing the command's timeout.
     await vi.waitFor(async () => {
-      const directory = await vi.mocked(mkdtemp).mock.results[0]?.value;
-      expect(await readFile(`${directory}/output.txt`, "utf8")).toBe("partial");
+      const file = await vi.mocked(open).mock.results[0]?.value;
+      expect((await file.stat()).size).toBe(7);
     });
     await vi.advanceTimersByTimeAsync(30_000);
     const error = await pending;
