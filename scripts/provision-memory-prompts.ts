@@ -46,9 +46,6 @@ function memoryCoreUrl(path: string): URL {
 
 async function request<T>(path: string, body?: object): Promise<T> {
   const url = memoryCoreUrl(path);
-  if (!body) {
-    url.searchParams.set("limit", "100");
-  }
   const headers = {
     accept: "application/json",
     ...(body ? { "content-type": "application/json" } : {}),
@@ -75,11 +72,26 @@ async function request<T>(path: string, body?: object): Promise<T> {
     throw new Error("MemoryCore request failed or timed out");
   }
   if (!response.ok || envelope.code !== 0 || envelope.data === undefined) {
-    throw new Error(
-      `MemoryCore ${path} failed (${response.status}, code ${envelope.code}): ${envelope.message ?? "unknown error"}`,
-    );
+    const code =
+      Number.isSafeInteger(envelope.code) &&
+      envelope.code >= 0 &&
+      envelope.code <= 999_999
+        ? envelope.code
+        : "unknown";
+    throw new Error(`MemoryCore request failed (${response.status}, code ${code})`);
   }
   return envelope.data;
+}
+
+async function listPrompts(layer: Layer): Promise<PromptRecord[]> {
+  const prompts: PromptRecord[] = [];
+  while (true) {
+    const page = await request<{ items: PromptRecord[] }>(
+      `/v3/memory-prompt/get?layer=${layer}&limit=100&offset=${prompts.length}`,
+    );
+    prompts.push(...page.items);
+    if (page.items.length < 100) return prompts;
+  }
 }
 
 async function provision(layer: Layer): Promise<void> {
@@ -89,10 +101,9 @@ async function provision(layer: Layer): Promise<void> {
     .slice(0, 12);
   const name = `my-discord-agent ${layer.toUpperCase()} quality ${scopeHash}`;
   const prompt = (await readFile(new URL(`./memory-prompts/${layer}.md`, import.meta.url), "utf8")).trim();
-  const listed = await request<{ items: PromptRecord[] }>(
-    `/v3/memory-prompt/get?layer=${layer}`,
+  const matches = (await listPrompts(layer)).filter(
+    (item) => item.name === name,
   );
-  const matches = listed.items.filter((item) => item.name === name);
   if (matches.length > 1) {
     throw new Error(`Multiple active MemoryCore prompts named ${JSON.stringify(name)}`);
   }
