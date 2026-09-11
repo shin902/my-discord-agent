@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const layers = ["l1", "l2", "l3"] as const;
@@ -45,17 +46,31 @@ async function request<T>(path: string, body?: object): Promise<T> {
   if (!body) {
     url.searchParams.set("limit", "100");
   }
-  const response = await fetch(url, {
-    method: body ? "POST" : "GET",
-    headers: {
-      accept: "application/json",
-      ...(body ? { "content-type": "application/json" } : {}),
-      "x-tdai-service-id": serviceId,
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const envelope = (await response.json()) as Envelope<T>;
+  const headers = {
+    accept: "application/json",
+    ...(body ? { "content-type": "application/json" } : {}),
+    "x-tdai-service-id": serviceId,
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
+  try {
+    new Headers(headers);
+  } catch {
+    throw new Error("Invalid MemoryCore header configuration");
+  }
+  const signal = AbortSignal.timeout(10_000);
+  let response: Response;
+  let envelope: Envelope<T>;
+  try {
+    response = await fetch(url, {
+      method: body ? "POST" : "GET",
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal,
+    });
+    envelope = (await response.json()) as Envelope<T>;
+  } catch {
+    throw new Error("MemoryCore request failed or timed out");
+  }
   if (!response.ok || envelope.code !== 0 || envelope.data === undefined) {
     throw new Error(
       `MemoryCore ${path} failed (${response.status}, code ${envelope.code}): ${envelope.message ?? "unknown error"}`,
@@ -65,7 +80,11 @@ async function request<T>(path: string, body?: object): Promise<T> {
 }
 
 async function provision(layer: Layer): Promise<void> {
-  const name = `my-discord-agent ${layer.toUpperCase()} quality`;
+  const scopeHash = createHash("sha256")
+    .update(`${teamId}\0${agentId}`)
+    .digest("hex")
+    .slice(0, 12);
+  const name = `my-discord-agent ${layer.toUpperCase()} quality ${scopeHash}`;
   const prompt = (await readFile(new URL(`./memory-prompts/${layer}.md`, import.meta.url), "utf8")).trim();
   const listed = await request<{ items: PromptRecord[] }>(
     `/v3/memory-prompt/get?layer=${layer}`,
