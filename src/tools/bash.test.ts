@@ -243,6 +243,30 @@ describe("bashTool", () => {
     expect(textOf(result)).toBe("stderr:\nwarn");
   });
 
+  it("preserves stdout/stderr arrival order with stream markers", async () => {
+    const child = mockCommand({ autoClose: false });
+    const pending = bashTool.execute(
+      "id",
+      { command: "interleaved output" },
+      undefined,
+      undefined,
+    );
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    child.stdout.write("out-1\n");
+    child.stderr.write("err-1\n");
+    child.stdout.write("out-2\n");
+    child.exitCode = 0;
+    child.stdout.end();
+    child.stderr.end();
+    child.emit("close", 0, null);
+
+    const result = await pending;
+    expect(textOf(result)).toBe(
+      "out-1\n\nstderr:\nerr-1\n\nstdout:\nout-2",
+    );
+  });
+
   it("returns the existing empty result and command failure behavior", async () => {
     mockCommand();
     const empty = await bashTool.execute(
