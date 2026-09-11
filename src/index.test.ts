@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   loadGroups: vi.fn(),
   loadProviders: vi.fn(),
   initGroupPrompts: vi.fn(),
+  beginManagerShutdown: vi.fn(),
   initManager: vi.fn(),
   killAllRunningContainers: vi.fn(),
   validateGroupConfig: vi.fn(),
@@ -76,6 +77,7 @@ vi.mock("./config/group-config.js", () => ({
   initGroupPrompts: mocks.initGroupPrompts,
 }));
 vi.mock("./agent/manager.js", () => ({
+  beginManagerShutdown: mocks.beginManagerShutdown,
   initManager: mocks.initManager,
   killAllRunningContainers: mocks.killAllRunningContainers,
   validateGroupConfig: mocks.validateGroupConfig,
@@ -415,8 +417,12 @@ describe("index: 起動時バリデーション", () => {
     shutdownHandler();
     await vi.waitFor(() => expect(mockExit).toHaveBeenCalledWith(0));
 
+    expect(mocks.beginManagerShutdown).toHaveBeenCalledOnce();
     expect(mocks.stopCron).toHaveBeenCalledOnce();
     expect(mocks.stopPoller).toHaveBeenCalledOnce();
+    expect(mocks.beginManagerShutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.stopCron.mock.invocationCallOrder[0],
+    );
     expect(mocks.stopDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.killAllRunningContainers).toHaveBeenCalledTimes(2);
     expect(mocks.stopCron.mock.invocationCallOrder[0]).toBeLessThan(

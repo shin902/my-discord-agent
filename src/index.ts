@@ -2,6 +2,7 @@ import "dotenv/config";
 import type { Server } from "node:http";
 import { handleBotToolRequest } from "./agent/bot-orchestration.js";
 import {
+  beginManagerShutdown,
   initManager,
   killAllRunningContainers,
   validateGroupConfig,
@@ -148,6 +149,7 @@ void loginDiscordClients();
 // spawn した docker run 子プロセス（ひいてはコンテナ本体）は process.exit() しても
 // 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。
 const shutdown = async (): Promise<void> => {
+  beginManagerShutdown();
   if (xSavedReceiver) {
     const server = xSavedReceiver;
     await new Promise<void>((resolve) => server.close(() => resolve()));
