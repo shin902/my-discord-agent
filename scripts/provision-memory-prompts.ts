@@ -17,8 +17,31 @@ const teamId = process.env.MEMORY_CORE_TEAM_ID ?? "default";
 const agentId = process.env.MEMORY_CORE_AGENT_ID ?? "my-discord-agent";
 const token = process.env.MEMORY_CORE_GATEWAY_API_KEY;
 
+function memoryCoreUrl(path: string): URL {
+  const url = new URL(baseUrl);
+  if (
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.protocol !== "https:" &&
+      !(
+        url.protocol === "http:" &&
+        (url.hostname === "127.0.0.1" || url.hostname === "[::1]")
+      ))
+  ) {
+    throw new Error(
+      "MEMORY_CORE_URL must be HTTPS or literal loopback HTTP without credentials, query, or fragment",
+    );
+  }
+  const route = new URL(path, "https://memory-core.invalid");
+  url.pathname = `${url.pathname.replace(/\/$/u, "")}${route.pathname}`;
+  url.search = route.search;
+  return url;
+}
+
 async function request<T>(path: string, body?: object): Promise<T> {
-  const url = new URL(path, baseUrl);
+  const url = memoryCoreUrl(path);
   if (!body) {
     url.searchParams.set("limit", "100");
   }

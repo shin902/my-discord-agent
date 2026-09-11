@@ -42,7 +42,7 @@ Memory backendごとに `handler: "jobs/memory-export.ts"` を持つjobを定義
 
 ### MemoryCore sidecarの起動
 
-`compose.memory-core.yaml`はMemoryCore単体を公式imageから起動します。TencentDB Agent Memoryのstable release `v2.0.1`（2026-08-25）が公開したMemoryCore component image `agentmemory/memory-core:1.0.1`をmanifest digestまで固定しています。このreleaseに含まれる`/v3/memory-prompt/*`契約をcustom prompt provisioningの根拠とし、開発branchや独自forkには依存しません。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストのCLIProxyAPIが`127.0.0.1:8317`で待ち受けるため、MemoryCoreはhost networkで起動します。MemoryCore自身のGatewayは`127.0.0.1`にbindし、ホスト外部へ公開しません。MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
+`compose.memory-core.yaml`はMemoryCore単体を公式imageから起動します。TencentDB Agent Memoryのstable release `v2.0.1`（2026-08-25）に含まれる`/v3/memory-prompt/*`契約をcustom prompt provisioningの根拠とし、そのAPIとの互換性をsmoke確認した公式MemoryCore image `agentmemory/memory-core:1.0.1`をmanifest digestまで固定しています。開発branchや独自forkには依存しません。Memory Hub / Memory ProxyやTencentDB repositoryのclone、自前buildは不要です。ホストのCLIProxyAPIが`127.0.0.1:8317`で待ち受けるため、MemoryCoreはhost networkで起動します。MemoryCore自身のGatewayは`127.0.0.1`にbindし、ホスト外部へ公開しません。MemoryCoreのデータはDocker volume `memory-core-data`へ永続化されます。
 
 exampleをGit管理外の実設定へコピーします。exampleは、直接OpenAIなどのOpenAI-compatible providerを使う汎用構成です。Composeは`.env`の`TDAI_LLM_API_BASE_URL`をMemoryCoreが認識する`TDAI_LLM_BASE_URL`へ渡し、未設定時は`https://api.openai.com/v1`を使います。`MEMORY_CORE_LLM_API_KEY`は選択したproviderのAPI keyとして`TDAI_LLM_API_KEY`へ渡します。API key自体は追跡対象外のYAMLへ書きません。
 
