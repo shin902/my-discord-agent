@@ -93,6 +93,7 @@ describe("runner stdin transport", () => {
 
 describe("runAgentLoop", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -180,23 +181,29 @@ describe("runAgentLoop", () => {
     });
   });
 
-  it("既存のsession-time-anchorを再利用し、fallbackを評価しない", async () => {
-    const anchor = {
-      role: "custom" as const,
-      customType: "session-time-anchor" as const,
-      content: "1787868000000",
-      display: false,
-    };
-    Object.defineProperty(anchor, "timestamp", {
-      get: () => {
-        throw new Error("fallback was evaluated");
+  it("既存のsession-time-anchorを再利用してsystem promptに固定する", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-11T12:34:56.789Z"));
+    const anchorTimestamp = 1787868000000;
+    vi.mocked(loadMessages).mockResolvedValue([
+      {
+        role: "custom",
+        customType: "session-time-anchor",
+        content: `${anchorTimestamp}`,
+        display: false,
       },
-    });
-    vi.mocked(loadMessages).mockResolvedValue([anchor] as never);
+    ] as never);
 
     await expect(
       runAgentLoop("test-group", "session-1", "こんにちは", {}),
     ).resolves.toBe("OK");
+    expect(lastAgentOptions).toMatchObject({
+      initialState: {
+        systemPrompt: expect.stringContaining(
+          formatSessionTimeAnchor(anchorTimestamp),
+        ),
+      },
+    });
     expect(appendMessage).not.toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -204,9 +211,19 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("既存メッセージの最古timestampをsession anchorへ保存する", async () => {
+  it("session-time-anchorがない既存セッションではrun時点のDate.now()をanchorに保存する", async () => {
+    vi.useFakeTimers();
+    const runAt = new Date("2026-09-11T12:34:56.789Z");
+    vi.setSystemTime(runAt);
+    const hourMs = 60 * 60 * 1000;
+    const expectedAnchorTimestamp =
+      Math.floor(runAt.getTime() / hourMs) * hourMs;
     vi.mocked(loadMessages).mockResolvedValue([
-      { role: "user", content: "old", timestamp: 1787868000123 },
+      {
+        role: "user",
+        content: "old",
+        timestamp: expectedAnchorTimestamp - 24 * hourMs,
+      },
     ] as never);
 
     await runAgentLoop("test-group", "session-1", "こんにちは", {});
@@ -216,10 +233,18 @@ describe("runAgentLoop", () => {
       "session-1",
       expect.objectContaining({
         customType: "session-time-anchor",
-        content: "1787868000000",
+        content: `${expectedAnchorTimestamp}`,
         display: false,
+        timestamp: expectedAnchorTimestamp,
       }),
     );
+    expect(lastAgentOptions).toMatchObject({
+      initialState: {
+        systemPrompt: expect.stringContaining(
+          formatSessionTimeAnchor(expectedAnchorTimestamp),
+        ),
+      },
+    });
   });
 
   it("不正なsession-time-anchorは明示的に拒否する", async () => {
