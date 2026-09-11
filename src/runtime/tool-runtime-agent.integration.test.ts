@@ -243,14 +243,14 @@ describe.skipIf(!runtimeImage || !agentImage)(
       );
       const skill = text(
         await agent.call("bash", {
-          command: "python3 SKILLS/arxiv/scripts/search.py runtime",
+          command: "python3 SKILLS/arxiv/scripts/arxiv.py search runtime",
         }),
       );
       expect(JSON.parse(skill)).toEqual(JSON.parse(native));
       const survey = text(
         await agent.call("bash", {
           command:
-            "python3 SKILLS/arxiv/scripts/survey.py runtime boundary --limit 5",
+            "python3 SKILLS/arxiv/scripts/arxiv.py survey runtime boundary --limit 5",
         }),
       );
       expect(Array.isArray(JSON.parse(survey))).toBe(true);

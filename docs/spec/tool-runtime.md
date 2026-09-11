@@ -26,13 +26,13 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 | mail | list-emails、read-email |
 | weather | get-current-weather、get-weather-forecast |
 | last30days | hackernews-search、github-recent-search、agent-reach |
-| finance | sandbox-local finance-cli（Tool Proxy依存なし） |
+| finance | sandbox-local `SKILLS/finance/scripts/finance.py`（Tool Proxy依存なし） |
 
 `skills: "*"` はこの表の依存だけへ展開し、他のcapabilityを許可しません。依存の解決は配置状態に左右されませんが、promptへ載せるSkill一覧は実際にインストール済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
 
 native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。Toolだけで選択されたcapabilityもCLIから利用できます。Skill依存capabilityも同じrun authorityに含まれますが、Skillのshell CLIを実行するには `bash` を別途許可する必要があります。
 
-`approvalRequiredTools` はeffective `tools` またはtrusted Skill依存に含まれるhost/runtime capabilityへ指定できます。Skillだけで許可されたcapabilityにも、native選択時と同じapprovalが適用され、表示・承認した実効引数をそのまま実行します。Financeのsandbox-local操作はTool Proxy approval対象ではありません。Runner imageの `finance-cli` もSkillのauthorityではなく、DEC-0135どおり `bash` を許可したtrusted/private sandboxから利用できる共通ユーティリティです。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
+`approvalRequiredTools` はeffective `tools` またはtrusted Skill依存に含まれるhost/runtime capabilityへ指定できます。Skillだけで許可されたcapabilityにも、native選択時と同じapprovalが適用され、表示・承認した実効引数をそのまま実行します。Financeのsandbox-local操作はTool Proxy approval対象ではありません。`finance.py` はSkillと同じsandbox内の固定SQLiteを操作し、外部credentialやRunner-global utilityには依存しません。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
 
 ## コンテナと成果物の寿命
 
@@ -69,11 +69,11 @@ Agent sandboxは必要なhost Proxy port以外へのdirect egressを拒否しま
 5. 以下の手順で配置済みSkillを更新してからhostを再起動します。host・Runtime image・Runner image・配置済みSkillを揃えてください。新しいhost共通image設定は再起動で反映します。
 6. Redditを利用する環境だけ、既存stateを保持してhostで `pnpm reddit:refresh` を実行します。初回loginが必要な場合は [Redditセットアップ](../guides/reddit-cookie-setup.md) を参照してください。
 
-imageが無い場合はprebuilt imageの設定エラー、CLIが無い場合はRunner更新を要するエラーになります。旧HTTP Runtimeや直接Internet経路へfallbackしません。
+Runtime imageが無い場合はprebuilt imageの設定エラー、Runnerの共通 `tool-proxy` CLIが無い場合はRunner更新を要するエラーになります。旧HTTP Runtimeや直接Internet経路へfallbackしません。
 
 ### 配置済みSkillの更新
 
-`ensureGroupSkills` は既存Skillを自動上書きしません。`agent-reach`、`tavily-search`、`arxiv`、`github`、`github-write`、`calendar`、`mail`、`weather`、`finance`、`last30days` を使う各groupで、**カスタマイズとの差分を確認して**更新します。
+`ensureGroupSkills` は既存Skillを自動上書きしません。`agent-reach`、`tavily-search`、`arxiv`、`github`、`github-write`、`calendar`、`mail`、`weather`、`finance`、`last30days` を使う各groupで、**カスタマイズとの差分を確認して**更新します。旧 `arxiv-search` / `arxiv-survey` の配置済みSkillは `arxiv/scripts/arxiv.py search|survey` へ、操作別の旧domain shell配置は各Skillの単一公開CLIへ手動移行します。
 
 ```sh
 group=YOUR_GROUP
@@ -81,9 +81,9 @@ skill=arxiv
 diff -ru "groups/$group/SKILLS/$skill" "templates/SKILLS/$skill"
 ```
 
-更新対象は各domain Skillの `scripts/` と `SKILL.md`（特に `arxiv/scripts/search.py` / `survey.py`、各host capabilityの薄いshell frontend、financeの `finance-cli` 呼び出し）です。カスタマイズが無いことを確認したファイルだけテンプレートからcopyし、独自手順は共通CLIを呼ぶよう手動で統合します。Skillフォルダを無条件に削除・上書きしないでください。
+更新対象は各domain Skillの `scripts/` と `SKILL.md`（特に `arxiv/scripts/arxiv.py`、`calendar/scripts/calendar.py`、`github/scripts/github.py`、各host capabilityの薄いfrontend、financeの `finance.py`）です。カスタマイズが無いことを確認したファイルだけテンプレートからcopyし、独自手順は共通CLIを呼ぶよう手動で統合します。Skillフォルダを無条件に削除・上書きしないでください。
 
-Financeを用途別ToolからSkillでも使うgroupでは、`skills` に `finance` を追加します。`finance` SkillのscriptはRunner imageに同梱した `finance-cli` を通じて既存の8つのsandbox-local Toolを再利用し、SQLやDB pathを公開しません。既存の `finance.db` は移動・再作成せずそのまま再利用します。
+Financeを用途別ToolからSkillでも使うgroupでは、`skills` に `finance` を追加します。`finance` Skillの `scripts/finance.py` はsandbox内の固定 `/workspace/finance.db` を標準ライブラリ `sqlite3` で直接操作します。native Finance Toolも残し、schema・migration・金額符号・validation・append-only subscription historyを相互運用契約として既存の `finance.db` をそのまま再利用します。Tool ProxyやRunner-global `finance-cli` は使用しません。
 
 arXivのPython entrypoint・位置引数・`--from` / `--to` / `--limit` / `--sort`・JSON配列stdoutは維持します。CLIのlimitは1〜50の厳密検証、native側は50へのclampです。取得・正規化はnative TypeScriptへ統一し、旧Pythonとの差は次のとおりです。
 

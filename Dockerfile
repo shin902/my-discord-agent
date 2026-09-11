@@ -34,8 +34,6 @@ ENV TZ="Asia/Tokyo"
 COPY dist/sandbox/runner.bundle.mjs ./runner.mjs
 
 COPY dist/sandbox/tool-proxy-cli.mjs ./tool-proxy-cli.mjs
-COPY dist/sandbox/finance-cli.mjs ./finance-cli.mjs
-RUN chmod 755 /app/tool-proxy-cli.mjs /app/finance-cli.mjs && \
-    ln -s /app/tool-proxy-cli.mjs /usr/local/bin/tool-proxy && \
-    ln -s /app/finance-cli.mjs /usr/local/bin/finance-cli
+RUN chmod 755 /app/tool-proxy-cli.mjs && \
+    ln -s /app/tool-proxy-cli.mjs /usr/local/bin/tool-proxy
 COPY scripts/sandbox-entrypoint.sh ./sandbox-entrypoint.sh

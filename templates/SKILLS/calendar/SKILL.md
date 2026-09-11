@@ -5,20 +5,22 @@ description: Read and manage Google Calendar events through the shared Tool Prox
 
 # Calendar
 
-Calendar read and write operations intentionally live in one Skill. Each thin script prints the existing capability result to stdout; use `-h` or `--help` on every script for its arguments.
+Calendar read and write operations intentionally live in one Skill. Use the single public CLI and its subcommand help:
 
 ```bash
-# Discover calendar IDs, then list/read events
-bash SKILLS/calendar/scripts/calendars.sh
-bash SKILLS/calendar/scripts/events.sh --calendar-id primary --max-results 10
-bash SKILLS/calendar/scripts/event.sh EVENT_ID --calendar-id primary
+python3 SKILLS/calendar/scripts/calendar.py --help
+python3 SKILLS/calendar/scripts/calendar.py calendars
+python3 SKILLS/calendar/scripts/calendar.py events --calendar-id primary --max-results 10
+python3 SKILLS/calendar/scripts/calendar.py event EVENT_ID --calendar-id primary
 
 # Create, update, and delete (confirm mutations and targets first)
-bash SKILLS/calendar/scripts/create.sh "Team sync" \
-  2026-09-20T10:00:00+09:00 2026-09-20T11:00:00+09:00 \
+python3 SKILLS/calendar/scripts/calendar.py create \
+  --summary "Team sync" \
+  --start 2026-09-20T10:00:00+09:00 \
+  --end 2026-09-20T11:00:00+09:00 \
   --calendar-id primary --location "Tokyo" --attendee person@example.com
-bash SKILLS/calendar/scripts/update.sh EVENT_ID --summary "Updated title"
-bash SKILLS/calendar/scripts/delete.sh EVENT_ID --calendar-id primary
+python3 SKILLS/calendar/scripts/calendar.py update EVENT_ID --summary "Updated title"
+python3 SKILLS/calendar/scripts/calendar.py delete EVENT_ID --calendar-id primary
 ```
 
-`create.sh` accepts repeatable `--attendee` and `--recurrence` options. Timed recurring events require an IANA `--time-zone`; use `YYYY-MM-DD` for an all-day event. The scripts only parse arguments and create JSON for `tool-proxy`; OAuth credentials, validation (including event type and recurrence rules), authorization, API requests, and mutation safety remain in the existing Calendar capability and Tool Proxy. A read-only configuration should select `list-*` native tools directly rather than granting this combined Skill. Never fall back to direct Google API access.
+`calendar.py -h` / `--help` and every subcommand's help show the available arguments. The CLI only parses arguments and creates JSON for `tool-proxy`; OAuth credentials, validation (including event type and recurrence rules), authorization, API requests, and mutation safety remain in the existing Calendar capability and Tool Proxy. A read-only configuration should select `list-*` native tools directly rather than granting this combined Skill. Never fall back to direct Google API access.

@@ -179,15 +179,15 @@ Agent-facing の専用ツールと Skill shell は入口・UX・結果の envelo
 
 **場所:** `templates/SKILLS/{tavily-search,arxiv,github,github-write,calendar,mail,weather}/`
 
-各Skillの `scripts/` は `-h` / `--help` を備えた薄いCLIです。host/runtime capabilityでは、引数をJSON化して共通 `tool-proxy <capability> <json>` を呼ぶだけで、credential・認可・schema validation・clamp/default・外部API取得は既存のCapability Registry / Tool Proxy / executorへ委譲します。proxyが利用できない場合に直接外部APIへfallbackしません。
+各Skillの公開CLIは `-h` / `--help` を備えています。host/runtime capabilityでは、引数をJSON化して共通 `tool-proxy <capability> <json>` を呼ぶだけで、credential・認可・schema validation・clamp/default・外部API取得は既存のCapability Registry / Tool Proxy / executorへ委譲します。proxyが利用できない場合に直接外部APIへfallbackしません。複数操作のSkillは1つのPython CLIにsubcommandをまとめ、単一操作のSkillは直接shell wrapperを使います。
 
-- **tavily-search**: `scripts/search.sh QUERY`。`--max-results`、`--search-depth`、`--include-answer`、`--topic` を指定できます。
-- **arxiv**: `scripts/search.py QUERY` と `scripts/survey.py QUERY...`。投稿日範囲、件数、並び順を指定できます。2 capabilityを1 Skillにまとめています。
-- **github**: `scripts/issues.sh OWNER REPO`、`issue.sh`、`pull-request.sh`、`issue-comments.sh`、`pull-request-comments.sh`。read系だけを含みます。
+- **tavily-search**: `scripts/search.sh QUERY`。`--max-results`、`--search-depth`、`--include-answer`、`--topic` を指定できます。Tool Proxyを直接呼びます。
+- **arxiv**: `scripts/arxiv.py search QUERY` または `survey QUERY...`。投稿日範囲、件数、並び順を指定できます。2 capabilityを1 Skillにまとめています。
+- **github**: `scripts/github.py issues|issue|pull-request|issue-comments|pull-request-comments ...`。read系だけを含みます。
 - **github-write**: `scripts/comment-issue.sh OWNER REPO ISSUE_NUMBER BODY`。mutationはread Skillと分離します。
-- **calendar**: `scripts/calendars.sh`、`events.sh`、`event.sh`、`create.sh`、`update.sh`、`delete.sh`。read/writeを1 Skillにまとめます。read-onlyの細粒度が必要ならnative Toolを個別指定してください。
-- **mail**: `scripts/emails.sh` と `email.sh`。`email.sh` は既存どおり既定で既読化し、`--no-mark-as-read`で抑止できます。
-- **weather**: `scripts/current.sh` と `forecast.sh`。
+- **calendar**: `scripts/calendar.py calendars|events|event|create|update|delete ...`。read/writeを1 Skillにまとめます。read-onlyの細粒度が必要ならnative Toolを個別指定してください。
+- **mail**: `scripts/mail.py list|read ...`。`read` は既存どおり既定で既読化し、`--no-mark-as-read`で抑止できます。
+- **weather**: `scripts/weather.py current|forecast ...`。
 
 ### last30days
 
@@ -240,7 +240,7 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 
 ### finance Skill / Tool
 
-`templates/SKILLS/finance/` の8つのscriptから、Runner imageに同梱した `finance-cli` を呼び出せます。Financeは `src/tools/finance.ts` の確定的なsandbox-local Tool実装を再利用し、Tool Proxy capabilityへ戻しません。`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理します。AgentはSQLやDB pathを指定せず、最初の実行時にDB初期化と必要な互換migrationを内部で行います。`finance-cli` はSkill権限の代替認可ではなくRunner imageの共通ユーティリティなので、`bash` を許可したsandboxからはSkill未選択でも実行可能です。これはDEC-0135の「bashを許可したtrusted/private groupではfinance DBへのアクセスを受容する」境界を維持するもので、public groupにはfinance SkillやDBを配置しません。
+`templates/SKILLS/finance/scripts/finance.py` の単一CLIが、sandbox内の固定された `/workspace/finance.db` をPython標準ライブラリ `sqlite3` で直接操作します。Financeは `src/tools/finance.ts` のnative sandbox-local Toolも引き続きサポートし、両者で共有するSQLite schema・migration・金額符号・validation・append-only subscription historyを相互運用契約とします。SQLとDB pathはAgent向け契約に公開せず、Tool ProxyやRunner-global CLI、外部credentialにも依存しません。trusted/private groupのsandboxへSkillとDBを配置し、public groupへは配置しないというDEC-0135の境界を維持します。
 
 **スキーマ:**
 
@@ -249,7 +249,7 @@ transactions (id, date, amount, category, description)
 subscriptions (id, name, amount, cycle, next_date, category, active, recorded_at)
 ```
 
-保存上の`amount`は収入が正・支出が負（円の整数）。Agent-facingでは正の金額とincome/expense等の意味を使い、符号変換はTool側で行う。subscriptionは同じ`name`の最大`id`をcurrent stateとするappend-only snapshot historyで、update / cancelでも既存rowを変更・削除しない。
+保存上の`amount`は収入が正・支出が負（円の整数）。Agent-facingでは正の金額とincome/expense等の意味を使い、native Finance ToolとSkill CLIの各実装で同じ符号変換を行う。subscriptionは同じ`name`の最大`id`をcurrent stateとするappend-only snapshot historyで、update / cancelでも既存rowを変更・削除しない。
 
 **cron連携（`src/cron/jobs/`）:**
 

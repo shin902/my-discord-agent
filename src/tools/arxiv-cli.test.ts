@@ -55,10 +55,10 @@ afterAll(async () => {
 });
 
 function python(capability: string, args: string[], token: string) {
-  const script = capability === "arxiv-search" ? "search.py" : "survey.py";
+  const operation = capability === "arxiv-search" ? "search" : "survey";
   return execFileAsync(
     "python3",
-    [`templates/SKILLS/arxiv/scripts/${script}`, ...args],
+    [`templates/SKILLS/arxiv/scripts/arxiv.py`, operation, ...args],
     {
       env: {
         ...process.env,

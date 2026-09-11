@@ -1,12 +1,19 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFinanceTools, FINANCE_TOOLS } from "./finance.js";
 import { getCapabilityDefinition, resolveTools } from "./registry.js";
 
+const execFileAsync = promisify(execFile);
 const directories: string[] = [];
+const financeSkillPath = fileURLToPath(
+  new URL("../../templates/SKILLS/finance/scripts/finance.py", import.meta.url),
+);
 
 afterEach(async () => {
   await Promise.all(
@@ -20,6 +27,23 @@ async function testDatabase() {
   const directory = await mkdtemp(join(tmpdir(), "finance-b-"));
   directories.push(directory);
   return join(directory, "finance.db");
+}
+
+async function runFinanceSkill<T>(dbPath: string, args: string[]): Promise<T> {
+  const directory = await mkdtemp(join(tmpdir(), "finance-skill-run-"));
+  directories.push(directory);
+  const harness = join(directory, "run.py");
+  await writeFile(
+    harness,
+    `import importlib.util\nimport sys\n\nscript_path, db_path = sys.argv[1:3]\nspec = importlib.util.spec_from_file_location("finance_skill", script_path)\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nmodule.DATABASE_PATH = db_path\nraise SystemExit(module.main(sys.argv[3:]))\n`,
+  );
+  const { stdout } = await execFileAsync("python3", [
+    harness,
+    financeSkillPath,
+    dbPath,
+    ...args,
+  ]);
+  return JSON.parse(stdout) as T;
 }
 
 function json<T>(result: {
@@ -239,6 +263,49 @@ describe("finance sandbox tools", () => {
     ).toEqual([expect.objectContaining({ name: "Legacy", active: false })]);
   });
 
+  it("Skill migrates legacy databases without backfilling recorded_at", async () => {
+    const dbPath = await testDatabase();
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        category TEXT,
+        description TEXT
+      );
+      CREATE TABLE subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        cycle TEXT NOT NULL,
+        next_date TEXT NOT NULL,
+        category TEXT,
+        active INTEGER NOT NULL DEFAULT 1
+      );
+      INSERT INTO subscriptions
+        (name, amount, cycle, next_date, category, active)
+      VALUES ('Legacy', -1000, 'monthly', '2026-09-15', '旧', 1);
+    `);
+    legacy.close();
+
+    expect(
+      await runFinanceSkill<Array<{ amount: number; active: boolean }>>(
+        dbPath,
+        ["list-subscriptions", "--include-inactive"],
+      ),
+    ).toMatchObject([{ amount: 1000, active: true, recordedAt: null }]);
+    const db = new Database(dbPath, { readonly: true });
+    expect(
+      (
+        db.prepare("PRAGMA table_info(subscriptions)").all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name),
+    ).toContain("recorded_at");
+    db.close();
+  });
+
   it("adds subscriptions and rejects empty updates", async () => {
     const tools = createFinanceTools(await testDatabase());
     const added = json<{ amount: number; active: boolean }>(
@@ -255,5 +322,103 @@ describe("finance sandbox tools", () => {
     await expect(
       tools.updateSubscription.execute("empty", { name: "Example" }),
     ).rejects.toThrow("変更する項目を1つ以上指定してください");
+  });
+
+  it("keeps native-created databases readable and mutable by the Skill", async () => {
+    const dbPath = await testDatabase();
+    const tools = createFinanceTools(dbPath);
+    await tools.recordTransaction.execute("native-expense", {
+      type: "expense",
+      amount: 300,
+      date: "2026-09-11",
+      category: "food",
+    });
+    await tools.addSubscription.execute("native-subscription", {
+      name: "Native",
+      amount: 980,
+      cycle: "monthly",
+      nextDate: "2026-09-30",
+    });
+
+    expect(
+      await runFinanceSkill<Array<{ type: string; amount: number }>>(dbPath, [
+        "list-transactions",
+        "--type",
+        "expense",
+      ]),
+    ).toMatchObject([{ type: "expense", amount: -300 }]);
+    await runFinanceSkill(dbPath, [
+      "update-subscription",
+      "Native",
+      "--amount",
+      "1200",
+    ]);
+    expect(
+      json<Array<{ amount: number }>>(
+        await tools.subscriptionHistory.execute("native-history", {
+          name: "Native",
+        }),
+      ),
+    ).toMatchObject([{ amount: 980 }, { amount: 1200 }]);
+  });
+
+  it("keeps Skill-created databases readable and mutable by native Tools", async () => {
+    const dbPath = await testDatabase();
+    await runFinanceSkill(dbPath, [
+      "record-transaction",
+      "income",
+      "1000",
+      "--date",
+      "2026-09-10",
+    ]);
+    await runFinanceSkill(dbPath, [
+      "add-subscription",
+      "Skill",
+      "500",
+      "yearly",
+      "2027-01-01",
+    ]);
+    await runFinanceSkill(dbPath, [
+      "update-subscription",
+      "Skill",
+      "--inactive",
+    ]);
+    await runFinanceSkill(dbPath, [
+      "summary",
+      "--from",
+      "2026-09-01",
+      "--to",
+      "2026-09-30",
+    ]);
+    await runFinanceSkill(dbPath, ["cancel-subscription", "Skill"]);
+    expect(
+      await runFinanceSkill<Array<{ active: boolean }>>(dbPath, [
+        "list-subscriptions",
+        "--include-inactive",
+      ]),
+    ).toMatchObject([{ active: false }]);
+
+    const tools = createFinanceTools(dbPath);
+    expect(
+      json<Array<{ type: string; amount: number }>>(
+        await tools.listTransactions.execute("skill-transactions", {}),
+      ),
+    ).toMatchObject([{ type: "income", amount: 1000 }]);
+    await tools.updateSubscription.execute("native-update", {
+      name: "Skill",
+      nextDate: "2027-02-01",
+      active: true,
+    });
+    expect(
+      await runFinanceSkill<Array<{ amount: number; active: boolean }>>(
+        dbPath,
+        ["subscription-history", "Skill"],
+      ),
+    ).toMatchObject([
+      { amount: 500, active: true },
+      { amount: 500, active: false },
+      { amount: 500, active: false },
+      { amount: 500, active: true },
+    ]);
   });
 });
