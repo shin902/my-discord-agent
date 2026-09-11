@@ -142,7 +142,7 @@ async function provision(layer: Layer): Promise<void> {
   ) {
     throw new Error(`MemoryCore did not return the effective ${layer.toUpperCase()} prompt`);
   }
-  console.log(`${layer.toUpperCase()}: ${promptId} (effective for ${teamId}/${agentId})`);
+  console.log(`${layer.toUpperCase()}: effective prompt verified`);
 }
 
 for (const layer of layers) await provision(layer);
