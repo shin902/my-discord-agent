@@ -1,203 +1,116 @@
-# Agent Memory の記録対象と動作
+# Agent Memory export
 
-この文書は、`my-discord-agent` の Agent Memory shadow capture が**実際に何を記録し、何を記録しないか**を説明する。設定項目は [`config.md`](./config.md)、内部の処理境界は [`spec/agent-memory-shadow-capture.md`](./spec/agent-memory-shadow-capture.md) を参照する。
+Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 
-## 最初に区別すること
+```text
+config/cron.json (schedule + backend settings)
+  → cron handler (enqueueのみ)
+  → runtime.sqlite (queue / ordering / lease / fencing / retry / dead-letter / recovery)
+  → Memory export worker
+      → runtime.sqlite (source jobの成功commit / fencing一致をread-only確認)
+      → data/sessions/<group>/sessions.sqlite (本文をread-only取得)
+      → Memory Backend Adapter → TencentDB / other backend
+      → data/memory-export.sqlite (export成功markerのみ)
+```
 
-「メモリへ追記する」処理には、次の2段階がある。
+## 設定
 
-1. **L0 capture**: `my-discord-agent` が Discord の user/assistant 1往復を MemoryCore の `/v3/conversation/add` へ送る。
-2. **長期記憶の抽出・統合**: MemoryCore がL0会話を分析し、L1/L2/L3へ昇格・統合する。
-
-`my-discord-agent` は発言内容を見て「重要だから覚える」「雑談だから捨てる」とは判断しない。条件を満たした通常会話は、内容にかかわらず原則として1往復ずつL0 capture対象になる。何を長期記憶として残すかはMemoryCore側の責務である。
-
-現在はshadow captureのみで、Agent Memoryからのrecall、通常回答へのcontext injection、明示的な「覚えて」「忘れて」の解釈は実装していない。
-
-## L0 capture対象になる条件
-
-最終的にMemoryCoreへ送られるには、次の条件をすべて満たす必要がある。
-
-- `agentMemory.enabled` が `true`
-- メッセージの所属groupが `agentMemory.eligibleGroups` に含まれる
-- DiscordのMessage Typeが通常メッセージ（Default）またはReply
-- 投稿者が人間ユーザーで、Discord user IDを取得できる
-- ユーザー本文を `trim()` した結果が空でない
-- 通常Agent実行が正常終了する
-- Agentの最終回答が空でない
-- cron、mail、RSS、Bot Task、Subagent、Agent Memory内部jobではない
-
-`eligibleGroups` はprivacyを自動判定する仕組みではない。コードが確認するのはgroup名がリストに含まれるかだけであり、private/publicを推測しない。運用者がprivateと確認したgroupだけを列挙すること。
-
-### 具体例
-
-| 入力・実行経路 | L0 capture | 補足 |
-|---|---:|---|
-| eligible group内の人間による通常メッセージ | する | 内容の重要度は判定しない |
-| eligible group内のReply | する | Reply元の本文は送信しない |
-| `eligibleGroups` にないgroup | しない | private groupでも明示列挙が必要 |
-| Botまたは許可Webhookからの投稿 | しない | 通常Agentが処理できるWebhookでもmemory対象外 |
-| cron / mail / RSS | しない | 通常会話とは別経路として除外 |
-| `/bot` のBot Task | しない | Bot Task Sessionの会話は現状対象外 |
-| Subagentの依頼・結果 | しない | 親の通常最終回答だけが別条件で対象になり得る |
-| `requiredMention` によりintakeで無視された投稿 | しない | 通常queueへ入らない |
-| 添付あり・本文あり | する | 本文と最終回答だけを送る |
-| 添付のみで本文が空 | しない | 添付内容・metadataはmemory payloadへ入らない |
-| Agent実行が失敗、非ゼロ終了、または空回答 | しない | source job側の失敗処理だけを行う |
-| 人間によるstartup backfill対象メッセージ | し得る | live/backfillをmemory eligibilityでは区別していない |
-
-### `<NO_REPLY>` の扱い
-
-通常会話の最終回答が非空で、独立行の `<NO_REPLY>` を含む場合、Discord配送は抑制される。一方、shadow job作成は配送抑制とは別に行われるため、そのuser/assistant 1往復はL0 capture対象になり得る。
-
-## MemoryCoreへ送るデータ
-
-HTTP bodyは次の形になる。
+backendごとに `config/cron.json` へhandler付きjobを1つ定義します。[example](../config/cron.example.json) は誤送信防止のためdisabledです。対象groupを確認して明示的に有効化してください。通常のgroup/channel AgentConfigやDiscord配送設定は不要です。
 
 ```json
 {
-  "session_id": "現在のDiscord session ID",
-  "team_id": "agentMemory.teamId",
-  "agent_id": "agentMemory.agentId",
-  "user_id": "Discordの投稿者user ID",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Discordメッセージ本文",
-      "timestamp": "Discord投稿日時"
-    },
-    {
-      "role": "assistant",
-      "content": "Agentの最終回答",
-      "timestamp": "回答完了時刻"
-    }
-  ]
+  "id": "memory-tencent-main",
+  "schedule": "1m",
+  "enabled": true,
+  "handler": "jobs/memory-export.ts",
+  "settings": {
+    "type": "tencentdb",
+    "eligibleGroups": ["main"],
+    "batchSize": 50,
+    "baseUrl": "http://127.0.0.1:8420",
+    "serviceId": "default",
+    "teamId": "default",
+    "agentId": "my-discord-agent",
+    "bearerTokenEnv": "MEMORY_CORE_GATEWAY_API_KEY",
+    "timeoutMs": 10000
+  }
 }
 ```
 
-- `user_id` は現在、Discord user IDをそのまま送る。hash化や別IDへの変換は行わない。
-- `session_id` は現在のsession identityをそのまま送る。channel modeによってはDiscord channel IDまたはthread IDと同じ値になる。
-- ユーザー本文はDiscordの `message.content` であり、URLやmention表現を含み得る。
-- assistant側は途中経過ではなく、Agent実行が返した最終回答を送る。
-- `x-tdai-service-id` headerには `agentMemory.serviceId` を設定する。
-- `bearerTokenEnv` がある場合だけ、その環境変数の現在値をBearer tokenとして使う。
+| settings | 契約 |
+|---|---|
+| `type` | 現在は `tencentdb` |
+| `eligibleGroups` | exportを許可するgroup名の明示リスト（1件以上）。private会話の送信先を運用者が確認する |
+| `batchSize` | 1 jobで成功させるturn数の上限。1〜1000、既定50 |
+| `baseUrl` | 既定 `http://127.0.0.1:8420`。非loopbackはHTTPS必須。HTTPはliteral `127.0.0.1` / `[::1]` のみ。埋め込みcredentials、query、fragmentは禁止。redirectは追従しない |
+| `serviceId` | `x-tdai-service-id`。既定 `default` |
+| `teamId` / `agentId` | TencentDB scope。既定 `default` / `my-discord-agent` |
+| `bearerTokenEnv` | Bearer tokenを読む環境変数名。値をJSONへ書かない。MemoryCore v3 data-planeでは実質必須 |
+| `timeoutMs` | 1 HTTP requestのtimeout（body読み込みを含む）。1〜120000ms、既定10000 |
 
-### 送信しないもの
+MemoryCore sidecarの起動・鍵設定は [config.md](config.md#memorycore-sidecarの起動) を参照してください。
 
-次の情報はMemoryCoreのconversation payloadへ含めない。
+cron job IDは安定したbackend / export namespaceです。同じlogical backendならIDを維持します。別のbackend、team/agent scope等へ既存履歴を再exportしたい場合は**新しいcron job ID**を使います。
 
-- tool call、tool result、進捗通知
-- system prompt、system prompt snapshot
-- `MEMORY.md`、memory bootstrap snapshot
-- model/providerやAgentConfig
-- 添付ファイル本体、添付URL、ファイル名、MIME type
-- Reply元メッセージの本文
-- Discord message ID
-- group名、routing channel ID、配送先channel IDを独立したfieldとして送ること
+実行時のauthorityはstartupでロードされたcron設定cacheです。変更はrestartで反映し、process中のfresh read・hot reloadはしません。restart前にenqueueされたjobも新processのcacheで処理します。対応IDが削除、disabled、または別handlerへ変更されていれば、remote exportせず正常完了（no-op）します。handlerの同一性はcron loaderが解決した関数で判定するため、`./jobs/memory-export.ts`等の同値pathやloaderが受理する拡張子aliasでもexportできます。旧settings snapshot、generation、fingerprintの復元・比較はありません。settings不正・未設定credentialはworkerでnon-retryable failureになります。
 
-ただし前述のとおり、`session_id` 自体がDiscord channel/thread IDと一致する場合がある。group・channel・routing情報は通常queue metadataとして保存しますが、Agent Memory送信時の設定再確認には使いません。
+## canonical sourceとturn
 
-## 記録されるタイミング
+通常human Discord message（Default `0` / Reply `19`）のuser entryには、Memoryの設定と無関係に汎用provenanceを保存します。
 
-処理は次の順に進む。
-
-```text
-Discord message intake
-  ↓
-通常Agent実行
-  ↓
-最終回答の生成
-  ↓
-source result・Discord delivery・shadow jobをruntime.sqliteへcommit
-  ↓
-Discord delivery workerとshadow workerがそれぞれ処理
-  ↓
-shadow workerがMemoryCoreへPOST
+```json
+{"kind":"discord","sourceId":"<Discord message ID>","actorId":"<Discord user ID>","messageType":0,"createdAt":"2026-09-01T01:00:00.000Z"}
 ```
 
-shadow jobは、通常Agentの最終回答が完成した後に作る。source result、Discord配送、shadow jobは同じruntime.sqlite transactionで確定する。
+`session_entries.source_json` はnullableです。会話本文・session identityは既存columnを使い、candidate flagやbackend設定は追加しません。source metadataはLLM contextへ混ぜません。auto-thread起点でも、返信先message IDとは別に元のDiscord message IDを保持します。`createdAt`は元Discord messageの作成時刻です。exportのuser timestampにはこれを使い、startup backfill等の処理時刻と混同しません。canonical user entryのtimestampは処理時刻のまま維持し、`createdAt`のない旧provenanceだけはそのentry timestampへfallbackします。assistantはcanonical entryの生成時刻を使います。
 
-一方、Discordへの実配送とMemoryCoreへのHTTP送信は別workerで進むため、どちらが先に完了するかは保証しない。「ユーザーがDiscordで回答を読んだ後に必ずmemory処理が始まる」という順序ではない。
+通常会話のrunのentryには、本文・sourceとは別に `execution_json: {"jobId":"<runtime job ID>","fencingToken":1}` を保存します。これは汎用の実行identityであり、成功markerではありません。LLM contextには含めず、sandboxへruntime DBを公開することもありません。
 
-`my-discord-agent` が担当するのはL0送信までであり、MemoryCore内部のL1/L2/L3抽出をcronや優先度付きqueueで起動・停止する機能はない。MemoryCoreが使用するLLMのprovider、batch/逐次処理、同時実行数はMemoryCore側で管理する。通常回答と同時実行数1のローカルLLMを共有すると競合し得るため、現在の運用では別providerを推奨する。
+- source jobがruntime DB上で成功commit済み（`completed`、`succeeded`、`result_state: succeeded`）であり、保存されたfencing tokenが一致することを**応答を読む前に**確認します。sessionに`stop`があるだけではexportしません。
+- 同じ実行identityのentryだけから最終assistantを取得し、正常終了（`stopReason: stop`）、非空text、errorなしの場合だけ対応付けます。別試行の遅延書き込みを混ぜず、最終assistantが不適格な場合も途中の`stop`へfallbackしません。
+- 未commit、assistant未到着、error / aborted、tool call途中、length終了、空responseはexportしません。後続batchで成功commit済みの試行を再評価できます。
+- 別jobのpromptや応答は実行identityで分離します。同じrun内のfollow-up promptがある場合も、Agentが返す最終assistantを使います。`./command nonexistent`等のAgent起動前に生成する応答も、user＋assistantと実行identityをcanonicalへ保存して同じ条件で判定します。
+- Bot Task、Subagent、cron、RSS、mail、Discord Bot自身の発言、slash commandには初版のDiscord会話provenanceを付けません。
+- 送信元はsession DBのみです。通常runtime jobのpayload/result、Discord deliveryから本文を再構築しません。本文はcanonicalに保存されたtextです（添付ファイル案内等を含む場合があります）。thinkingやtool payloadは送信しません。
+- `<NO_REPLY>` はDiscord配送の抑制であり、非空の正常assistantとして保存されていればexport対象になり得ます。
 
-## 対象判定と設定のライフタイム
+session schema v1/v2は通常の書き込み経路でv3へ更新されます。migrationはwrite lock取得後にschema versionを再確認し、同じgroupの並行run/containerによる二重ALTERを防ぎます。export側はDB作成・migrationをしません。source provenanceや実行identityのない既存履歴は本文やruntime queueから推測・backfillしません。
 
-対象判定はintake時とAgent回答完了時に行います。Agent Memory設定とgroup mappingはcached loaderから読み込まれ、process lifetime中はfresh readしません。shadow executionのgateはcached configの`enabled`と`eligibleGroups.includes(msg.groupName)`だけで、`routingChannelId`からchannel mappingを再確認しません。設定変更、eligible group変更、channel mapping変更を反映するにはmy-discord-agentをrestartしてください。稼働中のhot reload / hot revocation / config rotation検知は保証しません。
+## queueと成功ledger
 
-intakeでeligibleなら後続のcaptureに必要なDiscord user IDをqueue payloadへ保持します。回答完了時に同じprocess-lifetime設定でeligible、ユーザー本文と最終回答が非空ならshadow jobを作ります。各段階のconfig readやeligibility確認に失敗しても通常Discord応答は継続し、shadow captureだけを諦めます。
+cron handlerは1回につきbounded batchのjobを1件enqueueするだけです。payloadは `jobKind: memory-export`、cron job ID、`sessionId: memory-export:<cronJobId>`、既存queue envelopeの最小metadataのみです。既存Inbox型に必要な `groupName` / `channelId` / `content` は空文字で、routing・本文の意味を持ちません。会話本文、turn固定リスト、接続設定、scope、secret selector、eligible判定、設定snapshotを永続化しません。
 
-`bearerTokenEnv` はselector名だけを設定・保持し、token値は送信時に環境変数から読みます。`enabled`、`eligibleGroups`、Bearer token、scopeの契約は維持します。
+同一backendのjobは既存session orderingで直列化し、retry待ちの先行jobも追い越しません。backend間は独立です。通常pollerのheartbeat・lease・fencing・retry・dead-letter・restart recoveryをそのまま利用し、Agent container、LLM provider lock、Discord deliveryは使いません。内部jobはqueue metricsには含め、Agent metricsからはjob discriminatorで除外します。
 
-process restart後はpersisted shadow payloadとrestart後cached configが共存し、設定世代を完全にはモデル化しません。canonical trajectoryからcurrent configでexportするdisposable ledgerへの移行は将来のDEC-0087に送り、今回は実装しません。
+ledgerは次の成功事実だけです。
 
-## 失敗・再試行・重複
+```sql
+CREATE TABLE exports (
+  backend_id TEXT NOT NULL,
+  group_name TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  exported_at TEXT NOT NULL,
+  PRIMARY KEY (backend_id, group_name, source_kind, source_id)
+);
+```
 
-MemoryCoreの障害は通常回答を失敗させない。
+backendが1turnを受理した直後にmarkerを書きます。batch途中で失敗してもそれまでのmarkerは残り、queue retryでは成功済みturnを送信しません。ledgerにpending、attempt、lease、retry、error、payload、configはありません。
 
-| 状況 | 通常回答 | shadow job |
-|---|---|---|
-| shadow準備時のconfig/read error | 継続 | 作成しない |
-| MemoryCore成功 | 成功のまま | completed |
-| network error / timeout | 成功のまま | 通常queueのretry対象 |
-| HTTP/APIの408、429、5xx相当 | 成功のまま | retry対象 |
-| その他の恒久的なAPI error | 成功のまま | dead-letter |
-| `bearerTokenEnv` が設定済みだが値がない | 成功のまま | non-retryable dead-letter |
-| config/group mappingを変更（稼働中） | 成功のまま | process lifetime中は変更を検知せず、既存jobも通常どおり処理。反映にはrestartが必要 |
-| process restart | 成功のまま | runtime.sqliteから未完了jobを再開可能 |
+network、timeout、408、429、5xxは既存queueのretryへ、明確な設定不備や恒久API errorはnon-retryableとしてdead-letterへ進みます。失敗したturn以後はそのbatchで送信しません。後続の定期cron jobは新しい実行機会なので、dead-letterが未export sourceを永久に除外することはありません。backend停止時はcronをdisabledにしてrestartすると、待機jobもno-opで収束できます。
 
-ローカルshadow jobには `agent-memory-shadow:<source job ID>` のidempotency keyを使い、同じsource jobから複数のshadow jobを作りにくくしている。
+## 制約と運用
 
-ただしMemoryCoreのHTTP APIへclient指定のidempotency keyは送っていない。MemoryCoreが受理した後に応答だけ失われた場合や、受理後・ローカルcomplete前にprocessが停止した場合は再送され、remote側に重複L0ができる可能性がある。remote exactly-onceは保証しない。
+- **at-least-once**: remote受理後・marker保存前のcrashでは重複が起こり得ます。2-phase commit、outbox、remote idempotency emulationはありません。
+- ledgerだけを削除すると、成功commitを検証できるturnがremoteへ再送されます。再構築は新しいbackend namespaceとcron IDを組み合わせるか、backend namespaceと対応markerを一緒にresetしてください。
+- source jobの成功記録がruntime retention等で失われたturnは、安全側で対象外にします。export/re-exportが必要な期間はsession DBに加えて対応runtime jobも保持してください。retention archiveからの自動復元・照合はしません。
+- 確認するのはsource jobの結果commitであり、Discordの`sent`ではありません。配送retryはAgentを再実行せず、Memory exportの判定とも独立です。
+- groupは設定順、group内はsource entry追加順に走査します。batch数はremote成功turn数を制限しますが、履歴の走査量を制限するcursor stateは持ちません。大きな履歴や先頭groupの継続的な大量流入では走査コスト・後続groupの遅延が増えます。
+- 通常queue/cronと同じ単一host process・Discord readinessの起動条件を引き継ぎます。Memory専用schedulerやmulti-host lockはありません。
+- queue状態は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順で確認します。`cronJobId` / `jobKind` と通常のjob statusを使い、成功件数はledgerをread-onlyで確認します。runtime backupにsession DB・export ledgerは含まれません（[storage.md](storage.md)）。
 
-## backfill・編集・削除の制約
+### 旧capture経路からのrollout
 
-### startup backfill
+旧shadow job互換実行・payload migrationはありません。**更新前に旧runtimeで未完了shadow jobをdrainし、queueに残っていないことをread-onlyで確認してから停止**してください。drainできない場合はrolloutを止め、既存queueの運用手順で対処します。ad-hocなSQL更新でleaseやdelivery状態を改変しないでください。
 
-memory eligibilityはlive messageとbackfillを区別しない。startup backfillで人間の過去メッセージが通常Agent処理へ入った場合、新しく生成されたassistant回答との1往復がcapture対象になり得る。
-
-### Discord messageの編集・削除
-
-MessageCreate時の本文と、その実行で得たassistant回答をappendするだけである。後からDiscord上でuser messageやassistant messageを編集・削除しても、MemoryCoreへ自動同期しない。
-
-### Reply
-
-Reply message自体は対象だが、Reply元の本文・author・message IDは送らない。MemoryCoreへ渡るuser contentは現在のReply本文だけである。
-
-### 明示的な「覚えない」「忘れて」
-
-ユーザー本文の意味を `my-discord-agent` 側では解釈しない。そのため「これは覚えなくてよい」という通常メッセージも、他の条件を満たせばL0へ送られる。per-message opt-out、MemoryCore上の既存memory削除、Discord deleteとの連動は未実装である。
-
-## ログの読み方
-
-| ログ | 意味 |
-|---|---|
-| `shadow job admitted` | 通常回答完了後、shadow jobをローカルqueueへ保存した。MemoryCore受理済みという意味ではない |
-| `shadow submission accepted` | MemoryCoreの`conversation/add`が成功応答を返し、ローカルjobを完了した |
-| `shadow submission failed` | 今回のremote送信に失敗した。後続のretryまたはdead-letter判定を確認する |
-| `shadow submission dead-lettered` | retry不能またはretry上限到達によりterminal failureになった |
-| `shadow job skipped (disabled/not eligible)` | cached configでAgent Memoryが無効またはgroupがeligibleでなく、remote送信せず完了した |
-| `shadow job preparation failed` | 通常回答は成功したが、shadow jobを作れなかった |
-
-`admitted` と `accepted` を混同しないこと。前者はローカル永続化、後者はremote成功を表す。
-
-## 接続先の制約
-
-- `http://` はliteral loopbackの `127.0.0.1` または `[::1]` だけを許可する。
-- `localhost` は許可しない。
-- loopback以外は `https://` が必須。
-- URLへのusername/password、query、fragment埋め込みは禁止。
-- HTTP redirectは追従せず失敗扱いにする。
-- Bearer token自体はconfigやqueue payloadへ保存せず、`bearerTokenEnv` で指定した環境変数から送信時に読む。
-
-## 現在実装していないこと
-
-- Agent Memoryからのrecall、context injection
-- per-messageの明示的opt-in / opt-out
-- 「覚えて」「忘れて」のcommand semantics
-- Discord edit/deleteとMemoryCoreの同期
-- 添付ファイルやReply元本文のcapture
-- startup backfillのmemory専用除外設定
-- remote exactly-once / client idempotency key
-- my-discord-agentからMemoryCore抽出を起動するbatch/cron mode
-- 通常会話を優先する共通LLM priority broker
-- MemoryCoreへ送信済みデータの削除・retention操作
+旧top-level `config/config.json.agentMemory` を削除し、必要なbackendを `config/cron.json` に移してrestartします。旧設定は新runtimeでは参照されません。新provenanceと実行identityが保存される以降の成功commit済み会話が対象となり、既存remote memoryはそのまま保持できます。新経路のqueue、session、ledgerを確認してから通常運用へ戻してください。

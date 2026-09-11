@@ -1,5 +1,5 @@
+import type { SessionSource } from "../agent/source.js";
 import type { AgentConfig } from "../config/groups.js";
-import type { AgentMemorySubmission } from "../memory/agent-memory.js";
 
 export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
 export type CronSessionMode = "per-run" | "destination";
@@ -17,8 +17,10 @@ export interface InboxMessage {
   groupName: string;
   sessionId: string;
   messageId?: string;
-  /** Discord author identity, persisted only for eligible Agent Memory captures. */
-  userId?: string;
+  /** Generic origin of a canonical user entry, independent of Memory settings. */
+  source?: SessionSource;
+  /** Absent for ordinary Agent jobs. Internal jobs bypass Agent execution/delivery. */
+  jobKind?: "memory-export";
   content: string;
   timestamp: string;
   enqueuedAt?: string;
@@ -45,8 +47,6 @@ export interface InboxMessage {
   botId?: string;
   /** Internal durable admission marker; never claimed as an executable job. */
   botTaskSessionAdmission?: boolean;
-  /** Internal asynchronous L0 shadow submission; never delivered to Discord. */
-  memoryShadow?: AgentMemorySubmission;
   /** Configured channel used to resolve group membership; differs from thread destination. */
   routingChannelId?: string;
   /** AgentConfig fields selected by Discord channel intake or a cron job. */

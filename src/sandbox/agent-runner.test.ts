@@ -117,6 +117,89 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it.each([
+    false,
+    true,
+  ])("attaches source only to the input user and execution to every event in order (failed run=%s)", async (failed) => {
+    const execution = { jobId: "source-job", fencingToken: 2 };
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 19 as const,
+      createdAt: "2026-09-01T01:00:00.000Z",
+    };
+    const messages = [
+      { role: "user", content: "input", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "answer" }],
+        stopReason: failed ? "error" : "stop",
+        timestamp: 2,
+      },
+      { role: "user", content: "later unsourced prompt", timestamp: 3 },
+    ];
+    let onEvent: (event: unknown) => void = () => {};
+    AgentMock.mockImplementation(function () {
+      return {
+        subscribe: (callback: (event: unknown) => void) => {
+          onEvent = callback;
+        },
+        prompt: async () => {
+          for (const message of messages)
+            onEvent({ type: "message_end", message });
+          if (failed) throw new Error("run failed");
+        },
+      };
+    });
+    const persisted: unknown[] = [];
+    vi.mocked(appendMessage).mockImplementation(
+      async (_group, _session, message) => {
+        if (message.role === "user")
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        if (message.role !== "custom") persisted.push(message);
+      },
+    );
+    const run = runAgentLoop(
+      "test-group",
+      "session-1",
+      "input",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      source,
+      execution,
+    );
+    if (failed) await expect(run).rejects.toThrow("run failed");
+    else await run;
+    expect(persisted).toEqual(messages);
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      messages[0],
+      source,
+      execution,
+    );
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      messages[1],
+      undefined,
+      execution,
+    );
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      messages[2],
+      undefined,
+      execution,
+    );
+  });
+
   it("aborted signal is wired to Pi Agent.abort", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -1567,15 +1650,60 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 0 as const,
+    };
+    const execution = { jobId: "source-job", fencingToken: 1 };
     const result = await runAgentLoop(
       "test-group",
       "session-1",
       "./command unknown",
       {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      source,
+      execution,
     );
 
     expect(result).toContain("見つかりません");
+    expect(AgentMock).not.toHaveBeenCalled();
     expect(mockAgent.prompt).not.toHaveBeenCalled();
+    const entries = vi
+      .mocked(appendMessage)
+      .mock.calls.filter((call) => call[2].role !== "custom");
+    expect(entries).toEqual([
+      [
+        "test-group",
+        "session-1",
+        {
+          role: "user",
+          content: "./command unknown",
+          timestamp: expect.any(Number),
+        },
+        source,
+        execution,
+      ],
+      [
+        "test-group",
+        "session-1",
+        expect.objectContaining({
+          role: "assistant",
+          content: [{ type: "text", text: result }],
+          stopReason: "stop",
+          timestamp: expect.any(Number),
+          usage: expect.objectContaining({ totalTokens: 0 }),
+        }),
+        undefined,
+        execution,
+      ],
+    ]);
   });
 
   it("convertToLlm が Agent に渡される", async () => {

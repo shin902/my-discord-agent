@@ -66,8 +66,6 @@ export async function handleSkillCommand(
     skillName: interaction.options.getString("skill", true).trim(),
     prompt: interaction.options.getString("prompt")?.trim() ?? "",
     idempotencyKey: `discord-interaction:${interaction.id}`,
-    userId: interaction.user.id,
-    userIsBot: interaction.user.bot,
   });
   await editReply(interaction, result);
 }

@@ -233,6 +233,15 @@ export async function loadHandlerFn(
   return mod.default;
 }
 
+/** Compare the actual loader-resolved handler, including relative and runtime extension aliases. */
+export async function isCronHandler(
+  job: Pick<CronJob, "handler">,
+  handler: string,
+): Promise<boolean> {
+  if (job.handler === undefined) return false;
+  return (await loadHandlerFn(job.handler)) === (await loadHandlerFn(handler));
+}
+
 // --- Startup validation ---
 
 async function validateHandlerPath(handlerRelPath: string): Promise<void> {
@@ -290,6 +299,11 @@ export async function executeJob(job: CronJob): Promise<void> {
 
 let _jobs: CronJob[] = [];
 const _inFlight = new Set<string>();
+
+/** Execution authority for durable work, populated once by startup. Never reads disk. */
+export function getCachedCronJob(id: string): CronJob | undefined {
+  return _jobs.find((job) => job.id === id);
+}
 
 export function _setCronJobs(jobs: CronJob[]): void {
   _jobs = jobs;

@@ -228,11 +228,6 @@ export interface EnqueueResult {
   inserted: boolean;
 }
 
-export interface ShadowJobAdmission {
-  payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
-  options?: { idempotencyKey?: string; maxAttempts?: number };
-}
-
 export interface BotTaskSessionEnqueueResult {
   session: BotTaskSession;
   enqueue: EnqueueResult;
@@ -817,6 +812,16 @@ export class QueueRepository {
       | JobRow
       | undefined;
     return row ? parsePayload(row) : undefined;
+  }
+  /** Read only outcome metadata: a completed job must also match the producing attempt. */
+  hasCommittedResult(id: string, token: number): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE id=? AND fencing_token=? AND status='completed' AND succeeded=1 AND result_state='succeeded'",
+        )
+        .get(id, token) !== undefined
+    );
   }
   findByIdempotencyKey(key: string): QueueJob | undefined {
     const row = this.db
@@ -1501,7 +1506,6 @@ export class QueueRepository {
       suppressDelivery?: boolean;
       metadata?: ExecutionMetadata;
       deliveryPayload?: unknown;
-      shadowJob?: ShadowJobAdmission;
     } = {},
   ): DeliveryRow | undefined {
     const at = nowIso();
@@ -1607,14 +1611,6 @@ export class QueueRepository {
             "UPDATE idempotency_keys SET status='completed',completed_at=? WHERE key=?",
           )
           .run(at, row.idempotency_key);
-      // Shadow admission shares this transaction with the source result and
-      // delivery rows. Remote MemoryCore I/O happens later when this job is
-      // independently claimed.
-      if (options.shadowJob)
-        this.enqueueInTransaction(
-          options.shadowJob.payload,
-          options.shadowJob.options,
-        );
       // An empty response enqueues no delivery chunks, so no DeliveryRow is
       // created. Return undefined instead of a fabricated "sent" row; every
       // caller either ignores the return value or only forwards real rows.

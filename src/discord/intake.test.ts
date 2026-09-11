@@ -5,18 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findGroup: vi.fn(),
   getRepo: vi.fn(),
-  loadMemoryConfig: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", () => ({
   findGroupByChannelId: mocks.findGroup,
 }));
-
-vi.mock("../config/agent-memory.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../config/agent-memory.js")>();
-  return { ...actual, loadAgentMemoryConfig: mocks.loadMemoryConfig };
-});
 
 vi.mock("../queue/repository.js", async (importOriginal) => {
   const actual =
@@ -46,15 +39,6 @@ beforeEach(() => {
   mocks.findGroup.mockResolvedValue({
     group: { name: "group" },
     channel: { channelId: "root-1", sessionMode: "auto-thread" },
-  });
-  mocks.loadMemoryConfig.mockResolvedValue({
-    enabled: false,
-    baseUrl: "http://127.0.0.1:8420",
-    serviceId: "default",
-    teamId: "team",
-    agentId: "agent",
-    eligibleGroups: [],
-    timeoutMs: 1000,
   });
 });
 
@@ -141,65 +125,31 @@ describe("ingestDiscordMessage", () => {
     expect(job?.messageId).toBeUndefined();
   });
 
-  it("persists memory identity only for an explicitly eligible normal user turn", async () => {
-    mocks.loadMemoryConfig.mockResolvedValue({
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      serviceId: "default",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: ["group"],
-      timeoutMs: 1000,
-    });
+  it.each([
+    "live",
+    "backfill",
+  ] as const)("always persists source provenance for %s human messages, including auto-thread roots", async (source) => {
     await ingestDiscordMessage(
       makeMessage({
-        id: "eligible",
-        startThread: vi.fn().mockResolvedValue({ id: "thread-eligible" }),
+        id: "normal",
+        startThread: vi.fn().mockResolvedValue({ id: "thread-normal" }),
       }),
-      {
-        source: "backfill",
-        replyOnFailure: false,
-      },
+      { source },
     );
-    const eligible = repo.findByIdempotencyKey("discord-message:eligible");
-    expect(eligible).toMatchObject({ userId: "user-id" });
-    expect(eligible).not.toHaveProperty("authorIsBot");
-
-    mocks.loadMemoryConfig.mockResolvedValue({
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      serviceId: "default",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: [],
-      timeoutMs: 1000,
+    const job = repo.findByIdempotencyKey("discord-message:normal");
+    expect(job).toMatchObject({
+      source: {
+        kind: "discord",
+        sourceId: "normal",
+        actorId: "user-id",
+        messageType: 0,
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
     });
-    await ingestDiscordMessage(
-      makeMessage({
-        id: "ineligible",
-        startThread: vi.fn().mockResolvedValue({ id: "thread-ineligible" }),
-      }),
-      {
-        source: "live",
-        replyOnFailure: false,
-      },
-    );
-    const ineligible = repo.findByIdempotencyKey("discord-message:ineligible");
-    expect(ineligible).not.toHaveProperty("userId");
-    expect(ineligible).not.toHaveProperty("authorIsBot");
+    expect(job?.messageId).toBeUndefined();
   });
 
   it("persists identity for Reply but not command-like message types", async () => {
-    mocks.loadMemoryConfig.mockResolvedValue({
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      serviceId: "default",
-      teamId: "team",
-      agentId: "agent",
-      eligibleGroups: ["group"],
-      timeoutMs: 1000,
-    });
-
     await ingestDiscordMessage(
       makeMessage({
         id: "100000000000000001",
@@ -211,7 +161,13 @@ describe("ingestDiscordMessage", () => {
     expect(
       repo.findByIdempotencyKey("discord-message:100000000000000001"),
     ).toMatchObject({
-      userId: "user-id",
+      source: {
+        kind: "discord",
+        sourceId: "100000000000000001",
+        actorId: "user-id",
+        messageType: 19,
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
     });
 
     await ingestDiscordMessage(
@@ -224,26 +180,29 @@ describe("ingestDiscordMessage", () => {
     );
     expect(
       repo.findByIdempotencyKey("discord-message:100000000000000002"),
-    ).not.toHaveProperty("userId");
+    ).not.toHaveProperty("source");
   });
 
-  it("does not block intake when Agent Memory eligibility loading fails", async () => {
-    mocks.loadMemoryConfig.mockRejectedValue(new Error("config unavailable"));
-    await ingestDiscordMessage(
-      makeMessage({
-        id: "memory-config-failed",
-        startThread: vi
-          .fn()
-          .mockResolvedValue({ id: "thread-memory-config-failed" }),
-      }),
-      {
-        source: "live",
-        replyOnFailure: false,
+  it("does not label even allowed live webhook bot messages as human sources", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        allowedWebhookIds: ["allowed"],
       },
+    });
+    await ingestDiscordMessage(
+      makeMessage({ id: "webhook", isBot: true, webhookId: "allowed" }),
+      { source: "live" },
     );
-    expect(
-      repo.findByIdempotencyKey("discord-message:memory-config-failed"),
-    ).toBeDefined();
+    const job = repo.findByIdempotencyKey("discord-message:webhook");
+    expect(job).toBeDefined();
+    expect(job).not.toHaveProperty("source");
+    await ingestDiscordMessage(makeMessage({ id: "bot", isBot: true }), {
+      source: "live",
+    });
+    expect(repo.findByIdempotencyKey("discord-message:bot")).toBeUndefined();
   });
 
   it("auto-threadで既存スレッドを再利用し、startThreadを呼ばない", async () => {
