@@ -70,7 +70,7 @@ Use the `date` tool when current time matters.
 
 ### 既存セッション
 
-`session-time-anchor` がまだ無い既存セッションでは、保存済みtrajectory entryの **最古 timestamp** を開始時刻として一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
+`session-time-anchor` がまだ無い既存セッションでも、初回run時点の `Date.now()` を開始時刻として hour bucket に丸め、一度だけ保存する。履歴本文への timestamp 追記や再renderは行わない。
 
 同一セッションの初期化競合については、既存のsession entry追記と同じ保証範囲で扱う。
 

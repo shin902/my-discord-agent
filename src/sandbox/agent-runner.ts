@@ -264,18 +264,6 @@ function snapshotHash(content: string | null): string | undefined {
     : createHash("sha256").update(content).digest("hex");
 }
 
-function findEarliestMessageTimestamp(
-  messages: AgentMessage[],
-): number | undefined {
-  let earliest: number | undefined;
-  for (const message of messages) {
-    const timestamp = message.timestamp;
-    if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) continue;
-    if (earliest === undefined || timestamp < earliest) earliest = timestamp;
-  }
-  return earliest;
-}
-
 const HOUR_MS = 60 * 60 * 1000;
 const MIN_TIME_ANCHOR_MS = 946_684_800_000;
 
@@ -301,19 +289,11 @@ async function loadOrCreateSessionTimeAnchor(
   groupName: string,
   sessionId: string,
   messages: AgentMessage[],
-  fallbackTimestamp: () => number,
 ): Promise<number> {
   const existing = messages.find(isSessionTimeAnchorMessage);
   if (existing) return parseSessionTimeAnchor(existing);
 
-  const fallback = fallbackTimestamp();
-  const candidate = canonicalHour(
-    Number.isSafeInteger(fallback) &&
-      fallback >= MIN_TIME_ANCHOR_MS &&
-      Number.isFinite(new Date(fallback).getTime())
-      ? fallback
-      : Date.now(),
-  );
+  const candidate = canonicalHour(Date.now());
   const anchorMessage: SessionTimeAnchorMessage = {
     role: "custom",
     customType: SESSION_TIME_ANCHOR_TYPE,
@@ -488,7 +468,6 @@ export async function runAgentLoop(
     groupName,
     sessionId,
     rawMessages,
-    () => findEarliestMessageTimestamp(rawMessages) ?? Date.now(),
   );
   const sessionTimeAnchorContent = formatSessionTimeAnchor(
     sessionAnchorTimestamp,
