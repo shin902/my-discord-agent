@@ -103,10 +103,12 @@ const makeProc = (
 describe("sendMessage: Docker 起動構成", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
   let execFileMock: ReturnType<typeof vi.fn>;
+  let findGroupMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
     spawnMock = vi.fn().mockReturnValue(makeProc());
+    findGroupMock = vi.fn().mockResolvedValue(undefined);
     execFileMock = vi.fn((_command, _args, callback) => {
       callback?.(null, "", "");
       return { on: vi.fn() };
@@ -120,7 +122,7 @@ describe("sendMessage: Docker 起動構成", () => {
       loadCredentialProxy: vi.fn().mockResolvedValue([]),
     }));
     vi.doMock("../config/groups.js", () => ({
-      findGroupByName: vi.fn().mockResolvedValue(undefined),
+      findGroupByName: findGroupMock,
     }));
     const { initManager } = await import("./manager.js");
     await initManager(12345);
@@ -142,6 +144,42 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--label", "my-discord-agent.runner=true"]),
     );
+  });
+
+  it("shutdown開始後の新規sendMessageはDockerをspawnしない", async () => {
+    const { beginManagerShutdown, sendMessage } = await import("./manager.js");
+
+    beginManagerShutdown();
+
+    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
+      "シャットダウン中のため実行を開始できません",
+    );
+    expect(findGroupMock).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("shutdown開始とspawn準備の競合でもDockerをspawnしない", async () => {
+    let releaseGroupLookup!: (group: undefined) => void;
+    findGroupMock.mockReturnValueOnce(
+      new Promise<undefined>((resolve) => {
+        releaseGroupLookup = resolve;
+      }),
+    );
+    const { beginManagerShutdown, killAllRunningContainers, sendMessage } =
+      await import("./manager.js");
+
+    const pending = sendMessage("test-group", "session-1", "hi");
+    await vi.waitFor(() => expect(findGroupMock).toHaveBeenCalledOnce());
+
+    beginManagerShutdown();
+    const cleanup = killAllRunningContainers();
+    releaseGroupLookup(undefined);
+
+    await expect(pending).rejects.toThrow(
+      "シャットダウン中のため実行を開始できません",
+    );
+    await cleanup;
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("SIGKILL などで null 終了したコンテナは成功レスポンスにせず再試行可能なエラーにする", async () => {
@@ -356,12 +394,11 @@ describe("sendMessage: Docker 起動構成", () => {
     }
   });
 
-  it("killAllRunningContainers は実行中のコンテナ名を docker kill する", async () => {
+  it("shutdown後もspawn済みコンテナのcleanupを維持する", async () => {
     vi.useFakeTimers();
     try {
-      const { sendMessage, killAllRunningContainers } = await import(
-        "./manager.js"
-      );
+      const { beginManagerShutdown, sendMessage, killAllRunningContainers } =
+        await import("./manager.js");
       const proc = makeProc();
       proc.on = vi.fn(); // close イベントを発火させず「実行中」の状態を維持する
       spawnMock.mockReturnValueOnce(proc);
@@ -370,6 +407,7 @@ describe("sendMessage: Docker 起動構成", () => {
       sendPromise.catch(() => {});
       await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
 
+      beginManagerShutdown();
       await killAllRunningContainers();
 
       // image pull 中（コンテナ未作成）でも docker run クライアント自体を
@@ -1528,6 +1566,39 @@ describe("sendMessage: configOverride", () => {
     vi.doUnmock("../proxy/credential-proxy-server.js");
     vi.doUnmock("../proxy/tool-proxy-server.js");
     vi.resetModules();
+  });
+
+  it("spawn直前のshutdown拒否でもrequest-scoped resourcesをrevokeする", async () => {
+    const sendMessage = await setup();
+    const { beginManagerShutdown } = await import("./manager.js");
+    const internalRevoke = vi.fn();
+    const toolProxyRevoke = vi.fn();
+    createInternalRequestConfigMock.mockReturnValueOnce({
+      port: 12345,
+      token: "internal-token",
+      revoke: internalRevoke,
+    });
+    createToolProxyRunMock.mockImplementationOnce(() => {
+      beginManagerShutdown();
+      return {
+        url: "http://host.docker.internal:23456/__tool-proxy/rpc",
+        token: "tool-token",
+        revoke: toolProxyRevoke,
+      };
+    });
+
+    await expect(
+      sendMessage("test-group", "session-1", "hi", {
+        configOverride: { tools: ["bot", "get-current-weather"] },
+      }),
+    ).rejects.toMatchObject({
+      name: "TransientError",
+      message:
+        "エージェントマネージャーはシャットダウン中のため実行を開始できません",
+    });
+    expect(internalRevoke).toHaveBeenCalledOnce();
+    expect(toolProxyRevoke).toHaveBeenCalledOnce();
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("host capabilityのrun tokenをpayloadへ渡し、完了時にrevokeする", async () => {

@@ -229,6 +229,21 @@ let storedToolProxyPort: number | null = null;
 // 直接 kill することで、pull 中・コンテナ起動後どちらのフェーズでも確実に止める。
 const runningContainers = new Map<string, ChildProcess>();
 
+const MANAGER_SHUTDOWN_MESSAGE =
+  "エージェントマネージャーはシャットダウン中のため実行を開始できません";
+let managerSpawnGateClosed = false;
+
+/** Synchronously close admission for runners that have not spawned yet. */
+export function beginManagerShutdown(): void {
+  managerSpawnGateClosed = true;
+}
+
+function assertSpawnAllowed(): void {
+  if (managerSpawnGateClosed) {
+    throw new TransientError(MANAGER_SHUTDOWN_MESSAGE);
+  }
+}
+
 const STOP_GRACE_MS = 1_000;
 export type StopAgentRunResult =
   | { status: "no-active-run" }
@@ -591,6 +606,7 @@ export async function sendMessage(
   content: string,
   options: SendMessageOptions = {},
 ): Promise<string> {
+  assertSpawnAllowed();
   const {
     onDiscordEvent,
     attachments,
@@ -832,7 +848,20 @@ export async function sendMessage(
   ];
 
   const dockerStartedAt = Date.now();
+  let runResourcesRevoked = false;
+  const revokeRunResources = (): void => {
+    if (runResourcesRevoked) return;
+    runResourcesRevoked = true;
+    internalRequest?.revoke();
+    toolProxyRun?.revoke();
+  };
   return new Promise<string>((resolve, reject) => {
+    try {
+      assertSpawnAllowed();
+    } catch (error) {
+      revokeRunResources();
+      throw error;
+    }
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     runningContainers.set(containerName, proc);
     let initialPayloadSent = false;
@@ -1268,8 +1297,5 @@ export async function sendMessage(
             ),
         );
       });
-  }).finally(() => {
-    internalRequest?.revoke();
-    toolProxyRun?.revoke();
-  });
+  }).finally(revokeRunResources);
 }
