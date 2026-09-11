@@ -240,7 +240,7 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 
 ### finance Skill / Tool
 
-`templates/SKILLS/finance/` の8つのscriptから、Runner imageに同梱した `finance-cli` を呼び出せます。Financeは `src/tools/finance.ts` の確定的なsandbox-local Tool実装を再利用し、Tool Proxy capabilityへ戻しません。`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理します。AgentはSQLやDB pathを指定せず、最初の実行時にDB初期化と必要な互換migrationを内部で行います。
+`templates/SKILLS/finance/` の8つのscriptから、Runner imageに同梱した `finance-cli` を呼び出せます。Financeは `src/tools/finance.ts` の確定的なsandbox-local Tool実装を再利用し、Tool Proxy capabilityへ戻しません。`/workspace/finance.db`（グループの実体は `groups/{name}/finance.db`）のSQLiteで収支・サブスクリプションを管理します。AgentはSQLやDB pathを指定せず、最初の実行時にDB初期化と必要な互換migrationを内部で行います。`finance-cli` はSkill権限の代替認可ではなくRunner imageの共通ユーティリティなので、`bash` を許可したsandboxからはSkill未選択でも実行可能です。これはDEC-0135の「bashを許可したtrusted/private groupではfinance DBへのアクセスを受容する」境界を維持するもので、public groupにはfinance SkillやDBを配置しません。
 
 **スキーマ:**
 

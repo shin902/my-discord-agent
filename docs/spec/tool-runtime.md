@@ -32,7 +32,7 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 
 native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。Toolだけで選択されたcapabilityもCLIから利用できます。Skill依存capabilityも同じrun authorityに含まれますが、Skillのshell CLIを実行するには `bash` を別途許可する必要があります。
 
-`approvalRequiredTools` はeffective `tools` またはtrusted Skill依存に含まれるhost/runtime capabilityへ指定できます。Skillだけで許可されたcapabilityにも、native選択時と同じapprovalが適用され、表示・承認した実効引数をそのまま実行します。Financeのsandbox-local操作はTool Proxy approval対象ではありません。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
+`approvalRequiredTools` はeffective `tools` またはtrusted Skill依存に含まれるhost/runtime capabilityへ指定できます。Skillだけで許可されたcapabilityにも、native選択時と同じapprovalが適用され、表示・承認した実効引数をそのまま実行します。Financeのsandbox-local操作はTool Proxy approval対象ではありません。Runner imageの `finance-cli` もSkillのauthorityではなく、DEC-0135どおり `bash` を許可したtrusted/private sandboxから利用できる共通ユーティリティです。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
 
 ## コンテナと成果物の寿命
 

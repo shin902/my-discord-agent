@@ -18,7 +18,7 @@ export function validateApprovalRequiredTools(
       !allowedCapabilities.has(toolName)
     ) {
       throw new Error(
-        `承認必須ツールは有効な tools に含めてください: ${toolName}`,
+        `承認必須ツールは有効な tools または Skill の依存に含めてください: ${toolName}`,
       );
     }
     const executor = getCapabilityDefinition(toolName)?.executor;

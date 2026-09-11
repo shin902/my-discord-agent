@@ -105,7 +105,7 @@ describe("validateAgentConfig", () => {
         defaultModel,
       ),
     ).rejects.toThrow(
-      "承認必須ツールは有効な tools に含めてください: get-current-weather",
+      "承認必須ツールは有効な tools または Skill の依存に含めてください: get-current-weather",
     );
   });
 
