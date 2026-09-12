@@ -3,17 +3,13 @@ import { chmod, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
-import {
-  type SessionExecution,
-  SessionExecutionSchema,
-  type SessionSource,
-  SessionSourceSchema,
-} from "./source.js";
+import type { ConversationEntries } from "./conversation.js";
+import { type SessionSource, SessionSourceSchema } from "./source.js";
 
 const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -126,16 +122,13 @@ function initializeSchema(db: Database.Database): void {
         PRAGMA user_version = 2;
       `);
     }
-    if (version < 3) {
+    if (version === 3) {
       db.exec(`
-        ALTER TABLE session_entries ADD COLUMN execution_json TEXT;
-        CREATE INDEX session_entries_execution ON session_entries(
-          session_id, json_extract(execution_json, '$.jobId'),
-          json_extract(execution_json, '$.fencingToken'), sequence
-        ) WHERE execution_json IS NOT NULL;
-        PRAGMA user_version = 3;
+        DROP INDEX session_entries_execution;
+        ALTER TABLE session_entries DROP COLUMN execution_json;
       `);
     }
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();
 }
 
@@ -181,79 +174,53 @@ export async function loadMessages(
   }
 }
 
-/** A sourced user and following entries from the same identified runtime attempt. */
-export interface SourceTrajectory {
+/** Exact entries adopted by the host; no attempt or final-response inference. */
+export interface SourceConversation {
   sessionId: string;
   source: SessionSource;
-  execution: SessionExecution;
   user: AgentMessage;
-  following: AgentMessage[];
+  assistant: AgentMessage;
 }
 
-/** Read-only, paged scan. No read transaction is held while the caller awaits I/O. */
-export function* readSourceTrajectories(
+/** Read-only lookup. No read transaction is held while the caller awaits I/O. */
+export function* readConversations(
   groupName: string,
-  includeExecution: (execution: SessionExecution) => boolean,
-): Generator<SourceTrajectory> {
+  entries: Iterable<ConversationEntries>,
+): Generator<SourceConversation> {
   validateName(groupName, "グループ名");
   const dbPath = path.join(groupDir(groupName), DB_FILENAME);
   if (!existsSync(dbPath)) return;
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     const version = db.pragma("user_version", { simple: true }) as number;
-    // Older schemas cannot establish committed attempts; never infer them from text.
-    if (version === 1 || version === 2) return;
+    // Pre-reference stores have no adopted conversations; do not migrate on export.
+    if (version >= 1 && version < SCHEMA_VERSION) return;
     if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
-    const sources = db.prepare(`
-      SELECT id, session_id, sequence, source_json, execution_json, payload_json
-      FROM session_entries
-      WHERE source_json IS NOT NULL AND execution_json IS NOT NULL AND id > ?
-      ORDER BY id LIMIT 100
+    const lookup = db.prepare(`
+      SELECT u.session_id, u.source_json, u.payload_json AS user_json,
+        a.payload_json AS assistant_json
+      FROM session_entries u JOIN session_entries a ON a.session_id = u.session_id
+      WHERE u.id = ? AND a.id = ? AND u.entry_type = 'user'
+        AND a.entry_type = 'assistant' AND u.source_json IS NOT NULL
     `);
-    const following = db.prepare(`
-      SELECT payload_json FROM session_entries
-      WHERE session_id = ? AND sequence > ? AND execution_json IS NOT NULL
-        AND json_extract(execution_json, '$.jobId') = ?
-        AND json_extract(execution_json, '$.fencingToken') = ?
-      ORDER BY sequence
-    `);
-    let cursor = 0;
-    for (;;) {
-      const rows = sources.all(cursor) as Array<{
-        id: number;
-        session_id: string;
-        sequence: number;
-        source_json: string;
-        execution_json: string;
-        payload_json: string;
-      }>;
-      if (rows.length === 0) return;
-      for (const row of rows) {
-        cursor = row.id;
-        const user = parseStoredMessage(row.payload_json);
-        if (user.role !== "user") continue;
-        const execution = SessionExecutionSchema.parse(
-          JSON.parse(row.execution_json),
-        );
-        // Check authority before reading the response, not after taking a possibly unfinished snapshot.
-        if (!includeExecution(execution)) continue;
-        const entries = following.all(
-          row.session_id,
-          row.sequence,
-          execution.jobId,
-          execution.fencingToken,
-        ) as Array<{ payload_json: string }>;
-        yield {
-          sessionId: row.session_id,
-          source: SessionSourceSchema.parse(JSON.parse(row.source_json)),
-          execution,
-          user,
-          following: entries.map((entry) =>
-            parseStoredMessage(entry.payload_json),
-          ),
-        };
-      }
+    for (const entry of entries) {
+      const row = lookup.get(entry.userEntryId, entry.assistantEntryId) as
+        | {
+            session_id: string;
+            source_json: string;
+            user_json: string;
+            assistant_json: string;
+          }
+        | undefined;
+      // Source deletion makes the reference unresolvable; never substitute nearby entries.
+      if (!row) continue;
+      yield {
+        sessionId: row.session_id,
+        source: SessionSourceSchema.parse(JSON.parse(row.source_json)),
+        user: parseStoredMessage(row.user_json),
+        assistant: parseStoredMessage(row.assistant_json),
+      };
     }
   } finally {
     db.close();
@@ -302,16 +269,12 @@ export async function appendMessage(
   sessionId: string,
   message: AgentMessage,
   source?: SessionSource,
-  execution?: SessionExecution,
-): Promise<void> {
+): Promise<number> {
   if (source && message.role !== "user") {
     throw new Error("source provenance requires a user entry");
   }
   const sourceJson = source
     ? JSON.stringify(SessionSourceSchema.parse(source))
-    : null;
-  const executionJson = execution
-    ? JSON.stringify(SessionExecutionSchema.parse(execution))
     : null;
   validateName(groupName, "グループ名");
   validateName(sessionId, "セッションID");
@@ -320,25 +283,27 @@ export async function appendMessage(
   const timestamp = messageTimestamp(sanitized);
 
   try {
-    db.transaction(() => {
+    return db.transaction(() => {
       db.prepare(`
         INSERT INTO sessions(id, created_at, updated_at)
         VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
       `).run(sessionId, timestamp, timestamp);
-      db.prepare(`
-        INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json, execution_json)
-        SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?, ?
+      const inserted = db
+        .prepare(`
+        INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json)
+        SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?
         FROM session_entries WHERE session_id=?
-      `).run(
-        sessionId,
-        entryType(sanitized),
-        JSON.stringify(sanitized),
-        timestamp,
-        sourceJson,
-        executionJson,
-        sessionId,
-      );
+      `)
+        .run(
+          sessionId,
+          entryType(sanitized),
+          JSON.stringify(sanitized),
+          timestamp,
+          sourceJson,
+          sessionId,
+        );
+      return Number(inserted.lastInsertRowid);
     })();
   } finally {
     db.close();

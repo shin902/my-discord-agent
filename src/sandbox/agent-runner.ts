@@ -19,14 +19,13 @@ import type {
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { z } from "zod";
 
+import {
+  CONVERSATION_ENTRIES_PREFIX,
+  type ConversationEntries,
+} from "../agent/conversation.js";
 import { resolveModel } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
-import {
-  type SessionExecution,
-  SessionExecutionSchema,
-  type SessionSource,
-  SessionSourceSchema,
-} from "../agent/source.js";
+import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
 import {
@@ -469,17 +468,15 @@ export async function runAgentLoop(
   signal?: AbortSignal,
   toolProxyEndpoint?: ToolProxyEndpoint,
   source?: SessionSource,
-  execution?: SessionExecution,
+  onConversation?: (entries: ConversationEntries) => void,
 ): Promise<string> {
   const persistMessage = (
     message: AgentMessage,
     entrySource?: SessionSource,
   ) =>
-    execution
-      ? appendMessage(groupName, sessionId, message, entrySource, execution)
-      : entrySource
-        ? appendMessage(groupName, sessionId, message, entrySource)
-        : appendMessage(groupName, sessionId, message);
+    entrySource
+      ? appendMessage(groupName, sessionId, message, entrySource)
+      : appendMessage(groupName, sessionId, message);
   const rawMessages = await loadMessages(groupName, sessionId);
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
     groupName,
@@ -560,11 +557,11 @@ export async function runAgentLoop(
     if (!skill) {
       const available = skills.map((s) => s.name).join(", ") || "(なし)";
       const response = `❌ スキル "${skillCommand.skillName}" が見つかりません。利用可能なスキル: ${available}`;
-      await persistMessage(
+      const userEntryId = await persistMessage(
         { role: "user", content, timestamp: Date.now() },
         source,
       );
-      await persistMessage({
+      const assistantEntryId = await persistMessage({
         role: "assistant",
         content: [{ type: "text", text: response }],
         api: "local-response",
@@ -581,6 +578,7 @@ export async function runAgentLoop(
         stopReason: "stop",
         timestamp: Date.now(),
       });
+      onConversation?.({ userEntryId, assistantEntryId });
       return response;
     }
     const skillFile = await readFile(skill.location, "utf-8");
@@ -808,6 +806,8 @@ export async function runAgentLoop(
 
   const pendingAppends: Promise<void>[] = [];
   let sourceAttached = false;
+  let userEntryId: number | undefined;
+  let assistantEntryId: number | undefined;
   let response = "";
   let assistantTurns = 0;
   let aggregatedUsage: AgentTokenUsage = {
@@ -851,9 +851,15 @@ export async function runAgentLoop(
           if (event.message.role === "user") sourceAttached = true;
           // Preserve event order in the canonical store, including user provenance.
           const previous = pendingAppends.at(-1) ?? Promise.resolve();
-          const append = previous.then(() =>
-            persistMessage(event.message, entrySource),
-          );
+          const append = previous.then(async () => {
+            const id = await persistMessage(event.message, entrySource);
+            if (event.message.role === "user") userEntryId ??= id;
+            if (isAssistantMessage(event.message)) {
+              // Match runAgent's actual final assistant, regardless of downstream eligibility.
+              // The host decides whether this result commits; projections select from it.
+              assistantEntryId = id;
+            }
+          });
           // Observe rejection immediately; Promise.all below still propagates it.
           void append.catch(() => {});
           pendingAppends.push(append);
@@ -952,6 +958,9 @@ export async function runAgentLoop(
     }
     await Promise.all(pendingAppends);
   }
+  if (userEntryId !== undefined && assistantEntryId !== undefined) {
+    onConversation?.({ userEntryId, assistantEntryId });
+  }
   return response;
 }
 
@@ -960,7 +969,6 @@ const PayloadSchema = z.object({
   sessionId: z.string(),
   content: z.string(),
   source: SessionSourceSchema.optional(),
-  execution: SessionExecutionSchema.optional(),
   groupConfig: AgentRuntimeConfigSchema,
   systemPromptSnapshotContent: z.string().optional(),
   systemPromptSnapshotPresent: z.boolean().optional(),
@@ -1081,7 +1089,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         abortController.signal,
         payload.toolProxyEndpoint,
         payload.source,
-        payload.execution,
+        (entries) => {
+          process.stderr.write(
+            `${CONVERSATION_ENTRIES_PREFIX}${JSON.stringify(entries)}\n`,
+          );
+        },
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

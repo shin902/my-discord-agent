@@ -917,12 +917,11 @@ describe("sendMessage: 添付ファイル", () => {
     await sendMessage("test-group", "session-1", "見て", {
       attachments,
       source,
-      execution: { jobId: "job", fencingToken: 2 },
     });
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.source).toEqual(source);
-    expect(payload.execution).toEqual({ jobId: "job", fencingToken: 2 });
+    expect(payload).not.toHaveProperty("execution");
     expect(payload.content).toContain("[添付ファイル]");
   });
 
@@ -1908,7 +1907,7 @@ describe("sendMessage: configOverride", () => {
 });
 
 describe("sendMessage: onDiscordEvent コールバック", () => {
-  const setupWithStderr = async (stderr: string, code = 0) => {
+  const setupWithStderr = async (stderr: string, code: number | null = 0) => {
     vi.resetModules();
     const spawnMock = vi
       .fn()
@@ -1989,6 +1988,88 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     expect(onDiscordEvent).toHaveBeenCalledTimes(2);
     expect(onDiscordEvent).toHaveBeenNthCalledWith(1, events[0]);
     expect(onDiscordEvent).toHaveBeenNthCalledWith(2, events[1]);
+  });
+
+  it.each([
+    0,
+    1,
+    2,
+    null,
+  ])("forwards adopted IDs only after successful runner close (code=%s)", async (code) => {
+    const entries = { userEntryId: 12, assistantEntryId: 15 };
+    const sendMessage = await setupWithStderr(
+      `__CONVERSATION_ENTRIES__:${JSON.stringify(entries)}\n`,
+      code,
+    );
+    const onConversation = vi.fn();
+    const onDiscordEvent = vi.fn();
+    const onExecutionTiming = vi.fn(() =>
+      expect(onConversation).not.toHaveBeenCalled(),
+    );
+    const result = sendMessage("g", "s", "hi", {
+      onConversation,
+      onDiscordEvent,
+      onExecutionTiming,
+    });
+    if (code === 0) {
+      await expect(result).resolves.toBe("response");
+      expect(onConversation).toHaveBeenCalledExactlyOnceWith(entries);
+    } else {
+      await expect(result).rejects.toThrow();
+      expect(onConversation).not.toHaveBeenCalled();
+    }
+    expect(onDiscordEvent).not.toHaveBeenCalled();
+  });
+
+  it("forwards a length result and its adopted IDs without applying Memory eligibility", async () => {
+    const entries = { userEntryId: 12, assistantEntryId: 15 };
+    const timing = {
+      type: "agent_timing",
+      promptMs: 1,
+      assistantTurns: 2,
+      stopReason: "length",
+    };
+    const sendMessage = await setupWithStderr(
+      `__CONVERSATION_ENTRIES__:${JSON.stringify(entries)}\n__DISCORD_EVENT__:${JSON.stringify(timing)}\n`,
+    );
+    const onConversation = vi.fn();
+    const onExecutionTiming = vi.fn();
+    await expect(
+      sendMessage("g", "s", "hi", { onConversation, onExecutionTiming }),
+    ).resolves.toBe("response");
+    expect(onConversation).toHaveBeenCalledExactlyOnceWith(entries);
+    expect(onExecutionTiming).toHaveBeenCalledWith(
+      expect.objectContaining({ exitCode: 0, stopReason: "length" }),
+    );
+  });
+
+  it.each([
+    '{"userEntryId":0,"assistantEntryId":2}',
+    '{"userEntryId":2,"assistantEntryId":1}',
+    '{"userEntryId":1.5,"assistantEntryId":2}',
+    '{"userEntryId":1,"assistantEntryId":9007199254740992}',
+    "not-json",
+    '{"userEntryId":1,"assistantEntryId":2}\n__CONVERSATION_ENTRIES__:{"userEntryId":1,"assistantEntryId":3}',
+  ])("rejects malformed or duplicate conversation frames: %s", async (frame) => {
+    const sendMessage = await setupWithStderr(
+      `__CONVERSATION_ENTRIES__:${frame}\n`,
+    );
+    const onConversation = vi.fn();
+    await expect(
+      sendMessage("g", "s", "hi", { onConversation }),
+    ).rejects.toThrow("invalid conversation entry reference");
+    expect(onConversation).not.toHaveBeenCalled();
+  });
+
+  it("does not forward adoption when a later runner error rejects the result", async () => {
+    const sendMessage = await setupWithStderr(
+      '__CONVERSATION_ENTRIES__:{"userEntryId":1,"assistantEntryId":2}\n__DISCORD_EVENT__:{"type":"error","message":"late failure"}\n',
+    );
+    const onConversation = vi.fn();
+    await expect(
+      sendMessage("g", "s", "hi", { onConversation }),
+    ).rejects.toThrow("late failure");
+    expect(onConversation).not.toHaveBeenCalled();
   });
 
   it("agent_timing はDiscordへ転送せず実行時間へ統合する", async () => {

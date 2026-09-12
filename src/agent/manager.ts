@@ -38,9 +38,14 @@ import {
   registerActiveRun,
   stopActiveRun,
 } from "./active-run-registry.js";
+import {
+  CONVERSATION_ENTRIES_PREFIX,
+  type ConversationEntries,
+  ConversationEntriesSchema,
+} from "./conversation.js";
 import { resolveBaseUrl, validateModel } from "./model.js";
 import { sandboxNetworkArgs } from "./sandbox-network.js";
-import type { SessionExecution, SessionSource } from "./source.js";
+import type { SessionSource } from "./source.js";
 
 export type AgentRunStatus = "running" | "completed" | "failed";
 
@@ -581,7 +586,7 @@ async function downloadAttachments(
 }
 export interface SendMessageOptions {
   source?: SessionSource;
-  execution?: SessionExecution;
+  onConversation?: (entries: ConversationEntries) => void;
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
   onExecutionTiming?: (timing: AgentExecutionTiming) => void;
@@ -757,7 +762,6 @@ export async function sendMessage(
     sessionId,
     content: promptContent,
     ...(options.source ? { source: options.source } : {}),
-    ...(options.execution ? { execution: options.execution } : {}),
     groupConfig: {
       ...effectiveConfig,
       model: resolvedModel,
@@ -1010,6 +1014,7 @@ export async function sendMessage(
     let agentTiming: AgentTimingEvent | undefined;
     let agentTimingReceivedAt: number | undefined;
     let runnerError: string | undefined;
+    let conversation: ConversationEntries | undefined;
     let timingReported = false;
 
     const reportExecutionTiming = (
@@ -1073,6 +1078,17 @@ export async function sendMessage(
     };
 
     const processStderrLine = (line: string): void => {
+      if (line.startsWith(CONVERSATION_ENTRIES_PREFIX)) {
+        try {
+          if (conversation) throw new Error("duplicate conversation reference");
+          conversation = ConversationEntriesSchema.parse(
+            JSON.parse(line.slice(CONVERSATION_ENTRIES_PREFIX.length)),
+          );
+        } catch {
+          runnerError = "invalid conversation entry reference";
+        }
+        return;
+      }
       if (line.startsWith(STEER_ACK_PREFIX)) {
         try {
           const parsed: unknown = JSON.parse(
@@ -1223,8 +1239,14 @@ export async function sendMessage(
         );
       } else if (stopRequested) {
         reject(new NonRetryableError("エージェントの停止が要求されました"));
-      } else if (code === 0) resolve(stdout.trim());
-      else if (code === 2) reject(new TransientError(plainStderr.trim()));
+      } else if (code === 0) {
+        try {
+          if (conversation) options.onConversation?.(conversation);
+          resolve(stdout.trim());
+        } catch (error) {
+          reject(error);
+        }
+      } else if (code === 2) reject(new TransientError(plainStderr.trim()));
       else if (code === null)
         reject(new TransientError("コンテナがシグナルで終了しました"));
       else

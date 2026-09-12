@@ -9,14 +9,14 @@ Discord / cron
   → QueueRepository.enqueue
   → runtime.sqlite: jobs
   → poller: claim → sandboxでAgent実行
-  → 実行結果とdeliveriesを同一transactionで保存
+  → 実行結果・deliveries・採用会話参照を同一transactionで保存
   → delivery worker → Discord
 ```
 
 - [QueueRepository](../src/queue/repository.ts) がenqueue、冪等性、claim、lease、fencing、結果保存、配送状態を管理します。
 - [poller](../src/queue/poller.ts) はdurable claimを取得し、[manager](../src/agent/manager.ts) を通じて使い捨てのsandbox containerを起動します。
 - [delivery worker](../src/queue/delivery.ts) は保存済みの配送内容を送信します。配送失敗を理由に完了済みAgentを再実行しません。
-- 会話履歴はgroupごとの `sessions.sqlite` に保存し、runtime DBとは分離します。pollerは実行中のjob IDとfencing tokenをrunnerへ渡し、各entryの生成試行を記録します。entry保存は結果commitより前なので、それだけでは成功の証明になりません。Memory exportはruntime DBの成功commitと生成試行の一致を確認し、本文はsession DBだけから読みます。
+- 会話履歴はgroupごとの `sessions.sqlite` に保存し、runtime DBとは分離します。runnerは採用する入力user / final assistantのstable entry IDをhostへ返します。entry保存だけでは成功の証明にならず、既存のfenced結果commitと同一transactionで `committed_conversations` へ参照を確定します。Memory exporterはこの参照とsession本文だけを消費し、attemptや最終応答を再推論しません。参照はjobs retentionと独立し、session renameでもentry IDを維持します。
 - Memory export cronは `jobKind: memory-export` とcron IDを持つ内部jobをenqueueします。pollerはAgent実行・Discord配送を経由せず、startup cron cacheとread-only session storeからbounded batchを処理します。既存の `session_id: memory-export:<cronJobId>` ordering、heartbeat、lease、fencing、retryを使い、Memory専用queueは持ちません。詳細は [Agent Memory export](agent-memory.md) を参照してください。
 
 ## 状態と順序
@@ -27,7 +27,7 @@ claimはtransaction内でworker・lease期限・増分fencing tokenを記録し�
 
 同じ `session_id` の未完了先行jobがある場合は後続をclaimしません。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使います。provider単位の実行制限はこれとは別で、[provider concurrency設定](config.md#configprovidersjson) を参照してください。全チャンネルを単一のPromiseチェーンで直列化する設計ではありません。
 
-実行成功時は結果と必要なdelivery chunkを同一transactionで確定します。Agentが空応答を返した場合は、理由 `empty_response` の `dead_letter` となり、正常完了にはなりません。明示的な配送抑制（独立行の `<NO_REPLY>`）や、意図的に空の結果を確定する内部jobは、deliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
+実行成功時は結果、必要なdelivery chunk、runnerから返された採用会話参照を同一transactionで確定します。Agentが空応答を返した場合は、理由 `empty_response` の `dead_letter` となり、正常完了にはなりません。明示的な配送抑制（独立行の `<NO_REPLY>`）や、意図的に空の結果を確定する内部jobは、deliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
 
 配送を意図的に抑制した成功結果では、結果commitと同じtransactionで `jobs.delivery_suppressed=1` を保存します。RSSのstartup reconciliationは `completed`・成功結果・この抑制フラグ・delivery 0件の組み合わせだけを無配信成功として既読化します。delivery 0件だけでは成功と推測せず、通常deliveryの `sent` / `failed` / `ambiguous` の意味論は変わりません。
 

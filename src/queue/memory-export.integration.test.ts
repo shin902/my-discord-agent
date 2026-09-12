@@ -11,6 +11,7 @@ import {
   it,
   vi,
 } from "vitest";
+import type { ConversationEntries } from "../agent/conversation.js";
 import { expectDefined } from "../test-utils.js";
 import type { QueueJob } from "./repository.js";
 
@@ -59,7 +60,7 @@ vi.mock("./repository.js", async (original) => ({
 
 const root = await mkdtemp(join(tmpdir(), "memory-export-integration-"));
 vi.stubEnv("SESSIONS_DIR", join(root, "sessions"));
-const { appendMessage } = await import("../agent/session.js");
+const { appendMessage, renameSession } = await import("../agent/session.js");
 const { QueueRepository, openRuntimeDb } = await import("./repository.js");
 const { _setCronJobs, loadAndValidateCron, executeJob } = await import(
   "../cron/runner.js"
@@ -99,36 +100,34 @@ function enqueueSource(
     timestamp: new Date().toISOString(),
   }).job;
 }
-async function appendAnswer(job: QueueJob, answer: string): Promise<void> {
-  await appendMessage(
-    job.groupName,
-    job.sessionId,
-    {
-      role: "assistant",
-      content: [{ type: "text", text: answer }],
-      stopReason: "stop",
-      timestamp: 2000,
-    } as AgentMessage,
-    undefined,
-    { jobId: job.id, fencingToken: expectDefined(job.fencingToken) },
-  );
+async function appendAnswer(job: QueueJob, answer: string): Promise<number> {
+  return appendMessage(job.groupName, job.sessionId, {
+    role: "assistant",
+    content: [{ type: "text", text: answer }],
+    stopReason: "stop",
+    timestamp: 2000,
+  } as AgentMessage);
 }
-async function appendAttempt(job: QueueJob, answer: string): Promise<void> {
-  await appendMessage(
+async function appendAttempt(
+  job: QueueJob,
+  answer: string,
+): Promise<ConversationEntries> {
+  const userEntryId = await appendMessage(
     job.groupName,
     job.sessionId,
     { role: "user", content: job.content, timestamp: 1000 },
     job.source,
-    { jobId: job.id, fencingToken: expectDefined(job.fencingToken) },
   );
-  await appendAnswer(job, answer);
+  const assistantEntryId = await appendAnswer(job, answer);
+  return { userEntryId, assistantEntryId };
 }
 async function seed(id: string, group = "main"): Promise<void> {
   const job = enqueueSource(id, group);
   const claimed = expectDefined(repo.claim("seed"));
   expect(claimed.job.id).toBe(job.id);
-  await appendAttempt(claimed.job, `answer ${id}`);
+  const conversation = await appendAttempt(claimed.job, `answer ${id}`);
   repo.commitResult(job.id, claimed.fencingToken, `answer ${id}`, {
+    conversation,
     suppressDelivery: true,
   });
 }
@@ -278,14 +277,14 @@ describe("cron + runtime queue + canonical trajectory export", () => {
   it("exports only the committed retry, never an abandoned stop or late stale-fence response", async () => {
     const job = enqueueSource("retried");
     const old = expectDefined(repo.claim("crashing-worker"));
-    await appendAttempt(old.job, "abandoned response");
+    const abandoned = await appendAttempt(old.job, "abandoned response");
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => accept());
     await executeJob(config());
     await processNext();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(repo.hasCommittedResult(job.id, old.fencingToken)).toBe(false);
+    expect([...repo.readCommittedConversations("main")]).toEqual([]);
 
     // Crash before result commit; restart/recover through the ordinary queue API.
     repo.close();
@@ -298,19 +297,23 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     );
     expect(retry.job.id).toBe(job.id);
     expect(retry.fencingToken).not.toBe(old.fencingToken);
-    await appendAttempt(retry.job, "committed response");
+    const adopted = await appendAttempt(retry.job, "committed response");
     // Even an old runner writing AFTER the retry's response must not replace it.
     await appendAnswer(old.job, "late abandoned response");
     expect(() =>
-      repo.commitResult(job.id, old.fencingToken, "abandoned response"),
+      repo.commitResult(job.id, old.fencingToken, "abandoned response", {
+        conversation: abandoned,
+      }),
     ).toThrow(/stale fencing/);
     await executeJob(config());
     await processNext();
     expect(fetchMock).not.toHaveBeenCalled();
 
-    repo.commitResult(job.id, retry.fencingToken, "committed response");
-    expect(repo.hasCommittedResult(job.id, old.fencingToken)).toBe(false);
-    expect(repo.hasCommittedResult(job.id, retry.fencingToken)).toBe(true);
+    repo.commitResult(job.id, retry.fencingToken, "committed response", {
+      conversation: adopted,
+    });
+    expect([...repo.readCommittedConversations("main")]).toEqual([adopted]);
+    await appendAnswer(old.job, "stale response after commit");
     // No post-commit session marker is needed, including across another restart.
     repo.close();
     repo = new QueueRepository(openRuntimeDb(join(root, "runtime.sqlite")));
@@ -335,23 +338,28 @@ describe("cron + runtime queue + canonical trajectory export", () => {
   ])("does not export a stop entry from a %s source result", async (outcome) => {
     const job = enqueueSource("unsuccessful");
     const claimed = expectDefined(repo.claim("source-worker"));
-    await appendAttempt(claimed.job, "uncommitted stop");
+    const conversation = await appendAttempt(claimed.job, "uncommitted stop");
     if (outcome === "dead-letter")
       repo.deadLetter(job.id, claimed.fencingToken, "agent_error");
-    else repo.commitResult(job.id, claimed.fencingToken, "", { empty: true });
+    else
+      repo.commitResult(job.id, claimed.fencingToken, "", {
+        empty: true,
+        conversation,
+      });
     const fetchMock = vi.spyOn(globalThis, "fetch");
     await executeJob(config());
     await processNext();
-    expect(repo.hasCommittedResult(job.id, claimed.fencingToken)).toBe(false);
+    expect([...repo.readCommittedConversations("main")]).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("does not infer success after the authoritative source job has been retained away", async () => {
+  it("exports after job retention and session rename, including to a new backend namespace", async () => {
     const { pruneRetention } = await import("./retention.js");
     const job = enqueueSource("retained");
     const claimed = expectDefined(repo.claim("source-worker"));
-    await appendAttempt(claimed.job, "retained result");
+    const conversation = await appendAttempt(claimed.job, "retained result");
     repo.commitResult(job.id, claimed.fencingToken, "retained result", {
+      conversation,
       suppressDelivery: true,
     });
     await pruneRetention(
@@ -360,11 +368,73 @@ describe("cron + runtime queue + canonical trajectory export", () => {
       { at: new Date(Date.now() + 60_000) },
     );
     expect(repo.get(job.id)).toBeUndefined();
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    await renameSession("main", "chat", "materialized-thread");
+    expect([...repo.readCommittedConversations("main")]).toEqual([
+      conversation,
+    ]);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => accept());
     await executeJob(config());
     await processNext();
-    expect(repo.hasCommittedResult(job.id, claimed.fencingToken)).toBe(false);
+    expect(wireContents(fetchMock)).toEqual(["user retained"]);
+    await startup([config("new-backend")]);
+    await executeJob(config("new-backend"));
+    await processNext();
+    expect(wireContents(fetchMock)).toEqual(["user retained", "user retained"]);
+  });
+
+  it("persists a successfully committed length response but excludes it from Memory export", async () => {
+    const job = enqueueSource("length");
+    let conversation: ConversationEntries | undefined;
+    vi.mocked(sendMessage).mockImplementationOnce(
+      async (group, sessionId, content, options = {}) => {
+        const userEntryId = await appendMessage(
+          group,
+          sessionId,
+          { role: "user", content, timestamp: 1000 },
+          options.source,
+        );
+        await appendAnswer(job, "interim successful stop");
+        const assistantEntryId = await appendMessage(group, sessionId, {
+          role: "assistant",
+          content: [{ type: "text", text: "truncated final" }],
+          stopReason: "length",
+          timestamp: 2000,
+        } as AgentMessage);
+        conversation = { userEntryId, assistantEntryId };
+        options.onConversation?.(conversation);
+        options.onExecutionTiming?.({
+          termination: "close",
+          exitCode: 0,
+          stopReason: "length",
+          preparationMs: 0,
+          dockerRunMs: 1,
+        });
+        return "truncated final";
+      },
+    );
+    await processNext();
+    expect(repo.get(job.id)).toMatchObject({
+      status: "completed",
+      succeeded: true,
+      stopReason: "length",
+    });
+    expect([...repo.readCommittedConversations("main")]).toEqual([
+      expectDefined(conversation),
+    ]);
+    expect(repo.listDeliveries()[0]?.payloadJson).toContain("truncated final");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => accept());
+    await executeJob(config());
+    await processNext();
     expect(fetchMock).not.toHaveBeenCalled();
+    // Skipping the ineligible pair must not prevent a later eligible conversation's export.
+    await seed("after-length");
+    await executeJob(config());
+    await processNext();
+    expect(wireContents(fetchMock)).toEqual(["user after-length"]);
   });
 
   it("captures a missing-skill local response only after the human source job commits", async () => {
@@ -386,7 +456,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
           undefined,
           undefined,
           options.source,
-          options.execution,
+          options.onConversation,
         );
         await executeJob(config());
         await processNext();
@@ -530,7 +600,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
       "normal user",
       expect.objectContaining({
         source,
-        execution: { jobId: normal.id, fencingToken: claimed.fencingToken },
+        onConversation: expect.any(Function),
       }),
     );
     expect(fetchMock).toHaveBeenCalledOnce();

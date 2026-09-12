@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import type { ConversationEntries } from "../agent/conversation.js";
 import {
   type AgentExecutionTiming,
   type DiscordEvent,
@@ -744,6 +745,7 @@ async function processCronThreadDelivery(
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = cronSessionId(msg);
+  let conversation: ConversationEntries | undefined;
   try {
     // Declarative item-thread jobs execute in a temporary session and leave
     // Discord untouched until the delivery worker has a response to post.
@@ -781,6 +783,9 @@ async function processCronThreadDelivery(
         const agentStartedAt = Date.now();
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
+            onConversation: (entries) => {
+              conversation = entries;
+            },
             onExecutionTiming: (executionTiming) => {
               timing.agentExecution = executionTiming;
             },
@@ -837,6 +842,7 @@ async function processCronThreadDelivery(
         {
           empty: !response,
           suppressDelivery,
+          conversation,
           metadata: executionMetadata(timing),
           deliveryPayload: {
             groupName: msg.groupName,
@@ -1070,6 +1076,7 @@ export async function processMessage(
   let stopTyping = () => {};
   try {
     let response: string;
+    let conversation: ConversationEntries | undefined;
 
     // グループ設定を先読みしてイベント通知と返信の送信設定を確定する
     const groupConfig = await findGroupByName(msg.groupName).catch((err) => {
@@ -1129,14 +1136,9 @@ export async function processMessage(
                   );
                 },
                 attachments: msg.attachments,
-                ...(msg.fencingToken !== undefined
-                  ? {
-                      execution: {
-                        jobId: msg.id,
-                        fencingToken: msg.fencingToken,
-                      },
-                    }
-                  : {}),
+                onConversation: (entries) => {
+                  conversation = entries;
+                },
                 source:
                   !msg.botId &&
                   !msg.cronJobId &&
@@ -1243,6 +1245,7 @@ export async function processMessage(
       {
         empty: !response,
         suppressDelivery,
+        conversation,
         metadata: executionMetadata(timing),
         deliveryPayload: {
           groupName: msg.groupName,
