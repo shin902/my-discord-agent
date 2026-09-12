@@ -1,5 +1,35 @@
 # Agent Memory export
 
+## NanoClaw-compatible workspace memory
+
+During startup, after all managed/orphan Agent runners have been stopped and
+before request handling begins, every Agent group is scaffolded with
+`memory/index.md`, `memory/system/index.md`, and
+`memory/system/definition.md`. Missing files are copied from
+`templates/agent-memory/` and existing files are never overwritten. The
+templates are adapted from NanoClaw commit
+[`0399a6dfa98fa8fb27b7b267749ed04d6880379b`](https://github.com/nanocoai/nanoclaw/tree/0399a6dfa98fa8fb27b7b267749ed04d6880379b); its MIT notice is retained in
+`templates/agent-memory/LICENSE`.
+
+Use the existing `contextFiles` support from #460 on a group, channel, cron
+job, or Bot profile to inject selected workspace files once as user-role
+bootstrap context:
+
+```json
+"contextFiles": [
+  { "path": "memory/index.md", "maxChars": 16000 },
+  { "path": "memory/system/definition.md", "maxChars": 16000 }
+]
+```
+
+Paths are relative to the group workspace. Only explicitly listed files are
+loaded; missing files are skipped and subordinate memory files are not expanded.
+Legacy `MEMORY.md` and `memory/SELF.md` files are not migrated or deleted, and
+existing sessions can still read their stored legacy bootstrap messages. New
+sessions do not inject those paths automatically; list them in `contextFiles`
+when they are still needed. This memory tree does not replace MemoryCore,
+session trajectory, or exact RSS/queue state.
+
 Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 
 ```text

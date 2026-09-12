@@ -1,5 +1,6 @@
 import "dotenv/config";
 import type { Server } from "node:http";
+import { fileURLToPath } from "node:url";
 import { handleBotToolRequest } from "./agent/bot-orchestration.js";
 import {
   beginManagerShutdown,
@@ -32,6 +33,7 @@ import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
 import { startScreenCaptureReceiver } from "./integrations/screen-capture/receiver.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
+import { ensureAgentMemoryScaffolds } from "./memory/agent-memory.js";
 import {
   initCredentialProxyServer,
   registerInternalRequestHandler,
@@ -76,6 +78,10 @@ try {
   // Stop managed and orphan containers before startup recovery.
   await cleanupToolRuntimes();
   await killAllRunningContainers({ includeOrphans: true, strict: true });
+  await ensureAgentMemoryScaffolds(
+    fileURLToPath(new URL("../groups/", import.meta.url)),
+    groups.map((group) => group.name),
+  );
   await initGroupPrompts(groups);
   await loadProviders();
   const defaultModel = await loadDefaultModel();

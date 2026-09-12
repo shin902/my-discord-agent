@@ -13,6 +13,12 @@ const TEST_ATTACHMENTS_DIR = path.join(
 // 実ファイルシステムに mkdir する（manager.ts:236-238）。このテストファイルでは
 // 任意の groupName が使われ得るため、テスト前後のディレクトリ一覧の差分から
 // 新規作成分だけを特定して削除する（groupName をハードコードしない、issue #47）。
+const scaffoldMemory = vi.hoisted(() => vi.fn());
+vi.mock("../memory/agent-memory.js", () => ({
+  ensureAgentMemoryScaffold: scaffoldMemory,
+  ensureAgentMemoryScaffolds: scaffoldMemory,
+}));
+
 const GROUPS_DIR = path.join(__dirname, "../../groups");
 const SESSIONS_DIR = path.join(__dirname, "../../data/sessions");
 
@@ -144,6 +150,7 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--label", "my-discord-agent.runner=true"]),
     );
+    expect(scaffoldMemory).not.toHaveBeenCalled();
   });
 
   it("shutdown開始後の新規sendMessageはDockerをspawnしない", async () => {

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   loadGroups: vi.fn(),
   loadProviders: vi.fn(),
   initGroupPrompts: vi.fn(),
+  ensureAgentMemoryScaffolds: vi.fn(),
   beginManagerShutdown: vi.fn(),
   initManager: vi.fn(),
   killAllRunningContainers: vi.fn(),
@@ -77,6 +78,9 @@ vi.mock("./queue/delivery.js", () => ({
   stopDeliveryWorker: mocks.stopDeliveryWorker,
 }));
 vi.mock("./config/groups.js", () => ({ loadGroups: mocks.loadGroups }));
+vi.mock("./memory/agent-memory.js", () => ({
+  ensureAgentMemoryScaffolds: mocks.ensureAgentMemoryScaffolds,
+}));
 vi.mock("./config/providers.js", () => ({
   loadProviders: mocks.loadProviders,
 }));
@@ -148,6 +152,7 @@ describe("index: 起動時バリデーション", () => {
     mocks.loadProviders.mockResolvedValue([]);
     mocks.initManager.mockResolvedValue(undefined);
     mocks.initGroupPrompts.mockResolvedValue(undefined);
+    mocks.ensureAgentMemoryScaffolds.mockResolvedValue(undefined);
     mocks.validateGroupConfig.mockResolvedValue(undefined);
     mocks.validateBotConfigs.mockResolvedValue(undefined);
     mocks.loadDefaultModel.mockResolvedValue({
@@ -326,6 +331,18 @@ describe("index: 起動時バリデーション", () => {
       includeOrphans: true,
       strict: true,
     });
+    expect(mocks.ensureAgentMemoryScaffolds).toHaveBeenCalledWith(
+      expect.stringMatching(/groups\/$/),
+      ["ok-group"],
+    );
+    expect(
+      mocks.killAllRunningContainers.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mocks.ensureAgentMemoryScaffolds.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(
+      mocks.ensureAgentMemoryScaffolds.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.initGroupPrompts.mock.invocationCallOrder[0] ?? 0);
     expect(mocks.initializeQueue).toHaveBeenCalledOnce();
 
     expect(mocks.registerHandlers).toHaveBeenCalledWith(

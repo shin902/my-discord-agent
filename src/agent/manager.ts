@@ -19,6 +19,7 @@ import {
 } from "../config/groups.js";
 import { isLlmCredential } from "../config/llm-credentials.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
+import { ensureAgentMemoryScaffold } from "../memory/agent-memory.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
 import { usesAnthropicOAuth } from "../proxy/provider-auth.js";
 import {
@@ -677,7 +678,9 @@ export async function sendMessage(
     }
   }
 
-  await mkdir(path.join(ROOT, "groups", groupName), { recursive: true });
+  const groupDir = path.join(ROOT, "groups", groupName);
+  await mkdir(groupDir, { recursive: true });
+  await ensureAgentMemoryScaffold(groupDir);
   if (
     options.configOverride?.skills !== undefined &&
     Array.isArray(effectiveConfig.skills)
