@@ -1,13 +1,5 @@
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { request as httpRequest, type Server } from "node:http";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -23,55 +15,8 @@ import {
 } from "./gallery-store.js";
 import { ingestXSavedItems, openXSavedDb } from "./store.js";
 
-// Native HTTP preserves Serve's Host header (Node fetch intentionally rewrites it).
-function httpFetch(
-  url: string,
-  init: {
-    method?: string;
-    headers?: Record<string, string | undefined>;
-    body?: URLSearchParams | Buffer;
-  } = {},
-): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const headers = { ...init.headers };
-    if (init.body instanceof URLSearchParams && !headers["Content-Type"])
-      headers["Content-Type"] =
-        "application/x-www-form-urlencoded;charset=UTF-8";
-    const request = httpRequest(
-      url,
-      { method: init.method, headers },
-      (incoming) => {
-        const chunks: Buffer[] = [];
-        incoming.on("data", (chunk) => chunks.push(chunk));
-        incoming.on("error", reject);
-        incoming.on("end", () =>
-          resolve(
-            new Response(
-              init.method === "HEAD" ? null : Buffer.concat(chunks),
-              {
-                status: incoming.statusCode,
-                headers: Object.fromEntries(
-                  Object.entries(incoming.headers).map(([key, value]) => [
-                    key,
-                    Array.isArray(value) ? value.join(", ") : (value ?? ""),
-                  ]),
-                ),
-              },
-            ),
-          ),
-        );
-      },
-    );
-    request.on("error", reject);
-    request.end(
-      init.body instanceof URLSearchParams ? init.body.toString() : init.body,
-    );
-  });
-}
-
 const origin = "https://gallery.example.ts.net";
 const identity = {
-  Host: new URL(origin).host,
   "Tailscale-User-Login": "owner@example.com",
 };
 const classification = {
@@ -163,15 +108,16 @@ describe("x-saved gallery", () => {
     if (db.open) db.close();
     await rm(root, { recursive: true, force: true });
   });
-  function get(url = "/", headers = identity) {
-    return httpFetch(endpoint + url, { headers });
+  function get(url = "/", headers: Record<string, string> = identity) {
+    return fetch(endpoint + url, { headers });
   }
   function post(
     fields: Record<string, string>,
-    headers: Record<string, string | undefined> = {},
+    headers: Record<string, string> = {},
   ) {
-    return httpFetch(`${endpoint}/items/123`, {
+    return fetch(`${endpoint}/items/123`, {
       method: "POST",
+      redirect: "manual",
       headers: { ...identity, Origin: origin, ...headers },
       body: new URLSearchParams(fields),
     });
@@ -335,7 +281,7 @@ describe("x-saved gallery", () => {
     expect(getGalleryItem(db, "123")?.labels).toEqual([]);
   });
 
-  it("authenticates every route and denies foreign/missing identity, host, Funnel, and CSRF", async () => {
+  it("requires the owner's identity and same-origin POST, and accepts only GET/POST", async () => {
     for (const url of [
       "/",
       "/gallery.css",
@@ -343,167 +289,80 @@ describe("x-saved gallery", () => {
       "/media/123/image/0",
       "/media/123/video/1",
     ]) {
-      for (const headers of [
-        { Host: identity.Host },
-        { ...identity, "Tailscale-User-Login": "other@example.com" },
-        { ...identity, Host: "evil.example" },
-        { ...identity, "Tailscale-Funnel-Request": "?1" },
-      ]) {
-        expect((await get(url, headers as typeof identity)).status).toBe(403);
-      }
+      expect((await get(url, {})).status).toBe(403);
     }
-    for (const headers of [
-      { Origin: "https://evil.example" },
-      { Origin: "null" },
-      { Origin: "" },
-      { "Sec-Fetch-Site": "cross-site" },
-      { "Tailscale-User-Login": "other@example.com" },
-    ]) {
-      expect((await post(classification, headers)).status).toBe(403);
+    const otherUser = { "Tailscale-User-Login": "other@example.com" };
+    expect((await get("/", otherUser)).status).toBe(403);
+    expect((await post(classification, otherUser)).status).toBe(403);
+    for (const Origin of ["https://evil.example", "null", ""]) {
+      expect((await post(classification, { Origin })).status).toBe(403);
     }
     expect(getGalleryItem(db, "123")?.status).toBe("inbox");
+    const head = await fetch(endpoint, { method: "HEAD", headers: identity });
+    expect(head.status).toBe(405);
+    expect(head.headers.get("allow")).toBe("GET, POST");
     expect((await get("/v1/x-saved/items")).status).toBe(404);
-    expect(
-      (
-        await httpFetch(`${endpoint}/`, {
-          method: "OPTIONS",
-          headers: identity,
-        })
-      ).status,
-    ).toBe(405);
-    expect((await get()).headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("escapes stored and reflected content, restricts links, and provides native lazy images/video controls", async () => {
     const html = await (await get("/?q=%22%3E%3Cscript%3E")).text();
     expect(html).toContain("&quot;&gt;&lt;script&gt;");
     expect(html).not.toContain("<script>");
-    const response = await get("/items/123?back=https://evil.example");
-    expect(response.headers.get("content-security-policy")).toContain(
-      "form-action 'self'",
-    );
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    updateGalleryItem(db, "123", {
+      ...classification,
+      tag: '<img src=x onerror="alert(3)">',
+    });
+    const response = await get("/items/123?back=javascript:alert(4)");
     const detail = await response.text();
     expect(detail).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(detail).toContain("&lt;img src=x onerror=&quot;alert(3)&quot;&gt;");
     expect(detail).toContain('loading="lazy"');
     expect(detail).toContain("playsinline controls");
-    expect(detail).not.toContain("https://evil.example");
+    expect(detail).not.toContain("javascript:alert(4)");
     expect(detail).toContain("https://x.com/i/status/123");
-    expect(detail).not.toContain("https://pbs.twimg.com");
-    expect(detail).not.toContain(root);
   });
 
-  it.each([
-    "?page=-1",
-    "?page=1.5",
-    "?page=Infinity",
-    "?sort=sql",
-    "?from=2026-02-30",
-    "?from=2026-09-02&to=2026-09-01",
-    "?q=a&q=b",
-    "?unexpected=1",
-    "?media=audio",
-  ])("rejects invalid queries %s", async (query) => {
-    expect((await get(`/${query}`)).status).toBe(400);
-  });
-
-  it("rejects invalid and oversized edits without changing state", async () => {
-    for (const fields of [
-      { ...classification, status: "unknown" },
-      {
-        ...classification,
-        series: Array.from({ length: 51 }, (_, i) => `v${i}`).join(","),
-      },
-      { ...classification, sql: "DROP TABLE x_items" },
-    ]) {
-      expect((await post(fields)).status).toBe(400);
-    }
+  it("rejects invalid filters and edits without changing state", async () => {
+    expect((await get("/?from=2026-09-02&to=2026-09-01")).status).toBe(400);
+    expect((await post({ ...classification, status: "unknown" })).status).toBe(
+      400,
+    );
     expect(
       (await post({ ...classification, tag: "a".repeat(256 * 1024) })).status,
     ).toBe(413);
-    expect(
-      (await post(classification, { "Content-Type": "application/json" }))
-        .status,
-    ).toBe(415);
-    expect(
-      (await post(classification, { "Content-Encoding": "gzip" })).status,
-    ).toBe(415);
     expect(getGalleryItem(db, "123")?.status).toBe("inbox");
   });
 
-  it("streams image and MP4 byte ranges for native playback/seek, including HEAD and missing archives", async () => {
+  it("serves completed images at route-derived paths and MP4 ranges for playback/seek", async () => {
+    // The DB supplies only the image format, not the path to open.
+    db.exec(
+      "UPDATE x_media SET local_path='format.png' WHERE tweet_id='123' AND kind='image'",
+    );
     const image = await get("/media/123/image/0");
     expect(image.headers.get("content-type")).toBe("image/png");
     expect(Buffer.from(await image.arrayBuffer())).toEqual(png);
-    for (const [range, expected, contentRange] of [
-      ["bytes=2-5", "2345", "bytes 2-5/10"],
-      ["bytes=7-", "789", "bytes 7-9/10"],
-      ["bytes=-3", "789", "bytes 7-9/10"],
-      ["bytes=0-99", "0123456789", "bytes 0-9/10"],
+    for (const [Range, expected] of [
+      ["bytes=2-5", "2345"],
+      ["bytes=7-", "789"],
+      ["bytes=-3", "789"],
     ]) {
-      const response = await get("/media/123/video/1", {
-        ...identity,
-        Range: range,
-      } as typeof identity);
+      const response = await get("/media/123/video/1", { ...identity, Range });
       expect(response.status).toBe(206);
-      expect(response.headers.get("content-range")).toBe(contentRange);
       expect(response.headers.get("content-type")).toBe("video/mp4");
       expect(await response.text()).toBe(expected);
     }
-    for (const range of [
-      "bytes=10-",
-      "bytes=8-2",
-      "bytes=-0",
-      "bytes=",
-      "bytes=0-1,3-4",
-      "bytes=999999999999999999999999999-",
-    ]) {
-      expect(
-        (
-          await get("/media/123/video/1", {
-            ...identity,
-            Range: range,
-          } as typeof identity)
-        ).status,
-      ).toBe(416);
-    }
-    const head = await httpFetch(`${endpoint}/media/123/video/1`, {
-      method: "HEAD",
-      headers: identity,
-    });
-    expect(head.headers.get("content-length")).toBe("10");
-    expect(await head.text()).toBe("");
-    expect((await get("/media/456/image/0")).status).toBe(404);
-    await rm(path.join(root, "media/123/0.png"));
+    expect(
+      (await get("/media/123/video/1", { ...identity, Range: "bytes=10-" }))
+        .status,
+    ).toBe(416);
+    db.exec(
+      "UPDATE x_media SET status='pending' WHERE tweet_id='123' AND kind='image'",
+    );
     expect((await get("/media/123/image/0")).status).toBe(404);
-  });
-
-  it("never serves arbitrary DB paths, unfinished files, symlinks, or directories", async () => {
-    const setPath = (p: string) =>
-      db
-        .prepare(
-          "UPDATE x_media SET local_path = ? WHERE tweet_id='123' AND kind='image'",
-        )
-        .run(p);
-    for (const bad of [
-      dbPath,
-      "../../saved.sqlite",
-      "media/123/0.svg",
-      "media/456/0.png",
-      "media/123/1.mp4",
-    ]) {
-      setPath(bad);
-      expect((await get("/media/123/image/0")).status).toBe(404);
-    }
-    setPath("media/123/0.png");
+    db.exec(
+      "UPDATE x_media SET status='done' WHERE tweet_id='123' AND kind='image'",
+    );
     await rm(path.join(root, "media/123/0.png"));
-    await symlink(dbPath, path.join(root, "media/123/0.png"));
-    expect((await get("/media/123/image/0")).status).toBe(404);
-    await rm(path.join(root, "media/123/0.png"));
-    await mkdir(path.join(root, "media/123/0.png"));
-    expect((await get("/media/123/image/0")).status).toBe(404);
-    await rename(path.join(root, "media/123"), path.join(root, "outside"));
-    await symlink(path.join(root, "outside"), path.join(root, "media/123"));
     expect((await get("/media/123/image/0")).status).toBe(404);
   });
 
@@ -521,18 +380,19 @@ describe("x-saved gallery", () => {
         page.setDefaultTimeout(5_000);
         await page.route(`${origin}/**`, async (route) => {
           const request = route.request();
-          let response = await httpFetch(
+          let response = await fetch(
             endpoint + request.url().slice(origin.length),
             {
               method: request.method(),
               headers: { ...(await request.allHeaders()), ...identity },
               body: request.postDataBuffer() ?? undefined,
+              redirect: "manual",
             },
           );
           // Playwright routing only intercepts the first request in a redirect
           // chain. Follow PRG locally; the HTTP test asserts the actual 303.
           if (response.status === 303)
-            response = await httpFetch(
+            response = await fetch(
               endpoint + response.headers.get("location"),
               { headers: identity },
             );

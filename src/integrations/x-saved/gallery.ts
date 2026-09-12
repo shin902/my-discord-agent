@@ -1,5 +1,4 @@
-import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import {
   createServer,
   type IncomingMessage,
@@ -49,26 +48,14 @@ function send(
   response.writeHead(status, { "Content-Type": type });
   response.end(body);
 }
-function parameters(params: URLSearchParams): Record<string, string> {
-  const result: Record<string, string> = Object.create(null);
-  for (const [key, value] of params) {
-    if (key in result)
-      throw new HttpError(400, "同じ項目を複数回指定できません。");
-    result[key] = value;
-  }
-  return result;
-}
 function backLink(value?: string): string {
-  return value && value.length <= 8_000 && /^\/\?[^#\r\n]*$/.test(value)
-    ? value
-    : "/";
+  return value?.startsWith("/?") ? value : "/";
 }
 async function readForm(request: IncomingMessage) {
   if (
     !/^application\/x-www-form-urlencoded(?:\s*;\s*charset=utf-8)?$/i.test(
       request.headers["content-type"] ?? "",
-    ) ||
-    request.headers["content-encoding"]
+    )
   ) {
     throw new HttpError(415, "通常のフォームで送信してください。");
   }
@@ -84,7 +71,7 @@ async function readForm(request: IncomingMessage) {
       );
     chunks.push(bytes);
   }
-  return parameters(
+  return Object.fromEntries(
     new URLSearchParams(Buffer.concat(chunks).toString("utf8")),
   );
 }
@@ -104,86 +91,57 @@ async function serveMedia(
     .get(tweetId, kind, Number(position)) as
     | { local_path: string | null }
     | undefined;
-  const relative = row?.local_path;
-  const ext = relative?.match(
-    /^media\/[1-9][0-9]{0,19}\/(?:[0-9]|1[0-5])\.(jpg|png|webp|gif|mp4)$/,
-  )?.[1];
+  // Only the format comes from SQLite; the route determines the archive path.
+  const ext = path.extname(row?.local_path ?? "").slice(1);
   if (
-    !ext ||
-    relative !== `media/${tweetId}/${position}.${ext}` ||
+    !row ||
+    !Object.hasOwn(MEDIA_TYPES, ext) ||
     (kind === "video") !== (ext === "mp4")
   ) {
     throw new HttpError(404, "保存ファイルがありません。");
   }
-  // Reject symlinks at every archive component (including the final file).
-  let file = root;
-  for (const segment of relative.split("/")) {
-    file = path.join(file, segment);
-    if ((await lstat(file)).isSymbolicLink())
-      throw new HttpError(404, "保存ファイルがありません。");
-  }
   const handle = await open(
-    file,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    path.join(root, "media", tweetId, `${position}.${ext}`),
+    "r",
   );
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || !stat.size)
       throw new HttpError(404, "保存ファイルがありません。");
-    // On the Linux host, verify the opened descriptor too: an untrusted mounted
-    // directory must not swap an ancestor for a symlink between lstat and open.
-    if (
-      process.platform === "linux" &&
-      (await realpath(`/proc/self/fd/${handle.fd}`)) !== file
-    ) {
-      throw new HttpError(404, "保存ファイルがありません。");
-    }
     let start = 0;
     let end = stat.size - 1;
+    // Native video needs single byte ranges; unsupported ranges receive the full file.
     const range =
-      request.method === "GET" && !request.headers["if-range"]
-        ? request.headers.range
-        : undefined;
-    if (range) {
-      response.setHeader("Content-Range", `bytes */${stat.size}`);
-      const parts = /^bytes=(\d*)-(\d*)$/.exec(range);
-      if (
-        !parts ||
-        (!parts[1] && !parts[2]) ||
-        parts.slice(1).some((n) => n && !Number.isSafeInteger(Number(n)))
-      )
-        throw new HttpError(416, "Invalid byte range");
-      start = parts[1]
-        ? Number(parts[1])
-        : Math.max(0, stat.size - Number(parts[2]));
-      end = parts[1] && parts[2] ? Math.min(Number(parts[2]), end) : end;
-      if (
-        !Number.isSafeInteger(start) ||
-        !Number.isSafeInteger(end) ||
-        start > end ||
-        start >= stat.size
-      ) {
+      !request.headers["if-range"] &&
+      /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? "");
+    const partial = range && (range[1] || range[2]);
+    if (partial) {
+      start = range[1]
+        ? Number(range[1])
+        : Math.max(0, stat.size - Number(range[2]));
+      end = range[1] && range[2] ? Math.min(Number(range[2]), end) : end;
+      if (start > end) {
+        response.setHeader("Content-Range", `bytes */${stat.size}`);
         throw new HttpError(416, "Invalid byte range");
       }
       response.setHeader("Content-Range", `bytes ${start}-${end}/${stat.size}`);
     }
-    response.writeHead(range ? 206 : 200, {
+    response.writeHead(partial ? 206 : 200, {
       "Content-Type": MEDIA_TYPES[ext],
       "Content-Length": end - start + 1,
       "Accept-Ranges": "bytes",
     });
-    if (request.method === "HEAD") response.end();
-    else
-      await pipeline(
-        handle.createReadStream({ start, end, autoClose: false }),
-        response,
-      );
+    await pipeline(
+      handle.createReadStream({ start, end, autoClose: false }),
+      response,
+    );
   } finally {
     await handle.close();
   }
 }
 
-/** Separate human-facing listener. Tailscale Serve is its only trusted proxy. */
+/** Single-user localhost service behind Tailscale Serve. Host SQLite, archive
+ * and local processes are trusted; external Tweet content is not. */
 export async function startXSavedGallery(options: {
   port: number;
   origin: string;
@@ -195,56 +153,32 @@ export async function startXSavedGallery(options: {
     origin: options.origin,
     allowedLogin: options.allowedLogin,
   });
-  const host = new URL(options.origin).host;
   const dbPath = resolveXSavedDbPath(options.xSavedDbPath);
   const db = openXSavedDb(dbPath);
-  const root = await realpath(path.dirname(dbPath));
+  const root = path.dirname(dbPath);
   const server = createServer(async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
-    // no-referrer turns native form POST Origin into null in Chromium.
-    response.setHeader("Referrer-Policy", "same-origin");
-    response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-    response.setHeader(
-      "Content-Security-Policy",
-      "default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-    );
     try {
       // Serve strips incoming identity headers, supplies the authenticated user,
       // and omits that identity for Funnel/tagged devices. Local processes are trusted.
-      if (
-        request.headers.host !== host ||
-        request.headers["tailscale-user-login"] !== options.allowedLogin ||
-        request.headers["tailscale-funnel-request"] !== undefined
-      ) {
+      if (request.headers["tailscale-user-login"] !== options.allowedLogin) {
         throw new HttpError(
           403,
           "自分のTailscaleアカウントで接続した端末から開いてください。",
         );
       }
-      if (
-        request.method !== "GET" &&
-        request.method !== "HEAD" &&
-        request.method !== "POST"
-      ) {
-        response.setHeader("Allow", "GET, HEAD, POST");
+      if (request.method !== "GET" && request.method !== "POST") {
+        response.setHeader("Allow", "GET, POST");
         throw new HttpError(405, "Method not allowed");
       }
       if (
         request.method === "POST" &&
-        (request.headers.origin !== options.origin ||
-          request.headers["sec-fetch-site"] === "cross-site")
+        request.headers.origin !== options.origin
       ) {
         throw new HttpError(403, "Galleryの画面から保存してください。");
       }
-      if (
-        !request.url?.startsWith("/") ||
-        request.url.startsWith("//") ||
-        request.url.length > 8_000
-      ) {
-        throw new HttpError(400, "URLが不正か長すぎます。");
-      }
-      const url = new URL(request.url, options.origin);
+      const url = new URL(request.url ?? "/", options.origin);
       const detail = /^\/items\/([1-9][0-9]{0,19})$/.exec(url.pathname);
       if (request.method === "POST") {
         if (!detail) throw new HttpError(404, "Not found");
@@ -289,7 +223,9 @@ export async function startXSavedGallery(options: {
         return;
       }
       if (url.pathname === "/") {
-        const filters = GalleryFilterSchema.parse(parameters(url.searchParams));
+        const filters = GalleryFilterSchema.parse(
+          Object.fromEntries(url.searchParams),
+        );
         send(response, 200, galleryListPage(filters, listGallery(db, filters)));
         return;
       }
@@ -318,7 +254,7 @@ export async function startXSavedGallery(options: {
           ? error.status
           : error instanceof z.ZodError
             ? 400
-            : ["ENOENT", "ENOTDIR", "ELOOP"].includes(
+            : ["ENOENT", "ENOTDIR"].includes(
                   (error as NodeJS.ErrnoException).code ?? "",
                 )
               ? 404

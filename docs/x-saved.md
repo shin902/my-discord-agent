@@ -118,6 +118,8 @@ Deploy the receiver before reloading the updated extension (old strict receivers
 
 Gallery is an opt-in, human-facing viewer/editor of the **same SQLite and media archive**, not a second store. It uses server-rendered HTML, native forms and video controls; no client framework, JavaScript bundle, pairing, or external assets are needed.
 
+**Threat model:** Gallery is a single-user localhost service with Tailscale Serve as its only external entry point; the host's SQLite, media archive and local processes are trusted, while external Tweet content remains untrusted. Gallery does not defend against host compromise or malicious local archive/symlink changes.
+
 ### Setup and authentication
 
 In `config/config.json`, configure the exact HTTPS origin shown by Tailscale Serve and **your own Tailscale user login** (not a device name):
@@ -143,11 +145,11 @@ tailscale serve --bg --https=443 http://127.0.0.1:8789
 tailscale serve status
 ```
 
-Open the configured origin from your Mac, iPhone or iPad connected as that Tailscale user. Tailnet access policy must also allow the connection. The backend binds only `127.0.0.1`; there is no configurable public bind. Every page, stylesheet, image and video checks the preserved `Host` and Serve-injected `Tailscale-User-Login`. Missing/different identities, tagged devices (which lack a user identity), and Funnel requests are denied. Do not use Funnel, a public proxy, port forwarding, or a proxy that accepts client-supplied identity headers. Local host processes are trusted; the header is not a bearer token and direct localhost access is not a supported login path.
+Open the configured origin from your Mac, iPhone or iPad connected as that Tailscale user. Tailnet access policy must also allow the connection. The backend binds only `127.0.0.1`; there is no configurable public bind. Every page, stylesheet, image and video checks that Serve-injected `Tailscale-User-Login` exactly matches the owner. Serve strips client-supplied identity headers; tagged devices and Funnel requests lack that user identity and therefore fail the same check. Do not use Funnel, a public proxy, port forwarding, or a proxy that accepts client-supplied identity headers. The header is not a bearer token and direct localhost access is not a supported login path.
 
 The receiver and Gallery have **separate ports/listeners/routes/authentication**. Gallery can be enabled with the receiver disabled. Both enabled on the same port fail startup. Do not expose the receiver just to enable Gallery, or replace its existing capture authentication/deployment with the Gallery settings. Gallery does not accept ingest requests. Shutdown closes both listeners and the Gallery database connection.
 
-Writes require a same-origin form POST and a matching `Origin`; there is no CORS grant. Pages escape stored text and use a restrictive CSP. Media routes address `(tweet_id, kind, position)`, not filesystem paths, and stream only completed, matching archive files with fixed image/MP4 MIME types. Paths outside the archive, symlinks, directories and unfinished files are rejected. Linux also verifies the opened file descriptor's canonical path before streaming. MP4 single-byte-range responses support native playback/seeking without loading entire videos into memory.
+Only GET and POST are accepted. Writes require `Origin` to match the configured Gallery origin; there is no CORS grant. Tweet text, labels and other rendered values are HTML-escaped, and SQL values use parameter binding. Media routes address `(tweet_id, kind, position)` and open only `media/<tweet_id>/<position>.<ext>` for completed rows. The existing `local_path` supplies only an allowed image/MP4 extension, never the path to open, preserving JPG/PNG/WebP/GIF support without moving files. Native MP4 single-byte-range responses support playback/seeking without loading entire videos into memory; unsupported range forms receive the full file.
 
 ### Browsing and classification
 
@@ -164,7 +166,7 @@ SQLite remains authoritative. Receiver, archive cron, Skill and Gallery use norm
 
 Back up the SQLite database with its existing online backup mechanism and media separately before deploying. Schema v4 adds `x_item_labels` without moving media or resetting state. Update host receiver/cron/Gallery code together: older host binaries reject schema v4. No production config or Tailscale Serve settings are changed automatically.
 
-The HTTP/SQLite tests cover migration, 2,000-media pagination, combined filters, transactional edits, preserved ingestion, auth/CSRF, escaping and byte-range/path safety. CI also runs a desktop/mobile browser smoke using a local fixture and simulated Serve headers (not a live Tailnet). To run that smoke locally:
+The HTTP/SQLite tests cover migration, 2,000-media pagination, combined filters, transactional edits, preserved ingestion, owner identity/CSRF, escaping, route-derived archive paths and native MP4 ranges. CI also runs a desktop/mobile browser smoke using a local fixture and simulated Serve headers (not a live Tailnet). To run that smoke locally:
 
 ```bash
 pnpm exec playwright install chromium
