@@ -54,8 +54,9 @@ each type consistent across files, and rename when better vocabulary emerges.
 
 Missing or malformed frontmatter never makes a memory unusable. Read the file
 normally and repair its metadata when you are already reading or editing it;
-do not scan the whole tree on every write. Search with ordinary filesystem
-tools such as `rg` and `find`, then follow Markdown links. For durable claims
+do not scan the whole tree on every write. Search with the available filesystem
+tools such as `grep`, `glob`, and `list`, then use `read` to inspect relevant
+files and follow Markdown links. For durable claims
 learned from external sources, add a
 `# Citations` section with links when useful; conversational facts need no
 synthetic citation.
