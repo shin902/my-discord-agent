@@ -7,10 +7,14 @@ pnpm build:runner
 
 normal_build_log="$(mktemp)"
 fallback_build_log=""
+mnemon_workspace=""
 cleanup() {
   rm -f "$normal_build_log"
   if [[ -n "$fallback_build_log" ]]; then
     rm -f "$fallback_build_log"
+  fi
+  if [[ -n "$mnemon_workspace" ]]; then
+    rm -rf "$mnemon_workspace"
   fi
 }
 trap cleanup EXIT
@@ -45,6 +49,22 @@ output="$({ docker run --rm \
 printf '%s\n' "$output"
 grep -q '^__AGENT_READY__$' <<<"$output"
 grep -q '^__SESSION_STORE_SMOKE_OK__$' <<<"$output"
+
+mnemon_workspace="$(mktemp -d)"
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "${mnemon_workspace}:/workspace" \
+  -e MNEMON_DATA_DIR=/workspace/.mnemon \
+  "$image" \
+  mnemon remember 'runner image smoke memory' --cat context --source agent --tags smoke > /dev/null
+mnemon_recall_output="$(docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "${mnemon_workspace}:/workspace" \
+  -e MNEMON_DATA_DIR=/workspace/.mnemon \
+  "$image" \
+  mnemon recall --basic 'runner image smoke')"
+printf '%s\n' "$mnemon_recall_output"
+grep -q 'runner image smoke memory' <<<"$mnemon_recall_output"
 
 # A source-forced build is the deterministic equivalent of a missing prebuilt
 # asset. It verifies that the retained native toolchain still provides the
