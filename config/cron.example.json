@@ -177,41 +177,6 @@
     "sessionMode": "per-run"
   },
   {
-    "_comment": "NanoClaw-style file memoryを任意導入する場合の日次ジョブ例。既存memory-dailyとは独立しており、併用も可能",
-    "id": "nanoclaw-memory-daily",
-    "schedule": "0 23 * * *",
-    "enabled": false,
-    "groupName": "my-group",
-    "prompt": "session-logsスキルを使って今日のセッションログを確認し、将来も役立つ事実・決定・選好だけを適切なmemory concept fileへ保存してください。各concept fileにはOKF frontmatterを付け、追加・移動・削除した場合はmemory/index.mdと途中のindex.mdを更新してください。記録対象が無ければファイルを変更せず、その旨だけ報告してください。",
-    "channelId": "YOUR_CHANNEL_ID",
-    "deliveryMode": "direct",
-    "sessionMode": "destination",
-    "tools": ["bash", "read", "write", "edit", "list", "glob", "grep"],
-    "approvalRequiredTools": [],
-    "skills": ["session-logs"],
-    "contextFiles": [
-      { "path": "memory/index.md", "maxChars": 16000 },
-      { "path": "memory/system/definition.md", "maxChars": 16000 }
-    ]
-  },
-  {
-    "_comment": "NanoClaw-style file memoryを任意導入する場合の週次整理ジョブ例。既存memory-weeklyとは独立しており、併用も可能",
-    "id": "nanoclaw-memory-weekly",
-    "schedule": "0 23 * * 0",
-    "enabled": false,
-    "groupName": "my-group",
-    "prompt": "memory treeを確認し、重複・古い情報・不正確なindexを整理してください。durableな情報は適切なconcept fileへ統合し、memory/index.mdと途中のindex.mdからすべて辿れる状態を保ってください。",
-    "channelId": "YOUR_CHANNEL_ID",
-    "deliveryMode": "direct",
-    "sessionMode": "destination",
-    "tools": ["read", "write", "edit", "list", "glob", "grep"],
-    "approvalRequiredTools": [],
-    "contextFiles": [
-      { "path": "memory/index.md", "maxChars": 16000 },
-      { "path": "memory/system/definition.md", "maxChars": 16000 }
-    ]
-  },
-  {
     "_comment": "自己成長型ペルソナ（docs/todo/issue-persona-growth.md）の日次ジョブ例。memory-daily と土台は同じだが、事実日報に加えて一人称の日記を書かせる",
     "id": "persona-diary-daily",
     "schedule": "0 23 * * *",

@@ -47,13 +47,6 @@ and subordinate memory files are not expanded. The Agent manages initialized
 memory with the ordinary filesystem tools. Existing legacy files and sessions
 are not migrated or deleted.
 
-Optional `nanoclaw-memory-daily` and `nanoclaw-memory-weekly` jobs are included
-in [`config/cron.example.json`](../config/cron.example.json). They assume the
-Skill has already been run, are disabled by default, and use distinct IDs so
-operators can enable them independently of or alongside the existing
-`memory-daily` / `memory-weekly` jobs. Both use the destination session to
-serialize updates to the shared memory tree.
-
 Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 
 ```text
