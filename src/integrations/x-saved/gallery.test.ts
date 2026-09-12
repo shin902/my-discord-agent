@@ -8,13 +8,11 @@ import { chromium } from "playwright";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startXSavedGallery } from "./gallery.js";
 import {
-  formatLabels,
   GalleryFilterSchema,
   getGalleryItem,
   listGallery,
   updateGalleryItem,
 } from "./gallery-store.js";
-import { escapeHtml } from "./gallery-view.js";
 import { ingestXSavedItems, openXSavedDb } from "./store.js";
 
 const origin = "https://gallery.example.ts.net";
@@ -24,10 +22,6 @@ const classification = {
   tag: "art\nblue",
   status: "keep",
 };
-const longLabels = Array.from(
-  { length: 50 },
-  (_, i) => String(i).padStart(2, "0") + "漢".repeat(98),
-).join("\n");
 // A local, credential-free image; the gallery never fetches a remote URL.
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
@@ -140,44 +134,28 @@ describe("x-saved gallery", () => {
     reopened.close();
   });
 
-  it("round-trips legacy comma/newline labels through status-only edits and exact filters", async () => {
-    db.exec("CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL)");
-    for (const tags of [
-      ["AI,ML"],
-      ["line\r\nbreak", "null\0byte", '\tquote"\\\t'],
-      ["[literal]"],
-    ]) {
-      db.exec(
-        "DELETE FROM x_tags; DROP TABLE x_item_labels; PRAGMA user_version=3;",
-      );
-      for (const tag of tags)
-        db.prepare("INSERT INTO x_tags VALUES ('123', ?)").run(tag);
-      openXSavedDb(dbPath).close();
-      const rendered = formatLabels([...tags].sort());
-      expect(await (await get("/items/123")).text()).toContain(
-        escapeHtml(rendered),
-      );
-      expect(
-        (
-          await post({
-            series: "",
-            character: "",
-            tag: rendered,
-            status: "reviewed",
-          })
-        ).status,
-      ).toBe(303);
-      expect(
-        getGalleryItem(db, "123")
-          ?.labels.map((l) => l.value)
-          .sort(),
-      ).toEqual([...tags].sort());
-      expect(search({ tag: rendered }).total).toBe(2);
-    }
+  it("keeps a legacy comma-containing tag as one value when editing status", async () => {
+    db.exec(
+      "CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL); INSERT INTO x_tags VALUES ('123', 'AI,ML'); DROP TABLE x_item_labels; PRAGMA user_version=3;",
+    );
+    openXSavedDb(dbPath).close();
+    expect(await (await get("/items/123")).text()).toContain(
+      "AI,ML</textarea>",
+    );
     expect(
-      (await post({ ...classification, tag: "[invalid JSON]" })).status,
-    ).toBe(400);
-    expect(getGalleryItem(db, "123")?.status).toBe("reviewed");
+      (
+        await post({
+          series: "",
+          character: "",
+          tag: "AI,ML",
+          status: "reviewed",
+        })
+      ).status,
+    ).toBe(303);
+    expect(getGalleryItem(db, "123")?.labels).toEqual([
+      { kind: "tag", value: "AI,ML" },
+    ]);
+    expect(search({ tag: "AI,ML" }).total).toBe(2);
   });
 
   it("combines every filter with exact multi-value matching and UTC dates", () => {
@@ -210,12 +188,6 @@ describe("x-saved gallery", () => {
       expect(search({ ...filters, ...change }).total).toBe(0);
     }
     expect(search({ media: "video", source: "bookmark" }).total).toBe(1);
-    expect(search({ review: "unknown" }).items.map((r) => r.tweet_id)).toEqual([
-      "456",
-    ]);
-    expect(search({ review: "needs-review" }).total).toBe(1);
-    updateGalleryItem(db, "123", { ...classification, tag: "unknown" });
-    expect(search({ review: "unknown" }).total).toBe(3);
     expect(search({ q: "%" }).total).toBe(2);
     expect(search({ q: "_" }).total).toBe(0);
     expect(search({ sort: "oldest" }).items[0].tweet_id).toBe("456");
@@ -257,44 +229,29 @@ describe("x-saved gallery", () => {
     expect(html).toContain("page=3");
   });
 
-  it("keeps long Unicode filters through detail, POST redirect, and return without nested URLs", async () => {
-    const values = longLabels;
-    const fields = {
-      series: values,
-      character: values,
-      tag: values,
-      status: "keep",
-    };
-    updateGalleryItem(db, "123", fields);
-    const query = new URLSearchParams({
-      series: values,
-      character: values,
-      tag: JSON.stringify(values.split("\n")),
-      media: "image",
-    });
-    expect(query.toString().length).toBeGreaterThan(16 * 1024);
-    const list = await get(`/?${query}`);
-    expect(list.status).toBe(200);
-    expect(list.headers.get("referrer-policy")).toBe("origin");
-    const link = (await list.text())
-      .match(/class="card-link" href="([^"]+)"/)?.[1]
-      .replaceAll("&amp;", "&");
-    expect(link).toBeDefined();
-    expect(link).not.toContain("back=");
-    expect((await get(link)).status).toBe(200);
-    const saved = await fetch(endpoint + link, {
-      method: "POST",
-      headers: { Origin: origin },
-      body: new URLSearchParams(fields),
-      redirect: "manual",
-    });
-    expect(saved.status).toBe(303);
-    expect(saved.headers.get("location")).toBe("#saved");
-    const back = `/?${new URL(endpoint + link).searchParams}`;
-    expect(await (await get(link)).text()).toContain(
-      `href="${escapeHtml(back)}">← 一覧に戻る`,
-    );
-    expect((await get(back)).status).toBe(200);
+  it("defines Unknown by missing series/character and Needs review only by inbox", () => {
+    expect(search({ review: "unknown" }).total).toBe(3);
+    for (const [series, character, status, unknown, needsReview] of [
+      ["", "Alice", "keep", true, false],
+      ["作品A", "", "reviewed", true, false],
+      ["作品A", "Alice", "inbox", false, true],
+      ["作品A", "Alice", "keep", false, false],
+    ] as const) {
+      updateGalleryItem(db, "123", {
+        series,
+        character,
+        status,
+        tag: "unknown",
+      });
+      expect(
+        search({ review: "unknown" }).items.some((r) => r.tweet_id === "123"),
+      ).toBe(unknown);
+      expect(
+        search({ review: "needs-review" }).items.some(
+          (r) => r.tweet_id === "123",
+        ),
+      ).toBe(needsReview);
+    }
   });
 
   it("saves atomically, clears labels, preserves receiver metadata/notes/files, and persists across connections", async () => {
@@ -519,44 +476,6 @@ describe("x-saved gallery", () => {
               fullPage: true,
             });
         }
-        // Reproduce both P2s through native forms: a >16 KiB filter URL and
-        // a status-only save of labels containing literal separators.
-        const tags = ["AI,ML", "line\r\nbreak", "[literal]"];
-        updateGalleryItem(db, "123", {
-          ...classification,
-          series: longLabels,
-          tag: JSON.stringify(tags),
-        });
-        await page.goto(endpoint);
-        await page.getByText("フィルター", { exact: true }).click();
-        await page.getByLabel("Media", { exact: true }).selectOption("image");
-        expect(
-          await page.getByLabel("Series / 作品").getAttribute("maxlength"),
-        ).toBe("10000");
-        await page.getByLabel("Series / 作品").fill(longLabels);
-        await page.getByLabel("Tags / タグ").fill(JSON.stringify(tags));
-        await page.getByRole("button", { name: "条件を適用" }).click();
-        expect(page.url().length).toBeGreaterThan(16 * 1024);
-        expect(await page.locator(".card").count()).toBe(1);
-        await page.locator(".card-link").click();
-        await page
-          .getByLabel("Status", { exact: true })
-          .selectOption("reviewed");
-        await page.getByRole("button", { name: "変更を保存" }).click();
-        await page.getByRole("status").waitFor();
-        expect(new URL(page.url()).hash).toBe("#saved");
-        expect(
-          getGalleryItem(db, "123")
-            ?.labels.filter((l) => l.kind === "tag")
-            .map((l) => l.value)
-            .sort(),
-        ).toEqual([...tags].sort());
-        await page.reload();
-        await page.getByRole("link", { name: "← 一覧に戻る" }).click();
-        expect(await page.getByLabel("Series / 作品").inputValue()).toBe(
-          longLabels,
-        );
-        expect(await page.locator(".card").count()).toBe(1);
         expect(errors).toEqual([]);
       } finally {
         await browser.close();

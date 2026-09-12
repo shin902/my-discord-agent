@@ -151,8 +151,7 @@ export async function startXSavedGallery(options: {
   const dbPath = resolveXSavedDbPath(options.xSavedDbPath);
   const db = openXSavedDb(dbPath);
   const root = path.dirname(dbPath);
-  // Long Unicode label filters can exceed Node's default 16 KiB.
-  const server = createServer({ maxHeaderSize: 256 * 1024 });
+  const server = createServer();
   server.on("request", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     // Do not duplicate a long filter URL in subsequent request headers.

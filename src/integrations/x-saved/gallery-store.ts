@@ -14,32 +14,15 @@ export const LABEL_KINDS = ["series", "character", "tag"] as const;
 const Labels = z
   .string()
   .max(10_000)
-  .transform((text, ctx) => {
-    if (text.trimStart().startsWith("[")) {
-      try {
-        return JSON.parse(text) as unknown;
-      } catch {
-        ctx.addIssue({ code: "custom", message: "Invalid label JSON array" });
-        return z.NEVER;
-      }
-    }
-    return text
-      .split(/[\r\n]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  })
-  .pipe(z.array(z.string().min(1).max(100)))
-  .transform((values) => [...new Set(values)])
-  .refine((values) => values.length <= 50, "At most 50 labels");
-
-/** Plain lines for ordinary labels; JSON avoids HTML/form whitespace normalization. */
-export function formatLabels(values: string[]): string {
-  const text = values.join("\n");
-  return text.startsWith("[") ||
-    values.some((v) => /[\r\n]/.test(v) || v.includes("\0") || v !== v.trim())
-    ? JSON.stringify(values)
-    : text;
-}
+  .transform((text) => [
+    ...new Set(
+      text
+        .split(/[\r\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ])
+  .pipe(z.array(z.string().min(1).max(100)).max(50));
 
 export const ClassificationSchema = z.strictObject({
   series: Labels,
@@ -48,11 +31,7 @@ export const ClassificationSchema = z.strictObject({
   status: z.enum(ITEM_STATUSES),
 });
 const DateFilter = z.union([z.literal(""), z.iso.date()]).default("");
-const LabelFilter = z
-  .string()
-  .transform((text) => text.replace(/\r\n?/g, "\n"))
-  .pipe(z.string().max(10_000))
-  .default("");
+const LabelFilter = z.string().max(10_000).default("");
 export const GalleryFilterSchema = z
   .strictObject({
     q: z.string().trim().max(500).default(""),
@@ -149,8 +128,7 @@ export function listGallery(db: Database.Database, filters: GalleryFilters) {
   if (filters.review === "unknown")
     add(`(
     NOT EXISTS (SELECT 1 FROM x_item_labels l WHERE l.tweet_id = i.tweet_id AND l.kind = 'series') OR
-    NOT EXISTS (SELECT 1 FROM x_item_labels l WHERE l.tweet_id = i.tweet_id AND l.kind = 'character') OR
-    EXISTS (SELECT 1 FROM x_item_labels l WHERE l.tweet_id = i.tweet_id AND lower(l.value) = 'unknown')
+    NOT EXISTS (SELECT 1 FROM x_item_labels l WHERE l.tweet_id = i.tweet_id AND l.kind = 'character')
   )`);
   const from = `FROM x_media m JOIN x_items i ON i.tweet_id = m.tweet_id ${ITEM_JOIN}
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;

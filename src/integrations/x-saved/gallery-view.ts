@@ -1,5 +1,4 @@
 import {
-  formatLabels,
   type GalleryCard,
   type GalleryFilters,
   type GalleryMedia,
@@ -202,7 +201,7 @@ ${select("sort", "並び順", filters.sort, [
   ["oldest", "投稿が古い順"],
   ["author", "Author順"],
 ])}
-</div><p class="help">作品・キャラクター・タグは1行1値で複数指定（完全一致・すべてを含む）。カンマは値の一部。改行入りの値はJSON配列で指定。Unknown は作品またはキャラクターが未入力、または unknown ラベル付き。投稿日不明は初回保存日を使います。</p>
+</div><p class="help">作品・キャラクター・タグは1行1値で複数指定（完全一致・すべてを含む）。カンマは値の一部。Unknown は作品またはキャラクターが未入力。Needs review は inbox。投稿日不明は初回保存日を使います。</p>
 <button type="submit">条件を適用</button></details></form>
 <div class="toolbar"><strong class="count">${result.total.toLocaleString("en-US")} media</strong><span class="muted">1ページ60件 · 分類はTweet単位</span></div>
 ${result.total ? `<div class="grid">${result.items.map((item) => card(item, String(query))).join("")}</div>` : `<section class="empty"><h2>表示できるメディアがありません</h2><p>条件を減らすか、media archive の収集・ダウンロードを確認してください。</p><a href="/">フィルターをリセット</a></section>`}
@@ -219,9 +218,10 @@ export function galleryDetailPage(
   const fields = Object.fromEntries(
     LABEL_KINDS.map((kind) => [
       kind,
-      formatLabels(
-        item.labels.filter((l) => l.kind === kind).map((l) => l.value),
-      ),
+      item.labels
+        .filter((l) => l.kind === kind)
+        .map((l) => l.value)
+        .join("\n"),
     ]),
   );
   return galleryPage(
@@ -237,7 +237,7 @@ ${item.note ? `<h2>Note</h2><p class="body-text">${escapeHtml(item.note)}</p>` :
 <form class="editor" method="post" action="/items/${encodeURIComponent(item.tweet_id)}?${escapeHtml(query)}"><h2>分類を編集</h2>
 ${LABEL_KINDS.map((kind) => `<label>${labelTitles[kind]}<textarea name="${kind}" rows="3" maxlength="10000">${escapeHtml(submitted?.[kind] ?? fields[kind])}</textarea></label>`).join("")}
 ${select("status", "Status", submitted?.status ?? item.status, statusOptions)}
-<p class="help">1行1値。カンマは値の一部。改行入り・前後の空白・先頭の [ を含む値はJSON配列で保持します。各50個・1値100文字まで。空欄で解除。同じTweetの全メディアに反映されます。</p>
+<p class="help">1行1値。カンマは値の一部。通常の短い単一行文字列を指定してください。各50個・1値100文字まで。空欄で解除。同じTweetの全メディアに反映されます。</p>
 <button type="submit">変更を保存</button></form></section></div>`,
   );
 }
