@@ -26,8 +26,8 @@ The bundled templates are adapted from NanoClaw commit
 [`0399a6dfa98fa8fb27b7b267749ed04d6880379b`](https://github.com/nanocoai/nanoclaw/tree/0399a6dfa98fa8fb27b7b267749ed04d6880379b).
 Its MIT notice is retained in `templates/SKILLS/agent-memory/LICENSE`.
 
-After initialization, optionally use #460's generic `contextFiles` support to
-inject the two entry points into new sessions:
+`contextFiles` is not an initializer. After initialization, it can optionally
+inject the two entry points into a new session's first context:
 
 ```json
 {
@@ -43,9 +43,15 @@ inject the two entry points into new sessions:
 Merge these entries with capabilities already required by that profile and
 restart after changing configuration. Paths are relative to the group
 workspace. Only explicitly listed files are loaded; missing files are skipped
-and subordinate memory files are not expanded. The Agent manages initialized
-memory with the ordinary filesystem tools. Existing legacy files and sessions
-are not migrated or deleted.
+and subordinate memory files are not expanded.
+
+`contextFiles` is not added retroactively to an existing session. In particular,
+a `shared` channel that was used to run the initializer keeps its existing
+session after restart. Continue there by explicitly reading the workspace
+memory files with filesystem tools, or start a new thread/channel with a new
+session ID after configuring `contextFiles` to receive the bootstrap. The Agent
+manages initialized memory with the ordinary filesystem tools. Existing legacy
+files and sessions are not migrated or deleted.
 
 ## MemoryCore Agent Memory export
 

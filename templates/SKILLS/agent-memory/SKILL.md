@@ -35,10 +35,10 @@ tools. Never store secrets or credentials in memory.
 
 ## Optional bootstrap
 
-Initialization does not alter configuration. If the user wants the entry
-points injected at the start of new sessions, tell them to add the following
-to the applicable group, channel, cron job, or Bot profile and restart the
-host:
+Initialization does not alter configuration, and `contextFiles` does not
+initialize memory. If the user wants the entry points injected into the first
+context of new sessions, tell them to add the following to the applicable
+group, channel, cron job, or Bot profile and restart the host:
 
 ```json
 {
@@ -49,5 +49,9 @@ host:
 }
 ```
 
-`contextFiles` uses a session-initial snapshot. Re-read workspace files
-explicitly when their latest contents are needed during the same session.
+`contextFiles` uses a session-initial snapshot and is not added retroactively.
+A shared channel used for initialization keeps its existing session after a
+restart: explicitly read the workspace files there, or start a new
+thread/channel with a new session ID after configuring `contextFiles`. Re-read
+workspace files explicitly when their latest contents are needed during the
+same session.
