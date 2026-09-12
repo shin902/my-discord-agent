@@ -168,13 +168,13 @@ cronで使う場合も既読状態は保存せず、実行ごとに期間を明�
 
 **場所:** `templates/SKILLS/session-logs/SKILL.md`
 
-自分自身の過去のsession trajectory（`/sessions/*/sessions.sqlite`）をPython標準の`sqlite3`でread-only検索・集計するスキル。`MEMORY.md` に無い過去の会話について聞かれたときに使う。group単位のmountにより他groupや`runtime.sqlite`は見えない。
+自分自身の過去のsession trajectory（`/sessions/*/sessions.sqlite`）をPython標準の`sqlite3`でread-only検索・集計するスキル。file-based memoryに残っていない過去の会話について聞かれたときに使う。group単位のmountにより他groupや`runtime.sqlite`は見えない。
 
-### 日次記録・週次MEMORY.md更新(memory-daily / memory-weekly cron)
+### 日次記録・週次Agent Memory整理(memory-daily / memory-weekly cron)
 
-専用スキルは設けず、`config/cron.json` に prompt-only ジョブを登録し、`session-logs` スキルの使い方と出力フォーマットをそのまま `prompt` に書く(`cron.example.json` 参照)。出力フォーマットは個人の好みに依存するため、共有テンプレートにはしない。
+専用スキルは設けず、`config/cron.json` に prompt-only ジョブを登録し、`session-logs` スキルの使い方と出力フォーマットをそのまま `prompt` に書く(`cron.example.json` 参照)。日次記録は`memory/YYYY-MM-DD.md`へ保存し、週次整理ではdurableな情報を適切なconcept fileへ統合して`memory/index.md`と途中のindexを更新する。出力フォーマットは個人の好みに依存するため、共有テンプレートにはしない。
 
-導入するグループには `session-logs` を `skills` に追加し、`bash` / `write` / `edit` ツールを有効にする。
+導入するグループには `session-logs` を `skills` に追加し、`bash` / `read` / `write` / `edit` / `list` / `glob` / `grep` ツールを有効にする。
 
 ### interest-profile
 
