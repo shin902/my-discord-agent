@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { loadMemoryCoreConnectionSettingsFromCron } from "../src/memory/cron-settings.js";
 import { MemoryCoreClient } from "../src/memory/memory-core.js";
 
 const layers = ["l1", "l2", "l3"] as const;
@@ -12,15 +13,9 @@ type PromptRecord = {
   prompt: string;
 };
 
-const client = new MemoryCoreClient({
-  baseUrl: process.env.MEMORY_CORE_URL,
-  serviceId: process.env.MEMORY_CORE_SERVICE_ID,
-  teamId: process.env.MEMORY_CORE_TEAM_ID,
-  agentId: process.env.MEMORY_CORE_AGENT_ID,
-  bearerTokenEnv: process.env.MEMORY_CORE_GATEWAY_API_KEY
-    ? "MEMORY_CORE_GATEWAY_API_KEY"
-    : undefined,
-});
+const client = new MemoryCoreClient(
+  await loadMemoryCoreConnectionSettingsFromCron(),
+);
 const { teamId, agentId } = client.settings;
 
 async function request<T>(path: string, body?: object): Promise<T> {

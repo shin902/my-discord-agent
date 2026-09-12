@@ -83,7 +83,7 @@ pnpm memory-core logs -f memory-core
 pnpm memory-core down
 ```
 
-`MEMORY_CORE_GATEWAY_API_KEY`を`.env`へ設定するとGateway共有鍵認証が有効になります。Memory export cron jobの`settings.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。v3 data-planeは共有鍵認証を無効にしてもBearer形式のヘッダーが必要です。`MEMORY_CORE_PORT`を変更する場合、上記health commandはシェル環境変数を優先し、未設定なら`.env`の値を読み取ります。Composeが使うGateway portと`settings.baseUrl`のポートは同じ値に合わせてください。
+`MEMORY_CORE_GATEWAY_API_KEY`を`.env`へ設定するとGateway共有鍵認証が有効になります。Memory export cron jobの`settings.bearerTokenEnv`へ同じ環境変数名を指定してください。API keyの値自体はJSONへ書きません。prompt provisioningもこのcron jobの接続・scope設定を読み、secretだけを`bearerTokenEnv`が示す環境変数から取得します。v3 data-planeは共有鍵認証を無効にしてもBearer形式のヘッダーが必要です。`MEMORY_CORE_PORT`を変更する場合、上記health commandはシェル環境変数を優先し、未設定なら`.env`の値を読み取ります。Composeが使うGateway portと`settings.baseUrl`のポートは同じ値に合わせてください。
 
 Composeは`config/memory-core.yaml`を読み取り専用でマウントします。設定項目の雛形は [`config/memory-core.example.yaml`](../config/memory-core.example.yaml) にあります。image tagはデータ形式のmigration notesを確認してから明示的に更新し、`latest`へは変更しないでください。volumeを削除する`down -v`は保存済みmemoryを消すため、通常の停止には使わないでください。
 

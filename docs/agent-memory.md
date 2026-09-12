@@ -58,7 +58,7 @@ MemoryCore起動後、リポジトリ管理の品質promptを現在のagent scop
 pnpm memory-core:prompts
 ```
 
-既定のscopeはcron exampleと同じ`default` / `my-discord-agent`です。異なる運用設定では`MEMORY_CORE_TEAM_ID`と`MEMORY_CORE_AGENT_ID`を指定してください。接続先とservice IDは`MEMORY_CORE_URL`（既定`http://127.0.0.1:8420`）と`MEMORY_CORE_SERVICE_ID`（既定`default`）、認証は既存の`MEMORY_CORE_GATEWAY_API_KEY`を使います。
+このcommandは`config/cron.json`にある唯一の`jobs/memory-export.ts` / `type: "tencentdb"` jobを接続設定の正本として読みます。`baseUrl`、`serviceId`、`teamId`、`agentId`、`bearerTokenEnv`、`timeoutMs`はexportと同じ値が使われます。該当jobがない、または複数ある場合は曖昧なscopeへprovisionせず失敗します。secret本体だけはJSONへ置かず、`bearerTokenEnv`で指定した環境変数（exampleでは`.env`の`MEMORY_CORE_GATEWAY_API_KEY`）から読みます。
 
 このcommandは各layerの同名promptを作成または更新し、agent scopeへapplyした後、MemoryCoreのeffective promptを再取得して内容とsourceを確認します。L1/L2/L3 schemaやpipeline、scope自体は変更しません。
 
