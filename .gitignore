@@ -2,6 +2,8 @@ docs/clone/*
 node_modules/
 dist/
 data/
+macos/build/
+macos/ScreenCaptureCollector/.build/
 .env
 
 config/*

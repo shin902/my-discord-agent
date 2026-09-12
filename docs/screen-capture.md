@@ -29,24 +29,47 @@ tailscale serve status
 
 Macを同じTailnetへ接続し、access policyでMacからBot PCの8444へのアクセスだけを許可してください。認証境界はTailnetと信頼済みのBot PCローカルプロセスです。アプリケーションBearer tokenはありません。**Funnel、public reverse proxy、ポート転送、public Internetへの公開は禁止**です。localhost bindだけでは誤設定されたpublic proxyを防げないため、Serve / Funnel状態とTailnet policyを運用者が確認してください。
 
-## Macから送る
+## Macメニューバー collector
 
-リポジトリの`scripts/capture-screen.sh`をMacへコピーし、Serveに表示されたホスト名を指定します。
+常駐収集には、macOS標準APIを使うSwiftUIのMenuBarExtraアプリを使います。XcodeまたはSwift toolchainが入ったMacで、リポジトリのルートからbuildして起動します。
+
+```bash
+./macos/build-screen-capture-collector.sh
+open macos/build/ScreenCaptureCollector.app
+```
+
+初回起動後にメニューバーのアイコンからSettingsを開き、Tailscale ServeのURLを保存します。受理される形式は次だけです（portは省略可）。
+
+```text
+https://<host>.<tailnet>.ts.net[:<port>]/v1/screen-captures
+```
+
+HTTP、`.ts.net`以外のhost、query / fragment、認証情報付きURL、範囲外のportは保存できません。URLはUserDefaultsへ保存され、外部の設定ファイルやcredentialは使いません。
+
+初回の`Capture Now`でmacOSの「画面収録」権限を求めます。System Settings → Privacy & Security → Screen Recordingでこのアプリを許可してください。権限の許可済み / 要求状態と、権限不足やメインディスプレイの取得・PNG化の失敗はメニューバーに表示されます。アプリはメインディスプレイだけを撮影し、複数ディスプレイの合成や自動マスキングは行いません。
+
+自動撮影の間隔は30秒 / 1分 / 5分から選べ、既定は1分です。Pauseは自動撮影と自動pending retryを停止し、状態をUserDefaultsへ保存します。Pause中も明示的な`Capture Now`と`Retry Pending`は実行できます。再開するとタイマーが動き、保存済みpending PNGも再送します。
+
+撮影直後のPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`へprivateな権限で保存されます。これは再起動後も残るdurable queueです。送信中は同じUUIDのファイルを使い、通信失敗・redirect・HTTP 200以外・ACK不明では削除しません。**HTTP statusが正確に200のときだけDB commit済みACKとみなし、その後にPNGを削除します**。削除自体に失敗した場合はファイルをpendingとして残し、同じUUIDで再試行できます。メニューバーにはRecording / Paused、Screen Recording権限、Last upload、Pending件数を表示し、直近の失敗時はFailureを表示します。
+
+画像全体を選択したreceiver / cron providerへ送信します。MenuBarExtraは認証情報を追加せず、redirectも追いません。Mac側にSQLiteや別の履歴DBは作らず、設定はUserDefaults、未ACKの画像はpendingディレクトリだけに保持します。画像に秘密情報や個人情報が含まれる可能性があるため、収集対象・Tailnet policy・providerを確認してから使ってください。自動マスキング、個別retention、Memory / Activityへの自動昇格はありません。
+
+### Shell fallback
+
+アプリを使わない場合は、リポジトリの`scripts/capture-screen.sh`をMacへコピーし、Serveに表示されたホスト名を指定します。アプリと同じURL検証・送信・ACK・pending PNG削除の契約です。
 
 ```bash
 bash scripts/capture-screen.sh \
   'https://<host>.<tailnet>.ts.net:8444/v1/screen-captures'
 ```
 
-macOS標準の`screencapture`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。Terminal等の実行元に「画面収録」の権限が必要です。初版ではMacの常駐収集・自動スケジュールは作りません。
-
-PNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`へprivateな権限で一時保存します。**curlが正常終了しHTTP 200を受信したら、Bot PCのDB commitが確定しているためMac側PNGを削除します**。第2引数で指定した既存PNGも成功後は削除対象です。送信失敗・ACK不明・非200応答ではPNGを保持し、表示された同じパスを第2引数にして再送します。削除に失敗した場合も非zeroで終了し、削除成功とは表示しません。
+既存PNGの再送:
 
 ```bash
 bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 ```
 
-同じUUIDと同じbytesの再送は冪等です。新しい撮影には新しいUUIDを使うので、画面が同じでも別の時点の記録として保存できます。既存PNGを送る場合もUUIDをbasenameにした`.png`へコピーしてください。スクリプトはHTTPSの`.ts.net` URLだけを受理し、redirectを追わず、HTTP 200以外をACKとして扱いません。
+新しい撮影には新しいUUIDを使います。同じUUIDと同じbytesの再送はreceiver側で冪等です。スクリプトもredirectを追わず、HTTP 200以外をACKとして扱いません。常駐タイマーはないため、単発撮影やアプリが使えない場合のfallbackとして使用してください。
 
 ## cron要約
 

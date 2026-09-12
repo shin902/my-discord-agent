@@ -51,7 +51,15 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$SCREEN_TEST_ARGS"\nprintf "%s" "$SCREEN_TEST_STATUS"\nexit "$SCREEN_TEST_CURL_EXIT"\n',
       { mode: 0o700 },
     );
-    expect(run(["https://public.example/v1/screen-captures"]).status).toBe(1);
+    for (const invalidUrl of [
+      "https://public.example/v1/screen-captures",
+      "http://bot.example.ts.net/v1/screen-captures",
+      "https://bot.example.ts.net:0/v1/screen-captures",
+      "https://bot.example.ts.net:65536/v1/screen-captures",
+      "https://bot.example.ts.net:0000001/v1/screen-captures",
+    ]) {
+      expect(run([invalidUrl]).status).toBe(1);
+    }
     expect(existsSync(argsFile)).toBe(false);
     const failed = run([url], "503");
     expect(failed.status).toBe(1);

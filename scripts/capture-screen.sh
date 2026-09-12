@@ -8,8 +8,20 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
   exit 1
 fi
 url=$1
-if [[ ! "$url" =~ ^https://[A-Za-z0-9.-]+\.ts\.net(:[0-9]+)?/v1/screen-captures$ ]]; then
-  echo "Receiver URL must be a Tailscale Serve HTTPS URL ending in /v1/screen-captures" >&2
+valid_receiver_url() {
+  local candidate=$1
+  if [[ ! "$candidate" =~ ^https://[A-Za-z0-9.-]+\.ts\.net(:[0-9]+)?/v1/screen-captures$ ]]; then
+    return 1
+  fi
+  if [[ "$candidate" =~ ^https://[A-Za-z0-9.-]+\.ts\.net:([0-9]+)/v1/screen-captures$ ]]; then
+    local port=${BASH_REMATCH[1]}
+    if (( ${#port} > 5 )) || (( 10#$port < 1 || 10#$port > 65535 )); then
+      return 1
+    fi
+  fi
+}
+if ! valid_receiver_url "$url"; then
+  echo "Receiver URL must be an HTTPS .ts.net URL ending in /v1/screen-captures" >&2
   exit 1
 fi
 
