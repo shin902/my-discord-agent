@@ -33,6 +33,7 @@ describe("ensureAgentMemoryScaffold", () => {
     expect(definition).toContain("OKF");
     expect(definition).toContain("session-initial\nsnapshot");
     expect(definition).toContain("Re-read the workspace files explicitly");
+    expect(definition).toContain("Never store secrets");
   });
 
   it("scaffolds every configured group", async () => {
