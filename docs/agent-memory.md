@@ -2,27 +2,37 @@
 
 ## NanoClaw-compatible workspace memory
 
-During startup, after all managed/orphan Agent runners have been stopped and
-before request handling begins, every Agent group is scaffolded with
-`memory/index.md`, `memory/system/index.md`, and
-`memory/system/definition.md`. Missing files are copied from
-`templates/agent-memory/` and existing files are never overwritten. The
-templates are adapted from NanoClaw commit
-[`0399a6dfa98fa8fb27b7b267749ed04d6880379b`](https://github.com/nanocoai/nanoclaw/tree/0399a6dfa98fa8fb27b7b267749ed04d6880379b); its MIT notice is retained in
-`templates/agent-memory/LICENSE`.
+NanoClaw-style file memory is an opt-in third memory option implemented by the
+`agent-memory` Skill. The host never creates memory files at startup or during
+an Agent run. It does not replace or modify legacy `MEMORY.md` /
+`memory/SELF.md`, their cron jobs, MemoryCore, session trajectory, or exact
+RSS/queue state. Operators may use any of these options independently or
+together; no data is migrated or synchronized automatically.
 
-This scaffold is an opt-in third memory option. It does not replace or modify
-legacy `MEMORY.md` / `memory/SELF.md`, their cron jobs, MemoryCore, session
-trajectory, or exact RSS/queue state. Operators may use any of these options
-independently or together.
+Add `agent-memory` to the profile's `skills`, enable `bash` and the ordinary
+filesystem tools, restart the host, then explicitly ask the Agent to initialize
+NanoClaw/OKF memory. The Skill runs its sandbox-local initializer, which creates
+only missing files and never overwrites existing workspace files:
 
-To enable NanoClaw-style memory for a group, channel, cron job, or Bot profile,
-configure its filesystem tools and use the existing `contextFiles` support from
-#460 to inject the two entry points once as user-role bootstrap context:
+```text
+memory/
+├── index.md
+└── system/
+    ├── index.md
+    └── definition.md
+```
+
+The bundled templates are adapted from NanoClaw commit
+[`0399a6dfa98fa8fb27b7b267749ed04d6880379b`](https://github.com/nanocoai/nanoclaw/tree/0399a6dfa98fa8fb27b7b267749ed04d6880379b).
+Its MIT notice is retained in `templates/SKILLS/agent-memory/LICENSE`.
+
+After initialization, optionally use #460's generic `contextFiles` support to
+inject the two entry points into new sessions:
 
 ```json
 {
-  "tools": ["read", "write", "edit", "list", "glob", "grep"],
+  "skills": ["agent-memory"],
+  "tools": ["bash", "read", "write", "edit", "list", "glob", "grep"],
   "contextFiles": [
     { "path": "memory/index.md", "maxChars": 16000 },
     { "path": "memory/system/definition.md", "maxChars": 16000 }
@@ -30,15 +40,18 @@ configure its filesystem tools and use the existing `contextFiles` support from
 }
 ```
 
-Merge these entries with any tools already required by that profile. Paths are
-relative to the group workspace. Only explicitly listed files are loaded;
-missing files are skipped and subordinate memory files are not expanded.
-Existing legacy files and sessions are not migrated or deleted.
+Merge these entries with capabilities already required by that profile and
+restart after changing configuration. Paths are relative to the group
+workspace. Only explicitly listed files are loaded; missing files are skipped
+and subordinate memory files are not expanded. The Agent manages initialized
+memory with the ordinary filesystem tools. Existing legacy files and sessions
+are not migrated or deleted.
 
 Optional `nanoclaw-memory-daily` and `nanoclaw-memory-weekly` jobs are included
-in [`config/cron.example.json`](../config/cron.example.json). They are disabled
-by default and use distinct IDs, so operators can enable them independently of
-or alongside the existing `memory-daily` / `memory-weekly` jobs.
+in [`config/cron.example.json`](../config/cron.example.json). They assume the
+Skill has already been run, are disabled by default, and use distinct IDs so
+operators can enable them independently of or alongside the existing
+`memory-daily` / `memory-weekly` jobs.
 
 Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 
