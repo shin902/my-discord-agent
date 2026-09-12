@@ -9,12 +9,16 @@ const mockedLoadRawCron = vi.mocked(loadRawCron);
 afterEach(() => vi.resetAllMocks());
 
 describe("MemoryCore cron settings", () => {
-  it("uses the memory-export job as the connection settings source", async () => {
+  it.each([
+    "jobs/memory-export.ts",
+    "./jobs/memory-export.ts",
+    "jobs/memory-export.js",
+  ])("uses loader-accepted handler identity %s", async (handler) => {
     mockedLoadRawCron.mockResolvedValue([
       { id: "other", handler: "jobs/mail.ts", settings: {} },
       {
         id: "memory-main",
-        handler: "jobs/memory-export.ts",
+        handler,
         settings: {
           type: "tencentdb",
           baseUrl: "https://memory.example/base",

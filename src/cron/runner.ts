@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import type { Client } from "discord.js";
 import { z } from "zod";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
@@ -26,6 +26,9 @@ import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
 import { createFileLock } from "../utils/lock.js";
 import { enqueueCronInbox } from "./enqueue.js";
+import { loadHandlerFn } from "./handler-loader.js";
+
+export { isCronHandler, loadHandlerFn } from "./handler-loader.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
@@ -198,49 +201,6 @@ export function shouldRun(
 }
 
 // --- Handler loading ---
-
-function resolveHandlerPath(handlerRelPath: string): string {
-  if (/\.\.(\/|\\|$)/.test(handlerRelPath)) {
-    throw new NonRetryableError(`不正なハンドラーパス: ${handlerRelPath}`);
-  }
-  // tsx (dev): .ts そのまま / tsc (prod): .ts → .js
-  const runnerExt = path.extname(new URL(import.meta.url).pathname);
-  const resolvedPath =
-    runnerExt === ".ts"
-      ? handlerRelPath
-      : handlerRelPath.replace(/\.ts$/, ".js");
-  const absPath = path.resolve(__dirname, resolvedPath);
-  if (!absPath.startsWith(ROOT + path.sep)) {
-    throw new NonRetryableError(
-      `ハンドラーパスがプロジェクト外を参照しています: ${handlerRelPath}`,
-    );
-  }
-  return absPath;
-}
-
-export async function loadHandlerFn(
-  handlerRelPath: string,
-): Promise<(ctx: CronContext) => Promise<void>> {
-  const absPath = resolveHandlerPath(handlerRelPath);
-  const mod = (await import(pathToFileURL(absPath).href)) as {
-    default?: (ctx: CronContext) => Promise<void>;
-  };
-  if (typeof mod.default !== "function") {
-    throw new NonRetryableError(
-      `ハンドラー ${handlerRelPath} に default export (function) がありません`,
-    );
-  }
-  return mod.default;
-}
-
-/** Compare the actual loader-resolved handler, including relative and runtime extension aliases. */
-export async function isCronHandler(
-  job: Pick<CronJob, "handler">,
-  handler: string,
-): Promise<boolean> {
-  if (job.handler === undefined) return false;
-  return (await loadHandlerFn(job.handler)) === (await loadHandlerFn(handler));
-}
 
 // --- Startup validation ---
 
