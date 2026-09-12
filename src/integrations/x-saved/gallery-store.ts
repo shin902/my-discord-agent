@@ -51,7 +51,7 @@ const DateFilter = z.union([z.literal(""), z.iso.date()]).default("");
 const LabelFilter = z
   .string()
   .transform((text) => text.replace(/\r\n?/g, "\n"))
-  .pipe(z.string().max(5_000))
+  .pipe(z.string().max(10_000))
   .default("");
 export const GalleryFilterSchema = z
   .strictObject({

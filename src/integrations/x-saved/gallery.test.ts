@@ -25,7 +25,7 @@ const classification = {
   status: "keep",
 };
 const longLabels = Array.from(
-  { length: 49 },
+  { length: 50 },
   (_, i) => String(i).padStart(2, "0") + "漢".repeat(98),
 ).join("\n");
 // A local, credential-free image; the gallery never fetches a remote URL.
@@ -269,7 +269,7 @@ describe("x-saved gallery", () => {
     const query = new URLSearchParams({
       series: values,
       character: values,
-      tag: values,
+      tag: JSON.stringify(values.split("\n")),
       media: "image",
     });
     expect(query.toString().length).toBeGreaterThan(16 * 1024);
@@ -530,6 +530,9 @@ describe("x-saved gallery", () => {
         await page.goto(endpoint);
         await page.getByText("フィルター", { exact: true }).click();
         await page.getByLabel("Media", { exact: true }).selectOption("image");
+        expect(
+          await page.getByLabel("Series / 作品").getAttribute("maxlength"),
+        ).toBe("10000");
         await page.getByLabel("Series / 作品").fill(longLabels);
         await page.getByLabel("Tags / タグ").fill(JSON.stringify(tags));
         await page.getByRole("button", { name: "条件を適用" }).click();

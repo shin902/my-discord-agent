@@ -187,7 +187,7 @@ ${select("source", "Source", filters.source, [
   ["like", "Like"],
   ["bookmark", "Bookmark"],
 ])}
-${LABEL_KINDS.map((k) => `<label>${labelTitles[k]}<textarea name="${k}" rows="2" maxlength="5000">${escapeHtml(filters[k])}</textarea></label>`).join("")}
+${LABEL_KINDS.map((k) => `<label>${labelTitles[k]}<textarea name="${k}" rows="2" maxlength="10000">${escapeHtml(filters[k])}</textarea></label>`).join("")}
 ${select("status", "Status", filters.status, [["", "すべて"], ...statusOptions])}
 ${select("review", "分類の確認", filters.review, [
   ["", "すべて"],
