@@ -855,16 +855,9 @@ export async function runAgentLoop(
             const id = await persistMessage(event.message, entrySource);
             if (event.message.role === "user") userEntryId ??= id;
             if (isAssistantMessage(event.message)) {
-              // Resolve adoption once, at the same final assistant event as runAgent.
-              // An ineligible final must not fall back to an earlier successful stop.
-              assistantEntryId =
-                event.message.stopReason === "stop" &&
-                !event.message.errorMessage &&
-                event.message.content.some(
-                  (block) => block.type === "text" && block.text.trim(),
-                )
-                  ? id
-                  : undefined;
+              // Match runAgent's actual final assistant, regardless of downstream eligibility.
+              // The host decides whether this result commits; projections select from it.
+              assistantEntryId = id;
             }
           });
           // Observe rejection immediately; Promise.all below still propagates it.

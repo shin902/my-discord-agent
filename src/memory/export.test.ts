@@ -93,6 +93,44 @@ describe("committed conversation export", () => {
     });
   });
 
+  it.each([
+    "length",
+    "error",
+    "aborted",
+    "toolUse",
+    "empty",
+    "error-field",
+  ])("filters the adopted %s final without falling back to an earlier stop or marking export success", async (terminal) => {
+    const group = `ineligible-${terminal}`;
+    const interim = await appendTurn(group);
+    const assistantEntryId = await session.appendMessage(group, "chat", {
+      ...assistant(terminal === "empty" ? " \n" : "actual final"),
+      stopReason:
+        terminal === "empty" || terminal === "error-field" ? "stop" : terminal,
+      ...(terminal === "error-field" ? { errorMessage: "failed" } : {}),
+    } as AgentMessage);
+    const references = [{ userEntryId: interim.userEntryId, assistantEntryId }];
+    expect([...readCaptureTurns(group, references)]).toEqual([]);
+    const backend = { exportTurn: vi.fn() };
+    const ledger = new MemoryExportLedger(":memory:");
+    try {
+      await exportBatch(
+        "backend",
+        [group],
+        50,
+        backend,
+        ledger,
+        () => references,
+      );
+      expect(backend.exportTurn).not.toHaveBeenCalled();
+      expect(
+        ledger.has("backend", [...readCaptureTurns(group, [interim])][0]),
+      ).toBe(false);
+    } finally {
+      ledger.close();
+    }
+  });
+
   it("skips unsourced, missing and cross-session references without substituting nearby entries", async () => {
     const group = "unresolvable";
     const pair = await appendTurn(group);

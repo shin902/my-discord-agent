@@ -78,9 +78,9 @@ cron job IDは安定したbackend / export namespaceです。同じlogical backe
 
 Runnerはcanonical entryをappendし、そのrunの入力userと最終assistantのstable entry IDをhostへ返します。hostはrunnerの正常終了後、既存のfencing検証を伴う `QueueRepository.commitResult()` の同一transactionで、job成功・delivery・`committed_conversations`参照を確定します。参照はgroupとentry IDだけで本文を特定し、session IDを複製しません。sandboxへruntime DBを公開せず、job ID / fencing tokenをentryへ伝播する必要もありません。
 
-- 採用可能なassistant（`stopReason: stop`、非空text、errorなし）はrunnerの結果生成時に一度だけ判定します。同じrun内にfollow-up promptがあっても入力userと最終assistantを選び、不適格なfinalから途中の`stop`へfallbackしません。
-- exporterはcommit済み参照から指定された2 entryを読むだけです。raw trajectoryの走査による最終応答の再構築やsource jobのattempt照合はしません。provenanceのないuser、空text、削除されて参照不能なentryは送信しません。
-- 未commit、error / aborted、tool call途中、length終了、空responseは採用されません。crash前やstale runnerの遅延entryも参照に選ばれず、成功したretryの結果だけが対象になります。
+- RunnerはMemory eligibilityにかかわらず入力userと実際の最終assistantのIDを返します。同じrun内にfollow-up promptがあってもこのpairを確定し、途中のassistantへfallbackしません。`committed_conversations`はqueueが成功commitした会話の参照であり、Memory対象一覧ではありません。たとえば非空の`length`応答がqueueで成功commitされれば、そのpairも保存されます。
+- exporterはcommit済み参照で指定された2 entryを読み、`stopReason: stop`、errorなし、非空textをMemory eligibilityとして判定します。`length`、error / aborted、tool call途中、空response、provenanceのないuser、削除されて参照不能なentryは送信しません。不適格なfinalから途中の`stop`へfallbackせず、raw trajectoryの走査やsource jobのattempt照合も行いません。
+- 未commitや失敗結果は採用参照を作りません。crash前やstale runnerの遅延entryも参照に選ばれず、成功したretryの結果だけが確定します。queueの既存成功・失敗判定は変更しません。
 - `./command nonexistent`等のAgent起動前のlocal responseも、user＋assistantをcanonicalへ保存し、通常と同じ参照commit経路を通ります。
 - Bot Task、Subagent、cron、RSS、mail、Discord Bot自身の発言、slash commandには初版のDiscord会話provenanceを付けません。
 - 送信元はsession DBのみです。通常runtime jobのpayload/result、Discord deliveryから本文を再構築しません。本文はcanonicalに保存されたtextです（添付ファイル案内等を含む場合があります）。thinkingやtool payloadは送信しません。

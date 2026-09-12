@@ -384,6 +384,59 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     expect(wireContents(fetchMock)).toEqual(["user retained", "user retained"]);
   });
 
+  it("persists a successfully committed length response but excludes it from Memory export", async () => {
+    const job = enqueueSource("length");
+    let conversation: ConversationEntries | undefined;
+    vi.mocked(sendMessage).mockImplementationOnce(
+      async (group, sessionId, content, options = {}) => {
+        const userEntryId = await appendMessage(
+          group,
+          sessionId,
+          { role: "user", content, timestamp: 1000 },
+          options.source,
+        );
+        await appendAnswer(job, "interim successful stop");
+        const assistantEntryId = await appendMessage(group, sessionId, {
+          role: "assistant",
+          content: [{ type: "text", text: "truncated final" }],
+          stopReason: "length",
+          timestamp: 2000,
+        } as AgentMessage);
+        conversation = { userEntryId, assistantEntryId };
+        options.onConversation?.(conversation);
+        options.onExecutionTiming?.({
+          termination: "close",
+          exitCode: 0,
+          stopReason: "length",
+          preparationMs: 0,
+          dockerRunMs: 1,
+        });
+        return "truncated final";
+      },
+    );
+    await processNext();
+    expect(repo.get(job.id)).toMatchObject({
+      status: "completed",
+      succeeded: true,
+      stopReason: "length",
+    });
+    expect([...repo.readCommittedConversations("main")]).toEqual([
+      expectDefined(conversation),
+    ]);
+    expect(repo.listDeliveries()[0]?.payloadJson).toContain("truncated final");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => accept());
+    await executeJob(config());
+    await processNext();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Skipping the ineligible pair must not prevent a later eligible conversation's export.
+    await seed("after-length");
+    await executeJob(config());
+    await processNext();
+    expect(wireContents(fetchMock)).toEqual(["user after-length"]);
+  });
+
   it("captures a missing-skill local response only after the human source job commits", async () => {
     const { runAgentLoop } = await import("../sandbox/agent-runner.js");
     const fetchMock = vi

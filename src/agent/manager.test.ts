@@ -2021,6 +2021,28 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     expect(onDiscordEvent).not.toHaveBeenCalled();
   });
 
+  it("forwards a length result and its adopted IDs without applying Memory eligibility", async () => {
+    const entries = { userEntryId: 12, assistantEntryId: 15 };
+    const timing = {
+      type: "agent_timing",
+      promptMs: 1,
+      assistantTurns: 2,
+      stopReason: "length",
+    };
+    const sendMessage = await setupWithStderr(
+      `__CONVERSATION_ENTRIES__:${JSON.stringify(entries)}\n__DISCORD_EVENT__:${JSON.stringify(timing)}\n`,
+    );
+    const onConversation = vi.fn();
+    const onExecutionTiming = vi.fn();
+    await expect(
+      sendMessage("g", "s", "hi", { onConversation, onExecutionTiming }),
+    ).resolves.toBe("response");
+    expect(onConversation).toHaveBeenCalledExactlyOnceWith(entries);
+    expect(onExecutionTiming).toHaveBeenCalledWith(
+      expect.objectContaining({ exitCode: 0, stopReason: "length" }),
+    );
+  });
+
   it.each([
     '{"userEntryId":0,"assistantEntryId":2}',
     '{"userEntryId":2,"assistantEntryId":1}',

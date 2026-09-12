@@ -212,7 +212,7 @@ describe("runAgentLoop", () => {
     "empty",
     "error-field",
     "append-failure",
-  ])("adopts only the final complete assistant after all appends (%s)", async (terminal) => {
+  ])("returns the actual final assistant IDs after persistence without applying Memory eligibility (%s)", async (terminal) => {
     const onConversation = vi.fn();
     const input = { role: "user", content: "input", timestamp: 1 };
     const interim = {
@@ -277,7 +277,7 @@ describe("runAgentLoop", () => {
     if (terminal === "append-failure")
       await expect(result).rejects.toThrow("disk full");
     else await result;
-    if (terminal === "stop")
+    if (terminal !== "append-failure")
       expect(onConversation).toHaveBeenCalledExactlyOnceWith({
         userEntryId: ids.get(input),
         assistantEntryId: ids.get(final),

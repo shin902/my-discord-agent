@@ -35,6 +35,8 @@ export function* readCaptureTurns(
     if (
       trajectory.user.role !== "user" ||
       assistant.role !== "assistant" ||
+      assistant.stopReason !== "stop" ||
+      assistant.errorMessage ||
       !text(assistant).trim() ||
       !userContent.trim()
     )
