@@ -1787,7 +1787,13 @@ describe("runAgentLoop", () => {
     ]);
   });
 
-  it("./command で未知のスキルを指定した場合は LLM を呼ばずにエラーを返す", async () => {
+  it("./command で未知のスキルを指定しても初回contextを先に固定する", async () => {
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/CONTEXT.md") {
+        return "初回context" as never;
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
     const mockAgent = createMockAgent(["OK"], {
       role: "assistant",
       content: [{ type: "text", text: "OK" }],
@@ -1808,7 +1814,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       "./command unknown",
-      {},
+      { contextFiles: [{ path: "CONTEXT.md", maxChars: 2000 }] },
       undefined,
       undefined,
       undefined,
@@ -1820,9 +1826,17 @@ describe("runAgentLoop", () => {
     );
 
     expect(onConversation).toHaveBeenCalledWith({
-      userEntryId: 2,
-      assistantEntryId: 3,
+      userEntryId: 3,
+      assistantEntryId: 4,
     });
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        customType: "context-bootstrap",
+        content: expect.stringContaining("初回context"),
+      }),
+    );
     expect(result).toContain("見つかりません");
     expect(AgentMock).not.toHaveBeenCalled();
     expect(mockAgent.prompt).not.toHaveBeenCalled();

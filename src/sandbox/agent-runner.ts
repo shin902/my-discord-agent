@@ -504,21 +504,65 @@ export async function runAgentLoop(
     needsContextBootstrap
       ? Promise.all(
           contextFiles.map((file) =>
-            file.path === "MEMORY.md" &&
-            identity?.memorySnapshotPresent !== undefined
-              ? Promise.resolve(
-                  identity.memorySnapshotPresent
-                    ? (identity.memorySnapshotContent ?? "")
-                    : null,
-                )
-              : file.path === "MEMORY.md" &&
-                  identity?.memorySnapshotContent !== undefined
-                ? Promise.resolve(identity.memorySnapshotContent)
-                : loadWorkspaceFile(`/workspace/${file.path}`),
+            loadWorkspaceFile(`/workspace/${file.path}`),
           ),
         )
       : Promise.resolve([]),
   ]);
+
+  const newBootstrapMessages: AgentMessage[] = [];
+
+  if (needsSystemPromptSnapshot && loadedSystemPrompt !== null) {
+    const systemPromptSnapshotMessage: SystemPromptSnapshotMessage = {
+      role: "custom",
+      customType: SYSTEM_PROMPT_SNAPSHOT_TYPE,
+      content: loadedSystemPrompt,
+      display: false,
+      timestamp: Date.now(),
+    };
+    await appendMessage(groupName, sessionId, systemPromptSnapshotMessage);
+    newBootstrapMessages.push(systemPromptSnapshotMessage);
+  }
+
+  if (needsContextBootstrap) {
+    const sections = contextFiles.flatMap((file, index) => {
+      const fileContent = contextFileContents[index];
+      return fileContent === null
+        ? []
+        : [formatBootstrapSection(file, fileContent)];
+    });
+    if (sections.length > 0) {
+      const bootstrapMessage: ContextBootstrapMessage = {
+        role: "custom",
+        customType: CONTEXT_BOOTSTRAP_TYPE,
+        content: sections.join("\n\n"),
+        display: false,
+        timestamp: Date.now(),
+      };
+      await appendMessage(groupName, sessionId, bootstrapMessage);
+      newBootstrapMessages.push(bootstrapMessage);
+    }
+  }
+
+  if (newBootstrapMessages.length > 0) {
+    const bootstrapOrder = [
+      SYSTEM_PROMPT_SNAPSHOT_TYPE as string,
+      MEMORY_BOOTSTRAP_TYPE,
+      SELF_BOOTSTRAP_TYPE,
+      CONTEXT_BOOTSTRAP_TYPE,
+    ];
+    const orderIndex = (message: AgentMessage) =>
+      bootstrapOrder.indexOf(getCustomType(message) ?? "");
+    const boundary = messages.findIndex(
+      (message) => !isBootstrapMessage(message),
+    );
+    const existingBootstrapCount = boundary === -1 ? messages.length : boundary;
+    const mergedBootstraps = [
+      ...messages.slice(0, existingBootstrapCount),
+      ...newBootstrapMessages,
+    ].sort((a, b) => orderIndex(a) - orderIndex(b));
+    messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
+  }
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
   // 指定スキルのSKILL.md本文をそのままプロンプトへ強制注入して実行させる。
@@ -599,20 +643,12 @@ export async function runAgentLoop(
   const existingMemorySnapshot = messages.find(
     (message) => getCustomType(message) === MEMORY_BOOTSTRAP_TYPE,
   );
-  const memoryFileIndex = contextFiles.findIndex(
-    (file) => file.path === "MEMORY.md",
-  );
   const memoryContent =
-    identity?.memorySnapshotPresent !== undefined
-      ? identity.memorySnapshotPresent
-        ? (identity.memorySnapshotContent ?? "")
-        : null
-      : (identity?.memorySnapshotContent ??
-        (existingMemorySnapshot && "content" in existingMemorySnapshot
-          ? String(existingMemorySnapshot.content)
-          : memoryFileIndex >= 0
-            ? (contextFileContents[memoryFileIndex] ?? null)
-            : null));
+    identity?.memorySnapshotPresent === true
+      ? (identity.memorySnapshotContent ?? "")
+      : existingMemorySnapshot && "content" in existingMemorySnapshot
+        ? String(existingMemorySnapshot.content)
+        : null;
   const memorySnapshotHash = snapshotHash(memoryContent);
   const computedSnapshotHash =
     systemPromptSnapshotHash === undefined && memorySnapshotHash === undefined
@@ -661,66 +697,6 @@ export async function runAgentLoop(
   ]
     .filter(Boolean)
     .join("\n\n");
-
-  const newBootstrapMessages: AgentMessage[] = [];
-
-  // 新規セッション、またはスナップショット未作成の既存セッションの場合、
-  // system prompt をセッションに固定化するスナップショットを書き込む。
-  // system prompt が空文字でも「ファイルは存在し空である」という状態を固定化するため、
-  // null（値不存在）とは区別して書き込む（そうしないと毎ターン再読み込みし続ける）
-  if (needsSystemPromptSnapshot && loadedSystemPrompt !== null) {
-    const systemPromptSnapshotMessage: SystemPromptSnapshotMessage = {
-      role: "custom",
-      customType: SYSTEM_PROMPT_SNAPSHOT_TYPE,
-      content: loadedSystemPrompt,
-      display: false,
-      timestamp: Date.now(),
-    };
-    await appendMessage(groupName, sessionId, systemPromptSnapshotMessage);
-    newBootstrapMessages.push(systemPromptSnapshotMessage);
-  }
-
-  // 設定順で存在するファイルを1つの擬似user messageへ固定する。
-  if (needsContextBootstrap) {
-    const sections = contextFiles.flatMap((file, index) => {
-      const fileContent = contextFileContents[index];
-      return fileContent === null
-        ? []
-        : [formatBootstrapSection(file, fileContent)];
-    });
-    if (sections.length > 0) {
-      const bootstrapMessage: ContextBootstrapMessage = {
-        role: "custom",
-        customType: CONTEXT_BOOTSTRAP_TYPE,
-        content: sections.join("\n\n"),
-        display: false,
-        timestamp: Date.now(),
-      };
-      await appendMessage(groupName, sessionId, bootstrapMessage);
-      newBootstrapMessages.push(bootstrapMessage);
-    }
-  }
-
-  // 新規bootstrapとlegacy bootstrapが混在しても次回ロード時と順序が
-  // 食い違わないよう、bootstrap種別の正規順序
-  // （system-prompt-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージする。
-  if (newBootstrapMessages.length > 0) {
-    const bootstrapOrder = [
-      SYSTEM_PROMPT_SNAPSHOT_TYPE as string,
-      MEMORY_BOOTSTRAP_TYPE,
-      SELF_BOOTSTRAP_TYPE,
-      CONTEXT_BOOTSTRAP_TYPE,
-    ];
-    const orderIndex = (m: AgentMessage) =>
-      bootstrapOrder.indexOf(getCustomType(m) ?? "");
-    const boundary = messages.findIndex((m) => !isBootstrapMessage(m));
-    const existingBootstrapCount = boundary === -1 ? messages.length : boundary;
-    const mergedBootstraps = [
-      ...messages.slice(0, existingBootstrapCount),
-      ...newBootstrapMessages,
-    ].sort((a, b) => orderIndex(a) - orderIndex(b));
-    messages = [...mergedBootstraps, ...messages.slice(existingBootstrapCount)];
-  }
 
   const rootRun = createRootDelegationLineage();
   const getApiKey = (provider: string) => {
