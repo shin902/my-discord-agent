@@ -6,12 +6,12 @@ import {
 } from "./steering.js";
 
 vi.mock("../agent/session.js", () => ({
-  appendMessage: vi.fn().mockResolvedValue(undefined),
+  appendMessage: vi.fn().mockResolvedValue(1),
 }));
 
 beforeEach(() => {
   vi.mocked(appendMessage).mockReset();
-  vi.mocked(appendMessage).mockResolvedValue(undefined);
+  vi.mocked(appendMessage).mockResolvedValue(1);
 });
 
 describe("steering controller", () => {
@@ -19,6 +19,7 @@ describe("steering controller", () => {
     const order: string[] = [];
     vi.mocked(appendMessage).mockImplementation(async () => {
       order.push("persist");
+      return 1;
     });
     const steer = vi.fn(() => {
       order.push("steer");
@@ -70,9 +71,9 @@ describe("steering controller", () => {
   });
 
   it("accepts the documented end race after persistence", async () => {
-    let resolveAppend!: () => void;
+    let resolveAppend!: (id: number) => void;
     vi.mocked(appendMessage).mockReturnValueOnce(
-      new Promise<void>((resolve) => {
+      new Promise<number>((resolve) => {
         resolveAppend = resolve;
       }),
     );
@@ -82,7 +83,7 @@ describe("steering controller", () => {
 
     const delivery = controller.receive("finish now");
     controller.close();
-    resolveAppend();
+    resolveAppend(1);
 
     await expect(delivery).resolves.toBe(true);
     expect(steer).toHaveBeenCalledTimes(1);

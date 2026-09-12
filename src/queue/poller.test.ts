@@ -301,6 +301,35 @@ describe("processMessage - terminal queue transitions", () => {
     vi.mocked(freezeExecutionIdentity).mockResolvedValue(undefined);
   });
 
+  it.each([
+    false,
+    true,
+  ])("commits adopted entries with the result on both conversation paths (item-thread=%s)", async (itemThread) => {
+    const conversation = { userEntryId: 3, assistantEntryId: 8 };
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, _session, _content, options) => {
+        options?.onConversation?.(conversation);
+        return "adopted answer";
+      },
+    );
+    const msg = makeMsg(
+      itemThread
+        ? {
+            cronJobId: "cron",
+            cronDeliveryMode: "item-thread",
+            cronProvisioning: true,
+          }
+        : {},
+    );
+    await processMessage(msg);
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      "adopted answer",
+      expect.objectContaining({ conversation }),
+    );
+  });
+
   it("invalid cron jobs are dead-lettered with one fenced transition", async () => {
     const msg = makeMsg({
       cronDeliveryMode: "new-thread",

@@ -3,6 +3,10 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
+import {
+  type ConversationEntries,
+  ConversationEntriesSchema,
+} from "../agent/conversation.js";
 import { splitMessage } from "../utils/splitMessage.js";
 import { type InboxMessage, normalizeInboxMessagePayload } from "./types.js";
 
@@ -11,7 +15,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 6;
+export const QUEUE_SCHEMA_VERSION = 7;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -597,6 +601,21 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
     "DROP INDEX IF EXISTS deliveries_job; CREATE UNIQUE INDEX IF NOT EXISTS deliveries_host_unique ON deliveries(host_unique_key) WHERE host_unique_key IS NOT NULL; UPDATE deliveries SET response_index=0 WHERE response_index IS NULL; UPDATE deliveries SET host_unique_key=job_id || ':0' WHERE host_unique_key IS NULL;",
   );
 }
+function createCommittedConversationsTable(db: Database.Database): void {
+  // Intentionally no FK to jobs: queue retention must not revoke adopted results.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS committed_conversations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      turn_id TEXT NOT NULL UNIQUE,
+      group_name TEXT NOT NULL,
+      user_entry_id INTEGER NOT NULL CHECK(user_entry_id > 0),
+      assistant_entry_id INTEGER NOT NULL CHECK(assistant_entry_id > user_entry_id),
+      committed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS committed_conversations_group
+      ON committed_conversations(group_name, id);
+  `);
+}
 function createBotTaskSessionTable(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS bot_task_sessions (
@@ -625,6 +644,7 @@ function repairRuntimeSchema(db: Database.Database): void {
     { name: "initialized", ddl: "initialized INTEGER NOT NULL DEFAULT 1" },
   ]);
   createBotTaskSessionTable(db);
+  createCommittedConversationsTable(db);
 }
 // Versioned schema migrations. Every step is idempotent; the value recorded in
 // schema_meta('schema_version') gates which steps still need to run. Stores stamped
@@ -674,6 +694,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     summary: "persist intentionally suppressed delivery outcomes",
     up(db) {
       repairRuntimeSchema(db);
+    },
+  },
+  {
+    version: 7,
+    summary:
+      "persist adopted conversation references independently of job retention",
+    up(db) {
+      createCommittedConversationsTable(db);
     },
   },
 ];
@@ -813,15 +841,28 @@ export class QueueRepository {
       | undefined;
     return row ? parsePayload(row) : undefined;
   }
-  /** Read only outcome metadata: a completed job must also match the producing attempt. */
-  hasCommittedResult(id: string, token: number): boolean {
-    return (
-      this.db
-        .prepare(
-          "SELECT 1 FROM jobs WHERE id=? AND fencing_token=? AND status='completed' AND succeeded=1 AND result_state='succeeded'",
-        )
-        .get(id, token) !== undefined
-    );
+  /** Paged references only; statements finish before yielding to remote I/O. */
+  *readCommittedConversations(
+    groupName: string,
+  ): Generator<ConversationEntries> {
+    const page = this.db.prepare(`
+      SELECT id, user_entry_id AS userEntryId, assistant_entry_id AS assistantEntryId
+      FROM committed_conversations WHERE group_name=? AND id>? ORDER BY id LIMIT 100
+    `);
+    let cursor = 0;
+    for (;;) {
+      const rows = page.all(groupName, cursor) as Array<
+        ConversationEntries & { id: number }
+      >;
+      if (rows.length === 0) return;
+      for (const row of rows) {
+        cursor = row.id;
+        yield {
+          userEntryId: row.userEntryId,
+          assistantEntryId: row.assistantEntryId,
+        };
+      }
+    }
   }
   findByIdempotencyKey(key: string): QueueJob | undefined {
     const row = this.db
@@ -1504,6 +1545,7 @@ export class QueueRepository {
     options: {
       empty?: boolean;
       suppressDelivery?: boolean;
+      conversation?: ConversationEntries;
       metadata?: ExecutionMetadata;
       deliveryPayload?: unknown;
     } = {},
@@ -1514,6 +1556,10 @@ export class QueueRepository {
         ? JSON.stringify(result)
         : JSON.stringify(result ?? null);
     const state: TerminalState = options.empty ? "empty_response" : "succeeded";
+    const conversation =
+      !options.empty && options.conversation
+        ? ConversationEntriesSchema.parse(options.conversation)
+        : undefined;
     const m = options.metadata ?? {};
     const hasDeliveryMeta = options.deliveryPayload !== undefined;
     const deliveryMeta = (
@@ -1532,9 +1578,11 @@ export class QueueRepository {
     return this.inImmediateTransaction<DeliveryRow | undefined>(() => {
       const row = this.db
         .prepare(
-          "SELECT idempotency_key FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
+          "SELECT idempotency_key, json_extract(payload_json, '$.groupName') AS group_name FROM jobs WHERE id=? AND status IN ('claimed','running') AND fencing_token=?",
         )
-        .get(id, token) as { idempotency_key: string | null } | undefined;
+        .get(id, token) as
+        | { idempotency_key: string | null; group_name: string }
+        | undefined;
       if (!row) throw new Error(`stale fencing token for job ${id}`);
       const changed = this.db
         .prepare(
@@ -1552,6 +1600,20 @@ export class QueueRepository {
         );
       if (changed.changes !== 1)
         throw new Error(`stale fencing token for job ${id}`);
+      if (conversation) {
+        this.db
+          .prepare(`
+          INSERT INTO committed_conversations(turn_id, group_name, user_entry_id, assistant_entry_id, committed_at)
+          VALUES (?, ?, ?, ?, ?)
+        `)
+          .run(
+            id,
+            row.group_name,
+            conversation.userEntryId,
+            conversation.assistantEntryId,
+            at,
+          );
+      }
       let first: DeliveryRow | undefined;
       for (const [index, content] of chunks.entries()) {
         const replyMessageId =

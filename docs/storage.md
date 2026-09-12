@@ -14,7 +14,7 @@ config/
   cron.json             # 定期実行ジョブ定義（省略可）
 
 data/
-  runtime.sqlite        # host所有のqueue・delivery・idempotency・admission・Discord cursor
+  runtime.sqlite        # host所有のqueue・delivery・採用会話参照・idempotency・admission・Discord cursor
   runtime.sqlite-wal    # runtime DBのWAL（存在する場合）
   runtime.sqlite-shm    # runtime DBの共有メモリ（存在する場合）
   rss.sqlite3           # RSS収集・dispatch状態（runtime DBとは別）
@@ -44,6 +44,7 @@ groups/
 |---|---|
 | `jobs` | 入力payload、実行状態、lease・fencing、結果、Bot同期実行のadmission。`delivery_suppressed` は結果commit時に配送を意図的に抑制した成功を表す |
 | `deliveries` | Discordへ送るchunkと配送状態 |
+| `committed_conversations` | 結果commit時に採用したgroup + user/assistant entry ID。本文は持たず、jobs retentionと独立して保持 |
 | `idempotency_keys` | 受理済み・完了済み入力の冪等性 |
 | `dead_letters` | 処理不能・移行不正行などの記録 |
 | `discord_sync_cursors` | Discord履歴backfillの進行位置 |
@@ -53,6 +54,8 @@ groups/
 runtime DBはWALを使用します。稼働中にmain fileだけをコピーしないでください。[backup.ts](../src/queue/backup.ts) はSQLiteのserializeで整合したsnapshotを作り、別DBとしてread-onlyで開いてintegrityを検証します。session DBやRSS DB、workspace、認証stateまで含む一括backupではありません。
 
 `jobs.delivery_suppressed=1` は `<NO_REPLY>` など、結果は成功だがDiscord deliveryを意図的に作らない完了をdurably識別するruntime metadataです。RSS claimのreconciliationはこのフラグを成功根拠として使いますが、通常のdeliveryが0件になっただけでは既読化しません。既存runtime DBは起動時のschema migrationでこの列を追加します。
+
+`committed_conversations`はruntime schema v7で追加されます。既存のfenced結果commitと同一transactionで保存し、jobsへの削除連動FKは設けません。参照の自動削除期限はなく、source lifecycleに沿った明示的な廃棄まで保持します。通常queue retentionはこのtableを削除しません。既存成功jobやraw trajectoryからの参照backfillは行いません。
 
 実データの調査は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順を使ってください。通常の完了・retention・recoveryを、JSONL行の削除やad-hoc SQLで代用しないでください。
 
@@ -68,7 +71,9 @@ session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
-`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存します。`execution_json` は各entryを生成したruntime attempt（`jobId` / `fencingToken`）であり、成功の証明ではありません。どちらもLLM contextには含めません。schema v1→v2でsource列、v2→v3でexecution列と検索indexを通常session書き込み時に追加し、既存entryはNULLのまま保持します。migrationはwrite lock下でversionを再確認します。Memory exporterはsource jobの成功commitとfencing一致をruntime DBのmetadataだけで確認してから、対応するattemptの本文をsession DBからread-onlyで読みます。旧履歴や存在しないDBを補完・作成しません。
+`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v4ではMemory専用になっていたv3の `execution_json` と検索indexを削除します。v1/v2からも通常session書き込み時にv4へ更新し、既存entry ID・本文・sourceを保持します。migrationはwrite lock下でversionを再確認します。
+
+append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。session renameはentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 
 実装の正本は [session.ts](../src/agent/session.ts) です。
 

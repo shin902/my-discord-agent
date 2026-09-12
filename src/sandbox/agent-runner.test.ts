@@ -101,7 +101,8 @@ describe("runAgentLoop", () => {
     vi.clearAllMocks();
     lastAgentOptions = undefined;
     vi.mocked(loadMessages).mockResolvedValue([]);
-    vi.mocked(appendMessage).mockResolvedValue(undefined);
+    let entryId = 0;
+    vi.mocked(appendMessage).mockImplementation(async () => ++entryId);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -120,8 +121,8 @@ describe("runAgentLoop", () => {
   it.each([
     false,
     true,
-  ])("attaches source only to the input user and execution to every event in order (failed run=%s)", async (failed) => {
-    const execution = { jobId: "source-job", fencingToken: 2 };
+  ])("persists events in order and returns the adopted IDs only after successful completion (failed run=%s)", async (failed) => {
+    const onConversation = vi.fn();
     const source = {
       kind: "discord" as const,
       sourceId: "message",
@@ -158,6 +159,7 @@ describe("runAgentLoop", () => {
         if (message.role === "user")
           await new Promise((resolve) => setTimeout(resolve, 5));
         if (message.role !== "custom") persisted.push(message);
+        return persisted.length;
       },
     );
     const run = runAgentLoop(
@@ -172,7 +174,7 @@ describe("runAgentLoop", () => {
       undefined,
       undefined,
       source,
-      execution,
+      onConversation,
     );
     if (failed) await expect(run).rejects.toThrow("run failed");
     else await run;
@@ -182,22 +184,105 @@ describe("runAgentLoop", () => {
       "session-1",
       messages[0],
       source,
-      execution,
     );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       messages[1],
-      undefined,
-      execution,
     );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       messages[2],
-      undefined,
-      execution,
     );
+    if (failed) expect(onConversation).not.toHaveBeenCalled();
+    else
+      expect(onConversation).toHaveBeenCalledWith({
+        userEntryId: 1,
+        assistantEntryId: 2,
+      });
+  });
+
+  it.each([
+    "stop",
+    "length",
+    "error",
+    "aborted",
+    "toolUse",
+    "empty",
+    "error-field",
+    "append-failure",
+  ])("adopts only the final complete assistant after all appends (%s)", async (terminal) => {
+    const onConversation = vi.fn();
+    const input = { role: "user", content: "input", timestamp: 1 };
+    const interim = {
+      role: "assistant",
+      content: [{ type: "text", text: "interim" }],
+      stopReason: "stop",
+      timestamp: 2,
+    };
+    const final = {
+      ...interim,
+      content: [
+        { type: "text", text: terminal === "empty" ? " \n" : "actual final" },
+      ],
+      stopReason: ["empty", "error-field", "append-failure"].includes(terminal)
+        ? "stop"
+        : terminal,
+      ...(terminal === "error-field" ? { errorMessage: "failed" } : {}),
+    };
+    let onEvent: (event: unknown) => void = () => {};
+    AgentMock.mockImplementation(function () {
+      return {
+        subscribe: (callback: (event: unknown) => void) => {
+          onEvent = callback;
+        },
+        prompt: async () => {
+          for (const message of [
+            input,
+            interim,
+            { ...input, content: "follow-up" },
+            final,
+          ])
+            onEvent({ type: "message_end", message });
+        },
+      };
+    });
+    let nextId = 0;
+    const ids = new Map<unknown, number>();
+    vi.mocked(appendMessage).mockImplementation(
+      async (_group, _session, message) => {
+        expect(onConversation).not.toHaveBeenCalled();
+        if (message === final && terminal === "append-failure")
+          throw new Error("disk full");
+        const id = ++nextId;
+        ids.set(message, id);
+        return id;
+      },
+    );
+    const result = runAgentLoop(
+      "test-group",
+      "session-1",
+      "input",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onConversation,
+    );
+    if (terminal === "append-failure")
+      await expect(result).rejects.toThrow("disk full");
+    else await result;
+    if (terminal === "stop")
+      expect(onConversation).toHaveBeenCalledExactlyOnceWith({
+        userEntryId: ids.get(input),
+        assistantEntryId: ids.get(final),
+      });
+    else expect(onConversation).not.toHaveBeenCalled();
   });
 
   it("aborted signal is wired to Pi Agent.abort", async () => {
@@ -1730,7 +1815,7 @@ describe("runAgentLoop", () => {
       actorId: "human",
       messageType: 0 as const,
     };
-    const execution = { jobId: "source-job", fencingToken: 1 };
+    const onConversation = vi.fn();
     const result = await runAgentLoop(
       "test-group",
       "session-1",
@@ -1743,9 +1828,13 @@ describe("runAgentLoop", () => {
       undefined,
       undefined,
       source,
-      execution,
+      onConversation,
     );
 
+    expect(onConversation).toHaveBeenCalledWith({
+      userEntryId: 2,
+      assistantEntryId: 3,
+    });
     expect(result).toContain("見つかりません");
     expect(AgentMock).not.toHaveBeenCalled();
     expect(mockAgent.prompt).not.toHaveBeenCalled();
@@ -1762,7 +1851,6 @@ describe("runAgentLoop", () => {
           timestamp: expect.any(Number),
         },
         source,
-        execution,
       ],
       [
         "test-group",
@@ -1774,8 +1862,6 @@ describe("runAgentLoop", () => {
           timestamp: expect.any(Number),
           usage: expect.objectContaining({ totalTokens: 0 }),
         }),
-        undefined,
-        execution,
       ],
     ]);
   });
@@ -1802,7 +1888,7 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadMessages).mockResolvedValue([]);
-    vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(appendMessage).mockResolvedValue(1);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
@@ -1873,7 +1959,7 @@ describe("runAgentLoop - tool_execution_start イベント", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadMessages).mockResolvedValue([]);
-    vi.mocked(appendMessage).mockResolvedValue(undefined);
+    vi.mocked(appendMessage).mockResolvedValue(1);
     vi.mocked(readFile).mockRejectedValue(
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );

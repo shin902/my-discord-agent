@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { z } from "zod";
-import { readSourceTrajectories } from "../agent/session.js";
-import type { SessionExecution } from "../agent/source.js";
+import type { ConversationEntries } from "../agent/conversation.js";
+import { readConversations } from "../agent/session.js";
 import { getQueueRepository } from "../queue/repository.js";
 import { NonRetryableError } from "../utils/error.js";
 import { MemoryExportLedger } from "./export-ledger.js";
@@ -27,19 +27,14 @@ function text(message: AgentMessage): string {
 
 export function* readCaptureTurns(
   groupName: string,
-  isCommitted: (execution: SessionExecution) => boolean,
+  entries: Iterable<ConversationEntries>,
 ): Generator<MemoryCaptureTurn> {
-  for (const trajectory of readSourceTrajectories(groupName, isCommitted)) {
-    let assistant: Extract<AgentMessage, { role: "assistant" }> | undefined;
-    for (const message of trajectory.following) {
-      // Match runAgent's final response; other attempts are already excluded by the store.
-      if (message.role === "assistant") assistant = message;
-    }
+  for (const trajectory of readConversations(groupName, entries)) {
+    const assistant = trajectory.assistant;
     const userContent = text(trajectory.user);
     if (
-      !assistant ||
-      assistant.stopReason !== "stop" ||
-      assistant.errorMessage ||
+      trajectory.user.role !== "user" ||
+      assistant.role !== "assistant" ||
       !text(assistant).trim() ||
       !userContent.trim()
     )
@@ -69,12 +64,12 @@ export async function exportBatch(
   batchSize: number,
   backend: MemoryCaptureBackend,
   ledger: MemoryExportLedger,
-  isCommitted: (execution: SessionExecution) => boolean,
+  readCommitted: (group: string) => Iterable<ConversationEntries>,
   signal?: AbortSignal,
 ): Promise<void> {
   let exported = 0;
   for (const group of groups) {
-    for (const turn of readCaptureTurns(group, isCommitted)) {
+    for (const turn of readCaptureTurns(group, readCommitted(group))) {
       signal?.throwIfAborted();
       if (ledger.has(backendId, turn)) continue;
       await backend.exportTurn(turn);
@@ -102,8 +97,7 @@ export async function runMemoryExport(
       parsed.data.batchSize,
       backend,
       ledger,
-      ({ jobId, fencingToken }) =>
-        getQueueRepository().hasCommittedResult(jobId, fencingToken),
+      (group) => getQueueRepository().readCommittedConversations(group),
       signal,
     );
   } finally {

@@ -11,11 +11,3 @@ export const SessionSourceSchema = z.object({
 });
 
 export type SessionSource = z.infer<typeof SessionSourceSchema>;
-
-/** Runtime attempt that produced an entry; not itself proof of committed success. */
-export const SessionExecutionSchema = z.object({
-  jobId: z.string().min(1),
-  fencingToken: z.number().int().positive(),
-});
-
-export type SessionExecution = z.infer<typeof SessionExecutionSchema>;
