@@ -147,15 +147,10 @@ try {
       port: screenCaptureConfig.port,
     });
   }
-  if (
-    galleryConfig.enabled &&
-    galleryConfig.origin &&
-    galleryConfig.allowedLogin
-  ) {
+  if (galleryConfig.enabled && galleryConfig.origin) {
     xSavedGallery = await startXSavedGallery({
       port: galleryConfig.port,
       origin: galleryConfig.origin,
-      allowedLogin: galleryConfig.allowedLogin,
     });
   }
 } catch (err) {

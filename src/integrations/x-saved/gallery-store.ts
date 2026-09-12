@@ -14,15 +14,32 @@ export const LABEL_KINDS = ["series", "character", "tag"] as const;
 const Labels = z
   .string()
   .max(10_000)
-  .transform((text) => [
-    ...new Set(
-      text
-        .split(/[,\r\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
-  ])
-  .pipe(z.array(z.string().min(1).max(100)).max(50));
+  .transform((text, ctx) => {
+    if (text.trimStart().startsWith("[")) {
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        ctx.addIssue({ code: "custom", message: "Invalid label JSON array" });
+        return z.NEVER;
+      }
+    }
+    return text
+      .split(/[\r\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  })
+  .pipe(z.array(z.string().min(1).max(100)))
+  .transform((values) => [...new Set(values)])
+  .refine((values) => values.length <= 50, "At most 50 labels");
+
+/** Plain lines for ordinary labels; JSON avoids HTML/form whitespace normalization. */
+export function formatLabels(values: string[]): string {
+  const text = values.join("\n");
+  return text.startsWith("[") ||
+    values.some((v) => /[\r\n]/.test(v) || v.includes("\0") || v !== v.trim())
+    ? JSON.stringify(values)
+    : text;
+}
 
 export const ClassificationSchema = z.strictObject({
   series: Labels,
@@ -31,14 +48,19 @@ export const ClassificationSchema = z.strictObject({
   status: z.enum(ITEM_STATUSES),
 });
 const DateFilter = z.union([z.literal(""), z.iso.date()]).default("");
+const LabelFilter = z
+  .string()
+  .transform((text) => text.replace(/\r\n?/g, "\n"))
+  .pipe(z.string().max(5_000))
+  .default("");
 export const GalleryFilterSchema = z
   .strictObject({
     q: z.string().trim().max(500).default(""),
     media: z.enum(["", "image", "video"]).default(""),
     source: z.enum(["", "like", "bookmark"]).default(""),
-    series: z.string().max(5_000).default(""),
-    character: z.string().max(5_000).default(""),
-    tag: z.string().max(5_000).default(""),
+    series: LabelFilter,
+    character: LabelFilter,
+    tag: LabelFilter,
     status: z.enum(["", ...ITEM_STATUSES]).default(""),
     review: z.enum(["", "unknown", "needs-review"]).default(""),
     author: z.string().trim().max(100).default(""),

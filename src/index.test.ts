@@ -356,7 +356,6 @@ describe("index: 起動時バリデーション", () => {
     const gallery = {
       port: 8789,
       origin: "https://gallery.example.ts.net",
-      allowedLogin: "owner@example.com",
     };
     mocks.loadXSavedGalleryConfig.mockResolvedValue({
       enabled: true,
@@ -442,7 +441,6 @@ describe("index: 起動時バリデーション", () => {
       enabled: true,
       port: 8789,
       origin: "https://gallery.example.ts.net",
-      allowedLogin: "owner@example.com",
     });
     mocks.startXSavedGallery.mockRejectedValue(new Error("EADDRINUSE"));
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");

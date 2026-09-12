@@ -48,9 +48,6 @@ function send(
   response.writeHead(status, { "Content-Type": type });
   response.end(body);
 }
-function backLink(value?: string): string {
-  return value?.startsWith("/?") ? value : "/";
-}
 async function readForm(request: IncomingMessage) {
   if (
     !/^application\/x-www-form-urlencoded(?:\s*;\s*charset=utf-8)?$/i.test(
@@ -145,29 +142,23 @@ async function serveMedia(
 export async function startXSavedGallery(options: {
   port: number;
   origin: string;
-  allowedLogin: string;
   xSavedDbPath?: string;
 }) {
   XSavedGalleryConfigSchema.parse({
     enabled: true,
     origin: options.origin,
-    allowedLogin: options.allowedLogin,
   });
   const dbPath = resolveXSavedDbPath(options.xSavedDbPath);
   const db = openXSavedDb(dbPath);
   const root = path.dirname(dbPath);
-  const server = createServer(async (request, response) => {
+  // Three 5,000-character Unicode filters can exceed Node's default 16 KiB.
+  const server = createServer({ maxHeaderSize: 256 * 1024 });
+  server.on("request", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
+    // Do not duplicate a long filter URL in subsequent request headers.
+    response.setHeader("Referrer-Policy", "origin");
     response.setHeader("X-Content-Type-Options", "nosniff");
     try {
-      // Serve strips incoming identity headers, supplies the authenticated user,
-      // and omits that identity for Funnel/tagged devices. Local processes are trusted.
-      if (request.headers["tailscale-user-login"] !== options.allowedLogin) {
-        throw new HttpError(
-          403,
-          "自分のTailscaleアカウントで接続した端末から開いてください。",
-        );
-      }
       if (request.method !== "GET" && request.method !== "POST") {
         response.setHeader("Allow", "GET, POST");
         throw new HttpError(405, "Method not allowed");
@@ -180,10 +171,10 @@ export async function startXSavedGallery(options: {
       }
       const url = new URL(request.url ?? "/", options.origin);
       const detail = /^\/items\/([1-9][0-9]{0,19})$/.exec(url.pathname);
+      const query = url.searchParams.toString();
       if (request.method === "POST") {
         if (!detail) throw new HttpError(404, "Not found");
-        const form = await readForm(request);
-        const { back, ...fields } = form;
+        const fields = await readForm(request);
         const item = getGalleryItem(db, detail[1]);
         if (!item) throw new HttpError(404, "Tweetがありません。");
         try {
@@ -195,7 +186,7 @@ export async function startXSavedGallery(options: {
             invalid ? 400 : 500,
             galleryDetailPage(
               item,
-              backLink(back),
+              query,
               invalid
                 ? "保存していません。Status、各50個・1値100文字までの分類を確認してください。"
                 : "保存できませんでした。入力は残っています。時間をおいて再試行してください。",
@@ -204,9 +195,8 @@ export async function startXSavedGallery(options: {
           );
           return;
         }
-        response.writeHead(303, {
-          Location: `/items/${detail[1]}?saved=1&back=${encodeURIComponent(backLink(back))}`,
-        });
+        // A fragment redirect keeps the current query without a huge Location header.
+        response.writeHead(303, { Location: "#saved" });
         response.end();
         return;
       }
@@ -232,15 +222,7 @@ export async function startXSavedGallery(options: {
       if (detail) {
         const item = getGalleryItem(db, detail[1]);
         if (!item) throw new HttpError(404, "Tweetがありません。");
-        send(
-          response,
-          200,
-          galleryDetailPage(
-            item,
-            backLink(url.searchParams.get("back") ?? undefined),
-            url.searchParams.get("saved") === "1" ? "変更を保存しました。" : "",
-          ),
-        );
+        send(response, 200, galleryDetailPage(item, query));
         return;
       }
       throw new HttpError(404, "Not found");

@@ -17,7 +17,6 @@ describe("x-saved gallery config", () => {
     const config = {
       enabled: true,
       origin: "https://gallery.example.ts.net",
-      allowedLogin: "owner@example.com",
     };
     vi.mocked(loadRawConfig).mockResolvedValue({ xSavedGallery: config });
     await expect(loadXSavedGalleryConfig()).resolves.toEqual({
@@ -32,8 +31,7 @@ describe("x-saved gallery config", () => {
     { port: 65536 },
     { port: "8789" },
     { host: "0.0.0.0" },
-    { allowedLogin: "" },
-    { allowedLogin: "a\nb" },
+    { allowedLogin: "owner@example.com" },
     { origin: "http://gallery.example.ts.net" },
     { origin: "https://example.com" },
     { origin: "https://gallery.example.ts.net/path" },

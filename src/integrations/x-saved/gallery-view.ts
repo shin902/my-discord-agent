@@ -1,4 +1,5 @@
 import {
+  formatLabels,
   type GalleryCard,
   type GalleryFilters,
   type GalleryMedia,
@@ -55,6 +56,7 @@ figcaption { font-size: .8rem; margin-top: .5rem; color: var(--muted); }
 .body-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .editor { display: grid; gap: .8rem; border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1.5rem; }
 .notice { margin: 1rem 0; }
+#saved:not(:target) { display: none; }
 @media (max-width: 650px) {
   header small { display: none; }
   main { padding-inline: .75rem; }
@@ -136,8 +138,8 @@ function mediaElement(
   // No thumbnail store or eager grid downloads; native MP4 preview in detail.
   return `<video src="${url}#t=0.1" preload="${detail ? "metadata" : "none"}" playsinline${detail ? " controls" : ""} aria-label="保存動画"></video>`;
 }
-function card(item: GalleryCard, back: string): string {
-  return `<article class="card"><a class="card-link" href="/items/${encodeURIComponent(item.tweet_id)}?back=${encodeURIComponent(back)}" aria-label="${escapeHtml(item.author_handle || item.tweet_id)} の詳細">
+function card(item: GalleryCard, query: string): string {
+  return `<article class="card"><a class="card-link" href="/items/${encodeURIComponent(item.tweet_id)}?${escapeHtml(query)}" aria-label="${escapeHtml(item.author_handle || item.tweet_id)} の詳細">
 <div class="stage">${mediaElement(item.tweet_id, item, false)}<span class="kind">${escapeHtml(item.kind.toUpperCase())} · ${escapeHtml(item.position + 1)}</span></div>
 <div class="caption"><div class="meta"><strong>@${escapeHtml(item.author_handle || "unknown")}</strong><span>${escapeHtml(item.status)}</span></div>
 <p class="excerpt">${escapeHtml(item.text.slice(0, 300) || "（本文なし）")}</p>
@@ -160,7 +162,6 @@ export function galleryListPage(
     Object.entries(filters).map(([k, v]): [string, string] => [k, String(v)]),
   );
   query.set("page", String(result.page));
-  const back = `/?${query}`;
   const pageLink = (page: number, text: string) => {
     const next = new URLSearchParams(query);
     next.set("page", String(page));
@@ -186,7 +187,7 @@ ${select("source", "Source", filters.source, [
   ["like", "Like"],
   ["bookmark", "Bookmark"],
 ])}
-${LABEL_KINDS.map((k) => input(k, labelTitles[k], filters[k], "text", 5_000)).join("")}
+${LABEL_KINDS.map((k) => `<label>${labelTitles[k]}<textarea name="${k}" rows="2" maxlength="5000">${escapeHtml(filters[k])}</textarea></label>`).join("")}
 ${select("status", "Status", filters.status, [["", "すべて"], ...statusOptions])}
 ${select("review", "分類の確認", filters.review, [
   ["", "すべて"],
@@ -201,44 +202,42 @@ ${select("sort", "並び順", filters.sort, [
   ["oldest", "投稿が古い順"],
   ["author", "Author順"],
 ])}
-</div><p class="help">作品・キャラクター・タグはカンマ区切りで複数指定（完全一致・すべてを含む）。Unknown は作品またはキャラクターが未入力、または unknown ラベル付き。投稿日不明は初回保存日を使います。</p>
+</div><p class="help">作品・キャラクター・タグは1行1値で複数指定（完全一致・すべてを含む）。カンマは値の一部。改行入りの値はJSON配列で指定。Unknown は作品またはキャラクターが未入力、または unknown ラベル付き。投稿日不明は初回保存日を使います。</p>
 <button type="submit">条件を適用</button></details></form>
 <div class="toolbar"><strong class="count">${result.total.toLocaleString("en-US")} media</strong><span class="muted">1ページ60件 · 分類はTweet単位</span></div>
-${result.total ? `<div class="grid">${result.items.map((item) => card(item, back)).join("")}</div>` : `<section class="empty"><h2>表示できるメディアがありません</h2><p>条件を減らすか、media archive の収集・ダウンロードを確認してください。</p><a href="/">フィルターをリセット</a></section>`}
+${result.total ? `<div class="grid">${result.items.map((item) => card(item, String(query))).join("")}</div>` : `<section class="empty"><h2>表示できるメディアがありません</h2><p>条件を減らすか、media archive の収集・ダウンロードを確認してください。</p><a href="/">フィルターをリセット</a></section>`}
 ${pagination}`,
   );
 }
 
 export function galleryDetailPage(
   item: NonNullable<ReturnType<typeof getGalleryItem>>,
-  back: string,
+  query: string,
   message = "",
   submitted?: Record<string, string>,
 ): string {
   const fields = Object.fromEntries(
     LABEL_KINDS.map((kind) => [
       kind,
-      item.labels
-        .filter((l) => l.kind === kind)
-        .map((l) => l.value)
-        .join("\n"),
+      formatLabels(
+        item.labels.filter((l) => l.kind === kind).map((l) => l.value),
+      ),
     ]),
   );
   return galleryPage(
     `@${item.author_handle || "unknown"}`,
-    `<nav aria-label="詳細ナビゲーション"><a href="${escapeHtml(back)}">← 一覧に戻る</a>${original(item.tweet_id)}</nav>
-${message ? `<p class="notice" role="status">${escapeHtml(message)}</p>` : ""}
+    `<nav aria-label="詳細ナビゲーション"><a href="/?${escapeHtml(query)}">← 一覧に戻る</a>${original(item.tweet_id)}</nav>
+${message ? `<p class="notice" role="status">${escapeHtml(message)}</p>` : '<p id="saved" class="notice" role="status">変更を保存しました。</p>'}
 <div class="detail"><section class="detail-media" aria-label="保存メディア">
 ${item.media.map((m) => `<figure>${mediaElement(item.tweet_id, m, true)}<figcaption>${escapeHtml(m.kind)} · ${escapeHtml(m.position + 1)}${m.media_status === "done" ? ` · <a href="${mediaUrl(item.tweet_id, m)}" target="_blank" rel="noopener">ファイルを開く</a>` : ""}</figcaption></figure>`).join("") || "<p>メディアなし</p>"}</section>
 <section aria-label="Tweetと分類"><h2>@${escapeHtml(item.author_handle || "unknown")}</h2>
 <p class="meta">${escapeHtml(item.tweet_created_at ?? item.first_seen_at)} · ${item.seen_liked ? "Like " : ""}${item.seen_bookmarked ? "Bookmark" : ""}</p>
 <p class="body-text">${escapeHtml(item.text || "（本文なし）")}</p>
 ${item.note ? `<h2>Note</h2><p class="body-text">${escapeHtml(item.note)}</p>` : ""}
-<form class="editor" method="post" action="/items/${encodeURIComponent(item.tweet_id)}"><h2>分類を編集</h2>
-<input type="hidden" name="back" value="${escapeHtml(back)}">
+<form class="editor" method="post" action="/items/${encodeURIComponent(item.tweet_id)}?${escapeHtml(query)}"><h2>分類を編集</h2>
 ${LABEL_KINDS.map((kind) => `<label>${labelTitles[kind]}<textarea name="${kind}" rows="3" maxlength="10000">${escapeHtml(submitted?.[kind] ?? fields[kind])}</textarea></label>`).join("")}
 ${select("status", "Status", submitted?.status ?? item.status, statusOptions)}
-<p class="help">1行1値、またはカンマ区切り。各50個・1値100文字まで。空欄で解除。同じTweetの全メディアに反映されます。</p>
+<p class="help">1行1値。カンマは値の一部。改行入り・前後の空白・先頭の [ を含む値はJSON配列で保持します。各50個・1値100文字まで。空欄で解除。同じTweetの全メディアに反映されます。</p>
 <button type="submit">変更を保存</button></form></section></div>`,
   );
 }

@@ -22,16 +22,10 @@ export const XSavedGalleryConfigSchema = z
         );
       }, "Expected an HTTPS Tailscale origin without a path")
       .optional(),
-    allowedLogin: z
-      .string()
-      .min(1)
-      .max(320)
-      .regex(/^[\x21-\x7e]+$/)
-      .optional(),
   })
   .refine(
-    (config) => !config.enabled || (!!config.origin && !!config.allowedLogin),
-    "Enabled gallery requires origin and allowedLogin",
+    (config) => !config.enabled || !!config.origin,
+    "Enabled gallery requires origin",
   );
 
 export async function loadXSavedGalleryConfig() {

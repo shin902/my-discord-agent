@@ -120,22 +120,21 @@ Gallery is an opt-in, human-facing viewer/editor of the **same SQLite and media 
 
 **Threat model:** Gallery is a single-user localhost service with Tailscale Serve as its only external entry point; the host's SQLite, media archive and local processes are trusted, while external Tweet content remains untrusted. Gallery does not defend against host compromise or malicious local archive/symlink changes.
 
-### Setup and authentication
+### Setup and access
 
-In `config/config.json`, configure the exact HTTPS origin shown by Tailscale Serve and **your own Tailscale user login** (not a device name):
+In `config/config.json`, configure the exact HTTPS origin shown by Tailscale Serve:
 
 ```json
 {
   "xSavedGallery": {
     "enabled": true,
     "port": 8789,
-    "origin": "https://your-host.your-tailnet.ts.net",
-    "allowedLogin": "you@example.com"
+    "origin": "https://your-host.your-tailnet.ts.net"
   }
 }
 ```
 
-Gallery defaults to disabled / port 8789. When enabled, `origin` and `allowedLogin` are required; malformed settings fail startup. `origin` must be an HTTPS `.ts.net` origin, with no trailing slash/path/query; include the HTTPS port if not 443. `allowedLogin` is the exact, case-sensitive ASCII login shown for your user in Tailscale. Restart the application after changes.
+Gallery defaults to disabled / port 8789. When enabled, `origin` is required for form POST validation; malformed settings fail startup. It must be an HTTPS `.ts.net` origin, with no trailing slash/path/query; include the HTTPS port if not 443. Remove `allowedLogin` from any earlier Gallery configuration: it is no longer a supported setting. Restart the application after changes.
 
 Inspect existing Serve handlers before assigning a free HTTPS port, then expose **only the Gallery listener**:
 
@@ -145,7 +144,7 @@ tailscale serve --bg --https=443 http://127.0.0.1:8789
 tailscale serve status
 ```
 
-Open the configured origin from your Mac, iPhone or iPad connected as that Tailscale user. Tailnet access policy must also allow the connection. The backend binds only `127.0.0.1`; there is no configurable public bind. Every page, stylesheet, image and video checks that Serve-injected `Tailscale-User-Login` exactly matches the owner. Serve strips client-supplied identity headers; tagged devices and Funnel requests lack that user identity and therefore fail the same check. Do not use Funnel, a public proxy, port forwarding, or a proxy that accepts client-supplied identity headers. The header is not a bearer token and direct localhost access is not a supported login path.
+Open the configured origin from your Mac, iPhone or iPad connected to the Tailnet. **Restrict access to the Serve endpoint to yourself in Tailscale's access policy before enabling it.** Serve does not by itself restrict access to the owner: anyone allowed to reach the endpoint can view and edit Gallery. The backend binds only `127.0.0.1`; there is no configurable public bind and no Gallery pairing, token, or Tailscale identity check. Direct localhost access is also trusted and unauthenticated. Do not use Funnel, a public proxy, or port forwarding.
 
 The receiver and Gallery have **separate ports/listeners/routes/authentication**. Gallery can be enabled with the receiver disabled. Both enabled on the same port fail startup. Do not expose the receiver just to enable Gallery, or replace its existing capture authentication/deployment with the Gallery settings. Gallery does not accept ingest requests. Shutdown closes both listeners and the Gallery database connection.
 
@@ -155,9 +154,9 @@ Only GET and POST are accepted. Writes require `Origin` to match the configured 
 
 - Grid: one card per media row, **60 cards per page**, lazy-loaded original images, Tweet excerpt, author, status and classification labels. Video cards open native MP4 preview/controls in detail; no thumbnail store or eager video-grid download is added. Pending/failed archives show placeholders. Text-only Tweets are not in the grid.
 - Search is a literal Tweet-body substring (ASCII case-insensitive); `%` and `_` are not wildcards. Media (`image` / `video`), sticky source (`like` / `bookmark`), status, exact author handle (optional `@`, case-insensitive), and classification filters combine with AND.
-- Series, characters and tags are multi-valued. Filters accept comma-separated exact, case-sensitive values and require **all specified values**. Editing accepts commas or newlines, trims/deduplicates values, and replaces that Tweet's labels; an empty field clears it. Each field allows 50 values, each 100 characters. Commas/newlines are separators, not part of a value.
+- Series, characters and tags are multi-valued. Filters and editing use **one value per line**; commas are literal, so a legacy tag such as `AI,ML` remains one value. Filters require **all specified values**, with exact, case-sensitive matching. Plain lines are trimmed/deduplicated; a JSON string array is also accepted for exact values. The editor automatically uses JSON when line breaks, leading/trailing whitespace or an initial `[` would otherwise change a stored value. Editing replaces that Tweet's labels; an empty field clears it. Each field allows 50 values, each 100 characters.
 - `Unknown` means missing series **or** characters, or any label equal to `unknown` (case-insensitive). `Needs review` means the existing `inbox` status. These are filters, not new stored statuses; `reviewed`, `keep`, `try`, `done`, `ignore` retain their existing meaning. Automated classification is out of scope.
-- Inclusive UTC date filters use the Tweet creation date, falling back to first capture when unavailable. Sort by first capture newest, Tweet newest/oldest, or author; page ties are stable. Filter/page state is retained through detail/edit and the return link.
+- Inclusive UTC date filters use the Tweet creation date, falling back to first capture when unavailable. Sort by first capture newest, Tweet newest/oldest, or author; page ties are stable. Filter/page state is retained directly in the query through detail/edit and the return link, without a nested `back` URL. The listener accepts up to 256 KiB of request headers to accommodate percent-encoded Unicode filters and sends only the origin as referrer. A short `303 Location: #saved` retains the query after saving, without copying it into response headers.
 - Detail edits are **Tweet-wide**, applying to every image/video in that Tweet, not separate copies per card. Status and labels commit together; notes, Tweet metadata, source flags, archive files and paths remain untouched. Ingest and media cron never overwrite classification. Invalid/failed edits retain the submitted form values for correction/retry.
 
 SQLite remains authoritative. Receiver, archive cron, Skill and Gallery use normal SQLite WAL transactions/busy timeout; there is no new writer queue, lock service or conflict-resolution layer. Single-user edits are last-writer-wins. Refresh an already-open page to see changes from another device/Skill. OFFSET pagination and original-image loading target hundreds to thousands of media; fast scrolling still depends on archive image sizes and network bandwidth.
@@ -166,14 +165,14 @@ SQLite remains authoritative. Receiver, archive cron, Skill and Gallery use norm
 
 Back up the SQLite database with its existing online backup mechanism and media separately before deploying. Schema v4 adds `x_item_labels` without moving media or resetting state. Update host receiver/cron/Gallery code together: older host binaries reject schema v4. No production config or Tailscale Serve settings are changed automatically.
 
-The HTTP/SQLite tests cover migration, 2,000-media pagination, combined filters, transactional edits, preserved ingestion, owner identity/CSRF, escaping, route-derived archive paths and native MP4 ranges. CI also runs a desktop/mobile browser smoke using a local fixture and simulated Serve headers (not a live Tailnet). To run that smoke locally:
+The HTTP/SQLite tests cover migration, 2,000-media pagination, combined filters, transactional edits, preserved ingestion, CSRF, escaping, route-derived archive paths, native MP4 ranges, long filter navigation and lossless legacy-label editing. CI also runs a desktop/mobile browser smoke using local HTTP fixtures with the browser's local POST origin translated to the configured HTTPS origin (not a live Tailnet). To run that smoke locally:
 
 ```bash
 pnpm exec playwright install chromium
 X_SAVED_GALLERY_BROWSER_TEST=1 pnpm exec vitest run src/integrations/x-saved/gallery.test.ts
 ```
 
-After enabling in production, verify image/video playback and one classification edit from your own user devices; confirm another Tailnet user is denied and existing receiver capture still works. These live identity/device checks are separate from the automated local smoke.
+After enabling in production, verify image/video playback and one classification edit from your own user devices; confirm Tailscale's access policy denies other users and existing receiver capture still works. These live Tailnet/device checks are separate from the automated local smoke.
 
 ## Configuration
 
