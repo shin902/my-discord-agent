@@ -11,6 +11,7 @@ const group = {
   approvalRequiredTools: ["group-approval"],
   skills: ["group-skill"],
   mounts: [{ host: "group", container: "/group" }],
+  contextFiles: [{ path: "MEMORY.md", maxChars: 2000 as const }],
 };
 
 const channel = {
@@ -19,6 +20,7 @@ const channel = {
   approvalRequiredTools: [],
   skills: "*" as const,
   mounts: [{ host: "channel", container: "/channel", readOnly: true }],
+  contextFiles: [],
 };
 
 describe("resolveAgentConfig", () => {
@@ -34,6 +36,7 @@ describe("resolveAgentConfig", () => {
       approvalRequiredTools: ["job-approval"],
       skills: "*",
       mounts: [{ host: "channel", container: "/channel", readOnly: true }],
+      contextFiles: [],
     });
   });
 
@@ -44,6 +47,7 @@ describe("resolveAgentConfig", () => {
       approvalRequiredTools: group.approvalRequiredTools,
       skills: group.skills,
       mounts: group.mounts,
+      contextFiles: group.contextFiles,
     });
   });
 
@@ -59,6 +63,7 @@ describe("resolveAgentConfig", () => {
       approvalRequiredTools: group.approvalRequiredTools,
       skills: group.skills,
       mounts: group.mounts,
+      contextFiles: group.contextFiles,
     });
   });
 

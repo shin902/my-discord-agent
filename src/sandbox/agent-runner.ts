@@ -58,12 +58,8 @@ import { loadGroupSystemPrompt } from "./system-prompt.js";
 // pi-agent-core が標準提供する CustomMessage（role: "custom"）を customType で使い分ける:
 // - "system-prompt-snapshot": グループの system prompt をセッション初回に固定化するためのスナップショット。
 //   役割上は system 相当として扱うため、LLM へのチャット履歴には乗せず systemPrompt の組み立てにのみ使う。
-// - "memory-bootstrap": MEMORY.md をセッション初回に注入する擬似ユーザーメッセージ。
-// - "self-bootstrap": /workspace/memory/SELF.md をセッション初回に注入する擬似ユーザーメッセージ。
-//   MEMORY.md（過去の事象＝書き換え不可の記録）とはカテゴリを分け、SELF.md は
-//   「現在の自分が過去をどう解釈するか」を表す可変の人格記述として別枠で扱う
-//   （docs/todo/issue-persona-growth.md 参照）。強制力は system prompt 側の記述が持ち、
-//   SELF.md 自体はコンテキスト側の参照情報にとどめる。
+// - "context-bootstrap": AgentConfig.contextFiles をセッション初回に注入する擬似ユーザーメッセージ。
+// - "memory-bootstrap" / "self-bootstrap": 旧sessionを読み続けるためのlegacy type。
 // - "skill-invocation": `./command` で明示実行されたスキルの SKILL.md 本文を注入する擬似ユーザーメッセージ。
 //   ユーザーの生発言（`./command スキル名 ...`）とは別メッセージとして保存することで、
 //   session trajectory上でも「ユーザーが何を打ったか」と「LLMに渡った指示内容」を区別できるようにする。
@@ -75,6 +71,7 @@ const SYSTEM_PROMPT_SNAPSHOT_TYPE = "system-prompt-snapshot";
 // Sessions written before the generic name was introduced remain readable.
 const LEGACY_SYSTEM_PROMPT_SNAPSHOT_TYPE = "agents-snapshot";
 const SESSION_TIME_ANCHOR_TYPE = "session-time-anchor";
+const CONTEXT_BOOTSTRAP_TYPE = "context-bootstrap";
 const MEMORY_BOOTSTRAP_TYPE = "memory-bootstrap";
 const SELF_BOOTSTRAP_TYPE = "self-bootstrap";
 const SKILL_INVOCATION_TYPE = "skill-invocation";
@@ -90,9 +87,11 @@ type SessionTimeAnchorMessage = Omit<CustomMessage, "content"> & {
   customType: typeof SESSION_TIME_ANCHOR_TYPE;
   content: string;
 };
-// MEMORY.md / SELF.md 共通の context-bootstrap メッセージ型（詳細は ContextBootstrapChannel 定義を参照）
 type ContextBootstrapMessage = Omit<CustomMessage, "content"> & {
-  customType: typeof MEMORY_BOOTSTRAP_TYPE | typeof SELF_BOOTSTRAP_TYPE;
+  customType:
+    | typeof CONTEXT_BOOTSTRAP_TYPE
+    | typeof MEMORY_BOOTSTRAP_TYPE
+    | typeof SELF_BOOTSTRAP_TYPE;
   content: string;
 };
 type SkillInvocationMessage = Omit<CustomMessage, "content"> & {
@@ -103,26 +102,6 @@ type SkillInvocationMessage = Omit<CustomMessage, "content"> & {
 // グループ system prompt がない場合のフォールバック。ペルソナはグループ側で
 // 上書きされる前提のため、ここには全グループ共通で成り立つ最小限だけを書く。
 export const DEFAULT_SYSTEM_PROMPT = "You are a helpful Discord assistant.";
-
-// MEMORY.md / SELF.md をコンテキストに注入する際の文字数上限（同上限。
-// SELF.md 側は docs/todo/issue-persona-growth.md のガードレール要件）
-const MEMORY_CHAR_LIMIT = 2000;
-const SELF_CHAR_LIMIT = 2000;
-
-const CONTEXT_BOOTSTRAP_CHANNELS: ContextBootstrapChannel[] = [
-  {
-    customType: MEMORY_BOOTSTRAP_TYPE,
-    path: "/workspace/MEMORY.md",
-    header: "Memory (MEMORY.md)",
-    charLimit: MEMORY_CHAR_LIMIT,
-  },
-  {
-    customType: SELF_BOOTSTRAP_TYPE,
-    path: "/workspace/memory/SELF.md",
-    header: "Persona (SELF.md)",
-    charLimit: SELF_CHAR_LIMIT,
-  },
-];
 
 const STEER_ACK_PREFIX = "__AGENT_STEER_ACK__:";
 
@@ -217,17 +196,6 @@ function isSkillInvocationMessage(
   return getCustomType(msg) === SKILL_INVOCATION_TYPE;
 }
 
-// MEMORY.md / SELF.md は「ワークスペース上のファイルをセッション初回に一度だけ
-// 擬似ユーザーメッセージとして注入する」という同一の仕組みを共有する（context-bootstrap
-// チャンネル）。差分は customType・読み込みパス・見出し・文字数上限のみなので、
-// ここに定義を1箇所へ集約し、runAgentLoop / defaultConvertToLlm 側はこの配列を走査するだけにする。
-type ContextBootstrapChannel = {
-  customType: typeof MEMORY_BOOTSTRAP_TYPE | typeof SELF_BOOTSTRAP_TYPE;
-  path: string;
-  header: string;
-  charLimit: number;
-};
-
 /** カスタムプロバイダーの API キーを credential-proxy + 環境変数から取得 */
 async function getCustomProviderApiKey(
   provider: string,
@@ -311,21 +279,23 @@ async function loadOrCreateSessionTimeAnchor(
 }
 
 function formatBootstrapSection(
-  channel: ContextBootstrapChannel,
+  file: NonNullable<AgentRuntimeConfig["contextFiles"]>[number],
   content: string,
 ): string {
   const codePoints = Array.from(content);
-  if (codePoints.length <= channel.charLimit) {
-    return `## ${channel.header}\n\n${content}`;
+  if (file.maxChars === "*" || codePoints.length <= file.maxChars) {
+    return `## Context (${file.path})\n\n${content}`;
   }
 
-  const truncated = codePoints.slice(0, channel.charLimit).join("");
-  return `## ${channel.header}\n\n${truncated}\n\n[Warning: ${channel.header} exceeds the limit (${channel.charLimit} characters). Delete or summarize old content to keep it organized]`;
+  const truncated = codePoints.slice(0, file.maxChars).join("");
+  return `## Context (${file.path})\n\n${truncated}\n\n[Warning: Context (${file.path}) exceeds the limit (${file.maxChars} characters)]`;
 }
 
-const CONTEXT_BOOTSTRAP_TYPES = new Set(
-  CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
-);
+const CONTEXT_BOOTSTRAP_TYPES = new Set([
+  CONTEXT_BOOTSTRAP_TYPE,
+  MEMORY_BOOTSTRAP_TYPE,
+  SELF_BOOTSTRAP_TYPE,
+]);
 
 type ReadToolDetails = {
   path?: unknown;
@@ -494,7 +464,7 @@ export async function runAgentLoop(
     return m.stopReason !== "error" && m.stopReason !== "aborted";
   });
 
-  // bootstrap 系（system-prompt-snapshot / context-bootstrap＝memory-bootstrap・self-bootstrap）は
+  // bootstrap 系（system-prompt-snapshot / context-bootstrap / legacy bootstrap）は
   // 常に先頭に並べる。保存済みentryの途中に追加された bootstrap をロード後に
   // 並べ替え、現在のターンと次回ロード時の LLM-visible ordering を安定させる。
   const isBootstrapMessage = (m: AgentMessage) =>
@@ -512,11 +482,12 @@ export async function runAgentLoop(
     isSystemPromptSnapshotMessage,
   );
   const needsSystemPromptSnapshot = !existingSystemPromptSnapshot;
-  const channelsNeedingBootstrap = CONTEXT_BOOTSTRAP_CHANNELS.filter(
-    (channel) => !messages.some((m) => getCustomType(m) === channel.customType),
+  const needsContextBootstrap = !messages.some((message) =>
+    CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? ""),
   );
+  const contextFiles = groupConfig.contextFiles ?? [];
 
-  const [loadedSystemPrompt, skills, channelFileContents] = await Promise.all([
+  const [loadedSystemPrompt, skills, contextFileContents] = await Promise.all([
     identity?.systemPromptSnapshotPresent !== undefined
       ? Promise.resolve(
           identity.systemPromptSnapshotPresent
@@ -528,21 +499,23 @@ export async function runAgentLoop(
           (await loadGroupSystemPrompt()))
         : Promise.resolve(null),
     loadSkills("/workspace/SKILLS", groupConfig.skills),
-    Promise.all(
-      channelsNeedingBootstrap.map((c) =>
-        c.customType === MEMORY_BOOTSTRAP_TYPE &&
-        identity?.memorySnapshotPresent !== undefined
-          ? Promise.resolve(
-              identity.memorySnapshotPresent
-                ? (identity.memorySnapshotContent ?? "")
-                : null,
-            )
-          : c.customType === MEMORY_BOOTSTRAP_TYPE &&
-              identity?.memorySnapshotContent !== undefined
-            ? Promise.resolve(identity.memorySnapshotContent)
-            : loadWorkspaceFile(c.path),
-      ),
-    ),
+    needsContextBootstrap
+      ? Promise.all(
+          contextFiles.map((file) =>
+            file.path === "MEMORY.md" &&
+            identity?.memorySnapshotPresent !== undefined
+              ? Promise.resolve(
+                  identity.memorySnapshotPresent
+                    ? (identity.memorySnapshotContent ?? "")
+                    : null,
+                )
+              : file.path === "MEMORY.md" &&
+                  identity?.memorySnapshotContent !== undefined
+                ? Promise.resolve(identity.memorySnapshotContent)
+                : loadWorkspaceFile(`/workspace/${file.path}`),
+          ),
+        )
+      : Promise.resolve([]),
   ]);
 
   // `./command スキル名` 形式のメッセージは、LLMの自律判断を待たずに
@@ -624,8 +597,8 @@ export async function runAgentLoop(
   const existingMemorySnapshot = messages.find(
     (message) => getCustomType(message) === MEMORY_BOOTSTRAP_TYPE,
   );
-  const memoryBootstrapIndex = channelsNeedingBootstrap.findIndex(
-    (channel) => channel.customType === MEMORY_BOOTSTRAP_TYPE,
+  const memoryFileIndex = contextFiles.findIndex(
+    (file) => file.path === "MEMORY.md",
   );
   const memoryContent =
     identity?.memorySnapshotPresent !== undefined
@@ -635,8 +608,8 @@ export async function runAgentLoop(
       : (identity?.memorySnapshotContent ??
         (existingMemorySnapshot && "content" in existingMemorySnapshot
           ? String(existingMemorySnapshot.content)
-          : memoryBootstrapIndex >= 0
-            ? (channelFileContents[memoryBootstrapIndex] ?? null)
+          : memoryFileIndex >= 0
+            ? (contextFileContents[memoryFileIndex] ?? null)
             : null));
   const memorySnapshotHash = snapshotHash(memoryContent);
   const computedSnapshotHash =
@@ -667,7 +640,7 @@ export async function runAgentLoop(
   // これは意図的な挙動: 「空の system prompt」を置くことを、グループがベースプロンプトを
   // 明示的にオプトアウトする手段として扱う（ファイル不存在=null の場合のみ DEFAULT を適用する）。
   //
-  // MEMORY.md / SELF.md は下の context-bootstrap 注入によって会話履歴経由で LLM に届く
+  // contextFiles は下の context-bootstrap 注入によって会話履歴経由で LLM に届く
   // （user role に変換されるため、system prompt と二重注入にはならない）。
   const systemPromptContent =
     identity?.systemPromptSnapshotPresent !== undefined
@@ -705,32 +678,36 @@ export async function runAgentLoop(
     newBootstrapMessages.push(systemPromptSnapshotMessage);
   }
 
-  // 新規セッション、または未保存のbootstrapがある既存セッションの場合、
-  // MEMORY.md / SELF.md を custom メッセージとして注入する。
-  // 各ファイルが空文字でも「ファイルは存在し空である」という状態を固定化するため、
-  // null（値不存在）とは区別して書き込む（system prompt と同様、そうしないと毎ターン再読み込みし続ける）
-  for (const [i, channel] of channelsNeedingBootstrap.entries()) {
-    const fileContent = channelFileContents[i];
-    if (fileContent === null) continue;
-    const bootstrapMessage: ContextBootstrapMessage = {
-      role: "custom",
-      customType: channel.customType,
-      content: formatBootstrapSection(channel, fileContent),
-      display: false,
-      timestamp: Date.now(),
-    };
-    await appendMessage(groupName, sessionId, bootstrapMessage);
-    newBootstrapMessages.push(bootstrapMessage);
+  // 設定順で存在するファイルを1つの擬似user messageへ固定する。
+  if (needsContextBootstrap) {
+    const sections = contextFiles.flatMap((file, index) => {
+      const fileContent = contextFileContents[index];
+      return fileContent === null
+        ? []
+        : [formatBootstrapSection(file, fileContent)];
+    });
+    if (sections.length > 0) {
+      const bootstrapMessage: ContextBootstrapMessage = {
+        role: "custom",
+        customType: CONTEXT_BOOTSTRAP_TYPE,
+        content: sections.join("\n\n"),
+        display: false,
+        timestamp: Date.now(),
+      };
+      await appendMessage(groupName, sessionId, bootstrapMessage);
+      newBootstrapMessages.push(bootstrapMessage);
+    }
   }
 
-  // newBootstrapMessages を先頭へ丸ごと prepend すると、既存の memory-bootstrap に
-  // self-bootstrapだけを追加する場合などで正規順序が崩れる。次回ロード時とも
-  // 順序が食い違わないよう、bootstrap種別の正規順序
+  // 新規bootstrapとlegacy bootstrapが混在しても次回ロード時と順序が
+  // 食い違わないよう、bootstrap種別の正規順序
   // （system-prompt-snapshot → CONTEXT_BOOTSTRAP_CHANNELS の定義順）でマージする。
   if (newBootstrapMessages.length > 0) {
     const bootstrapOrder = [
       SYSTEM_PROMPT_SNAPSHOT_TYPE as string,
-      ...CONTEXT_BOOTSTRAP_CHANNELS.map((c) => c.customType as string),
+      MEMORY_BOOTSTRAP_TYPE,
+      SELF_BOOTSTRAP_TYPE,
+      CONTEXT_BOOTSTRAP_TYPE,
     ];
     const orderIndex = (m: AgentMessage) =>
       bootstrapOrder.indexOf(getCustomType(m) ?? "");

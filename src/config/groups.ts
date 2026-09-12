@@ -35,6 +35,21 @@ export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type SkillSelection = z.infer<typeof SkillSelectionSchema>;
 export type MountConfig = z.infer<typeof MountConfigSchema>;
 
+export const ContextFileConfigSchema = z.object({
+  path: z
+    .string()
+    .min(1)
+    .refine(
+      (value) =>
+        !value.startsWith("/") &&
+        value.split("/").every((segment) => segment !== ".."),
+      "contextFiles.path はworkspace相対パスで指定してください",
+    ),
+  maxChars: z.union([z.number().int().positive(), z.literal("*")]),
+});
+
+export type ContextFileConfig = z.infer<typeof ContextFileConfigSchema>;
+
 /** Effective agent configuration after all trusted layers are resolved. */
 export interface AgentConfig {
   model?: ModelConfig;
@@ -42,6 +57,7 @@ export interface AgentConfig {
   approvalRequiredTools?: string[];
   skills?: SkillSelection;
   mounts?: MountConfig[];
+  contextFiles?: ContextFileConfig[];
 }
 
 // 各信頼済み設定階層で指定できるエージェント実行設定。
@@ -53,6 +69,7 @@ export const AgentConfigSchema = z.object({
   approvalRequiredTools: z.array(z.string()).optional(),
   skills: SkillSelectionSchema.optional(),
   mounts: z.array(MountConfigSchema).optional(),
+  contextFiles: z.array(ContextFileConfigSchema).optional(),
 });
 
 // sandboxへ渡す実行設定。group限定のtoolLogArgsはagentのイベント整形に必要だが、

@@ -917,9 +917,18 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
     ? await loadBotTaskSystemPrompt(msg.groupName, msg.sessionId)
     : ((await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
       undefined);
-  let memorySnapshotContent = await readOptional(
-    path.join("groups", msg.groupName, "memory", "MEMORY.md"),
-  );
+  const groupConfig = await findGroupByName(msg.groupName);
+  const contextFiles = resolveAgentConfig(
+    groupConfig,
+    msg.configOverride,
+  ).contextFiles;
+  let memorySnapshotContent = contextFiles?.some(
+    (file) => file.path === "MEMORY.md",
+  )
+    ? await readOptional(
+        path.join("groups", msg.groupName, "memory", "MEMORY.md"),
+      )
+    : undefined;
   const sessionMessages = await loadMessages(msg.groupName, msg.sessionId);
   for (const entry of sessionMessages as Array<{
     customType?: string;

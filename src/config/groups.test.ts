@@ -63,6 +63,7 @@ describe("loadGroups", () => {
         toolLogArgs: true,
         skills: ["session-logs"],
         mounts: [{ host: "repo", container: "/repo", readOnly: true }],
+        contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
         channels: [],
       },
     ]);
@@ -75,6 +76,7 @@ describe("loadGroups", () => {
       toolLogArgs: true,
       skills: ["session-logs"],
       mounts: [{ host: "repo", container: "/repo", readOnly: true }],
+      contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
     });
   });
 
@@ -95,6 +97,7 @@ describe("loadGroups", () => {
             approvalRequiredTools: [],
             skills: "*",
             mounts: [{ host: "channel", container: "/channel" }],
+            contextFiles: [],
             allowMention: true,
             toolLogArgs: true,
           },
@@ -109,6 +112,7 @@ describe("loadGroups", () => {
       approvalRequiredTools: [],
       skills: "*",
       mounts: [{ host: "channel", container: "/channel" }],
+      contextFiles: [],
     });
     expect(groups[0].channels[0]).not.toHaveProperty("allowMention");
     expect(groups[0].channels[0]).not.toHaveProperty("toolLogArgs");
@@ -134,6 +138,20 @@ describe("loadGroups", () => {
     expect(groups[0].toolLogArgs).toBeUndefined();
     expect(groups[0].skills).toBeUndefined();
     expect(groups[0].mounts).toBeUndefined();
+    expect(groups[0].contextFiles).toBeUndefined();
+  });
+
+  it("contextFilesはworkspace相対pathと正のmaxCharsだけを許可する", async () => {
+    for (const contextFiles of [
+      [{ path: "/etc/passwd", maxChars: 1 }],
+      [{ path: "memory/../secret", maxChars: 1 }],
+      [{ path: "MEMORY.md", maxChars: 0 }],
+    ]) {
+      const { loadGroups } = await setupRawGroups([
+        { name: "chat", channels: [], contextFiles },
+      ]);
+      await expect(loadGroups()).rejects.toThrow();
+    }
   });
 });
 

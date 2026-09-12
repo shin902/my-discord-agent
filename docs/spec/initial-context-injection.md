@@ -12,7 +12,7 @@ GitHub Issue: #117 / 初期実装 PR: #122（マージ済み）
 
 ## 基本方針
 
-- 通常sessionのグループsystem prompt / MEMORY.md / SELF.md はセッション初回に固定し、2回目以降はファイルを再読込しない。
+- 通常sessionのグループsystem promptとAgentConfig `contextFiles`はセッション初回に固定し、2回目以降はファイルを再読込しない。
 - Bot Task Sessionのbase roleはgroup/Main promptではなく、Task作成時の `bot.instructions` を同じgeneric snapshotへ固定する。
 - セッション開始時刻は **hour単位の固定アンカー**として systemPrompt に含める。
 - 現在日時を毎ターン systemPrompt へ再注入しない。
@@ -20,21 +20,21 @@ GitHub Issue: #117 / 初期実装 PR: #122（マージ済み）
 - 正確な「今」が必要な処理は、許可された AgentConfig で `date` ツールを使う。
 - 将来、長期間空いたセッション再開時に `Session resumed at ...` のような新規 tail event を追加する案はあるが、初版には含めない。
 
-## グループsystem prompt / MEMORY.md / SELF.md の固定
+## グループsystem prompt / contextFiles の固定
 
 pi-agent-core 標準の `CustomMessage`（`role: "custom"`）と独自 `convertToLlm` を利用する。`display: false` はTUI表示用で、LLM送信可否とは別概念。
 
 | customType | 対象 | LLM への渡し方 |
 |---|---|---|
 | `system-prompt-snapshot` | 通常sessionはグループsystem prompt（AGENTS.md）、Bot Task SessionはBot instructions | チャット履歴には乗せない。systemPrompt の組み立てにのみ使う |
-| `memory-bootstrap` | MEMORY.md | 最初の1件のみ `role: "user"` に展開 |
-| `self-bootstrap` | `/workspace/memory/SELF.md` | 最初の1件のみ `role: "user"` に展開 |
+| `context-bootstrap` | AgentConfig `contextFiles`で指定した存在するファイル（設定順に結合） | 最初の1件のみ `role: "user"` に展開 |
+| `memory-bootstrap` / `self-bootstrap` | 旧sessionのMEMORY.md / SELF.md snapshot | 後方互換として最初の1件のみ `role: "user"` に展開 |
 | `skill-invocation` | `./command` で明示実行したスキル本文 | 出現するたび `role: "user"` に展開 |
 
-### グループsystem promptと MEMORY.md / SELF.md の扱いが異なる理由
+### グループsystem promptと contextFiles の扱いが異なる理由
 
 - **グループsystem promptは system role に残す**: 指示遵守の優先度を維持する。初回に `system-prompt-snapshot` として固定し、以後はその内容を systemPrompt に再利用する。
-- **MEMORY.md / SELF.md は user role に変換**: system prompt との二重注入を避けつつ、会話履歴の一部として届ける。
+- **contextFiles は user role に変換**: system prompt との二重注入を避けつつ、会話履歴の一部として届ける。`MEMORY.md` / `memory/SELF.md`も特別扱いせず、必要なら明示設定する。
 
 ### なぜ生の user メッセージとして保存しないか
 
@@ -55,7 +55,7 @@ Bot固有のsnapshot typeやschemaは持たない。Main Agentのsnapshot semant
 - 保存済み `system-prompt-snapshot`（旧名 `agents-snapshot` も含む）はそのまま使う。旧group/Main roleの場合も保持するが、現在のBot instructionsのdynamic appendは行わない。Bot固有roleへ切り替えるには新規runを使う。
 - snapshotのないTaskは実行を拒否し、新規runを案内する。queue経由は非リトライ可能な `dead_letter`、direct経由はエラーとなる。履歴の補完・破壊的移行はしない。
 
-session time anchorは従来どおり初回runner実行時に初期化する。skills、MEMORY.md / SELF.mdのcontext-bootstrap、request-scoped `systemPromptAppend` は共通runtime layerとして維持する。
+session time anchorは従来どおり初回runner実行時に初期化する。skills、AgentConfig `contextFiles`のcontext-bootstrap、request-scoped `systemPromptAppend` は共通runtime layerとして維持する。
 
 ## セッション時刻アンカー
 
@@ -107,20 +107,20 @@ Use the `date` tool when current time matters.
 3. `formatSkillsForPrompt()` のスキル一覧（有効な場合）
 4. request-scoped `systemPromptAppend`（cron の NO_REPLY 指示など、有効な場合）
 
-MEMORY.md / SELF.md はここへ重複注入せず、context-bootstrap 経由で会話履歴へ入る。
+`contextFiles` はここへ重複注入せず、context-bootstrap 経由で会話履歴へ入る。
 
 ## 空ファイルの扱い（オプトアウト仕様）
 
 ファイル不存在（`null`）と空文字（`""`）を区別する。
 
 - **グループsystem promptが空文字**: `system-prompt-snapshot` を空内容で保存し、DEFAULT_SYSTEM_PROMPT も除外する。結果として systemPrompt は固定session start time（+ skills / request append）のみになる。
-- **MEMORY.md / SELF.md が空文字**: 対応する bootstrap を空内容で保存し、「存在するが空」の状態を固定する。
+- **contextFiles内のファイルが空文字**: context-bootstrap内へ空のsectionを保存し、「存在するが空」の状態を固定する。不存在ファイルはsectionを作らない。
 
 空文字でもスナップショット/bootstrapを保存しないと「内容なし」と「未注入」を区別できず、毎ターン再読込する非対称性が生じるため、この挙動は意図的である。
 
 ## ロード時の並べ替え
 
-trajectory内の bootstrap 系（`system-prompt-snapshot` / `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。保存済みentryの途中に bootstrap が追加されても、現在のターンと次回ロード時で LLM-visible ordering が変わらないようにするため。
+trajectory内の bootstrap 系（`system-prompt-snapshot` / `context-bootstrap` / legacy `memory-bootstrap` / `self-bootstrap`）は `loadMessages()` 後に正規順序で履歴先頭へ並べ替える。保存済みentryの途中に bootstrap が追加されても、現在のターンと次回ロード時で LLM-visible ordering が変わらないようにするため。
 
 時刻アンカーは systemPrompt にだけ使うため、この並べ替え対象にはならない。
 
@@ -136,7 +136,7 @@ trajectory内の bootstrap 系（`system-prompt-snapshot` / `memory-bootstrap` /
 
 - 一度 LLM に渡した過去の会話本文を、時刻付与のために後から変更しない。
 - session time anchor は初回決定後に更新しない。
-- MEMORY.md / SELF.md の bootstrap 順序をセッション途中で変えない。
+- contextFilesのbootstrap順序をセッション途中で変えない。
 - live current time を system prompt の変動要素にしない。
 
 これにより、時間認識のために prefix/KV cache の安定性を犠牲にしない。

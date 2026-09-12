@@ -840,7 +840,13 @@ describe("runAgentLoop", () => {
       "test-group",
       "bot-task-1",
       "work",
-      { skills: "*" },
+      {
+        skills: "*",
+        contextFiles: [
+          { path: "MEMORY.md", maxChars: 2000 },
+          { path: "memory/SELF.md", maxChars: 2000 },
+        ],
+      },
       {
         systemPromptSnapshotContent: "Bot role A",
         systemPromptSnapshotPresent: true,
@@ -862,15 +868,13 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).not.toContain("shared memory");
     expect(systemPrompt).not.toContain("shared self context");
     expect(readFile).not.toHaveBeenCalledWith("/workspace/AGENTS.md", "utf-8");
-    expect(messages.slice(0, 3)).toMatchObject([
+    expect(messages.slice(0, 2)).toMatchObject([
       { customType: "system-prompt-snapshot", content: "Bot role A" },
       {
-        customType: "memory-bootstrap",
-        content: expect.stringContaining("shared memory"),
-      },
-      {
-        customType: "self-bootstrap",
-        content: expect.stringContaining("shared self context"),
+        customType: "context-bootstrap",
+        content: expect.stringMatching(
+          /shared memory[\s\S]*shared self context/,
+        ),
       },
     ]);
     expect(appendMessage).not.toHaveBeenCalledWith(
@@ -880,7 +884,7 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("新規セッションでは AGENTS.md は system-prompt-snapshot として、MEMORY.md は memory-bootstrap として保存する", async () => {
+  it("新規セッションでは設定したcontext fileをcontext-bootstrapとして保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -900,7 +904,9 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
+    });
 
     // system-prompt-snapshot が appendMessage で保存される（system role 維持のため AGENTS.md 原文をそのまま保持）
     expect(appendMessage).toHaveBeenCalledWith(
@@ -912,18 +918,17 @@ describe("runAgentLoop", () => {
         content: "カスタムプロンプト",
       }),
     );
-    // memory-bootstrap が appendMessage で保存される
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "custom",
-        customType: "memory-bootstrap",
+        customType: "context-bootstrap",
         content: expect.stringContaining("ユーザーは猫が好き"),
       }),
     );
 
-    // messages 配列の先頭に system-prompt-snapshot、続いて memory-bootstrap が含まれる
+    // messages 配列の先頭に system-prompt-snapshot、続いて context-bootstrap が含まれる
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
@@ -933,11 +938,11 @@ describe("runAgentLoop", () => {
     });
     expect(messages[1]).toMatchObject({
       role: "custom",
-      customType: "memory-bootstrap",
+      customType: "context-bootstrap",
     });
   });
 
-  it("新規セッションでは SELF.md も memory-bootstrap と同様に self-bootstrap として保存する（system-prompt-snapshot・memory-bootstrap に続いて3番目）", async () => {
+  it("複数context fileを設定順に1つのcontext-bootstrapへ保存する", async () => {
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -960,35 +965,31 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [
+        { path: "MEMORY.md", maxChars: 2000 },
+        { path: "memory/SELF.md", maxChars: 2000 },
+      ],
+    });
 
-    // self-bootstrap が appendMessage で保存される
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({
         role: "custom",
-        customType: "self-bootstrap",
-        content: expect.stringContaining("一人称は「僕」"),
-      }),
-    );
-    expect(appendMessage).toHaveBeenCalledWith(
-      "test-group",
-      "session-1",
-      expect.objectContaining({
-        role: "custom",
-        customType: "self-bootstrap",
-        content: expect.stringContaining("## Persona (SELF.md)"),
+        customType: "context-bootstrap",
+        content: expect.stringMatching(
+          /ユーザーは猫が好き[\s\S]*一人称は「僕」/,
+        ),
       }),
     );
 
-    // messages 配列は system-prompt-snapshot → memory-bootstrap → self-bootstrap の順で並ぶ
+    // messages 配列は system-prompt-snapshot → context-bootstrap の順で並ぶ
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({ customType: "system-prompt-snapshot" });
-    expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
-    expect(messages[2]).toMatchObject({ customType: "self-bootstrap" });
+    expect(messages[1]).toMatchObject({ customType: "context-bootstrap" });
   });
 
   it("新規セッションで AGENTS.md はあるが MEMORY.md がない場合は system-prompt-snapshot のみ保存する", async () => {
@@ -1199,7 +1200,7 @@ describe("runAgentLoop", () => {
     expect(promptAppends).toHaveLength(0);
   });
 
-  it("memory-bootstrap のみ既存で self-bootstrap がない場合、SELF.md だけを追加する（チャンネルごとに独立判定）", async () => {
+  it("legacy bootstrapがある既存sessionへ新しいcontextFilesを途中追加しない", async () => {
     vi.mocked(loadMessages).mockResolvedValue([
       {
         role: "custom",
@@ -1224,34 +1225,22 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [{ path: "memory/SELF.md", maxChars: 2000 }],
+    });
 
-    // MEMORY.md は既存の bootstrap があるため再読み込みしない
-    expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
-    // SELF.md は bootstrap がまだ無いため読み込んで追加する
-    expect(appendMessage).toHaveBeenCalledWith(
+    expect(readFile).not.toHaveBeenCalledWith(
+      "/workspace/memory/SELF.md",
+      "utf-8",
+    );
+    expect(appendMessage).not.toHaveBeenCalledWith(
       "test-group",
       "session-1",
-      expect.objectContaining({
-        role: "custom",
-        customType: "self-bootstrap",
-        content: expect.stringContaining("後から生えた人格"),
-      }),
+      expect.objectContaining({ customType: "context-bootstrap" }),
     );
-    // memory-bootstrap は再書き込みされない
-    const memoryAppends = vi
-      .mocked(appendMessage)
-      .mock.calls.filter(
-        (call) =>
-          call[2] &&
-          typeof call[2] === "object" &&
-          "customType" in call[2] &&
-          (call[2] as { customType: string }).customType === "memory-bootstrap",
-      );
-    expect(memoryAppends).toHaveLength(0);
   });
 
-  it("memory-bootstrap のみ既存のターンでも、LLM へ渡す順序は memory-bootstrap → self-bootstrap になる", async () => {
+  it("legacy bootstrapがある既存sessionの順序を維持する", async () => {
     vi.mocked(loadMessages).mockResolvedValue([
       {
         role: "custom",
@@ -1276,15 +1265,15 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [{ path: "memory/SELF.md", maxChars: 2000 }],
+    });
 
-    // self-bootstrap が memory-bootstrap より前に来てはいけない
-    // （次回ロード時と順序が変わるとプロンプトキャッシュが不安定になる）
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
+    expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ customType: "memory-bootstrap" });
-    expect(messages[1]).toMatchObject({ customType: "self-bootstrap" });
   });
 
   it("既存セッション（スナップショットなし）は AGENTS.md をスナップショット化し、MEMORY.md を memory-bootstrap に追加する", async () => {
@@ -1312,7 +1301,9 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
+    });
 
     // AGENTS.md は systemPrompt に含まれる（system role として復元）
     const systemPrompt = (
@@ -1339,7 +1330,7 @@ describe("runAgentLoop", () => {
       "session-1",
       expect.objectContaining({
         role: "custom",
-        customType: "memory-bootstrap",
+        customType: "context-bootstrap",
         content: expect.stringContaining("旧記憶"),
       }),
     );
@@ -1349,8 +1340,8 @@ describe("runAgentLoop", () => {
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({ customType: "system-prompt-snapshot" });
-    expect(messages[1]).toMatchObject({ customType: "memory-bootstrap" });
-    // 既存履歴1件 + system-prompt-snapshot 1件 + memory-bootstrap 1件
+    expect(messages[1]).toMatchObject({ customType: "context-bootstrap" });
+    // 既存履歴1件 + system-prompt-snapshot 1件 + context-bootstrap 1件
     expect(messages).toHaveLength(3);
   });
 
@@ -1444,7 +1435,7 @@ describe("runAgentLoop", () => {
     expect(messages[0]).toMatchObject({ role: "user", content: "前回の質問" });
   });
 
-  it("MEMORY.md が文字数上限を超える場合は切り詰めて警告を注入する（新規セッションの bootstrap メッセージ）", async () => {
+  it("maxCharsを超えるcontext fileを切り詰めて警告を注入する", async () => {
     const longMemory = "あ".repeat(3000);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/MEMORY.md") {
@@ -1462,9 +1453,10 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
+    });
 
-    // memory-bootstrap メッセージの content に切り詰めた MEMORY.md が含まれる
     const bootstrapCall = vi
       .mocked(appendMessage)
       .mock.calls.find(
@@ -1472,7 +1464,8 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "customType" in call[2] &&
-          (call[2] as { customType: string }).customType === "memory-bootstrap",
+          (call[2] as { customType: string }).customType ===
+            "context-bootstrap",
       );
     expect(bootstrapCall).toBeDefined();
     const bootstrapContent = (bootstrapCall?.[2] as { content: string })
@@ -1482,7 +1475,7 @@ describe("runAgentLoop", () => {
     expect(bootstrapContent).toContain("exceeds the limit (2000 characters)");
   });
 
-  it("SELF.md が文字数上限を超える場合は切り詰めて警告を注入する（新規セッションの bootstrap メッセージ）", async () => {
+  it('maxChars="*"ならcontext fileを切り詰めない', async () => {
     const longSelf = "い".repeat(3000);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/memory/SELF.md") {
@@ -1500,7 +1493,9 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", {});
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [{ path: "memory/SELF.md", maxChars: "*" }],
+    });
 
     const bootstrapCall = vi
       .mocked(appendMessage)
@@ -1509,14 +1504,14 @@ describe("runAgentLoop", () => {
           call[2] &&
           typeof call[2] === "object" &&
           "customType" in call[2] &&
-          (call[2] as { customType: string }).customType === "self-bootstrap",
+          (call[2] as { customType: string }).customType ===
+            "context-bootstrap",
       );
     expect(bootstrapCall).toBeDefined();
     const bootstrapContent = (bootstrapCall?.[2] as { content: string })
       .content;
-    expect(bootstrapContent).toContain("い".repeat(2000));
-    expect(bootstrapContent).not.toContain("い".repeat(2001));
-    expect(bootstrapContent).toContain("exceeds the limit (2000 characters)");
+    expect(bootstrapContent).toContain(longSelf);
+    expect(bootstrapContent).not.toContain("exceeds the limit");
   });
 
   it("不明なプロバイダはエラーをスロー", async () => {

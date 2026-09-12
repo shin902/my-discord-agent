@@ -78,6 +78,7 @@ data/cron/
 | `approvalRequiredTools` | オプション | string[] | AgentConfig。effective `tools` に含まれる既知host/runtime capabilityのうちapprovalを挟むtool名。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合はapprovalなし。jobで未指定なら親を継承し、`[]` は明示解除。親の配列を完全置換 |
 | `skills` | オプション | string[] / `"*"` | AgentConfig。親のスキル指定を完全置換 |
 | `mounts` | オプション | object[] | AgentConfig。コンテナへの追加マウント。親のmounts配列を完全置換 |
+| `contextFiles` | オプション | object[] | AgentConfig。workspace相対ファイルをsession初回のuser roleへ注入する。親の配列を完全置換し、`[]`で無効化 |
 | `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |
 
 handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
