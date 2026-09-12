@@ -35,6 +35,11 @@ relative to the group workspace. Only explicitly listed files are loaded;
 missing files are skipped and subordinate memory files are not expanded.
 Existing legacy files and sessions are not migrated or deleted.
 
+Optional `nanoclaw-memory-daily` and `nanoclaw-memory-weekly` jobs are included
+in [`config/cron.example.json`](../config/cron.example.json). They are disabled
+by default and use distinct IDs, so operators can enable them independently of
+or alongside the existing `memory-daily` / `memory-weekly` jobs.
+
 Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 
 ```text
