@@ -117,7 +117,6 @@ Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加�
 | `./command session-logs` | 追加指示なしで `session-logs` を実行させる |
 
 **仕組み（`src/skills/command.ts` / `src/sandbox/agent-runner.ts`）:**
-
 - `parseSkillCommand()` がメッセージ先頭の `./command スキル名` パターンを解析する
 - 指定されたスキル名が実行時の `skills` 許可リストに存在しない場合、LLM を呼ばずに利用可能なスキル一覧をエラーとして即時返信する
 - 存在する場合、`SKILL.md` のフロントマターを除いた本文を「このスキルの手順に従って実行してください」という指示文に整形し、`role: "custom"` / `customType: "skill-invocation"` の専用メッセージとして組み立てる
@@ -199,7 +198,7 @@ Markdownファイルを、CDN/外部JS依存なしの単一HTMLファイルに�
 
 **場所:** `templates/SKILLS/mnemon/SKILL.md`
 
-Agent Runner imageに固定versionのMnemon CLIを同梱し、`mnemon` Skillを有効にしたAgentだけが既存の`bash` Toolから利用できる。データディレクトリは`MNEMON_DATA_DIR=/workspace/.mnemon`で、groupごとの`/workspace` mountに保存されるため、使い捨てRunnerを跨いで残るがgroup間では共有されない。
+Agent Runner imageに固定versionのMnemon CLIを同梱し、`mnemon` Skillを有効にしたAgentへ既存の`bash` Toolからの利用方法を提示する。データディレクトリは`MNEMON_DATA_DIR=/workspace/.mnemon`で、groupごとの`/workspace` mountに保存されるため、使い捨てRunnerを跨いで残るがgroup間では共有されない。
 
 Skillでは、将来も役立つdecision・preference・fact・constraintだけを`recall` / `remember` / `link`する。秘密情報、短命な運用状態、既存の`MEMORY.md` / session history / Memory exportの内容を理由なく複製しない。毎turnの自動recall・remember、lifecycle hook、native Tool、embedding endpoint、global storeは提供しない。利用するAgentのeffective `skills` に`mnemon`、`tools` に`bash`を明示する。
 
