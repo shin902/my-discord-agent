@@ -18,6 +18,7 @@ data/
   runtime.sqlite-wal    # runtime DBのWAL（存在する場合）
   runtime.sqlite-shm    # runtime DBの共有メモリ（存在する場合）
   rss.sqlite3           # RSS収集・dispatch状態（runtime DBとは別）
+  screen-captures.sqlite # host専用の画面PNG BLOB・受信時刻・要約（NULLなら未読）
   memory-export.sqlite  # backend/group/sourceごとのexport成功markerのみ
   sessions/
     <groupName>/
@@ -76,6 +77,10 @@ DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.s
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。session renameはentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 
 実装の正本は [session.ts](../src/agent/session.ts) です。
+
+## Screen captures
+
+`data/screen-captures.sqlite`は画像本体と未読状態を一緒に保存するhost専用DBです。`summary IS NULL`を未読の正本とし、要約保存と既読化を1つのSQL更新で確定します。WAL運用のため稼働中のmain file単独copyは避け、SQLite backup APIを使用してください。runtime DB backupには含まれません。設定・schema・Mac送信・retentionは [画面画像の収集と要約](screen-capture.md) を参照してください。
 
 ## Memory export ledger
 

@@ -13,6 +13,7 @@ import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { loadProviders } from "./config/providers.js";
+import { loadScreenCaptureReceiverConfig } from "./config/screen-capture.js";
 import { loadXSavedReceiverConfig } from "./config/x-saved.js";
 import {
   _setCronJobs,
@@ -29,6 +30,7 @@ import {
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
+import { startScreenCaptureReceiver } from "./integrations/screen-capture/receiver.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
 import {
   initCredentialProxyServer,
@@ -53,6 +55,7 @@ import {
 
 const groups = await loadGroups();
 let xSavedReceiver: Server | undefined;
+let screenCaptureReceiver: Server | undefined;
 try {
   const discordConfig = await loadDiscordConfig();
   const botRegistry = await loadBotRegistry();
@@ -125,6 +128,12 @@ try {
   if (xSavedConfig.enabled) {
     xSavedReceiver = await startXSavedReceiver({ port: xSavedConfig.port });
   }
+  const screenCaptureConfig = await loadScreenCaptureReceiverConfig();
+  if (screenCaptureConfig.enabled) {
+    screenCaptureReceiver = await startScreenCaptureReceiver({
+      port: screenCaptureConfig.port,
+    });
+  }
 } catch (err) {
   console.error("[startup] 設定の読み込みに失敗しました:", err);
   process.exit(1);
@@ -150,9 +159,9 @@ void loginDiscordClients();
 // 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。
 const shutdown = async (): Promise<void> => {
   beginManagerShutdown();
-  if (xSavedReceiver) {
-    const server = xSavedReceiver;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+  for (const server of [xSavedReceiver, screenCaptureReceiver]) {
+    if (server)
+      await new Promise<void>((resolve) => server.close(() => resolve()));
   }
   stopCron();
   stopPoller();

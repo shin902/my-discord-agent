@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   loadDiscordConfig: vi.fn(),
   loadXSavedReceiverConfig: vi.fn(),
   startXSavedReceiver: vi.fn(),
+  loadScreenCaptureReceiverConfig: vi.fn(),
+  startScreenCaptureReceiver: vi.fn(),
   loadBotRegistry: vi.fn(),
   startPoller: vi.fn(),
   stopPoller: vi.fn(),
@@ -55,6 +57,12 @@ vi.mock("./config/x-saved.js", () => ({
 }));
 vi.mock("./integrations/x-saved/receiver.js", () => ({
   startXSavedReceiver: mocks.startXSavedReceiver,
+}));
+vi.mock("./config/screen-capture.js", () => ({
+  loadScreenCaptureReceiverConfig: mocks.loadScreenCaptureReceiverConfig,
+}));
+vi.mock("./integrations/screen-capture/receiver.js", () => ({
+  startScreenCaptureReceiver: mocks.startScreenCaptureReceiver,
 }));
 vi.mock("./config/bots.js", () => ({
   loadBotRegistry: mocks.loadBotRegistry,
@@ -129,6 +137,10 @@ describe("index: 起動時バリデーション", () => {
     mocks.loadXSavedReceiverConfig.mockResolvedValue({
       enabled: false,
       port: 8787,
+    });
+    mocks.loadScreenCaptureReceiverConfig.mockResolvedValue({
+      enabled: false,
+      port: 8788,
     });
     mocks.loadBotRegistry.mockResolvedValue({});
     mocks.backfillDiscordMessages.mockResolvedValue(undefined);
@@ -344,6 +356,37 @@ describe("index: 起動時バリデーション", () => {
     listener?.("SIGTERM");
     await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(mockExit).toHaveBeenCalledWith(0));
+  });
+
+  it("starts and closes the opt-in screen capture receiver", async () => {
+    const close = vi.fn((callback: () => void) => callback());
+    mocks.loadScreenCaptureReceiverConfig.mockResolvedValue({
+      enabled: true,
+      port: 8788,
+    });
+    mocks.startScreenCaptureReceiver.mockResolvedValue({ close });
+    const listenersBefore = process.listeners("SIGTERM");
+    await import("./index.js");
+    expect(mocks.startScreenCaptureReceiver).toHaveBeenCalledWith({
+      port: 8788,
+    });
+    mockExit.mockImplementation(() => undefined);
+    const listener = process
+      .listeners("SIGTERM")
+      .find((entry) => !listenersBefore.includes(entry));
+    listener?.("SIGTERM");
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(mockExit).toHaveBeenCalledWith(0));
+  });
+
+  it("fails startup if the screen capture receiver cannot listen", async () => {
+    mocks.loadScreenCaptureReceiverConfig.mockResolvedValue({
+      enabled: true,
+      port: 8788,
+    });
+    mocks.startScreenCaptureReceiver.mockRejectedValue(new Error("EADDRINUSE"));
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mocks.startPoller).not.toHaveBeenCalled();
   });
 
   it("receiver startup failure stops application startup", async () => {

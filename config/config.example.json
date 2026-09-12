@@ -19,6 +19,10 @@
     "enabled": false,
     "port": 8787
   },
+  "screenCaptureReceiver": {
+    "enabled": false,
+    "port": 8788
+  },
   "proxy": {
     "requestTimeoutMs": 120000
   },
