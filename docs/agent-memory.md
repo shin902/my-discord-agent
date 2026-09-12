@@ -1,6 +1,61 @@
-# Agent Memory export
+# Agent Memory
 
-Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
+## NanoClaw-compatible workspace memory
+
+NanoClaw-style file memory is an opt-in third memory option implemented by the
+`agent-memory` Skill. The host never creates memory files at startup or during
+an Agent run. It does not replace or modify legacy `MEMORY.md` /
+`memory/SELF.md`, their cron jobs, MemoryCore, session trajectory, or exact
+RSS/queue state. Operators may use any of these options independently or
+together; no data is migrated or synchronized automatically.
+
+Add `agent-memory` to the profile's `skills`, enable `bash` and the ordinary
+filesystem tools, restart the host, then explicitly ask the Agent to initialize
+NanoClaw/OKF memory. The Skill runs its sandbox-local initializer, which creates
+only missing files and never overwrites existing workspace files:
+
+```text
+memory/
+├── index.md
+└── system/
+    ├── index.md
+    └── definition.md
+```
+
+The bundled templates are adapted from NanoClaw commit
+[`0399a6dfa98fa8fb27b7b267749ed04d6880379b`](https://github.com/nanocoai/nanoclaw/tree/0399a6dfa98fa8fb27b7b267749ed04d6880379b).
+Its MIT notice is retained in `templates/SKILLS/agent-memory/LICENSE`.
+
+`contextFiles` is not an initializer. After initialization, it can optionally
+inject the two entry points into a new session's first context:
+
+```json
+{
+  "skills": ["agent-memory"],
+  "tools": ["bash", "read", "write", "edit", "list", "glob", "grep"],
+  "contextFiles": [
+    { "path": "memory/index.md", "maxChars": 16000 },
+    { "path": "memory/system/definition.md", "maxChars": 16000 }
+  ]
+}
+```
+
+Merge these entries with capabilities already required by that profile and
+restart after changing configuration. Paths are relative to the group
+workspace. Only explicitly listed files are loaded; missing files are skipped
+and subordinate memory files are not expanded.
+
+`contextFiles` is not added retroactively to an existing session. In particular,
+a `shared` channel that was used to run the initializer keeps its existing
+session after restart. Continue there by explicitly reading the workspace
+memory files with filesystem tools, or start a new thread/channel with a new
+session ID after configuring `contextFiles` to receive the bootstrap. The Agent
+manages initialized memory with the ordinary filesystem tools. Existing legacy
+files and sessions are not migrated or deleted.
+
+## MemoryCore Agent Memory export
+
+Agent Memory exportはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 
 ```text
 config/cron.json (schedule + backend settings)

@@ -164,6 +164,12 @@ Tool版はTypeScriptのstructured arguments、Skill版はPythonのCLI arguments�
 
 cronで使う場合も既読状態は保存せず、実行ごとに期間を明示する。公開Botなど`bash`を許可しない境界ではTool版を、trustedな環境でSkillを使う場合はPython版を選べる。
 
+### agent-memory
+
+**場所:** `templates/SKILLS/agent-memory/SKILL.md`
+
+NanoClaw/OKF形式のfile memoryを明示的な依頼時だけ初期化する任意Skill。sandbox内で`init.sh`を実行し、`memory/index.md`・`memory/system/index.md`・`memory/system/definition.md`のうち不足分だけを作成する。既存ファイル、`MEMORY.md` / `memory/SELF.md`、既存memory cron、MemoryCoreは変更・移行しない。利用するAgentの`skills`に`agent-memory`、`tools`に`bash`と必要なfilesystem toolsを明示する。設定と任意の`contextFiles`は[Agent Memory](agent-memory.md#nanoclaw-compatible-workspace-memory)を参照。
+
 ### session-logs
 
 **場所:** `templates/SKILLS/session-logs/SKILL.md`
