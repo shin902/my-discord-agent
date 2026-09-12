@@ -1,4 +1,4 @@
-# Agent Memory export
+# Agent Memory
 
 ## NanoClaw-compatible workspace memory
 
@@ -47,7 +47,9 @@ and subordinate memory files are not expanded. The Agent manages initialized
 memory with the ordinary filesystem tools. Existing legacy files and sessions
 are not migrated or deleted.
 
-Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
+## MemoryCore Agent Memory export
+
+Agent Memory exportはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 
 ```text
 config/cron.json (schedule + backend settings)
