@@ -8,8 +8,8 @@
     "tools": ["tavily-search", "agent-reach", "bot"],
     "approvalRequiredTools": ["tavily-search"],
     "contextFiles": [
-      { "path": "MEMORY.md", "maxChars": 2000 },
-      { "path": "memory/SELF.md", "maxChars": 2000 }
+      { "path": "memory/index.md", "maxChars": 16000 },
+      { "path": "memory/system/definition.md", "maxChars": 16000 }
     ],
     "allowMention": false,
     "toolLogArgs": true,

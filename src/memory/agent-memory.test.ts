@@ -26,9 +26,13 @@ describe("ensureAgentMemoryScaffold", () => {
     expect(
       await readFile(join(groupDir, "memory/system/index.md"), "utf8"),
     ).toContain("Definition");
-    expect(
-      await readFile(join(groupDir, "memory/system/definition.md"), "utf8"),
-    ).toContain("OKF");
+    const definition = await readFile(
+      join(groupDir, "memory/system/definition.md"),
+      "utf8",
+    );
+    expect(definition).toContain("OKF");
+    expect(definition).toContain("session-initial\nsnapshot");
+    expect(definition).toContain("Re-read the workspace files explicitly");
   });
 
   it("scaffolds every configured group", async () => {

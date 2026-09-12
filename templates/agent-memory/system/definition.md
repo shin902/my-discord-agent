@@ -10,11 +10,13 @@ Only the portable file contract below and two loaded paths are fixed:
 prose organization, and other guidance are yours to reshape if a different
 shape would remember or retrieve better.
 
-`memory/index.md` and this definition are loaded whenever a context window is
-created: at startup, after clear, and after compaction. Keep both lean: headlines and
-pointers here, detail in linked files. Core Memory in the index should only hold
-durable facts relevant in nearly every conversation; behavior, role,
-and persona belong in `/workspace/AGENTS.md`.
+`memory/index.md` and this definition are injected from a session-initial
+snapshot when a new session starts. Updates made during the same session are
+not automatically re-injected. Re-read the workspace files explicitly when
+you need their latest contents. Keep both lean: headlines and pointers here,
+detail in linked files. Core Memory in the index should only hold durable facts
+relevant in nearly every conversation; behavior, role, and persona belong in
+`/workspace/AGENTS.md`.
 
 ## Open Knowledge Format
 
