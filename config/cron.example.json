@@ -94,6 +94,14 @@
     }
   },
   {
+    "id": "screen-capture-summary",
+    "schedule": "5m",
+    "enabled": false,
+    "handler": "jobs/screen-capture-summary.ts",
+    "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
+    "settings": { "concurrency": 4, "timeoutMs": 120000 }
+  },
+  {
     "id": "x-saved-media-download",
     "schedule": "*/5 * * * *",
     "enabled": false,
