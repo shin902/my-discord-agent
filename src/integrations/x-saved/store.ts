@@ -11,7 +11,7 @@ const ROOT = path.resolve(
   "../../..",
 );
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
@@ -137,6 +137,15 @@ function createSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_x_media_status ON x_media(status);
 
+    CREATE TABLE IF NOT EXISTS x_item_labels (
+      tweet_id TEXT NOT NULL REFERENCES x_items(tweet_id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('series', 'character', 'tag')),
+      value TEXT NOT NULL CHECK (length(value) BETWEEN 1 AND 100),
+      PRIMARY KEY (tweet_id, kind, value)
+    );
+    CREATE INDEX IF NOT EXISTS idx_x_item_labels_value
+      ON x_item_labels(kind, value, tweet_id);
+
     CREATE TABLE IF NOT EXISTS x_sync_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       started_at TEXT NOT NULL,
@@ -193,13 +202,13 @@ function migrateSchemaV1(db: Database.Database): void {
 }
 
 function ensureSchema(db: Database.Database): void {
-  const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > SCHEMA_VERSION) {
-    throw new Error(
-      `x-saved schema version ${version} is newer than supported ${SCHEMA_VERSION}`,
-    );
-  }
   db.transaction(() => {
+    const version = db.pragma("user_version", { simple: true }) as number;
+    if (version > SCHEMA_VERSION) {
+      throw new Error(
+        `x-saved schema version ${version} is newer than supported ${SCHEMA_VERSION}`,
+      );
+    }
     if (version === 1) migrateSchemaV1(db);
     createSchema(db);
     if (version < 3) {
@@ -208,8 +217,22 @@ function ensureSchema(db: Database.Database): void {
     }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_x_items_media_resolution
       ON x_items(media_resolve_attempted_at, tweet_id) WHERE media_resolved_at IS NULL;`);
+    if (
+      version < 4 &&
+      db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'x_tags'",
+        )
+        .get()
+    ) {
+      // Preserve the legacy table for old installed skills; import its tags once.
+      db.exec(`INSERT OR IGNORE INTO x_item_labels (tweet_id, kind, value)
+        SELECT tweet_id, 'tag', trim(tag) FROM x_tags
+        WHERE tweet_id IN (SELECT tweet_id FROM x_items)
+          AND length(trim(tag)) BETWEEN 1 AND 100;`);
+    }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
-  })();
+  }).immediate();
 }
 
 export function openXSavedDb(

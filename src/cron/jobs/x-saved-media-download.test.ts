@@ -88,7 +88,7 @@ describe("one x-saved archive cron", () => {
         new Response("mp4", { headers: { "content-type": "video/mp4" } }),
       );
     await handler(ctx());
-    expect(db.pragma("user_version", { simple: true })).toBe(3);
+    expect(db.pragma("user_version", { simple: true })).toBe(4);
     expect(db.prepare("SELECT * FROM x_items").get()).toMatchObject({
       ...before,
       media_resolved_at: expect.any(String),

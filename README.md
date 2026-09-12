@@ -266,6 +266,7 @@ Agent向けの共通指示は [AGENTS.md](AGENTS.md)、タスク別の手順は 
 - [Credential設定](docs/config/credential-proxy.md) / [Credential Proxy・Tool Proxyの認証境界](docs/proxy.md)
 - [ツールとスキル](docs/agent-tools-skills.md) / [Slash Command の登録](docs/guides/discord-bot-setup.md#6-slash-command-の登録)
 - [Mac画面画像のTailscale収集・cron要約](docs/screen-capture.md)
+- [X saved: 収集・media archive・Tailscale Gallery](docs/x-saved.md)
 
 `docs/plan/`・`docs/research/` や「歴史的」と明記した設計文書は背景資料です。旧API・旧設定の記述を現行仕様やAgentへの作業指示として扱わないでください。
 
