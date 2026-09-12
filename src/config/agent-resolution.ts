@@ -7,6 +7,7 @@ export const AGENT_CONFIG_FIELDS = [
   "approvalRequiredTools",
   "skills",
   "mounts",
+  "contextFiles",
 ] as const satisfies readonly (keyof AgentConfig)[];
 
 /** Pick only common AgentConfig fields from a group, channel, or job config. */

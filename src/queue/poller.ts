@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import type { ConversationEntries } from "../agent/conversation.js";
 import {
   type AgentExecutionTiming,
@@ -908,18 +906,11 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   snapshotHash: string;
   toolCallKey: string;
 }> {
-  const readOptional = async (file: string) =>
-    readFile(file, "utf8").catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    });
   let systemPromptSnapshotContent = msg.botId
     ? await loadBotTaskSystemPrompt(msg.groupName, msg.sessionId)
     : ((await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
       undefined);
-  let memorySnapshotContent = await readOptional(
-    path.join("groups", msg.groupName, "memory", "MEMORY.md"),
-  );
+  let memorySnapshotContent: string | undefined;
   const sessionMessages = await loadMessages(msg.groupName, msg.sessionId);
   for (const entry of sessionMessages as Array<{
     customType?: string;
