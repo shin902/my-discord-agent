@@ -5,14 +5,15 @@ type: system
 # Agent Memory System
 
 This file defines how your persistent memory works, and it is yours to improve.
-Only the portable file contract below and two loaded paths are fixed:
+Only the portable file contract below and two entry-point paths are fixed:
 `memory/index.md` and this file at `memory/system/definition.md`. The folders,
 prose organization, and other guidance are yours to reshape if a different
 shape would remember or retrieve better.
 
-`memory/index.md` and this definition are injected from a session-initial
-snapshot when a new session starts. Updates made during the same session are
-not automatically re-injected. Re-read the workspace files explicitly when
+When both paths are configured in `contextFiles`, `memory/index.md` and this
+definition are injected from a session-initial snapshot when a new session
+starts. Without that optional configuration, read them explicitly. Updates
+made during the same session are not automatically re-injected. Re-read the workspace files explicitly when
 you need their latest contents. Keep both lean: headlines and pointers here,
 detail in linked files. Core Memory in the index should only hold durable facts
 relevant in nearly every conversation; behavior, role, and persona belong in
