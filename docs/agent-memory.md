@@ -11,24 +11,29 @@ templates are adapted from NanoClaw commit
 [`0399a6dfa98fa8fb27b7b267749ed04d6880379b`](https://github.com/nanocoai/nanoclaw/tree/0399a6dfa98fa8fb27b7b267749ed04d6880379b); its MIT notice is retained in
 `templates/agent-memory/LICENSE`.
 
-Use the existing `contextFiles` support from #460 on a group, channel, cron
-job, or Bot profile to inject selected workspace files once as user-role
-bootstrap context:
+This scaffold is an opt-in third memory option. It does not replace or modify
+legacy `MEMORY.md` / `memory/SELF.md`, their cron jobs, MemoryCore, session
+trajectory, or exact RSS/queue state. Operators may use any of these options
+independently or together.
+
+To enable NanoClaw-style memory for a group, channel, cron job, or Bot profile,
+configure its filesystem tools and use the existing `contextFiles` support from
+#460 to inject the two entry points once as user-role bootstrap context:
 
 ```json
-"contextFiles": [
-  { "path": "memory/index.md", "maxChars": 16000 },
-  { "path": "memory/system/definition.md", "maxChars": 16000 }
-]
+{
+  "tools": ["read", "write", "edit", "list", "glob", "grep"],
+  "contextFiles": [
+    { "path": "memory/index.md", "maxChars": 16000 },
+    { "path": "memory/system/definition.md", "maxChars": 16000 }
+  ]
+}
 ```
 
-Paths are relative to the group workspace. Only explicitly listed files are
-loaded; missing files are skipped and subordinate memory files are not expanded.
-Legacy `MEMORY.md` and `memory/SELF.md` files are not migrated or deleted, and
-existing sessions can still read their stored legacy bootstrap messages. New
-sessions do not inject those paths automatically; list them in `contextFiles`
-when they are still needed. This memory tree does not replace MemoryCore,
-session trajectory, or exact RSS/queue state.
+Merge these entries with any tools already required by that profile. Paths are
+relative to the group workspace. Only explicitly listed files are loaded;
+missing files are skipped and subordinate memory files are not expanded.
+Existing legacy files and sessions are not migrated or deleted.
 
 Agent Memoryはcanonical session trajectoryから作る派生projectionです。cronは実行機会とbackend設定を持ち、処理は既存runtime queueへ委譲します。recall、prompt injection、embeddingは実装しません。
 

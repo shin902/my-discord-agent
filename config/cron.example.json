@@ -171,7 +171,7 @@
     "schedule": "0 23 * * 0",
     "enabled": true,
     "groupName": "my-group",
-    "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md を読み、今後も参照する価値がある情報だけを適切なconcept fileへ統合してください。一度きりの作業ログは反映しないこと。concept fileを追加・移動・削除した場合は、memory/index.mdと途中のindex.mdを更新し、すべての情報をindexから辿れる状態にしてください。",
+    "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md と既存の MEMORY.md を読み比べ、今後も参照する価値がある情報だけを MEMORY.md に統合してください。一度きりの作業ログは反映しないこと。MEMORY.md 全体で2000字程度に収めること。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
     "sessionMode": "per-run"
@@ -189,12 +189,12 @@
     "model": { "provider": "YOUR_PROVIDER", "modelId": "YOUR_MODEL_ID" }
   },
   {
-    "_comment": "自己成長型ペルソナの週次ジョブ例。memory-weekly と土台は同じだが、日記7日分から傾向を抽出してpersona conceptを更新する。失敗の記録は「〜は使えない」という恒久ルール形式を禁止し、日付つきの事象形式で書かせること",
+    "_comment": "自己成長型ペルソナの週次ジョブ例。memory-weekly と土台は同じだが、日記7日分から傾向を抽出して SELF.md を更新する。失敗の記録は「〜は使えない」という恒久ルール形式を禁止し、日付つきの事象形式で書かせること",
     "id": "persona-self-weekly",
     "schedule": "0 23 * * 0",
     "enabled": true,
     "groupName": "my-group",
-    "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md を読み、今後も参照する価値がある情報だけを適切なconcept fileへ統合してください。一度きりの作業ログは反映しないこと。失敗の記録を残す場合は「〜は使えない」という恒久ルール形式を禁止し、必ず「YYYY-MM-DD時点で〜が失敗した」という日付つきの事象形式で書くこと。\n\nあわせて、memory/diary/ 配下の直近7日分の日記を読み、繰り返し現れる傾向・口癖・感じ方のパターンを抽出してpersona conceptへ統合してください。AGENTS.md のコア人格と矛盾する内容を書かないこと。concept fileを追加・移動・削除した場合は、memory/index.mdと途中のindex.mdを更新し、すべての情報をindexから辿れる状態にしてください。",
+    "prompt": "memory/ 配下の直近7日分の YYYY-MM-DD.md と既存の MEMORY.md を読み比べ、今後も参照する価値がある情報だけを MEMORY.md に統合してください。一度きりの作業ログは反映しないこと。MEMORY.md 全体で2000字程度に収めること。失敗の記録を残す場合は「〜は使えない」という恒久ルール形式を禁止し、必ず「YYYY-MM-DD時点で〜が失敗した」という日付つきの事象形式で書くこと。\n\nあわせて、memory/diary/ 配下の直近7日分の日記を読み、繰り返し現れる傾向・口癖・感じ方のパターンを抽出して memory/SELF.md を更新してください。SELF.md は2000字以内(`wc -m`で確認)に収め、AGENTS.md のコア人格と矛盾する内容を書かないこと。",
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
     "sessionMode": "per-run",
