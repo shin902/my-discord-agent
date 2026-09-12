@@ -1276,7 +1276,7 @@ describe("runAgentLoop", () => {
     expect(messages[0]).toMatchObject({ customType: "memory-bootstrap" });
   });
 
-  it("既存セッション（スナップショットなし）は AGENTS.md をスナップショット化し、MEMORY.md を memory-bootstrap に追加する", async () => {
+  it("会話済みsessionへcontextFilesを途中追加しない", async () => {
     const existingHistory = [
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];
@@ -1310,9 +1310,8 @@ describe("runAgentLoop", () => {
       lastAgentOptions as { initialState: { systemPrompt: string } }
     ).initialState.systemPrompt;
     expect(systemPrompt).toContain("グループプロンプト");
-    // MEMORY.md は systemPrompt には含めない（memory-bootstrap 経由で user role として渡す）
     expect(systemPrompt).not.toContain("旧記憶");
-    expect(systemPrompt).not.toContain("## Memory (MEMORY.md)");
+    expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
 
     // system-prompt-snapshot としてsession trajectoryへ保存され、次回以降は再読み込みされない
     expect(appendMessage).toHaveBeenCalledWith(
@@ -1324,25 +1323,19 @@ describe("runAgentLoop", () => {
         content: "グループプロンプト",
       }),
     );
-    // memory-bootstrap としてsession trajectoryへ保存される
-    expect(appendMessage).toHaveBeenCalledWith(
+    expect(appendMessage).not.toHaveBeenCalledWith(
       "test-group",
       "session-1",
-      expect.objectContaining({
-        role: "custom",
-        customType: "context-bootstrap",
-        content: expect.stringContaining("旧記憶"),
-      }),
+      expect.objectContaining({ customType: "context-bootstrap" }),
     );
 
-    // Agent に渡す messages の先頭に system-prompt-snapshot、続いて memory-bootstrap が入る
+    // Agent に渡すmessagesはsystem prompt snapshotと既存履歴だけ。
     const messages = (
       lastAgentOptions as { initialState: { messages: unknown[] } }
     ).initialState.messages;
     expect(messages[0]).toMatchObject({ customType: "system-prompt-snapshot" });
-    expect(messages[1]).toMatchObject({ customType: "context-bootstrap" });
-    // 既存履歴1件 + system-prompt-snapshot 1件 + context-bootstrap 1件
-    expect(messages).toHaveLength(3);
+    expect(messages[1]).toMatchObject({ role: "user", content: "前回の質問" });
+    expect(messages).toHaveLength(2);
   });
 
   it("ロード時に途中にある system-prompt-snapshot / memory-bootstrap を先頭へ並べ替える", async () => {
