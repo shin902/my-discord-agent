@@ -9,11 +9,13 @@ mkdir -p "$workspace/memory/system"
 copy_missing() {
   local source="$1"
   local destination="$2"
-  if [[ ! -e "$destination" && ! -L "$destination" ]]; then
-    cp "$source" "$destination"
+  if (set -o noclobber; cat "$source" > "$destination") 2>/dev/null; then
     echo "created: ${destination#"$workspace/"}"
-  else
+  elif [[ -e "$destination" || -L "$destination" ]]; then
     echo "kept: ${destination#"$workspace/"}"
+  else
+    echo "failed to create: ${destination#"$workspace/"}" >&2
+    return 1
   fi
 }
 
