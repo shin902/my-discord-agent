@@ -40,7 +40,7 @@ bash scripts/capture-screen.sh \
 
 macOS標準の`screencapture`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。Terminal等の実行元に「画面収録」の権限が必要です。初版ではMacの常駐収集・自動スケジュールは作りません。
 
-PNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`へprivateな権限で保存します。**成功・失敗のどちらでもMac側のPNGを残します**。不要になったファイルは利用者が削除してください。送信エラー時は表示された同じパスを第2引数にして再送します。
+PNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`へprivateな権限で一時保存します。**curlが正常終了しHTTP 200を受信したら、Bot PCのDB commitが確定しているためMac側PNGを削除します**。第2引数で指定した既存PNGも成功後は削除対象です。送信失敗・ACK不明・非200応答ではPNGを保持し、表示された同じパスを第2引数にして再送します。削除に失敗した場合も非zeroで終了し、削除成功とは表示しません。
 
 ```bash
 bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
@@ -99,6 +99,6 @@ sqlite3 -readonly data/screen-captures.sqlite \
   'SELECT id, received_at, length(image) AS bytes, summary IS NOT NULL AS is_read FROM screen_captures ORDER BY received_at;'
 ```
 
-DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。画像・要約の自動削除期限は設けず、MacとBot PC双方の容量・retention・backupのアクセス権を運用者が管理します。
+DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。Bot PC側の画像・要約には自動削除期限を設けず、容量・retention・backupのアクセス権を運用者が管理します。Mac側はACK後に削除しますが、未ACK・削除失敗のPNGは再送または明示削除が必要です。旧版で成功後も残ったPNGは自動走査しないため、同じパスで再送してACK後に削除するか、不要と確認して明示的に削除してください。
 
 導入時はMacから1枚撮影し、DBで未読を確認→cron後の既読を確認してください。receiverを止めた送信失敗→同じUUIDで再送し1行だけになること、要約provider停止中は未読が残り復旧後に既読になることも確認します。自動テストはHTTP / SQLite、実SDK＋ローカル模擬provider、失敗再試行、並列数、senderのMacコマンド模擬までを検証します。実Macの画面収録権限、Tailnet到達性、実providerの画面理解は別途実機確認が必要です。

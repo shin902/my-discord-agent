@@ -26,8 +26,7 @@ if [[ ! -f "$image" || ! "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
   echo "Expected an existing <UUID>.png file" >&2
   exit 1
 fi
-# Keep the PNG on success too: the caller owns local retention and can retry the same ID.
-echo "Local capture (retained): $image" >&2
+echo "Local capture (pending upload): $image" >&2
 status=$(curl -q --silent --show-error --proto '=https' --noproxy '*' \
   --connect-timeout 10 --max-time 60 --output /dev/null --write-out '%{http_code}' \
   --header 'Content-Type: image/png' --header "X-Capture-Id: $id" \
@@ -39,4 +38,6 @@ if [[ "$status" != 200 ]]; then
   echo "Upload not acknowledged (HTTP $status); PNG retained for retry" >&2
   exit 1
 fi
-printf 'Accepted: %s\n' "$id"
+# HTTP 200 confirms the DB commit; no second copy is needed on the Mac.
+rm -- "$image"
+printf 'Accepted: %s (local PNG deleted)\n' "$id"
