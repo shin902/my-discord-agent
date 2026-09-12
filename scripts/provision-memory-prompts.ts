@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { MemoryCoreClient } from "../src/memory/memory-core.js";
 
 const layers = ["l1", "l2", "l3"] as const;
 type Layer = (typeof layers)[number];
 
-type Envelope<T> = { code: number; message?: string; data?: T };
 type PromptRecord = {
   memory_prompt_id: string;
   name: string;
@@ -12,76 +12,19 @@ type PromptRecord = {
   prompt: string;
 };
 
-const baseUrl = process.env.MEMORY_CORE_URL ?? "http://127.0.0.1:8420";
-const serviceId = process.env.MEMORY_CORE_SERVICE_ID ?? "default";
-const teamId = process.env.MEMORY_CORE_TEAM_ID ?? "default";
-const agentId = process.env.MEMORY_CORE_AGENT_ID ?? "my-discord-agent";
-const token = process.env.MEMORY_CORE_GATEWAY_API_KEY;
-
-function memoryCoreUrl(path: string): URL {
-  let url: URL;
-  try {
-    url = new URL(baseUrl);
-  } catch {
-    throw new Error("Invalid MemoryCore URL configuration");
-  }
-  if (
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.protocol !== "https:" &&
-      !(
-        url.protocol === "http:" &&
-        (url.hostname === "127.0.0.1" || url.hostname === "[::1]")
-      ))
-  ) {
-    throw new Error("Invalid MemoryCore URL configuration");
-  }
-  const route = new URL(path, "https://memory-core.invalid");
-  url.pathname = `${url.pathname.replace(/\/$/u, "")}${route.pathname}`;
-  url.search = route.search;
-  return url;
-}
+const client = new MemoryCoreClient({
+  baseUrl: process.env.MEMORY_CORE_URL,
+  serviceId: process.env.MEMORY_CORE_SERVICE_ID,
+  teamId: process.env.MEMORY_CORE_TEAM_ID,
+  agentId: process.env.MEMORY_CORE_AGENT_ID,
+  bearerTokenEnv: process.env.MEMORY_CORE_GATEWAY_API_KEY
+    ? "MEMORY_CORE_GATEWAY_API_KEY"
+    : undefined,
+});
+const { teamId, agentId } = client.settings;
 
 async function request<T>(path: string, body?: object): Promise<T> {
-  const url = memoryCoreUrl(path);
-  const headers = {
-    accept: "application/json",
-    ...(body ? { "content-type": "application/json" } : {}),
-    "x-tdai-service-id": serviceId,
-    ...(token ? { authorization: `Bearer ${token}` } : {}),
-  };
-  try {
-    new Headers(headers);
-  } catch {
-    throw new Error("Invalid MemoryCore header configuration");
-  }
-  const signal = AbortSignal.timeout(10_000);
-  let response: Response;
-  let envelope: Envelope<T>;
-  try {
-    response = await fetch(url, {
-      method: body ? "POST" : "GET",
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal,
-      redirect: "error",
-    });
-    envelope = (await response.json()) as Envelope<T>;
-  } catch {
-    throw new Error("MemoryCore request failed or timed out");
-  }
-  if (!response.ok || envelope.code !== 0 || envelope.data === undefined) {
-    const code =
-      Number.isSafeInteger(envelope.code) &&
-      envelope.code >= 0 &&
-      envelope.code <= 999_999
-        ? envelope.code
-        : "unknown";
-    throw new Error(`MemoryCore request failed (${response.status}, code ${code})`);
-  }
-  return envelope.data;
+  return client.request<T>(path, { body, requireData: true });
 }
 
 function isPromptRecord(value: unknown): value is PromptRecord {
