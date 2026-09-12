@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   startXSavedReceiver: vi.fn(),
   loadScreenCaptureReceiverConfig: vi.fn(),
   startScreenCaptureReceiver: vi.fn(),
+  loadXSavedGalleryConfig: vi.fn(),
+  startXSavedGallery: vi.fn(),
   loadBotRegistry: vi.fn(),
   startPoller: vi.fn(),
   stopPoller: vi.fn(),
@@ -54,6 +56,10 @@ vi.mock("./config/config.js", () => ({
 }));
 vi.mock("./config/x-saved.js", () => ({
   loadXSavedReceiverConfig: mocks.loadXSavedReceiverConfig,
+  loadXSavedGalleryConfig: mocks.loadXSavedGalleryConfig,
+}));
+vi.mock("./integrations/x-saved/gallery.js", () => ({
+  startXSavedGallery: mocks.startXSavedGallery,
 }));
 vi.mock("./integrations/x-saved/receiver.js", () => ({
   startXSavedReceiver: mocks.startXSavedReceiver,
@@ -141,6 +147,10 @@ describe("index: 起動時バリデーション", () => {
     mocks.loadScreenCaptureReceiverConfig.mockResolvedValue({
       enabled: false,
       port: 8788,
+    });
+    mocks.loadXSavedGalleryConfig.mockResolvedValue({
+      enabled: false,
+      port: 8789,
     });
     mocks.loadBotRegistry.mockResolvedValue({});
     mocks.backfillDiscordMessages.mockResolvedValue(undefined);
@@ -337,10 +347,22 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.startPoller).toHaveBeenCalledOnce();
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.loginDiscordClients).toHaveBeenCalledOnce();
+    expect(mocks.startXSavedGallery).not.toHaveBeenCalled();
   });
 
-  it("starts and closes the enabled x-saved receiver", async () => {
+  it("starts and closes receiver and gallery as independent listeners", async () => {
     const close = vi.fn((callback: () => void) => callback());
+    const closeGallery = vi.fn((callback: () => void) => callback());
+    const gallery = {
+      port: 8789,
+      origin: "https://gallery.example.ts.net",
+      allowedLogin: "owner@example.com",
+    };
+    mocks.loadXSavedGalleryConfig.mockResolvedValue({
+      enabled: true,
+      ...gallery,
+    });
+    mocks.startXSavedGallery.mockResolvedValue({ close: closeGallery });
     mocks.loadXSavedReceiverConfig.mockResolvedValue({
       enabled: true,
       port: 8787,
@@ -349,12 +371,14 @@ describe("index: 起動時バリデーション", () => {
     const listenersBefore = process.listeners("SIGTERM");
     await import("./index.js");
     expect(mocks.startXSavedReceiver).toHaveBeenCalledWith({ port: 8787 });
+    expect(mocks.startXSavedGallery).toHaveBeenCalledWith(gallery);
     mockExit.mockImplementation(() => undefined);
     const listener = process
       .listeners("SIGTERM")
       .find((entry) => !listenersBefore.includes(entry));
     listener?.("SIGTERM");
     await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(closeGallery).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(mockExit).toHaveBeenCalledWith(0));
   });
 
@@ -395,6 +419,32 @@ describe("index: 起動時バリデーション", () => {
       port: 8787,
     });
     mocks.startXSavedReceiver.mockRejectedValue(new Error("EADDRINUSE"));
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mocks.startPoller).not.toHaveBeenCalled();
+  });
+
+  it("rejects a shared receiver/gallery port before starting either listener", async () => {
+    mocks.loadXSavedReceiverConfig.mockResolvedValue({
+      enabled: true,
+      port: 8787,
+    });
+    mocks.loadXSavedGalleryConfig.mockResolvedValue({
+      enabled: true,
+      port: 8787,
+    });
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mocks.startXSavedReceiver).not.toHaveBeenCalled();
+    expect(mocks.startXSavedGallery).not.toHaveBeenCalled();
+  });
+
+  it("gallery startup failure stops application startup", async () => {
+    mocks.loadXSavedGalleryConfig.mockResolvedValue({
+      enabled: true,
+      port: 8789,
+      origin: "https://gallery.example.ts.net",
+      allowedLogin: "owner@example.com",
+    });
+    mocks.startXSavedGallery.mockRejectedValue(new Error("EADDRINUSE"));
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
     expect(mocks.startPoller).not.toHaveBeenCalled();
   });

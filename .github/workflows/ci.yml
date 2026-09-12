@@ -63,8 +63,12 @@ jobs:
           cache-from: type=gha,scope=agent-runner
           cache-to: type=gha,mode=max,scope=agent-runner
 
+      - name: Install browser for Gallery smoke
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Test
         env:
+          X_SAVED_GALLERY_BROWSER_TEST: "1"
           DOTENV_CONFIG_PATH: /dev/null
           TOOL_RUNTIME_TEST_IMAGE: my-discord-agent-tool-runtime:ci
           SANDBOX_NETWORK_TEST_IMAGE: my-discord-agent-runner:ci

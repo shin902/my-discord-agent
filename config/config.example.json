@@ -23,6 +23,12 @@
     "enabled": false,
     "port": 8788
   },
+  "xSavedGallery": {
+    "enabled": false,
+    "port": 8789,
+    "origin": "https://your-host.your-tailnet.ts.net",
+    "allowedLogin": "you@example.com"
+  },
   "proxy": {
     "requestTimeoutMs": 120000
   },

@@ -14,7 +14,10 @@ import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { loadProviders } from "./config/providers.js";
 import { loadScreenCaptureReceiverConfig } from "./config/screen-capture.js";
-import { loadXSavedReceiverConfig } from "./config/x-saved.js";
+import {
+  loadXSavedGalleryConfig,
+  loadXSavedReceiverConfig,
+} from "./config/x-saved.js";
 import {
   _setCronJobs,
   loadAndValidateCron,
@@ -31,6 +34,7 @@ import {
 import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
 import { startScreenCaptureReceiver } from "./integrations/screen-capture/receiver.js";
+import { startXSavedGallery } from "./integrations/x-saved/gallery.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
 import {
   initCredentialProxyServer,
@@ -56,6 +60,7 @@ import {
 const groups = await loadGroups();
 let xSavedReceiver: Server | undefined;
 let screenCaptureReceiver: Server | undefined;
+let xSavedGallery: Server | undefined;
 try {
   const discordConfig = await loadDiscordConfig();
   const botRegistry = await loadBotRegistry();
@@ -125,6 +130,14 @@ try {
     console.warn(`[startup] ${alert}`);
   _setCronJobs(cronJobs);
   const xSavedConfig = await loadXSavedReceiverConfig();
+  const galleryConfig = await loadXSavedGalleryConfig();
+  if (
+    xSavedConfig.enabled &&
+    galleryConfig.enabled &&
+    xSavedConfig.port === galleryConfig.port
+  ) {
+    throw new Error("x-saved receiver and gallery require separate ports");
+  }
   if (xSavedConfig.enabled) {
     xSavedReceiver = await startXSavedReceiver({ port: xSavedConfig.port });
   }
@@ -132,6 +145,17 @@ try {
   if (screenCaptureConfig.enabled) {
     screenCaptureReceiver = await startScreenCaptureReceiver({
       port: screenCaptureConfig.port,
+    });
+  }
+  if (
+    galleryConfig.enabled &&
+    galleryConfig.origin &&
+    galleryConfig.allowedLogin
+  ) {
+    xSavedGallery = await startXSavedGallery({
+      port: galleryConfig.port,
+      origin: galleryConfig.origin,
+      allowedLogin: galleryConfig.allowedLogin,
     });
   }
 } catch (err) {
@@ -159,7 +183,7 @@ void loginDiscordClients();
 // 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。
 const shutdown = async (): Promise<void> => {
   beginManagerShutdown();
-  for (const server of [xSavedReceiver, screenCaptureReceiver]) {
+  for (const server of [xSavedReceiver, screenCaptureReceiver, xSavedGallery]) {
     if (server)
       await new Promise<void>((resolve) => server.close(() => resolve()));
   }

@@ -114,6 +114,65 @@ DB/schema/transaction errors fail the entire cron instead of being swallowed as 
 
 Deploy the receiver before reloading the updated extension (old strict receivers reject media fields). Install updated Skill templates, retain the existing directory mount, then enable the archive cron. No production configuration is changed automatically. Verify existing IDs resolve with the browser closed, confirm image/MP4 paths, and use Agent `read` on a downloaded image. Mac Chrome/Tailscale new-capture checks are still needed for installation validation, but not for stored-ID media backfill.
 
+## Gallery: browse and edit over Tailscale
+
+Gallery is an opt-in, human-facing viewer/editor of the **same SQLite and media archive**, not a second store. It uses server-rendered HTML, native forms and video controls; no client framework, JavaScript bundle, pairing, or external assets are needed.
+
+### Setup and authentication
+
+In `config/config.json`, configure the exact HTTPS origin shown by Tailscale Serve and **your own Tailscale user login** (not a device name):
+
+```json
+{
+  "xSavedGallery": {
+    "enabled": true,
+    "port": 8789,
+    "origin": "https://your-host.your-tailnet.ts.net",
+    "allowedLogin": "you@example.com"
+  }
+}
+```
+
+Gallery defaults to disabled / port 8789. When enabled, `origin` and `allowedLogin` are required; malformed settings fail startup. `origin` must be an HTTPS `.ts.net` origin, with no trailing slash/path/query; include the HTTPS port if not 443. `allowedLogin` is the exact, case-sensitive ASCII login shown for your user in Tailscale. Restart the application after changes.
+
+Inspect existing Serve handlers before assigning a free HTTPS port, then expose **only the Gallery listener**:
+
+```bash
+tailscale serve status
+tailscale serve --bg --https=443 http://127.0.0.1:8789
+tailscale serve status
+```
+
+Open the configured origin from your Mac, iPhone or iPad connected as that Tailscale user. Tailnet access policy must also allow the connection. The backend binds only `127.0.0.1`; there is no configurable public bind. Every page, stylesheet, image and video checks the preserved `Host` and Serve-injected `Tailscale-User-Login`. Missing/different identities, tagged devices (which lack a user identity), and Funnel requests are denied. Do not use Funnel, a public proxy, port forwarding, or a proxy that accepts client-supplied identity headers. Local host processes are trusted; the header is not a bearer token and direct localhost access is not a supported login path.
+
+The receiver and Gallery have **separate ports/listeners/routes/authentication**. Gallery can be enabled with the receiver disabled. Both enabled on the same port fail startup. Do not expose the receiver just to enable Gallery, or replace its existing capture authentication/deployment with the Gallery settings. Gallery does not accept ingest requests. Shutdown closes both listeners and the Gallery database connection.
+
+Writes require a same-origin form POST and a matching `Origin`; there is no CORS grant. Pages escape stored text and use a restrictive CSP. Media routes address `(tweet_id, kind, position)`, not filesystem paths, and stream only completed, matching archive files with fixed image/MP4 MIME types. Paths outside the archive, symlinks, directories and unfinished files are rejected. Linux also verifies the opened file descriptor's canonical path before streaming. MP4 single-byte-range responses support native playback/seeking without loading entire videos into memory.
+
+### Browsing and classification
+
+- Grid: one card per media row, **60 cards per page**, lazy-loaded original images, Tweet excerpt, author, status and classification labels. Video cards open native MP4 preview/controls in detail; no thumbnail store or eager video-grid download is added. Pending/failed archives show placeholders. Text-only Tweets are not in the grid.
+- Search is a literal Tweet-body substring (ASCII case-insensitive); `%` and `_` are not wildcards. Media (`image` / `video`), sticky source (`like` / `bookmark`), status, exact author handle (optional `@`, case-insensitive), and classification filters combine with AND.
+- Series, characters and tags are multi-valued. Filters accept comma-separated exact, case-sensitive values and require **all specified values**. Editing accepts commas or newlines, trims/deduplicates values, and replaces that Tweet's labels; an empty field clears it. Each field allows 50 values, each 100 characters. Commas/newlines are separators, not part of a value.
+- `Unknown` means missing series **or** characters, or any label equal to `unknown` (case-insensitive). `Needs review` means the existing `inbox` status. These are filters, not new stored statuses; `reviewed`, `keep`, `try`, `done`, `ignore` retain their existing meaning. Automated classification is out of scope.
+- Inclusive UTC date filters use the Tweet creation date, falling back to first capture when unavailable. Sort by first capture newest, Tweet newest/oldest, or author; page ties are stable. Filter/page state is retained through detail/edit and the return link.
+- Detail edits are **Tweet-wide**, applying to every image/video in that Tweet, not separate copies per card. Status and labels commit together; notes, Tweet metadata, source flags, archive files and paths remain untouched. Ingest and media cron never overwrite classification. Invalid/failed edits retain the submitted form values for correction/retry.
+
+SQLite remains authoritative. Receiver, archive cron, Skill and Gallery use normal SQLite WAL transactions/busy timeout; there is no new writer queue, lock service or conflict-resolution layer. Single-user edits are last-writer-wins. Refresh an already-open page to see changes from another device/Skill. OFFSET pagination and original-image loading target hundreds to thousands of media; fast scrolling still depends on archive image sizes and network bandwidth.
+
+### Upgrade and verification
+
+Back up the SQLite database with its existing online backup mechanism and media separately before deploying. Schema v4 adds `x_item_labels` without moving media or resetting state. Update host receiver/cron/Gallery code together: older host binaries reject schema v4. No production config or Tailscale Serve settings are changed automatically.
+
+The HTTP/SQLite tests cover migration, 2,000-media pagination, combined filters, transactional edits, preserved ingestion, auth/CSRF, escaping and byte-range/path safety. CI also runs a desktop/mobile browser smoke using a local fixture and simulated Serve headers (not a live Tailnet). To run that smoke locally:
+
+```bash
+pnpm exec playwright install chromium
+X_SAVED_GALLERY_BROWSER_TEST=1 pnpm exec vitest run src/integrations/x-saved/gallery.test.ts
+```
+
+After enabling in production, verify image/video playback and one classification edit from your own user devices; confirm another Tailnet user is denied and existing receiver capture still works. These live identity/device checks are separate from the automated local smoke.
+
 ## Configuration
 
 The database and backup locations can be overridden with environment variables:
@@ -125,7 +184,7 @@ export X_SAVED_BACKUP_DIR=/var/lib/my-discord-agent/x-saved-backups
 
 The default database is `data/x-saved/x-saved.sqlite`. Backups default to `data/x-saved-backups`, outside the live database directory and therefore outside the sandbox mount. The backup directory must remain outside the live database directory.
 
-Back up `x-saved.sqlite` and its backup files, and back up `data/x-saved/media/` separately. SQLite backups do not contain image/MP4 binaries. Agent-managed status and notes cannot be reconstructed from an upstream service alone.
+Back up `x-saved.sqlite` and its backup files, and back up `data/x-saved/media/` separately. SQLite backups do not contain image/MP4 binaries. Agent/human-managed status, notes and classification labels cannot be reconstructed from an upstream service alone.
 
 `config/cron.example.json` contains a disabled `x-saved-backup` handler example. When enabled, it calls the generic backup operation once per schedule, retaining 14 backups by default. Set the optional `settings.keep` value to change retention; database and backup paths continue to come from `X_SAVED_DB_PATH` and `X_SAVED_BACKUP_DIR`.
 
@@ -179,7 +238,10 @@ The durable state is `data/x-saved/x-saved.sqlite`:
 - `x_items` — post body, author, URL, sticky like/bookmark history, ingest timestamps, nullable `media_resolved_at` / `media_resolve_attempted_at`
 - `x_item_state` — `inbox`, `reviewed`, `keep`, `try`, `done`, or `ignore`, plus an optional note and update time
 - `x_media` — `(tweet_id, kind, position)` primary key, source/alt text, relative file path, pending/done/failed status and last error; cascading ownership by `x_items`
+- `x_item_labels` — `(tweet_id, kind, value)` primary key; multi-valued `series`, `character`, `tag`, with a lookup index and cascading ownership by `x_items`
 - `x_sync_runs` — optional source health records, timestamps, errors, and new-item count
 - `x_meta` — metadata such as the one-time `initial_import_completed_at` marker
+
+Schema v4 adds `x_item_labels`. If a legacy `x_tags` table remains, valid nonempty trimmed tags (up to 100 characters) are imported once; the legacy table is retained unchanged, including values outside those limits. The current Gallery uses only `x_item_labels`, with no dual writes to legacy tables. Schema migration checks the version inside SQLite's write transaction so simultaneous opens cannot apply it twice.
 
 Schema v3 transactionally adds `x_media` and the two nullable timestamps to existing v1/v2 databases without resetting item state. DOM hints never set `media_resolved_at`. No resolver-specific table, metadata JSON, hashes, dimensions, bitrate or retry counters are stored. The store preserves its schema migrations and merge/upsert behavior for existing databases. In particular, missing incoming metadata does not erase stored metadata, relationship flags remain sticky, and existing item state and notes remain unchanged.

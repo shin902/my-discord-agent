@@ -454,7 +454,14 @@ describe("x-saved persistence", () => {
         )
         .all(),
     ).toEqual([]);
-    expect(db.pragma("user_version", { simple: true })).toBe(3);
+    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(
+      db
+        .prepare(
+          "SELECT kind, value FROM x_item_labels WHERE tweet_id = 'legacy'",
+        )
+        .all(),
+    ).toEqual([{ kind: "tag", value: "saved" }]);
     db.close();
   });
 
