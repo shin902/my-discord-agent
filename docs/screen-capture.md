@@ -38,9 +38,32 @@ bash scripts/capture-screen.sh \
   'https://<host>.<tailnet>.ts.net:8444/v1/screen-captures'
 ```
 
-macOS標準の`screencapture`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。Terminal等の実行元に「画面収録」の権限が必要です。初版ではMacの常駐収集・自動スケジュールは作りません。
+macOS標準の`screencapture`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。Terminal等の実行元に「画面収録」の権限が必要です。
 
-PNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`へprivateな権限で一時保存します。**curlが正常終了しHTTP 200を受信したら、Bot PCのDB commitが確定しているためMac側PNGを削除します**。第2引数で指定した既存PNGも成功後は削除対象です。送信失敗・ACK不明・非200応答ではPNGを保持し、表示された同じパスを第2引数にして再送します。削除に失敗した場合も非zeroで終了し、削除成功とは表示しません。
+継続して収集する場合はresident modeを起動します。間隔は`30`、`60`（既定）、`300`秒だけを指定できます。
+
+```bash
+RECEIVER_URL='https://<host>.<tailnet>.ts.net:8444/v1/screen-captures'
+bash scripts/capture-screen.sh on "$RECEIVER_URL"       # 60秒ごと
+bash scripts/capture-screen.sh on "$RECEIVER_URL" 300   # 5分ごと
+bash scripts/capture-screen.sh status
+bash scripts/capture-screen.sh off
+```
+
+`on`はterminalから切り離したbackground loopを起動し、すでに稼働中なら新しいprocessを増やしません。これはlogin itemやLaunchAgentではないため、Mac再起動後は再度`on`を実行してください。`status`は稼働中ならexit 0、停止中ならexit 1を返し、古いpid fileを除去します。`off`はこのscriptが起動したprocessだけを停止し、繰り返し実行しても成功します。
+
+状態と追記logはprivateな権限で次に保存されます。
+
+- pid file: `~/Library/Application Support/my-discord-agent/screen-capture/pid`
+- log: `~/Library/Application Support/my-discord-agent/screen-capture/capture.log`
+
+送信待ちPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`です。各周期では既存の全PNGを先に再送し、すべてACKされた場合だけ新しく1枚撮影します。1枚でも再送に失敗すると、その周期は新規撮影せず次の周期に再試行するため、receiver停止中にPNGが増え続けません。失敗の確認には次を使います。
+
+```bash
+tail -f "$HOME/Library/Application Support/my-discord-agent/screen-capture/capture.log"
+```
+
+**curlが正常終了しHTTP 200を受信したら、Bot PCのDB commitが確定しているためMac側PNGを削除します**。送信失敗・ACK不明・非200応答ではPNGを保持します。resident modeは次周期に自動再送し、one-shotでは表示された同じパスを第2引数にして手動再送します。削除に失敗した場合も非zeroで終了し、削除成功とは表示しません。
 
 ```bash
 bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
