@@ -90,6 +90,12 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 - 同一jobのtick重複はcron runnerが抑止します。変更反映にはBot再起動が必要です。
 - Agent成功後・DB更新前に停止した場合は再実行されますが、Agentには既存memoryとの差分だけを反映するよう指示します。
 
+### 参考Memoryテンプレート
+
+[`templates/memory/screen-capture/`](../templates/memory/screen-capture/)に、画面活動を`memory/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。まだ実運用で十分に検証された推奨設定ではないため、既存memoryへ一括上書きせず、必要な`index.md`と`system/screen-activity-memory.md`の内容を確認して取り込んでください。
+
+このテンプレートは画面Activity Memoryへ特化しています。通常の汎用memoryとして使う場合は、日次ログをそのまま常時contextへ入れるのではなく、別途コンパクトなsummary/indexへ統合する運用が必要です。
+
 ## 受信プロトコル
 
 `POST /v1/screen-captures`へraw PNG bytesを送ります。
