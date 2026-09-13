@@ -69,7 +69,15 @@ bash scripts/capture-screen.sh \
 bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 ```
 
-新しい撮影には新しいUUIDを使います。同じUUIDと同じbytesの再送はreceiver側で冪等です。スクリプトもredirectを追わず、HTTP 200以外をACKとして扱いません。常駐タイマーはないため、単発撮影やアプリが使えない場合のfallbackとして使用してください。
+新しい撮影には新しいUUIDを使います。同じUUIDと同じbytesの再送はreceiver側で冪等です。スクリプトもredirectを追わず、HTTP 200以外をACKとして扱いません。常駐撮影をCLIから有効化できます。`on`は現在のターミナルからバックグラウンドループを起動し、`off`で停止します。間隔は30秒 / 1分 / 5分です。
+
+```bash
+bash scripts/capture-screen.sh on "$RECEIVER_URL" 60
+bash scripts/capture-screen.sh status
+bash scripts/capture-screen.sh off
+```
+
+設定はlaunchdには登録せず、ターミナルから起動したプロセスとPIDファイルだけで管理します。ターミナル終了後もプロセスを残したくない場合は、終了前に`off`を実行してください。
 
 ## cron要約
 
