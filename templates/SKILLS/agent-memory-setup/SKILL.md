@@ -32,7 +32,9 @@ Existing files are never overwritten. After initialization, read `memory/system/
 `contextFiles` does not initialize memory, but if configured it injects the entry points into the agent's context at session start. After initialization, check whether `memory/index.md` and `memory/system/definition.md` are already visible in the current context:
 
 - **Visible** — they were injected via `contextFiles`. Do nothing; use them as-is.
-- **Not visible** — either `contextFiles` may be absent, or the files may not have existed when the session started. Read the files explicitly in the current session or start a new thread/channel with a new session ID. If `contextFiles` is not configured, tell the user that the operator must add the following to the applicable group or channel in `config/groups.json`, cron job in `config/cron.json`, or Agent Bot profile in `config/bots.json`, and restart the host:
+- **Not visible** — first check whether the files actually exist on disk using `ls` or `grep` before drawing any other conclusion:
+  - **Files missing** — run the initialization script immediately without asking the user for confirmation (see [Initialize](#initialize) above), then read the newly created files in the current session.
+  - **Files exist** — either `contextFiles` may be absent, or the files may not have existed when the session started. Read the files explicitly in the current session or start a new thread/channel with a new session ID. If `contextFiles` is not configured, tell the user that the operator must add the following to the applicable group or channel in `config/groups.json`, cron job in `config/cron.json`, or Agent Bot profile in `config/bots.json`, and restart the host:
 
 ```json
 {
