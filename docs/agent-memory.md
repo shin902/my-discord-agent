@@ -3,13 +3,13 @@
 ## NanoClaw-compatible workspace memory
 
 NanoClaw-style file memory is an opt-in third memory option implemented by the
-`agent-memory` Skill. The host never creates memory files at startup or during
+`agent-memory-setup` Skill. The host never creates memory files at startup or during
 an Agent run. It does not replace or modify legacy `MEMORY.md` /
 `memory/SELF.md`, their cron jobs, MemoryCore, session trajectory, or exact
 RSS/queue state. Operators may use any of these options independently or
 together; no data is migrated or synchronized automatically.
 
-Add `agent-memory` to the profile's `skills`, enable `bash` and the ordinary
+Add `agent-memory-setup` to the profile's `skills`, enable `bash` and the ordinary
 filesystem tools, restart the host, then explicitly ask the Agent to initialize
 NanoClaw/OKF memory. The Skill runs its sandbox-local initializer, which creates
 only missing files and never overwrites existing workspace files:
@@ -24,14 +24,14 @@ memory/
 
 The bundled templates are adapted from NanoClaw commit
 [`0399a6dfa98fa8fb27b7b267749ed04d6880379b`](https://github.com/nanocoai/nanoclaw/tree/0399a6dfa98fa8fb27b7b267749ed04d6880379b).
-Its MIT notice is retained in `templates/SKILLS/agent-memory/LICENSE`.
+Its MIT notice is retained in `templates/SKILLS/agent-memory-setup/LICENSE`.
 
 `contextFiles` is not an initializer. After initialization, it can optionally
 inject the two entry points into a new session's first context:
 
 ```json
 {
-  "skills": ["agent-memory"],
+  "skills": ["agent-memory-setup"],
   "tools": ["bash", "read", "write", "edit", "list", "glob", "grep"],
   "contextFiles": [
     { "path": "memory/index.md", "maxChars": 16000 },

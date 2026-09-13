@@ -6,9 +6,12 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
-const script = join(process.cwd(), "templates/SKILLS/agent-memory/init.sh");
+const script = join(
+  process.cwd(),
+  "templates/SKILLS/agent-memory-setup/init.sh",
+);
 
-describe("agent-memory Skill initializer", () => {
+describe("agent-memory-setup Skill initializer", () => {
   it("creates missing templates without overwriting existing memory", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "agent-memory-skill-"));
 
