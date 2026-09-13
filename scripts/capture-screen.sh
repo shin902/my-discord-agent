@@ -5,6 +5,7 @@ umask 077
 
 state_directory="$HOME/Library/Application Support/my-discord-agent/screen-capture"
 pidfile="$state_directory/pid"
+lock_directory="$state_directory/lock"
 logfile="$state_directory/capture.log"
 capture_directory="$HOME/Library/Application Support/my-discord-agent/screen-captures"
 script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
@@ -53,11 +54,30 @@ case ${1-} in
     ;;
 esac
 
+lock_state() {
+  mkdir -p "$state_directory"
+  for _ in {1..100}; do
+    if mkdir "$lock_directory" 2>/dev/null; then
+      trap 'rmdir "$lock_directory"' EXIT
+      return
+    fi
+    sleep 0.05
+  done
+  echo "Screen capture state is busy; retry" >&2
+  exit 1
+}
+
 if [[ "$command" == "off" ]]; then
+  lock_state
   if [[ -f "$pidfile" ]]; then
     pid=$(<"$pidfile")
     if pid_is_ours "$pid"; then
       kill "$pid" 2>/dev/null || true
+      for _ in {1..20}; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.05
+      done
+      kill -KILL "$pid" 2>/dev/null || true
     fi
     rm -f -- "$pidfile"
   fi
@@ -65,6 +85,7 @@ if [[ "$command" == "off" ]]; then
   exit 0
 fi
 if [[ "$command" == "status" ]]; then
+  lock_state
   if [[ -f "$pidfile" ]] && pid_is_ours "$(<"$pidfile")"; then
     echo "Screen capture resident mode: on (pid $(<"$pidfile"))"
     exit 0
@@ -96,11 +117,11 @@ if [[ "$command" == "on" ]]; then
     echo "Interval must be 30, 60, or 300 seconds" >&2
     exit 1
   }
+  lock_state
   if [[ -f "$pidfile" ]] && pid_is_ours "$(<"$pidfile")"; then
     echo "Screen capture resident mode is already on (pid $(<"$pidfile"))"
     exit 0
   fi
-  mkdir -p "$state_directory"
   nohup bash "$script" run "$url" "$interval" >>"$logfile" 2>&1 < /dev/null &
   echo $! > "$pidfile"
   echo "Screen capture resident mode: on (every ${interval}s)"
@@ -109,17 +130,45 @@ fi
 
 if [[ "$command" == "run" ]]; then
   [[ "$interval" =~ ^[0-9]+$ ]] || exit 1
+  active_child=""
+  stop_tree() {
+    local child
+    while read -r child; do
+      stop_tree "$child"
+    done < <(pgrep -P "$1" 2>/dev/null || true)
+    kill "$1" 2>/dev/null || true
+  }
+  stop_worker() {
+    trap - TERM INT
+    if [[ -n "$active_child" ]]; then
+      stop_tree "$active_child"
+      wait "$active_child" 2>/dev/null || true
+    fi
+    exit 0
+  }
+  run_capture() {
+    local result
+    if [[ -n "$1" ]]; then
+      bash "$script" "$url" "$1" &
+    else
+      bash "$script" "$url" &
+    fi
+    active_child=$!
+    wait "$active_child"
+    result=$?
+    active_child=""
+    return "$result"
+  }
+  trap stop_worker TERM INT
   mkdir -p "$capture_directory"
   while :; do
     failed=0
-    shopt -s nullglob
-    pending=("$capture_directory"/*.png)
-    shopt -u nullglob
-    for image in "${pending[@]}"; do
-      bash "$script" "$url" "$image" || failed=1
+    for image in "$capture_directory"/*.png; do
+      [[ -e "$image" ]] || break
+      run_capture "$image" || failed=1
     done
     if (( failed == 0 )); then
-      bash "$script" "$url" || true
+      run_capture "" || true
     fi
     sleep "$interval"
   done

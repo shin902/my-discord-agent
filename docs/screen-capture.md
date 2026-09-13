@@ -50,7 +50,7 @@ bash scripts/capture-screen.sh status
 bash scripts/capture-screen.sh off
 ```
 
-`on`はterminalから切り離したbackground loopを起動し、すでに稼働中なら新しいprocessを増やしません。これはlogin itemやLaunchAgentではないため、Mac再起動後は再度`on`を実行してください。`status`は稼働中ならexit 0、停止中ならexit 1を返し、古いpid fileを除去します。`off`はこのscriptが起動したprocessだけを停止し、繰り返し実行しても成功します。
+`on`はterminalから切り離したbackground loopを起動し、すでに稼働中なら新しいprocessを増やしません。これはlogin itemやLaunchAgentではないため、Mac再起動後は再度`on`を実行してください。`status`は稼働中ならexit 0、停止中ならexit 1を返し、古いpid fileを除去します。`off`はこのscriptが起動したworkerと実行中の撮影・送信processを停止し、繰り返し実行しても成功します。複数の`on`が同時に実行されても起動処理を直列化し、workerを1つだけ維持します。
 
 状態と追記logはprivateな権限で次に保存されます。
 

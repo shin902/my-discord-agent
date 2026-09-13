@@ -10,6 +10,69 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
+it("serializes resident startup and stops its active upload", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "screen-resident-"));
+  const script = path.resolve("scripts/capture-screen.sh");
+  const url = "https://bot.example.ts.net:8444/v1/screen-captures";
+  try {
+    writeFileSync(
+      path.join(root, "uuidgen"),
+      "#!/usr/bin/env bash\nprintf 'cf7f6080-1faa-49a3-9734-0b4b0b1c0cee\\n'\n",
+      { mode: 0o700 },
+    );
+    writeFileSync(
+      path.join(root, "screencapture"),
+      '#!/usr/bin/env bash\nprintf png > "$5"\n',
+      { mode: 0o700 },
+    );
+    writeFileSync(
+      path.join(root, "curl"),
+      '#!/usr/bin/env bash\necho $$ > "$HOME/curl-pid"\nwhile :; do sleep 1; done\n',
+      { mode: 0o700 },
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `for _ in {1..10}; do bash "$1" on "$2" 30 & done
+wait
+pidfile="$HOME/Library/Application Support/my-discord-agent/screen-capture/pid"
+pid=$(<"$pidfile")
+for _ in {1..100}; do [[ -f "$HOME/curl-pid" ]] && break; sleep 0.02; done
+curl_pid=$(<"$HOME/curl-pid")
+[[ $(pgrep -f "$1 run $2 30" | wc -l | tr -d ' ') == 1 ]] || exit 10
+bash "$1" off
+kill -0 "$pid" 2>/dev/null && exit 11
+kill -0 "$curl_pid" 2>/dev/null && exit 12
+exit 0`,
+        "resident-test",
+        script,
+        url,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: root,
+          PATH: `${root}:${process.env.PATH}`,
+        },
+        timeout: 10_000,
+      },
+    );
+    const log = path.join(
+      root,
+      "Library/Application Support/my-discord-agent/screen-capture/capture.log",
+    );
+    expect(
+      result.status,
+      `${result.stdout}${result.stderr}${existsSync(log) ? readFileSync(log, "utf8") : ""}`,
+    ).toBe(0);
+  } finally {
+    spawnSync("pkill", ["-f", `${script} run ${url}`]);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("retains uncertain uploads for same-UUID retries and deletes the PNG only after HTTP 200", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "screen-sender-"));
   const id = "cf7f6080-1faa-49a3-9734-0b4b0b1c0cee";
