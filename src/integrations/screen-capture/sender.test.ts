@@ -31,6 +31,11 @@ it("installs, updates, reports, and removes the screen capture LaunchAgent", () 
     writeFileSync(path.join(root, "plutil"), "#!/usr/bin/env bash\nexit 0\n", {
       mode: 0o700,
     });
+    writeFileSync(
+      path.join(root, "shlock"),
+      '#!/usr/bin/env bash\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in -f) file=$2; shift 2;; -p) pid=$2; shift 2;; esac\ndone\n(set -o noclobber; printf "%s\\n" "$pid" > "$file") 2>/dev/null\n',
+      { mode: 0o700 },
+    );
 
     expect(run("status").status).toBe(1);
     expect(run("on", url, "30").status).toBe(0);

@@ -11,23 +11,16 @@ script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 domain="gui/$(id -u)"
 lock_directory="$plist.lock"
 
-release_lock() {
-  [[ $(cat "$lock_directory/pid" 2>/dev/null || true) == "$$" ]] && rm -rf -- "$lock_directory"
+temporary=""
+cleanup() {
+  [[ -z "$temporary" ]] || rm -f -- "$temporary"
+  rm -f -- "$lock_directory"
 }
 
 lock_lifecycle() {
-  local owner stale="$lock_directory.stale.$$"
   mkdir -p "$(dirname "$lock_directory")"
-  while ! mkdir "$lock_directory" 2>/dev/null; do
-    owner=$(cat "$lock_directory/pid" 2>/dev/null || true)
-    if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
-      sleep 0.05
-    elif mv "$lock_directory" "$stale" 2>/dev/null; then
-      rm -rf -- "$stale"
-    fi
-  done
-  printf '%s\n' "$$" >"$lock_directory/pid"
-  trap release_lock EXIT
+  while ! shlock -f "$lock_directory" -p "$$"; do sleep 0.05; done
+  trap cleanup EXIT
 }
 
 unload_agent() {
@@ -118,7 +111,6 @@ if [[ "$command" == "on" ]]; then
   escaped_script=$(xml_escape "$script")
   escaped_logfile=$(xml_escape "$logfile")
   temporary="$plist.$$"
-  trap 'rm -f -- "$temporary"' EXIT
   cat >"$temporary" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
