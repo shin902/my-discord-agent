@@ -15,7 +15,7 @@ it("installs, updates, reports, and removes the screen capture LaunchAgent", () 
   const script = path.resolve("scripts/capture-screen.sh");
   const url = "https://bot.example.ts.net:8444/v1/screen-captures";
   const calls = path.join(root, "launchctl-calls");
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: root,
     PATH: `${root}:${process.env.PATH}`,
@@ -25,7 +25,7 @@ it("installs, updates, reports, and removes the screen capture LaunchAgent", () 
   try {
     writeFileSync(
       path.join(root, "launchctl"),
-      '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$HOME/launchctl-calls"\n[[ "$1" != print || -f "$HOME/loaded" ]] || exit 1\n[[ "$1" != bootstrap ]] || touch "$HOME/loaded"\n[[ "$1" != bootout ]] || rm -f "$HOME/loaded"\n',
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$HOME/launchctl-calls"\n[[ "$1" != print || -f "$HOME/loaded" ]] || exit 1\n[[ "$1" != bootstrap ]] || touch "$HOME/loaded"\nif [[ "$1" == bootout ]]; then\n  [[ -z "$FAIL_BOOTOUT" ]] || exit 1\n  rm -f "$HOME/loaded"\nfi\n',
       { mode: 0o700 },
     );
     writeFileSync(path.join(root, "plutil"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -47,6 +47,10 @@ it("installs, updates, reports, and removes the screen capture LaunchAgent", () 
       "<key>StartInterval</key><integer>300</integer>",
     );
     expect(run("on", url, "0").status).toBe(1);
+    env.FAIL_BOOTOUT = "1";
+    expect(run("off").status).toBe(1);
+    expect(existsSync(plist)).toBe(true);
+    delete env.FAIL_BOOTOUT;
     expect(run("off").status).toBe(0);
     expect(existsSync(plist)).toBe(false);
     expect(readFileSync(calls, "utf8")).toContain("bootstrap gui/");

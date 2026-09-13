@@ -9,6 +9,36 @@ logfile="$HOME/Library/Logs/my-discord-agent-screen-capture.log"
 capture_directory="$HOME/Library/Application Support/my-discord-agent/screen-captures"
 script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 domain="gui/$(id -u)"
+lock_directory="$plist.lock"
+
+release_lock() {
+  [[ $(cat "$lock_directory/pid" 2>/dev/null || true) == "$$" ]] && rm -rf -- "$lock_directory"
+}
+
+lock_lifecycle() {
+  local owner stale="$lock_directory.stale.$$"
+  mkdir -p "$(dirname "$lock_directory")"
+  while ! mkdir "$lock_directory" 2>/dev/null; do
+    owner=$(cat "$lock_directory/pid" 2>/dev/null || true)
+    if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
+      sleep 0.05
+    elif mv "$lock_directory" "$stale" 2>/dev/null; then
+      rm -rf -- "$stale"
+    fi
+  done
+  printf '%s\n' "$$" >"$lock_directory/pid"
+  trap release_lock EXIT
+}
+
+unload_agent() {
+  if launchctl print "$domain/$label" >/dev/null 2>&1; then
+    launchctl bootout "$domain/$label"
+  fi
+}
+
+xml_escape() {
+  sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"
+}
 
 usage() {
   cat >&2 <<EOF
@@ -47,7 +77,8 @@ case ${1-} in
 esac
 
 if [[ "$command" == "off" ]]; then
-  launchctl bootout "$domain/$label" 2>/dev/null || true
+  lock_lifecycle
+  unload_agent
   rm -f -- "$plist"
   echo "Screen capture LaunchAgent: off"
   exit 0
@@ -83,6 +114,9 @@ if [[ "$command" == "on" ]]; then
     exit 1
   }
   mkdir -p "$(dirname "$plist")" "$(dirname "$logfile")"
+  lock_lifecycle
+  escaped_script=$(xml_escape "$script")
+  escaped_logfile=$(xml_escape "$logfile")
   temporary="$plist.$$"
   trap 'rm -f -- "$temporary"' EXIT
   cat >"$temporary" <<EOF
@@ -91,16 +125,16 @@ if [[ "$command" == "on" ]]; then
 <plist version="1.0"><dict>
   <key>Label</key><string>$label</string>
   <key>ProgramArguments</key><array>
-    <string>/bin/bash</string><string>$script</string><string>run</string><string>$url</string>
+    <string>/bin/bash</string><string>$escaped_script</string><string>run</string><string>$url</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>$interval</integer>
-  <key>StandardOutPath</key><string>$logfile</string>
-  <key>StandardErrorPath</key><string>$logfile</string>
+  <key>StandardOutPath</key><string>$escaped_logfile</string>
+  <key>StandardErrorPath</key><string>$escaped_logfile</string>
 </dict></plist>
 EOF
   plutil -lint "$temporary" >/dev/null
-  launchctl bootout "$domain/$label" 2>/dev/null || true
+  unload_agent
   mv -f -- "$temporary" "$plist"
   launchctl bootstrap "$domain" "$plist"
   echo "Screen capture LaunchAgent: on (every ${interval}s)"
