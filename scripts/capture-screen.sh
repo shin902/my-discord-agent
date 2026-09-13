@@ -4,8 +4,7 @@ set -euo pipefail
 umask 077
 
 state_directory="$HOME/Library/Application Support/my-discord-agent/screen-capture"
-pidfile="$state_directory/pid"
-lock_directory="$state_directory/lock"
+worker_marker="$state_directory/worker"
 logfile="$state_directory/capture.log"
 capture_directory="$HOME/Library/Application Support/my-discord-agent/screen-captures"
 script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
@@ -15,6 +14,39 @@ pid_is_ours() {
   [[ "$1" =~ ^[0-9]+$ ]] || return 1
   process=$(ps -p "$1" -o command= 2>/dev/null || true)
   [[ "$process" == *"$script run "* ]]
+}
+
+current_worker_pid() {
+  local pid
+  [[ -L "$worker_marker" ]] || return 1
+  pid=$(readlink "$worker_marker" 2>/dev/null || true)
+  if pid_is_ours "$pid"; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+  rm -f -- "$worker_marker"
+  return 1
+}
+
+claim_worker() {
+  local pid
+  mkdir -p "$state_directory"
+  while :; do
+    if ln -s "$$" "$worker_marker" 2>/dev/null; then
+      return 0
+    fi
+    pid=$(readlink "$worker_marker" 2>/dev/null || true)
+    if pid_is_ours "$pid"; then
+      return 1
+    fi
+    rm -f -- "$worker_marker"
+  done
+}
+
+release_worker() {
+  if [[ -L "$worker_marker" ]] && [[ $(readlink "$worker_marker" 2>/dev/null || true) == "$$" ]]; then
+    rm -f -- "$worker_marker"
+  fi
 }
 
 usage() {
@@ -54,43 +86,21 @@ case ${1-} in
     ;;
 esac
 
-lock_state() {
-  mkdir -p "$state_directory"
-  for _ in {1..100}; do
-    if mkdir "$lock_directory" 2>/dev/null; then
-      trap 'rmdir "$lock_directory"' EXIT
-      return
-    fi
-    sleep 0.05
-  done
-  echo "Screen capture state is busy; retry" >&2
-  exit 1
-}
-
 if [[ "$command" == "off" ]]; then
-  lock_state
-  if [[ -f "$pidfile" ]]; then
-    pid=$(<"$pidfile")
-    if pid_is_ours "$pid"; then
-      kill "$pid" 2>/dev/null || true
-      for _ in {1..20}; do
-        kill -0 "$pid" 2>/dev/null || break
-        sleep 0.05
-      done
-      kill -KILL "$pid" 2>/dev/null || true
-    fi
-    rm -f -- "$pidfile"
+  if pid=$(current_worker_pid); then
+    # Stop future scheduling only. A one-shot capture/upload already started by the
+    # worker is allowed to finish independently.
+    kill "$pid" 2>/dev/null || true
   fi
   echo "Screen capture resident mode: off"
   exit 0
 fi
+
 if [[ "$command" == "status" ]]; then
-  lock_state
-  if [[ -f "$pidfile" ]] && pid_is_ours "$(<"$pidfile")"; then
-    echo "Screen capture resident mode: on (pid $(<"$pidfile"))"
+  if pid=$(current_worker_pid); then
+    echo "Screen capture resident mode: on (pid $pid)"
     exit 0
   fi
-  rm -f -- "$pidfile"
   echo "Screen capture resident mode: off"
   exit 1
 fi
@@ -117,50 +127,48 @@ if [[ "$command" == "on" ]]; then
     echo "Interval must be 30, 60, or 300 seconds" >&2
     exit 1
   }
-  lock_state
-  if [[ -f "$pidfile" ]] && pid_is_ours "$(<"$pidfile")"; then
-    echo "Screen capture resident mode is already on (pid $(<"$pidfile"))"
+  mkdir -p "$state_directory"
+  if pid=$(current_worker_pid); then
+    echo "Screen capture resident mode is already on (pid $pid)"
     exit 0
   fi
   nohup bash "$script" run "$url" "$interval" >>"$logfile" 2>&1 < /dev/null &
-  echo $! > "$pidfile"
-  echo "Screen capture resident mode: on (every ${interval}s)"
-  exit 0
+  candidate=$!
+  for _ in {1..20}; do
+    if pid=$(current_worker_pid); then
+      echo "Screen capture resident mode: on (every ${interval}s, pid $pid)"
+      exit 0
+    fi
+    kill -0 "$candidate" 2>/dev/null || break
+    sleep 0.05
+  done
+  echo "Screen capture resident mode failed to start; see $logfile" >&2
+  exit 1
 fi
 
 if [[ "$command" == "run" ]]; then
-  [[ "$interval" =~ ^[0-9]+$ ]] || exit 1
-  active_child=""
-  stop_tree() {
-    local child
-    while read -r child; do
-      stop_tree "$child"
-    done < <(pgrep -P "$1" 2>/dev/null || true)
-    kill "$1" 2>/dev/null || true
-  }
-  stop_worker() {
-    trap - TERM INT
-    if [[ -n "$active_child" ]]; then
-      stop_tree "$active_child"
-      wait "$active_child" 2>/dev/null || true
-    fi
-    exit 0
-  }
+  [[ "$interval" =~ ^(30|60|300)$ ]] || exit 1
+  # The worker owns one atomic marker. Concurrent `on` calls may launch candidate
+  # workers, but only one can claim the marker; stale markers are reclaimed.
+  claim_worker || exit 0
+  trap 'exit 0' TERM INT
+  trap release_worker EXIT
+  mkdir -p "$capture_directory"
+
   run_capture() {
-    local result
     if [[ -n "$1" ]]; then
       bash "$script" "$url" "$1" &
     else
       bash "$script" "$url" &
     fi
-    active_child=$!
-    wait "$active_child"
-    result=$?
-    active_child=""
-    return "$result"
+    wait $!
   }
-  trap stop_worker TERM INT
-  mkdir -p "$capture_directory"
+
+  wait_interval() {
+    sleep "$interval" &
+    wait $!
+  }
+
   while :; do
     failed=0
     for image in "$capture_directory"/*.png; do
@@ -170,7 +178,7 @@ if [[ "$command" == "run" ]]; then
     if (( failed == 0 )); then
       run_capture "" || true
     fi
-    sleep "$interval"
+    wait_interval || true
   done
 fi
 
