@@ -51,14 +51,14 @@ describe("screen capture summary cron", () => {
     }
   }
 
-  it("runs one group agent with every image and completes the batch", async () => {
+  it("runs one group agent with the configured batch and completes only it", async () => {
     const ids = insert(3);
-    await handler(ctx);
+    await handler({ ...ctx, settings: { limit: 2 } });
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [groupName, , prompt] = vi.mocked(sendMessage).mock.calls[0];
     expect(groupName).toBe("logbook");
-    for (const id of ids) {
+    for (const id of ids.slice(0, 2)) {
       const imagePath = path.join(
         process.cwd(),
         "groups/logbook/.screen-captures",
@@ -69,6 +69,7 @@ describe("screen capture summary cron", () => {
         code: "ENOENT",
       });
     }
+    expect(prompt).not.toContain(ids[2]);
 
     const db = openScreenCaptureDb();
     try {
@@ -78,7 +79,7 @@ describe("screen capture summary cron", () => {
             "SELECT count(*) AS count FROM screen_captures WHERE completed_at IS NOT NULL",
           )
           .get(),
-      ).toEqual({ count: 3 });
+      ).toEqual({ count: 2 });
     } finally {
       db.close();
     }

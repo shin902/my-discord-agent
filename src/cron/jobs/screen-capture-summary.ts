@@ -10,6 +10,7 @@ import type { CronContext } from "../runner.js";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const Settings = z.strictObject({
   timeoutMs: z.number().int().min(1).max(600_000).default(120_000),
+  limit: z.number().int().min(1).default(10),
 });
 
 export default async function handler(ctx: CronContext): Promise<void> {
@@ -29,8 +30,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
   try {
     const captures = db
       .prepare(`SELECT id, image, received_at FROM screen_captures
-        WHERE completed_at IS NULL ORDER BY received_at, id`)
-      .all() as { id: string; image: Buffer; received_at: string }[];
+        WHERE completed_at IS NULL ORDER BY received_at, id LIMIT ?`)
+      .all(settings.data.limit) as {
+      id: string;
+      image: Buffer;
+      received_at: string;
+    }[];
     if (captures.length === 0) return;
 
     await mkdir(directory, { recursive: true });

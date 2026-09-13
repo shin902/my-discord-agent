@@ -80,12 +80,13 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
   "groupName": "logbook",
   "handler": "jobs/screen-capture-summary.ts",
   "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
-  "settings": { "timeoutMs": 120000 }
+  "settings": { "timeoutMs": 120000, "limit": 10 }
 }
 ```
 
 - `model`はcron指定を優先し、省略時はグループ設定へfallbackします。tools・skills・mounts・contextFilesはグループ設定を使います。
 - `settings.timeoutMs`は1–600000、既定120000で、Agent run全体の上限です。
+- `settings.limit`は1回に処理する画像数で、既定10です。古い未処理画像から順に処理します。
 - DBのPNG BLOBは`groups/<group>/.screen-captures/`へ一時配置され、Agentから`/workspace/.screen-captures/<id>.png`として読めます。
 - 同一jobのtick重複はcron runnerが抑止します。変更反映にはBot再起動が必要です。
 - Agent成功後・DB更新前に停止した場合は再実行されますが、Agentには既存memoryとの差分だけを反映するよう指示します。
