@@ -6,7 +6,15 @@ umask 077
 state_directory="$HOME/Library/Application Support/my-discord-agent/screen-capture"
 pidfile="$state_directory/pid"
 logfile="$state_directory/capture.log"
+capture_directory="$HOME/Library/Application Support/my-discord-agent/screen-captures"
 script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+
+pid_is_ours() {
+  local process
+  [[ "$1" =~ ^[0-9]+$ ]] || return 1
+  process=$(ps -p "$1" -o command= 2>/dev/null || true)
+  [[ "$process" == *"$script run "* ]]
+}
 
 usage() {
   cat >&2 <<EOF
@@ -48,14 +56,16 @@ esac
 if [[ "$command" == "off" ]]; then
   if [[ -f "$pidfile" ]]; then
     pid=$(<"$pidfile")
-    kill "$pid" 2>/dev/null || true
+    if pid_is_ours "$pid"; then
+      kill "$pid" 2>/dev/null || true
+    fi
     rm -f -- "$pidfile"
   fi
   echo "Screen capture resident mode: off"
   exit 0
 fi
 if [[ "$command" == "status" ]]; then
-  if [[ -f "$pidfile" ]] && kill -0 "$(<"$pidfile")" 2>/dev/null; then
+  if [[ -f "$pidfile" ]] && pid_is_ours "$(<"$pidfile")"; then
     echo "Screen capture resident mode: on (pid $(<"$pidfile"))"
     exit 0
   fi
@@ -86,7 +96,7 @@ if [[ "$command" == "on" ]]; then
     echo "Interval must be 30, 60, or 300 seconds" >&2
     exit 1
   }
-  if [[ -f "$pidfile" ]] && kill -0 "$(<"$pidfile")" 2>/dev/null; then
+  if [[ -f "$pidfile" ]] && pid_is_ours "$(<"$pidfile")"; then
     echo "Screen capture resident mode is already on (pid $(<"$pidfile"))"
     exit 0
   fi
@@ -99,8 +109,18 @@ fi
 
 if [[ "$command" == "run" ]]; then
   [[ "$interval" =~ ^[0-9]+$ ]] || exit 1
+  mkdir -p "$capture_directory"
   while :; do
-    bash "$script" "$url" || true
+    failed=0
+    shopt -s nullglob
+    pending=("$capture_directory"/*.png)
+    shopt -u nullglob
+    for image in "${pending[@]}"; do
+      bash "$script" "$url" "$image" || failed=1
+    done
+    if (( failed == 0 )); then
+      bash "$script" "$url" || true
+    fi
     sleep "$interval"
   done
 fi
@@ -108,9 +128,8 @@ fi
 if [[ $# -eq 2 ]]; then
   image=$2
 else
-  directory="$HOME/Library/Application Support/my-discord-agent/screen-captures"
-  mkdir -p "$directory"
-  image="$directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
+  mkdir -p "$capture_directory"
+  image="$capture_directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
   screencapture -x -m -t png "$image"
 fi
 id=$(basename "$image" .png)
