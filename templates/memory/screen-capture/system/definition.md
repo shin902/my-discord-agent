@@ -5,19 +5,17 @@ type: system
 # Agent Memory System
 
 This file defines how your persistent memory works, and it is yours to improve.
-Only the portable file contract below and two entry-point paths are fixed:
+Only the portable file contract below and two loaded paths are fixed:
 `memory/index.md` and this file at `memory/system/definition.md`. The folders,
 prose organization, and other guidance are yours to reshape if a different
 shape would remember or retrieve better.
 
-When both paths are configured in `contextFiles`, `memory/index.md` and this
-definition are injected from a session-initial snapshot when a new session
-starts. Without that optional configuration, read them explicitly. Updates
-made during the same session are not automatically re-injected. Re-read the workspace files explicitly when
-you need their latest contents. Keep both lean: headlines and pointers here,
-detail in linked files. Core Memory in the index should only hold durable facts
-relevant in nearly every conversation; behavior, role, and persona belong in
-`/workspace/AGENTS.md`.
+`memory/index.md` and this definition are loaded whenever a context window is
+created: at startup.Updates made during the same session are not automatically re-injected.
+Re-read the workspace files explicitly when you need their latest contents.
+Keep both lean: headlines and pointers here, detail in linked files.
+Core Memory in the index should only hold durable facts relevant in nearly every conversation;
+behavior, role, and persona belong in `/workspace/AGENTS.md`.
 
 ## Open Knowledge Format
 
@@ -55,22 +53,15 @@ each type consistent across files, and rename when better vocabulary emerges.
 
 Missing or malformed frontmatter never makes a memory unusable. Read the file
 normally and repair its metadata when you are already reading or editing it;
-do not scan the whole tree on every write. Search with the available filesystem
-tools such as `grep`, `glob`, and `list`, then use `read` to inspect relevant
-files and follow Markdown links. For durable claims
+do not scan the whole tree on every write. Search with ordinary filesystem
+tools such as `grep`, `glob`, and `list`, then follow Markdown links. For durable claims
 learned from external sources, add a
 `# Citations` section with links when useful; conversational facts need no
 synthetic citation.
 
 ## What to remember
 
-Never store secrets or authentication material in memory, including passwords,
-API keys, access tokens, cookies, private keys, authorization headers, or
-session credentials. If such data appears in conversation or files, do not
-copy it into memory; redact or remove the secret value while preserving only
-the non-secret context when that context is worth remembering.
-
-As a useful assistant, you need to store all relevant non-secret information the user shares with you and recall it when relevant. When the user shares a file or large chunk of information (e.g. a call transcript), create one or more new concepts with distilled and organized information that could be relevant to recall. When the user shares specific facts or preferences in conversation, add them to existing concepts or create new concepts as needed. Information is lost when the conversation history is compacted, so anything you would want to survive compaction should be stored in memory.
+As a useful assistant, you need to store all relevant information the user shares with you and recall it when relevant. When the user shares a file or large chunk of information (e.g. a call transcript), create one or more new concepts with distilled and organized information that could be relevant to recall. When the user shares specific facts or preferences in conversation, add them to existing concepts or create new concepts as needed. Information is lost when the conversation history is compacted, so anything you would want to survive compaction should be stored in memory.
 
 Remember the approach, not the instance. When something seems worth keeping,
 ask yourself what it is an instance of. If the user disliked the wording of one
