@@ -1,85 +1,56 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-it("keeps one resident worker, reclaims stale ownership, and leaves an in-flight upload alone on off", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "screen-resident-"));
+it("installs, updates, reports, and removes the screen capture LaunchAgent", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "screen-launch-agent-"));
   const script = path.resolve("scripts/capture-screen.sh");
   const url = "https://bot.example.ts.net:8444/v1/screen-captures";
+  const calls = path.join(root, "launchctl-calls");
+  const env = {
+    ...process.env,
+    HOME: root,
+    PATH: `${root}:${process.env.PATH}`,
+  };
+  const run = (...args: string[]) =>
+    spawnSync("bash", [script, ...args], { encoding: "utf8", env });
   try {
     writeFileSync(
-      path.join(root, "uuidgen"),
-      "#!/usr/bin/env bash\nprintf 'cf7f6080-1faa-49a3-9734-0b4b0b1c0cee\\n'\n",
+      path.join(root, "launchctl"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$HOME/launchctl-calls"\n[[ "$1" != print || -f "$HOME/loaded" ]] || exit 1\n[[ "$1" != bootstrap ]] || touch "$HOME/loaded"\n[[ "$1" != bootout ]] || rm -f "$HOME/loaded"\n',
       { mode: 0o700 },
     );
-    writeFileSync(
-      path.join(root, "screencapture"),
-      '#!/usr/bin/env bash\nprintf png > "$5"\n',
-      { mode: 0o700 },
-    );
-    writeFileSync(
-      path.join(root, "curl"),
-      '#!/usr/bin/env bash\necho $$ > "$HOME/curl-pid"\nsleep 5\nprintf 200\n',
-      { mode: 0o700 },
-    );
-    const stateDir = path.join(
-      root,
-      "Library/Application Support/my-discord-agent/screen-capture",
-    );
-    mkdirSync(stateDir, { recursive: true });
-    symlinkSync("999999", path.join(stateDir, "worker"));
+    writeFileSync(path.join(root, "plutil"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o700,
+    });
 
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        `for _ in {1..10}; do bash "$1" on "$2" 30 & done
-wait
-worker="$HOME/Library/Application Support/my-discord-agent/screen-capture/worker"
-for _ in {1..100}; do [[ -L "$worker" ]] && break; sleep 0.02; done
-pid=$(readlink "$worker")
-[[ "$pid" =~ ^[0-9]+$ ]] || exit 9
-[[ $(pgrep -f "$1 run $2 30" | wc -l | tr -d ' ') == 1 ]] || exit 10
-for _ in {1..100}; do [[ -f "$HOME/curl-pid" ]] && break; sleep 0.02; done
-curl_pid=$(<"$HOME/curl-pid")
-bash "$1" off
-for _ in {1..100}; do [[ ! -L "$worker" ]] && break; sleep 0.02; done
-[[ ! -L "$worker" ]] || exit 11
-kill -0 "$pid" 2>/dev/null && exit 12
-kill -0 "$curl_pid" 2>/dev/null || exit 13
-kill "$curl_pid" 2>/dev/null || true
-exit 0`,
-        "resident-test",
-        script,
-        url,
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          HOME: root,
-          PATH: `${root}:${process.env.PATH}`,
-        },
-        timeout: 10_000,
-      },
+    expect(run("status").status).toBe(1);
+    expect(run("on", url, "30").status).toBe(0);
+    const plist = path.join(
+      root,
+      "Library/LaunchAgents/com.my-discord-agent.screen-capture.plist",
     );
-    const log = path.join(stateDir, "capture.log");
-    expect(
-      result.status,
-      `${result.stdout}${result.stderr}${existsSync(log) ? readFileSync(log, "utf8") : ""}`,
-    ).toBe(0);
+    expect(readFileSync(plist, "utf8")).toContain(
+      "<key>StartInterval</key><integer>30</integer>",
+    );
+    expect(run("status").status).toBe(0);
+    expect(run("on", url, "300").status).toBe(0);
+    expect(readFileSync(plist, "utf8")).toContain(
+      "<key>StartInterval</key><integer>300</integer>",
+    );
+    expect(run("on", url, "0").status).toBe(1);
+    expect(run("off").status).toBe(0);
+    expect(existsSync(plist)).toBe(false);
+    expect(readFileSync(calls, "utf8")).toContain("bootstrap gui/");
   } finally {
-    spawnSync("pkill", ["-f", `${script} run ${url}`]);
     rmSync(root, { recursive: true, force: true });
   }
 });
