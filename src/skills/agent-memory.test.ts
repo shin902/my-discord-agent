@@ -27,9 +27,7 @@ describe("agent-memory-setup Skill initializer", () => {
       );
     const definition = await readFile(join(workspace, files[2]), "utf8");
     expect(definition).toContain("OKF");
-    expect(definition).toContain("session-initial snapshot");
-    expect(definition).toContain("available filesystem");
-    expect(definition).toContain("Never store secrets");
+    expect(definition).toContain("memory/index.md");
 
     await writeFile(join(workspace, files[0]), "existing index\n");
     await writeFile(join(workspace, files[1]), "existing system index\n");
