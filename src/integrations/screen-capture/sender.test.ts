@@ -1,16 +1,18 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-it("serializes resident startup and stops its active upload", () => {
+it("keeps one resident worker, reclaims stale ownership, and leaves an in-flight upload alone on off", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "screen-resident-"));
   const script = path.resolve("scripts/capture-screen.sh");
   const url = "https://bot.example.ts.net:8444/v1/screen-captures";
@@ -27,23 +29,35 @@ it("serializes resident startup and stops its active upload", () => {
     );
     writeFileSync(
       path.join(root, "curl"),
-      '#!/usr/bin/env bash\necho $$ > "$HOME/curl-pid"\nwhile :; do sleep 1; done\n',
+      '#!/usr/bin/env bash\necho $$ > "$HOME/curl-pid"\nsleep 5\nprintf 200\n',
       { mode: 0o700 },
     );
+    const stateDir = path.join(
+      root,
+      "Library/Application Support/my-discord-agent/screen-capture",
+    );
+    mkdirSync(stateDir, { recursive: true });
+    symlinkSync("999999", path.join(stateDir, "worker"));
+
     const result = spawnSync(
       "bash",
       [
         "-c",
         `for _ in {1..10}; do bash "$1" on "$2" 30 & done
 wait
-pidfile="$HOME/Library/Application Support/my-discord-agent/screen-capture/pid"
-pid=$(<"$pidfile")
+worker="$HOME/Library/Application Support/my-discord-agent/screen-capture/worker"
+for _ in {1..100}; do [[ -L "$worker" ]] && break; sleep 0.02; done
+pid=$(readlink "$worker")
+[[ "$pid" =~ ^[0-9]+$ ]] || exit 9
+[[ $(pgrep -f "$1 run $2 30" | wc -l | tr -d ' ') == 1 ]] || exit 10
 for _ in {1..100}; do [[ -f "$HOME/curl-pid" ]] && break; sleep 0.02; done
 curl_pid=$(<"$HOME/curl-pid")
-[[ $(pgrep -f "$1 run $2 30" | wc -l | tr -d ' ') == 1 ]] || exit 10
 bash "$1" off
-kill -0 "$pid" 2>/dev/null && exit 11
-kill -0 "$curl_pid" 2>/dev/null && exit 12
+for _ in {1..100}; do [[ ! -L "$worker" ]] && break; sleep 0.02; done
+[[ ! -L "$worker" ]] || exit 11
+kill -0 "$pid" 2>/dev/null && exit 12
+kill -0 "$curl_pid" 2>/dev/null || exit 13
+kill "$curl_pid" 2>/dev/null || true
 exit 0`,
         "resident-test",
         script,
@@ -59,10 +73,7 @@ exit 0`,
         timeout: 10_000,
       },
     );
-    const log = path.join(
-      root,
-      "Library/Application Support/my-discord-agent/screen-capture/capture.log",
-    );
+    const log = path.join(stateDir, "capture.log");
     expect(
       result.status,
       `${result.stdout}${result.stderr}${existsSync(log) ? readFileSync(log, "utf8") : ""}`,
