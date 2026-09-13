@@ -50,11 +50,13 @@ bash scripts/capture-screen.sh status
 bash scripts/capture-screen.sh off
 ```
 
-`on`はterminalから切り離したbackground loopを起動し、すでに稼働中なら新しいprocessを増やしません。これはlogin itemやLaunchAgentではないため、Mac再起動後は再度`on`を実行してください。`status`は稼働中ならexit 0、停止中ならexit 1を返し、古いpid fileを除去します。`off`はこのscriptが起動したworkerと実行中の撮影・送信processを停止し、繰り返し実行しても成功します。複数の`on`が同時に実行されても起動処理を直列化し、workerを1つだけ維持します。
+`on`はterminalから切り離した軽量なbackground loopを起動します。これはlogin itemやLaunchAgentではないため、Mac再起動後は再度`on`を実行してください。worker自身がatomicなowner markerを取得するため、複数の`on`がほぼ同時に実行されても稼働workerは1つだけになり、古いmarkerはworkerが存在しなければ自動回収します。`status`は稼働中ならexit 0、停止中ならexit 1です。
+
+`off`はresident workerへ停止を要求し、**以後の自動撮影を止めます**。すでに開始済みの1回の撮影・uploadは強制終了せず、そのまま完了してよい契約です。そのため`off`後に、開始済みuploadがHTTP 200を受けてpending PNGを削除する場合があります。resident modeはプロセスツリー全体の強制停止や厳密なservice managerを目的にしません。
 
 状態と追記logはprivateな権限で次に保存されます。
 
-- pid file: `~/Library/Application Support/my-discord-agent/screen-capture/pid`
+- worker owner marker: `~/Library/Application Support/my-discord-agent/screen-capture/worker`
 - log: `~/Library/Application Support/my-discord-agent/screen-capture/capture.log`
 
 送信待ちPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`です。各周期では既存の全PNGを先に再送し、すべてACKされた場合だけ新しく1枚撮影します。1枚でも再送に失敗すると、その周期は新規撮影せず次の周期に再試行するため、receiver停止中にPNGが増え続けません。失敗の確認には次を使います。
