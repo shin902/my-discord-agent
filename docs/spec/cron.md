@@ -189,7 +189,7 @@ host専用DBの未読画像IDを全件snapshotし、boundedな並列workerから
 3. cron enqueue/pollerが設定された方式に従ってproviderのconcurrency設定とセッション順序を保ったままAIを実行し、delivery workerが投稿先を確定する。`item-thread` は一時sessionでAIを実行し、通常応答がある場合だけ親メッセージ→session昇格→thread作成の順でmaterializeする。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
-AI・Discord delivery・既読化のいずれかが失敗したメールは未読のまま残る。同じメールが次回も取得されてもactive / completed idempotency recordがある間は新しいjobを作らず、Agent・配送の失敗は既存jobのqueue retry経路で再試行する。
+Agent・配送の一時的な失敗は既存jobのqueue retry経路で再試行する。jobがdead letterへ到達した場合、またはDiscord配送完了後のGraph既読化に失敗した場合はmailのidempotency keyを解放する。メールは未読のまま次回cronで新しいjobとして再処理でき、activeなjobや既読化済みメールは重複投入しない。
 
 ## 運用メモ
 

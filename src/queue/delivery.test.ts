@@ -39,6 +39,7 @@ function completed(
   repo: QueueRepository,
   response: string,
   metadata: Record<string, unknown> = {},
+  idempotencyKey?: string,
 ) {
   const item = repo.enqueue({
     channelId: "channel",
@@ -46,6 +47,7 @@ function completed(
     sessionId: "session",
     content: "prompt",
     timestamp: new Date().toISOString(),
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   });
   const claim = expectDefined(repo.claim("agent", 1000));
   repo.commitResult(item.job.id, claim.fencingToken, response, {
@@ -398,6 +400,33 @@ describe("durable delivery worker", () => {
       await worker.runOnce();
       expect(acknowledgeEmail).toHaveBeenCalledOnce();
       expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("releases a completed mail key when Graph ACK fails", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const adapter: DeliveryAdapter = {
+      send: vi.fn(async () => ({ externalMessageId: "discord-1" })),
+    };
+    acknowledgeEmail.mockRejectedValueOnce(new Error("Graph unavailable"));
+    try {
+      const jobId = completed(
+        repo,
+        "response",
+        { mailEmailId: "mail-1" },
+        "mail:graph:mail-1",
+      );
+      const worker = new DeliveryWorker(repo, adapter, {
+        workerId: "delivery-a",
+      });
+
+      await worker.runOnce();
+
+      expect(repo.listDeliveries("sent")).toHaveLength(1);
+      expect(repo.getIdempotencyRecord("mail:graph:mail-1")).toBeUndefined();
+      expect(repo.get(jobId)?.idempotencyKey).toBeUndefined();
     } finally {
       repo.close();
     }

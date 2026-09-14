@@ -124,6 +124,34 @@ describe("QueueRepository lease renewal", () => {
       repo.close();
     }
   });
+
+  it("releases a dead-lettered mail key so an unread message can be queued again", () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const payload = {
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+        mailEmailId: "mail-1",
+      };
+      const first = repo.enqueue(payload, {
+        idempotencyKey: "mail:graph:mail-1",
+        maxAttempts: 1,
+      });
+      repo.claim("worker-a", 1);
+      repo.claim("worker-b", 1, new Date(Date.now() + 100));
+
+      expect(repo.get(first.job.id)?.status).toBe("dead_letter");
+      expect(repo.getIdempotencyRecord("mail:graph:mail-1")).toBeUndefined();
+      expect(
+        repo.enqueue(payload, { idempotencyKey: "mail:graph:mail-1" }).inserted,
+      ).toBe(true);
+    } finally {
+      repo.close();
+    }
+  });
 });
 
 describe("failAttempt - options object", () => {

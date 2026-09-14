@@ -566,6 +566,7 @@ export class DeliveryWorker {
       if (typeof payload.mailEmailId !== "string") return;
       await acknowledgeEmail(payload.mailEmailId);
     } catch (error) {
+      this.repository.releaseTerminalIdempotencyKey(row.jobId);
       console.error("[mail] Discord配送後の既読化に失敗:", error);
     }
   }

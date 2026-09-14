@@ -201,6 +201,7 @@ async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
     try {
       await acknowledgeEmail(msg.mailEmailId);
     } catch (error) {
+      getQueueRepository().releaseTerminalIdempotencyKey(msg.id);
       console.error(
         `[poller] 無配信mailの既読化に失敗しました (${msg.id}):`,
         error,
