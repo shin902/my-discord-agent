@@ -373,7 +373,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
       `[screen-capture-summary] completed=${invalidCount + rejectedIds.length + summarized.length} accepted=${summarized.length}`,
     );
   } finally {
-    await rm(directory, { recursive: true, force: true });
-    db.close();
+    try {
+      await rm(directory, { recursive: true, force: true });
+    } finally {
+      db.close();
+    }
   }
 }
