@@ -11,7 +11,7 @@ const ROOT = path.resolve(
   "../../..",
 );
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
@@ -136,6 +136,14 @@ function createSchema(db: Database.Database): void {
       PRIMARY KEY (tweet_id, kind, position)
     );
     CREATE INDEX IF NOT EXISTS idx_x_media_status ON x_media(status);
+
+    CREATE TABLE IF NOT EXISTS x_enrichment (
+      tweet_id TEXT PRIMARY KEY REFERENCES x_items(tweet_id) ON DELETE CASCADE,
+      document_json TEXT CHECK (document_json IS NULL OR json_valid(document_json)),
+      resolved_at TEXT,
+      attempted_at TEXT NOT NULL,
+      last_error TEXT
+    );
 
     CREATE TABLE IF NOT EXISTS x_item_labels (
       tweet_id TEXT NOT NULL REFERENCES x_items(tweet_id) ON DELETE CASCADE,

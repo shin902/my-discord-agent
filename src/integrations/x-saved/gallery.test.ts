@@ -125,7 +125,7 @@ describe("x-saved gallery", () => {
     const before = getGalleryItem(db, "123");
     db.exec("DROP TABLE x_item_labels; PRAGMA user_version=3;");
     const upgraded = openXSavedDb(dbPath);
-    expect(upgraded.pragma("user_version", { simple: true })).toBe(4);
+    expect(upgraded.pragma("user_version", { simple: true })).toBe(5);
     expect(getGalleryItem(upgraded, "123")).toEqual(before);
     updateGalleryItem(upgraded, "123", classification);
     upgraded.close();

@@ -72,7 +72,7 @@ Errors return JSON without `accepted`: `400` for invalid JSON/batches, `413` for
 
 To verify an installation, capture a Like and a Bookmark in Chrome and check the local database within a few seconds. For recovery, stop the receiver, capture another item, confirm the popup shows it pending, restart the receiver, and use `Sync pending items`. Confirm only acknowledged entries disappear. These browser/Tailnet checks require the installed extension and live runtime; automated HTTP/SQLite and extension tests cover the protocol separately.
 
-## Media archive: one host cron
+## Media archive and context enrichment: one host cron
 
 **Tweet ID is the canonical locator.** The extension is a sensor for collecting saved IDs, with optional first-capture hints. Its normal `kind:tweet_id` sent/inFlight/seen/outbox/ACK behavior is unchanged; there is no media-aware dedupe or enrichment replay. Already stored text-only Tweets can be backfilled without Mac re-scrolling, re-sending, or an IndexedDB reset.
 
@@ -88,14 +88,29 @@ Enable the single disabled `x-saved-media-download` example deliberately, then r
 }
 ```
 
-This is a deterministic host handler, not an Agent/LLM job. Each run has two sequential phases, each bounded by the same `limit` (1–100, default 20):
+This is a deterministic host handler, not an Agent/LLM job. Each run has three sequential phases, each bounded by the same `limit` (1–100, default 20):
 
 1. Select unresolved `x_items`, never-attempted first then oldest attempt. Update `media_resolve_attempted_at`, look up **only the Tweet ID** through `https://api.fxtwitter.com/2/status/<id>`, upsert media and set `media_resolved_at` atomically on success. Empty media is also success and is not repeatedly looked up. Failures remain unresolved and rotate behind other IDs on later runs.
 2. Download pending/failed `x_media`, pending first. Save one image or one MP4 into a sibling temporary file, count streamed bytes, then atomically rename and commit a relative `local_path` / `done`. Individual failures become `failed` with `last_error`; other files continue and failed sources retry next run. A video without direct MP4 is marked failed and excluded from repeated download attempts while its source remains absent.
 
-FxTwitter's current [v2 API schema](https://github.com/FxEmbed/FxEmbed/blob/main/docs/specs/fxtwitter-openapi.json) is validated: matching focal status ID/type/provider, ordered `media.all`, supported image/video/gif entries. Quotes, cards, avatars, thumbnails and mosaic URLs are not archive sources. The highest-bitrate direct MP4 format is selected; a direct top-level MP4 URL is usable when formats are absent. HLS-only videos retain presence metadata but cannot be archived. No HLS, ffmpeg, variant table, provider abstraction, resolver queue or second cron is involved.
+3. Backfill context from `https://api.fxtwitter.com/2/thread/<id>` for saved IDs with no completed `x_enrichment` snapshot (including snapshots missing the focal author's ID). Never-attempted IDs precede oldest attempts. Store the snapshot and `resolved_at` together; individual network/validation failures retain `last_error`, continue the batch and retry on later runs. This phase is independent of media completeness, so old completed archives and new captures both qualify without browser replay.
+
+FxTwitter's current [v2 API schema](https://github.com/FixTweet/FxTwitter/blob/main/packages/atmosphere/src/types/api-schemas.ts) is validated: matching focal status ID/type/provider, ordered `media.all`, supported image/video/gif entries. Quotes, cards, avatars, thumbnails and mosaic URLs are not archive sources. The highest-bitrate direct MP4 format is selected; a direct top-level MP4 URL is usable when formats are absent. HLS-only videos retain presence metadata but cannot be archived. No HLS, ffmpeg, variant table, provider abstraction, resolver queue or second cron is involved.
 
 Like Agent Reach's existing FxTwitter fetch policy, lookup is credential-free, redirect-free, bounded to 20 seconds and 2 MiB. The archive uses v2's ID-only endpoint instead of Agent Reach's handle-based text endpoint. Only saved Tweet IDs are sent to FxTwitter, never saved-state flags, text, notes, cookies or tokens. Deleted/private/unavailable posts can remain unresolved; this public third-party service is not a completeness guarantee for inaccessible posts.
+
+### Saved context
+
+`x_enrichment.document_json` contains `status` and an ordered `thread`, including the saved focal post. The thread endpoint reconstructs available ancestors and descendants; other authors' statuses are excluded and provider tombstones preserve unavailable gaps. A successful null/empty thread becomes a focal-only thread. Availability is limited to what FxTwitter returns, not a promise of a complete historical thread.
+
+Each available status retains text, ID, URL, creation time, `author` (`id`, `screen_name`, `name`, nullable `avatar_url`, optional profile `url`), `raw_text.facets` (including expanded `replacement` URLs), derived `external_urls`, one inline `quote` with its author/text/basic metadata, and the full `article` document including title, content blocks and entity map. Nested quotes are stripped. Missing quote/article are explicit `null`; missing URLs are `[]`. Successfully resolved absence is complete and is not polled again. Missing required author data or a preview-only Article is a retryable validation failure; oversized responses fail rather than silently truncating Article text.
+
+No conversation/reply-tree, profile/timeline, external-page or recursive quote lookup is performed. These URLs and Article entities are stored as untrusted data, never followed or downloaded by enrichment. Existing Tweet text, external URL fields, source history, status/notes/labels and archived media are untouched. Gallery and existing Skill list/search output are unchanged; the stored context is directly readable from SQLite without another lookup:
+
+```sql
+SELECT document_json, resolved_at, attempted_at, last_error
+FROM x_enrichment WHERE tweet_id = '123';
+```
 
 ### Files and trust boundary
 
@@ -108,9 +123,11 @@ Images try `name=orig` first, then the supplied URL only if that attempt fails. 
 
 Files live beside the database under `data/x-saved/media/` (or under the configured DB parent). Completed rows/files are retained as archived snapshots on later capture or lookup, not reset or replaced; pending sources can be completed by FxTwitter. Missing incoming entries never delete media. Hints arriving after successful resolution cannot override resolved media. Media processing does not change Tweet text/timestamps, sticky history, initial-import markers, Agent status or notes.
 
-DB/schema/transaction errors fail the entire cron instead of being swallowed as per-item failures. A crash after file rename but before DB commit may cause that pending file to be downloaded again. No separate filesystem/SQLite transaction or retry ledger is added. Long sequential video downloads can delay later cron ticks under the existing runner; reduce `limit` on slow links.
+DB/schema/transaction errors fail the entire cron instead of being swallowed as per-item failures. A crash after file rename but before DB commit may cause that pending file to be downloaded again. No separate filesystem/SQLite transaction or retry ledger is added. Long sequential video downloads delay the enrichment phase and the next run of this job; reduce `limit` on slow links.
 
 ### Rollout
+
+Back up SQLite and media separately before upgrading to schema v5. Deploy host receiver/cron/Gallery code together: older host binaries reject the newer schema. The existing enabled media cron automatically backfills context after upgrade; no extension update, re-scroll or second cron is needed for enrichment. With the browser closed, verify `x_enrichment.resolved_at`/`document_json` for an existing ID and inspect `last_error` for retries. Automated tests cover fresh context, full Article text, thread order, quotes/authors/facets, resolved absence, v4 migration, bounded retry selection, database failures and preservation of existing saved state. Live FxTwitter availability and production rollout require separate operator verification.
 
 Deploy the receiver before reloading the updated extension (old strict receivers reject media fields). Install updated Skill templates, retain the existing directory mount, then enable the archive cron. No production configuration is changed automatically. Verify existing IDs resolve with the browser closed, confirm image/MP4 paths, and use Agent `read` on a downloaded image. Mac Chrome/Tailscale new-capture checks are still needed for installation validation, but not for stored-ID media backfill.
 
@@ -165,7 +182,7 @@ SQLite remains authoritative. Receiver, archive cron, Skill and Gallery use norm
 
 ### Upgrade and verification
 
-Back up the SQLite database with its existing online backup mechanism and media separately before deploying. Schema v4 adds `x_item_labels` without moving media or resetting state. Update host receiver/cron/Gallery code together: older host binaries reject schema v4. No production config or Tailscale Serve settings are changed automatically.
+Back up the SQLite database with its existing online backup mechanism and media separately before deploying. Schema v4 adds `x_item_labels` without moving media or resetting state. Update host receiver/cron/Gallery code together: older host binaries reject newer schema versions. No production config or Tailscale Serve settings are changed automatically.
 
 The HTTP/SQLite tests cover migration, 2,000-media pagination, combined filters, transactional edits, preserved ingestion, CSRF, escaping, route-derived archive paths, native MP4 ranges, comma-containing tags, and the separate Unknown / Needs review semantics. CI also runs a desktop/mobile browser smoke using local HTTP fixtures with the browser's local POST origin translated to the configured HTTPS origin (not a live Tailnet). To run that smoke locally:
 
@@ -241,10 +258,13 @@ The durable state is `data/x-saved/x-saved.sqlite`:
 - `x_items` — post body, author, URL, sticky like/bookmark history, ingest timestamps, nullable `media_resolved_at` / `media_resolve_attempted_at`
 - `x_item_state` — `inbox`, `reviewed`, `keep`, `try`, `done`, or `ignore`, plus an optional note and update time
 - `x_media` — `(tweet_id, kind, position)` primary key, source/alt text, relative file path, pending/done/failed status and last error; cascading ownership by `x_items`
+- `x_enrichment` — one context snapshot per saved Tweet (`document_json`), nullable `resolved_at`, `attempted_at` and `last_error`; cascading ownership by `x_items`, independent of media resolution
 - `x_item_labels` — `(tweet_id, kind, value)` primary key; multi-valued `series`, `character`, `tag`, with a lookup index and cascading ownership by `x_items`
 - `x_sync_runs` — optional source health records, timestamps, errors, and new-item count
 - `x_meta` — metadata such as the one-time `initial_import_completed_at` marker
 
+Schema v5 adds `x_enrichment` without rewriting existing rows. Snapshot authors are required for successful resolution; an absent row, null completion marker or missing focal author ID qualifies for automatic backfill. Context-only thread/quote posts are embedded in the snapshot, not inserted as newly saved `x_items`.
+
 Schema v4 adds `x_item_labels`. If a legacy `x_tags` table remains, valid nonempty trimmed tags (up to 100 characters) are imported once; the legacy table is retained unchanged, including values outside those limits. The current Gallery uses only `x_item_labels`, with no dual writes to legacy tables. Schema migration checks the version inside SQLite's write transaction so simultaneous opens cannot apply it twice.
 
-Schema v3 transactionally adds `x_media` and the two nullable timestamps to existing v1/v2 databases without resetting item state. DOM hints never set `media_resolved_at`. No resolver-specific table, metadata JSON, hashes, dimensions, bitrate or retry counters are stored. The store preserves its schema migrations and merge/upsert behavior for existing databases. In particular, missing incoming metadata does not erase stored metadata, relationship flags remain sticky, and existing item state and notes remain unchanged.
+Schema v3 transactionally adds `x_media` and the two nullable timestamps to existing v1/v2 databases without resetting item state. DOM hints never set `media_resolved_at`. Media resolution stores no hashes, dimensions, bitrate or retry counters; context metadata lives separately in the v5 snapshot. The store preserves its schema migrations and merge/upsert behavior for existing databases. In particular, missing incoming metadata does not erase stored metadata, relationship flags remain sticky, and existing item state and notes remain unchanged.

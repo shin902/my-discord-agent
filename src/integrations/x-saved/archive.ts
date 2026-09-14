@@ -90,11 +90,17 @@ export function parseArchiveMedia(
 export async function lookupArchiveMedia(
   tweetId: string,
 ): Promise<ArchiveMedia[]> {
+  return parseArchiveMedia(await fetchFxTwitter("status", tweetId), tweetId);
+}
+
+/** Fixed host, bounded JSON, no credentials or redirects for either lookup. */
+export async function fetchFxTwitter(
+  resource: "status" | "thread",
+  tweetId: string,
+): Promise<unknown> {
   Id.parse(tweetId);
-  // Agent Reach also uses a fixed FxTwitter endpoint, no credentials/redirects,
-  // 20s and 2 MiB. v2 permits an ID-only locator and exposes ordered formats.
   const response = await fetch(
-    `https://api.fxtwitter.com/2/status/${tweetId}`,
+    `https://api.fxtwitter.com/2/${resource}/${tweetId}`,
     {
       credentials: "omit",
       redirect: "error",
@@ -119,10 +125,7 @@ export async function lookupArchiveMedia(
         throw new Error("FxTwitter response exceeds 2 MiB");
       chunks.push(chunk);
     }
-    return parseArchiveMedia(
-      JSON.parse(Buffer.concat(chunks).toString("utf8")),
-      tweetId,
-    );
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } finally {
     if (response.body && !response.body.locked)
       await response.body.cancel().catch(() => {});
