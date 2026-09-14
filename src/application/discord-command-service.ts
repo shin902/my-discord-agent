@@ -1,6 +1,10 @@
 import { acquireActiveRun } from "../agent/active-run-registry.js";
 import { stopAgentRun } from "../agent/manager.js";
-import { type SessionMode, setSessionMode } from "../agent/session.js";
+import {
+  getSessionMode,
+  type SessionMode,
+  setSessionMode,
+} from "../agent/session.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import {
   type BotProfile,
@@ -150,6 +154,12 @@ export async function executeSkillCommand(
   }
 
   try {
+    if (
+      (await getSessionMode(match.group.name, request.channelId)) ===
+      "capture-only"
+    ) {
+      return "記録専用モード中はスキルを実行できません。";
+    }
     const configOverride = pickAgentConfig(match.channel);
     await getQueueRepository().enqueue({
       channelId: request.channelId,

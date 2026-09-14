@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   stopAgentRun: vi.fn(),
   setSessionMode: vi.fn(),
+  getSessionMode: vi.fn(),
   hasUnfinishedSessionJobs: vi.fn(),
 }));
 
@@ -26,6 +27,7 @@ vi.mock("../config/bots.js", () => ({
 vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn().mockResolvedValue(undefined),
   setSessionMode: mocks.setSessionMode,
+  getSessionMode: mocks.getSessionMode,
 }));
 vi.mock("../agent/manager.js", () => ({
   stopAgentRun: mocks.stopAgentRun,
@@ -170,6 +172,7 @@ beforeEach(() => {
   mocks.listBotTaskSessions.mockReturnValue([]);
   mocks.stopAgentRun.mockResolvedValue({ status: "no-active-run" });
   mocks.hasUnfinishedSessionJobs.mockReturnValue(false);
+  mocks.getSessionMode.mockResolvedValue("normal");
 });
 
 describe("bot command definition", () => {
@@ -560,6 +563,18 @@ describe("handleSkillCommand", () => {
     expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
     expect(interaction.editReply).toHaveBeenCalledWith({
       content: "スキル「session-logs」の実行を受け付けました。",
+    });
+  });
+
+  it("capture-only中はenqueueしない", async () => {
+    mocks.getSessionMode.mockResolvedValue("capture-only");
+    const interaction = makeSkillInteraction({ skill: "session-logs" });
+
+    await handleSkillCommand(interaction as never);
+
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "記録専用モード中はスキルを実行できません。",
     });
   });
 
