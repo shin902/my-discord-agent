@@ -43,7 +43,7 @@ import { resolveTools } from "../tools/registry.js";
 import type { ToolProxyEndpoint } from "../tools/tool-proxy.js";
 import { isTransientError } from "../utils/error.js";
 import { runAgent } from "./agent-execution.js";
-import { type BotToolEndpoint, createBotTool } from "./bot.js";
+import { type BotToolConfig, createBotTool } from "./bot.js";
 import {
   createSteeringController,
   STEERING_INSTRUCTION_TYPE,
@@ -433,7 +433,7 @@ export async function runAgentLoop(
   groupConfig: AgentRuntimeConfig,
   identity?: FrozenExecutionIdentity,
   systemPromptAppend?: string,
-  botToolEndpoint?: BotToolEndpoint,
+  botToolConfig?: BotToolConfig,
   onAgentCreated?: (agent: Agent) => void,
   signal?: AbortSignal,
   toolProxyEndpoint?: ToolProxyEndpoint,
@@ -744,9 +744,9 @@ export async function runAgentLoop(
           ? createSubagentTool(delegationContext)
           : undefined,
       bot: () =>
-        botToolEndpoint && groupConfig.tools?.includes("bot") === true
+        botToolConfig && groupConfig.tools?.includes("bot") === true
           ? createBotTool({
-              endpoint: botToolEndpoint,
+              ...botToolConfig,
               groupName,
               onUsage: (usage) => {
                 aggregatedUsage = addTokenUsage(aggregatedUsage, usage);
@@ -932,8 +932,16 @@ const PayloadSchema = z.object({
   snapshotHash: z.string().optional(),
   toolCallKey: z.string().optional(),
   systemPromptAppend: z.string().optional(),
-  botToolEndpoint: z
-    .object({ url: z.string().url(), token: z.string().min(1) })
+  botToolConfig: z
+    .object({
+      endpoint: z.object({ url: z.string().url(), token: z.string().min(1) }),
+      bots: z.array(
+        z.object({
+          id: z.string().min(1),
+          description: z.string().trim().min(1),
+        }),
+      ),
+    })
     .optional(),
   toolProxyEndpoint: z
     .object({ url: z.string().url(), token: z.string().min(1) })
@@ -1036,7 +1044,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         payload.groupConfig,
         payload,
         payload.systemPromptAppend,
-        payload.botToolEndpoint,
+        payload.botToolConfig,
         (agent) => {
           steering.attach(agent);
           process.stderr.write("__AGENT_ACTIVE__\n");

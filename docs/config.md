@@ -399,12 +399,13 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 
 ## config/bots.json
 
-Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group` と空でない `instructions`、任意の AgentConfig（`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
+Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group`、caller-facing の空でない `description`、Bot本人向けの空でない `instructions`、任意の AgentConfig（`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
 
 ```json
 {
   "coding": {
     "group": "default",
+    "description": "Implements and reviews code changes.",
     "instructions": "コード変更を担当する worker",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["read", "write", "edit"],
@@ -413,6 +414,19 @@ Agent Bot profile の canonical source です。トップレベルに Bot ID を
   }
 }
 ```
+
+`description` は呼び出し側AgentがBotの用途を判断するための短いmetadataです。前後の空白を除去し、未指定・空文字・空白のみは起動時に拒否します。既存の各Bot profileにも用途を明示して追加してください。Bot IDや `instructions` からの自動推測・補完は行いません。秘密情報やBot内部の設定を記載しないでください。
+
+`bot` toolが有効な場合、現在のAgentGroupに所属する利用可能なBotの `id + description` をtool descriptionに常時含めます。
+
+```text
+Available bots:
+- coding: Implements and reviews code changes.
+```
+
+Botがない場合は `(none)` と表示します。別groupのBot、`instructions` 全文、mounts、credentials、内部authorityやその他のprofile設定は公開しません。専用のdiscovery toolは追加せず、既存の `bot(action=run|resume|list)` を維持します。`list` はBot一覧ではなく、引き続き現在のgroup / Botが所有するTask Sessionを列挙します。Discord `/bot` のUXは変更しません。
+
+catalogはtool surface構築時に現在ロード済みのRegistryから生成し、`description` もcatalog全体もTask Sessionのsystem prompt snapshotには保存しません。Registry / group設定のファイル変更は既存どおり再起動が必要で、再起動後のtool surfaceに反映されます。
 
 `instructions` はTask Sessionのbase role promptであり、Main/groupのrole promptへの追記ではありません。Discord `/bot run`・agent-facing `bot run` の新規Task作成時に、queue/direct admissionより先にgeneric `system-prompt-snapshot` として `sessions.sqlite` へ固定します。profile変更後も同じTaskのresumeは保存済みinstructionsを使い、新規Taskだけが変更後のinstructionsを使います。`model` / `tools` / `skills` / `mounts` はsnapshotせず、現在のAgentConfig解決を維持します。
 

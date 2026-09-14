@@ -21,7 +21,15 @@ describe("createBotTool", () => {
         token: "secret",
       },
       groupName: "main",
+      bots: [
+        { id: "coding", description: "Implements and reviews code changes." },
+        { id: "finance", description: "Tracks income and expenses." },
+      ],
     });
+    expect(tool.description.split("Available bots:\n")[1]).toBe(
+      "- coding: Implements and reviews code changes.\n- finance: Tracks income and expenses.",
+    );
+    expect(tool.description).not.toContain("secret");
 
     const onUpdate = vi.fn();
     const resultPromise = tool.execute(
@@ -109,7 +117,12 @@ describe("createBotTool", () => {
         token: "secret",
       },
       groupName: "main",
+      bots: [],
     });
+    expect(tool.description).toContain("Available bots:\n(none)");
+    expect(
+      tool.parameters.properties.action.anyOf.map((action) => action.const),
+    ).toEqual(["run", "resume", "list"]);
 
     const result = await tool.execute("call-2", {
       action: "list",
@@ -140,6 +153,7 @@ describe("createBotTool", () => {
         token: "secret",
       },
       groupName: "main",
+      bots: [],
     });
 
     await expect(

@@ -509,16 +509,34 @@ describe("runAgentLoop", () => {
       { tools: ["bot"] },
       undefined,
       undefined,
-      { url: "http://host.docker.internal:1234/__agent/bot", token: "secret" },
+      {
+        endpoint: {
+          url: "http://host.docker.internal:1234/__agent/bot",
+          token: "secret",
+        },
+        bots: [{ id: "coding", description: "Implements code changes." }],
+      },
     );
     const rootOptions = lastAgentOptions as {
-      initialState: { tools: AgentTool[] };
+      initialState: { tools: AgentTool[]; systemPrompt: string };
     };
     const botTool = rootOptions.initialState.tools.find(
       (tool) => tool.name === "bot",
     );
     expect(botTool).toBeDefined();
     if (!botTool) throw new Error("bot tool was not wired");
+    expect(botTool.description).toContain(
+      "Available bots:\n- coding: Implements code changes.",
+    );
+    expect(rootOptions.initialState.tools.map((tool) => tool.name)).toEqual([
+      "bot",
+    ]);
+    expect(rootOptions.initialState.systemPrompt).not.toContain(
+      "Implements code changes.",
+    );
+    expect(JSON.stringify(vi.mocked(appendMessage).mock.calls)).not.toContain(
+      "Implements code changes.",
+    );
 
     const result = await botTool.execute("tool-call", {
       action: "run",
@@ -540,7 +558,13 @@ describe("runAgentLoop", () => {
       {},
       undefined,
       undefined,
-      { url: "http://host.docker.internal:1234/__agent/bot", token: "secret" },
+      {
+        endpoint: {
+          url: "http://host.docker.internal:1234/__agent/bot",
+          token: "secret",
+        },
+        bots: [{ id: "coding", description: "Implements code changes." }],
+      },
     );
 
     const rootOptions = lastAgentOptions as {

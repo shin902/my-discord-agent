@@ -109,7 +109,7 @@ Approval対象toolの設定と安全上の注意は [エージェントのツー
 
 ### Agent Bot profile
 
-Agent Bot profile の canonical source は `config/bots.json` です。トップレベルに Bot ID をキーとする map を置き、各 profile に `group`、空でない `instructions`、任意の `model` / `tools` / `skills` / `mounts` / `contextFiles` を指定します。`config/config.json` の `discord.bots` は Discord application 設定であり、両者はmergeされません。Botを使わない場合は `config/bots.json` を作成せずに起動できます。
+Agent Bot profile の canonical source は `config/bots.json` です。トップレベルに Bot ID をキーとする map を置き、各 profile に `group`、呼び出し側向けの空でない `description`、Bot本人向けの空でない `instructions`、任意の `model` / `tools` / `skills` / `mounts` / `contextFiles` を指定します。`bot` toolには同一groupのBot IDとdescriptionを常時公開します（[詳細・既存設定の移行](docs/config.md#configbotsjson)）。`config/config.json` の `discord.bots` は Discord application 設定であり、両者はmergeされません。Botを使わない場合は `config/bots.json` を作成せずに起動できます。
 
 ```bash
 cp config/bots.example.json config/bots.json

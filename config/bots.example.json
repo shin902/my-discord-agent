@@ -1,6 +1,7 @@
 {
   "coding": {
     "group": "default",
+    "description": "Implements and reviews code changes.",
     "instructions": "コード変更を担当する worker",
     "model": {
       "provider": "zai",
