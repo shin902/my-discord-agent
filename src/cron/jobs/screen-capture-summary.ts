@@ -120,7 +120,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const agentOptions =
     Object.keys(agentConfig).length > 0 ? { configOverride: agentConfig } : {};
   const memoryModel = await resolveModelConfig(
-    resolveAgentConfig(await findGroupByName(groupName), agentConfig).model,
+    agentConfig.model ??
+      resolveAgentConfig(await findGroupByName(groupName), agentConfig).model,
   );
   const memoryConcurrency = await resolveProviderConcurrency(
     memoryModel.provider,
