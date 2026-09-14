@@ -541,9 +541,24 @@ export class DeliveryWorker {
             },
           );
         }
+        if (kind === "non-retryable" && this.isMail(claim.row)) {
+          this.repository.releaseTerminalIdempotencyKey(claim.row.jobId);
+        }
       } catch (updateError) {
         console.error("[delivery] state update failed", updateError);
       }
+    }
+  }
+
+  private isMail(row: DeliveryRow): boolean {
+    if (!row.payloadJson) return false;
+    try {
+      return (
+        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
+          .mailEmailId === "string"
+      );
+    } catch {
+      return false;
     }
   }
 

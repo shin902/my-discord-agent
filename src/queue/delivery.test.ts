@@ -409,6 +409,35 @@ describe("durable delivery worker", () => {
     }
   });
 
+  it("releases a mail key when delivery fails permanently", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const adapter: DeliveryAdapter = {
+      send: vi.fn(async () => {
+        throw new DeliveryError("non-retryable", "missing destination");
+      }),
+    };
+    try {
+      completed(
+        repo,
+        "response",
+        { mailEmailId: "mail-1" },
+        "mail:graph:mail:mail-1",
+      );
+      const worker = new DeliveryWorker(repo, adapter, {
+        workerId: "delivery-a",
+      });
+
+      await worker.runOnce();
+
+      expect(repo.listDeliveries("failed")).toHaveLength(1);
+      expect(
+        repo.getIdempotencyRecord("mail:graph:mail:mail-1"),
+      ).toBeUndefined();
+    } finally {
+      repo.close();
+    }
+  });
+
   it("retains a completed mail key for durable ACK recovery", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const adapter: DeliveryAdapter = {
