@@ -68,7 +68,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## cronによるActivity Memory更新
 
-未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像だけを、指定したAgentGroupのworkspaceへ長辺1280pxへ縮小した一時PNGとして配置します（hostに`magick`コマンドが必要です）。採用画像を比較元として順次置き換え、設定数を採用した時点で走査を止めます。Agentはグループの`contextFiles`とtoolsを使い、採用画像を1回のrunで確認して既存memoryとの差分だけを反映します。成功後にだけ走査済み画像の`completed_at`と採否を更新し、一時PNGを削除します。Agent失敗・timeout・プロセス停止では未完了のまま次回再試行します。全画像が棄却された場合はAgentを実行せず完了にします。
+未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像だけを採用します（hostに`magick`コマンドが必要です）。採用画像は`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
 
 `config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
 
@@ -80,16 +80,22 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
   "groupName": "logbook",
   "handler": "jobs/screen-capture-summary.ts",
   "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
-  "settings": { "timeoutMs": 120000, "limit": 10 }
+  "settings": {
+    "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
+    "timeoutMs": 300000,
+    "limit": 10,
+    "concurrency": 4
+  }
 }
 ```
 
-- `model`はcron指定を優先し、省略時はグループ設定へfallbackします。tools・skills・mounts・contextFilesはグループ設定を使います。
-- `settings.timeoutMs`は1–600000、既定120000で、Agent run全体の上限です。
-- `settings.limit`は1回に採用する画像数で、既定10です。古い未処理画像から順に走査し、採用数へ達した時点で停止します。
-- DBのPNG BLOBは`groups/<group>/.screen-captures/`へ一時配置され、Agentから`/workspace/.screen-captures/<id>.png`として読めます。
+- `model`はMemory更新用の通常LLMです。cron指定を優先し、省略時はグループ設定へfallbackします。
+- `settings.visionModel`は必須で、Credential Proxyに定義した画像入力対応モデルを指定します。
+- `settings.concurrency`はVLM worker数（1–16、既定4）です。`providers.json`の既存provider concurrencyが`serial`なら実際の呼び出しは直列になります。
+- `settings.timeoutMs`は各VLM呼び出しとMemory更新の上限（1–600000、既定120000）です。
+- `settings.limit`は1回に採用する画像数で、既定10です。
+- VLM失敗画像は未完了で残り、成功済みsummaryは再利用されます。通常LLM成功後・DB更新前に停止した場合は再実行されるため、既存memoryとの差分だけを反映するよう指示します。
 - 同一jobのtick重複はcron runnerが抑止します。変更反映にはBot再起動が必要です。
-- Agent成功後・DB更新前に停止した場合は再実行されますが、Agentには既存memoryとの差分だけを反映するよう指示します。
 
 ### 参考Memoryテンプレート
 
@@ -113,7 +119,7 @@ SQLite commit後だけ`200 {"accepted":"<uuid>"}`を返します。同じIDで�
 
 ## 永続化・確認・backup
 
-`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC受信時刻`received_at`、nullableな`summary`（旧個別要約）、`completed_at`、採否を表す`accepted`を持ちます。**`completed_at IS NULL`が未完了、非NULLが完了**の正本です。
+`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC受信時刻`received_at`、nullableなVLM要約`summary`、`completed_at`、採否を表す`accepted`を持ちます。**`completed_at IS NULL`が未完了、非NULLが完了**の正本です。
 
 ローカルでのread-only確認例（画像や要約本文を端末ログへ出さない）:
 

@@ -1,14 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  type AssistantMessage,
+  completeSimple,
+  getModel,
+} from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendMessage } from "../../agent/manager.js";
+import { resolveModel } from "../../agent/model.js";
+import { loadCredentialProxy } from "../../config/credential-proxy.js";
+import { resolveProviderConcurrency } from "../../config/providers.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
 import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
-const magickSimilarities = vi.hoisted(() => [] as number[]);
+const similarities = vi.hoisted(() => [] as number[]);
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
     (
@@ -18,33 +26,78 @@ vi.mock("node:child_process", () => ({
     ) =>
       callback(
         null,
-        args.includes("SSIM") ? String(magickSimilarities.shift() ?? 0) : "",
+        args.includes("SSIM") ? (similarities.shift() ?? 0) : "",
         "",
       ),
   ),
 }));
+vi.mock("@earendil-works/pi-ai/compat", async (original) => ({
+  ...(await original<typeof import("@earendil-works/pi-ai/compat")>()),
+  completeSimple: vi.fn(),
+}));
+vi.mock("../../agent/model.js", () => ({ resolveModel: vi.fn() }));
 vi.mock("../../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+vi.mock("../../config/credential-proxy.js", () => ({
+  loadCredentialProxy: vi.fn(),
+}));
+vi.mock("../../config/providers.js", () => ({
+  resolveProviderConcurrency: vi.fn(),
+}));
+vi.mock("../../proxy/credential-proxy-server.js", () => ({
+  getProxyPort: () => 4242,
+}));
 
+const visionModel = { provider: "openai", modelId: "gpt-4o-mini" };
+const memoryModel = { provider: "openai", modelId: "gpt-5" };
 const ctx = {
   id: "screen-capture-summary",
   schedule: "5m",
   enabled: true,
   groupName: "logbook",
   handler: "jobs/screen-capture-summary.ts",
+  model: memoryModel,
+  settings: { visionModel, concurrency: 2, limit: 10 },
 } as CronContext;
+const model = getModel("openai", "gpt-4o-mini");
+
+function result(text = "Editor work"): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    stopReason: "stop",
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    timestamp: Date.now(),
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  };
+}
 
 describe("screen capture summary cron", () => {
   let directory: string;
 
   beforeEach(async () => {
     vi.resetAllMocks();
-    magickSimilarities.length = 0;
+    similarities.length = 0;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
       path.join(directory, "captures.sqlite"),
     );
-    vi.mocked(sendMessage).mockResolvedValue("done");
+    vi.mocked(resolveModel).mockResolvedValue(model);
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      { provider: "openai", baseUrl: "https://api.openai.com/v1" },
+    ]);
+    vi.mocked(resolveProviderConcurrency).mockResolvedValue("parallel");
+    vi.mocked(completeSimple).mockResolvedValue(result());
+    vi.mocked(sendMessage).mockResolvedValue("updated");
   });
 
   afterEach(async () => {
@@ -67,127 +120,96 @@ describe("screen capture summary cron", () => {
     }
   }
 
-  it("runs one group agent with the configured batch and completes only it", async () => {
-    const ids = insert(3);
-    await handler({ ...ctx, settings: { limit: 2 } });
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    const [groupName, , prompt] = vi.mocked(sendMessage).mock.calls[0];
-    expect(groupName).toBe("logbook");
-    for (const id of ids.slice(0, 2)) {
-      const imagePath = path.join(
-        process.cwd(),
-        "groups/logbook/.screen-captures",
-        `${id}.png`,
-      );
-      expect(prompt).toContain(`/workspace/.screen-captures/${id}.png`);
-      await expect(readFile(imagePath)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    }
-    expect(prompt).not.toContain(ids[2]);
-
+  function rows() {
     const db = openScreenCaptureDb();
     try {
-      expect(
-        db
-          .prepare(
-            "SELECT count(*) AS count FROM screen_captures WHERE completed_at IS NOT NULL",
-          )
-          .get(),
-      ).toEqual({ count: 2 });
+      return db
+        .prepare(
+          "SELECT id, summary, accepted, completed_at FROM screen_captures ORDER BY received_at, id",
+        )
+        .all() as {
+        id: string;
+        summary: string | null;
+        accepted: number | null;
+        completed_at: string | null;
+      }[];
     } finally {
       db.close();
     }
-  });
+  }
 
-  it("discards similar images and stops after accepting the configured limit", async () => {
-    const ids = insert(5);
-    magickSimilarities.push(0.95, 0.93, 0.6);
-
-    await handler({ ...ctx, settings: { limit: 2 } });
-
-    const prompt = vi.mocked(sendMessage).mock.calls[0][2];
-    expect(prompt).toContain(ids[0]);
-    expect(prompt).toContain(ids[3]);
-    expect(prompt).not.toContain(ids[1]);
-    expect(prompt).not.toContain(ids[2]);
-    expect(prompt).not.toContain(ids[4]);
-
-    const db = openScreenCaptureDb();
-    try {
-      expect(
-        db
-          .prepare(
-            "SELECT id, accepted FROM screen_captures WHERE completed_at IS NOT NULL ORDER BY received_at, id",
-          )
-          .all(),
-      ).toEqual([
-        { id: ids[0], accepted: 1 },
-        { id: ids[1], accepted: 0 },
-        { id: ids[2], accepted: 0 },
-        { id: ids[3], accepted: 1 },
-      ]);
-      expect(
-        db
-          .prepare("SELECT id FROM screen_captures WHERE completed_at IS NULL")
-          .all(),
-      ).toEqual([{ id: ids[4] }]);
-    } finally {
-      db.close();
-    }
-  });
-
-  it("uses the previous run's last accepted image as its reference", async () => {
-    const [previous, candidate] = insert(2);
-    const db = openScreenCaptureDb();
-    db.prepare(
-      "UPDATE screen_captures SET completed_at = ?, accepted = 1 WHERE id = ?",
-    ).run("2026-09-12T01:00:00Z", previous);
-    db.close();
-    magickSimilarities.push(0.9);
-
+  it("summarizes images with settings.visionModel then gives text to the memory model", async () => {
+    insert(2);
     await handler(ctx);
 
-    expect(sendMessage).not.toHaveBeenCalled();
-    const reopened = openScreenCaptureDb();
-    try {
-      expect(
-        reopened
-          .prepare("SELECT accepted FROM screen_captures WHERE id = ?")
-          .get(candidate),
-      ).toEqual({ accepted: 0 });
-    } finally {
-      reopened.close();
-    }
+    expect(resolveModel).toHaveBeenCalledWith("openai", "gpt-4o-mini");
+    expect(completeSimple).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledWith(
+      "logbook",
+      expect.stringMatching(/^cron-screen-capture-summary-/),
+      expect.stringContaining("Editor work"),
+      expect.objectContaining({ configOverride: { model: memoryModel } }),
+    );
+    expect(vi.mocked(sendMessage).mock.calls[0][2]).not.toContain(".png");
+    expect(
+      rows().every(
+        (row) =>
+          row.summary === "Editor work" &&
+          row.accepted === 1 &&
+          row.completed_at,
+      ),
+    ).toBe(true);
   });
 
-  it("leaves images uncompleted when the agent fails", async () => {
-    insert(2);
-    vi.mocked(sendMessage).mockRejectedValue(new Error("agent failed"));
+  it("keeps VLM summaries pending when memory update fails and reuses them", async () => {
+    insert(1);
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error("agent failed"));
     await expect(handler(ctx)).rejects.toThrow("agent failed");
+    expect(rows()[0]).toMatchObject({
+      summary: "Editor work",
+      completed_at: null,
+    });
 
-    const db = openScreenCaptureDb();
-    try {
-      expect(
-        db
-          .prepare(
-            "SELECT count(*) AS count FROM screen_captures WHERE completed_at IS NULL",
-          )
-          .get(),
-      ).toEqual({ count: 2 });
-    } finally {
-      db.close();
-    }
+    vi.mocked(completeSimple).mockClear();
+    await handler(ctx);
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(rows()[0].completed_at).not.toBeNull();
   });
 
-  it("rejects a missing group or invalid settings", async () => {
-    await expect(handler({ ...ctx, groupName: undefined })).rejects.toThrow(
+  it("skips similar images without calling the VLM", async () => {
+    const ids = insert(2);
+    similarities.push(0.95);
+    await handler(ctx);
+
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    expect(rows()).toEqual([
+      expect.objectContaining({ id: ids[0], accepted: 1 }),
+      expect.objectContaining({ id: ids[1], summary: null, accepted: 0 }),
+    ]);
+  });
+
+  it("leaves only failed VLM images pending", async () => {
+    insert(2);
+    vi.mocked(completeSimple)
+      .mockRejectedValueOnce(new Error("provider failure"))
+      .mockResolvedValueOnce(result("success"));
+    await handler(ctx);
+
+    expect(rows().filter((row) => row.completed_at === null)).toEqual([
+      expect.objectContaining({ summary: null }),
+    ]);
+    expect(sendMessage).toHaveBeenCalledWith(
+      "logbook",
+      expect.any(String),
+      expect.stringContaining("success"),
+      expect.any(Object),
+    );
+  });
+
+  it("rejects missing handler-specific configuration", async () => {
+    await expect(handler({ ...ctx, settings: {} })).rejects.toThrow(
       "requires valid settings and groupName",
     );
-    await expect(
-      handler({ ...ctx, settings: { timeoutMs: 0 } }),
-    ).rejects.toThrow("requires valid settings and groupName");
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(completeSimple).not.toHaveBeenCalled();
   });
 });
