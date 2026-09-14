@@ -172,9 +172,20 @@ function initializeSchema(db: Database.Database): void {
     if (
       !sessionColumns().some((column) => column.name === "agent_initialized")
     ) {
+      // Preserve the old needsContextBootstrap predicate, not run completion:
+      // anchors/snapshots alone must still allow the first context bootstrap.
       db.exec(`
-        ALTER TABLE sessions ADD COLUMN agent_initialized INTEGER NOT NULL DEFAULT 1
+        ALTER TABLE sessions ADD COLUMN agent_initialized INTEGER NOT NULL DEFAULT 0
           CHECK (agent_initialized IN (0, 1));
+        UPDATE sessions SET agent_initialized = EXISTS (
+          SELECT 1 FROM session_entries
+          WHERE session_id = sessions.id AND (
+            json_extract(payload_json, '$.role') IS NOT 'custom'
+            OR json_extract(payload_json, '$.customType') IN (
+              'context-bootstrap', 'memory-bootstrap', 'self-bootstrap'
+            )
+          )
+        );
       `);
     }
     if (sessionColumns().some((column) => column.name === "mode")) {

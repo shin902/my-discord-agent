@@ -345,8 +345,8 @@ describe("SQLite session trajectory store", () => {
     );
     db.close();
 
-    // Missing historical state uses the legacy initialized default; an
-    // existing explicit marker is preserved, and new sessions start fresh.
+    // Missing historical state is derived from the existing user entry;
+    // explicit markers are preserved, and new sessions start fresh.
     expect(await session.isSessionAgentInitialized(group, "old")).toBe(
       !initialized,
     );
@@ -375,6 +375,81 @@ describe("SQLite session trajectory store", () => {
     expect(await session.isSessionAgentInitialized(group, "new")).toBe(false);
     await session.markSessionAgentInitialized(group, "new");
     expect(await session.isSessionAgentInitialized(group, "new")).toBe(true);
+  });
+
+  it.each([
+    4, 5,
+  ])("derives missing initialization state from the legacy bootstrap predicate in v%s", async (version) => {
+    const group = `bootstrap-migration-v${version}`;
+    await session.loadMessages(group, "missing");
+    const db = new Database(path.join(root, group, "sessions.sqlite"));
+    db.exec(`
+      ALTER TABLE sessions DROP COLUMN agent_initialized;
+      DROP INDEX session_entries_source_identity;
+      CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
+      PRAGMA user_version = ${version};
+    `);
+    const cases = [
+      { id: "empty", types: [], initialized: false },
+      { id: "anchor", types: ["session-time-anchor"], initialized: false },
+      { id: "snapshot", types: ["system-prompt-snapshot"], initialized: false },
+      {
+        id: "interrupted",
+        types: ["session-time-anchor", "system-prompt-snapshot"],
+        initialized: false,
+      },
+      { id: "other-custom", types: ["skill-invocation"], initialized: false },
+      ...[
+        "context-bootstrap",
+        "memory-bootstrap",
+        "self-bootstrap",
+        "user",
+        "assistant",
+        "toolResult",
+      ].map((type) => ({
+        id: type,
+        types: ["session-time-anchor", "system-prompt-snapshot", type],
+        initialized: true,
+      })),
+    ];
+    for (const { id, types } of cases) {
+      db.prepare(
+        "INSERT INTO sessions(id, created_at, updated_at) VALUES (?, 1, 1)",
+      ).run(id);
+      for (const [index, type] of types.entries()) {
+        const ordinary = ["user", "assistant", "toolResult"].includes(type);
+        const payload = {
+          role: ordinary ? type : "custom",
+          ...(!ordinary ? { customType: type } : {}),
+          content: "preserved",
+          timestamp: 1,
+        };
+        db.prepare(
+          "INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at) VALUES (?, ?, ?, ?, 1)",
+        ).run(id, index + 1, type, JSON.stringify(payload));
+      }
+    }
+    const entries = db
+      .prepare("SELECT * FROM session_entries ORDER BY id")
+      .all();
+    db.close();
+
+    for (const { id, initialized } of cases) {
+      expect(await session.isSessionAgentInitialized(group, id), id).toBe(
+        initialized,
+      );
+    }
+    const inspect = dbFor(group);
+    expect(inspect.pragma("user_version", { simple: true })).toBe(5);
+    expect(
+      inspect.prepare("SELECT * FROM session_entries ORDER BY id").all(),
+    ).toEqual(entries);
+    inspect.close();
+    // A later open must not re-derive or overwrite an explicit marker.
+    await session.markSessionAgentInitialized(group, "interrupted");
+    expect(await session.isSessionAgentInitialized(group, "interrupted")).toBe(
+      true,
+    );
   });
 
   it("session identityをtransactionでrenameしentryを維持する", async () => {
