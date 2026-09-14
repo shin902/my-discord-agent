@@ -18,7 +18,7 @@ Update:
 
 memory/YYYY-MM/YYYY-MM-DD.md
 
-for the local date represented by the screenshots.
+for the JST (`Asia/Tokyo`) date represented by the screenshots. Convert the supplied UTC timestamps to JST. If a batch crosses midnight, update each date's file separately.
 
 ## Principles
 
@@ -33,7 +33,7 @@ for the local date represented by the screenshots.
 - This is not a command log, changelog, review report, or transcript. Summarize only what the user was trying to accomplish and the meaningful result or current state.
 - Before writing, discard implementation details and observations that are not needed to remember the activity later.
 - Omit commands, filenames, branch names, commit hashes, PR numbers, review findings, transient errors, UI operations, and intermediate steps. Include one only when it materially changes the activity's meaning or final state.
-- Each continuous activity must be one `##` heading followed by one short paragraph of at most 3 sentences and 80 words. Do not use bullet lists or nested detail.
+- Each continuous activity must be one `## HH:MM–HH:MM — Activity` heading using the first and last relevant capture times in JST, followed by one short paragraph of at most 3 sentences and 80 words. Do not use bullet lists or nested detail.
 - Merge later evidence into that same bounded paragraph; do not let a continuing activity grow into a running history.
 - Keep at most 2 activity sections for one batch, and only when the user clearly changed goals.
 
