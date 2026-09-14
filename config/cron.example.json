@@ -101,7 +101,7 @@
     "groupName": "my-group",
     "handler": "jobs/screen-capture-summary.ts",
     "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
-    "settings": { "timeoutMs": 120000, "limit": 10 }
+    "settings": { "timeoutMs": 300000, "limit": 10 }
   },
   {
     "id": "x-saved-media-download",
