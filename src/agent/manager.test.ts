@@ -3,6 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const loadBotRegistryMock = vi.hoisted(() => vi.fn());
+vi.mock("../config/bots.js", () => ({ loadBotRegistry: loadBotRegistryMock }));
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_ATTACHMENTS_DIR = path.join(
   __dirname,
@@ -22,6 +25,7 @@ let groupsBefore: Set<string>;
 let sessionsBefore: Set<string>;
 
 beforeEach(async () => {
+  loadBotRegistryMock.mockReset().mockResolvedValue({});
   groupsBefore = new Set(await listEntries(GROUPS_DIR));
   sessionsBefore = new Set(await listEntries(SESSIONS_DIR));
 });
@@ -1782,8 +1786,9 @@ describe("sendMessage: configOverride", () => {
     expect(createToolProxyRunMock).not.toHaveBeenCalled();
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
-    expect(payload.botToolEndpoint).toBeUndefined();
+    expect(payload.botToolConfig).toBeUndefined();
     expect(payload.toolProxyEndpoint).toBeUndefined();
+    expect(loadBotRegistryMock).not.toHaveBeenCalled();
   });
 
   it("botがeffective toolsに明示された場合だけendpointとtokenを渡す", async () => {
@@ -1800,10 +1805,65 @@ describe("sendMessage: configOverride", () => {
     );
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
-    expect(payload.botToolEndpoint).toEqual({
-      url: "http://host.docker.internal:12345/__agent/bot",
-      token: "internal-token",
+    expect(payload.botToolConfig).toEqual({
+      endpoint: {
+        url: "http://host.docker.internal:12345/__agent/bot",
+        token: "internal-token",
+      },
+      bots: [],
     });
+  });
+
+  it("tool surface構築ごとに現在groupのidとdescriptionだけを渡す", async () => {
+    const sendMessage = await setup();
+    const coding = {
+      group: "test-group",
+      description: "Implements code changes.",
+      instructions: "PRIVATE ROLE",
+      mounts: [{ host: "/private-repo", container: "/repo" }],
+      model: { provider: "private-provider", modelId: "private-model" },
+      tools: ["bash"],
+      skills: ["private-skill"],
+      credential: "PRIVATE SECRET",
+    };
+    loadBotRegistryMock.mockResolvedValue({
+      coding,
+      finance: { group: "test-group", description: "Tracks expenses." },
+      research: { group: "other-group", description: "PRIVATE DESCRIPTION" },
+    });
+    await sendMessage("test-group", "session-1", "hi", {
+      configOverride: { tools: ["bot"] },
+    });
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.botToolConfig.bots).toEqual([
+      { id: "coding", description: "Implements code changes." },
+      { id: "finance", description: "Tracks expenses." },
+    ]);
+    for (const hidden of [
+      "PRIVATE",
+      "/private-repo",
+      "private-provider",
+      "private-model",
+      "private-skill",
+    ]) {
+      expect(JSON.stringify(payload)).not.toContain(hidden);
+    }
+
+    loadBotRegistryMock.mockResolvedValue({
+      coding: { ...coding, group: "other-group" },
+      finance: { group: "test-group", description: "Tracks budgets too." },
+      research: { group: "test-group", description: "Researches sources." },
+    });
+    await sendMessage("test-group", "session-1", "continue", {
+      configOverride: { tools: ["bot"] },
+    });
+    const nextPayload = JSON.parse(proc.stdin.write.mock.calls[1][0] as string);
+    expect(nextPayload.botToolConfig.bots).toEqual([
+      { id: "finance", description: "Tracks budgets too." },
+      { id: "research", description: "Researches sources." },
+    ]);
+    expect(loadBotRegistryMock).toHaveBeenCalledTimes(2);
   });
 
   it("bot internal tokenにはtrusted destinationをhost側で渡す", async () => {
@@ -1821,17 +1881,19 @@ describe("sendMessage: configOverride", () => {
     );
   });
 
-  it("groupのbot設定はchannel相当のtools上書きで無効化される", async () => {
+  it.each([
+    { configOverride: { tools: ["read"] } },
+    { configOverride: { tools: ["bot"] }, enableBotTool: false },
+  ])("無効なbot toolへendpointやcatalogを渡さない: %j", async (options) => {
     const sendMessage = await setup();
 
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["read"] },
-    });
+    await sendMessage("test-group", "session-1", "hi", options);
 
     expect(createInternalRequestConfigMock).not.toHaveBeenCalled();
+    expect(loadBotRegistryMock).not.toHaveBeenCalled();
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
-    expect(payload.botToolEndpoint).toBeUndefined();
+    expect(payload.botToolConfig).toBeUndefined();
   });
 
   it("configOverride が payload の groupConfig を上書きする", async () => {

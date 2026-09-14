@@ -12,6 +12,7 @@ type BotsModule = typeof import("./bots.js");
 let loadBotRegistry: BotsModule["loadBotRegistry"];
 let resolveBotProfile: BotsModule["resolveBotProfile"];
 let validateBotConfigs: BotsModule["validateBotConfigs"];
+const description = "Implements and reviews code changes.";
 
 beforeEach(async () => {
   vi.resetModules();
@@ -41,6 +42,7 @@ describe("validateBotConfigs", () => {
         {
           coding: {
             group: "main",
+            description,
             instructions: "worker",
             model: { provider: "bot-provider", modelId: "bot-model" },
             tools: ["read", "get-current-weather"],
@@ -64,7 +66,7 @@ describe("validateBotConfigs", () => {
     await expect(
       validateBotConfigs(
         [group],
-        { coding: { group: "other", instructions: "worker" } },
+        { coding: { group: "other", description, instructions: "worker" } },
         defaultModel,
       ),
     ).rejects.toThrow("Bot coding のグループが未定義です: other");
@@ -74,7 +76,7 @@ describe("validateBotConfigs", () => {
 
 describe("resolveBotProfile", () => {
   const registry = {
-    coding: { group: "main", instructions: "coding" },
+    coding: { group: "main", description, instructions: "coding" },
   };
 
   it("returns a Bot in its configured group", () => {
@@ -98,6 +100,7 @@ describe("loadBotRegistry", () => {
     mockLoadRawBots.mockResolvedValue({
       coding: {
         group: "main",
+        description: `  ${description}  `,
         instructions: "コード変更を担当する worker",
         model: {
           provider: "zai",
@@ -114,6 +117,7 @@ describe("loadBotRegistry", () => {
     await expect(loadBotRegistry()).resolves.toEqual({
       coding: {
         group: "main",
+        description,
         instructions: "コード変更を担当する worker",
         model: {
           provider: "zai",
@@ -137,7 +141,7 @@ describe("loadBotRegistry", () => {
 
   it("Botなし構成の空Registryを起動後もcacheする", async () => {
     mockLoadRawBots.mockResolvedValueOnce({}).mockResolvedValueOnce({
-      coding: { group: "main", instructions: "worker" },
+      coding: { group: "main", description, instructions: "worker" },
     });
 
     await expect(loadBotRegistry()).resolves.toEqual({});
@@ -147,7 +151,7 @@ describe("loadBotRegistry", () => {
 
   it("bot の group は必須", async () => {
     mockLoadRawBots.mockResolvedValue({
-      coding: { instructions: "コード変更を担当する worker" },
+      coding: { description, instructions: "コード変更を担当する worker" },
     });
 
     await expect(loadBotRegistry()).rejects.toThrow();
@@ -155,7 +159,7 @@ describe("loadBotRegistry", () => {
 
   it("instructions がない Bot は拒否する", async () => {
     mockLoadRawBots.mockResolvedValue({
-      coding: { group: "main" },
+      coding: { group: "main", description },
     });
 
     await expect(loadBotRegistry()).rejects.toThrow();
@@ -163,16 +167,30 @@ describe("loadBotRegistry", () => {
 
   it("instructions が空文字の Bot は拒否する", async () => {
     mockLoadRawBots.mockResolvedValue({
-      coding: { group: "main", instructions: "" },
+      coding: { group: "main", description, instructions: "" },
     });
 
     await expect(loadBotRegistry()).rejects.toThrow();
+  });
+
+  it.each([
+    undefined,
+    "",
+    " \n\t ",
+    123,
+  ])("descriptionが未指定・空白・非文字列のBotを拒否する: %j", async (description) => {
+    mockLoadRawBots.mockResolvedValue({
+      coding: { group: "main", instructions: "worker", description },
+    });
+
+    await expect(loadBotRegistry()).rejects.toThrow("description");
   });
 
   it("channel 固有の設定を BotProfile に混入させない", async () => {
     mockLoadRawBots.mockResolvedValue({
       coding: {
         group: "main",
+        description,
         instructions: "コード変更を担当する worker",
         channels: [{ channelId: "channel", sessionMode: "shared" }],
         sessionMode: "shared",
@@ -182,6 +200,7 @@ describe("loadBotRegistry", () => {
     const registry = await loadBotRegistry();
     expect(registry.coding).toEqual({
       group: "main",
+      description,
       instructions: "コード変更を担当する worker",
     });
     expect(registry.coding).not.toHaveProperty("channels");
@@ -192,6 +211,7 @@ describe("loadBotRegistry", () => {
     mockLoadRawBots.mockResolvedValue({
       coding: {
         group: "main",
+        description,
         instructions: "コード変更を担当する worker",
         mounts: [{ host: "/repo", container: "workspace" }],
       },

@@ -7,6 +7,7 @@ import { AgentConfigSchema, type GroupConfig } from "./groups.js";
 /** A persistent worker profile scoped to an AgentGroup. */
 export const BotProfileSchema = AgentConfigSchema.extend({
   group: z.string().min(1),
+  description: z.string().trim().min(1),
   instructions: z.string().min(1),
 });
 

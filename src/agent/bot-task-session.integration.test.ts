@@ -82,6 +82,7 @@ const group: GroupConfig = {
 };
 const profile: BotProfile = {
   group: group.name,
+  description: "Caller-facing description A",
   instructions: "Bot role A",
   tools: ["read", "bot"],
 };
@@ -205,6 +206,7 @@ describe("Bot Task Session role snapshots", () => {
     vi.mocked(loadBotRegistry).mockResolvedValue({
       worker: {
         ...profile,
+        description: "Caller-facing description B",
         instructions: "Bot role B",
         model: { provider: "bot-provider", modelId: "bot-model" },
         tools: ["bash", "bot"],

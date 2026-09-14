@@ -18,9 +18,9 @@ const parameters = Type.Object({
 
 type BotAction = "run" | "resume" | "list";
 
-export interface BotToolEndpoint {
-  url: string;
-  token: string;
+export interface BotToolConfig {
+  endpoint: { url: string; token: string };
+  bots: { id: string; description: string }[];
 }
 
 export interface BotToolDetails {
@@ -69,8 +69,7 @@ function details(
   };
 }
 
-export interface BotToolContext {
-  endpoint: BotToolEndpoint;
+export interface BotToolContext extends BotToolConfig {
   groupName: string;
   onUsage?: (usage: NonNullable<BotToolDetails["usage"]>) => void;
 }
@@ -82,8 +81,13 @@ export function createBotTool(
   return {
     name: "bot",
     label: "Bot",
-    description:
+    description: [
       "Delegate work synchronously to an existing Bot and receive the result after it finishes. run and resume wait for completion within the same tool call.",
+      "Available bots:",
+      ...(context.bots.length
+        ? context.bots.map(({ id, description }) => `- ${id}: ${description}`)
+        : ["(none)"]),
+    ].join("\n"),
     parameters,
     execute: async (
       _toolCallId,

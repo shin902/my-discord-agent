@@ -9,6 +9,7 @@ import {
   validateAgentConfig,
   validateApprovalRequiredTools,
 } from "../config/agent-validation.js";
+import { loadBotRegistry } from "../config/bots.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -736,8 +737,14 @@ export async function sendMessage(
   }
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
-  const internalRequest =
+  const botCatalog =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
+      ? Object.entries(await loadBotRegistry())
+          .filter(([, profile]) => profile.group === groupName)
+          .map(([id, { description }]) => ({ id, description }))
+      : undefined;
+  const internalRequest =
+    botCatalog !== undefined
       ? createInternalRequestConfig?.(
           groupName,
           heldLlmProvider,
@@ -783,11 +790,14 @@ export async function sendMessage(
     ...(snapshotHash !== undefined ? { snapshotHash } : {}),
     ...(toolCallKey !== undefined ? { toolCallKey } : {}),
     ...(systemPromptAppend !== undefined ? { systemPromptAppend } : {}),
-    ...(enableBotTool !== false && internalRequest
+    ...(internalRequest
       ? {
-          botToolEndpoint: {
-            url: `http://host.docker.internal:${internalRequest.port}/__agent/bot`,
-            token: internalRequest.token,
+          botToolConfig: {
+            endpoint: {
+              url: `http://host.docker.internal:${internalRequest.port}/__agent/bot`,
+              token: internalRequest.token,
+            },
+            bots: botCatalog,
           },
         }
       : {}),
