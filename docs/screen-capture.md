@@ -96,7 +96,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 - `settings.mode`は`summarize`（既定）または`direct`です。
 - `settings.visionModel`は`summarize`で必須です。Credential Proxyに定義した画像入力対応モデルを指定します。`direct`では指定しません。
 - `settings.concurrency`はVLM worker数（1–16、既定4）です。`providers.json`の既存provider concurrencyが`serial`なら実際の呼び出しは直列になります。
-- `settings.timeoutMs`は各VLM呼び出しとMemory更新の上限（1–600000、既定120000）です。
+- `settings.timeoutMs`は各VLM呼び出しとMemory更新の上限（1以上、既定120000）です。Dockerサンドボックス側の実行時間制限は別途適用されます。
 - `settings.limit`は1回に採用する画像数（1以上、既定10）です。
 - VLM失敗画像は未完了で残り、成功済みsummaryは再利用されます。通常LLM成功後・DB更新前に停止した場合は再実行されるため、既存memoryとの差分だけを反映するよう指示します。
 - ImageMagickがdecodeできない画像は`accepted = 0`で完了にして後続画像を処理します。`magick` executable不在などjob全体の実行環境エラーは画像不正として完了させず、jobを失敗させます。
