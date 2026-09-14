@@ -189,6 +189,15 @@ describe("screen capture summary cron", () => {
     }
   }
 
+  it("accepts a limit above 10", async () => {
+    await expect(
+      handler({
+        ...ctx,
+        settings: { visionModel, concurrency: 2, limit: 30 },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("summarizes images with settings.visionModel then gives text to the memory model", async () => {
     insert(2);
     await handler(ctx);
@@ -433,7 +442,7 @@ describe("screen capture summary cron", () => {
       handler({ ...ctx, settings: { mode: "direct", timeoutMs: 0 } }),
     ).rejects.toThrow("requires valid settings and groupName");
     await expect(
-      handler({ ...ctx, settings: { mode: "direct", limit: 11 } }),
+      handler({ ...ctx, settings: { mode: "direct", limit: 0 } }),
     ).rejects.toThrow("requires valid settings and groupName");
     expect(completeSimple).not.toHaveBeenCalled();
   });

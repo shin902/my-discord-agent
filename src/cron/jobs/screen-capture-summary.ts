@@ -25,7 +25,7 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SIMILARITY_THRESHOLD = 0.8;
 const CommonSettings = {
   timeoutMs: z.number().int().min(1).max(600_000).default(120_000),
-  limit: z.number().int().min(1).max(10).default(10),
+  limit: z.number().int().min(1).default(10),
 };
 const Settings = z.union([
   z.strictObject({ mode: z.literal("direct"), ...CommonSettings }),
