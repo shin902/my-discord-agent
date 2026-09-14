@@ -185,11 +185,11 @@ host専用DBの未読画像IDを全件snapshotし、boundedな並列workerから
 メールハンドラーは未読メールを取得して本文とACK対象のメールIDをinboxへ投入する。AI・Discord delivery・deliveryModeに応じたスレッド作成はcron enqueue/pollerの共通処理へ任せ、mail.ts自体は配送方式を制限しない。全delivery chunkが`sent`になった後にだけメールを既読化する。
 
 1. 未読メールを取得して本文を取得する。
-2. `enqueueCronInbox()` にメールIDを付けてjobを投入する。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。jobにはACK対象のメールID以外のmail固有冪等キーやsource照合情報を付けず、前回のjob・placeholder・スレッドを検索しない。
+2. `enqueueCronInbox()` にメールIDとGraph message ID由来の冪等キー `mail:graph:<message-id>` を付けてjobを投入する。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。runtime queueの既存idempotency ledgerが同じメールの再投入を抑止する。
 3. cron enqueue/pollerが設定された方式に従ってproviderのconcurrency設定とセッション順序を保ったままAIを実行し、delivery workerが投稿先を確定する。`item-thread` は一時sessionでAIを実行し、通常応答がある場合だけ親メッセージ→session昇格→thread作成の順でmaterializeする。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
-AI・Discord delivery・既読化のいずれかが失敗したメールは未読のまま残る。次回実行では過去jobを再開・照合せず新しいjobと投稿先を作るため、失敗した試行のDiscord投稿が残る場合は重複しうる。このjob境界の性質はmail固有の既知の残余リスクであり、RSS dispatchなど別目的の冪等性は維持する。
+AI・Discord delivery・既読化のいずれかが失敗したメールは未読のまま残る。同じメールが次回も取得されてもactive / completed idempotency recordがある間は新しいjobを作らず、Agent・配送の失敗は既存jobのqueue retry経路で再試行する。
 
 ## 運用メモ
 

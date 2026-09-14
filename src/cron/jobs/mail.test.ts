@@ -96,7 +96,7 @@ describe("mail cron queue boundary", () => {
     );
     const payload = appendInbox.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.sessionId).toEqual(expect.stringMatching(/^cron-mail-/));
-    expect(payload.idempotencyKey).toBeUndefined();
+    expect(payload.idempotencyKey).toBe("mail:graph:mail-1");
     expect(payload.mailEmailId).toBe("mail-1");
     expect(payload.cronPlaceholderMessageId).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -118,7 +118,7 @@ describe("mail cron queue boundary", () => {
     expect(JSON.stringify(payload)).not.toContain("host-graph-token");
   });
 
-  it("enqueues the unread email again on a later cron run without cross-run lookup", async () => {
+  it("reuses the durable idempotency key when the email stays unread", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(unreadResponse())
@@ -133,9 +133,13 @@ describe("mail cron queue boundary", () => {
     await handler(context);
 
     expect(appendInbox).toHaveBeenCalledTimes(2);
-    const first = appendInbox.mock.calls[0][0] as { sessionId: string };
-    const second = appendInbox.mock.calls[1][0] as { sessionId: string };
-    expect(second.sessionId).not.toBe(first.sessionId);
+    const payloads = appendInbox.mock.calls.map(
+      ([payload]) => payload as { idempotencyKey?: string },
+    );
+    expect(payloads.map(({ idempotencyKey }) => idempotencyKey)).toEqual([
+      "mail:graph:mail-1",
+      "mail:graph:mail-1",
+    ]);
   });
 
   it("does not ACK when enqueue fails", async () => {
