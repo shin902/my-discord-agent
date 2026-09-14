@@ -24,7 +24,12 @@ import {
   type ConversationEntries,
 } from "../agent/conversation.js";
 import { resolveModel } from "../agent/model.js";
-import { appendMessage, loadMessages } from "../agent/session.js";
+import {
+  appendMessage,
+  isSessionAgentInitialized,
+  loadMessages,
+  markSessionAgentInitialized,
+} from "../agent/session.js";
 import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
@@ -483,7 +488,7 @@ export async function runAgentLoop(
   );
   const needsSystemPromptSnapshot = !existingSystemPromptSnapshot;
   const needsContextBootstrap =
-    !rawMessages.some((message) => message.role !== "custom") &&
+    !(await isSessionAgentInitialized(groupName, sessionId)) &&
     !messages.some((message) =>
       CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? ""),
     );
@@ -542,6 +547,10 @@ export async function runAgentLoop(
       await appendMessage(groupName, sessionId, bootstrapMessage);
       newBootstrapMessages.push(bootstrapMessage);
     }
+  }
+
+  if (needsContextBootstrap) {
+    await markSessionAgentInitialized(groupName, sessionId);
   }
 
   if (newBootstrapMessages.length > 0) {

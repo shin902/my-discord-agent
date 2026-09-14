@@ -10,6 +10,7 @@ const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
 const SCHEMA_VERSION = 5;
+const EXPORT_SCHEMA_VERSION = 4;
 
 export type SessionMode = "normal" | "capture-only";
 
@@ -102,7 +103,8 @@ function initializeSchema(db: Database.Database): void {
           kind TEXT NOT NULL DEFAULT 'conversation',
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
-          mode TEXT NOT NULL DEFAULT 'normal' CHECK (mode IN ('normal', 'capture-only'))
+          mode TEXT NOT NULL DEFAULT 'normal' CHECK (mode IN ('normal', 'capture-only')),
+          agent_initialized INTEGER NOT NULL DEFAULT 0 CHECK (agent_initialized IN (0, 1))
         );
         CREATE TABLE IF NOT EXISTS session_entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,17 +133,22 @@ function initializeSchema(db: Database.Database): void {
         ALTER TABLE session_entries DROP COLUMN execution_json;
       `);
     }
-    if (
-      version > 0 &&
-      version < 5 &&
-      !(db.pragma("table_info(sessions)") as Array<{ name: string }>).some(
-        (column) => column.name === "mode",
-      )
-    ) {
-      db.exec(`
-        ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'
-          CHECK (mode IN ('normal', 'capture-only'));
-      `);
+    if (version > 0 && version < 5) {
+      const columns = db.pragma("table_info(sessions)") as Array<{
+        name: string;
+      }>;
+      if (!columns.some((column) => column.name === "mode")) {
+        db.exec(`
+          ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'
+            CHECK (mode IN ('normal', 'capture-only'));
+        `);
+      }
+      if (!columns.some((column) => column.name === "agent_initialized")) {
+        db.exec(`
+          ALTER TABLE sessions ADD COLUMN agent_initialized INTEGER NOT NULL DEFAULT 1
+            CHECK (agent_initialized IN (0, 1));
+        `);
+      }
     }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();
@@ -209,9 +216,10 @@ export function* readConversations(
   try {
     const version = db.pragma("user_version", { simple: true }) as number;
     // Pre-reference stores have no adopted conversations; do not migrate on export.
-    if (version >= 1 && version < SCHEMA_VERSION) return;
-    if (version !== SCHEMA_VERSION)
+    if (version >= 1 && version < EXPORT_SCHEMA_VERSION) return;
+    if (version < EXPORT_SCHEMA_VERSION || version > SCHEMA_VERSION) {
       throw new Error(`Unsupported session schema: ${version}`);
+    }
     const lookup = db.prepare(`
       SELECT u.session_id, u.source_json, u.payload_json AS user_json,
         a.payload_json AS assistant_json
@@ -296,6 +304,42 @@ export async function getSessionMode(
   }
 }
 
+export async function isSessionAgentInitialized(
+  groupName: string,
+  sessionId: string,
+): Promise<boolean> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  const db = await openDatabase(groupName);
+  try {
+    const row = db
+      .prepare("SELECT agent_initialized FROM sessions WHERE id=?")
+      .get(sessionId) as { agent_initialized: number } | undefined;
+    return row?.agent_initialized === 1;
+  } finally {
+    db.close();
+  }
+}
+
+export async function markSessionAgentInitialized(
+  groupName: string,
+  sessionId: string,
+): Promise<void> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  const db = await openDatabase(groupName);
+  const now = Date.now();
+  try {
+    db.prepare(`
+      INSERT INTO sessions(id, created_at, updated_at, agent_initialized)
+      VALUES (?, ?, ?, 1)
+      ON CONFLICT(id) DO UPDATE SET agent_initialized=1, updated_at=excluded.updated_at
+    `).run(sessionId, now, now);
+  } finally {
+    db.close();
+  }
+}
+
 export async function setSessionMode(
   groupName: string,
   sessionId: string,
@@ -338,28 +382,43 @@ export async function appendMessage(
   const timestamp = messageTimestamp(sanitized);
 
   try {
-    return db.transaction(() => {
-      db.prepare(`
+    return db
+      .transaction(() => {
+        if (source) {
+          const existing = db
+            .prepare(`
+            SELECT id FROM session_entries
+            WHERE session_id=?
+              AND json_extract(source_json, '$.kind')=?
+              AND json_extract(source_json, '$.sourceId')=?
+          `)
+            .get(sessionId, source.kind, source.sourceId) as
+            | { id: number }
+            | undefined;
+          if (existing) return existing.id;
+        }
+        db.prepare(`
         INSERT INTO sessions(id, created_at, updated_at)
         VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
       `).run(sessionId, timestamp, timestamp);
-      const inserted = db
-        .prepare(`
+        const inserted = db
+          .prepare(`
         INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json)
         SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?
         FROM session_entries WHERE session_id=?
       `)
-        .run(
-          sessionId,
-          entryType(sanitized),
-          JSON.stringify(sanitized),
-          timestamp,
-          sourceJson,
-          sessionId,
-        );
-      return Number(inserted.lastInsertRowid);
-    })();
+          .run(
+            sessionId,
+            entryType(sanitized),
+            JSON.stringify(sanitized),
+            timestamp,
+            sourceJson,
+            sessionId,
+          );
+        return Number(inserted.lastInsertRowid);
+      })
+      .immediate();
   } finally {
     db.close();
   }

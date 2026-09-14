@@ -241,6 +241,18 @@ describe("committed conversation export", () => {
     ).rejects.toThrow(/user entry/);
   });
 
+  it("reads schema-v4 committed conversations without migrating", async () => {
+    const pair = await appendTurn("legacy-readable-v4");
+    const filename = join(root, "legacy-readable-v4", "sessions.sqlite");
+    const db = new Database(filename);
+    db.pragma("user_version = 4");
+    db.close();
+    const before = await readFile(filename);
+
+    expect([...readCaptureTurns("legacy-readable-v4", [pair])]).toHaveLength(1);
+    expect(await readFile(filename)).toEqual(before);
+  });
+
   it.each([
     1, 2, 3,
   ])("does not migrate or infer old v%s history on export; migration preserves entry IDs", async (version) => {

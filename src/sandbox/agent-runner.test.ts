@@ -39,11 +39,18 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
 vi.mock("../agent/session.js", () => ({
   loadMessages: vi.fn(),
   appendMessage: vi.fn(),
+  isSessionAgentInitialized: vi.fn(),
+  markSessionAgentInitialized: vi.fn(),
 }));
 
 const { createRunnerLineRouter, runAgentLoop, DEFAULT_SYSTEM_PROMPT } =
   await import("./agent-runner.js");
-const { loadMessages, appendMessage } = await import("../agent/session.js");
+const {
+  loadMessages,
+  appendMessage,
+  isSessionAgentInitialized,
+  markSessionAgentInitialized,
+} = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
 
@@ -101,6 +108,8 @@ describe("runAgentLoop", () => {
     vi.clearAllMocks();
     lastAgentOptions = undefined;
     vi.mocked(loadMessages).mockResolvedValue([]);
+    vi.mocked(isSessionAgentInitialized).mockResolvedValue(false);
+    vi.mocked(markSessionAgentInitialized).mockResolvedValue(undefined);
     let entryId = 0;
     vi.mocked(appendMessage).mockImplementation(async () => ++entryId);
     vi.mocked(readFile).mockRejectedValue(
@@ -908,7 +917,10 @@ describe("runAgentLoop", () => {
     );
   });
 
-  it("新規セッションでは設定したcontext fileをcontext-bootstrapとして保存する", async () => {
+  it("captureから始まった未初期化sessionでもcontext fileを保存する", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      { role: "user", content: "captured", timestamp: 1 },
+    ]);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {
         return "カスタムプロンプト" as never;
@@ -964,6 +976,10 @@ describe("runAgentLoop", () => {
       role: "custom",
       customType: "context-bootstrap",
     });
+    expect(markSessionAgentInitialized).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+    );
   });
 
   it("複数context fileを設定順に1つのcontext-bootstrapへ保存する", async () => {
@@ -1305,6 +1321,7 @@ describe("runAgentLoop", () => {
       { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
     ];
     vi.mocked(loadMessages).mockResolvedValue(existingHistory as never);
+    vi.mocked(isSessionAgentInitialized).mockResolvedValue(true);
 
     vi.mocked(readFile).mockImplementation(async (filePath) => {
       if (String(filePath) === "/workspace/AGENTS.md") {

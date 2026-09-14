@@ -1169,6 +1169,16 @@ export class QueueRepository {
       return { session: parseBotTaskSession(updated), enqueue };
     });
   }
+  hasUnfinishedSessionJobs(sessionId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE session_id=? AND status NOT IN ('completed','dead_letter') LIMIT 1",
+        )
+        .get(sessionId),
+    );
+  }
+
   /** Atomically move a cron job into the destination session ordering. */
   provisionCronJob(
     id: string,

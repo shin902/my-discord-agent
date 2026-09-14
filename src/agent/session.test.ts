@@ -88,6 +88,30 @@ describe("SQLite session trajectory store", () => {
     db.close();
   });
 
+  it("同じDiscord sourceの再送を二重保存しない", async () => {
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message-1",
+      actorId: "user-1",
+      messageType: 0 as const,
+    };
+    const first = await session.appendMessage(
+      "dedupe",
+      "session-a",
+      { role: "user", content: "hello", timestamp: 1 },
+      source,
+    );
+    const replay = await session.appendMessage(
+      "dedupe",
+      "session-a",
+      { role: "user", content: "hello", timestamp: 1 },
+      source,
+    );
+
+    expect(replay).toBe(first);
+    expect(await session.loadMessages("dedupe", "session-a")).toHaveLength(1);
+  });
+
   it("並行appendを壊さず一意なsequenceとして保存する", async () => {
     await Promise.all(
       Array.from({ length: 20 }, (_, index) =>
@@ -206,6 +230,13 @@ describe("SQLite session trajectory store", () => {
     expect(await session.getSessionMode("mode-group", "session-a")).toBe(
       "capture-only",
     );
+    expect(
+      await session.isSessionAgentInitialized("mode-group", "session-a"),
+    ).toBe(false);
+    await session.markSessionAgentInitialized("mode-group", "session-a");
+    expect(
+      await session.isSessionAgentInitialized("mode-group", "session-a"),
+    ).toBe(true);
     await session.setSessionMode("mode-group", "session-a", "normal");
     expect(await session.loadMessages("mode-group", "session-a")).toEqual([
       { role: "user", content: "captured", timestamp: 123 },

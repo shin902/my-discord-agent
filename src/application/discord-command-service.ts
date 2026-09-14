@@ -93,7 +93,21 @@ export async function executeSessionModeCommand(
   const resolved = await resolveCommandGroup(request);
   if ("error" in resolved) return resolved.error;
   try {
+    const repository = getQueueRepository();
+    if (
+      request.mode === "capture-only" &&
+      repository.hasUnfinishedSessionJobs(request.channelId)
+    ) {
+      return "待機中または実行中のAgentがあるため、記録専用モードへ切り替えられません。";
+    }
     await setSessionMode(resolved.groupName, request.channelId, request.mode);
+    if (
+      request.mode === "capture-only" &&
+      repository.hasUnfinishedSessionJobs(request.channelId)
+    ) {
+      await setSessionMode(resolved.groupName, request.channelId, "normal");
+      return "切替中にAgentの実行が始まったため、通常モードを維持しました。";
+    }
     return request.mode === "capture-only"
       ? "このセッションを記録専用モードにしました。"
       : "このセッションを通常モードに戻しました。";

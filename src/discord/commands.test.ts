@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   stopAgentRun: vi.fn(),
   setSessionMode: vi.fn(),
+  hasUnfinishedSessionJobs: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", async (importOriginal) => {
@@ -35,6 +36,7 @@ vi.mock("../queue/repository.js", () => ({
     resumeBotTaskSessionAndEnqueue: mocks.resumeBotTaskSessionAndEnqueue,
     listBotTaskSessions: mocks.listBotTaskSessions,
     enqueue: mocks.enqueue,
+    hasUnfinishedSessionJobs: mocks.hasUnfinishedSessionJobs,
   }),
 }));
 
@@ -167,6 +169,7 @@ beforeEach(() => {
   mocks.resumeBotTaskSessionAndEnqueue.mockReturnValue(undefined);
   mocks.listBotTaskSessions.mockReturnValue([]);
   mocks.stopAgentRun.mockResolvedValue({ status: "no-active-run" });
+  mocks.hasUnfinishedSessionJobs.mockReturnValue(false);
 });
 
 describe("bot command definition", () => {
@@ -266,6 +269,19 @@ describe("steer command", () => {
 });
 
 describe("session-mode command", () => {
+  it("rejects capture-only while the session has unfinished work", async () => {
+    mocks.hasUnfinishedSessionJobs.mockReturnValue(true);
+    const interaction = makeInteraction({ mode: "capture-only" });
+
+    await handleSessionModeCommand(interaction as never);
+
+    expect(mocks.setSessionMode).not.toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content:
+        "待機中または実行中のAgentがあるため、記録専用モードへ切り替えられません。",
+    });
+  });
+
   it("persists capture-only for the exact session without enqueueing", async () => {
     const interaction = makeInteraction({ mode: "capture-only" });
 
