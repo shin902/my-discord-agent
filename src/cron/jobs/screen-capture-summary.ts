@@ -42,10 +42,17 @@ type Capture = {
 
 class InvalidCaptureError extends Error {}
 
-function runMagick(args: string[]): Promise<string> {
+function runMagick(
+  args: string[],
+  acceptedExitCodes: readonly number[] = [],
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile("magick", args, (error, stdout, stderr) => {
-      if (!error) return resolve(String(stdout));
+      if (
+        !error ||
+        acceptedExitCodes.includes((error as { code?: number }).code ?? -1)
+      )
+        return resolve(String(stdout));
       if (
         typeof (error as { code?: unknown }).code === "number" &&
         /@ error\/png\.c\/|improper image header|corrupt image/i.test(
@@ -66,30 +73,34 @@ async function writeCapture(directory: string, capture: Capture) {
 }
 
 async function similarity(reference: string, candidate: string) {
-  const stdout = await runMagick([
-    "(",
-    reference,
-    "-resize",
-    "64x64!",
-    "-colorspace",
-    "Gray",
-    ")",
-    "(",
-    candidate,
-    "-resize",
-    "64x64!",
-    "-colorspace",
-    "Gray",
-    ")",
-    "-metric",
-    "SSIM",
-    "-compare",
-    "-format",
-    "%[distortion]",
-    "info:",
-  ]);
+  const stdout = await runMagick(
+    [
+      "(",
+      reference,
+      "-resize",
+      "64x64!",
+      "-colorspace",
+      "Gray",
+      ")",
+      "(",
+      candidate,
+      "-resize",
+      "64x64!",
+      "-colorspace",
+      "Gray",
+      ")",
+      "-metric",
+      "SSIM",
+      "-compare",
+      "-format",
+      "%[distortion]",
+      "info:",
+    ],
+    [1],
+  );
   const value = Number(stdout);
-  if (!Number.isFinite(value)) throw new Error("magick returned invalid SSIM");
+  if (stdout.trim() === "" || !Number.isFinite(value))
+    throw new Error("magick returned invalid SSIM");
   return value;
 }
 

@@ -20,6 +20,7 @@ const magick = vi.hoisted(() => ({
   similarities: [] as number[],
   invalidIds: new Set<string>(),
   errorCode: undefined as string | number | undefined,
+  comparisonExitCode: undefined as number | undefined,
 }));
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
@@ -31,10 +32,13 @@ vi.mock("node:child_process", () => ({
       const invalid = [...magick.invalidIds].some((id) =>
         args.some((arg) => arg.endsWith(`/${id}.png`)),
       );
+      const errorCode =
+        magick.errorCode ??
+        (args.includes("SSIM") ? magick.comparisonExitCode : undefined);
       const error =
-        magick.errorCode || invalid
+        errorCode || invalid
           ? Object.assign(new Error("magick failed"), {
-              code: magick.errorCode ?? 1,
+              code: errorCode ?? 1,
             })
           : null;
       callback(
@@ -110,6 +114,7 @@ describe("screen capture summary cron", () => {
     magick.similarities.length = 0;
     magick.invalidIds.clear();
     magick.errorCode = undefined;
+    magick.comparisonExitCode = undefined;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
@@ -212,6 +217,26 @@ describe("screen capture summary cron", () => {
       summary: null,
       completed_at: null,
     });
+  });
+
+  it("accepts ImageMagick exit 1 when comparison returns a valid SSIM", async () => {
+    insert(2);
+    magick.similarities.push(0.2);
+    magick.comparisonExitCode = 1;
+
+    await handler(ctx);
+
+    expect(sendMessage).toHaveBeenCalled();
+    expect(rows().every((row) => row.accepted === 1 && row.completed_at)).toBe(
+      true,
+    );
+  });
+
+  it("rejects ImageMagick comparison exit 2", async () => {
+    insert(2);
+    magick.comparisonExitCode = 2;
+
+    await expect(handler(ctx)).rejects.toMatchObject({ code: 2 });
   });
 
   it("scans a duplicate backlog while retaining only one selected image", async () => {
