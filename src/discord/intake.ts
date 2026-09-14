@@ -3,7 +3,12 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
-import { appendMessage, getSessionMode } from "../agent/session.js";
+import {
+  appendMessage,
+  getSessionMode,
+  hasSessionSource,
+} from "../agent/session.js";
+import type { SessionSource } from "../agent/source.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
@@ -176,12 +181,27 @@ async function ingest(
     }
 
     const repository = getQueueRepository();
-    const mode = await getSessionMode(match.group.name, sessionId);
     const isHumanMessage =
       !message.author.bot &&
       (message.type === MessageType.Default ||
         message.type === MessageType.Reply);
-    if (mode === "capture-only" && isHumanMessage) {
+    const humanSource: SessionSource | undefined = isHumanMessage
+      ? {
+          kind: "discord" as const,
+          sourceId: message.id,
+          actorId: message.author.id,
+          messageType: message.type === MessageType.Default ? 0 : 19,
+          createdAt: message.createdAt.toISOString(),
+        }
+      : undefined;
+    if (
+      humanSource &&
+      (await hasSessionSource(match.group.name, sessionId, humanSource))
+    ) {
+      return { status: "ignored", cursorScope };
+    }
+    const mode = await getSessionMode(match.group.name, sessionId);
+    if (mode === "capture-only" && humanSource) {
       const attachmentLines = [...message.attachments.values()].map(
         (attachment) => `- ${attachment.name}: ${attachment.url}`,
       );
@@ -195,16 +215,7 @@ async function ingest(
             : message.content,
           timestamp: message.createdAt.getTime(),
         },
-        {
-          kind: "discord",
-          sourceId: message.id,
-          actorId: message.author.id,
-          messageType:
-            message.type === MessageType.Default
-              ? MessageType.Default
-              : MessageType.Reply,
-          createdAt: message.createdAt.toISOString(),
-        },
+        humanSource,
       );
       if (
         options.updateLiveCursor &&

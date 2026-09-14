@@ -95,6 +95,9 @@ describe("SQLite session trajectory store", () => {
       actorId: "user-1",
       messageType: 0 as const,
     };
+    expect(await session.hasSessionSource("dedupe", "session-a", source)).toBe(
+      false,
+    );
     const first = await session.appendMessage(
       "dedupe",
       "session-a",
@@ -109,6 +112,9 @@ describe("SQLite session trajectory store", () => {
     );
 
     expect(replay).toBe(first);
+    expect(await session.hasSessionSource("dedupe", "session-a", source)).toBe(
+      true,
+    );
     expect(await session.loadMessages("dedupe", "session-a")).toHaveLength(1);
   });
 

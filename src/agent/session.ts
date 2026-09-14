@@ -71,6 +71,22 @@ function parseStoredMessage(payload: string): AgentMessage {
   return message as unknown as AgentMessage;
 }
 
+function findSourceEntry(
+  db: Database.Database,
+  sessionId: string,
+  source: SessionSource,
+): number | undefined {
+  const row = db
+    .prepare(`
+      SELECT id FROM session_entries
+      WHERE session_id=?
+        AND json_extract(source_json, '$.kind')=?
+        AND json_extract(source_json, '$.sourceId')=?
+    `)
+    .get(sessionId, source.kind, source.sourceId) as { id: number } | undefined;
+  return row?.id;
+}
+
 function entryType(message: Record<string, unknown>): string {
   if (typeof message.customType === "string") return message.customType;
   return typeof message.role === "string" ? message.role : "unknown";
@@ -287,6 +303,22 @@ export async function renameSession(
   }
 }
 
+export async function hasSessionSource(
+  groupName: string,
+  sessionId: string,
+  source: SessionSource,
+): Promise<boolean> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  const parsed = SessionSourceSchema.parse(source);
+  const db = await openDatabase(groupName);
+  try {
+    return findSourceEntry(db, sessionId, parsed) !== undefined;
+  } finally {
+    db.close();
+  }
+}
+
 export async function getSessionMode(
   groupName: string,
   sessionId: string,
@@ -385,17 +417,8 @@ export async function appendMessage(
     return db
       .transaction(() => {
         if (source) {
-          const existing = db
-            .prepare(`
-            SELECT id FROM session_entries
-            WHERE session_id=?
-              AND json_extract(source_json, '$.kind')=?
-              AND json_extract(source_json, '$.sourceId')=?
-          `)
-            .get(sessionId, source.kind, source.sourceId) as
-            | { id: number }
-            | undefined;
-          if (existing) return existing.id;
+          const existing = findSourceEntry(db, sessionId, source);
+          if (existing !== undefined) return existing;
         }
         db.prepare(`
         INSERT INTO sessions(id, created_at, updated_at)

@@ -6,11 +6,13 @@ const mocks = vi.hoisted(() => ({
   findGroup: vi.fn(),
   getRepo: vi.fn(),
   getSessionMode: vi.fn(),
+  hasSessionSource: vi.fn(),
   appendMessage: vi.fn(),
 }));
 
 vi.mock("../agent/session.js", () => ({
   getSessionMode: mocks.getSessionMode,
+  hasSessionSource: mocks.hasSessionSource,
   appendMessage: mocks.appendMessage,
 }));
 
@@ -44,6 +46,7 @@ beforeEach(() => {
   repo = new repositoryModule.QueueRepository(db);
   mocks.getRepo.mockReturnValue(repo);
   mocks.getSessionMode.mockResolvedValue("normal");
+  mocks.hasSessionSource.mockResolvedValue(false);
   mocks.appendMessage.mockResolvedValue(1);
   mocks.findGroup.mockResolvedValue({
     group: { name: "group" },
@@ -350,7 +353,26 @@ describe("ingestDiscordMessage", () => {
     ).toBeUndefined();
   });
 
-  it("normalへ戻すとcaptured trajectoryを残したまま再びenqueueする", async () => {
+  it("capture済みmessageはnormal復帰後のbackfillでもenqueueしない", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: { channelId: "root-1", sessionMode: "shared" },
+    });
+    mocks.getSessionMode.mockResolvedValue("normal");
+    mocks.hasSessionSource.mockResolvedValue(true);
+
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "captured-before-backfill" }),
+      { source: "backfill", replyOnFailure: false },
+    );
+
+    expect(result.status).toBe("ignored");
+    expect(
+      repo.findByIdempotencyKey("discord-message:captured-before-backfill"),
+    ).toBeUndefined();
+  });
+
+  it("normalへ戻すと新しいmessageを再びenqueueする", async () => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
       channel: { channelId: "root-1", sessionMode: "shared" },
