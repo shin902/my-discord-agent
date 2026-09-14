@@ -941,7 +941,7 @@ const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
   content: z.string(),
-  imagePaths: z.array(z.string().startsWith("/workspace/")).max(10).optional(),
+  imagePaths: z.array(z.string().startsWith("/workspace/")).optional(),
   source: SessionSourceSchema.optional(),
   groupConfig: AgentRuntimeConfigSchema,
   systemPromptSnapshotContent: z.string().optional(),
