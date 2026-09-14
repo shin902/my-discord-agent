@@ -1,4 +1,3 @@
-import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   listDispatchClaims,
   markArticlesRead,
@@ -8,23 +7,6 @@ import {
 import { getQueueRepository, type QueueRepository } from "./repository.js";
 
 export type RssDispatchResolution = "completed" | "dead_letter";
-
-export async function reconcileMailAcks(
-  repo: QueueRepository = getQueueRepository(),
-): Promise<number> {
-  let acknowledged = 0;
-  for (const job of repo.listPendingMailAcks()) {
-    if (!job.mailEmailId) continue;
-    try {
-      await acknowledgeEmail(job.mailEmailId);
-      repo.patchJobPayload(job.id, { mailAcknowledged: true });
-      acknowledged++;
-    } catch (error) {
-      console.error(`[mail] startup既読化に失敗しました (${job.id}):`, error);
-    }
-  }
-  return acknowledged;
-}
 
 /**
  * Settle one RSS dispatch after its associated queue job reaches a terminal

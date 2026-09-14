@@ -118,7 +118,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` 必須 |
 
-応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は完了jobと冪等キーを保持して起動時reconciliationで再ACKし、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
+応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` は配送方式を解釈せず、設定された `deliveryMode` / `sessionMode` を `enqueueCronInbox()` に渡す。各方式の投稿先準備・配送はcron enqueue/pollerの共通処理が担う。
 
@@ -185,11 +185,13 @@ host専用DBの未読画像IDを全件snapshotし、boundedな並列workerから
 メールハンドラーは未読メールを取得して本文とACK対象のメールIDをinboxへ投入する。AI・Discord delivery・deliveryModeに応じたスレッド作成はcron enqueue/pollerの共通処理へ任せ、mail.ts自体は配送方式を制限しない。全delivery chunkが`sent`になった後にだけメールを既読化する。
 
 1. 未読メールを取得して本文を取得する。
-2. `enqueueCronInbox()` にメールIDとcron job ID + Graph message ID由来の冪等キー `mail:graph:<cron-job-id>:<message-id>` を付けてjobを投入する。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。runtime queueの既存idempotency ledgerが同じcron job内で同じメールの再投入を抑止し、別のmail cron jobは独立して処理する。
+2. `enqueueCronInbox()` にメールIDとcron job ID + Graph message ID由来の冪等キー `mail:graph:<encoded-cron-job-id>:<encoded-message-id>` を付けてjobを投入する。各IDは区切り文字との衝突を避けるためURI encodeする。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。同一cron job + 同一Graph messageはqueue jobがactive（`queued` / `retry_wait` / `claimed` / `running`）の間だけdedupeし、別cron jobは独立してenqueueできる。
 3. cron enqueue/pollerが設定された方式に従ってproviderのconcurrency設定とセッション順序を保ったままAIを実行し、delivery workerが投稿先を確定する。`item-thread` は一時sessionでAIを実行し、通常応答がある場合だけ親メッセージ→session昇格→thread作成の順でmaterializeする。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
-Agent・配送の一時的な失敗は既存jobのqueue retry経路で再試行する。jobがdead letterへ到達した場合、またはDiscord配送がnon-retryableな`failed`に確定した場合はmailのidempotency keyを解放し、未読メールを次回cronで新しいjobとして再処理できるようにする。一方、Discord配送完了後または明示的な配送抑止後のGraph既読化に失敗した場合は、完了jobとidempotency keyを保持してAgent実行・Discord配送の重複を防ぐ。Graph既読化の成功はjob payloadの`mailAcknowledged`へ永続化する。起動時は、成功完了して全deliveryが`sent`（または明示的にdelivery抑止済み）なのにこのmarkerがないmail jobだけを再ACKするため、delivery永続化直後のprocess crashから回復できる。ACK後・marker保存前に停止した場合はGraph PATCHを再実行するが、既読化は冪等でありDiscordへは再配送しない。
+queue jobがterminal（`completed` / `dead_letter`）ならdedupeせず、Graphが未読で返すメールを次回cronで新しいjobとして再enqueueする。既存のenqueue transaction内でmailのterminal keyを解放・再登録するため、並行handlerも同じactive jobへ収束する。Mail以外のqueue idempotencyは変更しない。
+
+Graphの未読状態をsource側のretry signalとし、Agentのdead-letter、terminal delivery failure、配送後や明示的な配送抑止後のGraph ACK失敗でも通常のcron経路から再処理する。ACK専用state・worker・startup/runtime reconciliationは持たず、既存のqueue retry・delivery・配送後ACKを維持する。`completed` はAgent結果の保存完了であり、Discord配送完了とは別なので、配送待ちでもGraphが未読なら再enqueue可能。これはactive-only contractの境界であり、terminal後の再処理ではDiscord投稿が重複しうる。
 
 ## 運用メモ
 

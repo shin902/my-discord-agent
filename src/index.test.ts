@@ -36,7 +36,6 @@ const mocks = vi.hoisted(() => ({
   queueRepository: { db: {}, listRssStatePaths: vi.fn() },
   initializeQueue: vi.fn(),
   reconcileRssDispatches: vi.fn(),
-  reconcileMailAcks: vi.fn(),
   runRuntimeOperator: vi.fn(),
 }));
 
@@ -121,7 +120,6 @@ vi.mock("./queue/migration.js", () => ({
 }));
 vi.mock("./queue/reconciliation.js", () => ({
   reconcileRssDispatches: mocks.reconcileRssDispatches,
-  reconcileMailAcks: mocks.reconcileMailAcks,
 }));
 vi.mock("./queue/operator.js", () => ({
   runRuntimeOperator: mocks.runRuntimeOperator,
@@ -548,7 +546,6 @@ describe("index: 起動時バリデーション", () => {
       mocks.queueRepository,
       ["runtime.sqlite", "cron.sqlite"],
     );
-    expect(mocks.reconcileMailAcks).toHaveBeenCalledWith(mocks.queueRepository);
     expect(mocks.runRuntimeOperator).toHaveBeenCalledWith(
       mocks.queueRepository.db,
       expect.objectContaining({
@@ -557,9 +554,6 @@ describe("index: 起動時バリデーション", () => {
     );
     expect(
       mocks.reconcileRssDispatches.mock.invocationCallOrder[0],
-    ).toBeLessThan(mocks.reconcileMailAcks.mock.invocationCallOrder[0]);
-    expect(mocks.reconcileMailAcks.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.runRuntimeOperator.mock.invocationCallOrder[0],
-    );
+    ).toBeLessThan(mocks.runRuntimeOperator.mock.invocationCallOrder[0]);
   });
 });

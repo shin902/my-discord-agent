@@ -74,8 +74,6 @@ const {
   updateRunning,
   getJob,
   enqueue,
-  releaseTerminalIdempotencyKey,
-  patchJobPayload,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
   commitInboxResult: vi.fn(),
@@ -87,8 +85,6 @@ const {
   updateRunning: vi.fn(),
   getJob: vi.fn(),
   enqueue: vi.fn(),
-  releaseTerminalIdempotencyKey: vi.fn(),
-  patchJobPayload: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -102,8 +98,6 @@ vi.mock("./repository.js", () => ({
     updateRunning,
     get: getJob,
     enqueue,
-    releaseTerminalIdempotencyKey,
-    patchJobPayload,
   }),
 }));
 
@@ -122,8 +116,6 @@ beforeEach(() => {
   claim.mockReset();
   claim.mockReturnValue(undefined);
   deadLetter.mockClear();
-  releaseTerminalIdempotencyKey.mockClear();
-  patchJobPayload.mockClear();
   failAttempt.mockReset();
   heartbeat.mockReset();
   markRunning.mockReset();
@@ -934,7 +926,6 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     await processMessage(msg);
 
     expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
-    expect(releaseTerminalIdempotencyKey).not.toHaveBeenCalled();
     const db = openRssDb(rssPath);
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(0);

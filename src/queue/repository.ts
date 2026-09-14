@@ -870,65 +870,6 @@ export class QueueRepository {
       .get(key) as JobRow | undefined;
     return row ? parsePayload(row) : undefined;
   }
-  private releaseIdempotencyKeyInTransaction(jobId: string, key: string): void {
-    this.db
-      .prepare(
-        "UPDATE jobs SET idempotency_key=NULL,payload_json=json_remove(payload_json,'$.idempotencyKey') WHERE id=?",
-      )
-      .run(jobId);
-    this.db
-      .prepare("DELETE FROM idempotency_keys WHERE key=? AND job_id=?")
-      .run(key, jobId);
-  }
-  releaseTerminalIdempotencyKey(jobId: string): boolean {
-    return this.inImmediateTransaction(() => {
-      const row = this.db
-        .prepare(
-          "SELECT idempotency_key FROM jobs WHERE id=? AND status IN ('completed','dead_letter')",
-        )
-        .get(jobId) as { idempotency_key: string | null } | undefined;
-      if (!row?.idempotency_key) return false;
-      this.releaseIdempotencyKeyInTransaction(jobId, row.idempotency_key);
-      return true;
-    });
-  }
-  private settleDeadLetterIdempotency(
-    jobId: string,
-    key: string,
-    payloadJson: string,
-  ): void {
-    const payload = JSON.parse(payloadJson) as InboxMessage;
-    if (payload.mailEmailId) {
-      this.releaseIdempotencyKeyInTransaction(jobId, key);
-    } else {
-      this.db
-        .prepare("UPDATE idempotency_keys SET status='dead_letter' WHERE key=?")
-        .run(key);
-    }
-  }
-  listPendingMailAcks(): QueueJob[] {
-    const rows = this.db
-      .prepare(
-        `SELECT j.* FROM jobs j
-         WHERE j.status='completed'
-           AND j.succeeded=1
-           AND json_extract(j.payload_json,'$.mailEmailId') IS NOT NULL
-           AND json_extract(j.payload_json,'$.mailAcknowledged') IS NOT 1
-           AND (
-             j.delivery_suppressed=1
-             OR (
-               EXISTS (SELECT 1 FROM deliveries d WHERE d.job_id=j.id)
-               AND NOT EXISTS (
-                 SELECT 1 FROM deliveries d
-                 WHERE d.job_id=j.id AND d.status!='sent'
-               )
-             )
-           )
-         ORDER BY j.completed_at,j.id`,
-      )
-      .all() as JobRow[];
-    return rows.map(parsePayload);
-  }
   listTerminalCronJobs(): QueueJob[] {
     const rows = this.db
       .prepare(
@@ -1294,10 +1235,25 @@ export class QueueRepository {
         | undefined;
       if (idem) {
         const existing = idem.job_id ? this.get(idem.job_id) : undefined;
-        return {
-          job: existing ?? syntheticCompleted(payload, key),
-          inserted: false,
-        };
+        const status = existing?.status ?? idem.status;
+        if (
+          payload.mailEmailId &&
+          (status === "completed" || status === "dead_letter")
+        ) {
+          // Mail uses Graph unread state to retry after terminal jobs. Reuse
+          // the key inside this enqueue transaction, never via check-then-insert.
+          this.db
+            .prepare(
+              "UPDATE jobs SET idempotency_key=NULL,payload_json=json_remove(payload_json,'$.idempotencyKey') WHERE id=?",
+            )
+            .run(idem.job_id);
+          this.db.prepare("DELETE FROM idempotency_keys WHERE key=?").run(key);
+        } else {
+          return {
+            job: existing ?? syntheticCompleted(payload, key),
+            inserted: false,
+          };
+        }
       }
     }
     const id = `job-${randomUUID()}`;
@@ -1864,11 +1820,9 @@ export class QueueRepository {
         nowIso(),
       );
     if (row?.idempotency_key)
-      this.settleDeadLetterIdempotency(
-        id,
-        row.idempotency_key,
-        row.payload_json,
-      );
+      this.db
+        .prepare("UPDATE idempotency_keys SET status='dead_letter' WHERE key=?")
+        .run(row.idempotency_key);
   }
   private deadLetterExhaustedInTransaction(row: JobRow, reason: string): void {
     const at = nowIso();
@@ -1885,11 +1839,9 @@ export class QueueRepository {
       )
       .run(row.id, reason, row.payload_json, error, "queue", at);
     if (row.idempotency_key)
-      this.settleDeadLetterIdempotency(
-        row.id,
-        row.idempotency_key,
-        row.payload_json,
-      );
+      this.db
+        .prepare("UPDATE idempotency_keys SET status='dead_letter' WHERE key=?")
+        .run(row.idempotency_key);
   }
   deadLetter(
     id: string,

@@ -200,7 +200,6 @@ async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
   if (msg.mailEmailId) {
     try {
       await acknowledgeEmail(msg.mailEmailId);
-      getQueueRepository().patchJobPayload(msg.id, { mailAcknowledged: true });
     } catch (error) {
       console.error(
         `[poller] 無配信mailの既読化に失敗しました (${msg.id}):`,

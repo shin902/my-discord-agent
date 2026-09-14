@@ -49,10 +49,7 @@ import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
-import {
-  reconcileMailAcks,
-  reconcileRssDispatches,
-} from "./queue/reconciliation.js";
+import { reconcileRssDispatches } from "./queue/reconciliation.js";
 import { getQueueRepository } from "./queue/repository.js";
 
 import {
@@ -118,7 +115,6 @@ try {
   // Reconcile before collecting startup metrics so crash-window claims do not
   // produce transient orphan/tombstone alerts.
   reconcileRssDispatches(queueRepository, rssStatePaths);
-  await reconcileMailAcks(queueRepository);
   const staleAfterMs = Number(process.env.RUNTIME_STALE_AFTER_MS);
   const runtimeOperator = await runRuntimeOperator(queueRepository.db, {
     rssDbPaths: rssStatePaths,

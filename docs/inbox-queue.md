@@ -29,7 +29,7 @@ claimはtransaction内でworker・lease期限・増分fencing tokenを記録し�
 
 実行成功時は結果、必要なdelivery chunk、runnerから返された採用会話参照を同一transactionで確定します。Agentが空応答を返した場合は、理由 `empty_response` の `dead_letter` となり、正常完了にはなりません。明示的な配送抑制（独立行の `<NO_REPLY>`）や、意図的に空の結果を確定する内部jobは、deliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
 
-配送を意図的に抑制した成功結果では、結果commitと同じtransactionで `jobs.delivery_suppressed=1` を保存します。RSSのstartup reconciliationは `completed`・成功結果・この抑制フラグ・delivery 0件の組み合わせだけを無配信成功として既読化します。delivery 0件だけでは成功と推測せず、通常deliveryの `sent` / `failed` / `ambiguous` の意味論は変わりません。MailはGraph既読化成功をjob payloadの`mailAcknowledged`へ保存し、起動時に成功済み・全delivery送信済み（または配送抑止済み）でmarkerのないjobだけを再ACKします。
+配送を意図的に抑制した成功結果では、結果commitと同じtransactionで `jobs.delivery_suppressed=1` を保存します。RSSのstartup reconciliationは `completed`・成功結果・この抑制フラグ・delivery 0件の組み合わせだけを無配信成功として既読化します。delivery 0件だけでは成功と推測せず、通常deliveryの `sent` / `failed` / `ambiguous` の意味論は変わりません。
 
 `deliveries.status` は `pending`、`retry_wait`、`sending`、`sent`、`failed`、`ambiguous` です。jobの `completed` はDiscord配送済みを意味しません。送信成否が不明な場合は `ambiguous` を区別し、Discord側を含むexactly-once配送は保証しません。
 

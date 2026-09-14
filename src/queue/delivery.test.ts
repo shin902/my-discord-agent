@@ -39,7 +39,6 @@ function completed(
   repo: QueueRepository,
   response: string,
   metadata: Record<string, unknown> = {},
-  idempotencyKey?: string,
 ) {
   const item = repo.enqueue({
     channelId: "channel",
@@ -47,10 +46,6 @@ function completed(
     sessionId: "session",
     content: "prompt",
     timestamp: new Date().toISOString(),
-    ...(idempotencyKey ? { idempotencyKey } : {}),
-    ...(typeof metadata.mailEmailId === "string"
-      ? { mailEmailId: metadata.mailEmailId }
-      : {}),
   });
   const claim = expectDefined(repo.claim("agent", 1000));
   repo.commitResult(item.job.id, claim.fencingToken, response, {
@@ -403,82 +398,6 @@ describe("durable delivery worker", () => {
       await worker.runOnce();
       expect(acknowledgeEmail).toHaveBeenCalledOnce();
       expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
-      expect(repo.listPendingMailAcks()).toEqual([]);
-    } finally {
-      repo.close();
-    }
-  });
-
-  it("releases a mail key when delivery fails permanently", async () => {
-    const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    const adapter: DeliveryAdapter = {
-      send: vi.fn(async () => {
-        throw new DeliveryError("non-retryable", "missing destination");
-      }),
-    };
-    try {
-      completed(
-        repo,
-        "response",
-        { mailEmailId: "mail-1" },
-        "mail:graph:mail:mail-1",
-      );
-      const worker = new DeliveryWorker(repo, adapter, {
-        workerId: "delivery-a",
-      });
-
-      await worker.runOnce();
-
-      expect(repo.listDeliveries("failed")).toHaveLength(1);
-      expect(
-        repo.getIdempotencyRecord("mail:graph:mail:mail-1"),
-      ).toBeUndefined();
-    } finally {
-      repo.close();
-    }
-  });
-
-  it("retains a completed mail key for durable ACK recovery", async () => {
-    const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    const adapter: DeliveryAdapter = {
-      send: vi.fn(async () => ({ externalMessageId: "discord-1" })),
-    };
-    acknowledgeEmail.mockRejectedValueOnce(new Error("Graph unavailable"));
-    try {
-      const jobId = completed(
-        repo,
-        "response",
-        { mailEmailId: "mail-1" },
-        "mail:graph:mail-1",
-      );
-      const worker = new DeliveryWorker(repo, adapter, {
-        workerId: "delivery-a",
-      });
-
-      await worker.runOnce();
-
-      expect(repo.listDeliveries("sent")).toHaveLength(1);
-      expect(repo.getIdempotencyRecord("mail:graph:mail-1")).toMatchObject({
-        status: "completed",
-        jobId,
-      });
-      expect(repo.get(jobId)?.idempotencyKey).toBe("mail:graph:mail-1");
-      expect(repo.listPendingMailAcks()).toEqual([
-        expect.objectContaining({ id: jobId, mailEmailId: "mail-1" }),
-      ]);
-      expect(
-        repo.enqueue(
-          {
-            channelId: "channel",
-            groupName: "mail",
-            sessionId: "another-session",
-            content: "content",
-            timestamp: new Date().toISOString(),
-            mailEmailId: "mail-1",
-          },
-          { idempotencyKey: "mail:graph:mail-1" },
-        ).inserted,
-      ).toBe(false);
     } finally {
       repo.close();
     }

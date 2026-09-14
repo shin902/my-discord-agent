@@ -40,8 +40,6 @@ export interface InboxMessage {
   cronProvisioning?: boolean;
   /** Mail message to acknowledge only after every Discord delivery is sent. */
   mailEmailId?: string;
-  /** Durable marker that the Graph read ACK completed. */
-  mailAcknowledged?: boolean;
   cronFailureNotified?: boolean;
   rssDispatchId?: string;
   rssStatePath?: string;

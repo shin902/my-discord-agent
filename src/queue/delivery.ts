@@ -541,24 +541,9 @@ export class DeliveryWorker {
             },
           );
         }
-        if (kind === "non-retryable" && this.isMail(claim.row)) {
-          this.repository.releaseTerminalIdempotencyKey(claim.row.jobId);
-        }
       } catch (updateError) {
         console.error("[delivery] state update failed", updateError);
       }
-    }
-  }
-
-  private isMail(row: DeliveryRow): boolean {
-    if (!row.payloadJson) return false;
-    try {
-      return (
-        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
-          .mailEmailId === "string"
-      );
-    } catch {
-      return false;
     }
   }
 
@@ -580,7 +565,6 @@ export class DeliveryWorker {
       const payload = JSON.parse(row.payloadJson) as DeliveryPayload;
       if (typeof payload.mailEmailId !== "string") return;
       await acknowledgeEmail(payload.mailEmailId);
-      this.repository.patchJobPayload(row.jobId, { mailAcknowledged: true });
     } catch (error) {
       console.error("[mail] Discord配送後の既読化に失敗:", error);
     }
