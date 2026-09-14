@@ -200,6 +200,7 @@ async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
   if (msg.mailEmailId) {
     try {
       await acknowledgeEmail(msg.mailEmailId);
+      getQueueRepository().patchJobPayload(msg.id, { mailAcknowledged: true });
     } catch (error) {
       getQueueRepository().releaseTerminalIdempotencyKey(msg.id);
       console.error(

@@ -96,7 +96,7 @@ describe("mail cron queue boundary", () => {
     );
     const payload = appendInbox.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.sessionId).toEqual(expect.stringMatching(/^cron-mail-/));
-    expect(payload.idempotencyKey).toBe("mail:graph:mail-1");
+    expect(payload.idempotencyKey).toBe("mail:graph:mail:mail-1");
     expect(payload.mailEmailId).toBe("mail-1");
     expect(payload.cronPlaceholderMessageId).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -137,9 +137,29 @@ describe("mail cron queue boundary", () => {
       ([payload]) => payload as { idempotencyKey?: string },
     );
     expect(payloads.map(({ idempotencyKey }) => idempotencyKey)).toEqual([
-      "mail:graph:mail-1",
-      "mail:graph:mail-1",
+      "mail:graph:mail:mail-1",
+      "mail:graph:mail:mail-1",
     ]);
+  });
+
+  it("scopes the same Graph message to each cron job", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(unreadResponse())
+        .mockResolvedValueOnce(bodyResponse())
+        .mockResolvedValueOnce(unreadResponse())
+        .mockResolvedValueOnce(bodyResponse()),
+    );
+    const appendInbox = vi.fn().mockResolvedValue(undefined);
+
+    await handler(makeContext(appendInbox));
+    await handler({ ...makeContext(appendInbox), id: "mail-secondary" });
+
+    expect(
+      appendInbox.mock.calls.map(([payload]) => payload.idempotencyKey),
+    ).toEqual(["mail:graph:mail:mail-1", "mail:graph:mail-secondary:mail-1"]);
   });
 
   it("does not ACK when enqueue fails", async () => {

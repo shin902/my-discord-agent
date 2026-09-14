@@ -185,11 +185,11 @@ host専用DBの未読画像IDを全件snapshotし、boundedな並列workerから
 メールハンドラーは未読メールを取得して本文とACK対象のメールIDをinboxへ投入する。AI・Discord delivery・deliveryModeに応じたスレッド作成はcron enqueue/pollerの共通処理へ任せ、mail.ts自体は配送方式を制限しない。全delivery chunkが`sent`になった後にだけメールを既読化する。
 
 1. 未読メールを取得して本文を取得する。
-2. `enqueueCronInbox()` にメールIDとGraph message ID由来の冪等キー `mail:graph:<message-id>` を付けてjobを投入する。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。runtime queueの既存idempotency ledgerが同じメールの再投入を抑止する。
+2. `enqueueCronInbox()` にメールIDとcron job ID + Graph message ID由来の冪等キー `mail:graph:<cron-job-id>:<message-id>` を付けてjobを投入する。`deliveryMode` / `sessionMode` はcron設定から共通処理へ渡され、`direct`・`new-thread`・`item-thread` のいずれも設定に応じて処理される。runtime queueの既存idempotency ledgerが同じcron job内で同じメールの再投入を抑止し、別のmail cron jobは独立して処理する。
 3. cron enqueue/pollerが設定された方式に従ってproviderのconcurrency設定とセッション順序を保ったままAIを実行し、delivery workerが投稿先を確定する。`item-thread` は一時sessionでAIを実行し、通常応答がある場合だけ親メッセージ→session昇格→thread作成の順でmaterializeする。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
-Agent・配送の一時的な失敗は既存jobのqueue retry経路で再試行する。jobがdead letterへ到達した場合、またはDiscord配送完了後のGraph既読化に失敗した場合はmailのidempotency keyを解放する。メールは未読のまま次回cronで新しいjobとして再処理でき、activeなjobや既読化済みメールは重複投入しない。
+Agent・配送の一時的な失敗は既存jobのqueue retry経路で再試行する。jobがdead letterへ到達した場合、またはDiscord配送完了後のGraph既読化に失敗した場合はmailのidempotency keyを解放する。メールは未読のまま次回cronで新しいjobとして再処理でき、activeなjobや既読化済みメールは重複投入しない。Graph既読化の成功はjob payloadの`mailAcknowledged`へ永続化する。起動時は、成功完了して全deliveryが`sent`（または明示的にdelivery抑止済み）なのにこのmarkerがないmail jobだけを再ACKするため、delivery永続化直後のprocess crashから回復できる。ACK後・marker保存前に停止した場合はGraph PATCHを再実行するが、既読化は冪等でありDiscordへは再配送しない。
 
 ## 運用メモ
 

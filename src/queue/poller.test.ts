@@ -75,6 +75,7 @@ const {
   getJob,
   enqueue,
   releaseTerminalIdempotencyKey,
+  patchJobPayload,
 } = vi.hoisted(() => ({
   claim: vi.fn(),
   commitInboxResult: vi.fn(),
@@ -87,6 +88,7 @@ const {
   getJob: vi.fn(),
   enqueue: vi.fn(),
   releaseTerminalIdempotencyKey: vi.fn(),
+  patchJobPayload: vi.fn(),
 }));
 vi.mock("./repository.js", () => ({
   getQueueRepository: () => ({
@@ -101,6 +103,7 @@ vi.mock("./repository.js", () => ({
     get: getJob,
     enqueue,
     releaseTerminalIdempotencyKey,
+    patchJobPayload,
   }),
 }));
 
@@ -120,6 +123,7 @@ beforeEach(() => {
   claim.mockReturnValue(undefined);
   deadLetter.mockClear();
   releaseTerminalIdempotencyKey.mockClear();
+  patchJobPayload.mockClear();
   failAttempt.mockReset();
   heartbeat.mockReset();
   markRunning.mockReset();

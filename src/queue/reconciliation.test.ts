@@ -2,6 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const acknowledgeEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
+
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -10,11 +14,16 @@ import {
   saveFeedEntries,
 } from "../rss/store.js";
 import { expectDefined } from "../test-utils.js";
-import { reconcileRssDispatches, settleRssDispatch } from "./reconciliation.js";
+import {
+  reconcileMailAcks,
+  reconcileRssDispatches,
+  settleRssDispatch,
+} from "./reconciliation.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 let tempDirs: string[] = [];
 afterEach(async () => {
+  acknowledgeEmail.mockReset().mockResolvedValue(undefined);
   await Promise.all(
     tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -103,6 +112,52 @@ function queuePayload(
     rssStatePath: rssPath,
   };
 }
+
+describe("reconcileMailAcks", () => {
+  it("ACKs a sent mail delivery after restart and records completion", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mail-reconcile-test-"));
+    tempDirs.push(dir);
+    const runtimePath = join(dir, "runtime.sqlite");
+    const beforeCrash = new QueueRepository(runtimePath);
+    const enqueued = beforeCrash.enqueue(
+      {
+        channelId: "channel",
+        groupName: "mail",
+        sessionId: "session",
+        content: "content",
+        timestamp: new Date().toISOString(),
+        mailEmailId: "mail-1",
+      },
+      { idempotencyKey: "mail:graph:mail:mail-1" },
+    );
+    const claim = expectDefined(beforeCrash.claim("worker"));
+    beforeCrash.commitResult(enqueued.job.id, claim.fencingToken, "response", {
+      deliveryPayload: {
+        groupName: "mail",
+        destinationType: "channel",
+        destinationId: "channel",
+        mailEmailId: "mail-1",
+      },
+    });
+    beforeCrash.db
+      .prepare("UPDATE deliveries SET status='sent' WHERE job_id=?")
+      .run(enqueued.job.id);
+    beforeCrash.close();
+
+    const restarted = new QueueRepository(runtimePath);
+    try {
+      expect(await reconcileMailAcks(restarted)).toBe(1);
+      expect(acknowledgeEmail).toHaveBeenCalledOnce();
+      expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
+      expect(restarted.get(enqueued.job.id)?.mailAcknowledged).toBe(true);
+
+      expect(await reconcileMailAcks(restarted)).toBe(0);
+      expect(acknowledgeEmail).toHaveBeenCalledOnce();
+    } finally {
+      restarted.close();
+    }
+  });
+});
 
 describe("reconcileRssDispatches", () => {
   it("startup recovery marks articles after the associated job completed", async () => {

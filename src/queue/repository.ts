@@ -906,6 +906,29 @@ export class QueueRepository {
         .run(key);
     }
   }
+  listPendingMailAcks(): QueueJob[] {
+    const rows = this.db
+      .prepare(
+        `SELECT j.* FROM jobs j
+         WHERE j.status='completed'
+           AND j.succeeded=1
+           AND json_extract(j.payload_json,'$.mailEmailId') IS NOT NULL
+           AND json_extract(j.payload_json,'$.mailAcknowledged') IS NOT 1
+           AND (
+             j.delivery_suppressed=1
+             OR (
+               EXISTS (SELECT 1 FROM deliveries d WHERE d.job_id=j.id)
+               AND NOT EXISTS (
+                 SELECT 1 FROM deliveries d
+                 WHERE d.job_id=j.id AND d.status!='sent'
+               )
+             )
+           )
+         ORDER BY j.completed_at,j.id`,
+      )
+      .all() as JobRow[];
+    return rows.map(parsePayload);
+  }
   listTerminalCronJobs(): QueueJob[] {
     const rows = this.db
       .prepare(

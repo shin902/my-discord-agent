@@ -400,6 +400,7 @@ describe("durable delivery worker", () => {
       await worker.runOnce();
       expect(acknowledgeEmail).toHaveBeenCalledOnce();
       expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
+      expect(repo.listPendingMailAcks()).toEqual([]);
     } finally {
       repo.close();
     }
