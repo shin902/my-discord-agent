@@ -20,7 +20,6 @@ export async function reconcileMailAcks(
       repo.patchJobPayload(job.id, { mailAcknowledged: true });
       acknowledged++;
     } catch (error) {
-      repo.releaseTerminalIdempotencyKey(job.id);
       console.error(`[mail] startup既読化に失敗しました (${job.id}):`, error);
     }
   }

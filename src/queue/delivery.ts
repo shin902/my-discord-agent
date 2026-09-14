@@ -567,7 +567,6 @@ export class DeliveryWorker {
       await acknowledgeEmail(payload.mailEmailId);
       this.repository.patchJobPayload(row.jobId, { mailAcknowledged: true });
     } catch (error) {
-      this.repository.releaseTerminalIdempotencyKey(row.jobId);
       console.error("[mail] Discord配送後の既読化に失敗:", error);
     }
   }

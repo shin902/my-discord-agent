@@ -118,7 +118,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` 必須 |
 
-応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
+応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は完了jobと冪等キーを保持して起動時reconciliationで再ACKし、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 
 旧 `mode` は後方互換のため受理する。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` に変換する。旧 `mode` と新しい2フィールドは同時指定できない。item-threadを使うhandler付きジョブは `CronContext.deliveryMode` に `item-thread` を指定する。`mail.ts` は配送方式を解釈せず、設定された `deliveryMode` / `sessionMode` を `enqueueCronInbox()` に渡す。各方式の投稿先準備・配送はcron enqueue/pollerの共通処理が担う。
 
@@ -189,7 +189,7 @@ host専用DBの未読画像IDを全件snapshotし、boundedな並列workerから
 3. cron enqueue/pollerが設定された方式に従ってproviderのconcurrency設定とセッション順序を保ったままAIを実行し、delivery workerが投稿先を確定する。`item-thread` は一時sessionでAIを実行し、通常応答がある場合だけ親メッセージ→session昇格→thread作成の順でmaterializeする。
 4. AIが成功し、生成された全delivery chunkが`sent`になった後にだけ対象メールを既読化する。
 
-Agent・配送の一時的な失敗は既存jobのqueue retry経路で再試行する。jobがdead letterへ到達した場合、またはDiscord配送完了後のGraph既読化に失敗した場合はmailのidempotency keyを解放する。メールは未読のまま次回cronで新しいjobとして再処理でき、activeなjobや既読化済みメールは重複投入しない。Graph既読化の成功はjob payloadの`mailAcknowledged`へ永続化する。起動時は、成功完了して全deliveryが`sent`（または明示的にdelivery抑止済み）なのにこのmarkerがないmail jobだけを再ACKするため、delivery永続化直後のprocess crashから回復できる。ACK後・marker保存前に停止した場合はGraph PATCHを再実行するが、既読化は冪等でありDiscordへは再配送しない。
+Agent・配送の一時的な失敗は既存jobのqueue retry経路で再試行する。jobがdead letterへ到達した場合はmailのidempotency keyを解放し、未読メールを次回cronで新しいjobとして再処理できるようにする。一方、Discord配送完了後または明示的な配送抑止後のGraph既読化に失敗した場合は、完了jobとidempotency keyを保持してAgent実行・Discord配送の重複を防ぐ。Graph既読化の成功はjob payloadの`mailAcknowledged`へ永続化する。起動時は、成功完了して全deliveryが`sent`（または明示的にdelivery抑止済み）なのにこのmarkerがないmail jobだけを再ACKするため、delivery永続化直後のprocess crashから回復できる。ACK後・marker保存前に停止した場合はGraph PATCHを再実行するが、既読化は冪等でありDiscordへは再配送しない。
 
 ## 運用メモ
 

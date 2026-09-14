@@ -157,6 +157,49 @@ describe("reconcileMailAcks", () => {
       restarted.close();
     }
   });
+
+  it("keeps a failed startup ACK pending and deduplicated", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mail-reconcile-test-"));
+    tempDirs.push(dir);
+    const runtimePath = join(dir, "runtime.sqlite");
+    const beforeCrash = new QueueRepository(runtimePath);
+    const payload = {
+      channelId: "channel",
+      groupName: "mail",
+      sessionId: "session",
+      content: "content",
+      timestamp: new Date().toISOString(),
+      mailEmailId: "mail-1",
+    };
+    const enqueued = beforeCrash.enqueue(payload, {
+      idempotencyKey: "mail:graph:mail:mail-1",
+    });
+    const claim = expectDefined(beforeCrash.claim("worker"));
+    beforeCrash.commitResult(
+      enqueued.job.id,
+      claim.fencingToken,
+      "<NO_REPLY>",
+      { suppressDelivery: true },
+    );
+    beforeCrash.close();
+
+    acknowledgeEmail.mockRejectedValueOnce(new Error("Graph unavailable"));
+    const restarted = new QueueRepository(runtimePath);
+    try {
+      expect(await reconcileMailAcks(restarted)).toBe(0);
+      expect(restarted.get(enqueued.job.id)?.mailAcknowledged).toBeUndefined();
+      expect(
+        restarted.getIdempotencyRecord("mail:graph:mail:mail-1"),
+      ).toMatchObject({ status: "completed", jobId: enqueued.job.id });
+      expect(
+        restarted.enqueue(payload, {
+          idempotencyKey: "mail:graph:mail:mail-1",
+        }).inserted,
+      ).toBe(false);
+    } finally {
+      restarted.close();
+    }
+  });
 });
 
 describe("reconcileRssDispatches", () => {

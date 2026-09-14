@@ -48,6 +48,9 @@ function completed(
     content: "prompt",
     timestamp: new Date().toISOString(),
     ...(idempotencyKey ? { idempotencyKey } : {}),
+    ...(typeof metadata.mailEmailId === "string"
+      ? { mailEmailId: metadata.mailEmailId }
+      : {}),
   });
   const claim = expectDefined(repo.claim("agent", 1000));
   repo.commitResult(item.job.id, claim.fencingToken, response, {
@@ -406,7 +409,7 @@ describe("durable delivery worker", () => {
     }
   });
 
-  it("releases a completed mail key when Graph ACK fails", async () => {
+  it("retains a completed mail key for durable ACK recovery", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     const adapter: DeliveryAdapter = {
       send: vi.fn(async () => ({ externalMessageId: "discord-1" })),
@@ -426,8 +429,27 @@ describe("durable delivery worker", () => {
       await worker.runOnce();
 
       expect(repo.listDeliveries("sent")).toHaveLength(1);
-      expect(repo.getIdempotencyRecord("mail:graph:mail-1")).toBeUndefined();
-      expect(repo.get(jobId)?.idempotencyKey).toBeUndefined();
+      expect(repo.getIdempotencyRecord("mail:graph:mail-1")).toMatchObject({
+        status: "completed",
+        jobId,
+      });
+      expect(repo.get(jobId)?.idempotencyKey).toBe("mail:graph:mail-1");
+      expect(repo.listPendingMailAcks()).toEqual([
+        expect.objectContaining({ id: jobId, mailEmailId: "mail-1" }),
+      ]);
+      expect(
+        repo.enqueue(
+          {
+            channelId: "channel",
+            groupName: "mail",
+            sessionId: "another-session",
+            content: "content",
+            timestamp: new Date().toISOString(),
+            mailEmailId: "mail-1",
+          },
+          { idempotencyKey: "mail:graph:mail-1" },
+        ).inserted,
+      ).toBe(false);
     } finally {
       repo.close();
     }

@@ -934,9 +934,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     await processMessage(msg);
 
     expect(acknowledgeEmail).toHaveBeenCalledWith("mail-1");
-    expect(releaseTerminalIdempotencyKey).toHaveBeenCalledWith(
-      "mail-rss-suppressed",
-    );
+    expect(releaseTerminalIdempotencyKey).not.toHaveBeenCalled();
     const db = openRssDb(rssPath);
     try {
       expect(listUnreadArticles(db, 10)).toHaveLength(0);
