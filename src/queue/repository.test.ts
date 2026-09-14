@@ -1,4 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
@@ -52,6 +58,169 @@ describe("QueueRepository payload", () => {
       expect(columns.some((column) => column.name === "bot_id")).toBe(false);
     } finally {
       repo.close();
+    }
+  });
+});
+
+describe("mail idempotency storage", () => {
+  const payload = {
+    channelId: "channel",
+    groupName: "mail",
+    sessionId: "session",
+    content: "content",
+    timestamp: "2026-09-15T00:00:00.000Z",
+    cronJobId: "mail",
+    mailEmailId: "mail-1",
+    idempotencyKey: "mail:graph:mail:mail-1",
+  };
+  let repo: QueueRepository;
+  beforeEach(() => {
+    repo = new QueueRepository(":memory:");
+  });
+  afterEach(() => {
+    repo.close();
+  });
+
+  it.each([
+    "completed",
+    "dead_letter",
+  ])("does not reuse non-mail %s keys, even after job retention", (status) => {
+    const generic = { ...payload, mailEmailId: undefined };
+    const first = repo.enqueue(generic).job;
+    const claim = expectDefined(repo.claim());
+    if (status === "completed")
+      repo.commitResult(first.id, claim.fencingToken, "<NO_REPLY>", {
+        suppressDelivery: true,
+      });
+    else repo.deadLetter(first.id, claim.fencingToken, "non_retryable");
+
+    expect(repo.enqueue(generic).inserted).toBe(false);
+    repo.db.prepare("DELETE FROM jobs WHERE id=?").run(first.id);
+    expect(repo.enqueue(generic).inserted).toBe(false);
+    expect(repo.getIdempotencyRecord(payload.idempotencyKey)?.status).toBe(
+      status,
+    );
+  });
+
+  it.each([
+    "completed",
+    "dead_letter",
+  ])("reuses mail %s keys after job retention", (status) => {
+    const first = repo.enqueue(payload).job;
+    const claim = expectDefined(repo.claim());
+    if (status === "completed")
+      repo.commitResult(first.id, claim.fencingToken, "<NO_REPLY>", {
+        suppressDelivery: true,
+      });
+    else repo.deadLetter(first.id, claim.fencingToken, "non_retryable");
+    repo.db.prepare("DELETE FROM jobs WHERE id=?").run(first.id);
+
+    const next = repo.enqueue(payload);
+    expect(next.inserted).toBe(true);
+    expect(repo.enqueue(payload)).toMatchObject({
+      inserted: false,
+      job: { id: next.job.id },
+    });
+  });
+
+  it("rolls back terminal key reuse if the replacement insert fails", () => {
+    const first = repo.enqueue(payload).job;
+    const claim = expectDefined(repo.claim());
+    repo.commitResult(first.id, claim.fencingToken, "<NO_REPLY>", {
+      suppressDelivery: true,
+    });
+    repo.db.exec(
+      "CREATE TRIGGER reject_enqueue BEFORE INSERT ON jobs BEGIN SELECT RAISE(ABORT, 'insert failed'); END;",
+    );
+
+    expect(() => repo.enqueue(payload)).toThrow("insert failed");
+    expect(repo.findByIdempotencyKey(payload.idempotencyKey)?.id).toBe(
+      first.id,
+    );
+    expect(repo.getIdempotencyRecord(payload.idempotencyKey)).toMatchObject({
+      jobId: first.id,
+      status: "completed",
+    });
+    repo.db.exec("DROP TRIGGER reject_enqueue");
+    expect(repo.enqueue(payload).inserted).toBe(true);
+  });
+
+  it.each([
+    false,
+    true,
+  ])("serializes simultaneous connections across restart (terminal key: %s)", async (terminal) => {
+    const dir = await mkdtemp(join(tmpdir(), "mail-idempotency-"));
+    const dbPath = join(dir, "runtime.sqlite");
+    const initial = new QueueRepository(dbPath);
+    // Both a fresh key and reuse of a durable terminal key must be atomic.
+    if (terminal) {
+      const first = initial.enqueue(payload).job;
+      const claim = expectDefined(initial.claim());
+      initial.commitResult(first.id, claim.fencingToken, "<NO_REPLY>", {
+        suppressDelivery: true,
+      });
+    }
+    initial.close();
+    const gate = new Int32Array(new SharedArrayBuffer(4));
+    const workers = Array.from(
+      { length: 2 },
+      () =>
+        new Worker(
+          `
+      const { parentPort, workerData } = require("node:worker_threads");
+      require("tsx/cjs/api").register();
+      const { QueueRepository } = require(workerData.repositoryPath);
+      const repo = new QueueRepository(workerData.dbPath);
+      parentPort.postMessage("ready");
+      Atomics.wait(new Int32Array(workerData.gate), 0, 0);
+      const result = repo.enqueue(workerData.payload);
+      repo.close();
+      parentPort.postMessage({ inserted: result.inserted, id: result.job.id });
+    `,
+          {
+            eval: true,
+            workerData: {
+              dbPath,
+              payload,
+              gate: gate.buffer,
+              repositoryPath: fileURLToPath(
+                new URL("./repository.ts", import.meta.url),
+              ),
+            },
+          },
+        ),
+    );
+    const signal = AbortSignal.timeout(10_000);
+    try {
+      expect(
+        await Promise.all(
+          workers.map((worker) => once(worker, "message", { signal })),
+        ),
+      ).toEqual([["ready"], ["ready"]]);
+      const results = Promise.all(
+        workers.map((worker) => once(worker, "message", { signal })),
+      );
+      Atomics.store(gate, 0, 1);
+      Atomics.notify(gate, 0);
+      const values = (await results).map(([value]) => value);
+      expect(values.filter((value) => value.inserted)).toHaveLength(1);
+      expect(new Set(values.map((value) => value.id)).size).toBe(1);
+      const restarted = new QueueRepository(dbPath);
+      try {
+        expect(restarted.enqueue(payload).inserted).toBe(false);
+        expect(
+          restarted.db
+            .prepare(
+              "SELECT id FROM jobs WHERE status NOT IN ('completed','dead_letter')",
+            )
+            .all(),
+        ).toHaveLength(1);
+      } finally {
+        restarted.close();
+      }
+    } finally {
+      await Promise.all(workers.map((worker) => worker.terminate()));
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

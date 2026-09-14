@@ -1235,10 +1235,25 @@ export class QueueRepository {
         | undefined;
       if (idem) {
         const existing = idem.job_id ? this.get(idem.job_id) : undefined;
-        return {
-          job: existing ?? syntheticCompleted(payload, key),
-          inserted: false,
-        };
+        const status = existing?.status ?? idem.status;
+        if (
+          payload.mailEmailId &&
+          (status === "completed" || status === "dead_letter")
+        ) {
+          // Mail uses Graph unread state to retry after terminal jobs. Reuse
+          // the key inside this enqueue transaction, never via check-then-insert.
+          this.db
+            .prepare(
+              "UPDATE jobs SET idempotency_key=NULL,payload_json=json_remove(payload_json,'$.idempotencyKey') WHERE id=?",
+            )
+            .run(idem.job_id);
+          this.db.prepare("DELETE FROM idempotency_keys WHERE key=?").run(key);
+        } else {
+          return {
+            job: existing ?? syntheticCompleted(payload, key),
+            inserted: false,
+          };
+        }
       }
     }
     const id = `job-${randomUUID()}`;

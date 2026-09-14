@@ -105,6 +105,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       await enqueueCronInbox(
         {
           ...ctx,
+          idempotencyKey: `mail:graph:${encodeURIComponent(ctx.id)}:${encodeURIComponent(meta.id)}`,
           mailEmailId: meta.id,
         },
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
