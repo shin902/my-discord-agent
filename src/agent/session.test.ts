@@ -310,6 +310,73 @@ describe("SQLite session trajectory store", () => {
     inspect.close();
   });
 
+  it.each([
+    { mode: true, initialized: false },
+    { mode: true, initialized: true },
+    { mode: false, initialized: false },
+    { mode: false, initialized: true },
+  ])("repairs earlier/partially migrated v5 shapes: %j", async ({
+    mode,
+    initialized,
+  }) => {
+    const group = `early-v5-${mode}-${initialized}`;
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 0 as const,
+    };
+    await session.appendMessage(
+      group,
+      "old",
+      { role: "user", content: "keep", timestamp: 1 },
+      source,
+    );
+    const db = new Database(path.join(root, group, "sessions.sqlite"));
+    const entries = db.prepare("SELECT * FROM session_entries").all();
+    if (mode)
+      db.exec(
+        "ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal' CHECK (mode IN ('normal', 'capture-only'))",
+      );
+    if (!initialized)
+      db.exec("ALTER TABLE sessions DROP COLUMN agent_initialized");
+    db.exec(
+      "DROP INDEX session_entries_source_identity; CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL",
+    );
+    db.close();
+
+    // Missing historical state uses the legacy initialized default; an
+    // existing explicit marker is preserved, and new sessions start fresh.
+    expect(await session.isSessionAgentInitialized(group, "old")).toBe(
+      !initialized,
+    );
+    expect(await session.hasSessionSource(group, "old", source)).toBe(true);
+    const inspect = dbFor(group);
+    expect(inspect.pragma("user_version", { simple: true })).toBe(5);
+    expect(inspect.prepare("SELECT * FROM session_entries").all()).toEqual(
+      entries,
+    );
+    expect(inspect.pragma("table_info(sessions)")).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "mode" })]),
+    );
+    expect(
+      inspect
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='session_entries_source_identity'",
+        )
+        .get(),
+    ).toBeDefined();
+    inspect.close();
+    await session.appendMessage(group, "new", {
+      role: "user",
+      content: "new capture",
+      timestamp: 2,
+    });
+    expect(await session.isSessionAgentInitialized(group, "new")).toBe(false);
+    await session.markSessionAgentInitialized(group, "new");
+    expect(await session.isSessionAgentInitialized(group, "new")).toBe(true);
+  });
+
   it("session identityをtransactionでrenameしentryを維持する", async () => {
     await session.appendMessage("rename-group", "cron-temp", {
       role: "user",

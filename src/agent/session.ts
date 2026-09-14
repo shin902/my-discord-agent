@@ -100,12 +100,20 @@ function messageTimestamp(message: Record<string, unknown>): number {
 function initializeSchema(db: Database.Database): void {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
-  // Remove the obsolete PR-era mode column without changing entry identities.
+  // PR-era v5 stores have multiple shapes. Check required fields as well as
+  // the version so an earlier/partially migrated store is not skipped.
   const sessionColumns = () =>
     db.pragma("table_info(sessions)") as Array<{ name: string }>;
+  const columns = sessionColumns();
   if (
     db.pragma("user_version", { simple: true }) === SCHEMA_VERSION &&
-    !sessionColumns().some((column) => column.name === "mode")
+    columns.some((column) => column.name === "agent_initialized") &&
+    !columns.some((column) => column.name === "mode") &&
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='session_entries_source_identity'",
+      )
+      .get()
   )
     return;
   db.transaction(() => {
@@ -152,27 +160,22 @@ function initializeSchema(db: Database.Database): void {
         ALTER TABLE session_entries DROP COLUMN execution_json;
       `);
     }
-    if (version < 5) {
+    db.exec(`
+      DROP INDEX IF EXISTS session_entries_source;
+      CREATE INDEX IF NOT EXISTS session_entries_source_identity
+        ON session_entries(
+          session_id,
+          json_extract(source_json, '$.kind'),
+          json_extract(source_json, '$.sourceId')
+        ) WHERE source_json IS NOT NULL;
+    `);
+    if (
+      !sessionColumns().some((column) => column.name === "agent_initialized")
+    ) {
       db.exec(`
-        DROP INDEX IF EXISTS session_entries_source;
-        CREATE INDEX IF NOT EXISTS session_entries_source_identity
-          ON session_entries(
-            session_id,
-            json_extract(source_json, '$.kind'),
-            json_extract(source_json, '$.sourceId')
-          ) WHERE source_json IS NOT NULL;
+        ALTER TABLE sessions ADD COLUMN agent_initialized INTEGER NOT NULL DEFAULT 1
+          CHECK (agent_initialized IN (0, 1));
       `);
-    }
-    if (version > 0 && version < 5) {
-      const columns = db.pragma("table_info(sessions)") as Array<{
-        name: string;
-      }>;
-      if (!columns.some((column) => column.name === "agent_initialized")) {
-        db.exec(`
-          ALTER TABLE sessions ADD COLUMN agent_initialized INTEGER NOT NULL DEFAULT 1
-            CHECK (agent_initialized IN (0, 1));
-        `);
-      }
     }
     if (sessionColumns().some((column) => column.name === "mode")) {
       db.exec("ALTER TABLE sessions DROP COLUMN mode");
