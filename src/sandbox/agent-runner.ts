@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type {
   AssistantMessage,
+  ImageContent,
   Message,
   TextContent,
   Usage,
@@ -439,6 +440,7 @@ export async function runAgentLoop(
   toolProxyEndpoint?: ToolProxyEndpoint,
   source?: SessionSource,
   onConversation?: (entries: ConversationEntries) => void,
+  imagePaths?: string[],
 ): Promise<string> {
   const persistMessage = (
     message: AgentMessage,
@@ -570,6 +572,22 @@ export async function runAgentLoop(
   // 注入指示は別の skill-invocation custom メッセージに分離する
   // （session trajectory上で「何を打ったか」と「LLMに渡った指示」を区別できるようにするため）。
   let promptInput: string | AgentMessage[] = content;
+  if (imagePaths?.length) {
+    const images: ImageContent[] = await Promise.all(
+      imagePaths.map(async (imagePath) => ({
+        type: "image",
+        data: (await readFile(imagePath)).toString("base64"),
+        mimeType: "image/png",
+      })),
+    );
+    promptInput = [
+      {
+        role: "user",
+        content: [{ type: "text", text: content }, ...images],
+        timestamp: Date.now(),
+      } as AgentMessage,
+    ];
+  }
   const skillCommand = parseSkillCommand(content);
   if (skillCommand) {
     const skill = skills.find((s) => s.name === skillCommand.skillName);
@@ -923,6 +941,7 @@ const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
   content: z.string(),
+  imagePaths: z.array(z.string().startsWith("/workspace/")).max(10).optional(),
   source: SessionSourceSchema.optional(),
   groupConfig: AgentRuntimeConfigSchema,
   systemPromptSnapshotContent: z.string().optional(),
@@ -1049,6 +1068,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             `${CONVERSATION_ENTRIES_PREFIX}${JSON.stringify(entries)}\n`,
           );
         },
+        payload.imagePaths,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

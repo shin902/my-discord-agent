@@ -86,15 +86,19 @@ describe("direct screen capture summary cron", () => {
     }
   }
 
-  it("resizes and sends one agent the selected image paths", async () => {
+  it("resizes and injects selected images into the initial message", async () => {
     const ids = insert(2);
     await handler(ctx);
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    const [groupName, , prompt] = vi.mocked(sendMessage).mock.calls[0];
+    const [groupName, , prompt, options] =
+      vi.mocked(sendMessage).mock.calls[0] ?? [];
     expect(groupName).toBe("logbook");
+    expect(prompt).not.toContain("readで確認");
+    expect(options?.imagePaths).toEqual(
+      ids.map((id) => `/workspace/.screen-captures/${id}.png`),
+    );
     for (const id of ids) {
-      expect(prompt).toContain(`/workspace/.screen-captures/${id}.png`);
       await expect(
         readFile(
           path.join(
@@ -130,9 +134,13 @@ describe("direct screen capture summary cron", () => {
     similarities.push(0.8);
     await handler(ctx);
 
-    const prompt = vi.mocked(sendMessage).mock.calls[0][2];
-    expect(prompt).toContain(ids[0]);
-    expect(prompt).not.toContain(ids[1]);
+    const options = vi.mocked(sendMessage).mock.calls[0]?.[3];
+    expect(options?.imagePaths).toEqual([
+      `/workspace/.screen-captures/${ids[0]}.png`,
+    ]);
+    expect(options?.imagePaths).not.toContain(
+      `/workspace/.screen-captures/${ids[1]}.png`,
+    );
     expect(rows()).toEqual([
       expect.objectContaining({ id: ids[0], accepted: 1 }),
       expect.objectContaining({ id: ids[1], accepted: 0 }),
