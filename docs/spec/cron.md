@@ -178,7 +178,7 @@ backendごとに1 jobを定義し、`settings`にbackend接続・eligible groups
 
 ## 画面画像の要約（`jobs/screen-capture-summary.ts`）
 
-host専用DBの未完了画像を全件snapshotして指定AgentGroupのworkspaceへ一時配置し、1回のAgent実行でmemoryへ差分統合します。Agent成功後にだけ`completed_at`を更新し、失敗画像は次回再試行します。modelはcron overrideを優先し、tools・contextFiles等はAgentGroup設定を使います。設定とMac/Tailscale導入手順は [画面画像の収集と要約](../screen-capture.md) を参照してください。
+host専用DBの未完了画像を古い順に類似度で絞り込み、指定AgentGroupのworkspaceへ採用画像だけを一時配置して、1回のAgent実行でmemoryへ差分統合します。Agent成功後にだけ走査済み画像の`completed_at`と採否を更新し、失敗画像は次回再試行します。modelはcron overrideを優先し、tools・contextFiles等はAgentGroup設定を使います。設定とMac/Tailscale導入手順は [画面画像の収集と要約](../screen-capture.md) を参照してください。
 
 ## メール処理（`jobs/mail.ts`）
 

@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -91,6 +92,75 @@ describe("screen capture summary cron", () => {
       ).toEqual({ count: 2 });
     } finally {
       db.close();
+    }
+  });
+
+  it("discards similar images and stops after accepting the configured limit", async () => {
+    const ids = insert(5);
+    const similarities = [0.95, 0.93, 0.6];
+    vi.mocked(execFile).mockImplementation((_command, args, callback) => {
+      const output = args.includes("SSIM") ? String(similarities.shift()) : "";
+      callback(null, output, "");
+      return undefined as never;
+    });
+
+    await handler({ ...ctx, settings: { limit: 2 } });
+
+    const prompt = vi.mocked(sendMessage).mock.calls[0][2];
+    expect(prompt).toContain(ids[0]);
+    expect(prompt).toContain(ids[3]);
+    expect(prompt).not.toContain(ids[1]);
+    expect(prompt).not.toContain(ids[2]);
+    expect(prompt).not.toContain(ids[4]);
+
+    const db = openScreenCaptureDb();
+    try {
+      expect(
+        db
+          .prepare(
+            "SELECT id, accepted FROM screen_captures WHERE completed_at IS NOT NULL ORDER BY received_at, id",
+          )
+          .all(),
+      ).toEqual([
+        { id: ids[0], accepted: 1 },
+        { id: ids[1], accepted: 0 },
+        { id: ids[2], accepted: 0 },
+        { id: ids[3], accepted: 1 },
+      ]);
+      expect(
+        db
+          .prepare("SELECT id FROM screen_captures WHERE completed_at IS NULL")
+          .all(),
+      ).toEqual([{ id: ids[4] }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses the previous run's last accepted image as its reference", async () => {
+    const [previous, candidate] = insert(2);
+    const db = openScreenCaptureDb();
+    db.prepare(
+      "UPDATE screen_captures SET completed_at = ?, accepted = 1 WHERE id = ?",
+    ).run("2026-09-12T01:00:00Z", previous);
+    db.close();
+    vi.mocked(execFile).mockImplementation((_command, args, callback) => {
+      callback(null, args.includes("SSIM") ? "0.9" : "", "");
+      return undefined as never;
+    });
+
+    await handler(ctx);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const reopened = openScreenCaptureDb();
+    try {
+      expect(
+        reopened
+          .prepare("SELECT accepted FROM screen_captures WHERE id = ?")
+          .get(candidate),
+      ).toEqual({ accepted: 0 });
+    } finally {
+      reopened.close();
     }
   });
 

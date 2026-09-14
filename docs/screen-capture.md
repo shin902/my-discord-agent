@@ -68,7 +68,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## cronによるActivity Memory更新
 
-未完了画像を5分ごとに全件snapshotし、指定したAgentGroupのworkspaceへ長辺1280pxへ縮小した一時PNGとして配置します（hostにImageMagickの`magick`コマンドが必要です）。Agentはグループの`contextFiles`とtoolsを使い、全画像を1回のrunで確認して既存memoryとの差分だけを反映します。成功後にだけDBの`completed_at`を更新し、一時PNGを削除します。Agent失敗・timeout・プロセス停止では未完了のまま次回再試行します。
+未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像だけを、指定したAgentGroupのworkspaceへ長辺1280pxへ縮小した一時PNGとして配置します（hostに`magick`コマンドが必要です）。採用画像を比較元として順次置き換え、設定数を採用した時点で走査を止めます。Agentはグループの`contextFiles`とtoolsを使い、採用画像を1回のrunで確認して既存memoryとの差分だけを反映します。成功後にだけ走査済み画像の`completed_at`と採否を更新し、一時PNGを削除します。Agent失敗・timeout・プロセス停止では未完了のまま次回再試行します。全画像が棄却された場合はAgentを実行せず完了にします。
 
 `config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
 
@@ -86,7 +86,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 - `model`はcron指定を優先し、省略時はグループ設定へfallbackします。tools・skills・mounts・contextFilesはグループ設定を使います。
 - `settings.timeoutMs`は1–600000、既定120000で、Agent run全体の上限です。
-- `settings.limit`は1回に処理する画像数で、既定10です。古い未処理画像から順に処理します。
+- `settings.limit`は1回に採用する画像数で、既定10です。古い未処理画像から順に走査し、採用数へ達した時点で停止します。
 - DBのPNG BLOBは`groups/<group>/.screen-captures/`へ一時配置され、Agentから`/workspace/.screen-captures/<id>.png`として読めます。
 - 同一jobのtick重複はcron runnerが抑止します。変更反映にはBot再起動が必要です。
 - Agent成功後・DB更新前に停止した場合は再実行されますが、Agentには既存memoryとの差分だけを反映するよう指示します。
@@ -113,7 +113,7 @@ SQLite commit後だけ`200 {"accepted":"<uuid>"}`を返します。同じIDで�
 
 ## 永続化・確認・backup
 
-`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC受信時刻`received_at`、nullableな`summary`（旧個別要約）と`completed_at`を持ちます。**`completed_at IS NULL`が未完了、非NULLが完了**の正本です。
+`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC受信時刻`received_at`、nullableな`summary`（旧個別要約）、`completed_at`、採否を表す`accepted`を持ちます。**`completed_at IS NULL`が未完了、非NULLが完了**の正本です。
 
 ローカルでのread-only確認例（画像や要約本文を端末ログへ出さない）:
 
