@@ -70,6 +70,8 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像だけを採用します（hostに`magick`コマンドが必要です）。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を通常LLMへ直接添付します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
 
+画像にはpassword、token、個人情報などが含まれ得ます。自動マスキングはありません。`summarize`では画像全体を`settings.visionModel`のproviderへ、`direct`ではMemory更新用の通常modelのproviderへ送信するため、**収集対象と両modeで利用するproviderを確認してから**有効化してください。
+
 `config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
 
 ```json
