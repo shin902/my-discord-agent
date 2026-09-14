@@ -206,16 +206,17 @@ describe("screen capture summary cron", () => {
     });
   });
 
-  it("skips similar images without calling the VLM", async () => {
-    const ids = insert(2);
-    magick.similarities.push(0.95);
+  it("scans a duplicate backlog while retaining only one selected image", async () => {
+    const ids = insert(20);
+    magick.similarities.push(...Array.from({ length: 19 }, () => 0.95));
     await handler(ctx);
 
     expect(completeSimple).toHaveBeenCalledTimes(1);
-    expect(rows()).toEqual([
-      expect.objectContaining({ id: ids[0], accepted: 1 }),
-      expect.objectContaining({ id: ids[1], summary: null, accepted: 0 }),
-    ]);
+    const completed = rows();
+    expect(completed.find((row) => row.id === ids[0])).toMatchObject({
+      accepted: 1,
+    });
+    expect(completed.filter((row) => row.accepted === 0)).toHaveLength(19);
   });
 
   it("completes an invalid capture and continues with later captures", async () => {
@@ -254,6 +255,21 @@ describe("screen capture summary cron", () => {
 
     await expect(handler(ctx)).rejects.toMatchObject({ code: errorCode });
     expect(rows().every((row) => row.completed_at === null)).toBe(true);
+  });
+
+  it("propagates summary database write failures", async () => {
+    insert(1);
+    const db = openScreenCaptureDb();
+    try {
+      db.exec(`CREATE TRIGGER fail_summary_write
+        BEFORE UPDATE OF summary ON screen_captures
+        BEGIN SELECT RAISE(ABORT, 'summary storage failed'); END`);
+    } finally {
+      db.close();
+    }
+
+    await expect(handler(ctx)).rejects.toThrow("summary storage failed");
+    expect(rows()[0]).toMatchObject({ summary: null, completed_at: null });
   });
 
   it("leaves only failed VLM images pending", async () => {

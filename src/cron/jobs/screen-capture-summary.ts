@@ -131,8 +131,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
     }
     let cursor = { received_at: "", id: "" };
     const selected: Capture[] = [];
-    const rejected: Capture[] = [];
-    const invalid: Capture[] = [];
+    const rejectedIds: string[] = [];
+    let invalidCount = 0;
     const completeInvalid = db.prepare(
       "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
     );
@@ -155,12 +155,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
           selected.push(capture);
           reference = imagePath;
         } else {
-          rejected.push(capture);
+          rejectedIds.push(capture.id);
           await rm(imagePath, { force: true });
         }
       } catch (error) {
         if (!(error instanceof InvalidCaptureError)) throw error;
-        invalid.push(capture);
+        invalidCount++;
         completeInvalid.run(new Date().toISOString(), capture.id);
         console.warn(
           `[screen-capture-summary] ${capture.id}: invalid capture; marked completed`,
@@ -168,10 +168,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
       }
     }
 
-    if (selected.length === 0 && rejected.length === 0) {
-      if (invalid.length > 0)
+    if (selected.length === 0 && rejectedIds.length === 0) {
+      if (invalidCount > 0)
         console.log(
-          `[screen-capture-summary] completed=${invalid.length} accepted=0`,
+          `[screen-capture-summary] completed=${invalidCount} accepted=0`,
         );
       return;
     }
@@ -200,13 +200,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
         const complete = db.prepare(
           "UPDATE screen_captures SET completed_at = ?, accepted = ? WHERE id = ? AND completed_at IS NULL",
         );
-        for (const capture of rejected)
-          complete.run(completedAt, 0, capture.id);
+        for (const id of rejectedIds) complete.run(completedAt, 0, id);
         for (const capture of selected)
           complete.run(completedAt, 1, capture.id);
       })();
       console.log(
-        `[screen-capture-summary] completed=${invalid.length + rejected.length + selected.length} accepted=${selected.length}`,
+        `[screen-capture-summary] completed=${invalidCount + rejectedIds.length + selected.length} accepted=${selected.length}`,
       );
       return;
     }
@@ -254,6 +253,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
           async () => {
             while (next < pending.length) {
               const capture = pending[next++];
+              let summary: string;
               try {
                 const signal = AbortSignal.timeout(timeoutMs);
                 const release = await acquireLlmLock(
@@ -298,7 +298,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
                           : visionModel.thinkingLevel,
                     },
                   );
-                  const summary = result.content
+                  summary = result.content
                     .filter((part) => part.type === "text")
                     .map((part) => part.text)
                     .join("\n")
@@ -309,7 +309,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
                     !summary
                   )
                     throw new Error("Incomplete or empty summary");
-                  save.run(summary, capture.id);
                 } finally {
                   release();
                 }
@@ -317,7 +316,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
                 console.warn(
                   `[screen-capture-summary] ${capture.id}: vision failed; left pending`,
                 );
+                continue;
               }
+              save.run(summary, capture.id);
             }
           },
         ),
@@ -360,12 +361,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
       const complete = db.prepare(
         "UPDATE screen_captures SET completed_at = ?, accepted = ? WHERE id = ? AND completed_at IS NULL",
       );
-      for (const capture of rejected) complete.run(completedAt, 0, capture.id);
+      for (const id of rejectedIds) complete.run(completedAt, 0, id);
       for (const capture of summarized)
         complete.run(completedAt, 1, capture.id);
     })();
     console.log(
-      `[screen-capture-summary] completed=${invalid.length + rejected.length + summarized.length} accepted=${summarized.length}`,
+      `[screen-capture-summary] completed=${invalidCount + rejectedIds.length + summarized.length} accepted=${summarized.length}`,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
