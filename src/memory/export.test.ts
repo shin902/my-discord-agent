@@ -262,7 +262,7 @@ describe("committed conversation export", () => {
     const db = new Database(filename);
     if (version === 1)
       db.exec(
-        "DROP INDEX session_entries_source; ALTER TABLE session_entries DROP COLUMN source_json;",
+        "DROP INDEX IF EXISTS session_entries_source; DROP INDEX IF EXISTS session_entries_source_identity; ALTER TABLE session_entries DROP COLUMN source_json;",
       );
     if (version === 3)
       db.exec(`ALTER TABLE session_entries ADD COLUMN execution_json TEXT;

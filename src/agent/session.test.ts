@@ -44,6 +44,13 @@ describe("SQLite session trajectory store", () => {
       "sessions",
       "sqlite_sequence",
     ]);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='session_entries_source_identity'",
+        )
+        .get(),
+    ).toEqual({ name: "session_entries_source_identity" });
     db.close();
   });
 

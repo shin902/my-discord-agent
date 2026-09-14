@@ -149,6 +149,17 @@ function initializeSchema(db: Database.Database): void {
         ALTER TABLE session_entries DROP COLUMN execution_json;
       `);
     }
+    if (version < 5) {
+      db.exec(`
+        DROP INDEX IF EXISTS session_entries_source;
+        CREATE INDEX IF NOT EXISTS session_entries_source_identity
+          ON session_entries(
+            session_id,
+            json_extract(source_json, '$.kind'),
+            json_extract(source_json, '$.sourceId')
+          ) WHERE source_json IS NOT NULL;
+      `);
+    }
     if (version > 0 && version < 5) {
       const columns = db.pragma("table_info(sessions)") as Array<{
         name: string;
