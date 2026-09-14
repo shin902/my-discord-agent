@@ -176,6 +176,20 @@ describe("screen capture summary cron", () => {
     expect(rows()[0].completed_at).not.toBeNull();
   });
 
+  it("stops fetching captures when the accepted limit is reached", async () => {
+    const ids = insert(3);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
+
+    expect(completeSimple).toHaveBeenCalledTimes(2);
+    expect(rows().find((row) => row.id === ids[2])).toMatchObject({
+      summary: null,
+      completed_at: null,
+    });
+  });
+
   it("skips similar images without calling the VLM", async () => {
     const ids = insert(2);
     similarities.push(0.95);

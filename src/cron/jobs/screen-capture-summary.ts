@@ -87,27 +87,34 @@ export default async function handler(ctx: CronContext): Promise<void> {
   const directory = path.join(ROOT, "data", ".screen-captures-work");
 
   try {
-    const captures = db
-      .prepare(`SELECT id, image, received_at, summary FROM screen_captures
-        WHERE completed_at IS NULL ORDER BY received_at, id`)
-      .all() as Capture[];
-    if (captures.length === 0) return;
-
-    await rm(directory, { recursive: true, force: true });
-    await mkdir(directory, { recursive: true });
+    const nextCapture = db.prepare(`SELECT id, image, received_at, summary
+      FROM screen_captures
+      WHERE completed_at IS NULL AND (received_at > ? OR (received_at = ? AND id > ?))
+      ORDER BY received_at, id LIMIT 1`);
     const previous = db
       .prepare(`SELECT id, image, received_at, summary FROM screen_captures
         WHERE completed_at IS NOT NULL AND accepted = 1
         ORDER BY received_at DESC, id DESC LIMIT 1`)
       .get() as Capture | undefined;
+
+    await rm(directory, { recursive: true, force: true });
+    await mkdir(directory, { recursive: true });
     let reference = previous
       ? await writeCapture(directory, previous)
       : undefined;
+    let cursor = { received_at: "", id: "" };
     const selected: Capture[] = [];
     const rejected: Capture[] = [];
 
-    for (const capture of captures) {
-      if (selected.length >= limit) break;
+    while (selected.length < limit) {
+      const capture = nextCapture.get(
+        cursor.received_at,
+        cursor.received_at,
+        cursor.id,
+      ) as Capture | undefined;
+      if (!capture) break;
+      cursor = capture;
+
       const imagePath = await writeCapture(directory, capture);
       const accepted = reference
         ? (await similarity(reference, imagePath)) < SIMILARITY_THRESHOLD
@@ -120,6 +127,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
         await rm(imagePath, { force: true });
       }
     }
+
+    if (selected.length === 0 && rejected.length === 0) return;
 
     if (selected.some((capture) => capture.summary === null)) {
       const resolved = await resolveModel(
