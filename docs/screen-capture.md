@@ -68,7 +68,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## cronによるActivity Memory更新
 
-未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像だけを採用します（hostに`magick`コマンドが必要です）。採用画像は`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
+未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像だけを採用します（hostに`magick`コマンドが必要です）。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を通常LLMへ直接添付します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
 
 `config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
 
@@ -81,6 +81,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
   "handler": "jobs/screen-capture-summary.ts",
   "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
   "settings": {
+    "mode": "summarize",
     "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
     "timeoutMs": 300000,
     "limit": 10,
@@ -90,7 +91,8 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 ```
 
 - `model`はMemory更新用の通常LLMです。cron指定を優先し、省略時はグループ設定へfallbackします。
-- `settings.visionModel`は必須で、Credential Proxyに定義した画像入力対応モデルを指定します。
+- `settings.mode`は`summarize`（既定）または`direct`です。
+- `settings.visionModel`は`summarize`で必須です。Credential Proxyに定義した画像入力対応モデルを指定します。`direct`では指定しません。
 - `settings.concurrency`はVLM worker数（1–16、既定4）です。`providers.json`の既存provider concurrencyが`serial`なら実際の呼び出しは直列になります。
 - `settings.timeoutMs`は各VLM呼び出しとMemory更新の上限（1–600000、既定120000）です。
 - `settings.limit`は1回に採用する画像数で、既定10です。

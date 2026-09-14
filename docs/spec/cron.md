@@ -178,7 +178,7 @@ backendごとに1 jobを定義し、`settings`にbackend接続・eligible groups
 
 ## 画面画像の要約（`jobs/screen-capture-summary.ts`）
 
-host専用DBの未完了画像を古い順に類似度で絞り込み、`settings.visionModel`で画像ごとの要約をDBへ保存します。そのテキストだけを指定AgentGroupの通常LLMへ渡し、既存memoryとの差分を統合します。VLMはCredential Proxyと既存provider concurrencyを使い、通常LLM成功後にだけ`completed_at`を更新します。設定とMac/Tailscale導入手順は [画面画像の収集と要約](../screen-capture.md) を参照してください。
+host専用DBの未完了画像を古い順に類似度で絞り込みます。`settings.mode`が`summarize`なら`settings.visionModel`で画像ごとの要約をDBへ保存してテキストを指定AgentGroupへ渡し、`direct`なら画像を直接渡して、既存memoryとの差分を統合します。VLMはCredential Proxyと既存provider concurrencyを使い、通常LLM成功後にだけ`completed_at`を更新します。設定とMac/Tailscale導入手順は [画面画像の収集と要約](../screen-capture.md) を参照してください。
 
 ## メール処理（`jobs/mail.ts`）
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -220,10 +220,55 @@ describe("screen capture summary cron", () => {
     );
   });
 
+  it("passes selected images directly to the memory agent in direct mode", async () => {
+    const ids = insert(2);
+    await handler({
+      ...ctx,
+      settings: { mode: "direct", timeoutMs: 120_000, limit: 10 },
+    });
+
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      "logbook",
+      expect.stringMatching(/^cron-screen-capture-summary-/),
+      expect.stringContaining("未処理画像"),
+      expect.objectContaining({
+        imagePaths: ids.map((id) => `/workspace/.screen-captures/${id}.png`),
+      }),
+    );
+    for (const id of ids) {
+      await expect(
+        readFile(
+          path.join(
+            process.cwd(),
+            "groups/logbook/.screen-captures",
+            `${id}.png`,
+          ),
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    expect(rows().every((row) => row.accepted === 1 && row.completed_at)).toBe(
+      true,
+    );
+  });
+
+  it("leaves direct-mode images pending when the memory agent fails", async () => {
+    insert(1);
+    vi.mocked(sendMessage).mockRejectedValue(new Error("agent failed"));
+
+    await expect(
+      handler({ ...ctx, settings: { mode: "direct", limit: 10 } }),
+    ).rejects.toThrow("agent failed");
+    expect(rows()[0].completed_at).toBeNull();
+  });
+
   it("rejects missing handler-specific configuration", async () => {
     await expect(handler({ ...ctx, settings: {} })).rejects.toThrow(
       "requires valid settings and groupName",
     );
+    await expect(
+      handler({ ...ctx, settings: { mode: "direct", timeoutMs: 0 } }),
+    ).rejects.toThrow("requires valid settings and groupName");
     expect(completeSimple).not.toHaveBeenCalled();
   });
 });
