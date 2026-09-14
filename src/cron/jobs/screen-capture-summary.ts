@@ -20,7 +20,7 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SIMILARITY_THRESHOLD = 0.8;
 const CommonSettings = {
   timeoutMs: z.number().int().min(1).max(600_000).default(120_000),
-  limit: z.number().int().min(1).default(10),
+  limit: z.number().int().min(1).max(10).default(10),
 };
 const Settings = z.union([
   z.strictObject({ mode: z.literal("direct"), ...CommonSettings }),
@@ -39,11 +39,20 @@ type Capture = {
   summary: string | null;
 };
 
+class InvalidCaptureError extends Error {}
+
 function runMagick(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("magick", args, (error, stdout) => {
-      if (error) reject(error);
-      else resolve(String(stdout));
+    execFile("magick", args, (error, stdout, stderr) => {
+      if (!error) return resolve(String(stdout));
+      if (
+        typeof (error as { code?: unknown }).code === "number" &&
+        /@ error\/png\.c\/|improper image header|corrupt image/i.test(
+          String(stderr),
+        )
+      )
+        return reject(new InvalidCaptureError());
+      reject(error);
     });
   });
 }
@@ -109,12 +118,24 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
     await rm(directory, { recursive: true, force: true });
     await mkdir(directory, { recursive: true });
-    let reference = previous
-      ? await writeCapture(directory, previous)
-      : undefined;
+    let reference: string | undefined;
+    if (previous) {
+      try {
+        reference = await writeCapture(directory, previous);
+      } catch (error) {
+        if (!(error instanceof InvalidCaptureError)) throw error;
+        console.warn(
+          `[screen-capture-summary] ${previous.id}: invalid capture; ignored as similarity reference`,
+        );
+      }
+    }
     let cursor = { received_at: "", id: "" };
     const selected: Capture[] = [];
     const rejected: Capture[] = [];
+    const invalid: Capture[] = [];
+    const completeInvalid = db.prepare(
+      "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
+    );
 
     while (selected.length < limit) {
       const capture = nextCapture.get(
@@ -125,20 +146,35 @@ export default async function handler(ctx: CronContext): Promise<void> {
       if (!capture) break;
       cursor = capture;
 
-      const imagePath = await writeCapture(directory, capture);
-      const accepted = reference
-        ? (await similarity(reference, imagePath)) < SIMILARITY_THRESHOLD
-        : true;
-      if (accepted) {
-        selected.push(capture);
-        reference = imagePath;
-      } else {
-        rejected.push(capture);
-        await rm(imagePath, { force: true });
+      try {
+        const imagePath = await writeCapture(directory, capture);
+        const accepted = reference
+          ? (await similarity(reference, imagePath)) < SIMILARITY_THRESHOLD
+          : true;
+        if (accepted) {
+          selected.push(capture);
+          reference = imagePath;
+        } else {
+          rejected.push(capture);
+          await rm(imagePath, { force: true });
+        }
+      } catch (error) {
+        if (!(error instanceof InvalidCaptureError)) throw error;
+        invalid.push(capture);
+        completeInvalid.run(new Date().toISOString(), capture.id);
+        console.warn(
+          `[screen-capture-summary] ${capture.id}: invalid capture; marked completed`,
+        );
       }
     }
 
-    if (selected.length === 0 && rejected.length === 0) return;
+    if (selected.length === 0 && rejected.length === 0) {
+      if (invalid.length > 0)
+        console.log(
+          `[screen-capture-summary] completed=${invalid.length} accepted=0`,
+        );
+      return;
+    }
 
     if (parsed.data.mode === "direct") {
       if (selected.length > 0) {
@@ -170,7 +206,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
           complete.run(completedAt, 1, capture.id);
       })();
       console.log(
-        `[screen-capture-summary] completed=${rejected.length + selected.length} accepted=${selected.length}`,
+        `[screen-capture-summary] completed=${invalid.length + rejected.length + selected.length} accepted=${selected.length}`,
       );
       return;
     }
@@ -329,7 +365,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
         complete.run(completedAt, 1, capture.id);
     })();
     console.log(
-      `[screen-capture-summary] completed=${rejected.length + summarized.length} accepted=${summarized.length}`,
+      `[screen-capture-summary] completed=${invalid.length + rejected.length + summarized.length} accepted=${summarized.length}`,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

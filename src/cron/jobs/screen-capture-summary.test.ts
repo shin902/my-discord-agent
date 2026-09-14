@@ -16,19 +16,33 @@ import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js"
 import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
-const similarities = vi.hoisted(() => [] as number[]);
+const magick = vi.hoisted(() => ({
+  similarities: [] as number[],
+  invalidIds: new Set<string>(),
+  errorCode: undefined as string | number | undefined,
+}));
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
     (
       _command: string,
       args: string[],
       callback: (...args: unknown[]) => void,
-    ) =>
+    ) => {
+      const invalid = [...magick.invalidIds].some((id) =>
+        args.some((arg) => arg.endsWith(`/${id}.png`)),
+      );
+      const error =
+        magick.errorCode || invalid
+          ? Object.assign(new Error("magick failed"), {
+              code: magick.errorCode ?? 1,
+            })
+          : null;
       callback(
-        null,
-        args.includes("SSIM") ? (similarities.shift() ?? 0) : "",
-        "",
-      ),
+        error,
+        args.includes("SSIM") ? (magick.similarities.shift() ?? 0) : "",
+        invalid ? "improper image header @ error/png.c/ReadPNGImage/" : "",
+      );
+    },
   ),
 }));
 vi.mock("@earendil-works/pi-ai/compat", async (original) => ({
@@ -85,7 +99,9 @@ describe("screen capture summary cron", () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
-    similarities.length = 0;
+    magick.similarities.length = 0;
+    magick.invalidIds.clear();
+    magick.errorCode = undefined;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
@@ -192,7 +208,7 @@ describe("screen capture summary cron", () => {
 
   it("skips similar images without calling the VLM", async () => {
     const ids = insert(2);
-    similarities.push(0.95);
+    magick.similarities.push(0.95);
     await handler(ctx);
 
     expect(completeSimple).toHaveBeenCalledTimes(1);
@@ -200,6 +216,44 @@ describe("screen capture summary cron", () => {
       expect.objectContaining({ id: ids[0], accepted: 1 }),
       expect.objectContaining({ id: ids[1], summary: null, accepted: 0 }),
     ]);
+  });
+
+  it("completes an invalid capture and continues with later captures", async () => {
+    const ids = insert(2);
+    magick.invalidIds.add(ids[0]);
+
+    await handler(ctx);
+
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        id: ids[0],
+        summary: null,
+        accepted: 0,
+        completed_at: expect.any(String),
+      }),
+      expect.objectContaining({
+        id: ids[1],
+        summary: "Editor work",
+        accepted: 1,
+        completed_at: expect.any(String),
+      }),
+    ]);
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+
+    vi.mocked(completeSimple).mockClear();
+    await handler(ctx);
+    expect(completeSimple).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "ENOENT",
+    1,
+  ])("does not mistake a magick infrastructure failure (%s) for invalid captures", async (errorCode) => {
+    insert(2);
+    magick.errorCode = errorCode;
+
+    await expect(handler(ctx)).rejects.toMatchObject({ code: errorCode });
+    expect(rows().every((row) => row.completed_at === null)).toBe(true);
   });
 
   it("leaves only failed VLM images pending", async () => {
@@ -268,6 +322,9 @@ describe("screen capture summary cron", () => {
     );
     await expect(
       handler({ ...ctx, settings: { mode: "direct", timeoutMs: 0 } }),
+    ).rejects.toThrow("requires valid settings and groupName");
+    await expect(
+      handler({ ...ctx, settings: { mode: "direct", limit: 11 } }),
     ).rejects.toThrow("requires valid settings and groupName");
     expect(completeSimple).not.toHaveBeenCalled();
   });
