@@ -63,13 +63,21 @@ vi.mock("../../proxy/credential-proxy-server.js", () => ({
 
 const visionModel = { provider: "openai", modelId: "gpt-4o-mini" };
 const memoryModel = { provider: "openai", modelId: "gpt-5" };
+const agentConfig = {
+  model: memoryModel,
+  tools: ["read", "write"],
+  approvalRequiredTools: ["write"],
+  skills: ["memory"],
+  mounts: [{ host: "data", container: "/data" }],
+  contextFiles: [{ path: "memory/context.md", maxChars: 1000 }],
+};
 const ctx = {
   id: "screen-capture-summary",
   schedule: "5m",
   enabled: true,
   groupName: "logbook",
   handler: "jobs/screen-capture-summary.ts",
-  model: memoryModel,
+  ...agentConfig,
   settings: { visionModel, concurrency: 2, limit: 10 },
 } as CronContext;
 const model = getModel("openai", "gpt-4o-mini");
@@ -164,7 +172,7 @@ describe("screen capture summary cron", () => {
       "logbook",
       expect.stringMatching(/^cron-screen-capture-summary-/),
       expect.stringContaining("Editor work"),
-      expect.objectContaining({ configOverride: { model: memoryModel } }),
+      expect.objectContaining({ configOverride: agentConfig }),
     );
     expect(vi.mocked(sendMessage).mock.calls[0][2]).not.toContain(".png");
     expect(
@@ -304,6 +312,7 @@ describe("screen capture summary cron", () => {
       expect.stringContaining("未処理画像"),
       expect.objectContaining({
         imagePaths: ids.map((id) => `/workspace/.screen-captures/${id}.png`),
+        configOverride: agentConfig,
       }),
     );
     for (const id of ids) {
@@ -319,6 +328,24 @@ describe("screen capture summary cron", () => {
     }
     expect(rows().every((row) => row.accepted === 1 && row.completed_at)).toBe(
       true,
+    );
+  });
+
+  it("omits configOverride when the cron has no AgentConfig fields", async () => {
+    insert(1);
+    await handler({
+      ...ctx,
+      model: undefined,
+      tools: undefined,
+      approvalRequiredTools: undefined,
+      skills: undefined,
+      mounts: undefined,
+      contextFiles: undefined,
+      settings: { mode: "direct", limit: 10 },
+    });
+
+    expect(vi.mocked(sendMessage).mock.calls[0][3]).not.toHaveProperty(
+      "configOverride",
     );
   });
 
