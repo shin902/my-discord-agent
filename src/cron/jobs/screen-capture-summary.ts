@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { z } from "zod";
 import { sendMessage } from "../../agent/manager.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
@@ -8,6 +10,7 @@ import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const execFileAsync = promisify(execFile);
 const Settings = z.strictObject({
   timeoutMs: z.number().int().min(1).max(600_000).default(120_000),
   limit: z.number().int().min(1).default(10),
@@ -40,9 +43,16 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
     await mkdir(directory, { recursive: true });
     await Promise.all(
-      captures.map(({ id, image }) =>
-        writeFile(path.join(directory, `${id}.png`), image),
-      ),
+      captures.map(async ({ id, image }) => {
+        const imagePath = path.join(directory, `${id}.png`);
+        await writeFile(imagePath, image);
+        await execFileAsync("magick", [
+          imagePath,
+          "-resize",
+          "1280x1280>",
+          imagePath,
+        ]);
+      }),
     );
     const files = captures
       .map(

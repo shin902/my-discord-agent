@@ -8,6 +8,15 @@ import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js"
 import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn(
+    (
+      _command: string,
+      _args: string[],
+      callback: (...args: unknown[]) => void,
+    ) => callback(null, "", ""),
+  ),
+}));
 vi.mock("../../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 
 const ctx = {

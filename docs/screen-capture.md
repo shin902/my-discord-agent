@@ -68,7 +68,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## cronによるActivity Memory更新
 
-未完了画像を5分ごとに全件snapshotし、指定したAgentGroupのworkspaceへ一時PNGとして配置します。Agentはグループの`contextFiles`とtoolsを使い、全画像を1回のrunで確認して既存memoryとの差分だけを反映します。成功後にだけDBの`completed_at`を更新し、一時PNGを削除します。Agent失敗・timeout・プロセス停止では未完了のまま次回再試行します。
+未完了画像を5分ごとに全件snapshotし、指定したAgentGroupのworkspaceへ長辺1280pxへ縮小した一時PNGとして配置します（hostにImageMagickの`magick`コマンドが必要です）。Agentはグループの`contextFiles`とtoolsを使い、全画像を1回のrunで確認して既存memoryとの差分だけを反映します。成功後にだけDBの`completed_at`を更新し、一時PNGを削除します。Agent失敗・timeout・プロセス停止では未完了のまま次回再試行します。
 
 `config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
 
