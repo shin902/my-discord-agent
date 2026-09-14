@@ -4,6 +4,10 @@ import {
   lookupArchiveMedia,
   saveArchiveFile,
 } from "../../integrations/x-saved/archive.js";
+import {
+  lookupXSavedEnrichment,
+  type XSavedEnrichment,
+} from "../../integrations/x-saved/enrichment.js";
 import type { ArchiveMedia } from "../../integrations/x-saved/media-contract.js";
 import {
   mergeXSavedMedia,
@@ -85,8 +89,42 @@ export default async function handler(ctx: CronContext): Promise<void> {
       );
       if (!error) downloaded++;
     }
+    // Independent completeness: old completed archives still need context/author.
+    const backlog = db
+      .prepare(`SELECT i.tweet_id FROM x_items i
+      LEFT JOIN x_enrichment e ON e.tweet_id = i.tweet_id
+      WHERE e.resolved_at IS NULL
+        OR json_extract(e.document_json, '$.status.author.id') IS NULL
+      ORDER BY e.attempted_at, i.tweet_id LIMIT ?`)
+      .all(limit) as { tweet_id: string }[];
+    let enriched = 0;
+    for (const { tweet_id } of backlog) {
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO x_enrichment (tweet_id, attempted_at) VALUES (?, ?)
+        ON CONFLICT(tweet_id) DO UPDATE SET attempted_at = excluded.attempted_at`).run(
+        tweet_id,
+        now,
+      );
+      let document: XSavedEnrichment;
+      try {
+        document = await lookupXSavedEnrichment(tweet_id);
+      } catch (error) {
+        const message = String(error).slice(0, 1000);
+        db.prepare(
+          "UPDATE x_enrichment SET last_error = ? WHERE tweet_id = ?",
+        ).run(message, tweet_id);
+        console.warn(
+          `[x-saved-media-download] enrich ${tweet_id}: ${message.slice(0, 300)}`,
+        );
+        continue;
+      }
+      // Snapshot and completeness commit together; no ingest/media/state updates.
+      db.prepare(`UPDATE x_enrichment SET document_json = ?, resolved_at = ?, last_error = NULL
+        WHERE tweet_id = ?`).run(JSON.stringify(document), now, tweet_id);
+      enriched++;
+    }
     console.log(
-      `[x-saved-media-download] resolved=${resolved}/${tweets.length} downloaded=${downloaded}/${files.length}`,
+      `[x-saved-media-download] resolved=${resolved}/${tweets.length} downloaded=${downloaded}/${files.length} enriched=${enriched}/${backlog.length}`,
     );
   } finally {
     db.close();

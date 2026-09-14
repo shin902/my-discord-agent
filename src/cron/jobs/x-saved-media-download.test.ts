@@ -11,6 +11,14 @@ import {
 import type { CronContext } from "../runner.js";
 import handler from "./x-saved-media-download.js";
 
+// Keep media failure/ordering tests independent of the context lookup phase.
+vi.mock("../../integrations/x-saved/enrichment.js", () => ({
+  lookupXSavedEnrichment: vi.fn(async () => ({
+    status: { author: { id: "1" } },
+    thread: [],
+  })),
+}));
+
 const image = "https://pbs.twimg.com/media/a.jpg?name=orig";
 const video = "https://video.twimg.com/tweet_video/a.mp4";
 const ctx = (limit = 20) => ({ settings: { limit } }) as CronContext;
@@ -88,7 +96,7 @@ describe("one x-saved archive cron", () => {
         new Response("mp4", { headers: { "content-type": "video/mp4" } }),
       );
     await handler(ctx());
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     expect(db.prepare("SELECT * FROM x_items").get()).toMatchObject({
       ...before,
       media_resolved_at: expect.any(String),

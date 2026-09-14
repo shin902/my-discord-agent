@@ -454,7 +454,7 @@ describe("x-saved persistence", () => {
         )
         .all(),
     ).toEqual([]);
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     expect(
       db
         .prepare(
