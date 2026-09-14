@@ -44,9 +44,9 @@ export async function backfillDiscordMessages(
   for (const group of groups) {
     const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {
+      let completed = false;
       try {
-        const completed = await backfillTarget(discordClient, channel, repo);
-        if (completed) finishDiscordChannelBackfill(channel.channelId);
+        completed = await backfillTarget(discordClient, channel, repo);
       } catch (error) {
         // A single inaccessible channel must not prevent other configured
         // channels from recovering their histories. Keep its cursor gate in
@@ -55,6 +55,8 @@ export async function backfillDiscordMessages(
           `[discord-backfill] チャンネル ${channel.channelId} の復旧に失敗しました:`,
           error,
         );
+      } finally {
+        finishDiscordChannelBackfill(channel.channelId, completed);
       }
     }
   }

@@ -51,6 +51,24 @@ describe("SQLite session trajectory store", () => {
         )
         .get(),
     ).toEqual({ name: "session_entries_source_identity" });
+    expect(
+      db
+        .prepare(
+          "EXPLAIN QUERY PLAN SELECT id FROM session_entries WHERE session_id=? AND source_json IS NOT NULL AND json_extract(source_json, '$.kind')=? AND json_extract(source_json, '$.sourceId')=?",
+        )
+        .all("session", "discord", "message"),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: expect.stringContaining(
+            "USING INDEX session_entries_source_identity",
+          ),
+        }),
+      ]),
+    );
+    expect(db.pragma("table_info(sessions)")).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "mode" })]),
+    );
     db.close();
   });
 
@@ -211,7 +229,19 @@ describe("SQLite session trajectory store", () => {
             .prepare("SELECT COUNT(*) AS count FROM session_entries")
             .get(),
         ).toEqual({ count: version === 0 ? 2 : 3 });
-        if (version >= 1)
+        expect(
+          inspect
+            .prepare(
+              "SELECT agent_initialized FROM sessions WHERE id='main-session'",
+            )
+            .get(),
+        ).toEqual({ agent_initialized: 0 });
+        if (version >= 1) {
+          expect(
+            inspect
+              .prepare("SELECT agent_initialized FROM sessions WHERE id='old'")
+              .get(),
+          ).toEqual({ agent_initialized: 1 });
           expect(
             inspect
               .prepare(
@@ -219,6 +249,7 @@ describe("SQLite session trajectory store", () => {
               )
               .get(),
           ).toEqual({ source_json: null });
+        }
       } finally {
         inspect.close();
       }
@@ -229,20 +260,13 @@ describe("SQLite session trajectory store", () => {
     }
   }, 15_000);
 
-  it("session modeをDBに保存し、同じtrajectoryを維持する", async () => {
-    expect(await session.getSessionMode("mode-group", "session-a")).toBe(
-      "normal",
-    );
-    await session.setSessionMode("mode-group", "session-a", "capture-only");
+  it("capture-first sessionのAgent初期化状態をraw trajectoryと独立に保存する", async () => {
     await session.appendMessage("mode-group", "session-a", {
       role: "user",
       content: "captured",
       timestamp: 123,
     });
 
-    expect(await session.getSessionMode("mode-group", "session-a")).toBe(
-      "capture-only",
-    );
     expect(
       await session.isSessionAgentInitialized("mode-group", "session-a"),
     ).toBe(false);
@@ -250,10 +274,40 @@ describe("SQLite session trajectory store", () => {
     expect(
       await session.isSessionAgentInitialized("mode-group", "session-a"),
     ).toBe(true);
-    await session.setSessionMode("mode-group", "session-a", "normal");
     expect(await session.loadMessages("mode-group", "session-a")).toEqual([
       { role: "user", content: "captured", timestamp: 123 },
     ]);
+  });
+
+  it("PR-era v5の不要なmode列だけを除去して履歴と初期化状態を維持する", async () => {
+    await session.appendMessage("legacy-v5", "captured", {
+      role: "user",
+      content: "keep",
+      timestamp: 1,
+    });
+    await session.markSessionAgentInitialized("legacy-v5", "initialized");
+    const db = new Database(path.join(root, "legacy-v5", "sessions.sqlite"));
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'capture-only' CHECK (mode IN ('normal', 'capture-only'))",
+    );
+    const entries = db.prepare("SELECT * FROM session_entries").all();
+    db.close();
+
+    expect(
+      await session.isSessionAgentInitialized("legacy-v5", "captured"),
+    ).toBe(false);
+    expect(
+      await session.isSessionAgentInitialized("legacy-v5", "initialized"),
+    ).toBe(true);
+    const inspect = dbFor("legacy-v5");
+    expect(inspect.pragma("user_version", { simple: true })).toBe(5);
+    expect(inspect.pragma("table_info(sessions)")).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "mode" })]),
+    );
+    expect(inspect.prepare("SELECT * FROM session_entries").all()).toEqual(
+      entries,
+    );
+    inspect.close();
   });
 
   it("session identityをtransactionでrenameしentryを維持する", async () => {

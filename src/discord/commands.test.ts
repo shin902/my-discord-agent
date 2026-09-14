@@ -11,9 +11,6 @@ const mocks = vi.hoisted(() => ({
   listBotTaskSessions: vi.fn(),
   enqueue: vi.fn(),
   stopAgentRun: vi.fn(),
-  setSessionMode: vi.fn(),
-  getSessionMode: vi.fn(),
-  hasUnfinishedSessionJobs: vi.fn(),
 }));
 
 vi.mock("../config/groups.js", async (importOriginal) => {
@@ -26,8 +23,6 @@ vi.mock("../config/bots.js", () => ({
 }));
 vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn().mockResolvedValue(undefined),
-  setSessionMode: mocks.setSessionMode,
-  getSessionMode: mocks.getSessionMode,
 }));
 vi.mock("../agent/manager.js", () => ({
   stopAgentRun: mocks.stopAgentRun,
@@ -38,22 +33,17 @@ vi.mock("../queue/repository.js", () => ({
     resumeBotTaskSessionAndEnqueue: mocks.resumeBotTaskSessionAndEnqueue,
     listBotTaskSessions: mocks.listBotTaskSessions,
     enqueue: mocks.enqueue,
-    hasUnfinishedSessionJobs: mocks.hasUnfinishedSessionJobs,
   }),
 }));
 
 const { appendMessage } = await import("../agent/session.js");
 const {
   handleBotCommand,
-  handleSessionModeCommand,
   handleSkillCommand,
   handleStopCommand,
   handleSteerCommand,
 } = await import("./command-handlers.js");
 const { command: botCommand } = await import("./commands/bot.js");
-const { command: sessionModeCommand } = await import(
-  "./commands/session-mode.js"
-);
 const { command: skillCommand } = await import("./commands/skill.js");
 const { command: steerCommand } = await import("./commands/steer.js");
 const { command: stopCommand } = await import("./commands/stop.js");
@@ -72,7 +62,6 @@ function makeInteraction(options: {
   action?: string;
   session?: string;
   instruction?: string;
-  mode?: string;
   channelId?: string;
   isThread?: boolean;
   parentId?: string | null;
@@ -92,7 +81,6 @@ function makeInteraction(options: {
         if (name === "session") return options.session;
         if (name === "instruction")
           return options.instruction ?? "Change direction";
-        if (name === "mode") return options.mode ?? "normal";
         return options.prompt ?? "Do it";
       },
     },
@@ -171,8 +159,6 @@ beforeEach(() => {
   mocks.resumeBotTaskSessionAndEnqueue.mockReturnValue(undefined);
   mocks.listBotTaskSessions.mockReturnValue([]);
   mocks.stopAgentRun.mockResolvedValue({ status: "no-active-run" });
-  mocks.hasUnfinishedSessionJobs.mockReturnValue(false);
-  mocks.getSessionMode.mockResolvedValue("normal");
 });
 
 describe("bot command definition", () => {
@@ -271,37 +257,6 @@ describe("steer command", () => {
   });
 });
 
-describe("session-mode command", () => {
-  it("rejects capture-only while the session has unfinished work", async () => {
-    mocks.hasUnfinishedSessionJobs.mockReturnValue(true);
-    const interaction = makeInteraction({ mode: "capture-only" });
-
-    await handleSessionModeCommand(interaction as never);
-
-    expect(mocks.setSessionMode).not.toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content:
-        "待機中または実行中のAgentがあるため、記録専用モードへ切り替えられません。",
-    });
-  });
-
-  it("persists capture-only for the exact session without enqueueing", async () => {
-    const interaction = makeInteraction({ mode: "capture-only" });
-
-    await handleSessionModeCommand(interaction as never);
-
-    expect(mocks.setSessionMode).toHaveBeenCalledWith(
-      "main",
-      "channel-1",
-      "capture-only",
-    );
-    expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "このセッションを記録専用モードにしました。",
-    });
-  });
-});
-
 describe("stop command", () => {
   it("stops the exact active session and displays the cooperative result", async () => {
     mocks.stopAgentRun.mockResolvedValueOnce({ status: "aborted" });
@@ -344,15 +299,11 @@ describe("command registry", () => {
   it("discovers each command module by its chat-input name", () => {
     expect(DISCORD_COMMANDS.map(({ data }) => data.toJSON().name)).toEqual([
       "bot",
-      "session-mode",
       "skill",
       "steer",
       "stop",
     ]);
     expect(getDiscordCommand("bot")?.execute).toEqual(expect.any(Function));
-    expect(getDiscordCommand("session-mode")?.execute).toEqual(
-      expect.any(Function),
-    );
     expect(getDiscordCommand("stop")?.execute).toEqual(expect.any(Function));
     expect(getDiscordCommand("missing")).toBeUndefined();
   });
@@ -374,7 +325,6 @@ describe("deployDiscordCommands", () => {
       {
         body: [
           botCommand.data.toJSON(),
-          sessionModeCommand.data.toJSON(),
           skillCommand.data.toJSON(),
           steerCommand.data.toJSON(),
           stopCommand.data.toJSON(),
@@ -395,7 +345,6 @@ describe("deployDiscordCommands", () => {
     expect(put).toHaveBeenCalledWith("/applications/application-1/commands", {
       body: [
         botCommand.data.toJSON(),
-        sessionModeCommand.data.toJSON(),
         skillCommand.data.toJSON(),
         steerCommand.data.toJSON(),
         stopCommand.data.toJSON(),
@@ -566,9 +515,23 @@ describe("handleSkillCommand", () => {
     });
   });
 
-  it("capture-only中はenqueueしない", async () => {
-    mocks.getSessionMode.mockResolvedValue("capture-only");
-    const interaction = makeSkillInteraction({ skill: "session-logs" });
+  it.each([
+    false,
+    true,
+  ])("capture-only channelの/skillを拒否する (thread=%s)", async (isThread) => {
+    mocks.findGroupByChannelId.mockResolvedValue({
+      group: { name: "main" },
+      channel: {
+        channelId: "channel-1",
+        sessionMode: isThread ? "thread" : "shared",
+        agentMode: "capture-only",
+      },
+    });
+    const interaction = makeSkillInteraction({
+      skill: "session-logs",
+      isThread,
+      parentId: isThread ? "channel-1" : null,
+    });
 
     await handleSkillCommand(interaction as never);
 
@@ -652,7 +615,14 @@ describe("handleBotCommand", () => {
     });
   });
 
-  it("enqueues a one-shot Bot request without channel config inheritance", async () => {
+  it.each([
+    undefined,
+    "capture-only",
+  ])("enqueues an independent Bot Task without channel config inheritance (agentMode=%s)", async (agentMode) => {
+    mocks.findGroupByChannelId.mockResolvedValue({
+      group: { name: "main" },
+      channel: { channelId: "channel-1", sessionMode: "shared", agentMode },
+    });
     const interaction = makeInteraction({ bot: "coding", prompt: "Fix it" });
 
     await handleBotCommand(interaction as never);

@@ -3,18 +3,19 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
-import {
-  appendMessage,
-  getSessionMode,
-  hasSessionSource,
-} from "../agent/session.js";
+import { appendMessage, hasSessionSource } from "../agent/session.js";
 import type { SessionSource } from "../agent/source.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
-import { isDiscordChannelBackfillPending } from "./backfill-state.js";
+import {
+  isDiscordChannelBackfillPending,
+  waitForDiscordChannelBackfill,
+} from "./backfill-state.js";
+
+const liveMessageChains = new Map<string, Promise<unknown>>();
 
 export type DiscordMessageSource = "live" | "backfill";
 
@@ -49,12 +50,27 @@ export async function ingestDiscordMessage(
     discordBotId?: string;
   },
 ): Promise<DiscordIngestResult> {
-  return ingest(message, {
-    source: options.source,
-    replyOnFailure: options.replyOnFailure ?? false,
-    updateLiveCursor: options.source === "live",
-    discordBotId: options.discordBotId,
-  });
+  const run = () =>
+    ingest(message, {
+      source: options.source,
+      replyOnFailure: options.replyOnFailure ?? false,
+      updateLiveCursor: options.source === "live",
+      discordBotId: options.discordBotId,
+    });
+  // Backfill replays sequentially. Live captures wait for that root scan in
+  // ingest(), then retain callback order even across async channel lookups.
+  if (options.source === "backfill") return run();
+  const next = (liveMessageChains.get(message.channelId) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(run);
+  liveMessageChains.set(message.channelId, next);
+  try {
+    return await next;
+  } finally {
+    if (liveMessageChains.get(message.channelId) === next) {
+      liveMessageChains.delete(message.channelId);
+    }
+  }
 }
 
 // URL あり → "{hostname}-{messageId末尾6文字}", URL なし → "thread-{messageId末尾6文字}", 最大100文字
@@ -132,9 +148,18 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  // An unmentioned auto-thread root has no session whose capture mode could
-  // override the normal response trigger. Avoid creating a thread for it.
+  const captureOnly = (match.channel.agentMode ?? "normal") === "capture-only";
+  const isHumanMessage =
+    !message.author.bot &&
+    (message.type === MessageType.Default ||
+      message.type === MessageType.Reply);
+  if (captureOnly && (!isHumanMessage || message.webhookId !== null)) {
+    return { status: "ignored", cursorScope: defaultCursorScope };
+  }
+
+  // Normal auto-thread roots must meet the response trigger before routing.
   if (
+    !captureOnly &&
     !isThread &&
     match.channel.sessionMode === "auto-thread" &&
     match.channel.requiredMention === true &&
@@ -149,6 +174,13 @@ async function ingest(
   let cursorScope = defaultCursorScope;
 
   try {
+    if (
+      captureOnly &&
+      options.source === "live" &&
+      !(await waitForDiscordChannelBackfill(lookupId))
+    ) {
+      throw new Error(`Discord backfill incomplete: ${lookupId}`);
+    }
     if (match.channel.sessionMode === "shared") {
       if (isThread) return { status: "ignored", cursorScope: lookupId };
       sessionId = message.channelId;
@@ -181,10 +213,6 @@ async function ingest(
     }
 
     const repository = getQueueRepository();
-    const isHumanMessage =
-      !message.author.bot &&
-      (message.type === MessageType.Default ||
-        message.type === MessageType.Reply);
     const humanSource: SessionSource | undefined = isHumanMessage
       ? {
           kind: "discord" as const,
@@ -200,8 +228,7 @@ async function ingest(
     ) {
       return { status: "ignored", cursorScope };
     }
-    const mode = await getSessionMode(match.group.name, sessionId);
-    if (mode === "capture-only" && humanSource) {
+    if (captureOnly && humanSource) {
       const attachmentLines = [...message.attachments.values()].map(
         (attachment) => `- ${attachment.name}: ${attachment.url}`,
       );
@@ -285,6 +312,8 @@ async function ingest(
     }
     return { status: "enqueued", cursorScope };
   } catch (error) {
+    // Capture failures stay silent and leave the cursor for recovery.
+    if (captureOnly) throw error;
     if (error instanceof ThreadCreationError) {
       if (options.replyOnFailure) {
         await message

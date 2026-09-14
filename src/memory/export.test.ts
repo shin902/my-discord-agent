@@ -245,7 +245,12 @@ describe("committed conversation export", () => {
     const pair = await appendTurn("legacy-readable-v4");
     const filename = join(root, "legacy-readable-v4", "sessions.sqlite");
     const db = new Database(filename);
-    db.pragma("user_version = 4");
+    db.exec(`
+      ALTER TABLE sessions DROP COLUMN agent_initialized;
+      DROP INDEX session_entries_source_identity;
+      CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
+      PRAGMA user_version = 4;
+    `);
     db.close();
     const before = await readFile(filename);
 

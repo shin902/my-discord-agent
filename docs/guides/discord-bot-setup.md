@@ -75,6 +75,4 @@ pnpm discord:deploy guild <guild-id>
 - `src/discord/interaction-router.ts` owns lookup and unexpected-error logging. Commands decide when to defer and use `editReply`; validation and expected failures use an ephemeral `reply` (or edit after defer). The runtime only registers the router and does not deploy commands.
 - Verify with `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`. Deployment is a separate operator action as described above.
 
-`/session-mode mode:capture-only` は対象sessionの人間messageを応答せずtrajectoryへ記録し、`mode:normal`で通常応答へ戻します。trajectory順序を守るため、待機中・実行中のAgentがあるsessionはcapture-onlyへ切り替えられません。切替によって実行中Agentを停止することはありません。
-
 このドキュメントは https://github.com/karaage0703/xangi/blob/main/docs/discord-setup.md このドキュメントを元に最新の情報に変更した上でこのリポジトリ用に最適化したものです。

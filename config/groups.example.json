@@ -16,6 +16,11 @@
     "channels": [
       { "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" },
       {
+        "channelId": "YOUR_CAPTURE_CHANNEL_ID",
+        "sessionMode": "shared",
+        "agentMode": "capture-only"
+      },
+      {
         "channelId": "YOUR_RESTRICTED_CHANNEL_ID",
         "sessionMode": "shared",
         "requiredMention": true,

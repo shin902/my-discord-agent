@@ -5,13 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findGroup: vi.fn(),
   getRepo: vi.fn(),
-  getSessionMode: vi.fn(),
   hasSessionSource: vi.fn(),
   appendMessage: vi.fn(),
 }));
 
 vi.mock("../agent/session.js", () => ({
-  getSessionMode: mocks.getSessionMode,
   hasSessionSource: mocks.hasSessionSource,
   appendMessage: mocks.appendMessage,
 }));
@@ -45,7 +43,6 @@ beforeEach(() => {
   db = repositoryModule.openRuntimeDb(":memory:");
   repo = new repositoryModule.QueueRepository(db);
   mocks.getRepo.mockReturnValue(repo);
-  mocks.getSessionMode.mockResolvedValue("normal");
   mocks.hasSessionSource.mockResolvedValue(false);
   mocks.appendMessage.mockResolvedValue(1);
   mocks.findGroup.mockResolvedValue({
@@ -324,9 +321,9 @@ describe("ingestDiscordMessage", () => {
         channelId: "root-1",
         sessionMode: "shared",
         requiredMention: true,
+        agentMode: "capture-only",
       },
     });
-    mocks.getSessionMode.mockResolvedValue("capture-only");
 
     const result = await ingestDiscordMessage(
       makeMessage({ id: "captured-message" }),
@@ -353,12 +350,68 @@ describe("ingestDiscordMessage", () => {
     ).toBeUndefined();
   });
 
-  it("capture済みmessageはnormal復帰後のbackfillでもenqueueしない", async () => {
+  it.each([
+    { isBot: true },
+    { isBot: true, webhookId: "allowed" },
+    { webhookId: "allowed" },
+    { type: MessageType.ChatInputCommand },
+    { type: MessageType.ThreadCreated },
+  ])("capture-onlyでは人間の通常message以外を起動も保存もしない: %j", async (options) => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "auto-thread",
+        agentMode: "capture-only",
+        allowedWebhookIds: ["allowed"],
+      },
+    });
+    const input = makeMessage({ id: "excluded", ...options });
+    const enqueue = vi.spyOn(repo, "enqueue");
+    await ingestDiscordMessage(input, { source: "live", replyOnFailure: true });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(mocks.appendMessage).not.toHaveBeenCalled();
+    expect(input.startThread).not.toHaveBeenCalled();
+    expect(input.reply).not.toHaveBeenCalled();
+  });
+
+  it("live captureを到着順に直列化し、失敗後も次のmessageを処理する", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        agentMode: "capture-only",
+      },
+    });
+    let rejectFirst!: (error: Error) => void;
+    mocks.appendMessage.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    const first = makeMessage({ id: "first" });
+    const firstResult = expect(
+      ingestDiscordMessage(first, { source: "live", replyOnFailure: true }),
+    ).rejects.toThrow("disk full");
+    const second = ingestDiscordMessage(makeMessage({ id: "second" }), {
+      source: "live",
+    });
+    await vi.waitFor(() => expect(mocks.appendMessage).toHaveBeenCalledOnce());
+    expect(mocks.hasSessionSource).toHaveBeenCalledOnce();
+    rejectFirst(new Error("disk full"));
+    await firstResult;
+    expect((await second).status).toBe("captured");
+    expect(mocks.appendMessage).toHaveBeenCalledTimes(2);
+    expect(first.reply).not.toHaveBeenCalled();
+  });
+
+  it("capture済みmessageはnormal configでのbackfillでもenqueueしない", async () => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
       channel: { channelId: "root-1", sessionMode: "shared" },
     });
-    mocks.getSessionMode.mockResolvedValue("normal");
     mocks.hasSessionSource.mockResolvedValue(true);
 
     const result = await ingestDiscordMessage(
@@ -372,12 +425,14 @@ describe("ingestDiscordMessage", () => {
     ).toBeUndefined();
   });
 
-  it("normalへ戻すと新しいmessageを再びenqueueする", async () => {
+  it.each([
+    undefined,
+    "normal",
+  ])("agentMode=%sでは通常enqueueする", async (agentMode) => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
-      channel: { channelId: "root-1", sessionMode: "shared" },
+      channel: { channelId: "root-1", sessionMode: "shared", agentMode },
     });
-    mocks.getSessionMode.mockResolvedValue("normal");
 
     const result = await ingestDiscordMessage(
       makeMessage({ id: "normal-after-capture" }),

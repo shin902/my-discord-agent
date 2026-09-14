@@ -1,10 +1,5 @@
 import { acquireActiveRun } from "../agent/active-run-registry.js";
 import { stopAgentRun } from "../agent/manager.js";
-import {
-  getSessionMode,
-  type SessionMode,
-  setSessionMode,
-} from "../agent/session.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import {
   type BotProfile,
@@ -54,70 +49,11 @@ export type SteerCommandResult =
   | { content: string; accepted: false }
   | { content: string; accepted: true; instruction: string };
 
-export interface SessionModeCommandRequest {
-  discordBotId: string;
-  channelId: string;
-  routingChannelId: string;
-  isThread: boolean;
-  mode: SessionMode;
-}
-
 export interface StopCommandRequest {
   discordBotId: string;
   channelId: string;
   routingChannelId: string;
   isThread: boolean;
-}
-
-async function resolveCommandGroup(request: {
-  discordBotId: string;
-  routingChannelId: string;
-  isThread: boolean;
-}): Promise<{ groupName: string } | { error: string }> {
-  const match = await findGroupByChannelId(request.routingChannelId);
-  if (!match) return { error: "このチャンネルはAgentGroupに未登録です。" };
-  const expectedDiscordBotId = match.group.bot ?? DEFAULT_DISCORD_BOT_ID;
-  if (request.discordBotId !== expectedDiscordBotId) {
-    return {
-      error: "このDiscord BotはこのチャンネルのAgentGroupを担当していません。",
-    };
-  }
-  if (match.channel.sessionMode === "shared" && request.isThread) {
-    return { error: "このコマンドは親チャンネルで実行してください。" };
-  }
-  if (match.channel.sessionMode !== "shared" && !request.isThread) {
-    return { error: "このコマンドはスレッド内で実行してください。" };
-  }
-  return { groupName: match.group.name };
-}
-
-export async function executeSessionModeCommand(
-  request: SessionModeCommandRequest,
-): Promise<string> {
-  const resolved = await resolveCommandGroup(request);
-  if ("error" in resolved) return resolved.error;
-  try {
-    const repository = getQueueRepository();
-    if (
-      request.mode === "capture-only" &&
-      repository.hasUnfinishedSessionJobs(request.channelId)
-    ) {
-      return "待機中または実行中のAgentがあるため、記録専用モードへ切り替えられません。";
-    }
-    await setSessionMode(resolved.groupName, request.channelId, request.mode);
-    if (
-      request.mode === "capture-only" &&
-      repository.hasUnfinishedSessionJobs(request.channelId)
-    ) {
-      await setSessionMode(resolved.groupName, request.channelId, "normal");
-      return "切替中にAgentの実行が始まったため、通常モードを維持しました。";
-    }
-    return request.mode === "capture-only"
-      ? "このセッションを記録専用モードにしました。"
-      : "このセッションを通常モードに戻しました。";
-  } catch (error) {
-    return `セッションモードを変更できませんでした: ${error instanceof Error ? error.message : String(error)}`;
-  }
 }
 
 function validSessionHandle(handle: string): boolean {
@@ -154,10 +90,7 @@ export async function executeSkillCommand(
   }
 
   try {
-    if (
-      (await getSessionMode(match.group.name, request.channelId)) ===
-      "capture-only"
-    ) {
+    if (match.channel.agentMode === "capture-only") {
       return "記録専用モード中はスキルを実行できません。";
     }
     const configOverride = pickAgentConfig(match.channel);

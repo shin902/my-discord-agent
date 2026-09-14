@@ -68,11 +68,15 @@ runtime DBはWALを使用します。稼働中にmain fileだけをコピーし�
 
 ## Session trajectory
 
-session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityと永続的な応答mode（`normal` / `capture-only`）を管理し、`session_entries`へメッセージをappendする。`capture-only`中の通常の人間messageは同じtrajectoryへ保存するだけでqueueやAgentを起動せず、`normal`へ戻した後のrunからそのまま参照できる。
+session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityとAgent初回bootstrapの完了状態を管理し、`session_entries`へメッセージをappendする。channel configの `agentMode: capture-only` ではeligibleな人間messageを同じtrajectoryへ保存するだけでqueueやAgentを起動しない。応答方針の正本は [channel config](spec/channel-modes.md#agentmode) のみであり、session DBにmode stateは持たない。
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
-`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v4ではMemory専用になっていたv3の `execution_json` と検索indexを削除します。v1/v2からも通常session書き込み時にv4へ更新し、既存entry ID・本文・sourceを保持します。migrationはwrite lock下でversionを再確認します。
+`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v4ではMemory専用になっていたv3の `execution_json` と検索indexを削除します。v1/v2からも通常sessionアクセス時に現行schemaへ更新し、既存entry ID・本文・sourceを保持します。migrationはwrite lock下でversionを再確認します。
+
+schema v5は `sessions.agent_initialized` とsession / source kind / source IDの検索indexを追加します。既存v4 sessionは初期化済みとして移行し、新規sessionはcaptureだけでは初期化済みにしません。capture-first sessionでも後の初回Agent runで `contextFiles` が注入されます。PR試行版v5に残る不要な `mode` 列はアクセス時に除去し、履歴と初期化状態を保持します。Memory exportはschema v4とv5の両方をread-onlyで読めるため、未アクセスgroupのv4 DBもmigrationなしでexportできます。
+
+Discord sourceの `(session_id, source.kind, source.sourceId)` を使って再取得を重複排除します。capture済みmessageは後からnormal configでbackfillしても再append・誤enqueueしません。本文をruntime DBに二重保存したり、captureだけを理由にMemory exportや要約を起動したりはしません。
 
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。session renameはentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 

@@ -12,8 +12,6 @@ const DB_FILENAME = "sessions.sqlite";
 const SCHEMA_VERSION = 5;
 const EXPORT_SCHEMA_VERSION = 4;
 
-export type SessionMode = "normal" | "capture-only";
-
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`不正な${label}: ${name}`);
@@ -79,7 +77,7 @@ function findSourceEntry(
   const row = db
     .prepare(`
       SELECT id FROM session_entries
-      WHERE session_id=?
+      WHERE session_id=? AND source_json IS NOT NULL
         AND json_extract(source_json, '$.kind')=?
         AND json_extract(source_json, '$.sourceId')=?
     `)
@@ -102,8 +100,14 @@ function messageTimestamp(message: Record<string, unknown>): number {
 function initializeSchema(db: Database.Database): void {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
-  // Already-current stores need no migration write lock.
-  if (db.pragma("user_version", { simple: true }) === SCHEMA_VERSION) return;
+  // Remove the obsolete PR-era mode column without changing entry identities.
+  const sessionColumns = () =>
+    db.pragma("table_info(sessions)") as Array<{ name: string }>;
+  if (
+    db.pragma("user_version", { simple: true }) === SCHEMA_VERSION &&
+    !sessionColumns().some((column) => column.name === "mode")
+  )
+    return;
   db.transaction(() => {
     // Another run/container may have migrated while we waited for the lock.
     const version = db.pragma("user_version", { simple: true }) as number;
@@ -119,7 +123,6 @@ function initializeSchema(db: Database.Database): void {
           kind TEXT NOT NULL DEFAULT 'conversation',
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
-          mode TEXT NOT NULL DEFAULT 'normal' CHECK (mode IN ('normal', 'capture-only')),
           agent_initialized INTEGER NOT NULL DEFAULT 0 CHECK (agent_initialized IN (0, 1))
         );
         CREATE TABLE IF NOT EXISTS session_entries (
@@ -164,18 +167,15 @@ function initializeSchema(db: Database.Database): void {
       const columns = db.pragma("table_info(sessions)") as Array<{
         name: string;
       }>;
-      if (!columns.some((column) => column.name === "mode")) {
-        db.exec(`
-          ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'
-            CHECK (mode IN ('normal', 'capture-only'));
-        `);
-      }
       if (!columns.some((column) => column.name === "agent_initialized")) {
         db.exec(`
           ALTER TABLE sessions ADD COLUMN agent_initialized INTEGER NOT NULL DEFAULT 1
             CHECK (agent_initialized IN (0, 1));
         `);
       }
+    }
+    if (sessionColumns().some((column) => column.name === "mode")) {
+      db.exec("ALTER TABLE sessions DROP COLUMN mode");
     }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();
@@ -330,23 +330,6 @@ export async function hasSessionSource(
   }
 }
 
-export async function getSessionMode(
-  groupName: string,
-  sessionId: string,
-): Promise<SessionMode> {
-  validateName(groupName, "グループ名");
-  validateName(sessionId, "セッションID");
-  const db = await openDatabase(groupName);
-  try {
-    const row = db
-      .prepare("SELECT mode FROM sessions WHERE id=?")
-      .get(sessionId) as { mode: SessionMode } | undefined;
-    return row?.mode ?? "normal";
-  } finally {
-    db.close();
-  }
-}
-
 export async function isSessionAgentInitialized(
   groupName: string,
   sessionId: string,
@@ -383,29 +366,6 @@ export async function markSessionAgentInitialized(
   }
 }
 
-export async function setSessionMode(
-  groupName: string,
-  sessionId: string,
-  mode: SessionMode,
-): Promise<void> {
-  validateName(groupName, "グループ名");
-  validateName(sessionId, "セッションID");
-  if (mode !== "normal" && mode !== "capture-only") {
-    throw new Error(`不正なsession mode: ${String(mode)}`);
-  }
-  const db = await openDatabase(groupName);
-  const now = Date.now();
-  try {
-    db.prepare(`
-      INSERT INTO sessions(id, created_at, updated_at, mode)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET mode=excluded.mode, updated_at=excluded.updated_at
-    `).run(sessionId, now, now, mode);
-  } finally {
-    db.close();
-  }
-}
-
 export async function appendMessage(
   groupName: string,
   sessionId: string,
@@ -432,8 +392,8 @@ export async function appendMessage(
           if (existing !== undefined) return existing;
         }
         db.prepare(`
-        INSERT INTO sessions(id, created_at, updated_at)
-        VALUES (?, ?, ?)
+        INSERT INTO sessions(id, created_at, updated_at, agent_initialized)
+        VALUES (?, ?, ?, 0)
         ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
       `).run(sessionId, timestamp, timestamp);
         const inserted = db

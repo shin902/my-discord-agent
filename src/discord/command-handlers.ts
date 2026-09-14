@@ -1,7 +1,6 @@
 import type { ChatInputCommandInteraction } from "discord.js";
 import {
   executeBotCommand,
-  executeSessionModeCommand,
   executeSkillCommand,
   executeSteerCommand,
   executeStopCommand,
@@ -67,25 +66,6 @@ export async function handleSkillCommand(
     skillName: interaction.options.getString("skill", true).trim(),
     prompt: interaction.options.getString("prompt")?.trim() ?? "",
     idempotencyKey: `discord-interaction:${interaction.id}`,
-  });
-  await editReply(interaction, result);
-}
-
-/** Adapt a Discord interaction into the session-mode application use case. */
-export async function handleSessionModeCommand(
-  interaction: ChatInputCommandInteraction,
-  discordBotId = DEFAULT_DISCORD_BOT_ID,
-): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-  const channel = interaction.channel as InteractionChannel | null;
-  const result = await executeSessionModeCommand({
-    discordBotId,
-    channelId: interaction.channelId,
-    routingChannelId: await interactionGroupLookupId(interaction),
-    isThread: channel?.isThread?.() === true,
-    mode: interaction.options.getString("mode", true) as
-      | "normal"
-      | "capture-only",
   });
   await editReply(interaction, result);
 }

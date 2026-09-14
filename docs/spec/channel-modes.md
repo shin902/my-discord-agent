@@ -1,6 +1,6 @@
 # チャンネルモード
 
-Channel が持つ `sessionMode` で動作が決まる。
+Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける方法、`agentMode` は通常messageをAgentへ渡すか記録だけにするかを表す。別軸の静的設定であり、変更は再起動後に反映される。
 
 ## `sessionMode`
 
@@ -10,9 +10,34 @@ Channel が持つ `sessionMode` で動作が決まる。
 | `thread` | 無視（メンションも含む） | 全メッセージに反応 |
 | `auto-thread` | 任意のメッセージでスレッドを自動作成 | 全メッセージに反応 |
 
-`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
+上表は `agentMode: normal` の場合。`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
 
 Slash command は通常メッセージの取り込み経路を通らないため、`requiredMention` の対象外。現在の `/bot` と、将来追加する `/new` などのコマンドもメンション不要で利用できる設計とする。
+
+---
+
+## `agentMode`
+
+| 値 | 通常の人間messageの処理 |
+|---|---|
+| `normal`（未指定時） | 既存のtriggerに従ってenqueue → Agent run → response |
+| `capture-only` | 同じcanonical sessionの `sessions.sqlite` にraw user entryをappendして終了 |
+
+```json
+{
+  "channelId": "...",
+  "sessionMode": "shared",
+  "agentMode": "capture-only"
+}
+```
+
+`capture-only` は通常の人間の投稿・返信を、`requiredMention` に関係なく保存する。本文・添付URL・既存timestamp/source provenanceを保持し、queue job、Agent Runner、provider、tool/subagent、assistant response、progress/placeholderは発生させない。bot/Webhook投稿やsystem messageは保存もenqueueもしない。group担当Botの認可と `sessionMode` の対象範囲は維持する。`auto-thread` の親投稿は既存のsession routingどおりthreadを作成・再利用するが、応答messageは送らない。
+
+`/skill` は同じDiscord sessionを実行するためcapture-only channelでは拒否する。独立したBot Task Sessionを使う `/bot` や他の独立sessionは制限しない。
+
+起動時backfillとlive captureは同じroot channelの復旧完了境界を使う。live captureはそのrootと配下threadの古いbackfillを待ち、その後はlive到着順に保存する。他channelのlive captureや通常channelのenqueueは待たせない。backfill失敗・不完全時はlive captureも保存せず、エラーをhost logへ残してcursorを維持する。Discordへ失敗応答は送らず、権限等を修正して再起動した際のbackfillで復旧する。既存の初回起動時のcursor初期化方針（過去履歴を遡らない）は変更しない。
+
+設定はchannel configだけが正本で、session単位のruntime切替はない。後にconfigをnormalへ変更して再起動すれば、同じsessionのAgentは保存済みraw historyを利用できる。既存jobを設定変更で停止・取り消すことはないため、通常channelをcapture-onlyへ変更する運用では、そのsessionの既存workを完了させてから再起動する。
 
 ---
 

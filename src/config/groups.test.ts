@@ -118,6 +118,33 @@ describe("loadGroups", () => {
     expect(groups[0].channels[0]).not.toHaveProperty("toolLogArgs");
   });
 
+  it.each([
+    undefined,
+    "normal",
+    "capture-only",
+  ])("channel agentMode=%sをsession routingとは別に読み込む", async (agentMode) => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "chat",
+        channels: [{ channelId: "channel", sessionMode: "shared", agentMode }],
+      },
+    ]);
+    const [group] = await loadGroups();
+    expect(group.channels[0].sessionMode).toBe("shared");
+    expect(group.channels[0].agentMode ?? "normal").toBe(agentMode ?? "normal");
+  });
+
+  it.each([
+    { sessionMode: "capture-only" },
+    { sessionMode: "shared", agentMode: "unknown" },
+    { sessionMode: "shared", agentMode: null },
+  ])("不正なchannel modeを拒否する: %j", async (channel) => {
+    const { loadGroups } = await setupRawGroups([
+      { name: "chat", channels: [{ channelId: "channel", ...channel }] },
+    ]);
+    await expect(loadGroups()).rejects.toThrow();
+  });
+
   it('skills は全ロードを示す "*" もパースできる', async () => {
     const { loadGroups } = await setupRawGroups([
       { name: "chat", channels: [], skills: "*" },

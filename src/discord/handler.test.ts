@@ -15,7 +15,6 @@ const mockCreateDiscordInteractionRouter = vi.hoisted(() =>
   }),
 );
 vi.mock("../agent/session.js", () => ({
-  getSessionMode: vi.fn().mockResolvedValue("normal"),
   hasSessionSource: vi.fn().mockResolvedValue(false),
   appendMessage: vi.fn(),
 }));
