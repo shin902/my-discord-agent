@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -9,13 +8,19 @@ import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js"
 import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
+const magickSimilarities = vi.hoisted(() => [] as number[]);
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
     (
       _command: string,
-      _args: string[],
+      args: string[],
       callback: (...args: unknown[]) => void,
-    ) => callback(null, "", ""),
+    ) =>
+      callback(
+        null,
+        args.includes("SSIM") ? String(magickSimilarities.shift() ?? 0) : "",
+        "",
+      ),
   ),
 }));
 vi.mock("../../agent/manager.js", () => ({ sendMessage: vi.fn() }));
@@ -33,6 +38,7 @@ describe("screen capture summary cron", () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    magickSimilarities.length = 0;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
@@ -97,12 +103,7 @@ describe("screen capture summary cron", () => {
 
   it("discards similar images and stops after accepting the configured limit", async () => {
     const ids = insert(5);
-    const similarities = [0.95, 0.93, 0.6];
-    vi.mocked(execFile).mockImplementation((_command, args, callback) => {
-      const output = args.includes("SSIM") ? String(similarities.shift()) : "";
-      callback(null, output, "");
-      return undefined as never;
-    });
+    magickSimilarities.push(0.95, 0.93, 0.6);
 
     await handler({ ...ctx, settings: { limit: 2 } });
 
@@ -144,10 +145,7 @@ describe("screen capture summary cron", () => {
       "UPDATE screen_captures SET completed_at = ?, accepted = 1 WHERE id = ?",
     ).run("2026-09-12T01:00:00Z", previous);
     db.close();
-    vi.mocked(execFile).mockImplementation((_command, args, callback) => {
-      callback(null, args.includes("SSIM") ? "0.9" : "", "");
-      return undefined as never;
-    });
+    magickSimilarities.push(0.9);
 
     await handler(ctx);
 
