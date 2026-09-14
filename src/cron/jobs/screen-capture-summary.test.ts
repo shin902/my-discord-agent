@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -300,6 +300,18 @@ describe("screen capture summary cron", () => {
 
   it("passes selected images directly to the memory agent in direct mode", async () => {
     const ids = insert(2);
+    const directory = path.join(
+      process.cwd(),
+      "groups/logbook/.screen-captures",
+    );
+    vi.mocked(sendMessage).mockImplementationOnce(async () => {
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+      for (const id of ids)
+        expect(
+          (await stat(path.join(directory, `${id}.png`))).mode & 0o777,
+        ).toBe(0o600);
+      return "updated";
+    });
     await handler({
       ...ctx,
       settings: { mode: "direct", timeoutMs: 120_000, limit: 10 },
@@ -317,13 +329,7 @@ describe("screen capture summary cron", () => {
     );
     for (const id of ids) {
       await expect(
-        readFile(
-          path.join(
-            process.cwd(),
-            "groups/logbook/.screen-captures",
-            `${id}.png`,
-          ),
-        ),
+        readFile(path.join(directory, `${id}.png`)),
       ).rejects.toMatchObject({ code: "ENOENT" });
     }
     expect(rows().every((row) => row.accepted === 1 && row.completed_at)).toBe(

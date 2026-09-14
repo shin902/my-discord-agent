@@ -60,7 +60,7 @@ function runMagick(args: string[]): Promise<string> {
 
 async function writeCapture(directory: string, capture: Capture) {
   const imagePath = path.join(directory, `${capture.id}.png`);
-  await writeFile(imagePath, capture.image);
+  await writeFile(imagePath, capture.image, { mode: 0o600 });
   await runMagick([imagePath, "-resize", "1280x1280>", imagePath]);
   return imagePath;
 }
@@ -121,7 +121,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       .get() as Capture | undefined;
 
     await rm(directory, { recursive: true, force: true });
-    await mkdir(directory, { recursive: true });
+    await mkdir(directory, { recursive: true, mode: 0o700 });
     let reference: string | undefined;
     if (previous) {
       try {
