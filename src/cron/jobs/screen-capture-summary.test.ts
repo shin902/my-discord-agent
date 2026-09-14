@@ -11,8 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendMessage } from "../../agent/manager.js";
 import { resolveModel } from "../../agent/model.js";
 import { loadCredentialProxy } from "../../config/credential-proxy.js";
+import { resolveModelConfig } from "../../config/default-model.js";
+import { findGroupByName } from "../../config/groups.js";
 import { resolveProviderConcurrency } from "../../config/providers.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
+import { acquireLlmLock } from "../../queue/llm-mutex.js";
 import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
@@ -58,9 +61,17 @@ vi.mock("../../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn(),
 }));
+vi.mock("../../config/default-model.js", () => ({
+  resolveModelConfig: vi.fn(),
+}));
+vi.mock("../../config/groups.js", async (original) => ({
+  ...(await original<typeof import("../../config/groups.js")>()),
+  findGroupByName: vi.fn(),
+}));
 vi.mock("../../config/providers.js", () => ({
   resolveProviderConcurrency: vi.fn(),
 }));
+vi.mock("../../queue/llm-mutex.js", () => ({ acquireLlmLock: vi.fn() }));
 vi.mock("../../proxy/credential-proxy-server.js", () => ({
   getProxyPort: () => 4242,
 }));
@@ -124,7 +135,18 @@ describe("screen capture summary cron", () => {
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       { provider: "openai", baseUrl: "https://api.openai.com/v1" },
     ]);
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "logbook",
+      channels: [],
+      model: memoryModel,
+    });
+    vi.mocked(resolveModelConfig).mockImplementation(async (config) =>
+      config
+        ? { ...config, provider: config.provider ?? "openai" }
+        : memoryModel,
+    );
     vi.mocked(resolveProviderConcurrency).mockResolvedValue("parallel");
+    vi.mocked(acquireLlmLock).mockResolvedValue(vi.fn());
     vi.mocked(completeSimple).mockResolvedValue(result());
     vi.mocked(sendMessage).mockResolvedValue("updated");
   });
@@ -323,8 +345,11 @@ describe("screen capture summary cron", () => {
     );
   });
 
-  it("passes selected images directly to the memory agent in direct mode", async () => {
+  it("locks the effective memory provider around direct-mode agent calls", async () => {
     const ids = insert(2);
+    const release = vi.fn();
+    vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
+    vi.mocked(acquireLlmLock).mockResolvedValue(release);
     const directory = path.join(
       process.cwd(),
       "groups/logbook/.screen-captures",
@@ -350,8 +375,18 @@ describe("screen capture summary cron", () => {
       expect.objectContaining({
         imagePaths: ids.map((id) => `/workspace/.screen-captures/${id}.png`),
         configOverride: agentConfig,
+        heldLlmProvider: memoryModel.provider,
       }),
     );
+    expect(resolveProviderConcurrency).toHaveBeenCalledWith(
+      memoryModel.provider,
+    );
+    expect(acquireLlmLock).toHaveBeenCalledWith(
+      memoryModel.provider,
+      "serial",
+      expect.any(AbortSignal),
+    );
+    expect(release).toHaveBeenCalledOnce();
     for (const id of ids) {
       await expect(
         readFile(path.join(directory, `${id}.png`)),
