@@ -43,6 +43,8 @@ The current day's file is mutable.
 
 When new evidence extends or clarifies the latest activity, rewrite that existing section rather than appending a duplicate 5-minute entry.
 
+Keep all activity sections ordered chronologically by their start time.
+
 Do not rewrite older unrelated activity.
 
 Do not modify `memory/index.md` or `memory/system/definition.md` during normal 5-minute processing.
