@@ -3,6 +3,7 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
+import { appendMessage, getSessionMode } from "../agent/session.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
@@ -13,7 +14,7 @@ import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 export type DiscordMessageSource = "live" | "backfill";
 
 export interface DiscordIngestResult {
-  status: "enqueued" | "ignored";
+  status: "captured" | "enqueued" | "ignored";
   cursorScope?: string;
 }
 
@@ -126,11 +127,11 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  // Thread messages resolve their parent channel before this point, so a
-  // channel-level requiredMention policy applies equally to the channel and
-  // every thread below it. Slash commands use InteractionCreate and bypass
-  // this normal-message gate.
+  // An unmentioned auto-thread root has no session whose capture mode could
+  // override the normal response trigger. Avoid creating a thread for it.
   if (
+    !isThread &&
+    match.channel.sessionMode === "auto-thread" &&
     match.channel.requiredMention === true &&
     !mentionsCurrentDiscordBot(message)
   ) {
@@ -174,6 +175,56 @@ async function ingest(
       return { status: "ignored", cursorScope: defaultCursorScope };
     }
 
+    const repository = getQueueRepository();
+    const mode = await getSessionMode(match.group.name, sessionId);
+    const isHumanMessage =
+      !message.author.bot &&
+      (message.type === MessageType.Default ||
+        message.type === MessageType.Reply);
+    if (mode === "capture-only" && isHumanMessage) {
+      const attachmentLines = [...message.attachments.values()].map(
+        (attachment) => `- ${attachment.name}: ${attachment.url}`,
+      );
+      await appendMessage(
+        match.group.name,
+        sessionId,
+        {
+          role: "user",
+          content: attachmentLines.length
+            ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
+            : message.content,
+          timestamp: message.createdAt.getTime(),
+        },
+        {
+          kind: "discord",
+          sourceId: message.id,
+          actorId: message.author.id,
+          messageType:
+            message.type === MessageType.Default
+              ? MessageType.Default
+              : MessageType.Reply,
+          createdAt: message.createdAt.toISOString(),
+        },
+      );
+      if (
+        options.updateLiveCursor &&
+        !isDiscordChannelBackfillPending(lookupId) &&
+        typeof repository.upsertDiscordCursor === "function"
+      ) {
+        repository.upsertDiscordCursor(cursorScope, message.id);
+      }
+      return { status: "captured", cursorScope };
+    }
+
+    // Capture mode separates persistence eligibility from the normal response
+    // trigger. Outside capture mode, requiredMention keeps its existing role.
+    if (
+      match.channel.requiredMention === true &&
+      !mentionsCurrentDiscordBot(message)
+    ) {
+      return { status: "ignored", cursorScope };
+    }
+
     const attachments =
       message.attachments.size > 0
         ? [...message.attachments.values()].map((attachment) => ({
@@ -213,7 +264,6 @@ async function ingest(
         : {}),
     };
 
-    const repository = getQueueRepository();
     await repository.enqueue(payload);
     if (
       options.updateLiveCursor &&

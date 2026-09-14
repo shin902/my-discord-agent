@@ -267,7 +267,7 @@ describe("committed conversation export", () => {
     // Old text is not automatically promoted to a reference during migration.
     expect([...readCaptureTurns(group, [])]).toEqual([]);
     const inspect = new Database(filename, { readonly: true });
-    expect(inspect.pragma("user_version", { simple: true })).toBe(4);
+    expect(inspect.pragma("user_version", { simple: true })).toBe(5);
     expect(
       inspect
         .prepare("SELECT id FROM session_entries WHERE id=?")

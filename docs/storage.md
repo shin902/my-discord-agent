@@ -68,7 +68,7 @@ runtime DBはWALを使用します。稼働中にmain fileだけをコピーし�
 
 ## Session trajectory
 
-session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityを管理し、`session_entries`へメッセージをappendする。
+session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityと永続的な応答mode（`normal` / `capture-only`）を管理し、`session_entries`へメッセージをappendする。`capture-only`中の通常の人間messageは同じtrajectoryへ保存するだけでqueueやAgentを起動せず、`normal`へ戻した後のrunからそのまま参照できる。
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 

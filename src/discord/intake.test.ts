@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findGroup: vi.fn(),
   getRepo: vi.fn(),
+  getSessionMode: vi.fn(),
+  appendMessage: vi.fn(),
+}));
+
+vi.mock("../agent/session.js", () => ({
+  getSessionMode: mocks.getSessionMode,
+  appendMessage: mocks.appendMessage,
 }));
 
 vi.mock("../config/groups.js", () => ({
@@ -36,6 +43,8 @@ beforeEach(() => {
   db = repositoryModule.openRuntimeDb(":memory:");
   repo = new repositoryModule.QueueRepository(db);
   mocks.getRepo.mockReturnValue(repo);
+  mocks.getSessionMode.mockResolvedValue("normal");
+  mocks.appendMessage.mockResolvedValue(1);
   mocks.findGroup.mockResolvedValue({
     group: { name: "group" },
     channel: { channelId: "root-1", sessionMode: "auto-thread" },
@@ -303,6 +312,61 @@ describe("ingestDiscordMessage", () => {
     expect(
       repo.findByIdempotencyKey("discord-message:message-no-mention"),
     ).toBeUndefined();
+  });
+
+  it("capture-onlyでは非mentionの人間messageを保存するがenqueueしない", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "shared",
+        requiredMention: true,
+      },
+    });
+    mocks.getSessionMode.mockResolvedValue("capture-only");
+
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "captured-message" }),
+      { source: "live", replyOnFailure: false },
+    );
+
+    expect(result).toMatchObject({ status: "captured" });
+    expect(mocks.appendMessage).toHaveBeenCalledWith(
+      "group",
+      "root-1",
+      {
+        role: "user",
+        content: "hello",
+        timestamp: new Date("2026-08-11T00:00:00.000Z").getTime(),
+      },
+      expect.objectContaining({
+        kind: "discord",
+        sourceId: "captured-message",
+        actorId: "user-id",
+      }),
+    );
+    expect(
+      repo.findByIdempotencyKey("discord-message:captured-message"),
+    ).toBeUndefined();
+  });
+
+  it("normalへ戻すとcaptured trajectoryを残したまま再びenqueueする", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: { channelId: "root-1", sessionMode: "shared" },
+    });
+    mocks.getSessionMode.mockResolvedValue("normal");
+
+    const result = await ingestDiscordMessage(
+      makeMessage({ id: "normal-after-capture" }),
+      { source: "live", replyOnFailure: false },
+    );
+
+    expect(result.status).toBe("enqueued");
+    expect(mocks.appendMessage).not.toHaveBeenCalled();
+    expect(
+      repo.findByIdempotencyKey("discord-message:normal-after-capture"),
+    ).toBeDefined();
   });
 
   it("requiredMention=trueでもBot mentionがあれば親チャンネルでenqueueする", async () => {

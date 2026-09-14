@@ -35,7 +35,7 @@ describe("SQLite session trajectory store", () => {
       session.loadMessages("empty-group", "missing"),
     ).resolves.toEqual([]);
     const db = dbFor("empty-group");
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all() as Array<{ name: string }>;
@@ -108,7 +108,7 @@ describe("SQLite session trajectory store", () => {
   });
 
   it.each([
-    0, 1, 2, 3,
+    0, 1, 2, 3, 4,
   ])("rechecks stale v%s under the migration write lock across concurrent connections", async (version) => {
     const group = `migration-v${version}`;
     await mkdir(path.join(root, group), { recursive: true });
@@ -132,6 +132,7 @@ describe("SQLite session trajectory store", () => {
         CREATE INDEX session_entries_execution ON session_entries(session_id, json_extract(execution_json, '$.jobId'), json_extract(execution_json, '$.fencingToken'), sequence) WHERE execution_json IS NOT NULL;
         PRAGMA user_version=3;`);
     }
+    if (version === 4) db.pragma("user_version=4");
     db.close();
     const gate = new Int32Array(new SharedArrayBuffer(4));
     const worker = new Worker(
@@ -158,7 +159,7 @@ describe("SQLite session trajectory store", () => {
       ]);
       const inspect = dbFor(group);
       try {
-        expect(inspect.pragma("user_version", { simple: true })).toBe(4);
+        expect(inspect.pragma("user_version", { simple: true })).toBe(5);
         expect(
           (
             inspect.pragma("table_info(session_entries)") as Array<{
@@ -190,6 +191,26 @@ describe("SQLite session trajectory store", () => {
       await worker.terminate();
     }
   }, 15_000);
+
+  it("session modeをDBに保存し、同じtrajectoryを維持する", async () => {
+    expect(await session.getSessionMode("mode-group", "session-a")).toBe(
+      "normal",
+    );
+    await session.setSessionMode("mode-group", "session-a", "capture-only");
+    await session.appendMessage("mode-group", "session-a", {
+      role: "user",
+      content: "captured",
+      timestamp: 123,
+    });
+
+    expect(await session.getSessionMode("mode-group", "session-a")).toBe(
+      "capture-only",
+    );
+    await session.setSessionMode("mode-group", "session-a", "normal");
+    expect(await session.loadMessages("mode-group", "session-a")).toEqual([
+      { role: "user", content: "captured", timestamp: 123 },
+    ]);
+  });
 
   it("session identityをtransactionでrenameしentryを維持する", async () => {
     await session.appendMessage("rename-group", "cron-temp", {

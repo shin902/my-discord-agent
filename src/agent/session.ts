@@ -9,7 +9,9 @@ import { type SessionSource, SessionSourceSchema } from "./source.js";
 const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
+
+export type SessionMode = "normal" | "capture-only";
 
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -99,7 +101,8 @@ function initializeSchema(db: Database.Database): void {
           id TEXT PRIMARY KEY,
           kind TEXT NOT NULL DEFAULT 'conversation',
           created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
+          updated_at INTEGER NOT NULL,
+          mode TEXT NOT NULL DEFAULT 'normal' CHECK (mode IN ('normal', 'capture-only'))
         );
         CREATE TABLE IF NOT EXISTS session_entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,6 +129,18 @@ function initializeSchema(db: Database.Database): void {
       db.exec(`
         DROP INDEX session_entries_execution;
         ALTER TABLE session_entries DROP COLUMN execution_json;
+      `);
+    }
+    if (
+      version > 0 &&
+      version < 5 &&
+      !(db.pragma("table_info(sessions)") as Array<{ name: string }>).some(
+        (column) => column.name === "mode",
+      )
+    ) {
+      db.exec(`
+        ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'
+          CHECK (mode IN ('normal', 'capture-only'));
       `);
     }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -259,6 +274,46 @@ export async function renameSession(
         fromSessionId,
       );
     })();
+  } finally {
+    db.close();
+  }
+}
+
+export async function getSessionMode(
+  groupName: string,
+  sessionId: string,
+): Promise<SessionMode> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  const db = await openDatabase(groupName);
+  try {
+    const row = db
+      .prepare("SELECT mode FROM sessions WHERE id=?")
+      .get(sessionId) as { mode: SessionMode } | undefined;
+    return row?.mode ?? "normal";
+  } finally {
+    db.close();
+  }
+}
+
+export async function setSessionMode(
+  groupName: string,
+  sessionId: string,
+  mode: SessionMode,
+): Promise<void> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  if (mode !== "normal" && mode !== "capture-only") {
+    throw new Error(`不正なsession mode: ${String(mode)}`);
+  }
+  const db = await openDatabase(groupName);
+  const now = Date.now();
+  try {
+    db.prepare(`
+      INSERT INTO sessions(id, created_at, updated_at, mode)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET mode=excluded.mode, updated_at=excluded.updated_at
+    `).run(sessionId, now, now, mode);
   } finally {
     db.close();
   }

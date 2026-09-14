@@ -1,5 +1,6 @@
 import type { DiscordCommandDefinition } from "./command-contract.js";
 import { command as botCommand } from "./commands/bot.js";
+import { command as sessionModeCommand } from "./commands/session-mode.js";
 import { command as skillCommand } from "./commands/skill.js";
 import { command as steerCommand } from "./commands/steer.js";
 import { command as stopCommand } from "./commands/stop.js";
@@ -10,6 +11,7 @@ import { command as stopCommand } from "./commands/stop.js";
  */
 export const DISCORD_COMMANDS: readonly DiscordCommandDefinition[] = [
   botCommand,
+  sessionModeCommand,
   skillCommand,
   steerCommand,
   stopCommand,
