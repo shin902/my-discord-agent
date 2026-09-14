@@ -150,6 +150,7 @@ else
   mkdir -p "$capture_directory"
   image="$capture_directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
   screencapture -x -m -t png "$image"
+  sips -Z 1280 "$image" >/dev/null
 fi
 id=$(basename "$image" .png)
 if [[ ! -f "$image" || ! "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then

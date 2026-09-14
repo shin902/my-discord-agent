@@ -101,6 +101,11 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       { mode: 0o700 },
     );
     writeFileSync(
+      path.join(root, "sips"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$*" > "$HOME/sips-args"\n',
+      { mode: 0o700 },
+    );
+    writeFileSync(
       path.join(root, "curl"),
       '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$SCREEN_TEST_ARGS"\nprintf "%s" "$SCREEN_TEST_STATUS"\nexit "$SCREEN_TEST_CURL_EXIT"\n',
       { mode: 0o700 },
@@ -135,6 +140,9 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
     expect(args).toContain("=https");
     expect(args).not.toContain("--location");
     expect(run([url]).status).toBe(0); // Fresh captures use the same ACK cleanup.
+    expect(readFileSync(path.join(root, "sips-args"), "utf8")).toContain(
+      `-Z 1280 ${image}`,
+    );
     expect(existsSync(image)).toBe(false);
     writeFileSync(path.join(root, "rm"), "#!/usr/bin/env bash\nexit 1\n", {
       mode: 0o700,

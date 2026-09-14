@@ -38,7 +38,7 @@ bash scripts/capture-screen.sh \
   'https://<host>.<tailnet>.ts.net:8444/v1/screen-captures'
 ```
 
-macOS標準の`screencapture`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。Terminal等の実行元に「画面収録」の権限が必要です。
+macOS標準の`screencapture`、`sips`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。画像は縦横比を保ったまま長辺1280pxへ縮小してから送信します。Terminal等の実行元に「画面収録」の権限が必要です。
 
 継続して収集する場合はLaunchAgentを登録します。間隔は正の秒数で指定でき、既定は60秒です。同じ`on`コマンドを再実行するとURLと間隔を更新できます。
 
