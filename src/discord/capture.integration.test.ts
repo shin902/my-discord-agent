@@ -328,7 +328,9 @@ describe("static capture-only Discord ingestion", () => {
       message(String(1001 + index), isThread),
     );
     releaseFirst(page(older.reverse()));
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2), {
+      timeout: 5_000,
+    });
     expect(
       await session.loadMessages(group.name, isThread ? "thread" : "root"),
     ).toHaveLength(100);

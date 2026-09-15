@@ -15,11 +15,14 @@ describe("initToolCredentials: host integration initialization", () => {
     },
   ];
 
+  let credentials: CredentialEntry[];
+
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv };
+    credentials = GOOGLE_CREDS;
     vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue(GOOGLE_CREDS),
+      loadCredentialProxy: vi.fn().mockImplementation(async () => credentials),
     }));
   });
 
@@ -34,15 +37,13 @@ describe("initToolCredentials: host integration initialization", () => {
       clientId: "client",
       scopes: ["Mail.Read"],
     };
-    vi.doMock("../config/credential-proxy.js", () => ({
-      loadCredentialProxy: vi.fn().mockResolvedValue([
-        {
-          provider: "graph",
-          baseUrl: "https://graph.microsoft.com/v1.0",
-          msal,
-        },
-      ]),
-    }));
+    credentials = [
+      {
+        provider: "graph",
+        baseUrl: "https://graph.microsoft.com/v1.0",
+        msal,
+      },
+    ];
     const initGraphAuth = vi.fn();
     vi.doMock("./graph-auth.js", () => ({ initGraphAuth }));
     const { initToolCredentials } = await import("./tool-credentials.js");
