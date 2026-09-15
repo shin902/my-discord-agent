@@ -6,29 +6,20 @@ type: system
 
 This file defines how your persistent memory works, and it is yours to improve.
 Only the portable file contract below and two loaded paths are fixed:
-`capturelog/index.md` and this file at `capturelog/system/definition.md`. The folders,
+`memory/index.md` and this file at `memory/system/definition.md`. The folders,
 prose organization, and other guidance are yours to reshape if a different
 shape would remember or retrieve better.
 
-`capturelog/index.md` and this definition are loaded whenever a context window is
+`memory/index.md` and this definition are loaded whenever a context window is
 created: at startup.Updates made during the same session are not automatically re-injected.
 Re-read the workspace files explicitly when you need their latest contents.
 Keep both lean: headlines and pointers here, detail in linked files.
 Core Memory in the index should only hold durable facts relevant in nearly every conversation;
 behavior, role, and persona belong in `/workspace/AGENTS.md`.
 
-## Capture Log
-
-Capture Log keeps chronological records that can be revisited later:
-
-- `capturelog/YYYY-MM/YYYY-MM-DD.md` records observed screen activity for each day.
-- `capturelog/diary/YYYY-MM-DD.md` records first-person reflections, feelings, insights, and difficulties.
-
-Keep observed activity factual and concise. Keep subjective reflection in the diary instead of presenting it as observed fact. Update an existing entry when new material continues the same activity or reflection, and avoid duplicate entries.
-
 ## Open Knowledge Format
 
-The `capturelog/` directory follows the Open Knowledge Format (OKF): a simple
+The `memory/` directory follows the Open Knowledge Format (OKF): a simple
 convention for portable agent memory that any agent or tool can read and
 edit. One Markdown concept per file, with YAML frontmatter containing a
 `type`; `index.md` and `log.md` are reserved and do not need a type. The root
