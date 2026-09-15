@@ -122,7 +122,7 @@ describe("loadGroups", () => {
     undefined,
     "normal",
     "capture-only",
-  ])("channel agentMode=%sをsession routingとは別に読み込む", async (agentMode) => {
+  ])("shared channelのagentMode=%sを読み込む", async (agentMode) => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
@@ -132,6 +132,24 @@ describe("loadGroups", () => {
     const [group] = await loadGroups();
     expect(group.channels[0].sessionMode).toBe("shared");
     expect(group.channels[0].agentMode ?? "normal").toBe(agentMode ?? "normal");
+  });
+
+  it.each([
+    "thread",
+    "auto-thread",
+    "email-mode",
+  ])("capture-only + %sは起動時のconfig errorになる", async (sessionMode) => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "chat",
+        channels: [
+          { channelId: "channel", sessionMode, agentMode: "capture-only" },
+        ],
+      },
+    ]);
+    await expect(loadGroups()).rejects.toThrow(
+      "agentMode: capture-only requires sessionMode: shared",
+    );
   });
 
   it.each([

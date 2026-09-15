@@ -88,7 +88,14 @@ const ChannelConfigSchema = AgentConfigSchema.extend({
   requiredMention: z.boolean().optional(),
   // feedcord 等、Webhook経由でこのチャンネルに投稿するメッセージを許可するWebhook IDのリスト
   allowedWebhookIds: z.array(z.string()).optional(),
-});
+}).refine(
+  (channel) =>
+    channel.agentMode !== "capture-only" || channel.sessionMode === "shared",
+  {
+    message: "agentMode: capture-only requires sessionMode: shared",
+    path: ["agentMode"],
+  },
+);
 
 // allowMention/toolLogArgs は配送・観測設定であり、group限定のままにする。
 const GroupConfigSchema = AgentRuntimeConfigSchema.extend({

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -113,17 +113,12 @@ function page(messages: Message[]) {
   };
 }
 
-function historyChannel(isThread: boolean, fetch: ReturnType<typeof vi.fn>) {
-  const thread = { id: "thread", messages: { fetch } };
+function historyChannel(fetch: ReturnType<typeof vi.fn>) {
   return {
     id: "root",
     type: ChannelType.GuildText,
     messages: { fetch },
-    threads: {
-      fetchActive: vi.fn().mockResolvedValue({
-        threads: new Map(isThread ? [["thread", thread]] : []),
-      }),
-    },
+    threads: { fetchActive: vi.fn() },
   };
 }
 
@@ -135,37 +130,25 @@ function expectNoRunsOrResponses(...messages: Message[]) {
     repo.db.prepare("SELECT COUNT(*) AS count FROM deliveries").get(),
   ).toEqual({ count: 0 });
   expect(mocks.sendMessage).not.toHaveBeenCalled();
-  for (const message of messages) expect(message.reply).not.toHaveBeenCalled();
+  for (const message of messages) {
+    expect(message.reply).not.toHaveBeenCalled();
+    expect(message.startThread).not.toHaveBeenCalled();
+    expect(message.fetch).not.toHaveBeenCalled();
+  }
 }
 
 describe("static capture-only Discord ingestion", () => {
-  it.each([
-    "shared",
-    "thread",
-    "auto-thread",
-    "email-mode",
-  ] as const)("captures raw human messages once using %s session routing, including normal-config replay", async (sessionMode) => {
-    channel.sessionMode = sessionMode;
-    const isThread = sessionMode === "thread" || sessionMode === "email-mode";
-    if (isThread) {
-      mocks.findGroup.mockImplementation(async (id) => ({
-        group,
-        channel:
-          id === "thread" ? { ...channel, channelId: "thread" } : channel,
-      }));
-    }
-    const input = message("1001", isThread);
+  it("captures raw human messages once in the configured shared channel session, including normal-config replay", async () => {
+    const input = message("1001");
     const enqueue = vi.spyOn(repo, "enqueue");
     await live(input);
-    const sessionId = sessionMode === "shared" ? "root" : "thread";
+    const sessionId = channel.channelId;
     expect(await session.loadMessages(group.name, sessionId)).toEqual([
       { role: "user", content: "raw 1001", timestamp: 1001 },
     ]);
     expect(await session.isSessionAgentInitialized(group.name, sessionId)).toBe(
       false,
     );
-    // Auto-thread roots reuse the same Discord thread on replay.
-    Object.assign(input, { thread: { id: "thread" } });
     await ingest(input, { source: "backfill" });
     channel.agentMode = "normal";
     channel.requiredMention = false;
@@ -189,54 +172,14 @@ describe("static capture-only Discord ingestion", () => {
   it.each([
     "live",
     "backfill",
-  ] as const)("does not inherit auto-thread parent capture mode during %s ingestion", async (source) => {
-    channel.sessionMode = "auto-thread";
+  ] as const)("ignores child thread messages under a shared capture channel without an extra lookup during %s ingestion", async (source) => {
     channel.requiredMention = false;
-    const parent = message("1001");
-    const child = message("1002", true);
-    expect((await ingest(parent, { source })).status).toBe("captured");
-    expect((await ingest(child, { source })).status).toBe("enqueued");
-    expect(await session.loadMessages(group.name, "thread")).toEqual([
-      { role: "user", content: "raw 1001", timestamp: 1001 },
-    ]);
-    expect(repo.findByIdempotencyKey("discord-message:1002")).toMatchObject({
-      channelId: "thread",
-      routingChannelId: "root",
-      sessionId: "thread",
-    });
-    expect(child.startThread).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    "live",
-    "backfill",
-  ] as const)("captures an explicitly configured thread without changing parent routing during %s ingestion", async (source) => {
-    channel.sessionMode = "thread";
-    channel.agentMode = "normal";
-    mocks.findGroup.mockImplementation(async (id) => ({
-      group,
-      channel:
-        id === "thread"
-          ? {
-              channelId: "thread",
-              sessionMode: "shared",
-              agentMode: "capture-only",
-            }
-          : channel,
-    }));
     const input = message("1001", true);
-    expect((await ingest(input, { source })).status).toBe("captured");
-    expect(await session.loadMessages(group.name, "thread")).toEqual([
-      { role: "user", content: "raw 1001", timestamp: 1001 },
-    ]);
-    expectNoRunsOrResponses(input);
-  });
-
-  it("keeps the parent mention requirement for an unconfigured child thread", async () => {
-    channel.sessionMode = "auto-thread";
-    const input = message("1001", true);
-    expect((await ingest(input, { source: "live" })).status).toBe("ignored");
-    expect(await session.loadMessages(group.name, "thread")).toEqual([]);
+    expect((await ingest(input, { source })).status).toBe("ignored");
+    expect(mocks.findGroup.mock.calls).toEqual([["root"]]);
+    await expect(
+      stat(path.join(root, group.name, "sessions.sqlite")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
     expectNoRunsOrResponses(input);
   });
 
@@ -272,15 +215,7 @@ describe("static capture-only Discord ingestion", () => {
     expectNoRunsOrResponses(input);
   });
 
-  it.each([
-    false,
-    true,
-  ])("orders paginated backfill before racing live messages (thread=%s)", async (isThread) => {
-    channel.sessionMode = isThread ? "thread" : "shared";
-    mocks.findGroup.mockImplementation(async (id) => ({
-      group,
-      channel: id === "thread" ? { ...channel, channelId: "thread" } : channel,
-    }));
+  it("orders shared channel paginated backfill before racing live messages", async () => {
     repo.upsertDiscordCursor("root", "1000");
     let releaseFirst!: (value: ReturnType<typeof page>) => void;
     let releaseLast!: (value: ReturnType<typeof page>) => void;
@@ -294,11 +229,12 @@ describe("static capture-only Discord ingestion", () => {
       .fn()
       .mockReturnValueOnce(firstPage)
       .mockReturnValueOnce(lastPage);
-    mocks.fetchChannel.mockResolvedValue(historyChannel(isThread, fetch));
+    const historyRoot = historyChannel(fetch);
+    mocks.fetchChannel.mockResolvedValue(historyRoot);
     const recovery = backfill([group], repo);
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
-    const b = message("1101", isThread);
-    const c = message("1102", isThread);
+    const b = message("1101");
+    const c = message("1102");
     const pending = Promise.all([live(b), live(c)]);
     // Another capture channel must not be held by this root's startup scan.
     mocks.findGroup.mockImplementation(async (id) =>
@@ -311,47 +247,37 @@ describe("static capture-only Discord ingestion", () => {
               agentMode: "capture-only",
             },
           }
-        : {
-            group,
-            channel:
-              id === "thread" ? { ...channel, channelId: "thread" } : channel,
-          },
+        : { group, channel },
     );
     const other = message("2000");
     Object.assign(other, { channelId: "other" });
     await live(other);
-    expect(
-      await session.loadMessages(group.name, isThread ? "thread" : "root"),
-    ).toEqual([]);
+    expect(await session.loadMessages(group.name, "root")).toEqual([]);
     expect(await session.loadMessages(group.name, "other")).toHaveLength(1);
     const older = Array.from({ length: 100 }, (_, index) =>
-      message(String(1001 + index), isThread),
+      message(String(1001 + index)),
     );
     releaseFirst(page(older.reverse()));
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2), {
       timeout: 5_000,
     });
-    expect(
-      await session.loadMessages(group.name, isThread ? "thread" : "root"),
-    ).toHaveLength(100);
+    expect(await session.loadMessages(group.name, "root")).toHaveLength(100);
     releaseLast(page([b]));
     await recovery;
     await pending;
-    const history = await session.loadMessages(
-      group.name,
-      isThread ? "thread" : "root",
-    );
+    const history = await session.loadMessages(group.name, "root");
     expect(history.map((entry) => entry.timestamp)).toEqual(
       Array.from({ length: 102 }, (_, index) => 1001 + index),
     );
     expect(history.every((entry) => entry.role === "user")).toBe(true);
-    expectNoRunsOrResponses(b, c, other);
+    expect(historyRoot.threads.fetchActive).not.toHaveBeenCalled();
+    expectNoRunsOrResponses(...older, b, c, other);
   });
 
   it("does not let live captures pass failed backfill and recovers them on retry", async () => {
     repo.upsertDiscordCursor("root", "1000");
     const fetch = vi.fn().mockRejectedValue(new Error("history unavailable"));
-    mocks.fetchChannel.mockResolvedValue(historyChannel(false, fetch));
+    mocks.fetchChannel.mockResolvedValue(historyChannel(fetch));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const recovery = backfill([group], repo);

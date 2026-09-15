@@ -57,7 +57,7 @@ export async function ingestDiscordMessage(
       updateLiveCursor: options.source === "live",
       discordBotId: options.discordBotId,
     });
-  // Backfill replays sequentially. Live captures wait for that root scan in
+  // Backfill replays sequentially. Live captures wait for their channel scan in
   // ingest(), then retain callback order even across async channel lookups.
   if (options.source === "backfill") return run();
   const next = (liveMessageChains.get(message.channelId) ?? Promise.resolve())
@@ -148,12 +148,8 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  // Agent mode is exact-ID only; session routing still uses the parent.
-  const exactMatch =
-    message.channelId === lookupId
-      ? match
-      : await findGroupByChannelId(message.channelId);
-  const captureOnly = exactMatch?.channel.agentMode === "capture-only";
+  // Config validation restricts capture to shared channels, never threads.
+  const captureOnly = !isThread && match.channel.agentMode === "capture-only";
   const isHumanMessage =
     !message.author.bot &&
     (message.type === MessageType.Default ||
@@ -170,19 +166,56 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  let sessionId: string;
-  let inboxChannelId = message.channelId;
-  let replyMessageId: string | undefined = message.id;
   let cursorScope = defaultCursorScope;
 
   try {
-    if (
-      captureOnly &&
-      options.source === "live" &&
-      !(await waitForDiscordChannelBackfill(lookupId))
-    ) {
-      throw new Error(`Discord backfill incomplete: ${lookupId}`);
+    const humanSource: SessionSource | undefined = isHumanMessage
+      ? {
+          kind: "discord" as const,
+          sourceId: message.id,
+          actorId: message.author.id,
+          messageType: message.type === MessageType.Default ? 0 : 19,
+          createdAt: message.createdAt.toISOString(),
+        }
+      : undefined;
+    if (captureOnly && humanSource) {
+      const sessionId = match.channel.channelId;
+      if (
+        options.source === "live" &&
+        !(await waitForDiscordChannelBackfill(sessionId))
+      ) {
+        throw new Error(`Discord backfill incomplete: ${sessionId}`);
+      }
+      const attachmentLines = [...message.attachments.values()].map(
+        (attachment) => `- ${attachment.name}: ${attachment.url}`,
+      );
+      // appendMessage deduplicates the source ID in its write transaction.
+      await appendMessage(
+        match.group.name,
+        sessionId,
+        {
+          role: "user",
+          content: attachmentLines.length
+            ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
+            : message.content,
+          timestamp: message.createdAt.getTime(),
+        },
+        humanSource,
+      );
+      const repository = getQueueRepository();
+      if (
+        options.updateLiveCursor &&
+        !isDiscordChannelBackfillPending(sessionId) &&
+        typeof repository.upsertDiscordCursor === "function"
+      ) {
+        repository.upsertDiscordCursor(sessionId, message.id);
+      }
+      return { status: "captured", cursorScope: sessionId };
     }
+
+    let sessionId: string;
+    let inboxChannelId = message.channelId;
+    let replyMessageId: string | undefined = message.id;
     if (match.channel.sessionMode === "shared") {
       if (isThread) return { status: "ignored", cursorScope: lookupId };
       sessionId = message.channelId;
@@ -215,45 +248,11 @@ async function ingest(
     }
 
     const repository = getQueueRepository();
-    const humanSource: SessionSource | undefined = isHumanMessage
-      ? {
-          kind: "discord" as const,
-          sourceId: message.id,
-          actorId: message.author.id,
-          messageType: message.type === MessageType.Default ? 0 : 19,
-          createdAt: message.createdAt.toISOString(),
-        }
-      : undefined;
     if (
       humanSource &&
       (await hasSessionSource(match.group.name, sessionId, humanSource))
     ) {
       return { status: "ignored", cursorScope };
-    }
-    if (captureOnly && humanSource) {
-      const attachmentLines = [...message.attachments.values()].map(
-        (attachment) => `- ${attachment.name}: ${attachment.url}`,
-      );
-      await appendMessage(
-        match.group.name,
-        sessionId,
-        {
-          role: "user",
-          content: attachmentLines.length
-            ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
-            : message.content,
-          timestamp: message.createdAt.getTime(),
-        },
-        humanSource,
-      );
-      if (
-        options.updateLiveCursor &&
-        !isDiscordChannelBackfillPending(lookupId) &&
-        typeof repository.upsertDiscordCursor === "function"
-      ) {
-        repository.upsertDiscordCursor(cursorScope, message.id);
-      }
-      return { status: "captured", cursorScope };
     }
 
     const attachments =

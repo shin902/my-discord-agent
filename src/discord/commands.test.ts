@@ -515,23 +515,16 @@ describe("handleSkillCommand", () => {
     });
   });
 
-  it.each([
-    false,
-    true,
-  ])("exact matchのcapture-only channel/threadの/skillを拒否する (thread=%s)", async (isThread) => {
-    mocks.findGroupByChannelId.mockImplementation(async (id) => ({
+  it("capture-only shared channelの/skillを拒否する", async () => {
+    mocks.findGroupByChannelId.mockResolvedValue({
       group: { name: "main" },
       channel: {
-        channelId: id,
-        sessionMode: isThread ? "thread" : "shared",
-        agentMode: id === "channel-1" ? "capture-only" : "normal",
+        channelId: "channel-1",
+        sessionMode: "shared",
+        agentMode: "capture-only",
       },
-    }));
-    const interaction = makeSkillInteraction({
-      skill: "session-logs",
-      isThread,
-      parentId: isThread ? "parent-channel" : null,
     });
+    const interaction = makeSkillInteraction({ skill: "session-logs" });
 
     await handleSkillCommand(interaction as never);
 
@@ -541,14 +534,14 @@ describe("handleSkillCommand", () => {
     });
   });
 
-  it("allows /skill in a child thread of a capture-only auto-thread parent", async () => {
+  it("keeps the shared channel /skill routing restriction in child threads", async () => {
     mocks.findGroupByChannelId.mockImplementation(async (id) =>
       id === "parent-channel"
         ? {
             group: { name: "main" },
             channel: {
               channelId: id,
-              sessionMode: "auto-thread",
+              sessionMode: "shared",
               agentMode: "capture-only",
             },
           }
@@ -560,15 +553,10 @@ describe("handleSkillCommand", () => {
       parentId: "parent-channel",
     });
     await handleSkillCommand(interaction as never);
-    expect(mocks.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channelId: "thread-1",
-        routingChannelId: "parent-channel",
-        sessionId: "thread-1",
-      }),
-    );
+    expect(mocks.findGroupByChannelId.mock.calls).toEqual([["parent-channel"]]);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "スキル「session-logs」の実行を受け付けました。",
+      content: "このコマンドは親チャンネルで実行してください。",
     });
   });
 

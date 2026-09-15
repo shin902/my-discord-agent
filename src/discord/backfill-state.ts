@@ -26,7 +26,7 @@ export function finishDiscordChannelBackfill(
   if (completed) pendingBackfills.delete(channelId);
 }
 
-/** Captures must not pass older history from this root or any of its threads. */
+/** Live captures must wait for older history from the same shared channel. */
 export async function waitForDiscordChannelBackfill(
   channelId: string,
 ): Promise<boolean> {

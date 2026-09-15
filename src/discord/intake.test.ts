@@ -362,7 +362,7 @@ describe("ingestDiscordMessage", () => {
       group: { name: "group" },
       channel: {
         channelId: "root-1",
-        sessionMode: "auto-thread",
+        sessionMode: "shared",
         agentMode: "capture-only",
         allowedWebhookIds: ["allowed"],
       },
@@ -400,7 +400,7 @@ describe("ingestDiscordMessage", () => {
       source: "live",
     });
     await vi.waitFor(() => expect(mocks.appendMessage).toHaveBeenCalledOnce());
-    expect(mocks.hasSessionSource).toHaveBeenCalledOnce();
+    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     rejectFirst(new Error("disk full"));
     await firstResult;
     expect((await second).status).toBe("captured");

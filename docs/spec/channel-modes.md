@@ -21,7 +21,7 @@ Slash command は通常メッセージの取り込み経路を通らないため
 | 値 | 通常の人間messageの処理 |
 |---|---|
 | `normal`（未指定時） | 既存のtriggerに従ってenqueue → Agent run → response |
-| `capture-only` | 同じcanonical sessionの `sessions.sqlite` にraw user entryをappendして終了 |
+| `capture-only` | `shared` 限定。設定したchannel IDをsession IDとして、canonical `sessions.sqlite` にraw user entryをappendして終了 |
 
 ```json
 {
@@ -31,15 +31,15 @@ Slash command は通常メッセージの取り込み経路を通らないため
 }
 ```
 
-`agentMode` は投稿先のchannel/thread IDと設定の `channelId` が完全一致する場合だけ適用し、親channelから子threadへ継承しない。exact matchがない場合は `normal` とする。`sessionMode`・`requiredMention` 等の親channelによるrouting/trigger解決とは分離する。
+`capture-only` は **`sessionMode: shared` とだけ併用可能**。`thread` / `auto-thread` / `email-mode` との併用は、起動時のconfig validationで `agentMode: capture-only requires sessionMode: shared` として拒否する。
 
-`capture-only` は通常の人間の投稿・返信を、`requiredMention` に関係なく保存する。本文・添付URL・既存timestamp/source provenanceを保持し、queue job、Agent Runner、provider、tool/subagent、assistant response、progress/placeholderは発生させない。bot/Webhook投稿やsystem messageは保存もenqueueもしない。group担当Botの認可と `sessionMode` の対象範囲は維持する。`auto-thread` の親投稿は既存のsession routingどおりthreadを作成・再利用するが、応答messageは送らない。
+`capture-only` は設定したshared channelそのものの通常の人間の投稿・返信を、`requiredMention` に関係なく保存する。本文・添付URL・既存timestamp/source provenanceを保持し、queue job、Agent Runner、provider、tool/subagent、assistant response、progress/placeholder、thread作成は発生させない。bot/Webhook投稿やsystem messageは保存もenqueueもしない。group担当Botの認可は維持する。
 
-`auto-thread` の親がcapture-onlyでも、子threadの投稿はそのthread IDにcapture-onlyが明示されていなければ通常処理する。親・子を横断するcapture serializationは行わない。
+配下threadのmessageはsharedの既存routingどおり無視し、capture対象にしない。thread routingやthread IDによるcapture設定はサポートしない。
 
-`/skill` も実行先channel/thread IDのexact matchでcapture-onlyの場合だけ拒否する。独立したBot Task Sessionを使う `/bot` や他の独立sessionは制限しない。
+`/skill` はcapture-onlyのshared channelで拒否する。配下threadではsharedの既存command routing制約を維持する。独立したBot Task Sessionを使う `/bot` や他の独立sessionは制限しない。
 
-起動時backfillとlive captureは同じroot channelの復旧完了境界を使う。live captureはそのrootと配下threadの古いbackfillを待ち、その後は同じ投稿先channel/thread ID内のlive到着順に保存する。他channelのlive captureや通常channelのenqueueは待たせない。backfill失敗・不完全時はlive captureも保存せず、エラーをhost logへ残してcursorを維持する。Discordへ失敗応答は送らず、権限等を修正して再起動した際のbackfillで復旧する。既存の初回起動時のcursor初期化方針（過去履歴を遡らない）は変更しない。
+live captureはそのshared channelのstartup backfill完了を待ち、その後は同じchannel内のlive到着順に保存する。他channelのlive captureや通常channelのenqueueは待たせない。backfill失敗・不完全時はlive captureも保存せず、エラーをhost logへ残してcursorを維持する。Discordへ失敗応答は送らず、権限等を修正して再起動した際のbackfillで復旧する。既存の初回起動時のcursor初期化方針（過去履歴を遡らない）は変更しない。
 
 設定はchannel configだけが正本で、session単位のruntime切替はない。後にconfigをnormalへ変更して再起動すれば、同じsessionのAgentは保存済みraw historyを利用できる。既存jobを設定変更で停止・取り消すことはないため、通常channelをcapture-onlyへ変更する運用では、そのsessionの既存workを完了させてから再起動する。
 

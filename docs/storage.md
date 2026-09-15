@@ -68,7 +68,7 @@ runtime DBはWALを使用します。稼働中にmain fileだけをコピーし�
 
 ## Session trajectory
 
-session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityとAgent初回bootstrapの完了状態を管理し、`session_entries`へメッセージをappendする。channel configの `agentMode: capture-only` ではeligibleな人間messageを同じtrajectoryへ保存するだけでqueueやAgentを起動しない。応答方針の正本は [channel config](spec/channel-modes.md#agentmode) のみであり、session DBにmode stateは持たない。
+session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityとAgent初回bootstrapの完了状態を管理し、`session_entries`へメッセージをappendする。channel configの `agentMode: capture-only` は `sessionMode: shared` 限定で、eligibleな人間messageを設定したchannel IDのsession trajectoryへ保存するだけでqueueやAgentを起動しない。threadは作成も記録もしない。応答方針の正本は [channel config](spec/channel-modes.md#agentmode) のみであり、session DBにmode stateは持たない。
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
