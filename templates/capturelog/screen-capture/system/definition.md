@@ -17,6 +17,15 @@ Keep both lean: headlines and pointers here, detail in linked files.
 Core Memory in the index should only hold durable facts relevant in nearly every conversation;
 behavior, role, and persona belong in `/workspace/AGENTS.md`.
 
+## Capture Log
+
+Capture Log keeps chronological records that can be revisited later:
+
+- `capturelog/YYYY-MM/YYYY-MM-DD.md` records observed screen activity for each day.
+- `capturelog/diary/YYYY-MM-DD.md` records first-person reflections, feelings, insights, and difficulties.
+
+Keep observed activity factual and concise. Keep subjective reflection in the diary instead of presenting it as observed fact. Update an existing entry when new material continues the same activity or reflection, and avoid duplicate entries.
+
 ## Open Knowledge Format
 
 The `capturelog/` directory follows the Open Knowledge Format (OKF): a simple
