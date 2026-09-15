@@ -147,6 +147,13 @@ describe("static capture-only Discord ingestion", () => {
   ] as const)("captures raw human messages once using %s session routing, including normal-config replay", async (sessionMode) => {
     channel.sessionMode = sessionMode;
     const isThread = sessionMode === "thread" || sessionMode === "email-mode";
+    if (isThread) {
+      mocks.findGroup.mockImplementation(async (id) => ({
+        group,
+        channel:
+          id === "thread" ? { ...channel, channelId: "thread" } : channel,
+      }));
+    }
     const input = message("1001", isThread);
     const enqueue = vi.spyOn(repo, "enqueue");
     await live(input);
@@ -176,6 +183,60 @@ describe("static capture-only Discord ingestion", () => {
     ).toEqual([{ kind: "discord", sourceId: "1001" }]);
     db.close();
     expect(enqueue).not.toHaveBeenCalled();
+    expectNoRunsOrResponses(input);
+  });
+
+  it.each([
+    "live",
+    "backfill",
+  ] as const)("does not inherit auto-thread parent capture mode during %s ingestion", async (source) => {
+    channel.sessionMode = "auto-thread";
+    channel.requiredMention = false;
+    const parent = message("1001");
+    const child = message("1002", true);
+    expect((await ingest(parent, { source })).status).toBe("captured");
+    expect((await ingest(child, { source })).status).toBe("enqueued");
+    expect(await session.loadMessages(group.name, "thread")).toEqual([
+      { role: "user", content: "raw 1001", timestamp: 1001 },
+    ]);
+    expect(repo.findByIdempotencyKey("discord-message:1002")).toMatchObject({
+      channelId: "thread",
+      routingChannelId: "root",
+      sessionId: "thread",
+    });
+    expect(child.startThread).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "live",
+    "backfill",
+  ] as const)("captures an explicitly configured thread without changing parent routing during %s ingestion", async (source) => {
+    channel.sessionMode = "thread";
+    channel.agentMode = "normal";
+    mocks.findGroup.mockImplementation(async (id) => ({
+      group,
+      channel:
+        id === "thread"
+          ? {
+              channelId: "thread",
+              sessionMode: "shared",
+              agentMode: "capture-only",
+            }
+          : channel,
+    }));
+    const input = message("1001", true);
+    expect((await ingest(input, { source })).status).toBe("captured");
+    expect(await session.loadMessages(group.name, "thread")).toEqual([
+      { role: "user", content: "raw 1001", timestamp: 1001 },
+    ]);
+    expectNoRunsOrResponses(input);
+  });
+
+  it("keeps the parent mention requirement for an unconfigured child thread", async () => {
+    channel.sessionMode = "auto-thread";
+    const input = message("1001", true);
+    expect((await ingest(input, { source: "live" })).status).toBe("ignored");
+    expect(await session.loadMessages(group.name, "thread")).toEqual([]);
     expectNoRunsOrResponses(input);
   });
 
@@ -216,6 +277,10 @@ describe("static capture-only Discord ingestion", () => {
     true,
   ])("orders paginated backfill before racing live messages (thread=%s)", async (isThread) => {
     channel.sessionMode = isThread ? "thread" : "shared";
+    mocks.findGroup.mockImplementation(async (id) => ({
+      group,
+      channel: id === "thread" ? { ...channel, channelId: "thread" } : channel,
+    }));
     repo.upsertDiscordCursor("root", "1000");
     let releaseFirst!: (value: ReturnType<typeof page>) => void;
     let releaseLast!: (value: ReturnType<typeof page>) => void;
@@ -246,7 +311,11 @@ describe("static capture-only Discord ingestion", () => {
               agentMode: "capture-only",
             },
           }
-        : { group, channel },
+        : {
+            group,
+            channel:
+              id === "thread" ? { ...channel, channelId: "thread" } : channel,
+          },
     );
     const other = message("2000");
     Object.assign(other, { channelId: "other" });

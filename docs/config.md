@@ -187,7 +187,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
 | `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
-| `agentMode` | — | channel限定の静的設定。`normal`（未指定時）は通常enqueue、`capture-only` はeligibleな人間messageを同じsessionへ記録するだけ。`sessionMode` のroutingとは別軸。変更は再起動で反映 |
+| `agentMode` | — | channel限定の静的設定。`normal`（未指定時）は通常enqueue、`capture-only` はeligibleな人間messageを同じsessionへ記録するだけ。投稿先channel/thread IDとのexact match限定で、親から子threadへ継承しない。`sessionMode` のroutingとは別軸。変更は再起動で反映 |
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`agentMode: normal` で `true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |

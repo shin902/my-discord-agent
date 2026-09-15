@@ -148,7 +148,12 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  const captureOnly = (match.channel.agentMode ?? "normal") === "capture-only";
+  // Agent mode is exact-ID only; session routing still uses the parent.
+  const exactMatch =
+    message.channelId === lookupId
+      ? match
+      : await findGroupByChannelId(message.channelId);
+  const captureOnly = exactMatch?.channel.agentMode === "capture-only";
   const isHumanMessage =
     !message.author.bot &&
     (message.type === MessageType.Default ||

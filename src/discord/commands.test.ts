@@ -518,19 +518,19 @@ describe("handleSkillCommand", () => {
   it.each([
     false,
     true,
-  ])("capture-only channelの/skillを拒否する (thread=%s)", async (isThread) => {
-    mocks.findGroupByChannelId.mockResolvedValue({
+  ])("exact matchのcapture-only channel/threadの/skillを拒否する (thread=%s)", async (isThread) => {
+    mocks.findGroupByChannelId.mockImplementation(async (id) => ({
       group: { name: "main" },
       channel: {
-        channelId: "channel-1",
+        channelId: id,
         sessionMode: isThread ? "thread" : "shared",
-        agentMode: "capture-only",
+        agentMode: id === "channel-1" ? "capture-only" : "normal",
       },
-    });
+    }));
     const interaction = makeSkillInteraction({
       skill: "session-logs",
       isThread,
-      parentId: isThread ? "channel-1" : null,
+      parentId: isThread ? "parent-channel" : null,
     });
 
     await handleSkillCommand(interaction as never);
@@ -538,6 +538,37 @@ describe("handleSkillCommand", () => {
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(interaction.editReply).toHaveBeenCalledWith({
       content: "記録専用モード中はスキルを実行できません。",
+    });
+  });
+
+  it("allows /skill in a child thread of a capture-only auto-thread parent", async () => {
+    mocks.findGroupByChannelId.mockImplementation(async (id) =>
+      id === "parent-channel"
+        ? {
+            group: { name: "main" },
+            channel: {
+              channelId: id,
+              sessionMode: "auto-thread",
+              agentMode: "capture-only",
+            },
+          }
+        : null,
+    );
+    const interaction = makeSkillInteraction({
+      channelId: "thread-1",
+      isThread: true,
+      parentId: "parent-channel",
+    });
+    await handleSkillCommand(interaction as never);
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "thread-1",
+        routingChannelId: "parent-channel",
+        sessionId: "thread-1",
+      }),
+    );
+    expect(interaction.editReply).toHaveBeenCalledWith({
+      content: "スキル「session-logs」の実行を受け付けました。",
     });
   });
 
