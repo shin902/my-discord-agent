@@ -6,7 +6,7 @@ Mac screencapture → HTTPS / Tailscale Serve → localhost receiver
   → cron → logbook Agentが全画像を一括確認 → Activity Memoryへ差分統合
 ```
 
-PNGを収集し、指定AgentGroupのfile memoryへ画面活動の差分を統合します。Discord配送、検索UI、Project Memoryへの昇格、PII分類は行いません。receiverとcronはそれぞれ既定で無効です。実設定やTailscaleの構成は自動変更しません。
+PNGを収集し、指定AgentGroupの`capturelog`へ画面活動の差分を統合します。Discord配送、検索UI、Project Memoryへの昇格、PII分類は行いません。receiverとcronはそれぞれ既定で無効です。実設定やTailscaleの構成は自動変更しません。
 
 ## Bot PCの受信設定
 
@@ -68,7 +68,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## cronによるActivity Memory更新
 
-cron開始時点の未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像を`settings.limit`件まで採用します（hostに`magick`コマンドが必要です）。実行中に届いた画像は次回のcronで処理します。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を1回の通常LLM実行へ直接添付します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
+cron開始時点の未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像を`settings.limit`件まで採用します（hostに`magick`コマンドが必要です）。実行中に届いた画像は次回のcronで処理します。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を1回の通常LLM実行へ直接添付します。通常LLMは既存`capturelog`を読み、差分だけを追記します。`capturelog`更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
 
 画像にはpassword、token、個人情報などが含まれ得ます。自動マスキングはありません。`summarize`では画像全体を`settings.visionModel`のproviderへ、`direct`ではMemory更新用の通常modelのproviderへ送信するため、**収集対象と両modeで利用するproviderを確認してから**有効化してください。
 
@@ -97,13 +97,13 @@ cron開始時点の未完了画像を古い順に走査し、直前に採用し�
 - `settings.concurrency`はVLM worker数（1–16、既定4）です。`providers.json`の既存provider concurrencyが`serial`なら実際の呼び出しは直列になります。
 - `settings.limit`は1回に採用する画像数（1以上、既定10）です。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
 - screen-capture固有のtimeoutはありません。Agent実行には共通のAgent Runner timeoutが適用されます。実用上はresize済み画像を20〜数十枚程度扱うbest-effort運用を想定し、任意枚数の処理完了は保証しません。
-- VLM失敗画像は未完了で残り、成功済みsummaryは再利用されます。通常LLM成功後・DB更新前に停止した場合は再実行されるため、既存memoryとの差分だけを反映するよう指示します。
+- VLM失敗画像は未完了で残り、成功済みsummaryは再利用されます。通常LLM成功後・DB更新前に停止した場合は再実行されるため、既存`capturelog`との差分だけを反映するよう指示します。
 - ImageMagickがdecodeできない画像は`accepted = 0`で完了にして後続画像を処理します。`magick` executable不在などjob全体の実行環境エラーは画像不正として完了させず、jobを失敗させます。
 - 同一jobのtick重複はcron runnerが抑止します。同じscreen-capture DBを処理するhandlerは1 process内の1 jobだけに設定してください。別IDのjobや別processを含む複数consumerはサポートしません。変更反映にはBot再起動が必要です。
 
 ### 参考Memoryテンプレート
 
-[`templates/memory/screen-capture/`](../templates/memory/screen-capture/)に、画面活動を`memory/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。まだ実運用で十分に検証された推奨設定ではないため、既存memoryへ一括上書きせず、必要な`index.md`と`system/screen-activity-memory.md`の内容を確認して取り込んでください。
+[`templates/capturelog/screen-capture/`](../templates/capturelog/screen-capture/)に、画面活動を`capturelog/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。まだ実運用で十分に検証された推奨設定ではないため、既存`capturelog`へ一括上書きせず、必要な`index.md`と`system/screen-activity-memory.md`の内容を確認して取り込んでください。
 
 このテンプレートは画面Activity Memoryへ特化しています。通常の汎用memoryとして使う場合は、日次ログをそのまま常時contextへ入れるのではなく、別途コンパクトなsummary/indexへ統合する運用が必要です。
 
