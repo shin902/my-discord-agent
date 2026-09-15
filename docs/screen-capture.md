@@ -103,7 +103,7 @@ cron開始時点の未完了画像を古い順に走査し、直前に採用し�
 
 ### 参考Memoryテンプレート
 
-[`templates/memory/screen-capture/`](../templates/memory/screen-capture/)に、画面活動を`memory/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。まだ実運用で十分に検証された推奨設定ではないため、既存memoryへ一括上書きせず、必要な`index.md`と`system/screen-activity-memory.md`の内容を確認して取り込んでください。
+[`templates/capturelog/screen-capture/`](../templates/capturelog/screen-capture/)に、画面活動を`memory/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。まだ実運用で十分に検証された推奨設定ではないため、既存memoryへ一括上書きせず、必要な`index.md`と`system/screen-activity-memory.md`の内容を確認して取り込んでください。
 
 このテンプレートは画面Activity Memoryへ特化しています。通常の汎用memoryとして使う場合は、日次ログをそのまま常時contextへ入れるのではなく、別途コンパクトなsummary/indexへ統合する運用が必要です。
 
