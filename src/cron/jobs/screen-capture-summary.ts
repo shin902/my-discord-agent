@@ -23,16 +23,12 @@ import type { CronContext } from "../runner.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SIMILARITY_THRESHOLD = 0.8;
-const CommonSettings = {
-  limit: z.number().int().min(1).default(10),
-};
 const Settings = z.union([
-  z.strictObject({ mode: z.literal("direct"), ...CommonSettings }),
+  z.strictObject({ mode: z.literal("direct") }),
   z.strictObject({
     mode: z.literal("summarize").default("summarize"),
     visionModel: ModelConfigSchema,
     concurrency: z.number().int().min(1).max(16).default(4),
-    ...CommonSettings,
   }),
 ]);
 
@@ -42,6 +38,8 @@ type Capture = {
   received_at: string;
   summary: string | null;
 };
+
+type SelectedCapture = Omit<Capture, "image">;
 
 class InvalidCaptureError extends Error {}
 
@@ -113,7 +111,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
     throw new NonRetryableError(
       "screen-capture-summary requires valid settings and groupName",
     );
-  const { limit } = parsed.data;
   const groupName = ctx.groupName;
   const agentConfig = pickAgentConfig(ctx);
   const agentOptions =
@@ -179,21 +176,21 @@ export default async function handler(ctx: CronContext): Promise<void> {
       }
     }
     let cursor = { received_at: "", id: "" };
-    const selected: Capture[] = [];
+    const selected: SelectedCapture[] = [];
     const rejectedIds: string[] = [];
     let invalidCount = 0;
     const completeInvalid = db.prepare(
       "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
     );
 
-    while (selected.length < limit) {
+    while (true) {
       const capture = nextCapture.get(
         cursor.received_at,
         cursor.received_at,
         cursor.id,
       ) as Capture | undefined;
       if (!capture) break;
-      cursor = capture;
+      cursor = { received_at: capture.received_at, id: capture.id };
 
       try {
         const imagePath = await writeCapture(directory, capture);
@@ -201,7 +198,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
           ? (await similarity(reference, imagePath)) < SIMILARITY_THRESHOLD
           : true;
         if (accepted) {
-          selected.push(capture);
+          selected.push({
+            id: capture.id,
+            received_at: capture.received_at,
+            summary: capture.summary,
+          });
           reference = imagePath;
         } else {
           rejectedIds.push(capture.id);

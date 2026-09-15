@@ -349,6 +349,40 @@ describe("runAgentLoop", () => {
     });
   });
 
+  it("accepts and loads more than 10 image paths", async () => {
+    const imagePaths = Array.from(
+      { length: 12 },
+      (_, index) => `/workspace/image-${index}.png`,
+    );
+    vi.mocked(readFile).mockResolvedValue(Buffer.from("image"));
+
+    await runAgentLoop(
+      "test-group",
+      "session-1",
+      "images",
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      imagePaths,
+    );
+
+    expect(
+      vi
+        .mocked(readFile)
+        .mock.calls.filter(([file]) => imagePaths.includes(String(file))),
+    ).toHaveLength(12);
+    const agent = AgentMock.mock.results[0]?.value as {
+      prompt: ReturnType<typeof vi.fn>;
+    };
+    expect(agent.prompt.mock.calls[0][0][0].content).toHaveLength(13);
+  });
+
   it("既存のsession-time-anchorを再利用してsystem promptに固定する", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-11T12:34:56.789Z"));

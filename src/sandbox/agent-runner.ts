@@ -573,13 +573,14 @@ export async function runAgentLoop(
   // （session trajectory上で「何を打ったか」と「LLMに渡った指示」を区別できるようにするため）。
   let promptInput: string | AgentMessage[] = content;
   if (imagePaths?.length) {
-    const images: ImageContent[] = await Promise.all(
-      imagePaths.map(async (imagePath) => ({
+    const images: ImageContent[] = [];
+    for (const imagePath of imagePaths) {
+      images.push({
         type: "image",
         data: (await readFile(imagePath)).toString("base64"),
         mimeType: "image/png",
-      })),
-    );
+      });
+    }
     promptInput = [
       {
         role: "user",

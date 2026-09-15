@@ -93,7 +93,7 @@ const ctx = {
   groupName: "logbook",
   handler: "jobs/screen-capture-summary.ts",
   ...agentConfig,
-  settings: { visionModel, concurrency: 2, limit: 10 },
+  settings: { visionModel, concurrency: 2 },
 } as CronContext;
 const model = getModel("openai", "gpt-4o-mini");
 
@@ -163,7 +163,11 @@ describe("screen capture summary cron", () => {
         const id = randomUUID();
         db.prepare(
           "INSERT INTO screen_captures (id, image, received_at) VALUES (?, ?, ?)",
-        ).run(id, Buffer.from(`image-${index}`), `2026-09-12T00:00:0${index}Z`);
+        ).run(
+          id,
+          Buffer.from(`image-${index}`),
+          `2026-09-12T00:00:${String(index).padStart(2, "0")}Z`,
+        );
         return id;
       });
     } finally {
@@ -189,13 +193,16 @@ describe("screen capture summary cron", () => {
     }
   }
 
-  it("accepts a limit above 10", async () => {
+  it.each([
+    "limit",
+    "timeoutMs",
+  ])("rejects removed settings.%s configuration", async (setting) => {
     await expect(
       handler({
         ...ctx,
-        settings: { visionModel, concurrency: 2, limit: 30 },
+        settings: { visionModel, concurrency: 2, [setting]: 10 },
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("requires valid settings and groupName");
   });
 
   it("summarizes images with settings.visionModel then gives text to the memory model", async () => {
@@ -236,18 +243,12 @@ describe("screen capture summary cron", () => {
     expect(rows()[0].completed_at).not.toBeNull();
   });
 
-  it("stops fetching captures when the accepted limit is reached", async () => {
-    const ids = insert(3);
-    await handler({
-      ...ctx,
-      settings: { visionModel, concurrency: 2, limit: 2 },
-    });
+  it("processes every pending capture in the current run", async () => {
+    insert(12);
+    await handler(ctx);
 
-    expect(completeSimple).toHaveBeenCalledTimes(2);
-    expect(rows().find((row) => row.id === ids[2])).toMatchObject({
-      summary: null,
-      completed_at: null,
-    });
+    expect(completeSimple).toHaveBeenCalledTimes(12);
+    expect(rows().every((row) => row.completed_at)).toBe(true);
   });
 
   it("accepts ImageMagick exit 1 when comparison returns a valid SSIM", async () => {
@@ -354,8 +355,8 @@ describe("screen capture summary cron", () => {
     );
   });
 
-  it("locks the effective memory provider around direct-mode agent calls", async () => {
-    const ids = insert(2);
+  it("passes more than 10 images to one locked direct-mode agent call", async () => {
+    const ids = insert(12);
     const release = vi.fn();
     vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
     vi.mocked(acquireLlmLock).mockResolvedValue(release);
@@ -373,7 +374,7 @@ describe("screen capture summary cron", () => {
     });
     await handler({
       ...ctx,
-      settings: { mode: "direct", limit: 10 },
+      settings: { mode: "direct" },
     });
 
     expect(completeSimple).not.toHaveBeenCalled();
@@ -412,7 +413,7 @@ describe("screen capture summary cron", () => {
       skills: undefined,
       mounts: undefined,
       contextFiles: undefined,
-      settings: { mode: "direct", limit: 10 },
+      settings: { mode: "direct" },
     });
 
     expect(vi.mocked(sendMessage).mock.calls[0][3]).not.toHaveProperty(
@@ -425,7 +426,7 @@ describe("screen capture summary cron", () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("agent failed"));
 
     await expect(
-      handler({ ...ctx, settings: { mode: "direct", limit: 10 } }),
+      handler({ ...ctx, settings: { mode: "direct" } }),
     ).rejects.toThrow("agent failed");
     expect(rows()[0].completed_at).toBeNull();
   });
@@ -435,7 +436,7 @@ describe("screen capture summary cron", () => {
       "requires valid settings and groupName",
     );
     await expect(
-      handler({ ...ctx, settings: { mode: "direct", limit: 0 } }),
+      handler({ ...ctx, settings: { mode: "direct", timeoutMs: 1 } }),
     ).rejects.toThrow("requires valid settings and groupName");
     expect(completeSimple).not.toHaveBeenCalled();
   });
