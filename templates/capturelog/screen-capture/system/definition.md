@@ -6,11 +6,11 @@ type: system
 
 This file defines how your persistent memory works, and it is yours to improve.
 Only the portable file contract below and two loaded paths are fixed:
-`memory/index.md` and this file at `memory/system/definition.md`. The folders,
+`capturelog/index.md` and this file at `capturelog/system/definition.md`. The folders,
 prose organization, and other guidance are yours to reshape if a different
 shape would remember or retrieve better.
 
-`memory/index.md` and this definition are loaded whenever a context window is
+`capturelog/index.md` and this definition are loaded whenever a context window is
 created: at startup.Updates made during the same session are not automatically re-injected.
 Re-read the workspace files explicitly when you need their latest contents.
 Keep both lean: headlines and pointers here, detail in linked files.
@@ -19,7 +19,7 @@ behavior, role, and persona belong in `/workspace/AGENTS.md`.
 
 ## Open Knowledge Format
 
-The `memory/` directory follows the Open Knowledge Format (OKF): a simple
+The `capturelog/` directory follows the Open Knowledge Format (OKF): a simple
 convention for portable agent memory that any agent or tool can read and
 edit. One Markdown concept per file, with YAML frontmatter containing a
 `type`; `index.md` and `log.md` are reserved and do not need a type. The root
