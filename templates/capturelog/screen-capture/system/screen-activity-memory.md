@@ -47,4 +47,4 @@ Keep all activity sections ordered chronologically by their start time.
 
 Do not rewrite older unrelated activity.
 
-Do not modify `capturelog/index.md` or `capturelog/system/definition.md` during normal 5-minute processing.
+Do not modify `memory/index.md` or `memory/system/definition.md` during normal 5-minute processing.
