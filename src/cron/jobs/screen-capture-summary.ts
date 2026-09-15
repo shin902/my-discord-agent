@@ -24,7 +24,6 @@ import type { CronContext } from "../runner.js";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SIMILARITY_THRESHOLD = 0.8;
 const CommonSettings = {
-  timeoutMs: z.number().int().min(1).default(120_000),
   limit: z.number().int().min(1).default(10),
 };
 const Settings = z.union([
@@ -114,7 +113,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     throw new NonRetryableError(
       "screen-capture-summary requires valid settings and groupName",
     );
-  const { timeoutMs, limit } = parsed.data;
+  const { limit } = parsed.data;
   const groupName = ctx.groupName;
   const agentConfig = pickAgentConfig(ctx);
   const agentOptions =
@@ -132,19 +131,16 @@ export default async function handler(ctx: CronContext): Promise<void> {
     content: string,
     options: Omit<
       NonNullable<Parameters<typeof sendMessage>[3]>,
-      "signal" | "heldLlmProvider"
+      "heldLlmProvider"
     >,
   ) => {
-    const signal = AbortSignal.timeout(timeoutMs);
     const release = await acquireLlmLock(
       memoryModel.provider,
       memoryConcurrency,
-      signal,
     );
     try {
       return await sendMessage(groupName, sessionId, content, {
         ...options,
-        signal,
         heldLlmProvider:
           memoryConcurrency === "serial" ? memoryModel.provider : undefined,
       });
@@ -306,11 +302,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
               const capture = pending[next++];
               let summary: string;
               try {
-                const signal = AbortSignal.timeout(timeoutMs);
                 const release = await acquireLlmLock(
                   visionModel.provider,
                   policy,
-                  signal,
                 );
                 try {
                   const image = await readFile(
@@ -341,7 +335,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
                     },
                     {
                       apiKey,
-                      signal,
                       maxTokens: Math.min(2048, model.maxTokens),
                       reasoning:
                         visionModel.thinkingLevel === "off"
@@ -354,11 +347,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
                     .map((part) => part.text)
                     .join("\n")
                     .trim();
-                  if (
-                    signal.aborted ||
-                    result.stopReason !== "stop" ||
-                    !summary
-                  )
+                  if (result.stopReason !== "stop" || !summary)
                     throw new Error("Incomplete or empty summary");
                 } finally {
                   release();

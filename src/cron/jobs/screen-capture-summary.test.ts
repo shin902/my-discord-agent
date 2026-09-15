@@ -373,7 +373,7 @@ describe("screen capture summary cron", () => {
     });
     await handler({
       ...ctx,
-      settings: { mode: "direct", timeoutMs: 120_000, limit: 10 },
+      settings: { mode: "direct", limit: 10 },
     });
 
     expect(completeSimple).not.toHaveBeenCalled();
@@ -390,11 +390,7 @@ describe("screen capture summary cron", () => {
     expect(resolveProviderConcurrency).toHaveBeenCalledWith(
       memoryModel.provider,
     );
-    expect(acquireLlmLock).toHaveBeenCalledWith(
-      memoryModel.provider,
-      "serial",
-      expect.any(AbortSignal),
-    );
+    expect(acquireLlmLock).toHaveBeenCalledWith(memoryModel.provider, "serial");
     expect(release).toHaveBeenCalledOnce();
     for (const id of ids) {
       await expect(
@@ -438,9 +434,6 @@ describe("screen capture summary cron", () => {
     await expect(handler({ ...ctx, settings: {} })).rejects.toThrow(
       "requires valid settings and groupName",
     );
-    await expect(
-      handler({ ...ctx, settings: { mode: "direct", timeoutMs: 0 } }),
-    ).rejects.toThrow("requires valid settings and groupName");
     await expect(
       handler({ ...ctx, settings: { mode: "direct", limit: 0 } }),
     ).rejects.toThrow("requires valid settings and groupName");
