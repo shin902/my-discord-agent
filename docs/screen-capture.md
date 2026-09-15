@@ -103,7 +103,7 @@ cron開始時点の未完了画像を古い順に走査し、直前に採用し�
 
 ### 参考Memoryテンプレート
 
-[`templates/capturelog/screen-capture/`](../templates/capturelog/screen-capture/)に、画面活動を`capturelog/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。`index.md`と`system/`は`memory/`へ取り込み、日次ログだけを`capturelog/`へ保存します。まだ実運用で十分に検証された推奨設定ではないため、既存`memory/`へ一括上書きせず、必要な内容を確認して取り込んでください。
+[`templates/capturelog/`](../templates/capturelog/)に、画面活動を`capturelog/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。配下の`memory/`と`capturelog/`はAgentGroup workspaceへの配置構造をそのまま表します。まだ実運用で十分に検証された推奨設定ではないため、既存ファイルへ一括上書きせず、必要な内容を確認して取り込んでください。
 
 このテンプレートは画面Activity Memoryへ特化しています。通常の汎用memoryとして使う場合は、日次ログをそのまま常時contextへ入れるのではなく、別途コンパクトなsummary/indexへ統合する運用が必要です。
 
