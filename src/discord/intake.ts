@@ -10,12 +10,9 @@ import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
-import {
-  isDiscordChannelBackfillPending,
-  waitForDiscordChannelBackfill,
-} from "./backfill-state.js";
+import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 
-const liveMessageChains = new Map<string, Promise<unknown>>();
+const liveCaptures = new Map<string, Promise<unknown>>();
 
 export type DiscordMessageSource = "live" | "backfill";
 
@@ -50,27 +47,12 @@ export async function ingestDiscordMessage(
     discordBotId?: string;
   },
 ): Promise<DiscordIngestResult> {
-  const run = () =>
-    ingest(message, {
-      source: options.source,
-      replyOnFailure: options.replyOnFailure ?? false,
-      updateLiveCursor: options.source === "live",
-      discordBotId: options.discordBotId,
-    });
-  // Backfill replays sequentially. Live captures wait for their channel scan in
-  // ingest(), then retain callback order even across async channel lookups.
-  if (options.source === "backfill") return run();
-  const next = (liveMessageChains.get(message.channelId) ?? Promise.resolve())
-    .catch(() => undefined)
-    .then(run);
-  liveMessageChains.set(message.channelId, next);
-  try {
-    return await next;
-  } finally {
-    if (liveMessageChains.get(message.channelId) === next) {
-      liveMessageChains.delete(message.channelId);
-    }
-  }
+  return ingest(message, {
+    source: options.source,
+    replyOnFailure: options.replyOnFailure ?? false,
+    updateLiveCursor: options.source === "live",
+    discordBotId: options.discordBotId,
+  });
 }
 
 // URL あり → "{hostname}-{messageId末尾6文字}", URL なし → "thread-{messageId末尾6文字}", 最大100文字
@@ -154,7 +136,10 @@ async function ingest(
     !message.author.bot &&
     (message.type === MessageType.Default ||
       message.type === MessageType.Reply);
-  if (captureOnly && (!isHumanMessage || message.webhookId !== null)) {
+  if (
+    captureOnly &&
+    (options.source !== "live" || !isHumanMessage || message.webhookId !== null)
+  ) {
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
@@ -180,35 +165,32 @@ async function ingest(
       : undefined;
     if (captureOnly && humanSource) {
       const sessionId = match.channel.channelId;
-      if (
-        options.source === "live" &&
-        !(await waitForDiscordChannelBackfill(sessionId))
-      ) {
-        throw new Error(`Discord backfill incomplete: ${sessionId}`);
-      }
       const attachmentLines = [...message.attachments.values()].map(
         (attachment) => `- ${attachment.name}: ${attachment.url}`,
       );
-      // appendMessage deduplicates the source ID in its write transaction.
-      await appendMessage(
-        match.group.name,
-        sessionId,
-        {
-          role: "user",
-          content: attachmentLines.length
-            ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
-            : message.content,
-          timestamp: message.createdAt.getTime(),
-        },
-        humanSource,
-      );
-      const repository = getQueueRepository();
-      if (
-        options.updateLiveCursor &&
-        !isDiscordChannelBackfillPending(sessionId) &&
-        typeof repository.upsertDiscordCursor === "function"
-      ) {
-        repository.upsertDiscordCursor(sessionId, message.id);
+      // Only live captures share this append chain; normal intake never waits.
+      const next = (liveCaptures.get(sessionId) ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() =>
+          appendMessage(
+            match.group.name,
+            sessionId,
+            {
+              role: "user",
+              content: attachmentLines.length
+                ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
+                : message.content,
+              timestamp: message.createdAt.getTime(),
+            },
+            humanSource,
+          ),
+        );
+      liveCaptures.set(sessionId, next);
+      try {
+        await next;
+      } finally {
+        if (liveCaptures.get(sessionId) === next)
+          liveCaptures.delete(sessionId);
       }
       return { status: "captured", cursorScope: sessionId };
     }
@@ -249,6 +231,8 @@ async function ingest(
 
     const repository = getQueueRepository();
     if (
+      options.source === "backfill" &&
+      match.channel.sessionMode === "shared" &&
       humanSource &&
       (await hasSessionSource(match.group.name, sessionId, humanSource))
     ) {
@@ -272,19 +256,7 @@ async function ingest(
       routingChannelId: lookupId,
       sessionId,
       messageId: replyMessageId,
-      ...(!message.author.bot &&
-      (message.type === MessageType.Default ||
-        message.type === MessageType.Reply)
-        ? {
-            source: {
-              kind: "discord" as const,
-              sourceId: message.id,
-              actorId: message.author.id,
-              messageType: message.type,
-              createdAt: message.createdAt.toISOString(),
-            },
-          }
-        : {}),
+      ...(humanSource ? { source: humanSource } : {}),
       content: message.content,
       timestamp: message.createdAt.toISOString(),
       idempotencyKey: `discord-message:${message.id}`,
@@ -304,7 +276,7 @@ async function ingest(
     }
     return { status: "enqueued", cursorScope };
   } catch (error) {
-    // Capture failures stay silent and leave the cursor for recovery.
+    // Live-only capture failures are logged by the handler, never replied to.
     if (captureOnly) throw error;
     if (error instanceof ThreadCreationError) {
       if (options.replyOnFailure) {

@@ -100,25 +100,12 @@ function messageTimestamp(message: Record<string, unknown>): number {
 function initializeSchema(db: Database.Database): void {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
-  // PR-era v5 stores have multiple shapes. Check required fields as well as
-  // the version so an earlier/partially migrated store is not skipped.
-  const sessionColumns = () =>
-    db.pragma("table_info(sessions)") as Array<{ name: string }>;
-  const columns = sessionColumns();
-  if (
-    db.pragma("user_version", { simple: true }) === SCHEMA_VERSION &&
-    columns.some((column) => column.name === "agent_initialized") &&
-    !columns.some((column) => column.name === "mode") &&
-    db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='session_entries_source_identity'",
-      )
-      .get()
-  )
-    return;
+  // Already-current stores need no schema inspection or migration write lock.
+  if (db.pragma("user_version", { simple: true }) === SCHEMA_VERSION) return;
   db.transaction(() => {
     // Another run/container may have migrated while we waited for the lock.
     const version = db.pragma("user_version", { simple: true }) as number;
+    if (version === SCHEMA_VERSION) return;
     if (version > SCHEMA_VERSION) {
       throw new Error(
         `未対応のsession DB schema versionです: ${version} (対応: ${SCHEMA_VERSION})`,
@@ -130,8 +117,7 @@ function initializeSchema(db: Database.Database): void {
           id TEXT PRIMARY KEY,
           kind TEXT NOT NULL DEFAULT 'conversation',
           created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL,
-          agent_initialized INTEGER NOT NULL DEFAULT 0 CHECK (agent_initialized IN (0, 1))
+          updated_at INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS session_entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,9 +155,7 @@ function initializeSchema(db: Database.Database): void {
           json_extract(source_json, '$.sourceId')
         ) WHERE source_json IS NOT NULL;
     `);
-    if (
-      !sessionColumns().some((column) => column.name === "agent_initialized")
-    ) {
+    if (version < 5) {
       // Preserve the old needsContextBootstrap predicate, not run completion:
       // anchors/snapshots alone must still allow the first context bootstrap.
       db.exec(`
@@ -187,9 +171,6 @@ function initializeSchema(db: Database.Database): void {
           )
         );
       `);
-    }
-    if (sessionColumns().some((column) => column.name === "mode")) {
-      db.exec("ALTER TABLE sessions DROP COLUMN mode");
     }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();
@@ -406,8 +387,8 @@ export async function appendMessage(
           if (existing !== undefined) return existing;
         }
         db.prepare(`
-        INSERT INTO sessions(id, created_at, updated_at, agent_initialized)
-        VALUES (?, ?, ?, 0)
+        INSERT INTO sessions(id, created_at, updated_at)
+        VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
       `).run(sessionId, timestamp, timestamp);
         const inserted = db

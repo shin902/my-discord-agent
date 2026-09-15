@@ -14,10 +14,6 @@ const mockCreateDiscordInteractionRouter = vi.hoisted(() =>
       mockHandleSkillCommand(interaction, discordBotId);
   }),
 );
-vi.mock("../agent/session.js", () => ({
-  hasSessionSource: vi.fn().mockResolvedValue(false),
-  appendMessage: vi.fn(),
-}));
 vi.mock("./client.js", () => ({ DEFAULT_DISCORD_BOT_ID: "personal" }));
 vi.mock("./interaction-router.js", () => ({
   createDiscordInteractionRouter: mockCreateDiscordInteractionRouter,

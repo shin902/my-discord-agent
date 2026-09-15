@@ -187,7 +187,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
 | `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
-| `agentMode` | — | channel限定の静的設定。`normal`（未指定時）は通常enqueue。`capture-only` は `sessionMode: shared` 限定で、eligibleな人間messageを設定したchannel IDのsessionへ記録するだけ。thread作成・threadの記録は行わない。変更は再起動で反映 |
+| `agentMode` | — | channel限定の静的設定。`normal`（未指定時）は通常enqueue。`capture-only` はshared限定・live限定で、人間messageをchannel IDのsessionへ記録するだけ。応答・backfill・threadなし。変更は再起動で反映 |
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`agentMode: normal` で `true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |
@@ -204,11 +204,13 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### 起動時Discord履歴バックフィル
 
-設定済みの全チャンネルで、ボット停止中にDiscordへ届いたメッセージを起動時にDiscord APIから取得し、channelの `agentMode` に従って通常のinboxへ投入するか、canonical sessionへ記録する。バックフィルは常に有効で、`MessageCreate` と同じ取り込み処理を通る。capture-onlyのlive取り込みは同じchannelのbackfill完了を待つ。
+通常Agent channelでは、ボット停止中にDiscordへ届いたメッセージを起動時にDiscord APIから取得し、通常のinboxへ投入する。`MessageCreate` と同じ取り込み処理を通る。
+
+capture-onlyはlive `MessageCreate` だけを記録し、backfillしない。起動時にそのchannelの既存cursorを解除し、capture中はcursorを更新しない。normalへ戻した最初の起動では、下記の初回初期化を再利用して現在のtipから開始するため、capture中の停止期間も後からAgent実行されない。
 
 初回起動時は現在の最新メッセージをカーソルとして登録するため、既存履歴を遡らない。以降は `data/runtime.sqlite` の `discord_sync_cursors` に保存したカーソルより後を取得する。既存スレッドの復旧ではアーカイブ済みスレッドも対象に含める。
 
-ライブ受信とバックフィルの両方でDiscordメッセージIDを冪等キーに使うため、起動処理と通常イベントが競合しても二重投入されない。captureではcanonical sessionのsource IDで重複排除し、後にnormal configで再取得しても誤enqueueしない。バックフィルではbot/Webhookメッセージを対象外とし、過去RSSの再処理は行わない。
+ライブ受信とバックフィルの両方でDiscordメッセージIDを冪等キーに使うため、起動処理と通常イベントが競合しても二重投入されない。live captureの重複はcanonical sessionのsource IDで排除する。通常shared channelのbackfillにもsource確認を残し、保存済み入力を誤enqueueしない。バックフィルではbot/Webhookメッセージを対象外とし、過去RSSの再処理は行わない。
 
 `shared` は親チャンネル、`thread` は既存スレッド、`auto-thread` は親メッセージごとのスレッド作成・再利用を対象にする。スレッド作成にはDiscord側のスレッド作成権限、履歴取得にはメッセージ履歴の閲覧権限が必要。
 

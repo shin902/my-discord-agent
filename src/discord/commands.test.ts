@@ -534,32 +534,6 @@ describe("handleSkillCommand", () => {
     });
   });
 
-  it("keeps the shared channel /skill routing restriction in child threads", async () => {
-    mocks.findGroupByChannelId.mockImplementation(async (id) =>
-      id === "parent-channel"
-        ? {
-            group: { name: "main" },
-            channel: {
-              channelId: id,
-              sessionMode: "shared",
-              agentMode: "capture-only",
-            },
-          }
-        : null,
-    );
-    const interaction = makeSkillInteraction({
-      channelId: "thread-1",
-      isThread: true,
-      parentId: "parent-channel",
-    });
-    await handleSkillCommand(interaction as never);
-    expect(mocks.findGroupByChannelId.mock.calls).toEqual([["parent-channel"]]);
-    expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "このコマンドは親チャンネルで実行してください。",
-    });
-  });
-
   it("does not label slash commands as human Discord message sources", async () => {
     const interaction = makeSkillInteraction({ userId: "user-1" });
     await handleSkillCommand(interaction as never);

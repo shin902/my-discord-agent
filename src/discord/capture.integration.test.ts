@@ -56,7 +56,6 @@ beforeAll(async () => {
   registerHandlers(client as never);
   live = client.on.mock.calls.find(([event]) => event === "messageCreate")?.[1];
 });
-
 beforeEach(async () => {
   vi.clearAllMocks();
   const { QueueRepository, openRuntimeDb } = await import(
@@ -75,7 +74,6 @@ beforeEach(async () => {
     id === "root" ? { group, channel } : null,
   );
 });
-
 afterEach(async () => {
   repo.close();
   await rm(path.join(root, "capture"), { recursive: true, force: true });
@@ -100,11 +98,10 @@ function message(id: string, isThread = false): Message {
     client: { user: { id: "bot" } },
     mentions: { users: new Map() },
     reply: vi.fn(),
-    startThread: vi.fn().mockResolvedValue({ id: "thread" }),
-    fetch: vi.fn().mockResolvedValue({ thread: null }),
+    startThread: vi.fn(),
+    fetch: vi.fn(),
   } as unknown as Message;
 }
-
 function page(messages: Message[]) {
   return {
     size: messages.length,
@@ -112,16 +109,6 @@ function page(messages: Message[]) {
     first: () => messages[0],
   };
 }
-
-function historyChannel(fetch: ReturnType<typeof vi.fn>) {
-  return {
-    id: "root",
-    type: ChannelType.GuildText,
-    messages: { fetch },
-    threads: { fetchActive: vi.fn() },
-  };
-}
-
 function expectNoRunsOrResponses(...messages: Message[]) {
   expect(repo.db.prepare("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({
     count: 0,
@@ -137,164 +124,121 @@ function expectNoRunsOrResponses(...messages: Message[]) {
   }
 }
 
-describe("static capture-only Discord ingestion", () => {
-  it("captures raw human messages once in the configured shared channel session, including normal-config replay", async () => {
+describe("shared live-only capture", () => {
+  it("stores raw humans once without mentions or runs, and preserves history after returning to normal", async () => {
     const input = message("1001");
+    const reply = message("1002");
+    Object.assign(reply, {
+      type: MessageType.Reply,
+      attachments: new Map([
+        [
+          "file",
+          { name: "note.txt", url: "https://cdn.discordapp.com/note.txt" },
+        ],
+      ]),
+    });
     const enqueue = vi.spyOn(repo, "enqueue");
+    await Promise.all([live(input), live(reply)]);
     await live(input);
-    const sessionId = channel.channelId;
-    expect(await session.loadMessages(group.name, sessionId)).toEqual([
-      { role: "user", content: "raw 1001", timestamp: 1001 },
-    ]);
-    expect(await session.isSessionAgentInitialized(group.name, sessionId)).toBe(
+    expect(await session.isSessionAgentInitialized(group.name, "root")).toBe(
       false,
     );
-    await ingest(input, { source: "backfill" });
     channel.agentMode = "normal";
     channel.requiredMention = false;
     await ingest(input, { source: "backfill" });
-    expect(await session.loadMessages(group.name, sessionId)).toHaveLength(1);
+    expect(await session.loadMessages(group.name, channel.channelId)).toEqual([
+      { role: "user", content: "raw 1001", timestamp: 1001 },
+      {
+        role: "user",
+        content:
+          "raw 1002\n\n[添付ファイル]\n- note.txt: https://cdn.discordapp.com/note.txt",
+        timestamp: 1002,
+      },
+    ]);
     const db = new Database(path.join(root, group.name, "sessions.sqlite"), {
       readonly: true,
     });
     expect(
       db
-        .prepare(
-          "SELECT json_extract(source_json, '$.kind') AS kind, json_extract(source_json, '$.sourceId') AS sourceId FROM session_entries",
-        )
+        .prepare("SELECT source_json FROM session_entries ORDER BY sequence")
         .all(),
-    ).toEqual([{ kind: "discord", sourceId: "1001" }]);
+    ).toEqual(
+      [input, reply].map((entry) => ({
+        source_json: JSON.stringify({
+          kind: "discord",
+          sourceId: entry.id,
+          actorId: "human",
+          messageType: entry.type,
+          createdAt: entry.createdAt.toISOString(),
+        }),
+      })),
+    );
     db.close();
     expect(enqueue).not.toHaveBeenCalled();
-    expectNoRunsOrResponses(input);
+    expectNoRunsOrResponses(input, reply);
   });
 
-  it.each([
-    "live",
-    "backfill",
-  ] as const)("ignores child thread messages under a shared capture channel without an extra lookup during %s ingestion", async (source) => {
-    channel.requiredMention = false;
-    const input = message("1001", true);
-    expect((await ingest(input, { source })).status).toBe("ignored");
-    expect(mocks.findGroup.mock.calls).toEqual([["root"]]);
+  it("ignores child threads and historical messages without opening the session store", async () => {
+    const child = message("1001", true);
+    const historical = message("1002");
+    expect((await ingest(child, { source: "live" })).status).toBe("ignored");
+    expect((await ingest(historical, { source: "backfill" })).status).toBe(
+      "ignored",
+    );
+    expect(mocks.findGroup.mock.calls).toEqual([["root"], ["root"]]);
     await expect(
       stat(path.join(root, group.name, "sessions.sqlite")),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    expectNoRunsOrResponses(input);
+    expectNoRunsOrResponses(child, historical);
   });
 
-  it("keeps reply text, attachment links and source timestamps as an ordinary user entry", async () => {
-    const input = message("1001");
-    Object.assign(input, {
-      type: MessageType.Reply,
-      content: "reply text",
-      attachments: new Map([
-        [
-          "attachment",
-          { name: "note.txt", url: "https://cdn.discordapp.com/note.txt" },
-        ],
-      ]),
-    });
-    await live(input);
-    expect(await session.loadMessages(group.name, "root")).toEqual([
-      {
-        role: "user",
-        content:
-          "reply text\n\n[添付ファイル]\n- note.txt: https://cdn.discordapp.com/note.txt",
-        timestamp: 1001,
-      },
-    ]);
-    expect(
-      await session.hasSessionSource(group.name, "root", {
-        kind: "discord",
-        sourceId: "1001",
-        actorId: "human",
-        messageType: 19,
-      }),
-    ).toBe(true);
-    expectNoRunsOrResponses(input);
-  });
+  it.each([
+    "absent",
+    "empty",
+    "old",
+  ])("skips capture downtime through normal restart with a %s cursor, then resumes normal backfill", async (state) => {
+    if (state === "empty") repo.initializeDiscordCursor("root");
+    if (state === "old") repo.upsertDiscordCursor("root", "1000");
+    await backfill([group], repo);
+    // No Discord history/channel fetch at all (also works for shared DMs).
+    expect(mocks.fetchChannel).not.toHaveBeenCalled();
+    expect(repo.isDiscordCursorInitialized("root")).toBe(false);
+    const captured = message("1001");
+    await live(captured);
+    expect(repo.getDiscordCursor("root")).toBeUndefined();
+    expectNoRunsOrResponses(captured);
 
-  it("orders shared channel paginated backfill before racing live messages", async () => {
-    repo.upsertDiscordCursor("root", "1000");
-    let releaseFirst!: (value: ReturnType<typeof page>) => void;
-    let releaseLast!: (value: ReturnType<typeof page>) => void;
-    const firstPage = new Promise<ReturnType<typeof page>>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const lastPage = new Promise<ReturnType<typeof page>>((resolve) => {
-      releaseLast = resolve;
-    });
+    // Stop in capture mode, then restart directly in normal mode. 1002 was
+    // posted while stopped: normal's existing first-start tip skips it.
+    channel.agentMode = "normal";
+    channel.requiredMention = false;
     const fetch = vi
       .fn()
-      .mockReturnValueOnce(firstPage)
-      .mockReturnValueOnce(lastPage);
-    const historyRoot = historyChannel(fetch);
-    mocks.fetchChannel.mockResolvedValue(historyRoot);
-    const recovery = backfill([group], repo);
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
-    const b = message("1101");
-    const c = message("1102");
-    const pending = Promise.all([live(b), live(c)]);
-    // Another capture channel must not be held by this root's startup scan.
-    mocks.findGroup.mockImplementation(async (id) =>
-      id === "other"
-        ? {
-            group,
-            channel: {
-              channelId: "other",
-              sessionMode: "shared",
-              agentMode: "capture-only",
-            },
-          }
-        : { group, channel },
-    );
-    const other = message("2000");
-    Object.assign(other, { channelId: "other" });
-    await live(other);
-    expect(await session.loadMessages(group.name, "root")).toEqual([]);
-    expect(await session.loadMessages(group.name, "other")).toHaveLength(1);
-    const older = Array.from({ length: 100 }, (_, index) =>
-      message(String(1001 + index)),
-    );
-    releaseFirst(page(older.reverse()));
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2), {
-      timeout: 5_000,
+      .mockResolvedValueOnce(page([message("1002")]))
+      .mockResolvedValueOnce(page([]));
+    const threads = { fetchActive: vi.fn() };
+    mocks.fetchChannel.mockResolvedValue({
+      id: "root",
+      type: ChannelType.GuildText,
+      messages: { fetch },
+      threads,
     });
-    expect(await session.loadMessages(group.name, "root")).toHaveLength(100);
-    releaseLast(page([b]));
-    await recovery;
-    await pending;
-    const history = await session.loadMessages(group.name, "root");
-    expect(history.map((entry) => entry.timestamp)).toEqual(
-      Array.from({ length: 102 }, (_, index) => 1001 + index),
-    );
-    expect(history.every((entry) => entry.role === "user")).toBe(true);
-    expect(historyRoot.threads.fetchActive).not.toHaveBeenCalled();
-    expectNoRunsOrResponses(...older, b, c, other);
-  });
+    await backfill([group], repo);
+    expect(fetch.mock.calls).toEqual([
+      [{ limit: 1, cache: false }],
+      [{ after: "1002", limit: 100, cache: false }],
+    ]);
+    expect(repo.getDiscordCursor("root")).toBe("1002");
+    expectNoRunsOrResponses(captured);
+    expect(await session.loadMessages(group.name, "root")).toHaveLength(1);
 
-  it("does not let live captures pass failed backfill and recovers them on retry", async () => {
-    repo.upsertDiscordCursor("root", "1000");
-    const fetch = vi.fn().mockRejectedValue(new Error("history unavailable"));
-    mocks.fetchChannel.mockResolvedValue(historyChannel(fetch));
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const recovery = backfill([group], repo);
-      const b = message("1002");
-      await Promise.all([recovery, live(b)]);
-      expect(await session.loadMessages(group.name, "root")).toEqual([]);
-      expect(repo.getDiscordCursor("root")).toBe("1000");
-      fetch.mockResolvedValue(page([message("1001"), b]));
-      await backfill([group], repo);
-      expect(
-        (await session.loadMessages(group.name, "root")).map(
-          (entry) => entry.timestamp,
-        ),
-      ).toEqual([1001, 1002]);
-      expectNoRunsOrResponses(b);
-    } finally {
-      errors.mockRestore();
-    }
+    // A later normal-mode outage still uses the unchanged recovery path.
+    fetch.mockResolvedValueOnce(page([message("1003")]));
+    await backfill([group], repo);
+    expect(repo.findByIdempotencyKey("discord-message:1003")).toMatchObject({
+      sessionId: "root",
+    });
+    expect(repo.getDiscordCursor("root")).toBe("1003");
+    expect(threads.fetchActive).not.toHaveBeenCalled();
   });
 });

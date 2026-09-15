@@ -68,13 +68,15 @@ runtime DBはWALを使用します。稼働中にmain fileだけをコピーし�
 
 ## Session trajectory
 
-session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityとAgent初回bootstrapの完了状態を管理し、`session_entries`へメッセージをappendする。channel configの `agentMode: capture-only` は `sessionMode: shared` 限定で、eligibleな人間messageを設定したchannel IDのsession trajectoryへ保存するだけでqueueやAgentを起動しない。threadは作成も記録もしない。応答方針の正本は [channel config](spec/channel-modes.md#agentmode) のみであり、session DBにmode stateは持たない。
+session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions.sqlite`に保存する。`runtime.sqlite`はqueue・delivery・admission等のControl Plane、session DBはconversation/task trajectoryのData Planeである。session storeはSQLiteのversioned schemaを使い、`sessions`でidentityとAgent初回bootstrapの完了状態を管理し、`session_entries`へメッセージをappendする。channel configの `agentMode: capture-only` は `sessionMode: shared` 限定で、liveの人間messageを設定したchannel IDのsession trajectoryへ保存するだけでqueueやAgentを起動しない。backfill・応答・threadはない。応答方針の正本は [channel config](spec/channel-modes.md#agentmode) のみであり、session DBにmode stateは持たない。
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
 `session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v4ではMemory専用になっていたv3の `execution_json` と検索indexを削除します。v1/v2からも通常sessionアクセス時に現行schemaへ更新し、既存entry ID・本文・sourceを保持します。migrationはwrite lock下でversionを再確認します。
 
-schema v5は `sessions.agent_initialized` とsession / source kind / source IDの検索indexを追加します。初期化列がない既存sessionは旧bootstrap判定をそのまま移行し、non-custom entryまたは `context-bootstrap` / `memory-bootstrap` / `self-bootstrap` があれば初期化済み、それ以外は未初期化にします。空sessionやsystem snapshot / session-time-anchorのみ残る途中失敗sessionは、次回runでcontext bootstrapを実行できます。新規sessionもcaptureだけでは初期化済みにしません。capture-first sessionでも後の初回Agent runで `contextFiles` が注入されます。PR試行版v5はversion番号だけでなくtable/indexの形も確認し、欠けた初期化列・source indexを補ってから不要な `mode` 列を除去します。履歴と既存の明示的初期化状態は保持し、初期化列を追加する場合にだけtrajectoryから上記の初期値を導出します。Agentが完走したかは推測しません。移行後に作る新規sessionは未初期化です。Memory exportはschema v4とv5の両方をread-onlyで読めるため、未アクセスgroupのv4 DBもmigrationなしでexportできます。
+schema v5は `sessions.agent_initialized` とsource identity検索indexを追加します。raw user entryだけではcaptureと通常runの途中失敗を区別できず、`contextFiles` が空でも初回bootstrapの境界が必要なため、初期化booleanを保持します。captureだけでは初期化済みにせず、後の初回Agent runでconfigured `contextFiles` を注入します。
+
+production v4以前からのmigrationは旧bootstrap判定を保持し、non-custom entryまたは `context-bootstrap` / `memory-bootstrap` / `self-bootstrap` があれば初期化済み、それ以外は未初期化にします。空・anchor/snapshotのみのsessionも後からbootstrapできます。entry ID・payload・sourceは変更しません。未mergeのPR試行版v5 shapeのrepairはサポートしません。Memory exportはv4/v5をread-onlyで読み、未アクセスgroupもmigrationせずexportできます。
 
 Discord sourceの `(session_id, source.kind, source.sourceId)` を使って再取得を重複排除します。capture済みmessageは後からnormal configでbackfillしても再append・誤enqueueしません。本文をruntime DBに二重保存したり、captureだけを理由にMemory exportや要約を起動したりはしません。
 

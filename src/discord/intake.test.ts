@@ -124,6 +124,7 @@ describe("ingestDiscordMessage", () => {
 
     expect(result).toMatchObject({ status: "enqueued", cursorScope: "root-1" });
     expect(startThread).toHaveBeenCalledOnce();
+    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     const job = repo.findByIdempotencyKey("discord-message:message-new");
     expect(job).toMatchObject({
       idempotencyKey: "discord-message:message-new",
@@ -315,42 +316,6 @@ describe("ingestDiscordMessage", () => {
     ).toBeUndefined();
   });
 
-  it("capture-onlyでは非mentionの人間messageを保存するがenqueueしない", async () => {
-    mocks.findGroup.mockResolvedValue({
-      group: { name: "group" },
-      channel: {
-        channelId: "root-1",
-        sessionMode: "shared",
-        requiredMention: true,
-        agentMode: "capture-only",
-      },
-    });
-
-    const result = await ingestDiscordMessage(
-      makeMessage({ id: "captured-message" }),
-      { source: "live", replyOnFailure: false },
-    );
-
-    expect(result).toMatchObject({ status: "captured" });
-    expect(mocks.appendMessage).toHaveBeenCalledWith(
-      "group",
-      "root-1",
-      {
-        role: "user",
-        content: "hello",
-        timestamp: new Date("2026-08-11T00:00:00.000Z").getTime(),
-      },
-      expect.objectContaining({
-        kind: "discord",
-        sourceId: "captured-message",
-        actorId: "user-id",
-      }),
-    );
-    expect(
-      repo.findByIdempotencyKey("discord-message:captured-message"),
-    ).toBeUndefined();
-  });
-
   it.each([
     { isBot: true },
     { isBot: true, webhookId: "allowed" },
@@ -408,24 +373,6 @@ describe("ingestDiscordMessage", () => {
     expect(first.reply).not.toHaveBeenCalled();
   });
 
-  it("capture済みmessageはnormal configでのbackfillでもenqueueしない", async () => {
-    mocks.findGroup.mockResolvedValue({
-      group: { name: "group" },
-      channel: { channelId: "root-1", sessionMode: "shared" },
-    });
-    mocks.hasSessionSource.mockResolvedValue(true);
-
-    const result = await ingestDiscordMessage(
-      makeMessage({ id: "captured-before-backfill" }),
-      { source: "backfill", replyOnFailure: false },
-    );
-
-    expect(result.status).toBe("ignored");
-    expect(
-      repo.findByIdempotencyKey("discord-message:captured-before-backfill"),
-    ).toBeUndefined();
-  });
-
   it.each([
     undefined,
     "normal",
@@ -441,6 +388,7 @@ describe("ingestDiscordMessage", () => {
     );
 
     expect(result.status).toBe("enqueued");
+    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     expect(mocks.appendMessage).not.toHaveBeenCalled();
     expect(
       repo.findByIdempotencyKey("discord-message:normal-after-capture"),

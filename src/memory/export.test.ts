@@ -265,9 +265,14 @@ describe("committed conversation export", () => {
     const pair = await appendTurn(group);
     const filename = join(root, group, "sessions.sqlite");
     const db = new Database(filename);
+    db.exec(`
+      ALTER TABLE sessions DROP COLUMN agent_initialized;
+      DROP INDEX session_entries_source_identity;
+      CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
+    `);
     if (version === 1)
       db.exec(
-        "DROP INDEX IF EXISTS session_entries_source; DROP INDEX IF EXISTS session_entries_source_identity; ALTER TABLE session_entries DROP COLUMN source_json;",
+        "DROP INDEX session_entries_source; ALTER TABLE session_entries DROP COLUMN source_json;",
       );
     if (version === 3)
       db.exec(`ALTER TABLE session_entries ADD COLUMN execution_json TEXT;

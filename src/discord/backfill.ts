@@ -38,15 +38,25 @@ export async function backfillDiscordMessages(
   // channel cannot be advanced by a live event during an earlier channel's
   // recovery.
   const channelIds = groups.flatMap((group) =>
-    group.channels.map((channel) => channel.channelId),
+    group.channels.flatMap((channel) => {
+      if (channel.agentMode === "capture-only") {
+        // Leave this scope uninitialized throughout capture. On return to
+        // normal, the existing first-start policy seeds the current tip,
+        // skipping even downtime immediately before that restart.
+        repo.resetDiscordCursor(channel.channelId);
+        return [];
+      }
+      return [channel.channelId];
+    }),
   );
   beginDiscordChannelBackfill(channelIds);
   for (const group of groups) {
     const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {
-      let completed = false;
+      if (channel.agentMode === "capture-only") continue;
       try {
-        completed = await backfillTarget(discordClient, channel, repo);
+        const completed = await backfillTarget(discordClient, channel, repo);
+        if (completed) finishDiscordChannelBackfill(channel.channelId);
       } catch (error) {
         // A single inaccessible channel must not prevent other configured
         // channels from recovering their histories. Keep its cursor gate in
@@ -55,8 +65,6 @@ export async function backfillDiscordMessages(
           `[discord-backfill] チャンネル ${channel.channelId} の復旧に失敗しました:`,
           error,
         );
-      } finally {
-        finishDiscordChannelBackfill(channel.channelId, completed);
       }
     }
   }

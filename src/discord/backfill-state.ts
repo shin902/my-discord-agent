@@ -1,39 +1,23 @@
-const pendingBackfills = new Map<
-  string,
-  { done: Promise<boolean>; finish: (completed: boolean) => void }
->();
+const pendingBackfills = new Set<string>();
 
-/** Register every root before scanning, including channels not reached yet. */
+/** 起動時バックフィルがまだ完了していないルートチャンネルを登録する。 */
 export function beginDiscordChannelBackfill(
   channelIds: readonly string[],
 ): void {
-  for (const channelId of channelIds) {
-    pendingBackfills.get(channelId)?.finish(false);
-    let finish!: (completed: boolean) => void;
-    const done = new Promise<boolean>((resolve) => {
-      finish = resolve;
-    });
-    pendingBackfills.set(channelId, { done, finish });
-  }
+  for (const channelId of channelIds) pendingBackfills.add(channelId);
 }
 
-/** Failed scans keep the cursor gate closed, but release waiting live handlers. */
-export function finishDiscordChannelBackfill(
-  channelId: string,
-  completed = true,
-): void {
-  pendingBackfills.get(channelId)?.finish(completed);
-  if (completed) pendingBackfills.delete(channelId);
+/** ルートチャンネルのバックフィル完了を記録する。 */
+export function finishDiscordChannelBackfill(channelId: string): void {
+  pendingBackfills.delete(channelId);
 }
 
-/** Live captures must wait for older history from the same shared channel. */
-export async function waitForDiscordChannelBackfill(
-  channelId: string,
-): Promise<boolean> {
-  return (await pendingBackfills.get(channelId)?.done) ?? true;
-}
-
-/** Live cursors cannot skip history in a pending or failed root scan. */
+/**
+ * ルートチャンネル、またはそのスレッドのバックフィルが未完了かを返す。
+ *
+ * バックフィルは設定されたチャンネル単位で逐次実行されるため、未到達の
+ * チャンネルではライブ取り込みによるカーソル更新を止める必要がある。
+ */
 export function isDiscordChannelBackfillPending(channelId: string): boolean {
   return pendingBackfills.has(channelId);
 }

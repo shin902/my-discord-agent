@@ -21,7 +21,7 @@ Slash command は通常メッセージの取り込み経路を通らないため
 | 値 | 通常の人間messageの処理 |
 |---|---|
 | `normal`（未指定時） | 既存のtriggerに従ってenqueue → Agent run → response |
-| `capture-only` | `shared` 限定。設定したchannel IDをsession IDとして、canonical `sessions.sqlite` にraw user entryをappendして終了 |
+| `capture-only` | shared限定・live限定。channel IDのcanonical sessionへraw user messageをappendするだけ。応答・backfill・threadなし |
 
 ```json
 {
@@ -39,7 +39,9 @@ Slash command は通常メッセージの取り込み経路を通らないため
 
 `/skill` はcapture-onlyのshared channelで拒否する。配下threadではsharedの既存command routing制約を維持する。独立したBot Task Sessionを使う `/bot` や他の独立sessionは制限しない。
 
-live captureはそのshared channelのstartup backfill完了を待ち、その後は同じchannel内のlive到着順に保存する。他channelのlive captureや通常channelのenqueueは待たせない。backfill失敗・不完全時はlive captureも保存せず、エラーをhost logへ残してcursorを維持する。Discordへ失敗応答は送らず、権限等を修正して再起動した際のbackfillで復旧する。既存の初回起動時のcursor初期化方針（過去履歴を遡らない）は変更しない。
+対象は起動中に受信したlive `MessageCreate` だけで、Discord backfillは行わない。他channelのbackfillを待たず、保存失敗はhost logへ記録するだけで応答・replay復旧はしない。同じchannelのlive append順序とsource IDによる重複排除は維持する。
+
+capture-only起動時はそのchannelのbackfill cursorを解除し、capture中は更新しない。normalへ戻すと既存の初回起動処理が現在のDiscord tipをseedするため、停止中のmessageも過去入力としてAgent実行されない。通常Agent channelのbackfillは従来どおり。
 
 設定はchannel configだけが正本で、session単位のruntime切替はない。後にconfigをnormalへ変更して再起動すれば、同じsessionのAgentは保存済みraw historyを利用できる。既存jobを設定変更で停止・取り消すことはないため、通常channelをcapture-onlyへ変更する運用では、そのsessionの既存workを完了させてから再起動する。
 
