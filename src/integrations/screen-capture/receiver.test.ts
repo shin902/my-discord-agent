@@ -52,6 +52,8 @@ describe("screen capture HTTP / SQLite boundary", () => {
         image: png,
         received_at: expect.any(String),
         summary: null,
+        completed_at: null,
+        accepted: null,
       });
       db.prepare(
         "UPDATE screen_captures SET summary = 'Editor work' WHERE id = ?",

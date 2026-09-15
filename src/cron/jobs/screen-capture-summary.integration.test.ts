@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
+import { sendMessage } from "../../agent/manager.js";
 import type { CredentialEntry } from "../../config/credential-proxy.js";
 import { startScreenCaptureReceiver } from "../../integrations/screen-capture/receiver.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
@@ -13,14 +14,18 @@ import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
 const state = vi.hoisted(() => ({ port: 0, entries: [] as CredentialEntry[] }));
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn(
+    (
+      _command: string,
+      _args: string[],
+      callback: (...args: unknown[]) => void,
+    ) => callback(null, "", ""),
+  ),
+}));
+vi.mock("../../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 vi.mock("../../config/credential-proxy.js", () => ({
   loadCredentialProxy: async () => state.entries,
-}));
-vi.mock("../../config/default-model.js", () => ({
-  resolveModelConfig: async () => ({
-    provider: "screen-test",
-    modelId: "vision-test",
-  }),
 }));
 vi.mock("../../config/providers.js", () => ({
   resolveProviderConcurrency: async () => "parallel",
@@ -32,7 +37,7 @@ vi.mock("../../proxy/credential-proxy-server.js", async (original) => ({
   getProxyPort: () => state.port,
 }));
 
-it("runs upload → durable PNG → actual Pi SDK → Credential Proxy → summary commit without external services", async () => {
+it("runs upload → VLM through Credential Proxy → DB summary → memory agent", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "screen-pipeline-"));
   const servers: Server[] = [];
   async function listen(server: Server) {
@@ -44,6 +49,8 @@ it("runs upload → durable PNG → actual Pi SDK → Credential Proxy → summa
   }
   vi.stubEnv("SCREEN_CAPTURE_DB_PATH", path.join(directory, "captures.sqlite"));
   vi.stubEnv("SCREEN_PIPELINE_KEY", "fixture-host-secret");
+  vi.mocked(sendMessage).mockResolvedValue("updated");
+
   try {
     let request:
       | { headers: IncomingHttpHeaders; url?: string; body: string }
@@ -91,7 +98,20 @@ it("runs upload → durable PNG → actual Pi SDK → Credential Proxy → summa
       },
     );
     expect(await response.json()).toEqual({ accepted: id });
-    await handler({ settings: { timeoutMs: 5000 } } as CronContext);
+
+    const memoryModel = { provider: "openai", modelId: "gpt-5" };
+    await handler({
+      id: "screen-capture-summary",
+      schedule: "5m",
+      enabled: true,
+      groupName: "logbook",
+      handler: "jobs/screen-capture-summary.ts",
+      model: memoryModel,
+      settings: {
+        visionModel: { provider: "screen-test", modelId: "vision-test" },
+      },
+    } as CronContext);
+
     expect(request?.headers.authorization).toBe("Bearer fixture-host-secret");
     expect(request?.url).toBe("/v1/chat/completions");
     const wire = JSON.parse(request?.body ?? "{}");
@@ -99,15 +119,24 @@ it("runs upload → durable PNG → actual Pi SDK → Credential Proxy → summa
       type: "image_url",
       image_url: { url: `data:image/png;base64,${png.toString("base64")}` },
     });
-    expect(wire.tools ?? []).toEqual([]);
+    expect(sendMessage).toHaveBeenCalledWith(
+      "logbook",
+      expect.any(String),
+      expect.stringContaining("エディタでコードを編集している。"),
+      expect.objectContaining({ configOverride: { model: memoryModel } }),
+    );
     const db = openScreenCaptureDb();
     try {
       expect(
-        db.prepare("SELECT id, image, summary FROM screen_captures").get(),
+        db
+          .prepare(
+            "SELECT summary, accepted, completed_at IS NOT NULL AS completed FROM screen_captures WHERE id = ?",
+          )
+          .get(id),
       ).toEqual({
-        id,
-        image: png,
         summary: "エディタでコードを編集している。",
+        accepted: 1,
+        completed: 1,
       });
     } finally {
       db.close();

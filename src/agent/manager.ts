@@ -590,6 +590,8 @@ export interface SendMessageOptions {
   onConversation?: (entries: ConversationEntries) => void;
   onDiscordEvent?: (event: DiscordEvent) => void;
   attachments?: AttachmentRef[];
+  /** Container-local image paths to include in the initial user message. */
+  imagePaths?: string[];
   onExecutionTiming?: (timing: AgentExecutionTiming) => void;
   onContainerStarted?: () => void | Promise<void>;
   signal?: AbortSignal;
@@ -619,6 +621,7 @@ export async function sendMessage(
   const {
     onDiscordEvent,
     attachments,
+    imagePaths,
     onExecutionTiming,
     onContainerStarted,
     signal,
@@ -768,6 +771,7 @@ export async function sendMessage(
     groupName,
     sessionId,
     content: promptContent,
+    ...(imagePaths?.length ? { imagePaths } : {}),
     ...(options.source ? { source: options.source } : {}),
     groupConfig: {
       ...effectiveConfig,

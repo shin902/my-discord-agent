@@ -98,9 +98,15 @@
     "id": "screen-capture-summary",
     "schedule": "5m",
     "enabled": false,
+    "groupName": "my-group",
     "handler": "jobs/screen-capture-summary.ts",
     "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
-    "settings": { "concurrency": 4, "timeoutMs": 120000 }
+    "settings": {
+      "mode": "summarize",
+      "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
+      "limit": 10,
+      "concurrency": 4
+    }
   },
   {
     "id": "x-saved-media-download",

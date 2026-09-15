@@ -2,11 +2,11 @@
 
 ```text
 Mac screencapture → HTTPS / Tailscale Serve → localhost receiver
-  → data/screen-captures.sqlite（PNG + 未読）
-  → cron → 並列のツールなし画像要約 → 同じDBへ要約を保存（既読）
+  → data/screen-captures.sqlite（PNG + 未完了状態）
+  → cron → logbook Agentが全画像を一括確認 → Activity Memoryへ差分統合
 ```
 
-初版はPNGの収集・画像ごとの要約だけです。専用AgentGroup、Discord配送、検索UI、Project Memory / Activityへの昇格、PII分類は行いません。receiverとcronはそれぞれ既定で無効です。実設定やTailscaleの構成は自動変更しません。
+PNGを収集し、指定AgentGroupのfile memoryへ画面活動の差分を統合します。Discord配送、検索UI、Project Memoryへの昇格、PII分類は行いません。receiverとcronはそれぞれ既定で無効です。実設定やTailscaleの構成は自動変更しません。
 
 ## Bot PCの受信設定
 
@@ -38,7 +38,7 @@ bash scripts/capture-screen.sh \
   'https://<host>.<tailnet>.ts.net:8444/v1/screen-captures'
 ```
 
-macOS標準の`screencapture`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。Terminal等の実行元に「画面収録」の権限が必要です。
+macOS標準の`screencapture`、`sips`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。画像は縦横比を保ったまま長辺1280pxへ縮小してから送信します。Terminal等の実行元に「画面収録」の権限が必要です。
 
 継続して収集する場合はLaunchAgentを登録します。間隔は正の秒数で指定でき、既定は60秒です。同じ`on`コマンドを再実行するとURLと間隔を更新できます。
 
@@ -52,7 +52,7 @@ bash scripts/capture-screen.sh off
 
 `on`は`~/Library/LaunchAgents/com.my-discord-agent.screen-capture.plist`を作成して登録するため、ログイン後はterminalを閉じても動作し、Mac再起動後も再開します。`status`は登録中ならexit 0、停止中ならexit 1です。`off`は実行中の撮影・送信を含むLaunchAgentを停止してplistを削除し、繰り返し実行しても成功します。logは`~/Library/Logs/my-discord-agent-screen-capture.log`へ追記されます。
 
-送信待ちPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`です。各周期では既存の全PNGを先に再送し、すべてACKされた場合だけ新しく1枚撮影します。1枚でも再送に失敗すると、その周期は新規撮影せず次の周期に再試行するため、receiver停止中にPNGが増え続けません。失敗の確認には次を使います。
+送信待ちPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`です。各周期では既存の全PNGを先に再送し、すべてACKされた場合だけ新しく1枚撮影します。1枚でも再送に失敗すると、その周期は新規撮影せず次の周期に再試行するため、receiver停止中にPNGが増え続けません。初回撮影時に`sips`の縮小が失敗したPNGは、未縮小のまま再送待ちへ残さず削除します。失敗の確認には次を使います。
 
 ```bash
 tail -f "$HOME/Library/Logs/my-discord-agent-screen-capture.log"
@@ -66,31 +66,46 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 同じUUIDと同じbytesの再送は冪等です。新しい撮影には新しいUUIDを使うので、画面が同じでも別の時点の記録として保存できます。既存PNGを送る場合もUUIDをbasenameにした`.png`へコピーしてください。スクリプトはHTTPSの`.ts.net` URLだけを受理し、redirectを追わず、HTTP 200以外をACKとして扱いません。
 
-## cron要約
+## cronによるActivity Memory更新
 
-画像全体が選択したLLM providerへ送られます。画面や生成要約に秘密情報・個人情報が含まれ得るため、**収集対象とproviderを確認してから**明示的に有効化してください。自動マスキングはありません。
+cron開始時点の未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像を`settings.limit`件まで採用します（hostに`magick`コマンドが必要です）。実行中に届いた画像は次回のcronで処理します。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を1回の通常LLM実行へ直接添付します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
 
-`config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。**同じDBに対するjobは1つ、Botプロセスも1つ**にしてください。
+画像にはpassword、token、個人情報などが含まれ得ます。自動マスキングはありません。`summarize`では画像全体を`settings.visionModel`のproviderへ、`direct`ではMemory更新用の通常modelのproviderへ送信するため、**収集対象と両modeで利用するproviderを確認してから**有効化してください。
+
+`config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
 
 ```json
 {
   "id": "screen-capture-summary",
   "schedule": "5m",
   "enabled": true,
+  "groupName": "logbook",
   "handler": "jobs/screen-capture-summary.ts",
   "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
-  "settings": { "concurrency": 4, "timeoutMs": 120000 }
+  "settings": {
+    "mode": "summarize",
+    "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
+    "limit": 10,
+    "concurrency": 4
+  }
 }
 ```
 
-- `model`はこのjobの指定を使い、省略時は`config.json`の`defaultModel`へfallbackします。group / channel / tools / skills / mountsは使いません。
-- [Credential設定](config/credential-proxy.md)にLLM接続を定義します。上の例は`credentials.example.json`の`google` entryとhostの`GEMINI_API_KEY`を使用します。画像入力可能なモデルが必須です。カスタムモデルは`models[modelId].input: ["text", "image"]`も指定してください。
-- 対応wire APIは`openai-completions`、`openai-responses`、`anthropic-messages`、`google-generative-ai`です。SDKへ渡すのはlocalhostのCredential Proxy URLと非secret placeholderだけです。実キーはProxyで注入します。Codexを使う場合は[CLIProxyAPI](guides/codex-oauth-cliproxyapi.md)経由の`openai-responses`にします。
-- `settings.concurrency`は1–16、既定4。全未読IDを対象にしつつ画像本体はworker単位で読みます。これはbatch件数制限ではありません。[providers.json](config.md#configprovidersjson)の既存の共通provider lockも守るため、`serial`または未設定providerは直列になります。並列化するproviderには例として`{ "provider": "google", "concurrency": "parallel" }`を設定してください。
-- `settings.timeoutMs`は1–600000、既定120000。1画像のprovider lock待ち＋LLM処理の上限です。要約の出力上限は2048 tokens（モデル上限が小さければそちら）です。
-- 一度だけ未読IDをsnapshotし、その全件を処理します。処理中に到着した画像は次回対象です。同一jobのtick重複は[cron runner](spec/cron.md#実行タイミングと長時間実行)が抑止します。cron設定変更後はBotの再起動が必要で、既存cronと同じくDiscord ready後に動作します。
-- 正常終了した空でない要約だけを保存します。通信エラー、timeout、空応答、途中終了は未読のまま次の実行で再試行します。画像ごとの失敗は他の画像を止めません。ログにはIDと件数だけを出し、画像・要約・providerの生エラーは出しません。
-- 要約保存と既読化は同じSQL更新です。DBエラーではjobを失敗させ、開始済みworkerの完了を待ってDBを閉じます。再起動時も既読画像はスキップします。LLM成功後・DB保存前に停止した場合、その画像は再要約され得ます。別のqueueやleaseは追加しません。
+- `model`はMemory更新用の通常LLMです。cron指定を優先し、省略時はグループ設定へfallbackします。
+- `settings.mode`は`summarize`（既定）または`direct`です。
+- `settings.visionModel`は`summarize`で必須です。Credential Proxyに定義した画像入力対応モデルを指定します。`direct`では指定しません。
+- `settings.concurrency`はVLM worker数（1–16、既定4）です。`providers.json`の既存provider concurrencyが`serial`なら実際の呼び出しは直列になります。
+- `settings.limit`は1回に採用する画像数（1以上、既定10）です。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
+- screen-capture固有のtimeoutはありません。Agent実行には共通のAgent Runner timeoutが適用されます。実用上はresize済み画像を20〜数十枚程度扱うbest-effort運用を想定し、任意枚数の処理完了は保証しません。
+- VLM失敗画像は未完了で残り、成功済みsummaryは再利用されます。通常LLM成功後・DB更新前に停止した場合は再実行されるため、既存memoryとの差分だけを反映するよう指示します。
+- ImageMagickがdecodeできない画像は`accepted = 0`で完了にして後続画像を処理します。`magick` executable不在などjob全体の実行環境エラーは画像不正として完了させず、jobを失敗させます。
+- 同一jobのtick重複はcron runnerが抑止します。同じscreen-capture DBを処理するhandlerは1 process内の1 jobだけに設定してください。別IDのjobや別processを含む複数consumerはサポートしません。変更反映にはBot再起動が必要です。
+
+### 参考Memoryテンプレート
+
+[`templates/memory/screen-capture/`](../templates/memory/screen-capture/)に、画面活動を`memory/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。まだ実運用で十分に検証された推奨設定ではないため、既存memoryへ一括上書きせず、必要な`index.md`と`system/screen-activity-memory.md`の内容を確認して取り込んでください。
+
+このテンプレートは画面Activity Memoryへ特化しています。通常の汎用memoryとして使う場合は、日次ログをそのまま常時contextへ入れるのではなく、別途コンパクトなsummary/indexへ統合する運用が必要です。
 
 ## 受信プロトコル
 
@@ -102,21 +117,21 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 | `X-Capture-Id` | 撮影ごとのUUID（受信側で小文字へ正規化） |
 | body | 20 MiB以下のPNG。圧縮HTTP bodyやmultipart / JSONは非対応 |
 
-PNG signatureを検証しますが、receiver内では画像をdecodeしません。破損したPNGの要約が失敗した場合は未読として残ります。bodyサイズはストリームを数えて制限します。web-pageからの書込みを防ぐため、`Origin`付きrequestは拒否し、CORSは有効化しません。
+PNG signatureを検証しますが、receiver内では画像をdecodeしません。後段でdecode不能と判定された画像は`accepted = 0`で完了し、後続画像の処理を継続します。bodyサイズはストリームを数えて制限します。web-pageからの書込みを防ぐため、`Origin`付きrequestは拒否し、CORSは有効化しません。
 
 SQLite commit後だけ`200 {"accepted":"<uuid>"}`を返します。同じIDで異なる画像は409、ID・PNG不正は400、サイズ超過は413、形式・encoding不正は415、Originは403、保存失敗は500です。エラー応答に`accepted`は含みません。別pathは404、POST以外は405です。
 
 ## 永続化・確認・backup
 
-`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC受信時刻`received_at`、nullableな`summary`を持ちます。**`summary IS NULL`が未読、非NULLが既読**の正本で、重複するstatus列は持ちません。
+`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC受信時刻`received_at`、nullableなVLM要約`summary`、`completed_at`、採否を表す`accepted`を持ちます。**`completed_at IS NULL`が未完了、非NULLが完了**の正本です。
 
 ローカルでのread-only確認例（画像や要約本文を端末ログへ出さない）:
 
 ```bash
 sqlite3 -readonly data/screen-captures.sqlite \
-  'SELECT id, received_at, length(image) AS bytes, summary IS NOT NULL AS is_read FROM screen_captures ORDER BY received_at;'
+  'SELECT id, received_at, length(image) AS bytes, completed_at IS NOT NULL AS is_completed FROM screen_captures ORDER BY received_at;'
 ```
 
 DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。Bot PC側の画像・要約には自動削除期限を設けず、容量・retention・backupのアクセス権を運用者が管理します。Mac側はACK後に削除しますが、未ACK・削除失敗のPNGは再送または明示削除が必要です。旧版で成功後も残ったPNGは自動走査しないため、同じパスで再送してACK後に削除するか、不要と確認して明示的に削除してください。
 
-導入時はMacから1枚撮影し、DBで未読を確認→cron後の既読を確認してください。receiverを止めた送信失敗→同じUUIDで再送し1行だけになること、要約provider停止中は未読が残り復旧後に既読になることも確認します。自動テストはHTTP / SQLite、実SDK＋ローカル模擬provider、失敗再試行、並列数、senderのMacコマンド模擬までを検証します。実Macの画面収録権限、Tailnet到達性、実providerの画面理解は別途実機確認が必要です。
+導入時はMacから1枚撮影し、DBで未完了を確認→cron後の完了とActivity Memory更新を確認してください。receiverを止めた送信失敗→同じUUIDで再送し1行だけになること、Agent失敗中は未完了が残り復旧後に完了することも確認します。自動テストはHTTP / SQLite、全画像のworkspace配置、Agent成功・失敗時の完了状態、senderのMacコマンド模擬までを検証します。実Macの画面収録権限、Tailnet到達性、実providerの画面理解は別途実機確認が必要です。
