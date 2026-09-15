@@ -1888,6 +1888,11 @@ export class QueueRepository {
       .get(scopeId) as { initialized?: number } | undefined;
     return row?.initialized === 1;
   }
+  clearDiscordCursor(scopeId: string): void {
+    this.db
+      .prepare("DELETE FROM discord_sync_cursors WHERE scope_id=?")
+      .run(scopeId);
+  }
   initializeDiscordCursor(scopeId: string): void {
     this.db
       .prepare(

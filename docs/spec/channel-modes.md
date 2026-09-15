@@ -1,6 +1,6 @@
 # チャンネルモード
 
-Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける方法を表す。`appendUserOnly` は通常のlive Discord message intakeだけを変更するboolean設定であり、Agent modeやsession全体の制約ではない。変更は再起動後に反映される。
+Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける方法を表す。設定変更は再起動後に反映される。
 
 ## `sessionMode`
 
@@ -18,23 +18,21 @@ Slash command は通常メッセージの取り込み経路を通らないため
 
 ## `appendUserOnly`
 
-未指定 / `false` は既存挙動。`true` は **`sessionMode: shared` とだけ併用可能**で、`thread` / `auto-thread` / `email-mode` との併用は起動時に `appendUserOnly requires sessionMode: shared` として拒否する。
+任意boolean。未指定 / `false` は既存挙動。`true` は **`sessionMode: shared` 限定**で、`thread` / `auto-thread` / `email-mode` との併用は起動時config error。
 
 ```json
-{
-  "channelId": "...",
-  "sessionMode": "shared",
-  "appendUserOnly": true
-}
+{ "channelId": "...", "sessionMode": "shared", "appendUserOnly": true }
 ```
 
-設定したshared channelそのもののeligibleなlive human `MessageCreate`（通常の投稿・返信）を、`requiredMention` に関係なくchannel IDのcanonical `sessions.sqlite`へuser entryとしてappendして終了する。本文・添付URL・既存timestamp/source provenanceを保持する。その入力についてqueue job、Agent Runner、provider、tool/subagent、assistant response、progress/placeholder、thread作成・routingは発生させない。bot/Webhook/system message、child threadは対象外。group/channel認可と担当Bot判定は維持する。
+担当Botが受信した設定shared channel自身のlive human `MessageCreate`（Default / Reply）を、`requiredMention` に関係なくchannel IDのcanonical sessionへuser entryとしてappendして終了する。本文・添付名/URL・timestamp・既存Discord source provenanceを保持する。その入力についてqueue、Agent/provider/tool実行、response/progress/placeholder、thread作成は発生しない。bot/Webhook/system、child thread、backfillは対象外。
 
-Discord backfill対象から除外し、停止中のmessageは回収しない。cursorの解除・更新は行わず、通常channelのbackfillは変更しない。同じchannelのlive append順序とsource IDによる重複排除だけを維持する。保存失敗はhost logへ記録し、応答・replay復旧はしない。
+同一channelのlive appendだけ到着順に保存し、source IDで重複排除する。保存失敗はhost logに残し、応答・replay復旧はしない。
 
-session全体をuser-onlyにはしない。cron、`/skill`、`/bot`、既存queue job、他経路のAgent実行は従来どおりで、同じsessionのassistant / toolResult / custom entryも許容する。他経路とのserializationは追加しない。
+session-wide modeではない。cron、`/skill`、`/bot`、既存queueなど他経路は従来どおりで、同じsessionのassistant / toolResult / custom entryも許容する。
 
-記録用途での継続利用を想定し、後から同じsessionを通常Agent会話として再開する互換性は初版の保証対象外。通常Agent bootstrapは変更しない。ログconsumer側のhuman user filterもこの機能のscope外とする。
+`false` に戻して再起動すれば同じsessionを通常Agentとして再利用できる。contextFilesは既存のgeneric bootstrap判定（Agent execution evidenceの有無）に従う。専用初期化stateは持たない。
+
+有効化した起動時に当該channelの既存Discord cursor行を削除し、有効中はbackfillもlive cursor更新もしない。normal復帰時は既存の初回起動処理で現在tipへseedするため、有効期間の保存済みmessageも停止中のmessageもAgent jobとして再生しない。seed以前の履歴は遡らず、それ以後は通常のbackfillに戻る。
 
 ---
 

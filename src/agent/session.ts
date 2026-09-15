@@ -283,43 +283,41 @@ export async function appendMessage(
   const timestamp = messageTimestamp(sanitized);
 
   try {
-    return db
-      .transaction(() => {
-        if (source) {
-          // ponytail: scan this session's source JSON; index only if measured slow.
-          const existing = db
-            .prepare(`
-              SELECT id FROM session_entries WHERE session_id=?
-                AND json_extract(source_json, '$.kind')=?
-                AND json_extract(source_json, '$.sourceId')=?
-            `)
-            .get(sessionId, source.kind, source.sourceId) as
-            | { id: number }
-            | undefined;
-          if (existing) return existing.id;
-        }
-        db.prepare(`
+    const append = db.transaction(() => {
+      if (source) {
+        const existing = db
+          .prepare(`
+            SELECT id FROM session_entries WHERE session_id=?
+              AND json_extract(source_json, '$.kind')=?
+              AND json_extract(source_json, '$.sourceId')=?
+          `)
+          .get(sessionId, source.kind, source.sourceId) as
+          | { id: number }
+          | undefined;
+        if (existing) return existing.id;
+      }
+      db.prepare(`
         INSERT INTO sessions(id, created_at, updated_at)
         VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
       `).run(sessionId, timestamp, timestamp);
-        const inserted = db
-          .prepare(`
+      const inserted = db
+        .prepare(`
         INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json)
         SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?
         FROM session_entries WHERE session_id=?
       `)
-          .run(
-            sessionId,
-            entryType(sanitized),
-            JSON.stringify(sanitized),
-            timestamp,
-            sourceJson,
-            sessionId,
-          );
-        return Number(inserted.lastInsertRowid);
-      })
-      .immediate();
+        .run(
+          sessionId,
+          entryType(sanitized),
+          JSON.stringify(sanitized),
+          timestamp,
+          sourceJson,
+          sessionId,
+        );
+      return Number(inserted.lastInsertRowid);
+    });
+    return append.immediate();
   } finally {
     db.close();
   }

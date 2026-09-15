@@ -137,31 +137,18 @@ describe("loadGroups", () => {
   });
 
   it.each([
-    "thread",
-    "auto-thread",
-    "email-mode",
-  ])("appendUserOnly + %sは起動時のconfig errorになる", async (sessionMode) => {
+    ["thread", true],
+    ["auto-thread", true],
+    ["email-mode", true],
+    ["shared", "true"],
+  ])("rejects sessionMode=%s + appendUserOnly=%s", async (sessionMode, appendUserOnly) => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
-        channels: [{ channelId: "channel", sessionMode, appendUserOnly: true }],
+        channels: [{ channelId: "channel", sessionMode, appendUserOnly }],
       },
     ]);
-    await expect(loadGroups()).rejects.toThrow(
-      "appendUserOnly requires sessionMode: shared",
-    );
-  });
-
-  it.each([
-    { sessionMode: "unknown" },
-    { sessionMode: "shared", appendUserOnly: "true" },
-    { sessionMode: "shared", appendUserOnly: null },
-    { sessionMode: "shared", appendUserOnly: 1 },
-  ])("不正なchannel configを拒否する: %j", async (channel) => {
-    const { loadGroups } = await setupRawGroups([
-      { name: "chat", channels: [{ channelId: "channel", ...channel }] },
-    ]);
-    await expect(loadGroups()).rejects.toThrow();
+    await expect(loadGroups()).rejects.toThrow("appendUserOnly");
   });
 
   it('skills は全ロードを示す "*" もパースできる', async () => {

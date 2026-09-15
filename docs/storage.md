@@ -74,7 +74,7 @@ DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.s
 
 `session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v4ではMemory専用になっていたv3の `execution_json` と検索indexを削除します。v1/v2からも通常session書き込み時にv4へ更新し、既存entry ID・本文・sourceを保持します。migrationはwrite lock下でversionを再確認します。
 
-[appendUserOnly](spec/channel-modes.md#appenduseronly)も既存schema v4へuser entryをappendし、専用stateやmigrationは追加しません。source付きappendは同じtransaction内で既存 `source_json` の `(session_id, source.kind, source.sourceId)` を検索し、重複なら元のentry IDを返します。追加のexpression indexや事前lookup APIは持ちません。
+source付きappendは同じwrite transaction内で `(session_id, source.kind, source.sourceId)` を照合し、重複なら本文・時刻を変更せず元のentry IDを返します。[appendUserOnly](spec/channel-modes.md#appenduseronly)もこの既存schemaへのappendを使います。
 
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。session renameはentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 

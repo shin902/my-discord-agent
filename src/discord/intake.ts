@@ -130,39 +130,26 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  const appendUserOnly = match.channel.appendUserOnly;
-  const isHumanMessage =
+  const humanSource: SessionSource | undefined =
     !message.author.bot &&
-    (message.type === MessageType.Default ||
-      message.type === MessageType.Reply);
-  if (
-    appendUserOnly &&
-    (isThread ||
+    (message.type === MessageType.Default || message.type === MessageType.Reply)
+      ? {
+          kind: "discord",
+          sourceId: message.id,
+          actorId: message.author.id,
+          messageType: message.type,
+          createdAt: message.createdAt.toISOString(),
+        }
+      : undefined;
+  if (match.channel.appendUserOnly) {
+    if (
+      isThread ||
       options.source !== "live" ||
-      !isHumanMessage ||
-      message.webhookId !== null)
-  ) {
-    return { status: "ignored", cursorScope: defaultCursorScope };
-  }
+      !humanSource ||
+      message.webhookId !== null
+    )
+      return { status: "ignored" };
 
-  if (
-    !appendUserOnly &&
-    match.channel.requiredMention === true &&
-    !mentionsCurrentDiscordBot(message)
-  ) {
-    return { status: "ignored", cursorScope: defaultCursorScope };
-  }
-
-  const humanSource: SessionSource | undefined = isHumanMessage
-    ? {
-        kind: "discord",
-        sourceId: message.id,
-        actorId: message.author.id,
-        messageType: message.type === MessageType.Default ? 0 : 19,
-        createdAt: message.createdAt.toISOString(),
-      }
-    : undefined;
-  if (appendUserOnly) {
     const sessionId = match.channel.channelId;
     const attachmentLines = [...message.attachments.values()].map(
       (attachment) => `- ${attachment.name}: ${attachment.url}`,
@@ -194,11 +181,18 @@ async function ingest(
     return { status: "appended" };
   }
 
+  if (
+    match.channel.requiredMention === true &&
+    !mentionsCurrentDiscordBot(message)
+  ) {
+    return { status: "ignored", cursorScope: defaultCursorScope };
+  }
+
+  let sessionId: string;
+  let inboxChannelId = message.channelId;
+  let replyMessageId: string | undefined = message.id;
   let cursorScope = defaultCursorScope;
   try {
-    let sessionId: string;
-    let inboxChannelId = message.channelId;
-    let replyMessageId: string | undefined = message.id;
     if (match.channel.sessionMode === "shared") {
       if (isThread) return { status: "ignored", cursorScope: lookupId };
       sessionId = message.channelId;
