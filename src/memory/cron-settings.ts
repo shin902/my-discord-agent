@@ -27,11 +27,11 @@ export async function loadMemoryCoreConnectionSettingsFromCron() {
   const matches = candidates
     .filter((_, index) => identities[index])
     .map((job) => job.settings);
-  if (matches.length !== 1) {
+  if (matches.length === 0) {
     throw new MemoryCoreError(
-      "Expected exactly one TencentDB memory-export cron job",
+      "Expected at least one TencentDB memory-export cron job",
       false,
     );
   }
-  return parseMemoryCoreConnectionSettings(matches[0]);
+  return matches.map(parseMemoryCoreConnectionSettings);
 }
