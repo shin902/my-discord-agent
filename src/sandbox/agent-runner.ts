@@ -484,11 +484,12 @@ export async function runAgentLoop(
     isSystemPromptSnapshotMessage,
   );
   const needsSystemPromptSnapshot = !existingSystemPromptSnapshot;
-  const needsContextBootstrap =
-    !rawMessages.some((message) => message.role !== "custom") &&
-    !messages.some((message) =>
+  const needsContextBootstrap = !rawMessages.some(
+    (message) =>
+      message.role === "assistant" ||
+      message.role === "toolResult" ||
       CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? ""),
-    );
+  );
   const contextFiles = groupConfig.contextFiles ?? [];
 
   const [loadedSystemPrompt, skills, contextFileContents] = await Promise.all([

@@ -1334,66 +1334,92 @@ describe("runAgentLoop", () => {
     expect(messages[0]).toMatchObject({ customType: "memory-bootstrap" });
   });
 
-  it("会話済みsessionへcontextFilesを途中追加しない", async () => {
-    const existingHistory = [
-      { role: "user" as const, content: "前回の質問", timestamp: Date.now() },
-    ];
-    vi.mocked(loadMessages).mockResolvedValue(existingHistory as never);
-
+  it.each([
+    ["empty", []],
+    ["user-only", [{ role: "user", content: "保存済み入力" }]],
+    [
+      "anchor and user-only",
+      [
+        {
+          role: "custom",
+          customType: "session-time-anchor",
+          content: "946684800000",
+        },
+        { role: "user", content: "保存済み入力" },
+      ],
+    ],
+  ])("%s trajectoryはcontextFilesをbootstrapする", async (_name, history) => {
+    vi.mocked(loadMessages).mockResolvedValue(history as never);
     vi.mocked(readFile).mockImplementation(async (filePath) => {
-      if (String(filePath) === "/workspace/AGENTS.md") {
-        return "グループプロンプト" as never;
-      }
-      if (String(filePath) === "/workspace/MEMORY.md") {
-        return "旧記憶" as never;
-      }
+      if (String(filePath) === "/workspace/MEMORY.md")
+        return "保存するcontext" as never;
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-    });
-
-    const mockAgent = createMockAgent(["OK"], {
-      role: "assistant",
-      content: [{ type: "text", text: "OK" }],
-    });
-    AgentMock.mockImplementation(function (options: unknown) {
-      lastAgentOptions = options;
-      return mockAgent;
     });
 
     await runAgentLoop("test-group", "session-1", "hi", {
       contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
     });
 
-    // AGENTS.md は systemPrompt に含まれる（system role として復元）
-    const systemPrompt = (
-      lastAgentOptions as { initialState: { systemPrompt: string } }
-    ).initialState.systemPrompt;
-    expect(systemPrompt).toContain("グループプロンプト");
-    expect(systemPrompt).not.toContain("旧記憶");
-    expect(readFile).not.toHaveBeenCalledWith("/workspace/MEMORY.md", "utf-8");
-
-    // system-prompt-snapshot としてsession trajectoryへ保存され、次回以降は再読み込みされない
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
-      expect.objectContaining({
-        role: "custom",
-        customType: "system-prompt-snapshot",
-        content: "グループプロンプト",
-      }),
+      expect.objectContaining({ customType: "context-bootstrap" }),
     );
+  });
+
+  it.each([
+    ["context-bootstrap", "context-bootstrap"],
+    ["memory-bootstrap", "memory-bootstrap"],
+    ["self-bootstrap", "self-bootstrap"],
+    ["assistant", "assistant"],
+    ["aborted assistant", "assistant"],
+    ["toolResult", "toolResult"],
+  ])("%s trajectoryはcontextFilesをbootstrapしない", async (_name, evidence) => {
+    const message =
+      evidence === "assistant"
+        ? {
+            role: "assistant",
+            content: [{ type: "text", text: "失敗" }],
+            stopReason: _name === "aborted assistant" ? "aborted" : "error",
+          }
+        : evidence === "toolResult"
+          ? { role: "toolResult", content: "結果" }
+          : { role: "custom", customType: evidence, content: "済み" };
+    vi.mocked(loadMessages).mockResolvedValue([message] as never);
+
+    await runAgentLoop("test-group", "session-1", "hi", {
+      contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
+    });
+
     expect(appendMessage).not.toHaveBeenCalledWith(
       "test-group",
       "session-1",
       expect.objectContaining({ customType: "context-bootstrap" }),
     );
+  });
 
-    // Agent に渡すmessagesはsystem prompt snapshotと既存履歴だけ。
-    const messages = (
-      lastAgentOptions as { initialState: { messages: unknown[] } }
-    ).initialState.messages;
-    expect(messages[0]).toMatchObject({ customType: "system-prompt-snapshot" });
-    expect(messages[1]).toMatchObject({ role: "user", content: "前回の質問" });
-    expect(messages).toHaveLength(2);
+  it("user保存後にAgent実行前で停止したsessionはretry時にcontextFilesをbootstrapする", async () => {
+    vi.mocked(loadMessages).mockResolvedValue([
+      { role: "user", content: "保存済み入力" },
+    ] as never);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/MEMORY.md")
+        return "保存するcontext" as never;
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+
+    await runAgentLoop("test-group", "session-1", "retry", {
+      contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
+    });
+
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({
+        customType: "context-bootstrap",
+        content: expect.stringContaining("保存するcontext"),
+      }),
+    );
   });
 
   it("ロード時に途中にある system-prompt-snapshot / memory-bootstrap を先頭へ並べ替える", async () => {
