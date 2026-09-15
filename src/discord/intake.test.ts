@@ -317,13 +317,13 @@ describe("ingestDiscordMessage", () => {
     { webhookId: "allowed" },
     { type: MessageType.ChatInputCommand },
     { type: MessageType.ThreadCreated },
-  ])("capture-onlyでは人間の通常message以外を起動も保存もしない: %j", async (options) => {
+  ])("appendUserOnlyでは人間の通常message以外を起動も保存もしない: %j", async (options) => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
       channel: {
         channelId: "root-1",
         sessionMode: "shared",
-        agentMode: "capture-only",
+        appendUserOnly: true,
         allowedWebhookIds: ["allowed"],
       },
     });
@@ -336,13 +336,13 @@ describe("ingestDiscordMessage", () => {
     expect(input.reply).not.toHaveBeenCalled();
   });
 
-  it("live captureを到着順に直列化し、失敗後も次のmessageを処理する", async () => {
+  it("live user appendの到着順を維持し、失敗後も次のmessageを処理する", async () => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
       channel: {
         channelId: "root-1",
         sessionMode: "shared",
-        agentMode: "capture-only",
+        appendUserOnly: true,
       },
     });
     let rejectFirst!: (error: Error) => void;
@@ -362,29 +362,29 @@ describe("ingestDiscordMessage", () => {
     await vi.waitFor(() => expect(mocks.appendMessage).toHaveBeenCalledOnce());
     rejectFirst(new Error("disk full"));
     await firstResult;
-    expect((await second).status).toBe("captured");
+    expect((await second).status).toBe("appended");
     expect(mocks.appendMessage).toHaveBeenCalledTimes(2);
     expect(first.reply).not.toHaveBeenCalled();
   });
 
   it.each([
     undefined,
-    "normal",
-  ])("agentMode=%sでは通常enqueueする", async (agentMode) => {
+    false,
+  ])("appendUserOnly=%sでは通常enqueueする", async (appendUserOnly) => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
-      channel: { channelId: "root-1", sessionMode: "shared", agentMode },
+      channel: { channelId: "root-1", sessionMode: "shared", appendUserOnly },
     });
 
     const result = await ingestDiscordMessage(
-      makeMessage({ id: "normal-after-capture" }),
+      makeMessage({ id: "agent-input" }),
       { source: "live", replyOnFailure: false },
     );
 
     expect(result.status).toBe("enqueued");
     expect(mocks.appendMessage).not.toHaveBeenCalled();
     expect(
-      repo.findByIdempotencyKey("discord-message:normal-after-capture"),
+      repo.findByIdempotencyKey("discord-message:agent-input"),
     ).toBeDefined();
   });
 

@@ -515,25 +515,6 @@ describe("handleSkillCommand", () => {
     });
   });
 
-  it("capture-only shared channelの/skillを拒否する", async () => {
-    mocks.findGroupByChannelId.mockResolvedValue({
-      group: { name: "main" },
-      channel: {
-        channelId: "channel-1",
-        sessionMode: "shared",
-        agentMode: "capture-only",
-      },
-    });
-    const interaction = makeSkillInteraction({ skill: "session-logs" });
-
-    await handleSkillCommand(interaction as never);
-
-    expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith({
-      content: "記録専用モード中はスキルを実行できません。",
-    });
-  });
-
   it("does not label slash commands as human Discord message sources", async () => {
     const interaction = makeSkillInteraction({ userId: "user-1" });
     await handleSkillCommand(interaction as never);
@@ -608,14 +589,7 @@ describe("handleBotCommand", () => {
     });
   });
 
-  it.each([
-    undefined,
-    "capture-only",
-  ])("enqueues an independent Bot Task without channel config inheritance (agentMode=%s)", async (agentMode) => {
-    mocks.findGroupByChannelId.mockResolvedValue({
-      group: { name: "main" },
-      channel: { channelId: "channel-1", sessionMode: "shared", agentMode },
-    });
+  it("enqueues a one-shot Bot request without channel config inheritance", async () => {
     const interaction = makeInteraction({ bot: "coding", prompt: "Fix it" });
 
     await handleBotCommand(interaction as never);

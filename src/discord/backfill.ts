@@ -38,22 +38,15 @@ export async function backfillDiscordMessages(
   // channel cannot be advanced by a live event during an earlier channel's
   // recovery.
   const channelIds = groups.flatMap((group) =>
-    group.channels.flatMap((channel) => {
-      if (channel.agentMode === "capture-only") {
-        // Leave this scope uninitialized throughout capture. On return to
-        // normal, the existing first-start policy seeds the current tip,
-        // skipping even downtime immediately before that restart.
-        repo.resetDiscordCursor(channel.channelId);
-        return [];
-      }
-      return [channel.channelId];
-    }),
+    group.channels
+      .filter((channel) => !channel.appendUserOnly)
+      .map((channel) => channel.channelId),
   );
   beginDiscordChannelBackfill(channelIds);
   for (const group of groups) {
     const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {
-      if (channel.agentMode === "capture-only") continue;
+      if (channel.appendUserOnly) continue;
       try {
         const completed = await backfillTarget(discordClient, channel, repo);
         if (completed) finishDiscordChannelBackfill(channel.channelId);

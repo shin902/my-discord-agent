@@ -2,7 +2,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { ChannelType, type Message, MessageType } from "discord.js";
+import { type Message, MessageType } from "discord.js";
 import {
   afterAll,
   afterEach,
@@ -46,7 +46,7 @@ let group: GroupConfig;
 let channel: ChannelConfig;
 
 beforeAll(async () => {
-  root = await mkdtemp(path.join(os.tmpdir(), "discord-capture-"));
+  root = await mkdtemp(path.join(os.tmpdir(), "discord-append-user-only-"));
   vi.stubEnv("SESSIONS_DIR", root);
   session = await import("../agent/session.js");
   ({ ingestDiscordMessage: ingest } = await import("./intake.js"));
@@ -66,17 +66,17 @@ beforeEach(async () => {
   channel = {
     channelId: "root",
     sessionMode: "shared",
-    agentMode: "capture-only",
+    appendUserOnly: true,
     requiredMention: true,
   };
-  group = { name: "capture", channels: [channel] };
+  group = { name: "journal", channels: [channel] };
   mocks.findGroup.mockImplementation(async (id) =>
     id === "root" ? { group, channel } : null,
   );
 });
 afterEach(async () => {
   repo.close();
-  await rm(path.join(root, "capture"), { recursive: true, force: true });
+  await rm(path.join(root, "journal"), { recursive: true, force: true });
 });
 afterAll(async () => {
   vi.unstubAllEnvs();
@@ -102,13 +102,6 @@ function message(id: string, isThread = false): Message {
     fetch: vi.fn(),
   } as unknown as Message;
 }
-function page(messages: Message[]) {
-  return {
-    size: messages.length,
-    values: () => messages.values(),
-    first: () => messages[0],
-  };
-}
 function expectNoRunsOrResponses(...messages: Message[]) {
   expect(repo.db.prepare("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({
     count: 0,
@@ -124,7 +117,7 @@ function expectNoRunsOrResponses(...messages: Message[]) {
   }
 }
 
-describe("shared live-only capture", () => {
+describe("appendUserOnly: shared live human messages", () => {
   it("stores raw humans once without mentions or runs", async () => {
     const input = message("1001");
     const reply = message("1002");
@@ -186,53 +179,16 @@ describe("shared live-only capture", () => {
     expectNoRunsOrResponses(child, historical);
   });
 
-  it.each([
-    "absent",
-    "empty",
-    "old",
-  ])("skips capture downtime through normal restart with a %s cursor, then resumes normal backfill", async (state) => {
-    if (state === "empty") repo.initializeDiscordCursor("root");
-    if (state === "old") repo.upsertDiscordCursor("root", "1000");
+  it("skips Discord backfill without changing cursors or blocking live input", async () => {
+    repo.upsertDiscordCursor("root", "1000");
     await backfill([group], repo);
-    // No Discord history/channel fetch at all (also works for shared DMs).
     expect(mocks.fetchChannel).not.toHaveBeenCalled();
-    expect(repo.isDiscordCursorInitialized("root")).toBe(false);
-    const captured = message("1001");
-    await live(captured);
-    expect(repo.getDiscordCursor("root")).toBeUndefined();
-    expectNoRunsOrResponses(captured);
-
-    // Stop in capture mode, then restart directly in normal mode. 1002 was
-    // posted while stopped: normal's existing first-start tip skips it.
-    channel.agentMode = "normal";
-    channel.requiredMention = false;
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(page([message("1002")]))
-      .mockResolvedValueOnce(page([]));
-    const threads = { fetchActive: vi.fn() };
-    mocks.fetchChannel.mockResolvedValue({
-      id: "root",
-      type: ChannelType.GuildText,
-      messages: { fetch },
-      threads,
-    });
-    await backfill([group], repo);
-    expect(fetch.mock.calls).toEqual([
-      [{ limit: 1, cache: false }],
-      [{ after: "1002", limit: 100, cache: false }],
+    const input = message("1001");
+    await live(input);
+    expect(repo.getDiscordCursor("root")).toBe("1000");
+    expect(await session.loadMessages(group.name, "root")).toEqual([
+      { role: "user", content: "raw 1001", timestamp: 1001 },
     ]);
-    expect(repo.getDiscordCursor("root")).toBe("1002");
-    expectNoRunsOrResponses(captured);
-    expect(await session.loadMessages(group.name, "root")).toHaveLength(1);
-
-    // A later normal-mode outage still uses the unchanged recovery path.
-    fetch.mockResolvedValueOnce(page([message("1003")]));
-    await backfill([group], repo);
-    expect(repo.findByIdempotencyKey("discord-message:1003")).toMatchObject({
-      sessionId: "root",
-    });
-    expect(repo.getDiscordCursor("root")).toBe("1003");
-    expect(threads.fetchActive).not.toHaveBeenCalled();
+    expectNoRunsOrResponses(input);
   });
 });

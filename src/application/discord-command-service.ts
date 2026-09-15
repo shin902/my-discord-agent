@@ -90,9 +90,6 @@ export async function executeSkillCommand(
   }
 
   try {
-    if (match.channel.agentMode === "capture-only") {
-      return "記録専用モード中はスキルを実行できません。";
-    }
     const configOverride = pickAgentConfig(match.channel);
     await getQueueRepository().enqueue({
       channelId: request.channelId,

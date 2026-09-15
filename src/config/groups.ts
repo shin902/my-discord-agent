@@ -83,17 +83,16 @@ export const AgentRuntimeConfigSchema = AgentConfigSchema.extend({
 const ChannelConfigSchema = AgentConfigSchema.extend({
   channelId: z.string(),
   sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
-  agentMode: z.enum(["normal", "capture-only"]).optional(),
+  appendUserOnly: z.boolean().optional(),
   // true の場合、親チャンネルとその配下スレッドの通常メッセージはBotへのmention時だけ処理する。
   requiredMention: z.boolean().optional(),
   // feedcord 等、Webhook経由でこのチャンネルに投稿するメッセージを許可するWebhook IDのリスト
   allowedWebhookIds: z.array(z.string()).optional(),
 }).refine(
-  (channel) =>
-    channel.agentMode !== "capture-only" || channel.sessionMode === "shared",
+  (channel) => !channel.appendUserOnly || channel.sessionMode === "shared",
   {
-    message: "agentMode: capture-only requires sessionMode: shared",
-    path: ["agentMode"],
+    message: "appendUserOnly requires sessionMode: shared",
+    path: ["appendUserOnly"],
   },
 );
 

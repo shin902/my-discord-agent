@@ -12,12 +12,12 @@ import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 
-const liveCaptures = new Map<string, Promise<unknown>>();
+const liveUserAppends = new Map<string, Promise<unknown>>();
 
 export type DiscordMessageSource = "live" | "backfill";
 
 export interface DiscordIngestResult {
-  status: "captured" | "enqueued" | "ignored";
+  status: "appended" | "enqueued" | "ignored";
   cursorScope?: string;
 }
 
@@ -130,71 +130,72 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  // Config validation restricts capture to shared channels, never threads.
-  const captureOnly = !isThread && match.channel.agentMode === "capture-only";
+  const appendUserOnly = match.channel.appendUserOnly;
   const isHumanMessage =
     !message.author.bot &&
     (message.type === MessageType.Default ||
       message.type === MessageType.Reply);
   if (
-    captureOnly &&
-    (options.source !== "live" || !isHumanMessage || message.webhookId !== null)
+    appendUserOnly &&
+    (isThread ||
+      options.source !== "live" ||
+      !isHumanMessage ||
+      message.webhookId !== null)
   ) {
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
   if (
-    !captureOnly &&
+    !appendUserOnly &&
     match.channel.requiredMention === true &&
     !mentionsCurrentDiscordBot(message)
   ) {
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  let cursorScope = defaultCursorScope;
-
-  try {
-    const humanSource: SessionSource | undefined = isHumanMessage
-      ? {
-          kind: "discord" as const,
-          sourceId: message.id,
-          actorId: message.author.id,
-          messageType: message.type === MessageType.Default ? 0 : 19,
-          createdAt: message.createdAt.toISOString(),
-        }
-      : undefined;
-    if (captureOnly && humanSource) {
-      const sessionId = match.channel.channelId;
-      const attachmentLines = [...message.attachments.values()].map(
-        (attachment) => `- ${attachment.name}: ${attachment.url}`,
-      );
-      // Only live captures share this append chain; normal intake never waits.
-      const next = (liveCaptures.get(sessionId) ?? Promise.resolve())
-        .catch(() => undefined)
-        .then(() =>
-          appendMessage(
-            match.group.name,
-            sessionId,
-            {
-              role: "user",
-              content: attachmentLines.length
-                ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
-                : message.content,
-              timestamp: message.createdAt.getTime(),
-            },
-            humanSource,
-          ),
-        );
-      liveCaptures.set(sessionId, next);
-      try {
-        await next;
-      } finally {
-        if (liveCaptures.get(sessionId) === next)
-          liveCaptures.delete(sessionId);
+  const humanSource: SessionSource | undefined = isHumanMessage
+    ? {
+        kind: "discord",
+        sourceId: message.id,
+        actorId: message.author.id,
+        messageType: message.type === MessageType.Default ? 0 : 19,
+        createdAt: message.createdAt.toISOString(),
       }
-      return { status: "captured", cursorScope: sessionId };
+    : undefined;
+  if (appendUserOnly) {
+    const sessionId = match.channel.channelId;
+    const attachmentLines = [...message.attachments.values()].map(
+      (attachment) => `- ${attachment.name}: ${attachment.url}`,
+    );
+    // Preserve live arrival order across asynchronous session-store opening.
+    const next = (liveUserAppends.get(sessionId) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() =>
+        appendMessage(
+          match.group.name,
+          sessionId,
+          {
+            role: "user",
+            content: attachmentLines.length
+              ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
+              : message.content,
+            timestamp: message.createdAt.getTime(),
+          },
+          humanSource,
+        ),
+      );
+    liveUserAppends.set(sessionId, next);
+    try {
+      await next;
+    } finally {
+      if (liveUserAppends.get(sessionId) === next)
+        liveUserAppends.delete(sessionId);
     }
+    return { status: "appended" };
+  }
 
+  let cursorScope = defaultCursorScope;
+  try {
     let sessionId: string;
     let inboxChannelId = message.channelId;
     let replyMessageId: string | undefined = message.id;
@@ -267,8 +268,6 @@ async function ingest(
     }
     return { status: "enqueued", cursorScope };
   } catch (error) {
-    // Live-only capture failures are logged by the handler, never replied to.
-    if (captureOnly) throw error;
     if (error instanceof ThreadCreationError) {
       if (options.replyOnFailure) {
         await message

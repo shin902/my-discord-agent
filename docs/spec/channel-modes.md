@@ -1,6 +1,6 @@
 # チャンネルモード
 
-Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける方法、`agentMode` は通常messageをAgentへ渡すか記録だけにするかを表す。別軸の静的設定であり、変更は再起動後に反映される。
+Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける方法を表す。`appendUserOnly` は通常のlive Discord message intakeだけを変更するboolean設定であり、Agent modeやsession全体の制約ではない。変更は再起動後に反映される。
 
 ## `sessionMode`
 
@@ -10,40 +10,31 @@ Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける�
 | `thread` | 無視（メンションも含む） | 全メッセージに反応 |
 | `auto-thread` | 任意のメッセージでスレッドを自動作成 | 全メッセージに反応 |
 
-上表は `agentMode: normal` の場合。`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
+上表は `appendUserOnly` が未指定 / `false` の場合。`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
 
 Slash command は通常メッセージの取り込み経路を通らないため、`requiredMention` の対象外。現在の `/bot` と、将来追加する `/new` などのコマンドもメンション不要で利用できる設計とする。
 
 ---
 
-## `agentMode`
+## `appendUserOnly`
 
-| 値 | 通常の人間messageの処理 |
-|---|---|
-| `normal`（未指定時） | 既存のtriggerに従ってenqueue → Agent run → response |
-| `capture-only` | shared限定・live限定。channel IDのcanonical sessionへraw user messageをappendするだけ。応答・backfill・threadなし |
+未指定 / `false` は既存挙動。`true` は **`sessionMode: shared` とだけ併用可能**で、`thread` / `auto-thread` / `email-mode` との併用は起動時に `appendUserOnly requires sessionMode: shared` として拒否する。
 
 ```json
 {
   "channelId": "...",
   "sessionMode": "shared",
-  "agentMode": "capture-only"
+  "appendUserOnly": true
 }
 ```
 
-`capture-only` は **`sessionMode: shared` とだけ併用可能**。`thread` / `auto-thread` / `email-mode` との併用は、起動時のconfig validationで `agentMode: capture-only requires sessionMode: shared` として拒否する。
+設定したshared channelそのもののeligibleなlive human `MessageCreate`（通常の投稿・返信）を、`requiredMention` に関係なくchannel IDのcanonical `sessions.sqlite`へuser entryとしてappendして終了する。本文・添付URL・既存timestamp/source provenanceを保持する。その入力についてqueue job、Agent Runner、provider、tool/subagent、assistant response、progress/placeholder、thread作成・routingは発生させない。bot/Webhook/system message、child threadは対象外。group/channel認可と担当Bot判定は維持する。
 
-`capture-only` は設定したshared channelそのものの通常の人間の投稿・返信を、`requiredMention` に関係なく保存する。本文・添付URL・既存timestamp/source provenanceを保持し、queue job、Agent Runner、provider、tool/subagent、assistant response、progress/placeholder、thread作成は発生させない。bot/Webhook投稿やsystem messageは保存もenqueueもしない。group担当Botの認可は維持する。
+Discord backfill対象から除外し、停止中のmessageは回収しない。cursorの解除・更新は行わず、通常channelのbackfillは変更しない。同じchannelのlive append順序とsource IDによる重複排除だけを維持する。保存失敗はhost logへ記録し、応答・replay復旧はしない。
 
-配下threadのmessageはsharedの既存routingどおり無視し、capture対象にしない。thread routingやthread IDによるcapture設定はサポートしない。
+session全体をuser-onlyにはしない。cron、`/skill`、`/bot`、既存queue job、他経路のAgent実行は従来どおりで、同じsessionのassistant / toolResult / custom entryも許容する。他経路とのserializationは追加しない。
 
-`/skill` はcapture-onlyのshared channelで拒否する。配下threadではsharedの既存command routing制約を維持する。独立したBot Task Sessionを使う `/bot` や他の独立sessionは制限しない。
-
-対象は起動中に受信したlive `MessageCreate` だけで、Discord backfillは行わない。他channelのbackfillを待たず、保存失敗はhost logへ記録するだけで応答・replay復旧はしない。同じchannelのlive append順序とsource IDによる重複排除は維持する。
-
-capture-only起動時はそのchannelのbackfill cursorを解除し、capture中は更新しない。normalへ戻すと既存の初回起動処理が現在のDiscord tipをseedするため、停止中のmessageも過去入力としてAgent実行されない。通常Agent channelのbackfillは従来どおり。
-
-設定はchannel configだけが正本で、session単位のruntime切替はない。後にconfigをnormalへ変更して再起動すれば、同じsessionのAgentは保存済みraw historyを利用できる。既存jobを設定変更で停止・取り消すことはないため、通常channelをcapture-onlyへ変更する運用では、そのsessionの既存workを完了させてから再起動する。
+記録用途での継続利用を想定し、後から同じsessionを通常Agent会話として再開する互換性は初版の保証対象外。通常Agent bootstrapは変更しない。ログconsumer側のhuman user filterもこの機能のscope外とする。
 
 ---
 

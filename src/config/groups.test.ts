@@ -120,43 +120,44 @@ describe("loadGroups", () => {
 
   it.each([
     undefined,
-    "normal",
-    "capture-only",
-  ])("shared channelのagentMode=%sを読み込む", async (agentMode) => {
+    false,
+    true,
+  ])("shared channelのappendUserOnly=%sを読み込む", async (appendUserOnly) => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
-        channels: [{ channelId: "channel", sessionMode: "shared", agentMode }],
+        channels: [
+          { channelId: "channel", sessionMode: "shared", appendUserOnly },
+        ],
       },
     ]);
     const [group] = await loadGroups();
     expect(group.channels[0].sessionMode).toBe("shared");
-    expect(group.channels[0].agentMode ?? "normal").toBe(agentMode ?? "normal");
+    expect(group.channels[0].appendUserOnly).toBe(appendUserOnly);
   });
 
   it.each([
     "thread",
     "auto-thread",
     "email-mode",
-  ])("capture-only + %sは起動時のconfig errorになる", async (sessionMode) => {
+  ])("appendUserOnly + %sは起動時のconfig errorになる", async (sessionMode) => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
-        channels: [
-          { channelId: "channel", sessionMode, agentMode: "capture-only" },
-        ],
+        channels: [{ channelId: "channel", sessionMode, appendUserOnly: true }],
       },
     ]);
     await expect(loadGroups()).rejects.toThrow(
-      "agentMode: capture-only requires sessionMode: shared",
+      "appendUserOnly requires sessionMode: shared",
     );
   });
 
   it.each([
-    { sessionMode: "capture-only" },
-    { sessionMode: "shared", agentMode: "unknown" },
-    { sessionMode: "shared", agentMode: null },
-  ])("不正なchannel modeを拒否する: %j", async (channel) => {
+    { sessionMode: "unknown" },
+    { sessionMode: "shared", appendUserOnly: "true" },
+    { sessionMode: "shared", appendUserOnly: null },
+    { sessionMode: "shared", appendUserOnly: 1 },
+  ])("不正なchannel configを拒否する: %j", async (channel) => {
     const { loadGroups } = await setupRawGroups([
       { name: "chat", channels: [{ channelId: "channel", ...channel }] },
     ]);

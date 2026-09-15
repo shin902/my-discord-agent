@@ -484,17 +484,11 @@ export async function runAgentLoop(
     isSystemPromptSnapshotMessage,
   );
   const needsSystemPromptSnapshot = !existingSystemPromptSnapshot;
-  // Capture-first users precede the first run's anchor. The anchor alone can
-  // survive failed bootstrap I/O; a later user means prompt execution began,
-  // even if contextFiles was empty and no assistant was persisted.
-  const anchorIndex = rawMessages.findIndex(isSessionTimeAnchorMessage);
-  const needsContextBootstrap = !rawMessages.some(
-    (message, index) =>
-      isAssistantMessage(message) ||
-      message.role === "toolResult" ||
-      CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? "") ||
-      (message.role === "user" && anchorIndex >= 0 && index > anchorIndex),
-  );
+  const needsContextBootstrap =
+    !rawMessages.some((message) => message.role !== "custom") &&
+    !messages.some((message) =>
+      CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? ""),
+    );
   const contextFiles = groupConfig.contextFiles ?? [];
 
   const [loadedSystemPrompt, skills, contextFileContents] = await Promise.all([

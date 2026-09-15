@@ -1874,12 +1874,6 @@ export class QueueRepository {
     })();
     return count;
   }
-  /** Forget history recovery progress so the next normal startup seeds its tip. */
-  resetDiscordCursor(scopeId: string): void {
-    this.db
-      .prepare("DELETE FROM discord_sync_cursors WHERE scope_id=?")
-      .run(scopeId);
-  }
   getDiscordCursor(scopeId: string): string | undefined {
     const row = this.db
       .prepare(
