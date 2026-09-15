@@ -157,9 +157,16 @@ export default async function handler(ctx: CronContext): Promise<void> {
       : path.join(ROOT, "data", ".screen-captures-work");
 
   try {
+    const watermark = db
+      .prepare(`SELECT received_at, id FROM screen_captures
+        WHERE completed_at IS NULL
+        ORDER BY received_at DESC, id DESC LIMIT 1`)
+      .get() as { received_at: string; id: string } | undefined;
     const nextCapture = db.prepare(`SELECT id, image, received_at, summary
       FROM screen_captures
-      WHERE completed_at IS NULL AND (received_at > ? OR (received_at = ? AND id > ?))
+      WHERE completed_at IS NULL
+        AND (received_at > ? OR (received_at = ? AND id > ?))
+        AND (received_at < ? OR (received_at = ? AND id <= ?))
       ORDER BY received_at, id LIMIT 1`);
     const previous = db
       .prepare(`SELECT id, image, received_at, summary FROM screen_captures
@@ -188,11 +195,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
       "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
     );
 
-    while (selected.length < limit) {
+    while (watermark && selected.length < limit) {
       const capture = nextCapture.get(
         cursor.received_at,
         cursor.received_at,
         cursor.id,
+        watermark.received_at,
+        watermark.received_at,
+        watermark.id,
       ) as Capture | undefined;
       if (!capture) break;
       cursor = { received_at: capture.received_at, id: capture.id };

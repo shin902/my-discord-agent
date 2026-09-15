@@ -68,7 +68,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## cronによるActivity Memory更新
 
-未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像を`settings.limit`件まで採用します（hostに`magick`コマンドが必要です）。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を1回の通常LLM実行へ直接添付します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
+cron開始時点の未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像を`settings.limit`件まで採用します（hostに`magick`コマンドが必要です）。実行中に届いた画像は次回のcronで処理します。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を1回の通常LLM実行へ直接添付します。通常LLMは既存memoryを読み、差分だけを追記します。Memory更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
 
 画像にはpassword、token、個人情報などが含まれ得ます。自動マスキングはありません。`summarize`では画像全体を`settings.visionModel`のproviderへ、`direct`ではMemory更新用の通常modelのproviderへ送信するため、**収集対象と両modeで利用するproviderを確認してから**有効化してください。
 

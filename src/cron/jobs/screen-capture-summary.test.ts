@@ -24,6 +24,7 @@ const magick = vi.hoisted(() => ({
   invalidIds: new Set<string>(),
   errorCode: undefined as string | number | undefined,
   comparisonExitCode: undefined as number | undefined,
+  onExec: undefined as (() => void) | undefined,
 }));
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
@@ -32,6 +33,9 @@ vi.mock("node:child_process", () => ({
       args: string[],
       callback: (...args: unknown[]) => void,
     ) => {
+      const onExec = magick.onExec;
+      magick.onExec = undefined;
+      onExec?.();
       const invalid = [...magick.invalidIds].some((id) =>
         args.some((arg) => arg.endsWith(`/${id}.png`)),
       );
@@ -126,6 +130,7 @@ describe("screen capture summary cron", () => {
     magick.invalidIds.clear();
     magick.errorCode = undefined;
     magick.comparisonExitCode = undefined;
+    magick.onExec = undefined;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
@@ -156,10 +161,11 @@ describe("screen capture summary cron", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  function insert(count: number) {
+  function insert(count: number, start = 0) {
     const db = openScreenCaptureDb();
     try {
-      return Array.from({ length: count }, (_, index) => {
+      return Array.from({ length: count }, (_, offset) => {
+        const index = start + offset;
         const id = randomUUID();
         db.prepare(
           "INSERT INTO screen_captures (id, image, received_at) VALUES (?, ?, ?)",
@@ -247,6 +253,21 @@ describe("screen capture summary cron", () => {
     await handler(ctx);
     expect(completeSimple).not.toHaveBeenCalled();
     expect(rows()[0].completed_at).not.toBeNull();
+  });
+
+  it("leaves captures added after the start-of-run watermark for the next run", async () => {
+    insert(1);
+    magick.onExec = () => insert(1, 1);
+
+    await handler(ctx);
+
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    expect(rows().filter((row) => row.completed_at === null)).toHaveLength(1);
+
+    vi.mocked(completeSimple).mockClear();
+    await handler(ctx);
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    expect(rows().every((row) => row.completed_at)).toBe(true);
   });
 
   it("leaves captures beyond the configured work budget pending", async () => {
