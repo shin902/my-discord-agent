@@ -162,11 +162,8 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  // Normal auto-thread roots must meet the response trigger before routing.
   if (
     !captureOnly &&
-    !isThread &&
-    match.channel.sessionMode === "auto-thread" &&
     match.channel.requiredMention === true &&
     !mentionsCurrentDiscordBot(message)
   ) {
@@ -257,15 +254,6 @@ async function ingest(
         repository.upsertDiscordCursor(cursorScope, message.id);
       }
       return { status: "captured", cursorScope };
-    }
-
-    // Capture mode separates persistence eligibility from the normal response
-    // trigger. Outside capture mode, requiredMention keeps its existing role.
-    if (
-      match.channel.requiredMention === true &&
-      !mentionsCurrentDiscordBot(message)
-    ) {
-      return { status: "ignored", cursorScope };
     }
 
     const attachments =

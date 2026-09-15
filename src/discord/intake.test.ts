@@ -309,6 +309,7 @@ describe("ingestDiscordMessage", () => {
     );
 
     expect(result).toMatchObject({ status: "ignored", cursorScope: "root-1" });
+    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     expect(
       repo.findByIdempotencyKey("discord-message:message-no-mention"),
     ).toBeUndefined();
@@ -520,6 +521,7 @@ describe("ingestDiscordMessage", () => {
       status: "ignored",
       cursorScope: "thread-1",
     });
+    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     expect(
       repo.findByIdempotencyKey("discord-message:thread-message-no-mention"),
     ).toBeUndefined();
