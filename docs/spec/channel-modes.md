@@ -1,6 +1,6 @@
 # チャンネルモード
 
-Channel が持つ `sessionMode` で動作が決まる。
+Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける方法を表す。設定変更は再起動後に反映される。
 
 ## `sessionMode`
 
@@ -10,9 +10,29 @@ Channel が持つ `sessionMode` で動作が決まる。
 | `thread` | 無視（メンションも含む） | 全メッセージに反応 |
 | `auto-thread` | 任意のメッセージでスレッドを自動作成 | 全メッセージに反応 |
 
-`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
+上表は `appendUserOnly` が未指定 / `false` の場合。`requiredMention: true` を指定したチャンネルでは、この表の「反応する」通常メッセージのうち、現在のDiscord Botへのメンションを含むものだけを処理する。スレッドでは親チャンネルの設定を参照するため、親チャンネルとその配下スレッドに同じ `requiredMention` ポリシーが適用される。
 
 Slash command は通常メッセージの取り込み経路を通らないため、`requiredMention` の対象外。現在の `/bot` と、将来追加する `/new` などのコマンドもメンション不要で利用できる設計とする。
+
+---
+
+## `appendUserOnly`
+
+任意boolean。未指定 / `false` は既存挙動。`true` は **`sessionMode: shared` 限定**で、`thread` / `auto-thread` / `email-mode` との併用は起動時config error。
+
+```json
+{ "channelId": "...", "sessionMode": "shared", "appendUserOnly": true }
+```
+
+担当Botが受信した設定shared channel自身のlive human `MessageCreate`（Default / Reply）を、`requiredMention` に関係なくchannel IDのcanonical sessionへuser entryとしてappendして終了する。本文・添付名/URL・timestamp・既存Discord source provenanceを保持する。その入力についてqueue、Agent/provider/tool実行、response/progress/placeholder、thread作成は発生しない。bot/Webhook/system、child thread、backfillは対象外。
+
+同一channelのlive appendだけ到着順に保存し、source IDで重複排除する。保存失敗はhost logに残し、応答・replay復旧はしない。
+
+session-wide modeではない。cron、`/skill`、`/bot`、既存queueなど他経路は従来どおりで、同じsessionのassistant / toolResult / custom entryも許容する。
+
+`false` に戻して再起動すれば同じsessionを通常Agentとして再利用できる。contextFilesは既存のgeneric bootstrap判定（Agent execution evidenceの有無）に従う。専用初期化stateは持たない。
+
+有効化した起動時に当該channelの既存Discord cursor行を削除し、有効中はbackfillもlive cursor更新もしない。normal復帰時は既存の初回起動処理で現在tipへseedするため、有効期間の保存済みmessageも停止中のmessageもAgent jobとして再生しない。seed以前の履歴は遡らず、それ以後は通常のbackfillに戻る。
 
 ---
 

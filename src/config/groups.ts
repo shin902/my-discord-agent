@@ -83,11 +83,18 @@ export const AgentRuntimeConfigSchema = AgentConfigSchema.extend({
 const ChannelConfigSchema = AgentConfigSchema.extend({
   channelId: z.string(),
   sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
+  appendUserOnly: z.boolean().optional(),
   // true の場合、親チャンネルとその配下スレッドの通常メッセージはBotへのmention時だけ処理する。
   requiredMention: z.boolean().optional(),
   // feedcord 等、Webhook経由でこのチャンネルに投稿するメッセージを許可するWebhook IDのリスト
   allowedWebhookIds: z.array(z.string()).optional(),
-});
+}).refine(
+  (channel) => !channel.appendUserOnly || channel.sessionMode === "shared",
+  {
+    message: "appendUserOnly requires sessionMode: shared",
+    path: ["appendUserOnly"],
+  },
+);
 
 // allowMention/toolLogArgs は配送・観測設定であり、group限定のままにする。
 const GroupConfigSchema = AgentRuntimeConfigSchema.extend({

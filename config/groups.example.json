@@ -16,6 +16,11 @@
     "channels": [
       { "channelId": "YOUR_CHANNEL_ID", "sessionMode": "shared" },
       {
+        "channelId": "YOUR_APPEND_USER_ONLY_CHANNEL_ID",
+        "sessionMode": "shared",
+        "appendUserOnly": true
+      },
+      {
         "channelId": "YOUR_RESTRICTED_CHANNEL_ID",
         "sessionMode": "shared",
         "requiredMention": true,

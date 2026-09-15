@@ -118,6 +118,39 @@ describe("loadGroups", () => {
     expect(groups[0].channels[0]).not.toHaveProperty("toolLogArgs");
   });
 
+  it.each([
+    undefined,
+    false,
+    true,
+  ])("shared channelのappendUserOnly=%sを読み込む", async (appendUserOnly) => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "chat",
+        channels: [
+          { channelId: "channel", sessionMode: "shared", appendUserOnly },
+        ],
+      },
+    ]);
+    const [group] = await loadGroups();
+    expect(group.channels[0].sessionMode).toBe("shared");
+    expect(group.channels[0].appendUserOnly).toBe(appendUserOnly);
+  });
+
+  it.each([
+    ["thread", true],
+    ["auto-thread", true],
+    ["email-mode", true],
+    ["shared", "true"],
+  ])("rejects sessionMode=%s + appendUserOnly=%s", async (sessionMode, appendUserOnly) => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "chat",
+        channels: [{ channelId: "channel", sessionMode, appendUserOnly }],
+      },
+    ]);
+    await expect(loadGroups()).rejects.toThrow("appendUserOnly");
+  });
+
   it('skills は全ロードを示す "*" もパースできる', async () => {
     const { loadGroups } = await setupRawGroups([
       { name: "chat", channels: [], skills: "*" },

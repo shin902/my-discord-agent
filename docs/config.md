@@ -187,7 +187,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
 | `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
-| `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
+| `appendUserOnly` | — | channel限定の任意boolean。`true` はshared channelのlive human messageをuser entryとして保存し、Agent実行・応答しない。未指定 / `false` は通常挙動。詳細は [チャンネルモード](spec/channel-modes.md#appenduseronly) |
+| `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`appendUserOnly` 無効時に `true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |
 | `approvalRequiredTools` | — | AgentConfig。effective `tools` に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・`tools` 外・sandbox内toolは設定エラー。子layerで指定した配列は完全置換 |
@@ -201,7 +202,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### 起動時Discord履歴バックフィル
 
-設定済みの全チャンネルで、ボット停止中にDiscordへ届いたメッセージを起動時にDiscord APIから取得し、通常のinboxへ投入する。バックフィルは常に有効で、`MessageCreate` と同じ取り込み処理を通る。
+`appendUserOnly: true` を除く設定済みチャンネルで、ボット停止中にDiscordへ届いたメッセージを起動時にDiscord APIから取得し、`MessageCreate` と同じ取り込み処理を通して通常のinboxへ投入する。`appendUserOnly` の有効期間は回収せず、normal復帰時には現在tipから再開する（[cursorの扱い](spec/channel-modes.md#appenduseronly)）。
 
 初回起動時は現在の最新メッセージをカーソルとして登録するため、既存履歴を遡らない。以降は `data/runtime.sqlite` の `discord_sync_cursors` に保存したカーソルより後を取得する。既存スレッドの復旧ではアーカイブ済みスレッドも対象に含める。
 

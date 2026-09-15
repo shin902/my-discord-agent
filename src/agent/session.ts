@@ -283,7 +283,19 @@ export async function appendMessage(
   const timestamp = messageTimestamp(sanitized);
 
   try {
-    return db.transaction(() => {
+    const append = db.transaction(() => {
+      if (source) {
+        const existing = db
+          .prepare(`
+            SELECT id FROM session_entries WHERE session_id=?
+              AND json_extract(source_json, '$.kind')=?
+              AND json_extract(source_json, '$.sourceId')=?
+          `)
+          .get(sessionId, source.kind, source.sourceId) as
+          | { id: number }
+          | undefined;
+        if (existing) return existing.id;
+      }
       db.prepare(`
         INSERT INTO sessions(id, created_at, updated_at)
         VALUES (?, ?, ?)
@@ -304,7 +316,8 @@ export async function appendMessage(
           sessionId,
         );
       return Number(inserted.lastInsertRowid);
-    })();
+    });
+    return append.immediate();
   } finally {
     db.close();
   }

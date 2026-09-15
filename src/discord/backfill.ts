@@ -38,12 +38,18 @@ export async function backfillDiscordMessages(
   // channel cannot be advanced by a live event during an earlier channel's
   // recovery.
   const channelIds = groups.flatMap((group) =>
-    group.channels.map((channel) => channel.channelId),
+    group.channels.flatMap((channel) => {
+      if (!channel.appendUserOnly) return [channel.channelId];
+      // Returning to normal must seed at the current tip, not replay this period.
+      repo.clearDiscordCursor(channel.channelId);
+      return [];
+    }),
   );
   beginDiscordChannelBackfill(channelIds);
   for (const group of groups) {
     const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {
+      if (channel.appendUserOnly) continue;
       try {
         const completed = await backfillTarget(discordClient, channel, repo);
         if (completed) finishDiscordChannelBackfill(channel.channelId);

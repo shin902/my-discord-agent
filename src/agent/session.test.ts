@@ -88,6 +88,39 @@ describe("SQLite session trajectory store", () => {
     db.close();
   });
 
+  it("同じsession/sourceの再送は元のentryを返し、本文・時刻を上書きしない", async () => {
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message-1",
+      actorId: "user-1",
+      messageType: 0 as const,
+    };
+    const original = { role: "user" as const, content: "hello", timestamp: 1 };
+    const first = await session.appendMessage(
+      "dedupe",
+      "session-a",
+      original,
+      source,
+    );
+    const replays = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        session.appendMessage(
+          "dedupe",
+          "session-a",
+          { ...original, content: "edited", timestamp: 2 },
+          source,
+        ),
+      ),
+    );
+    expect(replays).toEqual(Array(5).fill(first));
+    expect(await session.loadMessages("dedupe", "session-a")).toEqual([
+      original,
+    ]);
+    expect(
+      await session.appendMessage("dedupe", "session-b", original, source),
+    ).not.toBe(first);
+  });
+
   it("並行appendを壊さず一意なsequenceとして保存する", async () => {
     await Promise.all(
       Array.from({ length: 20 }, (_, index) =>

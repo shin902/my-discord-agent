@@ -1,10 +1,29 @@
-import type Database from "better-sqlite3";
-import { type Message, MessageType } from "discord.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import Database from "better-sqlite3";
+import { ChannelType, Collection, type Message, MessageType } from "discord.js";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import type { ChannelConfig, GroupConfig } from "../config/groups.js";
 
 const mocks = vi.hoisted(() => ({
   findGroup: vi.fn(),
   getRepo: vi.fn(),
+  appendMessage: vi.fn(),
+  fetchChannel: vi.fn(),
+}));
+
+vi.mock("../agent/session.js", () => ({
+  appendMessage: mocks.appendMessage,
 }));
 
 vi.mock("../config/groups.js", () => ({
@@ -17,7 +36,14 @@ vi.mock("../queue/repository.js", async (importOriginal) => {
   return { ...actual, getQueueRepository: mocks.getRepo };
 });
 
-const { ingestDiscordMessage } = await import("./intake.js");
+vi.mock("./client.js", () => ({
+  getDiscordClientForGroup: () => ({ channels: { fetch: mocks.fetchChannel } }),
+}));
+
+const { ingestDiscordMessage, handleLiveDiscordMessage: live } = await import(
+  "./intake.js"
+);
+const { backfillDiscordMessages: backfill } = await import("./backfill.js");
 const { beginDiscordChannelBackfill, finishDiscordChannelBackfill } =
   await import("./backfill-state.js");
 const repositoryModule = await vi.importActual<
@@ -26,9 +52,21 @@ const repositoryModule = await vi.importActual<
 
 let db: Database.Database;
 let repo: InstanceType<typeof repositoryModule.QueueRepository>;
+let root: string;
+let session: typeof import("../agent/session.js");
 
-afterEach(() => {
-  repo?.close();
+beforeAll(async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "discord-intake-"));
+  vi.stubEnv("SESSIONS_DIR", root);
+  session = await vi.importActual("../agent/session.js");
+});
+afterAll(async () => {
+  vi.unstubAllEnvs();
+  await rm(root, { recursive: true, force: true });
+});
+afterEach(async () => {
+  repo.close();
+  await rm(path.join(root, "group"), { recursive: true, force: true });
 });
 
 beforeEach(() => {
@@ -36,6 +74,7 @@ beforeEach(() => {
   db = repositoryModule.openRuntimeDb(":memory:");
   repo = new repositoryModule.QueueRepository(db);
   mocks.getRepo.mockReturnValue(repo);
+  mocks.appendMessage.mockImplementation(session.appendMessage);
   mocks.findGroup.mockResolvedValue({
     group: { name: "group" },
     channel: { channelId: "root-1", sessionMode: "auto-thread" },
@@ -77,6 +116,7 @@ function makeMessage(options: {
         : options.channel,
     content: "hello",
     createdAt: new Date("2026-08-11T00:00:00.000Z"),
+    createdTimestamp: Number(options.id),
     attachments: new Map(),
     thread: options.thread ?? null,
     fetch: vi.fn().mockResolvedValue({ thread: options.fetchedThread ?? null }),
@@ -305,13 +345,174 @@ describe("ingestDiscordMessage", () => {
     ).toBeUndefined();
   });
 
-  it("requiredMention=trueでもBot mentionがあれば親チャンネルでenqueueする", async () => {
+  describe("appendUserOnly", () => {
+    let channel: ChannelConfig;
+    let group: GroupConfig;
+    beforeEach(() => {
+      channel = {
+        channelId: "root-1",
+        sessionMode: "shared",
+        appendUserOnly: true,
+        requiredMention: true,
+        allowedWebhookIds: ["allowed"],
+      };
+      group = { name: "group", channels: [channel] };
+      mocks.findGroup.mockResolvedValue({ group, channel });
+    });
+
+    it("appends live humans/replies in order once, with attachments and provenance, without queue or response", async () => {
+      const input = makeMessage({ id: "1001" });
+      const reply = makeMessage({ id: "1002", type: MessageType.Reply });
+      reply.attachments.set("file", {
+        name: "note.txt",
+        url: "https://cdn.discordapp.com/note.txt",
+      } as never);
+      const enqueue = vi.spyOn(repo, "enqueue");
+      await Promise.all([live(input), live(reply), live(input)]);
+      const store = new Database(
+        path.join(root, group.name, "sessions.sqlite"),
+        { readonly: true },
+      );
+      expect(
+        store
+          .prepare(
+            "SELECT payload_json, source_json FROM session_entries ORDER BY sequence",
+          )
+          .all(),
+      ).toEqual(
+        [input, reply].map((message) => ({
+          payload_json: JSON.stringify({
+            role: "user",
+            content:
+              message === input
+                ? "hello"
+                : "hello\n\n[添付ファイル]\n- note.txt: https://cdn.discordapp.com/note.txt",
+            timestamp: message.createdAt.getTime(),
+          }),
+          source_json: JSON.stringify({
+            kind: "discord",
+            sourceId: message.id,
+            actorId: message.author.id,
+            messageType: message.type,
+            createdAt: message.createdAt.toISOString(),
+          }),
+        })),
+      );
+      store.close();
+      expect(enqueue).not.toHaveBeenCalled();
+      for (const message of [input, reply]) {
+        expect(message.reply).not.toHaveBeenCalled();
+        expect(message.startThread).not.toHaveBeenCalled();
+        expect(message.fetch).not.toHaveBeenCalled();
+      }
+    });
+
+    it.each([
+      [{ isBot: true }, "live"],
+      [{ isBot: true, webhookId: "allowed" }, "live"],
+      [{ webhookId: "allowed" }, "live"],
+      [{ type: MessageType.ChatInputCommand }, "live"],
+      [{ type: MessageType.ThreadCreated }, "live"],
+      [{ isThread: true, parentId: "root-1", channelId: "child" }, "live"],
+      [{}, "backfill"],
+    ] as const)("excludes %j (%s) without saving or responding", async (options, source) => {
+      const input = makeMessage({ id: "excluded", ...options });
+      const enqueue = vi.spyOn(repo, "enqueue");
+      expect(
+        (await ingestDiscordMessage(input, { source, replyOnFailure: true }))
+          .status,
+      ).toBe("ignored");
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(mocks.appendMessage).not.toHaveBeenCalled();
+      expect(input.startThread).not.toHaveBeenCalled();
+      expect(input.reply).not.toHaveBeenCalled();
+    });
+
+    it("waits for the earlier live append and continues silently after failure", async () => {
+      let rejectFirst!: (error: Error) => void;
+      mocks.appendMessage.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirst = reject;
+          }),
+      );
+      const first = makeMessage({ id: "1001" });
+      const firstResult = expect(live(first)).rejects.toThrow("disk full");
+      const second = live(makeMessage({ id: "1002" }));
+      await vi.waitFor(() =>
+        expect(mocks.appendMessage).toHaveBeenCalledOnce(),
+      );
+      rejectFirst(new Error("disk full"));
+      await firstResult;
+      expect((await second).status).toBe("appended");
+      expect(mocks.appendMessage).toHaveBeenCalledTimes(2);
+      expect(first.reply).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "1000",
+      "",
+    ])("clears cursor %j, then restores normal tip seeding and intake without replaying the append-only period", async (cursor) => {
+      if (cursor) repo.upsertDiscordCursor(channel.channelId, cursor);
+      else repo.initializeDiscordCursor(channel.channelId);
+      repo.upsertDiscordCursor("other", "900");
+      await backfill([group], repo);
+      expect(mocks.fetchChannel).not.toHaveBeenCalled();
+      await live(makeMessage({ id: "1001" }));
+      expect(repo.isDiscordCursorInitialized(channel.channelId)).toBe(false);
+      expect(repo.getDiscordCursor(channel.channelId)).toBeUndefined();
+      expect(repo.getDiscordCursor("other")).toBe("900");
+
+      // Restart with normal config; 1002 arrived while the bot was stopped.
+      channel.appendUserOnly = false;
+      channel.requiredMention = false;
+      const history = [
+        makeMessage({ id: "1001" }),
+        makeMessage({ id: "1002" }),
+      ];
+      const fetch = vi.fn(
+        async ({ after }: { after?: string }) =>
+          new Collection(
+            (after
+              ? history.filter((message) => message.id > after)
+              : history.slice(-1)
+            ).map((message) => [message.id, message]),
+          ),
+      );
+      mocks.fetchChannel.mockResolvedValue({
+        id: channel.channelId,
+        type: ChannelType.GuildText,
+        messages: { fetch },
+      });
+      await backfill([group], repo);
+      expect(fetch).toHaveBeenNthCalledWith(1, { limit: 1, cache: false });
+      expect(repo.getDiscordCursor(channel.channelId)).toBe("1002");
+      expect(db.prepare("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({
+        count: 0,
+      });
+      history.push(makeMessage({ id: "1003" }));
+      await backfill([group], repo);
+      await live(makeMessage({ id: "1004" }));
+      for (const id of ["1003", "1004"]) {
+        expect(
+          repo.findByIdempotencyKey(`discord-message:${id}`),
+        ).toMatchObject({ sessionId: channel.channelId });
+      }
+      expect(mocks.appendMessage).toHaveBeenCalledOnce();
+    });
+  });
+
+  it.each([
+    undefined,
+    false,
+  ])("appendUserOnly=%sならmention付きの通常messageをenqueueする", async (appendUserOnly) => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
       channel: {
         channelId: "root-1",
         sessionMode: "shared",
         requiredMention: true,
+        appendUserOnly,
       },
     });
 
@@ -324,6 +525,7 @@ describe("ingestDiscordMessage", () => {
     expect(
       repo.findByIdempotencyKey("discord-message:message-mentioned"),
     ).toBeDefined();
+    expect(mocks.appendMessage).not.toHaveBeenCalled();
   });
 
   it("thread messages retain the thread destination while routing by the parent channel", async () => {

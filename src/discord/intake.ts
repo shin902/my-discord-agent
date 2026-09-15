@@ -3,6 +3,8 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
+import { appendMessage } from "../agent/session.js";
+import type { SessionSource } from "../agent/source.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
 import { findGroupByChannelId } from "../config/groups.js";
@@ -10,10 +12,12 @@ import { getQueueRepository } from "../queue/repository.js";
 import type { QueueInput } from "../queue/types.js";
 import { isDiscordChannelBackfillPending } from "./backfill-state.js";
 
+const liveUserAppends = new Map<string, Promise<unknown>>();
+
 export type DiscordMessageSource = "live" | "backfill";
 
 export interface DiscordIngestResult {
-  status: "enqueued" | "ignored";
+  status: "appended" | "enqueued" | "ignored";
   cursorScope?: string;
 }
 
@@ -126,10 +130,57 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  // Thread messages resolve their parent channel before this point, so a
-  // channel-level requiredMention policy applies equally to the channel and
-  // every thread below it. Slash commands use InteractionCreate and bypass
-  // this normal-message gate.
+  const humanSource: SessionSource | undefined =
+    !message.author.bot &&
+    (message.type === MessageType.Default || message.type === MessageType.Reply)
+      ? {
+          kind: "discord",
+          sourceId: message.id,
+          actorId: message.author.id,
+          messageType: message.type,
+          createdAt: message.createdAt.toISOString(),
+        }
+      : undefined;
+  if (match.channel.appendUserOnly) {
+    if (
+      isThread ||
+      options.source !== "live" ||
+      !humanSource ||
+      message.webhookId !== null
+    )
+      return { status: "ignored" };
+
+    const sessionId = match.channel.channelId;
+    const attachmentLines = [...message.attachments.values()].map(
+      (attachment) => `- ${attachment.name}: ${attachment.url}`,
+    );
+    // Preserve live arrival order across asynchronous session-store opening.
+    const next = (liveUserAppends.get(sessionId) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() =>
+        appendMessage(
+          match.group.name,
+          sessionId,
+          {
+            role: "user",
+            content: attachmentLines.length
+              ? `${message.content}\n\n[添付ファイル]\n${attachmentLines.join("\n")}`
+              : message.content,
+            timestamp: message.createdAt.getTime(),
+          },
+          humanSource,
+        ),
+      );
+    liveUserAppends.set(sessionId, next);
+    try {
+      await next;
+    } finally {
+      if (liveUserAppends.get(sessionId) === next)
+        liveUserAppends.delete(sessionId);
+    }
+    return { status: "appended" };
+  }
+
   if (
     match.channel.requiredMention === true &&
     !mentionsCurrentDiscordBot(message)
@@ -141,7 +192,6 @@ async function ingest(
   let inboxChannelId = message.channelId;
   let replyMessageId: string | undefined = message.id;
   let cursorScope = defaultCursorScope;
-
   try {
     if (match.channel.sessionMode === "shared") {
       if (isThread) return { status: "ignored", cursorScope: lookupId };
@@ -191,19 +241,7 @@ async function ingest(
       routingChannelId: lookupId,
       sessionId,
       messageId: replyMessageId,
-      ...(!message.author.bot &&
-      (message.type === MessageType.Default ||
-        message.type === MessageType.Reply)
-        ? {
-            source: {
-              kind: "discord" as const,
-              sourceId: message.id,
-              actorId: message.author.id,
-              messageType: message.type,
-              createdAt: message.createdAt.toISOString(),
-            },
-          }
-        : {}),
+      ...(humanSource ? { source: humanSource } : {}),
       content: message.content,
       timestamp: message.createdAt.toISOString(),
       idempotencyKey: `discord-message:${message.id}`,
