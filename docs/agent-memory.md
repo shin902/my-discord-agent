@@ -113,9 +113,9 @@ MemoryCore起動後、リポジトリ管理の品質promptを現在のagent scop
 pnpm memory-core:prompts
 ```
 
-このcommandは`config/cron.json`にある唯一の`jobs/memory-export.ts` / `type: "tencentdb"` jobを接続設定の正本として読みます。`baseUrl`、`serviceId`、`teamId`、`agentId`、`bearerTokenEnv`、`timeoutMs`はexportと同じ値が使われます。該当jobがない、または複数ある場合は曖昧なscopeへprovisionせず失敗します。secret本体だけはJSONへ置かず、`bearerTokenEnv`で指定した環境変数（exampleでは`.env`の`MEMORY_CORE_GATEWAY_API_KEY`）から読みます。
+このcommandは`config/cron.json`にある各`jobs/memory-export.ts` / `type: "tencentdb"` jobを接続設定の正本として読みます。`baseUrl`、`serviceId`、`teamId`、`agentId`、`bearerTokenEnv`、`timeoutMs`はexportと同じ値が使われます。該当jobがない場合は失敗します。secret本体だけはJSONへ置かず、`bearerTokenEnv`で指定した環境変数（exampleでは`.env`の`MEMORY_CORE_GATEWAY_API_KEY`）から読みます。
 
-このcommandは各layerの同名promptを作成または更新し、agent scopeへapplyした後、MemoryCoreのeffective promptを再取得して内容とsourceを確認します。L1/L2/L3 schemaやpipeline、scope自体は変更しません。
+このcommandは各jobのagent scopeについて、各layerの同名promptを作成または更新し、applyした後、MemoryCoreのeffective promptを再取得して内容とsourceを確認します。L1/L2/L3 schemaやpipeline、scope自体は変更しません。
 
 cron job IDは安定したbackend / export namespaceです。同じlogical backendならIDを維持します。別のbackend、team/agent scope等へ既存履歴を再exportしたい場合は**新しいcron job ID**を使います。
 

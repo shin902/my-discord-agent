@@ -13,10 +13,7 @@ type PromptRecord = {
   prompt: string;
 };
 
-const client = new MemoryCoreClient(
-  await loadMemoryCoreConnectionSettingsFromCron(),
-);
-const { teamId, agentId } = client.settings;
+let client: MemoryCoreClient;
 
 async function request<T>(path: string, body?: object): Promise<T> {
   return client.request<T>(path, { body, requireData: true });
@@ -53,6 +50,7 @@ async function listPrompts(layer: Layer): Promise<PromptRecord[]> {
 }
 
 async function provision(layer: Layer): Promise<void> {
+  const { teamId, agentId } = client.settings;
   const scopeHash = createHash("sha256")
     .update(`${teamId}\0${agentId}`)
     .digest("hex")
@@ -102,4 +100,8 @@ async function provision(layer: Layer): Promise<void> {
   console.log(`${layer.toUpperCase()}: effective prompt verified`);
 }
 
-for (const layer of layers) await provision(layer);
+const settings = await loadMemoryCoreConnectionSettingsFromCron();
+for (const connection of settings) {
+  client = new MemoryCoreClient(connection);
+  for (const layer of layers) await provision(layer);
+}

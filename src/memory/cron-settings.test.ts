@@ -32,14 +32,16 @@ describe("MemoryCore cron settings", () => {
       },
     ]);
 
-    await expect(loadMemoryCoreConnectionSettingsFromCron()).resolves.toEqual({
-      baseUrl: "https://memory.example/base",
-      serviceId: "service",
-      teamId: "team",
-      agentId: "agent",
-      bearerTokenEnv: "MEMORY_SECRET",
-      timeoutMs: 1234,
-    });
+    await expect(loadMemoryCoreConnectionSettingsFromCron()).resolves.toEqual([
+      {
+        baseUrl: "https://memory.example/base",
+        serviceId: "service",
+        teamId: "team",
+        agentId: "agent",
+        bearerTokenEnv: "MEMORY_SECRET",
+        timeoutMs: 1234,
+      },
+    ]);
   });
 
   it.each([
@@ -48,18 +50,19 @@ describe("MemoryCore cron settings", () => {
   ])("rejects when no MemoryCore export profile exists", async ({ jobs }) => {
     mockedLoadRawCron.mockResolvedValue(jobs);
     await expect(loadMemoryCoreConnectionSettingsFromCron()).rejects.toThrow(
-      "exactly one",
+      "at least one",
     );
   });
 
-  it("rejects ambiguous MemoryCore export profiles", async () => {
-    const job = {
+  it("loads multiple MemoryCore export profiles", async () => {
+    const job = (agentId: string) => ({
       handler: "jobs/memory-export.ts",
-      settings: { type: "tencentdb" },
-    };
-    mockedLoadRawCron.mockResolvedValue([job, job]);
-    await expect(loadMemoryCoreConnectionSettingsFromCron()).rejects.toThrow(
-      "exactly one",
-    );
+      settings: { type: "tencentdb", agentId },
+    });
+    mockedLoadRawCron.mockResolvedValue([job("main"), job("local")]);
+    await expect(loadMemoryCoreConnectionSettingsFromCron()).resolves.toEqual([
+      expect.objectContaining({ agentId: "main" }),
+      expect.objectContaining({ agentId: "local" }),
+    ]);
   });
 });
