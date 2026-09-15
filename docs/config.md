@@ -210,7 +210,7 @@ capture-onlyはlive `MessageCreate` だけを記録し、backfillしない。起
 
 初回起動時は現在の最新メッセージをカーソルとして登録するため、既存履歴を遡らない。以降は `data/runtime.sqlite` の `discord_sync_cursors` に保存したカーソルより後を取得する。既存スレッドの復旧ではアーカイブ済みスレッドも対象に含める。
 
-ライブ受信とバックフィルの両方でDiscordメッセージIDを冪等キーに使うため、起動処理と通常イベントが競合しても二重投入されない。live captureの重複はcanonical sessionのsource IDで排除する。通常shared channelのbackfillにもsource確認を残し、保存済み入力を誤enqueueしない。バックフィルではbot/Webhookメッセージを対象外とし、過去RSSの再処理は行わない。
+ライブ受信とバックフィルの両方でDiscordメッセージIDを冪等キーに使うため、起動処理と通常イベントが競合しても二重投入されない。live captureの重複はcanonical sessionのsource IDで排除する。通常backfillでのsession DB事前照会は行わず、上記cursor境界でcapture済み入力を再取得対象から外す。バックフィルではbot/Webhookメッセージを対象外とし、過去RSSの再処理は行わない。
 
 `shared` は親チャンネル、`thread` は既存スレッド、`auto-thread` は親メッセージごとのスレッド作成・再利用を対象にする。スレッド作成にはDiscord側のスレッド作成権限、履歴取得にはメッセージ履歴の閲覧権限が必要。
 

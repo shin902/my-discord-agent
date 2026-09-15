@@ -9,8 +9,7 @@ import { type SessionSource, SessionSourceSchema } from "./source.js";
 const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
-const SCHEMA_VERSION = 5;
-const EXPORT_SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 4;
 
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -69,22 +68,6 @@ function parseStoredMessage(payload: string): AgentMessage {
   return message as unknown as AgentMessage;
 }
 
-function findSourceEntry(
-  db: Database.Database,
-  sessionId: string,
-  source: SessionSource,
-): number | undefined {
-  const row = db
-    .prepare(`
-      SELECT id FROM session_entries
-      WHERE session_id=? AND source_json IS NOT NULL
-        AND json_extract(source_json, '$.kind')=?
-        AND json_extract(source_json, '$.sourceId')=?
-    `)
-    .get(sessionId, source.kind, source.sourceId) as { id: number } | undefined;
-  return row?.id;
-}
-
 function entryType(message: Record<string, unknown>): string {
   if (typeof message.customType === "string") return message.customType;
   return typeof message.role === "string" ? message.role : "unknown";
@@ -100,12 +83,11 @@ function messageTimestamp(message: Record<string, unknown>): number {
 function initializeSchema(db: Database.Database): void {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
-  // Already-current stores need no schema inspection or migration write lock.
+  // Already-current stores need no migration write lock.
   if (db.pragma("user_version", { simple: true }) === SCHEMA_VERSION) return;
   db.transaction(() => {
     // Another run/container may have migrated while we waited for the lock.
     const version = db.pragma("user_version", { simple: true }) as number;
-    if (version === SCHEMA_VERSION) return;
     if (version > SCHEMA_VERSION) {
       throw new Error(
         `未対応のsession DB schema versionです: ${version} (対応: ${SCHEMA_VERSION})`,
@@ -144,32 +126,6 @@ function initializeSchema(db: Database.Database): void {
       db.exec(`
         DROP INDEX session_entries_execution;
         ALTER TABLE session_entries DROP COLUMN execution_json;
-      `);
-    }
-    db.exec(`
-      DROP INDEX IF EXISTS session_entries_source;
-      CREATE INDEX IF NOT EXISTS session_entries_source_identity
-        ON session_entries(
-          session_id,
-          json_extract(source_json, '$.kind'),
-          json_extract(source_json, '$.sourceId')
-        ) WHERE source_json IS NOT NULL;
-    `);
-    if (version < 5) {
-      // Preserve the old needsContextBootstrap predicate, not run completion:
-      // anchors/snapshots alone must still allow the first context bootstrap.
-      db.exec(`
-        ALTER TABLE sessions ADD COLUMN agent_initialized INTEGER NOT NULL DEFAULT 0
-          CHECK (agent_initialized IN (0, 1));
-        UPDATE sessions SET agent_initialized = EXISTS (
-          SELECT 1 FROM session_entries
-          WHERE session_id = sessions.id AND (
-            json_extract(payload_json, '$.role') IS NOT 'custom'
-            OR json_extract(payload_json, '$.customType') IN (
-              'context-bootstrap', 'memory-bootstrap', 'self-bootstrap'
-            )
-          )
-        );
       `);
     }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -238,10 +194,9 @@ export function* readConversations(
   try {
     const version = db.pragma("user_version", { simple: true }) as number;
     // Pre-reference stores have no adopted conversations; do not migrate on export.
-    if (version >= 1 && version < EXPORT_SCHEMA_VERSION) return;
-    if (version < EXPORT_SCHEMA_VERSION || version > SCHEMA_VERSION) {
+    if (version >= 1 && version < SCHEMA_VERSION) return;
+    if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
-    }
     const lookup = db.prepare(`
       SELECT u.session_id, u.source_json, u.payload_json AS user_json,
         a.payload_json AS assistant_json
@@ -309,58 +264,6 @@ export async function renameSession(
   }
 }
 
-export async function hasSessionSource(
-  groupName: string,
-  sessionId: string,
-  source: SessionSource,
-): Promise<boolean> {
-  validateName(groupName, "グループ名");
-  validateName(sessionId, "セッションID");
-  const parsed = SessionSourceSchema.parse(source);
-  const db = await openDatabase(groupName);
-  try {
-    return findSourceEntry(db, sessionId, parsed) !== undefined;
-  } finally {
-    db.close();
-  }
-}
-
-export async function isSessionAgentInitialized(
-  groupName: string,
-  sessionId: string,
-): Promise<boolean> {
-  validateName(groupName, "グループ名");
-  validateName(sessionId, "セッションID");
-  const db = await openDatabase(groupName);
-  try {
-    const row = db
-      .prepare("SELECT agent_initialized FROM sessions WHERE id=?")
-      .get(sessionId) as { agent_initialized: number } | undefined;
-    return row?.agent_initialized === 1;
-  } finally {
-    db.close();
-  }
-}
-
-export async function markSessionAgentInitialized(
-  groupName: string,
-  sessionId: string,
-): Promise<void> {
-  validateName(groupName, "グループ名");
-  validateName(sessionId, "セッションID");
-  const db = await openDatabase(groupName);
-  const now = Date.now();
-  try {
-    db.prepare(`
-      INSERT INTO sessions(id, created_at, updated_at, agent_initialized)
-      VALUES (?, ?, ?, 1)
-      ON CONFLICT(id) DO UPDATE SET agent_initialized=1, updated_at=excluded.updated_at
-    `).run(sessionId, now, now);
-  } finally {
-    db.close();
-  }
-}
-
 export async function appendMessage(
   groupName: string,
   sessionId: string,
@@ -383,8 +286,17 @@ export async function appendMessage(
     return db
       .transaction(() => {
         if (source) {
-          const existing = findSourceEntry(db, sessionId, source);
-          if (existing !== undefined) return existing;
+          // ponytail: scan this session's source JSON; index only if measured slow.
+          const existing = db
+            .prepare(`
+              SELECT id FROM session_entries WHERE session_id=?
+                AND json_extract(source_json, '$.kind')=?
+                AND json_extract(source_json, '$.sourceId')=?
+            `)
+            .get(sessionId, source.kind, source.sourceId) as
+            | { id: number }
+            | undefined;
+          if (existing) return existing.id;
         }
         db.prepare(`
         INSERT INTO sessions(id, created_at, updated_at)

@@ -25,12 +25,7 @@ import {
   type ConversationEntries,
 } from "../agent/conversation.js";
 import { resolveModel } from "../agent/model.js";
-import {
-  appendMessage,
-  isSessionAgentInitialized,
-  loadMessages,
-  markSessionAgentInitialized,
-} from "../agent/session.js";
+import { appendMessage, loadMessages } from "../agent/session.js";
 import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
@@ -489,11 +484,17 @@ export async function runAgentLoop(
     isSystemPromptSnapshotMessage,
   );
   const needsSystemPromptSnapshot = !existingSystemPromptSnapshot;
-  const needsContextBootstrap =
-    !(await isSessionAgentInitialized(groupName, sessionId)) &&
-    !messages.some((message) =>
-      CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? ""),
-    );
+  // Capture-first users precede the first run's anchor. The anchor alone can
+  // survive failed bootstrap I/O; a later user means prompt execution began,
+  // even if contextFiles was empty and no assistant was persisted.
+  const anchorIndex = rawMessages.findIndex(isSessionTimeAnchorMessage);
+  const needsContextBootstrap = !rawMessages.some(
+    (message, index) =>
+      isAssistantMessage(message) ||
+      message.role === "toolResult" ||
+      CONTEXT_BOOTSTRAP_TYPES.has(getCustomType(message) ?? "") ||
+      (message.role === "user" && anchorIndex >= 0 && index > anchorIndex),
+  );
   const contextFiles = groupConfig.contextFiles ?? [];
 
   const [loadedSystemPrompt, skills, contextFileContents] = await Promise.all([
@@ -549,10 +550,6 @@ export async function runAgentLoop(
       await appendMessage(groupName, sessionId, bootstrapMessage);
       newBootstrapMessages.push(bootstrapMessage);
     }
-  }
-
-  if (needsContextBootstrap) {
-    await markSessionAgentInitialized(groupName, sessionId);
   }
 
   if (newBootstrapMessages.length > 0) {

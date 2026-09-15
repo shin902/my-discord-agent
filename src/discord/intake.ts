@@ -3,7 +3,7 @@ import {
   MessageType,
   ThreadAutoArchiveDuration,
 } from "discord.js";
-import { appendMessage, hasSessionSource } from "../agent/session.js";
+import { appendMessage } from "../agent/session.js";
 import type { SessionSource } from "../agent/source.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
@@ -229,16 +229,6 @@ async function ingest(
       return { status: "ignored", cursorScope: defaultCursorScope };
     }
 
-    const repository = getQueueRepository();
-    if (
-      options.source === "backfill" &&
-      match.channel.sessionMode === "shared" &&
-      humanSource &&
-      (await hasSessionSource(match.group.name, sessionId, humanSource))
-    ) {
-      return { status: "ignored", cursorScope };
-    }
-
     const attachments =
       message.attachments.size > 0
         ? [...message.attachments.values()].map((attachment) => ({
@@ -266,6 +256,7 @@ async function ingest(
         : {}),
     };
 
+    const repository = getQueueRepository();
     await repository.enqueue(payload);
     if (
       options.updateLiveCursor &&

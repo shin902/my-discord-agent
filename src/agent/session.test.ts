@@ -35,7 +35,7 @@ describe("SQLite session trajectory store", () => {
       session.loadMessages("empty-group", "missing"),
     ).resolves.toEqual([]);
     const db = dbFor("empty-group");
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(4);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all() as Array<{ name: string }>;
@@ -44,31 +44,6 @@ describe("SQLite session trajectory store", () => {
       "sessions",
       "sqlite_sequence",
     ]);
-    expect(
-      db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='index' AND name='session_entries_source_identity'",
-        )
-        .get(),
-    ).toEqual({ name: "session_entries_source_identity" });
-    expect(
-      db
-        .prepare(
-          "EXPLAIN QUERY PLAN SELECT id FROM session_entries WHERE session_id=? AND source_json IS NOT NULL AND json_extract(source_json, '$.kind')=? AND json_extract(source_json, '$.sourceId')=?",
-        )
-        .all("session", "discord", "message"),
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          detail: expect.stringContaining(
-            "USING INDEX session_entries_source_identity",
-          ),
-        }),
-      ]),
-    );
-    expect(db.pragma("table_info(sessions)")).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "mode" })]),
-    );
     db.close();
   });
 
@@ -113,34 +88,37 @@ describe("SQLite session trajectory store", () => {
     db.close();
   });
 
-  it("同じDiscord sourceの再送を二重保存しない", async () => {
+  it("同じsession/sourceの再送は元のentryを返し、本文・時刻を上書きしない", async () => {
     const source = {
       kind: "discord" as const,
       sourceId: "message-1",
       actorId: "user-1",
       messageType: 0 as const,
     };
-    expect(await session.hasSessionSource("dedupe", "session-a", source)).toBe(
-      false,
-    );
+    const original = { role: "user" as const, content: "hello", timestamp: 1 };
     const first = await session.appendMessage(
       "dedupe",
       "session-a",
-      { role: "user", content: "hello", timestamp: 1 },
+      original,
       source,
     );
-    const replay = await session.appendMessage(
-      "dedupe",
-      "session-a",
-      { role: "user", content: "hello", timestamp: 1 },
-      source,
+    const replays = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        session.appendMessage(
+          "dedupe",
+          "session-a",
+          { ...original, content: "edited", timestamp: 2 },
+          source,
+        ),
+      ),
     );
-
-    expect(replay).toBe(first);
-    expect(await session.hasSessionSource("dedupe", "session-a", source)).toBe(
-      true,
-    );
-    expect(await session.loadMessages("dedupe", "session-a")).toHaveLength(1);
+    expect(replays).toEqual(Array(5).fill(first));
+    expect(await session.loadMessages("dedupe", "session-a")).toEqual([
+      original,
+    ]);
+    expect(
+      await session.appendMessage("dedupe", "session-b", original, source),
+    ).not.toBe(first);
   });
 
   it("並行appendを壊さず一意なsequenceとして保存する", async () => {
@@ -163,7 +141,7 @@ describe("SQLite session trajectory store", () => {
   });
 
   it.each([
-    0, 1, 2, 3, 4,
+    0, 1, 2, 3,
   ])("rechecks stale v%s under the migration write lock across concurrent connections", async (version) => {
     const group = `migration-v${version}`;
     await mkdir(path.join(root, group), { recursive: true });
@@ -187,7 +165,6 @@ describe("SQLite session trajectory store", () => {
         CREATE INDEX session_entries_execution ON session_entries(session_id, json_extract(execution_json, '$.jobId'), json_extract(execution_json, '$.fencingToken'), sequence) WHERE execution_json IS NOT NULL;
         PRAGMA user_version=3;`);
     }
-    if (version === 4) db.pragma("user_version=4");
     db.close();
     const gate = new Int32Array(new SharedArrayBuffer(4));
     const worker = new Worker(
@@ -214,7 +191,7 @@ describe("SQLite session trajectory store", () => {
       ]);
       const inspect = dbFor(group);
       try {
-        expect(inspect.pragma("user_version", { simple: true })).toBe(5);
+        expect(inspect.pragma("user_version", { simple: true })).toBe(4);
         expect(
           (
             inspect.pragma("table_info(session_entries)") as Array<{
@@ -229,19 +206,7 @@ describe("SQLite session trajectory store", () => {
             .prepare("SELECT COUNT(*) AS count FROM session_entries")
             .get(),
         ).toEqual({ count: version === 0 ? 2 : 3 });
-        expect(
-          inspect
-            .prepare(
-              "SELECT agent_initialized FROM sessions WHERE id='main-session'",
-            )
-            .get(),
-        ).toEqual({ agent_initialized: 0 });
-        if (version >= 1) {
-          expect(
-            inspect
-              .prepare("SELECT agent_initialized FROM sessions WHERE id='old'")
-              .get(),
-          ).toEqual({ agent_initialized: 1 });
+        if (version >= 1)
           expect(
             inspect
               .prepare(
@@ -249,7 +214,6 @@ describe("SQLite session trajectory store", () => {
               )
               .get(),
           ).toEqual({ source_json: null });
-        }
       } finally {
         inspect.close();
       }
@@ -259,111 +223,6 @@ describe("SQLite session trajectory store", () => {
       await worker.terminate();
     }
   }, 15_000);
-
-  it("capture-first sessionのAgent初期化状態をraw trajectoryと独立に保存する", async () => {
-    await session.appendMessage("mode-group", "session-a", {
-      role: "user",
-      content: "captured",
-      timestamp: 123,
-    });
-
-    expect(
-      await session.isSessionAgentInitialized("mode-group", "session-a"),
-    ).toBe(false);
-    await session.markSessionAgentInitialized("mode-group", "session-a");
-    expect(
-      await session.isSessionAgentInitialized("mode-group", "session-a"),
-    ).toBe(true);
-    expect(await session.loadMessages("mode-group", "session-a")).toEqual([
-      { role: "user", content: "captured", timestamp: 123 },
-    ]);
-  });
-
-  it("migrates v4 using the legacy bootstrap predicate without changing raw entries", async () => {
-    const group = "bootstrap-migration-v4";
-    await session.loadMessages(group, "missing");
-    const db = new Database(path.join(root, group, "sessions.sqlite"));
-    db.exec(`
-      ALTER TABLE sessions DROP COLUMN agent_initialized;
-      DROP INDEX session_entries_source_identity;
-      CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
-      PRAGMA user_version = 4;
-    `);
-    const cases = [
-      { id: "empty", types: [], initialized: false },
-      { id: "anchor", types: ["session-time-anchor"], initialized: false },
-      { id: "snapshot", types: ["system-prompt-snapshot"], initialized: false },
-      {
-        id: "interrupted",
-        types: ["session-time-anchor", "system-prompt-snapshot"],
-        initialized: false,
-      },
-      { id: "other-custom", types: ["skill-invocation"], initialized: false },
-      ...[
-        "context-bootstrap",
-        "memory-bootstrap",
-        "self-bootstrap",
-        "user",
-        "assistant",
-        "toolResult",
-      ].map((type) => ({
-        id: type,
-        types: ["session-time-anchor", "system-prompt-snapshot", type],
-        initialized: true,
-      })),
-    ];
-    for (const { id, types } of cases) {
-      db.prepare(
-        "INSERT INTO sessions(id, created_at, updated_at) VALUES (?, 1, 1)",
-      ).run(id);
-      for (const [index, type] of types.entries()) {
-        const ordinary = ["user", "assistant", "toolResult"].includes(type);
-        const payload = {
-          role: ordinary ? type : "custom",
-          ...(!ordinary ? { customType: type } : {}),
-          content: "preserved",
-          timestamp: 1,
-        };
-        db.prepare(
-          "INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json) VALUES (?, ?, ?, ?, 1, ?)",
-        ).run(
-          id,
-          index + 1,
-          type,
-          JSON.stringify(payload),
-          type === "user"
-            ? JSON.stringify({
-                kind: "discord",
-                sourceId: "message",
-                actorId: "human",
-                messageType: 0,
-              })
-            : null,
-        );
-      }
-    }
-    const entries = db
-      .prepare("SELECT * FROM session_entries ORDER BY id")
-      .all();
-    db.close();
-
-    for (const { id, initialized } of cases) {
-      expect(await session.isSessionAgentInitialized(group, id), id).toBe(
-        initialized,
-      );
-    }
-    const inspect = dbFor(group);
-    expect(inspect.pragma("user_version", { simple: true })).toBe(5);
-    expect(
-      inspect.prepare("SELECT * FROM session_entries ORDER BY id").all(),
-    ).toEqual(entries);
-    inspect.close();
-    // A later open must not re-derive or overwrite an explicit marker.
-    await session.markSessionAgentInitialized(group, "interrupted");
-    expect(await session.isSessionAgentInitialized(group, "interrupted")).toBe(
-      true,
-    );
-  });
 
   it("session identityをtransactionでrenameしentryを維持する", async () => {
     await session.appendMessage("rename-group", "cron-temp", {

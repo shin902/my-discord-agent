@@ -5,12 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findGroup: vi.fn(),
   getRepo: vi.fn(),
-  hasSessionSource: vi.fn(),
   appendMessage: vi.fn(),
 }));
 
 vi.mock("../agent/session.js", () => ({
-  hasSessionSource: mocks.hasSessionSource,
   appendMessage: mocks.appendMessage,
 }));
 
@@ -43,7 +41,6 @@ beforeEach(() => {
   db = repositoryModule.openRuntimeDb(":memory:");
   repo = new repositoryModule.QueueRepository(db);
   mocks.getRepo.mockReturnValue(repo);
-  mocks.hasSessionSource.mockResolvedValue(false);
   mocks.appendMessage.mockResolvedValue(1);
   mocks.findGroup.mockResolvedValue({
     group: { name: "group" },
@@ -124,7 +121,6 @@ describe("ingestDiscordMessage", () => {
 
     expect(result).toMatchObject({ status: "enqueued", cursorScope: "root-1" });
     expect(startThread).toHaveBeenCalledOnce();
-    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     const job = repo.findByIdempotencyKey("discord-message:message-new");
     expect(job).toMatchObject({
       idempotencyKey: "discord-message:message-new",
@@ -310,7 +306,6 @@ describe("ingestDiscordMessage", () => {
     );
 
     expect(result).toMatchObject({ status: "ignored", cursorScope: "root-1" });
-    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     expect(
       repo.findByIdempotencyKey("discord-message:message-no-mention"),
     ).toBeUndefined();
@@ -365,7 +360,6 @@ describe("ingestDiscordMessage", () => {
       source: "live",
     });
     await vi.waitFor(() => expect(mocks.appendMessage).toHaveBeenCalledOnce());
-    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     rejectFirst(new Error("disk full"));
     await firstResult;
     expect((await second).status).toBe("captured");
@@ -388,7 +382,6 @@ describe("ingestDiscordMessage", () => {
     );
 
     expect(result.status).toBe("enqueued");
-    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     expect(mocks.appendMessage).not.toHaveBeenCalled();
     expect(
       repo.findByIdempotencyKey("discord-message:normal-after-capture"),
@@ -469,7 +462,6 @@ describe("ingestDiscordMessage", () => {
       status: "ignored",
       cursorScope: "thread-1",
     });
-    expect(mocks.hasSessionSource).not.toHaveBeenCalled();
     expect(
       repo.findByIdempotencyKey("discord-message:thread-message-no-mention"),
     ).toBeUndefined();

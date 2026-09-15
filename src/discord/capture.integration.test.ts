@@ -125,7 +125,7 @@ function expectNoRunsOrResponses(...messages: Message[]) {
 }
 
 describe("shared live-only capture", () => {
-  it("stores raw humans once without mentions or runs, and preserves history after returning to normal", async () => {
+  it("stores raw humans once without mentions or runs", async () => {
     const input = message("1001");
     const reply = message("1002");
     Object.assign(reply, {
@@ -140,12 +140,6 @@ describe("shared live-only capture", () => {
     const enqueue = vi.spyOn(repo, "enqueue");
     await Promise.all([live(input), live(reply)]);
     await live(input);
-    expect(await session.isSessionAgentInitialized(group.name, "root")).toBe(
-      false,
-    );
-    channel.agentMode = "normal";
-    channel.requiredMention = false;
-    await ingest(input, { source: "backfill" });
     expect(await session.loadMessages(group.name, channel.channelId)).toEqual([
       { role: "user", content: "raw 1001", timestamp: 1001 },
       {
