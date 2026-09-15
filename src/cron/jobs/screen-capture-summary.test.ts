@@ -24,6 +24,7 @@ const magick = vi.hoisted(() => ({
   invalidIds: new Set<string>(),
   errorCode: undefined as string | number | undefined,
   comparisonExitCode: undefined as number | undefined,
+  onExec: undefined as (() => void) | undefined,
 }));
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
@@ -32,6 +33,9 @@ vi.mock("node:child_process", () => ({
       args: string[],
       callback: (...args: unknown[]) => void,
     ) => {
+      const onExec = magick.onExec;
+      magick.onExec = undefined;
+      onExec?.();
       const invalid = [...magick.invalidIds].some((id) =>
         args.some((arg) => arg.endsWith(`/${id}.png`)),
       );
@@ -126,6 +130,7 @@ describe("screen capture summary cron", () => {
     magick.invalidIds.clear();
     magick.errorCode = undefined;
     magick.comparisonExitCode = undefined;
+    magick.onExec = undefined;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
@@ -156,14 +161,19 @@ describe("screen capture summary cron", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  function insert(count: number) {
+  function insert(count: number, start = 0) {
     const db = openScreenCaptureDb();
     try {
-      return Array.from({ length: count }, (_, index) => {
+      return Array.from({ length: count }, (_, offset) => {
+        const index = start + offset;
         const id = randomUUID();
         db.prepare(
           "INSERT INTO screen_captures (id, image, received_at) VALUES (?, ?, ?)",
-        ).run(id, Buffer.from(`image-${index}`), `2026-09-12T00:00:0${index}Z`);
+        ).run(
+          id,
+          Buffer.from(`image-${index}`),
+          `2026-09-12T00:00:${String(index).padStart(2, "0")}Z`,
+        );
         return id;
       });
     } finally {
@@ -188,6 +198,24 @@ describe("screen capture summary cron", () => {
       db.close();
     }
   }
+
+  it("accepts a limit above 10", async () => {
+    await expect(
+      handler({
+        ...ctx,
+        settings: { visionModel, concurrency: 2, limit: 30 },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects removed settings.timeoutMs configuration", async () => {
+    await expect(
+      handler({
+        ...ctx,
+        settings: { visionModel, concurrency: 2, timeoutMs: 10 },
+      }),
+    ).rejects.toThrow("requires valid settings and groupName");
+  });
 
   it("summarizes images with settings.visionModel then gives text to the memory model", async () => {
     insert(2);
@@ -227,7 +255,22 @@ describe("screen capture summary cron", () => {
     expect(rows()[0].completed_at).not.toBeNull();
   });
 
-  it("stops fetching captures when the accepted limit is reached", async () => {
+  it("leaves captures added after the start-of-run watermark for the next run", async () => {
+    insert(1);
+    magick.onExec = () => insert(1, 1);
+
+    await handler(ctx);
+
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    expect(rows().filter((row) => row.completed_at === null)).toHaveLength(1);
+
+    vi.mocked(completeSimple).mockClear();
+    await handler(ctx);
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    expect(rows().every((row) => row.completed_at)).toBe(true);
+  });
+
+  it("leaves captures beyond the configured work budget pending", async () => {
     const ids = insert(3);
     await handler({
       ...ctx,
@@ -345,8 +388,8 @@ describe("screen capture summary cron", () => {
     );
   });
 
-  it("locks the effective memory provider around direct-mode agent calls", async () => {
-    const ids = insert(2);
+  it("passes more than 10 images to one locked direct-mode agent call", async () => {
+    const ids = insert(12);
     const release = vi.fn();
     vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
     vi.mocked(acquireLlmLock).mockResolvedValue(release);
@@ -364,7 +407,7 @@ describe("screen capture summary cron", () => {
     });
     await handler({
       ...ctx,
-      settings: { mode: "direct", timeoutMs: 120_000, limit: 10 },
+      settings: { mode: "direct", limit: 12 },
     });
 
     expect(completeSimple).not.toHaveBeenCalled();
@@ -381,11 +424,7 @@ describe("screen capture summary cron", () => {
     expect(resolveProviderConcurrency).toHaveBeenCalledWith(
       memoryModel.provider,
     );
-    expect(acquireLlmLock).toHaveBeenCalledWith(
-      memoryModel.provider,
-      "serial",
-      expect.any(AbortSignal),
-    );
+    expect(acquireLlmLock).toHaveBeenCalledWith(memoryModel.provider, "serial");
     expect(release).toHaveBeenCalledOnce();
     for (const id of ids) {
       await expect(
@@ -407,7 +446,7 @@ describe("screen capture summary cron", () => {
       skills: undefined,
       mounts: undefined,
       contextFiles: undefined,
-      settings: { mode: "direct", limit: 10 },
+      settings: { mode: "direct" },
     });
 
     expect(vi.mocked(sendMessage).mock.calls[0][3]).not.toHaveProperty(
@@ -420,7 +459,7 @@ describe("screen capture summary cron", () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("agent failed"));
 
     await expect(
-      handler({ ...ctx, settings: { mode: "direct", limit: 10 } }),
+      handler({ ...ctx, settings: { mode: "direct" } }),
     ).rejects.toThrow("agent failed");
     expect(rows()[0].completed_at).toBeNull();
   });
@@ -430,10 +469,7 @@ describe("screen capture summary cron", () => {
       "requires valid settings and groupName",
     );
     await expect(
-      handler({ ...ctx, settings: { mode: "direct", timeoutMs: 0 } }),
-    ).rejects.toThrow("requires valid settings and groupName");
-    await expect(
-      handler({ ...ctx, settings: { mode: "direct", limit: 11 } }),
+      handler({ ...ctx, settings: { mode: "direct", timeoutMs: 1 } }),
     ).rejects.toThrow("requires valid settings and groupName");
     expect(completeSimple).not.toHaveBeenCalled();
   });

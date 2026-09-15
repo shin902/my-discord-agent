@@ -109,7 +109,6 @@ it("runs upload → VLM through Credential Proxy → DB summary → memory agent
       model: memoryModel,
       settings: {
         visionModel: { provider: "screen-test", modelId: "vision-test" },
-        timeoutMs: 5000,
       },
     } as CronContext);
 

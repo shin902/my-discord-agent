@@ -24,8 +24,7 @@ import type { CronContext } from "../runner.js";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SIMILARITY_THRESHOLD = 0.8;
 const CommonSettings = {
-  timeoutMs: z.number().int().min(1).max(600_000).default(120_000),
-  limit: z.number().int().min(1).max(10).default(10),
+  limit: z.number().int().min(1).default(10),
 };
 const Settings = z.union([
   z.strictObject({ mode: z.literal("direct"), ...CommonSettings }),
@@ -43,6 +42,8 @@ type Capture = {
   received_at: string;
   summary: string | null;
 };
+
+type SelectedCapture = Omit<Capture, "image">;
 
 class InvalidCaptureError extends Error {}
 
@@ -114,7 +115,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     throw new NonRetryableError(
       "screen-capture-summary requires valid settings and groupName",
     );
-  const { timeoutMs, limit } = parsed.data;
+  const { limit } = parsed.data;
   const groupName = ctx.groupName;
   const agentConfig = pickAgentConfig(ctx);
   const agentOptions =
@@ -132,19 +133,16 @@ export default async function handler(ctx: CronContext): Promise<void> {
     content: string,
     options: Omit<
       NonNullable<Parameters<typeof sendMessage>[3]>,
-      "signal" | "heldLlmProvider"
+      "heldLlmProvider"
     >,
   ) => {
-    const signal = AbortSignal.timeout(timeoutMs);
     const release = await acquireLlmLock(
       memoryModel.provider,
       memoryConcurrency,
-      signal,
     );
     try {
       return await sendMessage(groupName, sessionId, content, {
         ...options,
-        signal,
         heldLlmProvider:
           memoryConcurrency === "serial" ? memoryModel.provider : undefined,
       });
@@ -159,9 +157,16 @@ export default async function handler(ctx: CronContext): Promise<void> {
       : path.join(ROOT, "data", ".screen-captures-work");
 
   try {
+    const watermark = db
+      .prepare(`SELECT received_at, id FROM screen_captures
+        WHERE completed_at IS NULL
+        ORDER BY received_at DESC, id DESC LIMIT 1`)
+      .get() as { received_at: string; id: string } | undefined;
     const nextCapture = db.prepare(`SELECT id, image, received_at, summary
       FROM screen_captures
-      WHERE completed_at IS NULL AND (received_at > ? OR (received_at = ? AND id > ?))
+      WHERE completed_at IS NULL
+        AND (received_at > ? OR (received_at = ? AND id > ?))
+        AND (received_at < ? OR (received_at = ? AND id <= ?))
       ORDER BY received_at, id LIMIT 1`);
     const previous = db
       .prepare(`SELECT id, image, received_at, summary FROM screen_captures
@@ -183,21 +188,24 @@ export default async function handler(ctx: CronContext): Promise<void> {
       }
     }
     let cursor = { received_at: "", id: "" };
-    const selected: Capture[] = [];
+    const selected: SelectedCapture[] = [];
     const rejectedIds: string[] = [];
     let invalidCount = 0;
     const completeInvalid = db.prepare(
       "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
     );
 
-    while (selected.length < limit) {
+    while (watermark && selected.length < limit) {
       const capture = nextCapture.get(
         cursor.received_at,
         cursor.received_at,
         cursor.id,
+        watermark.received_at,
+        watermark.received_at,
+        watermark.id,
       ) as Capture | undefined;
       if (!capture) break;
-      cursor = capture;
+      cursor = { received_at: capture.received_at, id: capture.id };
 
       try {
         const imagePath = await writeCapture(directory, capture);
@@ -205,7 +213,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
           ? (await similarity(reference, imagePath)) < SIMILARITY_THRESHOLD
           : true;
         if (accepted) {
-          selected.push(capture);
+          selected.push({
+            id: capture.id,
+            received_at: capture.received_at,
+            summary: capture.summary,
+          });
           reference = imagePath;
         } else {
           rejectedIds.push(capture.id);
@@ -306,11 +318,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
               const capture = pending[next++];
               let summary: string;
               try {
-                const signal = AbortSignal.timeout(timeoutMs);
                 const release = await acquireLlmLock(
                   visionModel.provider,
                   policy,
-                  signal,
                 );
                 try {
                   const image = await readFile(
@@ -341,7 +351,6 @@ export default async function handler(ctx: CronContext): Promise<void> {
                     },
                     {
                       apiKey,
-                      signal,
                       maxTokens: Math.min(2048, model.maxTokens),
                       reasoning:
                         visionModel.thinkingLevel === "off"
@@ -354,11 +363,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
                     .map((part) => part.text)
                     .join("\n")
                     .trim();
-                  if (
-                    signal.aborted ||
-                    result.stopReason !== "stop" ||
-                    !summary
-                  )
+                  if (result.stopReason !== "stop" || !summary)
                     throw new Error("Incomplete or empty summary");
                 } finally {
                   release();
