@@ -23,12 +23,16 @@ import type { CronContext } from "../runner.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SIMILARITY_THRESHOLD = 0.8;
+const CommonSettings = {
+  limit: z.number().int().min(1).default(10),
+};
 const Settings = z.union([
-  z.strictObject({ mode: z.literal("direct") }),
+  z.strictObject({ mode: z.literal("direct"), ...CommonSettings }),
   z.strictObject({
     mode: z.literal("summarize").default("summarize"),
     visionModel: ModelConfigSchema,
     concurrency: z.number().int().min(1).max(16).default(4),
+    ...CommonSettings,
   }),
 ]);
 
@@ -111,6 +115,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     throw new NonRetryableError(
       "screen-capture-summary requires valid settings and groupName",
     );
+  const { limit } = parsed.data;
   const groupName = ctx.groupName;
   const agentConfig = pickAgentConfig(ctx);
   const agentOptions =
@@ -183,7 +188,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
     );
 
-    while (true) {
+    while (selected.length < limit) {
       const capture = nextCapture.get(
         cursor.received_at,
         cursor.received_at,

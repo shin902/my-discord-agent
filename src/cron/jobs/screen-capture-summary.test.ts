@@ -93,7 +93,7 @@ const ctx = {
   groupName: "logbook",
   handler: "jobs/screen-capture-summary.ts",
   ...agentConfig,
-  settings: { visionModel, concurrency: 2 },
+  settings: { visionModel, concurrency: 2, limit: 10 },
 } as CronContext;
 const model = getModel("openai", "gpt-4o-mini");
 
@@ -193,14 +193,20 @@ describe("screen capture summary cron", () => {
     }
   }
 
-  it.each([
-    "limit",
-    "timeoutMs",
-  ])("rejects removed settings.%s configuration", async (setting) => {
+  it("accepts a limit above 10", async () => {
     await expect(
       handler({
         ...ctx,
-        settings: { visionModel, concurrency: 2, [setting]: 10 },
+        settings: { visionModel, concurrency: 2, limit: 30 },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects removed settings.timeoutMs configuration", async () => {
+    await expect(
+      handler({
+        ...ctx,
+        settings: { visionModel, concurrency: 2, timeoutMs: 10 },
       }),
     ).rejects.toThrow("requires valid settings and groupName");
   });
@@ -243,12 +249,18 @@ describe("screen capture summary cron", () => {
     expect(rows()[0].completed_at).not.toBeNull();
   });
 
-  it("processes every pending capture in the current run", async () => {
-    insert(12);
-    await handler(ctx);
+  it("leaves captures beyond the configured work budget pending", async () => {
+    const ids = insert(3);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
 
-    expect(completeSimple).toHaveBeenCalledTimes(12);
-    expect(rows().every((row) => row.completed_at)).toBe(true);
+    expect(completeSimple).toHaveBeenCalledTimes(2);
+    expect(rows().find((row) => row.id === ids[2])).toMatchObject({
+      summary: null,
+      completed_at: null,
+    });
   });
 
   it("accepts ImageMagick exit 1 when comparison returns a valid SSIM", async () => {
@@ -374,7 +386,7 @@ describe("screen capture summary cron", () => {
     });
     await handler({
       ...ctx,
-      settings: { mode: "direct" },
+      settings: { mode: "direct", limit: 12 },
     });
 
     expect(completeSimple).not.toHaveBeenCalled();

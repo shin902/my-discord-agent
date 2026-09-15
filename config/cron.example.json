@@ -104,6 +104,7 @@
     "settings": {
       "mode": "summarize",
       "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
+      "limit": 10,
       "concurrency": 4
     }
   },
