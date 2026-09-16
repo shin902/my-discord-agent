@@ -109,6 +109,12 @@
     }
   },
   {
+    "id": "screen-capture-gc",
+    "schedule": "0 */6 * * *",
+    "enabled": false,
+    "handler": "jobs/screen-capture-gc.ts"
+  },
+  {
     "id": "x-saved-media-download",
     "schedule": "*/5 * * * *",
     "enabled": false,
