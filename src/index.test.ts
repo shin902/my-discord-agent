@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   validateBotConfigs: vi.fn(),
   loadDefaultModel: vi.fn(),
   loadAndValidateCron: vi.fn(),
+  runStartupJobs: vi.fn(),
   stopCron: vi.fn(),
   queueRepository: { db: {}, listRssStatePaths: vi.fn() },
   initializeQueue: vi.fn(),
@@ -110,6 +111,7 @@ vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),
   stopCron: mocks.stopCron,
   loadAndValidateCron: mocks.loadAndValidateCron,
+  runStartupJobs: mocks.runStartupJobs,
   _setCronJobs: vi.fn(),
 }));
 vi.mock("./queue/repository.js", () => ({
@@ -484,6 +486,7 @@ describe("index: 起動時バリデーション", () => {
     await vi.waitFor(() =>
       expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce(),
     );
+    expect(mocks.runStartupJobs).toHaveBeenCalledOnce();
 
     releaseBackfill();
     await Promise.all([firstBackfill, secondBackfill]);

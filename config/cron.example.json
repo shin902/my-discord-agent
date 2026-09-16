@@ -17,6 +17,16 @@
     }
   },
   {
+    "id": "startup-check",
+    "schedule": "@startup",
+    "enabled": false,
+    "groupName": "my-group",
+    "prompt": "未処理事項を確認して、必要な作業を進めてください",
+    "channelId": "YOUR_CHANNEL_ID",
+    "deliveryMode": "direct",
+    "sessionMode": "destination"
+  },
+  {
     "id": "daily-report",
     "schedule": "0 9 * * *",
     "enabled": true,

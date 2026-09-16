@@ -21,6 +21,7 @@ import {
 import {
   _setCronJobs,
   loadAndValidateCron,
+  runStartupJobs,
   startCron,
   stopCron,
 } from "./cron/runner.js";
@@ -162,6 +163,7 @@ let backfillStarted = false;
 const runStartupBackfillOnce = async (): Promise<void> => {
   if (backfillStarted) return;
   backfillStarted = true;
+  runStartupJobs();
   console.log("[discord-backfill] 起動時履歴復旧を開始します");
   await backfillDiscordMessages(groups);
   console.log("[discord-backfill] 起動時履歴復旧が完了しました");
