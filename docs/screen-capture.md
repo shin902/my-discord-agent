@@ -101,6 +101,8 @@ cron開始時点の未完了画像を古い順に走査し、直前に採用し�
 - ImageMagickがdecodeできない画像は`accepted = 0`で完了にして後続画像を処理します。`magick` executable不在などjob全体の実行環境エラーは画像不正として完了させず、jobを失敗させます。
 - 同一jobのtick重複はcron runnerが抑止します。同じscreen-capture DBを処理するhandlerは1 process内の1 jobだけに設定してください。別IDのjobや別processを含む複数consumerはサポートしません。変更反映にはBot再起動が必要です。
 
+完了済み画像は専用の`screen-capture-gc` cronで`completed_at`から24時間後に削除します。`accepted`の値は問わず、未完了画像は削除しません。設定例は`config/cron.example.json`にあります。
+
 ### 参考Memoryテンプレート
 
 [`templates/capturelog/`](../templates/capturelog/)に、画面活動を`capturelog/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。配下の`memory/`と`capturelog/`はAgentGroup workspaceへの配置構造をそのまま表します。まだ実運用で十分に検証された推奨設定ではないため、既存ファイルへ一括上書きせず、必要な内容を確認して取り込んでください。
@@ -132,6 +134,6 @@ sqlite3 -readonly data/screen-captures.sqlite \
   'SELECT id, received_at, length(image) AS bytes, completed_at IS NOT NULL AS is_completed FROM screen_captures ORDER BY received_at;'
 ```
 
-DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。Bot PC側の画像・要約には自動削除期限を設けず、容量・retention・backupのアクセス権を運用者が管理します。Mac側はACK後に削除しますが、未ACK・削除失敗のPNGは再送または明示削除が必要です。旧版で成功後も残ったPNGは自動走査しないため、同じパスで再送してACK後に削除するか、不要と確認して明示的に削除してください。
+DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。完了済みの画像・要約は24時間保持し、`screen-capture-gc`実行時に削除します。SQLiteファイル自体の即時縮小は保証せず、空きpageの再利用で将来の増加を抑えます。既存DBを縮小する必要がある場合だけ、Bot停止中に手動で`VACUUM`してください。未完了画像には自動削除期限がありません。Mac側はACK後に削除しますが、未ACK・削除失敗のPNGは再送または明示削除が必要です。旧版で成功後も残ったPNGは自動走査しないため、同じパスで再送してACK後に削除するか、不要と確認して明示的に削除してください。
 
 導入時はMacから1枚撮影し、DBで未完了を確認→cron後の完了とActivity Memory更新を確認してください。receiverを止めた送信失敗→同じUUIDで再送し1行だけになること、Agent失敗中は未完了が残り復旧後に完了することも確認します。自動テストはHTTP / SQLite、全画像のworkspace配置、Agent成功・失敗時の完了状態、senderのMacコマンド模擬までを検証します。実Macの画面収録権限、Tailnet到達性、実providerの画面理解は別途実機確認が必要です。
