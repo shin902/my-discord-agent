@@ -125,7 +125,6 @@ function validMessage(value: unknown): value is InboxMessage {
       return false;
     if (
       override.skills !== undefined &&
-      override.skills !== "*" &&
       (!Array.isArray(override.skills) ||
         override.skills.some((skill) => typeof skill !== "string"))
     )

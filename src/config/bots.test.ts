@@ -109,7 +109,7 @@ describe("loadBotRegistry", () => {
         },
         tools: ["read", "write", "get-current-weather"],
         approvalRequiredTools: ["get-current-weather"],
-        skills: "*",
+        skills: ["test-skill"],
         mounts: [{ host: "/repo", container: "/workspace" }],
       },
     });
@@ -126,7 +126,7 @@ describe("loadBotRegistry", () => {
         },
         tools: ["read", "write", "get-current-weather"],
         approvalRequiredTools: ["get-current-weather"],
-        skills: "*",
+        skills: ["test-skill"],
         mounts: [{ host: "/repo", container: "/workspace" }],
       },
     });

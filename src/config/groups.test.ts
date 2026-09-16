@@ -95,7 +95,7 @@ describe("loadGroups", () => {
             model: { provider: "channel-provider", modelId: "channel-model" },
             tools: [],
             approvalRequiredTools: [],
-            skills: "*",
+            skills: ["channel-skill"],
             mounts: [{ host: "channel", container: "/channel" }],
             contextFiles: [],
             allowMention: true,
@@ -110,7 +110,7 @@ describe("loadGroups", () => {
       model: { provider: "channel-provider", modelId: "channel-model" },
       tools: [],
       approvalRequiredTools: [],
-      skills: "*",
+      skills: ["channel-skill"],
       mounts: [{ host: "channel", container: "/channel" }],
       contextFiles: [],
     });
@@ -151,12 +151,11 @@ describe("loadGroups", () => {
     await expect(loadGroups()).rejects.toThrow("appendUserOnly");
   });
 
-  it('skills は全ロードを示す "*" もパースできる', async () => {
+  it('skills は "*" を拒否する', async () => {
     const { loadGroups } = await setupRawGroups([
       { name: "chat", channels: [], skills: "*" },
     ]);
-    const groups = await loadGroups();
-    expect(groups[0].skills).toBe("*");
+    await expect(loadGroups()).rejects.toThrow();
   });
 
   it("エージェント設定フィールドは省略可能", async () => {

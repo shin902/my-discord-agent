@@ -53,26 +53,18 @@ export async function loadSkills(
   skillsDir: string,
   selection?: SkillSelection,
 ): Promise<Skill[]> {
-  // 未指定または [] は「スキルなし」。全スキルを読み込む場合は "*" を明示する。
-  if (
-    selection === undefined ||
-    (Array.isArray(selection) && selection.length === 0)
-  ) {
-    return [];
-  }
+  // 未指定または [] は「スキルなし」。
+  if (!selection?.length) return [];
 
-  const allowlist = Array.isArray(selection) ? selection : undefined;
+  const allowlist = selection;
   let entries: Dirent[];
   try {
     entries = (await readdir(skillsDir, { withFileTypes: true })) as Dirent[];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      if (allowlist && allowlist.length > 0) {
-        throw new Error(
-          `[skills] スキルディレクトリ "${skillsDir}" が存在しません。allowlist に指定されたスキル: ${allowlist.join(", ")}`,
-        );
-      }
-      return [];
+      throw new Error(
+        `[skills] スキルディレクトリ "${skillsDir}" が存在しません。allowlist に指定されたスキル: ${allowlist.join(", ")}`,
+      );
     }
     throw err;
   }
@@ -91,7 +83,7 @@ export async function loadSkills(
       content = await readFile(skillPath, "utf-8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        if (allowlist?.includes(entry.name)) {
+        if (allowlist.includes(entry.name)) {
           throw new Error(
             `[skills] ディレクトリ "${entry.name}" は存在しますが SKILL.md がありません (${skillPath})`,
           );
@@ -111,7 +103,7 @@ export async function loadSkills(
       );
     }
 
-    if (allowlist && !allowlist.includes(entry.name)) continue;
+    if (!allowlist.includes(entry.name)) continue;
 
     skills.push(
       SkillSchema.parse({
@@ -122,13 +114,11 @@ export async function loadSkills(
     );
   }
 
-  if (allowlist) {
-    const missing = allowlist.filter((name) => !foundDirs.has(name));
-    if (missing.length > 0) {
-      throw new Error(
-        `[skills] allowlist に指定されたスキルが "${skillsDir}" に見つかりません: ${missing.join(", ")}`,
-      );
-    }
+  const missing = allowlist.filter((name) => !foundDirs.has(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `[skills] allowlist に指定されたスキルが "${skillsDir}" に見つかりません: ${missing.join(", ")}`,
+    );
   }
 
   return skills;

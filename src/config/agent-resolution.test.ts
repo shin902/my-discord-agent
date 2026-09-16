@@ -18,7 +18,7 @@ const channel = {
   model: { provider: "channel-provider", modelId: "channel-model" },
   tools: [],
   approvalRequiredTools: [],
-  skills: "*" as const,
+  skills: ["channel-skill"],
   mounts: [{ host: "channel", container: "/channel", readOnly: true }],
   contextFiles: [],
 };
@@ -34,7 +34,7 @@ describe("resolveAgentConfig", () => {
       model: { provider: "channel-provider", modelId: "channel-model" },
       tools: ["job-tool"],
       approvalRequiredTools: ["job-approval"],
-      skills: "*",
+      skills: ["channel-skill"],
       mounts: [{ host: "channel", container: "/channel", readOnly: true }],
       contextFiles: [],
     });
