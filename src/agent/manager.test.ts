@@ -1737,30 +1737,6 @@ describe("sendMessage: configOverride", () => {
     expect(payload.groupConfig.skills).toEqual(skills);
   });
 
-  it("wildcard expands only built-in Skill dependencies, without granting bash", async () => {
-    const sendMessage = await setup("*");
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools: ["read"] },
-    });
-    expect(createToolProxyRunMock).toHaveBeenCalledExactlyOnceWith(
-      expect.any(String),
-      [
-        "agent-reach",
-        "arxiv-search",
-        "arxiv-survey",
-        "hackernews-search",
-        "github-recent-search",
-      ],
-      {
-        approvalRequiredCapabilities: [],
-        trustedDiscordDestination: undefined,
-      },
-    );
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
-    expect(payload.groupConfig.tools).toEqual(["read"]);
-  });
-
   it("host capabilityのrun tokenは失敗時にもrevokeする", async () => {
     const sendMessage = await setup();
     spawnMock.mockReturnValueOnce(makeProc(1, "", "runner failed"));
@@ -1932,23 +1908,6 @@ describe("sendMessage: configOverride", () => {
 
     ensureGroupSkillsMock.mockClear();
     await sendMessage("test-group", "session-2", "hi");
-    expect(ensureGroupSkillsMock).not.toHaveBeenCalled();
-  });
-
-  it('configOverride.skills が "*" の場合は payload を上書きし、テンプレートコピーはしない', async () => {
-    const sendMessage = await setup();
-
-    await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { skills: "*" },
-    });
-
-    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
-    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
-    expect(payload.groupConfig).toEqual(
-      expect.objectContaining({
-        skills: "*",
-      }),
-    );
     expect(ensureGroupSkillsMock).not.toHaveBeenCalled();
   });
 

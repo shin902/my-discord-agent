@@ -95,7 +95,7 @@ approval UIは認可機構やpublic / multi-user環境の安全境界ではあ�
 
 `groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
-`tools` は選択したnative schemaを、`skills` は配置済みSkillの説明・場所をpromptへ提示します。Tool Proxyの実行権限はeffective toolsとtrustedな組込Skill依存の和集合で、同じrun tokenをnative／CLIで共有します。`skills: "*"` は組込supported skillsの依存だけへ展開し、全capability許可にはなりません。promptに載せるwildcardの説明は実際の配置済みSkillだけです。
+`tools` は選択したnative schemaを、`skills` は明示した配置済みSkillの説明・場所をpromptへ提示します。Tool Proxyの実行権限はeffective toolsと明示したtrustedな組込Skill依存の和集合で、同じrun tokenをnative／CLIで共有します。配置されているだけのSkillはpromptにもauthorityにも影響しません。
 
 Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／redirectionを維持します。bashは自動付与しません。Toolだけを選択した場合もそのcapabilityをCLIから呼べ、Skill単独利用のためにnative schemaを追加する必要もありません。組込依存と実行境界は [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
 
@@ -216,7 +216,7 @@ LLMが維持する個人用wikiを `raw/`（不変ソース）→ `wiki/`（LLM�
 
 `wiki-ingest`・`wiki-query`・`wiki-lint` は `wiki-setup` にバンドルされており、`templates/SKILLS/` には独立して存在しない。`wiki-setup` 実行時のヒアリングで確定したディレクトリ名が `setup.sh` によってスキルに焼き込まれ、`/workspace/SKILLS/` へコピーされる。
 
-`wiki-ingest`・`wiki-query`・`wiki-lint` は `wiki-setup` 実行後に `/workspace/SKILLS/` へ配置される。`groups.json` の `skills` フィールドを**省略**しているグループではロードされない。利用するには `"wiki-ingest"` 等を明示的に追加するか、全スキルを許可する場合だけ `"skills": "*"` を指定する（`skills: []` のままでは読み込まれない）。
+`wiki-ingest`・`wiki-query`・`wiki-lint` は `wiki-setup` 実行後に `/workspace/SKILLS/` へ配置される。配置だけではロードされないため、利用する名前を `groups.json` の `skills` 配列へ明示的に追加する（`skills: []` のままでは読み込まれない）。
 
 | スキル | 場所 | 役割 |
 |--------|------|------|

@@ -22,7 +22,7 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 | arxiv-survey | arxiv-survey |
 | last30days | hackernews-search、github-recent-search、agent-reach |
 
-`skills: "*"` はこの表の依存だけへ展開し、他のcapabilityを許可しません。依存の解決は配置状態に左右されませんが、promptへ載せるSkill一覧は実際にインストール済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
+`skills` は明示したSkill名の配列だけを受け付けます。表の組込依存は明示したSkillごとに解決し、配置されているだけのSkillやSkill本文・frontmatterからauthorityを付与しません。promptへ載せるSkill一覧も明示指定され、実際にインストール済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
 
 native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。Toolだけで選択されたcapabilityもCLIから利用できます。Skillだけの選択でも組込依存を使えます。
 

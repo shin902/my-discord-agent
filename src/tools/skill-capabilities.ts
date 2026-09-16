@@ -10,12 +10,9 @@ const SKILL_CAPABILITIES: Readonly<Record<string, readonly string[]>> = {
 
 export function runCapabilityNames(config: {
   tools?: readonly string[];
-  skills?: readonly string[] | "*";
+  skills?: readonly string[];
 }): string[] {
-  const skills =
-    config.skills === "*"
-      ? Object.keys(SKILL_CAPABILITIES)
-      : (config.skills ?? []);
+  const skills = config.skills ?? [];
   return [
     ...new Set([
       ...proxyCapabilityNames([...(config.tools ?? [])]),

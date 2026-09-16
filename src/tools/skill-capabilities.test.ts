@@ -19,15 +19,6 @@ describe("trusted Skill dependencies", () => {
   ])("resolves only built-in dependencies: %j", (config, expected) => {
     expect(runCapabilityNames(config)).toEqual(expected);
   });
-  it("wildcard never grants unrelated host capabilities or local tools", () => {
-    expect(runCapabilityNames({ skills: "*" })).toEqual([
-      "agent-reach",
-      "arxiv-search",
-      "arxiv-survey",
-      "hackernews-search",
-      "github-recent-search",
-    ]);
-  });
   it("does not add Skill dependencies to the model's native tool list", () => {
     const config = { tools: ["read"], skills: ["arxiv-search"] };
     expect(runCapabilityNames(config)).toEqual(["arxiv-search"]);

@@ -899,7 +899,7 @@ describe("runAgentLoop", () => {
       "bot-task-1",
       "work",
       {
-        skills: "*",
+        skills: ["review"],
         contextFiles: [
           { path: "MEMORY.md", maxChars: 2000 },
           { path: "memory/SELF.md", maxChars: 2000 },
@@ -1693,7 +1693,7 @@ describe("runAgentLoop", () => {
     ).rejects.toThrow("session write error");
   });
 
-  it('skills: "*" の場合は systemPrompt にスキル一覧を追加する', async () => {
+  it("明示したskillsだけをsystemPromptに追加する", async () => {
     vi.mocked(readdir).mockResolvedValue([
       { name: "review", isDirectory: () => true } as unknown as Awaited<
         ReturnType<typeof readdir>
@@ -1718,7 +1718,9 @@ describe("runAgentLoop", () => {
       return mockAgent;
     });
 
-    await runAgentLoop("test-group", "session-1", "hi", { skills: "*" });
+    await runAgentLoop("test-group", "session-1", "hi", {
+      skills: ["review"],
+    });
 
     const systemPrompt = (
       lastAgentOptions as { initialState: { systemPrompt: string } }

@@ -276,7 +276,7 @@ describe("ingestDiscordMessage", () => {
         model: { provider: "channel-provider", modelId: "channel-model" },
         tools: [],
         approvalRequiredTools: [],
-        skills: "*",
+        skills: ["test-skill"],
         mounts: [{ host: "channel", container: "/channel" }],
       },
     });
@@ -293,7 +293,7 @@ describe("ingestDiscordMessage", () => {
         model: { provider: "channel-provider", modelId: "channel-model" },
         tools: [],
         approvalRequiredTools: [],
-        skills: "*",
+        skills: ["test-skill"],
         mounts: [{ host: "channel", container: "/channel" }],
       },
     });
