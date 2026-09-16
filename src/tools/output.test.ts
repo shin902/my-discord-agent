@@ -181,8 +181,7 @@ describe("common tool output boundary", () => {
     expect(details.count).toBe(3);
     expect(details.truncated).toBe(true);
     expect(firstText(result)).toContain("startLine/lineCount");
-    expect(firstText(result)).toContain("tailCount");
-    expect(firstText(result)).not.toContain("tailLines");
+    expect(firstText(result)).not.toContain("tailCount");
   });
 
   it("preserves image-only base64 content without inspecting it as text", async () => {
@@ -252,7 +251,7 @@ describe("common tool output boundary", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
 
-  it("lets read ranges, tailCount, and grep consume the file in the same run", async () => {
+  it("lets read ranges and grep consume the file in the same run", async () => {
     const text = Array.from(
       { length: 10_000 },
       (_, index) => `record-${index}: payload\n`,
@@ -270,7 +269,8 @@ describe("common tool output boundary", () => {
 
     const tail = await readTool.execute("read-tail", {
       path,
-      tailCount: 2,
+      startLine: 9_999,
+      lineCount: 2,
     });
     expect(firstText(tail)).toBe("record-9998: payload\nrecord-9999: payload");
 
