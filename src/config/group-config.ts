@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { GroupConfig } from "./groups.js";
+import type { GroupConfig, SkillSelection } from "./groups.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GROUPS_DIR = path.join(__dirname, "../../groups");
@@ -50,6 +50,10 @@ export async function ensureGroupDirs(groupNames: string[]): Promise<void> {
       }
     }),
   );
+}
+
+function skillsToEnsureList(selection: SkillSelection | undefined): string[] {
+  return Array.isArray(selection) ? selection : [];
 }
 
 /** skills リストに対して、未コピーのスキルを templates/SKILLS/ からコピーする */
@@ -111,7 +115,7 @@ export async function initGroupPrompts(groups: GroupConfig[]): Promise<void> {
   await Promise.all(
     groups.map(async (group) => {
       const [, prompt] = await Promise.all([
-        ensureGroupSkills(group.name, group.skills ?? []),
+        ensureGroupSkills(group.name, skillsToEnsureList(group.skills)),
         _loadGroupSystemPromptFromFile(group.name),
       ]);
       _promptCache.set(group.name, prompt);
