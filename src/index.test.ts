@@ -486,7 +486,7 @@ describe("index: 起動時バリデーション", () => {
     await vi.waitFor(() =>
       expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce(),
     );
-    expect(mocks.runStartupJobs).toHaveBeenCalledOnce();
+    expect(mocks.runStartupJobs).toHaveBeenCalledTimes(2);
 
     releaseBackfill();
     await Promise.all([firstBackfill, secondBackfill]);

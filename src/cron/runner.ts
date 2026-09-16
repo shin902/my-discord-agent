@@ -259,7 +259,7 @@ export async function executeJob(job: CronJob): Promise<void> {
 
 let _jobs: CronJob[] = [];
 const _inFlight = new Set<string>();
-let _startupJobsRun = false;
+const _startupJobsStarted = new Set<string>();
 
 /** Execution authority for durable work, populated once by startup. Never reads disk. */
 export function getCachedCronJob(id: string): CronJob | undefined {
@@ -300,11 +300,21 @@ function launchAdmittedJob(job: CronJob, admissionAt: Date): void {
 }
 
 /** Discord ready後、startup jobをプロセスごとに一度だけ起動する。 */
-export function runStartupJobs(): void {
-  if (_startupJobsRun) return;
-  _startupJobsRun = true;
+export async function runStartupJobs(): Promise<void> {
   for (const job of _jobs) {
-    if (!job.enabled || job.schedule !== "@startup") continue;
+    if (
+      !job.enabled ||
+      job.schedule !== "@startup" ||
+      _startupJobsStarted.has(job.id)
+    )
+      continue;
+
+    const client = job.groupName
+      ? await getDiscordClientForGroupName(job.groupName)
+      : getDefaultDiscordClient();
+    if (!client.isReady() || _startupJobsStarted.has(job.id)) continue;
+
+    _startupJobsStarted.add(job.id);
     console.log(`[cron] "${job.id}" startup開始`);
     void executeJob(job).then(
       () => console.log(`[cron] "${job.id}" startup完了`),

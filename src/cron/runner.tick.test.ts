@@ -38,11 +38,12 @@ function makeJob(id: string, schedule: string, prompt = id): CronJob {
 describe("tick() orchestration", () => {
   let mockAppendInbox: ReturnType<typeof vi.fn>;
   let mockIsReady: ReturnType<typeof vi.fn>;
+  let mockOtherIsReady: ReturnType<typeof vi.fn>;
   let mockExistsSync: ReturnType<typeof vi.fn>;
   let mockWriteFile: ReturnType<typeof vi.fn>;
   let startCron: () => void;
   let stopCron: () => void;
-  let runStartupJobs: () => void;
+  let runStartupJobs: () => Promise<void>;
   let setCronJobs: (jobs: CronJob[]) => void;
 
   beforeEach(async () => {
@@ -52,6 +53,7 @@ describe("tick() orchestration", () => {
 
     mockAppendInbox = vi.fn().mockResolvedValue(undefined);
     mockIsReady = vi.fn().mockReturnValue(true);
+    mockOtherIsReady = vi.fn().mockReturnValue(false);
     mockExistsSync = vi.fn();
     mockWriteFile = vi.fn().mockResolvedValue(undefined);
 
@@ -66,10 +68,20 @@ describe("tick() orchestration", () => {
       isReady: mockIsReady,
       channels: { fetch: vi.fn() },
     };
+    const otherDiscordClient = {
+      isReady: mockOtherIsReady,
+      channels: { fetch: vi.fn() },
+    };
     vi.doMock("../discord/client.js", () => ({
       getDefaultDiscordClient: () => discordClient,
-      getDiscordClientForGroupName: vi.fn().mockResolvedValue(discordClient),
-      getDiscordClients: () => new Map([["personal", discordClient]]),
+      getDiscordClientForGroupName: vi.fn(async (groupName: string) =>
+        groupName === "other" ? otherDiscordClient : discordClient,
+      ),
+      getDiscordClients: () =>
+        new Map([
+          ["personal", discordClient],
+          ["other", otherDiscordClient],
+        ]),
     }));
     vi.doMock("../queue/repository.js", () => ({
       getQueueRepository: () => ({ enqueue: mockAppendInbox }),
@@ -101,8 +113,8 @@ describe("tick() orchestration", () => {
   it("@startup は明示起動で一度だけ実行し、通常tickでは再実行しない", async () => {
     setCronJobs([makeJob("startup-job", "@startup")]);
 
-    runStartupJobs();
-    runStartupJobs();
+    await runStartupJobs();
+    await runStartupJobs();
     await flushMicrotasks();
     expect(mockAppendInbox).toHaveBeenCalledOnce();
 
@@ -110,6 +122,29 @@ describe("tick() orchestration", () => {
     await vi.advanceTimersByTimeAsync(70_000);
     expect(mockAppendInbox).toHaveBeenCalledOnce();
     expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("各startup jobは割当先Botがreadyになった時に一度だけ実行する", async () => {
+    const personalJob = makeJob("personal-startup", "@startup", "personal");
+    const otherJob = {
+      ...makeJob("other-startup", "@startup", "other"),
+      groupName: "other",
+    };
+    setCronJobs([personalJob, otherJob]);
+
+    await runStartupJobs();
+    await flushMicrotasks();
+    expect(
+      mockAppendInbox.mock.calls.map(([payload]) => payload.content),
+    ).toEqual(["personal"]);
+
+    mockOtherIsReady.mockReturnValue(true);
+    await runStartupJobs();
+    await runStartupJobs();
+    await flushMicrotasks();
+    expect(
+      mockAppendInbox.mock.calls.map(([payload]) => payload.content),
+    ).toEqual(["personal", "other"]);
   });
 
   it("client.isReady() が false の場合 tick をスキップする", async () => {

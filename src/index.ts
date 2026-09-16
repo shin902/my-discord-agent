@@ -163,13 +163,16 @@ let backfillStarted = false;
 const runStartupBackfillOnce = async (): Promise<void> => {
   if (backfillStarted) return;
   backfillStarted = true;
-  runStartupJobs();
   console.log("[discord-backfill] 起動時履歴復旧を開始します");
   await backfillDiscordMessages(groups);
   console.log("[discord-backfill] 起動時履歴復旧が完了しました");
 };
+const onDiscordReady = async (): Promise<void> => {
+  await runStartupJobs();
+  await runStartupBackfillOnce();
+};
 for (const [discordBotId, discordClient] of getDiscordClients()) {
-  registerHandlers(discordClient, runStartupBackfillOnce, discordBotId);
+  registerHandlers(discordClient, onDiscordReady, discordBotId);
 }
 startPoller();
 startDeliveryWorker(getQueueRepository());
