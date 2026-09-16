@@ -207,7 +207,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
         ),
       ).toContain("artifact-line");
       await agent.call("agent-reach", { url: "https://example.com/next" });
-      expect(text(await agent.call("read", { path, tailCount: 1 }))).toBe(
+      expect(text(await agent.call("read", { path, startLine: 20_000 }))).toBe(
         "artifact-line",
       );
       await agent.call("bash", {

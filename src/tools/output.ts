@@ -101,7 +101,6 @@ function buildNotice(output: ExternalizedToolOutput): string {
     "必要な箇所だけ読む方法:",
     `- grep({"pattern":"検索語","path":"${output.fullOutputPath}"}) で対象を絞る。`,
     `- 先頭からは read({"path":"${output.fullOutputPath}","startLine":1,"lineCount":200}) を使う。`,
-    `- 末尾からは read({"path":"${output.fullOutputPath}","tailCount":200}) を使う。`,
     `- 全文を確認する場合は read の startLine/lineCount で連続した範囲を先頭から順番に読み、最後まで網羅する。`,
   ].join("\n");
 }

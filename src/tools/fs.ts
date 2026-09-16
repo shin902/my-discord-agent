@@ -79,19 +79,11 @@ const readParameters = Type.Object({
       minimum: 1,
     }),
   ),
-  tailCount: Type.Optional(
-    Type.Integer({
-      description:
-        "Number of lines to return from the end. Cannot be combined with startLine or lineCount.",
-      minimum: 1,
-    }),
-  ),
 });
 
 type ReadRange = {
   startLine?: number;
   lineCount?: number;
-  tailCount?: number;
 };
 
 type SelectedLines = {
@@ -121,25 +113,10 @@ function validatePositiveInteger(
   }
 }
 
-function validateReadRange({
-  startLine,
-  lineCount,
-  tailCount,
-}: ReadRange): boolean {
+function validateReadRange({ startLine, lineCount }: ReadRange): boolean {
   validatePositiveInteger("startLine", startLine);
   validatePositiveInteger("lineCount", lineCount);
-  validatePositiveInteger("tailCount", tailCount);
-  if (
-    tailCount !== undefined &&
-    (startLine !== undefined || lineCount !== undefined)
-  ) {
-    throw new Error("tailCount は startLine/lineCount と併用できません");
-  }
-  return (
-    startLine !== undefined ||
-    lineCount !== undefined ||
-    tailCount !== undefined
-  );
+  return startLine !== undefined || lineCount !== undefined;
 }
 
 /**
@@ -152,26 +129,14 @@ async function selectLinesFromStream(
   fp: string,
   range: ReadRange,
 ): Promise<StreamSelectedLines> {
-  const { startLine, lineCount, tailCount } = range;
+  const { startLine, lineCount } = range;
   const selectionStart = startLine ?? 1;
   const selectedLines: string[] = [];
-  const tailLines: string[] = [];
-  let tailStart = 0;
   let totalLines = 0;
   let size = 0;
 
   const addLine = (line: string): void => {
     totalLines += 1;
-    if (tailCount !== undefined) {
-      if (tailLines.length < tailCount) {
-        tailLines.push(line);
-      } else {
-        tailLines[tailStart] = line;
-        tailStart = (tailStart + 1) % tailCount;
-      }
-      return;
-    }
-
     if (
       totalLines >= selectionStart &&
       (lineCount === undefined || totalLines - selectionStart < lineCount)
@@ -205,18 +170,8 @@ async function selectLinesFromStream(
     );
   }
 
-  let first = 0;
-  let returnedLines = selectedLines;
-  if (tailCount !== undefined) {
-    first = Math.max(0, totalLines - tailCount);
-    returnedLines =
-      tailStart === 0
-        ? tailLines
-        : [...tailLines.slice(tailStart), ...tailLines.slice(0, tailStart)];
-  } else if (startLine !== undefined) {
-    first = startLine - 1;
-  }
-
+  const first = startLine === undefined ? 0 : startLine - 1;
+  const returnedLines = selectedLines;
   const returnedLineCount = returnedLines.length;
   const actualStartLine = returnedLineCount === 0 ? 0 : first + 1;
   const actualEndLine = returnedLineCount === 0 ? 0 : first + returnedLineCount;
@@ -236,12 +191,12 @@ export const readTool: AgentTool<typeof readParameters> = {
   name: "read",
   label: "Read File",
   description:
-    "Read a file in the workspace or an additional mounted path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, startLine alone for the suffix from that line, or tailCount for lines from the end. tailCount cannot be combined with startLine or lineCount. The result includes file size, total line count, and the returned range. For large files, read consecutive bounded ranges instead of the whole file.",
+    "Read a file in the workspace or an additional mounted path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, or startLine alone for the suffix from that line. The result includes file size, total line count, and the returned range. For large files, read consecutive bounded ranges instead of the whole file.",
   parameters: readParameters,
-  execute: async (_toolCallId, { path, startLine, lineCount, tailCount }) => {
+  execute: async (_toolCallId, { path, startLine, lineCount }) => {
     const safePath = sanitizePath(path);
     const fp = fullPath(safePath);
-    const hasRange = validateReadRange({ startLine, lineCount, tailCount });
+    const hasRange = validateReadRange({ startLine, lineCount });
 
     const mimeType = IMAGE_MIME_TYPES[extname(safePath).toLowerCase()];
     if (mimeType) {
@@ -265,7 +220,6 @@ export const readTool: AgentTool<typeof readParameters> = {
       const selected = await selectLinesFromStream(fp, {
         startLine,
         lineCount,
-        tailCount,
       });
       return {
         content: [{ type: "text", text: selected.text }],

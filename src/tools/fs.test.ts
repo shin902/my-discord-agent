@@ -214,68 +214,9 @@ describe("read", () => {
     });
   });
 
-  it("tailCount なら末尾から指定行数を返す", async () => {
-    mockReadStream("line 1\nline 2\nline 3\nline 4");
-
-    const result = await readTool.execute("call-1", {
-      path: "notes.txt",
-      tailCount: 2,
-    });
-
-    expect(firstText(result)).toBe("line 3\nline 4");
-    expect(result.details).toMatchObject({
-      startLine: 3,
-      endLine: 4,
-      returnedLineCount: 2,
-      totalLines: 4,
-      eof: true,
-    });
-  });
-
-  it("大きな改行密集ストリームでも末尾の要求行だけを保持する", async () => {
-    const totalLines = 20_000;
-    mockGeneratedReadStream(totalLines);
-
-    const result = await readTool.execute("call-1", {
-      path: "large.txt",
-      tailCount: 3,
-    });
-
-    expect(firstText(result)).toBe("line 19998\nline 19999\nline 20000");
-    expect(readFile).not.toHaveBeenCalled();
-    expect(result.details).toMatchObject({
-      size: generatedReadSize(totalLines),
-      totalLines,
-      startLine: totalLines - 2,
-      endLine: totalLines,
-      returnedLineCount: 3,
-      eof: true,
-    });
-  });
-
-  it("tailCount は startLine/lineCount と併用できない", async () => {
-    vi.mocked(readFile).mockResolvedValue("line 1\nline 2" as never);
-
-    await expect(
-      readTool.execute("call-1", {
-        path: "notes.txt",
-        startLine: 1,
-        tailCount: 1,
-      }),
-    ).rejects.toThrow("tailCount");
-    await expect(
-      readTool.execute("call-1", {
-        path: "notes.txt",
-        lineCount: 1,
-        tailCount: 1,
-      }),
-    ).rejects.toThrow("tailCount");
-    expect(readFile).not.toHaveBeenCalled();
-  });
-
   it("行範囲の値は正の整数でなければならない", async () => {
     const invalidValues = [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
-    for (const field of ["startLine", "lineCount", "tailCount"] as const) {
+    for (const field of ["startLine", "lineCount"] as const) {
       for (const value of invalidValues) {
         await expect(
           readTool.execute("call-1", {
@@ -366,7 +307,7 @@ describe("read", () => {
   it("read の説明に行範囲と順次読み込みの指示が含まれる", () => {
     expect(readTool.description).toContain("startLine");
     expect(readTool.description).toContain("lineCount");
-    expect(readTool.description).toContain("tailCount");
+    expect(readTool.description).not.toContain("tailCount");
     expect(readTool.description).toContain("consecutive bounded ranges");
   });
 
