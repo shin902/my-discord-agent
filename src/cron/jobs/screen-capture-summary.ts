@@ -73,7 +73,7 @@ function runMagick(
 async function writeCapture(directory: string, capture: Capture) {
   const imagePath = path.join(directory, `${capture.id}.png`);
   await writeFile(imagePath, capture.image, { mode: 0o600 });
-  await runMagick([imagePath, "-resize", "1280x1280>", imagePath]);
+  await runMagick(["identify", imagePath]);
   return imagePath;
 }
 

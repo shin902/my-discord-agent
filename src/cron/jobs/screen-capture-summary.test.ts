@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
@@ -223,6 +224,11 @@ describe("screen capture summary cron", () => {
 
     expect(resolveModel).toHaveBeenCalledWith("openai", "gpt-4o-mini");
     expect(completeSimple).toHaveBeenCalledTimes(2);
+    expect(execFile).not.toHaveBeenCalledWith(
+      "magick",
+      expect.arrayContaining(["-resize", "1280x1280>"]),
+      expect.any(Function),
+    );
     expect(sendMessage).toHaveBeenCalledWith(
       "logbook",
       expect.stringMatching(/^cron-screen-capture-summary-/),
