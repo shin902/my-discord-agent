@@ -17,8 +17,11 @@ export const ModelConfigSchema = z.object({
   thinkingLevel: z.enum(THINKING_LEVELS).optional(),
 });
 
-// skills 未指定または [] は「スキルなし」。明示したスキルだけを読み込む。
-export const SkillSelectionSchema = z.array(z.string());
+// skills 未指定または [] は「スキルなし」。"*" は配置済みSkillをすべて公開する。
+export const SkillSelectionSchema = z.union([
+  z.array(z.string()),
+  z.literal("*"),
+]);
 
 export const MountConfigSchema = z.object({
   host: z.string(),
