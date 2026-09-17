@@ -151,7 +151,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "chat",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily-search", "bot"],
+    "tools": ["bash", "bot"],
+    "skills": ["web"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [
@@ -169,8 +170,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "thread",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["tavily-search", "agent-reach", "bash", "read", "write", "edit"],
-    "skills": ["session-logs"],
+    "tools": ["bash", "read", "write", "edit"],
+    "skills": ["web", "session-logs"],
     "allowMention": true,
     "toolLogArgs": true,
     "channels": [
@@ -303,7 +304,7 @@ RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` 
     "sessionMode": "per-run",
     "handler": "jobs/rss-dispatch.ts",
     "tools": ["bash"],
-    "skills": ["agent-reach"],
+    "skills": ["web"],
     "settings": {
       "feeds": ["https://example.com/feed.xml"],
       "maxItemsPerRun": 10,

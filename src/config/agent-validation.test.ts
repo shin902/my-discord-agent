@@ -82,7 +82,20 @@ describe("validateAgentConfig", () => {
     ).rejects.toThrow("不明なツール名: missing-tool");
   });
 
-  it("rejects an approval-required tool outside effective tools", async () => {
+  it("accepts an approval-required capability provided by a trusted Skill", async () => {
+    await expect(
+      validateAgentConfig(
+        {
+          tools: ["bash"],
+          skills: ["weather"],
+          approvalRequiredTools: ["get-current-weather"],
+        },
+        defaultModel,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects an approval-required tool outside effective tools and skills", async () => {
     await expect(
       validateAgentConfig(
         {
@@ -92,7 +105,7 @@ describe("validateAgentConfig", () => {
         defaultModel,
       ),
     ).rejects.toThrow(
-      "承認必須ツールは有効な tools に含めてください: get-current-weather",
+      "承認必須ツールは有効な tools または skills に含めてください: get-current-weather",
     );
   });
 

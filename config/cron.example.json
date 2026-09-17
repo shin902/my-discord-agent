@@ -79,7 +79,7 @@
     "noReply": true,
     "handler": "jobs/rss-dispatch.ts",
     "tools": ["bash"],
-    "skills": ["agent-reach"],
+    "skills": ["web"],
     "settings": {
       "feeds": ["https://example.com/feed.xml"],
       "maxItemsPerRun": 10,
@@ -151,7 +151,7 @@
     "sessionMode": "per-run",
     "noReply": true,
     "tools": ["bash", "read"],
-    "skills": ["x-saved", "agent-reach"],
+    "skills": ["x-saved", "web"],
     "mounts": [
       {
         "host": "data/x-saved",

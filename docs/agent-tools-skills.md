@@ -57,9 +57,9 @@ Registryから解決したsandbox-local Toolは、executorへ入る直前に広�
 
 ### Discord tool approval（opt-in）
 
-`approvalRequiredTools` は、effective `tools` に含まれる既知host/runtime capabilityからユーザーが選んだtoolだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools` 外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
+`approvalRequiredTools` は、effective `tools`またはtrustedな組込Skill mappingに含まれる既知host/runtime capabilityからユーザーが選んだものだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools`とtrusted Skill依存の外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
 
-Skillだけで許可されたcapabilityへのapproval設定は拡張していません。必要なら対応Toolを `tools` にも指定してください。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
+`approvalRequiredTools`には、effective `tools`またはtrustedな組込Skill mappingで許可されたhost/runtime capabilityを指定できます。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
 
 validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
 
@@ -98,7 +98,28 @@ approval UIは認可機構やpublic / multi-user環境の安全境界ではあ�
 
 `tools` は選択したnative schemaを、`skills` は明示した配置済みSkillの説明・場所をpromptへ提示します。Tool Proxyの実行権限はeffective toolsと明示したtrustedな組込Skill依存の和集合で、同じrun tokenをnative／CLIで共有します。配置されているだけのSkillはpromptにもauthorityにも影響しません。
 
-Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／redirectionを維持します。bashは自動付与しません。Toolだけを選択した場合もそのcapabilityをCLIから呼べ、Skill単独利用のためにnative schemaを追加する必要もありません。組込依存と実行境界は [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
+Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／redirectionを維持します。bashは自動付与しません。Toolだけを選択した場合もそのcapabilityをCLIから呼べ、Skill単独利用のためにnative schemaを追加する必要もありません。ドメインSkillのscriptはcapability名とJSON引数を変換せずTool Proxyへ渡し、既存Tool schemaを入力contractの正本とします。組込依存と実行境界は [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
+
+### ドメインSkill
+
+通常のAgentでは大量のnative schemaを常駐させず、`bash`と必要なSkillを有効にします。
+
+| Skill | capabilities |
+|---|---|
+| `web` | `agent-reach`, `tavily-search`, `arxiv-search`, `arxiv-survey`, `hackernews-search`, `github-recent-search`, `x-search` |
+| `github` | `list-issues`, `read-issue`, `read-pull-request`, `list-issue-comments`, `list-pull-request-comments`, `comment-issue` |
+| `mail` | `list-emails`, `read-email` |
+| `calendar` | `list-calendars`, `list-events`, `read-event`, `create-event`, `update-event`, `delete-event` |
+| `weather` | `get-current-weather`, `get-weather-forecast` |
+
+各scriptは次の共通形式です。JSONはparse・再構成せず、そのまま`tool-proxy`へ渡します。
+
+```bash
+bash SKILLS/web/scripts/web.sh tavily-search '{"query":"latest AI news","max_results":5}'
+bash SKILLS/github/scripts/github.sh read-issue '{"owner":"owner","repo":"repo","issue_number":123}'
+```
+
+`last30days`は複数capabilityを組み合わせるworkflow Skillとして独立したままです。bashを許可しないAgentでは、必要なcapabilityを従来どおりnative Toolとして設定できます。
 
 ### スキルの明示的実行（`./command`）
 
@@ -114,7 +135,7 @@ Discordでは同じ実行経路を `/skill skill:<スキル名> prompt:<追加�
 
 | 例 | 動作 |
 |----|------|
-| `./command agent-reach https://example.com を要約して` | `agent-reach` の `SKILL.md` 本文をプロンプトに強制注入し、追加指示と共に実行させる |
+| `./command web https://example.com を要約して` | `web` の `SKILL.md` 本文をプロンプトに強制注入し、追加指示と共に実行させる |
 | `./command session-logs` | 追加指示なしで `session-logs` を実行させる |
 
 **仕組み（`src/skills/command.ts` / `src/sandbox/agent-runner.ts`）:**

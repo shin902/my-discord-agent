@@ -1671,7 +1671,7 @@ describe("sendMessage: configOverride", () => {
         },
       }),
     ).rejects.toThrow(
-      "設定エラー: 承認必須ツールは有効な tools に含めてください: get-current-weather",
+      "設定エラー: 承認必須ツールは有効な tools または skills に含めてください: get-current-weather",
     );
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -1682,16 +1682,20 @@ describe("sendMessage: configOverride", () => {
       skills: [],
       allowed: ["agent-reach", "get-current-weather"],
     },
-    { tools: ["read"], skills: ["agent-reach"], allowed: ["agent-reach"] },
+    {
+      tools: ["read"],
+      skills: ["weather"],
+      allowed: ["get-current-weather", "get-weather-forecast"],
+    },
     {
       tools: ["agent-reach", "get-current-weather"],
-      skills: ["agent-reach"],
-      allowed: ["agent-reach", "get-current-weather"],
+      skills: ["weather"],
+      allowed: ["agent-reach", "get-current-weather", "get-weather-forecast"],
     },
     {
       tools: ["read"],
-      skills: ["arxiv-search", "arxiv-survey"],
-      allowed: ["arxiv-search", "arxiv-survey"],
+      skills: ["mail"],
+      allowed: ["list-emails", "read-email"],
     },
     {
       tools: ["read"],

@@ -17,16 +17,20 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 
 | Skill | 組込依存 |
 | --- | --- |
-| agent-reach | agent-reach |
-| arxiv-search | arxiv-search |
-| arxiv-survey | arxiv-survey |
+| web | agent-reach、tavily-search、arxiv-search、arxiv-survey、hackernews-search、github-recent-search、x-search |
+| github | list-issues、read-issue、read-pull-request、list-issue-comments、list-pull-request-comments、comment-issue |
+| mail | list-emails、read-email |
+| calendar | list-calendars、list-events、read-event、create-event、update-event、delete-event |
+| weather | get-current-weather、get-weather-forecast |
 | last30days | hackernews-search、github-recent-search、agent-reach |
+
+配置済みgroupとの互換性のため、旧`agent-reach` / `arxiv-search` / `arxiv-survey` mappingも維持します。新規設定では`web`を使います。
 
 `skills` は明示したSkill名の配列だけを受け付けます。表の組込依存は明示したSkillごとに解決し、配置されているだけのSkillやSkill本文・frontmatterからauthorityを付与しません。promptへ載せるSkill一覧も明示指定され、実際にインストール済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
 
 native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。Toolだけで選択されたcapabilityもCLIから利用できます。Skillだけの選択でも組込依存を使えます。
 
-`approvalRequiredTools` は引き続きeffective `tools` に含まれるhost/runtime capabilityだけに指定できます。Skill単独capabilityへの設定拡張は採用していません。必要なら対応Toolを `tools` にも追加してください。設定したapprovalはnative／Skill双方に適用され、表示・承認した実効引数をそのまま実行します。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
+`approvalRequiredTools` はeffective `tools`または上表のtrusted Skill依存に含まれるhost/runtime capabilityに指定できます。設定したapprovalはnative／Skill双方に適用され、表示・承認した実効引数をそのまま実行します。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
 
 ## コンテナと成果物の寿命
 
@@ -80,15 +84,15 @@ imageが無い場合はprebuilt imageの設定エラー、CLIが無い場合はR
 
 ### 配置済みSkillの更新
 
-`ensureGroupSkills` は既存Skillを自動上書きしません。`agent-reach`、`arxiv-search`、`arxiv-survey`、`last30days` を使う各groupで、**カスタマイズとの差分を確認して**更新します。
+`ensureGroupSkills` は既存Skillを自動上書きしません。新しい`web`、`github`、`mail`、`calendar`、`weather`を使うgroupへtemplateを追加します。旧`agent-reach`、`arxiv-search`、`arxiv-survey`から`web`へ移行する場合も、**カスタマイズとの差分を確認して**更新します。
 
 ```sh
 group=YOUR_GROUP
-skill=arxiv-search
+skill=web
 diff -ru "groups/$group/SKILLS/$skill" "templates/SKILLS/$skill"
 ```
 
-更新対象はagent-reachの `scripts/agent-reach.sh`、arXivの `scripts/search.py` / `scripts/survey.py`、last30daysの `scripts/reddit-search.sh` と新規 `hn-search.sh` / `github-search.sh`、各 `SKILL.md` です。カスタマイズが無いことを確認したファイルだけテンプレートからcopyし、独自手順は共通CLIを呼ぶよう手動で統合します。Skillフォルダを無条件に削除・上書きしないでください。
+ドメインSkillのscriptは`<capability> '<JSON arguments>'`だけを受け取り、JSONを変換せず共通CLIへ渡します。カスタマイズが無いことを確認したファイルだけtemplateからcopyし、Skillフォルダを無条件に削除・上書きしないでください。`last30days`はworkflow Skillとして独立して維持します。
 
 Financeを旧Skillから用途別Toolへ移行するgroupでは、`skills` から `finance` / `finance-setup` を外し、必要な8つの `finance-*` Toolを `tools` に追加します。`groups/<group>/SKILLS/finance` / `finance-setup` はテンプレート削除では自動削除されないため、独自変更が無いことを確認してから退役させてください。既存の `finance.db` は移動・再作成せずそのまま再利用します。
 

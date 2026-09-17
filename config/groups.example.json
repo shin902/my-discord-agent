@@ -5,7 +5,8 @@
       "provider": "zai",
       "modelId": "glm-4.7-flash"
     },
-    "tools": ["tavily-search", "agent-reach", "bot"],
+    "tools": ["bash", "bot"],
+    "skills": ["web"],
     "approvalRequiredTools": ["tavily-search"],
     "contextFiles": [
       { "path": "MEMORY.md", "maxChars": 2000 },
