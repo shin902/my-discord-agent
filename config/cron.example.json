@@ -143,9 +143,7 @@
     "enabled": false,
     "handler": "jobs/x-saved-classify.ts",
     "settings": {
-      "python": "data/x-saved-tagger/venv/bin/python",
       "aliases": "config/x-saved-aliases.json",
-      "cache": "data/x-saved-tagger/cache",
       "device": "cpu",
       "limit": 20,
       "thresholds": { "copyright": 0.46, "character": 0.37, "general": 0.34 }

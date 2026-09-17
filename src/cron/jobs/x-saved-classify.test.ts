@@ -32,7 +32,22 @@ describe("x-saved PixAI host classification", () => {
     ).toBe("");
   });
 
-  it("validates settings before spawning and uses a fixed host script without a shell", async () => {
+  it.each([
+    "python",
+    "cache",
+  ])("rejects the removed %s setting", async (key) => {
+    await expect(
+      handler({
+        settings: {
+          aliases: "config/x-saved-aliases.json",
+          [key]: "arbitrary/path",
+        },
+      } as CronContext),
+    ).rejects.toThrow("Invalid");
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it("validates settings before spawning and uses fixed host paths without a shell", async () => {
     await expect(
       handler({ settings: { limit: 0 } } as CronContext),
     ).rejects.toThrow("Invalid");
@@ -42,17 +57,23 @@ describe("x-saved PixAI host classification", () => {
     try {
       await handler({
         settings: {
-          python: "data/x-saved-tagger/venv/bin/python",
           aliases: "config/x-saved-aliases.json",
-          cache: "data/x-saved-tagger/cache",
         },
       } as CronContext);
       expect(execFile).toHaveBeenCalledWith(
-        path.resolve("data/x-saved-tagger/venv/bin/python"),
+        path.join(
+          os.homedir(),
+          ".local/share/my-discord-agent/x-saved-tagger/venv/bin/python",
+        ),
         expect.arrayContaining([
           path.resolve("scripts/x-saved-tagger.py"),
           "--db",
           path.join(dir, "archive.sqlite"),
+          "--cache",
+          path.join(
+            os.homedir(),
+            ".local/share/my-discord-agent/x-saved-tagger/cache",
+          ),
           "--device",
           "cpu",
           "--limit",

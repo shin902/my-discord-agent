@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -16,9 +17,7 @@ const root = path.resolve(
 );
 const score = z.number().min(0).max(1);
 const Settings = z.strictObject({
-  python: z.string().min(1),
   aliases: z.string().min(1),
-  cache: z.string().min(1),
   device: z.enum(["cpu", "cuda", "mps"]).default("cpu"),
   limit: z.number().int().min(1).max(100).default(20),
   thresholds: z
@@ -35,10 +34,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
   if (!parsed.success)
     throw new NonRetryableError("Invalid x-saved-classify settings");
   const settings = parsed.data;
+  const taggerRoot = path.join(
+    os.homedir(),
+    ".local/share/my-discord-agent/x-saved-tagger",
+  );
   const dbPath = resolveXSavedDbPath();
   openXSavedDb(dbPath).close();
   const { stdout, stderr } = await promisify(execFile)(
-    path.resolve(root, settings.python),
+    path.join(taggerRoot, "venv/bin/python"),
     [
       path.join(root, "scripts/x-saved-tagger.py"),
       "--db",
@@ -46,7 +49,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       "--aliases",
       path.resolve(root, settings.aliases),
       "--cache",
-      path.resolve(root, settings.cache),
+      path.join(taggerRoot, "cache"),
       "--device",
       settings.device,
       "--limit",

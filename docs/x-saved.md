@@ -139,18 +139,19 @@ The model has custom Python code. The pinned code was inspected, but this reposi
 
 ### Install and smoke-test
 
-Keep the Python environment and model cache **outside `data/x-saved/` and all Agent mounts**. The classifier rejects a cache inside the archive directory. Example CPU setup (Python 3.12, approximately 2 GB of model weights plus dependencies):
+Cron uses fixed paths under **`~/.local/share/my-discord-agent/x-saved-tagger/`**, using the host service user's home: `venv/bin/python` and `cache/`. The `python` / `cache` cron settings are no longer accepted; remove them from existing job definitions. Keep this directory outside Agent mounts. This removes unnecessary path configuration, not a general mount-isolation policy. The standalone classifier still rejects a cache inside the archive directory. Example CPU setup (Python 3.12, approximately 2 GB of model weights plus dependencies):
 
 ```bash
-uv venv --python 3.12 data/x-saved-tagger/venv
-uv pip install --python data/x-saved-tagger/venv/bin/python \
+TAGGER_ROOT="$HOME/.local/share/my-discord-agent/x-saved-tagger"
+uv venv --python 3.12 "$TAGGER_ROOT/venv"
+uv pip install --python "$TAGGER_ROOT/venv/bin/python" \
   torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu
-uv pip install --python data/x-saved-tagger/venv/bin/python \
+uv pip install --python "$TAGGER_ROOT/venv/bin/python" \
   transformers==4.57.6 timm==1.0.24 Pillow==12.1.1
 cp config/x-saved-aliases.example.json config/x-saved-aliases.json
 # Explicit one-time network download of the fixed snapshot; does not touch SQLite.
-data/x-saved-tagger/venv/bin/python scripts/x-saved-tagger.py \
-  --cache data/x-saved-tagger/cache --download
+"$TAGGER_ROOT/venv/bin/python" scripts/x-saved-tagger.py \
+  --cache "$TAGGER_ROOT/cache" --download
 ```
 
 Normal execution is offline (`local_files_only`, HF offline/telemetry disabled). The upstream preprocessing and FP32 inference are retained; images are processed sequentially, and the model is loaded once per batch only when needed. CPU defaults to four OpenMP/MKL threads, overridable with `OMP_NUM_THREADS` / `MKL_NUM_THREADS`. For CUDA or MPS, install compatible PyTorch packages and set `device` accordingly; there is no silent device fallback. CUDA/MPS are not covered by the CPU smoke check.
@@ -158,9 +159,9 @@ Normal execution is offline (`local_files_only`, HF offline/telemetry disabled).
 Back up the existing SQLite database first and use a **disposable archive copy** for initial classification/threshold calibration. Run the current host once to create/migrate the archive to schema v5, then:
 
 ```bash
-data/x-saved-tagger/venv/bin/python scripts/x-saved-tagger.py \
+"$TAGGER_ROOT/venv/bin/python" scripts/x-saved-tagger.py \
   --db /path/to/disposable-archive/x-saved.sqlite \
-  --aliases config/x-saved-aliases.json --cache data/x-saved-tagger/cache \
+  --aliases config/x-saved-aliases.json --cache "$TAGGER_ROOT/cache" \
   --device cpu --limit 1
 ```
 
