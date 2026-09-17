@@ -20,6 +20,7 @@ import {
 } from "./config/x-saved.js";
 import {
   _setCronJobs,
+  enqueueStartupJobs,
   loadAndValidateCron,
   startCron,
   stopCron,
@@ -158,21 +159,22 @@ try {
   process.exit(1);
 }
 
-let backfillStarted = false;
-const runStartupBackfillOnce = async (): Promise<void> => {
-  if (backfillStarted) return;
-  backfillStarted = true;
+for (const [discordBotId, discordClient] of getDiscordClients()) {
+  registerHandlers(discordClient, undefined, discordBotId);
+}
+try {
+  await loginDiscordClients();
   console.log("[discord-backfill] 起動時履歴復旧を開始します");
   await backfillDiscordMessages(groups);
   console.log("[discord-backfill] 起動時履歴復旧が完了しました");
-};
-for (const [discordBotId, discordClient] of getDiscordClients()) {
-  registerHandlers(discordClient, runStartupBackfillOnce, discordBotId);
+  await enqueueStartupJobs();
+  startPoller();
+  startDeliveryWorker(getQueueRepository());
+  startCron();
+} catch (err) {
+  console.error("[startup] 起動処理に失敗しました:", err);
+  process.exit(1);
 }
-startPoller();
-startDeliveryWorker(getQueueRepository());
-startCron();
-void loginDiscordClients();
 
 // spawn した docker run 子プロセス（ひいてはコンテナ本体）は process.exit() しても
 // 自動では止まらず孤立するため、実行中コンテナを docker kill してから終了する。

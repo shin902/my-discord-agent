@@ -94,6 +94,22 @@ describe("loadAndValidateCron", () => {
     expect(result).toEqual([]);
   });
 
+  it("@startup + handler は拒否する", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "startup-handler",
+          schedule: "@startup",
+          handler: "__fixtures__/test-handler.ts",
+        },
+      ]),
+    );
+
+    await expect(loadAndValidateCron()).rejects.toThrow(
+      "@startup は handler 付きジョブでは使用できません",
+    );
+  });
+
   it("有効なハンドラー付きジョブは検証に成功する", async () => {
     const cronJson = JSON.stringify([
       {
