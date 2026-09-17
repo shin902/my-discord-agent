@@ -9,6 +9,5 @@ export default async function handler(_ctx: CronContext): Promise<void> {
     console.error(
       `[reddit-cookie-refresh] クッキー更新に失敗しました: ${err instanceof Error ? err.message : err}`,
     );
-    throw err;
   }
 }

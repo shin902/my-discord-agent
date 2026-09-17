@@ -1,14 +1,14 @@
 import "dotenv/config";
 import { fileURLToPath } from "node:url";
-import { refreshXCookiesInRuntime } from "../src/runtime/tool-runtime-client.js";
+import { refreshXCookies } from "../src/proxy/x-cookie-refresh.js";
 
 export async function main(): Promise<void> {
   try {
-    await refreshXCookiesInRuntime();
+    await refreshXCookies();
     console.log("[x-cookie-refresh] X cookies refreshed");
-  } catch (error) {
+  } catch {
     console.error(
-      `[x-cookie-refresh] Refresh failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      "[x-cookie-refresh] Refresh failed; check host browser setup or run pnpm x:login",
     );
     process.exitCode = 1;
   }

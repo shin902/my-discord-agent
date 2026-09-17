@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import { refreshRedditCookies } from "../proxy/reddit-cookie-refresh.js";
-import { refreshXCookies } from "../proxy/x-cookie-refresh.js";
 import { getRuntimeCapability } from "../tools/runtime-capabilities.js";
 import {
   TOOL_RUNTIME_INPUT_MAX_BYTES,
@@ -16,42 +15,27 @@ export async function executeRuntimeRequest(
     if (!request || typeof request !== "object" || Array.isArray(request))
       throw new Error("Invalid Tool Runtime request");
     const input = request as Record<string, unknown>;
-    if (Object.keys(input).length === 1 && "maintenance" in input) {
-      const maintenance = input.maintenance;
-      const isReddit = maintenance === "reddit-cookie-refresh";
-      const isX = maintenance === "x-cookie-refresh";
-      if (!isReddit && !isX) throw new Error("Invalid Tool Runtime request");
-      const profileDir = isReddit
-        ? process.env.REDDIT_PROFILE_DIR
-        : process.env.X_PROFILE_DIR;
-      const cookieFile = isReddit
-        ? process.env.REDDIT_COOKIE_FILE
-        : process.env.X_COOKIE_FILE;
-      if (!profileDir || !cookieFile)
-        throw new Error(
-          `${isReddit ? "Reddit" : "X"} maintenance state is unavailable`,
-        );
+    if (
+      Object.keys(input).length === 1 &&
+      input.maintenance === "reddit-cookie-refresh"
+    ) {
+      if (!process.env.REDDIT_PROFILE_DIR || !process.env.REDDIT_COOKIE_FILE)
+        throw new Error("Reddit maintenance state is unavailable");
       // Browser diagnostics may contain private state; only the fixed outcome is returned.
       try {
-        if (isReddit) await refreshRedditCookies({ profileDir, cookieFile });
-        else await refreshXCookies({ profileDir, cookieFile });
+        await refreshRedditCookies({
+          profileDir: process.env.REDDIT_PROFILE_DIR,
+          cookieFile: process.env.REDDIT_COOKIE_FILE,
+        });
       } catch (error) {
-        console.error(
-          `[tool-runtime] ${isReddit ? "Reddit" : "X"} cookie refresh failed:`,
-          error,
-        );
+        console.error("[tool-runtime] Reddit cookie refresh failed:", error);
         throw new Error(
-          `${isReddit ? "Reddit" : "X"} cookie refresh failed; check login and Runtime diagnostics`,
+          "Reddit cookie refresh failed; check login and Runtime diagnostics",
         );
       }
       return {
         result: {
-          content: [
-            {
-              type: "text",
-              text: `${isReddit ? "Reddit" : "X"} cookies refreshed`,
-            },
-          ],
+          content: [{ type: "text", text: "Reddit cookies refreshed" }],
           details: {},
         },
       };
