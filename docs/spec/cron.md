@@ -55,7 +55,7 @@ data/cron/
 ]
 ```
 
-`handler` があるジョブは `prompt`・`channelId`・`deliveryMode`・`sessionMode` を省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される。
+`handler` があるジョブは `prompt`・`channelId`・`deliveryMode`・`sessionMode` を省略可能。省略しない場合は `CronContext` 経由でハンドラーに渡される。ただし `schedule: "@startup"` は宣言型のprompt job専用で、handler付きジョブには使用できない。
 
 ---
 
@@ -64,7 +64,7 @@ data/cron/
 | フィールド | 必須 | 型 | 説明 |
 |-----------|------|-----|------|
 | `id` | ✓ | string | ジョブID（一意） |
-| `schedule` | ✓ | string | cron式 `"0 9 * * *"`、インターバル `"30m"` `"1h"`、または起動時に1回実行する `"@startup"` |
+| `schedule` | ✓ | string | cron式 `"0 9 * * *"`、インターバル `"30m"` `"1h"`、または起動時に1回実行するprompt job専用 `"@startup"` |
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
@@ -72,7 +72,7 @@ data/cron/
 | `sessionMode` | handler なし時必須 | `"per-run"` \| `"destination"` | セッションIDの決定方法（後述） |
 | `noReply` | オプション | boolean | `true`なら、このリクエストのsystem promptへ通知不要時に独立行 `<NO_REPLY>` を返す指示を追加。既定値は`false` |
 | `mode` | オプション | `"to-channel"` \| `"to-thread"` | 旧設定との後方互換用。新規設定では使用しない |
-| `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く） |
+| `handler` | オプション | string | カスタムロジックの TS ファイルパス（`src/cron/` からの相対パス。`../` などパストラバーサルは正規表現で弾く）。`@startup` では使用不可 |
 | `model` | オプション | object | AgentConfig。`provider` / `modelId` / `thinkingLevel`。group/channelのmodelオブジェクトを完全置換 |
 | `tools` | オプション | string[] | AgentConfig。エージェントに渡すツール名。親の配列を完全置換 |
 | `approvalRequiredTools` | オプション | string[] | AgentConfig。effective `tools` に含まれる既知host/runtime capabilityのうちapprovalを挟むtool名。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合はapprovalなし。jobで未指定なら親を継承し、`[]` は明示解除。親の配列を完全置換 |
@@ -81,7 +81,7 @@ data/cron/
 | `contextFiles` | オプション | object[] | AgentConfig。workspace相対ファイルをsession初回のuser roleへ注入する。親の配列を完全置換し、`[]`で無効化 |
 | `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |
 
-handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
+handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。`@startup` だけは例外としてhandlerを受理せず、通常の宣言型prompt jobとして設定する。
 
 通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでも配送先channelのAgentConfigは継承しない。未指定フィールドは親を継承し、`approvalRequiredTools` のjobでの未指定も同様に親を継承する。`[]` は明示解除であり、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronのAgentConfig override対象ではない。cronのAgentConfigは信頼済みの静的設定からのみ投入する。
 
@@ -146,7 +146,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 - **cron式**: `"0 9 * * *"` — 分・時・日・月・曜日。標準的な cron 記法
 - **インターバル**: `"30m"` `"1h"` `"2h"` — 起動からの経過時間ベース
-- **起動時**: `"@startup"` — Discord clientがreadyになった後、1プロセス起動につき1回だけ実行。通常tickでは実行せず、永続的な実行済みstateは持たない
+- **起動時**: `"@startup"` — 宣言型prompt job専用。Discord clientがreadyになり、起動時backfillが完了した後に、1プロセス起動につき1回だけ実行する。通常tickでは実行せず、永続的な実行済みstateは持たない
 
 **重複実行防止**: `data/cron/state.json` に各ジョブの `lastRun` を記録（`@startup`を除く）。
 
