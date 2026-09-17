@@ -1,9 +1,15 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { readXCookies, writeXCookiesAtomic } from "./x-cookie-store.js";
+import { visitAuthenticatedXHome } from "./x-cookie-home.js";
+import {
+  readXCookies,
+  writeXCookiesAtomic,
+  type XCookies,
+} from "./x-cookie-store.js";
 
-const NAV_TIMEOUT_MS = 30_000;
-const SETTLE_MS = 4_000;
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 function startXvfb(display: string): ChildProcess {
   const process = spawn(
@@ -47,41 +53,38 @@ async function stopXvfb(process: ChildProcess): Promise<void> {
   });
 }
 
-export async function refreshXCookies(options: {
-  profileDir: string;
-  cookieFile: string;
-}): Promise<void> {
+export async function refreshXCookies(
+  options = {
+    profileDir: resolve(ROOT, "data/x-browser-profile"),
+    cookieFile: resolve(ROOT, "data/twitter-cookies.json"),
+  },
+): Promise<void> {
   const display = `:${190 + (process.pid % 100)}`;
   const xvfb = startXvfb(display);
-  const previousDisplay = process.env.DISPLAY;
-  process.env.DISPLAY = display;
   try {
     await waitForXvfb(xvfb);
     const context = await chromium.launchPersistentContext(options.profileDir, {
       headless: false,
+      env: { ...process.env, DISPLAY: display },
       ...(process.env.CHROMIUM_PATH
         ? { executablePath: process.env.CHROMIUM_PATH }
         : {}),
     });
+    let cookies: XCookies;
     try {
       const page = await context.newPage();
-      await page.goto("https://x.com/home", {
-        waitUntil: "load",
-        timeout: NAV_TIMEOUT_MS,
-      });
-      await page.waitForTimeout(SETTLE_MS);
-      if (/\/i\/flow\/login/.test(page.url()))
-        throw new Error("X session expired; run pnpm x:login again");
-      await writeXCookiesAtomic(
-        options.cookieFile,
-        await readXCookies(context),
-      );
+      await visitAuthenticatedXHome(page);
+      cookies = await readXCookies(context);
     } finally {
       await context.close();
     }
+    await writeXCookiesAtomic(options.cookieFile, cookies);
+  } catch {
+    // Browser errors can contain private URLs or state; do not forward diagnostics.
+    throw new Error(
+      "X cookie refresh failed; check host browser setup or run pnpm x:login",
+    );
   } finally {
-    if (previousDisplay === undefined) delete process.env.DISPLAY;
-    else process.env.DISPLAY = previousDisplay;
     await stopXvfb(xvfb);
   }
 }
