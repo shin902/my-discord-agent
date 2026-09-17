@@ -87,23 +87,25 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(self.infer.call_count, 2)
         # Human removal is not undone by the next unchanged run.
         with self.db:
-            self.db.execute("DELETE FROM x_item_labels WHERE value='guitar'")
+            self.db.execute("DELETE FROM x_item_labels WHERE value IN ('guitar', 'gotoh_hitori')")
         self.run_batch()
         self.assertNotIn(("tag", "guitar"), self.labels())
+        self.assertNotIn(("character", "gotoh_hitori"), self.labels())
 
-    def test_failure_retains_text_and_retries_without_partial_image_labels(self):
+    def test_failure_retries_without_writing_text_or_partial_image_labels(self):
         self.seed("123", positions=(0, 1))
         self.infer.side_effect = [
             {"copyright": {}, "character": {}, "general": {"partial": 0.9}},
             ValueError("broken image"),
-        ]
-        self.assertEqual(self.run_batch(limit=1), {"processed": 0, "failed": 1})
-        self.assertNotIn(("tag", "partial"), self.labels())
-        self.assertIn(("character", "gotoh_hitori"), self.labels())
+        ] * 2
+        for _ in range(2):
+            self.assertEqual(self.run_batch(limit=1), {"processed": 0, "failed": 1})
+            self.assertEqual(self.labels(), set())
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM x_meta").fetchone()[0], 0)
         self.infer.side_effect = None
         self.assertEqual(self.run_batch(limit=1), {"processed": 1, "failed": 0})
         self.assertEqual(self.db.execute("SELECT value FROM x_meta").fetchone()[0], "done")
+        self.assertEqual(self.labels(), {("character", "gotoh_hitori"), ("series", "bocchi_the_rock")})
 
     def test_waits_for_all_downloads_and_reprocesses_only_after_marker_removal(self):
         self.seed(positions=(0, 1))
@@ -111,8 +113,8 @@ class ClassifyTests(unittest.TestCase):
             self.db.execute("UPDATE x_media SET status='pending' WHERE position=1")
         self.run_batch()
         self.loader.assert_not_called()
-        self.assertIn(("series", "bocchi_the_rock"), self.labels())
         self.assertEqual(self.run_batch()["processed"], 0)
+        self.assertEqual(self.labels(), set())
         with self.db:
             self.db.execute("UPDATE x_media SET status='done'")
         self.assertEqual(self.run_batch()["processed"], 1)
@@ -159,7 +161,7 @@ class ClassifyTests(unittest.TestCase):
         with self.assertRaisesRegex(sqlite3.IntegrityError, "db failed"):
             self.run_batch()
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM x_meta").fetchone()[0], 0)
-        self.assertNotIn(("tag", "guitar"), self.labels())
+        self.assertEqual(self.labels(), set())
 
 
 if __name__ == "__main__":

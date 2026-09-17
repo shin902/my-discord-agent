@@ -138,11 +138,6 @@ def classify(db_path, aliases_raw, cache, device="cpu", limit=20, thresholds=Non
             tweet_id = tweet["tweet_id"]
             media = db.execute("""SELECT status, local_path FROM x_media
                 WHERE tweet_id=? AND kind='image' ORDER BY position""", (tweet_id,)).fetchall()
-            baseline = text_labels(tweet["text"], aliases)
-            # Text matches survive model/cache/decode failures. Never replace existing human labels.
-            with db:
-                db.executemany("INSERT OR IGNORE INTO x_item_labels VALUES (?, ?, ?)",
-                               [(tweet_id, kind, value) for kind, value in sorted(baseline)])
             if any(image["status"] != "done" for image in media):
                 continue  # Wait for every image before inference and completion.
             candidates = {}
@@ -159,8 +154,10 @@ def classify(db_path, aliases_raw, cache, device="cpu", limit=20, thresholds=Non
                 failed += 1
                 print(f"[x-saved-tagger] {tweet_id}: {error}", file=sys.stderr)
                 continue
-            # Database errors escape; image labels and the done marker commit together.
+            # Database errors escape; all labels and the done marker commit together.
             with db:
+                db.executemany("INSERT OR IGNORE INTO x_item_labels VALUES (?, ?, ?)",
+                               [(tweet_id, kind, value) for kind, value in sorted(text_labels(tweet["text"], aliases))])
                 existing = set(tuple(row) for row in db.execute(
                     "SELECT kind, value FROM x_item_labels WHERE tweet_id=?", (tweet_id,)))
                 counts = {kind: sum(k == kind for k, _ in existing) for kind in CATEGORIES.values()}
