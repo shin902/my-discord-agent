@@ -61,7 +61,7 @@ Registryから解決したsandbox-local Toolは、executorへ入る直前に広�
 
 Skillだけで許可されたcapabilityへのapproval設定は拡張していません。必要なら対応Toolを `tools` にも指定してください。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
 
-validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中かつTool invocationのbudget内だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
+validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中かつTool invocationのbudget内だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Tool timeout・caller abort・run revokeでapprovalが取り消された場合、投稿済みmessageをfailed / cancelled表示とdisabled buttonsへbest-effortで更新します。Approve / Denyのupdate中に取り消された場合も同じterminal表示へ補正し、cleanup editの失敗やtimeoutで実行可否を変更しません。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
 
 approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
 

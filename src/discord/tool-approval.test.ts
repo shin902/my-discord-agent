@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toolExecutionSignal } from "../tools/timeout.js";
 
 const fetchChannel = vi.hoisted(() => vi.fn());
 const sendMessage = vi.hoisted(() => vi.fn());
+const editMessage = vi.fn();
 vi.mock("./client.js", () => ({
   getDiscordClient: () => ({ channels: { fetch: fetchChannel } }),
 }));
@@ -13,13 +15,16 @@ const {
 } = await import("./tool-approval.js");
 const { createToolApprovalRequest } = await import("../proxy/tool-approval.js");
 
-function makeRequest(args: unknown = { eventId: "event-1" }) {
+function makeRequest(
+  args: unknown = { eventId: "event-1" },
+  signal = new AbortController().signal,
+) {
   return createToolApprovalRequest(
     {
       runId: "run-1",
       capability: "delete-event",
       trustedDiscordDestination: { botId: "personal", channelId: "channel-1" },
-      revokeSignal: new AbortController().signal,
+      revokeSignal: signal,
     },
     args,
   );
@@ -34,11 +39,100 @@ function customId(payload: { components?: unknown[] }, index: number): string {
 
 beforeEach(() => {
   fetchChannel.mockReset();
-  sendMessage.mockReset().mockResolvedValue({ id: "message-1" });
+  editMessage.mockReset().mockResolvedValue(undefined);
+  sendMessage
+    .mockReset()
+    .mockResolvedValue({ id: "message-1", edit: editMessage });
   fetchChannel.mockResolvedValue({ send: sendMessage });
 });
 
+afterEach(() => vi.useRealTimers());
+
+function expectFailed(payload: unknown) {
+  expect(payload).toMatchObject({
+    content: "Tool approval failed / cancelled\nTool: delete-event",
+    components: [
+      {
+        components: [
+          { data: { disabled: true } },
+          { data: { disabled: true } },
+        ],
+      },
+    ],
+  });
+}
+
 describe("presentToolApprovalRequest", () => {
+  it.each([
+    "timeout",
+    "caller abort",
+    "run revoke",
+  ])("disables the posted message on %s and rejects late clicks", async (cause) => {
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    const run = new AbortController();
+    const execution = toolExecutionSignal(
+      120_000,
+      AbortSignal.any([caller.signal, run.signal]),
+    );
+    const request = makeRequest(undefined, execution.signal);
+    try {
+      await presentToolApprovalRequest(request);
+      const payload = sendMessage.mock.calls[0][0];
+      if (cause === "caller abort") caller.abort();
+      if (cause === "run revoke") run.abort();
+      await vi.advanceTimersByTimeAsync(cause === "timeout" ? 120_000 : 0);
+      await expect(request.waitForDecision()).rejects.toThrow(
+        "Tool approval canceled",
+      );
+      expect(editMessage).toHaveBeenCalledOnce();
+      expectFailed(editMessage.mock.calls[0][0]);
+      const update = vi.fn();
+      for (const index of [0, 1]) {
+        expect(
+          await routeToolApprovalInteraction(
+            {
+              customId: customId(payload, index),
+              user: { bot: false },
+              channelId: "channel-1",
+              message: { id: "message-1", edit: editMessage },
+              update,
+            } as never,
+            "personal",
+          ),
+        ).toBe(false);
+      }
+      expect(update).not.toHaveBeenCalled();
+      expect(request.claim("approve")).toBeUndefined();
+      execution.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      execution.dispose();
+    }
+  });
+
+  it.each([
+    "reject",
+    "hang",
+  ])("does not change cancellation when cleanup edits %s", async (failure) => {
+    vi.useFakeTimers();
+    editMessage.mockImplementation(() =>
+      failure === "reject"
+        ? Promise.reject(new Error("Discord unavailable"))
+        : new Promise(() => {}),
+    );
+    const controller = new AbortController();
+    const request = makeRequest(undefined, controller.signal);
+    await presentToolApprovalRequest(request);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(TOOL_APPROVAL_UPDATE_TIMEOUT_MS);
+    await expect(request.waitForDecision()).rejects.toThrow(
+      "Tool approval canceled",
+    );
+    expect(request.claim("approve")).toBeUndefined();
+    expect(editMessage).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("sends only the snapshotted tool and canonical args with approval buttons", async () => {
     const request = makeRequest({ eventId: "event-1" });
 
@@ -85,6 +179,13 @@ describe("presentToolApprovalRequest", () => {
         2_000,
       );
       await expect(request.waitForDecision()).resolves.toBe(result);
+      const terminal = update.mock.calls[0][0];
+      expect(terminal.content).toContain(
+        buttonIndex === 0 ? "Result: Approved" : "Result: Denied",
+      );
+      expect(terminal.components[0].components[0].data.disabled).toBe(true);
+      expect(terminal.components[0].components[1].data.disabled).toBe(true);
+      expect(editMessage).not.toHaveBeenCalled();
     }
 
     const overflowing = makeRequest({ value: "x".repeat(1_910) });
@@ -130,6 +231,51 @@ describe("presentToolApprovalRequest", () => {
 });
 
 describe("routeToolApprovalInteraction", () => {
+  it.each([
+    0, 1,
+  ])("corrects interaction %i when invocation timeout wins during update", async (index) => {
+    vi.useFakeTimers();
+    const execution = toolExecutionSignal(1_000);
+    const request = makeRequest(undefined, execution.signal);
+    let finalPayload: unknown;
+    editMessage.mockImplementation(async (payload) => {
+      finalPayload = payload;
+    });
+    try {
+      await presentToolApprovalRequest(request);
+      const payload = sendMessage.mock.calls[0][0];
+      let resolveUpdate!: () => void;
+      const update = vi.fn(async (terminal) => {
+        await new Promise<void>((resolve) => {
+          resolveUpdate = resolve;
+        });
+        finalPayload = terminal;
+      });
+      const route = routeToolApprovalInteraction(
+        {
+          customId: customId(payload, index),
+          user: { bot: false },
+          channelId: "channel-1",
+          message: { id: "message-1", edit: editMessage },
+          update,
+        } as never,
+        "personal",
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(request.waitForDecision()).rejects.toThrow(
+        "Tool approval canceled",
+      );
+      expectFailed(finalPayload);
+      resolveUpdate();
+      await expect(route).resolves.toBe(true);
+      expect(editMessage).toHaveBeenCalledTimes(2);
+      expectFailed(finalPayload);
+      expect(request.claim("approve")).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      execution.dispose();
+    }
+  });
   it("ignores mismatches and lets the first valid click win", async () => {
     const request = makeRequest();
     await presentToolApprovalRequest(request);
@@ -181,7 +327,7 @@ describe("routeToolApprovalInteraction", () => {
     await presentToolApprovalRequest(request);
     const payload = sendMessage.mock.calls[0]?.[0];
     const update = vi.fn().mockRejectedValue(new Error("timeout"));
-    const edit = vi.fn();
+    const edit = editMessage;
 
     await routeToolApprovalInteraction(
       {
@@ -198,7 +344,8 @@ describe("routeToolApprovalInteraction", () => {
       "Tool approval Discord update failed",
     );
     expect(request.claim("approve")).toBeUndefined();
-    expect(edit).not.toHaveBeenCalled();
+    expect(edit).toHaveBeenCalledOnce();
+    expectFailed(edit.mock.calls[0][0]);
   });
 
   it("corrects a late successful update after timeout", async () => {
@@ -211,7 +358,7 @@ describe("routeToolApprovalInteraction", () => {
       const update = vi.fn(
         () => new Promise<void>((resolve) => (resolveUpdate = resolve)),
       );
-      const edit = vi.fn().mockResolvedValue(undefined);
+      const edit = editMessage;
       const route = routeToolApprovalInteraction(
         {
           customId: customId(payload, 0),
@@ -232,8 +379,8 @@ describe("routeToolApprovalInteraction", () => {
       resolveUpdate();
       await Promise.resolve();
       await Promise.resolve();
-      expect(edit).toHaveBeenCalledOnce();
-      expect(edit.mock.calls[0]?.[0]).toMatchObject({
+      expect(edit).toHaveBeenCalledTimes(2);
+      expect(edit.mock.calls[1]?.[0]).toMatchObject({
         content: expect.stringContaining("Tool approval failed / cancelled"),
         components: expect.any(Array),
       });
@@ -254,7 +401,7 @@ describe("routeToolApprovalInteraction", () => {
       const update = vi.fn(
         () => new Promise<void>((resolve) => (resolveUpdate = resolve)),
       );
-      const edit = vi.fn().mockRejectedValue(new Error("edit failed"));
+      const edit = editMessage.mockRejectedValue(new Error("edit failed"));
       const route = routeToolApprovalInteraction(
         {
           customId: customId(payload, 0),
@@ -271,7 +418,7 @@ describe("routeToolApprovalInteraction", () => {
       resolveUpdate();
       await Promise.resolve();
       await Promise.resolve();
-      expect(edit).toHaveBeenCalledOnce();
+      expect(edit).toHaveBeenCalledTimes(2);
       expect(unhandledRejection).not.toHaveBeenCalled();
     } finally {
       process.off("unhandledRejection", unhandledRejection);

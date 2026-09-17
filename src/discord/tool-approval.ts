@@ -138,29 +138,33 @@ export async function presentToolApprovalRequest(
   const message = await channel.send(
     initialPayload(request, requestId, inline),
   );
-  pending.set(requestId, {
+  const item = {
     request,
     botId,
     channelId,
     messageId: message.id,
     requestId,
     inline,
-  });
+  };
+  pending.set(requestId, item);
   void request.waitForDecision().then(
     () => pending.delete(requestId),
-    () => pending.delete(requestId),
+    () => {
+      pending.delete(requestId);
+      return failMessage(message, item);
+    },
   );
 }
 
 function updateWithTimeout(
   operation: Promise<unknown>,
-  correctLateSuccess: () => Promise<unknown>,
+  correctLateSuccess?: () => Promise<unknown>,
 ): Promise<void> {
   let timedOut = false;
   let timer!: NodeJS.Timeout;
   void operation.then(
     () => {
-      if (!timedOut) return;
+      if (!timedOut || !correctLateSuccess) return;
       void correctLateSuccess().catch(() => undefined);
     },
     () => undefined,
@@ -187,6 +191,17 @@ function failedPayload(item: PendingApproval): MessageEditOptions {
   };
 }
 
+async function failMessage(
+  message: Message,
+  item: PendingApproval,
+): Promise<void> {
+  try {
+    await updateWithTimeout(message.edit(failedPayload(item)));
+  } catch {
+    // Discord cleanup is best effort; approval is already terminal.
+  }
+}
+
 export async function routeToolApprovalInteraction(
   interaction: ButtonInteraction,
   discordBotId: string,
@@ -209,9 +224,11 @@ export async function routeToolApprovalInteraction(
   try {
     await updateWithTimeout(
       interaction.update(terminalPayload(item, parsed.decision)),
-      () => interaction.message.edit(failedPayload(item)),
+      () => failMessage(interaction.message, item),
     );
-    claim.completeUiUpdate();
+    if (!claim.completeUiUpdate()) {
+      await failMessage(interaction.message, item);
+    }
   } catch (error) {
     claim.failUiUpdate(error);
   } finally {
