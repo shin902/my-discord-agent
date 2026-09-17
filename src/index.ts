@@ -25,7 +25,10 @@ import {
   startCron,
   stopCron,
 } from "./cron/runner.js";
-import { backfillDiscordMessages } from "./discord/backfill.js";
+import {
+  backfillDiscordMessages,
+  prepareDiscordBackfill,
+} from "./discord/backfill.js";
 import {
   destroyDiscordClients,
   getDiscordClients,
@@ -163,6 +166,7 @@ for (const [discordBotId, discordClient] of getDiscordClients()) {
   registerHandlers(discordClient, discordBotId);
 }
 try {
+  prepareDiscordBackfill(groups);
   await loginDiscordClients();
   console.log("[discord-backfill] 起動時履歴復旧を開始します");
   await backfillDiscordMessages(groups);

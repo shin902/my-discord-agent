@@ -27,16 +27,11 @@ const EMPTY_SCOPE_AFTER_MESSAGE_ID = "0";
 type RootChannel = TextChannel | NewsChannel | ForumChannel;
 type MessageChannel = TextChannel | NewsChannel | AnyThreadChannel;
 
-/** Recover Discord messages that arrived while the gateway was disconnected. */
-export async function backfillDiscordMessages(
+/** Arm cursor gates before Discord login can deliver live messages. */
+export function prepareDiscordBackfill(
   groups: readonly GroupConfig[],
   repo: QueueRepository = getQueueRepository(),
-): Promise<void> {
-  // Live messages are still accepted while this function runs, but their
-  // cursor updates must not move a channel that has not been scanned yet.
-  // Register every channel before the sequential loop starts so a later
-  // channel cannot be advanced by a live event during an earlier channel's
-  // recovery.
+): void {
   const channelIds = groups.flatMap((group) =>
     group.channels.flatMap((channel) => {
       if (!channel.appendUserOnly) return [channel.channelId];
@@ -46,6 +41,15 @@ export async function backfillDiscordMessages(
     }),
   );
   beginDiscordChannelBackfill(channelIds);
+}
+
+/** Recover Discord messages that arrived while the gateway was disconnected. */
+export async function backfillDiscordMessages(
+  groups: readonly GroupConfig[],
+  repo: QueueRepository = getQueueRepository(),
+): Promise<void> {
+  // Keep direct callers safe; startup prepares earlier, before login.
+  prepareDiscordBackfill(groups, repo);
   for (const group of groups) {
     const discordClient = getDiscordClientForGroup(group);
     for (const channel of group.channels) {

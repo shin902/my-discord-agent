@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   ]),
   registerHandlers: vi.fn(),
   backfillDiscordMessages: vi.fn(),
+  prepareDiscordBackfill: vi.fn(),
   loadDiscordConfig: vi.fn(),
   loadXSavedReceiverConfig: vi.fn(),
   startXSavedReceiver: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("./discord/handler.js", () => ({
 }));
 vi.mock("./discord/backfill.js", () => ({
   backfillDiscordMessages: mocks.backfillDiscordMessages,
+  prepareDiscordBackfill: mocks.prepareDiscordBackfill,
 }));
 vi.mock("./config/config.js", () => ({
   loadDiscordConfig: mocks.loadDiscordConfig,
@@ -451,9 +453,12 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.startPoller).not.toHaveBeenCalled();
   });
 
-  it("backfill後にstartup jobをenqueueしてからqueue workerを開始する", async () => {
+  it("login前にbackfill gateをarmし、復旧後にstartup jobをenqueueしてからqueue workerを開始する", async () => {
     await import("./index.js");
 
+    expect(
+      mocks.prepareDiscordBackfill.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.loginDiscordClients.mock.invocationCallOrder[0]);
     expect(
       mocks.backfillDiscordMessages.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.enqueueStartupJobs.mock.invocationCallOrder[0]);
