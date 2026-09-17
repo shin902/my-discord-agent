@@ -23,14 +23,16 @@ vi.mock("node:fs/promises", async (original) => {
 });
 
 import { copyFile, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
-import { bashTool } from "./bash.js";
 import {
   externalizeLargeToolResult,
   TOOL_OUTPUT_CHAR_LIMIT,
 } from "./output.js";
+import { resolveTools } from "./registry.js";
+import { DEFAULT_TOOL_TIMEOUT_MS } from "./timeout.js";
 
-function run(command: string, signal?: AbortSignal) {
-  return bashTool.execute("id", { command }, signal, undefined);
+function run(command: string, signal?: AbortSignal, toolTimeoutMs?: number) {
+  const [tool] = resolveTools(["bash"], {}, { toolTimeoutMs });
+  return tool.execute("id", { command }, signal, undefined);
 }
 
 function getText(result: Awaited<ReturnType<typeof run>>): string {
@@ -222,18 +224,32 @@ describe("bashTool streaming output", () => {
     expect(getText(await run("printf recovered"))).toBe("recovered");
   });
 
-  it("preserves acquired output when the command times out", async () => {
+  it.each([
+    undefined,
+    50_000,
+  ])("preserves output and kills the process group at Tool timeout %s", async (timeoutMs) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const pending = run("printf partial; sleep 60").catch(
-      (error: Error & { details: unknown }) => error,
-    );
+    const kill = vi.spyOn(process, "kill");
+    const pending = run(
+      "printf partial; sleep 300",
+      undefined,
+      timeoutMs,
+    ).catch((error: Error & { details: unknown }) => error);
     // Observe the anonymous capture before advancing the command's timeout.
     await vi.waitFor(async () => {
       const file = await vi.mocked(open).mock.results[0]?.value;
       expect((await file.stat()).size).toBe(7);
     });
+    const child = vi.mocked(realSpawn).mock.results[0].value;
     await vi.advanceTimersByTimeAsync(30_000);
+    expect(kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(
+      (timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS) - 30_000,
+    );
     const error = await pending;
+    expect(kill).toHaveBeenCalledWith(-child.pid, "SIGKILL");
+    expect(child.signalCode).toBe("SIGKILL");
+    kill.mockRestore();
     expect((error as Error).message).toContain("timed out");
     const details = outputDetails(error);
     expect((error as Error).message).toContain(details.fullOutputPath);

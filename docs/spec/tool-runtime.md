@@ -34,7 +34,9 @@ hostが一意なcontainer名を生成します。正常・処理エラー終了�
 
 host起動時のcleanupは `my-discord-agent.tool-runtime=<checkout絶対パスのhash>` という専用labelだけを対象にします。Agent sandboxや別checkoutのRuntimeを名前prefixで巻き込みません。稼働ディレクトリを移す場合、移動前のhostを正常停止してから移してください。
 
-stdinは1 MiB、構造化stdoutは64 MiBが上限です。取得処理の既存timeout・応答サイズ制限も維持します。Dockerやbrowserのstderrは先頭16 KiBまで保持し、失敗時だけcontainer名とともにhost logへ出します。上限超過は切り詰めを明示し、以降もpipeをdrainします。内部診断はAgentへのresponseに含めません。取得元の失敗は成功した空結果へ変換しません。
+Tool invocationの寿命は共通 `tool.timeoutMs`（既定120秒）を正本とし、capabilityごとの30秒 / 120秒timerは持ちません。native ToolはRunner、CLIからのhost/runtime capabilityはTool Proxyでも同じ設定を適用し、caller abort・切断・run revokeは内側へ伝播します。Runtime内で新しいinvocation timerを開始せず、host側のtimeout / abortでcontainer全体を停止します。arXiv / recent-searchの重複30秒fetch timer、agent-reachの重複120秒executor timerはなく、外側のbudgetに従います。FxTwitter単一requestの20秒、browser navigationや外部CLIの取得・retry制限など用途固有の制限は維持します。HTTP requestのtimeoutとの責務分離は[設定仕様](../config.md#timeoutとabortの責務)を参照してください。
+
+stdinは1 MiB、構造化stdoutは64 MiBが上限です。取得処理の応答サイズ制限も維持します。Dockerやbrowserのstderrは先頭16 KiBまで保持し、失敗時だけcontainer名とともにhost logへ出します。上限超過は切り詰めを明示し、以降もpipeをdrainします。内部診断はAgentへのresponseに含めません。取得元の失敗は成功した空結果へ変換しません。
 
 Runtimeは長い結果も本文で返します。native結果の50,000文字超の外部化はAgent sandbox側の [output.ts](../../src/tools/output.ts) に集約し、同じAgent run中の後続read／grepで再利用できます。Runtime callの終了でこのファイルは消えません。Agent sandboxの終了後は過去pathの再読を保証しません。Skillはstdoutを維持し、`>` による保存やworkspaceへの明示copyもAgent側で行います。共有workspace・artifact store・session永続化は追加していません。
 

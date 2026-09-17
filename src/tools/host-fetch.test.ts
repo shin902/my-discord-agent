@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
+import { loadRequestTimeoutMs } from "../config/proxy-config.js";
 import { getGoogleAccessToken } from "../proxy/google-auth.js";
 import { getGraphAccessToken } from "../proxy/graph-auth.js";
 import { hostFetch } from "./host-fetch.js";
@@ -18,10 +19,92 @@ vi.mock("../proxy/graph-auth.js", () => ({ getGraphAccessToken: vi.fn() }));
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("hostFetch", () => {
+  it.each([
+    "argument",
+    "init",
+  ])("propagates caller abort before the request timeout (%s)", async (source) => {
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      { provider: "api", baseUrl: "https://api.example.com" },
+    ]);
+    vi.mocked(loadRequestTimeoutMs).mockResolvedValue(120_000);
+    const caller = new AbortController();
+    let upstreamSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url, init) => {
+        upstreamSignal = init.signal;
+        return new Promise((_resolve, reject) => {
+          init.signal.addEventListener(
+            "abort",
+            () => reject(init.signal.reason),
+            { once: true },
+          );
+        });
+      }),
+    );
+    const pending = hostFetch(
+      "api",
+      "/items",
+      source === "init" ? { signal: caller.signal } : {},
+      source === "argument" ? caller.signal : undefined,
+    ).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(upstreamSignal).toBeDefined());
+    const reason = new Error("Tool stopped");
+    caller.abort(reason);
+    expect(await pending).toBe(reason);
+    expect(upstreamSignal?.aborted).toBe(true);
+  });
+
+  it("does not issue a mutation after abort during credential acquisition", async () => {
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      {
+        provider: "graph",
+        baseUrl: "https://graph.example.com",
+        msal: { tenantId: "t", clientId: "c", scopes: ["s"] },
+      },
+    ]);
+    const caller = new AbortController();
+    vi.mocked(getGraphAccessToken).mockImplementationOnce(async () => {
+      caller.abort(new Error("stopped while authenticating"));
+      return "token";
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      hostFetch("graph", "/items", { method: "POST" }, caller.signal),
+    ).rejects.toThrow("stopped while authenticating");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("expires a real request timer independently of the Tool signal", async () => {
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      { provider: "api", baseUrl: "https://api.example.com" },
+    ]);
+    vi.mocked(loadRequestTimeoutMs).mockResolvedValueOnce(10);
+    const caller = new AbortController();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener(
+              "abort",
+              () => reject(init.signal.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    expect((await hostFetch("api", "/items", {}, caller.signal)).status).toBe(
+      504,
+    );
+    expect(caller.signal.aborted).toBe(false);
+  });
   it("env credentialをhostでBearerとして注入する", async () => {
     process.env.HOST_API_TOKEN = "host-secret";
     vi.mocked(loadCredentialProxy).mockResolvedValue([

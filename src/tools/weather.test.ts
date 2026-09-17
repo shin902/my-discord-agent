@@ -63,10 +63,12 @@ describe("get-current-weather", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining("geocoding-api.open-meteo.com"),
+      { signal: undefined },
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("api.open-meteo.com/v1/forecast"),
+      { signal: undefined },
     );
 
     const text = firstText(result);
@@ -149,6 +151,7 @@ describe("get-weather-forecast", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("forecast_days=2"),
+      { signal: undefined },
     );
 
     const text = firstText(result);
@@ -187,6 +190,7 @@ describe("get-weather-forecast", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("forecast_days=3"),
+      { signal: undefined },
     );
   });
 
@@ -217,6 +221,7 @@ describe("get-weather-forecast", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("forecast_days=7"),
+      { signal: undefined },
     );
   });
 });

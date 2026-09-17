@@ -20,6 +20,7 @@ import {
 } from "../config/groups.js";
 import { isLlmCredential } from "../config/llm-credentials.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
+import { loadToolTimeoutMs } from "../config/tool-config.js";
 import { createInternalRequestConfig } from "../proxy/credential-proxy-server.js";
 import { usesAnthropicOAuth } from "../proxy/provider-auth.js";
 import {
@@ -740,6 +741,7 @@ export async function sendMessage(
   }
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
+  const toolTimeoutMs = await loadToolTimeoutMs();
   const botCatalog =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
       ? Object.entries(await loadBotRegistry())
@@ -768,6 +770,7 @@ export async function sendMessage(
           },
         );
   const payload = JSON.stringify({
+    toolTimeoutMs,
     groupName,
     sessionId,
     content: promptContent,

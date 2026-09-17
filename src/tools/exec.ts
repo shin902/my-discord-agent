@@ -1,7 +1,7 @@
 import { exec, spawn } from "node:child_process";
 
 export type ExecOptions = {
-  timeout: number;
+  timeout?: number;
   maxBuffer: number;
   cwd: string;
   signal?: AbortSignal;
@@ -175,15 +175,17 @@ export function execAsync(
     });
     child.once("close", maybeSettle);
 
-    timeoutTimer = setTimeout(() => {
-      const error = commandFailure() as Error & {
-        killed?: boolean;
-        signal?: NodeJS.Signals;
-      };
-      error.killed = true;
-      error.signal = "SIGTERM";
-      requestTermination(error);
-    }, options.timeout);
-    timeoutTimer.unref();
+    if (options.timeout !== undefined) {
+      timeoutTimer = setTimeout(() => {
+        const error = commandFailure() as Error & {
+          killed?: boolean;
+          signal?: NodeJS.Signals;
+        };
+        error.killed = true;
+        error.signal = "SIGTERM";
+        requestTermination(error);
+      }, options.timeout);
+      timeoutTimer.unref();
+    }
   });
 }

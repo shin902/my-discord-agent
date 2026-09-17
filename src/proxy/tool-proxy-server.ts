@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as http from "node:http";
+import { loadToolTimeoutMs } from "../config/tool-config.js";
 import { executeToolRuntime } from "../runtime/tool-runtime-client.js";
 import { materializeCapabilityArgs } from "../tools/capability.js";
 import { getCapabilityDefinition } from "../tools/registry.js";
+import { toolExecutionSignal } from "../tools/timeout.js";
 import {
   createToolApprovalRequest,
   type ToolApprovalRequest,
@@ -276,13 +278,18 @@ async function executeRequest(
     return;
   }
   const effectiveArgs = materializeCapabilityArgs(capability, body.args);
+  const timeoutMs = await loadToolTimeoutMs();
   const abortController = new AbortController();
   const abortRequest = (): void => {
     if (!res.writableEnded) abortController.abort();
   };
   req.once("aborted", abortRequest);
   res.once("close", abortRequest);
-  const signal = AbortSignal.any([abortController.signal, run.revokeSignal]);
+  const execution = toolExecutionSignal(
+    timeoutMs,
+    AbortSignal.any([abortController.signal, run.revokeSignal]),
+  );
+  const signal = execution.signal;
   if (req.aborted || res.destroyed) abortRequest();
   try {
     let executionArgs = effectiveArgs;
@@ -335,12 +342,14 @@ async function executeRequest(
       capability.executor === "runtime"
         ? await executeToolRuntime(body.capability, executionArgs, signal)
         : await tool.execute("tool-proxy", executionArgs, signal);
+    signal.throwIfAborted();
     if (!res.writableEnded) sendJson(res, 200, { result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!res.destroyed && !res.writableEnded)
       sendJson(res, 502, { error: message });
   } finally {
+    execution.dispose();
     req.off("aborted", abortRequest);
     res.off("close", abortRequest);
   }

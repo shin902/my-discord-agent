@@ -25,6 +25,10 @@ import {
   stopToolProxyServer,
 } from "./tool-proxy-server.js";
 
+vi.mock("../config/tool-config.js", () => ({
+  loadToolTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 const execFileAsync = promisify(execFile);
 let directory: string;
 let url: string;

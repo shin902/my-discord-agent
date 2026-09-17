@@ -13,6 +13,10 @@ import * as runtime from "../runtime/tool-runtime-client.js";
 import { createToolRuntimeFixture } from "../runtime/tool-runtime-fixture.js";
 import { sandboxNetworkArgs } from "./sandbox-network.js";
 
+vi.mock("../config/tool-config.js", () => ({
+  loadToolTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 const exec = promisify(execFile);
 const image = process.env.SANDBOX_NETWORK_TEST_IMAGE ?? "";
 const runtimeImage = process.env.TOOL_RUNTIME_TEST_IMAGE;

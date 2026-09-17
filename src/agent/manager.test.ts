@@ -60,6 +60,10 @@ vi.mock("../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../config/tool-config.js", () => ({
+  loadToolTimeoutMs: vi.fn().mockResolvedValue(45_000),
+}));
+
 vi.mock("../config/agent-config.js", () => ({
   loadAgentTimeoutMs: vi.fn().mockResolvedValue(10 * 60 * 1000),
 }));
@@ -925,6 +929,7 @@ describe("sendMessage: 添付ファイル", () => {
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.source).toEqual(source);
+    expect(payload.toolTimeoutMs).toBe(45_000);
     expect(payload).not.toHaveProperty("execution");
     expect(payload.content).toContain("[添付ファイル]");
   });

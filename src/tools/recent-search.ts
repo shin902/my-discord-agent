@@ -23,10 +23,7 @@ async function search(url: URL, signal?: AbortSignal): Promise<unknown> {
       "User-Agent": "my-discord-agent/last30days",
     },
     redirect: "error",
-    signal: AbortSignal.any([
-      AbortSignal.timeout(30_000),
-      ...(signal ? [signal] : []),
-    ]),
+    signal,
   });
   if (!response.ok) {
     await response.body?.cancel();

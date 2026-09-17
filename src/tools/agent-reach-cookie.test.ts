@@ -20,6 +20,7 @@ vi.mock("node:dns/promises", () => ({ lookup: dnsLookupMock }));
 vi.mock("./exec.js", () => ({ execAsync: execAsyncMock }));
 
 import { agentReachTool } from "./agent-reach.js";
+import { wrapToolTimeout } from "./timeout.js";
 
 const directories: string[] = [];
 const originalCookieFile = process.env.REDDIT_COOKIE_FILE;
@@ -53,7 +54,7 @@ async function setupCookie(): Promise<void> {
 }
 
 async function executeReddit(signal?: AbortSignal): Promise<unknown> {
-  return agentReachTool.execute(
+  return wrapToolTimeout(agentReachTool).execute(
     "test",
     { url: "https://www.reddit.com/r/test" },
     signal,
@@ -254,7 +255,7 @@ describe("agent-reach Reddit cookie boundary", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it("aborts a pending fetch at the direct-fetch timeout", async () => {
+  it("aborts a pending fetch at the common Tool timeout", async () => {
     await setupCookie();
     vi.useFakeTimers();
     let observedSignal!: AbortSignal;

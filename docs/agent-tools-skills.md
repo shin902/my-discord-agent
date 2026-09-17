@@ -49,7 +49,7 @@
 
 保存ファイルはtrimや文字コード変換をしない取得済みbytesです。inline上限とは別のdisk保護として、1回のcallでstdout/stderr合計 **5 MiB（5,242,880 bytes）** を超えたらprocess groupを停止し、先頭5 MiBをpartial outputとして保持します。ちょうど5 MiBなら上限超過とはしません。超過時は失敗resultの本文にpartial outputであることを明記し、detailsの `captureLimitBytes` / `captureLimitExceeded` でも確認できます。この上限はcall単位であり、run全体の合計disk quotaではありません。result detailsの `fullOutputPath`、`totalBytes`、`previewBytes`、`truncated`、`lifetime: "container-run"` で参照先・サイズ・寿命を確認できます。大出力時は本文にも保存先と寿命を表示します。`read` / `grep` で必要な範囲を参照してください。
 
-非ゼロ終了、30秒timeout、abortでも取得済みoutputを保存し、失敗resultの本文にpreview・保存先・サイズ・寿命を含めます。timeout / abortはcallのprocess groupをSIGKILLで停止します。ENOSPC等の保存失敗時はproducerを停止し、anonymous captureをcloseして解放します。終了後のpublish失敗も不完全なfileとdirectoryを削除し、保存先を返しません。保存開始前の失敗ならcommandを起動しません。パスは現在のAgent container run内だけ有効で、Discord turnやcontainerを跨ぐ永続性はありません。container自体が強制終了した場合の回収も保証しません。
+非ゼロ終了、共通 `tool.timeoutMs`（既定120秒）のtimeout、abortでも取得済みoutputを保存し、失敗resultの本文にpreview・保存先・サイズ・寿命を含めます。timeout / abortはcallのprocess groupをSIGKILLで停止します。ENOSPC等の保存失敗時はproducerを停止し、anonymous captureをcloseして解放します。終了後のpublish失敗も不完全なfileとdirectoryを削除し、保存先を返しません。保存開始前の失敗ならcommandを起動しません。パスは現在のAgent container run内だけ有効で、Discord turnやcontainerを跨ぐ永続性はありません。container自体が強制終了した場合の回収も保証しません。
 
 ### sandbox Toolのruntime引数検証
 
@@ -61,7 +61,7 @@ Registryから解決したsandbox-local Toolは、executorへ入る直前に広�
 
 Skillだけで許可されたcapabilityへのapproval設定は拡張していません。必要なら対応Toolを `tools` にも指定してください。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
 
-validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
+validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中かつTool invocationのbudget内だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
 
 approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
 

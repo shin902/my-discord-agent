@@ -1,14 +1,28 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+  type ChildProcessWithoutNullStreams,
+  execFile,
+  spawn,
+} from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadToolTimeoutMs } from "../config/tool-config.js";
 import { executeToolRuntime } from "./tool-runtime-client.js";
+
+vi.mock("../config/tool-config.js", () => ({
+  loadToolTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawn: vi.fn(),
+  execFile: vi.fn(),
 }));
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
 
 function containerExit(code: number, stdout: string, diagnostics: Buffer[]) {
   vi.mocked(spawn).mockImplementationOnce(() => {
@@ -30,6 +44,79 @@ function containerExit(code: number, stdout: string, diagnostics: Buffer[]) {
 const call = () => executeToolRuntime("arxiv-search", { query: "fixture" });
 
 describe("Tool Runtime host diagnostics", () => {
+  it.each([
+    "agent-reach",
+    "arxiv-search",
+    "arxiv-survey",
+    "hackernews-search",
+    "github-recent-search",
+  ])("uses common timeout rather than a capability timer: %s", async (capability) => {
+    vi.useFakeTimers();
+    vi.mocked(loadToolTimeoutMs).mockResolvedValueOnce(45_000);
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+    });
+    vi.mocked(spawn).mockReturnValueOnce(
+      child as unknown as ChildProcessWithoutNullStreams,
+    );
+    vi.mocked(execFile).mockImplementationOnce((...args: unknown[]) => {
+      child.emit("close", 137);
+      (args.at(-1) as (error: null, stdout: string, stderr: string) => void)(
+        null,
+        "",
+        "",
+      );
+      return child as unknown as ReturnType<typeof execFile>;
+    });
+    const pending = executeToolRuntime(capability, {
+      query: "fixture",
+      url: "https://example.com",
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(execFile).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await pending).toHaveProperty("message", "Tool Runtime timed out");
+    const dockerArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+    expect(execFile).toHaveBeenCalledWith(
+      "docker",
+      ["kill", dockerArgs[dockerArgs.indexOf("--name") + 1]],
+      { timeout: 5_000 },
+      expect.any(Function),
+    );
+  });
+
+  it("propagates caller cancellation to the exact Runtime container", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+    });
+    vi.mocked(spawn).mockReturnValueOnce(
+      child as unknown as ChildProcessWithoutNullStreams,
+    );
+    vi.mocked(execFile).mockImplementationOnce((...args: unknown[]) => {
+      child.emit("close", 137);
+      (args.at(-1) as (error: null, stdout: string, stderr: string) => void)(
+        null,
+        "",
+        "",
+      );
+      return child as unknown as ReturnType<typeof execFile>;
+    });
+    const caller = new AbortController();
+    const pending = executeToolRuntime(
+      "arxiv-search",
+      { query: "fixture" },
+      caller.signal,
+    ).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+    caller.abort();
+    expect(await pending).toHaveProperty("message", "Tool Runtime aborted");
+    expect(execFile).toHaveBeenCalledOnce();
+  });
   it.each([
     [125, "", "failed to start or exited unexpectedly"],
     [0, "invalid JSON", "Invalid Tool Runtime response"],

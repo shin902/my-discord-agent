@@ -20,6 +20,11 @@ export async function hostFetch(
   init: RequestInit = {},
   signal?: AbortSignal,
 ): Promise<Response> {
+  signal = AbortSignal.any([
+    ...(signal ? [signal] : []),
+    ...(init.signal ? [init.signal] : []),
+  ]);
+  signal.throwIfAborted();
   const entry = (await loadCredentialProxy()).find(
     (candidate) => candidate.provider === provider,
   );
@@ -35,6 +40,7 @@ export async function hostFetch(
     );
   }
 
+  signal.throwIfAborted();
   const headers: Record<string, string> = {
     ...((init.headers ?? {}) as Record<string, string>),
   };
@@ -48,6 +54,7 @@ export async function hostFetch(
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     }
   } catch (error) {
+    signal.throwIfAborted();
     if (entry.msal) {
       console.error(
         `[credential-proxy] graph token 取得失敗: ${error instanceof Error ? error.message : error}`,
@@ -64,10 +71,9 @@ export async function hostFetch(
     return new Response("Google token acquisition failed", { status: 502 });
   }
 
+  signal.throwIfAborted();
   const timeoutSignal = AbortSignal.timeout(await loadRequestTimeoutMs());
-  const requestSignal = signal
-    ? AbortSignal.any([signal, timeoutSignal])
-    : timeoutSignal;
+  const requestSignal = AbortSignal.any([signal, timeoutSignal]);
   try {
     return await fetch(
       `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`,
@@ -78,7 +84,7 @@ export async function hostFetch(
       },
     );
   } catch (error) {
-    if (timeoutSignal.aborted && !signal?.aborted) {
+    if (timeoutSignal.aborted && !signal.aborted) {
       return new Response("Gateway Timeout", { status: 504 });
     }
     throw error;

@@ -40,6 +40,7 @@ import { listEmailsTool, readEmailTool } from "./mail.js";
 import { wrapToolOutput } from "./output.js";
 import { RUNTIME_CAPABILITIES } from "./runtime-capabilities.js";
 import { tavilySearchTool } from "./tavily.js";
+import { wrapToolTimeout } from "./timeout.js";
 import { getCurrentWeatherTool, getWeatherForecastTool } from "./weather.js";
 
 const createStaticToolFactory =
@@ -262,5 +263,7 @@ export function resolveTools(
     if (tool) runtimeTools.push(wrapToolInputValidation(tool));
   }
 
-  return [...staticTools, ...runtimeTools];
+  return [...staticTools, ...runtimeTools].map((tool) =>
+    wrapToolTimeout(tool, capabilityContext.toolTimeoutMs),
+  );
 }

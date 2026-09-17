@@ -231,10 +231,7 @@ async function fetchArxiv(
       Accept: "application/atom+xml, application/xml, text/xml",
       "User-Agent": "my-discord-agent/arxiv",
     },
-    signal: AbortSignal.any([
-      AbortSignal.timeout(30_000),
-      ...(signal ? [signal] : []),
-    ]),
+    signal,
   });
   let text: string;
   try {

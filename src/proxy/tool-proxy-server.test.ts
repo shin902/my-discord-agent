@@ -10,6 +10,10 @@ import {
   TOOL_PROXY_BODY_LIMIT,
 } from "./tool-proxy-server.js";
 
+vi.mock("../config/tool-config.js", () => ({
+  loadToolTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 vi.mock("../config/proxy-config.js", () => ({
   loadRequestTimeoutMs: vi.fn().mockResolvedValue(120_000),
 }));
@@ -296,6 +300,7 @@ describe("Tool Proxy RPC", () => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
         expect.stringContaining("name=%E6%9D%B1%E4%BA%AC"),
+        { signal: expect.any(AbortSignal) },
       );
     } finally {
       config.revoke();
@@ -669,6 +674,7 @@ describe("Tool Proxy RPC", () => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining(`forecast_days=${clampedDays}`),
+        { signal: expect.any(AbortSignal) },
       );
     } finally {
       config.revoke();

@@ -22,6 +22,10 @@ import { executeRuntimeRequest } from "../runtime/tool-runtime.js";
 import * as runtime from "../runtime/tool-runtime-client.js";
 import { resolveTools } from "./registry.js";
 
+vi.mock("../config/tool-config.js", () => ({
+  loadToolTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 const execFileAsync = promisify(execFile);
 const originalFetch = globalThis.fetch;
 let directory: string;

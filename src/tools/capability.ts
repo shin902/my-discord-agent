@@ -125,6 +125,7 @@ export function wrapToolInputValidation<T extends AgentTool>(
 }
 
 export interface CapabilityDispatchContext {
+  readonly toolTimeoutMs?: number;
   readonly toolProxyEndpoint?: ToolProxyEndpoint;
 }
 

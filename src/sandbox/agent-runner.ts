@@ -441,6 +441,7 @@ export async function runAgentLoop(
   source?: SessionSource,
   onConversation?: (entries: ConversationEntries) => void,
   imagePaths?: string[],
+  toolTimeoutMs?: number,
 ): Promise<string> {
   const persistMessage = (
     message: AgentMessage,
@@ -775,7 +776,7 @@ export async function runAgentLoop(
             })
           : undefined,
     },
-    { toolProxyEndpoint },
+    { toolProxyEndpoint, toolTimeoutMs },
   );
   delegationContext.tools = agentTools;
 
@@ -940,6 +941,7 @@ export async function runAgentLoop(
 }
 
 const PayloadSchema = z.object({
+  toolTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
   groupName: z.string(),
   sessionId: z.string(),
   content: z.string(),
@@ -1079,6 +1081,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           );
         },
         payload.imagePaths,
+        payload.toolTimeoutMs,
       );
     } catch (error) {
       // Initialization failures must reject pre-attach requests without

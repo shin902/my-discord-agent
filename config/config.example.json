@@ -31,6 +31,9 @@
   "proxy": {
     "requestTimeoutMs": 120000
   },
+  "tool": {
+    "timeoutMs": 120000
+  },
   "agent": {
     "timeoutMs": 600000
   }

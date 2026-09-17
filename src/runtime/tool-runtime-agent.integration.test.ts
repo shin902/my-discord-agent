@@ -27,6 +27,10 @@ import { runCapabilityNames } from "../tools/skill-capabilities.js";
 import * as runtime from "./tool-runtime-client.js";
 import { createToolRuntimeFixture } from "./tool-runtime-fixture.js";
 
+vi.mock("../config/tool-config.js", () => ({
+  loadToolTimeoutMs: vi.fn().mockResolvedValue(120_000),
+}));
+
 const execFileAsync = promisify(execFile);
 const runtimeImage = process.env.TOOL_RUNTIME_TEST_IMAGE;
 const agentImage =

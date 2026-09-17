@@ -5,7 +5,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { loadToolTimeoutMs } from "../config/tool-config.js";
 import { getRuntimeCapability } from "../tools/runtime-capabilities.js";
+import { toolExecutionSignal } from "../tools/timeout.js";
 import {
   TOOL_RUNTIME_INPUT_MAX_BYTES,
   TOOL_RUNTIME_MAX_BYTES,
@@ -157,7 +159,6 @@ export async function buildToolRuntimeArgs(
 
 async function runContainer(
   request: ToolRuntimeRequest,
-  timeoutMs: number,
   signal: AbortSignal,
   options: ToolRuntimeOptions,
 ): Promise<AgentToolResult<unknown>> {
@@ -197,11 +198,14 @@ async function runContainer(
       }
     })();
   };
-  const abort = () => cancel(new Error("Tool Runtime aborted"));
-  const timer = setTimeout(
-    () => cancel(new Error("Tool Runtime timed out")),
-    timeoutMs,
-  );
+  const abort = () =>
+    cancel(
+      new Error(
+        signal.reason?.name === "TimeoutError"
+          ? "Tool Runtime timed out"
+          : "Tool Runtime aborted",
+      ),
+    );
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
   child.stdout.on("data", (chunk: Buffer) => {
@@ -271,7 +275,6 @@ async function runContainer(
     throw error;
   } finally {
     closed = true;
-    clearTimeout(timer);
     signal.removeEventListener("abort", abort);
     await cancellation;
   }
@@ -284,19 +287,19 @@ async function execute(
   options: ToolRuntimeOptions,
 ): Promise<AgentToolResult<unknown>> {
   const controller = new AbortController();
+  const execution = toolExecutionSignal(
+    timeoutMs,
+    AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]),
+  );
   const entry = {
     controller,
-    done: runContainer(
-      request,
-      timeoutMs,
-      AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]),
-      options,
-    ),
+    done: runContainer(request, execution.signal, options),
   };
   active.add(entry);
   try {
     return await entry.done;
   } finally {
+    execution.dispose();
     active.delete(entry);
   }
 }
@@ -309,7 +312,12 @@ export async function executeToolRuntime(
 ): Promise<AgentToolResult<unknown>> {
   const definition = getRuntimeCapability(capability);
   if (!definition) throw new Error("Unknown Runtime capability");
-  return execute({ capability, args }, definition.timeoutMs, signal, options);
+  return execute(
+    { capability, args },
+    await loadToolTimeoutMs(),
+    signal,
+    options,
+  );
 }
 
 export async function refreshRedditCookiesInRuntime(
