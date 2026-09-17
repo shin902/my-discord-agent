@@ -307,6 +307,7 @@ describe("resolveTools", () => {
   it.each([
     "arxiv-search",
     "arxiv-survey",
+    "x-search",
     "list-issues",
     "read-issue",
     "list-issue-comments",
@@ -324,7 +325,8 @@ describe("resolveTools", () => {
   ])("%s はProxy capabilityである", (name) => {
     expect(getCapabilityDefinition(name)).toMatchObject({
       tool: name,
-      executor: name.startsWith("arxiv-") ? "runtime" : "host",
+      executor:
+        name.startsWith("arxiv-") || name === "x-search" ? "runtime" : "host",
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
       materializeArgs: expect.any(Function),

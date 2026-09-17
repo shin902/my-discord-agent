@@ -24,6 +24,7 @@
 | `arxiv-search` | arXivを自然言語クエリで検索。投稿日範囲と並び順を指定でき、正規化した論文メタデータをJSONで返す |
 | `hackernews-search` | 直近30日のHN storyを最大10件検索。points・URL・comment数を返す |
 | `github-recent-search` | 直近30日に更新された公開GitHub Issues/PRをreactions順で最大5件検索 |
+| `x-search` | Xを検索し、`top` / `latest`のstructured resultを最大50件返す。X検索演算子はqueryへ直接指定する |
 | `arxiv-survey` | 1〜8個の自然言語クエリをOR条件でまとめてarXiv検索。期間指定の定期サーベイ向け |
 | `list-calendars` | Google Calendarのカレンダー一覧を取得。ID・表示名・アクセス権・タイムゾーンを返し、複数ページも自動的に最後まで取得する |
 | `read` | ワークスペース内のファイルを読み込む |

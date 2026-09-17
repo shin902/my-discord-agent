@@ -31,6 +31,20 @@ export function toolRuntimeLabel(root = ROOT): string {
   return `my-discord-agent.tool-runtime=${createHash("sha256").update(resolve(root)).digest("hex").slice(0, 16)}`;
 }
 
+async function twitterMountArgs(root: string): Promise<string[]> {
+  const state = resolve(root, "data/twitter-cookies.json");
+  try {
+    const stat = await lstat(state);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error();
+    return [
+      "--mount",
+      `type=bind,src=${state},dst=/var/lib/twitter/twitter-cookies.json,readonly`,
+    ];
+  } catch {
+    throw new Error("X search state is unavailable or invalid");
+  }
+}
+
 async function redditMountArgs(
   root: string,
   maintenance: boolean,
@@ -95,11 +109,12 @@ export async function buildToolRuntimeArgs(
     : getRuntimeCapability(request.capability);
   if (!maintenance && !capability)
     throw new Error("Unknown Runtime capability");
-  const mounts =
-    maintenance ||
-    capability?.needsRedditCookies?.(
-      "args" in request ? request.args : undefined,
-    )
+  const mounts = capability?.needsTwitterCredentials
+    ? await twitterMountArgs(root)
+    : maintenance ||
+        capability?.needsRedditCookies?.(
+          "args" in request ? request.args : undefined,
+        )
       ? await redditMountArgs(root, maintenance)
       : [];
   return [

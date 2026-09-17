@@ -11,6 +11,7 @@ import {
   hackerNewsSearchTool,
   recentSearchSince,
 } from "./recent-search.js";
+import { xSearchTool } from "./x-search.js";
 
 type RuntimeCapability = Extract<
   CapabilityDefinition,
@@ -19,6 +20,7 @@ type RuntimeCapability = Extract<
   readonly executor: "runtime";
   readonly timeoutMs: number;
   readonly needsRedditCookies?: (args: unknown) => boolean;
+  readonly needsTwitterCredentials?: boolean;
 };
 
 function runtimeCapability(
@@ -28,6 +30,7 @@ function runtimeCapability(
     clampedProperties?: readonly string[];
     defaultArgs?: () => Readonly<Record<string, unknown>>;
     needsRedditCookies?: (args: unknown) => boolean;
+    needsTwitterCredentials?: boolean;
   },
 ): RuntimeCapability {
   return {
@@ -36,6 +39,7 @@ function runtimeCapability(
     factory: () => tool,
     timeoutMs: options.timeoutMs,
     needsRedditCookies: options.needsRedditCookies,
+    needsTwitterCredentials: options.needsTwitterCredentials,
     validateArgs: validateToolArgs(tool, options.clampedProperties),
     materializeArgs: materializeToolArgs(tool, options),
   };
@@ -66,6 +70,12 @@ export const RUNTIME_CAPABILITIES = {
   "github-recent-search": runtimeCapability(githubRecentSearchTool, {
     timeoutMs: 30_000,
     defaultArgs: () => ({ since: recentSearchSince() }),
+  }),
+  "x-search": runtimeCapability(xSearchTool, {
+    timeoutMs: 30_000,
+    clampedProperties: ["limit"],
+    defaultArgs: () => ({ limit: 10, mode: "top" }),
+    needsTwitterCredentials: true,
   }),
 } satisfies Record<string, RuntimeCapability>;
 
