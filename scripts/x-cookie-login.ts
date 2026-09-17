@@ -19,21 +19,12 @@ export async function main(): Promise<void> {
   const page = await context.newPage();
   await page.goto("https://x.com/i/flow/login");
 
-  let saved = false;
-  const timer = setInterval(async () => {
-    if (saved) return;
-    try {
-      await writeXCookiesAtomic(COOKIE_FILE, await readXCookies(context));
-      saved = true;
-      console.log("X cookies saved. You may close the browser.");
-    } catch {
-      // Login is still in progress; credentials are never logged.
-    }
-  }, 1_000);
-  await new Promise<void>((resolve) => context.once("close", resolve));
-  clearInterval(timer);
-  if (!saved)
-    throw new Error("X login was not completed; the existing cookie file was unchanged");
+  await page.waitForURL(/^https:\/\/(?:www\.)?x\.com\/home(?:[/?#]|$)/, {
+    timeout: 0,
+  });
+  await writeXCookiesAtomic(COOKIE_FILE, await readXCookies(context));
+  console.log("X cookies saved. You may close the browser.");
+  await new Promise<void>((resolve) => context.on("close", resolve));
   console.log("Setup complete. Run pnpm x:refresh to verify maintenance.");
 }
 

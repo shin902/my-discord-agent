@@ -9,5 +9,6 @@ export default async function handler(_context: CronContext): Promise<void> {
     console.error(
       `[x-cookie-refresh] Refresh failed: ${error instanceof Error ? error.message : "unknown error"}`,
     );
+    throw error;
   }
 }
