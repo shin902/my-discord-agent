@@ -486,10 +486,11 @@ describe("index: 起動時バリデーション", () => {
     await vi.waitFor(() =>
       expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce(),
     );
-    expect(mocks.runStartupJobs).toHaveBeenCalledTimes(2);
+    expect(mocks.runStartupJobs).not.toHaveBeenCalled();
 
     releaseBackfill();
     await Promise.all([firstBackfill, secondBackfill]);
+    expect(mocks.runStartupJobs).toHaveBeenCalledTimes(2);
     expect(log).toHaveBeenCalledWith(
       "[discord-backfill] 起動時履歴復旧が完了しました",
     );
