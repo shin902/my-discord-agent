@@ -93,6 +93,7 @@
     "handler": "jobs/reddit-cookie-refresh.ts"
   },
   {
+    "_comment": "Host-only Playwright refresh; run pnpm x:login first. No Tool Runtime / Agent tools.",
     "id": "x-cookie-refresh",
     "schedule": "30 4 */3 * *",
     "enabled": false,
