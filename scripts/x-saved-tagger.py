@@ -43,8 +43,12 @@ def read_aliases(raw):
         if not isinstance(entries, dict):
             raise ValueError(f"{group} must be an object")
         lookup = maps[kind] = {}
+        canonical_keys = set()
         for canonical, entry in entries.items():
             canonical = label(canonical)
+            if canonical in canonical_keys:
+                raise ValueError(f"Ambiguous canonical label: {canonical}")
+            canonical_keys.add(canonical)
             allowed = {"aliases", "series"} if kind == "character" else {"aliases"}
             if not isinstance(entry, dict) or entry.keys() - allowed:
                 raise ValueError("Invalid alias entry")

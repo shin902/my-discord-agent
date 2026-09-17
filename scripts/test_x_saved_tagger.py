@@ -64,6 +64,10 @@ class ClassifyTests(unittest.TestCase):
             tagger.read_aliases({"tags": {"a": {"aliases": ["same"]}, "b": {"aliases": ["SAME"]}}})
         with self.assertRaisesRegex(ValueError, "reference"):
             tagger.read_aliases({"characters": {"a": {"series": "missing"}}})
+        for group in ("series", "characters", "tags"):
+            for first, second in (("Alice", "alice"), ("Ａｌｉｃｅ", "alice"), ("alice smith", "alice_smith")):
+                with self.subTest(group=group, first=first), self.assertRaisesRegex(ValueError, "Ambiguous canonical"):
+                    tagger.read_aliases({group: {first: {}, second: {}}})
 
     def test_all_images_union_thresholds_and_manual_labels_survive(self):
         self.seed(positions=(0, 1))
