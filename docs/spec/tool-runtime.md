@@ -1,6 +1,6 @@
 # Tool Runtime
 
-Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search`を **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。
+Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search`、`x-search`を **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。
 
 ```text
 Agent sandbox: native Tool / Skill → tool-proxy CLI
@@ -45,6 +45,19 @@ Runtimeのfirewallはpublic Internetを許可し、private／link-local／CGNAT�
 Redditを使わないcallはstateを参照せず、UID/GID 1000で実行します。通常のReddit取得は `data/reddit-cookies.json` だけをread-only mountします。hostが固定pathと非root所有者を確認し、そのUID/GIDを使います。maintenanceだけが同じ所有者の `data/reddit-browser-profile/` とCookieをread/write mountします。stateが無い場合もarXivやHN等は起動できます。
 
 Cookie更新はhostの `pnpm reddit:refresh` または既存cronから単発maintenance containerで実行します。maintenanceはAgent-facing capabilityに登録しません。CookieはRuntime内で読み、固定されたReddit取得へだけ付けます。初回loginは従来の `pnpm reddit:login` です。
+
+## X検索state
+
+`x-search`だけ、hostの`data/twitter-cookies.json`をRuntime内の固定pathへread-only mountします。ファイルはGit管理外で、内容は次の2値だけです。
+
+```json
+{
+  "auth_token": "...",
+  "ct0": "..."
+}
+```
+
+RuntimeはSearchTimeline POST対応済みの`twitter-cli` commit `7c634e0d396b1e7af9f63315b414925fe4f29ae7`をGitHub archiveからSHA固定で導入し、argvで起動します。state fileの非root owner UID/GIDへRuntimeをdropしてから、値を子process環境へだけ渡します。Agent引数・結果、`docker run`の環境変数・argv、host logへcredentialやraw authenticated responseを載せません。ブラウザprofileはmountせず、自動Cookie抽出も使いません。認証失効、rate limit、CLI / upstream変更は空結果ではなく固定診断の失敗になります。利用するgroup / channel / cronのeffective `tools`へ`x-search`を明示し、Runtime imageとhostを同時に更新してください。
 
 ## 導入・旧構成からの移行
 

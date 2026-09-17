@@ -16,7 +16,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --from=build /build/node_modules ./node_modules
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir yt-dlp feedparser
+    /opt/venv/bin/pip install --no-cache-dir yt-dlp feedparser \
+    "twitter-cli @ https://github.com/public-clis/twitter-cli/archive/7c634e0d396b1e7af9f63315b414925fe4f29ae7.tar.gz"
 RUN node node_modules/playwright/cli.js install-deps chromium || true
 
 ENV PATH="/opt/venv/bin:$PATH"
