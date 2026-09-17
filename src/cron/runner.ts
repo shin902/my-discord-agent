@@ -59,6 +59,13 @@ const CronJobSchema = z
     const hasLegacyMode = job.mode != null;
     const hasDeliveryMode = job.deliveryMode != null;
     const hasSessionMode = job.sessionMode != null;
+    if (job.schedule === "@startup" && job.handler != null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "@startup は handler をサポートしません。prompt jobとして設定してください",
+      });
+      return;
+    }
     if (hasLegacyMode && (hasDeliveryMode || hasSessionMode)) {
       ctx.addIssue({
         code: "custom",
