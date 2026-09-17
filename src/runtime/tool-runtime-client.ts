@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { lstat, mkdtemp, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -25,6 +25,7 @@ export interface ToolRuntimeOptions {
   /** Trusted host configuration; never taken from capability arguments. */
   root?: string;
   image?: string;
+  xCookieOutputDir?: string;
 }
 
 export function toolRuntimeLabel(root = ROOT): string {
@@ -53,6 +54,43 @@ async function twitterMountArgs(root: string): Promise<string[]> {
   } catch {
     throw new Error("X search state is unavailable or invalid");
   }
+}
+
+async function xMaintenanceMountArgs(
+  root: string,
+  outputDir: string | undefined,
+): Promise<string[]> {
+  if (!outputDir) throw new Error("X maintenance output is unavailable");
+  const profile = resolve(root, "data/x-browser-profile");
+  const profileStat = await lstat(profile);
+  const outputStat = await lstat(outputDir);
+  if (
+    !profileStat.isDirectory() ||
+    profileStat.isSymbolicLink() ||
+    !outputStat.isDirectory() ||
+    outputStat.isSymbolicLink() ||
+    profileStat.uid === 0 ||
+    profileStat.gid === 0 ||
+    profileStat.uid !== outputStat.uid ||
+    profileStat.gid !== outputStat.gid
+  )
+    throw new Error(
+      "X maintenance state is unavailable or invalid; run x:login first",
+    );
+  return [
+    "-e",
+    `TOOL_RUNTIME_UID=${profileStat.uid}`,
+    "-e",
+    `TOOL_RUNTIME_GID=${profileStat.gid}`,
+    "-e",
+    "X_PROFILE_DIR=/var/lib/twitter/profile",
+    "-e",
+    "X_COOKIE_FILE=/var/lib/twitter/output/twitter-cookies.json",
+    "--mount",
+    `type=bind,src=${profile},dst=/var/lib/twitter/profile`,
+    "--mount",
+    `type=bind,src=${outputDir},dst=/var/lib/twitter/output`,
+  ];
 }
 
 async function redditMountArgs(
@@ -119,14 +157,20 @@ export async function buildToolRuntimeArgs(
     : getRuntimeCapability(request.capability);
   if (!maintenance && !capability)
     throw new Error("Unknown Runtime capability");
+  const maintenanceName = maintenance ? request.maintenance : undefined;
   const mounts = capability?.needsTwitterCredentials
     ? await twitterMountArgs(root)
-    : maintenance ||
-        capability?.needsRedditCookies?.(
-          "args" in request ? request.args : undefined,
-        )
-      ? await redditMountArgs(root, maintenance)
-      : [];
+    : maintenanceName === "x-cookie-refresh"
+      ? await xMaintenanceMountArgs(root, options.xCookieOutputDir)
+      : maintenanceName === "reddit-cookie-refresh" ||
+          capability?.needsRedditCookies?.(
+            "args" in request ? request.args : undefined,
+          )
+        ? await redditMountArgs(
+            root,
+            maintenanceName === "reddit-cookie-refresh",
+          )
+        : [];
   return [
     "run",
     "--rm",
@@ -321,6 +365,23 @@ export async function refreshRedditCookiesInRuntime(
     undefined,
     options,
   );
+}
+
+export async function refreshXCookiesInRuntime(
+  options: ToolRuntimeOptions = {},
+): Promise<void> {
+  const root = options.root ?? ROOT;
+  const outputDir = await mkdtemp(resolve(root, "data/.x-cookie-refresh-"));
+  const outputFile = resolve(outputDir, "twitter-cookies.json");
+  try {
+    await execute({ maintenance: "x-cookie-refresh" }, 120_000, undefined, {
+      ...options,
+      xCookieOutputDir: outputDir,
+    });
+    await rename(outputFile, resolve(root, "data/twitter-cookies.json"));
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
 }
 
 export async function stopToolRuntimes(): Promise<void> {

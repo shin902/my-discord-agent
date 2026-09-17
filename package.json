@@ -12,6 +12,8 @@
     "memory-core:prompts": "node --env-file-if-exists=.env --import tsx scripts/provision-memory-prompts.ts",
     "reddit:login": "tsx scripts/reddit-cookie-login.ts",
     "reddit:refresh": "tsx scripts/reddit-cookie-refresh.ts",
+    "x:login": "tsx scripts/x-cookie-login.ts",
+    "x:refresh": "tsx scripts/x-cookie-refresh.ts",
     "runner:image:build": "pnpm build:runner && docker build -t localhost:5050/my-discord-agent-runner:latest . && docker push localhost:5050/my-discord-agent-runner:latest",
     "runner:image:smoke": "bash scripts/runner-image-smoke.sh",
     "restart": "pnpm sandbox build && pnpm build && node dist/index.js",

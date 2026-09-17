@@ -93,6 +93,12 @@
     "handler": "jobs/reddit-cookie-refresh.ts"
   },
   {
+    "id": "x-cookie-refresh",
+    "schedule": "30 4 */3 * *",
+    "enabled": false,
+    "handler": "jobs/x-cookie-refresh.ts"
+  },
+  {
     "id": "issue-triage",
     "schedule": "0 * * * *",
     "enabled": true,
