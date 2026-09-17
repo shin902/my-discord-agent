@@ -40,12 +40,10 @@ describe("x:login", () => {
     await vi.waitUntil(() => waitForURL.mock.calls.length === 1);
     expect(writeXCookiesAtomic).not.toHaveBeenCalled();
 
-    reachHome?.();
-    await vi.waitUntil(
-      () => vi.mocked(writeXCookiesAtomic).mock.calls.length === 1,
-    );
-    expect(readXCookies).toHaveBeenCalledWith(context);
     context.emit("close");
+    reachHome?.();
     await login;
+    expect(writeXCookiesAtomic).toHaveBeenCalledOnce();
+    expect(readXCookies).toHaveBeenCalledWith(context);
   });
 });

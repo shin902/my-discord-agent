@@ -16,6 +16,7 @@ export async function main(): Promise<void> {
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: false,
   });
+  const closed = new Promise<void>((resolve) => context.on("close", resolve));
   const page = await context.newPage();
   await page.goto("https://x.com/i/flow/login");
 
@@ -24,7 +25,7 @@ export async function main(): Promise<void> {
   });
   await writeXCookiesAtomic(COOKIE_FILE, await readXCookies(context));
   console.log("X cookies saved. You may close the browser.");
-  await new Promise<void>((resolve) => context.on("close", resolve));
+  await closed;
   console.log("Setup complete. Run pnpm x:refresh to verify maintenance.");
 }
 
