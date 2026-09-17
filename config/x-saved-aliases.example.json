@@ -1,0 +1,19 @@
+{
+  "series": {
+    "bocchi_the_rock": {
+      "aliases": [
+        "ぼざろ",
+        "ぼっち・ざ・ろっく",
+        "ぼっちざろっく",
+        "bocchi_the_rock!"
+      ]
+    }
+  },
+  "characters": {
+    "gotoh_hitori": {
+      "series": "bocchi_the_rock",
+      "aliases": ["後藤ひとり", "ぼっちちゃん", "gotou_hitori"]
+    }
+  },
+  "tags": {}
+}

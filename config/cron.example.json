@@ -139,6 +139,18 @@
     "settings": { "limit": 20 }
   },
   {
+    "id": "x-saved-classify",
+    "schedule": "*/10 * * * *",
+    "enabled": false,
+    "handler": "jobs/x-saved-classify.ts",
+    "settings": {
+      "aliases": "config/x-saved-aliases.json",
+      "device": "cpu",
+      "limit": 20,
+      "thresholds": { "copyright": 0.46, "character": 0.37, "general": 0.34 }
+    }
+  },
+  {
     "id": "x-saved-backup",
     "schedule": "0 5 * * *",
     "enabled": false,
