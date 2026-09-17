@@ -131,6 +131,59 @@ Back up SQLite and media separately before upgrading to schema v5. Deploy host r
 
 Deploy the receiver before reloading the updated extension (old strict receivers reject media fields). Install updated Skill templates, retain the existing directory mount, then enable the archive cron. No production configuration is changed automatically. Verify existing IDs resolve with the browser closed, confirm image/MP4 paths, and use Agent `read` on a downloaded image. Mac Chrome/Tailscale new-capture checks are still needed for installation validation, but not for stored-ID media backfill.
 
+## Local automatic classification (PixAI)
+
+`jobs/x-saved-classify.ts` is an opt-in **host-only, non-Agent** cron. It runs `scripts/x-saved-tagger.py` in a dedicated Python environment, separately from media downloading. No LLM, VLM, OCR, remote image upload, file relocation, or new service is involved. Inference uses the local **PixAI Tagger v1.0** snapshot at revision `f33cfdb53c0c90b049bab9ce066eea1118970ef8` (May 2026 cutoff). Unknown/new characters outside its vocabulary cannot be recognized.
+
+The model has custom Python code. The pinned code was inspected, but this repository does not redistribute its code or weights. **The upstream model card does not currently specify a license; availability is not a license grant. Confirm applicable usage/distribution terms with PixAI before production use or redistribution.** Our integration does not resolve that uncertainty.
+
+### Install and smoke-test
+
+Keep the Python environment and model cache **outside `data/x-saved/` and all Agent mounts**. The classifier rejects a cache inside the archive directory. Example CPU setup (Python 3.12, approximately 2 GB of model weights plus dependencies):
+
+```bash
+uv venv --python 3.12 data/x-saved-tagger/venv
+uv pip install --python data/x-saved-tagger/venv/bin/python \
+  torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu
+uv pip install --python data/x-saved-tagger/venv/bin/python \
+  transformers==4.57.6 timm==1.0.24 Pillow==12.1.1
+cp config/x-saved-aliases.example.json config/x-saved-aliases.json
+# Explicit one-time network download of the fixed snapshot; does not touch SQLite.
+data/x-saved-tagger/venv/bin/python scripts/x-saved-tagger.py \
+  --cache data/x-saved-tagger/cache --download
+```
+
+Normal execution is offline (`local_files_only`, HF offline/telemetry disabled). The upstream preprocessing and FP32 inference are retained; images are processed sequentially, and the model is loaded once per batch only when needed. CPU defaults to four OpenMP/MKL threads, overridable with `OMP_NUM_THREADS` / `MKL_NUM_THREADS`. For CUDA or MPS, install compatible PyTorch packages and set `device` accordingly; there is no silent device fallback. CUDA/MPS are not covered by the CPU smoke check.
+
+Back up the existing SQLite database first and use a **disposable archive copy** for initial classification/threshold calibration. Run the current host once to create/migrate the archive to schema v5, then:
+
+```bash
+data/x-saved-tagger/venv/bin/python scripts/x-saved-tagger.py \
+  --db /path/to/disposable-archive/x-saved.sqlite \
+  --aliases config/x-saved-aliases.json --cache data/x-saved-tagger/cache \
+  --device cpu --limit 1
+```
+
+This command **writes labels** to the specified database. Inspect the result before enabling the disabled `x-saved-classify` example in `config/cron.example.json`, and restart the host after changing cron settings. Relative cron paths resolve from the repository root. Use one classifier job/process per archive; do not overlap manual runs with the cron. Each run handles at most `limit` Tweets (1–100, default 20), with a 30-minute process timeout. Reduce the limit for slow CPUs or many-image Tweets. A killed batch retains already committed Tweets; the interrupted Tweet is retried.
+
+### Alias dictionary and merge policy
+
+The alias file is JSON, not hand-written regular expressions. It has `series`, `characters`, and `tags` maps. Each canonical label has `aliases: string[]`; a character may also specify `series` referencing a canonical series entry. See `config/x-saved-aliases.example.json`. Include alternate model spellings in the same alias list when necessary. Ambiguous aliases and unknown series references fail validation before writing.
+
+1. Scan Tweet text with escaped literal aliases and canonical names. NFKC/case folding handles width/case differences; ASCII word boundaries prevent `ai` matching inside `mail`, while Japanese aliases match substrings. Adopt all matched labels, including explicit character-to-series mappings.
+2. Pass **every completed image** through PixAI, even if text already supplied a classification. Animated image files use their first frame; MP4/video and text-only Tweets are not classified by this job. Pending/failed downloads use text aliases for now and reopen automatically when the archive row changes. Missing/corrupt completed files remain retryable failures.
+3. Map `copyright -> series`, `character -> character`, `general -> tag`. Style/meta/rating outputs are deliberately excluded. Normalize labels with NFKC/case folding and whitespace-to-underscore, canonicalize through the dictionary, and union/dedupe across images. Default inclusive thresholds are copyright **0.46**, character **0.37**, general **0.34** (the upstream micro-F1 starting points, **not** a local accuracy guarantee). Override them with cron `settings.thresholds` or CLI `--thresholds '{"character":0.6}'`.
+4. Add labels to `x_item_labels`, **never delete existing labels or alter status/notes/media**. Image-derived additions are ranked by maximum confidence across images, with lexical tie-breaking, and fill up to 50 values per kind including existing/text labels. Text matches and existing labels are never truncated; unusually large alias dictionaries can therefore exceed Gallery's 50-value editing limit. All successful image labels and the completion checkpoint commit together. If any image fails, text matches remain, image additions are deferred, and `last_error` records the failure. DB errors fail the job rather than masquerading as image errors.
+
+No schema migration or second database is needed. `x_meta` keys `pixai-v1:<tweet_id>` hold the input fingerprint, last attempt time, and last error. The fingerprint covers the pinned model/policy, dictionary, thresholds, Tweet text, and image row states/paths. Unchanged successful Tweets are skipped, preserving subsequent human removals; failures rotate behind never-attempted Tweets and retry on later runs. Later images, text, dictionary, or threshold changes reopen the Tweet and may **re-add previously removed predictions**. Raising a threshold does not retract old labels. This additive policy has no provenance ledger or manual-label lock; edit after backfill and pause the cron while correcting labels. In-place replacement of archived image bytes at an unchanged path is not detected (normal archiving does not replace completed files).
+
+```sql
+SELECT key, json_extract(value, '$.last_error') AS last_error
+FROM x_meta WHERE key LIKE 'pixai-v1:%';
+```
+
+Automated checks use temporary SQLite/image fixtures and a fake inference function; `pnpm test` runs them without model downloads. A separate real-model CPU smoke verified local loading, inference, label persistence, and unchanged-input skipping on a synthetic image. It does **not** measure anime recognition quality. Production saved-image accuracy/thresholds and GPU performance still require operator validation. Alias mining and automatic dictionary updates are not implemented.
+
 ## Gallery: browse and edit over Tailscale
 
 Gallery is an opt-in, human-facing viewer/editor of the **same SQLite and media archive**, not a second store. It uses server-rendered HTML, native forms and video controls; no client framework, JavaScript bundle, pairing, or external assets are needed.
@@ -172,10 +225,10 @@ Only GET and POST are accepted. Writes require `Origin` to match the configured 
 - Grid: one card per media row, **60 cards per page**, lazy-loaded original images, Tweet excerpt, author, status and classification labels. Video cards open native MP4 preview/controls in detail; no thumbnail store or eager video-grid download is added. Pending/failed archives show placeholders. Text-only Tweets are not in the grid.
 - Search is a literal Tweet-body substring (ASCII case-insensitive); `%` and `_` are not wildcards. Media (`image` / `video`), sticky source (`like` / `bookmark`), status, exact author handle (optional `@`, case-insensitive), and classification filters combine with AND.
 - Series, characters and tags are multi-valued. Filters and editing use **one value per line**; commas are literal, so a legacy tag such as `AI,ML` remains one value. Filters require **all specified values**, with exact, case-sensitive matching. Labels are ordinary short, single-line strings; lines are trimmed/deduplicated. There is no JSON syntax or fallback. Editing replaces that Tweet's labels; an empty field clears it. Validation caps each field at 50 values and each value at 100 characters; these are upper bounds, not an end-to-end guarantee at all combined maxima.
-- `Unknown` means missing series **or** characters. A literal `unknown` label has no special meaning. `Needs review` means **only** the existing `inbox` status, independently of whether classification is complete. These are filters, not new stored statuses; `reviewed`, `keep`, `try`, `done`, `ignore` retain their existing meaning. Automated classification is out of scope.
+- `Unknown` means missing series **or** characters. A literal `unknown` label has no special meaning. `Needs review` means **only** the existing `inbox` status, independently of whether classification is complete. These are filters, not new stored statuses; `reviewed`, `keep`, `try`, `done`, `ignore` retain their existing meaning. Optional automated classification is described in [Local automatic classification](#local-automatic-classification-pixai).
 - Inclusive UTC date filters use the Tweet creation date, falling back to first capture when unavailable. Sort by first capture newest, Tweet newest/oldest, or author; page ties are stable. Ordinary filter/page state is retained directly in the query through detail/edit and the return link, without a nested `back` URL. A short `303 Location: #saved` retains the query after saving. Node's default request-header limit is unchanged; Gallery does not expand browser/server limits for huge URLs.
 - Detail shows the saved self-thread in snapshot order, including author/name, handle, body, posting time and ID-derived original Tweet links. The saved focal Tweet is marked; tombstones appear as unavailable gaps. Missing, failed or unusable enrichment leaves the normal detail available. This is a local snapshot view without network lookups, quote/Article UI or additional media downloads; external text is HTML-escaped.
-- Detail edits are **Tweet-wide**, applying to every image/video in that Tweet, not separate copies per card. Status and labels commit together; notes, Tweet metadata, source flags, archive files and paths remain untouched. Ingest and media cron never overwrite classification. Invalid/failed edits retain the submitted form values for correction/retry.
+- Detail edits are **Tweet-wide**, applying to every image/video in that Tweet, not separate copies per card. Status and labels commit together; notes, Tweet metadata, source flags, archive files and paths remain untouched. Ingest and media cron never overwrite classification; the optional classifier adds labels under its documented merge policy. Invalid/failed edits retain the submitted form values for correction/retry.
 
 **Support scope:** normal browsing/search and a few to a few dozen tags or filters. Artificial maximum-size combinations (including 50 × 100-character labels), 100,000-character filter URLs and lossless editing of unusual legacy values containing embedded newlines, NUL or surrounding whitespace are not requirements. Do not use Gallery to round-trip those unusual legacy values: saving applies ordinary line splitting and trimming. Review fixes should target problems encountered in normal use, not complete coverage of theoretically constructible inputs.
 
