@@ -29,8 +29,8 @@ import {
   TOOL_OUTPUT_CHAR_LIMIT,
 } from "./output.js";
 
-function run(command: string, signal?: AbortSignal) {
-  return bashTool.execute("id", { command }, signal, undefined);
+function run(command: string, signal?: AbortSignal, timeoutMs?: number) {
+  return bashTool.execute("id", { command, timeoutMs }, signal, undefined);
 }
 
 function getText(result: Awaited<ReturnType<typeof run>>): string {
@@ -238,6 +238,23 @@ describe("bashTool streaming output", () => {
     const details = outputDetails(error);
     expect((error as Error).message).toContain(details.fullOutputPath);
     expect(await readFile(details.fullOutputPath, "utf8")).toBe("partial");
+  });
+
+  it("honors a custom outer timeout", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = run("printf partial; sleep 60", undefined, 130_000).catch(
+      (error: Error & { details: unknown }) => error,
+    );
+    await vi.waitFor(async () => {
+      const file = await vi.mocked(open).mock.results[0]?.value;
+      expect((await file.stat()).size).toBe(7);
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(vi.mocked(realSpawn).mock.results[0].value.exitCode).toBeNull();
+    await vi.advanceTimersByTimeAsync(100_000);
+    await expect(pending).resolves.toMatchObject({
+      message: expect.stringContaining("timed out"),
+    });
   });
 
   it("does not start the command when output storage cannot be opened", async () => {
