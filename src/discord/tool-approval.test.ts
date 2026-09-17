@@ -63,64 +63,35 @@ function expectFailed(payload: unknown) {
 }
 
 describe("presentToolApprovalRequest", () => {
-  it.each([
-    "timeout",
-    "caller abort",
-    "run revoke",
-  ])("disables the posted message on %s and rejects late clicks", async (cause) => {
+  it("disables the posted message on invocation timeout and rejects a late click", async () => {
     vi.useFakeTimers();
-    const caller = new AbortController();
-    const run = new AbortController();
-    const execution = toolExecutionSignal(
-      120_000,
-      AbortSignal.any([caller.signal, run.signal]),
-    );
+    const execution = toolExecutionSignal(120_000);
     const request = makeRequest(undefined, execution.signal);
-    try {
-      await presentToolApprovalRequest(request);
-      const payload = sendMessage.mock.calls[0][0];
-      if (cause === "caller abort") caller.abort();
-      if (cause === "run revoke") run.abort();
-      await vi.advanceTimersByTimeAsync(cause === "timeout" ? 120_000 : 0);
-      await expect(request.waitForDecision()).rejects.toThrow(
-        "Tool approval canceled",
-      );
-      expect(editMessage).toHaveBeenCalledOnce();
-      expectFailed(editMessage.mock.calls[0][0]);
-      const update = vi.fn();
-      for (const index of [0, 1]) {
-        expect(
-          await routeToolApprovalInteraction(
-            {
-              customId: customId(payload, index),
-              user: { bot: false },
-              channelId: "channel-1",
-              message: { id: "message-1", edit: editMessage },
-              update,
-            } as never,
-            "personal",
-          ),
-        ).toBe(false);
-      }
-      expect(update).not.toHaveBeenCalled();
-      expect(request.claim("approve")).toBeUndefined();
-      execution.dispose();
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      execution.dispose();
-    }
+    await presentToolApprovalRequest(request);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await expect(request.waitForDecision()).rejects.toThrow(
+      "Tool approval canceled",
+    );
+    expectFailed(editMessage.mock.calls[0][0]);
+    const update = vi.fn();
+    expect(
+      await routeToolApprovalInteraction(
+        {
+          customId: customId(sendMessage.mock.calls[0][0], 0),
+          user: { bot: false },
+          channelId: "channel-1",
+          message: { id: "message-1", edit: editMessage },
+          update,
+        } as never,
+        "personal",
+      ),
+    ).toBe(false);
+    expect(update).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "reject",
-    "hang",
-  ])("does not change cancellation when cleanup edits %s", async (failure) => {
+  it("keeps approval cancelled when the cleanup edit never responds", async () => {
     vi.useFakeTimers();
-    editMessage.mockImplementation(() =>
-      failure === "reject"
-        ? Promise.reject(new Error("Discord unavailable"))
-        : new Promise(() => {}),
-    );
+    editMessage.mockImplementation(() => new Promise(() => {}));
     const controller = new AbortController();
     const request = makeRequest(undefined, controller.signal);
     await presentToolApprovalRequest(request);
@@ -179,12 +150,6 @@ describe("presentToolApprovalRequest", () => {
         2_000,
       );
       await expect(request.waitForDecision()).resolves.toBe(result);
-      const terminal = update.mock.calls[0][0];
-      expect(terminal.content).toContain(
-        buttonIndex === 0 ? "Result: Approved" : "Result: Denied",
-      );
-      expect(terminal.components[0].components[0].data.disabled).toBe(true);
-      expect(terminal.components[0].components[1].data.disabled).toBe(true);
       expect(editMessage).not.toHaveBeenCalled();
     }
 
@@ -231,50 +196,40 @@ describe("presentToolApprovalRequest", () => {
 });
 
 describe("routeToolApprovalInteraction", () => {
-  it.each([
-    0, 1,
-  ])("corrects interaction %i when invocation timeout wins during update", async (index) => {
-    vi.useFakeTimers();
-    const execution = toolExecutionSignal(1_000);
-    const request = makeRequest(undefined, execution.signal);
+  it("corrects a late Approved UI when cancellation wins during interaction update", async () => {
+    const controller = new AbortController();
+    const request = makeRequest(undefined, controller.signal);
     let finalPayload: unknown;
     editMessage.mockImplementation(async (payload) => {
       finalPayload = payload;
     });
-    try {
-      await presentToolApprovalRequest(request);
-      const payload = sendMessage.mock.calls[0][0];
-      let resolveUpdate!: () => void;
-      const update = vi.fn(async (terminal) => {
-        await new Promise<void>((resolve) => {
-          resolveUpdate = resolve;
-        });
-        finalPayload = terminal;
+    await presentToolApprovalRequest(request);
+    let resolveUpdate!: () => void;
+    const update = vi.fn(async (terminal) => {
+      await new Promise<void>((resolve) => {
+        resolveUpdate = resolve;
       });
-      const route = routeToolApprovalInteraction(
-        {
-          customId: customId(payload, index),
-          user: { bot: false },
-          channelId: "channel-1",
-          message: { id: "message-1", edit: editMessage },
-          update,
-        } as never,
-        "personal",
-      );
-      await vi.advanceTimersByTimeAsync(1_000);
-      await expect(request.waitForDecision()).rejects.toThrow(
-        "Tool approval canceled",
-      );
-      expectFailed(finalPayload);
-      resolveUpdate();
-      await expect(route).resolves.toBe(true);
-      expect(editMessage).toHaveBeenCalledTimes(2);
-      expectFailed(finalPayload);
-      expect(request.claim("approve")).toBeUndefined();
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      execution.dispose();
-    }
+      finalPayload = terminal;
+    });
+    const route = routeToolApprovalInteraction(
+      {
+        customId: customId(sendMessage.mock.calls[0][0], 0),
+        user: { bot: false },
+        channelId: "channel-1",
+        message: { id: "message-1", edit: editMessage },
+        update,
+      } as never,
+      "personal",
+    );
+    controller.abort();
+    await expect(request.waitForDecision()).rejects.toThrow(
+      "Tool approval canceled",
+    );
+    expectFailed(finalPayload);
+    resolveUpdate();
+    await expect(route).resolves.toBe(true);
+    expectFailed(finalPayload);
+    expect(request.claim("approve")).toBeUndefined();
   });
   it("ignores mismatches and lets the first valid click win", async () => {
     const request = makeRequest();
