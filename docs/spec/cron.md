@@ -64,7 +64,7 @@ data/cron/
 | フィールド | 必須 | 型 | 説明 |
 |-----------|------|-----|------|
 | `id` | ✓ | string | ジョブID（一意） |
-| `schedule` | ✓ | string | cron式 `"0 9 * * *"` or インターバル `"30m"` `"1h"` |
+| `schedule` | ✓ | string | cron式 `"0 9 * * *"`、インターバル `"30m"` `"1h"`、または宣言型prompt job専用の `"@startup"` |
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
@@ -146,8 +146,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 - **cron式**: `"0 9 * * *"` — 分・時・日・月・曜日。標準的な cron 記法
 - **インターバル**: `"30m"` `"1h"` `"2h"` — 起動からの経過時間ベース
+- **起動時**: `"@startup"` — handlerなしの宣言型prompt jobを、Discord loginと起動時backfillの完了後、通常poller開始前に1回だけqueueへ投入する。通常のcron tickでは実行しない
 
-**重複実行防止**: `data/cron/state.json` に各ジョブの `lastRun` を記録。
+**重複実行防止**: `@startup` を除き、`data/cron/state.json` に各ジョブの `lastRun` を記録。
 
 - **cron式**: チェック条件は `前回実行時刻 < 今回の予定実行時刻 ≤ 現在時刻`。これにより `0 9 * * *` が 9:00〜9:59 の間に何度もマッチする問題を防ぐ。
 - **インターバル**: チェック条件は `lastRun + interval ≤ 現在時刻`。

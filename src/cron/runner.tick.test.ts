@@ -42,6 +42,7 @@ describe("tick() orchestration", () => {
   let mockWriteFile: ReturnType<typeof vi.fn>;
   let startCron: () => void;
   let stopCron: () => void;
+  let enqueueStartupJobs: () => Promise<void>;
   let setCronJobs: (jobs: CronJob[]) => void;
 
   beforeEach(async () => {
@@ -84,6 +85,7 @@ describe("tick() orchestration", () => {
     const runner = await import("./runner.js");
     startCron = runner.startCron;
     stopCron = runner.stopCron;
+    enqueueStartupJobs = runner.enqueueStartupJobs;
     setCronJobs = runner._setCronJobs;
 
     // 静的ロードパターン: テストで直接 _setCronJobs を呼び出してジョブを設定
@@ -94,6 +96,18 @@ describe("tick() orchestration", () => {
     stopCron();
     vi.useRealTimers();
     vi.resetModules();
+  });
+
+  it("@startup jobは明示実行でのみenqueueする", async () => {
+    setCronJobs([makeJob("startup-job", "@startup", "startup")]);
+
+    startCron();
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(mockAppendInbox).not.toHaveBeenCalled();
+
+    await enqueueStartupJobs();
+    expect(mockAppendInbox).toHaveBeenCalledOnce();
+    expect(mockAppendInbox.mock.calls[0]?.[0].content).toBe("startup");
   });
 
   it("client.isReady() が false の場合 tick をスキップする", async () => {

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   ]),
   registerHandlers: vi.fn(),
   backfillDiscordMessages: vi.fn(),
+  prepareDiscordBackfill: vi.fn(),
   loadDiscordConfig: vi.fn(),
   loadXSavedReceiverConfig: vi.fn(),
   startXSavedReceiver: vi.fn(),
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   validateBotConfigs: vi.fn(),
   loadDefaultModel: vi.fn(),
   loadAndValidateCron: vi.fn(),
+  enqueueStartupJobs: vi.fn(),
   stopCron: vi.fn(),
   queueRepository: { db: {}, listRssStatePaths: vi.fn() },
   initializeQueue: vi.fn(),
@@ -50,6 +52,7 @@ vi.mock("./discord/handler.js", () => ({
 }));
 vi.mock("./discord/backfill.js", () => ({
   backfillDiscordMessages: mocks.backfillDiscordMessages,
+  prepareDiscordBackfill: mocks.prepareDiscordBackfill,
 }));
 vi.mock("./config/config.js", () => ({
   loadDiscordConfig: mocks.loadDiscordConfig,
@@ -110,6 +113,7 @@ vi.mock("./cron/runner.js", () => ({
   startCron: vi.fn(),
   stopCron: mocks.stopCron,
   loadAndValidateCron: mocks.loadAndValidateCron,
+  enqueueStartupJobs: mocks.enqueueStartupJobs,
   _setCronJobs: vi.fn(),
 }));
 vi.mock("./queue/repository.js", () => ({
@@ -165,6 +169,7 @@ describe("index: 起動時バリデーション", () => {
       modelId: "glm-4.7-flash",
     });
     mocks.loadAndValidateCron.mockResolvedValue([]);
+    mocks.enqueueStartupJobs.mockResolvedValue(undefined);
     mocks.killAllRunningContainers.mockResolvedValue(undefined);
     mocks.queueRepository.listRssStatePaths.mockReturnValue([]);
     mocks.runRuntimeOperator.mockResolvedValue({
@@ -340,10 +345,11 @@ describe("index: 起動時バリデーション", () => {
 
     expect(mocks.registerHandlers).toHaveBeenCalledWith(
       mocks.discordClients.get("personal"),
-      expect.any(Function),
       "personal",
     );
     expect(mocks.registerHandlers).toHaveBeenCalledOnce();
+    expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce();
+    expect(mocks.enqueueStartupJobs).toHaveBeenCalledOnce();
     expect(mocks.startPoller).toHaveBeenCalledOnce();
     expect(mocks.startDeliveryWorker).toHaveBeenCalledOnce();
     expect(mocks.loginDiscordClients).toHaveBeenCalledOnce();
@@ -447,50 +453,26 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.startPoller).not.toHaveBeenCalled();
   });
 
-  it("複数Botがreadyになっても起動時バックフィルは一度だけ実行する", async () => {
-    mocks.discordClients.set("secondary", {
-      login: vi.fn(),
-      isReady: vi.fn().mockReturnValue(true),
-    });
-    let releaseBackfill!: () => void;
-    mocks.backfillDiscordMessages.mockReturnValue(
-      new Promise<void>((resolve) => {
-        releaseBackfill = resolve;
-      }),
-    );
-
+  it("login前にbackfill gateをarmし、復旧後にstartup jobをenqueueしてからqueue workerを開始する", async () => {
     await import("./index.js");
 
-    expect(mocks.registerHandlers).toHaveBeenCalledTimes(2);
-    expect(mocks.registerHandlers).toHaveBeenNthCalledWith(
-      1,
-      mocks.discordClients.get("personal"),
-      expect.any(Function),
-      "personal",
+    expect(
+      mocks.prepareDiscordBackfill.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.loginDiscordClients.mock.invocationCallOrder[0]);
+    expect(
+      mocks.backfillDiscordMessages.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.enqueueStartupJobs.mock.invocationCallOrder[0]);
+    expect(mocks.enqueueStartupJobs.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.startPoller.mock.invocationCallOrder[0],
     );
-    expect(mocks.registerHandlers).toHaveBeenNthCalledWith(
-      2,
-      mocks.discordClients.get("secondary"),
-      expect.any(Function),
-      "secondary",
-    );
-    const firstReady = mocks.registerHandlers.mock
-      .calls[0]?.[1] as () => Promise<void>;
-    const secondReady = mocks.registerHandlers.mock
-      .calls[1]?.[1] as () => Promise<void>;
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const firstBackfill = firstReady();
-    const secondBackfill = secondReady();
-    await vi.waitFor(() =>
-      expect(mocks.backfillDiscordMessages).toHaveBeenCalledOnce(),
-    );
+  });
 
-    releaseBackfill();
-    await Promise.all([firstBackfill, secondBackfill]);
-    expect(log).toHaveBeenCalledWith(
-      "[discord-backfill] 起動時履歴復旧が完了しました",
-    );
-    log.mockRestore();
+  it("startup jobのenqueue失敗時はqueue workerを開始しない", async () => {
+    mocks.enqueueStartupJobs.mockRejectedValue(new Error("enqueue failed"));
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mocks.startPoller).not.toHaveBeenCalled();
+    expect(mocks.startDeliveryWorker).not.toHaveBeenCalled();
   });
 
   it("shutdown は cron のタイマーを queue worker より先に停止する", async () => {

@@ -19,7 +19,9 @@ vi.mock("../queue/repository.js", () => ({
   getQueueRepository: mocks.getRepo,
 }));
 
-const { backfillDiscordMessages } = await import("./backfill.js");
+const { backfillDiscordMessages, prepareDiscordBackfill } = await import(
+  "./backfill.js"
+);
 const { isDiscordChannelBackfillPending } = await import("./backfill-state.js");
 
 mocks.getDiscordClientForGroup.mockReturnValue(mockClient);
@@ -74,6 +76,7 @@ function repoWithCursors(cursors: Record<string, string>) {
     getDiscordCursor: vi.fn((scope: string) => state.get(scope)),
     isDiscordCursorInitialized: vi.fn((scope: string) => state.has(scope)),
     initializeDiscordCursor: vi.fn((scope: string) => state.set(scope, "")),
+    clearDiscordCursor: vi.fn((scope: string) => state.delete(scope)),
     upsertDiscordCursor: vi.fn((scope: string, id: string) => {
       state.set(scope, id);
     }),
@@ -88,6 +91,18 @@ describe("backfillDiscordMessages", () => {
       status: "enqueued",
       cursorScope: input.channelId,
     }));
+  });
+
+  it("login前に対象チャンネルのcursor gateをarmできる", () => {
+    mocks.getRepo.mockReturnValue(repoWithCursors({}));
+    prepareDiscordBackfill([
+      {
+        name: "group",
+        channels: [{ channelId: "pre-login", sessionMode: "shared" }],
+      },
+    ]);
+
+    expect(isDiscordChannelBackfillPending("pre-login")).toBe(true);
   });
 
   it("親チャンネルの履歴を古い順でinbox取り込みし、カーソルを進める", async () => {

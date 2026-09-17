@@ -80,6 +80,12 @@ const CronJobSchema = z
           "item-thread は sessionMode=destination と組み合わせてください",
       });
     }
+    if (job.schedule === "@startup" && job.handler != null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "@startup は handler 付きジョブでは使用できません",
+      });
+    }
     if (job.handler != null) return;
     if (job.groupName == null || job.prompt == null || job.channelId == null) {
       ctx.addIssue({
@@ -269,6 +275,13 @@ export function _setCronJobs(jobs: CronJob[]): void {
   _jobs = jobs;
 }
 
+/** Enqueue declarative startup jobs once, after startup recovery completes. */
+export async function enqueueStartupJobs(): Promise<void> {
+  for (const job of _jobs) {
+    if (job.enabled && job.schedule === "@startup") await executeJob(job);
+  }
+}
+
 async function runAdmittedJob(job: CronJob, admissionAt: Date): Promise<void> {
   try {
     await executeJob(job);
@@ -311,7 +324,8 @@ async function tick(): Promise<void> {
     const toRun: CronJob[] = [];
 
     for (const job of _jobs) {
-      if (!job.enabled || _inFlight.has(job.id)) continue;
+      if (!job.enabled || job.schedule === "@startup" || _inFlight.has(job.id))
+        continue;
       const entry = state[job.id];
       const lastRun = entry ? new Date(entry.lastRun) : null;
       if (shouldRun(job.schedule, lastRun, admissionAt)) {
