@@ -6,6 +6,7 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import { chromium } from "playwright";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseXSavedEnrichment } from "./enrichment.js";
 import { startXSavedGallery } from "./gallery.js";
 import {
   GalleryFilterSchema,
@@ -352,6 +353,101 @@ describe("x-saved gallery", () => {
     expect(detail).toContain("playsinline controls");
     expect(detail).toContain('href="/?"');
     expect(detail).toContain("https://x.com/i/status/123");
+  });
+
+  it("shows the saved self-thread in order, marks the focal Tweet and escapes external content only in detail", async () => {
+    const status = (id: string, text: string) => ({
+      type: "status",
+      provider: "twitter",
+      id,
+      url: "javascript:alert(1)",
+      text,
+      created_at: `2026-09-01 <${id}>`,
+      author: {
+        id: "1",
+        name: "Alice <img>",
+        screen_name: 'alice"<script>',
+        avatar_url: null,
+      },
+      raw_text: { text, facets: [] },
+    });
+    const focal = status("123", "focal & text");
+    const document = parseXSavedEnrichment(
+      {
+        code: 200,
+        status: focal,
+        thread: [
+          status("121", "before <script>alert(1)</script>"),
+          {
+            type: "tombstone",
+            provider: "twitter",
+            reason: "unavailable",
+            message: "gap <img>",
+          },
+          focal,
+          status("124", "after thread"),
+        ],
+      },
+      "123",
+    );
+    db.prepare(
+      "INSERT INTO x_enrichment (tweet_id, document_json, resolved_at, attempted_at) VALUES (?, ?, ?, '2026-09-10')",
+    ).run("123", JSON.stringify(document), "2026-09-10");
+    expect(getGalleryItem(db, "123")?.thread.map((entry) => entry.id)).toEqual([
+      "121",
+      undefined,
+      "123",
+      "124",
+    ]);
+    const detail = await (await get("/items/123")).text();
+    const thread = detail.slice(detail.indexOf('<section class="thread"'));
+    expect(thread).toContain(
+      '<li class="focal"><strong>保存対象Tweet</strong>',
+    );
+    expect(thread).toContain("Alice &lt;img&gt;");
+    expect(thread).toContain("@alice&quot;&lt;script&gt;");
+    expect(thread).toContain("2026-09-01 &lt;121&gt;");
+    expect(thread).toContain("before &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(thread).toContain("取得できないTweet · gap &lt;img&gt;");
+    expect(thread).toContain("focal &amp; text");
+    expect(thread).not.toContain("javascript:");
+    expect(thread).not.toContain("<script>");
+    for (const id of ["121", "123", "124"])
+      expect(thread).toContain(`href="https://x.com/i/status/${id}"`);
+    expect(thread.indexOf("before")).toBeLessThan(thread.indexOf("gap"));
+    expect(thread.indexOf("gap")).toBeLessThan(thread.indexOf("focal &amp;"));
+    expect(thread.indexOf("focal &amp;")).toBeLessThan(
+      thread.indexOf("after thread"),
+    );
+    expect(await (await get()).text()).not.toContain("Self-thread");
+    expect((await post(classification)).status).toBe(303);
+    expect(getGalleryItem(db, "123")?.thread).toHaveLength(4);
+  });
+
+  it.each([
+    null,
+    {},
+    { thread: null },
+    { thread: [] },
+    { thread: [{ type: "status" }] },
+  ])("keeps detail and editing available without a usable thread: %j", async (document) => {
+    for (const resolvedAt of [null, "2026-09-10"]) {
+      db.prepare(
+        "INSERT OR REPLACE INTO x_enrichment (tweet_id, document_json, resolved_at, last_error, attempted_at) VALUES (?, ?, ?, ?, '2026-09-10')",
+      ).run(
+        "123",
+        JSON.stringify(document),
+        resolvedAt,
+        resolvedAt ? null : "lookup failed",
+      );
+      const response = await get("/items/123");
+      expect(response.status).toBe(200);
+      const detail = await response.text();
+      expect(detail).not.toContain("Self-thread");
+      expect(detail).toContain("分類を編集");
+      expect(detail).toContain("playsinline controls");
+      expect((await post(classification)).status).toBe(303);
+    }
   });
 
   it("rejects invalid filters and edits without changing state", async () => {

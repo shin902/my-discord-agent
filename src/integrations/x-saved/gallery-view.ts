@@ -55,6 +55,10 @@ figcaption { font-size: .8rem; margin-top: .5rem; color: var(--muted); }
 .body-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .editor { display: grid; gap: .8rem; border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1.5rem; }
 .notice { margin: 1rem 0; }
+.thread { margin-top: 2rem; }
+.thread ol { list-style: none; padding: 0; display: grid; gap: 1rem; }
+.thread li { padding: 1rem; border: 1px solid var(--line); border-radius: .4rem; background: white; }
+.thread .focal { border: 2px solid var(--blue); }
 #saved:not(:target) { display: none; }
 @media (max-width: 650px) {
   header small { display: none; }
@@ -238,6 +242,21 @@ ${item.note ? `<h2>Note</h2><p class="body-text">${escapeHtml(item.note)}</p>` :
 ${LABEL_KINDS.map((kind) => `<label>${labelTitles[kind]}<textarea name="${kind}" rows="3" maxlength="10000">${escapeHtml(submitted?.[kind] ?? fields[kind])}</textarea></label>`).join("")}
 ${select("status", "Status", submitted?.status ?? item.status, statusOptions)}
 <p class="help">1行1値。カンマは値の一部。通常の短い単一行文字列を指定してください。各50個・1値100文字まで。空欄で解除。同じTweetの全メディアに反映されます。</p>
-<button type="submit">変更を保存</button></form></section></div>`,
+<button type="submit">変更を保存</button></form></section></div>
+${
+  item.thread.length
+    ? `<section class="thread" aria-labelledby="thread-title"><h2 id="thread-title">Self-thread</h2><ol>${item.thread
+        .map((entry) => {
+          const focal = entry.id === item.tweet_id;
+          return `<li${focal ? ' class="focal"' : ""}>${focal ? "<strong>保存対象Tweet</strong>" : ""}${
+            entry.type === "tombstone"
+              ? `<p class="muted">取得できないTweet · ${escapeHtml(entry.message || entry.reason)}</p>`
+              : `<p><strong>${escapeHtml(entry.author.name)}</strong> @${escapeHtml(entry.author.screen_name)}</p><p class="meta">${escapeHtml(entry.created_at)}</p><p class="body-text">${escapeHtml(entry.text || "（本文なし）")}</p>`
+          }
+${entry.id ? original(entry.id) : ""}</li>`;
+        })
+        .join("")}</ol></section>`
+    : ""
+}`,
   );
 }
