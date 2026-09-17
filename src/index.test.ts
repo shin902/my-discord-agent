@@ -343,7 +343,6 @@ describe("index: 起動時バリデーション", () => {
 
     expect(mocks.registerHandlers).toHaveBeenCalledWith(
       mocks.discordClients.get("personal"),
-      undefined,
       "personal",
     );
     expect(mocks.registerHandlers).toHaveBeenCalledOnce();

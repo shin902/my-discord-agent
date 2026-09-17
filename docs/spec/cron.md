@@ -148,7 +148,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 - **インターバル**: `"30m"` `"1h"` `"2h"` — 起動からの経過時間ベース
 - **起動時**: `"@startup"` — handlerなしの宣言型prompt jobを、Discord loginと起動時backfillの完了後、通常poller開始前に1回だけqueueへ投入する。通常のcron tickでは実行しない
 
-**重複実行防止**: `data/cron/state.json` に各ジョブの `lastRun` を記録。
+**重複実行防止**: `@startup` を除き、`data/cron/state.json` に各ジョブの `lastRun` を記録。
 
 - **cron式**: チェック条件は `前回実行時刻 < 今回の予定実行時刻 ≤ 現在時刻`。これにより `0 9 * * *` が 9:00〜9:59 の間に何度もマッチする問題を防ぐ。
 - **インターバル**: チェック条件は `lastRun + interval ≤ 現在時刻`。

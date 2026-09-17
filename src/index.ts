@@ -160,7 +160,7 @@ try {
 }
 
 for (const [discordBotId, discordClient] of getDiscordClients()) {
-  registerHandlers(discordClient, undefined, discordBotId);
+  registerHandlers(discordClient, discordBotId);
 }
 try {
   await loginDiscordClients();
