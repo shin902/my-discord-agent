@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { refreshRedditCookies } from "../proxy/reddit-cookie-refresh.js";
+import { refreshXCookies } from "../proxy/x-cookie-refresh.js";
 import { agentReachTool } from "../tools/agent-reach.js";
 import { arxivSearchTool } from "../tools/arxiv.js";
 import { executeRuntimeRequest } from "./tool-runtime.js";
 
 vi.mock("../proxy/reddit-cookie-refresh.js", () => ({
   refreshRedditCookies: vi.fn(),
+}));
+vi.mock("../proxy/x-cookie-refresh.js", () => ({
+  refreshXCookies: vi.fn(),
 }));
 afterEach(() => {
   vi.restoreAllMocks();
@@ -87,6 +91,21 @@ describe("one-shot Tool Runtime protocol", () => {
     expect(refreshRedditCookies).toHaveBeenCalledExactlyOnceWith({
       profileDir: "/fixture/profile",
       cookieFile: "/fixture/cookies.json",
+    });
+
+    vi.stubEnv("X_PROFILE_DIR", "/fixture/x-profile");
+    vi.stubEnv("X_COOKIE_FILE", "/fixture/x-cookies.json");
+    expect(
+      await executeRuntimeRequest({ maintenance: "x-cookie-refresh" }),
+    ).toEqual({
+      result: {
+        content: [{ type: "text", text: "X cookies refreshed" }],
+        details: {},
+      },
+    });
+    expect(refreshXCookies).toHaveBeenCalledExactlyOnceWith({
+      profileDir: "/fixture/x-profile",
+      cookieFile: "/fixture/x-cookies.json",
     });
   });
 });
