@@ -62,7 +62,8 @@ const CronJobSchema = z
     if (job.schedule === "@startup" && job.handler != null) {
       ctx.addIssue({
         code: "custom",
-        message: "@startup は handler をサポートしません。prompt jobとして設定してください",
+        message:
+          "@startup は handler をサポートしません。prompt jobとして設定してください",
       });
       return;
     }
