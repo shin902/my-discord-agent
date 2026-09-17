@@ -133,13 +133,13 @@ Deploy the receiver before reloading the updated extension (old strict receivers
 
 ## Local automatic classification (PixAI)
 
-`jobs/x-saved-classify.ts` is an opt-in **host-only, non-Agent** cron. It runs `scripts/x-saved-tagger.py` in a dedicated Python environment, separately from media downloading. No LLM, VLM, OCR, remote image upload, file relocation, or new service is involved. Inference uses the local **PixAI Tagger v1.0** snapshot at revision `f33cfdb53c0c90b049bab9ce066eea1118970ef8` (May 2026 cutoff). Unknown/new characters outside its vocabulary cannot be recognized.
+`jobs/x-saved-classify.ts` is an opt-in **host-only, non-Agent** cron running `scripts/x-saved-tagger.py`. It uses local **PixAI Tagger v1.0**, pinned to revision `f33cfdb53c0c90b049bab9ce066eea1118970ef8`; no LLM/VLM or image upload is involved. Unknown characters outside the model vocabulary cannot be recognized.
 
-The model has custom Python code. The pinned code was inspected, but this repository does not redistribute its code or weights. **The upstream model card does not currently specify a license; availability is not a license grant. Confirm applicable usage/distribution terms with PixAI before production use or redistribution.** Our integration does not resolve that uncertainty.
+**The upstream model card does not specify a license. Confirm usage/distribution terms with PixAI.** This repository does not redistribute the custom model code or weights.
 
 ### Install and smoke-test
 
-Cron uses fixed paths under **`~/.local/share/my-discord-agent/x-saved-tagger/`**, using the host service user's home: `venv/bin/python` and `cache/`. The `python` / `cache` cron settings are no longer accepted; remove them from existing job definitions. Keep this directory outside Agent mounts. This removes unnecessary path configuration, not a general mount-isolation policy. The standalone classifier still rejects a cache inside the archive directory. Example CPU setup (Python 3.12, approximately 2 GB of model weights plus dependencies):
+Python and model/cache paths are fixed under the host service user's **`~/.local/share/my-discord-agent/x-saved-tagger/`**. Keep this directory outside Agent mounts; cron does not accept `python` / `cache` settings. CPU setup (Python 3.12, approximately 2 GB of weights plus dependencies):
 
 ```bash
 TAGGER_ROOT="$HOME/.local/share/my-discord-agent/x-saved-tagger"
@@ -149,14 +149,16 @@ uv pip install --python "$TAGGER_ROOT/venv/bin/python" \
 uv pip install --python "$TAGGER_ROOT/venv/bin/python" \
   transformers==4.57.6 timm==1.0.24 Pillow==12.1.1
 cp config/x-saved-aliases.example.json config/x-saved-aliases.json
-# Explicit one-time network download of the fixed snapshot; does not touch SQLite.
-"$TAGGER_ROOT/venv/bin/python" scripts/x-saved-tagger.py \
-  --cache "$TAGGER_ROOT/cache" --download
+# One-time download; scheduled classification never downloads code or weights.
+HF_HUB_DISABLE_IMPLICIT_TOKEN=1 "$TAGGER_ROOT/venv/bin/hf" download \
+  pixai-labs/pixai-tagger-v1.0 --revision f33cfdb53c0c90b049bab9ce066eea1118970ef8 \
+  --include config.json preprocessor_config.json tagger_pipeline.py model.safetensors \
+  --cache-dir "$TAGGER_ROOT/cache"
 ```
 
-Normal execution is offline (`local_files_only`, HF offline/telemetry disabled). The upstream preprocessing and FP32 inference are retained; images are processed sequentially, and the model is loaded once per batch only when needed. CPU defaults to four OpenMP/MKL threads, overridable with `OMP_NUM_THREADS` / `MKL_NUM_THREADS`. For CUDA or MPS, install compatible PyTorch packages and set `device` accordingly; there is no silent device fallback. CUDA/MPS are not covered by the CPU smoke check.
+Inference is offline (`local_files_only`, HF offline/telemetry disabled), sequential, FP32, with upstream preprocessing and one lazy model load per batch. CPU defaults to four OpenMP/MKL threads (`OMP_NUM_THREADS` / `MKL_NUM_THREADS` override). CUDA/MPS require compatible PyTorch and an explicit `device`; neither is verified here.
 
-Back up the existing SQLite database first and use a **disposable archive copy** for initial classification/threshold calibration. Run the current host once to create/migrate the archive to schema v5, then:
+Back up SQLite, run the host to migrate to schema v5, then smoke-test a **disposable archive copy**:
 
 ```bash
 "$TAGGER_ROOT/venv/bin/python" scripts/x-saved-tagger.py \
@@ -165,25 +167,20 @@ Back up the existing SQLite database first and use a **disposable archive copy**
   --device cpu --limit 1
 ```
 
-This command **writes labels** to the specified database. Inspect the result before enabling the disabled `x-saved-classify` example in `config/cron.example.json`, and restart the host after changing cron settings. Relative cron paths resolve from the repository root. Use one classifier job/process per archive; do not overlap manual runs with the cron. Each run handles at most `limit` Tweets (1–100, default 20), with a 30-minute process timeout. Reduce the limit for slow CPUs or many-image Tweets. A killed batch retains already committed Tweets; the interrupted Tweet is retried.
+This **writes labels**. Inspect results before enabling the `x-saved-classify` example in `config/cron.example.json`, then restart. Relative paths resolve from the repository root. Use one classifier process per archive. Each run selects at most `limit` unfinished Tweets (1–100, default 20) in random order so persistent failures cannot block a fixed prefix. Cron kills runs after 30 minutes; committed Tweets remain done, interrupted ones retry.
 
 ### Alias dictionary and merge policy
 
-The alias file is JSON, not hand-written regular expressions. It has `series`, `characters`, and `tags` maps. Each canonical label has `aliases: string[]`; a character may also specify `series` referencing a canonical series entry. See `config/x-saved-aliases.example.json`. Include alternate model spellings in the same alias list when necessary. Ambiguous aliases and unknown series references fail validation before writing.
+Use the locally maintained `series`, `characters`, and `tags` maps in `config/x-saved-aliases.example.json`. Canonical entries have `aliases: string[]`; characters may reference a canonical `series`. Normalized canonical/alias collisions and unknown series references are rejected; this is not an external-input schema validator.
 
-1. Scan Tweet text with escaped literal aliases and canonical names. NFKC/case folding handles width/case differences; ASCII word boundaries prevent `ai` matching inside `mail`, while Japanese aliases match substrings. Adopt all matched labels, including explicit character-to-series mappings.
-2. Pass **every completed image** through PixAI, even if text already supplied a classification. Animated image files use their first frame; MP4/video and text-only Tweets are not classified by this job. Pending/failed downloads use text aliases for now and reopen automatically when the archive row changes. Missing/corrupt completed files remain retryable failures.
-3. Map `copyright -> series`, `character -> character`, `general -> tag`. Style/meta/rating outputs are deliberately excluded. Normalize labels with NFKC/case folding and whitespace-to-underscore, canonicalize through the dictionary, and union/dedupe across images. Default inclusive thresholds are copyright **0.46**, character **0.37**, general **0.34** (the upstream micro-F1 starting points, **not** a local accuracy guarantee). Override them with cron `settings.thresholds` or CLI `--thresholds '{"character":0.6}'`.
-4. Add labels to `x_item_labels`, **never delete existing labels or alter status/notes/media**. Image-derived additions are ranked by maximum confidence across images, with lexical tie-breaking, and fill up to 50 values per kind including existing/text labels. Text matches and existing labels are never truncated; unusually large alias dictionaries can therefore exceed Gallery's 50-value editing limit. All successful image labels and the completion checkpoint commit together. If any image fails, text matches remain, image additions are deferred, and `last_error` records the failure. DB errors fail the job rather than masquerading as image errors.
+1. Match literal aliases/canonical names against Tweet text with NFKC/case folding. ASCII word boundaries prevent `ai` matching `mail`; Japanese aliases match substrings. Known characters supply their series.
+2. Save text matches immediately. Wait while any image download is pending/failed, then infer **all saved images**, even when text already matched. Animated images use the first frame; video/text-only Tweets are excluded. Missing/undecodable files fail normally and remain retryable.
+3. Map `copyright -> series`, `character -> character`, `general -> tag`; ignore other categories. Normalize whitespace to underscores, canonicalize aliases, supplement known series, and union/dedupe all images. Inclusive thresholds default to **0.46 / 0.37 / 0.34** respectively; override with `settings.thresholds` or `--thresholds '{"character":0.6}'`.
+4. Append to `x_item_labels`; **never delete labels or change status/notes/media**. Maximum image confidence (lexical ties) fills up to Gallery's 50 labels per kind, counting existing/text labels without truncating them. Image labels and the done marker commit together. An image failure keeps text matches but defers image additions and logs to stderr; DB errors fail the job.
 
-No schema migration or second database is needed. `x_meta` keys `pixai-v1:<tweet_id>` hold the input fingerprint, last attempt time, and last error. The fingerprint covers the pinned model/policy, dictionary, thresholds, Tweet text, and image row states/paths. Unchanged successful Tweets are skipped, preserving subsequent human removals; failures rotate behind never-attempted Tweets and retry on later runs. Later images, text, dictionary, or threshold changes reopen the Tweet and may **re-add previously removed predictions**. Raising a threshold does not retract old labels. This additive policy has no provenance ledger or manual-label lock; edit after backfill and pause the cron while correcting labels. In-place replacement of archived image bytes at an unchanged path is not detected (normal archiving does not replace completed files).
+`x_meta['pixai-v1:<tweet_id>'] = 'done'` skips successful Tweets on later runs. No fingerprints, attempt/error records, schema migration, or automatic invalidation. Text, aliases, thresholds, and images added after completion require explicit reprocessing. Earlier fingerprint checkpoints are treated as unfinished and reprocessed once. To reprocess, pause cron and run `DELETE FROM x_meta WHERE key = 'pixai-v1:123';` for that Tweet. Labels remain; previously removed predictions may return.
 
-```sql
-SELECT key, json_extract(value, '$.last_error') AS last_error
-FROM x_meta WHERE key LIKE 'pixai-v1:%';
-```
-
-Automated checks use temporary SQLite/image fixtures and a fake inference function; `pnpm test` runs them without model downloads. A separate real-model CPU smoke verified local loading, inference, label persistence, and unchanged-input skipping on a synthetic image. It does **not** measure anime recognition quality. Production saved-image accuracy/thresholds and GPU performance still require operator validation. Alias mining and automatic dictionary updates are not implemented.
+The archive is local internal data; a resolved-path containment check prevents ordinary references outside its sandbox-writable directory. Python/model caches stay outside that directory. No symlink-race/TOCTOU hardening is provided. `pnpm test` uses temporary SQLite and fake inference without downloads; real-image accuracy/thresholds and GPU performance require operator calibration.
 
 ## Gallery: browse and edit over Tailscale
 

@@ -1,5 +1,4 @@
 import importlib.util
-import json
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -82,6 +81,8 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(self.loader.call_count, 1)
         self.assertEqual(self.labels(), {("series", "bocchi_the_rock"), ("series", "other_series"), ("character", "gotoh_hitori"), ("character", "other_character"), ("tag", "manual"), ("tag", "guitar"), ("tag", "solo")})
         self.assertEqual(self.db.execute("SELECT status,note FROM x_item_state").fetchone(), ("keep", "retained note"))
+        self.assertEqual(self.db.execute("SELECT status,local_path FROM x_media ORDER BY position").fetchall(),
+                         [("done", "media/123/0.jpg"), ("done", "media/123/1.jpg")])
         self.assertEqual(self.run_batch(), {"processed": 0, "failed": 0})
         self.assertEqual(self.infer.call_count, 2)
         # Human removal is not undone by the next unchanged run.
@@ -90,9 +91,8 @@ class ClassifyTests(unittest.TestCase):
         self.run_batch()
         self.assertNotIn(("tag", "guitar"), self.labels())
 
-    def test_failure_retains_text_rotates_and_retries_without_partial_image_labels(self):
+    def test_failure_retains_text_and_retries_without_partial_image_labels(self):
         self.seed("123", positions=(0, 1))
-        self.seed("124", text="")
         self.infer.side_effect = [
             {"copyright": {}, "character": {}, "general": {"partial": 0.9}},
             ValueError("broken image"),
@@ -100,15 +100,15 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(self.run_batch(limit=1), {"processed": 0, "failed": 1})
         self.assertNotIn(("tag", "partial"), self.labels())
         self.assertIn(("character", "gotoh_hitori"), self.labels())
-        checkpoint = json.loads(self.db.execute("SELECT value FROM x_meta").fetchone()[0])
-        self.assertEqual(checkpoint["last_error"], "broken image")
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM x_meta").fetchone()[0], 0)
         self.infer.side_effect = None
         self.assertEqual(self.run_batch(limit=1), {"processed": 1, "failed": 0})
-        self.assertEqual(self.infer.call_args.args[0], self.root / "media/124/0.jpg")
-        self.assertEqual(self.run_batch(limit=1), {"processed": 1, "failed": 0})
+        self.assertEqual(self.db.execute("SELECT value FROM x_meta").fetchone()[0], "done")
 
-    def test_pending_download_and_changed_text_or_threshold_reopen(self):
-        self.seed(status="pending")
+    def test_waits_for_all_downloads_and_reprocesses_only_after_marker_removal(self):
+        self.seed(positions=(0, 1))
+        with self.db:
+            self.db.execute("UPDATE x_media SET status='pending' WHERE position=1")
         self.run_batch()
         self.loader.assert_not_called()
         self.assertIn(("series", "bocchi_the_rock"), self.labels())
@@ -116,24 +116,30 @@ class ClassifyTests(unittest.TestCase):
         with self.db:
             self.db.execute("UPDATE x_media SET status='done'")
         self.assertEqual(self.run_batch()["processed"], 1)
-        self.assertEqual(self.infer.call_count, 1)
+        self.assertEqual(self.infer.call_count, 2)
         with self.db:
             self.db.execute("UPDATE x_items SET text='AI'")
-        self.assertEqual(self.run_batch()["processed"], 1)
-        self.assertIn(("tag", "ai"), self.labels())
+        self.assertEqual(self.run_batch(thresholds={"general": 0.8})["processed"], 0)
+        self.assertEqual(self.infer.call_count, 2)
+        with self.db:
+            self.db.execute("DELETE FROM x_meta WHERE key='pixai-v1:123'")
+        self.infer.return_value["general"] = {"guitar": 0.7}
         self.assertEqual(self.run_batch(thresholds={"general": 0.8})["processed"], 1)
+        self.assertIn(("tag", "ai"), self.labels())
+        self.assertNotIn(("tag", "guitar"), self.labels())
 
-    def test_path_validation_missing_files_and_symlinks(self):
+    def test_archive_escape_and_missing_file_remain_retryable(self):
         self.seed()
-        for local in ("../../secret.jpg", "media/124/0.jpg", "media/123/0.mp4", None):
-            with self.subTest(local=local), self.assertRaises(ValueError):
-                tagger.archive_path(self.root, "123", 0, local)
-        image = self.root / "media/123/0.jpg"
-        image.unlink()
-        self.assertEqual(self.run_batch()["failed"], 1)
-        image.symlink_to(self.root / "x-saved.sqlite")
+        with self.db:
+            self.db.execute("UPDATE x_media SET local_path='../outside.jpg'")
         self.assertEqual(self.run_batch()["failed"], 1)
         self.loader.assert_not_called()
+        with self.db:
+            self.db.execute("UPDATE x_media SET local_path='media/123/0.jpg'")
+        (self.root / "media/123/0.jpg").unlink()
+        self.infer.side_effect = lambda image: image.read_bytes()
+        self.assertEqual(self.run_batch()["failed"], 1)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM x_meta").fetchone()[0], 0)
 
     def test_caps_image_labels_but_never_discards_text_or_existing(self):
         self.seed(text="AI")
@@ -147,20 +153,13 @@ class ClassifyTests(unittest.TestCase):
 
     def test_database_failure_escapes_and_rolls_back_completion(self):
         self.seed()
+        self.infer.return_value["general"] = {"guitar": 0.9}
         self.db.executescript("""CREATE TRIGGER fail BEFORE INSERT ON x_meta
             BEGIN SELECT RAISE(ABORT, 'db failed'); END;""")
         with self.assertRaisesRegex(sqlite3.IntegrityError, "db failed"):
             self.run_batch()
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM x_meta").fetchone()[0], 0)
-
-    def test_invalid_settings_and_scores_fail_closed(self):
-        self.seed()
-        for thresholds in ({"general": float("nan")}, {"general": -1}, {"unknown": 0.1}):
-            with self.assertRaises(ValueError):
-                self.run_batch(thresholds=thresholds)
-        self.infer.return_value["general"] = {"bad": float("nan")}
-        self.assertEqual(self.run_batch()["failed"], 1)
-        self.assertNotIn(("tag", "bad"), self.labels())
+        self.assertNotIn(("tag", "guitar"), self.labels())
 
 
 if __name__ == "__main__":
