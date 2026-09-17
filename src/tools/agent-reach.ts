@@ -19,7 +19,7 @@ const WORKSPACE = "/tmp";
 // 外部コマンド（curl/yt-dlp等）の出力先として使う一時領域は、呼び出しごとに
 // システム一時ディレクトリの下へ独立して作成する。フェッチ結果はツールコール結果に
 // 直接返すため、呼び出し終了時にディレクトリごと削除する。
-const TIMEOUT_MS = 120_000;
+export const AGENT_REACH_TIMEOUT_MS = 30_000;
 
 const IPV4_NON_PUBLIC_CIDRS: ReadonlyArray<readonly [number, number]> = [
   [0x00000000, 8], // "this" network / unspecified
@@ -1296,7 +1296,10 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         : `${pathname}.json`;
       const redditUrl = `https://www.reddit.com${jsonPath}${parsed.search}`;
       const timeoutController = new AbortController();
-      const timeout = setTimeout(() => timeoutController.abort(), TIMEOUT_MS);
+      const timeout = setTimeout(
+        () => timeoutController.abort(),
+        AGENT_REACH_TIMEOUT_MS,
+      );
       const requestSignal = signal
         ? AbortSignal.any([signal, timeoutController.signal])
         : timeoutController.signal;
@@ -1355,7 +1358,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       let stdout: string;
       try {
         ({ stdout } = await execAsync(cmd, {
-          timeout: TIMEOUT_MS,
+          timeout: AGENT_REACH_TIMEOUT_MS,
           maxBuffer: 64 * 1024 * 1024,
           cwd: WORKSPACE,
           signal,

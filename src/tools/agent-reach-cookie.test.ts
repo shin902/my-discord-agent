@@ -274,7 +274,7 @@ describe("agent-reach Reddit cookie boundary", () => {
     const pending = executeReddit();
     const handled = pending.catch(() => undefined);
     await vi.waitFor(() => expect(observedSignal).toBeDefined());
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(observedSignal.aborted).toBe(true);
     await handled;
     await expect(pending).rejects.toThrow("fetch aborted");
@@ -314,7 +314,7 @@ describe("agent-reach Reddit cookie boundary", () => {
     const pending = executeReddit();
     const handled = pending.catch((error: unknown) => error);
     await vi.waitFor(() => expect(bodyController).toBeDefined());
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(observedSignal.aborted).toBe(true);
     const error = await handled;
     expect(error).toBeInstanceOf(Error);

@@ -14,7 +14,7 @@ Capabilities and uses:
 - `update-event`: update an event
 - `delete-event`: delete an event
 
-First retrieve only the capability you need, then follow its description (including safety requirements) and parameters when constructing raw JSON. Set the `bash` Tool's `timeoutMs` to `130000` for every script call; this is only an outer ceiling, while each capability keeps its own runtime timeout.
+First retrieve only the capability you need, then follow its description (including safety requirements) and parameters when constructing raw JSON:
 
 ```bash
 # Read the canonical Tool contract without executing it

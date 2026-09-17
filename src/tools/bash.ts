@@ -14,8 +14,7 @@ import { pipeline } from "node:stream/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_TIMEOUT_MS = 130_000;
+const TIMEOUT_MS = 30_000;
 // Internal byte budget, not a separate inline-output policy. Leave room for
 // notices within output.ts's TOOL_OUTPUT_CHAR_LIMIT (characters, not bytes).
 const PREVIEW_BYTES = 32 * 1024;
@@ -23,26 +22,15 @@ const CAPTURE_BYTES = 5 * 1024 * 1024;
 
 const parameters = Type.Object({
   command: Type.String({ description: "Shell command to execute." }),
-  timeoutMs: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      maximum: MAX_TIMEOUT_MS,
-      description: `Timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, maximum ${MAX_TIMEOUT_MS}).`,
-    }),
-  ),
 });
 
 export const bashTool: AgentTool<typeof parameters> = {
   name: "bash",
   label: "Bash",
   description:
-    "Run a shell command with a configurable timeout (default 30 seconds, maximum 130 seconds) and a 5 MiB combined stdout/stderr capture limit. Exceeding the capture limit stops the command and preserves the first 5 MiB as partial output. Large output returns a bounded head preview and a full output file under /tmp, valid only for the current container run. stdout/stderr share one stream. Prefer a domain Skill when fetching content from URLs.",
+    "Run a shell command with a 30-second timeout and a 5 MiB combined stdout/stderr capture limit. Exceeding the capture limit stops the command and preserves the first 5 MiB as partial output. Large output returns a bounded head preview and a full output file under /tmp, valid only for the current container run. stdout/stderr share one stream. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
   parameters,
-  execute: async (
-    _toolCallId,
-    { command, timeoutMs = DEFAULT_TIMEOUT_MS },
-    signal,
-  ) => {
+  execute: async (_toolCallId, { command }, signal) => {
     signal?.throwIfAborted();
     let directory = await mkdtemp("/tmp/my-discord-agent-bash-");
     let fullOutputPath = join(directory, "output.txt");
@@ -102,7 +90,7 @@ export const bashTool: AgentTool<typeof parameters> = {
             resolve();
           });
         });
-        timer = setTimeout(() => terminate("Command timed out"), timeoutMs);
+        timer = setTimeout(() => terminate("Command timed out"), TIMEOUT_MS);
         onAbort = () => terminate("Command aborted");
         signal?.addEventListener("abort", onAbort, { once: true });
         if (signal?.aborted) onAbort();

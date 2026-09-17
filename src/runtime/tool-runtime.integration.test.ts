@@ -249,7 +249,7 @@ describe.skipIf(!baseImage)("disposable Tool Runtime Docker boundary", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const pending = startHang();
     const id = await waitForChild();
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     vi.useRealTimers();
     expect(await pending).toHaveProperty(
       "error.message",
