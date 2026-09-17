@@ -9,7 +9,7 @@ export function registerHandlers(
   onReady?: () => Promise<void> | void,
   discordBotId = DEFAULT_DISCORD_BOT_ID,
 ): void {
-  client.once(Events.ClientReady, (c) => {
+  const handleReady = (c: Client<true>): void => {
     console.log(`起動しました: ${c.user.tag}`);
     if (onReady) {
       void Promise.resolve()
@@ -21,6 +21,14 @@ export function registerHandlers(
           );
         });
     }
+  };
+
+  client.once(Events.ClientReady, (c) => {
+    handleReady(c);
+    // Startup jobs can still be pending after the initial ready event (for
+    // example while startup backfill is running). Re-run the ready callback
+    // after later reconnects so skipped jobs can be admitted once ready again.
+    client.on(Events.ClientReady, handleReady);
   });
 
   client.on(Events.MessageCreate, (message: Message) =>
