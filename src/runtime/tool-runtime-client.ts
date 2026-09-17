@@ -35,8 +35,18 @@ async function twitterMountArgs(root: string): Promise<string[]> {
   const state = resolve(root, "data/twitter-cookies.json");
   try {
     const stat = await lstat(state);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error();
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.uid === 0 ||
+      stat.gid === 0
+    )
+      throw new Error();
     return [
+      "-e",
+      `TOOL_RUNTIME_UID=${stat.uid}`,
+      "-e",
+      `TOOL_RUNTIME_GID=${stat.gid}`,
       "--mount",
       `type=bind,src=${state},dst=/var/lib/twitter/twitter-cookies.json,readonly`,
     ];

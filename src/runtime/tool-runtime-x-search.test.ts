@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,13 +19,18 @@ describe("x-search Runtime state", () => {
     const state = join(root, "data/twitter-cookies.json");
     await writeFile(state, "fixture");
 
+    const stat = await lstat(state);
     const xArgs = await buildToolRuntimeArgs(
       { capability: "x-search", args: { query: "test" } },
       "x-search-fixture",
       { root },
     );
-    expect(xArgs).toContain(
-      `type=bind,src=${state},dst=/var/lib/twitter/twitter-cookies.json,readonly`,
+    expect(xArgs).toEqual(
+      expect.arrayContaining([
+        `TOOL_RUNTIME_UID=${stat.uid}`,
+        `TOOL_RUNTIME_GID=${stat.gid}`,
+        `type=bind,src=${state},dst=/var/lib/twitter/twitter-cookies.json,readonly`,
+      ]),
     );
 
     const arxivArgs = await buildToolRuntimeArgs(
