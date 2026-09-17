@@ -15,7 +15,10 @@ import {
   resolveTools,
 } from "./registry.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("resolveTools", () => {
   it("sandbox / host toolを指定順に解決し、重複を維持する", () => {
@@ -441,6 +444,69 @@ describe("resolveTools", () => {
     "clone-repository",
   ])("削除済みtool %s を解決しない", (name) => {
     expect(() => resolveTools([name])).toThrow(`不明なツール名: ${name}`);
+  });
+
+  it.each([
+    "bot",
+    "subagent",
+  ] as const)("%s outlives the common Tool timeout but stops on parent abort", async (name) => {
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    const execute = vi.fn(
+      (_id, _args, signal: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener(
+              "abort",
+              () => reject(init.signal.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const [ordinary, orchestration] = resolveTools(
+      ["get-current-weather", name],
+      {
+        [name]: () => ({
+          name,
+          label: name,
+          description: name,
+          parameters: Type.Object({}),
+          execute,
+        }),
+      },
+      { toolProxyEndpoint: { url: "http://proxy.test", token: "test" } },
+    );
+    const ordinaryResult = ordinary
+      .execute("ordinary", { location: "Tokyo" }, caller.signal)
+      .catch((error: unknown) => error);
+    let settled = false;
+    const pending = orchestration
+      .execute("orchestration", {}, caller.signal)
+      .catch((error: unknown) => {
+        settled = true;
+        return error;
+      });
+    await vi.advanceTimersByTimeAsync(120_001);
+    expect(await ordinaryResult).toHaveProperty("name", "TimeoutError");
+    expect(settled).toBe(false);
+    expect(execute.mock.calls[0][2]).toBe(caller.signal);
+    expect(caller.signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+
+    const reason = new Error("parent Agent run stopped");
+    caller.abort(reason);
+    expect(await pending).toBe(reason);
+    expect(settled).toBe(true);
   });
 
   it("runtime factoryをstatic toolと同じ解決経路で使う", () => {

@@ -263,7 +263,11 @@ export function resolveTools(
     if (tool) runtimeTools.push(wrapToolInputValidation(tool));
   }
 
-  return [...staticTools, ...runtimeTools].map((tool) =>
-    wrapToolTimeout(tool, capabilityContext.toolTimeoutMs),
-  );
+  return [
+    ...staticTools.map((tool) =>
+      wrapToolTimeout(tool, capabilityContext.toolTimeoutMs),
+    ),
+    // Agent orchestration follows the parent run lifecycle and caller signal.
+    ...runtimeTools,
+  ];
 }

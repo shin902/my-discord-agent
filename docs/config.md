@@ -391,8 +391,8 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 |---|---|---|
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: Credential Proxy / `hostFetch()` の1 upstream HTTP requestの寿命（ms、デフォルト: 120000）。Tool全体やLLM呼び出し全体のtimeoutとは別 |
-| `tool` | — | `timeoutMs`: 1 Agent Tool invocation全体の寿命（ms、デフォルト: 120000）。bash・native Tool・Tool Proxyのhost/runtime capabilityに共通。正の整数、最大2147483647 |
-| `agent` | — | `timeoutMs`: Agent run全体（サンドボックスコンテナ）の寿命（ms、デフォルト: 600000＝10分） |
+| `tool` | — | `timeoutMs`: 通常の1 Agent Tool invocation全体の寿命（ms、デフォルト: 120000）。bash・filesystem・finance・Tool Proxyのhost/runtime capability等に共通。同期Agent orchestrationの `bot` / `subagent` は対象外。正の整数、最大2147483647 |
+| `agent` | — | `timeoutMs`: bot / subagentのorchestrationを含むAgent run全体（サンドボックスコンテナ）の寿命（ms、デフォルト: 600000＝10分） |
 | `xSavedReceiver` | — | `enabled`（既定: false）、`port`（既定: 8787、1–65535）。localhost 専用の X saved 受信サーバー。[Tailscale Serve と拡張の設定手順](x-saved.md#live-capture-setup)を参照。変更後は再起動が必要 |
 | `screenCaptureReceiver` | — | `enabled`（既定: false）、`port`（既定: 8788、1–65535）。localhost専用の画面PNG receiver。[Mac / Tailscale / cron要約の設定](screen-capture.md)を参照。変更後は再起動が必要 |
 | `xSavedGallery` | — | `enabled`（既定: false）、`port`（既定: 8789、1–65535）。有効時はPOST元検証用の `origin`（HTTPS `.ts.net` origin、末尾 `/` なし）が必須。receiverとは別のlocalhost listener。Gallery自身の認証はなく、アクセス制限はTailscale側で行う。[Gallery設定・アクセス・編集](x-saved.md#gallery-browse-and-edit-over-tailscale)を参照。変更後は再起動が必要 |
@@ -401,7 +401,9 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 
 ### Timeoutとabortの責務
 
-`agent.timeoutMs`（run全体）、`tool.timeoutMs`（1 Tool invocation全体）、`proxy.requestTimeoutMs`（1 upstream HTTP request）は別のbudgetです。paginationでrequestを繰り返してもToolのbudgetは更新しません。callerのTool AbortSignalはnative / host executorからhelper・`hostFetch()`・`fetch()`へ伝播し、HTTP request timeoutより先にabortされた場合は即座にrequestを中断します。Runtimeの寿命はhostが管理し、timeout / caller abortで呼び出し単位のcontainerを停止します。
+`bot run` / `bot resume` と `subagent` は別のAgent実行を同期的に待つorchestration Toolであり、`tool.timeoutMs`を適用しません。親Agent runのlifecycle（`agent.timeoutMs`を含む）とcaller AbortSignalに従い、親のabort / disconnectを既存signal経路で伝播します。orchestration専用のtimeout設定はありません。
+
+`agent.timeoutMs`（run全体）、`tool.timeoutMs`（通常の1 Tool invocation全体）、`proxy.requestTimeoutMs`（1 upstream HTTP request）は別のbudgetです。paginationでrequestを繰り返してもToolのbudgetは更新しません。callerのTool AbortSignalはnative / host executorからhelper・`hostFetch()`・`fetch()`へ伝播し、HTTP request timeoutより先にabortされた場合は即座にrequestを中断します。Runtimeの寿命はhostが管理し、timeout / caller abortで呼び出し単位のcontainerを停止します。
 
 設定はhost再起動後に反映され、`tool.timeoutMs`はtrusted payloadでRunnerに渡します（Agent-visible tool引数にはしません）。更新時はHostとAgent Runner / Tool Runtime imageを同時に更新してください。approval待ちもTool invocationのbudgetに含みます。キャンセル後は実行資源のcleanupを待つため、結果の返却がtimeout時刻より遅れることがあります。HTTP abortはupstreamで既に確定したmutationのrollbackではないため、失敗後の無条件retryは安全とは限りません。
 
