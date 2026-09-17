@@ -1,12 +1,12 @@
 import { validateModel } from "../agent/model.js";
 import { getCapabilityDefinition, resolveTools } from "../tools/registry.js";
-import { runCapabilityNames } from "../tools/skill-capabilities.js";
+import { runCapabilityNames } from "../tools/tool-sets.js";
 import type { AgentConfig } from "./groups.js";
 import { buildExtraMountArgs } from "./mounts.js";
 
 /** Validate the opt-in approval selection on one effective AgentConfig. */
 export function validateApprovalRequiredTools(
-  config: Pick<AgentConfig, "tools" | "skills" | "approvalRequiredTools">,
+  config: Pick<AgentConfig, "tools" | "toolSets" | "approvalRequiredTools">,
 ): void {
   const approvalRequiredTools = config.approvalRequiredTools ?? [];
   resolveTools(approvalRequiredTools);
@@ -21,7 +21,7 @@ export function validateApprovalRequiredTools(
     }
     if (!allowedCapabilities.has(toolName)) {
       throw new Error(
-        `承認必須ツールは有効な tools または skills に含めてください: ${toolName}`,
+        `承認必須ツールは有効な tools または toolSets に含めてください: ${toolName}`,
       );
     }
   }

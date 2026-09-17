@@ -36,7 +36,8 @@ describe("domain Skill CLI", () => {
     ["weather", "get-current-weather"],
   ])("%s passes capability and JSON to tool-proxy without transformation", async (skill, capability) => {
     const { directory, log } = await fakeToolProxy();
-    const json = '{"value":"two  spaces","optional":null}';
+    const json =
+      '{"value":"two  spaces","optional":null,"attendees":[],"nested":{"enabled":false,"values":[1,"x"]}}';
     const result = spawnSync(
       "sh",
       [
@@ -49,5 +50,18 @@ describe("domain Skill CLI", () => {
 
     expect(result.status).toBe(0);
     expect(await readFile(log, "utf8")).toBe(`${capability}\n${json}\n`);
+    const describe = spawnSync(
+      "bash",
+      [resolve(`templates/SKILLS/${skill}/scripts/${skill}.sh`), capability],
+      {
+        env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+      },
+    );
+    expect(describe.status).toBe(0);
+    expect(await readFile(log, "utf8")).toBe(`describe\n${capability}\n`);
+    const invalid = spawnSync("bash", [
+      resolve(`templates/SKILLS/${skill}/scripts/${skill}.sh`),
+    ]);
+    expect(invalid.status).toBe(2);
   });
 });

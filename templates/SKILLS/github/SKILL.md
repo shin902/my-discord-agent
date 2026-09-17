@@ -5,13 +5,22 @@ description: Read, list, and comment on GitHub issues and pull requests.
 
 # GitHub
 
-Pass the capability's JSON arguments unchanged:
+Capabilities and uses:
+
+- `list-issues`: list repository issues
+- `read-issue`: read an issue
+- `read-pull-request`: read a pull request
+- `list-issue-comments`: read issue comments
+- `list-pull-request-comments`: read pull request comments and reviews
+- `comment-issue`: post an issue comment
+
+First retrieve only the capability you need, then follow its description (including safety requirements) and parameters when constructing raw JSON:
 
 ```bash
-bash SKILLS/github/scripts/github.sh list-issues '{"owner":"owner","repo":"repo","state":"open"}'
+# Read the canonical Tool contract without executing it
+bash SKILLS/github/scripts/github.sh read-issue
+# Execute with JSON matching that contract
 bash SKILLS/github/scripts/github.sh read-issue '{"owner":"owner","repo":"repo","issue_number":123}'
 ```
 
-Capabilities: `list-issues`, `read-issue`, `read-pull-request`, `list-issue-comments`, `list-pull-request-comments`, `comment-issue`.
-
-The script does not parse or transform arguments. Use the capability's canonical Tool schema when constructing the JSON object.
+The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `github`).

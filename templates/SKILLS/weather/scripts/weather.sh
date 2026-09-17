@@ -1,8 +1,12 @@
 #!/bin/sh
 set -eu
 
+if [ "$#" -eq 1 ]; then
+  exec tool-proxy describe "$1"
+fi
+
 if [ "$#" -ne 2 ]; then
-  echo "Usage: weather.sh <capability> '<JSON arguments>'" >&2
+  echo "Usage: weather.sh <capability> ['<JSON arguments>']" >&2
   exit 2
 fi
 

@@ -5,13 +5,22 @@ description: List, read, create, update, and delete Google Calendar events.
 
 # Calendar
 
-Pass the capability's JSON arguments unchanged:
+Capabilities and uses:
+
+- `list-calendars`: list calendars
+- `list-events`: list calendar events
+- `read-event`: read one event
+- `create-event`: create an event
+- `update-event`: update an event
+- `delete-event`: delete an event
+
+First retrieve only the capability you need, then follow its description (including safety requirements) and parameters when constructing raw JSON:
 
 ```bash
-bash SKILLS/calendar/scripts/calendar.sh list-events '{"maxResults":10}'
-bash SKILLS/calendar/scripts/calendar.sh create-event '{"summary":"event","start":"2026-09-23T10:00:00+09:00","end":"2026-09-23T18:00:00+09:00","attendees":["user@example.com"],"timeZone":"Asia/Tokyo"}'
+# Read the canonical Tool contract without executing it
+bash SKILLS/calendar/scripts/calendar.sh list-events
+# Execute with JSON matching that contract
+bash SKILLS/calendar/scripts/calendar.sh list-events '{}'
 ```
 
-Capabilities: `list-calendars`, `list-events`, `read-event`, `create-event`, `update-event`, `delete-event`.
-
-The script does not parse or transform arguments. Use the capability's canonical Tool schema when constructing the JSON object.
+The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `calendar`).

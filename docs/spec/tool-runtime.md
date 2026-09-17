@@ -13,24 +13,33 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 
 ## runの権限と提示
 
-利用可能capabilityはeffective `tools` のProxy対象と、effective `skills` の組込依存の和集合です。設定の継承・配列完全置換を解決してから求めます。Skill本文やworkspace内manifestは権限の情報源にしません。
+利用可能capabilityはeffective native `tools` のhost/runtime対象と、effective `toolSets` のtrusted bundleの和集合です。設定の継承・配列完全置換を解決してから求めます。bundleの正本はtrusted codeの [`TOOL_SETS`](../../src/tools/tool-sets.ts) です。`skills` は説明・workflowの公開だけを制御し、Skillの名前・内容・存在・hash・workspace内manifestは権限の情報源にしません。
 
-| Skill | 組込依存 |
+| toolSet | capabilities |
 | --- | --- |
 | web | agent-reach、tavily-search、arxiv-search、arxiv-survey、hackernews-search、github-recent-search、x-search |
 | github | list-issues、read-issue、read-pull-request、list-issue-comments、list-pull-request-comments、comment-issue |
 | mail | list-emails、read-email |
 | calendar | list-calendars、list-events、read-event、create-event、update-event、delete-event |
 | weather | get-current-weather、get-weather-forecast |
-| last30days | hackernews-search、github-recent-search、agent-reach |
 
-配置済みgroupとの互換性のため、旧`agent-reach` / `arxiv-search` / `arxiv-survey` mappingも維持します。新規設定では`web`を使います。
+`toolSets` は上表の名前を明示指定します。未知名や `"*"` は設定エラーです。未指定なら親を継承し、`[]` はbundle許可を解除します（native `tools` の権限は別です）。`skills: ["*"]` にも全選択の意味はありません。
 
-`skills` は明示したSkill名の配列だけを受け付けます。表の組込依存は明示したSkillごとに解決し、配置されているだけのSkillやSkill本文・frontmatterからauthorityを付与しません。promptへ載せるSkill一覧も明示指定され、実際にインストール済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
+`skills: ["github"], toolSets: []` だけではGitHub capabilityは許可されません。逆に `skills: [], toolSets: ["github"]` はcapabilityだけを許可し、Skill説明をpromptへ追加しません。promptへ載せるSkill一覧は明示指定された配置済みのものだけです。native schemaは `tools` で選択したものだけを提示し、`/skill` / `./command` の選択チェックも維持します。bashは自動付与しません。
 
-native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。Toolだけで選択されたcapabilityもCLIから利用できます。Skillだけの選択でも組込依存を使えます。
+native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使います。CLIにはhostから `TOOL_PROXY_URL` / `TOOL_PROXY_TOKEN` を渡します。native Toolだけで選択されたcapabilityもCLIから利用できます。Skillだけの選択ではcapabilityは増えません。
 
-`approvalRequiredTools` はeffective `tools`または上表のtrusted Skill依存に含まれるhost/runtime capabilityに指定できます。設定したapprovalはnative／Skill双方に適用され、表示・承認した実効引数をそのまま実行します。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
+`approvalRequiredTools` はeffective `tools`または上表のeffective `toolSets`に含まれるhost/runtime capabilityに指定できます。設定したapprovalはnative／Skill双方に適用され、表示・承認した実効引数をそのまま実行します。接続切断・run revokeはapproval待ちと実行中の処理を中断します。
+
+### Tool contractの段階的開示
+
+1. `SKILL.md` でcapability一覧と用途を確認します。
+2. `tool-proxy describe <capability>`（または `bash SKILLS/web/scripts/web.sh tavily-search`）で必要な1件だけのcontractを取得します。
+3. `tool-proxy <capability> '<JSON arguments>'`（または同じSkill scriptにJSONを追加）で実行します。
+
+describeは同じRPCへ `{ "operation": "describe", "capability": "..." }` を送り、`{ "result": { "name": "...", "description": "...", "parameters": { ... } } }` を返します。CLIのstdoutはこのcontract objectです。現在のrun tokenとallowed capabilityの検証は実行と共通で、未認可capabilityのschema/descriptionは返しません。認可後に `getCapabilityDefinition()` / `factory()` から既存 `AgentTool` のname・description・TypeBox parametersを取得し、別schemaは定義しません。descriptionの安全上の契約（削除前の確認など）も実行前に確認してください。
+
+describeはread-onlyで、approval・引数materialize・host executor実行・Tool Runtime起動を行いません。実行時のvalidation・approvalは従来どおり維持します。Skill scriptはcapability固有schemaやoption定義を持たず、raw JSONを無変換で渡します。
 
 ## コンテナと成果物の寿命
 
@@ -61,7 +70,7 @@ Cookie更新はhostの `pnpm reddit:refresh` または既存cronから単発main
 }
 ```
 
-RuntimeはSearchTimeline POST対応済みの`twitter-cli` commit `7c634e0d396b1e7af9f63315b414925fe4f29ae7`をGitHub archiveからSHA固定で導入し、argvで起動します。state fileの非root owner UID/GIDへRuntimeをdropしてから、値を子process環境へだけ渡します。Agent引数・結果、`docker run`の環境変数・argv、host logへcredentialやraw authenticated responseを載せません。ブラウザprofileはmountせず、自動Cookie抽出も使いません。認証失効、rate limit、CLI / upstream変更は空結果ではなく固定診断の失敗になります。利用するgroup / channel / cronのeffective `tools`へ`x-search`を明示し、Runtime imageとhostを同時に更新してください。
+RuntimeはSearchTimeline POST対応済みの`twitter-cli` commit `7c634e0d396b1e7af9f63315b414925fe4f29ae7`をGitHub archiveからSHA固定で導入し、argvで起動します。state fileの非root owner UID/GIDへRuntimeをdropしてから、値を子process環境へだけ渡します。Agent引数・結果、`docker run`の環境変数・argv、host logへcredentialやraw authenticated responseを載せません。ブラウザprofileはmountせず、自動Cookie抽出も使いません。認証失効、rate limit、CLI / upstream変更は空結果ではなく固定診断の失敗になります。利用するgroup / channel / cronのeffective `tools`へ`x-search`、または `toolSets`へ`web`を明示し、Runtime imageとhostを同時に更新してください。
 
 ## 導入・旧構成からの移行
 
@@ -82,6 +91,12 @@ Agent sandboxは必要なhost Proxy port以外へのdirect egressを拒否しま
 
 imageが無い場合はprebuilt imageの設定エラー、CLIが無い場合はRunner更新を要するエラーになります。旧HTTP Runtimeや直接Internet経路へfallbackしません。
 
+### skillsからtoolSetsへの権限移行
+
+旧 `skills -> capability` の暗黙grantは削除しました。旧 `agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` も例外ではありません。利用を継続するgroup/channel/cron/Botのtrusted configへ `toolSets: ["web"]` を明示するか、必要な個別capabilityをnative `tools` に指定してください。`web` は7 capabilityを許可するため、不要な権限まで許可したくない場合は個別 `tools` を使います。GitHub等もそれぞれ必要なbundleだけを明示します。Skill directoryを検査して権限を自動移行することはありません。
+
+例: `tools: ["bash"], skills: ["web"], toolSets: ["web"]`。制限された子layerでは必要に応じて `toolSets: []` も指定し、継承したbundleを解除してください。config変更後はhostを再起動し、describe対応CLIを含むRunner imageと配置済みSkill scriptも更新します。
+
 ### 配置済みSkillの更新
 
 `ensureGroupSkills` は既存Skillを自動上書きしません。新しい`web`、`github`、`mail`、`calendar`、`weather`を使うgroupへtemplateを追加します。旧`agent-reach`、`arxiv-search`、`arxiv-survey`から`web`へ移行する場合も、**カスタマイズとの差分を確認して**更新します。
@@ -92,7 +107,7 @@ skill=web
 diff -ru "groups/$group/SKILLS/$skill" "templates/SKILLS/$skill"
 ```
 
-ドメインSkillのscriptは`<capability> '<JSON arguments>'`だけを受け取り、JSONを変換せず共通CLIへ渡します。カスタマイズが無いことを確認したファイルだけtemplateからcopyし、Skillフォルダを無条件に削除・上書きしないでください。`last30days`はworkflow Skillとして独立して維持します。
+全ドメインSkillのscriptは`<capability>`でcontract取得、`<capability> '<JSON arguments>'`で実行し、JSONを変換せず共通CLIへ渡します。カスタマイズが無いことを確認したファイルだけtemplateからcopyし、Skillフォルダを無条件に削除・上書きしないでください。`last30days`はworkflow Skillとして独立して維持します。
 
 Financeを旧Skillから用途別Toolへ移行するgroupでは、`skills` から `finance` / `finance-setup` を外し、必要な8つの `finance-*` Toolを `tools` に追加します。`groups/<group>/SKILLS/finance` / `finance-setup` はテンプレート削除では自動削除されないため、独自変更が無いことを確認してから退役させてください。既存の `finance.db` は移動・再作成せずそのまま再利用します。
 

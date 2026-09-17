@@ -34,7 +34,9 @@ Agent sandbox
   → 外部API
 ```
 
-native ToolとSkill CLIは同じrun tokenを共有します。許可集合はeffective toolsと、trustedな組込Skill依存の和集合です。Skill本文から権限を取得せず、wildcardも組込依存だけへ展開します。
+native ToolとSkill CLIは同じrun tokenを共有します。許可集合はeffective native `tools` のhost/runtime capabilityと、trusted codeで定義したeffective `toolSets` の和集合です。`skills` は説明・workflowの公開だけで権限を付与せず、Skillの内容・存在・hashもauthority sourceにはしません。`toolSets` にwildcardはありません。
+
+`tool-proxy describe <capability>` は現在のrun tokenで認可済みのTool contract（既存AgentToolのname・description・TypeBox parameters）だけを返します。approval・host executor実行・Tool Runtime起動は行いません。
 
 run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、approval対象集合、trusted Discord bot/channel、revoke signalをsnapshotとして登録し、終了時にrevokeします。
 

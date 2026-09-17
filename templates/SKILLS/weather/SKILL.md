@@ -5,13 +5,18 @@ description: Get current weather and forecasts for a place.
 
 # Weather
 
-Pass the capability's JSON arguments unchanged:
+Capabilities and uses:
+
+- `get-current-weather`: get current weather for a place
+- `get-weather-forecast`: get a forecast for a place
+
+First retrieve only the capability you need, then follow its description (including safety requirements) and parameters when constructing raw JSON:
 
 ```bash
+# Read the canonical Tool contract without executing it
+bash SKILLS/weather/scripts/weather.sh get-current-weather
+# Execute with JSON matching that contract
 bash SKILLS/weather/scripts/weather.sh get-current-weather '{"location":"Tokyo"}'
-bash SKILLS/weather/scripts/weather.sh get-weather-forecast '{"location":"Tokyo","days":5}'
 ```
 
-Capabilities: `get-current-weather`, `get-weather-forecast`.
-
-The script does not parse or transform arguments. Use the capability's canonical Tool schema when constructing the JSON object.
+The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `weather`).

@@ -5,13 +5,18 @@ description: List and read Outlook email through the configured account.
 
 # Mail
 
-Pass the capability's JSON arguments unchanged:
+Capabilities and uses:
+
+- `list-emails`: list mailbox messages
+- `read-email`: read a message
+
+First retrieve only the capability you need, then follow its description (including safety requirements) and parameters when constructing raw JSON:
 
 ```bash
-bash SKILLS/mail/scripts/mail.sh list-emails '{"folder":"inbox","unreadOnly":true}'
-bash SKILLS/mail/scripts/mail.sh read-email '{"id":"EMAIL_ID"}'
+# Read the canonical Tool contract without executing it
+bash SKILLS/mail/scripts/mail.sh list-emails
+# Execute with JSON matching that contract
+bash SKILLS/mail/scripts/mail.sh list-emails '{}'
 ```
 
-Capabilities: `list-emails`, `read-email`.
-
-The script does not parse or transform arguments. Use the capability's canonical Tool schema when constructing the JSON object.
+The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `mail`).

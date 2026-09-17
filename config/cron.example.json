@@ -80,6 +80,7 @@
     "handler": "jobs/rss-dispatch.ts",
     "tools": ["bash"],
     "skills": ["web"],
+    "toolSets": ["web"],
     "settings": {
       "feeds": ["https://example.com/feed.xml"],
       "maxItemsPerRun": 10,
@@ -152,6 +153,7 @@
     "noReply": true,
     "tools": ["bash", "read"],
     "skills": ["x-saved", "web"],
+    "toolSets": ["web"],
     "mounts": [
       {
         "host": "data/x-saved",

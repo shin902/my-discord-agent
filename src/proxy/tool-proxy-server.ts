@@ -148,17 +148,19 @@ async function readBody(
   });
 }
 
-function isRequest(value: unknown): value is {
-  capability: string;
-  args: unknown;
-} {
+function isRequest(
+  value: unknown,
+): value is
+  | { capability: string; args: unknown }
+  | { capability: string; operation: "describe" } {
   return (
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
     Object.keys(value).length === 2 &&
     typeof (value as Record<string, unknown>).capability === "string" &&
-    Object.hasOwn(value, "args")
+    (Object.hasOwn(value, "args") ||
+      (value as Record<string, unknown>).operation === "describe")
   );
 }
 
@@ -267,6 +269,18 @@ async function executeRequest(
     sendJson(res, 403, {
       error: `Capability is not authorized: ${body.capability}`,
     });
+    return;
+  }
+  if ("operation" in body) {
+    const tool = capability.factory();
+    if (!tool) {
+      sendJson(res, 500, {
+        error: `Capability is unavailable: ${body.capability}`,
+      });
+      return;
+    }
+    const { name, description, parameters } = tool;
+    sendJson(res, 200, { result: { name, description, parameters } });
     return;
   }
   if (!capability.validateArgs(body.args)) {

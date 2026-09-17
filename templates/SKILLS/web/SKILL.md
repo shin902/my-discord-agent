@@ -5,14 +5,6 @@ description: Search the web, papers, GitHub activity, Hacker News, and X, or fet
 
 # Web
 
-Pass the capability's JSON arguments unchanged:
-
-```bash
-bash SKILLS/web/scripts/web.sh tavily-search '{"query":"Strix Halo ROCm","max_results":10}'
-bash SKILLS/web/scripts/web.sh agent-reach '{"url":"https://example.com"}'
-bash SKILLS/web/scripts/web.sh arxiv-search '{"query":"speculative decoding","max_results":20}'
-```
-
 Capabilities and uses:
 
 - `tavily-search`: general web search, current information, and fact checking
@@ -23,4 +15,13 @@ Capabilities and uses:
 - `github-recent-search`: recent public GitHub issues and pull requests
 - `x-search`: search X posts
 
-The script does not parse or transform arguments. Use the capability's canonical Tool schema when constructing the JSON object.
+First retrieve only the capability you need, then follow its description (including safety requirements) and parameters when constructing raw JSON:
+
+```bash
+# Read the canonical Tool contract without executing it
+bash SKILLS/web/scripts/web.sh tavily-search
+# Execute with JSON matching that contract
+bash SKILLS/web/scripts/web.sh tavily-search '{"query":"Strix Halo ROCm"}'
+```
+
+The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `web`).

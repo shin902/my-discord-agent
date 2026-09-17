@@ -1,7 +1,7 @@
 import { proxyCapabilityNames } from "./registry.js";
 
-/** Built-in, reviewed dependencies. Skill files describe usage, never authority. */
-const SKILL_CAPABILITIES: Readonly<Record<string, readonly string[]>> = {
+/** Trusted capability bundles. Skill selection and files never grant authority. */
+export const TOOL_SETS: Readonly<Record<string, readonly string[]>> = {
   web: [
     "agent-reach",
     "tavily-search",
@@ -29,26 +29,21 @@ const SKILL_CAPABILITIES: Readonly<Record<string, readonly string[]>> = {
     "delete-event",
   ],
   weather: ["get-current-weather", "get-weather-forecast"],
-  // Existing deployed groups are not overwritten when templates change.
-  "agent-reach": ["agent-reach"],
-  "arxiv-search": ["arxiv-search"],
-  "arxiv-survey": ["arxiv-survey"],
-  last30days: ["hackernews-search", "github-recent-search", "agent-reach"],
 };
 
 export function runCapabilityNames(config: {
   tools?: readonly string[];
-  skills?: readonly string[];
+  toolSets?: readonly string[];
 }): string[] {
-  const skills = config.skills ?? [];
   return [
     ...new Set([
       ...proxyCapabilityNames([...(config.tools ?? [])]),
-      ...skills.flatMap((skill) =>
-        Object.hasOwn(SKILL_CAPABILITIES, skill)
-          ? SKILL_CAPABILITIES[skill]
-          : [],
-      ),
+      ...(config.toolSets ?? []).flatMap((name) => {
+        if (!Object.hasOwn(TOOL_SETS, name)) {
+          throw new Error(`Unknown toolSet: ${name}`);
+        }
+        return TOOL_SETS[name];
+      }),
     ]),
   ];
 }

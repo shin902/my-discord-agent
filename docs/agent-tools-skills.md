@@ -1,6 +1,6 @@
 # エージェントのツールとスキル
 
-エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skillsは指定時に完全置換する。context-created toolの `bot` と `subagent` は、正確な名前をtoolsへ明示的に追加したAgentだけが利用できます。
+エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skills/toolSetsは指定時にフィールド単位で完全置換する。context-created toolの `bot` と `subagent` は、正確な名前をtoolsへ明示的に追加したAgentだけが利用できます。
 
 ## ツール
 
@@ -57,13 +57,11 @@ Registryから解決したsandbox-local Toolは、executorへ入る直前に広�
 
 ### Discord tool approval（opt-in）
 
-`approvalRequiredTools` は、effective `tools`またはtrustedな組込Skill mappingに含まれる既知host/runtime capabilityからユーザーが選んだものだけに追加確認を挟む設定です。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・effective `tools`とtrusted Skill依存の外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。
-
-`approvalRequiredTools`には、effective `tools`またはtrustedな組込Skill mappingで許可されたhost/runtime capabilityを指定できます。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
+`approvalRequiredTools` は、effective native `tools`とeffective `toolSets`の和集合に含まれる既知host/runtime capabilityからユーザーが選んだものだけに追加確認を挟む設定です。`skills` はvalidationにもauthorityにも関与しません。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおりapprovalなしです。子layerで未指定なら親の値を継承し、`[]` は明示解除です。既存mutation toolを自動的に必須化しません。未知名・許可集合の外・sandbox内tool（read/bash/bot/subagent等）はconfig errorです。設定済みapprovalはnative／Skill CLIのどちらから呼んでも同じcapabilityに適用されます。
 
 validate後にmaterializeされたcanonical argsを、run開始時に固定されたtrusted Discord bot/channelへ表示します。長いJSONは添付し、approval専用TTLは設けません。requesting runの生存中だけ待機し、first non-bot click wins。Discordのupdateだけ短いtimeoutを設け、update failureはfail closedします。Approve後にrun authorityを再確認し、表示した同じmaterialized invocationを実行します。
 
-approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
+approval UIは認可機構やpublic / multi-user環境の安全境界ではありません。安全性は危険なmutation capabilityを `tools` / `toolSets` に付与しないことで担保します。`approvalUserIds`、mandatory registry set、tool固有のpolicy/summary/target、approval TTL、grant tokenは提供しません。
 
 **注意:** `webfetch` は削除済み。URLの内容取得には`agent-reach`ツールを使う。
 
@@ -96,15 +94,25 @@ approval UIは認可機構やpublic / multi-user環境の安全境界ではあ�
 
 `groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
-`tools` は選択したnative schemaを、`skills` は明示した配置済みSkillの説明・場所をpromptへ提示します。Tool Proxyの実行権限はeffective toolsと明示したtrustedな組込Skill依存の和集合で、同じrun tokenをnative／CLIで共有します。配置されているだけのSkillはpromptにもauthorityにも影響しません。
+`tools` は選択したnative schemaを、`skills` は明示した配置済みSkillの説明・場所をpromptへ提示します。`skills` はcapabilityを一切追加しません。Tool Proxyの実行権限はeffective native toolsのhost/runtime capabilityと、trusted codeで定義したeffective `toolSets` の和集合で、同じrun tokenをnative／CLIで共有します。Skillの名前・内容・hash・存在はauthority sourceではありません。`skills: [], toolSets: ["github"]` ならcapabilityだけを許可し、Skill説明は追加しません。`skills: ["github"], toolSets: []` だけではGitHub capabilityは使えません。
 
-Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／redirectionを維持します。bashは自動付与しません。Toolだけを選択した場合もそのcapabilityをCLIから呼べ、Skill単独利用のためにnative schemaを追加する必要もありません。ドメインSkillのscriptはcapability名とJSON引数を変換せずTool Proxyへ渡し、既存Tool schemaを入力contractの正本とします。組込依存と実行境界は [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
+Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／redirectionを維持します。bashは自動付与しません。Toolだけを選択した場合もそのcapabilityをCLIから呼べ、Skill単独利用のためにnative schemaを追加する必要もありません。ドメインSkillのscriptはcapability名とJSON引数を変換せずTool Proxyへ渡し、既存Tool schemaを入力contractの正本とします。trusted bundleと実行境界は [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
 
 ### ドメインSkill
 
-通常のAgentでは大量のnative schemaを常駐させず、`bash`と必要なSkillを有効にします。
+通常のAgentでは大量のnative schemaを常駐させず、`bash`と必要なSkill・toolSetを別々に指定します。
 
-| Skill | capabilities |
+```json
+{
+  "tools": ["bash", "read"],
+  "skills": ["web", "calendar"],
+  "toolSets": ["web", "calendar"]
+}
+```
+
+`toolSets` は以下のtrusted bundle名だけを受け付けます。未知名と `"*"` は設定エラーです。`skills: ["*"]` も全選択として扱いません。
+
+| Skill / toolSet | capabilities |
 |---|---|
 | `web` | `agent-reach`, `tavily-search`, `arxiv-search`, `arxiv-survey`, `hackernews-search`, `github-recent-search`, `x-search` |
 | `github` | `list-issues`, `read-issue`, `read-pull-request`, `list-issue-comments`, `list-pull-request-comments`, `comment-issue` |
@@ -112,14 +120,18 @@ Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／r
 | `calendar` | `list-calendars`, `list-events`, `read-event`, `create-event`, `update-event`, `delete-event` |
 | `weather` | `get-current-weather`, `get-weather-forecast` |
 
-各scriptは次の共通形式です。JSONはparse・再構成せず、そのまま`tool-proxy`へ渡します。
+全scriptは同じ形式で、capability名だけならcontractを取得、JSONを追加すると実行します。まずSkillで用途を確認し、必要な1件のcontractだけを取得してから、そのdescription（安全上の操作契約を含む）とparametersに従ってJSONを作ります。JSONはparse・再構成せず、そのまま`tool-proxy`へ渡します。
 
 ```bash
-bash SKILLS/web/scripts/web.sh tavily-search '{"query":"latest AI news","max_results":5}'
-bash SKILLS/github/scripts/github.sh read-issue '{"owner":"owner","repo":"repo","issue_number":123}'
+bash SKILLS/web/scripts/web.sh tavily-search
+bash SKILLS/web/scripts/web.sh tavily-search '{"query":"latest AI news"}'
+# 同等の共通CLI
+tool-proxy describe delete-event
 ```
 
-`last30days`は複数capabilityを組み合わせるworkflow Skillとして独立したままです。bashを許可しないAgentでは、必要なcapabilityを従来どおりnative Toolとして設定できます。
+describeは現在のrun tokenで認可済みのcapabilityだけに対して、既存AgentToolの `name` / `description` / TypeBox `parameters` を返します。approval・host executor・Tool Runtimeを起動しません。schemaやCLI flagsをSkill側で再定義しません。
+
+**移行:** 旧Skill名からの暗黙grantは削除しました。既存の `agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` も、必要なら `toolSets: ["web"]` または個別のnative `tools` を明示します。`last30days`は複数capabilityを組み合わせるworkflow Skillとして独立したままです。bashを許可しないAgentでは、必要なcapabilityを従来どおりnative Toolとして設定できます。
 
 ### スキルの明示的実行（`./command`）
 

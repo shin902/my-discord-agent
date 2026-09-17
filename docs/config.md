@@ -23,7 +23,7 @@ groups/{name}/
   AGENTS.md                # グループのシステムプロンプト
 ```
 
-AgentConfig（`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → channel`、cronでは配送先のchannel/thread設定を継承せず `group → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
+AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → channel`、cronでは配送先のchannel/thread設定を継承せず `group → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
 
 | ファイル | 必須 | トップレベル形式 | 内容 |
 |---|---|---|---|
@@ -153,6 +153,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["bash", "bot"],
     "skills": ["web"],
+    "toolSets": ["web"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [
@@ -163,6 +164,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
         "requiredMention": true,
         "tools": ["read"],
         "skills": [],
+        "toolSets": [],
         "mounts": []
       }
     ]
@@ -172,6 +174,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["bash", "read", "write", "edit"],
     "skills": ["web", "session-logs"],
+    "toolSets": ["web"],
     "allowMention": true,
     "toolLogArgs": true,
     "channels": [
@@ -192,14 +195,15 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`appendUserOnly` 無効時に `true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |
-| `approvalRequiredTools` | — | AgentConfig。effective `tools` に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・`tools` 外・sandbox内toolは設定エラー。子layerで指定した配列は完全置換 |
+| `approvalRequiredTools` | — | AgentConfig。effective native `tools` とeffective `toolSets` の和集合に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・許可集合外・sandbox内toolは設定エラー。`skills` はこのvalidationに関与しない。子layerで指定した配列は完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
-| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` からロードするスキル名の配列。未指定または `[]` はスキルなし。channelで指定するとgroupの指定を完全置換 |
+| `skills` | — | AgentConfig。`groups/{name}/SKILLS/` から説明・workflowを公開するスキル名の配列。capabilityは付与しない。親を継承後も未指定、または `[]` ならスキルなし。channelで指定するとgroupの指定を完全置換 |
+| `toolSets` | — | AgentConfig。trusted capability bundle名の配列。`web` / `github` / `mail` / `calendar` / `weather`。native `tools` のhost/runtime capabilityとの和集合をrun authorityにする。Skill説明やnative schemaは追加しない。未指定なら親を継承、`[]` はbundle許可を解除、指定配列は完全置換。未知名と `"*"` は設定エラー |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 | `contextFiles` | — | AgentConfig。workspace相対ファイルを配列順にsession初回のuser roleへ注入する。各要素は `{ "path": string, "maxChars": 正の整数 | "*" }`。`"*"` は無制限。absolute pathと`..`は禁止し、不存在ファイルは無視する。子layerの配列は完全置換し、`[]`で無効化 |
 
-`sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
+`sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
 
 ### 起動時Discord履歴バックフィル
 
@@ -210,6 +214,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 ライブ受信とバックフィルの両方でDiscordメッセージIDを冪等キーに使うため、起動処理と通常イベントが競合しても二重投入されない。バックフィルではbot/Webhookメッセージを対象外とし、過去RSSの再処理は行わない。
 
 `shared` は親チャンネル、`thread` は既存スレッド、`auto-thread` は親メッセージごとのスレッド作成・再利用を対象にする。スレッド作成にはDiscord側のスレッド作成権限、履歴取得にはメッセージ履歴の閲覧権限が必要。
+
+`skills` と権限設定 `toolSets` は独立です。Skillの内容・存在・hashをauthority sourceにしません。旧Skill名からの暗黙grantは削除したため、Web系Skill（旧 `agent-reach` / arXiv / `last30days` を含む）の継続利用には `toolSets: ["web"]` または必要な個別native `tools` を明示してください。bundle内容とdescribe操作は [Tool Runtime仕様](spec/tool-runtime.md#runの権限と提示) を参照してください。
 
 `skills` は安全側に倒し、キー自体を省略した場合もスキルはロードしない。`groups/{name}/SKILLS/` に配置されているだけのスキルは公開されず、利用するスキル名を配列で明示する。
 
@@ -267,7 +273,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 
-`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、groupの既定値をそのジョブの実行時だけ上書きできる。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfigは継承しない。`skills` はスキル名の配列または `[]` を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
+`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、groupの既定値をそのジョブの実行時だけ上書きできる。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfigは継承しない。`skills` はスキル名の配列または `[]` を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
 
 ### jobs/mail.ts
 
@@ -305,6 +311,7 @@ RSS処理は収集とエージェント投入を分離する。`rss-collect.ts` 
     "handler": "jobs/rss-dispatch.ts",
     "tools": ["bash"],
     "skills": ["web"],
+    "toolSets": ["web"],
     "settings": {
       "feeds": ["https://example.com/feed.xml"],
       "maxItemsPerRun": 10,
@@ -401,7 +408,7 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 
 ## config/bots.json
 
-Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group`、caller-facing の空でない `description`、Bot本人向けの空でない `instructions`、任意の AgentConfig（`model` / `tools` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
+Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group`、caller-facing の空でない `description`、Bot本人向けの空でない `instructions`、任意の AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
 
 ```json
 {
@@ -430,7 +437,7 @@ Botがない場合は `(none)` と表示します。別groupのBot、`instructio
 
 catalogはtool surface構築時に現在ロード済みのRegistryから生成し、`description` もcatalog全体もTask Sessionのsystem prompt snapshotには保存しません。Registry / group設定のファイル変更は既存どおり再起動が必要で、再起動後のtool surfaceに反映されます。
 
-`instructions` はTask Sessionのbase role promptであり、Main/groupのrole promptへの追記ではありません。Discord `/bot run`・agent-facing `bot run` の新規Task作成時に、queue/direct admissionより先にgeneric `system-prompt-snapshot` として `sessions.sqlite` へ固定します。profile変更後も同じTaskのresumeは保存済みinstructionsを使い、新規Taskだけが変更後のinstructionsを使います。`model` / `tools` / `skills` / `mounts` はsnapshotせず、現在のAgentConfig解決を維持します。
+`instructions` はTask Sessionのbase role promptであり、Main/groupのrole promptへの追記ではありません。Discord `/bot run`・agent-facing `bot run` の新規Task作成時に、queue/direct admissionより先にgeneric `system-prompt-snapshot` として `sessions.sqlite` へ固定します。profile変更後も同じTaskのresumeは保存済みinstructionsを使い、新規Taskだけが変更後のinstructionsを使います。`model` / `tools` / `toolSets` / `skills` / `mounts` はsnapshotせず、現在のAgentConfig解決を維持します。
 
 legacy Taskの保存済みsnapshotはgroup/Main roleであっても書き換えず使用し、現在のBot instructionsも追記しません。snapshotがないTaskは実行を拒否します。新しいBot roleで実行するには新規runを使ってください。詳細は [Bot Task Sessionのrole source](spec/initial-context-injection.md#bot-task-sessionのrole-source) を参照してください。
 

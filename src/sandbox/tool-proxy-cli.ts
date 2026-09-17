@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { requestToolProxy } from "../tools/tool-proxy.js";
+import { describeToolProxy, requestToolProxy } from "../tools/tool-proxy.js";
 
 /** Generic capability transport. It neither selects executors nor issues authority. */
 async function main(args = process.argv.slice(2)): Promise<void> {
   try {
     if (args.length !== 2)
-      throw new Error("Usage: tool-proxy <capability> <JSON arguments>");
+      throw new Error(
+        "Usage: tool-proxy describe <capability> | tool-proxy <capability> <JSON arguments>",
+      );
     const url = process.env.TOOL_PROXY_URL;
     const token = process.env.TOOL_PROXY_TOKEN;
     if (!url || !token)
@@ -23,6 +25,11 @@ async function main(args = process.argv.slice(2)): Promise<void> {
       endpoint.hash
     )
       throw new Error("Invalid Tool Proxy endpoint");
+    if (args[0] === "describe") {
+      const contract = await describeToolProxy(args[1], { url, token });
+      process.stdout.write(`${JSON.stringify(contract)}\n`);
+      return;
+    }
     const result = await requestToolProxy(args[0], JSON.parse(args[1]), {
       url,
       token,

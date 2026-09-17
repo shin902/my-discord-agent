@@ -7,6 +7,7 @@
     },
     "tools": ["bash", "bot"],
     "skills": ["web"],
+    "toolSets": ["web"],
     "approvalRequiredTools": ["tavily-search"],
     "contextFiles": [
       { "path": "MEMORY.md", "maxChars": 2000 },
@@ -29,6 +30,7 @@
         "approvalRequiredTools": [],
         "contextFiles": [],
         "skills": [],
+        "toolSets": [],
         "mounts": []
       }
     ],
