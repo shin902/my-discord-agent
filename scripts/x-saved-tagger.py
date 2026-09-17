@@ -133,13 +133,13 @@ def classify(db_path, aliases_raw, cache, device="cpu", limit=20, thresholds=Non
             FROM x_items i LEFT JOIN x_meta m ON m.key = ? || i.tweet_id
             WHERE (m.value IS NULL OR m.value != 'done')
               AND EXISTS (SELECT 1 FROM x_media WHERE tweet_id=i.tweet_id AND kind='image')
+              AND NOT EXISTS (SELECT 1 FROM x_media
+                WHERE tweet_id=i.tweet_id AND kind='image' AND status != 'done')
             ORDER BY random() LIMIT ?""", (PREFIX, limit)).fetchall()
         for tweet in tweets:
             tweet_id = tweet["tweet_id"]
-            media = db.execute("""SELECT status, local_path FROM x_media
+            media = db.execute("""SELECT local_path FROM x_media
                 WHERE tweet_id=? AND kind='image' ORDER BY position""", (tweet_id,)).fetchall()
-            if any(image["status"] != "done" for image in media):
-                continue  # Wait for every image before inference and completion.
             candidates = {}
             try:
                 for image in media:

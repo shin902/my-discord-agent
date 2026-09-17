@@ -107,6 +107,24 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT value FROM x_meta").fetchone()[0], "done")
         self.assertEqual(self.labels(), {("character", "gotoh_hitori"), ("series", "bocchi_the_rock")})
 
+    def test_filters_unready_tweets_before_limit(self):
+        self.seed("pending", status="pending", positions=(0, 1))
+        self.seed("ready")
+        real_connect = sqlite3.connect
+
+        def connect(*args, **kwargs):
+            connection = real_connect(*args, **kwargs)
+            connection.create_function("random", 0, lambda: 0)
+            return connection
+
+        with patch.object(tagger.sqlite3, "connect", side_effect=connect):
+            self.assertEqual(self.run_batch(limit=1)["processed"], 1)
+        self.assertEqual(self.loader.call_count, 1)
+        self.assertEqual(self.labels("pending"), set())
+        self.assertEqual(self.db.execute(
+            "SELECT value FROM x_meta WHERE key='pixai-v1:ready'"
+        ).fetchone(), ("done",))
+
     def test_waits_for_all_downloads_and_reprocesses_only_after_marker_removal(self):
         self.seed(positions=(0, 1))
         with self.db:
