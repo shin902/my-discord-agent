@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,6 +39,27 @@ describe("x-search Runtime state", () => {
       { root },
     );
     expect(arxivArgs.join(" ")).not.toContain("twitter-cookies");
+  });
+
+  it("mounts only the persistent profile and isolated output for maintenance", async () => {
+    root = await mkdtemp(join(tmpdir(), "x-maintenance-runtime-"));
+    const profile = join(root, "data/x-browser-profile");
+    const output = join(root, "data/output");
+    await mkdir(profile, { recursive: true });
+    await mkdir(output);
+
+    const args = await buildToolRuntimeArgs(
+      { maintenance: "x-cookie-refresh" },
+      "x-refresh-fixture",
+      { root, xCookieOutputDir: output },
+    );
+    expect(args).toEqual(
+      expect.arrayContaining([
+        `type=bind,src=${profile},dst=/var/lib/twitter/profile`,
+        `type=bind,src=${output},dst=/var/lib/twitter/output`,
+      ]),
+    );
+    expect(args.join(" ")).not.toContain("data/twitter-cookies.json");
   });
 
   it("fails closed when state is missing", async () => {
