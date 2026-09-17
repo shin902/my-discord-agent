@@ -19,9 +19,7 @@ describe("registerHandlers ready lifecycle", () => {
 
     const initialReady = client.once.mock.calls.find(
       ([event]) => event === Events.ClientReady,
-    )?.[1] as
-      | ((client: { user: { tag: string } }) => void)
-      | undefined;
+    )?.[1] as ((client: { user: { tag: string } }) => void) | undefined;
     if (!initialReady)
       throw new Error("ClientReady once handler was not registered");
 
@@ -30,9 +28,7 @@ describe("registerHandlers ready lifecycle", () => {
 
     const reconnectReady = client.on.mock.calls.find(
       ([event]) => event === Events.ClientReady,
-    )?.[1] as
-      | ((client: { user: { tag: string } }) => void)
-      | undefined;
+    )?.[1] as ((client: { user: { tag: string } }) => void) | undefined;
     if (!reconnectReady)
       throw new Error("ClientReady reconnect handler was not registered");
 
