@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
+import { XSavedThreadSchema } from "./enrichment.js";
 
 export const GALLERY_PAGE_SIZE = 60;
 export const ITEM_STATUSES = [
@@ -165,7 +166,19 @@ export function getGalleryItem(db: Database.Database, tweetId: string) {
       `SELECT ${MEDIA_SELECT} FROM x_media m WHERE m.tweet_id = ? ORDER BY m.position, m.kind`,
     )
     .all(tweetId) as GalleryMedia[];
-  return { ...withLabels(row), media };
+  const enrichment = db
+    .prepare(
+      "SELECT document_json FROM x_enrichment WHERE tweet_id = ? AND resolved_at IS NOT NULL",
+    )
+    .get(tweetId) as { document_json: string | null } | undefined;
+  const thread = XSavedThreadSchema.safeParse(
+    JSON.parse(enrichment?.document_json ?? "null")?.thread,
+  );
+  return {
+    ...withLabels(row),
+    media,
+    thread: thread.success ? thread.data : [],
+  };
 }
 
 export function updateGalleryItem(

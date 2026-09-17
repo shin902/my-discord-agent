@@ -53,10 +53,11 @@ const Tombstone = z.object({
 const QuotedStatus = Status.extend({
   quote: z.union([Status, Tombstone]).nullish(),
 });
+export const XSavedThreadSchema = z.array(z.union([QuotedStatus, Tombstone]));
 const ResponseSchema = z.object({
   code: z.literal(200),
   status: QuotedStatus,
-  thread: z.array(z.union([QuotedStatus, Tombstone])).nullable(),
+  thread: XSavedThreadSchema.nullable(),
 });
 
 function snapshot(status: z.infer<typeof QuotedStatus>) {
