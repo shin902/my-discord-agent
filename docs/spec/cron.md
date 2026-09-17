@@ -2,7 +2,7 @@
 
 ## 概要
 
-定期実行ジョブの基盤。1分ごとに有効なジョブをチェックし、条件を満たせばエージェントへ投げる。
+定期実行ジョブの基盤。通常ジョブは1分ごとに有効なジョブをチェックし、条件を満たせばエージェントへ投げる。`schedule: "@startup"` だけは例外で、Host startup sequenceの一工程として起動時復旧後に1回だけ既存runtime queueへ投入する。
 
 ---
 
@@ -64,7 +64,7 @@ data/cron/
 | フィールド | 必須 | 型 | 説明 |
 |-----------|------|-----|------|
 | `id` | ✓ | string | ジョブID（一意） |
-| `schedule` | ✓ | string | cron式 `"0 9 * * *"`、インターバル `"30m"` `"1h"`、または起動時に1回実行するprompt job専用 `"@startup"` |
+| `schedule` | ✓ | string | cron式 `"0 9 * * *"`、インターバル `"30m"` `"1h"`、またはHost起動時に1回投入するprompt job専用 `"@startup"` |
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
@@ -98,7 +98,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 
 ### deliveryMode / sessionMode
 
-投稿方法とセッションID戦略は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、cron tick はadmission後にハンドラー完了やキューへの追加を待たず返る。
+投稿方法とセッションID戦略は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、通常cron tickはadmission後にハンドラー完了やキューへの追加を待たず返る。`@startup` はtickではなくHost startup sequenceから同じenqueue経路を使う。
 
 | フィールド | 値 | 動作 |
 |---|---|---|
@@ -146,7 +146,19 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 - **cron式**: `"0 9 * * *"` — 分・時・日・月・曜日。標準的な cron 記法
 - **インターバル**: `"30m"` `"1h"` `"2h"` — 起動からの経過時間ベース
-- **起動時**: `"@startup"` — 宣言型prompt job専用。Discord clientがreadyになり、起動時backfillが完了した後に、1プロセス起動につき1回だけ実行する。通常tickでは実行せず、永続的な実行済みstateは持たない
+- **起動時**: `"@startup"` — 宣言型prompt job専用。Discord loginと起動時backfillが完了した後、通常poller開始前のHost startup sequenceで既存runtime queueへ1回だけ投入する。通常tickでは実行せず、永続的な実行済みstateは持たない
+
+`@startup` はDiscord `ClientReady` eventそのものをtriggerにしない。各Botごとのready listener、per-job readiness state、reconnect時の再scan、startup専用retry stateは持たず、Host startup sequenceの順序で一度だけ処理する。queueへのenqueue自体が失敗した場合はstartup failureとして扱い、startup側に独自の再試行状態機械を追加しない。
+
+起動順序の正本:
+
+```text
+Host startup
+  -> Discord clients login
+  -> startup Discord backfill completes
+  -> enqueue @startup prompt jobs
+  -> start normal poller / delivery / cron operation
+```
 
 **重複実行防止**: `data/cron/state.json` に各ジョブの `lastRun` を記録（`@startup`を除く）。
 
