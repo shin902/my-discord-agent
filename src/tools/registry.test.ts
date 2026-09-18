@@ -294,6 +294,10 @@ describe("resolveTools", () => {
       executor: "runtime",
       timeoutMs: 30_000,
     });
+    expect(getCapabilityDefinition("list-events")).toMatchObject({
+      executor: "host",
+      timeoutMs: 120_000,
+    });
     expect(getCapabilityDefinition("get-current-weather")).toMatchObject({
       tool: "get-current-weather",
       executor: "host",

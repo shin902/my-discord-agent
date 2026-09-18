@@ -296,6 +296,7 @@ describe("Tool Proxy RPC", () => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
         expect.stringContaining("name=%E6%9D%B1%E4%BA%AC"),
+        { signal: expect.any(AbortSignal) },
       );
     } finally {
       config.revoke();
@@ -669,6 +670,7 @@ describe("Tool Proxy RPC", () => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining(`forecast_days=${clampedDays}`),
+        { signal: expect.any(AbortSignal) },
       );
     } finally {
       config.revoke();

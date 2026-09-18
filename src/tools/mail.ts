@@ -4,8 +4,11 @@ import { hostFetch } from "./host-fetch.js";
 
 const MAX_BODY_CHARS = 8000;
 
-async function graphFetch(path: string): Promise<unknown> {
-  const res = await hostFetch("graph", path);
+async function graphFetch(
+  path: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const res = await hostFetch("graph", path, {}, signal);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Graph API エラー ${res.status}: ${text.slice(0, 200)}`);
@@ -13,12 +16,21 @@ async function graphFetch(path: string): Promise<unknown> {
   return res.json();
 }
 
-async function graphPatch(path: string, body: unknown): Promise<void> {
-  const res = await hostFetch("graph", path, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+async function graphPatch(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await hostFetch(
+    "graph",
+    path,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    signal,
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
@@ -57,6 +69,7 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
   execute: async (
     _toolCallId,
     { limit = 10, folder = "inbox", unreadOnly = false },
+    signal,
   ) => {
     if (!/^[a-zA-Z0-9_-]+$/.test(folder)) {
       throw new Error(`無効なフォルダ名: ${folder}`);
@@ -66,6 +79,7 @@ export const listEmailsTool: AgentTool<typeof listEmailsParameters> = {
     const filterParam = unreadOnly ? "&$filter=isRead eq false" : "";
     const data = (await graphFetch(
       `/me/mailFolders/${folder}/messages?$top=${top}&$select=${select}&$orderby=receivedDateTime desc${filterParam}`,
+      signal,
     )) as { value: Array<Record<string, unknown>> };
 
     const lines: string[] = [`## メール一覧（${folder}）`, ""];
@@ -113,17 +127,20 @@ export const readEmailTool: AgentTool<typeof readEmailParameters> = {
   description:
     "Read the full content of an email using an ID returned by list-emails. Marks the email as read by default.",
   parameters: readEmailParameters,
-  execute: async (_toolCallId, { id, markAsRead = true }) => {
+  execute: async (_toolCallId, { id, markAsRead = true }, signal) => {
     const select =
       "id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,isRead";
     const msg = (await graphFetch(
       `/me/messages/${encodeURIComponent(id)}?$select=${select}`,
+      signal,
     )) as Record<string, unknown>;
 
     if (markAsRead && msg.isRead === false) {
-      await graphPatch(`/me/messages/${encodeURIComponent(id)}`, {
-        isRead: true,
-      });
+      await graphPatch(
+        `/me/messages/${encodeURIComponent(id)}`,
+        { isRead: true },
+        signal,
+      );
     }
 
     const from = (

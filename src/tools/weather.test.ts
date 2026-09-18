@@ -56,17 +56,22 @@ describe("get-current-weather", () => {
       });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await getCurrentWeatherTool.execute("id", {
-      location: "東京",
-    });
+    const signal = new AbortController().signal;
+    const result = await getCurrentWeatherTool.execute(
+      "id",
+      { location: "東京" },
+      signal,
+    );
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining("geocoding-api.open-meteo.com"),
+      { signal },
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining("api.open-meteo.com/v1/forecast"),
+      { signal },
     );
 
     const text = firstText(result);
