@@ -13,10 +13,11 @@ RuntimeにHTTP入口・待受port・service tokenはありません。Credential
 
 ## runの権限と提示
 
-利用可能capabilityはeffective native `tools` のhost/runtime対象と、effective `toolSets` のtrusted bundleの和集合です。設定の継承・配列完全置換を解決してから求めます。bundleの正本はtrusted codeの [`TOOL_SETS`](../../src/tools/tool-sets.ts) です。`skills` は説明・workflowの公開だけを制御し、Skillの名前・内容・存在・hash・workspace内manifestは権限の情報源にしません。
+利用可能capabilityはeffective native `tools` のhost/runtime対象と、effective `toolSets` のtrusted permission setの和集合です。設定の継承・配列完全置換を解決してから求めます。bundleの正本はtrusted codeの [`TOOL_SETS`](../../src/tools/tool-sets.ts) です。`skills` は説明・workflowの公開だけを制御し、Skillの名前・内容・存在・hash・workspace内manifestは権限の情報源にしません。
 
 | toolSet | capabilities |
 | --- | --- |
+| agent-reach | agent-reach |
 | web | agent-reach、tavily-search、arxiv-search、arxiv-survey、hackernews-search、github-recent-search、x-search |
 | github | list-issues、read-issue、read-pull-request、list-issue-comments、list-pull-request-comments、comment-issue |
 | mail | list-emails、read-email |
@@ -93,7 +94,7 @@ imageが無い場合はprebuilt imageの設定エラー、CLIが無い場合はR
 
 ### skillsからtoolSetsへの権限移行
 
-旧 `skills -> capability` の暗黙grantは削除しました。旧 `agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` も例外ではありません。利用を継続するgroup/channel/cron/Botのtrusted configへ `toolSets: ["web"]` を明示するか、必要な個別capabilityをnative `tools` に指定してください。`web` は7 capabilityを許可するため、不要な権限まで許可したくない場合は個別 `tools` を使います。GitHub等もそれぞれ必要なbundleだけを明示します。Skill directoryを検査して権限を自動移行することはありません。
+旧 `skills -> capability` の暗黙grantは削除しました。`agent-reach` Skillを利用するgroup/channel/cron/Botは、trusted configへ `toolSets: ["agent-reach"]` を明示するとagent-reach capabilityだけを許可できます。その他のWeb系Skillは `toolSets: ["web"]` または必要な個別capabilityをnative `tools` に指定してください。`web` は7 capabilityを許可するため、不要な権限まで許可したくない場合は個別 `tools` を使います。GitHub等もそれぞれ必要なbundleだけを明示します。Skill directoryを検査して権限を自動移行することはありません。
 
 例: `tools: ["bash"], skills: ["web"], toolSets: ["web"]`。制限された子layerでは必要に応じて `toolSets: []` も指定し、継承したbundleを解除してください。config変更後はhostを再起動し、describe対応CLIを含むRunner imageと配置済みSkill scriptも更新します。
 

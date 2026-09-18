@@ -151,9 +151,9 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   {
     "name": "chat",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
-    "tools": ["bash", "bot"],
-    "skills": ["web"],
-    "toolSets": ["web"],
+    "tools": ["bash", "tavily-search", "bot"],
+    "skills": ["agent-reach"],
+    "toolSets": ["agent-reach"],
     "allowMention": false,
     "toolLogArgs": true,
     "channels": [
@@ -173,8 +173,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "name": "thread",
     "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
     "tools": ["bash", "read", "write", "edit"],
-    "skills": ["web", "session-logs"],
-    "toolSets": ["web"],
+    "skills": ["agent-reach", "session-logs"],
+    "toolSets": ["agent-reach"],
     "allowMention": true,
     "toolLogArgs": true,
     "channels": [
@@ -199,7 +199,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |
 | `toolLogArgs` | — | ツール実行ログに引数を含めるか |
 | `skills` | — | AgentConfig。`groups/{name}/SKILLS/` から説明・workflowを公開するスキル名の配列。capabilityは付与しない。親を継承後も未指定、または `[]` ならスキルなし。channelで指定するとgroupの指定を完全置換 |
-| `toolSets` | — | AgentConfig。trusted capability bundle名の配列。`web` / `github` / `mail` / `calendar` / `weather`。native `tools` のhost/runtime capabilityとの和集合をrun authorityにする。Skill説明やnative schemaは追加しない。未指定なら親を継承、`[]` はbundle許可を解除、指定配列は完全置換。未知名と `"*"` は設定エラー |
+| `toolSets` | — | AgentConfig。trusted capability bundle名の配列。`agent-reach` / `web` / `github` / `mail` / `calendar` / `weather`。native `tools` のhost/runtime capabilityとの和集合をrun authorityにする。Skill説明やnative schemaは追加しない。未指定なら親を継承、`[]` はbundle許可を解除、指定配列は完全置換。未知名と `"*"` は設定エラー |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 | `contextFiles` | — | AgentConfig。workspace相対ファイルを配列順にsession初回のuser roleへ注入する。各要素は `{ "path": string, "maxChars": 正の整数 | "*" }`。`"*"` は無制限。absolute pathと`..`は禁止し、不存在ファイルは無視する。子layerの配列は完全置換し、`[]`で無効化 |
 
@@ -215,7 +215,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 `shared` は親チャンネル、`thread` は既存スレッド、`auto-thread` は親メッセージごとのスレッド作成・再利用を対象にする。スレッド作成にはDiscord側のスレッド作成権限、履歴取得にはメッセージ履歴の閲覧権限が必要。
 
-`skills` と権限設定 `toolSets` は独立です。Skillの内容・存在・hashをauthority sourceにしません。旧Skill名からの暗黙grantは削除したため、Web系Skill（旧 `agent-reach` / arXiv / `last30days` を含む）の継続利用には `toolSets: ["web"]` または必要な個別native `tools` を明示してください。bundle内容とdescribe操作は [Tool Runtime仕様](spec/tool-runtime.md#runの権限と提示) を参照してください。
+`skills` と権限設定 `toolSets` は独立です。Skillの内容・存在・hashをauthority sourceにしません。旧Skill名からの暗黙grantは削除したため、`agent-reach` Skillには `toolSets: ["agent-reach"]`、その他のWeb系Skillには `toolSets: ["web"]` または必要な個別native `tools` を明示してください。bundle内容とdescribe操作は [Tool Runtime仕様](spec/tool-runtime.md#runの権限と提示) を参照してください。
 
 `skills` は安全側に倒し、キー自体を省略した場合もスキルはロードしない。`groups/{name}/SKILLS/` に配置されているだけのスキルは公開されず、利用するスキル名を配列で明示する。
 

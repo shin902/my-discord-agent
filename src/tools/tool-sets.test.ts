@@ -34,11 +34,11 @@ describe("trusted toolSets", () => {
     expect(runCapabilityNames({ ...config, toolSets: [] })).toEqual([]);
   });
 
-  it("unions native Proxy capabilities and bundles without duplicates", () => {
+  it("unions native Proxy capabilities and Skill permissions without duplicates", () => {
     expect(
       runCapabilityNames({
         tools: ["bash", "agent-reach", "read-email"],
-        toolSets: ["web", "mail", "web"],
+        toolSets: ["agent-reach", "web", "mail", "web"],
       }),
     ).toEqual([
       "agent-reach",
@@ -59,7 +59,6 @@ describe("trusted toolSets", () => {
     "__proto__",
     "constructor",
     "last30days",
-    "agent-reach",
     "arxiv-search",
     "arxiv-survey",
   ])("rejects unknown bundle %s", (name) => {

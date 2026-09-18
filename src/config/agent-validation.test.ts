@@ -110,11 +110,7 @@ describe("validateAgentConfig", () => {
     );
   });
 
-  it.each([
-    "*",
-    "unknown",
-    "agent-reach",
-  ])("rejects toolSet %s at startup", async (name) => {
+  it.each(["*", "unknown"])("rejects toolSet %s at startup", async (name) => {
     await expect(
       validateAgentConfig({ tools: [], toolSets: [name] }, defaultModel),
     ).rejects.toThrow(`Unknown toolSet: ${name}`);

@@ -77,7 +77,7 @@ data/cron/
 | `tools` | オプション | string[] | AgentConfig。エージェントに渡すツール名。親の配列を完全置換 |
 | `approvalRequiredTools` | オプション | string[] | AgentConfig。effective native `tools` とeffective `toolSets` の和集合に含まれる既知host/runtime capabilityのうちapprovalを挟むtool名。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合はapprovalなし。jobで未指定なら親を継承し、`[]` は明示解除。親の配列を完全置換 |
 | `skills` | オプション | string[] | AgentConfig。説明・workflowの公開だけを制御し、capabilityは付与しない。明示したスキル名で親の指定を完全置換 |
-| `toolSets` | オプション | string[] | AgentConfig。trusted capability bundle（web/github/mail/calendar/weather）。未指定ならgroupを継承し、指定配列は完全置換、`[]`で解除。未知名と `"*"` は設定エラー |
+| `toolSets` | オプション | string[] | AgentConfig。trusted capability permission set（agent-reach/web/github/mail/calendar/weather）。未指定ならgroupを継承し、指定配列は完全置換、`[]`で解除。未知名と `"*"` は設定エラー |
 | `mounts` | オプション | object[] | AgentConfig。コンテナへの追加マウント。親のmounts配列を完全置換 |
 | `contextFiles` | オプション | object[] | AgentConfig。workspace相対ファイルをsession初回のuser roleへ注入する。親の配列を完全置換し、`[]`で無効化 |
 | `settings` | オプション | unknown | ハンドラー固有の設定値置き場。中身は検証せずそのまま `CronContext.settings` 経由でハンドラーに渡す。ハンドラー側で必要な型にキャスト、または自前で Zod パースして使う |

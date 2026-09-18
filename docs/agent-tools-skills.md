@@ -114,6 +114,7 @@ Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／r
 
 | Skill / toolSet | capabilities |
 |---|---|
+| `agent-reach` | `agent-reach` |
 | `web` | `agent-reach`, `tavily-search`, `arxiv-search`, `arxiv-survey`, `hackernews-search`, `github-recent-search`, `x-search` |
 | `github` | `list-issues`, `read-issue`, `read-pull-request`, `list-issue-comments`, `list-pull-request-comments`, `comment-issue` |
 | `mail` | `list-emails`, `read-email` |
@@ -131,7 +132,7 @@ tool-proxy describe delete-event
 
 describeは現在のrun tokenで認可済みのcapabilityだけに対して、既存AgentToolの `name` / `description` / TypeBox `parameters` を返します。approval・host executor・Tool Runtimeを起動しません。schemaやCLI flagsをSkill側で再定義しません。
 
-**移行:** 旧Skill名からの暗黙grantは削除しました。既存の `agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` も、必要なら `toolSets: ["web"]` または個別のnative `tools` を明示します。`last30days`は複数capabilityを組み合わせるworkflow Skillとして独立したままです。bashを許可しないAgentでは、必要なcapabilityを従来どおりnative Toolとして設定できます。
+**移行:** 旧Skill名からの暗黙grantは削除しました。`agent-reach` Skillは `toolSets: ["agent-reach"]` でそのcapabilityだけを許可できます。その他のWeb系Skillは、必要なら `toolSets: ["web"]` または個別のnative `tools` を明示します。`last30days`は複数capabilityを組み合わせるworkflow Skillとして独立したままです。bashを許可しないAgentでは、必要なcapabilityを従来どおりnative Toolとして設定できます。
 
 ### スキルの明示的実行（`./command`）
 

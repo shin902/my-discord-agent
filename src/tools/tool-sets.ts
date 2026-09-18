@@ -1,7 +1,8 @@
 import { proxyCapabilityNames } from "./registry.js";
 
-/** Trusted capability bundles. Skill selection and files never grant authority. */
+/** Trusted capabilities available to each Skill. Skill files never grant authority. */
 export const TOOL_SETS: Readonly<Record<string, readonly string[]>> = {
+  "agent-reach": ["agent-reach"],
   web: [
     "agent-reach",
     "tavily-search",
