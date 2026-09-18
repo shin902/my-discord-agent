@@ -87,9 +87,11 @@ describe("provider concurrency config", () => {
   it("明示resourceと同名providerの暗黙fallbackを別keyにする", async () => {
     vi.mocked(loadRawProviders).mockResolvedValue([
       { provider: "gateway", resource: "local", concurrency: "parallel" },
+      { provider: "local", concurrency: "serial" },
     ]);
-    const { resolveProviderLockTarget } = await importFresh();
+    const { loadProviders, resolveProviderLockTarget } = await importFresh();
 
+    await expect(loadProviders()).resolves.toHaveLength(2);
     await expect(resolveProviderLockTarget("gateway")).resolves.toEqual({
       resource: "resource:local",
       concurrency: "parallel",

@@ -11,6 +11,10 @@ export const ProviderConfigSchema = z.object({
 });
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
+function inferenceResourceKey(provider: string, resource?: string): string {
+  return resource ? `resource:${resource}` : `provider:${provider}`;
+}
+
 const ProvidersConfigSchema = z
   .array(ProviderConfigSchema)
   .superRefine((entries, ctx) => {
@@ -26,7 +30,7 @@ const ProvidersConfigSchema = z
       }
       seen.add(entry.provider);
 
-      const resource = entry.resource ?? entry.provider;
+      const resource = inferenceResourceKey(entry.provider, entry.resource);
       const existing = resourceConcurrency.get(resource);
       if (existing !== undefined && existing !== entry.concurrency) {
         ctx.addIssue({
@@ -56,9 +60,7 @@ export async function resolveProviderLockTarget(
     (candidate) => candidate.provider === provider,
   );
   return {
-    resource: entry?.resource
-      ? `resource:${entry.resource}`
-      : `provider:${provider}`,
+    resource: inferenceResourceKey(provider, entry?.resource),
     concurrency: entry?.concurrency ?? "serial",
   };
 }
