@@ -98,6 +98,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 - `settings.limit`はfull batchを開始する未完了画像数、1回の解析枚数、1 cron invocationの最大処理枚数を兼ねます（1以上、既定10）。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
 - screen-capture固有のtimeoutはありません。Agent実行には共通のAgent Runner timeoutが適用されます。実用上はresize済み画像を20〜数十枚程度扱うbest-effort運用を想定し、任意枚数の処理完了は保証しません。
 - VLMが1枚でも失敗したbatchは全画像が未完了で残り、成功済みsummaryは次回に再利用されます。通常LLM成功後・DB更新前に停止した場合も再実行されるため、既存`capturelog`との差分だけを反映するよう指示します。
+- ImageMagickがdecode不能と判定した画像は`accepted = 0`で完了します。そのrunでは不足したbatchを追加取得せず解析を行わず、次のcronで改めてfull batchを形成します。`magick` executable不在などの実行環境エラーは画像不正として完了させません。
 - 同一jobのtick重複はcron runnerが抑止します。同じscreen-capture DBを処理するhandlerは1 process内の1 jobだけに設定してください。別IDのjobや別processを含む複数consumerはサポートしません。変更反映にはBot再起動が必要です。
 
 完了済み画像は専用の`screen-capture-gc` cronで`completed_at`から24時間後に削除します。`accepted`の値は問わず、未完了画像は削除しません。設定例は`config/cron.example.json`にあります。

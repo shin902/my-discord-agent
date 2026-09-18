@@ -13,9 +13,14 @@ domain="gui/$(id -u)"
 lock_directory="$plist.lock"
 
 temporary=""
+raw_temporary=""
 cleanup() {
   [[ -z "$temporary" ]] || rm -f -- "$temporary"
   rm -f -- "$lock_directory"
+}
+
+cleanup_raw_capture() {
+  [[ -z "$raw_temporary" ]] || rm -f -- "$raw_temporary"
 }
 
 lock_lifecycle() {
@@ -150,12 +155,13 @@ if [[ $# -eq 2 ]]; then
 else
   mkdir -p "$capture_directory"
   image="$capture_directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
-  temporary="$image.raw.png"
-  screencapture -x -m -t png "$temporary"
+  raw_temporary="$image.raw.png"
+  trap cleanup_raw_capture EXIT
+  screencapture -x -m -t png "$raw_temporary"
   if [[ -f "$reference_image" ]]; then
     if similarity=$(magick \
       \( "$reference_image" -resize '64x64!' -colorspace Gray \) \
-      \( "$temporary" -resize '64x64!' -colorspace Gray \) \
+      \( "$raw_temporary" -resize '64x64!' -colorspace Gray \) \
       -metric SSIM -compare -format '%[distortion]' info: 2>/dev/null); then
       :
     elif [[ $? -ne 1 ]]; then
@@ -166,9 +172,9 @@ else
       exit 0
     fi
   fi
-  magick "$temporary" -resize '1280x720>' "$image"
-  rm -- "$temporary"
-  temporary=""
+  magick "$raw_temporary" -resize '1280x720>' "$image"
+  rm -- "$raw_temporary"
+  raw_temporary=""
 fi
 id=$(basename "$image" .png)
 if [[ ! -f "$image" || ! "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
@@ -188,6 +194,7 @@ if [[ "$status" != 200 ]]; then
   exit 1
 fi
 # Advance the comparison reference only after the server committed the image.
+mkdir -p "$capture_directory"
 cp -- "$image" "$reference_image"
 rm -- "$image"
 printf 'Accepted: %s (local PNG deleted)\n' "$id"

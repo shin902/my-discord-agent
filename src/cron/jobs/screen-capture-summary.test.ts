@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
@@ -19,6 +20,33 @@ import { acquireLlmLock } from "../../queue/llm-mutex.js";
 import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
+const magick = vi.hoisted(() => ({
+  invalidIds: new Set<string>(),
+  errorCode: undefined as string | number | undefined,
+}));
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn(
+    (
+      _command: string,
+      args: string[],
+      callback: (...args: unknown[]) => void,
+    ) => {
+      const invalid = [...magick.invalidIds].some((id) =>
+        args.some((arg) => arg.endsWith(`/${id}.png`)),
+      );
+      const errorCode = magick.errorCode;
+      callback(
+        errorCode || invalid
+          ? Object.assign(new Error("magick failed"), {
+              code: errorCode ?? 1,
+            })
+          : null,
+        "",
+        invalid ? "improper image header @ error/png.c/ReadPNGImage/" : "",
+      );
+    },
+  ),
+}));
 vi.mock("@earendil-works/pi-ai/compat", async (original) => ({
   ...(await original<typeof import("@earendil-works/pi-ai/compat")>()),
   completeSimple: vi.fn(),
@@ -89,6 +117,8 @@ describe("screen capture summary cron", () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    magick.invalidIds.clear();
+    magick.errorCode = undefined;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
@@ -182,6 +212,11 @@ describe("screen capture summary cron", () => {
       settings: { visionModel, concurrency: 2, limit: 2 },
     });
 
+    expect(execFile).toHaveBeenCalledWith(
+      "magick",
+      ["identify", expect.stringMatching(/\.png$/)],
+      expect.any(Function),
+    );
     expect(resolveModel).toHaveBeenCalledWith("openai", "gpt-4o-mini");
     expect(completeSimple).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenCalledWith(
@@ -225,6 +260,42 @@ describe("screen capture summary cron", () => {
 
     expect(completeSimple).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+    expect(rows()[0].completed_at).toBeNull();
+  });
+
+  it("terminally rejects invalid captures without analyzing a partial batch", async () => {
+    const ids = insert(2);
+    magick.invalidIds.add(ids[0]);
+
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
+
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        id: ids[0],
+        accepted: 0,
+        completed_at: expect.any(String),
+      }),
+      expect.objectContaining({ id: ids[1], completed_at: null }),
+    ]);
+
+    insert(1, 2);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
+    expect(completeSimple).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not complete captures when ImageMagick validation is unavailable", async () => {
+    insert(1);
+    magick.errorCode = "ENOENT";
+
+    await expect(handler(ctx)).rejects.toMatchObject({ code: "ENOENT" });
     expect(rows()[0].completed_at).toBeNull();
   });
 

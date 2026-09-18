@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,9 +44,28 @@ type Capture = {
 
 type SelectedCapture = Omit<Capture, "image">;
 
+class InvalidCaptureError extends Error {}
+
+function validateCapture(imagePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("magick", ["identify", imagePath], (error, _stdout, stderr) => {
+      if (!error) return resolve();
+      if (
+        typeof (error as { code?: unknown }).code === "number" &&
+        /@ error\/png\.c\/|improper image header|corrupt image/i.test(
+          String(stderr),
+        )
+      )
+        return reject(new InvalidCaptureError());
+      reject(error);
+    });
+  });
+}
+
 async function writeCapture(directory: string, capture: Capture) {
   const imagePath = path.join(directory, `${capture.id}.png`);
   await writeFile(imagePath, capture.image, { mode: 0o600 });
+  await validateCapture(imagePath);
   return imagePath;
 }
 
@@ -107,14 +127,26 @@ export default async function handler(ctx: CronContext): Promise<void> {
     await rm(directory, { recursive: true, force: true });
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const selected: SelectedCapture[] = [];
+    const completeInvalid = db.prepare(
+      "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
+    );
     for (const capture of captures) {
-      await writeCapture(directory, capture);
-      selected.push({
-        id: capture.id,
-        received_at: capture.received_at,
-        summary: capture.summary,
-      });
+      try {
+        await writeCapture(directory, capture);
+        selected.push({
+          id: capture.id,
+          received_at: capture.received_at,
+          summary: capture.summary,
+        });
+      } catch (error) {
+        if (!(error instanceof InvalidCaptureError)) throw error;
+        completeInvalid.run(new Date().toISOString(), capture.id);
+        console.warn(
+          `[screen-capture-summary] ${capture.id}: invalid capture; marked completed`,
+        );
+      }
     }
+    if (selected.length < limit) return;
 
     if (parsed.data.mode === "direct") {
       if (selected.length > 0) {

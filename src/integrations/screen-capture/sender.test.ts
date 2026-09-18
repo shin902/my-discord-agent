@@ -175,9 +175,17 @@ printf '%s-resized' "$(<"$input")" > "$output"
     expect(skipped.stdout).toContain("skipped");
     expect(existsSync(argsFile)).toBe(false);
     expect(existsSync(image)).toBe(false);
+    expect(existsSync(`${image}.raw.png`)).toBe(false);
     expect(run([url]).status).toBe(0); // Changed captures use the same ACK cleanup.
     expect(readFileSync(magickCalls, "utf8")).toContain("1280x720>");
     expect(existsSync(image)).toBe(false);
+
+    rmSync(path.dirname(image), { recursive: true });
+    const explicit = path.join(root, `${id}.png`);
+    writeFileSync(explicit, "explicit");
+    expect(run([url, explicit]).status).toBe(0);
+    expect(readFileSync(reference, "utf8")).toBe("explicit");
+
     writeFileSync(path.join(root, "rm"), "#!/usr/bin/env bash\nexit 1\n", {
       mode: 0o700,
     });
