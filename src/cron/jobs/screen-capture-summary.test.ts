@@ -21,11 +21,8 @@ import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
 const magick = vi.hoisted(() => ({
-  similarities: [] as number[],
   invalidIds: new Set<string>(),
   errorCode: undefined as string | number | undefined,
-  comparisonExitCode: undefined as number | undefined,
-  onExec: undefined as (() => void) | undefined,
 }));
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
@@ -34,24 +31,17 @@ vi.mock("node:child_process", () => ({
       args: string[],
       callback: (...args: unknown[]) => void,
     ) => {
-      const onExec = magick.onExec;
-      magick.onExec = undefined;
-      onExec?.();
       const invalid = [...magick.invalidIds].some((id) =>
         args.some((arg) => arg.endsWith(`/${id}.png`)),
       );
-      const errorCode =
-        magick.errorCode ??
-        (args.includes("SSIM") ? magick.comparisonExitCode : undefined);
-      const error =
+      const errorCode = magick.errorCode;
+      callback(
         errorCode || invalid
           ? Object.assign(new Error("magick failed"), {
               code: errorCode ?? 1,
             })
-          : null;
-      callback(
-        error,
-        args.includes("SSIM") ? (magick.similarities.shift() ?? 0) : "",
+          : null,
+        "",
         invalid ? "improper image header @ error/png.c/ReadPNGImage/" : "",
       );
     },
@@ -98,7 +88,7 @@ const ctx = {
   groupName: "logbook",
   handler: "jobs/screen-capture-summary.ts",
   ...agentConfig,
-  settings: { visionModel, concurrency: 2, limit: 10 },
+  settings: { visionModel, concurrency: 2, limit: 1 },
 } as CronContext;
 const model = getModel("openai", "gpt-4o-mini");
 
@@ -127,11 +117,8 @@ describe("screen capture summary cron", () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
-    magick.similarities.length = 0;
     magick.invalidIds.clear();
     magick.errorCode = undefined;
-    magick.comparisonExitCode = undefined;
-    magick.onExec = undefined;
     directory = await mkdtemp(path.join(os.tmpdir(), "screen-summary-"));
     vi.stubEnv(
       "SCREEN_CAPTURE_DB_PATH",
@@ -220,15 +207,18 @@ describe("screen capture summary cron", () => {
 
   it("summarizes images with settings.visionModel then gives text to the memory model", async () => {
     insert(2);
-    await handler(ctx);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
 
-    expect(resolveModel).toHaveBeenCalledWith("openai", "gpt-4o-mini");
-    expect(completeSimple).toHaveBeenCalledTimes(2);
-    expect(execFile).not.toHaveBeenCalledWith(
+    expect(execFile).toHaveBeenCalledWith(
       "magick",
-      expect.arrayContaining(["-resize", "1280x1280>"]),
+      ["identify", expect.stringMatching(/\.png$/)],
       expect.any(Function),
     );
+    expect(resolveModel).toHaveBeenCalledWith("openai", "gpt-4o-mini");
+    expect(completeSimple).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenCalledWith(
       "logbook",
       expect.stringMatching(/^cron-screen-capture-summary-/),
@@ -261,19 +251,52 @@ describe("screen capture summary cron", () => {
     expect(rows()[0].completed_at).not.toBeNull();
   });
 
-  it("leaves captures added after the start-of-run watermark for the next run", async () => {
+  it("does nothing until a full batch is pending", async () => {
     insert(1);
-    magick.onExec = () => insert(1, 1);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
 
-    await handler(ctx);
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(rows()[0].completed_at).toBeNull();
+  });
 
-    expect(completeSimple).toHaveBeenCalledTimes(1);
-    expect(rows().filter((row) => row.completed_at === null)).toHaveLength(1);
+  it("terminally rejects invalid captures without analyzing a partial batch", async () => {
+    const ids = insert(2);
+    magick.invalidIds.add(ids[0]);
 
-    vi.mocked(completeSimple).mockClear();
-    await handler(ctx);
-    expect(completeSimple).toHaveBeenCalledTimes(1);
-    expect(rows().every((row) => row.completed_at)).toBe(true);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
+
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        id: ids[0],
+        accepted: 0,
+        completed_at: expect.any(String),
+      }),
+      expect.objectContaining({ id: ids[1], completed_at: null }),
+    ]);
+
+    insert(1, 2);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
+    expect(completeSimple).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not complete captures when ImageMagick validation is unavailable", async () => {
+    insert(1);
+    magick.errorCode = "ENOENT";
+
+    await expect(handler(ctx)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(rows()[0].completed_at).toBeNull();
   });
 
   it("leaves captures beyond the configured work budget pending", async () => {
@@ -288,77 +311,6 @@ describe("screen capture summary cron", () => {
       summary: null,
       completed_at: null,
     });
-  });
-
-  it("accepts ImageMagick exit 1 when comparison returns a valid SSIM", async () => {
-    insert(2);
-    magick.similarities.push(0.2);
-    magick.comparisonExitCode = 1;
-
-    await handler(ctx);
-
-    expect(sendMessage).toHaveBeenCalled();
-    expect(rows().every((row) => row.accepted === 1 && row.completed_at)).toBe(
-      true,
-    );
-  });
-
-  it("rejects ImageMagick comparison exit 2", async () => {
-    insert(2);
-    magick.comparisonExitCode = 2;
-
-    await expect(handler(ctx)).rejects.toMatchObject({ code: 2 });
-  });
-
-  it("scans a duplicate backlog while retaining only one selected image", async () => {
-    const ids = insert(20);
-    magick.similarities.push(...Array.from({ length: 19 }, () => 0.95));
-    await handler(ctx);
-
-    expect(completeSimple).toHaveBeenCalledTimes(1);
-    const completed = rows();
-    expect(completed.find((row) => row.id === ids[0])).toMatchObject({
-      accepted: 1,
-    });
-    expect(completed.filter((row) => row.accepted === 0)).toHaveLength(19);
-  });
-
-  it("completes an invalid capture and continues with later captures", async () => {
-    const ids = insert(2);
-    magick.invalidIds.add(ids[0]);
-
-    await handler(ctx);
-
-    expect(rows()).toEqual([
-      expect.objectContaining({
-        id: ids[0],
-        summary: null,
-        accepted: 0,
-        completed_at: expect.any(String),
-      }),
-      expect.objectContaining({
-        id: ids[1],
-        summary: "Editor work",
-        accepted: 1,
-        completed_at: expect.any(String),
-      }),
-    ]);
-    expect(completeSimple).toHaveBeenCalledTimes(1);
-
-    vi.mocked(completeSimple).mockClear();
-    await handler(ctx);
-    expect(completeSimple).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    "ENOENT",
-    1,
-  ])("does not mistake a magick infrastructure failure (%s) for invalid captures", async (errorCode) => {
-    insert(2);
-    magick.errorCode = errorCode;
-
-    await expect(handler(ctx)).rejects.toMatchObject({ code: errorCode });
-    expect(rows().every((row) => row.completed_at === null)).toBe(true);
   });
 
   it("propagates summary database write failures", async () => {
@@ -376,22 +328,18 @@ describe("screen capture summary cron", () => {
     expect(rows()[0]).toMatchObject({ summary: null, completed_at: null });
   });
 
-  it("leaves only failed VLM images pending", async () => {
+  it("leaves the full batch pending when one VLM summary fails", async () => {
     insert(2);
     vi.mocked(completeSimple)
       .mockRejectedValueOnce(new Error("provider failure"))
       .mockResolvedValueOnce(result("success"));
-    await handler(ctx);
+    await handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 2, limit: 2 },
+    });
 
-    expect(rows().filter((row) => row.completed_at === null)).toEqual([
-      expect.objectContaining({ summary: null }),
-    ]);
-    expect(sendMessage).toHaveBeenCalledWith(
-      "logbook",
-      expect.any(String),
-      expect.stringContaining("success"),
-      expect.any(Object),
-    );
+    expect(rows().every((row) => row.completed_at === null)).toBe(true);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("passes more than 10 images to one locked direct-mode agent call", async () => {
@@ -452,7 +400,7 @@ describe("screen capture summary cron", () => {
       skills: undefined,
       mounts: undefined,
       contextFiles: undefined,
-      settings: { mode: "direct" },
+      settings: { mode: "direct", limit: 1 },
     });
 
     expect(vi.mocked(sendMessage).mock.calls[0][3]).not.toHaveProperty(
@@ -465,7 +413,7 @@ describe("screen capture summary cron", () => {
     vi.mocked(sendMessage).mockRejectedValue(new Error("agent failed"));
 
     await expect(
-      handler({ ...ctx, settings: { mode: "direct" } }),
+      handler({ ...ctx, settings: { mode: "direct", limit: 1 } }),
     ).rejects.toThrow("agent failed");
     expect(rows()[0].completed_at).toBeNull();
   });

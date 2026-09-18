@@ -7,14 +7,20 @@ label="com.my-discord-agent.screen-capture"
 plist="$HOME/Library/LaunchAgents/$label.plist"
 logfile="$HOME/Library/Logs/my-discord-agent-screen-capture.log"
 capture_directory="$HOME/Library/Application Support/my-discord-agent/screen-captures"
+reference_image="$capture_directory/.last-acknowledged.png"
 script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 domain="gui/$(id -u)"
 lock_directory="$plist.lock"
 
 temporary=""
+raw_temporary=""
 cleanup() {
   [[ -z "$temporary" ]] || rm -f -- "$temporary"
   rm -f -- "$lock_directory"
+}
+
+cleanup_raw_capture() {
+  [[ -z "$raw_temporary" ]] || rm -f -- "$raw_temporary"
 }
 
 lock_lifecycle() {
@@ -106,10 +112,15 @@ if [[ "$command" == "on" ]]; then
     echo "Interval must be a positive number of seconds" >&2
     exit 1
   }
+  magick_path=$(command -v magick) || {
+    echo "ImageMagick 'magick' is required" >&2
+    exit 1
+  }
   mkdir -p "$(dirname "$plist")" "$(dirname "$logfile")"
   lock_lifecycle
   escaped_script=$(xml_escape "$script")
   escaped_logfile=$(xml_escape "$logfile")
+  escaped_path=$(xml_escape "$(dirname "$magick_path"):/usr/bin:/bin:/usr/sbin:/sbin")
   temporary="$plist.$$"
   cat >"$temporary" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -119,6 +130,9 @@ if [[ "$command" == "on" ]]; then
   <key>ProgramArguments</key><array>
     <string>/bin/bash</string><string>$escaped_script</string><string>run</string><string>$url</string>
   </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>$escaped_path</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>$interval</integer>
   <key>StandardOutPath</key><string>$escaped_logfile</string>
@@ -149,11 +163,26 @@ if [[ $# -eq 2 ]]; then
 else
   mkdir -p "$capture_directory"
   image="$capture_directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
-  screencapture -x -m -t png "$image"
-  if ! sips -Z 1280 "$image" >/dev/null; then
-    rm -f -- "$image"
-    exit 1
+  raw_temporary="$image.raw.png"
+  trap cleanup_raw_capture EXIT
+  screencapture -x -m -t png "$raw_temporary"
+  if [[ -f "$reference_image" ]]; then
+    if similarity=$(magick \
+      \( "$reference_image" -resize '64x64!' -colorspace Gray \) \
+      \( "$raw_temporary" -resize '64x64!' -colorspace Gray \) \
+      -metric SSIM -compare -format '%[distortion]' info: 2>/dev/null); then
+      :
+    elif [[ $? -ne 1 ]]; then
+      exit 1
+    fi
+    if awk -v similarity="$similarity" 'BEGIN { exit !(similarity >= 0.8) }'; then
+      echo "Capture unchanged (SSIM $similarity); skipped"
+      exit 0
+    fi
   fi
+  magick "$raw_temporary" -resize '1280x720>' "$image"
+  rm -- "$raw_temporary"
+  raw_temporary=""
 fi
 id=$(basename "$image" .png)
 if [[ ! -f "$image" || ! "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
@@ -172,6 +201,7 @@ if [[ "$status" != 200 ]]; then
   echo "Upload not acknowledged (HTTP $status); PNG retained for retry" >&2
   exit 1
 fi
-# HTTP 200 confirms the DB commit; no second copy is needed on the Mac.
+# Advance the comparison reference only after the server committed the image.
+cp -- "$image" "$reference_image"
 rm -- "$image"
 printf 'Accepted: %s (local PNG deleted)\n' "$id"
