@@ -51,6 +51,7 @@ export type ContextFileConfig = z.infer<typeof ContextFileConfigSchema>;
 export interface AgentConfig {
   model?: ModelConfig;
   tools: string[];
+  toolSets?: string[];
   approvalRequiredTools?: string[];
   skills?: SkillSelection;
   mounts?: MountConfig[];
@@ -63,6 +64,7 @@ export interface AgentConfig {
 export const AgentConfigSchema = z.object({
   model: ModelConfigSchema.optional(),
   tools: z.array(z.string()).optional(),
+  toolSets: z.array(z.string()).optional(),
   approvalRequiredTools: z.array(z.string()).optional(),
   skills: SkillSelectionSchema.optional(),
   mounts: z.array(MountConfigSchema).optional(),

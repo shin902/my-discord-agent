@@ -10,19 +10,44 @@ export interface ToolProxyEndpoint {
   token: string;
 }
 
-type ToolProxyResponse = {
-  result?: AgentToolResult<unknown>;
+type ToolProxyResponse<T> = {
+  result?: T;
   error?: unknown;
 };
 
-export async function requestToolProxy(
+export type ToolContract = Pick<
+  AgentTool,
+  "name" | "description" | "parameters"
+>;
+
+export function describeToolProxy(
+  capability: string,
+  endpoint?: ToolProxyEndpoint,
+  signal?: AbortSignal,
+): Promise<ToolContract> {
+  return requestProxy({ capability, operation: "describe" }, endpoint, signal);
+}
+
+export function requestToolProxy(
   capability: string,
   args: unknown,
   endpoint?: ToolProxyEndpoint,
   signal?: AbortSignal,
 ): Promise<AgentToolResult<unknown>> {
+  return requestProxy({ capability, args }, endpoint, signal);
+}
+
+async function requestProxy<T>(
+  body:
+    | { capability: string; args: unknown }
+    | { capability: string; operation: "describe" },
+  endpoint?: ToolProxyEndpoint,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!endpoint) {
-    throw new Error(`Tool Proxy endpoint is unavailable for ${capability}`);
+    throw new Error(
+      `Tool Proxy endpoint is unavailable for ${body.capability}`,
+    );
   }
   const response = await fetch(endpoint.url, {
     method: "POST",
@@ -30,15 +55,12 @@ export async function requestToolProxy(
       "content-type": "application/json",
       authorization: `Bearer ${endpoint.token}`,
     },
-    body: JSON.stringify({
-      capability,
-      args,
-    }),
+    body: JSON.stringify(body),
     signal,
   });
-  let payload: ToolProxyResponse;
+  let payload: ToolProxyResponse<T>;
   try {
-    payload = (await response.json()) as ToolProxyResponse;
+    payload = (await response.json()) as ToolProxyResponse<T>;
   } catch {
     throw new Error(`Tool Proxy request failed (HTTP ${response.status})`);
   }

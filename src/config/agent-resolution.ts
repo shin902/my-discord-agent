@@ -4,6 +4,7 @@ import type { AgentConfig } from "./groups.js";
 export const AGENT_CONFIG_FIELDS = [
   "model",
   "tools",
+  "toolSets",
   "approvalRequiredTools",
   "skills",
   "mounts",

@@ -148,17 +148,19 @@ async function readBody(
   });
 }
 
-function isRequest(value: unknown): value is {
-  capability: string;
-  args: unknown;
-} {
+function isRequest(
+  value: unknown,
+): value is
+  | { capability: string; args: unknown }
+  | { capability: string; operation: "describe" } {
   return (
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
     Object.keys(value).length === 2 &&
     typeof (value as Record<string, unknown>).capability === "string" &&
-    Object.hasOwn(value, "args")
+    (Object.hasOwn(value, "args") ||
+      (value as Record<string, unknown>).operation === "describe")
   );
 }
 
@@ -269,6 +271,18 @@ async function executeRequest(
     });
     return;
   }
+  if ("operation" in body) {
+    const tool = capability.factory();
+    if (!tool) {
+      sendJson(res, 500, {
+        error: `Capability is unavailable: ${body.capability}`,
+      });
+      return;
+    }
+    const { name, description, parameters } = tool;
+    sendJson(res, 200, { result: { name, description, parameters } });
+    return;
+  }
   if (!capability.validateArgs(body.args)) {
     sendJson(res, 400, {
       error: `Invalid arguments for capability: ${body.capability}`,
@@ -282,7 +296,10 @@ async function executeRequest(
   };
   req.once("aborted", abortRequest);
   res.once("close", abortRequest);
-  const signal = AbortSignal.any([abortController.signal, run.revokeSignal]);
+  const requestSignal = AbortSignal.any([
+    abortController.signal,
+    run.revokeSignal,
+  ]);
   if (req.aborted || res.destroyed) abortRequest();
   try {
     let executionArgs = effectiveArgs;
@@ -300,7 +317,7 @@ async function executeRequest(
             runId: run.runId,
             capability: body.capability,
             trustedDiscordDestination: run.trustedDiscordDestination,
-            revokeSignal: signal,
+            revokeSignal: requestSignal,
           },
           effectiveArgs,
         );
@@ -323,6 +340,10 @@ async function executeRequest(
       executionArgs = approvalRequest.invocation.args.value;
     }
 
+    const signal = AbortSignal.any([
+      requestSignal,
+      AbortSignal.timeout(capability.timeoutMs),
+    ]);
     const tool = capability.factory();
     if (!tool) {
       sendJson(res, 500, {

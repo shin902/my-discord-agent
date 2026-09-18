@@ -1671,7 +1671,7 @@ describe("sendMessage: configOverride", () => {
         },
       }),
     ).rejects.toThrow(
-      "設定エラー: 承認必須ツールは有効な tools に含めてください: get-current-weather",
+      "設定エラー: 承認必須ツールは有効な tools または toolSets に含めてください: get-current-weather",
     );
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -1680,27 +1680,37 @@ describe("sendMessage: configOverride", () => {
     {
       tools: ["agent-reach", "get-current-weather"],
       skills: [],
+      toolSets: [],
       allowed: ["agent-reach", "get-current-weather"],
     },
-    { tools: ["read"], skills: ["agent-reach"], allowed: ["agent-reach"] },
+    {
+      tools: ["read"],
+      skills: [],
+      toolSets: ["weather"],
+      allowed: ["get-current-weather", "get-weather-forecast"],
+    },
     {
       tools: ["agent-reach", "get-current-weather"],
-      skills: ["agent-reach"],
-      allowed: ["agent-reach", "get-current-weather"],
+      skills: ["weather"],
+      toolSets: ["weather"],
+      allowed: ["agent-reach", "get-current-weather", "get-weather-forecast"],
     },
     {
       tools: ["read"],
-      skills: ["arxiv-search", "arxiv-survey"],
-      allowed: ["arxiv-search", "arxiv-survey"],
+      skills: ["mail"],
+      toolSets: ["mail"],
+      allowed: ["list-emails", "read-email"],
     },
     {
       tools: ["read"],
-      skills: ["last30days"],
-      allowed: ["hackernews-search", "github-recent-search", "agent-reach"],
+      skills: ["github", "last30days", "agent-reach", "arxiv-search"],
+      toolSets: [],
+      allowed: [],
     },
-  ])("tools=$tools skills=$skills share one authority and token", async ({
+  ])("tools=$tools toolSets=$toolSets determine authority independently of skills=$skills", async ({
     tools,
     skills,
+    toolSets,
     allowed,
   }) => {
     const sendMessage = await setup();
@@ -1708,8 +1718,12 @@ describe("sendMessage: configOverride", () => {
       ? ["agent-reach"]
       : [];
     await sendMessage("test-group", "session-1", "hi", {
-      configOverride: { tools, skills, approvalRequiredTools },
+      configOverride: { tools, skills, toolSets, approvalRequiredTools },
     });
+    if (allowed.length === 0) {
+      expect(createToolProxyRunMock).not.toHaveBeenCalled();
+      return;
+    }
     expect(createToolProxyRunMock).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("test-group:session-1:"),
       allowed,

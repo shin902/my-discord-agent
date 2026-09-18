@@ -55,9 +55,12 @@ type Place = {
   label: string;
 };
 
-async function geocodeLocation(location: string): Promise<Place> {
+async function geocodeLocation(
+  location: string,
+  signal?: AbortSignal,
+): Promise<Place> {
   const url = `${GEOCODING_URL}?name=${encodeURIComponent(location)}&count=1&language=ja&format=json`;
-  const res = await fetch(url);
+  const res = await (signal ? fetch(url, { signal }) : fetch(url));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
@@ -100,12 +103,12 @@ export const getCurrentWeatherTool: AgentTool<typeof currentWeatherParams> = {
   description:
     "Get the current weather, temperature, humidity, and wind speed for a specified place. Use it when answering about current weather conditions.",
   parameters: currentWeatherParams,
-  execute: async (_toolCallId, { location }) => {
-    const place = await geocodeLocation(location);
+  execute: async (_toolCallId, { location }, signal) => {
+    const place = await geocodeLocation(location, signal);
     const url =
       `${FORECAST_URL}?latitude=${place.latitude}&longitude=${place.longitude}` +
       `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`;
-    const res = await fetch(url);
+    const res = await (signal ? fetch(url, { signal }) : fetch(url));
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`天気APIエラー ${res.status}: ${text.slice(0, 200)}`);
@@ -166,14 +169,14 @@ export const getWeatherForecastTool: AgentTool<typeof forecastParams> = {
   description:
     "Get a multi-day weather forecast for a specified place, including high and low temperatures and precipitation probability.",
   parameters: forecastParams,
-  execute: async (_toolCallId, { location, days = 3 }) => {
+  execute: async (_toolCallId, { location, days = 3 }, signal) => {
     const forecastDays = Math.min(Math.max(days, 1), 7);
-    const place = await geocodeLocation(location);
+    const place = await geocodeLocation(location, signal);
     const url =
       `${FORECAST_URL}?latitude=${place.latitude}&longitude=${place.longitude}` +
       `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code` +
       `&timezone=auto&forecast_days=${forecastDays}`;
-    const res = await fetch(url);
+    const res = await (signal ? fetch(url, { signal }) : fetch(url));
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`天気APIエラー ${res.status}: ${text.slice(0, 200)}`);

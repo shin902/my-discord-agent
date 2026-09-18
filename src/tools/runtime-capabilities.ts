@@ -1,5 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { agentReachTool, detectService, normalizeUrl } from "./agent-reach.js";
+import {
+  AGENT_REACH_TIMEOUT_MS,
+  agentReachTool,
+  detectService,
+  normalizeUrl,
+} from "./agent-reach.js";
 import { arxivSearchTool, arxivSurveyTool } from "./arxiv.js";
 import {
   type CapabilityDefinition,
@@ -48,7 +53,7 @@ function runtimeCapability(
 /** The single trusted definition set shared by host Registry and Runtime dispatch. */
 export const RUNTIME_CAPABILITIES = {
   "agent-reach": runtimeCapability(agentReachTool, {
-    timeoutMs: 120_000,
+    timeoutMs: AGENT_REACH_TIMEOUT_MS,
     needsRedditCookies: (args) =>
       detectService(new URL(normalizeUrl((args as { url: string }).url))) ===
       "reddit",

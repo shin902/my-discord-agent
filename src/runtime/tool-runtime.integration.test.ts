@@ -245,15 +245,14 @@ describe.skipIf(!baseImage)("disposable Tool Runtime Docker boundary", () => {
     await expectRemoved();
   }, 15_000);
 
-  it("host timeout and shutdown terminate the same named container boundary", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const pending = startHang();
+  it("caller abort and shutdown terminate the same named container boundary", async () => {
+    const controller = new AbortController();
+    const pending = startHang(controller.signal);
     const id = await waitForChild();
-    await vi.advanceTimersByTimeAsync(120_000);
-    vi.useRealTimers();
+    controller.abort();
     expect(await pending).toHaveProperty(
       "error.message",
-      "Tool Runtime timed out",
+      "Tool Runtime aborted",
     );
     await expectRemoved(id);
     const shutdownPending = startHang();

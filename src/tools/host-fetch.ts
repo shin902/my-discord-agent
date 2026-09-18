@@ -13,6 +13,24 @@ function firstSetEnvVar(envVars: string[] | undefined): string | undefined {
     .find((value): value is string => Boolean(value));
 }
 
+async function raceWithAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  let abort = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+
 /** Fetch an API from the host without exposing its credential route to the sandbox. */
 export async function hostFetch(
   provider: string,
@@ -40,14 +58,15 @@ export async function hostFetch(
   };
   try {
     if (entry.msal) {
-      headers.Authorization = `Bearer ${await getGraphAccessToken(provider)}`;
+      headers.Authorization = `Bearer ${await raceWithAbort(getGraphAccessToken(provider), signal)}`;
     } else if (entry.google) {
-      headers.Authorization = `Bearer ${await getGoogleAccessToken(provider)}`;
+      headers.Authorization = `Bearer ${await raceWithAbort(getGoogleAccessToken(provider), signal)}`;
     } else {
       const apiKey = firstSetEnvVar(entry.envVars);
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     }
   } catch (error) {
+    if (signal?.aborted) throw error;
     if (entry.msal) {
       console.error(
         `[credential-proxy] graph token 取得失敗: ${error instanceof Error ? error.message : error}`,

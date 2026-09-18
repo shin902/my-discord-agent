@@ -112,6 +112,7 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
     value.topic === "finance");
 
 interface HostCapabilityOptions {
+  readonly timeoutMs?: number;
   readonly validateArgs?: CapabilityArgsValidator;
   readonly clampedProperties?: readonly string[];
   readonly defaultArgs?: () => Readonly<Record<string, unknown>>;
@@ -126,6 +127,7 @@ function hostCapability(
     tool: tool.name,
     executor: "host",
     factory: () => tool,
+    timeoutMs: options.timeoutMs ?? 30_000,
     validateArgs:
       options.validateArgs ?? validateToolArgs(tool, clampedProperties),
     materializeArgs: materializeToolArgs(tool, {
@@ -178,8 +180,9 @@ const CAPABILITIES = {
   "read-email": hostCapability(readEmailTool, {
     defaultArgs: () => ({ markAsRead: true }),
   }),
-  "list-calendars": hostCapability(listCalendarsTool),
+  "list-calendars": hostCapability(listCalendarsTool, { timeoutMs: 120_000 }),
   "list-events": hostCapability(listEventsTool, {
+    timeoutMs: 120_000,
     clampedProperties: ["maxResults"],
     defaultArgs: () => ({
       timeMin: new Date().toISOString(),
@@ -188,15 +191,19 @@ const CAPABILITIES = {
     }),
   }),
   "read-event": hostCapability(readEventTool, {
+    timeoutMs: 120_000,
     defaultArgs: () => ({ calendarId: "primary" }),
   }),
   "create-event": hostCapability(createEventTool, {
+    timeoutMs: 120_000,
     defaultArgs: () => ({ calendarId: "primary" }),
   }),
   "update-event": hostCapability(updateEventTool, {
+    timeoutMs: 120_000,
     defaultArgs: () => ({ calendarId: "primary" }),
   }),
   "delete-event": hostCapability(deleteEventTool, {
+    timeoutMs: 120_000,
     defaultArgs: () => ({ calendarId: "primary" }),
   }),
 } satisfies Record<string, CapabilityDefinition>;

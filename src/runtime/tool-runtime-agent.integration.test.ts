@@ -23,7 +23,7 @@ import {
   initToolProxyServer,
   stopToolProxyServer,
 } from "../proxy/tool-proxy-server.js";
-import { runCapabilityNames } from "../tools/skill-capabilities.js";
+import { runCapabilityNames } from "../tools/tool-sets.js";
 import * as runtime from "./tool-runtime-client.js";
 import { createToolRuntimeFixture } from "./tool-runtime-fixture.js";
 
@@ -102,6 +102,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
           "grep",
         ],
         skills: ["last30days", "arxiv-search", "arxiv-survey"],
+        toolSets: ["web"],
       };
       const run = createToolProxyRun(name, runCapabilityNames(config));
       if (!run) throw new Error("Tool Proxy not initialized");

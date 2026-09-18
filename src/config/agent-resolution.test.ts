@@ -67,6 +67,22 @@ describe("resolveAgentConfig", () => {
     });
   });
 
+  it("inherits, replaces and clears toolSets independently of tools and skills", () => {
+    const parent = { tools: ["bash"], skills: ["web"], toolSets: ["web"] };
+    expect(resolveAgentConfig(parent, { skills: [] })).toEqual({
+      ...parent,
+      skills: [],
+    });
+    expect(resolveAgentConfig(parent, { toolSets: ["calendar"] })).toEqual({
+      ...parent,
+      toolSets: ["calendar"],
+    });
+    expect(resolveAgentConfig(parent, { toolSets: [] })).toEqual({
+      ...parent,
+      toolSets: [],
+    });
+  });
+
   it("tools未指定のeffective configは空配列になる", () => {
     expect(resolveAgentConfig()).toEqual({ tools: [] });
   });

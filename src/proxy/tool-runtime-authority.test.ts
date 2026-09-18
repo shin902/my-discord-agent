@@ -15,8 +15,8 @@ import {
 } from "vitest";
 import * as runtime from "../runtime/tool-runtime-client.js";
 import { resolveTools } from "../tools/registry.js";
-import { runCapabilityNames } from "../tools/skill-capabilities.js";
 import { requestToolProxy } from "../tools/tool-proxy.js";
+import { runCapabilityNames } from "../tools/tool-sets.js";
 import type { ToolApprovalRequest } from "./tool-approval.js";
 import {
   createToolProxyRequestHandler,
@@ -66,10 +66,14 @@ function cli(token: string, capability: string, args: unknown) {
     },
   );
 }
-function authority(tools: string[], skills: string[], approval: string[] = []) {
+function authority(
+  tools: string[],
+  toolSets: string[],
+  approval: string[] = [],
+) {
   const config = createToolProxyRun(
     "runtime-authority",
-    runCapabilityNames({ tools, skills }),
+    runCapabilityNames({ tools, toolSets }),
     {
       approvalRequiredCapabilities: approval,
       trustedDiscordDestination: {
@@ -84,17 +88,17 @@ function authority(tools: string[], skills: string[], approval: string[] = []) {
 
 describe("Native/Skill shared Runtime authority", () => {
   it.each([
-    { tools: ["arxiv-search"], skills: [] },
-    { tools: ["arxiv-search"], skills: ["arxiv-search"] },
+    { tools: ["arxiv-search"], toolSets: [] },
+    { tools: ["arxiv-search"], toolSets: ["web"] },
   ])("applies the same approval and effective args to native and CLI: %j", async ({
     tools,
-    skills,
+    toolSets,
   }) => {
     const execute = vi.spyOn(runtime, "executeToolRuntime").mockResolvedValue({
       content: [{ type: "text", text: "[]" }],
       details: {},
     });
-    const run = authority(tools, skills, ["arxiv-search"]);
+    const run = authority(tools, toolSets, ["arxiv-search"]);
     const presented: unknown[] = [];
     present = async (request) => {
       presented.push(request.invocation.args.value);
@@ -128,18 +132,18 @@ describe("Native/Skill shared Runtime authority", () => {
     }
   });
 
-  it("supports Skill-only authority but rejects unselected, maintenance and revoked capabilities", async () => {
+  it("supports toolSet-only authority but rejects unselected, maintenance and revoked capabilities", async () => {
     const execute = vi.spyOn(runtime, "executeToolRuntime").mockResolvedValue({
       content: [{ type: "text", text: "[]" }],
       details: {},
     });
-    const run = authority([], ["arxiv-search"]);
+    const run = authority([], ["web"]);
     try {
       expect(
         (await cli(run.token, "arxiv-search", { query: "q" })).stdout,
       ).toBe("[]");
       await expect(
-        cli(run.token, "arxiv-survey", { queries: ["q"] }),
+        cli(run.token, "read-email", { id: "q" }),
       ).rejects.toMatchObject({
         stderr: expect.stringContaining("not authorized"),
       });
@@ -198,7 +202,7 @@ describe("Native/Skill shared Runtime authority", () => {
         );
         return { content: [], details: {} };
       });
-    const run = authority([], ["arxiv-search"]);
+    const run = authority([], ["web"]);
     const pending = requestToolProxy(
       "arxiv-search",
       { query: "q" },
@@ -235,7 +239,7 @@ describe("Native/Skill shared Runtime authority", () => {
         return { content: [], details: {} };
       },
     );
-    const run = authority([], ["agent-reach"]);
+    const run = authority([], ["web"]);
     const controller = new AbortController();
     try {
       const pending = requestToolProxy(
@@ -287,7 +291,7 @@ describe("Native/Skill shared Runtime authority", () => {
   });
 
   it("shutdown revokes active runs and closes new run admission", async () => {
-    const run = authority([], ["arxiv-search"]);
+    const run = authority([], ["web"]);
     try {
       await stopToolProxyServer();
       expect(

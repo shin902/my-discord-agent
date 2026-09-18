@@ -28,7 +28,7 @@ import {
 } from "../proxy/tool-proxy-server.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
-import { runCapabilityNames } from "../tools/skill-capabilities.js";
+import { runCapabilityNames } from "../tools/tool-sets.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

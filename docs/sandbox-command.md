@@ -96,7 +96,7 @@ CIも両imageを一度ずつbuildし、このDocker検証を含む全testを実�
 | Bot内部RPC | run token付き既存内部API。利用するrunだけendpointを渡す |
 | 任意curl / npm・pip install / remote git・gh等 | 直接通信不可。local Git・ローカルファイル操作は引き続き可能 |
 
-Skill単独利用も組込依存から共通authorityを得ます。native Toolを追加するためだけの設定変更は不要です。設定したapprovalはnative/CLI双方に適用します。汎用的なpackage install / remote Git用の通信例外は提供しません。
+Skillの選択だけではauthorityを得られません。native schemaを公開せずSkill CLIから利用する場合は、trusted configへ必要な `toolSets` を明示します。設定したapprovalはnative/CLI双方に適用します。汎用的なpackage install / remote Git用の通信例外は提供しません。
 
 LLMの接続定義がないKnownProviderはsandbox内で明示エラーになります。provider SDKが`baseUrl`を使わない独自通信や追加認証を必要とする構成も直接接続できません。既存Credential Proxyを使うHTTP inference経路を確認して導入してください。provider単位の認可は追加しません。起動時の外部DNS readiness probeは不要になったため削除しています。
 

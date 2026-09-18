@@ -23,11 +23,17 @@ async function githubFetch(
   owner: string,
   repo: string,
   suffix: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   assertValidRepoPart(owner, "owner");
   assertValidRepoPart(repo, "repo");
   const path = `/repos/${owner}/${repo}${suffix}`;
-  const res = await hostFetch("github", path, { headers: GITHUB_HEADERS });
+  const res = await hostFetch(
+    "github",
+    path,
+    { headers: GITHUB_HEADERS },
+    signal,
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
@@ -40,15 +46,21 @@ async function githubPost(
   repo: string,
   suffix: string,
   body: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   assertValidRepoPart(owner, "owner");
   assertValidRepoPart(repo, "repo");
   const path = `/repos/${owner}/${repo}${suffix}`;
-  const res = await hostFetch("github", path, {
-    method: "POST",
-    headers: { ...GITHUB_HEADERS, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await hostFetch(
+    "github",
+    path,
+    {
+      method: "POST",
+      headers: { ...GITHUB_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    signal,
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`GitHub API エラー ${res.status}: ${text.slice(0, 200)}`);
@@ -78,11 +90,13 @@ async function fetchIssueOnly(
   owner: string,
   repo: string,
   issueNumber: number,
+  signal?: AbortSignal,
 ): Promise<GitHubIssue> {
   const issue = (await githubFetch(
     owner,
     repo,
     `/issues/${issueNumber}`,
+    signal,
   )) as GitHubIssue;
   if (issue.pull_request != null) {
     throw new Error(
@@ -117,6 +131,7 @@ async function fetchIssuesUntilLimit(
   repo: string,
   state: string,
   limit: number,
+  signal?: AbortSignal,
 ): Promise<GitHubIssue[]> {
   const perPage = Math.min(limit, 50);
   const issues: GitHubIssue[] = [];
@@ -126,6 +141,7 @@ async function fetchIssuesUntilLimit(
       owner,
       repo,
       `/issues?state=${state}&per_page=${perPage}&page=${page}`,
+      signal,
     )) as GitHubIssue[];
     issues.push(...pageItems.filter((issue) => !issue.pull_request));
 
@@ -141,12 +157,17 @@ export const listIssuesTool: AgentTool<typeof listIssuesParameters> = {
   description:
     "List issues in a repository, returning their number, title, state, labels, and comment count. Pull requests are excluded.",
   parameters: listIssuesParameters,
-  execute: async (_toolCallId, { owner, repo, state = "open", limit = 10 }) => {
+  execute: async (
+    _toolCallId,
+    { owner, repo, state = "open", limit = 10 },
+    signal,
+  ) => {
     const filtered = await fetchIssuesUntilLimit(
       owner,
       repo,
       state,
       Math.min(limit, 50),
+      signal,
     );
 
     const lines: string[] = [
@@ -184,8 +205,8 @@ export const readIssueTool: AgentTool<typeof readIssueParameters> = {
   label: "Read GitHub Issue",
   description: "Read the full body of a specified GitHub issue.",
   parameters: readIssueParameters,
-  execute: async (_toolCallId, { owner, repo, issue_number }) => {
-    const issue = await fetchIssueOnly(owner, repo, issue_number);
+  execute: async (_toolCallId, { owner, repo, issue_number }, signal) => {
+    const issue = await fetchIssueOnly(owner, repo, issue_number, signal);
 
     let body = issue.body ?? "";
     if (body.length > MAX_BODY_CHARS) {
@@ -247,11 +268,12 @@ export const readPullRequestTool: AgentTool<typeof readPullRequestParameters> =
     description:
       "Read the body and metadata of a specified GitHub pull request and return them as Markdown.",
     parameters: readPullRequestParameters,
-    execute: async (_toolCallId, { owner, repo, pull_number }) => {
+    execute: async (_toolCallId, { owner, repo, pull_number }, signal) => {
       const pullRequest = (await githubFetch(
         owner,
         repo,
         `/pulls/${pull_number}`,
+        signal,
       )) as GitHubPullRequest;
 
       let body = pullRequest.body ?? "";
@@ -295,6 +317,7 @@ async function fetchAllGitHubPages<T>(
   owner: string,
   repo: string,
   suffix: string,
+  signal?: AbortSignal,
 ): Promise<T[]> {
   const items: T[] = [];
 
@@ -303,6 +326,7 @@ async function fetchAllGitHubPages<T>(
       owner,
       repo,
       `${suffix}?per_page=${GITHUB_PAGE_SIZE}&page=${page}`,
+      signal,
     )) as T[];
     items.push(...pageItems);
     if (pageItems.length < GITHUB_PAGE_SIZE) return items;
@@ -325,11 +349,12 @@ export const listIssueCommentsTool: AgentTool<
   description:
     "List all comments on a GitHub issue and return the author, created time, updated time, and body as Markdown.",
   parameters: listIssueCommentsParameters,
-  execute: async (_toolCallId, { owner, repo, issue_number }) => {
+  execute: async (_toolCallId, { owner, repo, issue_number }, signal) => {
     const comments = await fetchAllGitHubPages<GitHubIssueComment>(
       owner,
       repo,
       `/issues/${issue_number}/comments`,
+      signal,
     );
 
     const lines = [`# Issue #${issue_number} のコメント`, ""];
@@ -409,22 +434,25 @@ export const listPullRequestCommentsTool: AgentTool<
   description:
     "List all conversation comments, reviews, and inline review comments on a pull request and return them as Markdown.",
   parameters: listPullRequestCommentsParameters,
-  execute: async (_toolCallId, { owner, repo, pull_number }) => {
+  execute: async (_toolCallId, { owner, repo, pull_number }, signal) => {
     const conversationComments = await fetchAllGitHubPages<GitHubIssueComment>(
       owner,
       repo,
       `/issues/${pull_number}/comments`,
+      signal,
     );
     const reviews = await fetchAllGitHubPages<GitHubPullRequestReview>(
       owner,
       repo,
       `/pulls/${pull_number}/reviews`,
+      signal,
     );
     const inlineComments =
       await fetchAllGitHubPages<GitHubPullRequestReviewComment>(
         owner,
         repo,
         `/pulls/${pull_number}/comments`,
+        signal,
       );
 
     const lines = [`# Pull Request #${pull_number} のコメント・レビュー`, ""];
@@ -509,7 +537,7 @@ export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
   description:
     "Post a comment to a specified GitHub issue. This is a public write operation, so post only to the issue explicitly requested by the user.",
   parameters: commentIssueParameters,
-  execute: async (_toolCallId, { owner, repo, issue_number, body }) => {
+  execute: async (_toolCallId, { owner, repo, issue_number, body }, signal) => {
     if (body.length === 0) {
       throw new Error("コメント本文は空にできません");
     }
@@ -519,12 +547,13 @@ export const commentIssueTool: AgentTool<typeof commentIssueParameters> = {
       );
     }
 
-    await fetchIssueOnly(owner, repo, issue_number);
+    await fetchIssueOnly(owner, repo, issue_number, signal);
     const comment = (await githubPost(
       owner,
       repo,
       `/issues/${issue_number}/comments`,
       { body },
+      signal,
     )) as GitHubComment;
 
     return {
