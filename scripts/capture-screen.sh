@@ -14,13 +14,15 @@ lock_directory="$plist.lock"
 
 temporary=""
 raw_temporary=""
+resized_temporary=""
 cleanup() {
   [[ -z "$temporary" ]] || rm -f -- "$temporary"
   rm -f -- "$lock_directory"
 }
 
-cleanup_raw_capture() {
+cleanup_capture_temporaries() {
   [[ -z "$raw_temporary" ]] || rm -f -- "$raw_temporary"
+  [[ -z "$resized_temporary" ]] || rm -f -- "$resized_temporary"
 }
 
 lock_lifecycle() {
@@ -156,7 +158,8 @@ else
   mkdir -p "$capture_directory"
   image="$capture_directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
   raw_temporary="$image.raw.png"
-  trap cleanup_raw_capture EXIT
+  resized_temporary="$capture_directory/.$(basename "$image").resize.tmp"
+  trap cleanup_capture_temporaries EXIT
   screencapture -x -m -t png "$raw_temporary"
   if [[ -f "$reference_image" ]]; then
     if similarity=$(magick \
@@ -172,7 +175,9 @@ else
       exit 0
     fi
   fi
-  magick "$raw_temporary" -resize '1280x720>' "$image"
+  magick "$raw_temporary" -resize '1280x720>' "png:$resized_temporary"
+  mv -- "$resized_temporary" "$image"
+  resized_temporary=""
   rm -- "$raw_temporary"
   raw_temporary=""
 fi

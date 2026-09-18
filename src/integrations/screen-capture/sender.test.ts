@@ -113,13 +113,18 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       path.join(root, "magick"),
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$HOME/magick-calls"
-(( SCREEN_TEST_MAGICK_EXIT == 0 )) || exit "$SCREEN_TEST_MAGICK_EXIT"
 if [[ "$*" == *SSIM* ]]; then
+  (( SCREEN_TEST_MAGICK_EXIT == 0 )) || exit "$SCREEN_TEST_MAGICK_EXIT"
   printf '%s' "$SCREEN_TEST_SIMILARITY"
   exit 1
 fi
 input=$1
 output=\${!#}
+output=\${output#png:}
+if (( SCREEN_TEST_MAGICK_EXIT != 0 )); then
+  printf partial > "$output"
+  exit "$SCREEN_TEST_MAGICK_EXIT"
+fi
 printf '%s-resized' "$(<"$input")" > "$output"
 `,
       { mode: 0o700 },
@@ -138,6 +143,10 @@ printf '%s-resized' "$(<"$input")" > "$output"
     );
     expect(run([url], "200", 0, "0.2", 2).status).not.toBe(0);
     expect(existsSync(image)).toBe(false);
+    expect(existsSync(`${image}.raw.png`)).toBe(false);
+    expect(
+      existsSync(path.join(path.dirname(image), `.${id}.png.resize.tmp`)),
+    ).toBe(false);
     expect(existsSync(argsFile)).toBe(false);
     const failed = run([url], "503");
     expect(failed.status).toBe(1);
