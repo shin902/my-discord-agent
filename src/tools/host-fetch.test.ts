@@ -70,6 +70,49 @@ describe("hostFetch", () => {
     );
   });
 
+  it.each([
+    [
+      "Graph",
+      "graph",
+      { msal: { tenantId: "t", clientId: "c", scopes: ["s"] as string[] } },
+    ],
+    [
+      "Google",
+      "google-calendar",
+      {
+        google: {
+          clientId: "c",
+          clientSecretEnvVar: "SECRET",
+          scopes: ["s"] as string[],
+        },
+      },
+    ],
+  ] as const)("%s token取得待ちをcaller abortで終了する", async (_name, provider, auth) => {
+    vi.mocked(loadCredentialProxy).mockResolvedValue([
+      { provider, baseUrl: "https://api.example.com", ...auth },
+    ]);
+    vi.mocked(getGraphAccessToken).mockReturnValue(
+      new Promise<string>(() => {}),
+    );
+    vi.mocked(getGoogleAccessToken).mockReturnValue(
+      new Promise<string>(() => {}),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    const pending = hostFetch(provider, "/items", {}, controller.signal);
+    await vi.waitFor(() =>
+      expect(
+        provider === "graph" ? getGraphAccessToken : getGoogleAccessToken,
+      ).toHaveBeenCalled(),
+    );
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("proxy.requestTimeoutMs相当のtimeoutを504 responseとして維持する", async () => {
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       { provider: "api", baseUrl: "https://api.example.com" },
