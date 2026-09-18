@@ -118,11 +118,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
   try {
     const captures = db
-      .prepare(`SELECT id, image, received_at, summary FROM screen_captures
+      .prepare(`SELECT id, received_at, summary FROM screen_captures
         WHERE completed_at IS NULL
         ORDER BY received_at, id LIMIT ?`)
-      .all(limit) as Capture[];
+      .all(limit) as SelectedCapture[];
     if (captures.length < limit) return;
+    const getImage = db.prepare(
+      "SELECT image FROM screen_captures WHERE id = ? AND completed_at IS NULL",
+    );
 
     await rm(directory, { recursive: true, force: true });
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -132,7 +135,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
     );
     for (const capture of captures) {
       try {
-        await writeCapture(directory, capture);
+        const row = getImage.get(capture.id) as { image: Buffer } | undefined;
+        if (!row) throw new Error(`Screen capture disappeared: ${capture.id}`);
+        await writeCapture(directory, { ...capture, image: row.image });
         selected.push({
           id: capture.id,
           received_at: capture.received_at,

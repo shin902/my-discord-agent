@@ -15,6 +15,7 @@ lock_directory="$plist.lock"
 temporary=""
 raw_temporary=""
 resized_temporary=""
+similarity_error=""
 cleanup() {
   [[ -z "$temporary" ]] || rm -f -- "$temporary"
   rm -f -- "$lock_directory"
@@ -23,6 +24,7 @@ cleanup() {
 cleanup_capture_temporaries() {
   [[ -z "$raw_temporary" ]] || rm -f -- "$raw_temporary"
   [[ -z "$resized_temporary" ]] || rm -f -- "$resized_temporary"
+  [[ -z "$similarity_error" ]] || rm -f -- "$similarity_error"
 }
 
 lock_lifecycle() {
@@ -170,14 +172,22 @@ else
   trap cleanup_capture_temporaries EXIT
   screencapture -x -m -t png "$raw_temporary"
   if [[ -f "$reference_image" ]]; then
+    similarity_error="$capture_directory/.similarity-error.$$"
     if similarity=$(magick \
       \( "$reference_image" -resize '64x64!' -colorspace Gray \) \
       \( "$raw_temporary" -resize '64x64!' -colorspace Gray \) \
-      -metric SSIM -compare -format '%[distortion]' info: 2>/dev/null); then
-      :
-    elif [[ $? -ne 1 ]]; then
-      exit 1
+      -metric SSIM -compare -format '%[distortion]' info: 2>"$similarity_error"); then
+      comparison_status=0
+    else
+      comparison_status=$?
     fi
+    if (( comparison_status != 0 && comparison_status != 1 )); then
+      echo "ImageMagick similarity comparison failed (exit $comparison_status):" >&2
+      cat "$similarity_error" >&2
+      exit "$comparison_status"
+    fi
+    rm -f -- "$similarity_error"
+    similarity_error=""
     if awk -v similarity="$similarity" 'BEGIN { exit !(similarity >= 0.8) }'; then
       echo "Capture unchanged (SSIM $similarity); skipped"
       exit 0

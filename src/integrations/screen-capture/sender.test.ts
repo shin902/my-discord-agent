@@ -120,7 +120,10 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$HOME/magick-calls"
 if [[ "$*" == *SSIM* ]]; then
-  (( SCREEN_TEST_MAGICK_EXIT == 0 )) || exit "$SCREEN_TEST_MAGICK_EXIT"
+  if (( SCREEN_TEST_MAGICK_EXIT != 0 )); then
+    printf 'fixture comparison failure\\n' >&2
+    exit "$SCREEN_TEST_MAGICK_EXIT"
+  fi
   printf '%s' "$SCREEN_TEST_SIMILARITY"
   exit 1
 fi
@@ -185,6 +188,14 @@ printf '%s-resized' "$(<"$input")" > "$output"
     );
     expect(readFileSync(reference, "utf8")).toBe("png-resized");
     rmSync(argsFile);
+    const comparisonFailed = run([url], "200", 0, "0.2", 2);
+    expect(comparisonFailed.status).toBe(2);
+    expect(comparisonFailed.stderr).toContain(
+      "ImageMagick similarity comparison failed (exit 2)",
+    );
+    expect(comparisonFailed.stderr).toContain("fixture comparison failure");
+    expect(existsSync(`${image}.raw.png`)).toBe(false);
+
     const skipped = run([url], "200", 0, "0.95");
     expect(skipped.status).toBe(0);
     expect(skipped.stdout).toContain("skipped");
@@ -201,6 +212,7 @@ printf '%s-resized' "$(<"$input")" > "$output"
     expect(run([url, explicit]).status).toBe(0);
     expect(readFileSync(reference, "utf8")).toBe("explicit");
 
+    rmSync(reference);
     writeFileSync(path.join(root, "rm"), "#!/usr/bin/env bash\nexit 1\n", {
       mode: 0o700,
     });
