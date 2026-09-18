@@ -39,8 +39,11 @@ class CalendarApiError extends Error {
   }
 }
 
-async function calendarFetch(path: string): Promise<unknown> {
-  const res = await hostFetch(PROVIDER, path);
+async function calendarFetch(
+  path: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const res = await hostFetch(PROVIDER, path, {}, signal);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new CalendarApiError(
@@ -55,12 +58,18 @@ async function calendarRequest(
   method: "POST" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  const res = await hostFetch(PROVIDER, path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const res = await hostFetch(
+    PROVIDER,
+    path,
+    {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    },
+    signal,
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new CalendarApiError(
@@ -135,7 +144,7 @@ export const listCalendarsTool: AgentTool<typeof listCalendarsParameters> = {
   description:
     "List Google Calendars with their ID, name, access role, and time zone.",
   parameters: listCalendarsParameters,
-  execute: async () => {
+  execute: async (_toolCallId, _params, signal) => {
     const calendars: CalendarListEntry[] = [];
     const seenPageTokens = new Set<string>();
     let pageToken: string | undefined;
@@ -150,7 +159,7 @@ export const listCalendarsTool: AgentTool<typeof listCalendarsParameters> = {
         pageToken === undefined
           ? "/users/me/calendarList"
           : `/users/me/calendarList?pageToken=${encodeURIComponent(pageToken)}`;
-      const data = (await calendarFetch(path)) as {
+      const data = (await calendarFetch(path, signal)) as {
         items?: CalendarListEntry[];
         nextPageToken?: unknown;
       };
@@ -218,6 +227,7 @@ export const listEventsTool: AgentTool<typeof listEventsParameters> = {
   execute: async (
     _toolCallId,
     { timeMin, timeMax, maxResults = 10, calendarId = "primary" },
+    signal,
   ) => {
     const params = new URLSearchParams({
       maxResults: String(Math.min(maxResults, 50)),
@@ -229,6 +239,7 @@ export const listEventsTool: AgentTool<typeof listEventsParameters> = {
 
     const data = (await calendarFetch(
       `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+      signal,
     )) as { items: CalendarEvent[] };
 
     const lines: string[] = [`## 予定一覧（${calendarId}）`, ""];
@@ -260,9 +271,10 @@ export const readEventTool: AgentTool<typeof readEventParameters> = {
   description:
     "Read the details of a calendar event using an eventId returned by list-events.",
   parameters: readEventParameters,
-  execute: async (_toolCallId, { eventId, calendarId = "primary" }) => {
+  execute: async (_toolCallId, { eventId, calendarId = "primary" }, signal) => {
     const event = (await calendarFetch(
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      signal,
     )) as CalendarEvent;
 
     const attendees =
@@ -342,6 +354,7 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
       timeZone,
       calendarId = "primary",
     },
+    signal,
   ) => {
     const startDateTime = toEventDateTime(start);
     const endDateTime = toEventDateTime(end);
@@ -388,6 +401,7 @@ export const createEventTool: AgentTool<typeof createEventParameters> = {
       "POST",
       `/calendars/${encodeURIComponent(calendarId)}/events`,
       body,
+      signal,
     )) as CalendarEvent;
 
     return {
@@ -485,6 +499,7 @@ async function recreateEventForTypeChange(params: {
   location?: string;
   attendees?: string[];
   timeZone?: string;
+  signal?: AbortSignal;
 }) {
   const {
     eventId,
@@ -497,6 +512,7 @@ async function recreateEventForTypeChange(params: {
     location,
     attendees,
     timeZone,
+    signal,
   } = params;
 
   const recreateBody: Record<string, unknown> = {};
@@ -538,6 +554,7 @@ async function recreateEventForTypeChange(params: {
     "POST",
     `/calendars/${encodeURIComponent(calendarId)}/events`,
     recreateBody,
+    signal,
   )) as CalendarEvent;
 
   const buildKeepBothNotice = (reason: string) => ({
@@ -561,6 +578,7 @@ async function recreateEventForTypeChange(params: {
   try {
     const latest = (await calendarFetch(
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      signal,
     )) as Record<string, unknown>;
     if (current.etag !== undefined && latest.etag !== current.etag) {
       return buildKeepBothNotice(
@@ -568,6 +586,7 @@ async function recreateEventForTypeChange(params: {
       );
     }
   } catch (checkErr) {
+    signal?.throwIfAborted();
     if (checkErr instanceof CalendarApiError && checkErr.status === 404) {
       oldEventAlreadyGone = true;
     } else {
@@ -584,8 +603,11 @@ async function recreateEventForTypeChange(params: {
       await calendarRequest(
         "DELETE",
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        undefined,
+        signal,
       );
     } catch (deleteErr) {
+      signal?.throwIfAborted();
       const deleteMessage =
         deleteErr instanceof Error ? deleteErr.message : String(deleteErr);
       return buildKeepBothNotice(
@@ -628,6 +650,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
       timeZone,
       calendarId = "primary",
     },
+    signal,
   ) => {
     if (timeZone !== undefined) assertValidTimeZone(timeZone);
 
@@ -650,6 +673,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
         "PATCH",
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
         body,
+        signal,
       )) as CalendarEvent;
 
       return {
@@ -676,6 +700,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
       // ここで取得するしかなく、削除直前の etag 再確認（recreateEventForTypeChange 内）でしか検知できない。
       const current = (await calendarFetch(
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+        signal,
       )) as CalendarEvent & Record<string, unknown>;
 
       // エラー文言だけでは「本当に終日↔時刻指定の変更が原因か」を判別できないため、
@@ -712,6 +737,7 @@ export const updateEventTool: AgentTool<typeof updateEventParameters> = {
         location,
         attendees,
         timeZone,
+        signal,
       });
     }
   },
@@ -728,10 +754,12 @@ export const deleteEventTool: AgentTool<typeof deleteEventParameters> = {
   description:
     "Delete a specified calendar event. This cannot be undone, so show the event name and time to the user and obtain final confirmation before executing it.",
   parameters: deleteEventParameters,
-  execute: async (_toolCallId, { eventId, calendarId = "primary" }) => {
+  execute: async (_toolCallId, { eventId, calendarId = "primary" }, signal) => {
     await calendarRequest(
       "DELETE",
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      undefined,
+      signal,
     );
 
     return {

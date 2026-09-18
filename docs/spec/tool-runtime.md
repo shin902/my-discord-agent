@@ -70,7 +70,7 @@ Cookie更新はhostの `pnpm reddit:refresh` または既存cronから単発main
 }
 ```
 
-RuntimeはSearchTimeline POST対応済みの`twitter-cli` commit `7c634e0d396b1e7af9f63315b414925fe4f29ae7`をGitHub archiveからSHA固定で導入し、argvで起動します。state fileの非root owner UID/GIDへRuntimeをdropしてから、値を子process環境へだけ渡します。Agent引数・結果、`docker run`の環境変数・argv、host logへcredentialやraw authenticated responseを載せません。ブラウザprofileはmountせず、自動Cookie抽出も使いません。認証失効、rate limit、CLI / upstream変更は空結果ではなく固定診断の失敗になります。利用するgroup / channel / cronのeffective `tools`へ`x-search`、または `toolSets`へ`web`を明示し、Runtime imageとhostを同時に更新してください。
+RuntimeはSearchTimeline POST対応済みの`twitter-cli` commit `7c634e0d396b1e7af9f63315b414925fe4f29ae7`をGitHub archiveからSHA固定で導入し、argvで起動します。state fileの非root owner UID/GIDへRuntimeをdropしてから、値を子process環境へだけ渡します。Agent引数・結果、`docker run`の環境変数・argv、host logへcredentialやraw authenticated responseを載せません。通常検索ではブラウザprofileをmountしません。`pnpm x:login` / `pnpm x:refresh` / `x-cookie-refresh` cronはhost-onlyのPlaywright処理です。X maintenanceのRuntime protocol、profile / 出力ディレクトリmountはありません。初回ログインとrefreshは[X Cookieセットアップ](../guides/x-cookie-setup.md)を参照してください。認証失効、rate limit、CLI / upstream変更は空結果ではなく固定診断の失敗になります。利用するgroup / channel / cronのeffective `tools`へ`x-search`、または`toolSets`へ`web`を明示し、Runtime imageとhostを同時に更新してください。
 
 ## 導入・旧構成からの移行
 

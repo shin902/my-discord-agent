@@ -94,6 +94,13 @@
     "handler": "jobs/reddit-cookie-refresh.ts"
   },
   {
+    "_comment": "Host-only Playwright refresh; run pnpm x:login first. No Tool Runtime / Agent tools.",
+    "id": "x-cookie-refresh",
+    "schedule": "30 4 */3 * *",
+    "enabled": false,
+    "handler": "jobs/x-cookie-refresh.ts"
+  },
+  {
     "id": "issue-triage",
     "schedule": "0 * * * *",
     "enabled": true,
@@ -131,6 +138,18 @@
     "enabled": false,
     "handler": "jobs/x-saved-media-download.ts",
     "settings": { "limit": 20 }
+  },
+  {
+    "id": "x-saved-classify",
+    "schedule": "*/10 * * * *",
+    "enabled": false,
+    "handler": "jobs/x-saved-classify.ts",
+    "settings": {
+      "aliases": "config/x-saved-aliases.json",
+      "device": "cpu",
+      "limit": 20,
+      "thresholds": { "copyright": 0.46, "character": 0.37, "general": 0.34 }
+    }
   },
   {
     "id": "x-saved-backup",

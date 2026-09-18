@@ -33,6 +33,13 @@ describe("x-search Runtime state", () => {
       ]),
     );
 
+    expect(xArgs.filter((arg) => arg.startsWith("type=bind,"))).toEqual([
+      `type=bind,src=${state},dst=/var/lib/twitter/twitter-cookies.json,readonly`,
+    ]);
+    expect(xArgs.join(" ")).not.toMatch(
+      /x-browser-profile|X_PROFILE_DIR|X_COOKIE_FILE|\/var\/lib\/twitter\/(profile|output)/,
+    );
+
     const arxivArgs = await buildToolRuntimeArgs(
       { capability: "arxiv-search", args: { query: "test" } },
       "arxiv-fixture",

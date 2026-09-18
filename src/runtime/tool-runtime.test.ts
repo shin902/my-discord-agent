@@ -23,6 +23,7 @@ describe("one-shot Tool Runtime protocol", () => {
     { capability: "arxiv-search", args: { query: 1 } },
     { capability: "arxiv-search", args: { query: "q" }, image: "other" },
     { maintenance: "shell" },
+    { maintenance: "x-cookie-refresh" },
   ])("rejects unregistered operations or malformed requests: %j", async (request) => {
     expect(await executeRuntimeRequest(request)).toHaveProperty("error");
     expect(refreshRedditCookies).not.toHaveBeenCalled();
