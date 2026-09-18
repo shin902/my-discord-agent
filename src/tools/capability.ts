@@ -139,6 +139,7 @@ export type CapabilityDefinition =
     })
   | (CapabilityDefinitionBase & {
       readonly executor: "host" | "runtime";
+      readonly timeoutMs: number;
       /** Validate the wire arguments without changing the agent-facing schema. */
       readonly validateArgs: CapabilityArgsValidator;
       /** Resolve effective executor arguments after validation, when needed. */

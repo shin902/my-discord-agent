@@ -112,6 +112,7 @@ const tavilySearchArgsValidator: CapabilityArgsValidator = (value) =>
     value.topic === "finance");
 
 interface HostCapabilityOptions {
+  readonly timeoutMs?: number;
   readonly validateArgs?: CapabilityArgsValidator;
   readonly clampedProperties?: readonly string[];
   readonly defaultArgs?: () => Readonly<Record<string, unknown>>;
@@ -126,6 +127,7 @@ function hostCapability(
     tool: tool.name,
     executor: "host",
     factory: () => tool,
+    timeoutMs: options.timeoutMs ?? 30_000,
     validateArgs:
       options.validateArgs ?? validateToolArgs(tool, clampedProperties),
     materializeArgs: materializeToolArgs(tool, {

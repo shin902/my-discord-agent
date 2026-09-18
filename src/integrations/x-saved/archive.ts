@@ -5,7 +5,6 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { z } from "zod";
-import { TOOL_EXECUTION_TIMEOUT_MS } from "../../tools/tool-timeout.js";
 import { type ArchiveMedia, isMediaUrl } from "./media-contract.js";
 
 const Id = z.string().regex(/^[1-9][0-9]{0,19}$/);
@@ -105,7 +104,7 @@ export async function fetchFxTwitter(
     {
       credentials: "omit",
       redirect: "error",
-      signal: AbortSignal.timeout(TOOL_EXECUTION_TIMEOUT_MS),
+      signal: AbortSignal.timeout(20_000),
     },
   );
   try {

@@ -157,7 +157,6 @@ export async function buildToolRuntimeArgs(
 
 async function runContainer(
   request: ToolRuntimeRequest,
-  timeoutMs: number,
   signal: AbortSignal,
   options: ToolRuntimeOptions,
 ): Promise<AgentToolResult<unknown>> {
@@ -198,10 +197,6 @@ async function runContainer(
     })();
   };
   const abort = () => cancel(new Error("Tool Runtime aborted"));
-  const timer = setTimeout(
-    () => cancel(new Error("Tool Runtime timed out")),
-    timeoutMs,
-  );
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
   child.stdout.on("data", (chunk: Buffer) => {
@@ -271,7 +266,6 @@ async function runContainer(
     throw error;
   } finally {
     closed = true;
-    clearTimeout(timer);
     signal.removeEventListener("abort", abort);
     await cancellation;
   }
@@ -279,7 +273,6 @@ async function runContainer(
 
 async function execute(
   request: ToolRuntimeRequest,
-  timeoutMs: number,
   signal: AbortSignal | undefined,
   options: ToolRuntimeOptions,
 ): Promise<AgentToolResult<unknown>> {
@@ -288,7 +281,6 @@ async function execute(
     controller,
     done: runContainer(
       request,
-      timeoutMs,
       AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]),
       options,
     ),
@@ -309,7 +301,7 @@ export async function executeToolRuntime(
 ): Promise<AgentToolResult<unknown>> {
   const definition = getRuntimeCapability(capability);
   if (!definition) throw new Error("Unknown Runtime capability");
-  return execute({ capability, args }, definition.timeoutMs, signal, options);
+  return execute({ capability, args }, signal, options);
 }
 
 export async function refreshRedditCookiesInRuntime(
@@ -317,8 +309,7 @@ export async function refreshRedditCookiesInRuntime(
 ): Promise<void> {
   await execute(
     { maintenance: "reddit-cookie-refresh" },
-    120_000,
-    undefined,
+    AbortSignal.timeout(120_000),
     options,
   );
 }

@@ -5,7 +5,6 @@ import {
   hackerNewsSearchTool,
 } from "./recent-search.js";
 import { getRuntimeCapability } from "./runtime-capabilities.js";
-import { TOOL_EXECUTION_TIMEOUT_MS } from "./tool-timeout.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -13,15 +12,6 @@ afterEach(() => {
 });
 
 describe("last30days fixed public search contracts", () => {
-  it("uses the shared Tool execution timeout", () => {
-    expect(getRuntimeCapability("hackernews-search")?.timeoutMs).toBe(
-      TOOL_EXECUTION_TIMEOUT_MS,
-    );
-    expect(getRuntimeCapability("agent-reach")?.timeoutMs).toBe(
-      TOOL_EXECUTION_TIMEOUT_MS,
-    );
-  });
-
   it("freezes the 30-day cutoff before approval and removes caller-supplied execution fields", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-08T01:02:03Z"));

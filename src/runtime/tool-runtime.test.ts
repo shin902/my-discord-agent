@@ -44,11 +44,9 @@ describe("one-shot Tool Runtime protocol", () => {
         args: { url: "https://example.com" },
       }),
     ).toEqual({ result });
-    expect(execute).toHaveBeenCalledExactlyOnceWith(
-      "tool-runtime",
-      { url: "https://example.com" },
-      expect.any(AbortSignal),
-    );
+    expect(execute).toHaveBeenCalledExactlyOnceWith("tool-runtime", {
+      url: "https://example.com",
+    });
   });
 
   it("executes already-materialized arguments unchanged", async () => {
