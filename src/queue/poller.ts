@@ -19,7 +19,7 @@ import {
 } from "../config/groups.js";
 import {
   type ProviderConcurrency,
-  resolveProviderConcurrency,
+  resolveProviderLockTarget,
 } from "../config/providers.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
 import { getCachedCronJob, isCronHandler } from "../cron/runner.js";
@@ -32,7 +32,7 @@ import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
-import { acquireLlmLock } from "./llm-mutex.js";
+import { acquireInferenceLock } from "./inference-lock.js";
 import { settleRssDispatch } from "./reconciliation.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
 import type { InboxMessage } from "./types.js";
@@ -465,13 +465,13 @@ async function sendDiscordEvent(
 }
 
 // LLM ロックを取得してから fn() を実行し、完了後に必ず解放する
-interface LlmLockOptions {
+interface InferenceLockOptions {
   onAcquired?: (waitMs: number) => void;
   signal?: AbortSignal;
 }
 
-interface LlmLockTarget {
-  provider: string;
+interface InferenceLockTarget {
+  resource: string;
   concurrency: ProviderConcurrency;
 }
 
@@ -506,28 +506,25 @@ async function resolveBotExecution(
   };
 }
 
-async function resolveLlmLockTarget(
+async function resolveInferenceLockTarget(
   msg: InboxMessage,
   groupModel?: ModelConfig,
   configOverride = msg.configOverride,
-): Promise<LlmLockTarget> {
+): Promise<InferenceLockTarget> {
   const model = await resolveModelConfig(
     resolveAgentConfig({ model: groupModel }, configOverride).model,
   );
-  return {
-    provider: model.provider,
-    concurrency: await resolveProviderConcurrency(model.provider),
-  };
+  return resolveProviderLockTarget(model.provider);
 }
 
-async function withLlmLock<T>(
-  target: LlmLockTarget,
+async function withInferenceLock<T>(
+  target: InferenceLockTarget,
   fn: () => Promise<T>,
-  options: LlmLockOptions = {},
+  options: InferenceLockOptions = {},
 ): Promise<T> {
   const waitStartedAt = Date.now();
-  const release = await acquireLlmLock(
-    target.provider,
+  const release = await acquireInferenceLock(
+    target.resource,
     target.concurrency,
     options.signal,
   );
@@ -770,12 +767,12 @@ async function processCronThreadDelivery(
     }
     const groupConfig = await findGroupByName(msg.groupName);
     const execution = await resolveBotExecution(msg, groupConfig);
-    const lockTarget = await resolveLlmLockTarget(
+    const lockTarget = await resolveInferenceLockTarget(
       msg,
       groupConfig?.model,
       execution.configOverride,
     );
-    const response = await withLlmLock(
+    const response = await withInferenceLock(
       lockTarget,
       async () => {
         const agentStartedAt = Date.now();
@@ -807,9 +804,9 @@ async function processCronThreadDelivery(
             systemPromptAppend: msg.cronNoReply
               ? NO_REPLY_SYSTEM_PROMPT
               : undefined,
-            heldLlmProvider:
+            heldInferenceResource:
               lockTarget.concurrency === "serial"
-                ? lockTarget.provider
+                ? lockTarget.resource
                 : undefined,
             ...(msg.botId ? { enableBotTool: false } : {}),
           });
@@ -1062,7 +1059,7 @@ export async function processMessage(
   }
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
-  // タイピング表示はロック取得後（withLlmLock の fn 内）に開始するため、
+  // タイピング表示はロック取得後（withInferenceLock の fn 内）に開始するため、
   // ここではプレースホルダを持ち、catch / finally の両方で停止できるようにする
   let stopTyping = () => {};
   try {
@@ -1093,12 +1090,12 @@ export async function processMessage(
 
     try {
       const execution = await resolveBotExecution(msg, groupConfig);
-      const lockTarget = await resolveLlmLockTarget(
+      const lockTarget = await resolveInferenceLockTarget(
         msg,
         groupConfig.model,
         execution.configOverride,
       );
-      response = await withLlmLock(
+      response = await withInferenceLock(
         lockTarget,
         async () => {
           stopTyping = startTypingLoop(msg.groupName, msg.channelId);
@@ -1163,9 +1160,9 @@ export async function processMessage(
                   groupConfig,
                   msg.channelId,
                 ),
-                heldLlmProvider:
+                heldInferenceResource:
                   lockTarget.concurrency === "serial"
-                    ? lockTarget.provider
+                    ? lockTarget.resource
                     : undefined,
                 ...(msg.botId ? { enableBotTool: false } : {}),
               },

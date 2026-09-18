@@ -45,7 +45,7 @@ export async function withBotTaskSessionAdmission<T>(
       const result = repository.tryAdmitBotTaskSessionAdmission(admission);
       if (result === "blocked")
         throw new Error(
-          "先行するBot Task Session処理が親のprovider lockを待つため、同期Bot呼び出しを開始できません",
+          "先行するBot Task Session処理が親のinference resource lockを待つため、同期Bot呼び出しを開始できません",
         );
       if (result === "unavailable")
         throw new Error("Bot Task Session admissionを開始できません");

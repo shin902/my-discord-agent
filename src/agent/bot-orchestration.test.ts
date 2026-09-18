@@ -5,15 +5,17 @@ const {
   sendMessage,
   findGroupByName,
   loadBotRegistry,
-  acquireLlmLock,
-  resolveProviderConcurrency,
+  acquireInferenceLock,
+  resolveProviderLockTarget,
   repository,
 } = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   findGroupByName: vi.fn(),
   loadBotRegistry: vi.fn(),
-  acquireLlmLock: vi.fn().mockResolvedValue(vi.fn()),
-  resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
+  acquireInferenceLock: vi.fn().mockResolvedValue(vi.fn()),
+  resolveProviderLockTarget: vi
+    .fn()
+    .mockResolvedValue({ resource: "p", concurrency: "serial" }),
   repository: {
     listBotTaskSessions: vi.fn(),
     createBotTaskSessionAndAdmission: vi.fn(() => ({
@@ -77,8 +79,8 @@ vi.mock("../config/agent-resolution.js", () => ({
 vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi.fn(async (model: unknown) => model),
 }));
-vi.mock("../config/providers.js", () => ({ resolveProviderConcurrency }));
-vi.mock("../queue/llm-mutex.js", () => ({ acquireLlmLock }));
+vi.mock("../config/providers.js", () => ({ resolveProviderLockTarget }));
+vi.mock("../queue/inference-lock.js", () => ({ acquireInferenceLock }));
 vi.mock("../queue/repository.js", () => ({
   getQueueRepository: () => repository,
 }));
@@ -115,7 +117,7 @@ function response() {
 function invoke(
   req: MockRequest,
   res: ReturnType<typeof response>,
-  heldProvider?: string,
+  heldResource?: string,
   scope?: string,
   trustedDiscordDestination?: {
     botId: string;
@@ -126,7 +128,7 @@ function invoke(
     req as unknown as import("node:http").IncomingMessage,
     res as unknown as import("node:http").ServerResponse,
     scope,
-    heldProvider,
+    heldResource,
     trustedDiscordDestination,
   );
 }
@@ -332,7 +334,7 @@ describe("handleBotToolRequest", () => {
       "p",
     );
 
-    expect(acquireLlmLock).not.toHaveBeenCalled();
+    expect(acquireInferenceLock).not.toHaveBeenCalled();
   });
 
   it("先行処理がある同じserial providerの同期resumeは待たずに拒否する", async () => {
@@ -372,7 +374,10 @@ describe("handleBotToolRequest", () => {
   it("親が別のserial providerを保持中なら同期Bot呼び出しを拒否する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    resolveProviderConcurrency.mockResolvedValueOnce("serial");
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      resource: "p",
+      concurrency: "serial",
+    });
     const res = response();
 
     await invoke(
@@ -390,9 +395,9 @@ describe("handleBotToolRequest", () => {
 
     expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
     expect(JSON.parse(res.end.mock.calls[0][0]).error).toContain(
-      "異なるserial providerへの同期Bot呼び出しは利用できません",
+      "異なるserial resourceへの同期Bot呼び出しは利用できません",
     );
-    expect(acquireLlmLock).not.toHaveBeenCalled();
+    expect(acquireInferenceLock).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -400,8 +405,11 @@ describe("handleBotToolRequest", () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     const release = vi.fn();
-    acquireLlmLock.mockResolvedValueOnce(release);
-    resolveProviderConcurrency.mockResolvedValueOnce("serial");
+    acquireInferenceLock.mockResolvedValueOnce(release);
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      resource: "p",
+      concurrency: "serial",
+    });
     sendMessage.mockRejectedValueOnce(new Error("failed"));
 
     await invoke(
@@ -416,7 +424,7 @@ describe("handleBotToolRequest", () => {
       response(),
     );
 
-    expect(acquireLlmLock).toHaveBeenCalledWith(
+    expect(acquireInferenceLock).toHaveBeenCalledWith(
       "p",
       "serial",
       expect.any(AbortSignal),
@@ -427,7 +435,10 @@ describe("handleBotToolRequest", () => {
   it("同じparallel providerでは先行処理を待って実行する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    resolveProviderConcurrency.mockResolvedValueOnce("parallel");
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      resource: "p",
+      concurrency: "parallel",
+    });
     sendMessage.mockResolvedValueOnce("結果");
 
     await invoke(
@@ -452,7 +463,10 @@ describe("handleBotToolRequest", () => {
   it("parallel providerはlock待機なしで実行し、releaseはnoop契約に委ねる", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    resolveProviderConcurrency.mockResolvedValueOnce("parallel");
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      resource: "p",
+      concurrency: "parallel",
+    });
     sendMessage.mockResolvedValueOnce("結果");
 
     await invoke(
@@ -468,7 +482,7 @@ describe("handleBotToolRequest", () => {
       "other-provider",
     );
 
-    expect(acquireLlmLock).toHaveBeenCalledWith(
+    expect(acquireInferenceLock).toHaveBeenCalledWith(
       "p",
       "parallel",
       expect.any(AbortSignal),
@@ -479,7 +493,7 @@ describe("handleBotToolRequest", () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     const release = vi.fn();
-    acquireLlmLock.mockResolvedValueOnce(release);
+    acquireInferenceLock.mockResolvedValueOnce(release);
     const req = new MockRequest(
       JSON.stringify({
         groupName: "main",
@@ -501,7 +515,9 @@ describe("handleBotToolRequest", () => {
   it("lock待機中のabortでは取得後のreleaseなしで失敗する", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
-    acquireLlmLock.mockRejectedValueOnce(new Error("provider lock aborted"));
+    acquireInferenceLock.mockRejectedValueOnce(
+      new Error("inference resource lock aborted"),
+    );
 
     await invoke(
       new MockRequest(

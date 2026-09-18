@@ -13,11 +13,11 @@ import {
 import { loadCredentialProxy } from "../../config/credential-proxy.js";
 import { resolveModelConfig } from "../../config/default-model.js";
 import { findGroupByName, ModelConfigSchema } from "../../config/groups.js";
-import { resolveProviderConcurrency } from "../../config/providers.js";
+import { resolveProviderLockTarget } from "../../config/providers.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
 import { getProxyPort } from "../../proxy/credential-proxy-server.js";
 import { usesAnthropicOAuth } from "../../proxy/provider-auth.js";
-import { acquireLlmLock } from "../../queue/llm-mutex.js";
+import { acquireInferenceLock } from "../../queue/inference-lock.js";
 import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 
@@ -85,7 +85,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     resolveAgentConfig(await findGroupByName(groupName), agentConfig).model;
   const memoryModel =
     configuredMemoryModel ?? (await resolveModelConfig(undefined));
-  const memoryConcurrency = await resolveProviderConcurrency(
+  const memoryLockTarget = await resolveProviderLockTarget(
     memoryModel.provider,
   );
   const sendMemoryMessage = async (
@@ -93,18 +93,20 @@ export default async function handler(ctx: CronContext): Promise<void> {
     content: string,
     options: Omit<
       NonNullable<Parameters<typeof sendMessage>[3]>,
-      "heldLlmProvider"
+      "heldInferenceResource"
     >,
   ) => {
-    const release = await acquireLlmLock(
-      memoryModel.provider,
-      memoryConcurrency,
+    const release = await acquireInferenceLock(
+      memoryLockTarget.resource,
+      memoryLockTarget.concurrency,
     );
     try {
       return await sendMessage(groupName, sessionId, content, {
         ...options,
-        heldLlmProvider:
-          memoryConcurrency === "serial" ? memoryModel.provider : undefined,
+        heldInferenceResource:
+          memoryLockTarget.concurrency === "serial"
+            ? memoryLockTarget.resource
+            : undefined,
       });
     } finally {
       release();
@@ -214,7 +216,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       const apiKey = usesAnthropicOAuth(entry, key)
         ? "sk-ant-oat-proxy-placeholder"
         : "local";
-      const policy = await resolveProviderConcurrency(visionModel.provider);
+      const lockTarget = await resolveProviderLockTarget(visionModel.provider);
       const pending = selected.filter((capture) => capture.summary === null);
       const save = db.prepare(
         "UPDATE screen_captures SET summary = ? WHERE id = ? AND summary IS NULL AND completed_at IS NULL",
@@ -228,9 +230,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
               const capture = pending[next++];
               let summary: string;
               try {
-                const release = await acquireLlmLock(
-                  visionModel.provider,
-                  policy,
+                const release = await acquireInferenceLock(
+                  lockTarget.resource,
+                  lockTarget.concurrency,
                 );
                 try {
                   const image = await readFile(

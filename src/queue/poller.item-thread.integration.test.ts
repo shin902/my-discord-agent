@@ -40,7 +40,9 @@ vi.mock("../config/groups.js", async (importOriginal) => {
   };
 });
 vi.mock("../config/providers.js", () => ({
-  resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
+  resolveProviderLockTarget: vi
+    .fn()
+    .mockResolvedValue({ resource: "provider-a", concurrency: "serial" }),
 }));
 vi.mock("../discord/client.js", () => ({
   getDiscordClientForGroupName: vi.fn().mockResolvedValue(state.client),

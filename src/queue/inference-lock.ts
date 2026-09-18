@@ -5,9 +5,7 @@ interface MutexState {
   waiters: Array<() => void>;
 }
 
-// serial provider ごとに独立したミューテックスを持つ。
-// serial provider A と serial provider B は互いをブロックしない。
-const providerMutexes = new Map<string, MutexState>();
+const resourceMutexes = new Map<string, MutexState>();
 
 const noopRelease = () => {};
 
@@ -26,7 +24,7 @@ function acquire(
         const index = state.waiters.indexOf(tryAcquire);
         if (index >= 0) state.waiters.splice(index, 1);
       }
-      reject(new Error("provider lock aborted"));
+      reject(new Error("inference lock aborted"));
     };
     const tryAcquire = () => {
       queued = false;
@@ -56,37 +54,32 @@ function acquire(
     signal?.addEventListener("abort", abort, { once: true });
   });
 }
-function acquireProvider(
-  provider: string,
+function acquireResource(
+  resource: string,
   signal?: AbortSignal,
 ): Promise<() => void> {
-  const state = providerMutexes.get(provider) ?? {
+  const state = resourceMutexes.get(resource) ?? {
     locked: false,
     waiters: [],
   };
-  providerMutexes.set(provider, state);
+  resourceMutexes.set(resource, state);
   return acquire(
     state,
     () => {
-      if (providerMutexes.get(provider) === state) {
-        providerMutexes.delete(provider);
+      if (resourceMutexes.get(resource) === state) {
+        resourceMutexes.delete(resource);
       }
     },
     signal,
   );
 }
 
-/**
- * LLM 呼び出し（sendMessage()）の前後で取得するロック。
- * - provider concurrency が serial: provider 単位のミューテックスで待機
- * - provider concurrency が parallel: ロックなし
- */
-export async function acquireLlmLock(
-  provider: string,
+export async function acquireInferenceLock(
+  resource: string,
   concurrency: ProviderConcurrency,
   signal?: AbortSignal,
 ): Promise<() => void> {
-  if (signal?.aborted) throw new Error("provider lock aborted");
-  if (concurrency === "serial") return acquireProvider(provider, signal);
+  if (signal?.aborted) throw new Error("inference lock aborted");
+  if (concurrency === "serial") return acquireResource(resource, signal);
   return noopRelease;
 }
