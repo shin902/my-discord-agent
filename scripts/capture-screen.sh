@@ -114,10 +114,15 @@ if [[ "$command" == "on" ]]; then
     echo "Interval must be a positive number of seconds" >&2
     exit 1
   }
+  magick_path=$(command -v magick) || {
+    echo "ImageMagick 'magick' is required" >&2
+    exit 1
+  }
   mkdir -p "$(dirname "$plist")" "$(dirname "$logfile")"
   lock_lifecycle
   escaped_script=$(xml_escape "$script")
   escaped_logfile=$(xml_escape "$logfile")
+  escaped_path=$(xml_escape "$(dirname "$magick_path"):/usr/bin:/bin:/usr/sbin:/sbin")
   temporary="$plist.$$"
   cat >"$temporary" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -127,6 +132,9 @@ if [[ "$command" == "on" ]]; then
   <key>ProgramArguments</key><array>
     <string>/bin/bash</string><string>$escaped_script</string><string>run</string><string>$url</string>
   </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>$escaped_path</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>$interval</integer>
   <key>StandardOutPath</key><string>$escaped_logfile</string>

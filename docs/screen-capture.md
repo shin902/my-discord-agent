@@ -50,7 +50,7 @@ bash scripts/capture-screen.sh status
 bash scripts/capture-screen.sh off
 ```
 
-`on`は`~/Library/LaunchAgents/com.my-discord-agent.screen-capture.plist`を作成して登録するため、ログイン後はterminalを閉じても動作し、Mac再起動後も再開します。`status`は登録中ならexit 0、停止中ならexit 1です。`off`は実行中の撮影・送信を含むLaunchAgentを停止してplistを削除し、繰り返し実行しても成功します。logは`~/Library/Logs/my-discord-agent-screen-capture.log`へ追記されます。
+`on`は実行時に`magick`の場所を解決してPATHとともに`~/Library/LaunchAgents/com.my-discord-agent.screen-capture.plist`へ保存するため、ログイン後はterminalを閉じても動作し、Mac再起動後も再開します。`status`は登録中ならexit 0、停止中ならexit 1です。`off`は実行中の撮影・送信を含むLaunchAgentを停止してplistを削除し、繰り返し実行しても成功します。logは`~/Library/Logs/my-discord-agent-screen-capture.log`へ追記されます。
 
 送信待ちPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`、比較基準は同directoryの`.last-acknowledged.png`です。各周期では既存の全PNGを先に再送し、すべてACKされた場合だけ新しく1枚撮影します。1枚でも再送に失敗すると、その周期は新規撮影せず次の周期に再試行するため、receiver停止中にPNGが増え続けません。比較・縮小に失敗した新規captureは未縮小のまま再送待ちへ残しません。失敗の確認には次を使います。
 
@@ -64,7 +64,7 @@ tail -f "$HOME/Library/Logs/my-discord-agent-screen-capture.log"
 bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 ```
 
-同じUUIDと同じbytesの再送は冪等です。新しい撮影には新しいUUIDを使うので、画面が同じでも別の時点の記録として保存できます。既存PNGを送る場合もUUIDをbasenameにした`.png`へコピーしてください。スクリプトはHTTPSの`.ts.net` URLだけを受理し、redirectを追わず、HTTP 200以外をACKとして扱いません。
+同じUUIDと同じbytesの再送は冪等です。自動captureでは最後にACKされた画像とのSSIMが80%以上なら新しい時点として保存せずskipし、変化がある場合だけ新しいUUIDで送信します。既存PNGを明示的に送る場合は類似度判定を行わず、そのUUIDで送信します。UUIDをbasenameにした`.png`を指定してください。スクリプトはHTTPSの`.ts.net` URLだけを受理し、redirectを追わず、HTTP 200以外をACKとして扱いません。
 
 ## cronによるActivity Memory更新
 

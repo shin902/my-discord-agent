@@ -31,6 +31,9 @@ it("installs, updates, reports, and removes the screen capture LaunchAgent", () 
     writeFileSync(path.join(root, "plutil"), "#!/usr/bin/env bash\nexit 0\n", {
       mode: 0o700,
     });
+    writeFileSync(path.join(root, "magick"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o700,
+    });
     writeFileSync(
       path.join(root, "shlock"),
       '#!/usr/bin/env bash\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in -f) file=$2; shift 2;; -p) pid=$2; shift 2;; esac\ndone\n(set -o noclobber; printf "%s\\n" "$pid" > "$file") 2>/dev/null\n',
@@ -45,6 +48,9 @@ it("installs, updates, reports, and removes the screen capture LaunchAgent", () 
     );
     expect(readFileSync(plist, "utf8")).toContain(
       "<key>StartInterval</key><integer>30</integer>",
+    );
+    expect(readFileSync(plist, "utf8")).toContain(
+      `<key>PATH</key><string>${root}:/usr/bin:/bin:/usr/sbin:/sbin</string>`,
     );
     expect(run("status").status).toBe(0);
     expect(run("on", url, "300").status).toBe(0);
