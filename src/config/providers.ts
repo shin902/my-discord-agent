@@ -48,7 +48,7 @@ export interface ProviderLockTarget {
   concurrency: ProviderConcurrency;
 }
 
-/** 未設定 provider はprovider名をresourceとして安全側に倒して直列実行する。 */
+/** resource未指定providerは専用keyへ隔離し、安全側の直列実行にする。 */
 export async function resolveProviderLockTarget(
   provider: string,
 ): Promise<ProviderLockTarget> {
@@ -56,7 +56,9 @@ export async function resolveProviderLockTarget(
     (candidate) => candidate.provider === provider,
   );
   return {
-    resource: entry?.resource ?? provider,
+    resource: entry?.resource
+      ? `resource:${entry.resource}`
+      : `provider:${provider}`,
     concurrency: entry?.concurrency ?? "serial",
   };
 }

@@ -107,7 +107,7 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 - `serial`: 同じresourceの実行を FIFO で1件ずつ処理する
 - `parallel`: 同じresourceでも並列実行を許可する
 
-同じGPUや推論backendを共有するproviderには同じ`resource`を指定する。同一resourceに`serial`と`parallel`が混在する設定は起動時に拒否される。異なるresourceのロックは互いをブロックしない。同じセッションのメッセージはこの設定とは別に、`runtime.sqlite` の順序制御で未完了の先行jobを追い越さないよう処理される。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使う。詳細は [キューの状態と順序](inbox-queue.md#状態と順序) を参照。
+同じGPUや推論backendを共有するproviderには、両方のentryで同じ`resource`を明示する。`resource`を省略したproviderは、そのprovider専用のlock keyを使うため、同名の明示resourceとは共有しない。同一resourceに`serial`と`parallel`が混在する設定は起動時に拒否される。異なるresourceのロックは互いをブロックしない。同じセッションのメッセージはこの設定とは別に、`runtime.sqlite` の順序制御で未完了の先行jobを追い越さないよう処理される。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使う。詳細は [キューの状態と順序](inbox-queue.md#状態と順序) を参照。
 
 ## config/credentials.json
 

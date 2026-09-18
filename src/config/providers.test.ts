@@ -47,7 +47,7 @@ describe("provider concurrency config", () => {
     const { resolveProviderLockTarget } = await importFresh();
 
     await expect(resolveProviderLockTarget("zai")).resolves.toEqual({
-      resource: "zai",
+      resource: "provider:zai",
       concurrency: "serial",
     });
   });
@@ -59,7 +59,7 @@ describe("provider concurrency config", () => {
     const { resolveProviderLockTarget } = await importFresh();
 
     await expect(resolveProviderLockTarget("codex-oauth")).resolves.toEqual({
-      resource: "codex-oauth",
+      resource: "provider:codex-oauth",
       concurrency: "parallel",
     });
   });
@@ -75,11 +75,27 @@ describe("provider concurrency config", () => {
     const { resolveProviderLockTarget } = await importFresh();
 
     await expect(resolveProviderLockTarget("local-vlm")).resolves.toEqual({
-      resource: "local-gpu",
+      resource: "resource:local-gpu",
       concurrency: "serial",
     });
     await expect(resolveProviderLockTarget("unknown")).resolves.toEqual({
-      resource: "unknown",
+      resource: "provider:unknown",
+      concurrency: "serial",
+    });
+  });
+
+  it("明示resourceと同名providerの暗黙fallbackを別keyにする", async () => {
+    vi.mocked(loadRawProviders).mockResolvedValue([
+      { provider: "gateway", resource: "local", concurrency: "parallel" },
+    ]);
+    const { resolveProviderLockTarget } = await importFresh();
+
+    await expect(resolveProviderLockTarget("gateway")).resolves.toEqual({
+      resource: "resource:local",
+      concurrency: "parallel",
+    });
+    await expect(resolveProviderLockTarget("local")).resolves.toEqual({
+      resource: "provider:local",
       concurrency: "serial",
     });
   });
