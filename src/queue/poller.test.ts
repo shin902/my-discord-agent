@@ -47,7 +47,10 @@ vi.mock("../config/groups.js", async (importOriginal) => {
   return { ...actual, findGroupByChannelId, findGroupByName: vi.fn() };
 });
 vi.mock("../config/providers.js", () => ({
-  resolveProviderConcurrency: vi.fn().mockResolvedValue("serial"),
+  resolveProviderLockTarget: vi.fn().mockImplementation(async (provider) => ({
+    resource: provider,
+    concurrency: "serial",
+  })),
 }));
 const discordClient = vi.hoisted(() => ({
   isReady: vi.fn().mockReturnValue(false),
@@ -103,7 +106,7 @@ vi.mock("./repository.js", () => ({
 
 const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
-const { resolveProviderConcurrency } = await import("../config/providers.js");
+const { resolveProviderLockTarget } = await import("../config/providers.js");
 const client = discordClient;
 const { processMessage, startPoller, stopPoller } = await import("./poller.js");
 
@@ -129,7 +132,10 @@ beforeEach(() => {
     channel: { channelId: "ch-1", sessionMode: "shared" },
   });
   vi.mocked(client.isReady).mockReturnValue(false);
-  vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
+  vi.mocked(resolveProviderLockTarget).mockImplementation(async (provider) => ({
+    resource: provider,
+    concurrency: "serial",
+  }));
   loadBotRegistry.mockReset();
   resolveBotProfile.mockReset();
   loadMessages.mockResolvedValue([]);
@@ -241,7 +247,7 @@ describe("processMessage - Bot execution resolution", () => {
 
     await processMessage(msg);
 
-    expect(resolveProviderConcurrency).toHaveBeenCalledWith("bot-provider");
+    expect(resolveProviderLockTarget).toHaveBeenCalledWith("bot-provider");
     const options = vi.mocked(sendMessage).mock.calls[0]?.[3] as
       | SendMessageOptions
       | undefined;
@@ -2146,7 +2152,10 @@ describe("processMessage - provider ごとの LLM ロック", () => {
   });
 
   it("parallel provider は同じ provider でも並列に sendMessage を実行する", async () => {
-    vi.mocked(resolveProviderConcurrency).mockResolvedValue("parallel");
+    vi.mocked(resolveProviderLockTarget).mockResolvedValue({
+      resource: "provider-a",
+      concurrency: "parallel",
+    });
     let inFlight = 0;
     let maxInFlight = 0;
     let releaseBoth!: () => void;

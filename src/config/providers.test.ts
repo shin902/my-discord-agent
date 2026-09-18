@@ -44,20 +44,54 @@ describe("provider concurrency config", () => {
 
   it("未設定 provider は安全側の serial にする", async () => {
     vi.mocked(loadRawProviders).mockResolvedValue([]);
-    const { resolveProviderConcurrency } = await importFresh();
+    const { resolveProviderLockTarget } = await importFresh();
 
-    await expect(resolveProviderConcurrency("zai")).resolves.toBe("serial");
+    await expect(resolveProviderLockTarget("zai")).resolves.toEqual({
+      resource: "zai",
+      concurrency: "serial",
+    });
   });
 
   it("設定済み provider の parallel を返す", async () => {
     vi.mocked(loadRawProviders).mockResolvedValue([
       { provider: "codex-oauth", concurrency: "parallel" },
     ]);
-    const { resolveProviderConcurrency } = await importFresh();
+    const { resolveProviderLockTarget } = await importFresh();
 
-    await expect(resolveProviderConcurrency("codex-oauth")).resolves.toBe(
-      "parallel",
-    );
+    await expect(resolveProviderLockTarget("codex-oauth")).resolves.toEqual({
+      resource: "codex-oauth",
+      concurrency: "parallel",
+    });
+  });
+
+  it("resourceを返し、省略時はprovider名へfallbackする", async () => {
+    vi.mocked(loadRawProviders).mockResolvedValue([
+      {
+        provider: "local-vlm",
+        resource: "local-gpu",
+        concurrency: "serial",
+      },
+    ]);
+    const { resolveProviderLockTarget } = await importFresh();
+
+    await expect(resolveProviderLockTarget("local-vlm")).resolves.toEqual({
+      resource: "local-gpu",
+      concurrency: "serial",
+    });
+    await expect(resolveProviderLockTarget("unknown")).resolves.toEqual({
+      resource: "unknown",
+      concurrency: "serial",
+    });
+  });
+
+  it("同一resourceのconcurrency矛盾を拒否する", async () => {
+    vi.mocked(loadRawProviders).mockResolvedValue([
+      { provider: "local-llm", resource: "gpu", concurrency: "serial" },
+      { provider: "local-vlm", resource: "gpu", concurrency: "parallel" },
+    ]);
+    const { loadProviders } = await importFresh();
+
+    await expect(loadProviders()).rejects.toThrow(/一致しません/);
   });
 
   it("不正な concurrency を拒否する", async () => {

@@ -607,8 +607,8 @@ export interface SendMessageOptions {
   systemPromptAppend?: string;
   /** Disable nested agent-facing Bot delegation for a Bot execution. */
   enableBotTool?: boolean;
-  /** Provider whose serial LLM lock is held by the caller, if any. */
-  heldLlmProvider?: string;
+  /** Inference resource whose serial lock is held by the caller, if any. */
+  heldInferenceResource?: string;
 }
 
 export async function sendMessage(
@@ -633,7 +633,7 @@ export async function sendMessage(
     toolCallKey,
     systemPromptAppend,
     enableBotTool,
-    heldLlmProvider,
+    heldInferenceResource,
     trustedDiscordDestination,
   } = options;
   const executionStartedAt = Date.now();
@@ -750,7 +750,7 @@ export async function sendMessage(
     botCatalog !== undefined
       ? createInternalRequestConfig?.(
           groupName,
-          heldLlmProvider,
+          heldInferenceResource,
           trustedDiscordDestination,
         )
       : undefined;

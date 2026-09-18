@@ -22,8 +22,8 @@ class UpstreamTimeoutError extends Error {
 let proxyPort: number | null = null;
 interface InternalRequestAuthorization {
   scope: string;
-  /** Provider whose serial lock is held by the parent run, if any. */
-  heldProvider?: string;
+  /** Inference resource whose serial lock is held by the parent run, if any. */
+  heldResource?: string;
   /** Trusted Discord destination captured outside the sandbox. */
   trustedDiscordDestination?: TrustedDiscordDestination;
 }
@@ -33,7 +33,7 @@ let internalRequestHandler:
       req: IncomingMessage,
       res: ServerResponse,
       scope: string,
-      heldProvider?: string,
+      heldResource?: string,
       trustedDiscordDestination?: TrustedDiscordDestination,
     ) => Promise<void>)
   | null = null;
@@ -50,7 +50,7 @@ export function registerInternalRequestHandler(
     req: IncomingMessage,
     res: ServerResponse,
     scope: string,
-    heldProvider?: string,
+    heldResource?: string,
     trustedDiscordDestination?: TrustedDiscordDestination,
   ) => Promise<void>,
 ): void {
@@ -60,14 +60,14 @@ export function registerInternalRequestHandler(
 /** Issue a group-scoped credential for one sandbox run. The caller must revoke it when the run ends. */
 export function createInternalRequestConfig(
   scope: string,
-  heldProvider?: string,
+  heldResource?: string,
   trustedDiscordDestination?: TrustedDiscordDestination,
 ): InternalRequestConfig | undefined {
   if (proxyPort === null) return undefined;
   const token = randomUUID();
   internalRequestTokens.set(token, {
     scope,
-    heldProvider,
+    heldResource,
     ...(trustedDiscordDestination
       ? { trustedDiscordDestination: { ...trustedDiscordDestination } }
       : {}),
@@ -294,7 +294,7 @@ export function createRequestHandler(
           req,
           res,
           authorization.scope,
-          authorization.heldProvider,
+          authorization.heldResource,
           authorization.trustedDiscordDestination,
         ).catch((err) => {
           if (!res.headersSent) {

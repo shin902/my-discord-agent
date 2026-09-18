@@ -33,7 +33,9 @@ vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi.fn(async (model: unknown) => model),
 }));
 vi.mock("../config/providers.js", () => ({
-  resolveProviderConcurrency: vi.fn().mockResolvedValue("parallel"),
+  resolveProviderLockTarget: vi
+    .fn()
+    .mockResolvedValue({ resource: "provider-a", concurrency: "parallel" }),
 }));
 vi.mock("../discord/client.js", () => ({
   getDiscordClientForGroupName: vi.fn().mockResolvedValue({

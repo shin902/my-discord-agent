@@ -4,7 +4,7 @@ import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { findGroupByName } from "../config/groups.js";
-import { resolveProviderConcurrency } from "../config/providers.js";
+import { resolveProviderLockTarget } from "../config/providers.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import {
   formatBotTaskSessionList,
@@ -12,7 +12,7 @@ import {
   prepareBotTaskSession,
   previewBotTaskPrompt,
 } from "../queue/bot-task-sessions.js";
-import { acquireLlmLock } from "../queue/llm-mutex.js";
+import { acquireInferenceLock } from "../queue/inference-lock.js";
 import { getQueueRepository } from "../queue/repository.js";
 import { withBotTaskSessionAdmission } from "../queue/session-admission.js";
 import { type AgentExecutionTiming, sendMessage } from "./manager.js";
@@ -58,7 +58,7 @@ export async function handleBotToolRequest(
   req: IncomingMessage,
   res: ServerResponse,
   scope?: string,
-  heldProvider?: string,
+  heldResource?: string,
   trustedDiscordDestination?: TrustedDiscordDestination,
 ): Promise<void> {
   const controller = new AbortController();
@@ -103,14 +103,14 @@ export async function handleBotToolRequest(
 
     const configOverride = resolveAgentConfig(group, profile);
     const model = await resolveModelConfig(configOverride.model);
-    const concurrency = await resolveProviderConcurrency(model.provider);
+    const lockTarget = await resolveProviderLockTarget(model.provider);
     if (
-      heldProvider !== undefined &&
-      heldProvider !== model.provider &&
-      concurrency === "serial"
+      heldResource !== undefined &&
+      heldResource !== lockTarget.resource &&
+      lockTarget.concurrency === "serial"
     ) {
       throw new Error(
-        "親がserial providerのlockを保持しているため、異なるserial providerへの同期Bot呼び出しは利用できません",
+        "親がserial inference resourceのlockを保持しているため、異なるserial resourceへの同期Bot呼び出しは利用できません",
       );
     }
 
@@ -138,7 +138,7 @@ export async function handleBotToolRequest(
     if (!admitted) throw new Error("指定されたTask Sessionは見つかりません");
     const { session, admission } = admitted;
 
-    // Admission happens before the provider lock so a direct call cannot
+    // Admission happens before the inference resource lock so a direct call cannot
     // overtake an earlier queued invocation. The ticket remains active until
     // sendMessage has settled, so later turns cannot append concurrently.
     let execution!: { content: string; timing?: AgentExecutionTiming };
@@ -147,11 +147,11 @@ export async function handleBotToolRequest(
       admission,
       async () => {
         const release =
-          heldProvider === model.provider
+          heldResource === lockTarget.resource
             ? undefined
-            : await acquireLlmLock(
-                model.provider,
-                concurrency,
+            : await acquireInferenceLock(
+                lockTarget.resource,
+                lockTarget.concurrency,
                 controller.signal,
               );
         try {
@@ -185,7 +185,8 @@ export async function handleBotToolRequest(
       controller.signal,
       {
         failIfBlocked:
-          heldProvider === model.provider && concurrency === "serial",
+          heldResource === lockTarget.resource &&
+          lockTarget.concurrency === "serial",
       },
     );
 

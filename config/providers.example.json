@@ -3,7 +3,15 @@
   { "provider": "codex-oauth", "concurrency": "parallel" },
   { "provider": "openai", "concurrency": "parallel" },
   { "provider": "anthropic", "concurrency": "parallel" },
-  { "provider": "llama-cpp", "concurrency": "serial" },
-  { "provider": "llama-cpp-qwen3", "concurrency": "serial" },
+  {
+    "provider": "llama-cpp",
+    "resource": "local-gpu",
+    "concurrency": "serial"
+  },
+  {
+    "provider": "llama-cpp-qwen3",
+    "resource": "local-gpu",
+    "concurrency": "serial"
+  },
   { "provider": "ollama-qwen3", "concurrency": "serial" }
 ]

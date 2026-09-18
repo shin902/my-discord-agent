@@ -14,9 +14,9 @@ import { resolveModel } from "../../agent/model.js";
 import { loadCredentialProxy } from "../../config/credential-proxy.js";
 import { resolveModelConfig } from "../../config/default-model.js";
 import { findGroupByName } from "../../config/groups.js";
-import { resolveProviderConcurrency } from "../../config/providers.js";
+import { resolveProviderLockTarget } from "../../config/providers.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
-import { acquireLlmLock } from "../../queue/llm-mutex.js";
+import { acquireInferenceLock } from "../../queue/inference-lock.js";
 import type { CronContext } from "../runner.js";
 import handler from "./screen-capture-summary.js";
 
@@ -74,9 +74,11 @@ vi.mock("../../config/groups.js", async (original) => ({
   findGroupByName: vi.fn(),
 }));
 vi.mock("../../config/providers.js", () => ({
-  resolveProviderConcurrency: vi.fn(),
+  resolveProviderLockTarget: vi.fn(),
 }));
-vi.mock("../../queue/llm-mutex.js", () => ({ acquireLlmLock: vi.fn() }));
+vi.mock("../../queue/inference-lock.js", () => ({
+  acquireInferenceLock: vi.fn(),
+}));
 vi.mock("../../proxy/credential-proxy-server.js", () => ({
   getProxyPort: () => 4242,
 }));
@@ -151,8 +153,10 @@ describe("screen capture summary cron", () => {
         ? { ...config, provider: config.provider ?? "openai" }
         : memoryModel,
     );
-    vi.mocked(resolveProviderConcurrency).mockResolvedValue("parallel");
-    vi.mocked(acquireLlmLock).mockResolvedValue(vi.fn());
+    vi.mocked(resolveProviderLockTarget).mockImplementation(
+      async (provider) => ({ resource: provider, concurrency: "parallel" }),
+    );
+    vi.mocked(acquireInferenceLock).mockResolvedValue(vi.fn());
     vi.mocked(completeSimple).mockResolvedValue(result());
     vi.mocked(sendMessage).mockResolvedValue("updated");
   });
@@ -397,8 +401,10 @@ describe("screen capture summary cron", () => {
   it("passes more than 10 images to one locked direct-mode agent call", async () => {
     const ids = insert(12);
     const release = vi.fn();
-    vi.mocked(resolveProviderConcurrency).mockResolvedValue("serial");
-    vi.mocked(acquireLlmLock).mockResolvedValue(release);
+    vi.mocked(resolveProviderLockTarget).mockImplementation(
+      async (provider) => ({ resource: provider, concurrency: "serial" }),
+    );
+    vi.mocked(acquireInferenceLock).mockResolvedValue(release);
     const directory = path.join(
       process.cwd(),
       "groups/logbook/.screen-captures",
@@ -424,13 +430,16 @@ describe("screen capture summary cron", () => {
       expect.objectContaining({
         imagePaths: ids.map((id) => `/workspace/.screen-captures/${id}.png`),
         configOverride: agentConfig,
-        heldLlmProvider: memoryModel.provider,
+        heldInferenceResource: memoryModel.provider,
       }),
     );
-    expect(resolveProviderConcurrency).toHaveBeenCalledWith(
+    expect(resolveProviderLockTarget).toHaveBeenCalledWith(
       memoryModel.provider,
     );
-    expect(acquireLlmLock).toHaveBeenCalledWith(memoryModel.provider, "serial");
+    expect(acquireInferenceLock).toHaveBeenCalledWith(
+      memoryModel.provider,
+      "serial",
+    );
     expect(release).toHaveBeenCalledOnce();
     for (const id of ids) {
       await expect(
