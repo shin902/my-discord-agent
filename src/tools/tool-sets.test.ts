@@ -58,10 +58,7 @@ describe("trusted toolSets", () => {
     "unknown",
     "__proto__",
     "constructor",
-    "last30days",
-    "arxiv-search",
-    "arxiv-survey",
-  ])("rejects unknown bundle %s", (name) => {
+  ])("rejects unknown permission set %s", (name) => {
     expect(() => runCapabilityNames({ toolSets: [name] })).toThrow(
       `Unknown toolSet: ${name}`,
     );

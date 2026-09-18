@@ -3,6 +3,9 @@ import { proxyCapabilityNames } from "./registry.js";
 /** Trusted capabilities available to each Skill. Skill files never grant authority. */
 export const TOOL_SETS: Readonly<Record<string, readonly string[]>> = {
   "agent-reach": ["agent-reach"],
+  "arxiv-search": ["arxiv-search"],
+  "arxiv-survey": ["arxiv-survey"],
+  last30days: ["hackernews-search", "github-recent-search", "agent-reach"],
   web: [
     "agent-reach",
     "tavily-search",
