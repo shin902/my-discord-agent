@@ -14,17 +14,13 @@ lock_directory="$plist.lock"
 
 temporary=""
 raw_temporary=""
-resized_temporary=""
-similarity_error=""
 cleanup() {
   [[ -z "$temporary" ]] || rm -f -- "$temporary"
   rm -f -- "$lock_directory"
 }
 
-cleanup_capture_temporaries() {
+cleanup_raw_capture() {
   [[ -z "$raw_temporary" ]] || rm -f -- "$raw_temporary"
-  [[ -z "$resized_temporary" ]] || rm -f -- "$resized_temporary"
-  [[ -z "$similarity_error" ]] || rm -f -- "$similarity_error"
 }
 
 lock_lifecycle() {
@@ -168,34 +164,23 @@ else
   mkdir -p "$capture_directory"
   image="$capture_directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
   raw_temporary="$image.raw.png"
-  resized_temporary="$capture_directory/.$(basename "$image").resize.tmp"
-  trap cleanup_capture_temporaries EXIT
+  trap cleanup_raw_capture EXIT
   screencapture -x -m -t png "$raw_temporary"
   if [[ -f "$reference_image" ]]; then
-    similarity_error="$capture_directory/.similarity-error.$$"
     if similarity=$(magick \
       \( "$reference_image" -resize '64x64!' -colorspace Gray \) \
       \( "$raw_temporary" -resize '64x64!' -colorspace Gray \) \
-      -metric SSIM -compare -format '%[distortion]' info: 2>"$similarity_error"); then
-      comparison_status=0
-    else
-      comparison_status=$?
+      -metric SSIM -compare -format '%[distortion]' info: 2>/dev/null); then
+      :
+    elif [[ $? -ne 1 ]]; then
+      exit 1
     fi
-    if (( comparison_status != 0 && comparison_status != 1 )); then
-      echo "ImageMagick similarity comparison failed (exit $comparison_status):" >&2
-      cat "$similarity_error" >&2
-      exit "$comparison_status"
-    fi
-    rm -f -- "$similarity_error"
-    similarity_error=""
     if awk -v similarity="$similarity" 'BEGIN { exit !(similarity >= 0.8) }'; then
       echo "Capture unchanged (SSIM $similarity); skipped"
       exit 0
     fi
   fi
-  magick "$raw_temporary" -resize '1280x720>' "png:$resized_temporary"
-  mv -- "$resized_temporary" "$image"
-  resized_temporary=""
+  magick "$raw_temporary" -resize '1280x720>' "$image"
   rm -- "$raw_temporary"
   raw_temporary=""
 fi
@@ -217,7 +202,6 @@ if [[ "$status" != 200 ]]; then
   exit 1
 fi
 # Advance the comparison reference only after the server committed the image.
-mkdir -p "$capture_directory"
 cp -- "$image" "$reference_image"
 rm -- "$image"
 printf 'Accepted: %s (local PNG deleted)\n' "$id"

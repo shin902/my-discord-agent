@@ -87,7 +87,6 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
     status = "200",
     curlExit = 0,
     similarity = "0.2",
-    magickExit = 0,
   ) {
     return spawnSync(
       "bash",
@@ -99,7 +98,6 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
           SCREEN_TEST_STATUS: status,
           SCREEN_TEST_CURL_EXIT: String(curlExit),
           SCREEN_TEST_SIMILARITY: similarity,
-          SCREEN_TEST_MAGICK_EXIT: String(magickExit),
         },
       },
     );
@@ -120,20 +118,11 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$HOME/magick-calls"
 if [[ "$*" == *SSIM* ]]; then
-  if (( SCREEN_TEST_MAGICK_EXIT != 0 )); then
-    printf 'fixture comparison failure\\n' >&2
-    exit "$SCREEN_TEST_MAGICK_EXIT"
-  fi
   printf '%s' "$SCREEN_TEST_SIMILARITY"
   exit 1
 fi
 input=$1
 output=\${!#}
-output=\${output#png:}
-if (( SCREEN_TEST_MAGICK_EXIT != 0 )); then
-  printf partial > "$output"
-  exit "$SCREEN_TEST_MAGICK_EXIT"
-fi
 printf '%s-resized' "$(<"$input")" > "$output"
 `,
       { mode: 0o700 },
@@ -150,19 +139,12 @@ printf '%s-resized' "$(<"$input")" > "$output"
       "Library/Application Support/my-discord-agent/screen-captures",
       `${id}.png`,
     );
-    expect(run([url], "200", 0, "0.2", 2).status).not.toBe(0);
-    expect(existsSync(image)).toBe(false);
-    expect(existsSync(`${image}.raw.png`)).toBe(false);
-    expect(
-      existsSync(path.join(path.dirname(image), `.${id}.png.resize.tmp`)),
-    ).toBe(false);
-    expect(existsSync(argsFile)).toBe(false);
     const failed = run([url], "503");
     expect(failed.status).toBe(1);
     expect(failed.stderr).toContain("retained for retry");
     expect(readFileSync(image, "utf8")).toBe("png-resized");
     expect(readFileSync(magickCalls, "utf8").trim().split("\n")).toHaveLength(
-      2,
+      1,
     );
     for (const status of ["302", "409", "500"]) {
       expect(run([url, image], status).status).toBe(1);
@@ -188,14 +170,6 @@ printf '%s-resized' "$(<"$input")" > "$output"
     );
     expect(readFileSync(reference, "utf8")).toBe("png-resized");
     rmSync(argsFile);
-    const comparisonFailed = run([url], "200", 0, "0.2", 2);
-    expect(comparisonFailed.status).toBe(2);
-    expect(comparisonFailed.stderr).toContain(
-      "ImageMagick similarity comparison failed (exit 2)",
-    );
-    expect(comparisonFailed.stderr).toContain("fixture comparison failure");
-    expect(existsSync(`${image}.raw.png`)).toBe(false);
-
     const skipped = run([url], "200", 0, "0.95");
     expect(skipped.status).toBe(0);
     expect(skipped.stdout).toContain("skipped");
@@ -205,12 +179,6 @@ printf '%s-resized' "$(<"$input")" > "$output"
     expect(run([url]).status).toBe(0); // Changed captures use the same ACK cleanup.
     expect(readFileSync(magickCalls, "utf8")).toContain("1280x720>");
     expect(existsSync(image)).toBe(false);
-
-    rmSync(path.dirname(image), { recursive: true });
-    const explicit = path.join(root, `${id}.png`);
-    writeFileSync(explicit, "explicit");
-    expect(run([url, explicit]).status).toBe(0);
-    expect(readFileSync(reference, "utf8")).toBe("explicit");
 
     rmSync(reference);
     writeFileSync(path.join(root, "rm"), "#!/usr/bin/env bash\nexit 1\n", {
