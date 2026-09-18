@@ -7,6 +7,7 @@ label="com.my-discord-agent.screen-capture"
 plist="$HOME/Library/LaunchAgents/$label.plist"
 logfile="$HOME/Library/Logs/my-discord-agent-screen-capture.log"
 capture_directory="$HOME/Library/Application Support/my-discord-agent/screen-captures"
+reference_image="$capture_directory/.last-acknowledged.png"
 script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 domain="gui/$(id -u)"
 lock_directory="$plist.lock"
@@ -149,11 +150,25 @@ if [[ $# -eq 2 ]]; then
 else
   mkdir -p "$capture_directory"
   image="$capture_directory/$(uuidgen | tr '[:upper:]' '[:lower:]').png"
-  screencapture -x -m -t png "$image"
-  if ! sips -Z 1280 "$image" >/dev/null; then
-    rm -f -- "$image"
-    exit 1
+  temporary="$image.raw.png"
+  screencapture -x -m -t png "$temporary"
+  if [[ -f "$reference_image" ]]; then
+    if similarity=$(magick \
+      \( "$reference_image" -resize '64x64!' -colorspace Gray \) \
+      \( "$temporary" -resize '64x64!' -colorspace Gray \) \
+      -metric SSIM -compare -format '%[distortion]' info: 2>/dev/null); then
+      :
+    elif [[ $? -ne 1 ]]; then
+      exit 1
+    fi
+    if awk -v similarity="$similarity" 'BEGIN { exit !(similarity >= 0.8) }'; then
+      echo "Capture unchanged (SSIM $similarity); skipped"
+      exit 0
+    fi
   fi
+  magick "$temporary" -resize '1280x720>' "$image"
+  rm -- "$temporary"
+  temporary=""
 fi
 id=$(basename "$image" .png)
 if [[ ! -f "$image" || ! "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
@@ -172,6 +187,7 @@ if [[ "$status" != 200 ]]; then
   echo "Upload not acknowledged (HTTP $status); PNG retained for retry" >&2
   exit 1
 fi
-# HTTP 200 confirms the DB commit; no second copy is needed on the Mac.
+# Advance the comparison reference only after the server committed the image.
+cp -- "$image" "$reference_image"
 rm -- "$image"
 printf 'Accepted: %s (local PNG deleted)\n' "$id"

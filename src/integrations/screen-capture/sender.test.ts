@@ -69,14 +69,20 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
   const id = "cf7f6080-1faa-49a3-9734-0b4b0b1c0cee";
   const url = "https://bot.example.ts.net:8444/v1/screen-captures";
   const argsFile = path.join(root, "curl-args");
-  const sipsCalls = path.join(root, "sips-calls");
+  const magickCalls = path.join(root, "magick-calls");
   const env = {
     ...process.env,
     HOME: root,
     PATH: `${root}:${process.env.PATH}`,
     SCREEN_TEST_ARGS: argsFile,
   };
-  function run(args: string[], status = "200", curlExit = 0, sipsExit = 0) {
+  function run(
+    args: string[],
+    status = "200",
+    curlExit = 0,
+    similarity = "0.2",
+    magickExit = 0,
+  ) {
     return spawnSync(
       "bash",
       [path.resolve("scripts/capture-screen.sh"), ...args],
@@ -86,7 +92,8 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
           ...env,
           SCREEN_TEST_STATUS: status,
           SCREEN_TEST_CURL_EXIT: String(curlExit),
-          SCREEN_TEST_SIPS_EXIT: String(sipsExit),
+          SCREEN_TEST_SIMILARITY: similarity,
+          SCREEN_TEST_MAGICK_EXIT: String(magickExit),
         },
       },
     );
@@ -103,8 +110,18 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       { mode: 0o700 },
     );
     writeFileSync(
-      path.join(root, "sips"),
-      '#!/usr/bin/env bash\nprintf "%s\\n" "$*" > "$HOME/sips-args"\nprintf "call\\n" >> "$HOME/sips-calls"\n(( SCREEN_TEST_SIPS_EXIT == 0 )) || exit "$SCREEN_TEST_SIPS_EXIT"\nimage=$3\nprintf "%s" "-resized" >> "$image"\n',
+      path.join(root, "magick"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$HOME/magick-calls"
+(( SCREEN_TEST_MAGICK_EXIT == 0 )) || exit "$SCREEN_TEST_MAGICK_EXIT"
+if [[ "$*" == *SSIM* ]]; then
+  printf '%s' "$SCREEN_TEST_SIMILARITY"
+  exit 1
+fi
+input=$1
+output=\${!#}
+printf '%s-resized' "$(<"$input")" > "$output"
+`,
       { mode: 0o700 },
     );
     writeFileSync(
@@ -119,14 +136,16 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       "Library/Application Support/my-discord-agent/screen-captures",
       `${id}.png`,
     );
-    expect(run([url], "200", 0, 1).status).toBe(1);
+    expect(run([url], "200", 0, "0.2", 2).status).not.toBe(0);
     expect(existsSync(image)).toBe(false);
     expect(existsSync(argsFile)).toBe(false);
     const failed = run([url], "503");
     expect(failed.status).toBe(1);
     expect(failed.stderr).toContain("retained for retry");
     expect(readFileSync(image, "utf8")).toBe("png-resized");
-    expect(readFileSync(sipsCalls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(readFileSync(magickCalls, "utf8").trim().split("\n")).toHaveLength(
+      2,
+    );
     for (const status of ["302", "409", "500"]) {
       expect(run([url, image], status).status).toBe(1);
       expect(readFileSync(image, "utf8")).toBe("png-resized");
@@ -136,7 +155,6 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
       expect(run([url, image], status, 28).status).toBe(1);
       expect(readFileSync(image, "utf8")).toBe("png-resized");
     }
-    expect(readFileSync(sipsCalls, "utf8").trim().split("\n")).toHaveLength(2);
     const retried = run([url, image]);
     expect(retried.status).toBe(0);
     expect(retried.stdout).toContain(`Accepted: ${id} (local PNG deleted)`);
@@ -146,11 +164,19 @@ it("retains uncertain uploads for same-UUID retries and deletes the PNG only aft
     expect(args).toContain(`@${image}`);
     expect(args).toContain("=https");
     expect(args).not.toContain("--location");
-    expect(readFileSync(sipsCalls, "utf8").trim().split("\n")).toHaveLength(2);
-    expect(run([url]).status).toBe(0); // Fresh captures use the same ACK cleanup.
-    expect(readFileSync(path.join(root, "sips-args"), "utf8")).toContain(
-      `-Z 1280 ${image}`,
+    const reference = path.join(
+      root,
+      "Library/Application Support/my-discord-agent/screen-captures/.last-acknowledged.png",
     );
+    expect(readFileSync(reference, "utf8")).toBe("png-resized");
+    rmSync(argsFile);
+    const skipped = run([url], "200", 0, "0.95");
+    expect(skipped.status).toBe(0);
+    expect(skipped.stdout).toContain("skipped");
+    expect(existsSync(argsFile)).toBe(false);
+    expect(existsSync(image)).toBe(false);
+    expect(run([url]).status).toBe(0); // Changed captures use the same ACK cleanup.
+    expect(readFileSync(magickCalls, "utf8")).toContain("1280x720>");
     expect(existsSync(image)).toBe(false);
     writeFileSync(path.join(root, "rm"), "#!/usr/bin/env bash\nexit 1\n", {
       mode: 0o700,

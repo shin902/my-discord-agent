@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +21,6 @@ import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const SIMILARITY_THRESHOLD = 0.8;
 const CommonSettings = {
   limit: z.number().int().min(1).default(10),
 };
@@ -45,68 +43,10 @@ type Capture = {
 
 type SelectedCapture = Omit<Capture, "image">;
 
-class InvalidCaptureError extends Error {}
-
-function runMagick(
-  args: string[],
-  acceptedExitCodes: readonly number[] = [],
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile("magick", args, (error, stdout, stderr) => {
-      if (
-        !error ||
-        acceptedExitCodes.includes((error as { code?: number }).code ?? -1)
-      )
-        return resolve(String(stdout));
-      if (
-        typeof (error as { code?: unknown }).code === "number" &&
-        /@ error\/png\.c\/|improper image header|corrupt image/i.test(
-          String(stderr),
-        )
-      )
-        return reject(new InvalidCaptureError());
-      reject(error);
-    });
-  });
-}
-
 async function writeCapture(directory: string, capture: Capture) {
   const imagePath = path.join(directory, `${capture.id}.png`);
   await writeFile(imagePath, capture.image, { mode: 0o600 });
-  await runMagick(["identify", imagePath]);
   return imagePath;
-}
-
-async function similarity(reference: string, candidate: string) {
-  const stdout = await runMagick(
-    [
-      "(",
-      reference,
-      "-resize",
-      "64x64!",
-      "-colorspace",
-      "Gray",
-      ")",
-      "(",
-      candidate,
-      "-resize",
-      "64x64!",
-      "-colorspace",
-      "Gray",
-      ")",
-      "-metric",
-      "SSIM",
-      "-compare",
-      "-format",
-      "%[distortion]",
-      "info:",
-    ],
-    [1],
-  );
-  const value = Number(stdout);
-  if (stdout.trim() === "" || !Number.isFinite(value))
-    throw new Error("magick returned invalid SSIM");
-  return value;
 }
 
 export default async function handler(ctx: CronContext): Promise<void> {
@@ -157,88 +97,23 @@ export default async function handler(ctx: CronContext): Promise<void> {
       : path.join(ROOT, "data", ".screen-captures-work");
 
   try {
-    const watermark = db
-      .prepare(`SELECT received_at, id FROM screen_captures
-        WHERE completed_at IS NULL
-        ORDER BY received_at DESC, id DESC LIMIT 1`)
-      .get() as { received_at: string; id: string } | undefined;
-    const nextCapture = db.prepare(`SELECT id, image, received_at, summary
-      FROM screen_captures
-      WHERE completed_at IS NULL
-        AND (received_at > ? OR (received_at = ? AND id > ?))
-        AND (received_at < ? OR (received_at = ? AND id <= ?))
-      ORDER BY received_at, id LIMIT 1`);
-    const previous = db
+    const captures = db
       .prepare(`SELECT id, image, received_at, summary FROM screen_captures
-        WHERE completed_at IS NOT NULL AND accepted = 1
-        ORDER BY received_at DESC, id DESC LIMIT 1`)
-      .get() as Capture | undefined;
+        WHERE completed_at IS NULL
+        ORDER BY received_at, id LIMIT ?`)
+      .all(limit) as Capture[];
+    if (captures.length < limit) return;
 
     await rm(directory, { recursive: true, force: true });
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    let reference: string | undefined;
-    if (previous) {
-      try {
-        reference = await writeCapture(directory, previous);
-      } catch (error) {
-        if (!(error instanceof InvalidCaptureError)) throw error;
-        console.warn(
-          `[screen-capture-summary] ${previous.id}: invalid capture; ignored as similarity reference`,
-        );
-      }
-    }
-    let cursor = { received_at: "", id: "" };
     const selected: SelectedCapture[] = [];
-    const rejectedIds: string[] = [];
-    let invalidCount = 0;
-    const completeInvalid = db.prepare(
-      "UPDATE screen_captures SET completed_at = ?, accepted = 0 WHERE id = ? AND completed_at IS NULL",
-    );
-
-    while (watermark && selected.length < limit) {
-      const capture = nextCapture.get(
-        cursor.received_at,
-        cursor.received_at,
-        cursor.id,
-        watermark.received_at,
-        watermark.received_at,
-        watermark.id,
-      ) as Capture | undefined;
-      if (!capture) break;
-      cursor = { received_at: capture.received_at, id: capture.id };
-
-      try {
-        const imagePath = await writeCapture(directory, capture);
-        const accepted = reference
-          ? (await similarity(reference, imagePath)) < SIMILARITY_THRESHOLD
-          : true;
-        if (accepted) {
-          selected.push({
-            id: capture.id,
-            received_at: capture.received_at,
-            summary: capture.summary,
-          });
-          reference = imagePath;
-        } else {
-          rejectedIds.push(capture.id);
-          await rm(imagePath, { force: true });
-        }
-      } catch (error) {
-        if (!(error instanceof InvalidCaptureError)) throw error;
-        invalidCount++;
-        completeInvalid.run(new Date().toISOString(), capture.id);
-        console.warn(
-          `[screen-capture-summary] ${capture.id}: invalid capture; marked completed`,
-        );
-      }
-    }
-
-    if (selected.length === 0 && rejectedIds.length === 0) {
-      if (invalidCount > 0)
-        console.log(
-          `[screen-capture-summary] completed=${invalidCount} accepted=0`,
-        );
-      return;
+    for (const capture of captures) {
+      await writeCapture(directory, capture);
+      selected.push({
+        id: capture.id,
+        received_at: capture.received_at,
+        summary: capture.summary,
+      });
     }
 
     if (parsed.data.mode === "direct") {
@@ -259,16 +134,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
       }
 
       const completedAt = new Date().toISOString();
+      const complete = db.prepare(
+        "UPDATE screen_captures SET completed_at = ?, accepted = 1 WHERE id = ? AND completed_at IS NULL",
+      );
       db.transaction(() => {
-        const complete = db.prepare(
-          "UPDATE screen_captures SET completed_at = ?, accepted = ? WHERE id = ? AND completed_at IS NULL",
-        );
-        for (const id of rejectedIds) complete.run(completedAt, 0, id);
-        for (const capture of selected)
-          complete.run(completedAt, 1, capture.id);
+        for (const capture of selected) complete.run(completedAt, capture.id);
       })();
       console.log(
-        `[screen-capture-summary] completed=${invalidCount + rejectedIds.length + selected.length} accepted=${selected.length}`,
+        `[screen-capture-summary] completed=${selected.length} accepted=${selected.length}`,
       );
       return;
     }
@@ -397,6 +270,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
             summary: string;
           }[]);
 
+    if (summarized.length !== selected.length) return;
+
     if (summarized.length > 0) {
       const observations = summarized
         .map(({ received_at, summary }) => `- ${received_at}: ${summary}`)
@@ -409,16 +284,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
     }
 
     const completedAt = new Date().toISOString();
+    const complete = db.prepare(
+      "UPDATE screen_captures SET completed_at = ?, accepted = 1 WHERE id = ? AND completed_at IS NULL",
+    );
     db.transaction(() => {
-      const complete = db.prepare(
-        "UPDATE screen_captures SET completed_at = ?, accepted = ? WHERE id = ? AND completed_at IS NULL",
-      );
-      for (const id of rejectedIds) complete.run(completedAt, 0, id);
-      for (const capture of summarized)
-        complete.run(completedAt, 1, capture.id);
+      for (const capture of summarized) complete.run(completedAt, capture.id);
     })();
     console.log(
-      `[screen-capture-summary] completed=${invalidCount + rejectedIds.length + summarized.length} accepted=${summarized.length}`,
+      `[screen-capture-summary] completed=${summarized.length} accepted=${summarized.length}`,
     );
   } finally {
     try {

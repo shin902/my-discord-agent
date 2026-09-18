@@ -38,7 +38,7 @@ bash scripts/capture-screen.sh \
   'https://<host>.<tailnet>.ts.net:8444/v1/screen-captures'
 ```
 
-macOS標準の`screencapture`、`sips`、`uuidgen`、`curl`を使い、メインディスプレイを1回撮影します。画像は縦横比を保ったまま長辺1280pxへ縮小してから送信します。Terminal等の実行元に「画面収録」の権限が必要です。
+macOS標準の`screencapture`、`uuidgen`、`curl`とImageMagickの`magick`を使い、メインディスプレイを1回撮影します。最後にHTTP 200を受けた画像とのSSIMが80%以上なら送信せず、変化があれば縦横比を保って1280x720以内へ縮小して送信します。Terminal等の実行元に「画面収録」の権限が必要です。
 
 継続して収集する場合はLaunchAgentを登録します。間隔は正の秒数で指定でき、既定は60秒です。同じ`on`コマンドを再実行するとURLと間隔を更新できます。
 
@@ -52,7 +52,7 @@ bash scripts/capture-screen.sh off
 
 `on`は`~/Library/LaunchAgents/com.my-discord-agent.screen-capture.plist`を作成して登録するため、ログイン後はterminalを閉じても動作し、Mac再起動後も再開します。`status`は登録中ならexit 0、停止中ならexit 1です。`off`は実行中の撮影・送信を含むLaunchAgentを停止してplistを削除し、繰り返し実行しても成功します。logは`~/Library/Logs/my-discord-agent-screen-capture.log`へ追記されます。
 
-送信待ちPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`です。各周期では既存の全PNGを先に再送し、すべてACKされた場合だけ新しく1枚撮影します。1枚でも再送に失敗すると、その周期は新規撮影せず次の周期に再試行するため、receiver停止中にPNGが増え続けません。初回撮影時に`sips`の縮小が失敗したPNGは、未縮小のまま再送待ちへ残さず削除します。失敗の確認には次を使います。
+送信待ちPNGは`~/Library/Application Support/my-discord-agent/screen-captures/<UUID>.png`、比較基準は同directoryの`.last-acknowledged.png`です。各周期では既存の全PNGを先に再送し、すべてACKされた場合だけ新しく1枚撮影します。1枚でも再送に失敗すると、その周期は新規撮影せず次の周期に再試行するため、receiver停止中にPNGが増え続けません。比較・縮小に失敗した新規captureは未縮小のまま再送待ちへ残しません。失敗の確認には次を使います。
 
 ```bash
 tail -f "$HOME/Library/Logs/my-discord-agent-screen-capture.log"
@@ -68,7 +68,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## cronによるActivity Memory更新
 
-cron開始時点の未完了画像を古い順に走査し、直前に採用した画像とのImageMagick SSIMが80%未満の画像を`settings.limit`件まで採用します（hostに`magick`コマンドが必要です）。実行中に届いた画像は次回のcronで処理します。`settings.mode`が`summarize`なら、採用画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、そのテキストだけを指定AgentGroupの通常LLMへまとめて渡します。`direct`なら採用画像を1回の通常LLM実行へ直接添付します。通常LLMは既存`capturelog`を読み、差分だけを追記します。`capturelog`更新後に`completed_at`と採否を保存します。VLM成功後に通常LLMが失敗した場合、次回は保存済みsummaryを再利用します。
+未完了画像が`settings.limit`枚未満なら何もせず、以上なら古いものからちょうど`limit`枚を1 batchとして解析します。backlogが残っても1回のcron invocationでは1 batchだけを処理します。`settings.mode`が`summarize`なら、batchの画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、全画像の要約が揃ってから指定AgentGroupの通常LLMへまとめて渡します。`direct`ならbatchを1回の通常LLM実行へ直接添付します。通常LLMは既存`capturelog`を読み、差分だけを追記します。batch全体の処理成功後だけ`completed_at`を保存し、失敗時は全画像を未完了のまま再試行します。成功済みのVLM summaryは再利用します。
 
 画像にはpassword、token、個人情報などが含まれ得ます。自動マスキングはありません。`summarize`では画像全体を`settings.visionModel`のproviderへ、`direct`ではMemory更新用の通常modelのproviderへ送信するため、**収集対象と両modeで利用するproviderを確認してから**有効化してください。
 
@@ -95,10 +95,9 @@ cron開始時点の未完了画像を古い順に走査し、直前に採用し�
 - `settings.mode`は`summarize`（既定）または`direct`です。
 - `settings.visionModel`は`summarize`で必須です。Credential Proxyに定義した画像入力対応モデルを指定します。`direct`では指定しません。
 - `settings.concurrency`はVLM worker数（1–16、既定4）です。`providers.json`の既存provider concurrencyが`serial`なら実際の呼び出しは直列になります。
-- `settings.limit`は1回に採用する画像数（1以上、既定10）です。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
+- `settings.limit`はfull batchを開始する未完了画像数、1回の解析枚数、1 cron invocationの最大処理枚数を兼ねます（1以上、既定10）。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
 - screen-capture固有のtimeoutはありません。Agent実行には共通のAgent Runner timeoutが適用されます。実用上はresize済み画像を20〜数十枚程度扱うbest-effort運用を想定し、任意枚数の処理完了は保証しません。
-- VLM失敗画像は未完了で残り、成功済みsummaryは再利用されます。通常LLM成功後・DB更新前に停止した場合は再実行されるため、既存`capturelog`との差分だけを反映するよう指示します。
-- ImageMagickがdecodeできない画像は`accepted = 0`で完了にして後続画像を処理します。`magick` executable不在などjob全体の実行環境エラーは画像不正として完了させず、jobを失敗させます。
+- VLMが1枚でも失敗したbatchは全画像が未完了で残り、成功済みsummaryは次回に再利用されます。通常LLM成功後・DB更新前に停止した場合も再実行されるため、既存`capturelog`との差分だけを反映するよう指示します。
 - 同一jobのtick重複はcron runnerが抑止します。同じscreen-capture DBを処理するhandlerは1 process内の1 jobだけに設定してください。別IDのjobや別processを含む複数consumerはサポートしません。変更反映にはBot再起動が必要です。
 
 完了済み画像は専用の`screen-capture-gc` cronで`completed_at`から24時間後に削除します。`accepted`の値は問わず、未完了画像は削除しません。設定例は`config/cron.example.json`にあります。

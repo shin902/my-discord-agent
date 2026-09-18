@@ -82,7 +82,7 @@ append APIはgroup DB内でstableなentry IDを返します。Runnerは入力use
 
 ## Screen captures
 
-`data/screen-captures.sqlite`は画像本体、VLM要約、処理状態を一緒に保存するhost専用DBです。`completed_at IS NULL`を未完了の正本とし、通常AgentがActivity Memoryを更新した後に完了時刻を保存します。decode不能な画像は後続処理を妨げないよう`accepted = 0`で完了にします。WAL運用のため稼働中のmain file単独copyは避け、SQLite backup APIを使用してください。runtime DB backupには含まれません。設定・schema・Mac送信・retentionは [画面画像の収集と要約](screen-capture.md) を参照してください。
+`data/screen-captures.sqlite`は画像本体、VLM要約、処理状態を一緒に保存するhost専用DBです。`completed_at IS NULL`を未完了の正本とし、full batch全体の通常Agent処理が成功した後に完了時刻を保存します。WAL運用のため稼働中のmain file単独copyは避け、SQLite backup APIを使用してください。runtime DB backupには含まれません。設定・schema・Mac送信・retentionは [画面画像の収集と要約](screen-capture.md) を参照してください。
 
 ## Memory export ledger
 
