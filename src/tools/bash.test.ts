@@ -222,22 +222,35 @@ describe("bashTool streaming output", () => {
     expect(getText(await run("printf recovered"))).toBe("recovered");
   });
 
-  it("preserves acquired output when the command times out", async () => {
+  it("does not stop a command merely because 30 seconds elapse", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const pending = run("printf partial; sleep 60").catch(
+    const pending = run("sleep 0.1; printf complete");
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    vi.useRealTimers();
+
+    expect(getText(await pending)).toBe("complete");
+  });
+
+  it("kills the process group and preserves partial output when the caller aborts", async () => {
+    const controller = new AbortController();
+    const pending = run("printf partial; sleep 60", controller.signal).catch(
       (error: Error & { details: unknown }) => error,
     );
-    // Observe the anonymous capture before advancing the command's timeout.
     await vi.waitFor(async () => {
       const file = await vi.mocked(open).mock.results[0]?.value;
       expect((await file.stat()).size).toBe(7);
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+
+    controller.abort();
+
     const error = await pending;
-    expect((error as Error).message).toContain("timed out");
+    expect((error as Error).message).toContain("aborted");
     const details = outputDetails(error);
-    expect((error as Error).message).toContain(details.fullOutputPath);
     expect(await readFile(details.fullOutputPath, "utf8")).toBe("partial");
+    expect(vi.mocked(realSpawn).mock.results[0].value.signalCode).toBe(
+      "SIGKILL",
+    );
   });
 
   it("does not start the command when output storage cannot be opened", async () => {

@@ -101,8 +101,9 @@ describe("list-calendars", () => {
         }),
       });
     const { listCalendarsTool } = await import("./calendar.js");
+    const controller = new AbortController();
 
-    const result = await listCalendarsTool.execute("id", {});
+    const result = await listCalendarsTool.execute("id", {}, controller.signal);
 
     expect(firstText(result)).toContain("1ページ目");
     expect(firstText(result)).toContain("2ページ目");
@@ -118,6 +119,11 @@ describe("list-calendars", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstSignal = (fetchMock.mock.calls[0][1] as RequestInit).signal;
+    const secondSignal = (fetchMock.mock.calls[1][1] as RequestInit).signal;
+    controller.abort();
+    expect(firstSignal?.aborted).toBe(true);
+    expect(secondSignal?.aborted).toBe(true);
   });
 
   it("同じ nextPageToken が返っても追加取得せず結果を保持する", async () => {
@@ -336,6 +342,38 @@ describe("read-event", () => {
 });
 
 describe("create-event", () => {
+  it("caller abort で実行中の POST を中断する", async () => {
+    fetchMock.mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        }),
+    );
+    const { createEventTool } = await import("./calendar.js");
+    const controller = new AbortController();
+    const pending = createEventTool.execute(
+      "id",
+      {
+        summary: "新規予定",
+        start: "2025-01-01T10:00:00+09:00",
+        end: "2025-01-01T11:00:00+09:00",
+      },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(
+      true,
+    );
+  });
+
   it("summary/start/end を Body として POST する", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
