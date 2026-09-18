@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import FeedParser from "feedparser";
 import { Type } from "typebox";
+import { TOOL_EXECUTION_TIMEOUT_MS } from "./tool-timeout.js";
 
 const ARXIV_API_URL = "https://export.arxiv.org/api/query";
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -232,7 +233,7 @@ async function fetchArxiv(
       "User-Agent": "my-discord-agent/arxiv",
     },
     signal: AbortSignal.any([
-      AbortSignal.timeout(30_000),
+      AbortSignal.timeout(TOOL_EXECUTION_TIMEOUT_MS),
       ...(signal ? [signal] : []),
     ]),
   });

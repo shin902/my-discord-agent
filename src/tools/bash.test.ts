@@ -28,6 +28,7 @@ import {
   externalizeLargeToolResult,
   TOOL_OUTPUT_CHAR_LIMIT,
 } from "./output.js";
+import { TOOL_EXECUTION_TIMEOUT_MS } from "./tool-timeout.js";
 
 function run(command: string, signal?: AbortSignal) {
   return bashTool.execute("id", { command }, signal, undefined);
@@ -222,14 +223,26 @@ describe("bashTool streaming output", () => {
     expect(getText(await run("printf recovered"))).toBe("recovered");
   });
 
-  it("does not stop a command merely because 30 seconds elapse", async () => {
+  it("kills the process group at the shared Tool execution timeout", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const pending = run("sleep 0.1; printf complete");
+    const pending = run("printf partial; sleep 300").catch(
+      (error: Error & { details: unknown }) => error,
+    );
+    await vi.waitFor(async () => {
+      const file = await vi.mocked(open).mock.results[0]?.value;
+      expect((await file.stat()).size).toBe(7);
+    });
 
-    await vi.advanceTimersByTimeAsync(30_000);
-    vi.useRealTimers();
+    await vi.advanceTimersByTimeAsync(TOOL_EXECUTION_TIMEOUT_MS);
 
-    expect(getText(await pending)).toBe("complete");
+    const error = await pending;
+    expect((error as Error).message).toContain("timed out");
+    expect(await readFile(outputDetails(error).fullOutputPath, "utf8")).toBe(
+      "partial",
+    );
+    expect(vi.mocked(realSpawn).mock.results[0].value.signalCode).toBe(
+      "SIGKILL",
+    );
   });
 
   it("kills the process group and preserves partial output when the caller aborts", async () => {

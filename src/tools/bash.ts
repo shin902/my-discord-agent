@@ -13,6 +13,7 @@ import { pipeline } from "node:stream/promises";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { TOOL_EXECUTION_TIMEOUT_MS } from "./tool-timeout.js";
 
 // Internal byte budget, not a separate inline-output policy. Leave room for
 // notices within output.ts's TOOL_OUTPUT_CHAR_LIMIT (characters, not bytes).
@@ -27,7 +28,7 @@ export const bashTool: AgentTool<typeof parameters> = {
   name: "bash",
   label: "Bash",
   description:
-    "Run a shell command with a 5 MiB combined stdout/stderr capture limit. The command runs until it exits or the caller aborts it. Exceeding the capture limit stops the command and preserves the first 5 MiB as partial output. Large output returns a bounded head preview and a full output file under /tmp, valid only for the current container run. stdout/stderr share one stream. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
+    "Run a shell command with a 120-second execution limit and 5 MiB combined stdout/stderr capture limit. The command stops when it exits, the caller aborts it, or either limit is exceeded. Large output returns a bounded head preview and a full output file under /tmp, valid only for the current container run. stdout/stderr share one stream. Prefer a dedicated tool such as agent-reach when fetching content from URLs.",
   parameters,
   execute: async (_toolCallId, { command }, signal) => {
     signal?.throwIfAborted();
@@ -51,6 +52,7 @@ export const bashTool: AgentTool<typeof parameters> = {
     let captureLimitExceeded = false;
     let failure: string | undefined;
     let onAbort: (() => void) | undefined;
+    let timeout: NodeJS.Timeout | undefined;
     const output = file.createWriteStream({ autoClose: false });
     try {
       try {
@@ -91,6 +93,11 @@ export const bashTool: AgentTool<typeof parameters> = {
         onAbort = () => terminate("Command aborted");
         signal?.addEventListener("abort", onAbort, { once: true });
         if (signal?.aborted) onAbort();
+        timeout = setTimeout(
+          () => terminate("Command timed out"),
+          TOOL_EXECUTION_TIMEOUT_MS,
+        );
+        timeout.unref();
 
         const saved = pipeline(
           child.stdout,
@@ -117,6 +124,7 @@ export const bashTool: AgentTool<typeof parameters> = {
         if (storageError) throw storageError;
       } finally {
         if (onAbort) signal?.removeEventListener("abort", onAbort);
+        if (timeout) clearTimeout(timeout);
       }
 
       directory = await mkdtemp("/tmp/my-discord-agent-bash-");

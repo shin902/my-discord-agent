@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { readLimitedJson } from "./agent-reach.js";
+import { TOOL_EXECUTION_TIMEOUT_MS } from "./tool-timeout.js";
 
 const parameters = Type.Object({
   topic: Type.String({
@@ -24,7 +25,7 @@ async function search(url: URL, signal?: AbortSignal): Promise<unknown> {
     },
     redirect: "error",
     signal: AbortSignal.any([
-      AbortSignal.timeout(30_000),
+      AbortSignal.timeout(TOOL_EXECUTION_TIMEOUT_MS),
       ...(signal ? [signal] : []),
     ]),
   });

@@ -9,6 +9,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { getRedditCookieHeader } from "../proxy/reddit-cookie-store.js";
 import { execAsync } from "./exec.js";
+import { TOOL_EXECUTION_TIMEOUT_MS } from "./tool-timeout.js";
 
 // Reddit は bot 判定が厳しく、汎用的な curl の User-Agent では JS チャレンジで
 // ブロックされる。ログインに使ったブラウザに近い UA を送ることで通過率を上げる。
@@ -19,7 +20,6 @@ const WORKSPACE = "/tmp";
 // 外部コマンド（curl/yt-dlp等）の出力先として使う一時領域は、呼び出しごとに
 // システム一時ディレクトリの下へ独立して作成する。フェッチ結果はツールコール結果に
 // 直接返すため、呼び出し終了時にディレクトリごと削除する。
-const TIMEOUT_MS = 120_000;
 
 const IPV4_NON_PUBLIC_CIDRS: ReadonlyArray<readonly [number, number]> = [
   [0x00000000, 8], // "this" network / unspecified
@@ -386,7 +386,6 @@ import urllib.request
 
 MAX_REDIRECTS = 5
 MAX_FEED_BYTES = 5 * 1024 * 1024
-MAX_FETCH_SECONDS = 30.0
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -449,7 +448,7 @@ def _read_limited(response, url, deadline):
 def _fetch_body(initial_url):
     current_url = initial_url
     redirects = 0
-    deadline = time.monotonic() + MAX_FETCH_SECONDS
+    deadline = time.monotonic() + ${TOOL_EXECUTION_TIMEOUT_MS / 1000}
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}), _NoRedirect
     )
@@ -1004,7 +1003,7 @@ export async function fetchFxPost(
   signal?: AbortSignal,
 ): Promise<FxPost> {
   const { username, postId } = parseXStatus(rawUrl);
-  const timeoutSignal = AbortSignal.timeout(20_000);
+  const timeoutSignal = AbortSignal.timeout(TOOL_EXECUTION_TIMEOUT_MS);
   const requestSignal = signal
     ? AbortSignal.any([signal, timeoutSignal])
     : timeoutSignal;
@@ -1296,7 +1295,10 @@ export const agentReachTool: AgentTool<typeof parameters> = {
         : `${pathname}.json`;
       const redditUrl = `https://www.reddit.com${jsonPath}${parsed.search}`;
       const timeoutController = new AbortController();
-      const timeout = setTimeout(() => timeoutController.abort(), TIMEOUT_MS);
+      const timeout = setTimeout(
+        () => timeoutController.abort(),
+        TOOL_EXECUTION_TIMEOUT_MS,
+      );
       const requestSignal = signal
         ? AbortSignal.any([signal, timeoutController.signal])
         : timeoutController.signal;
@@ -1355,7 +1357,7 @@ export const agentReachTool: AgentTool<typeof parameters> = {
       let stdout: string;
       try {
         ({ stdout } = await execAsync(cmd, {
-          timeout: TIMEOUT_MS,
+          timeout: TOOL_EXECUTION_TIMEOUT_MS,
           maxBuffer: 64 * 1024 * 1024,
           cwd: WORKSPACE,
           signal,

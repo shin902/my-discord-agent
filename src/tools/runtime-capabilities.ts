@@ -11,6 +11,7 @@ import {
   hackerNewsSearchTool,
   recentSearchSince,
 } from "./recent-search.js";
+import { TOOL_EXECUTION_TIMEOUT_MS } from "./tool-timeout.js";
 import { xSearchTool } from "./x-search.js";
 
 type RuntimeCapability = Extract<
@@ -26,7 +27,6 @@ type RuntimeCapability = Extract<
 function runtimeCapability(
   tool: AgentTool,
   options: {
-    timeoutMs: number;
     clampedProperties?: readonly string[];
     defaultArgs?: () => Readonly<Record<string, unknown>>;
     needsRedditCookies?: (args: unknown) => boolean;
@@ -37,7 +37,7 @@ function runtimeCapability(
     tool: tool.name,
     executor: "runtime",
     factory: () => tool,
-    timeoutMs: options.timeoutMs,
+    timeoutMs: TOOL_EXECUTION_TIMEOUT_MS,
     needsRedditCookies: options.needsRedditCookies,
     needsTwitterCredentials: options.needsTwitterCredentials,
     validateArgs: validateToolArgs(tool, options.clampedProperties),
@@ -48,31 +48,25 @@ function runtimeCapability(
 /** The single trusted definition set shared by host Registry and Runtime dispatch. */
 export const RUNTIME_CAPABILITIES = {
   "agent-reach": runtimeCapability(agentReachTool, {
-    timeoutMs: 120_000,
     needsRedditCookies: (args) =>
       detectService(new URL(normalizeUrl((args as { url: string }).url))) ===
       "reddit",
   }),
   "arxiv-search": runtimeCapability(arxivSearchTool, {
-    timeoutMs: 30_000,
     clampedProperties: ["max_results"],
     defaultArgs: () => ({ max_results: 10, sort: "relevance" }),
   }),
   "arxiv-survey": runtimeCapability(arxivSurveyTool, {
-    timeoutMs: 30_000,
     clampedProperties: ["max_results"],
     defaultArgs: () => ({ max_results: 30, sort: "submitted" }),
   }),
   "hackernews-search": runtimeCapability(hackerNewsSearchTool, {
-    timeoutMs: 30_000,
     defaultArgs: () => ({ since: recentSearchSince() }),
   }),
   "github-recent-search": runtimeCapability(githubRecentSearchTool, {
-    timeoutMs: 30_000,
     defaultArgs: () => ({ since: recentSearchSince() }),
   }),
   "x-search": runtimeCapability(xSearchTool, {
-    timeoutMs: 30_000,
     clampedProperties: ["limit"],
     defaultArgs: () => ({ limit: 10, mode: "top" }),
     needsTwitterCredentials: true,
