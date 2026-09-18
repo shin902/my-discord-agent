@@ -160,6 +160,7 @@ describe("resolveTools", () => {
     const tool = dispatchCapability({
       tool: "host-test",
       executor: "host",
+      timeoutMs: 30_000,
       factory: vi.fn(() => ({
         name: "host-test",
         label: "host-test",
@@ -180,6 +181,7 @@ describe("resolveTools", () => {
     const definition = {
       tool: "host-test",
       executor: "host" as const,
+      timeoutMs: 30_000,
       factory: () => undefined,
       validateArgs: () => true,
     };
@@ -279,10 +281,23 @@ describe("resolveTools", () => {
     }
   });
 
-  it("registry is the source of host weather capability definitions", () => {
+  it("registry is the source of proxy capability definitions and deadlines", () => {
+    expect(getCapabilityDefinition("agent-reach")).toMatchObject({
+      executor: "runtime",
+      timeoutMs: 120_000,
+    });
+    expect(getCapabilityDefinition("arxiv-search")).toMatchObject({
+      executor: "runtime",
+      timeoutMs: 30_000,
+    });
+    expect(getCapabilityDefinition("x-search")).toMatchObject({
+      executor: "runtime",
+      timeoutMs: 30_000,
+    });
     expect(getCapabilityDefinition("get-current-weather")).toMatchObject({
       tool: "get-current-weather",
       executor: "host",
+      timeoutMs: 30_000,
       factory: expect.any(Function),
       validateArgs: expect.any(Function),
       materializeArgs: expect.any(Function),

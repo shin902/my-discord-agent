@@ -19,7 +19,7 @@ const WORKSPACE = "/tmp";
 // 外部コマンド（curl/yt-dlp等）の出力先として使う一時領域は、呼び出しごとに
 // システム一時ディレクトリの下へ独立して作成する。フェッチ結果はツールコール結果に
 // 直接返すため、呼び出し終了時にディレクトリごと削除する。
-export const AGENT_REACH_TIMEOUT_MS = 30_000;
+export const AGENT_REACH_TIMEOUT_MS = 120_000;
 
 const IPV4_NON_PUBLIC_CIDRS: ReadonlyArray<readonly [number, number]> = [
   [0x00000000, 8], // "this" network / unspecified
@@ -386,7 +386,7 @@ import urllib.request
 
 MAX_REDIRECTS = 5
 MAX_FEED_BYTES = 5 * 1024 * 1024
-MAX_FETCH_SECONDS = 30.0
+MAX_FETCH_SECONDS = 120.0
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

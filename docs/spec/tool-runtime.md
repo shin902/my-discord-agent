@@ -43,7 +43,7 @@ describeはread-onlyで、approval・引数materialize・host executor実行・T
 
 ## コンテナと成果物の寿命
 
-hostが一意なcontainer名を生成します。正常・処理エラー終了時は `--rm`、abort／timeout時はその正確な名前への `docker kill` を使います。作成前の中断では短時間だけ同じ名前へのkillを再試行します。Dockerが応答せず終了確認できない場合はcleanupエラーにし、次回起動の回収対象に残します。host shutdownでは新しいTool Proxy runの受付を閉じ、既存authorityをrevokeして実行中Runtimeを停止します。
+hostが一意なcontainer名を生成します。capabilityごとのdeadlineはhost Registryの `timeoutMs` を正本とし、Tool Proxyがrequest切断・run revokeと合成してhost Tool／Tool Runtimeへ渡します。native ToolとSkill CLIは同じcapabilityなら同じdeadlineです。bashやRuntime client／container内では同じdeadlineを重ねて測りません。正常・処理エラー終了時は `--rm`、abort／timeout時はその正確な名前への `docker kill` を使います。作成前の中断では短時間だけ同じ名前へのkillを再試行します。Dockerが応答せず終了確認できない場合はcleanupエラーにし、次回起動の回収対象に残します。host shutdownでは新しいTool Proxy runの受付を閉じ、既存authorityをrevokeして実行中Runtimeを停止します。
 
 host起動時のcleanupは `my-discord-agent.tool-runtime=<checkout絶対パスのhash>` という専用labelだけを対象にします。Agent sandboxや別checkoutのRuntimeを名前prefixで巻き込みません。稼働ディレクトリを移す場合、移動前のhostを正常停止してから移してください。
 

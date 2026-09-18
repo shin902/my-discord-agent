@@ -54,11 +54,7 @@ export async function executeRuntimeRequest(
     // Arguments are already materialized and (when configured) approved by the
     // Proxy. Do not recompute clock-dependent defaults after approval.
     return {
-      result: await tool.execute(
-        "tool-runtime",
-        input.args,
-        AbortSignal.timeout(capability.timeoutMs),
-      ),
+      result: await tool.execute("tool-runtime", input.args),
     };
   } catch (error) {
     return {

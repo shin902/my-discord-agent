@@ -296,7 +296,10 @@ async function executeRequest(
   };
   req.once("aborted", abortRequest);
   res.once("close", abortRequest);
-  const signal = AbortSignal.any([abortController.signal, run.revokeSignal]);
+  const requestSignal = AbortSignal.any([
+    abortController.signal,
+    run.revokeSignal,
+  ]);
   if (req.aborted || res.destroyed) abortRequest();
   try {
     let executionArgs = effectiveArgs;
@@ -314,7 +317,7 @@ async function executeRequest(
             runId: run.runId,
             capability: body.capability,
             trustedDiscordDestination: run.trustedDiscordDestination,
-            revokeSignal: signal,
+            revokeSignal: requestSignal,
           },
           effectiveArgs,
         );
@@ -337,6 +340,10 @@ async function executeRequest(
       executionArgs = approvalRequest.invocation.args.value;
     }
 
+    const signal = AbortSignal.any([
+      requestSignal,
+      AbortSignal.timeout(capability.timeoutMs),
+    ]);
     const tool = capability.factory();
     if (!tool) {
       sendJson(res, 500, {
