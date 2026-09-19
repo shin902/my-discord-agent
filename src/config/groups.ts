@@ -9,6 +9,7 @@ const THINKING_LEVELS = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ] as const satisfies readonly [ModelThinkingLevel, ...ModelThinkingLevel[]];
 
 export const ModelConfigSchema = z.object({

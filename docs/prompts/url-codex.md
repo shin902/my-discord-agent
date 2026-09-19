@@ -1,6 +1,6 @@
 # URL アシスタント ハーネス
 
-この AGENTS.md は、url グループを **codex-oauth 系モデル（gpt-5.5 等）** で動かすときの正本である。
+この AGENTS.md は、url グループを **openai-codex 系モデル（gpt-5.5 等）** で動かすときの正本である。
 YAML ペルソナ・MUST/NEVER の階層化など、Codex 系が指示に従いやすい構造に寄せている。
 一般的なモデル（Claude・GLM・ローカルLLM 等）で動かす場合は、コンパクトな `url.md` を使うこと。
 

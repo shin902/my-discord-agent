@@ -81,7 +81,7 @@ schemaには旧 `redditCookie`（`cookieFile` 既定値 `data/reddit-cookies.jso
 
 ## モデル解決
 
-KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。credential entryから `baseUrl` と、明示されていればwire `api` だけを適用し、provider identity・context window・maxTokens・reasoning・input・cost等の組み込みmetadataは保持します。`compat` 等によるカスタムモデル化はしません。
+KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。OpenAIの組み込みモデルを使うrouteでは`forceCustom`を指定しません。credential entryから `baseUrl` と、明示されていればwire `api` だけを適用し、provider identity・context window・maxTokens・reasoning・input・cost等の組み込みmetadataは保持します。`compat` 等によるカスタムモデル化はしません。
 
 sandboxでは接続先の `baseUrl` をホストから渡された Credential Proxy URL へ置換します。KnownProvider も `credentials.json` に接続定義が必要で、sandbox 用 entry がない場合は明示エラーとなります。provider SDK が `baseUrl` を利用しない独自接続方式は direct egress 拒否の対象となるため、利用する API 形式で疎通確認してください。
 
@@ -111,7 +111,7 @@ sandboxでは接続先の `baseUrl` をホストから渡された Credential Pr
 
 `thinkingFormat` の名前による自動補正は行いません。`qwen` / `ollama` は許容値ではありません。`reasoning: false` を明示するか、`thinkingFormat` がない場合、modelの `compat` 自体は付与されません。`thinkingLevelMap` は `compat` から分離してmodelのトップレベルへ渡されます。
 
-実際に選ぶthinkingLevelはAgentConfigの `model.thinkingLevel` です。runnerの省略時は `off` ですが、サーバーへ送られる形式や効果はAPI・モデル・compatに依存します。thinkingLevelごとの固定トークン予算を全provider共通の保証として扱わないでください。
+実際に選ぶthinkingLevelはAgentConfigの `model.thinkingLevel` で、`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`を指定できます。runnerの省略時は `off` です。組み込みモデルのmappingはPiのmodel metadataへ委譲し、サーバーへ送られる形式や効果はAPI・モデル・compatに依存します。thinkingLevelごとの固定トークン予算を全provider共通の保証として扱わないでください。
 
 ### カスタムモデルの例
 

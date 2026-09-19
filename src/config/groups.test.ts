@@ -13,6 +13,19 @@ describe("loadGroups", () => {
     vi.resetModules();
   });
 
+  it("thinkingLevel: max のモデル設定を読み込める", async () => {
+    const model = {
+      provider: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinkingLevel: "max" as const,
+    };
+    const { loadGroups } = await setupRawGroups([
+      { name: "chat", channels: [], model },
+    ]);
+    const groups = await loadGroups();
+    expect(groups[0].model).toEqual(model);
+  });
+
   it("mounts が無いグループも読み込める", async () => {
     const { loadGroups } = await setupRawGroups([
       { name: "chat", channels: [] },
