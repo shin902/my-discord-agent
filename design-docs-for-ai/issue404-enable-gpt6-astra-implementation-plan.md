@@ -146,6 +146,7 @@ model: {
 - 検証済みversionを `v7.2.155` と明記
 - GitHub release assetからOS/architectureに合うarchiveを取得する方法を示す
 - `cli-proxy-api --help 2>&1 | head -1` でversionを確認する
+- 設定ファイルを `~/.cli-proxy-api/config.yaml` に固定し、OAuth login、device login、server起動の全コマンドで `-config "$HOME/.cli-proxy-api/config.yaml"` を明示する
 - `latest`、`v1.x.x` のプレースホルダーを検証済み例として残さない
 - host運用をAstraの推奨経路とする
 - 新しいDocker/Composeファイルは追加しない。既存の一般的なDocker参考節は残してよいが、Astraの検証済みhost手順と混同させない
@@ -289,11 +290,12 @@ GitHub ActionsではさらにTool Runtime image、Agent Runner image、Playwrigh
 2. 既存my-discord-agentプロセスがある場合、`lsof` とプロセス情報で実行cwdを確認する。別worktreeのプロセスなら停止し、このworktreeから起動する。
 3. `pnpm build:runner` と通常のrunner image更新手順を実行し、古いbundle/imageを使わない。
 4. hostにCLIProxyAPI v7.2.155を配置し、`cli-proxy-api --help 2>&1 | head -1` でversionを確認する。
-5. CLIProxyAPIをhostのloopback `127.0.0.1:8317` で起動し、`-codex-login` または `-codex-device-login` で認証する。
-6. `.env` の `CLIPROXY_API_KEY` とCLIProxyAPIの `api-keys` を一致させる。値はログ、Issue、スクリーンショットへ出さない。
-7. gitignoredの `config/credentials.json` に `openai-codex` entryを設定する。
-8. gitignoredの `config/providers.json` で `openai-codex` を `parallel` に設定する。
-9. smoke対象groupまたはchannelの実設定を次へ変更する。tool continuation確認用に、その設定階層で `bash` toolを許可する。
+5. 設定を `~/.cli-proxy-api/config.yaml` に保存する。OAuth loginは `cli-proxy-api -config "$HOME/.cli-proxy-api/config.yaml" -codex-login`、headless環境は同じ `-config` と `-codex-device-login` を使う。
+6. `cli-proxy-api -config "$HOME/.cli-proxy-api/config.yaml"` で、設定したhostのloopback `127.0.0.1:8317` にserverを起動する。loginとserverで同じ設定ファイルを必ず指定する。
+7. `.env` の `CLIPROXY_API_KEY` とCLIProxyAPIの `api-keys` を一致させる。値はログ、Issue、スクリーンショットへ出さない。
+8. gitignoredの `config/credentials.json` に `openai-codex` entryを設定する。
+9. gitignoredの `config/providers.json` で `openai-codex` を `parallel` に設定する。
+10. smoke対象groupまたはchannelの実設定を次へ変更する。tool continuation確認用に、その設定階層で `bash` toolを許可する。
 
 ```json
 {
@@ -305,7 +307,7 @@ GitHub ActionsではさらにTool Runtime image、Agent Runner image、Playwrigh
 }
 ```
 
-10. このworktreeからmy-discord-agentを起動する。起動ログでmodel validation、Credential Proxy起動、Discord loginが成功し、CLIProxyAPI接続先がhostから到達可能であることを確認する。
+11. このworktreeからmy-discord-agentを起動する。起動ログでmodel validation、Credential Proxy起動、Discord loginが成功し、CLIProxyAPI接続先がhostから到達可能であることを確認する。
 
 ### ブラウザ操作と期待結果
 
