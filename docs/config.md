@@ -94,7 +94,7 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 ```json
 [
   { "provider": "zai", "concurrency": "serial" },
-  { "provider": "codex-oauth", "concurrency": "parallel" },
+  { "provider": "openai-codex", "concurrency": "parallel" },
   {
     "provider": "llama-cpp",
     "resource": "local-gpu",
@@ -128,13 +128,10 @@ Reddit の Cookie 認証は `config/credentials.json` では管理せず、Tool 
     "baseUrl": "https://api.anthropic.com"
   },
   {
-    "provider": "codex-oauth",
-    "forceCustom": true,
+    "provider": "openai-codex",
     "envVars": ["CLIPROXY_API_KEY"],
     "baseUrl": "http://localhost:8317/v1",
-    "api": "openai-responses",
-    "contextWindow": 192000,
-    "maxTokens": 8192
+    "api": "openai-responses"
   },
   {
     "provider": "llama-cpp-qwen3",
@@ -145,7 +142,7 @@ Reddit の Cookie 認証は `config/credentials.json` では管理せず、Tool 
 ]
 ```
 
-API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。Codex OAuth / CLIProxyAPI の詳しい構成は `docs/guides/codex-oauth-cliproxyapi.md` を参照。
+API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。OpenAIの組み込みモデルを使うentryには`forceCustom`を指定しない。Codex経路はmodel identityを`openai-codex`のまま保ち、wire APIだけを`openai-responses`へ変更してCLIProxyAPIへ接続する。詳しい構成は [Codex OAuth / CLIProxyAPIガイド](guides/codex-oauth-cliproxyapi.md) を参照。
 
 ## config/groups.json
 
@@ -198,7 +195,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
 | `appendUserOnly` | — | channel限定の任意boolean。`true` はshared channelのlive human messageをuser entryとして保存し、Agent実行・応答しない。未指定 / `false` は通常挙動。詳細は [チャンネルモード](spec/channel-modes.md#appenduseronly) |
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`appendUserOnly` 無効時に `true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
-| `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。channelで指定するとgroupのmodelオブジェクトを完全置換 |
+| `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。`thinkingLevel`は`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`を許容し、各値の意味とwire mappingはPiのmodel metadataへ委譲する。channelで指定するとgroupのmodelオブジェクトを完全置換 |
 | `tools` | — | AgentConfig。エージェントに渡す MCP ツール名の配列。`bot` と `subagent` は正確な名前を明示した場合だけ有効なcontext-created tool。channelで指定するとgroupの配列を完全置換するため、groupで許可したtoolもchannel側で指定しなければ無効 |
 | `approvalRequiredTools` | — | AgentConfig。effective native `tools` とeffective `toolSets` の和集合に含まれる既知host/runtime capabilityのうち、承認を挟むtool名だけを指定する。全layerで未指定のためeffective configに設定がない場合、またはeffective `[]` の場合は従来どおり承認なし。子layerで未指定なら親を継承し、`[]` は明示解除。未知名・許可集合外・sandbox内toolは設定エラー。`skills` はこのvalidationに関与しない。子layerで指定した配列は完全置換 |
 | `allowMention` | — | 元メッセージへの reply 形式で送信し、返信先ユーザーに通知するか。省略時は返信するが通知しない |

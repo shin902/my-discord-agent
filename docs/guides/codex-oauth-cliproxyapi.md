@@ -1,6 +1,6 @@
-# Codex OAuth を CLIProxyAPI サイドカー経由で使う
+# Codex OAuth を CLIProxyAPI 経由で使う
 
-ChatGPT/Codex OAuth の access token / refresh token / account ID / backend API 追従はアプリ本体に入れず、[router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) をローカルサイドカーとして使う。
+ChatGPT/Codex OAuthのtoken・account ID・backend API追従はアプリ本体に入れず、[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)へ閉じ込める。AstraではCLIProxyAPIをホストで動かす構成を推奨し、検証済みversionは **v7.2.155** とする。
 
 ```text
 sandbox agent
@@ -10,146 +10,73 @@ sandbox agent
            -> chatgpt.com/backend-api/codex/responses
 ```
 
+sandbox containerからCLIProxyAPIへ直接接続させない。
+
 ## 責務分担
 
-- my-discord-agent
-  - OpenAI互換 Responses リクエスト生成
-  - Discord セッション、Pi エージェントループ、ツール実行
-  - provider / model の選択
-- credential-proxy-server
-  - CLIProxyAPI の URL とローカル API キーをサンドボックスから隠す
-  - timeout と upstream error のマッピング
-  - Codex OAuth token は保持しない
-- CLIProxyAPI
-  - ChatGPT/Codex OAuth login
-  - access token refresh / refresh token rotation
-  - account ID 管理
-  - Codex backend と OpenAI Responses API の変換
+- my-discord-agent: OpenAI Responsesリクエスト、Discord session、Pi Agent loop、tool実行、model選択
+- Credential Proxy: CLIProxyAPIのURLとlocal API keyをsandboxから隠し、upstreamへ転送
+- CLIProxyAPI: Codex OAuth login、token refresh、account ID、Codex backendとのprotocol変換
 
-## CLIProxyAPI 側
+## CLIProxyAPI v7.2.155のインストール
 
-### インストール
+[release v7.2.155](https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.155)からOS / architectureに合うarchiveを取得し、含まれるbinaryをPATH上へ配置する。GitHub CLIを使う場合はasset名を確認してから選ぶ。
 
-**Arch Linux (AUR)**:
 ```bash
-yay -S cli-proxy-api-bin
-systemctl --user start cli-proxy-api
+gh release view v7.2.155 --repo router-for-me/CLIProxyAPI
+gh release download v7.2.155 --repo router-for-me/CLIProxyAPI --pattern '<OS/architectureに合うasset名>'
+cli-proxy-api --help 2>&1 | head -1
 ```
 
-**Linux（ワンクリックインストーラー）**:
-```bash
-curl -fsSL https://raw.githubusercontent.com/router-for-me/cliproxyapi-installer/refs/heads/master/cliproxyapi-installer | bash
-```
+先頭行が`CLIProxyAPI Version: 7.2.155`であることを確認する。package managerの最新版を検証済みversionとして扱わない。
 
-**macOS**:
-```bash
-brew install cliproxyapi
-brew services start cliproxyapi
-```
+## config.yaml の設定
 
-**Docker**:
-```bash
-docker run --rm -p 127.0.0.1:8317:8317 \
-  -v /path/to/config.yaml:/CLIProxyAPI/config.yaml \
-  eceasy/cli-proxy-api:latest
-```
+設定ファイルは`~/.cli-proxy-api/config.yaml`に固定する。
 
-Docker イメージは `latest` ではなく、検証済みタグまたは digest に固定する。
-
-### config.yaml の設定
-
-`config.example.yaml` をコピーして `config.yaml` を作成する（設定ファイルパスは `~/.cli-proxy-api/config.yaml`）。
-
-**基本設定**:
 ```yaml
-host: "127.0.0.1"   # loopback のみ受け付ける
+host: "127.0.0.1"
 port: 8317
 
 api-keys:
-  - "your-local-cliproxy-key"   # このアプリの .env の CLIPROXY_API_KEY と合わせる
+  - "your-local-cliproxy-key"
 ```
 
-**Codex OAuth 設定**:
-```yaml
-oauth-model-alias:
-  codex:
-    - name: "gpt-5-codex"
-      alias: "gpt-5-codex"
-
-oauth-excluded-models:
-  codex: []
-
-codex-header-defaults:
-  user-agent: "codex_cli_rs/0.114.0"
-  beta-features: "multi_agent"
-```
-
-### ChatGPT へのログイン
-
-サービスを止めてからログインし、完了後に再起動する。
-
-```bash
-systemctl --user stop cli-proxy-api
-cli-proxy-api -codex-login          # ブラウザが開くので ChatGPT にログイン
-systemctl --user start cli-proxy-api
-```
-
-ブラウザが使えないヘッドレス環境では `-codex-device-login`（デバイスコードフロー）を使う：
-
-```bash
-cli-proxy-api -codex-device-login
-```
-
-ログイン成功後、次回起動時のログに `1 auth entries` と表示されれば認証済み：
-
-```
-server clients and configuration updated: 1 clients (1 auth entries + ...)
-```
-
-ログイン後、OAuth 資格情報ディレクトリは CLIProxyAPI 専用 volume または設定ディレクトリに永続化される。volume・ログ・バックアップへ access token / refresh token を出力しない。
-
-### Docker Compose での起動
-
-アプリをホストで起動する標準構成では、CLIProxyAPI のポートを loopback にだけ公開する。
-
-```yaml
-services:
-  cli-proxy-api:
-    image: eceasy/cli-proxy-api:v1.x.x   # latest は固定タグに置き換える
-    ports:
-      - "127.0.0.1:8317:8317"
-    volumes:
-      - ./config.yaml:/CLIProxyAPI/config.yaml
-      - cliproxy-data:/CLIProxyAPI/data
-volumes:
-  cliproxy-data:
-```
-
-### .env への API キー設定
-
-CLIProxyAPI の `api-keys` に設定した値を、このアプリの `.env` に書く。
+`api-keys`の値をmy-discord-agentの`.env`にも設定する。
 
 ```env
 CLIPROXY_API_KEY=your-local-cliproxy-key
 ```
 
-## my-discord-agent 側
+## Codex OAuth loginと起動
 
-`config/credentials.json` に OpenAI互換 Responses provider として追加する。
+ブラウザを使えるhostでは次を実行する。
 
-```json
-{
-  "provider": "codex-oauth",
-  "forceCustom": true,
-  "envVars": ["CLIPROXY_API_KEY"],
-  "baseUrl": "http://localhost:8317/v1",
-  "api": "openai-responses",
-  "contextWindow": 192000,
-  "maxTokens": 8192
-}
+```bash
+cli-proxy-api -config "$HOME/.cli-proxy-api/config.yaml" -codex-login
 ```
 
-上記は既存のcustom provider構成です。Piに組み込み済みのモデルを使う場合は、次の接続定義によりmodel identity / metadataを保持できます（`forceCustom` は指定しません）。
+headless環境ではdevice flowを使う。
+
+```bash
+cli-proxy-api -config "$HOME/.cli-proxy-api/config.yaml" -codex-device-login
+```
+
+loginと同じ設定ファイルでserverを起動する。
+
+```bash
+cli-proxy-api -config "$HOME/.cli-proxy-api/config.yaml"
+```
+
+ログにauth entryが読み込まれたことを確認する。OAuth tokenをログ、backup、Issueへ出力しない。
+
+### Dockerを使う既存構成
+
+Docker利用時もimageを検証済みtagまたはdigestへ固定し、OAuth dataを永続化する。Astraの検証済み手順は上記host運用であり、新規構成で`latest`を使わない。
+
+## my-discord-agentの設定
+
+`config/credentials.json`ではPi built-inのmodel identity / metadataを維持し、wire APIだけをCLIProxyAPI向けに変更する。custom metadataは定義しない。
 
 ```json
 {
@@ -160,51 +87,57 @@ CLIPROXY_API_KEY=your-local-cliproxy-key
 }
 ```
 
-この場合、モデル選択のproviderも `openai-codex` にします。metadataはPiから取得し、wire APIとgateway routeだけを変更します。Astraの実利用有効化・CLIProxyAPI release固定・実機smokeは後続の #404 で扱い、この構造の追加だけでは有効化しません。direct OpenAI APIも `provider: "openai"`、`OPENAI_API_KEY`、`https://api.openai.com/v1` を使う同じthin forwarding経路です。
+`config/providers.json`では並列実行を許可できる。
 
-`openai-responses` は API キーを通常の Bearer credential として扱い、`/v1/responses` を呼び出す。`openai-codex-responses` は ChatGPT OAuth credential と Codex backend を直接扱うアダプターなので、このサイドカー構成には使用しない。
+```json
+{ "provider": "openai-codex", "concurrency": "parallel" }
+```
 
-アプリ本体（`credential-proxy-server` を含む）も CLIProxyAPI と同じ Docker ネットワーク内で起動する構成に限り、`baseUrl` に Docker のサービス名を使用できる。
+`config/groups.json`のmodel指定例:
+
+```json
+{
+  "model": {
+    "provider": "openai-codex",
+    "modelId": "gpt-6-astra",
+    "thinkingLevel": "max"
+  }
+}
+```
+
+`openai-codex`がmodel identity、`openai-responses`がwire API、CLIProxyAPIがgatewayである。`openai-codex-responses`はChatGPT OAuthを直接扱うadapterなので、この構成では使わない。Credential Proxyが`Authorization: Bearer $CLIPROXY_API_KEY`を注入し、sandboxへAPI keyやOAuth tokenを渡さない。
+
+OpenAI API key経路は`provider: "openai"`と`OPENAI_API_KEY`で設定可能だが、Issue #404では有料smokeを行わない。
+
+## 接続先
+
+Credential Proxyをhost processとして起動する標準構成では次を使う。
+
+```json
+"baseUrl": "http://localhost:8317/v1"
+```
+
+Credential Proxy自体がCLIProxyAPIと同じDocker network内にいる既存構成だけ、Docker service名を使える。
 
 ```json
 "baseUrl": "http://cli-proxy-api:8317/v1"
 ```
 
-ホスト上でアプリを起動する場合、Docker 内部 DNS 名は解決できないため、loopback に公開した `http://localhost:8317/v1` を使用する。
-
-`config/groups.json` のモデル指定例:
-
-```json
-{
-  "model": {
-    "provider": "codex-oauth",
-    "modelId": "gpt-5-codex"
-  }
-}
-```
-
-`credential-proxy-server` が `Authorization: Bearer $CLIPROXY_API_KEY` を CLIProxyAPI へ注入するため、サンドボックスコンテナには CLIProxyAPI の API キーも OAuth token も渡らない。
+host processからDocker内部DNS名を使わない。
 
 ## フェイルクローズ
 
-`CLIPROXY_API_KEY` が未設定の場合、サンドボックスへ渡す credential から `codex-oauth` provider は除外される。CLIProxyAPI 停止・401・429・timeout 時も、別の API キー課金経路へ自動フォールバックしない。課金経路へ切り替える場合は `config/groups.json` の provider を明示的に変更する。
+`CLIPROXY_API_KEY`が未設定の場合、sandbox向けcredentialから`openai-codex`は除外される。CLIProxyAPI停止・401・429・timeout時もOpenAI APIへ自動fallbackしない。
 
-## スモークテスト
+## Agent loop smoke
 
-更新時は少なくとも以下を確認する。
+直接`curl`が成功するだけでは完了としない。gitignoredの実設定を上記へ変更してmy-discord-agentをこのworktreeから起動し、Discord Webから実経路 `Agent loop → Credential Proxy → CLIProxyAPI → Codex backend` を確認する。
 
-- 非ストリーミング `/v1/responses`
-- SSE ストリーミング完了
-- tool call / tool result の往復
-- 期限切れ access token からの自動 refresh
-- 401、429、upstream timeout のマッピング
-- usage 情報の有無
+1. `pwd`、`git rev-parse HEAD`、`cli-proxy-api --help 2>&1 | head -1`を記録する。
+2. 対象groupで`openai-codex / gpt-6-astra / max`と`bash` toolを有効にする。
+3. 「`ASTRA_SMOKE_OK` とだけ返してください」でbasic responseとSSE完了を確認する。
+4. 「bashツールで `printf ASTRA_TOOL_OK` を実行し、その出力をそのまま返してください」でtool result後の継続推論を確認する。
+5. logで`/v1/responses`、model identity、thinking level、到達可能なbaseUrlを確認する。`ChatGPT-Account-Id`生成、JWT decode、OpenAI API fallbackがないことも確認する。
+6. Issue #404へ実施日、commit、CLIProxyAPI version、model設定、basic response / SSE / tool continuation / baseUrl到達性の成否だけをコメントする。秘密値は含めない。
 
-例（CLIProxyAPI へ直接）:
-
-```bash
-curl -sS http://localhost:8317/v1/responses \
-  -H "Authorization: Bearer $CLIPROXY_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5-codex","input":"ping"}'
-```
+smoke後は必要に応じてgitignoredの実設定を通常運用へ戻す。

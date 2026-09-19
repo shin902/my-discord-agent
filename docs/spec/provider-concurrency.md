@@ -27,7 +27,7 @@
 [
   { "provider": "local-a", "concurrency": "serial" },
   { "provider": "local-b", "concurrency": "serial" },
-  { "provider": "codex-oauth", "concurrency": "parallel" }
+  { "provider": "openai-codex", "concurrency": "parallel" }
 ]
 ```
 
@@ -37,7 +37,7 @@
 | `parallel` | なし |
 | provider の設定なし | 安全側の `serial` |
 
-`serial` の `local-a` が実行中でも `local-b` と `codex-oauth` は開始できる。一方、別セッションから来た2件の `local-a` 実行は先行処理の完了まで待つ。
+`serial` の `local-a` が実行中でも `local-b` と `openai-codex` は開始できる。一方、別セッションから来た2件の `local-a` 実行は先行処理の完了まで待つ。
 
 旧 `poller.dispatchMode` と `POLLER_DISPATCH_MODE` は廃止する。グローバルロックは持たず、直列化の範囲は常に provider 単位とする。
 

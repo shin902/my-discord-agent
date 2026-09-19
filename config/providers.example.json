@@ -1,6 +1,6 @@
 [
   { "provider": "zai", "concurrency": "serial" },
-  { "provider": "codex-oauth", "concurrency": "parallel" },
+  { "provider": "openai-codex", "concurrency": "parallel" },
   { "provider": "openai", "concurrency": "parallel" },
   { "provider": "anthropic", "concurrency": "parallel" },
   {
