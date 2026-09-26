@@ -191,7 +191,10 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
             );
           mutationAttempted = true;
           target = await channel.threads.create({
-            name: `cron-${String(payload.cronJobId ?? row.jobId).slice(0, 90)}`,
+            name: payload.mailRouteKey
+              .replace(/^mail:/, "")
+              .replace(/^github:(.+):item:(\d+)$/, "$1 #$2")
+              .slice(0, 100),
           });
           threadId = String(target.id ?? "");
           if (!threadId)

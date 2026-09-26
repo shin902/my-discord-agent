@@ -191,7 +191,7 @@ it("creates a Mail thread when no mapping exists", async () => {
     await new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "mail-create",
     }).runOnce();
-    expect(create).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledWith({ name: "a@example.com" });
     expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
       "thread-1",
     );
@@ -288,6 +288,9 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     });
     await worker.runOnce();
     expect(replacementSend).toHaveBeenCalledOnce();
+    expect(channel.threads.create).toHaveBeenCalledWith({
+      name: "a@example.com",
+    });
     expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
       "thread-2",
     );

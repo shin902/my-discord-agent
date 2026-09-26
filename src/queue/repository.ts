@@ -15,7 +15,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 9;
+export const QUEUE_SCHEMA_VERSION = 8;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -719,21 +719,8 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   },
   {
     version: 8,
-    summary: "persist Mail Discord thread routes",
+    summary: "persist Mail thread routes scoped to destination channels",
     up(db) {
-      db.exec(`CREATE TABLE IF NOT EXISTS mail_threads (
-        group_name TEXT NOT NULL, route_key TEXT NOT NULL,
-        thread_id TEXT NOT NULL, updated_at TEXT NOT NULL,
-        PRIMARY KEY (group_name, route_key)
-      )`);
-    },
-  },
-  {
-    version: 9,
-    summary: "scope Mail thread routes to destination channels",
-    up(db) {
-      // The old mapping cannot safely identify its parent channel; discard it.
-      db.exec("DROP TABLE IF EXISTS mail_threads");
       createMailThreadsTable(db);
     },
   },

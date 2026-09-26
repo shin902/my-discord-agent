@@ -51,19 +51,13 @@ it("persists Mail thread routes by group, channel and key across restart", async
   }
 });
 
-it("drops channel-ambiguous v8 Mail mappings on upgrade", async () => {
+it("creates channel-scoped Mail mappings on upgrade from v7", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mail-threads-v8-"));
   const dbPath = join(dir, "runtime.sqlite");
   try {
     const old = new QueueRepository(dbPath);
     old.db.exec(`DROP TABLE mail_threads;
-      CREATE TABLE mail_threads (
-        group_name TEXT NOT NULL, route_key TEXT NOT NULL,
-        thread_id TEXT NOT NULL, updated_at TEXT NOT NULL,
-        PRIMARY KEY (group_name, route_key)
-      );
-      INSERT INTO mail_threads VALUES ('group', 'mail:a@example.com', 'old-thread', 'now');
-      UPDATE schema_meta SET value='8' WHERE key='schema_version';`);
+      UPDATE schema_meta SET value='7' WHERE key='schema_version';`);
     old.close();
     const upgraded = new QueueRepository(dbPath);
     try {

@@ -25,23 +25,29 @@ interface UnreadEmail {
   subject: string;
   from: string;
   senderAddress: string;
+  headers: Array<{ name: string; value: string }>;
 }
 
-export function mailRouteKey(
-  subject: string,
-  body: string,
-  senderAddress: string,
-): string {
-  const url = body.match(/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/i);
-  const subjectPr = subject.match(/\[([\w.-]+)\/([\w.-]+)\].*\(#(\d+)\)\s*$/i);
-  const pr = url ?? subjectPr;
-  return pr
-    ? `github:${pr[1].toLowerCase()}/${pr[2].toLowerCase()}:pr:${pr[3]}`
-    : `mail:${senderAddress.trim().toLowerCase()}`;
+export function mailRouteKey({
+  subject,
+  senderAddress,
+  headers,
+}: Pick<UnreadEmail, "subject" | "senderAddress" | "headers">): string {
+  const sender = senderAddress.trim().toLowerCase();
+  if (sender === "notifications@github.com") {
+    const listId = headers.find(
+      (header) => header.name.toLowerCase() === "list-id",
+    )?.value;
+    const repo = listId?.match(/^\s*([\w.-]+)\/([\w.-]+)(?:\s|$)/i);
+    const item = subject.match(/\(#(\d+)\)\s*$/);
+    if (repo && item)
+      return `github:${repo[1].toLowerCase()}/${repo[2].toLowerCase()}:item:${item[1]}`;
+  }
+  return `mail:${sender}`;
 }
 
 async function listUnreadEmails(): Promise<UnreadEmail[]> {
-  const select = "id,subject,from";
+  const select = "id,subject,from,internetMessageHeaders";
   const data = (await graphFetch(
     `/me/mailFolders/inbox/messages?$top=${UNREAD_FETCH_LIMIT}&$select=${select}&$orderby=receivedDateTime asc&$filter=isRead eq false`,
   )) as { value: Array<Record<string, unknown>> };
@@ -59,6 +65,9 @@ async function listUnreadEmails(): Promise<UnreadEmail[]> {
       subject: String(msg.subject ?? "(件名なし)"),
       from,
       senderAddress,
+      headers: Array.isArray(msg.internetMessageHeaders)
+        ? (msg.internetMessageHeaders as Array<{ name: string; value: string }>)
+        : [],
     };
   });
 }
@@ -123,11 +132,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
           sessionMode: "per-run",
           idempotencyKey: `mail:graph:${encodeURIComponent(ctx.id)}:${encodeURIComponent(meta.id)}`,
           mailEmailId: meta.id,
-          mailRouteKey: mailRouteKey(
-            meta.subject,
-            bodyText,
-            meta.senderAddress,
-          ),
+          mailRouteKey: mailRouteKey(meta),
         },
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
       );

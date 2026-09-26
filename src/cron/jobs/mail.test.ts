@@ -72,41 +72,56 @@ function bodyResponse(): Response {
 }
 
 describe("mail routing", () => {
-  it("groups GitHub PR notifications by repository and PR number", () => {
+  const headers = [
+    { name: "List-Id", value: "Owner/Repo <repo.owner.github.com>" },
+  ];
+
+  it("groups GitHub issue and PR notifications by List-Id and terminal item number", () => {
     expect(
-      mailRouteKey(
-        "[Owner/Repo] Review requested (#533)",
-        "notification body",
-        "Notifications@GitHub.com",
-      ),
-    ).toBe("github:owner/repo:pr:533");
+      mailRouteKey({
+        subject: "[Unrelated/Text] Fix #42 (#533)",
+        senderAddress: " Notifications@GitHub.com ",
+        headers,
+      }),
+    ).toBe("github:owner/repo:item:533");
     expect(
-      mailRouteKey(
-        "[Owner/Repo] Fix #42 (#533)",
-        "notification body",
-        "Notifications@GitHub.com",
-      ),
-    ).toBe("github:owner/repo:pr:533");
-    expect(
-      mailRouteKey(
-        "[Owner/Repo] Fix #42 (#533)",
-        "https://github.com/Other/Project/pull/777/files",
-        "Notifications@GitHub.com",
-      ),
-    ).toBe("github:other/project:pr:777");
-    expect(
-      mailRouteKey(
-        "GitHub notification",
-        "https://github.com/Owner/Repo/pull/533/files",
-        "Notifications@GitHub.com",
-      ),
-    ).toBe("github:owner/repo:pr:533");
+      mailRouteKey({
+        subject: "[Owner/Repo] Issue (#42)",
+        senderAddress: "notifications@github.com",
+        headers,
+      }),
+    ).toBe("github:owner/repo:item:42");
   });
 
-  it("falls back to the canonical sender address", () => {
-    expect(mailRouteKey("Hello", "Body", " Sender@Example.COM ")).toBe(
-      "mail:sender@example.com",
-    );
+  it("falls back if sender, List-Id or terminal item marker is missing", () => {
+    expect(
+      mailRouteKey({
+        subject: "Hello",
+        senderAddress: " Sender@Example.COM ",
+        headers,
+      }),
+    ).toBe("mail:sender@example.com");
+    expect(
+      mailRouteKey({
+        subject: "[Owner/Repo] Fix (#533)",
+        senderAddress: "other@example.com",
+        headers,
+      }),
+    ).toBe("mail:other@example.com");
+    expect(
+      mailRouteKey({
+        subject: "[Owner/Repo] Fix (#533)",
+        senderAddress: "notifications@github.com",
+        headers: [],
+      }),
+    ).toBe("mail:notifications@github.com");
+    expect(
+      mailRouteKey({
+        subject: "[Owner/Repo] Fix #42",
+        senderAddress: "notifications@github.com",
+        headers,
+      }),
+    ).toBe("mail:notifications@github.com");
   });
 });
 
@@ -117,6 +132,46 @@ describe("mail cron queue boundary", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("routes GitHub mail from Graph headers, not a linked PR in its body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            value: [
+              {
+                id: "github-1",
+                subject: "[Owner/Repo] Fix #42 (#533)",
+                from: { emailAddress: { address: "notifications@github.com" } },
+                internetMessageHeaders: [
+                  {
+                    name: "List-Id",
+                    value: "Owner/Repo <repo.owner.github.com>",
+                  },
+                ],
+              },
+            ],
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            body: {
+              contentType: "text",
+              content: "https://github.com/other/repo/pull/777",
+            },
+          }),
+        ),
+    );
+    const appendInbox = vi.fn().mockResolvedValue(undefined);
+    await handler(makeContext(appendInbox));
+    expect(appendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mailRouteKey: "github:owner/repo:item:533",
+      }),
+    );
   });
 
   it("enqueues a per-run Mail job without ACKing before delivery", async () => {
@@ -146,7 +201,7 @@ describe("mail cron queue boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "https://graph.fixture.test/v1.0/me/mailFolders/inbox/messages?$top=20&$select=id,subject,from&$orderby=receivedDateTime asc&$filter=isRead eq false",
+      "https://graph.fixture.test/v1.0/me/mailFolders/inbox/messages?$top=20&$select=id,subject,from,internetMessageHeaders&$orderby=receivedDateTime asc&$filter=isRead eq false",
       expect.objectContaining({
         headers: { Authorization: "Bearer host-graph-token" },
         signal: expect.any(AbortSignal),
