@@ -111,6 +111,8 @@ skill=web
 diff -ru "groups/$group/SKILLS/$skill" "templates/SKILLS/$skill"
 ```
 
+**#534 のcwd変更で必要な既存groupの移行:** Agentの`bash`とfilesystem toolsの相対pathは`/`基準です。`ensureGroupSkills`は既存の`groups/<group>/SKILLS/`を更新しないため、host/Runnerを切り替える前に各groupの配置済みSkillを点検してください。`bash SKILLS/...`・`python3 SKILLS/...`などの実行pathは`/workspace/SKILLS/...`へ、workspace内への相対書き込み（例: `> skill.md`、`memory/...`、`data/...`）は`/workspace/...`へ変更します。未変更のtemplateと同じファイルだけ新しいtemplateをcopyし、カスタマイズ済みのSkillと`config/cron.json`等の既存promptは差分を確認して手動で移行してください。`contextFiles`の相対pathはhostが引き続きgroup workspace基準で解決するため変更不要です。移行が終わるまで当該groupのAgentを起動しないでください。
+
 全ドメインSkillのscriptは`<capability>`でcontract取得、`<capability> '<JSON arguments>'`で実行し、JSONを変換せず共通CLIへ渡します。カスタマイズが無いことを確認したファイルだけtemplateからcopyし、Skillフォルダを無条件に削除・上書きしないでください。`last30days`はworkflow Skillとして独立して維持します。
 
 Financeを旧Skillから用途別Toolへ移行するgroupでは、`skills` から `finance` / `finance-setup` を外し、必要な8つの `finance-*` Toolを `tools` に追加します。`groups/<group>/SKILLS/finance` / `finance-setup` はテンプレート削除では自動削除されないため、独自変更が無いことを確認してから退役させてください。既存の `finance.db` は移動・再作成せずそのまま再利用します。
