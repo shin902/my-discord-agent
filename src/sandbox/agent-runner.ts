@@ -718,7 +718,7 @@ export async function runAgentLoop(
             `- ${JSON.stringify(container)} (${readOnly ? "ro" : "rw"})`,
         ),
         "When the requested work concerns an existing mounted path, use that mount directly.",
-        "Do not clone or copy mounted content into /workspace.",
+        "Use an existing mounted path directly when possible.",
       ].join("\n")
     : undefined;
   const fullSystemPrompt = [
