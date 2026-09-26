@@ -27,7 +27,7 @@ interface UnreadEmail {
   senderAddress: string;
 }
 
-export function mailThreadKey(
+export function mailRouteKey(
   subject: string,
   body: string,
   senderAddress: string,
@@ -120,9 +120,15 @@ export default async function handler(ctx: CronContext): Promise<void> {
       await enqueueCronInbox(
         {
           ...ctx,
+          deliveryMode: "direct",
+          sessionMode: "per-run",
           idempotencyKey: `mail:graph:${encodeURIComponent(ctx.id)}:${encodeURIComponent(meta.id)}`,
           mailEmailId: meta.id,
-          threadKey: mailThreadKey(meta.subject, bodyText, meta.senderAddress),
+          mailRouteKey: mailRouteKey(
+            meta.subject,
+            bodyText,
+            meta.senderAddress,
+          ),
         },
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
       );

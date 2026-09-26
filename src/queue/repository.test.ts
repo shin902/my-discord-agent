@@ -8,6 +8,33 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
+it("persists Mail thread routes by group and key across restart", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mail-threads-"));
+  const dbPath = join(dir, "runtime.sqlite");
+  try {
+    const first = new QueueRepository(dbPath);
+    first.setMailThread("group-a", "mail:a@example.com", "thread-1");
+    first.close();
+    const reopened = new QueueRepository(dbPath);
+    try {
+      expect(reopened.getMailThread("group-a", "mail:a@example.com")).toBe(
+        "thread-1",
+      );
+      expect(
+        reopened.getMailThread("group-b", "mail:a@example.com"),
+      ).toBeUndefined();
+      reopened.setMailThread("group-a", "mail:a@example.com", "thread-2");
+      expect(reopened.getMailThread("group-a", "mail:a@example.com")).toBe(
+        "thread-2",
+      );
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 describe("QueueRepository payload", () => {
   it("normalizes legacy system prompt snapshot fields when reading payload_json", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));

@@ -67,6 +67,7 @@ function validMessage(value: unknown): value is InboxMessage {
     message.cronThreadId,
     message.cronPlaceholderMessageId,
     message.mailEmailId,
+    message.mailRouteKey,
     message.rssDispatchId,
     message.rssStatePath,
   ]) {
@@ -83,8 +84,7 @@ function validMessage(value: unknown): value is InboxMessage {
     message.cronDeliveryMode !== undefined &&
     message.cronDeliveryMode !== "direct" &&
     message.cronDeliveryMode !== "new-thread" &&
-    message.cronDeliveryMode !== "item-thread" &&
-    message.cronDeliveryMode !== "keyed-thread"
+    message.cronDeliveryMode !== "item-thread"
   )
     return false;
   if (

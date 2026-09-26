@@ -171,7 +171,36 @@ it("reuses the durably persisted cron thread for delivery", async () => {
   }
 });
 
-it("reuses a keyed thread and replaces a deleted mapping", async () => {
+it("creates a Mail thread when no mapping exists", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const send = vi.fn(async () => ({ id: "message-1" }));
+  const thread = { id: "thread-1", isSendable: () => true, send };
+  const create = vi.fn(async () => thread);
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockResolvedValue({ threads: { create } } as never);
+  try {
+    completed(repo, "first", {
+      destinationType: "channel",
+      destinationId: "channel",
+      mailEmailId: "mail-1",
+      mailRouteKey: "mail:a@example.com",
+    });
+    await new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "mail-create",
+    }).runOnce();
+    expect(create).toHaveBeenCalledOnce();
+    expect(repo.getMailThread("group", "mail:a@example.com")).toBe("thread-1");
+    expect(send).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
+it("reuses a Mail thread and replaces a deleted mapping", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const firstSend = vi.fn(async () => ({ id: "message-1" }));
   const replacementSend = vi.fn(async () => ({ id: "message-2" }));
@@ -183,7 +212,7 @@ it("reuses a keyed thread and replaces a deleted mapping", async () => {
   const channel = {
     threads: { create: vi.fn(async () => replacement) },
   };
-  repo.setKeyedThread("group", "mail:a@example.com", "thread-1");
+  repo.setMailThread("group", "mail:a@example.com", "thread-1");
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
@@ -200,9 +229,10 @@ it("reuses a keyed thread and replaces a deleted mapping", async () => {
     });
   try {
     completed(repo, "first", {
-      destinationType: "keyed-thread",
+      destinationType: "channel",
       destinationId: "channel",
-      threadKey: "mail:a@example.com",
+      mailEmailId: "mail-1",
+      mailRouteKey: "mail:a@example.com",
     });
     const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-keyed",
@@ -211,15 +241,16 @@ it("reuses a keyed thread and replaces a deleted mapping", async () => {
     expect(firstSend).toHaveBeenCalledOnce();
     expect(channel.threads.create).not.toHaveBeenCalled();
 
-    repo.setKeyedThread("group", "mail:a@example.com", "missing-thread");
+    repo.setMailThread("group", "mail:a@example.com", "missing-thread");
     completed(repo, "second", {
-      destinationType: "keyed-thread",
+      destinationType: "channel",
       destinationId: "channel",
-      threadKey: "mail:a@example.com",
+      mailEmailId: "mail-2",
+      mailRouteKey: "mail:a@example.com",
     });
     await worker.runOnce();
     expect(replacementSend).toHaveBeenCalledOnce();
-    expect(repo.getKeyedThread("group", "mail:a@example.com")).toBe("thread-2");
+    expect(repo.getMailThread("group", "mail:a@example.com")).toBe("thread-2");
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();

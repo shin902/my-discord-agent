@@ -38,13 +38,13 @@ export interface DeliverySendContext {
   isFinalChunk?: boolean;
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
-  resolveKeyedThread?: (
+  resolveMailThread?: (
     groupName: string,
-    threadKey: string,
+    mailRouteKey: string,
   ) => string | undefined;
-  persistKeyedThread?: (
+  persistMailThread?: (
     groupName: string,
-    threadKey: string,
+    mailRouteKey: string,
     threadId: string,
   ) => Promise<void> | void;
 }
@@ -82,7 +82,7 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
-  threadKey?: string;
+  mailRouteKey?: string;
   mailEmailId?: string;
 }
 type DeliveryMessage = {
@@ -148,15 +148,14 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const isItemThread = destinationType === "item-thread";
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
-      if (destinationType === "keyed-thread") {
-        if (!payload.threadKey)
-          throw new DeliveryError(
-            "non-retryable",
-            "keyed-thread delivery has no threadKey",
-          );
-        threadId = context.resolveKeyedThread?.(
+      if (
+        destinationType === "channel" &&
+        payload.mailEmailId &&
+        payload.mailRouteKey
+      ) {
+        threadId = context.resolveMailThread?.(
           payload.groupName,
-          payload.threadKey,
+          payload.mailRouteKey,
         );
         if (threadId) {
           try {
@@ -191,15 +190,15 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           if (!threadId)
             throw new DeliveryError("unknown", "Discord thread ID is empty");
           try {
-            await context.persistKeyedThread?.(
+            await context.persistMailThread?.(
               payload.groupName,
-              payload.threadKey,
+              payload.mailRouteKey,
               threadId,
             );
           } catch (error) {
             throw new DeliveryError(
               "unknown",
-              `failed to persist keyed Discord thread ${threadId}`,
+              `failed to persist Mail Discord thread ${threadId}`,
               error,
             );
           }
@@ -478,10 +477,10 @@ export class DeliveryWorker {
             claim.fencingToken,
             threadId,
           ),
-        resolveKeyedThread: (groupName, threadKey) =>
-          this.repository.getKeyedThread(groupName, threadKey),
-        persistKeyedThread: (groupName, threadKey, threadId) =>
-          this.repository.setKeyedThread(groupName, threadKey, threadId),
+        resolveMailThread: (groupName, mailRouteKey) =>
+          this.repository.getMailThread(groupName, mailRouteKey),
+        persistMailThread: (groupName, mailRouteKey, threadId) =>
+          this.repository.setMailThread(groupName, mailRouteKey, threadId),
         promoteCronItemSession: async (threadId) => {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);

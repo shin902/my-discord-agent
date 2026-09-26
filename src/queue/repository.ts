@@ -616,14 +616,14 @@ function createCommittedConversationsTable(db: Database.Database): void {
       ON committed_conversations(group_name, id);
   `);
 }
-function createKeyedThreadsTable(db: Database.Database): void {
+function createMailThreadsTable(db: Database.Database): void {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS keyed_threads (
+    CREATE TABLE IF NOT EXISTS mail_threads (
       group_name TEXT NOT NULL,
-      thread_key TEXT NOT NULL,
+      route_key TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      PRIMARY KEY (group_name, thread_key)
+      PRIMARY KEY (group_name, route_key)
     );
   `);
 }
@@ -656,7 +656,7 @@ function repairRuntimeSchema(db: Database.Database): void {
   ]);
   createBotTaskSessionTable(db);
   createCommittedConversationsTable(db);
-  createKeyedThreadsTable(db);
+  createMailThreadsTable(db);
 }
 // Versioned schema migrations. Every step is idempotent; the value recorded in
 // schema_meta('schema_version') gates which steps still need to run. Stores stamped
@@ -718,9 +718,9 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   },
   {
     version: 8,
-    summary: "persist keyed Discord thread routes",
+    summary: "persist Mail Discord thread routes",
     up(db) {
-      createKeyedThreadsTable(db);
+      createMailThreadsTable(db);
     },
   },
 ];
@@ -860,23 +860,23 @@ export class QueueRepository {
       | undefined;
     return row ? parsePayload(row) : undefined;
   }
-  getKeyedThread(groupName: string, threadKey: string): string | undefined {
+  getMailThread(groupName: string, routeKey: string): string | undefined {
     const row = this.db
       .prepare(
-        "SELECT thread_id AS threadId FROM keyed_threads WHERE group_name=? AND thread_key=?",
+        "SELECT thread_id AS threadId FROM mail_threads WHERE group_name=? AND route_key=?",
       )
-      .get(groupName, threadKey) as { threadId: string } | undefined;
+      .get(groupName, routeKey) as { threadId: string } | undefined;
     return row?.threadId;
   }
-  setKeyedThread(groupName: string, threadKey: string, threadId: string): void {
+  setMailThread(groupName: string, routeKey: string, threadId: string): void {
     this.db
       .prepare(
-        `INSERT INTO keyed_threads(group_name,thread_key,thread_id,updated_at)
+        `INSERT INTO mail_threads(group_name,route_key,thread_id,updated_at)
          VALUES (?,?,?,?)
-         ON CONFLICT(group_name,thread_key) DO UPDATE SET
+         ON CONFLICT(group_name,route_key) DO UPDATE SET
            thread_id=excluded.thread_id,updated_at=excluded.updated_at`,
       )
-      .run(groupName, threadKey, threadId, nowIso());
+      .run(groupName, routeKey, threadId, nowIso());
   }
   /** Paged references only; statements finish before yielding to remote I/O. */
   *readCommittedConversations(
