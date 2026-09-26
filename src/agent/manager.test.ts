@@ -937,7 +937,7 @@ describe("sendMessage: 添付ファイル", () => {
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
     expect(payload.content).toContain("見て");
     expect(payload.content).toContain("[添付ファイル]");
-    expect(payload.content).toContain("attachments/0-photo.png");
+    expect(payload.content).toContain("/workspace/attachments/0-photo.png");
   });
 
   it("画像添付がある場合は read ツールでの確認を促すヒントを追記する", async () => {

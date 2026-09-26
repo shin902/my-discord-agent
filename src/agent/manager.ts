@@ -527,7 +527,7 @@ const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
 
 interface SavedAttachment {
-  relPath: string;
+  containerPath: string;
   name: string;
   contentType: string | null;
   size: number;
@@ -571,7 +571,7 @@ async function downloadAttachments(
       const safeName = sanitizeAttachmentName(att.name, index);
       await writeFile(path.join(dir, safeName), buf);
       saved.push({
-        relPath: `attachments/${safeName}`,
+        containerPath: `/workspace/attachments/${safeName}`,
         name: att.name,
         contentType: att.contentType,
         size: buf.length,
@@ -708,7 +708,7 @@ export async function sendMessage(
     if (saved.length > 0) {
       const lines = saved.map(
         (f) =>
-          `- ${f.relPath} (${f.contentType ?? "unknown"}, ${f.size} bytes)`,
+          `- ${f.containerPath} (${f.contentType ?? "unknown"}, ${f.size} bytes)`,
       );
       const hasImage = saved.some((f) => f.contentType?.startsWith("image/"));
       const hint = hasImage
