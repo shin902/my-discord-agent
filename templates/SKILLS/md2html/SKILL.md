@@ -11,14 +11,14 @@ Convert a Markdown file into a single, fully self-contained HTML file with no CD
 
 ```bash
 # Basic conversion (generate input.html in the same directory)
-md2html input.md
+md2html /workspace/input.md
 
 # Specify the output filename
-md2html -o /workspace/output.html input.md
+md2html -o /workspace/output.html /workspace/input.md
 
 # Specify a style
-md2html --style dark input.md        # Dark theme
-md2html --style sidebar input.md     # Sidebar table of contents
+md2html --style dark /workspace/input.md        # Dark theme
+md2html --style sidebar /workspace/input.md     # Sidebar table of contents
 
 # List available styles
 md2html --list-styles
