@@ -35,18 +35,10 @@ for skill_src in "$SRC_DIR"/*/; do
   trap 'rm -rf "$skill_dest"' ERR
   cp -r "$skill_src" "$skill_dest"
 
-  # Python is available in the runner; perl is not installed there.
-  WIKI_ROOT="$WIKI_ROOT" RAW_DIR="$RAW_DIR" DIGEST_DIR="$DIGEST_DIR" python3 - "$skill_dest" <<'PY'
-import os
-import pathlib
-import sys
-
-for file in pathlib.Path(sys.argv[1]).rglob("*.md"):
-    content = file.read_text()
-    for key in ("WIKI_ROOT", "RAW_DIR", "DIGEST_DIR"):
-        content = content.replace("{{" + key + "}}", os.environ[key])
-    file.write_text(content)
-PY
+  # Replace placeholders in all .md files (perl -pi -e is portable across GNU/BSD)
+  find "$skill_dest" -name "*.md" -exec perl -pi -e \
+    "s|\{\{WIKI_ROOT\}\}|$WIKI_ROOT|g; s|\{\{RAW_DIR\}\}|$RAW_DIR|g; s|\{\{DIGEST_DIR\}\}|$DIGEST_DIR|g" \
+    {} \;
   trap - ERR
 
   echo "installed: $skill_name"

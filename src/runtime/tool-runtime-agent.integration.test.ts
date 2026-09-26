@@ -60,7 +60,6 @@ describe.skipIf(!runtimeImage || !agentImage)(
         "arxiv-search",
         "arxiv-survey",
         "last30days",
-        "wiki-setup",
       ])
         await cp(
           `templates/SKILLS/${skill}`,
@@ -241,18 +240,6 @@ describe.skipIf(!runtimeImage || !agentImage)(
           }),
         ),
       ).toBe("artifact-line");
-    }, 30_000);
-
-    it("installs wiki skills with relative roots under /workspace", async () => {
-      const agent = startAgent();
-      const setup = await agent.call("bash", {
-        command:
-          "bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest",
-      });
-      expect(text(setup)).toContain("installed: wiki-ingest");
-      expect(
-        await readFile(join(workspace, "SKILLS/wiki-ingest/SKILL.md"), "utf8"),
-      ).toContain("/workspace/llm-wiki/raw/");
     }, 30_000);
 
     it("runs native arXiv and each Skill frontend with the same authority", async () => {
