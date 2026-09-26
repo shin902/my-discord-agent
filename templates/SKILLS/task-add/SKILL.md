@@ -6,7 +6,7 @@ description: "Create a new task in taskmd format under /workspace/tasks/. Use th
 # task-add
 
 Create a new task as a Markdown file in taskmd format.
-See the taskmd skill's `spec.md` for format details (when enabled).
+See `/workspace/SKILLS/taskmd/spec.md` for format details (when taskmd is enabled).
 
 Request: $ARGUMENTS$
 

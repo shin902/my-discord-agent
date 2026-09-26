@@ -34,7 +34,7 @@ This is the core of the work. For each entity or concept touched by the source:
 
 ### 5. Update the index
 
-Add the new source page (and any newly created entity/concept pages) to `{{WIKI_ROOT}}/index.md` under the appropriate category, using the form `[[page]] — 一行要約`.
+Add the new source page (and any newly created entity/concept pages) to `{{WIKI_ROOT}}/wiki/index.md` under the appropriate category, using the form `[[page]] — 一行要約`.
 
 ### 6. Append to the log (never rewrite it)
 

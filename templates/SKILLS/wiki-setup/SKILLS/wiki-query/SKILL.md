@@ -13,7 +13,7 @@ First read the root `AGENTS.md` and follow its conventions.
 
 ### 1. Find relevant pages
 
-Read `{{WIKI_ROOT}}/index.md` first to identify candidate pages, then dig deeper from there. For a large wiki, do not rely on the index alone: run the `wiki-search` helper (for wikis with hundreds of pages, `wiki-search-fts` if the user has enabled it) to perform a ranked full-text search. Follow `[[wikilinks]]` from the most relevant pages — the answer is often found in the connections. If the search is advanced enough to require vector search or LLM reranking, ask the user about installing an external tool such as `qmd`.
+Read `{{WIKI_ROOT}}/wiki/index.md` first to identify candidate pages, then dig deeper from there. For a large wiki, do not rely on the index alone: run the `wiki-search` helper (for wikis with hundreds of pages, `wiki-search-fts` if the user has enabled it) to perform a ranked full-text search. Follow `[[wikilinks]]` from the most relevant pages — the answer is often found in the connections. If the search is advanced enough to require vector search or LLM reranking, ask the user about installing an external tool such as `qmd`.
 
 ### 2. Synthesize the answer
 
@@ -33,9 +33,9 @@ Choose a format that matches the question.
 
 This is how the wiki accumulates knowledge. If the answer is more than a simple lookup — a comparison, analysis, discovered connection, or synthesis — write it back as a new page.
 
-- Create `<slug>.md` with standard frontmatter in the concept-page directory (following the conventions defined in `AGENTS.md`; by default `{{WIKI_ROOT}}/concepts/`, or as a page under `{{WIKI_ROOT}}/syntheses/`), and mark `tags` to show that it is a derived/answer page.
+- Create `<slug>.md` with standard frontmatter in the concept-page directory (following the conventions defined in `AGENTS.md`; by default `{{WIKI_ROOT}}/wiki/concepts/`, or as a page under `{{WIKI_ROOT}}/wiki/syntheses/`), and mark `tags` to show that it is a derived/answer page.
 - Add `[[wikilinks]]` to every page referenced by the new page, and add reciprocal links from those pages.
-- Add it to `{{WIKI_ROOT}}/index.md`.
+- Add it to `{{WIKI_ROOT}}/wiki/index.md`.
 - Append a log entry.
   `## [YYYY-MM-DD] query | <question> → filed as [[page]]`
 

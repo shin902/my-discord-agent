@@ -9,7 +9,7 @@ description: "Markdown-based task management for coding agents. Tasks persist as
 persisted as Markdown files under `/workspace/tasks/` and survive across containers.
 It uses no MCP or plugin; everything is handled with files and Python helpers.
 
-For format details, use `read` to consult `spec.md` in the same directory.
+For format details, use `read` to consult `/workspace/SKILLS/taskmd/spec.md`.
 
 ## When to do what
 
@@ -32,7 +32,7 @@ python3 /workspace/SKILLS/taskmd/next.py
 It orders tasks that are `pending` and whose dependencies are all `done` by priority, then id. If any task is in progress, present it first. Do not take this output at face value; reconcile it with the user’s context (the recent conversation and urgency) to make the final decision — the deterministic ordering is a starting point, not an absolute rule.
 
 ### Create a task
-For a new task, follow the `task-add` skill procedure when that skill is enabled. Otherwise, create `/workspace/tasks/{id}-{slug}.md` manually according to the schema in `spec.md`.
+For a new task, follow the `task-add` skill procedure when that skill is enabled. Otherwise, create `/workspace/tasks/{id}-{slug}.md` manually according to the schema in `/workspace/SKILLS/taskmd/spec.md`.
 
 ### Execute a task
 For starting and completing an individual task, follow the `task-do` skill procedure. The key is two-layer management:
