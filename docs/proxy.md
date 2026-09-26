@@ -31,14 +31,20 @@ credential forwardingとは別に、host/runtime executorのcapabilityは専用R
 Agent sandbox
   → Tool Proxy（run token・capability・引数検証）
   → host executor / Tool callごとの使い捨てTool Runtime
+      ├─ current runのgroup workspaceを /workspace にread-write mount
+      └─ public Internet（private / host networkは拒否）
   → 外部API
 ```
+
+Tool Runtimeの `/workspace` はAgent Runnerと同じcurrent group workspaceを参照します。mount元はAgentの引数から受け取らず、run作成時のtrusted contextからhost側で解決します。他groupのworkspaceや任意host pathをRuntimeへ選ばせません。これにより、remote Gitのように外部通信とworkspaceへの永続書き込みの両方が必要なcapabilityを、別artifact handoffを追加せず実装できます。
+
+workspaceをRuntimeへ見せることはcredential公開を意味しません。API key、OAuth token、Cookie等をAgent-visibleな引数・結果・workspaceへ置かない境界は維持します。credentialが必要なcapabilityは、既存のReddit/X stateと同様にtrusted host側の固定設定から必要最小限だけをRuntimeへ渡し、Agentに値やhost pathを選ばせません。
 
 native ToolとSkill CLIは同じrun tokenを共有します。許可集合はeffective native `tools` のhost/runtime capabilityと、trusted codeで定義したeffective `toolSets` の和集合です。`skills` は説明・workflowの公開だけで権限を付与せず、Skillの内容・存在・hashもauthority sourceにはしません。`toolSets` にwildcardはありません。
 
 `tool-proxy describe <capability>` は現在のrun tokenで認可済みのTool contract（既存AgentToolのname・description・TypeBox parameters）だけを返します。approval・host executor実行・Tool Runtime起動は行いません。
 
-run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、approval対象集合、trusted Discord bot/channel、revoke signalをsnapshotとして登録し、終了時にrevokeします。
+run開始時にhostメモリへ短命opaque token、run identity、effective config由来のcapability allowlist、approval対象集合、trusted Discord bot/channel、current group workspace、revoke signalをsnapshotとして登録し、終了時にrevokeします。workspaceのhost pathはAgent-facing contractへ含めず、Tool Runtime起動時だけtrusted resourceとして使います。
 
 approval対象はvalidate後に確定したcanonical argsをsnapshotのDiscord destinationへ表示し、Approve後にauthorityを再確認して同じinvocationを実行します。approval専用TTLやgrant tokenは設けず、Discord updateの短いtimeout以外はrequesting runの生存中だけ待機します。Proxyはmethod/path、Content-Type、token、capability、引数schemaを検証し、未認可・不明・不正な要求を拒否します。
 
