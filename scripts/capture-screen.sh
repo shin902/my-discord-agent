@@ -181,6 +181,7 @@ else
     fi
   fi
   magick "$raw_temporary" -resize '1280x720>' "$image"
+  touch -r "$raw_temporary" "$image"
   rm -- "$raw_temporary"
   raw_temporary=""
 fi
@@ -190,9 +191,17 @@ if [[ ! -f "$image" || ! "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
   exit 1
 fi
 echo "Local capture (pending upload): $image" >&2
+# The PNG's mtime is the durable capture instant, including across process restarts.
+if epoch=$(stat -f %m "$image" 2>/dev/null) && [[ "$epoch" =~ ^[0-9]+$ ]]; then
+  captured_at=$(date -u -r "$epoch" '+%Y-%m-%dT%H:%M:%SZ')
+else
+  epoch=$(stat -c %Y "$image")
+  captured_at=$(date -u -d "@$epoch" '+%Y-%m-%dT%H:%M:%SZ')
+fi
 status=$(curl -q --silent --show-error --proto '=https' --noproxy '*' \
   --connect-timeout 10 --max-time 60 --output /dev/null --write-out '%{http_code}' \
   --header 'Content-Type: image/png' --header "X-Capture-Id: $id" \
+  --header "X-Captured-At: $captured_at" \
   --data-binary "@$image" "$url") || {
   echo "Upload failed; retry with the same PNG path" >&2
   exit 1

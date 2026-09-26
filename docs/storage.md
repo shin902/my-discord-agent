@@ -18,7 +18,7 @@ data/
   runtime.sqlite-wal    # runtime DBのWAL（存在する場合）
   runtime.sqlite-shm    # runtime DBの共有メモリ（存在する場合）
   rss.sqlite3           # RSS収集・dispatch状態（runtime DBとは別）
-  screen-captures.sqlite # host専用の画面PNG BLOB・受信時刻・処理完了時刻
+  screen-captures.sqlite # host専用の画面PNG BLOB・撮影時刻・処理完了時刻
   memory-export.sqlite  # backend/group/sourceごとのexport成功markerのみ
   sessions/
     <groupName>/

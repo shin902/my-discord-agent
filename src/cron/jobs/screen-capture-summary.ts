@@ -249,7 +249,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
                           content: [
                             {
                               type: "text",
-                              text: `受信時刻: ${capture.received_at}`,
+                              text: `撮影時刻: ${capture.received_at}`,
                             },
                             {
                               type: "image",

@@ -52,6 +52,16 @@ export async function startScreenCaptureReceiver(options: {
       reply(response, 400, { error: "X-Capture-Id must be a UUID" });
       return;
     }
+    const capturedAt = request.headers["x-captured-at"];
+    if (
+      typeof capturedAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(capturedAt) ||
+      !Number.isFinite(Date.parse(capturedAt)) ||
+      new Date(capturedAt).toISOString() !== capturedAt.replace("Z", ".000Z")
+    ) {
+      reply(response, 400, { error: "X-Captured-At must be a UTC timestamp" });
+      return;
+    }
     const chunks: Buffer[] = [];
     let size = 0;
     try {
@@ -80,7 +90,7 @@ export async function startScreenCaptureReceiver(options: {
     }
     const id = parsedId.data.toLowerCase();
     try {
-      insert.run(id, image, new Date().toISOString());
+      insert.run(id, image, capturedAt);
       // A retry must not replace a different capture or reset its summary.
       if (!matches.get(id, image)) {
         reply(response, 409, {

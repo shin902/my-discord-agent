@@ -143,12 +143,19 @@ printf '%s-resized' "$(<"$input")" > "$output"
     expect(failed.status).toBe(1);
     expect(failed.stderr).toContain("retained for retry");
     expect(readFileSync(image, "utf8")).toBe("png-resized");
+    const capturedAt = readFileSync(argsFile, "utf8")
+      .split("\n")
+      .find((arg) => arg.startsWith("X-Captured-At: "));
+    expect(capturedAt).toMatch(
+      /^X-Captured-At: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/,
+    );
     expect(readFileSync(magickCalls, "utf8").trim().split("\n")).toHaveLength(
       1,
     );
     for (const status of ["302", "409", "500"]) {
       expect(run([url, image], status).status).toBe(1);
       expect(readFileSync(image, "utf8")).toBe("png-resized");
+      expect(readFileSync(argsFile, "utf8")).toContain(capturedAt);
     }
     for (const status of ["000", "200"]) {
       // A transport failure (including an incomplete 200 response) is not an ACK.
@@ -161,6 +168,7 @@ printf '%s-resized' "$(<"$input")" > "$output"
     expect(existsSync(image)).toBe(false);
     const args = readFileSync(argsFile, "utf8").trim().split("\n");
     expect(args).toContain(`X-Capture-Id: ${id}`);
+    expect(args).toContain(capturedAt);
     expect(args).toContain(`@${image}`);
     expect(args).toContain("=https");
     expect(args).not.toContain("--location");

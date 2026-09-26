@@ -34,7 +34,12 @@ describe("screen capture HTTP / SQLite boundary", () => {
   function post(id: string = randomUUID(), body = png, headers = {}) {
     return fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "image/png", "X-Capture-Id": id, ...headers },
+      headers: {
+        "Content-Type": "image/png",
+        "X-Capture-Id": id,
+        "X-Captured-At": "2025-01-02T03:04:05Z",
+        ...headers,
+      },
       body,
     });
   }
@@ -50,7 +55,7 @@ describe("screen capture HTTP / SQLite boundary", () => {
       expect(row).toEqual({
         id,
         image: png,
-        received_at: expect.any(String),
+        received_at: "2025-01-02T03:04:05Z",
         summary: null,
         completed_at: null,
         accepted: null,
@@ -58,7 +63,10 @@ describe("screen capture HTTP / SQLite boundary", () => {
       db.prepare(
         "UPDATE screen_captures SET summary = 'Editor work' WHERE id = ?",
       ).run(id);
-      expect((await post(id)).status).toBe(200);
+      expect(
+        (await post(id, png, { "X-Captured-At": "2025-02-03T04:05:06Z" }))
+          .status,
+      ).toBe(200);
       expect(db.prepare("SELECT * FROM screen_captures").get()).toEqual({
         ...(row as object),
         summary: "Editor work",
@@ -113,6 +121,15 @@ describe("screen capture HTTP / SQLite boundary", () => {
     expect((await fetch(endpoint)).status).toBe(405);
     expect((await fetch(`${endpoint}/wrong`)).status).toBe(404);
     expect((await post("../../bad")).status).toBe(400);
+    for (const timestamp of [
+      "",
+      "2025-02-30T00:00:00Z",
+      "2025-01-02T03:04:05+09:00",
+    ]) {
+      expect(
+        (await post(randomUUID(), png, { "X-Captured-At": timestamp })).status,
+      ).toBe(400);
+    }
     expect(
       (await post(randomUUID(), png, { Origin: "https://evil.example" }))
         .status,
