@@ -15,7 +15,7 @@ The model has three layers. **Raw sources** (`raw/`) are immutable input data or
 
 ### 1. Confirm the location and purpose
 
-Work in the folder selected by the user. First, actually check (for example with `ls`; do not guess) whether the target folder already contains `AGENTS.md`, `wiki/`, or `raw/`. If any already exists, this is an addition or migration to an existing wiki rather than a new setup. Do not overwrite it; ask the user whether they want a rebuild, a new setup in another folder, or additions to the existing structure.
+Ask the user for the wiki root as an absolute container path (for example `/workspace/llm-wiki`). If they provide a relative path, ask for an absolute path before using any tools. Use that absolute root for every filesystem operation in steps 1–4: check `<root>/AGENTS.md`, `<root>/wiki/`, and `<root>/raw/` (for example with `ls`; do not guess) before creating anything. If any already exists, this is an addition or migration to an existing wiki rather than a new setup. Do not overwrite it; ask the user whether they want a rebuild, a new setup in another folder, or additions to the existing structure.
 
 Once you have confirmed that none exists (a new build), ask the user directly what the wiki is for before constructing anything (do not settle for guesses; ask in ordinary conversation) — this determines the schema. At minimum, confirm the following:
 
@@ -29,7 +29,7 @@ Do not proceed with construction until you have real answers rather than assumpt
 ### 2. Create the directory structure
 
 ```
-<root>/
+<absolute root>/
   AGENTS.md          # Schema (rulebook) — see step 3
   raw/               # Immutable source files (user-owned)
     assets/          # Downloaded images referenced by sources
@@ -90,10 +90,10 @@ Present these as suggestions, not requirements: Obsidian as a viewing frontend (
 Run the following with the directory names finalized during the interview as arguments:
 
 ```bash
-bash /workspace/SKILLS/wiki-setup/setup.sh <WIKI_ROOT> <RAW_DIR> <DIGEST_DIR>
+bash /workspace/SKILLS/wiki-setup/setup.sh <absolute-root> <absolute-raw-dir> <absolute-digest-dir>
 ```
 
-Example: `bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest` (relative arguments are resolved under `/workspace`).
+Example: `bash /workspace/SKILLS/wiki-setup/setup.sh /workspace/llm-wiki /workspace/llm-wiki/raw /workspace/llm-wiki/digest`. Pass the absolute paths confirmed in step 1.
 
 This script copies the bundled wiki-ingest, wiki-lint, and wiki-query from `wiki-setup/SKILLS/` to `/workspace/SKILLS/`, then replaces placeholders (such as `{{WIKI_ROOT}}`) with the actual paths in one pass. Existing skills are skipped (existing skills are never touched).
 
