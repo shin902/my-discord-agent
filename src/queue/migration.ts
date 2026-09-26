@@ -67,6 +67,7 @@ function validMessage(value: unknown): value is InboxMessage {
     message.cronThreadId,
     message.cronPlaceholderMessageId,
     message.mailEmailId,
+    message.mailRouteKey,
     message.rssDispatchId,
     message.rssStatePath,
   ]) {

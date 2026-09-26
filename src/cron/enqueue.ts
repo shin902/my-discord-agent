@@ -32,6 +32,7 @@ export type CronEnqueueContext = {
   mode?: "to-channel" | "to-thread";
   idempotencyKey?: string;
   mailEmailId?: string;
+  mailRouteKey?: string;
   rssDispatchId?: string;
   rssStatePath?: string;
   appendInbox: QueueProducer;
@@ -194,6 +195,9 @@ export async function enqueueCronInbox(
     cronJobId: ctx.id,
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
     ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
+    ...(ctx.mailEmailId && ctx.mailRouteKey
+      ? { mailRouteKey: ctx.mailRouteKey }
+      : {}),
     ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
     ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),

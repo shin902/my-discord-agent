@@ -38,6 +38,17 @@ export interface DeliverySendContext {
   isFinalChunk?: boolean;
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
+  resolveMailThread?: (
+    groupName: string,
+    channelId: string,
+    mailRouteKey: string,
+  ) => string | undefined;
+  persistMailThread?: (
+    groupName: string,
+    channelId: string,
+    mailRouteKey: string,
+    threadId: string,
+  ) => Promise<void> | void;
 }
 export interface DeliveryAdapter {
   send(
@@ -73,6 +84,7 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
+  mailRouteKey?: string;
   mailEmailId?: string;
 }
 type DeliveryMessage = {
@@ -138,7 +150,71 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const isItemThread = destinationType === "item-thread";
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
-      if (destinationType === "new-thread") {
+      if (
+        destinationType === "channel" &&
+        payload.mailEmailId &&
+        payload.mailRouteKey
+      ) {
+        threadId = context.resolveMailThread?.(
+          payload.groupName,
+          destinationId,
+          payload.mailRouteKey,
+        );
+        if (threadId) {
+          try {
+            target = (await client.channels.fetch(
+              threadId,
+            )) as unknown as DeliveryTarget;
+            if (!target) threadId = undefined;
+          } catch (error) {
+            if (statusCode(error) !== 404) throw error;
+            threadId = undefined;
+          }
+        }
+        if (!threadId) {
+          const channel = (await client.channels.fetch(
+            destinationId,
+          )) as unknown as DeliveryTarget | null;
+          if (!channel)
+            throw new DeliveryError(
+              "retryable",
+              "destination channel is unavailable",
+            );
+          if (
+            (channel.type !== ChannelType.GuildText &&
+              channel.type !== ChannelType.GuildAnnouncement) ||
+            typeof channel.threads?.create !== "function"
+          )
+            throw new DeliveryError(
+              "non-retryable",
+              "Mail route thread requires a parent text channel",
+            );
+          mutationAttempted = true;
+          target = await channel.threads.create({
+            name: payload.mailRouteKey
+              .replace(/^mail:/, "")
+              .replace(/^github:(.+):item:(\d+)$/, "$1 #$2")
+              .slice(0, 100),
+          });
+          threadId = String(target.id ?? "");
+          if (!threadId)
+            throw new DeliveryError("unknown", "Discord thread ID is empty");
+          try {
+            await context.persistMailThread?.(
+              payload.groupName,
+              destinationId,
+              payload.mailRouteKey,
+              threadId,
+            );
+          } catch (error) {
+            throw new DeliveryError(
+              "unknown",
+              `failed to persist Mail Discord thread ${threadId}`,
+              error,
+            );
+          }
+        }
+      } else if (destinationType === "new-thread") {
         if (threadId) {
           target = (await client.channels.fetch(
             threadId,
@@ -410,6 +486,15 @@ export class DeliveryWorker {
           this.repository.setDeliveryThread(
             claim.row.id,
             claim.fencingToken,
+            threadId,
+          ),
+        resolveMailThread: (groupName, channelId, mailRouteKey) =>
+          this.repository.getMailThread(groupName, channelId, mailRouteKey),
+        persistMailThread: (groupName, channelId, mailRouteKey, threadId) =>
+          this.repository.setMailThread(
+            groupName,
+            channelId,
+            mailRouteKey,
             threadId,
           ),
         promoteCronItemSession: async (threadId) => {

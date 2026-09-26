@@ -242,8 +242,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "id": "mail-check",
     "schedule": "*/30 * * * *",
     "enabled": true,
-    "deliveryMode": "new-thread",
-    "sessionMode": "destination",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
     "handler": "jobs/mail.ts"
   },
   {
@@ -281,9 +281,9 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### jobs/mail.ts
 
-`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、`enqueueCronInbox()` へ投入する。`deliveryMode` / `sessionMode` はcron設定に従って共通のcron enqueue/pollerが処理するため、`mail.ts` は `direct`・`new-thread`・`item-thread` のいずれも制限しない。全delivery chunkが`sent`になった後にだけメールを既読化する。ACK対象を特定するメールID以外のmail固有冪等キー、source照合、placeholder/threadのcross-run再利用は行わない。
+`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、LLM実行前に決定論的な `mailRouteKey` を付けて `enqueueCronInbox()` へ投入する。GitHub通知は送信元が `notifications@github.com` で、`List-Id` からowner/repo、件名末尾 `(#number)` からitem番号を取得できた場合だけ `github:<owner>/<repo>:item:<number>` にする。本文中のURLはroutingに使わない。それ以外は表示名を除いた小文字のsender addressから `mail:<address>` を生成する。Mailは常に `direct` + `per-run` で要約sessionをメールごとに分離し、親Text Channelの下に送信元別Discord threadを作る。`channelId` には既存threadではなく親Text Channelを指定する（既存threadなら配送を失敗として扱う）。mappingはgroup・親channel・routeごとに分離し、thread名にはsender addressまたは `owner/repo #number` を使う。保存済みthreadが削除されていれば新規作成して更新する。全delivery chunkが`sent`になった後にだけメールを既読化し、既存のretry / dedupe semanticsは変更しない。
 
-AI・delivery・既読化の失敗時はメールが未読のまま残る。次回cronは過去jobを復旧せず、そのメールに新しいjobと投稿先を作るため、失敗した試行のDiscord投稿が残る場合は重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
+AI・delivery・既読化の失敗時はメールが未読のまま残る。次回cronは過去jobを復旧せず、そのメールに新しいjobを作るため、失敗した試行のDiscord投稿が残る場合は同じthread内で重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
 
 複数producerや複数ホストで同じメールソースを処理する協調は保証しない。
 

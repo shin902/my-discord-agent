@@ -34,6 +34,8 @@ export interface InboxMessage {
   cronThread?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
+  /** Mail-only Discord thread route; the LLM session remains per-run. */
+  mailRouteKey?: string;
   /** Historical pre-materialized item-thread field; current runtime rejects this delivery shape. */
   cronPlaceholderMessageId?: string;
   /** Declarative item-thread jobs keep a temporary session until delivery materializes the destination. */

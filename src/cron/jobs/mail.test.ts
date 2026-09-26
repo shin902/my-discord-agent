@@ -26,7 +26,7 @@ import { QueueRepository } from "../../queue/repository.js";
 import type { QueueProducer } from "../../queue/types.js";
 import { expectDefined } from "../../test-utils.js";
 import type { CronContext } from "../runner.js";
-import handler from "./mail.js";
+import handler, { mailRouteKey } from "./mail.js";
 
 function makeContext(
   appendInbox: QueueProducer = vi.fn().mockResolvedValue(undefined),
@@ -71,6 +71,60 @@ function bodyResponse(): Response {
   return jsonResponse({ body: { contentType: "text", content: "本文" } });
 }
 
+describe("mail routing", () => {
+  const headers = [
+    { name: "List-Id", value: "Owner/Repo <repo.owner.github.com>" },
+  ];
+
+  it("groups GitHub issue and PR notifications by List-Id and terminal item number", () => {
+    expect(
+      mailRouteKey({
+        subject: "[Unrelated/Text] Fix #42 (#533)",
+        senderAddress: " Notifications@GitHub.com ",
+        headers,
+      }),
+    ).toBe("github:owner/repo:item:533");
+    expect(
+      mailRouteKey({
+        subject: "[Owner/Repo] Issue (#42)",
+        senderAddress: "notifications@github.com",
+        headers,
+      }),
+    ).toBe("github:owner/repo:item:42");
+  });
+
+  it("falls back if sender, List-Id or terminal item marker is missing", () => {
+    expect(
+      mailRouteKey({
+        subject: "Hello",
+        senderAddress: " Sender@Example.COM ",
+        headers,
+      }),
+    ).toBe("mail:sender@example.com");
+    expect(
+      mailRouteKey({
+        subject: "[Owner/Repo] Fix (#533)",
+        senderAddress: "other@example.com",
+        headers,
+      }),
+    ).toBe("mail:other@example.com");
+    expect(
+      mailRouteKey({
+        subject: "[Owner/Repo] Fix (#533)",
+        senderAddress: "notifications@github.com",
+        headers: [],
+      }),
+    ).toBe("mail:notifications@github.com");
+    expect(
+      mailRouteKey({
+        subject: "[Owner/Repo] Fix #42",
+        senderAddress: "notifications@github.com",
+        headers,
+      }),
+    ).toBe("mail:notifications@github.com");
+  });
+});
+
 describe("mail cron queue boundary", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -80,7 +134,47 @@ describe("mail cron queue boundary", () => {
     vi.unstubAllGlobals();
   });
 
-  it("enqueues a fresh new-thread job without ACKing before delivery", async () => {
+  it("routes GitHub mail from Graph headers, not a linked PR in its body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            value: [
+              {
+                id: "github-1",
+                subject: "[Owner/Repo] Fix #42 (#533)",
+                from: { emailAddress: { address: "notifications@github.com" } },
+                internetMessageHeaders: [
+                  {
+                    name: "List-Id",
+                    value: "Owner/Repo <repo.owner.github.com>",
+                  },
+                ],
+              },
+            ],
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            body: {
+              contentType: "text",
+              content: "https://github.com/other/repo/pull/777",
+            },
+          }),
+        ),
+    );
+    const appendInbox = vi.fn().mockResolvedValue(undefined);
+    await handler(makeContext(appendInbox));
+    expect(appendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mailRouteKey: "github:owner/repo:item:533",
+      }),
+    );
+  });
+
+  it("enqueues a per-run Mail job without ACKing before delivery", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(unreadResponse())
@@ -92,8 +186,8 @@ describe("mail cron queue boundary", () => {
 
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
-        cronDeliveryMode: "new-thread",
-        cronSessionMode: "destination",
+        cronDeliveryMode: "direct",
+        cronSessionMode: "per-run",
         cronJobId: "mail",
         content: expect.stringContaining("件名: 件名"),
       }),
@@ -102,11 +196,12 @@ describe("mail cron queue boundary", () => {
     expect(payload.sessionId).toEqual(expect.stringMatching(/^cron-mail-/));
     expect(payload.idempotencyKey).toBe("mail:graph:mail:mail-1");
     expect(payload.mailEmailId).toBe("mail-1");
+    expect(payload.mailRouteKey).toBe("mail:from@example.com");
     expect(payload.cronPlaceholderMessageId).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "https://graph.fixture.test/v1.0/me/mailFolders/inbox/messages?$top=20&$select=id,subject,from&$orderby=receivedDateTime asc&$filter=isRead eq false",
+      "https://graph.fixture.test/v1.0/me/mailFolders/inbox/messages?$top=20&$select=id,subject,from,internetMessageHeaders&$orderby=receivedDateTime asc&$filter=isRead eq false",
       expect.objectContaining({
         headers: { Authorization: "Bearer host-graph-token" },
         signal: expect.any(AbortSignal),
@@ -216,7 +311,7 @@ describe("mail cron queue boundary", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("passes through the configured item-thread mode", async () => {
+  it("keeps Mail per-run regardless of configured thread mode", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(unreadResponse())
@@ -233,9 +328,9 @@ describe("mail cron queue boundary", () => {
 
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
-        cronDeliveryMode: "item-thread",
-        cronSessionMode: "destination",
-        cronProvisioning: true,
+        cronDeliveryMode: "direct",
+        cronSessionMode: "per-run",
+        mailRouteKey: "mail:from@example.com",
         mailEmailId: "mail-1",
       }),
     );
@@ -359,7 +454,8 @@ describe("mail active-only dedupe", () => {
     const ctx = { ...context(), deliveryMode };
     await Promise.all([handler(ctx), handler(ctx)]);
     expect(jobs()).toHaveLength(1);
-    expect(currentJob().cronDeliveryMode).toBe(deliveryMode);
+    expect(currentJob().cronDeliveryMode).toBe("direct");
+    expect(currentJob().cronSessionMode).toBe("per-run");
   });
 
   it("re-enqueues after delivery succeeds but Graph ACK fails", async () => {

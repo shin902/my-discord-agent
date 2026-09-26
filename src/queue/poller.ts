@@ -1239,6 +1239,9 @@ export async function processMessage(
           groupName: msg.groupName,
           destinationType: "channel",
           destinationId: msg.channelId,
+          ...(msg.mailEmailId && msg.mailRouteKey
+            ? { mailRouteKey: msg.mailRouteKey }
+            : {}),
           replyMessageId,
           allowMention: groupConfig.allowMention === true,
           ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),

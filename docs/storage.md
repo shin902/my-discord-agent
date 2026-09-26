@@ -50,6 +50,7 @@ groups/
 | `dead_letters` | 処理不能・移行不正行などの記録 |
 | `discord_sync_cursors` | Discord履歴backfillの進行位置 |
 | `bot_task_sessions` | Bot Task Sessionのidentity・所有関係 |
+| `mail_threads` | `groupName + channelId + mailRouteKey` から再利用するMail専用Discord thread IDへのmapping。schema v8で追加 |
 | `schema_meta` | schema versionと旧queue移行marker |
 
 runtime DBはWALを使用します。稼働中にmain fileだけをコピーしないでください。[backup.ts](../src/queue/backup.ts) はSQLiteのserializeで整合したsnapshotを作り、別DBとしてread-onlyで開いてintegrityを検証します。session DBやRSS DB、workspace、認証stateまで含む一括backupではありません。
