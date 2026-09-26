@@ -8,7 +8,7 @@
 テーブルから取り除く）。
 
 使い方:
-    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は ./wiki
+    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
 
 注意（日本語トークナイズについて）:
     FTS5の `unicode61` トークナイザは空白・記号で分割する単純な実装で、
@@ -209,7 +209,7 @@ def main():
         description="SQLite FTS5を使ったwikiのBM25全文検索（標準ライブラリのみ）"
     )
     parser.add_argument("query", help="検索クエリ")
-    parser.add_argument("wiki_dir", nargs="?", default="wiki", help="wikiディレクトリ（既定: ./wiki）")
+    parser.add_argument("wiki_dir", nargs="?", default="/workspace/wiki", help="wikiディレクトリ（既定: /workspace/wiki）")
     parser.add_argument("-n", "--limit", type=int, default=15, help="表示する最大件数（既定: 15）")
     args = parser.parse_args()
 

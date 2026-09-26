@@ -10,13 +10,13 @@ Formatted text is written to stdout (Markdown for web, YouTube, GitHub, Reddit, 
 ### When no file output is needed, run it directly without redirection
 
 ```bash
-SKILLS/agent-reach/scripts/agent-reach.sh <URL>
+/workspace/SKILLS/agent-reach/scripts/agent-reach.sh <URL>
 ```
 
 ### Use redirection only when saving to a file is explicitly required
 
 ```bash
-SKILLS/agent-reach/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > video.md
+/workspace/SKILLS/agent-reach/scripts/agent-reach.sh https://www.youtube.com/watch?v=xxxxx > /workspace/video.md
 ```
 
 ## X/Twitter

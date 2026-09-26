@@ -18,9 +18,9 @@ First retrieve only the capability you need, then follow its description (includ
 
 ```bash
 # Read the canonical Tool contract without executing it
-bash SKILLS/calendar/scripts/calendar.sh list-events
+bash /workspace/SKILLS/calendar/scripts/calendar.sh list-events
 # Execute with JSON matching that contract
-bash SKILLS/calendar/scripts/calendar.sh list-events '{}'
+bash /workspace/SKILLS/calendar/scripts/calendar.sh list-events '{}'
 ```
 
 The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `calendar`).

@@ -2,7 +2,7 @@
 """LLMが運用するwiki向けの、依存ライブラリ不要なキーワード検索。
 
 使い方:
-    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は ./wiki
+    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
 """
 import os
 import re
@@ -37,7 +37,7 @@ def main():
         print('使い方: search.py "QUERY" [WIKI_DIR]', file=sys.stderr)
         sys.exit(1)
     query = sys.argv[1]
-    root = sys.argv[2] if len(sys.argv) > 2 else "wiki"
+    root = sys.argv[2] if len(sys.argv) > 2 else "/workspace/wiki"
     if not os.path.isdir(root):
         print(f"エラー: wikiディレクトリが見つかりません: {root}", file=sys.stderr)
         sys.exit(1)

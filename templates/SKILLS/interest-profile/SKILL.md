@@ -17,7 +17,7 @@ This skill has two modes:
 - **sync mode**: Run on triggers such as 「sync」「更新」「プロファイル更新」 → run Sections 1–5.
 - **show mode**: Run on triggers such as 「show」「見せて」「表示」 → run Section 6.
 
-Data directory: `data/interests/`
+Data directory: `/workspace/data/interests/`
 
 ---
 
@@ -37,9 +37,9 @@ When run automatically by cron or `/loop`, follow these rules strictly:
 Use the Python script to extract the new portion of the conversation logs.
 
 ```bash
-python3 SKILLS/interest-profile/scripts/extract_interests.py \
-  --state-file "data/interests/last-sync.json" \
-  --state-out "data/interests/last-sync.json.pending" \
+python3 /workspace/SKILLS/interest-profile/scripts/extract_interests.py \
+  --state-file "/workspace/data/interests/last-sync.json" \
+  --state-out "/workspace/data/interests/last-sync.json.pending" \
   --max-messages 500
 ```
 
@@ -51,13 +51,13 @@ Consume the script's output (a JSON array). If zero messages are extracted, you 
 
 ### Section 2: Load existing accumulated data (recent entries only)
 
-Load **only the signals from the most recent 90 days** from `data/interests/interest-log.jsonl`. Do not read every line (the log grows without bound, and reading it all would expand the context indefinitely; because of time weighting, signals older than 30 days have little effect, so recent entries are sufficient).
+Load **only the signals from the most recent 90 days** from `/workspace/data/interests/interest-log.jsonl`. Do not read every line (the log grows without bound, and reading it all would expand the context indefinitely; because of time weighting, signals older than 30 days have little effect, so recent entries are sufficient).
 
 Have the script output only recent entries, then read that output:
 
 ```bash
-python3 SKILLS/interest-profile/scripts/extract_interests.py \
-  --recent-log "data/interests/interest-log.jsonl" \
+python3 /workspace/SKILLS/interest-profile/scripts/extract_interests.py \
+  --recent-log "/workspace/data/interests/interest-log.jsonl" \
   --recent-days 90
 ```
 
@@ -170,19 +170,19 @@ signals_total: {総シグナル数}
 それぞれ1-2文で、なぜこの人に刺さりそうかの理由を添える。}
 ```
 
-Save INTERESTS.md to `INTERESTS.md` (the project root).
+Save INTERESTS.md to `/workspace/INTERESTS.md`.
 
 ### Section 5: Update state
 
 After all processing completes successfully, perform the following **in this order**. **Keep this order** (reversing it creates a partial commit in which the cursor advances while new signals remain unrecorded):
 
-1. Append the new signals to `data/interests/interest-log.jsonl` (one JSON object per line).
+1. Append the new signals to `/workspace/data/interests/interest-log.jsonl` (one JSON object per line).
 2. Promote the pending file (`last-sync.json.pending`) to the main file (commit):
 
 ```bash
-python3 SKILLS/interest-profile/scripts/extract_interests.py \
-  --state-file "data/interests/last-sync.json" \
-  --commit "data/interests/last-sync.json.pending"
+python3 /workspace/SKILLS/interest-profile/scripts/extract_interests.py \
+  --state-file "/workspace/data/interests/last-sync.json" \
+  --commit "/workspace/data/interests/last-sync.json.pending"
 ```
 
 - This command reads the pending file, atomically replaces `last-sync.json` with `os.replace`, and then deletes the pending file.
@@ -203,6 +203,6 @@ python3 SKILLS/interest-profile/scripts/extract_interests.py \
 
 ### Section 6: Display the profile
 
-Read and display `INTERESTS.md` (the project root).
+Read and display `/workspace/INTERESTS.md`.
 
 If the file does not exist, tell the user 「まだプロファイルが生成されていません。`/interest-profile sync` を実行してください」.

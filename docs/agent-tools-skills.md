@@ -127,8 +127,8 @@ Skillは同梱scriptからRunnerの共通 `tool-proxy` CLIを使い、stdout／r
 全scriptは同じ形式で、capability名だけならcontractを取得、JSONを追加すると実行します。まずSkillで用途を確認し、必要な1件のcontractだけを取得してから、そのdescription（安全上の操作契約を含む）とparametersに従ってJSONを作ります。JSONはparse・再構成せず、そのまま`tool-proxy`へ渡します。
 
 ```bash
-bash SKILLS/web/scripts/web.sh tavily-search
-bash SKILLS/web/scripts/web.sh tavily-search '{"query":"latest AI news"}'
+bash /workspace/SKILLS/web/scripts/web.sh tavily-search
+bash /workspace/SKILLS/web/scripts/web.sh tavily-search '{"query":"latest AI news"}'
 # 同等の共通CLI
 tool-proxy describe delete-event
 ```

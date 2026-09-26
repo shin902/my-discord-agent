@@ -8,7 +8,7 @@ description: Survey arXiv across multiple natural-language queries with optional
 Pass each topic/query as a positional argument. The script combines them with OR, performs one arXiv API request, deduplicates by arXiv ID, and writes normalized JSON to stdout.
 
 ```bash
-python3 SKILLS/arxiv-survey/scripts/survey.py \
+python3 /workspace/SKILLS/arxiv-survey/scripts/survey.py \
   "LLM inference optimization" \
   "speculative decoding" \
   "AMD GPU inference" \

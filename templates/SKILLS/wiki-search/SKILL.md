@@ -10,7 +10,7 @@ Lightweight full-text search for cases where the wiki has grown too large for re
 ## Usage
 
 ```
-python3 SKILLS/wiki-search/scripts/search.py "<query>" [WIKI_DIR]      # If WIKI_DIR is omitted, ./wiki is used
+python3 /workspace/SKILLS/wiki-search/scripts/search.py "<query>" [WIKI_DIR]      # If WIKI_DIR is omitted, /workspace/wiki is used
 ```
 
 Rank pages with a simple TF score over whitespace/word tokens (case-insensitive), adding a bonus when a match occurs in the title/frontmatter or a heading. Display the top pages together with each page’s highest-scoring matching line. Multi-word queries use OR search, and the score reflects how many query terms matched.

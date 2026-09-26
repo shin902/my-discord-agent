@@ -6,7 +6,7 @@
 ユーザーの承認を得てから修正を適用する。
 
 使い方:
-    python3 lint.py [WIKI_DIR]      # WIKI_DIR省略時は ./wiki
+    python3 lint.py [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
 """
 import os
 import re
@@ -72,7 +72,7 @@ def parse_frontmatter(text):
 
 
 def main():
-    root = sys.argv[1] if len(sys.argv) > 1 else "wiki"
+    root = sys.argv[1] if len(sys.argv) > 1 else "/workspace/wiki"
     if not os.path.isdir(root):
         print(f"エラー: wikiディレクトリが見つかりません: {root}", file=sys.stderr)
         sys.exit(1)

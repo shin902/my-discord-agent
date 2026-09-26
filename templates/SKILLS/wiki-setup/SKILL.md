@@ -93,7 +93,7 @@ Run the following with the directory names finalized during the interview as arg
 bash /workspace/SKILLS/wiki-setup/setup.sh <WIKI_ROOT> <RAW_DIR> <DIGEST_DIR>
 ```
 
-Example: `bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest`
+Example: `bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest` (relative arguments are resolved under `/workspace`).
 
 This script copies the bundled wiki-ingest, wiki-lint, and wiki-query from `wiki-setup/SKILLS/` to `/workspace/SKILLS/`, then replaces placeholders (such as `{{WIKI_ROOT}}`) with the actual paths in one pass. Existing skills are skipped (existing skills are never touched).
 

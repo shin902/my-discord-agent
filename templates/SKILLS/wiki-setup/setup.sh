@@ -12,6 +12,11 @@ WIKI_ROOT="${1:?WIKI_ROOT required (e.g. llm-wiki)}"
 RAW_DIR="${2:?RAW_DIR required (e.g. llm-wiki/raw)}"
 DIGEST_DIR="${3:?DIGEST_DIR required (e.g. llm-wiki/digest)}"
 
+# Relative setup paths historically referred to the persistent workspace.
+[[ "$WIKI_ROOT" = /* ]] || WIKI_ROOT="/workspace/$WIKI_ROOT"
+[[ "$RAW_DIR" = /* ]] || RAW_DIR="/workspace/$RAW_DIR"
+[[ "$DIGEST_DIR" = /* ]] || DIGEST_DIR="/workspace/$DIGEST_DIR"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/SKILLS"
 DEST_DIR="/workspace/SKILLS"
@@ -30,10 +35,18 @@ for skill_src in "$SRC_DIR"/*/; do
   trap 'rm -rf "$skill_dest"' ERR
   cp -r "$skill_src" "$skill_dest"
 
-  # Replace placeholders in all .md files (perl -pi -e is portable across GNU/BSD)
-  find "$skill_dest" -name "*.md" -exec perl -pi -e \
-    "s|\{\{WIKI_ROOT\}\}|$WIKI_ROOT|g; s|\{\{RAW_DIR\}\}|$RAW_DIR|g; s|\{\{DIGEST_DIR\}\}|$DIGEST_DIR|g" \
-    {} \;
+  # Python is available in the runner; perl is not installed there.
+  WIKI_ROOT="$WIKI_ROOT" RAW_DIR="$RAW_DIR" DIGEST_DIR="$DIGEST_DIR" python3 - "$skill_dest" <<'PY'
+import os
+import pathlib
+import sys
+
+for file in pathlib.Path(sys.argv[1]).rglob("*.md"):
+    content = file.read_text()
+    for key in ("WIKI_ROOT", "RAW_DIR", "DIGEST_DIR"):
+        content = content.replace("{{" + key + "}}", os.environ[key])
+    file.write_text(content)
+PY
   trap - ERR
 
   echo "installed: $skill_name"

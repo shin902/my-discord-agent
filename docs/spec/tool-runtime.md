@@ -38,7 +38,7 @@ native Toolと `tool-proxy <capability> '<JSON引数>'` は同じrun tokenを使
 ### Tool contractの段階的開示
 
 1. `SKILL.md` でcapability一覧と用途を確認します。
-2. `tool-proxy describe <capability>`（または `bash SKILLS/web/scripts/web.sh tavily-search`）で必要な1件だけのcontractを取得します。
+2. `tool-proxy describe <capability>`（または `bash /workspace/SKILLS/web/scripts/web.sh tavily-search`）で必要な1件だけのcontractを取得します。
 3. `tool-proxy <capability> '<JSON arguments>'`（または同じSkill scriptにJSONを追加）で実行します。
 
 describeは同じRPCへ `{ "operation": "describe", "capability": "..." }` を送り、`{ "result": { "name": "...", "description": "...", "parameters": { ... } } }` を返します。CLIのstdoutはこのcontract objectです。現在のrun tokenとallowed capabilityの検証は実行と共通で、未認可capabilityのschema/descriptionは返しません。認可後に `getCapabilityDefinition()` / `factory()` から既存 `AgentTool` のname・description・TypeBox parametersを取得し、別schemaは定義しません。descriptionの安全上の契約（削除前の確認など）も実行前に確認してください。

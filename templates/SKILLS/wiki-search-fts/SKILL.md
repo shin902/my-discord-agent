@@ -12,7 +12,7 @@ Do not enable this at the same time as `wiki-search`. Both descriptions use the 
 ## Usage
 
 ```
-python3 SKILLS/wiki-search-fts/scripts/search.py "<query>" [WIKI_DIR]      # ./wiki is used when WIKI_DIR is omitted
+python3 /workspace/SKILLS/wiki-search-fts/scripts/search.py "<query>" [WIKI_DIR]      # /workspace/wiki is used when WIKI_DIR is omitted
 ```
 
 On the first run, create the index database file `.wiki-search-fts.sqlite3` directly under `WIKI_DIR`. Later runs reuse this database, detect changes from each `.md` file's mtime and size, and re-index only files that changed (there is no full scan on every run). Deleted files are also automatically removed from the index.

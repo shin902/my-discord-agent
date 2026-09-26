@@ -14,9 +14,9 @@ First retrieve only the capability you need, then follow its description (includ
 
 ```bash
 # Read the canonical Tool contract without executing it
-bash SKILLS/mail/scripts/mail.sh list-emails
+bash /workspace/SKILLS/mail/scripts/mail.sh list-emails
 # Execute with JSON matching that contract
-bash SKILLS/mail/scripts/mail.sh list-emails '{}'
+bash /workspace/SKILLS/mail/scripts/mail.sh list-emails '{}'
 ```
 
 The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `mail`).

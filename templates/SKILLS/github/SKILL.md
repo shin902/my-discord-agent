@@ -18,9 +18,9 @@ First retrieve only the capability you need, then follow its description (includ
 
 ```bash
 # Read the canonical Tool contract without executing it
-bash SKILLS/github/scripts/github.sh read-issue
+bash /workspace/SKILLS/github/scripts/github.sh read-issue
 # Execute with JSON matching that contract
-bash SKILLS/github/scripts/github.sh read-issue '{"owner":"owner","repo":"repo","issue_number":123}'
+bash /workspace/SKILLS/github/scripts/github.sh read-issue '{"owner":"owner","repo":"repo","issue_number":123}'
 ```
 
 The script does not parse or transform arguments. Skill selection does not grant permission: the run must allow the capability through native `tools` or trusted `toolSets` (normally `github`).

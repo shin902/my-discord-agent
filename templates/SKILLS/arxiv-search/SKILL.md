@@ -8,7 +8,7 @@ description: Search arXiv by natural-language query with optional submission dat
 Run the Python script directly. Input is expressed as compact CLI arguments; stdout is normalized JSON.
 
 ```bash
-python3 SKILLS/arxiv-search/scripts/search.py "speculative decoding" \
+python3 /workspace/SKILLS/arxiv-search/scripts/search.py "speculative decoding" \
   --from 2026-08-01 \
   --to 2026-08-28 \
   --limit 20 \

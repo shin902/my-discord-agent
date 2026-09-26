@@ -282,12 +282,12 @@ The mount must be writable if the agent should use `mark` or `note`. Never mount
 Useful commands inside the skill:
 
 ```bash
-python3 SKILLS/x-saved/scripts/x-saved.py status
-python3 SKILLS/x-saved/scripts/x-saved.py pending --limit 20
-python3 SKILLS/x-saved/scripts/x-saved.py recent --collection bookmarks --limit 20
-python3 SKILLS/x-saved/scripts/x-saved.py search "Strix Halo"
-python3 SKILLS/x-saved/scripts/x-saved.py mark <tweet-id> try
-python3 SKILLS/x-saved/scripts/x-saved.py note <tweet-id> "llama.cppで試す"
+python3 /workspace/SKILLS/x-saved/scripts/x-saved.py status
+python3 /workspace/SKILLS/x-saved/scripts/x-saved.py pending --limit 20
+python3 /workspace/SKILLS/x-saved/scripts/x-saved.py recent --collection bookmarks --limit 20
+python3 /workspace/SKILLS/x-saved/scripts/x-saved.py search "Strix Halo"
+python3 /workspace/SKILLS/x-saved/scripts/x-saved.py mark <tweet-id> try
+python3 /workspace/SKILLS/x-saved/scripts/x-saved.py note <tweet-id> "llama.cppで試す"
 ```
 
 `pending`, `recent`, `search` and `show` include media `kind`, `status`, `position`, alt text and completed `/x-saved/media/...` paths. The Skill remains usable before migration (empty media lists). Use `read` for images when they inform classification. MP4 paths are visible as archives only; no video-understanding tool or thumbnail generation is added.
