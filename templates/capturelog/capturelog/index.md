@@ -1,3 +1,3 @@
 # Screen Capture Log Index
 
-Entries are stored at `capturelog/YYYY-MM/YYYY-MM-DD.md`.
+Entries are stored at `/workspace/capturelog/YYYY-MM/YYYY-MM-DD.md`.

@@ -105,7 +105,7 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ### 参考Memoryテンプレート
 
-[`templates/capturelog/`](../templates/capturelog/)に、画面活動を`capturelog/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。配下の`memory/`と`capturelog/`はAgentGroup workspaceへの配置構造をそのまま表します。まだ実運用で十分に検証された推奨設定ではないため、既存ファイルへ一括上書きせず、必要な内容を確認して取り込んでください。
+[`templates/capturelog/`](../templates/capturelog/)に、画面活動を`/workspace/capturelog/YYYY-MM/YYYY-MM-DD.md`へ統合するための参考テンプレートがあります。配下の`memory/`と`capturelog/`はAgentGroup workspaceへの配置構造をそのまま表します。まだ実運用で十分に検証された推奨設定ではないため、既存ファイルへ一括上書きせず、必要な内容を確認して取り込んでください。
 
 このテンプレートは画面Activity Memoryへ特化しています。通常の汎用memoryとして使う場合は、日次ログをそのまま常時contextへ入れるのではなく、別途コンパクトなsummary/indexへ統合する運用が必要です。
 
