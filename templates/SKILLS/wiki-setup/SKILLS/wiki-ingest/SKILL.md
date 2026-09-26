@@ -7,7 +7,7 @@ description: "Ingest a new source into an LLM-managed wiki: read it, summarize i
 
 Integrate one source into the wiki and *incorporate* its knowledge rather than merely storing it. The goal is not an isolated summary, but to update the connected graph as a whole so that it can already answer follow-up questions. A single source typically affects 10–15 pages.
 
-First read `AGENTS.md` in the target wiki directory. If anything conflicts, follow that file’s conventions over the instructions here.
+First read `{{WIKI_ROOT}}/AGENTS.md` in the target wiki directory. If anything conflicts, follow that file’s conventions over the instructions here.
 
 ## Procedure
 
@@ -21,14 +21,14 @@ Before writing, present the key points to the user in a few sentences: what is n
 
 ### 3. Write the source summary page
 
-In the source-page directory (following the conventions defined in `AGENTS.md`; by default `{{DIGEST_DIR}}/`), create `<slug>.md` with frontmatter (`type: source`, today’s date for `created`/`updated`, `sources: []`, and a link to the raw file). Include a concise summary, important claims/facts to preserve, notable quotations or numbers, and a `## Connections` section listing the entities and concepts touched by the source as `[[wikilinks]]`.
+In the source-page directory (following the conventions defined in `{{WIKI_ROOT}}/AGENTS.md`; by default `{{DIGEST_DIR}}/`), create `<slug>.md` with frontmatter (`type: source`, today’s date for `created`/`updated`, `sources: []`, and a link to the raw file). Include a concise summary, important claims/facts to preserve, notable quotations or numbers, and a `## Connections` section listing the entities and concepts touched by the source as `[[wikilinks]]`.
 
 ### 4. Apply the source across the wiki
 
 This is the core of the work. For each entity or concept touched by the source:
 
 - If a page already exists, **update it** — add new facts, strengthen or correct the integrated explanation, and cite the source page.
-- If a clear entity/concept recurs and has its own identity but no page exists, **create one** (following the `AGENTS.md` rules for creating versus editing).
+- If a clear entity/concept recurs and has its own identity but no page exists, **create one** (following the `{{WIKI_ROOT}}/AGENTS.md` rules for creating versus editing).
 - **Flag contradictions explicitly.** If the new source conflicts with an existing claim, do not silently overwrite it; record both, indicate which is newer, and surface the conflict. Add a `> ⚠️ Contradiction:` callout to affected pages.
 - Add reciprocal `[[wikilinks]]` so connections work in both directions, and update `overview.md` when the source changes the overall picture.
 

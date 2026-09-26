@@ -7,7 +7,7 @@ description: "Check the health of an LLM-managed wiki: find contradictions, stal
 
 Keep the wiki healthy as it grows. People abandon wikis when the cost of maintenance exceeds their value; this skill makes that maintenance inexpensive. Produce a report that summarizes issues and proposed fixes, and apply safe fixes only with the user's permission.
 
-First read the root `AGENTS.md` and follow its conventions.
+First read `{{WIKI_ROOT}}/AGENTS.md` and follow its conventions.
 
 ## Checks
 

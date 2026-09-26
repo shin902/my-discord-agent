@@ -7,7 +7,7 @@ description: "Answer questions about an LLM-managed wiki with citations, and wri
 
 Answer the user's questions with citations based on the wiki. When an answer has lasting value, write it back so the result becomes part of the knowledge base instead of disappearing into the chat history.
 
-First read the root `AGENTS.md` and follow its conventions.
+First read `{{WIKI_ROOT}}/AGENTS.md` and follow its conventions.
 
 ## Procedure
 
@@ -33,7 +33,7 @@ Choose a format that matches the question.
 
 This is how the wiki accumulates knowledge. If the answer is more than a simple lookup — a comparison, analysis, discovered connection, or synthesis — write it back as a new page.
 
-- Create `<slug>.md` with standard frontmatter in the concept-page directory (following the conventions defined in `AGENTS.md`; by default `{{WIKI_ROOT}}/wiki/concepts/`, or as a page under `{{WIKI_ROOT}}/wiki/syntheses/`), and mark `tags` to show that it is a derived/answer page.
+- Create `<slug>.md` with standard frontmatter in the concept-page directory (following the conventions defined in `{{WIKI_ROOT}}/AGENTS.md`; by default `{{WIKI_ROOT}}/wiki/concepts/`, or as a page under `{{WIKI_ROOT}}/wiki/syntheses/`), and mark `tags` to show that it is a derived/answer page.
 - Add `[[wikilinks]]` to every page referenced by the new page, and add reciprocal links from those pages.
 - Add it to `{{WIKI_ROOT}}/wiki/index.md`.
 - Append a log entry.
