@@ -32,12 +32,11 @@ export function mailRouteKey(
   body: string,
   senderAddress: string,
 ): string {
-  const text = `${subject}\n${body}`;
-  const githubPr =
-    text.match(/\[([\w.-]+)\/([\w.-]+)\][^\n]*?#(\d+)/i) ??
-    text.match(/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/i);
-  return githubPr
-    ? `github:${githubPr[1].toLowerCase()}/${githubPr[2].toLowerCase()}:pr:${githubPr[3]}`
+  const url = body.match(/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/i);
+  const subjectPr = subject.match(/\[([\w.-]+)\/([\w.-]+)\].*\(#(\d+)\)\s*$/i);
+  const pr = url ?? subjectPr;
+  return pr
+    ? `github:${pr[1].toLowerCase()}/${pr[2].toLowerCase()}:pr:${pr[3]}`
     : `mail:${senderAddress.trim().toLowerCase()}`;
 }
 

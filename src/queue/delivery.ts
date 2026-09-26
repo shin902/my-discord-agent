@@ -40,10 +40,12 @@ export interface DeliverySendContext {
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
   resolveMailThread?: (
     groupName: string,
+    channelId: string,
     mailRouteKey: string,
   ) => string | undefined;
   persistMailThread?: (
     groupName: string,
+    channelId: string,
     mailRouteKey: string,
     threadId: string,
   ) => Promise<void> | void;
@@ -155,6 +157,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       ) {
         threadId = context.resolveMailThread?.(
           payload.groupName,
+          destinationId,
           payload.mailRouteKey,
         );
         if (threadId) {
@@ -177,10 +180,14 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
               "retryable",
               "destination channel is unavailable",
             );
-          if (typeof channel.threads?.create !== "function")
+          if (
+            (channel.type !== ChannelType.GuildText &&
+              channel.type !== ChannelType.GuildAnnouncement) ||
+            typeof channel.threads?.create !== "function"
+          )
             throw new DeliveryError(
               "non-retryable",
-              "destination does not support threads",
+              "Mail route thread requires a parent text channel",
             );
           mutationAttempted = true;
           target = await channel.threads.create({
@@ -192,6 +199,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           try {
             await context.persistMailThread?.(
               payload.groupName,
+              destinationId,
               payload.mailRouteKey,
               threadId,
             );
@@ -477,10 +485,15 @@ export class DeliveryWorker {
             claim.fencingToken,
             threadId,
           ),
-        resolveMailThread: (groupName, mailRouteKey) =>
-          this.repository.getMailThread(groupName, mailRouteKey),
-        persistMailThread: (groupName, mailRouteKey, threadId) =>
-          this.repository.setMailThread(groupName, mailRouteKey, threadId),
+        resolveMailThread: (groupName, channelId, mailRouteKey) =>
+          this.repository.getMailThread(groupName, channelId, mailRouteKey),
+        persistMailThread: (groupName, channelId, mailRouteKey, threadId) =>
+          this.repository.setMailThread(
+            groupName,
+            channelId,
+            mailRouteKey,
+            threadId,
+          ),
         promoteCronItemSession: async (threadId) => {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);

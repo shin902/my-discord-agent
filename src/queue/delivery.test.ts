@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MessageFlags } from "discord.js";
+import { ChannelType, MessageFlags } from "discord.js";
 import { describe, expect, it, vi } from "vitest";
 
 const acknowledgeEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -177,9 +177,10 @@ it("creates a Mail thread when no mapping exists", async () => {
   const thread = { id: "thread-1", isSendable: () => true, send };
   const create = vi.fn(async () => thread);
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
-  const fetchSpy = vi
-    .spyOn(client.channels, "fetch")
-    .mockResolvedValue({ threads: { create } } as never);
+  const fetchSpy = vi.spyOn(client.channels, "fetch").mockResolvedValue({
+    type: ChannelType.GuildText,
+    threads: { create },
+  } as never);
   try {
     completed(repo, "first", {
       destinationType: "channel",
@@ -191,8 +192,39 @@ it("creates a Mail thread when no mapping exists", async () => {
       workerId: "mail-create",
     }).runOnce();
     expect(create).toHaveBeenCalledOnce();
-    expect(repo.getMailThread("group", "mail:a@example.com")).toBe("thread-1");
+    expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
+      "thread-1",
+    );
     expect(send).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
+it("rejects a Mail route whose destination is already a thread", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const create = vi.fn();
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi.spyOn(client.channels, "fetch").mockResolvedValue({
+    type: ChannelType.PublicThread,
+    threads: { create },
+  } as never);
+  try {
+    const jobId = completed(repo, "response", {
+      destinationType: "channel",
+      destinationId: "existing-thread",
+      mailEmailId: "mail-1",
+      mailRouteKey: "mail:a@example.com",
+    });
+    await new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "mail-thread-parent",
+    }).runOnce();
+    expect(create).not.toHaveBeenCalled();
+    expect(
+      repo.listDeliveries().find((row) => row.jobId === jobId),
+    ).toMatchObject({ status: "failed", attempts: 1 });
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();
@@ -210,9 +242,10 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     send: replacementSend,
   };
   const channel = {
+    type: ChannelType.GuildText,
     threads: { create: vi.fn(async () => replacement) },
   };
-  repo.setMailThread("group", "mail:a@example.com", "thread-1");
+  repo.setMailThread("group", "channel", "mail:a@example.com", "thread-1");
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
@@ -241,7 +274,12 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     expect(firstSend).toHaveBeenCalledOnce();
     expect(channel.threads.create).not.toHaveBeenCalled();
 
-    repo.setMailThread("group", "mail:a@example.com", "missing-thread");
+    repo.setMailThread(
+      "group",
+      "channel",
+      "mail:a@example.com",
+      "missing-thread",
+    );
     completed(repo, "second", {
       destinationType: "channel",
       destinationId: "channel",
@@ -250,7 +288,9 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     });
     await worker.runOnce();
     expect(replacementSend).toHaveBeenCalledOnce();
-    expect(repo.getMailThread("group", "mail:a@example.com")).toBe("thread-2");
+    expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
+      "thread-2",
+    );
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();

@@ -82,6 +82,20 @@ describe("mail routing", () => {
     ).toBe("github:owner/repo:pr:533");
     expect(
       mailRouteKey(
+        "[Owner/Repo] Fix #42 (#533)",
+        "notification body",
+        "Notifications@GitHub.com",
+      ),
+    ).toBe("github:owner/repo:pr:533");
+    expect(
+      mailRouteKey(
+        "[Owner/Repo] Fix #42 (#533)",
+        "https://github.com/Other/Project/pull/777/files",
+        "Notifications@GitHub.com",
+      ),
+    ).toBe("github:other/project:pr:777");
+    expect(
+      mailRouteKey(
         "GitHub notification",
         "https://github.com/Owner/Repo/pull/533/files",
         "Notifications@GitHub.com",

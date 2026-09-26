@@ -15,7 +15,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 8;
+export const QUEUE_SCHEMA_VERSION = 9;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -620,10 +620,11 @@ function createMailThreadsTable(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS mail_threads (
       group_name TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
       route_key TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      PRIMARY KEY (group_name, route_key)
+      PRIMARY KEY (group_name, channel_id, route_key)
     );
   `);
 }
@@ -720,6 +721,19 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 8,
     summary: "persist Mail Discord thread routes",
     up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS mail_threads (
+        group_name TEXT NOT NULL, route_key TEXT NOT NULL,
+        thread_id TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (group_name, route_key)
+      )`);
+    },
+  },
+  {
+    version: 9,
+    summary: "scope Mail thread routes to destination channels",
+    up(db) {
+      // The old mapping cannot safely identify its parent channel; discard it.
+      db.exec("DROP TABLE IF EXISTS mail_threads");
       createMailThreadsTable(db);
     },
   },
@@ -860,23 +874,32 @@ export class QueueRepository {
       | undefined;
     return row ? parsePayload(row) : undefined;
   }
-  getMailThread(groupName: string, routeKey: string): string | undefined {
+  getMailThread(
+    groupName: string,
+    channelId: string,
+    routeKey: string,
+  ): string | undefined {
     const row = this.db
       .prepare(
-        "SELECT thread_id AS threadId FROM mail_threads WHERE group_name=? AND route_key=?",
+        "SELECT thread_id AS threadId FROM mail_threads WHERE group_name=? AND channel_id=? AND route_key=?",
       )
-      .get(groupName, routeKey) as { threadId: string } | undefined;
+      .get(groupName, channelId, routeKey) as { threadId: string } | undefined;
     return row?.threadId;
   }
-  setMailThread(groupName: string, routeKey: string, threadId: string): void {
+  setMailThread(
+    groupName: string,
+    channelId: string,
+    routeKey: string,
+    threadId: string,
+  ): void {
     this.db
       .prepare(
-        `INSERT INTO mail_threads(group_name,route_key,thread_id,updated_at)
-         VALUES (?,?,?,?)
-         ON CONFLICT(group_name,route_key) DO UPDATE SET
+        `INSERT INTO mail_threads(group_name,channel_id,route_key,thread_id,updated_at)
+         VALUES (?,?,?,?,?)
+         ON CONFLICT(group_name,channel_id,route_key) DO UPDATE SET
            thread_id=excluded.thread_id,updated_at=excluded.updated_at`,
       )
-      .run(groupName, routeKey, threadId, nowIso());
+      .run(groupName, channelId, routeKey, threadId, nowIso());
   }
   /** Paged references only; statements finish before yielding to remote I/O. */
   *readCommittedConversations(

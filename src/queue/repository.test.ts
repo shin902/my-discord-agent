@@ -8,27 +8,79 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
-it("persists Mail thread routes by group and key across restart", async () => {
+it("persists Mail thread routes by group, channel and key across restart", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mail-threads-"));
   const dbPath = join(dir, "runtime.sqlite");
   try {
     const first = new QueueRepository(dbPath);
-    first.setMailThread("group-a", "mail:a@example.com", "thread-1");
+    first.setMailThread(
+      "group-a",
+      "channel-a",
+      "mail:a@example.com",
+      "thread-1",
+    );
     first.close();
     const reopened = new QueueRepository(dbPath);
     try {
-      expect(reopened.getMailThread("group-a", "mail:a@example.com")).toBe(
-        "thread-1",
-      );
       expect(
-        reopened.getMailThread("group-b", "mail:a@example.com"),
+        reopened.getMailThread("group-a", "channel-a", "mail:a@example.com"),
+      ).toBe("thread-1");
+      expect(
+        reopened.getMailThread("group-a", "channel-b", "mail:a@example.com"),
       ).toBeUndefined();
-      reopened.setMailThread("group-a", "mail:a@example.com", "thread-2");
-      expect(reopened.getMailThread("group-a", "mail:a@example.com")).toBe(
+      expect(
+        reopened.getMailThread("group-b", "channel-a", "mail:a@example.com"),
+      ).toBeUndefined();
+      reopened.setMailThread(
+        "group-a",
+        "channel-b",
+        "mail:a@example.com",
         "thread-2",
       );
+      expect(
+        reopened.getMailThread("group-a", "channel-a", "mail:a@example.com"),
+      ).toBe("thread-1");
+      expect(
+        reopened.getMailThread("group-a", "channel-b", "mail:a@example.com"),
+      ).toBe("thread-2");
     } finally {
       reopened.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("drops channel-ambiguous v8 Mail mappings on upgrade", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mail-threads-v8-"));
+  const dbPath = join(dir, "runtime.sqlite");
+  try {
+    const old = new QueueRepository(dbPath);
+    old.db.exec(`DROP TABLE mail_threads;
+      CREATE TABLE mail_threads (
+        group_name TEXT NOT NULL, route_key TEXT NOT NULL,
+        thread_id TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (group_name, route_key)
+      );
+      INSERT INTO mail_threads VALUES ('group', 'mail:a@example.com', 'old-thread', 'now');
+      UPDATE schema_meta SET value='8' WHERE key='schema_version';`);
+    old.close();
+    const upgraded = new QueueRepository(dbPath);
+    try {
+      expect(
+        upgraded.getMailThread("group", "channel", "mail:a@example.com"),
+      ).toBeUndefined();
+      upgraded.setMailThread(
+        "group",
+        "channel",
+        "mail:a@example.com",
+        "new-thread",
+      );
+      expect(
+        upgraded.getMailThread("group", "channel", "mail:a@example.com"),
+      ).toBe("new-thread");
+    } finally {
+      upgraded.close();
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
