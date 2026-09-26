@@ -205,6 +205,8 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
 | `contextFiles` | — | AgentConfig。workspace相対ファイルを配列順にsession初回のuser roleへ注入する。各要素は `{ "path": string, "maxChars": 正の整数 | "*" }`。`"*"` は無制限。absolute pathと`..`は禁止し、不存在ファイルは無視する。子layerの配列は完全置換し、`[]`で無効化 |
 
+有効な追加mountがある場合、Agentのsystem contextにはcontainer側pathと読み書き権限（`ro` / `rw`）を列挙し、既存mountの直接利用を促す。host側pathは表示しない。mount未設定時はこの案内を追加せず、作業ディレクトリは引き続き `/workspace` とする。
+
 `sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
 
 ### 起動時Discord履歴バックフィル

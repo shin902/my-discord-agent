@@ -1732,6 +1732,38 @@ describe("runAgentLoop", () => {
     expect(systemPrompt).toContain("<description>レビュースキル</description>");
   });
 
+  it("effective mounts のcontainer pathと権限だけをsystem promptに載せる", async () => {
+    const mockAgent = createMockAgent(["OK"], {
+      role: "assistant",
+      content: [{ type: "text", text: "OK" }],
+    });
+    AgentMock.mockImplementation(function (options: unknown) {
+      lastAgentOptions = options;
+      return mockAgent;
+    });
+
+    await runAgentLoop("test-group", "session-1", "hi", {
+      mounts: [
+        { host: "/private/group", container: "/group" },
+        { host: "/private/channel", container: "/channel", readOnly: true },
+      ],
+    });
+    const prompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(prompt).toContain(
+      'Additional mounted paths:\n- "/group" (rw)\n- "/channel" (ro)',
+    );
+    expect(prompt).toContain("use that mount directly");
+    expect(prompt).not.toContain("/private/");
+
+    await runAgentLoop("test-group", "session-2", "hi", { mounts: [] });
+    const emptyPrompt = (
+      lastAgentOptions as { initialState: { systemPrompt: string } }
+    ).initialState.systemPrompt;
+    expect(emptyPrompt).not.toContain("Additional mounted paths:");
+  });
+
   it("skills 未指定の場合は SKILLS 配下があってもスキル一覧を追加しない", async () => {
     vi.mocked(readdir).mockResolvedValue([
       { name: "review", isDirectory: () => true } as unknown as Awaited<
