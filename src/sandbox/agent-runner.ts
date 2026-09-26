@@ -709,10 +709,23 @@ export async function runAgentLoop(
         (needsSystemPromptSnapshot
           ? loadedSystemPrompt
           : (existingSystemPromptSnapshot?.content ?? null)));
+  const mounts = groupConfig.mounts ?? [];
+  const mountPrompt = mounts.length
+    ? [
+        "Additional mounted paths:",
+        ...mounts.map(
+          ({ container, readOnly }) =>
+            `- ${JSON.stringify(container)} (${readOnly ? "ro" : "rw"})`,
+        ),
+        "When the requested work concerns an existing mounted path, use that mount directly.",
+        "Do not clone or copy mounted content into /workspace.",
+      ].join("\n")
+    : undefined;
   const fullSystemPrompt = [
     systemPromptContent ?? DEFAULT_SYSTEM_PROMPT,
     sessionTimeAnchorContent,
     skillPrompt,
+    mountPrompt,
     systemPromptAppend,
   ]
     .filter(Boolean)
