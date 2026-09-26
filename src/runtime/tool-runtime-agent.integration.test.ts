@@ -213,7 +213,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
       );
       await agent.call("bash", {
         command:
-          "bash SKILLS/agent-reach/scripts/agent-reach.sh https://example.com/large > skill.md",
+          "bash /workspace/SKILLS/agent-reach/scripts/agent-reach.sh https://example.com/large > /workspace/skill.md",
       });
       expect(await readFile(join(workspace, "skill.md"), "utf8")).toBe(
         "artifact-line\n".repeat(20_000),
@@ -249,14 +249,15 @@ describe.skipIf(!runtimeImage || !agentImage)(
       );
       const skill = text(
         await agent.call("bash", {
-          command: "python3 SKILLS/arxiv-search/scripts/search.py runtime",
+          command:
+            "python3 /workspace/SKILLS/arxiv-search/scripts/search.py runtime",
         }),
       );
       expect(JSON.parse(skill)).toEqual(JSON.parse(native));
       const survey = text(
         await agent.call("bash", {
           command:
-            "python3 SKILLS/arxiv-survey/scripts/survey.py runtime boundary --limit 5",
+            "python3 /workspace/SKILLS/arxiv-survey/scripts/survey.py runtime boundary --limit 5",
         }),
       );
       expect(Array.isArray(JSON.parse(survey))).toBe(true);
@@ -266,7 +267,7 @@ describe.skipIf(!runtimeImage || !agentImage)(
         ["reddit-search", "Runtime Reddit fixture"],
       ]) {
         const result = await agent.call("bash", {
-          command: `bash SKILLS/last30days/scripts/${script}.sh runtime`,
+          command: `bash /workspace/SKILLS/last30days/scripts/${script}.sh runtime`,
         });
         expect(text(result)).toContain(expected);
       }
