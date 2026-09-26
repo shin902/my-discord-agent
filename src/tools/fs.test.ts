@@ -85,7 +85,7 @@ describe("read", () => {
     vi.mocked(readFile).mockResolvedValue(raw as never);
     const result = await readTool.execute("call-1", { path: "test.txt" });
     expect(firstText(result)).toBe(raw);
-    expect(readFile).toHaveBeenCalledWith("/workspace/test.txt", "utf-8");
+    expect(readFile).toHaveBeenCalledWith("/test.txt", "utf-8");
     expect(result.details).toEqual({
       path: "test.txt",
       size: raw.length,
@@ -159,7 +159,7 @@ describe("read", () => {
 
     expect(firstText(result)).toBe("line 1\nline 2\nline 3");
     expect(readFile).not.toHaveBeenCalled();
-    expect(createReadStream).toHaveBeenCalledWith("/workspace/large.txt", {
+    expect(createReadStream).toHaveBeenCalledWith("/large.txt", {
       encoding: "utf8",
     });
     expect(result.details).toMatchObject({
@@ -317,13 +317,7 @@ describe("read", () => {
     ).rejects.toThrow("アクセス拒否");
   });
 
-  it("/workspace プレフィックス + トラバーサルも拒否", async () => {
-    await expect(
-      readTool.execute("call-1", { path: "/workspace/../../etc/passwd" }),
-    ).rejects.toThrow("アクセス拒否");
-  });
-
-  it("/workspace 始まりの絶対パスも相対パスと同様に解決する", async () => {
+  it("/workspace の絶対パスをそのまま読む", async () => {
     vi.mocked(readFile).mockResolvedValue("hello world" as never);
     const result = await readTool.execute("call-1", {
       path: "/workspace/test.txt",
@@ -347,7 +341,7 @@ describe("read", () => {
 
     const result = await readTool.execute("call-1", { path: "photo.png" });
 
-    expect(readFile).toHaveBeenCalledWith("/workspace/photo.png", "base64");
+    expect(readFile).toHaveBeenCalledWith("/photo.png", "base64");
     expect(result.content[0]).toEqual({
       type: "image",
       data: "base64data",
@@ -388,11 +382,7 @@ describe("write", () => {
       content: "hello",
     });
     expect(firstText(result)).toBe("書き込み完了: out.txt (5 文字, 1 行)");
-    expect(writeFile).toHaveBeenCalledWith(
-      "/workspace/out.txt",
-      "hello",
-      "utf-8",
-    );
+    expect(writeFile).toHaveBeenCalledWith("/out.txt", "hello", "utf-8");
   });
 
   it("サブディレクトリを自動作成する", async () => {
@@ -400,7 +390,7 @@ describe("write", () => {
       path: "sub/dir/file.txt",
       content: "x",
     });
-    expect(mkdir).toHaveBeenCalledWith("/workspace/sub/dir", {
+    expect(mkdir).toHaveBeenCalledWith("/sub/dir", {
       recursive: true,
     });
   });
@@ -427,7 +417,7 @@ describe("list", () => {
     const result = await listTool.execute("call-1", { path: "" });
     expect(firstText(result)).toContain("file: foo.txt");
     expect(firstText(result)).toContain("dir: bar");
-    expect(readdir).toHaveBeenCalledWith("/workspace", { withFileTypes: true });
+    expect(readdir).toHaveBeenCalledWith("/", { withFileTypes: true });
   });
 
   it("空ディレクトリ", async () => {
@@ -459,7 +449,7 @@ describe("edit", () => {
       newString: "sandbox",
     });
     expect(writeFile).toHaveBeenCalledWith(
-      "/workspace/test.txt",
+      "/test.txt",
       "hello sandbox",
       "utf-8",
     );
@@ -521,6 +511,10 @@ describe("glob", () => {
     });
     expect(firstText(result)).toContain("foo.ts");
     expect(firstText(result)).toContain("bar.ts");
+    expect(glob).toHaveBeenCalledWith("*.ts", {
+      cwd: "/",
+      withFileTypes: false,
+    });
   });
 
   it("一致なし", async () => {
@@ -564,6 +558,8 @@ describe("grep", () => {
     });
     expect(firstText(result)).toContain("test.txt:1: hello world");
     expect(firstText(result)).toContain("test.txt:3: hello sandbox");
+    expect(stat).toHaveBeenCalledWith("/test.txt");
+    expect(readFile).toHaveBeenCalledWith("/test.txt", "utf-8");
   });
 
   it("/workspace 以外の絶対パスはコンテナ内の実パスをそのまま検索する（追加マウント対応）", async () => {

@@ -14,7 +14,7 @@ import { Type } from "typebox";
 
 import { assertNoParentTraversal } from "./path-safety.js";
 
-const WORKSPACE = "/workspace";
+const ROOT = "/";
 const GREP_MAX_RESULTS = 200;
 const READ_IMAGE_BYTE_LIMIT = 10 * 1024 * 1024; // 10MB
 
@@ -26,44 +26,26 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-// /workspace 始まりのパスはワークスペースルートからの相対パスとして扱う。
-// それ以外の絶対パスは、追加マウント（例: 個人用Obsidian Vaultの /obsidian）に
-// アクセスできるよう、コンテナ内の実パスとしてそのまま扱う。
-// （bash ツールがすでにコンテナ内の全パスへ無制限にアクセスできるため、
-// read/write 系ツールだけを /workspace 配下に閉じ込めても実質的な安全境界にはならない）
 function sanitizePath(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed === WORKSPACE || trimmed.startsWith(`${WORKSPACE}/`)) {
-    const stripped = trimmed.slice(WORKSPACE.length).replace(/^\/+/, "");
-    const normalized = normalize(stripped);
-    assertNoParentTraversal(
-      normalized,
-      raw,
-      "アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください",
-    );
-    return normalized === "." ? "" : normalized;
-  }
-  if (isAbsolute(trimmed)) {
-    return normalize(trimmed);
-  }
+  if (isAbsolute(trimmed)) return normalize(trimmed);
   const normalized = normalize(trimmed);
   assertNoParentTraversal(
     normalized,
     raw,
-    "アクセス拒否: 相対パスの .. でワークスペース外に出ることは許可されていません。ワークスペース外のファイルにアクセスする場合は絶対パスを使用してください",
+    "アクセス拒否: 相対パスの .. は許可されていません。親ディレクトリのファイルにアクセスする場合は絶対パスを使用してください",
   );
   return normalized === "." ? "" : normalized;
 }
 
 function fullPath(safePath: string): string {
-  if (safePath === "") return WORKSPACE;
-  return isAbsolute(safePath) ? safePath : join(WORKSPACE, safePath);
+  return isAbsolute(safePath) ? safePath : join(ROOT, safePath);
 }
 
 const readParameters = Type.Object({
   path: Type.String({
     description:
-      "Path to read, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      "Path to read, relative to / or an absolute path such as /workspace or /obsidian.",
   }),
   startLine: Type.Optional(
     Type.Integer({
@@ -191,7 +173,7 @@ export const readTool: AgentTool<typeof readParameters> = {
   name: "read",
   label: "Read File",
   description:
-    "Read a file in the workspace or an additional mounted path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, or startLine alone for the suffix from that line. The result includes file size, total line count, and the returned range. For large files, read consecutive bounded ranges instead of the whole file.",
+    "Read a file relative to / or at an absolute path. Use startLine and lineCount for a line range, lineCount alone for lines from the beginning, or startLine alone for the suffix from that line. The result includes file size, total line count, and the returned range. For large files, read consecutive bounded ranges instead of the whole file.",
   parameters: readParameters,
   execute: async (_toolCallId, { path, startLine, lineCount }) => {
     const safePath = sanitizePath(path);
@@ -260,7 +242,7 @@ export const readTool: AgentTool<typeof readParameters> = {
 const writeParameters = Type.Object({
   path: Type.String({
     description:
-      "Path to write, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      "Path to write, relative to / or an absolute path such as /workspace or /obsidian.",
   }),
   content: Type.String({ description: "Content to write." }),
 });
@@ -269,7 +251,7 @@ export const writeTool: AgentTool<typeof writeParameters> = {
   name: "write",
   label: "Write File",
   description:
-    "Create or overwrite a file in the workspace or an additional mounted path.",
+    "Create or overwrite a file relative to / or at an absolute path.",
   parameters: writeParameters,
   execute: async (_toolCallId, { path, content }) => {
     const safePath = sanitizePath(path);
@@ -297,7 +279,7 @@ export const writeTool: AgentTool<typeof writeParameters> = {
 const listParameters = Type.Object({
   path: Type.String({
     description:
-      "Directory path to list, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
+      "Directory path to list, relative to / or an absolute path. Use an empty string for /.",
     default: "",
   }),
 });
@@ -306,7 +288,7 @@ export const listTool: AgentTool<typeof listParameters> = {
   name: "list",
   label: "List Files",
   description:
-    "List files and directories in the workspace or an additional mounted path.",
+    "List files and directories relative to / or at an absolute path.",
   parameters: listParameters,
   execute: async (_toolCallId, { path }) => {
     const safePath = sanitizePath(path);
@@ -326,7 +308,7 @@ export const listTool: AgentTool<typeof listParameters> = {
 const editParameters = Type.Object({
   path: Type.String({
     description:
-      "Path to edit, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      "Path to edit, relative to / or an absolute path such as /workspace or /obsidian.",
   }),
   oldString: Type.String({ description: "String to replace." }),
   newString: Type.String({ description: "Replacement string." }),
@@ -377,7 +359,7 @@ const globParameters = Type.Object({
   }),
   path: Type.String({
     description:
-      "Base directory for the search, relative to the workspace root or an absolute path for an additional mount such as /obsidian. Use an empty string for the workspace root.",
+      "Base directory for the search, relative to / or an absolute path. Use an empty string for /.",
     default: "",
   }),
 });
@@ -409,7 +391,7 @@ const grepParameters = Type.Object({
   }),
   path: Type.String({
     description:
-      "File or directory to search, relative to the workspace root or an absolute path for an additional mount such as /obsidian.",
+      "File or directory to search, relative to / or an absolute path such as /workspace or /obsidian.",
   }),
   glob: Type.Optional(
     Type.String({

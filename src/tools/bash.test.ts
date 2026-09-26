@@ -68,6 +68,11 @@ afterEach(async () => {
 });
 
 describe("bashTool streaming output", () => {
+  it("starts shell commands at /", async () => {
+    await run("pwd");
+    expect(vi.mocked(realSpawn).mock.calls[0]?.[2]).toMatchObject({ cwd: "/" });
+  });
+
   it("keeps small stdout inline and saves a private, exact byte copy", async () => {
     const result = await run("printf 'hello\\n'");
     expect(getText(result)).toBe("hello");

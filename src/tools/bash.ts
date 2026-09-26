@@ -61,7 +61,7 @@ export const bashTool: AgentTool<typeof parameters> = {
         // Merge at the shell's file descriptor boundary, not by buffering two
         // streams. Bytes retain pipe arrival order; stderr has no added label.
         const child = spawn("/bin/sh", ["-c", `exec 2>&1\n${command}`], {
-          cwd: "/workspace",
+          cwd: "/",
           detached: true,
           stdio: ["ignore", "pipe", "ignore"],
         });
