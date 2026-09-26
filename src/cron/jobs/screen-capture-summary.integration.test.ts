@@ -96,7 +96,11 @@ it("runs upload → VLM through Credential Proxy → DB summary → memory agent
       `http://127.0.0.1:${(receiver.address() as AddressInfo).port}/v1/screen-captures`,
       {
         method: "POST",
-        headers: { "Content-Type": "image/png", "X-Capture-Id": id },
+        headers: {
+          "Content-Type": "image/png",
+          "X-Capture-Id": id,
+          "X-Captured-At": "2025-01-02T03:04:05Z",
+        },
         body: png,
       },
     );

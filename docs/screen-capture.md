@@ -117,15 +117,16 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 |---|---|
 | `Content-Type` | `image/png` |
 | `X-Capture-Id` | 撮影ごとのUUID（受信側で小文字へ正規化） |
+| `X-Captured-At` | 必須。撮影時刻のUTC ISO 8601（秒精度、例: `2025-01-02T03:04:05Z`） |
 | body | 20 MiB以下のPNG。圧縮HTTP bodyやmultipart / JSONは非対応 |
 
 PNG signatureを検証しますが、receiver内では画像をdecodeしません。後段でdecode不能と判定された画像は`accepted = 0`で完了し、後続画像の処理を継続します。bodyサイズはストリームを数えて制限します。web-pageからの書込みを防ぐため、`Origin`付きrequestは拒否し、CORSは有効化しません。
 
-SQLite commit後だけ`200 {"accepted":"<uuid>"}`を返します。同じIDで異なる画像は409、ID・PNG不正は400、サイズ超過は413、形式・encoding不正は415、Originは403、保存失敗は500です。エラー応答に`accepted`は含みません。別pathは404、POST以外は405です。
+SQLite commit後だけ`200 {"accepted":"<uuid>"}`を返します。同じID・同じPNGの再送は撮影時刻が異なっても初回保存値を維持します。同じIDで異なる画像は409、ID・撮影時刻・PNG不正は400、サイズ超過は413、形式・encoding不正は415、Originは403、保存失敗は500です。エラー応答に`accepted`は含みません。別pathは404、POST以外は405です。
 
 ## 永続化・確認・backup
 
-`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC受信時刻`received_at`、nullableなVLM要約`summary`、`completed_at`、採否を表す`accepted`を持ちます。**`completed_at IS NULL`が未完了、非NULLが完了**の正本です。
+`data/screen-captures.sqlite`はhost専用でsandboxへmountしません。`SCREEN_CAPTURE_DB_PATH`で変更でき、相対パスはrepository root基準です。テーブル`screen_captures`は`id`、PNG BLOBの`image`、UTC撮影時刻`received_at`（既存列名を維持）、nullableなVLM要約`summary`、`completed_at`、採否を表す`accepted`を持ちます。**`completed_at IS NULL`が未完了、非NULLが完了**の正本です。
 
 ローカルでのread-only確認例（画像や要約本文を端末ログへ出さない）:
 
@@ -134,6 +135,6 @@ sqlite3 -readonly data/screen-captures.sqlite \
   'SELECT id, received_at, length(image) AS bytes, completed_at IS NOT NULL AS is_completed FROM screen_captures ORDER BY received_at;'
 ```
 
-DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。完了済みの画像・要約は24時間保持し、`screen-capture-gc`実行時に削除します。SQLiteファイル自体の即時縮小は保証せず、空きpageの再利用で将来の増加を抑えます。既存DBを縮小する必要がある場合だけ、Bot停止中に手動で`VACUUM`してください。未完了画像には自動削除期限がありません。Mac側はACK後に削除しますが、未ACK・削除失敗のPNGは再送または明示削除が必要です。旧版で成功後も残ったPNGは自動走査しないため、同じパスで再送してACK後に削除するか、不要と確認して明示的に削除してください。
+DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。完了済みの画像・要約は24時間保持し、`screen-capture-gc`実行時に削除します。SQLiteファイル自体の即時縮小は保証せず、空きpageの再利用で将来の増加を抑えます。既存DBを縮小する必要がある場合だけ、Bot停止中に手動で`VACUUM`してください。未完了画像には自動削除期限がありません。Mac側は撮影時刻をPNGの更新時刻に保持し、再送時も同じ値を送ります（既存PNGの手動再送ではそのファイルの更新時刻を使用）。Mac側はACK後に削除しますが、未ACK・削除失敗のPNGは再送または明示削除が必要です。旧版で成功後も残ったPNGは自動走査しないため、同じパスで再送してACK後に削除するか、不要と確認して明示的に削除してください。
 
 導入時はMacから1枚撮影し、DBで未完了を確認→cron後の完了とActivity Memory更新を確認してください。receiverを止めた送信失敗→同じUUIDで再送し1行だけになること、Agent失敗中は未完了が残り復旧後に完了することも確認します。自動テストはHTTP / SQLite、全画像のworkspace配置、Agent成功・失敗時の完了状態、senderのMacコマンド模擬までを検証します。実Macの画面収録権限、Tailnet到達性、実providerの画面理解は別途実機確認が必要です。
