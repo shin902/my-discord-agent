@@ -32,6 +32,7 @@ export type CronEnqueueContext = {
   mode?: "to-channel" | "to-thread";
   idempotencyKey?: string;
   mailEmailId?: string;
+  threadKey?: string;
   rssDispatchId?: string;
   rssStatePath?: string;
   appendInbox: QueueProducer;
@@ -50,6 +51,11 @@ function resolveModes(ctx: CronEnqueueContext): {
         "[cron-enqueue] item-thread は sessionMode=destination と組み合わせてください",
       );
     }
+    if (ctx.deliveryMode === "keyed-thread" && ctx.sessionMode !== "per-run") {
+      throw new NonRetryableError(
+        "[cron-enqueue] keyed-thread は sessionMode=per-run と組み合わせてください",
+      );
+    }
     return {
       deliveryMode: ctx.deliveryMode,
       sessionMode: ctx.sessionMode,
@@ -58,6 +64,11 @@ function resolveModes(ctx: CronEnqueueContext): {
   if (ctx.deliveryMode === "item-thread") {
     throw new NonRetryableError(
       "[cron-enqueue] item-thread は sessionMode=destination と組み合わせてください",
+    );
+  }
+  if (ctx.deliveryMode === "keyed-thread") {
+    throw new NonRetryableError(
+      "[cron-enqueue] keyed-thread は sessionMode=per-run と組み合わせてください",
     );
   }
   if (ctx.mode === "to-thread") {
@@ -169,6 +180,11 @@ export async function enqueueCronInbox(
   }
 
   const { deliveryMode, sessionMode } = resolveModes(ctx);
+  if (deliveryMode === "keyed-thread" && !ctx.threadKey) {
+    throw new NonRetryableError(
+      "[cron-enqueue] keyed-thread には threadKey が必要です",
+    );
+  }
   if (deliveryMode === "item-thread") {
     await registerCronItemThread(ctx, content);
     return;
@@ -194,6 +210,7 @@ export async function enqueueCronInbox(
     cronJobId: ctx.id,
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
     ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
+    ...(ctx.threadKey ? { threadKey: ctx.threadKey } : {}),
     ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
     ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),

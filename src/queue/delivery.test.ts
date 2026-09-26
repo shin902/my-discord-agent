@@ -171,6 +171,62 @@ it("reuses the durably persisted cron thread for delivery", async () => {
   }
 });
 
+it("reuses a keyed thread and replaces a deleted mapping", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const firstSend = vi.fn(async () => ({ id: "message-1" }));
+  const replacementSend = vi.fn(async () => ({ id: "message-2" }));
+  const replacement = {
+    id: "thread-2",
+    isSendable: () => true,
+    send: replacementSend,
+  };
+  const channel = {
+    threads: { create: vi.fn(async () => replacement) },
+  };
+  repo.setKeyedThread("group", "mail:a@example.com", "thread-1");
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi
+    .spyOn(client.channels, "fetch")
+    .mockImplementation(async (id) => {
+      if (id === "thread-1")
+        return {
+          id,
+          isSendable: () => true,
+          send: firstSend,
+        } as never;
+      if (id === "missing-thread")
+        throw Object.assign(new Error("Unknown Channel"), { status: 404 });
+      return channel as never;
+    });
+  try {
+    completed(repo, "first", {
+      destinationType: "keyed-thread",
+      destinationId: "channel",
+      threadKey: "mail:a@example.com",
+    });
+    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      workerId: "delivery-keyed",
+    });
+    await worker.runOnce();
+    expect(firstSend).toHaveBeenCalledOnce();
+    expect(channel.threads.create).not.toHaveBeenCalled();
+
+    repo.setKeyedThread("group", "mail:a@example.com", "missing-thread");
+    completed(repo, "second", {
+      destinationType: "keyed-thread",
+      destinationId: "channel",
+      threadKey: "mail:a@example.com",
+    });
+    await worker.runOnce();
+    expect(replacementSend).toHaveBeenCalledOnce();
+    expect(repo.getKeyedThread("group", "mail:a@example.com")).toBe("thread-2");
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
 it("marks transport failure during thread creation ambiguous without retrying", async () => {
   const repo = new QueueRepository(openRuntimeDb(":memory:"));
   const create = vi.fn(async () => {

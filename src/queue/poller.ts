@@ -251,7 +251,8 @@ function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
   if (
     msg.cronDeliveryMode === "direct" ||
     msg.cronDeliveryMode === "new-thread" ||
-    msg.cronDeliveryMode === "item-thread"
+    msg.cronDeliveryMode === "item-thread" ||
+    msg.cronDeliveryMode === "keyed-thread"
   )
     return;
   try {
@@ -391,6 +392,7 @@ function isDirectCronMessage(msg: InboxMessage): boolean {
     msg.cronJobId !== undefined &&
     msg.cronDeliveryMode !== "new-thread" &&
     msg.cronDeliveryMode !== "item-thread" &&
+    msg.cronDeliveryMode !== "keyed-thread" &&
     msg.cronThread !== true
   );
 }
@@ -1237,8 +1239,12 @@ export async function processMessage(
         metadata: executionMetadata(timing),
         deliveryPayload: {
           groupName: msg.groupName,
-          destinationType: "channel",
+          destinationType:
+            msg.cronDeliveryMode === "keyed-thread"
+              ? "keyed-thread"
+              : "channel",
           destinationId: msg.channelId,
+          ...(msg.threadKey ? { threadKey: msg.threadKey } : {}),
           replyMessageId,
           allowMention: groupConfig.allowMention === true,
           ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),

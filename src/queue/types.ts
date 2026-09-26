@@ -1,7 +1,11 @@
 import type { SessionSource } from "../agent/source.js";
 import type { AgentConfig } from "../config/groups.js";
 
-export type CronDeliveryMode = "direct" | "new-thread" | "item-thread";
+export type CronDeliveryMode =
+  | "direct"
+  | "new-thread"
+  | "item-thread"
+  | "keyed-thread";
 export type CronSessionMode = "per-run" | "destination";
 
 export interface AttachmentRef {
@@ -34,6 +38,8 @@ export interface InboxMessage {
   cronThread?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
+  /** Stable route used to reuse a Discord thread without reusing the LLM session. */
+  threadKey?: string;
   /** Historical pre-materialized item-thread field; current runtime rejects this delivery shape. */
   cronPlaceholderMessageId?: string;
   /** Declarative item-thread jobs keep a temporary session until delivery materializes the destination. */

@@ -24,6 +24,21 @@ interface UnreadEmail {
   id: string;
   subject: string;
   from: string;
+  senderAddress: string;
+}
+
+export function mailThreadKey(
+  subject: string,
+  body: string,
+  senderAddress: string,
+): string {
+  const text = `${subject}\n${body}`;
+  const githubPr =
+    text.match(/\[([\w.-]+)\/([\w.-]+)\][^\n]*?#(\d+)/i) ??
+    text.match(/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/i);
+  return githubPr
+    ? `github:${githubPr[1].toLowerCase()}/${githubPr[2].toLowerCase()}:pr:${githubPr[3]}`
+    : `mail:${senderAddress.trim().toLowerCase()}`;
 }
 
 async function listUnreadEmails(): Promise<UnreadEmail[]> {
@@ -38,13 +53,13 @@ async function listUnreadEmails(): Promise<UnreadEmail[]> {
         | { emailAddress?: { name?: string; address?: string } }
         | undefined
     )?.emailAddress;
-    const from = ea?.name
-      ? `${ea.name} <${ea.address}>`
-      : (ea?.address ?? "不明");
+    const senderAddress = ea?.address?.trim().toLowerCase() ?? "unknown";
+    const from = ea?.name ? `${ea.name} <${senderAddress}>` : senderAddress;
     return {
       id: String(msg.id),
       subject: String(msg.subject ?? "(件名なし)"),
       from,
+      senderAddress,
     };
   });
 }
@@ -107,6 +122,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
           ...ctx,
           idempotencyKey: `mail:graph:${encodeURIComponent(ctx.id)}:${encodeURIComponent(meta.id)}`,
           mailEmailId: meta.id,
+          threadKey: mailThreadKey(meta.subject, bodyText, meta.senderAddress),
         },
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
       );

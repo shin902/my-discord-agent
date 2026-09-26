@@ -26,7 +26,7 @@ import { QueueRepository } from "../../queue/repository.js";
 import type { QueueProducer } from "../../queue/types.js";
 import { expectDefined } from "../../test-utils.js";
 import type { CronContext } from "../runner.js";
-import handler from "./mail.js";
+import handler, { mailThreadKey } from "./mail.js";
 
 function makeContext(
   appendInbox: QueueProducer = vi.fn().mockResolvedValue(undefined),
@@ -71,6 +71,31 @@ function bodyResponse(): Response {
   return jsonResponse({ body: { contentType: "text", content: "本文" } });
 }
 
+describe("mail routing", () => {
+  it("groups GitHub PR notifications by repository and PR number", () => {
+    expect(
+      mailThreadKey(
+        "[Owner/Repo] Review requested (#533)",
+        "notification body",
+        "Notifications@GitHub.com",
+      ),
+    ).toBe("github:owner/repo:pr:533");
+    expect(
+      mailThreadKey(
+        "GitHub notification",
+        "https://github.com/Owner/Repo/pull/533/files",
+        "Notifications@GitHub.com",
+      ),
+    ).toBe("github:owner/repo:pr:533");
+  });
+
+  it("falls back to the canonical sender address", () => {
+    expect(mailThreadKey("Hello", "Body", " Sender@Example.COM ")).toBe(
+      "mail:sender@example.com",
+    );
+  });
+});
+
 describe("mail cron queue boundary", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -102,6 +127,7 @@ describe("mail cron queue boundary", () => {
     expect(payload.sessionId).toEqual(expect.stringMatching(/^cron-mail-/));
     expect(payload.idempotencyKey).toBe("mail:graph:mail:mail-1");
     expect(payload.mailEmailId).toBe("mail-1");
+    expect(payload.threadKey).toBe("mail:from@example.com");
     expect(payload.cronPlaceholderMessageId).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenNthCalledWith(

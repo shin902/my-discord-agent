@@ -38,6 +38,15 @@ export interface DeliverySendContext {
   isFinalChunk?: boolean;
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
+  resolveKeyedThread?: (
+    groupName: string,
+    threadKey: string,
+  ) => string | undefined;
+  persistKeyedThread?: (
+    groupName: string,
+    threadKey: string,
+    threadId: string,
+  ) => Promise<void> | void;
 }
 export interface DeliveryAdapter {
   send(
@@ -73,6 +82,7 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
+  threadKey?: string;
   mailEmailId?: string;
 }
 type DeliveryMessage = {
@@ -138,7 +148,63 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const isItemThread = destinationType === "item-thread";
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
-      if (destinationType === "new-thread") {
+      if (destinationType === "keyed-thread") {
+        if (!payload.threadKey)
+          throw new DeliveryError(
+            "non-retryable",
+            "keyed-thread delivery has no threadKey",
+          );
+        threadId = context.resolveKeyedThread?.(
+          payload.groupName,
+          payload.threadKey,
+        );
+        if (threadId) {
+          try {
+            target = (await client.channels.fetch(
+              threadId,
+            )) as unknown as DeliveryTarget;
+            if (!target) threadId = undefined;
+          } catch (error) {
+            if (statusCode(error) !== 404) throw error;
+            threadId = undefined;
+          }
+        }
+        if (!threadId) {
+          const channel = (await client.channels.fetch(
+            destinationId,
+          )) as unknown as DeliveryTarget | null;
+          if (!channel)
+            throw new DeliveryError(
+              "retryable",
+              "destination channel is unavailable",
+            );
+          if (typeof channel.threads?.create !== "function")
+            throw new DeliveryError(
+              "non-retryable",
+              "destination does not support threads",
+            );
+          mutationAttempted = true;
+          target = await channel.threads.create({
+            name: `cron-${String(payload.cronJobId ?? row.jobId).slice(0, 90)}`,
+          });
+          threadId = String(target.id ?? "");
+          if (!threadId)
+            throw new DeliveryError("unknown", "Discord thread ID is empty");
+          try {
+            await context.persistKeyedThread?.(
+              payload.groupName,
+              payload.threadKey,
+              threadId,
+            );
+          } catch (error) {
+            throw new DeliveryError(
+              "unknown",
+              `failed to persist keyed Discord thread ${threadId}`,
+              error,
+            );
+          }
+        }
+      } else if (destinationType === "new-thread") {
         if (threadId) {
           target = (await client.channels.fetch(
             threadId,
@@ -412,6 +478,10 @@ export class DeliveryWorker {
             claim.fencingToken,
             threadId,
           ),
+        resolveKeyedThread: (groupName, threadKey) =>
+          this.repository.getKeyedThread(groupName, threadKey),
+        persistKeyedThread: (groupName, threadKey, threadId) =>
+          this.repository.setKeyedThread(groupName, threadKey, threadId),
         promoteCronItemSession: async (threadId) => {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);
