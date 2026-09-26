@@ -12,6 +12,14 @@ const script = join(
 );
 
 describe("agent-memory-setup Skill initializer", () => {
+  it("documents absolute tool paths while preserving relative host contextFiles", async () => {
+    const skill = await readFile(
+      "templates/SKILLS/agent-memory-setup/SKILL.md",
+      "utf8",
+    );
+    expect(skill).toContain("read `/workspace/memory/system/definition.md`");
+    expect(skill).toContain('{ "path": "memory/index.md"');
+  });
   it("creates missing templates without overwriting existing memory", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "agent-memory-skill-"));
 

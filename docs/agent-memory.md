@@ -42,13 +42,14 @@ inject the two entry points into a new session's first context:
 
 Merge these entries with capabilities already required by that profile and
 restart after changing configuration. Paths are relative to the group
-workspace. Only explicitly listed files are loaded; missing files are skipped
+workspace by the host; Agent filesystem tools and shell commands instead use
+absolute `/workspace/...` paths for these files. Only explicitly listed files are loaded; missing files are skipped
 and subordinate memory files are not expanded.
 
 `contextFiles` is not added retroactively to an existing session. In particular,
 a `shared` channel that was used to run the initializer keeps its existing
-session after restart. Continue there by explicitly reading the workspace
-memory files with filesystem tools, or start a new thread/channel with a new
+session after restart. Continue there by explicitly reading `/workspace/memory/index.md` and
+`/workspace/memory/system/definition.md` with filesystem tools, or start a new thread/channel with a new
 session ID after configuring `contextFiles` to receive the bootstrap. The Agent
 manages initialized memory with the ordinary filesystem tools. Existing legacy
 files and sessions are not migrated or deleted.
