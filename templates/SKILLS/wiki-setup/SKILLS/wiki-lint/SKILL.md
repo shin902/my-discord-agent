@@ -37,7 +37,7 @@ First run the `/workspace/SKILLS/wiki-lint/scripts/lint.py` helper for mechanica
 5. Append a log entry:
    `## [YYYY-MM-DD] lint | <N issues found, M fixed, K need decisions>`
 
-   Treat `log.md` as append-only. Do not read it in full; use `bash` with `tail -n 20` (or `tail -n 10`) to inspect only the last lines. Append with `printf ... >> log.md` or `cat >> log.md`, never with full-file `edit`/`write`, `sed -i`, or a read-and-write-back script.
+   Treat `{{WIKI_ROOT}}/wiki/log.md` as append-only. Do not read it in full; use `bash` with `tail -n 20 {{WIKI_ROOT}}/wiki/log.md` (or `tail -n 10 {{WIKI_ROOT}}/wiki/log.md`) to inspect only the last lines. Append with `printf ... >> {{WIKI_ROOT}}/wiki/log.md` or `cat >> {{WIKI_ROOT}}/wiki/log.md`, never with full-file `edit`/`write`, `sed -i`, or a read-and-write-back script.
 6. Finally, provide a brief list of questions to investigate or sources to find next — lint also tells you what to read next in the wiki.
 
 ## Notes

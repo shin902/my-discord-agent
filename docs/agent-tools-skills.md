@@ -224,7 +224,7 @@ NanoClaw/OKF形式のfile memoryを明示的な依頼時だけ初期化する任
 
 **場所:** `templates/SKILLS/interest-profile/SKILL.md`
 
-会話履歴からユーザーの興味プロファイルを抽出・蓄積し `INTERESTS.md`（プロジェクトルート）を生成・更新するスキル。`sync`（履歴差分を分析してシグナルを `data/interests/interest-log.jsonl` に追記し再生成）と `show`（既存の `INTERESTS.md` を表示するだけ）の2モードを持つ。cron等からの自律実行時はユーザーへの確認を行わない設計。
+会話履歴からユーザーの興味プロファイルを抽出・蓄積し `/workspace/INTERESTS.md`を生成・更新するスキル。`sync`（履歴差分を分析してシグナルを `/workspace/data/interests/interest-log.jsonl` に追記し再生成）と `show`（既存の `/workspace/INTERESTS.md` を表示するだけ）の2モードを持つ。cron等からの自律実行時はユーザーへの確認を行わない設計。
 
 ### last30days
 

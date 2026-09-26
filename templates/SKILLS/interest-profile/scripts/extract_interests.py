@@ -8,17 +8,17 @@ session_entries.payload_jsonにはAgentMessageがラップ無しで保存され�
 抽出と状態コミットを「単一実行＋成功後コミット」の2フェーズで行う:
 
   フェーズ1（抽出）: メッセージを stdout に出し、進めるべき状態を pending ファイルに書く。
-    python3 extract_interests.py \
-        --state-file data/interests/last-sync.json \
-        --state-out data/interests/last-sync.json.pending \
+    python3 /workspace/SKILLS/interest-profile/scripts/extract_interests.py \
+        --state-file /workspace/data/interests/last-sync.json \
+        --state-out /workspace/data/interests/last-sync.json.pending \
         --max-messages 500
 
     --logs-dir を省略すると /sessions（コンテナ内マウント先）を使う。
 
   フェーズ2（コミット）: 全処理が正常完了した後に pending を本ファイルへ原子的に昇格する。
-    python3 extract_interests.py \
-        --state-file data/interests/last-sync.json \
-        --commit data/interests/last-sync.json.pending
+    python3 /workspace/SKILLS/interest-profile/scripts/extract_interests.py \
+        --state-file /workspace/data/interests/last-sync.json \
+        --commit /workspace/data/interests/last-sync.json.pending
 
 Output (フェーズ1): JSON array of extracted user messages to stdout.
 

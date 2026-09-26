@@ -6,7 +6,7 @@
 ユーザーの承認を得てから修正を適用する。
 
 使い方:
-    python3 lint.py [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
+    python3 /workspace/SKILLS/wiki-lint/scripts/lint.py [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
 """
 import os
 import re

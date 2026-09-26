@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # wiki-setup/setup.sh
-# Usage: bash setup.sh <WIKI_ROOT> <RAW_DIR> <DIGEST_DIR>
-# Example: bash setup.sh llm-wiki llm-wiki/raw llm-wiki/digest
+# Usage: bash /workspace/SKILLS/wiki-setup/setup.sh <WIKI_ROOT> <RAW_DIR> <DIGEST_DIR>
+# Example: bash /workspace/SKILLS/wiki-setup/setup.sh llm-wiki llm-wiki/raw llm-wiki/digest
 #
 # Copies bundled skill templates to /workspace/SKILLS/ and substitutes placeholders.
 # Skips any skill directory that already exists (non-destructive).

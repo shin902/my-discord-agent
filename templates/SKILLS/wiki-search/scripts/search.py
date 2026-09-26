@@ -2,7 +2,7 @@
 """LLMが運用するwiki向けの、依存ライブラリ不要なキーワード検索。
 
 使い方:
-    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
+    python3 /workspace/SKILLS/wiki-search/scripts/search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
 """
 import os
 import re

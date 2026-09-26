@@ -2,7 +2,7 @@
 """タスクファイルの frontmatter とスキーマを検証する。Python 3 標準ライブラリのみ。
 
 usage:
-  python3 validate.py [tasks_dir]
+  python3 /workspace/SKILLS/taskmd/validate.py [tasks_dir]
 
 エラーがあれば exit code 1。
 """

@@ -2,8 +2,8 @@
 """次にやるべきタスクを推奨する。Python 3 標準ライブラリのみ。
 
 usage:
-  python3 next.py [tasks_dir]        # 着手可能なタスクを優先度順に推奨
-  python3 next.py --all [tasks_dir]  # 全タスクをステータス別に一覧
+  python3 /workspace/SKILLS/taskmd/next.py [tasks_dir]        # 着手可能なタスクを優先度順に推奨
+  python3 /workspace/SKILLS/taskmd/next.py --all [tasks_dir]  # 全タスクをステータス別に一覧
 """
 
 from __future__ import annotations

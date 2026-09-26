@@ -8,7 +8,7 @@
 テーブルから取り除く）。
 
 使い方:
-    python3 search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
+    python3 /workspace/SKILLS/wiki-search-fts/scripts/search.py "QUERY" [WIKI_DIR]      # WIKI_DIR省略時は /workspace/wiki
 
 注意（日本語トークナイズについて）:
     FTS5の `unicode61` トークナイザは空白・記号で分割する単純な実装で、
