@@ -34,7 +34,7 @@ AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills
 | `config/config.json` | ✓ | オブジェクト | Discord application・`defaultModel`（必須）・proxy・agent設定 |
 | `config/bots.json` | — | オブジェクト | Agent Bot profile Registry（省略時は空） |
 
-> **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai` は追加設定なしでも安全に利用できる。
+> **`opencode-go` の `kimi-k2.6` は非推奨**: 大規模なツールコールで API エラーが頻発する問題が `pi-agent-core` の更新でも解消せず、他モデル（deepseek-v4 等）でも同様の報告がある（#107）。`zai-custom` の `glm-4.7-flash` は無料枠（並列実行1まで・コンテキスト制限なし）で安定して動く。プロバイダー同時実行のデフォルトは `serial` のため、`zai-custom` は追加設定なしでも安全に利用できる。
 
 ## config/cron.json の Memory export
 
