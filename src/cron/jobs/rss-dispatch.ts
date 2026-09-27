@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { enqueueRssDispatch } from "../../features/rss.js";
 import {
   claimUnreadArticles,
   openRssDb,
@@ -6,7 +7,6 @@ import {
   type UnreadArticle,
 } from "../../rss/store.js";
 import { NonRetryableError } from "../../utils/error.js";
-import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 const FeedSchema = z.union([
@@ -120,14 +120,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
           .map((article) => article.id),
       );
 
-      await enqueueCronInbox(
-        {
-          ...ctx,
-          idempotencyKey: dispatch.jobId,
-          rssDispatchId: dispatch.id,
-          rssStatePath: settings.statePath,
-        },
+      await enqueueRssDispatch(
+        ctx,
         content,
+        dispatch.id,
+        dispatch.jobId,
+        settings.statePath,
       );
       console.log(
         `[rss-dispatch] ${queuedArticles.length}件をinboxへ投入しました（ジョブ成功後に既読化します）`,

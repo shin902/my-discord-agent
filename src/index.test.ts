@@ -35,7 +35,11 @@ const mocks = vi.hoisted(() => ({
   loadAndValidateCron: vi.fn(),
   enqueueStartupJobs: vi.fn(),
   stopCron: vi.fn(),
-  queueRepository: { db: {}, listRssStatePaths: vi.fn() },
+  queueRepository: {
+    db: {},
+    listRssStatePaths: vi.fn(),
+    registerSources: vi.fn(),
+  },
   initializeQueue: vi.fn(),
   reconcileRssDispatches: vi.fn(),
   runRuntimeOperator: vi.fn(),
@@ -124,6 +128,7 @@ vi.mock("./queue/migration.js", () => ({
 }));
 vi.mock("./features/rss.js", () => ({
   reconcileRssDispatches: mocks.reconcileRssDispatches,
+  registerRssSource: vi.fn(),
 }));
 vi.mock("./queue/operator.js", () => ({
   runRuntimeOperator: mocks.runRuntimeOperator,

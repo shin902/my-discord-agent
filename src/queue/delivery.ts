@@ -22,6 +22,8 @@ import type {
   DeliveryRow,
   QueueRepository,
 } from "./repository.js";
+import type { SourceEnvelope } from "./source-handlers.js";
+import { SourceHandlers } from "./source-handlers.js";
 
 export type DeliveryErrorKind = "retryable" | "non-retryable" | "unknown";
 export class DeliveryError extends Error {
@@ -86,6 +88,7 @@ interface DeliveryPayload {
   cronThreadId?: string;
   mailRouteKey?: string;
   mailEmailId?: string;
+  feature?: SourceEnvelope;
 }
 type DeliveryMessage = {
   id?: unknown;
@@ -431,6 +434,7 @@ export class DeliveryWorker {
     private readonly repository: QueueRepository,
     private readonly adapter: DeliveryAdapter = new DiscordDeliveryAdapter(),
     private readonly options: DeliveryWorkerOptions = {},
+    private readonly sources: SourceHandlers = new SourceHandlers(),
   ) {
     this.workerId = options.workerId ?? "delivery-single-host";
   }
@@ -585,16 +589,23 @@ export class DeliveryWorker {
       const allSent = deliveries.every(
         (delivery) => delivery.status === "sent",
       );
-      if (this.isRss(claim.row)) {
-        if (allSent) this.settleRss(claim.row, "completed");
+      if (this.sourceOf(claim.row)) {
+        await this.notifySource(claim.row, deliveries);
       } else {
-        this.settleRss(claim.row, "completed");
+        if (this.isRss(claim.row)) {
+          if (allSent) this.settleRss(claim.row, "completed");
+        } else {
+          this.settleRss(claim.row, "completed");
+        }
+        if (allSent) await this.acknowledgeMail(claim.row);
       }
-      if (allSent) await this.acknowledgeMail(claim.row);
     } catch (error) {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
-        const rss = this.isRss(claim.row);
+        const source = this.sourceOf(claim.row);
+        const rss = source
+          ? this.sources.policy(source).continueAfterFailedChunk
+          : this.isRss(claim.row);
         if (rss || unsupportedPreMaterializedItemThread) {
           this.repository.failDeliveryBatch(
             claim.row.id,
@@ -602,7 +613,14 @@ export class DeliveryWorker {
             kind === "unknown" ? "ambiguous" : "failed",
             String(error),
           );
-          if (rss) this.settleRss(claim.row, "dead_letter");
+          if (source) {
+            await this.notifySource(
+              claim.row,
+              this.repository
+                .listDeliveries()
+                .filter((row) => row.jobId === claim.row.jobId),
+            );
+          } else if (rss) this.settleRss(claim.row, "dead_letter");
         } else {
           const status =
             kind === "unknown"
@@ -629,6 +647,34 @@ export class DeliveryWorker {
       } catch (updateError) {
         console.error("[delivery] state update failed", updateError);
       }
+    }
+  }
+
+  private sourceOf(row: DeliveryRow): SourceEnvelope | undefined {
+    if (!row.payloadJson) return undefined;
+    const payload = JSON.parse(row.payloadJson) as { feature?: SourceEnvelope };
+    return payload.feature;
+  }
+
+  private async notifySource(
+    row: DeliveryRow,
+    deliveries: readonly DeliveryRow[],
+  ): Promise<void> {
+    const source = this.sourceOf(row);
+    if (!source) return;
+    try {
+      await this.sources.delivery(
+        source,
+        row,
+        deliveries.map((delivery) => delivery.status),
+      );
+    } catch (error) {
+      // Discord state is already fenced and durable. External ACK failure is
+      // recovered by the source's own unread/claim reconciliation path.
+      console.error(
+        `[delivery] ${source.kind} source finalization failed:`,
+        error,
+      );
     }
   }
 
@@ -697,8 +743,9 @@ export class DeliveryWorker {
 let defaultWorker: DeliveryWorker | undefined;
 export function startDeliveryWorker(
   repository: QueueRepository,
+  sources: SourceHandlers = new SourceHandlers(),
 ): DeliveryWorker {
-  defaultWorker ??= new DeliveryWorker(repository);
+  defaultWorker ??= new DeliveryWorker(repository, undefined, {}, sources);
   defaultWorker.start();
   return defaultWorker;
 }

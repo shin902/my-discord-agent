@@ -34,6 +34,7 @@ import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireInferenceLock } from "./inference-lock.js";
 import { JobHandlers } from "./job-handlers.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
+import { SourceHandlers } from "./source-handlers.js";
 import type { InboxMessage } from "./types.js";
 
 function trustedDiscordDestination(
@@ -195,7 +196,18 @@ function isEmptyAgentResponse(response: string): boolean {
   return response.trim().length === 0;
 }
 
-async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
+async function finalizeSuppressedSource(
+  msg: InboxMessage,
+  sources: SourceHandlers,
+): Promise<void> {
+  if (msg.feature) {
+    try {
+      await sources.suppressed(msg);
+    } catch (error) {
+      console.error(`[poller] source suppression failed (${msg.id}):`, error);
+    }
+    return;
+  }
   if (msg.mailEmailId) {
     try {
       await acknowledgeEmail(msg.mailEmailId);
@@ -243,7 +255,21 @@ async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
   }
 }
 
-function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
+async function settleRssDispatchAfterQueueTransition(
+  msg: InboxMessage,
+  sources: SourceHandlers,
+): Promise<void> {
+  if (msg.feature) {
+    try {
+      await sources.terminal(msg);
+    } catch (error) {
+      console.error(
+        `[poller] source terminal callback failed (${msg.id}):`,
+        error,
+      );
+    }
+    return;
+  }
   // RSS success is settled by the Discord delivery worker, not queue completion.
   // This keeps the article unread until the post actually exists in Discord.
   if (!msg.rssDispatchId) return;
@@ -283,9 +309,14 @@ function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
 const inFlightIds = new Set<string>();
 
 let activeHandlers = new JobHandlers();
-export function startPoller(handlers: JobHandlers = new JobHandlers()): void {
+let activeSources = new SourceHandlers();
+export function startPoller(
+  handlers: JobHandlers = new JobHandlers(),
+  sources: SourceHandlers = new SourceHandlers(),
+): void {
   if (running) return;
   activeHandlers = handlers;
+  activeSources = sources;
   running = true;
   void poll();
 }
@@ -321,7 +352,7 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
-  void processMessage(msg, controller.signal, activeHandlers)
+  void processMessage(msg, controller.signal, activeHandlers, activeSources)
     .finally(() => {
       clearInterval(renewal);
       inFlightIds.delete(msg.id);
@@ -736,7 +767,8 @@ async function ensureCronThread(msg: InboxMessage): Promise<void> {
 
 async function processCronThreadDelivery(
   msg: InboxMessage,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  sources: SourceHandlers,
 ): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
@@ -846,6 +878,7 @@ async function processCronThreadDelivery(
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
             cronThreadId: lateItemThread ? undefined : msg.cronThreadId,
+            ...(msg.feature ? { feature: msg.feature } : {}),
             ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
             ...(msg.rssDispatchId
               ? {
@@ -857,7 +890,7 @@ async function processCronThreadDelivery(
           },
         },
       );
-    if (suppressDelivery) await finalizeSuppressedSource(msg);
+    if (suppressDelivery) await finalizeSuppressedSource(msg, sources);
     outcome = "success";
   } catch (error) {
     if (msg.rssDispatchId) {
@@ -954,6 +987,7 @@ export async function processMessage(
   msg: InboxMessage,
   signal?: AbortSignal,
   handlers: JobHandlers = new JobHandlers(),
+  sources: SourceHandlers = new SourceHandlers(),
 ): Promise<void> {
   if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
     const timing = startResponseTiming(msg);
@@ -1040,7 +1074,7 @@ export async function processMessage(
           },
         );
       }
-      settleRssDispatchAfterQueueTransition(msg);
+      await settleRssDispatchAfterQueueTransition(msg, sources);
       return;
     }
   }
@@ -1050,9 +1084,9 @@ export async function processMessage(
     msg.cronThread
   ) {
     try {
-      return await processCronThreadDelivery(msg, signal);
+      return await processCronThreadDelivery(msg, signal, sources);
     } finally {
-      settleRssDispatchAfterQueueTransition(msg);
+      await settleRssDispatchAfterQueueTransition(msg, sources);
     }
   }
   const timing = startResponseTiming(msg);
@@ -1242,6 +1276,7 @@ export async function processMessage(
             : {}),
           replyMessageId,
           allowMention: groupConfig.allowMention === true,
+          ...(msg.feature ? { feature: msg.feature } : {}),
           ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
           ...(msg.rssDispatchId
             ? {
@@ -1253,12 +1288,12 @@ export async function processMessage(
         },
       },
     );
-    if (suppressDelivery) await finalizeSuppressedSource(msg);
+    if (suppressDelivery) await finalizeSuppressedSource(msg, sources);
     outcome = "success";
     stopTyping();
   } finally {
     stopTyping();
-    settleRssDispatchAfterQueueTransition(msg);
+    await settleRssDispatchAfterQueueTransition(msg, sources);
     logResponseTiming(msg, timing, outcome);
   }
 }

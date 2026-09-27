@@ -8,6 +8,7 @@ import {
   ConversationEntriesSchema,
 } from "../agent/conversation.js";
 import { splitMessage } from "../utils/splitMessage.js";
+import type { SourceHandlers } from "./source-handlers.js";
 import {
   type InboxMessage,
   normalizeInboxMessagePayload,
@@ -839,6 +840,11 @@ const DELIVERY_SELECT_COLUMNS =
 export class QueueRepository {
   readonly db: Database.Database;
   readonly workerId: string;
+  private sourceHandlers?: SourceHandlers;
+
+  registerSources(handlers: SourceHandlers): void {
+    this.sourceHandlers = handlers;
+  }
   constructor(
     dbOrPath?: Database.Database | string,
     workerId = "queue-single-host",
@@ -1278,6 +1284,11 @@ export class QueueRepository {
     options: { idempotencyKey?: string; maxAttempts?: number } = {},
   ): EnqueueResult {
     const key = options.idempotencyKey ?? payload.idempotencyKey;
+    const sourcePolicy = payload.feature
+      ? this.sourceHandlers?.policy(payload.feature)
+      : undefined;
+    if (payload.feature && !sourcePolicy)
+      throw new Error(`unregistered source kind: ${payload.feature.kind}`);
     if (key) {
       const idem = this.db
         .prepare("SELECT key,job_id,status FROM idempotency_keys WHERE key=?")
@@ -1288,7 +1299,7 @@ export class QueueRepository {
         const existing = idem.job_id ? this.get(idem.job_id) : undefined;
         const status = existing?.status ?? idem.status;
         if (
-          payload.mailEmailId &&
+          (sourcePolicy?.activeOnlyIdempotency || payload.mailEmailId) &&
           (status === "completed" || status === "dead_letter")
         ) {
           // Mail uses Graph unread state to retry after terminal jobs. Reuse

@@ -21,8 +21,10 @@ vi.mock("../../proxy/graph-auth.js", () => ({
   getGraphAccessToken: async () => "host-graph-token",
 }));
 
+import { registerMailSource } from "../../features/mail.js";
 import { DeliveryError, DeliveryWorker } from "../../queue/delivery.js";
 import { QueueRepository } from "../../queue/repository.js";
+import { SourceHandlers } from "../../queue/source-handlers.js";
 import type { QueueProducer } from "../../queue/types.js";
 import { expectDefined } from "../../test-utils.js";
 import type { CronContext } from "../runner.js";
@@ -341,6 +343,7 @@ describe("mail cron queue boundary", () => {
 // Real handler -> cron enqueue -> durable repository, with Graph left unread.
 describe("mail active-only dedupe", () => {
   let repo: QueueRepository;
+  let sources: SourceHandlers;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   function context(id = "mail", maxAttempts = 10): CronContext {
@@ -362,6 +365,9 @@ describe("mail active-only dedupe", () => {
 
   beforeEach(() => {
     repo = new QueueRepository(":memory:");
+    sources = new SourceHandlers();
+    registerMailSource(sources);
+    repo.registerSources(sources);
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (init?.method === "PATCH") {
         return jsonResponse({ error: "Graph unavailable" }, 503);
@@ -463,10 +469,10 @@ describe("mail active-only dedupe", () => {
     const first = currentJob();
     const claim = expectDefined(repo.claim());
     repo.commitResult(first.id, claim.fencingToken, "response", {
-      deliveryPayload: { mailEmailId: first.mailEmailId },
+      deliveryPayload: { feature: first.feature },
     });
     const send = vi.fn(async () => ({ externalMessageId: "discord-1" }));
-    const worker = new DeliveryWorker(repo, { send });
+    const worker = new DeliveryWorker(repo, { send }, {}, sources);
 
     await worker.runOnce();
 

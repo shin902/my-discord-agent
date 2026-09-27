@@ -36,8 +36,9 @@ import {
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
+import { registerMailSource } from "./features/mail.js";
 import { registerMemoryExport } from "./features/memory-export.js";
-import { reconcileRssDispatches } from "./features/rss.js";
+import { reconcileRssDispatches, registerRssSource } from "./features/rss.js";
 import { startScreenCapture } from "./features/screen-capture.js";
 import { startXSavedGallery } from "./integrations/x-saved/gallery.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
@@ -56,6 +57,7 @@ import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
 import { getQueueRepository } from "./queue/repository.js";
+import { SourceHandlers } from "./queue/source-handlers.js";
 
 import {
   cleanupToolRuntimes,
@@ -66,6 +68,7 @@ const groups = await loadGroups();
 let xSavedReceiver: Server | undefined;
 let screenCaptureReceiver: Server | undefined;
 let xSavedGallery: Server | undefined;
+let sources: SourceHandlers;
 try {
   const discordConfig = await loadDiscordConfig();
   const botRegistry = await loadBotRegistry();
@@ -93,6 +96,10 @@ try {
   await validateBotConfigs(groups, botRegistry, defaultModel);
   await initDiscordClients();
   const queueRepository = getQueueRepository();
+  sources = new SourceHandlers();
+  registerMailSource(sources);
+  registerRssSource(sources, queueRepository);
+  queueRepository.registerSources(sources);
   await initializeQueue(queueRepository);
   const cronJobs = await loadAndValidateCron();
   const rssStatePaths = [
@@ -170,8 +177,8 @@ try {
   await enqueueStartupJobs();
   const handlers = new JobHandlers();
   registerMemoryExport(handlers);
-  startPoller(handlers);
-  startDeliveryWorker(getQueueRepository());
+  startPoller(handlers, sources);
+  startDeliveryWorker(getQueueRepository(), sources);
   startCron();
 } catch (err) {
   console.error("[startup] 起動処理に失敗しました:", err);

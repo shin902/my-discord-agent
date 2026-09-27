@@ -17,8 +17,12 @@ vi.mock("../../queue/repository.js", async () => {
   };
 });
 
-import { reconcileRssDispatches } from "../../features/rss.js";
+import {
+  reconcileRssDispatches,
+  registerRssSource,
+} from "../../features/rss.js";
 import { QueueRepository } from "../../queue/repository.js";
+import { SourceHandlers } from "../../queue/source-handlers.js";
 import type { QueueInput } from "../../queue/types.js";
 import {
   claimUnreadArticles,
@@ -38,6 +42,9 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "rss-item-thread-dispatch-test-"));
   statePath = join(tmpDir, "rss.sqlite3");
   repository = new QueueRepository(join(tmpDir, "runtime.sqlite"));
+  const sources = new SourceHandlers();
+  registerRssSource(sources, repository);
+  repository.registerSources(sources);
   state.repository = repository;
 });
 

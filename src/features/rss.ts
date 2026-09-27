@@ -1,7 +1,12 @@
+import { z } from "zod";
+import { enqueueCronInbox } from "../cron/enqueue.js";
+import type { CronContext } from "../cron/runner.js";
 import {
   getQueueRepository,
   type QueueRepository,
 } from "../queue/repository.js";
+import type { SourceHandlers } from "../queue/source-handlers.js";
+import type { InboxMessage } from "../queue/types.js";
 import {
   listDispatchClaims,
   markArticlesRead,
@@ -10,6 +15,99 @@ import {
 } from "../rss/store.js";
 
 export type RssDispatchResolution = "completed" | "dead_letter";
+
+const rssInput = z.object({
+  dispatchId: z.string().min(1),
+  statePath: z.string().optional(),
+  dispatchJobId: z.string().optional(),
+});
+export type RssSourceInput = z.infer<typeof rssInput>;
+
+export async function enqueueRssDispatch(
+  ctx: CronContext,
+  content: string,
+  dispatchId: string,
+  dispatchJobId: string,
+  statePath?: string,
+): Promise<void> {
+  await enqueueCronInbox(
+    {
+      ...ctx,
+      idempotencyKey: dispatchJobId,
+      feature: {
+        kind: "rss",
+        input: rssInput.parse({ dispatchId, dispatchJobId, statePath }),
+      },
+      rssDispatchId: dispatchId,
+      rssStatePath: statePath,
+    },
+    content,
+  );
+}
+
+export function registerRssSource(
+  handlers: SourceHandlers,
+  repo: QueueRepository,
+): void {
+  handlers.register("rss", rssInput, {
+    continueAfterFailedChunk: true,
+    suppressed(input) {
+      const settled = settleRssDispatch(
+        input.statePath,
+        input.dispatchId,
+        input.dispatchJobId,
+        "completed",
+      );
+      if (settled !== 1) {
+        settleRssDispatch(
+          input.statePath,
+          input.dispatchId,
+          input.dispatchJobId,
+          "dead_letter",
+        );
+        throw new Error(
+          "RSS dispatch claim was not found or could not be opened",
+        );
+      }
+    },
+    terminal(input, message: InboxMessage) {
+      if (
+        ["direct", "new-thread", "item-thread"].includes(
+          message.cronDeliveryMode ?? "",
+        )
+      )
+        return;
+      const job = repo.get(message.id);
+      if (!job || (job.status !== "completed" && job.status !== "dead_letter"))
+        return;
+      settleRssDispatch(
+        input.statePath,
+        input.dispatchId,
+        input.dispatchJobId,
+        job.status,
+      );
+    },
+    delivery(input, _row, statuses) {
+      if (statuses.every((status) => status === "sent")) {
+        settleRssDispatch(
+          input.statePath,
+          input.dispatchId,
+          input.dispatchJobId,
+          "completed",
+        );
+      } else if (
+        statuses.some((status) => status === "failed" || status === "ambiguous")
+      ) {
+        settleRssDispatch(
+          input.statePath,
+          input.dispatchId,
+          input.dispatchJobId,
+          "dead_letter",
+        );
+      }
+    },
+  });
+}
 
 /**
  * Settle one RSS dispatch after its associated queue job reaches a terminal

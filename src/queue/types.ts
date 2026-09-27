@@ -21,6 +21,8 @@ export interface InboxMessage {
   source?: SessionSource;
   /** Absent for ordinary Agent jobs. Internal jobs bypass Agent execution/delivery. */
   jobKind?: string;
+  /** Opaque feature-owned source input; validated by the registered owner. */
+  feature?: { kind: string; input: unknown };
   content: string;
   timestamp: string;
   enqueuedAt?: string;

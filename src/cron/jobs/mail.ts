@@ -1,5 +1,5 @@
+import { enqueueMail } from "../../features/mail.js";
 import { hostFetch } from "../../tools/host-fetch.js";
-import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 const MAX_BODY_CHARS = 8000;
@@ -125,16 +125,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
     try {
       const bodyText = await fetchEmailBody(meta.id);
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
-      await enqueueCronInbox(
-        {
-          ...ctx,
-          deliveryMode: "direct",
-          sessionMode: "per-run",
-          idempotencyKey: `mail:graph:${encodeURIComponent(ctx.id)}:${encodeURIComponent(meta.id)}`,
-          mailEmailId: meta.id,
-          mailRouteKey: mailRouteKey(meta),
-        },
+      await enqueueMail(
+        ctx,
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
+        meta.id,
+        mailRouteKey(meta),
       );
     } catch (err) {
       console.error(`[mail] メール ${meta.id} のキュー登録に失敗:`, err);
