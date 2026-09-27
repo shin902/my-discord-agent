@@ -1,8 +1,8 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { initializeQueue, migrateLegacyQueue } from "./migration.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { initializeQueue } from "./migration.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 let tempDirs: string[] = [];
@@ -13,170 +13,48 @@ afterEach(async () => {
   tempDirs = [];
 });
 
-async function makePaths(
-  content: string,
-): Promise<{ inbox: string; dead: string; archive: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "queue-migration-test-"));
-  tempDirs.push(dir);
-  const inbox = join(dir, "inbox.jsonl");
-  const dead = join(dir, "dead-letter.jsonl");
-  await writeFile(inbox, content, "utf8");
-  return { inbox, dead, archive: join(dir, "archive") };
-}
-
-function message(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
-  return {
-    id: "legacy-1",
-    channelId: "channel",
-    groupName: "group",
-    sessionId: "session",
-    content: "content",
-    timestamp: "2026-08-01T00:00:00.000Z",
-    retries: 0,
-    ...overrides,
-  };
-}
-
-describe("migrateLegacyQueue", () => {
-  it("rejects a non-string Bot ID while preserving valid rows", async () => {
-    const paths = await makePaths(
-      `${JSON.stringify(message({ botId: 123 }))}\n${JSON.stringify(message({ id: "valid", botId: "coding" }))}\n`,
-    );
-    const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    try {
-      const result = await migrateLegacyQueue(repo, {
-        inboxPath: paths.inbox,
-        deadLetterPath: paths.dead,
-        archiveDir: paths.archive,
-      });
-      expect(result.malformed).toBe(1);
-      expect(result.migrated).toBe(1);
-      expect(repo.get("legacy-1")).toBeUndefined();
-      expect(repo.get("valid")?.botId).toBe("coding");
-    } finally {
-      repo.close();
-    }
-  });
-
-  it("classifies malformed optional fields as dead letters without aborting", async () => {
-    const paths = await makePaths(
-      `${JSON.stringify(message({ retries: "not-a-number" }))}\n${JSON.stringify(message({ id: "valid" }))}\n`,
-    );
-    const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    try {
-      const result = await migrateLegacyQueue(repo, {
-        inboxPath: paths.inbox,
-        deadLetterPath: paths.dead,
-        archiveDir: paths.archive,
-      });
-      expect(result.malformed).toBe(1);
-      expect(result.migrated).toBe(1);
-      expect(
-        repo.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
-      ).toEqual({ count: 1 });
-      expect(repo.db.prepare("SELECT reason FROM dead_letters").all()).toEqual([
-        { reason: "invalid_inbox_row" },
-      ]);
-    } finally {
-      repo.close();
-    }
-  });
-
-  it("numbers each migrated session from sequence zero like normal enqueue", async () => {
-    const paths = await makePaths(
-      `${JSON.stringify(message({ id: "legacy-first", content: "one" }))}\n${JSON.stringify(message({ id: "legacy-second", content: "two" }))}\n${JSON.stringify(message({ id: "legacy-other", sessionId: "other", content: "three" }))}\n`,
-    );
-    const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    try {
-      const result = await migrateLegacyQueue(repo, {
-        inboxPath: paths.inbox,
-        deadLetterPath: paths.dead,
-        archiveDir: paths.archive,
-      });
-      expect(result.migrated).toBe(3);
-      const rows = repo.db
-        .prepare("SELECT id,session_id,sequence FROM jobs ORDER BY id")
-        .all() as Array<{
-        id: string;
-        session_id: string;
-        sequence: number;
-      }>;
-      // Empty sessions start at 0 (COALESCE(MAX(sequence),-1)+1) exactly like
-      // QueueRepository.enqueue, so migrated and enqueued rows share ordering.
-      expect(rows).toEqual([
-        { id: "legacy-first", session_id: "session", sequence: 0 },
-        { id: "legacy-other", session_id: "other", sequence: 0 },
-        { id: "legacy-second", session_id: "session", sequence: 1 },
-      ]);
-    } finally {
-      repo.close();
-    }
-  });
-
-  it("commits rows and digest marker atomically so a failed migration can be retried", async () => {
-    const paths = await makePaths(`${JSON.stringify(message())}\n`);
-    const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    try {
-      repo.db.exec(
-        "CREATE TEMP TRIGGER fail_migration BEFORE INSERT ON jobs BEGIN SELECT RAISE(ABORT, 'forced migration failure'); END",
-      );
-      await expect(
-        migrateLegacyQueue(repo, {
-          inboxPath: paths.inbox,
-          deadLetterPath: paths.dead,
-          archiveDir: paths.archive,
-        }),
-      ).rejects.toThrow("forced migration failure");
-      const archives = await readdir(paths.archive);
-      expect(archives).toHaveLength(1);
-      expect(await readFile(join(paths.archive, archives[0]))).toEqual(
-        Buffer.from(`${JSON.stringify(message())}\n`),
-      );
-      expect(
-        repo.db.prepare("SELECT COUNT(*) AS count FROM jobs").get(),
-      ).toEqual({ count: 0 });
-      expect(
-        repo.db
-          .prepare(
-            "SELECT COUNT(*) AS count FROM schema_meta WHERE key LIKE 'legacy_migration:%'",
-          )
-          .get(),
-      ).toEqual({ count: 0 });
-      repo.db.exec("DROP TRIGGER fail_migration");
-      const result = await migrateLegacyQueue(repo, {
-        inboxPath: paths.inbox,
-        deadLetterPath: paths.dead,
-        archiveDir: paths.archive,
-      });
-      expect(result.migrated).toBe(1);
-      expect(result.backupPaths).toHaveLength(1);
-      expect(
-        (
-          await migrateLegacyQueue(repo, {
-            inboxPath: paths.inbox,
-            deadLetterPath: paths.dead,
-            archiveDir: paths.archive,
-          })
-        ).migrated,
-      ).toBe(0);
-    } finally {
-      repo.close();
-    }
-  });
-});
-
 describe("normal runtime startup", () => {
-  it("does not import a leftover JSONL file", async () => {
-    const paths = await makePaths(`${JSON.stringify(message())}\n`);
+  it("recovers admissions and expired leases in order", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const admissions = vi.spyOn(repo, "recoverBotTaskSessionAdmissions");
+      const expired = vi.spyOn(repo, "recoverExpired");
+      await initializeQueue(repo);
+      expect(admissions).toHaveBeenCalledOnce();
+      expect(expired).toHaveBeenCalledOnce();
+      expect(admissions.mock.invocationCallOrder[0]).toBeLessThan(
+        expired.mock.invocationCallOrder[0],
+      );
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("does not read or modify legacy queue JSONL", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "queue-startup-test-"));
+    tempDirs.push(dir);
+    const inbox = join(dir, "inbox.jsonl");
+    const dead = join(dir, "dead-letter.jsonl");
+    await writeFile(inbox, '{"id":"legacy-1"}\n');
+    await writeFile(dead, '{"reason":"legacy"}\n');
+    const repo = new QueueRepository(
+      openRuntimeDb(join(dir, "runtime.sqlite")),
+    );
     try {
       await initializeQueue(repo);
       expect(
         repo.db.prepare("SELECT count(*) AS count FROM jobs").get(),
       ).toEqual({ count: 0 });
-      expect(await readFile(paths.inbox, "utf8")).toContain("legacy-1");
+      expect(
+        repo.db.prepare("SELECT count(*) AS count FROM dead_letters").get(),
+      ).toEqual({ count: 0 });
+      expect(await readFile(inbox, "utf8")).toBe('{"id":"legacy-1"}\n');
+      expect(await readFile(dead, "utf8")).toBe('{"reason":"legacy"}\n');
+      expect(
+        (await readdir(dir)).filter(
+          (name) => name === "archive" || name.endsWith(".bak"),
+        ),
+      ).toEqual([]);
     } finally {
       repo.close();
     }

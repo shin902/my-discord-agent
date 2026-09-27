@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,28 +16,6 @@ afterEach(() => {
 });
 
 describe("one-time Issue #540 runtime conversion", () => {
-  it("imports an unconsumed legacy JSONL row before converting it", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "issue540-legacy-"));
-    directories.push(directory);
-    const inboxPath = join(directory, "inbox.jsonl");
-    writeFileSync(inboxPath, JSON.stringify({
-      id: "legacy-mail", channelId: "channel", groupName: "group", sessionId: "session",
-      content: "prompt", timestamp: new Date().toISOString(), retries: 0,
-      mailEmailId: "email-1", idempotencyKey: "legacy-key",
-    }) + "\n");
-    const repo = new QueueRepository(join(directory, "runtime.sqlite"));
-    try {
-      await convertIssue540Runtime(repo, {
-        inboxPath,
-        deadLetterPath: join(directory, "missing-dead.jsonl"),
-        archiveDir: join(directory, "archive"),
-      });
-      expect(repo.get("legacy-mail")?.feature).toEqual({ kind: "mail", input: { emailId: "email-1" } });
-      expect(repo.getIdempotencyRecord("legacy-key")?.jobId).toBe("legacy-mail");
-    } finally {
-      repo.close();
-    }
-  });
   it("converts pending jobs, deliveries, dead letters and preserves queue relations", async () => {
     const directory = mkdtempSync(join(tmpdir(), "issue540-convert-"));
     directories.push(directory);
@@ -82,12 +60,7 @@ describe("one-time Issue #540 runtime conversion", () => {
         .prepare("INSERT INTO committed_conversations(turn_id,group_name,user_entry_id,assistant_entry_id,committed_at) VALUES(?,?,?,?,?)")
         .run("turn-1", "group", 1, 2, new Date().toISOString());
       const original = repo.db.prepare("SELECT id,status,attempts,fencing_token,session_id FROM jobs ORDER BY id").all();
-      const paths = {
-        inboxPath: join(directory, "missing-inbox.jsonl"),
-        deadLetterPath: join(directory, "missing-dead.jsonl"),
-        archiveDir: join(directory, "archive"),
-      };
-      await convertIssue540Runtime(repo, paths);
+      await convertIssue540Runtime(repo);
       expect(repo.db.prepare("SELECT id,status,attempts,fencing_token,session_id FROM jobs ORDER BY id").all()).toEqual(original);
       const convertedMail = expectDefined(repo.get(mail.id));
       expect(convertedMail.feature).toEqual({ kind: "mail", input: { emailId: "email-1", routeKey: "route" } });
@@ -124,7 +97,7 @@ describe("one-time Issue #540 runtime conversion", () => {
         feature: { kind: "mail", input: { emailId: "new" } },
       });
       expect(next.inserted).toBe(true);
-      await expect(convertIssue540Runtime(repo, paths)).rejects.toThrow(/already/);
+      await expect(convertIssue540Runtime(repo)).rejects.toThrow(/already/);
     } finally {
       repo.close();
     }

@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
-import { migrateLegacyQueue, type LegacyQueuePaths } from "../src/queue/migration.js";
 import { QueueRepository } from "../src/queue/repository.js";
 
 const MARKER = "issue540:source-envelope";
@@ -68,11 +67,9 @@ function convertPayload(payload: Payload, dispatchJobId?: string): {
 /** Must run only while the old worker is stopped; never runs at normal startup. */
 export async function convertIssue540Runtime(
   repo: QueueRepository,
-  paths?: LegacyQueuePaths,
 ): Promise<void> {
   if (repo.db.prepare("SELECT 1 FROM schema_meta WHERE key=?").get(MARKER))
     throw new Error("Issue #540 runtime conversion has already been applied");
-  await migrateLegacyQueue(repo, paths);
   const db: Database.Database = repo.db;
   db.transaction(() => {
     const updateJob = db.prepare(
@@ -117,19 +114,11 @@ export async function convertIssue540Runtime(
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const dbPath = process.argv[2];
-  if (!dbPath || (process.argv[3] && process.argv[3] !== "--legacy-dir") || (process.argv[3] && !process.argv[4]))
-    throw new Error("usage: tsx scripts/convert-issue540-runtime.ts <runtime.sqlite> [--legacy-dir <directory>]");
-  const legacyDir = process.argv[4];
-  const paths = legacyDir
-    ? {
-        inboxPath: resolve(legacyDir, "inbox.jsonl"),
-        deadLetterPath: resolve(legacyDir, "dead-letter.jsonl"),
-        archiveDir: resolve(legacyDir, "archive"),
-      }
-    : undefined;
+  if (!dbPath || process.argv[3])
+    throw new Error("usage: tsx scripts/convert-issue540-runtime.ts <runtime.sqlite>");
   const repo = new QueueRepository(resolve(dbPath));
   try {
-    await convertIssue540Runtime(repo, paths);
+    await convertIssue540Runtime(repo);
   } finally {
     repo.close();
   }

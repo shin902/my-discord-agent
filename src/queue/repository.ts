@@ -295,13 +295,6 @@ function parseBotTaskSession(row: BotTaskSessionRow): BotTaskSession {
     preview: row.preview,
   };
 }
-export interface LegacyMigrationResult {
-  migrated: number;
-  completed: number;
-  malformed: number;
-  deadLetters: number;
-  backupPaths: string[];
-}
 export interface IdempotencyRecord {
   key: string;
   jobId: string | null;

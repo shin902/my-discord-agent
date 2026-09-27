@@ -24,9 +24,7 @@ data/
     <groupName>/
       sessions.sqlite   # group単位のcanonical session trajectory
   queue/
-    inbox.jsonl         # 旧形式の移行入力だけ。現行queueではない
-    dead-letter.jsonl   # 旧形式の移行入力だけ
-    archive/*.bak       # queue migration時に作る読み取り専用backup
+    *.jsonl             # 旧queueの残存ファイル（現行runtimeは読み込まない）
 
 groups/
   <groupName>/
@@ -47,11 +45,11 @@ groups/
 | `deliveries` | Discordへ送るchunkと配送状態 |
 | `committed_conversations` | 結果commit時に採用したgroup + user/assistant entry ID。本文は持たず、jobs retentionと独立して保持 |
 | `idempotency_keys` | 受理済み・完了済み入力の冪等性 |
-| `dead_letters` | 処理不能・移行不正行などの記録 |
+| `dead_letters` | 処理不能な入力などの記録 |
 | `discord_sync_cursors` | Discord履歴backfillの進行位置 |
 | `bot_task_sessions` | Bot Task Sessionのidentity・所有関係 |
 | `mail_threads` | `groupName + channelId + mailRouteKey` から再利用するMail専用Discord thread IDへのmapping。schema v8で追加 |
-| `schema_meta` | schema versionと旧queue移行marker・Issue #540変換marker |
+| `schema_meta` | schema versionとIssue #540変換marker |
 
 runtime DBはWALを使用します。稼働中にmain fileだけをコピーしないでください。[backup.ts](../src/queue/backup.ts) はSQLiteのserializeで整合したsnapshotを作り、別DBとしてread-onlyで開いてintegrityを検証します。session DBやRSS DB、workspace、認証stateまで含む一括backupではありません。
 
@@ -74,7 +72,7 @@ pnpm start
 
 systemd等で管理している環境では`pnpm start`を二重起動せず、変換・build後に管理サービスを起動します。起動ログでDiscord backfill完了後にworker/cronが開始したこと、および旧payloadが残らないことを確認します。
 
-[converter](../scripts/convert-issue540-runtime.ts) は既存の[migration.ts](../src/queue/migration.ts)で未取り込みの旧`data/queue/inbox.jsonl`と`dead-letter.jsonl`をSQLiteへ取り込み、旧JSONLを`data/queue/archive/`へバックアップします。その後`jobs`・`deliveries`・`dead_letters`のMail/RSS入力をfeature envelopeへ短いSQLite transactionで変換し、queueのlease/fencing/status、idempotency、session ID、採用会話参照を保持します。RSSの別DB、Screen Capture、group session DB、Memory ledgerは変更しません。外部APIへの呼び出しは変換中にありません。再実行は拒否されます。変換が失敗した場合は新workerを起動せず、バックアップとエラーを確認してください。旧JSONLファイルを残しても新runtimeには再流入しません。カスタムRSS statePathを設定から外しqueue側にも参照がなくなったclaimは自動発見できないため、運用で確認してください。
+[converter](../scripts/convert-issue540-runtime.ts) は旧queue JSONLを取り込まず、既存SQLite内の`jobs`・`deliveries`・`dead_letters`のMail/RSS入力をfeature envelopeへ短いSQLite transactionで変換し、queueのlease/fencing/status、idempotency、session ID、採用会話参照を保持します。RSSの別DB、Screen Capture、group session DB、Memory ledgerは変更しません。外部APIへの呼び出しは変換中にありません。再実行は拒否されます。変換が失敗した場合は新workerを起動せず、バックアップとエラーを確認してください。旧JSONLファイルを残しても新runtimeには再流入しません。カスタムRSS statePathを設定から外しqueue側にも参照がなくなったclaimは自動発見できないため、運用で確認してください。
 
 ## Session trajectory
 
