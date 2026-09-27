@@ -15,16 +15,19 @@ vi.mock("node:fs/promises", () => ({
 
 vi.mock("@earendil-works/pi-ai/compat", () => ({
   getProviders: () => ["provider-a", "zai"],
-  getModels: (provider: string) =>
-    provider === "zai"
-      ? [{ id: "glm-4.7-flash", name: "GLM-4.7-Flash" }]
-      : [{ id: "model-x", name: "Model X" }],
+  getModels: () => [{ id: "model-x", name: "Model X" }],
   getEnvApiKey: vi.fn(),
   streamSimple: vi.fn(),
 }));
 
 vi.mock("../config/credential-proxy.js", () => ({
-  loadCredentialProxy: vi.fn().mockResolvedValue([]),
+  loadCredentialProxy: vi.fn().mockResolvedValue([
+    {
+      provider: "zai-custom",
+      api: "openai-completions",
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
+    },
+  ]),
 }));
 
 vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
@@ -337,7 +340,7 @@ describe("runAgentLoop", () => {
     expect(lastAgentOptions).toMatchObject({
       initialState: {
         systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}`,
-        model: { id: "glm-4.7-flash", name: "GLM-4.7-Flash" },
+        model: { id: "glm-4.7-flash", provider: "zai-custom" },
         thinkingLevel: "off",
       },
     });
