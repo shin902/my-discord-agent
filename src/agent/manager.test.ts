@@ -1641,6 +1641,7 @@ describe("sendMessage: configOverride", () => {
       {
         approvalRequiredCapabilities: ["get-current-weather"],
         trustedDiscordDestination: undefined,
+        workspace: expect.stringMatching(/\/groups\/test-group$/),
       },
     );
     const run = createToolProxyRunMock.mock.results[0]?.value as {
@@ -1730,6 +1731,7 @@ describe("sendMessage: configOverride", () => {
       {
         approvalRequiredCapabilities: approvalRequiredTools,
         trustedDiscordDestination: undefined,
+        workspace: expect.stringMatching(/\/groups\/test-group$/),
       },
     );
     const run = createToolProxyRunMock.mock.results[0].value;

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -93,6 +93,35 @@ describe.skipIf(!baseImage)("disposable Tool Runtime Docker boundary", () => {
       (error) => ({ error: error as Error }),
     );
   }
+
+  it("shares the trusted workspace with the Runtime and rejects existing clone destinations", async () => {
+    const workspace = join(fixture.options.root, "workspace");
+    await mkdir(workspace);
+    try {
+      const args = {
+        url: "https://github.com/octocat/Hello-World.git",
+        destination: "repo",
+      };
+      const result = await executeToolRuntime("git-clone", args, undefined, {
+        ...fixture.options,
+        workspace,
+      });
+      expect(result.content).toEqual([
+        { type: "text", text: "Cloned into repo" },
+      ]);
+      expect(
+        await readFile(join(workspace, "repo", "README"), "utf8"),
+      ).toContain("Hello World");
+      await expect(
+        executeToolRuntime("git-clone", args, undefined, {
+          ...fixture.options,
+          workspace,
+        }),
+      ).rejects.toThrow("Destination already exists");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it("uses fixed launch conditions and starts non-Reddit calls without state", async () => {
     const args = await buildToolRuntimeArgs(

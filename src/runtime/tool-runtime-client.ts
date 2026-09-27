@@ -25,6 +25,7 @@ export interface ToolRuntimeOptions {
   /** Trusted host configuration; never taken from capability arguments. */
   root?: string;
   image?: string;
+  workspace?: string;
 }
 
 export function toolRuntimeLabel(root = ROOT): string {
@@ -119,6 +120,28 @@ export async function buildToolRuntimeArgs(
     : getRuntimeCapability(request.capability);
   if (!maintenance && !capability)
     throw new Error("Unknown Runtime capability");
+  const workspace = options.workspace;
+  if (capability?.tool === "git-clone" && !workspace)
+    throw new Error("Git clone requires a trusted group workspace");
+  let workspaceMount: string[] = [];
+  if (workspace) {
+    const stat = await lstat(workspace);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid === 0 ||
+      stat.gid === 0
+    )
+      throw new Error("Group workspace is unavailable or invalid");
+    workspaceMount = [
+      "-e",
+      `TOOL_RUNTIME_UID=${stat.uid}`,
+      "-e",
+      `TOOL_RUNTIME_GID=${stat.gid}`,
+      "--mount",
+      `type=bind,src=${workspace},dst=/workspace`,
+    ];
+  }
   const mounts = capability?.needsTwitterCredentials
     ? await twitterMountArgs(root)
     : maintenance ||
@@ -149,6 +172,7 @@ export async function buildToolRuntimeArgs(
     "-e",
     "CHROMIUM_PATH=/usr/bin/chromium",
     ...mounts,
+    ...workspaceMount,
     options.image ??
       process.env.TOOL_RUNTIME_IMAGE ??
       "my-discord-agent-tool-runtime:latest",

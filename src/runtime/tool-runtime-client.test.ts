@@ -1,8 +1,14 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { executeToolRuntime } from "./tool-runtime-client.js";
+import {
+  buildToolRuntimeArgs,
+  executeToolRuntime,
+} from "./tool-runtime-client.js";
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
@@ -28,6 +34,32 @@ function containerExit(code: number, stdout: string, diagnostics: Buffer[]) {
 }
 
 const call = () => executeToolRuntime("arxiv-search", { query: "fixture" });
+
+describe("Tool Runtime workspace mount", () => {
+  it("binds only the trusted run workspace and requires one for git-clone", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "runtime-workspace-"));
+    try {
+      const args = await buildToolRuntimeArgs(
+        {
+          capability: "git-clone",
+          args: { url: "https://github.com/a/b", destination: "repo" },
+        },
+        "test-runtime",
+        { workspace },
+      );
+      expect(args).toContain(`type=bind,src=${workspace},dst=/workspace`);
+      expect(args).not.toContain("type=bind,src=/other-group,dst=/workspace");
+      await expect(
+        buildToolRuntimeArgs(
+          { capability: "git-clone", args: {} },
+          "test-runtime",
+        ),
+      ).rejects.toThrow("trusted group workspace");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Tool Runtime host diagnostics", () => {
   it.each([

@@ -1,6 +1,6 @@
 # Tool Runtime
 
-Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search`、`x-search`を **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。
+Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search`、`x-search`、`git-clone`を **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。
 
 ```text
 Agent sandbox: native Tool / Skill → tool-proxy CLI
@@ -55,7 +55,7 @@ stdinは1 MiB、構造化stdoutは64 MiBが上限です。取得処理の既存t
 
 Runtimeは長い結果も本文で返します。native結果の50,000文字超の外部化はAgent sandbox側の [output.ts](../../src/tools/output.ts) に集約し、同じAgent run中の後続read／grepで再利用できます。Runtime callの終了でこのファイルは消えません。Agent sandboxの終了後は過去pathの再読を保証しません。Skillはstdoutを維持し、取得系capabilityが結果を自動保存する挙動は追加しません。
 
-一方、`/workspace` 自体はAgent RunnerとTool Runtimeで共有するcurrent groupの永続領域です。remote Gitのようにworkspace mutationを契約に含むcapabilityはRuntimeから直接ここへ書き込めます。Runtime内部の `/tmp` 等のscratchは従来どおりcall終了で破棄し、`/workspace` を汎用artifact storeやsession storeとして扱いません。
+一方、`/workspace` 自体はAgent RunnerとTool Runtimeで共有するcurrent groupの永続領域です。remote Gitのようにworkspace mutationを契約に含むcapabilityはRuntimeから直接ここへ書き込めます。Runtime内部の `/tmp` 等のscratchは従来どおりcall終了で破棄し、`/workspace` を汎用artifact storeやsession storeとして扱いません。`git-clone` はpublic HTTPS URLとworkspace相対の未作成destinationのみを受け付けます。既存destinationやworkspace外への移動は拒否し、認証付きprivate repository、fetch / pull / push、local Git操作は扱いません。利用する場合はeffective `tools` に `git-clone` を明示し、git入りRuntime imageとhostを一緒に更新してください。
 
 ## networkとReddit state
 

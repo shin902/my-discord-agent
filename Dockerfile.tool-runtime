@@ -9,7 +9,7 @@ RUN pnpm build:tool-runtime && pnpm prune --prod
 FROM node:22-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv curl ca-certificates xvfb chromium iptables util-linux \
+    python3 python3-venv curl ca-certificates git xvfb chromium iptables util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

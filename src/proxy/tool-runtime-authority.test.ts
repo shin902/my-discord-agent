@@ -87,6 +87,38 @@ function authority(
 }
 
 describe("Native/Skill shared Runtime authority", () => {
+  it("passes the trusted workspace to Runtime without accepting a caller mount", async () => {
+    const execute = vi.spyOn(runtime, "executeToolRuntime").mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      details: {},
+    });
+    const run = createToolProxyRun("workspace-test", ["git-clone"], {
+      workspace: "/trusted/group",
+    });
+    if (!run) throw new Error("not initialized");
+    try {
+      await requestToolProxy(
+        "git-clone",
+        {
+          url: "https://github.com/octocat/Hello-World.git",
+          destination: "repo",
+          workspace: "/other-group",
+        },
+        { url, token: run.token },
+      );
+      expect(execute).toHaveBeenCalledWith(
+        "git-clone",
+        {
+          url: "https://github.com/octocat/Hello-World.git",
+          destination: "repo",
+        },
+        expect.any(AbortSignal),
+        { workspace: "/trusted/group" },
+      );
+    } finally {
+      run.revoke();
+    }
+  });
   it.each([
     { tools: ["arxiv-search"], toolSets: [] },
     { tools: ["arxiv-search"], toolSets: ["web"] },
