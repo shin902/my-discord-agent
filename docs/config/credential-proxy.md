@@ -85,11 +85,11 @@ Piの組み込みprovider名の場合、pi-aiの組み込みモデル一覧か�
 
 sandboxでは接続先の `baseUrl` をホストから渡された Credential Proxy URL へ置換します。KnownProvider も `credentials.json` に接続定義が必要で、sandbox 用 entry がない場合は明示エラーとなります。provider SDK が `baseUrl` を利用しない独自接続方式は direct egress 拒否の対象となるため、利用する API 形式で疎通確認してください。
 
-組み込み以外のprovider名の場合は、このentryからカスタムモデルを作ります。modelIdは組み込み一覧で検証せず、そのまま使用します。組み込みproviderのcatalogにないmodelや独自metadataを使う場合は、`openai-custom` のような別のprovider名で定義し、AgentConfigの `model.provider` も同じ名前にしてください。
+組み込み以外のprovider名の場合は、`api` を明示したentryからカスタムモデルを作ります。`api` がないentryはLLM routeとして公開されず、モデル解決も失敗します。modelIdは組み込み一覧で検証せず、そのまま使用します。組み込みproviderのcatalogにないmodelや独自metadataを使う場合は、`openai-custom` のような別のprovider名で定義し、AgentConfigの `model.provider` も同じ名前にしてください。
 
 | フィールド | カスタムモデルでの挙動 |
 |---|---|
-| `api` | 省略時 `openai-completions` |
+| `api` | 組み込み以外のproviderでは必須。OpenAI互換APIなら `openai-completions` を指定 |
 | `reasoning` | 明示値を優先。省略時は有効な `compat.thinkingFormat` の有無で決定 |
 | `contextWindow` | 正の整数。省略時128000 |
 | `maxTokens` | 正の整数。省略時4096 |
