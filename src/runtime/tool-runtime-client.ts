@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { lstat, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -150,6 +150,19 @@ export async function buildToolRuntimeArgs(
         )
       ? await redditMountArgs(root, maintenance)
       : [];
+  if (workspaceMount.length && mounts.length) {
+    const credentialUid = mounts.find((arg) =>
+      arg.startsWith("TOOL_RUNTIME_UID="),
+    );
+    const credentialGid = mounts.find((arg) =>
+      arg.startsWith("TOOL_RUNTIME_GID="),
+    );
+    if (
+      credentialUid !== workspaceMount[1] ||
+      credentialGid !== workspaceMount[3]
+    )
+      throw new Error("Group workspace and credential owner must match");
+  }
   return [
     "run",
     "--rm",
@@ -173,6 +186,9 @@ export async function buildToolRuntimeArgs(
     "CHROMIUM_PATH=/usr/bin/chromium",
     ...mounts,
     ...workspaceMount,
+    ...(capability?.tool === "git-clone"
+      ? ["-e", `GIT_CLONE_STAGE=.git-clone-${name}`]
+      : []),
     options.image ??
       process.env.TOOL_RUNTIME_IMAGE ??
       "my-discord-agent-tool-runtime:latest",
@@ -185,6 +201,12 @@ async function runContainer(
   options: ToolRuntimeOptions,
 ): Promise<AgentToolResult<unknown>> {
   const name = `my-discord-agent-tool-${randomUUID()}`;
+  const stage =
+    "capability" in request &&
+    request.capability === "git-clone" &&
+    options.workspace
+      ? resolve(options.workspace, `.git-clone-${name}`)
+      : undefined;
   const args = await buildToolRuntimeArgs(request, name, options);
   const input = JSON.stringify(request);
   if (Buffer.byteLength(input) > TOOL_RUNTIME_INPUT_MAX_BYTES)
@@ -192,6 +214,7 @@ async function runContainer(
   signal.throwIfAborted();
   const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
   let closed = false;
+  let exited = false;
   let failure: Error | undefined;
   let cancellation: Promise<void> | undefined;
   const chunks: Buffer[] = [];
@@ -252,6 +275,7 @@ async function runContainer(
     );
     child.once("close", (code) => {
       closed = true;
+      exited = true;
       resolve(code);
     });
   });
@@ -292,6 +316,8 @@ async function runContainer(
     closed = true;
     signal.removeEventListener("abort", abort);
     await cancellation;
+    // Only remove the private staging directory after the container has exited.
+    if (stage && exited) await rm(stage, { recursive: true, force: true });
   }
 }
 

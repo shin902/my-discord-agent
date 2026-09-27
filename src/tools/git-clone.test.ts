@@ -2,15 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs/promises", () => ({
   realpath: vi.fn(async () => "/workspace"),
+  mkdir: vi.fn(async () => undefined),
+  rename: vi.fn(async () => undefined),
+  rm: vi.fn(async () => undefined),
   lstat: vi.fn(async () => {
     throw Object.assign(new Error("missing"), { code: "ENOENT" });
   }),
 }));
 
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath, rename, rm } from "node:fs/promises";
 import { cloneGitRepository } from "./git-clone.js";
 
 const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+const stageName =
+  ".git-clone-my-discord-agent-tool-00000000-0000-4000-8000-000000000000";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -27,15 +32,25 @@ describe("git-clone", () => {
         "https://github.com/example/repo.git",
         "repo",
         run as never,
+        stageName,
       ),
     ).toBe("repo");
     expect(run).toHaveBeenCalledWith(
       "git",
-      ["clone", "--", "https://github.com/example/repo.git", "/workspace/repo"],
+      [
+        "clone",
+        "--",
+        "https://github.com/example/repo.git",
+        `/workspace/${stageName}/repo`,
+      ],
       expect.objectContaining({
         cwd: "/workspace",
         env: expect.objectContaining({ GIT_TERMINAL_PROMPT: "0" }),
       }),
+    );
+    expect(rename).toHaveBeenCalledWith(
+      `/workspace/${stageName}/repo`,
+      "/workspace/repo",
     );
   });
 
@@ -70,6 +85,26 @@ describe("git-clone", () => {
       cloneGitRepository(url, "repo", run as never),
     ).rejects.toThrow();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("removes a partial checkout after clone failure", async () => {
+    run.mockRejectedValueOnce(new Error("network failed"));
+    await expect(
+      cloneGitRepository(
+        "https://github.com/a/b",
+        "repo",
+        run as never,
+        stageName,
+      ),
+    ).rejects.toThrow("network failed");
+    expect(mkdir).toHaveBeenCalledWith(`/workspace/${stageName}`, {
+      mode: 0o700,
+    });
+    expect(rm).toHaveBeenCalledWith(`/workspace/${stageName}`, {
+      recursive: true,
+      force: true,
+    });
+    expect(rename).not.toHaveBeenCalled();
   });
 
   it("rejects existing destinations and symlinked parents", async () => {

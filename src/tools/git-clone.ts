@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath, rename, rm } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -14,6 +14,7 @@ export async function cloneGitRepository(
   url: string,
   destination: string,
   run: typeof execFileAsync = execFileAsync,
+  stageName = process.env.GIT_CLONE_STAGE,
 ): Promise<string> {
   let parsed: URL;
   try {
@@ -64,23 +65,35 @@ export async function cloneGitRepository(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  await run("git", ["clone", "--", url, target], {
-    cwd: WORKSPACE,
-    timeout: 120_000,
-    maxBuffer: 1024 * 1024,
-    env: {
-      PATH: process.env.PATH,
-      HOME: "/tmp",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_ASKPASS: "/bin/false",
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: "credential.helper",
-      GIT_CONFIG_VALUE_0: "",
-    },
-  });
-  return destination;
+  if (
+    !stageName ||
+    !/^\.git-clone-my-discord-agent-tool-[0-9a-f-]{36}$/.test(stageName)
+  )
+    throw new Error("Git clone staging is unavailable");
+  const stage = resolve(WORKSPACE, stageName);
+  await mkdir(stage, { mode: 0o700 });
+  try {
+    await run("git", ["clone", "--", url, resolve(stage, "repo")], {
+      cwd: WORKSPACE,
+      timeout: 120_000,
+      maxBuffer: 1024 * 1024,
+      env: {
+        PATH: process.env.PATH,
+        HOME: "/tmp",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "/bin/false",
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "credential.helper",
+        GIT_CONFIG_VALUE_0: "",
+      },
+    });
+    await rename(resolve(stage, "repo"), target);
+    return destination;
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
 }
 
 export const gitCloneTool: AgentTool = {
