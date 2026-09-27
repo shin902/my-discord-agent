@@ -8,6 +8,7 @@ pnpm build:runner
 normal_build_log="$(mktemp)"
 fallback_build_log=""
 mnemon_workspace=""
+wiki_workspace=""
 cleanup() {
   rm -f "$normal_build_log"
   if [[ -n "$fallback_build_log" ]]; then
@@ -15,6 +16,9 @@ cleanup() {
   fi
   if [[ -n "$mnemon_workspace" ]]; then
     rm -rf "$mnemon_workspace"
+  fi
+  if [[ -n "$wiki_workspace" ]]; then
+    rm -rf "$wiki_workspace"
   fi
 }
 trap cleanup EXIT
@@ -65,6 +69,23 @@ mnemon_recall_output="$(docker run --rm \
   mnemon recall --basic 'runner image smoke')"
 printf '%s\n' "$mnemon_recall_output"
 grep -q 'runner image smoke memory' <<<"$mnemon_recall_output"
+
+wiki_workspace="$(mktemp -d)"
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "${wiki_workspace}:/workspace" \
+  -v "${PWD}/templates/SKILLS/wiki-setup:/tmp/wiki-setup:ro" \
+  "$image" bash /tmp/wiki-setup/setup.sh 'wiki/root&test' 'wiki/raw|test' 'wiki/digest&test'
+for skill in wiki-ingest wiki-lint wiki-query; do
+  test -f "$wiki_workspace/SKILLS/$skill/SKILL.md"
+done
+if grep -REq '\{\{(WIKI_ROOT|RAW_DIR|DIGEST_DIR)\}\}' "$wiki_workspace/SKILLS"; then
+  echo 'wiki-setup left placeholders in generated skills' >&2
+  exit 1
+fi
+grep -Fq 'wiki/root&test/index.md' "$wiki_workspace/SKILLS/wiki-query/SKILL.md"
+grep -Fq 'wiki/raw|test' "$wiki_workspace/SKILLS/wiki-ingest/SKILL.md"
+grep -Fq 'wiki/digest&test' "$wiki_workspace/SKILLS/wiki-ingest/SKILL.md"
 
 # A source-forced build is the deterministic equivalent of a missing prebuilt
 # asset. It verifies that the retained native toolchain still provides the
