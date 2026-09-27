@@ -20,7 +20,7 @@ const ROOT = path.resolve(
   "../..",
 );
 export const DEFAULT_RUNTIME_DB_PATH = path.join(ROOT, "data/runtime.sqlite");
-export const QUEUE_SCHEMA_VERSION = 8;
+export const QUEUE_SCHEMA_VERSION = 9;
 export type JobStatus =
   | "queued"
   | "retry_wait"
@@ -474,7 +474,7 @@ function createBaseTables(db: Database.Database): void {
     `CREATE TABLE IF NOT EXISTS jobs (${JOB_COLUMNS}); CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','retry_wait','sending','sent','failed','ambiguous')), payload_json TEXT, response_index INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, host_unique_key TEXT, destination_type TEXT, destination_id TEXT, reply_message_id TEXT, cron_thread_id TEXT, external_message_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, status TEXT NOT NULL CHECK(status IN ('active','completed','dead_letter')), created_at TEXT NOT NULL, completed_at TEXT); CREATE TABLE IF NOT EXISTS dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL, reason TEXT NOT NULL, payload_json TEXT, error TEXT, source TEXT NOT NULL, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS jobs_claim ON jobs(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS jobs_session_order ON jobs(session_id, sequence, status); CREATE INDEX IF NOT EXISTS deliveries_claim ON deliveries(status, next_attempt_at, lease_until, created_at); CREATE INDEX IF NOT EXISTS dead_letters_job ON dead_letters(job_id, created_at);`,
   );
 }
-const JOB_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_json TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK(status IN ('queued','retry_wait','claimed','running','completed','dead_letter')), claimed INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 10, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, claimed_at TEXT, started_at TEXT, heartbeat_at TEXT, exit_code INTEGER, termination TEXT, stop_reason TEXT, usage_json TEXT, timing_json TEXT, error_json TEXT, result_json TEXT, result_state TEXT CHECK(result_state IN ('succeeded','empty_response','non_retryable','max_retries','dead_letter')), terminal_reason TEXT, succeeded INTEGER NOT NULL DEFAULT 0, delivery_suppressed INTEGER NOT NULL DEFAULT 0, delivery_id TEXT, agents_snapshot_hash TEXT, memory_snapshot_hash TEXT, snapshot_hash TEXT, tool_call_key TEXT, workspace_path TEXT, conversation_path TEXT`;
+const JOB_COLUMNS = `id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload_json TEXT NOT NULL, source_kind TEXT, allow_failed_predecessor INTEGER NOT NULL DEFAULT 0, session_id TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL CHECK(status IN ('queued','retry_wait','claimed','running','completed','dead_letter')), claimed INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 10, next_attempt_at TEXT, lease_until TEXT, worker_id TEXT, fencing_token INTEGER NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, claimed_at TEXT, started_at TEXT, heartbeat_at TEXT, exit_code INTEGER, termination TEXT, stop_reason TEXT, usage_json TEXT, timing_json TEXT, error_json TEXT, result_json TEXT, result_state TEXT CHECK(result_state IN ('succeeded','empty_response','non_retryable','max_retries','dead_letter')), terminal_reason TEXT, succeeded INTEGER NOT NULL DEFAULT 0, delivery_suppressed INTEGER NOT NULL DEFAULT 0, delivery_id TEXT, agents_snapshot_hash TEXT, memory_snapshot_hash TEXT, snapshot_hash TEXT, tool_call_key TEXT, workspace_path TEXT, conversation_path TEXT`;
 
 function tableColumnNames(db: Database.Database, table: string): Set<string> {
   return new Set(
@@ -594,6 +594,11 @@ function applyDurableRuntimeColumns(db: Database.Database): void {
   addMissingColumns(db, "deliveries", DELIVERY_UPGRADE_COLUMNS);
   addMissingColumns(db, "jobs", [
     { name: "claimed", ddl: "claimed INTEGER NOT NULL DEFAULT 0" },
+    { name: "source_kind", ddl: "source_kind TEXT" },
+    {
+      name: "allow_failed_predecessor",
+      ddl: "allow_failed_predecessor INTEGER NOT NULL DEFAULT 0",
+    },
     {
       name: "delivery_suppressed",
       ddl: "delivery_suppressed INTEGER NOT NULL DEFAULT 0",
@@ -727,6 +732,22 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     summary: "persist Mail thread routes scoped to destination channels",
     up(db) {
       createMailThreadsTable(db);
+    },
+  },
+  {
+    version: 9,
+    summary: "persist source kind and generic delivery ordering policy",
+    up(db) {
+      addMissingColumns(db, "jobs", [
+        { name: "source_kind", ddl: "source_kind TEXT" },
+        {
+          name: "allow_failed_predecessor",
+          ddl: "allow_failed_predecessor INTEGER NOT NULL DEFAULT 0",
+        },
+      ]);
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS jobs_source_kind ON jobs(source_kind)",
+      );
     },
   },
 ];
@@ -1334,12 +1355,17 @@ export class QueueRepository {
     } as InboxMessage;
     this.db
       .prepare(
-        `INSERT INTO jobs (id,idempotency_key,payload_json,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO jobs (id,idempotency_key,payload_json,source_kind,allow_failed_predecessor,session_id,sequence,status,attempts,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
         key ?? null,
         JSON.stringify(record),
+        payload.feature?.kind ?? null,
+        Number(
+          sourcePolicy?.continueAfterFailedChunk ??
+            Boolean(payload.rssDispatchId),
+        ),
         payload.sessionId,
         sequenceRow.sequence,
         "queued",
@@ -2080,7 +2106,7 @@ export class QueueRepository {
                WHERE predecessor.job_id=candidate.job_id
                  AND predecessor.response_index<candidate.response_index
                  AND predecessor.status NOT IN ('sent')
-                 AND NOT (EXISTS (SELECT 1 FROM jobs rss_job WHERE rss_job.id=candidate.job_id AND json_extract(rss_job.payload_json,'$.rssDispatchId') IS NOT NULL) AND predecessor.status='failed')
+                 AND NOT (EXISTS (SELECT 1 FROM jobs source_job WHERE source_job.id=candidate.job_id AND source_job.allow_failed_predecessor=1) AND predecessor.status='failed')
              )
            ORDER BY candidate.created_at,candidate.response_index,candidate.rowid LIMIT 1`,
         )
@@ -2239,24 +2265,17 @@ export class QueueRepository {
       )
       .get(key) as IdempotencyRecord | undefined;
   }
-  listRssStatePaths(): string[] {
-    const paths = new Set<string>();
+  listSourceInputs(kind: string): unknown[] {
+    const inputs: unknown[] = [];
     for (const row of this.db
-      .prepare("SELECT payload_json FROM jobs")
-      .all() as Array<{ payload_json: string }>) {
-      try {
-        const value = JSON.parse(row.payload_json) as {
-          rssStatePath?: unknown;
-        };
-        if (
-          typeof value.rssStatePath === "string" &&
-          value.rssStatePath.length > 0
-        )
-          paths.add(value.rssStatePath);
-      } catch {}
+      .prepare("SELECT payload_json FROM jobs WHERE source_kind=?")
+      .all(kind) as Array<{ payload_json: string }>) {
+      const value = JSON.parse(row.payload_json) as InboxMessage;
+      if (value.feature?.kind === kind) inputs.push(value.feature.input);
     }
-    return [...paths];
+    return inputs;
   }
+
   recordDeadLetter(input: {
     jobId?: string;
     reason: string;

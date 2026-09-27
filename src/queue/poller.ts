@@ -568,14 +568,24 @@ async function withInferenceLock<T>(
   }
 }
 
+function terminalSourceFailure(
+  msg: InboxMessage,
+  sources: SourceHandlers,
+): boolean {
+  return msg.feature
+    ? sources.policy(msg.feature).terminalOnAgentFailure
+    : Boolean(msg.rssDispatchId);
+}
+
 // 非ゼロ終了コードの扱いは通常メッセージと cron thread delivery で同一のため共通化する。
-// リトライ方針の決定は QueueRepository が所有するため、poller は記録するだけ。
 async function releaseRssAfterFailure(
   msg: InboxMessage,
   reason: string,
   timing: ResponseTiming,
+  sources: SourceHandlers,
 ): Promise<void> {
-  if (!msg.rssDispatchId || msg.fencingToken === undefined) return;
+  if (!terminalSourceFailure(msg, sources) || msg.fencingToken === undefined)
+    return;
   await getQueueRepository().deadLetter(
     msg.id,
     msg.fencingToken,
@@ -583,20 +593,32 @@ async function releaseRssAfterFailure(
     undefined,
     executionMetadata(timing),
   );
-  settleRssDispatch(
-    msg.rssStatePath,
-    msg.rssDispatchId,
-    msg.idempotencyKey,
-    "dead_letter",
-  );
+  if (msg.feature) {
+    try {
+      await sources.terminal(msg);
+    } catch (error) {
+      console.error(
+        `[poller] source failure settlement failed (${msg.id}):`,
+        error,
+      );
+    }
+  } else if (msg.rssDispatchId) {
+    settleRssDispatch(
+      msg.rssStatePath,
+      msg.rssDispatchId,
+      msg.idempotencyKey,
+      "dead_letter",
+    );
+  }
 }
 
 async function failEmptyAgentResponse(
   msg: InboxMessage,
   timing: ResponseTiming,
+  sources: SourceHandlers,
 ): Promise<void> {
-  if (msg.rssDispatchId) {
-    await releaseRssAfterFailure(msg, "empty_response", timing);
+  if (terminalSourceFailure(msg, sources)) {
+    await releaseRssAfterFailure(msg, "empty_response", timing, sources);
   } else {
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
@@ -615,13 +637,14 @@ async function failAttemptIfNonZeroExitCode(
   msg: InboxMessage,
   response: string,
   timing: ResponseTiming,
+  sources: SourceHandlers,
 ): Promise<boolean> {
   const exitCode = timing.agentExecution?.exitCode;
   if (exitCode === undefined || exitCode === null || exitCode === 0) {
     return false;
   }
-  if (msg.rssDispatchId) {
-    await releaseRssAfterFailure(msg, "agent_exit", timing);
+  if (terminalSourceFailure(msg, sources)) {
+    await releaseRssAfterFailure(msg, "agent_exit", timing, sources);
   } else {
     await getQueueRepository().failAttempt(
       msg.id,
@@ -791,7 +814,7 @@ async function processCronThreadDelivery(
     // item-thread materializes only after a non-suppressed response exists.
     // new-thread keeps its existing destination-session behavior.
     if (
-      !msg.rssDispatchId &&
+      !terminalSourceFailure(msg, sources) &&
       msg.cronDeliveryMode !== "item-thread" &&
       usesCronDestinationSession(msg)
     ) {
@@ -854,10 +877,11 @@ async function processCronThreadDelivery(
         signal,
       },
     );
-    if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (await failAttemptIfNonZeroExitCode(msg, response, timing, sources))
+      return;
     if (isEmptyAgentResponse(response)) {
       outcome = "dead-letter";
-      await failEmptyAgentResponse(msg, timing);
+      await failEmptyAgentResponse(msg, timing, sources);
       return;
     }
     const suppressDelivery = hasNoReplyMarker(response);
@@ -893,9 +917,9 @@ async function processCronThreadDelivery(
     if (suppressDelivery) await finalizeSuppressedSource(msg, sources);
     outcome = "success";
   } catch (error) {
-    if (msg.rssDispatchId) {
+    if (terminalSourceFailure(msg, sources)) {
       outcome = "dead-letter";
-      await releaseRssAfterFailure(msg, "agent_error", timing);
+      await releaseRssAfterFailure(msg, "agent_error", timing, sources);
       return;
     }
     const ambiguousMutation =
@@ -991,11 +1015,12 @@ export async function processMessage(
 ): Promise<void> {
   if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
     const timing = startResponseTiming(msg);
-    if (msg.rssDispatchId) {
+    if (terminalSourceFailure(msg, sources)) {
       await releaseRssAfterFailure(
         msg,
         "unsupported_pre_materialized_item_thread",
         timing,
+        sources,
       );
     } else if (msg.fencingToken !== undefined) {
       await getQueueRepository().deadLetter(
@@ -1029,6 +1054,15 @@ export async function processMessage(
       }
     }
     return;
+  }
+  if (msg.feature) {
+    try {
+      sources.policy(msg.feature);
+    } catch (error) {
+      if (msg.fencingToken !== undefined)
+        getQueueRepository().failAttempt(msg.id, error, msg.fencingToken);
+      return;
+    }
   }
   if (msg.fencingToken !== undefined) {
     try {
@@ -1105,8 +1139,13 @@ export async function processMessage(
     });
     if (!groupConfig) {
       outcome = "dead-letter";
-      if (msg.rssDispatchId) {
-        await releaseRssAfterFailure(msg, "config-unavailable", timing);
+      if (terminalSourceFailure(msg, sources)) {
+        await releaseRssAfterFailure(
+          msg,
+          "config-unavailable",
+          timing,
+          sources,
+        );
       } else if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
           msg.id,
@@ -1162,6 +1201,7 @@ export async function processMessage(
                 source:
                   !msg.botId &&
                   !msg.cronJobId &&
+                  !msg.feature &&
                   !msg.mailEmailId &&
                   !msg.rssDispatchId
                     ? msg.source
@@ -1212,9 +1252,9 @@ export async function processMessage(
       );
     } catch (err) {
       stopTyping();
-      if (msg.rssDispatchId) {
+      if (terminalSourceFailure(msg, sources)) {
         outcome = "dead-letter";
-        await releaseRssAfterFailure(msg, "agent_error", timing);
+        await releaseRssAfterFailure(msg, "agent_error", timing, sources);
         return;
       }
       if (err instanceof NonRetryableError) {
@@ -1247,10 +1287,11 @@ export async function processMessage(
       return;
     }
 
-    if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (await failAttemptIfNonZeroExitCode(msg, response, timing, sources))
+      return;
     if (isEmptyAgentResponse(response)) {
       outcome = "dead-letter";
-      await failEmptyAgentResponse(msg, timing);
+      await failEmptyAgentResponse(msg, timing, sources);
       return;
     }
     const suppressDelivery = hasNoReplyMarker(response);

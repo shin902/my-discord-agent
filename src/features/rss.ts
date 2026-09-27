@@ -23,6 +23,16 @@ const rssInput = z.object({
 });
 export type RssSourceInput = z.infer<typeof rssInput>;
 
+export function discoverRssStatePaths(repo: QueueRepository): string[] {
+  const paths = new Set<string>();
+  for (const value of repo.listSourceInputs("rss")) {
+    const parsed = rssInput.safeParse(value);
+    if (parsed.success && parsed.data.statePath)
+      paths.add(parsed.data.statePath);
+  }
+  return [...paths];
+}
+
 export async function enqueueRssDispatch(
   ctx: CronContext,
   content: string,
@@ -51,6 +61,7 @@ export function registerRssSource(
 ): void {
   handlers.register("rss", rssInput, {
     continueAfterFailedChunk: true,
+    terminalOnAgentFailure: true,
     suppressed(input) {
       const settled = settleRssDispatch(
         input.statePath,
@@ -71,14 +82,16 @@ export function registerRssSource(
       }
     },
     terminal(input, message: InboxMessage) {
+      const job = repo.get(message.id);
+      if (!job || (job.status !== "completed" && job.status !== "dead_letter"))
+        return;
+      // Only successful jobs with a Discord delivery wait for the worker.
       if (
+        job.status === "completed" &&
         ["direct", "new-thread", "item-thread"].includes(
           message.cronDeliveryMode ?? "",
         )
       )
-        return;
-      const job = repo.get(message.id);
-      if (!job || (job.status !== "completed" && job.status !== "dead_letter"))
         return;
       settleRssDispatch(
         input.statePath,
@@ -151,12 +164,10 @@ export function reconcileRssDispatches(
   rssDbPaths?: string | readonly string[],
 ): number {
   const configured = typeof rssDbPaths === "string" ? [rssDbPaths] : rssDbPaths;
-  // Caller-supplied paths (startup passes the merged repository + cron path
-  // list) are authoritative: listRssStatePaths() parses every job payload, so
-  // discovering it again here would duplicate that full scan. Only standalone
-  // callers that pass no path argument fall back to queue-payload discovery.
+  // Caller-supplied paths are authoritative. Standalone reconciliation only
+  // scans persisted RSS inputs, never another feature's private payload.
   const discovered =
-    configured === undefined ? repo.listRssStatePaths() : configured;
+    configured === undefined ? discoverRssStatePaths(repo) : configured;
   const paths = new Set<string | undefined>([undefined, ...discovered]);
   let resolved = 0;
   for (const rssDbPath of paths) {

@@ -2,7 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reconcileRssDispatches, settleRssDispatch } from "../features/rss.js";
+import {
+  reconcileRssDispatches,
+  registerRssSource,
+  settleRssDispatch,
+} from "../features/rss.js";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -12,6 +16,7 @@ import {
 } from "../rss/store.js";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
+import { SourceHandlers } from "./source-handlers.js";
 
 let tempDirs: string[] = [];
 afterEach(async () => {
@@ -109,6 +114,9 @@ describe("reconcileRssDispatches", () => {
     const rssPath = await makeRssPath();
     seedUnread(rssPath);
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const sources = new SourceHandlers();
+    registerRssSource(sources, repo);
+    repo.registerSources(sources);
     try {
       const rssDb = openRssDb(rssPath);
       const dispatch = claimUnreadArticles(rssDb, "cron-rss", 10);
@@ -121,8 +129,14 @@ describe("reconcileRssDispatches", () => {
           sessionId: "session",
           content: "content",
           timestamp: new Date().toISOString(),
-          rssDispatchId: expectDefined(dispatch).id,
-          rssStatePath: rssPath,
+          feature: {
+            kind: "rss",
+            input: {
+              dispatchId: expectDefined(dispatch).id,
+              statePath: rssPath,
+              dispatchJobId: expectDefined(dispatch).jobId,
+            },
+          },
         },
         { idempotencyKey: expectDefined(dispatch).jobId },
       );
@@ -475,7 +489,7 @@ describe("reconcileRssDispatches", () => {
     claimOne(rssPath, "cron-supplied");
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
+      const discoverySpy = vi.spyOn(repo, "listSourceInputs");
       expect(reconcileRssDispatches(repo, [rssPath])).toBe(1);
       expect(discoverySpy).not.toHaveBeenCalled();
     } finally {
@@ -689,9 +703,9 @@ describe("reconcileRssDispatches", () => {
         { empty: true },
       );
 
-      const discoverySpy = vi.spyOn(repo, "listRssStatePaths");
+      const discoverySpy = vi.spyOn(repo, "listSourceInputs");
       expect(reconcileRssDispatches(repo)).toBe(0);
-      expect(discoverySpy).toHaveBeenCalledTimes(1);
+      expect(discoverySpy).toHaveBeenCalledWith("rss");
     } finally {
       repo.close();
     }

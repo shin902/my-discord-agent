@@ -45,6 +45,7 @@ export interface DeliverySendContext {
     channelId: string,
     mailRouteKey: string,
   ) => string | undefined;
+  threadRouteKey?: (envelope: SourceEnvelope) => string | undefined;
   persistMailThread?: (
     groupName: string,
     channelId: string,
@@ -153,15 +154,14 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const isItemThread = destinationType === "item-thread";
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
-      if (
-        destinationType === "channel" &&
-        payload.mailEmailId &&
-        payload.mailRouteKey
-      ) {
+      const routeKey = payload.feature
+        ? context.threadRouteKey?.(payload.feature)
+        : payload.mailRouteKey;
+      if (destinationType === "channel" && routeKey) {
         threadId = context.resolveMailThread?.(
           payload.groupName,
           destinationId,
-          payload.mailRouteKey,
+          routeKey,
         );
         if (threadId) {
           try {
@@ -194,7 +194,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
             );
           mutationAttempted = true;
           target = await channel.threads.create({
-            name: payload.mailRouteKey
+            name: routeKey
               .replace(/^mail:/, "")
               .replace(/^github:(.+):item:(\d+)$/, "$1 #$2")
               .slice(0, 100),
@@ -206,7 +206,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
             await context.persistMailThread?.(
               payload.groupName,
               destinationId,
-              payload.mailRouteKey,
+              routeKey,
               threadId,
             );
           } catch (error) {
@@ -470,6 +470,14 @@ export class DeliveryWorker {
       sourceJob.cronProvisioning !== true &&
       claim.row.destinationType === "new-thread";
     try {
+      const envelope = this.sourceOf(claim.row);
+      if (envelope) {
+        try {
+          this.sources.policy(envelope);
+        } catch (error) {
+          throw new DeliveryError("non-retryable", String(error), error);
+        }
+      }
       if (unsupportedPreMaterializedItemThread) {
         throw new DeliveryError(
           "non-retryable",
@@ -492,6 +500,7 @@ export class DeliveryWorker {
             claim.fencingToken,
             threadId,
           ),
+        threadRouteKey: (envelope) => this.sources.threadRouteKey(envelope),
         resolveMailThread: (groupName, channelId, mailRouteKey) =>
           this.repository.getMailThread(groupName, channelId, mailRouteKey),
         persistMailThread: (groupName, channelId, mailRouteKey, threadId) =>
@@ -603,9 +612,14 @@ export class DeliveryWorker {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
         const source = this.sourceOf(claim.row);
-        const rss = source
-          ? this.sources.policy(source).continueAfterFailedChunk
-          : this.isRss(claim.row);
+        let rss = this.isRss(claim.row);
+        if (source) {
+          try {
+            rss = this.sources.policy(source).continueAfterFailedChunk;
+          } catch {
+            rss = false;
+          }
+        }
         if (rss || unsupportedPreMaterializedItemThread) {
           this.repository.failDeliveryBatch(
             claim.row.id,
@@ -652,8 +666,14 @@ export class DeliveryWorker {
 
   private sourceOf(row: DeliveryRow): SourceEnvelope | undefined {
     if (!row.payloadJson) return undefined;
-    const payload = JSON.parse(row.payloadJson) as { feature?: SourceEnvelope };
-    return payload.feature;
+    try {
+      const payload = JSON.parse(row.payloadJson) as {
+        feature?: SourceEnvelope;
+      };
+      return payload.feature;
+    } catch {
+      return undefined;
+    }
   }
 
   private async notifySource(

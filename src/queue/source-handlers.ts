@@ -11,6 +11,9 @@ export interface SourceCallbacks<T> {
   activeOnlyIdempotency?: boolean;
   /** RSS continues past a failed response chunk; ordinary sources do not. */
   continueAfterFailedChunk?: boolean;
+  /** A failed RSS Agent run releases its claim instead of retrying that queue job. */
+  terminalOnAgentFailure?: boolean;
+  threadRouteKey?: (input: T) => string | undefined;
   suppressed?: (input: T, message: InboxMessage) => Promise<void> | void;
   terminal?: (input: T, message: InboxMessage) => Promise<void> | void;
   delivery?: (
@@ -23,6 +26,7 @@ export interface SourceCallbacks<T> {
 interface RegisteredSource {
   activeOnlyIdempotency: boolean;
   continueAfterFailedChunk: boolean;
+  terminalOnAgentFailure: boolean;
   suppressed: (input: unknown, message: InboxMessage) => Promise<void>;
   terminal: (input: unknown, message: InboxMessage) => Promise<void>;
   delivery: (
@@ -31,6 +35,7 @@ interface RegisteredSource {
     statuses: readonly SourceDeliveryStatus[],
   ) => Promise<void>;
   validate: (input: unknown) => unknown;
+  threadRouteKey: (input: unknown) => string | undefined;
 }
 
 /** No global registration order: startup and standalone workers share an explicit instance. */
@@ -55,7 +60,9 @@ export class SourceHandlers {
     this.sources.set(kind, {
       activeOnlyIdempotency: callbacks.activeOnlyIdempotency ?? false,
       continueAfterFailedChunk: callbacks.continueAfterFailedChunk ?? false,
+      terminalOnAgentFailure: callbacks.terminalOnAgentFailure ?? false,
       validate,
+      threadRouteKey: (input) => callbacks.threadRouteKey?.(validate(input)),
       suppressed: async (input, message) => {
         await callbacks.suppressed?.(validate(input), message);
       },
@@ -78,12 +85,18 @@ export class SourceHandlers {
   policy(envelope: SourceEnvelope): {
     activeOnlyIdempotency: boolean;
     continueAfterFailedChunk: boolean;
+    terminalOnAgentFailure: boolean;
   } {
     const source = this.resolve(envelope);
     return {
       activeOnlyIdempotency: source.activeOnlyIdempotency,
       continueAfterFailedChunk: source.continueAfterFailedChunk,
+      terminalOnAgentFailure: source.terminalOnAgentFailure,
     };
+  }
+
+  threadRouteKey(envelope: SourceEnvelope): string | undefined {
+    return this.resolve(envelope).threadRouteKey(envelope.input);
   }
 
   async suppressed(message: InboxMessage): Promise<void> {

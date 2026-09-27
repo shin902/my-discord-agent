@@ -38,7 +38,11 @@ import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
 import { registerMailSource } from "./features/mail.js";
 import { registerMemoryExport } from "./features/memory-export.js";
-import { reconcileRssDispatches, registerRssSource } from "./features/rss.js";
+import {
+  discoverRssStatePaths,
+  reconcileRssDispatches,
+  registerRssSource,
+} from "./features/rss.js";
 import { startScreenCapture } from "./features/screen-capture.js";
 import { startXSavedGallery } from "./integrations/x-saved/gallery.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
@@ -103,7 +107,7 @@ try {
   await initializeQueue(queueRepository);
   const cronJobs = await loadAndValidateCron();
   const rssStatePaths = [
-    ...queueRepository.listRssStatePaths(),
+    ...discoverRssStatePaths(queueRepository),
     ...cronJobs.flatMap((job) => {
       if (
         typeof job.handler !== "string" ||

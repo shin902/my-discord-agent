@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiscordEvent, SendMessageOptions } from "../agent/manager.js";
+import { registerRssSource } from "../features/rss.js";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -12,6 +13,9 @@ import {
   saveFeedEntries,
 } from "../rss/store.js";
 import { NonRetryableError, TransientError } from "../utils/error.js";
+import { JobHandlers } from "./job-handlers.js";
+import type { QueueRepository } from "./repository.js";
+import { SourceHandlers } from "./source-handlers.js";
 import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
@@ -891,11 +895,19 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       cronDeliveryMode: "direct",
       cronSessionMode: "per-run",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
+    const sources = new SourceHandlers();
+    registerRssSource(sources, { get: getJob } as unknown as QueueRepository);
 
-    await processMessage(msg);
+    await processMessage(msg, undefined, new JobHandlers(), sources);
 
     expect(commitInboxResult).toHaveBeenCalledWith(
       msg.id,

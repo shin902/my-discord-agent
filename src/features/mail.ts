@@ -33,6 +33,7 @@ export async function enqueueMail(
 export function registerMailSource(handlers: SourceHandlers): void {
   handlers.register("mail", mailInput, {
     activeOnlyIdempotency: true,
+    threadRouteKey: (input) => input.routeKey,
     async suppressed(input) {
       await acknowledgeEmail(input.emailId);
     },

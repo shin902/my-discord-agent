@@ -37,7 +37,7 @@ const mocks = vi.hoisted(() => ({
   stopCron: vi.fn(),
   queueRepository: {
     db: {},
-    listRssStatePaths: vi.fn(),
+    listSourceInputs: vi.fn(),
     registerSources: vi.fn(),
   },
   initializeQueue: vi.fn(),
@@ -127,6 +127,10 @@ vi.mock("./queue/migration.js", () => ({
   initializeQueue: mocks.initializeQueue,
 }));
 vi.mock("./features/rss.js", () => ({
+  discoverRssStatePaths: (repo: typeof mocks.queueRepository) =>
+    repo
+      .listSourceInputs("rss")
+      .map((input: { statePath: string }) => input.statePath),
   reconcileRssDispatches: mocks.reconcileRssDispatches,
   registerRssSource: vi.fn(),
 }));
@@ -176,7 +180,7 @@ describe("index: 起動時バリデーション", () => {
     mocks.loadAndValidateCron.mockResolvedValue([]);
     mocks.enqueueStartupJobs.mockResolvedValue(undefined);
     mocks.killAllRunningContainers.mockResolvedValue(undefined);
-    mocks.queueRepository.listRssStatePaths.mockReturnValue([]);
+    mocks.queueRepository.listSourceInputs.mockReturnValue([]);
     mocks.runRuntimeOperator.mockResolvedValue({
       health: { ok: true },
       observability: { alerts: [] },
@@ -515,7 +519,9 @@ describe("index: 起動時バリデーション", () => {
   });
 
   it("reconciles repository and cron RSS paths before final startup observability", async () => {
-    mocks.queueRepository.listRssStatePaths.mockReturnValue(["runtime.sqlite"]);
+    mocks.queueRepository.listSourceInputs.mockReturnValue([
+      { statePath: "runtime.sqlite" },
+    ]);
     mocks.loadAndValidateCron.mockResolvedValue([
       {
         handler: "jobs/rss-dispatch.ts",
@@ -528,7 +534,7 @@ describe("index: 起動時バリデーション", () => {
     // RSS state path discovery parses every job payload; startup must run it
     // exactly once and hand the resolved list to both reconciliation and the
     // runtime operator.
-    expect(mocks.queueRepository.listRssStatePaths).toHaveBeenCalledOnce();
+    expect(mocks.queueRepository.listSourceInputs).toHaveBeenCalledWith("rss");
     expect(mocks.reconcileRssDispatches).toHaveBeenCalledWith(
       mocks.queueRepository,
       ["runtime.sqlite", "cron.sqlite"],

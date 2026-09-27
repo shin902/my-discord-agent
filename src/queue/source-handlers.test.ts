@@ -58,6 +58,7 @@ describe("source registration", () => {
     ).toEqual({
       activeOnlyIdempotency: true,
       continueAfterFailedChunk: false,
+      terminalOnAgentFailure: false,
     });
     const message = {
       feature: { kind: "mail", input: { emailId: "one" } },

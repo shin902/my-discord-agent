@@ -7,6 +7,10 @@ export default defineConfig({
     globals: true,
     environment: "node",
     maxWorkers: isCI ? undefined : 8,
-    include: ["src/**/*.test.ts", ".pi/extensions/**/*.test.ts"],
+    include: [
+      "src/**/*.test.ts",
+      "scripts/**/*.test.ts",
+      ".pi/extensions/**/*.test.ts",
+    ],
   },
 });
