@@ -6,7 +6,6 @@ export function isLlmCredential(entry: CredentialEntry): boolean {
   if (entry.msal || entry.google || entry.redditCookie) return false;
   return (
     entry.api !== undefined ||
-    entry.forceCustom === true ||
     (getProviders() as string[]).includes(entry.provider)
   );
 }

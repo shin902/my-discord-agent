@@ -140,7 +140,6 @@ describe("loadCredentialProxy", () => {
       makeConfig([
         {
           provider: "codex-oauth",
-          forceCustom: true,
           envVars: ["CLIPROXY_API_KEY"],
           baseUrl: "http://localhost:8317/v1",
           api: "openai-codex-responses",
@@ -154,7 +153,6 @@ describe("loadCredentialProxy", () => {
     expect(result).toEqual([
       {
         provider: "codex-oauth",
-        forceCustom: true,
         envVars: ["CLIPROXY_API_KEY"],
         baseUrl: "http://localhost:8317/v1",
         api: "openai-codex-responses",

@@ -207,7 +207,7 @@ describe("resolveModel", () => {
     expect(textModel.input).toEqual(["text"]);
   });
 
-  it("forceCustom: true の場合、BuiltinProvider と衝突していてもカスタムプロバイダーとして解決する", async () => {
+  it("別名のカスタムプロバイダーは組み込みmodelId以外も解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders } = await import("@earendil-works/pi-ai/compat");
     const { loadCredentialProxy } = await import(
@@ -216,20 +216,19 @@ describe("resolveModel", () => {
     vi.mocked(getProviders).mockReturnValue(["groq"] as BuiltinProvider[]);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       {
-        provider: "groq",
-        forceCustom: true,
+        provider: "groq-custom",
         baseUrl: "https://api.groq.com/openai/v1",
         api: "openai-completions",
       },
     ] as CredentialEntry[]);
 
-    const model = await resolveModel("groq", "llama-3.3-70b-versatile");
-    expect(model.provider).toBe("groq");
+    const model = await resolveModel("groq-custom", "llama-3.3-70b-versatile");
+    expect(model.provider).toBe("groq-custom");
     expect(model.baseUrl).toBe("https://api.groq.com/openai/v1");
     expect(model.id).toBe("llama-3.3-70b-versatile");
   });
 
-  it("forceCustom が未指定の場合は BuiltinProvider 側のモデル一覧から解決する（回帰確認）", async () => {
+  it("BuiltinProvider は組み込みモデル一覧から解決する", async () => {
     const { resolveModel } = await importFresh();
     const { getProviders, getModels } = await import(
       "@earendil-works/pi-ai/compat"

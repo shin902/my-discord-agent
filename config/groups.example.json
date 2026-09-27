@@ -2,7 +2,7 @@
   {
     "name": "default",
     "model": {
-      "provider": "zai",
+      "provider": "zai-custom",
       "modelId": "glm-4.7-flash"
     },
     "tools": ["bash", "tavily-search", "bot"],

@@ -16,7 +16,6 @@ describe("LLM credential declarations", () => {
   });
   it.each([
     { api: "openai-responses" as const },
-    { forceCustom: true },
   ])("preserves custom model declarations: %j", (declaration) => {
     expect(
       isLlmCredential({
@@ -51,7 +50,6 @@ describe("LLM credential declarations", () => {
       provider: "openai",
       baseUrl: "http://fixture.test",
       api: "openai-responses",
-      forceCustom: true,
       ...auth,
     };
     expect(isLlmCredential(entry)).toBe(false);

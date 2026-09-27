@@ -93,7 +93,7 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 
 ```json
 [
-  { "provider": "zai", "concurrency": "serial" },
+  { "provider": "zai-custom", "concurrency": "serial" },
   { "provider": "openai-codex", "concurrency": "parallel" },
   {
     "provider": "llama-cpp",
@@ -118,7 +118,7 @@ Reddit の Cookie 認証は `config/credentials.json` では管理せず、Tool 
 ```json
 [
   {
-    "provider": "zai",
+    "provider": "zai-custom",
     "envVars": ["ZAI_API_KEY"],
     "baseUrl": "https://api.z.ai/api/coding/paas/v4"
   },
@@ -142,7 +142,7 @@ Reddit の Cookie 認証は `config/credentials.json` では管理せず、Tool 
 ]
 ```
 
-API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。OpenAIの組み込みモデルを使うentryには`forceCustom`を指定しない。Codex経路はmodel identityを`openai-codex`のまま保ち、wire APIだけを`openai-responses`へ変更してCLIProxyAPIへ接続する。詳しい構成は [Codex OAuth / CLIProxyAPIガイド](guides/codex-oauth-cliproxyapi.md) を参照。
+API キーなどの機密情報は `.env` に記載し、`envVars` で参照する。独自モデルには組み込みproviderと異なる名前を使う。Codex経路はmodel identityを`openai-codex`のまま保ち、wire APIだけを`openai-responses`へ変更してCLIProxyAPIへ接続する。詳しい構成は [Codex OAuth / CLIProxyAPIガイド](guides/codex-oauth-cliproxyapi.md) を参照。
 
 ## config/groups.json
 
@@ -152,7 +152,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 [
   {
     "name": "chat",
-    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
     "tools": ["bash", "tavily-search", "bot"],
     "skills": ["agent-reach"],
     "toolSets": ["agent-reach"],
@@ -173,7 +173,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
   },
   {
     "name": "thread",
-    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
     "tools": ["bash", "read", "write", "edit"],
     "skills": ["agent-reach", "session-logs"],
     "toolSets": ["agent-reach"],
@@ -255,7 +255,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "direct",
     "sessionMode": "per-run",
-    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
     "tools": ["read"],
     "skills": ["session-logs"]
   }
@@ -420,7 +420,7 @@ Agent Bot profile の canonical source です。トップレベルに Bot ID を
     "group": "default",
     "description": "Implements and reviews code changes.",
     "instructions": "コード変更を担当する worker",
-    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
     "tools": ["read", "write", "edit"],
     "skills": [],
     "mounts": []

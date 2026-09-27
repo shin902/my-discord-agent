@@ -19,9 +19,9 @@
 
 ### LLM routeの公開条件
 
-Credential Proxyは全credentialを公開しません。Piの組み込みprovider名、明示的な `api`、または `forceCustom: true` のいずれかでモデル用途と宣言されたentryだけを公開します。`msal` / `google` / `redditCookie` を持つentryは常にhost専用です。同じ判定をsandbox向けJSON・HTTP route・モデル解決で共有します。未知のintegrationは既定で非公開となり、URLや環境変数名から用途を推測しません。
+Credential Proxyは全credentialを公開しません。Piの組み込みprovider名、または明示的な `api`でモデル用途と宣言されたentryだけを公開します。`msal` / `google` / `redditCookie` を持つentryは常にhost専用です。同じ判定をsandbox向けJSON・HTTP route・モデル解決で共有します。未知のintegrationは既定で非公開となり、URLや環境変数名から用途を推測しません。
 
-独自providerを `provider` / `baseUrl` だけで定義していた場合は、既存のwire形式（従来の既定値なら `api: "openai-completions"`）を明記してください。`forceCustom: true` の既存entryは変更不要です。これは静的なLLM接続宣言であり、runごとの認可ではありません。運用者はintegrationの高権限credentialをLLM用として宣言しないでください。
+独自providerを `provider` / `baseUrl` だけで定義していた場合は、既存のwire形式（従来の既定値なら `api: "openai-completions"`）を明記してください。これは静的なLLM接続宣言であり、runごとの認可ではありません。運用者はintegrationの高権限credentialをLLM用として宣言しないでください。
 
 ### baseUrlのプレースホルダ
 
@@ -81,15 +81,14 @@ schemaには旧 `redditCookie`（`cookieFile` 既定値 `data/reddit-cookies.jso
 
 ## モデル解決
 
-KnownProviderで `forceCustom` が未指定・falseの場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。OpenAIの組み込みモデルを使うrouteでは`forceCustom`を指定しません。credential entryから `baseUrl` と、明示されていればwire `api` だけを適用し、provider identity・context window・maxTokens・reasoning・input・cost等の組み込みmetadataは保持します。`compat` 等によるカスタムモデル化はしません。
+Piの組み込みprovider名の場合、pi-aiの組み込みモデル一覧からmodelIdを検証・解決します。credential entryから `baseUrl` と、明示されていればwire `api` だけを適用し、provider identity・context window・maxTokens・reasoning・input・cost等の組み込みmetadataは保持します。`compat` 等によるカスタムモデル化はしません。
 
 sandboxでは接続先の `baseUrl` をホストから渡された Credential Proxy URL へ置換します。KnownProvider も `credentials.json` に接続定義が必要で、sandbox 用 entry がない場合は明示エラーとなります。provider SDK が `baseUrl` を利用しない独自接続方式は direct egress 拒否の対象となるため、利用する API 形式で疎通確認してください。
 
-未知のprovider名、または `forceCustom: true` の場合は、このentryからカスタムモデルを作ります。modelIdは組み込み一覧で検証せず、そのまま使用します。KnownProvider名でもmetadataを含めてカスタムモデルとして定義したい場合だけ `forceCustom: true` を指定します。単なるgateway URL / wire APIの変更には不要です。
+組み込み以外のprovider名の場合は、このentryからカスタムモデルを作ります。modelIdは組み込み一覧で検証せず、そのまま使用します。組み込みproviderのcatalogにないmodelや独自metadataを使う場合は、`openai-custom` のような別のprovider名で定義し、AgentConfigの `model.provider` も同じ名前にしてください。
 
 | フィールド | カスタムモデルでの挙動 |
 |---|---|
-| `forceCustom` | KnownProvider名でもカスタムモデル解決を選ぶ |
 | `api` | 省略時 `openai-completions` |
 | `reasoning` | 明示値を優先。省略時は有効な `compat.thinkingFormat` の有無で決定 |
 | `contextWindow` | 正の整数。省略時128000 |

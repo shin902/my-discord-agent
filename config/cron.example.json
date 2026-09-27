@@ -35,7 +35,7 @@
     "channelId": "YOUR_CHANNEL_ID",
     "deliveryMode": "new-thread",
     "sessionMode": "destination",
-    "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+    "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
     "tools": ["read", "grep"],
     "contextFiles": [{ "path": "memory/CRON.md", "maxChars": 2000 }],
     "skills": ["session-logs"],
