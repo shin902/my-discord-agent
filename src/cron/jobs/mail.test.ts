@@ -376,7 +376,7 @@ describe("mail active-only dedupe", () => {
   beforeEach(() => {
     repo = new QueueRepository(":memory:");
     sources = new SourceHandlers();
-    registerMailSource(sources);
+    registerMailSource(sources, repo);
     repo.registerSources(sources);
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (init?.method === "PATCH") {

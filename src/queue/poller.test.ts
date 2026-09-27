@@ -124,7 +124,9 @@ registerRssSource(
   { get: getJob } as unknown as QueueRepository,
   settleRssDispatch,
 );
-registerMailSource(sourceHandlers);
+registerMailSource(sourceHandlers, {
+  get: getJob,
+} as unknown as QueueRepository);
 function processMessage(msg: InboxMessage, signal?: AbortSignal) {
   return runProcessMessage(msg, signal, new JobHandlers(), sourceHandlers);
 }

@@ -11,7 +11,7 @@ describe("source registration", () => {
     const repo = new QueueRepository(":memory:");
     try {
       const handlers = new SourceHandlers();
-      registerMailSource(handlers);
+      registerMailSource(handlers, repo);
       repo.registerSources(handlers);
       const input = {
         channelId: "channel",
@@ -32,6 +32,28 @@ describe("source registration", () => {
       expect(() =>
         repo.enqueue({ ...input, feature: { kind: "unknown", input: {} } }),
       ).toThrow(/unregistered/);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("routes Mail threads through the repository captured at registration", () => {
+    const repo = new QueueRepository(":memory:");
+    try {
+      const handlers = new SourceHandlers();
+      registerMailSource(handlers, repo);
+      const route = handlers.threadRoute(
+        {
+          kind: "mail",
+          input: { emailId: "one", routeKey: "mail:a@example.com" },
+        },
+        "group",
+        "channel",
+      );
+      expect(route?.name).toBe("a@example.com");
+      expect(route?.resolve()).toBeUndefined();
+      route?.persist("thread-1");
+      expect(route?.resolve()).toBe("thread-1");
     } finally {
       repo.close();
     }

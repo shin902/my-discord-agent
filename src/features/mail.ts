@@ -82,10 +82,13 @@ export function setMailThread(
     .run(groupName, channelId, routeKey, threadId, new Date().toISOString());
 }
 
-export function registerMailSource(handlers: SourceHandlers): void {
+export function registerMailSource(
+  handlers: SourceHandlers,
+  repository: QueueRepository,
+): void {
   handlers.register("mail", mailInput, {
     activeOnlyIdempotency: true,
-    threadRoute(input, repository, groupName, channelId) {
+    threadRoute(input, groupName, channelId) {
       if (!input.routeKey) return undefined;
       const routeKey = input.routeKey;
       return {

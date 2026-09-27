@@ -480,12 +480,7 @@ export class DeliveryWorker {
             threadId,
           ),
         threadRoute: (envelope, groupName, channelId) =>
-          this.sources.threadRoute(
-            envelope,
-            this.repository,
-            groupName,
-            channelId,
-          ),
+          this.sources.threadRoute(envelope, groupName, channelId),
         promoteCronItemSession: async (threadId) => {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);
