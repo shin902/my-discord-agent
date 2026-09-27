@@ -20,6 +20,40 @@ import { QueueRepository } from "./repository.js";
 import { SourceHandlers } from "./source-handlers.js";
 
 describe("registered RSS source lifecycle", () => {
+  it("does not send a persisted delivery with an unregistered source", async () => {
+    const repo = new QueueRepository(":memory:");
+    try {
+      const job = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "prompt",
+        timestamp: new Date().toISOString(),
+      }).job;
+      const claim = expectDefined(repo.claim());
+      repo.commitResult(job.id, claim.fencingToken, "response", {
+        deliveryPayload: {
+          destinationId: "channel",
+          feature: { kind: "unknown", input: {} },
+        },
+      });
+      const send = vi.fn(async () => ({ externalMessageId: "sent" }));
+      const worker = new DeliveryWorker(
+        repo,
+        { send },
+        {},
+        new SourceHandlers(),
+      );
+      await worker.runOnce();
+      expect(send).not.toHaveBeenCalled();
+      expect(repo.listDeliveries().map((row) => row.status)).toEqual([
+        "failed",
+      ]);
+    } finally {
+      repo.close();
+    }
+  });
+
   it("uses persisted delivery policy, not JSON inspection, to pass a failed predecessor", () => {
     const repo = new QueueRepository(":memory:");
     const sources = new SourceHandlers();

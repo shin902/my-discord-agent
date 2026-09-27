@@ -35,8 +35,10 @@ function convertPayload(payload: Payload, dispatchJobId?: string): {
       throw new Error("invalid Mail route key");
     next.feature = {
       kind: "mail",
-      input: { emailId: mail, ...(routeKey ? { routeKey } : {}) },
+      input: { emailId: mail, ...(routeKey !== undefined ? { routeKey } : {}) },
     };
+    delete next.mailEmailId;
+    delete next.mailRouteKey;
     kind = "mail";
   } else if (rss !== undefined) {
     if (typeof rss !== "string" || !rss)
@@ -51,17 +53,15 @@ function convertPayload(payload: Payload, dispatchJobId?: string): {
       kind: "rss",
       input: {
         dispatchId: rss,
-        ...(statePath ? { statePath } : {}),
-        ...(key ? { dispatchJobId: key } : {}),
+        ...(statePath !== undefined ? { statePath } : {}),
+        ...(key !== undefined ? { dispatchJobId: key } : {}),
       },
     };
+    delete next.rssDispatchId;
+    delete next.rssStatePath;
+    delete next.rssDispatchJobId;
     kind = "rss";
   }
-  delete next.mailEmailId;
-  delete next.mailRouteKey;
-  delete next.rssDispatchId;
-  delete next.rssStatePath;
-  delete next.rssDispatchJobId;
   return { payload: next, kind, continueAfterFailedChunk: kind === "rss" ? 1 : 0 };
 }
 
@@ -102,14 +102,13 @@ export async function convertIssue540Runtime(
       .all() as Array<{ id: number; payload_json: string }>) {
       // Invalid legacy rows are themselves diagnostic dead letters, not queue
       // work. Preserve their raw payload instead of aborting the conversion.
-      let payload: Payload;
       try {
-        payload = parsePayload(row.payload_json);
+        const converted = convertPayload(parsePayload(row.payload_json));
+        updateLetter.run(JSON.stringify(converted.payload), row.id);
       } catch {
-        continue;
+        // A malformed dead letter is diagnostic evidence, never executable.
+        // Preserve it byte-for-byte instead of blocking valid queue work.
       }
-      const converted = convertPayload(payload);
-      updateLetter.run(JSON.stringify(converted.payload), row.id);
     }
     db.prepare("INSERT INTO schema_meta(key,value) VALUES(?,?)").run(MARKER, new Date().toISOString());
   })();
@@ -117,10 +116,19 @@ export async function convertIssue540Runtime(
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const dbPath = process.argv[2];
-  if (!dbPath) throw new Error("usage: tsx scripts/convert-issue540-runtime.ts <runtime.sqlite>");
+  if (!dbPath || (process.argv[3] && process.argv[3] !== "--legacy-dir") || (process.argv[3] && !process.argv[4]))
+    throw new Error("usage: tsx scripts/convert-issue540-runtime.ts <runtime.sqlite> [--legacy-dir <directory>]");
+  const legacyDir = process.argv[4];
+  const paths = legacyDir
+    ? {
+        inboxPath: resolve(legacyDir, "inbox.jsonl"),
+        deadLetterPath: resolve(legacyDir, "dead-letter.jsonl"),
+        archiveDir: resolve(legacyDir, "archive"),
+      }
+    : undefined;
   const repo = new QueueRepository(resolve(dbPath));
   try {
-    await convertIssue540Runtime(repo);
+    await convertIssue540Runtime(repo, paths);
   } finally {
     repo.close();
   }

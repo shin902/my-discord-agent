@@ -145,7 +145,7 @@ session schema v1〜v3は通常のsession書き込み経路でv4へ更新され�
 
 ## queueと成功ledger
 
-cron handlerは1回につきbounded batchのjobを1件enqueueするだけです。payloadは `jobKind: memory-export`、cron job ID、`sessionId: memory-export:<cronJobId>`、既存queue envelopeの最小metadataのみです。既存Inbox型に必要な `groupName` / `channelId` / `content` は空文字で、routing・本文の意味を持ちません。会話本文、turn固定リスト、接続設定、scope、secret selector、eligible判定、設定snapshotを永続化しません。
+cron handlerは1回につきbounded batchのhost-only jobを1件enqueueするだけです。producer入力は `jobKind: memory-export`、cron job ID、timestampのみで、queue保存時に既存の `sessionId: memory-export:<cronJobId>` と内部互換用の空文字group/channel/contentを補います。Agent実行・Discord配送には使いません。会話本文、turn固定リスト、接続設定、scope、secret selector、eligible判定、設定snapshotを永続化しません。
 
 同一backendのjobは既存session orderingで直列化し、retry待ちの先行jobも追い越しません。backend間は独立です。通常pollerのheartbeat・lease・fencing・retry・dead-letter・restart recoveryをそのまま利用し、Agent container、LLM provider lock、Discord deliveryは使いません。内部jobはqueue metricsには含め、Agent metricsからはjob discriminatorで除外します。
 
