@@ -30,10 +30,18 @@ for skill_src in "$SRC_DIR"/*/; do
   trap 'rm -rf "$skill_dest"' ERR
   cp -r "$skill_src" "$skill_dest"
 
-  # Replace placeholders in all .md files (perl -pi -e is portable across GNU/BSD)
-  find "$skill_dest" -name "*.md" -exec perl -pi -e \
-    "s|\{\{WIKI_ROOT\}\}|$WIKI_ROOT|g; s|\{\{RAW_DIR\}\}|$RAW_DIR|g; s|\{\{DIGEST_DIR\}\}|$DIGEST_DIR|g" \
-    {} \;
+  python3 - "$skill_dest" "$WIKI_ROOT" "$RAW_DIR" "$DIGEST_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+replacements = dict(zip(('WIKI_ROOT', 'RAW_DIR', 'DIGEST_DIR'), sys.argv[2:]))
+for path in root.rglob('*.md'):
+    text = path.read_text()
+    for name, value in replacements.items():
+        text = text.replace('{{' + name + '}}', value)
+    path.write_text(text)
+PY
   trap - ERR
 
   echo "installed: $skill_name"
