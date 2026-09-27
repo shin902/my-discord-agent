@@ -68,6 +68,10 @@ const { _setCronJobs, loadAndValidateCron, executeJob } = await import(
   "../cron/runner.js"
 );
 const { processMessage } = await import("./poller.js");
+const { JobHandlers } = await import("./job-handlers.js");
+const { registerMemoryExport } = await import("../features/memory-export.js");
+const handlers = new JobHandlers();
+registerMemoryExport(handlers);
 const { sendMessage } = await import("../agent/manager.js");
 let repo: InstanceType<typeof QueueRepository>;
 const config = (id = "memory-main", settings = {}) => ({
@@ -135,7 +139,7 @@ async function seed(id: string, group = "main"): Promise<void> {
 }
 async function processNext(now = new Date()): Promise<string> {
   const claimed = expectDefined(repo.claim("test-worker", 60_000, now));
-  await processMessage(claimed.job);
+  await processMessage(claimed.job, undefined, handlers);
   return claimed.job.id;
 }
 function accept(): Response {
@@ -575,7 +579,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
           rejectFetch = reject;
         }),
     );
-    const exporting = processMessage(memory.job);
+    const exporting = processMessage(memory.job, undefined, handlers);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const source = {
       kind: "discord" as const,
@@ -593,7 +597,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     }).job;
     const claimed = expectDefined(repo.claim("normal"));
     expect(claimed.job.id).toBe(normal.id);
-    await processMessage(claimed.job);
+    await processMessage(claimed.job, undefined, handlers);
     expect(repo.get(normal.id)?.status).toBe("completed");
     expect(repo.listDeliveries()).toHaveLength(1);
     expect(sendMessage).toHaveBeenCalledWith(

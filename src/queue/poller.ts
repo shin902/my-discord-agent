@@ -22,18 +22,17 @@ import {
   resolveProviderLockTarget,
 } from "../config/providers.js";
 import { acknowledgeEmail } from "../cron/mail-ack.js";
-import { getCachedCronJob, isCronHandler } from "../cron/runner.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
 import { settleRssDispatch } from "../features/rss.js";
-import { MEMORY_EXPORT_HANDLER, runMemoryExport } from "../memory/export.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireInferenceLock } from "./inference-lock.js";
+import { JobHandlers } from "./job-handlers.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
 import type { InboxMessage } from "./types.js";
 
@@ -283,8 +282,10 @@ function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
 // Durable claims provide session ordering; this set only prevents duplicate in-process dispatch.
 const inFlightIds = new Set<string>();
 
-export function startPoller(): void {
+let activeHandlers = new JobHandlers();
+export function startPoller(handlers: JobHandlers = new JobHandlers()): void {
   if (running) return;
+  activeHandlers = handlers;
   running = true;
   void poll();
 }
@@ -320,7 +321,7 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
-  void processMessage(msg, controller.signal)
+  void processMessage(msg, controller.signal, activeHandlers)
     .finally(() => {
       clearInterval(renewal);
       inFlightIds.delete(msg.id);
@@ -952,6 +953,7 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
 export async function processMessage(
   msg: InboxMessage,
   signal?: AbortSignal,
+  handlers: JobHandlers = new JobHandlers(),
 ): Promise<void> {
   if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
     const timing = startResponseTiming(msg);
@@ -970,17 +972,13 @@ export async function processMessage(
     }
     return;
   }
-  if (msg.jobKind === "memory-export") {
+  if (msg.jobKind) {
     if (msg.fencingToken === undefined)
       throw new Error(`fenced inbox message required: ${msg.id}`);
     const repository = getQueueRepository();
     try {
       repository.markRunning(msg.id, msg.fencingToken);
-      const job = msg.cronJobId ? getCachedCronJob(msg.cronJobId) : undefined;
-      if (job?.enabled && (await isCronHandler(job, MEMORY_EXPORT_HANDLER))) {
-        await runMemoryExport(job.id, job.settings, signal);
-      }
-      // Removed, disabled or repurposed cron identities terminally no-op.
+      await handlers.run(msg, signal);
       repository.commitResult(msg.id, msg.fencingToken, "", {
         suppressDelivery: true,
       });

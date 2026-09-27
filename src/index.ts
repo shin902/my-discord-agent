@@ -13,7 +13,6 @@ import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { loadProviders } from "./config/providers.js";
-import { loadScreenCaptureReceiverConfig } from "./config/screen-capture.js";
 import {
   loadXSavedGalleryConfig,
   loadXSavedReceiverConfig,
@@ -37,8 +36,9 @@ import {
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
+import { registerMemoryExport } from "./features/memory-export.js";
 import { reconcileRssDispatches } from "./features/rss.js";
-import { startScreenCaptureReceiver } from "./integrations/screen-capture/receiver.js";
+import { startScreenCapture } from "./features/screen-capture.js";
 import { startXSavedGallery } from "./integrations/x-saved/gallery.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
 import {
@@ -51,6 +51,7 @@ import {
   stopToolProxyServer,
 } from "./proxy/tool-proxy-server.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
+import { JobHandlers } from "./queue/job-handlers.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
@@ -145,12 +146,7 @@ try {
   if (xSavedConfig.enabled) {
     xSavedReceiver = await startXSavedReceiver({ port: xSavedConfig.port });
   }
-  const screenCaptureConfig = await loadScreenCaptureReceiverConfig();
-  if (screenCaptureConfig.enabled) {
-    screenCaptureReceiver = await startScreenCaptureReceiver({
-      port: screenCaptureConfig.port,
-    });
-  }
+  screenCaptureReceiver = await startScreenCapture();
   if (galleryConfig.enabled && galleryConfig.origin) {
     xSavedGallery = await startXSavedGallery({
       port: galleryConfig.port,
@@ -172,7 +168,9 @@ try {
   await backfillDiscordMessages(groups);
   console.log("[discord-backfill] 起動時履歴復旧が完了しました");
   await enqueueStartupJobs();
-  startPoller();
+  const handlers = new JobHandlers();
+  registerMemoryExport(handlers);
+  startPoller(handlers);
   startDeliveryWorker(getQueueRepository());
   startCron();
 } catch (err) {

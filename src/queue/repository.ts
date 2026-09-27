@@ -8,7 +8,11 @@ import {
   ConversationEntriesSchema,
 } from "../agent/conversation.js";
 import { splitMessage } from "../utils/splitMessage.js";
-import { type InboxMessage, normalizeInboxMessagePayload } from "./types.js";
+import {
+  type InboxMessage,
+  normalizeInboxMessagePayload,
+  type QueueInput,
+} from "./types.js";
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1345,11 +1349,21 @@ export class QueueRepository {
     return { job, inserted: true };
   }
   enqueue(
-    payload: Omit<InboxMessage, "id" | "retries" | "enqueuedAt">,
+    payload: QueueInput,
     options: { idempotencyKey?: string; maxAttempts?: number } = {},
   ): EnqueueResult {
+    const stored =
+      payload.jobKind !== undefined
+        ? {
+            ...payload,
+            sessionId: `${payload.jobKind}:${payload.cronJobId}`,
+            channelId: "",
+            groupName: "",
+            content: "",
+          }
+        : payload;
     return this.inImmediateTransaction(() =>
-      this.enqueueInTransaction(payload, options),
+      this.enqueueInTransaction(stored, options),
     );
   }
   /**

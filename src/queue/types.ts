@@ -20,7 +20,7 @@ export interface InboxMessage {
   /** Generic origin of a canonical user entry, independent of Memory settings. */
   source?: SessionSource;
   /** Absent for ordinary Agent jobs. Internal jobs bypass Agent execution/delivery. */
-  jobKind?: "memory-export";
+  jobKind?: string;
   content: string;
   timestamp: string;
   enqueuedAt?: string;
@@ -93,7 +93,22 @@ export function normalizeInboxMessagePayload(
   return normalized;
 }
 
-export type QueueInput = Omit<InboxMessage, "id" | "retries" | "enqueuedAt">;
+export type AgentQueueInput = Omit<
+  InboxMessage,
+  "id" | "retries" | "enqueuedAt" | "jobKind"
+> & { jobKind?: never };
+
+/** Host-only work has no Discord destination, group or Agent input. */
+export type HostQueueInput = {
+  jobKind: string;
+  cronJobId: string;
+  timestamp: string;
+};
+
+export type QueueInput = AgentQueueInput | HostQueueInput;
 
 /** Explicit callback contract used by queue producers. */
-export type QueueProducer = (message: QueueInput) => Promise<void> | void;
+export interface QueueProducer {
+  (message: AgentQueueInput): Promise<void> | void;
+  (message: HostQueueInput): Promise<void> | void;
+}
