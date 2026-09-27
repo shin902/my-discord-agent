@@ -765,6 +765,7 @@ export async function sendMessage(
             approvalRequiredCapabilities:
               effectiveConfig.approvalRequiredTools ?? [],
             trustedDiscordDestination,
+            workspace: path.join(ROOT, "groups", groupName),
           },
         );
   const payload = JSON.stringify({

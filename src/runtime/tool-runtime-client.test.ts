@@ -1,9 +1,28 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { executeToolRuntime } from "./tool-runtime-client.js";
+import {
+  buildToolRuntimeArgs,
+  executeToolRuntime,
+} from "./tool-runtime-client.js";
 
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs/promises")>()),
+  lstat: vi.fn(
+    (await importOriginal<typeof import("node:fs/promises")>()).lstat,
+  ),
+}));
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawn: vi.fn(),
@@ -29,7 +48,91 @@ function containerExit(code: number, stdout: string, diagnostics: Buffer[]) {
 
 const call = () => executeToolRuntime("arxiv-search", { query: "fixture" });
 
+describe("Tool Runtime workspace mount", () => {
+  it("rejects credential/workspace ownership mismatches rather than overriding the credential identity", async () => {
+    vi.mocked(lstat).mockImplementation(async (path) => {
+      const workspace = path === "/trusted/workspace";
+      return {
+        isDirectory: () => workspace,
+        isFile: () => !workspace,
+        isSymbolicLink: () => false,
+        uid: workspace ? 1000 : 2000,
+        gid: workspace ? 1000 : 2000,
+      } as never;
+    });
+    try {
+      await expect(
+        buildToolRuntimeArgs(
+          { capability: "x-search", args: { query: "q" } },
+          "test-runtime",
+          { root: "/trusted", workspace: "/trusted/workspace" },
+        ),
+      ).rejects.toThrow("workspace and credential owner must match");
+    } finally {
+      vi.mocked(lstat).mockRestore();
+    }
+  });
+  it("binds only the trusted run workspace and requires one for git-clone", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "runtime-workspace-"));
+    try {
+      const args = await buildToolRuntimeArgs(
+        {
+          capability: "git-clone",
+          args: { url: "https://github.com/a/b", destination: "repo" },
+        },
+        "test-runtime",
+        { workspace },
+      );
+      expect(args).toContain(`type=bind,src=${workspace},dst=/workspace`);
+      expect(args).not.toContain("type=bind,src=/other-group,dst=/workspace");
+      await expect(
+        buildToolRuntimeArgs(
+          { capability: "git-clone", args: {} },
+          "test-runtime",
+        ),
+      ).rejects.toThrow("trusted group workspace");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Tool Runtime host diagnostics", () => {
+  it("removes staging left behind by a failed Runtime call", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "runtime-stage-"));
+    vi.mocked(spawn).mockImplementationOnce((_command, args) => {
+      const name = args[args.indexOf("--name") + 1];
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      });
+      child.stdin.once("finish", async () => {
+        await mkdir(join(workspace, `.git-clone-${name}`));
+        await writeFile(
+          join(workspace, `.git-clone-${name}`, "partial"),
+          "incomplete",
+        );
+        child.stdout.end(JSON.stringify({ error: "clone failed" }));
+        child.stderr.end();
+        child.emit("close", 0);
+      });
+      return child as unknown as ChildProcessWithoutNullStreams;
+    });
+    try {
+      await expect(
+        executeToolRuntime(
+          "git-clone",
+          { url: "https://github.com/a/b", destination: "repo" },
+          undefined,
+          { workspace },
+        ),
+      ).rejects.toThrow("clone failed");
+      expect(await readdir(workspace)).toEqual([]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
   it.each([
     [125, "", "failed to start or exited unexpectedly"],
     [0, "invalid JSON", "Invalid Tool Runtime response"],

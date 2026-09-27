@@ -1,6 +1,6 @@
 # Tool Runtime
 
-Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search`、`x-search`を **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。
+Tool Proxyは、`agent-reach`、`arxiv-search`、`arxiv-survey`、`hackernews-search`、`github-recent-search`、`x-search`、`git-clone`を **Tool callごとの使い捨てコンテナ** で実行します。取得・外部CLI・parser・scratchはRuntime内で完結し、hostへの取得fallbackはありません。Registry内部で `host` / `sandbox` / `runtime` を区別し、Agentの設定や引数から実行先・image・mount・entrypointを選ばせません。
 
 ```text
 Agent sandbox: native Tool / Skill → tool-proxy CLI
@@ -55,11 +55,11 @@ stdinは1 MiB、構造化stdoutは64 MiBが上限です。取得処理の既存t
 
 Runtimeは長い結果も本文で返します。native結果の50,000文字超の外部化はAgent sandbox側の [output.ts](../../src/tools/output.ts) に集約し、同じAgent run中の後続read／grepで再利用できます。Runtime callの終了でこのファイルは消えません。Agent sandboxの終了後は過去pathの再読を保証しません。Skillはstdoutを維持し、取得系capabilityが結果を自動保存する挙動は追加しません。
 
-一方、`/workspace` 自体はAgent RunnerとTool Runtimeで共有するcurrent groupの永続領域です。remote Gitのようにworkspace mutationを契約に含むcapabilityはRuntimeから直接ここへ書き込めます。Runtime内部の `/tmp` 等のscratchは従来どおりcall終了で破棄し、`/workspace` を汎用artifact storeやsession storeとして扱いません。
+一方、`/workspace` 自体はAgent RunnerとTool Runtimeで共有するcurrent groupの永続領域です。remote Gitのようにworkspace mutationを契約に含むcapabilityはRuntimeから直接ここへ書き込めます。Runtime内部の `/tmp` 等のscratchは従来どおりcall終了で破棄し、`/workspace` を汎用artifact storeやsession storeとして扱いません。`git-clone` はpublic HTTPS URLとworkspace相対の未作成destinationのみを受け付けます。既存destinationやworkspace外への移動は拒否し、private staging directoryへcloneして成功後にpublishします。失敗・中断で残ったstagingはcontainer終了後にhostが回収します。認証付きprivate repository、fetch / pull / push、local Git操作は扱いません。利用する場合はeffective `tools` に `git-clone` を明示し、git入りRuntime imageとhostを一緒に更新してください。
 
 ## networkとReddit state
 
-Runtimeのfirewallはpublic Internetを許可し、private／link-local／CGNAT／metadata相当／multicast等を拒否します。公開DNSを指定し、Docker embedded DNS用のloopback例外を維持します。agent-reachのURL・DNS・redirect検証も維持し、firewall設定後は非root UID/GIDへ切り替えて全capabilityをdropします。workspaceをmountしても、このnetwork境界とcredential境界は変更しません。API key、OAuth token、Cookie等をAgent-visibleな引数・結果・workspaceへ保存せず、credentialが必要なRuntime capabilityだけtrusted host設定から固定resourceを渡します。
+Runtimeのfirewallはpublic Internetを許可し、private／link-local／CGNAT／metadata相当／multicast等を拒否します。公開DNSを指定し、Docker embedded DNS用のloopback例外を維持します。agent-reachのURL・DNS・redirect検証も維持し、firewall設定後は非root UID/GIDへ切り替えて全capabilityをdropします。workspaceをmountしても、このnetwork境界とcredential境界は変更しません。credential fileとworkspaceのowner UID/GIDが異なる場合は明示エラーで起動を拒否します。API key、OAuth token、Cookie等をAgent-visibleな引数・結果・workspaceへ保存せず、credentialが必要なRuntime capabilityだけtrusted host設定から固定resourceを渡します。
 
 Redditを使わないcallはstateを参照せず、UID/GID 1000で実行します。通常のReddit取得は `data/reddit-cookies.json` だけをread-only mountします。hostが固定pathと非root所有者を確認し、そのUID/GIDを使います。maintenanceだけが同じ所有者の `data/reddit-browser-profile/` とCookieをread/write mountします。stateが無い場合もarXivやHN等は起動できます。
 

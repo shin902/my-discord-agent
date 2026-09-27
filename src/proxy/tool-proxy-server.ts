@@ -23,6 +23,7 @@ type ToolProxyRunSnapshot = Readonly<{
   allowedCapabilities: readonly string[];
   approvalRequiredCapabilities: readonly string[];
   trustedDiscordDestination: TrustedDiscordDestination | undefined;
+  workspace: string | undefined;
   revokeSignal: AbortSignal;
   revoke: () => void;
 }>;
@@ -44,6 +45,7 @@ export function createToolProxyRun(
   options: {
     approvalRequiredCapabilities?: Iterable<string>;
     trustedDiscordDestination?: TrustedDiscordDestination;
+    workspace?: string;
   } = {},
 ): ToolProxyRunConfig | undefined {
   if (toolProxyPort === null) return undefined;
@@ -76,6 +78,7 @@ export function createToolProxyRun(
     trustedDiscordDestination: options.trustedDiscordDestination
       ? Object.freeze({ ...options.trustedDiscordDestination })
       : undefined,
+    workspace: options.workspace,
     revokeSignal: controller.signal,
     revoke,
   });
@@ -354,7 +357,9 @@ async function executeRequest(
     signal.throwIfAborted();
     const result =
       capability.executor === "runtime"
-        ? await executeToolRuntime(body.capability, executionArgs, signal)
+        ? await executeToolRuntime(body.capability, executionArgs, signal, {
+            workspace: run.workspace,
+          })
         : await tool.execute("tool-proxy", executionArgs, signal);
     if (!res.writableEnded) sendJson(res, 200, { result });
   } catch (error) {

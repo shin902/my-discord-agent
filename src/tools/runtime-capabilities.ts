@@ -11,6 +11,7 @@ import {
   materializeToolArgs,
   validateToolArgs,
 } from "./capability.js";
+import { gitCloneTool } from "./git-clone.js";
 import {
   githubRecentSearchTool,
   hackerNewsSearchTool,
@@ -52,6 +53,7 @@ function runtimeCapability(
 
 /** The single trusted definition set shared by host Registry and Runtime dispatch. */
 export const RUNTIME_CAPABILITIES = {
+  "git-clone": runtimeCapability(gitCloneTool, { timeoutMs: 120_000 }),
   "agent-reach": runtimeCapability(agentReachTool, {
     timeoutMs: AGENT_REACH_TIMEOUT_MS,
     needsRedditCookies: (args) =>
