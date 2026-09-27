@@ -48,7 +48,7 @@ function makeWorker(
   options: ConstructorParameters<typeof DeliveryWorker>[2] = {},
 ): DeliveryWorker {
   const sources = new SourceHandlers();
-  registerMailSource(sources);
+  registerMailSource(sources, repo);
   registerRssSource(sources, repo);
   repo.registerSources(sources);
   return new DeliveryWorker(repo, adapter, options, sources);

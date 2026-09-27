@@ -1,10 +1,8 @@
 import type { z } from "zod";
-import type { DeliveryRow, QueueRepository } from "./repository.js";
+import type { DeliveryRow } from "./repository.js";
 import type { InboxMessage } from "./types.js";
 
 export type SourceEnvelope = { kind: string; input: unknown };
-export type SourceResolution = "completed" | "dead_letter";
-export type SourceDeliveryStatus = DeliveryRow["status"];
 export type ThreadRoute = {
   name: string;
   resolve: () => string | undefined;
@@ -20,7 +18,6 @@ export interface SourceCallbacks<T> {
   terminalOnAgentFailure?: boolean;
   threadRoute?: (
     input: T,
-    repository: QueueRepository,
     groupName: string,
     channelId: string,
   ) => ThreadRoute | undefined;
@@ -29,7 +26,7 @@ export interface SourceCallbacks<T> {
   delivery?: (
     input: T,
     row: DeliveryRow,
-    statuses: readonly SourceDeliveryStatus[],
+    statuses: readonly DeliveryRow["status"][],
   ) => Promise<void> | void;
 }
 
@@ -42,12 +39,11 @@ interface RegisteredSource {
   delivery: (
     input: unknown,
     row: DeliveryRow,
-    statuses: readonly SourceDeliveryStatus[],
+    statuses: readonly DeliveryRow["status"][],
   ) => Promise<void>;
   validate: (input: unknown) => unknown;
   threadRoute: (
     input: unknown,
-    repository: QueueRepository,
     groupName: string,
     channelId: string,
   ) => ThreadRoute | undefined;
@@ -77,13 +73,8 @@ export class SourceHandlers {
       continueAfterFailedChunk: callbacks.continueAfterFailedChunk ?? false,
       terminalOnAgentFailure: callbacks.terminalOnAgentFailure ?? false,
       validate,
-      threadRoute: (input, repository, groupName, channelId) =>
-        callbacks.threadRoute?.(
-          validate(input),
-          repository,
-          groupName,
-          channelId,
-        ),
+      threadRoute: (input, groupName, channelId) =>
+        callbacks.threadRoute?.(validate(input), groupName, channelId),
       suppressed: async (input, message) => {
         await callbacks.suppressed?.(validate(input), message);
       },
@@ -118,13 +109,11 @@ export class SourceHandlers {
 
   threadRoute(
     envelope: SourceEnvelope,
-    repository: QueueRepository,
     groupName: string,
     channelId: string,
   ): ThreadRoute | undefined {
     return this.resolve(envelope).threadRoute(
       envelope.input,
-      repository,
       groupName,
       channelId,
     );
@@ -151,7 +140,7 @@ export class SourceHandlers {
   async delivery(
     envelope: SourceEnvelope,
     row: DeliveryRow,
-    statuses: readonly SourceDeliveryStatus[],
+    statuses: readonly DeliveryRow["status"][],
   ): Promise<void> {
     await this.resolve(envelope).delivery(envelope.input, row, statuses);
   }

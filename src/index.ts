@@ -101,7 +101,7 @@ try {
   await initDiscordClients();
   const queueRepository = getQueueRepository();
   sources = new SourceHandlers();
-  registerMailSource(sources);
+  registerMailSource(sources, queueRepository);
   registerRssSource(sources, queueRepository);
   queueRepository.registerSources(sources);
   await initializeQueue(queueRepository);

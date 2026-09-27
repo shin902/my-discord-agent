@@ -112,7 +112,7 @@ describe("one-time Issue #540 runtime conversion", () => {
       expect(repo.db.prepare("SELECT turn_id FROM committed_conversations").get()).toEqual({ turn_id: "turn-1" });
       expect(repo.getIdempotencyRecord("mail-key")?.jobId).toBe(mail.id);
       const handlers = new SourceHandlers();
-      registerMailSource(handlers);
+      registerMailSource(handlers, repo);
       registerRssSource(handlers, repo);
       repo.registerSources(handlers);
       const pending = expectDefined(repo.claim("post-conversion-worker"));

@@ -159,7 +159,7 @@ describe("mail idempotency storage", () => {
   beforeEach(() => {
     repo = new QueueRepository(":memory:");
     const sources = new SourceHandlers();
-    registerMailSource(sources);
+    registerMailSource(sources, repo);
     repo.registerSources(sources);
   });
   afterEach(() => {
@@ -238,7 +238,7 @@ describe("mail idempotency storage", () => {
     const dbPath = join(dir, "runtime.sqlite");
     const initial = new QueueRepository(dbPath);
     const initialSources = new SourceHandlers();
-    registerMailSource(initialSources);
+    registerMailSource(initialSources, initial);
     initial.registerSources(initialSources);
     // Both a fresh key and reuse of a durable terminal key must be atomic.
     if (terminal) {
