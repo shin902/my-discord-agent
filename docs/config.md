@@ -119,6 +119,7 @@ Reddit の Cookie 認証は `config/credentials.json` では管理せず、Tool 
 [
   {
     "provider": "zai-custom",
+    "api": "openai-completions",
     "envVars": ["ZAI_API_KEY"],
     "baseUrl": "https://api.z.ai/api/coding/paas/v4"
   },
