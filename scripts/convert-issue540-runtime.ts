@@ -82,6 +82,7 @@ export async function convertIssue540Runtime(
       .prepare("SELECT id,payload_json,idempotency_key FROM jobs")
       .all() as Array<{ id: string; payload_json: string; idempotency_key: string | null }>) {
       const converted = convertPayload(parsePayload(row.payload_json), row.idempotency_key ?? undefined);
+      if (!converted.kind) continue;
       updateJob.run(
         JSON.stringify(converted.payload),
         converted.kind,
@@ -94,7 +95,7 @@ export async function convertIssue540Runtime(
       .prepare("SELECT id,payload_json FROM deliveries WHERE payload_json IS NOT NULL")
       .all() as Array<{ id: string; payload_json: string }>) {
       const converted = convertPayload(parsePayload(row.payload_json));
-      updateDelivery.run(JSON.stringify(converted.payload), row.id);
+      if (converted.kind) updateDelivery.run(JSON.stringify(converted.payload), row.id);
     }
     const updateLetter = db.prepare("UPDATE dead_letters SET payload_json=? WHERE id=?");
     for (const row of db
@@ -104,7 +105,7 @@ export async function convertIssue540Runtime(
       // work. Preserve their raw payload instead of aborting the conversion.
       try {
         const converted = convertPayload(parsePayload(row.payload_json));
-        updateLetter.run(JSON.stringify(converted.payload), row.id);
+        if (converted.kind) updateLetter.run(JSON.stringify(converted.payload), row.id);
       } catch {
         // A malformed dead letter is diagnostic evidence, never executable.
         // Preserve it byte-for-byte instead of blocking valid queue work.

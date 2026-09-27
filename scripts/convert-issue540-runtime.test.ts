@@ -65,6 +65,10 @@ describe("one-time Issue #540 runtime conversion", () => {
         idempotencyKey: "rss-key",
       }).job;
       repo.db.prepare("UPDATE jobs SET payload_json=json_set(payload_json,'$.rssDispatchId','dispatch-1','$.rssStatePath','custom.sqlite3') WHERE id=?").run(rss.id);
+      const ordinary = repo.enqueue({ channelId: "channel", groupName: "group", sessionId: "ordinary", content: "unchanged", timestamp: new Date().toISOString() }).job;
+      const rawOrdinary = expectDefined(repo.db.prepare("SELECT payload_json FROM jobs WHERE id=?").get(ordinary.id) as { payload_json: string } | undefined).payload_json;
+      const prettyOrdinary = JSON.stringify(JSON.parse(rawOrdinary), null, 2);
+      repo.db.prepare("UPDATE jobs SET payload_json=? WHERE id=?").run(prettyOrdinary, ordinary.id);
       repo.db
         .prepare("INSERT INTO dead_letters(reason,payload_json,source,created_at) VALUES(?,?,?,?)")
         .run("malformed", "{not-json", "migration", new Date().toISOString());
@@ -88,6 +92,7 @@ describe("one-time Issue #540 runtime conversion", () => {
       const convertedMail = expectDefined(repo.get(mail.id));
       expect(convertedMail.feature).toEqual({ kind: "mail", input: { emailId: "email-1", routeKey: "route" } });
       expect("mailEmailId" in convertedMail).toBe(false);
+      expect(repo.db.prepare("SELECT payload_json FROM jobs WHERE id=?").get(ordinary.id)).toEqual({ payload_json: prettyOrdinary });
       const delivery = expectDefined(repo.claimDelivery("delivery-worker"));
       expect(JSON.parse(delivery.row.payloadJson ?? "{}").feature).toEqual(convertedMail.feature);
       expect(repo.listSourceInputs("rss")).toEqual([
