@@ -37,6 +37,7 @@ import {
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
+import { reconcileRssDispatches } from "./features/rss.js";
 import { startScreenCaptureReceiver } from "./integrations/screen-capture/receiver.js";
 import { startXSavedGallery } from "./integrations/x-saved/gallery.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
@@ -53,7 +54,6 @@ import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
-import { reconcileRssDispatches } from "./queue/reconciliation.js";
 import { getQueueRepository } from "./queue/repository.js";
 
 import {

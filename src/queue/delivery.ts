@@ -7,7 +7,7 @@ import {
   getDiscordClients,
 } from "../discord/client.js";
 import { withDiscordSendOptions } from "../discord/send-options.js";
-import { settleRssDispatch } from "./reconciliation.js";
+import { settleRssDispatch } from "../features/rss.js";
 
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());

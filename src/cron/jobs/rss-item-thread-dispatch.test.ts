@@ -17,7 +17,7 @@ vi.mock("../../queue/repository.js", async () => {
   };
 });
 
-import { reconcileRssDispatches } from "../../queue/reconciliation.js";
+import { reconcileRssDispatches } from "../../features/rss.js";
 import { QueueRepository } from "../../queue/repository.js";
 import type { QueueInput } from "../../queue/types.js";
 import {

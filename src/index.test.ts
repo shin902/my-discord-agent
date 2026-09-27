@@ -122,7 +122,7 @@ vi.mock("./queue/repository.js", () => ({
 vi.mock("./queue/migration.js", () => ({
   initializeQueue: mocks.initializeQueue,
 }));
-vi.mock("./queue/reconciliation.js", () => ({
+vi.mock("./features/rss.js", () => ({
   reconcileRssDispatches: mocks.reconcileRssDispatches,
 }));
 vi.mock("./queue/operator.js", () => ({

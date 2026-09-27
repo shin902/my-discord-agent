@@ -27,13 +27,13 @@ import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
+import { settleRssDispatch } from "../features/rss.js";
 import { MEMORY_EXPORT_HANDLER, runMemoryExport } from "../memory/export.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireInferenceLock } from "./inference-lock.js";
-import { settleRssDispatch } from "./reconciliation.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
 import type { InboxMessage } from "./types.js";
 

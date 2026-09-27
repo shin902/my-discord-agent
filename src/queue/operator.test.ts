@@ -2,9 +2,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { reconcileRssDispatches } from "../features/rss.js";
 import { openRssDb, resolveRssDbPath } from "../rss/store.js";
 import { runRuntimeOperator } from "./operator.js";
-import { reconcileRssDispatches } from "./reconciliation.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 describe("runtime operator", () => {

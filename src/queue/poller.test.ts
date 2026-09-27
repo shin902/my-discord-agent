@@ -31,8 +31,8 @@ vi.mock("../config/bots.js", () => ({
   loadBotRegistry,
   resolveBotProfile,
 }));
-vi.mock("./reconciliation.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./reconciliation.js")>();
+vi.mock("../features/rss.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../features/rss.js")>();
   settleRssDispatch.mockImplementation(actual.settleRssDispatch);
   return { ...actual, settleRssDispatch };
 });

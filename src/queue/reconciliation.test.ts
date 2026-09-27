@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { reconcileRssDispatches, settleRssDispatch } from "../features/rss.js";
 import {
   type ArticleDispatch,
   claimUnreadArticles,
@@ -10,7 +11,6 @@ import {
   saveFeedEntries,
 } from "../rss/store.js";
 import { expectDefined } from "../test-utils.js";
-import { reconcileRssDispatches, settleRssDispatch } from "./reconciliation.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 let tempDirs: string[] = [];

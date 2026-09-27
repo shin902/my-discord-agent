@@ -1,10 +1,13 @@
 import {
+  getQueueRepository,
+  type QueueRepository,
+} from "../queue/repository.js";
+import {
   listDispatchClaims,
   markArticlesRead,
   releaseDispatchArticles,
   tryOpenRssDb,
 } from "../rss/store.js";
-import { getQueueRepository, type QueueRepository } from "./repository.js";
 
 export type RssDispatchResolution = "completed" | "dead_letter";
 
