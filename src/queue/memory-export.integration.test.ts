@@ -174,6 +174,20 @@ afterAll(async () => {
 });
 
 describe("cron + runtime queue + canonical trajectory export", () => {
+  it("keeps unregistered host jobs diagnosable instead of completing them", async () => {
+    const job = repo.enqueue({
+      jobKind: "unregistered",
+      cronJobId: "unknown",
+      timestamp: new Date().toISOString(),
+    }).job;
+    const claimed = expectDefined(repo.claim("test-worker"));
+    expect(claimed.job.id).toBe(job.id);
+    await processMessage(claimed.job, undefined, handlers);
+    const retained = expectDefined(repo.get(job.id));
+    expect(retained.status).toBe("retry_wait");
+    expect(retained.lastError).toMatch(/unregistered job kind/);
+  });
+
   it("cron only enqueues a minimal identity, with no conversation or settings snapshot", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     await seed("one");
