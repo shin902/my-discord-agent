@@ -67,6 +67,9 @@ describe("one-time Issue #540 runtime conversion", () => {
       repo.db.prepare("UPDATE jobs SET payload_json=json_set(payload_json,'$.rssDispatchId','dispatch-1','$.rssStatePath','custom.sqlite3') WHERE id=?").run(rss.id);
       repo.db
         .prepare("INSERT INTO dead_letters(reason,payload_json,source,created_at) VALUES(?,?,?,?)")
+        .run("malformed", "{not-json", "migration", new Date().toISOString());
+      repo.db
+        .prepare("INSERT INTO dead_letters(reason,payload_json,source,created_at) VALUES(?,?,?,?)")
         .run("orphan-context", JSON.stringify({ mailRouteKey: "orphan", rssStatePath: "orphan.sqlite" }), "queue", new Date().toISOString());
       repo.db
         .prepare("INSERT INTO dead_letters(reason,payload_json,source,created_at) VALUES(?,?,?,?)")
@@ -100,6 +103,7 @@ describe("one-time Issue #540 runtime conversion", () => {
       expect(repo.db.prepare("SELECT source_kind,allow_failed_predecessor FROM jobs WHERE id=?").get(rss.id)).toEqual({ source_kind: "rss", allow_failed_predecessor: 1 });
       expect(repo.db.prepare("SELECT payload_json FROM dead_letters WHERE reason='legacy'").get()).toMatchObject({ payload_json: expect.stringContaining('"kind":"rss"') });
       expect(repo.db.prepare("SELECT payload_json FROM dead_letters WHERE reason='orphan-context'").get()).toEqual({ payload_json: JSON.stringify({ mailRouteKey: "orphan", rssStatePath: "orphan.sqlite" }) });
+      expect(repo.db.prepare("SELECT payload_json FROM dead_letters WHERE reason='malformed'").get()).toEqual({ payload_json: "{not-json" });
       expect(repo.db.prepare("SELECT turn_id FROM committed_conversations").get()).toEqual({ turn_id: "turn-1" });
       expect(repo.getIdempotencyRecord("mail-key")?.jobId).toBe(mail.id);
       const handlers = new SourceHandlers();

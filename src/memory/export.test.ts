@@ -337,6 +337,45 @@ describe("committed conversation export", () => {
     db.close();
   });
 
+  it("retries after remote acceptance when recording the success marker fails", async () => {
+    const pair = await appendTurn("marker-gap");
+    const ledger = new MemoryExportLedger(":memory:");
+    const backend = { exportTurn: vi.fn().mockResolvedValue(undefined) };
+    const readCommitted = () => [pair];
+    try {
+      vi.spyOn(ledger, "record").mockImplementationOnce(() => {
+        throw new Error("marker I/O");
+      });
+      await expect(
+        exportBatch(
+          "backend",
+          ["marker-gap"],
+          1,
+          backend,
+          ledger,
+          readCommitted,
+        ),
+      ).rejects.toThrow("marker I/O");
+      expect(
+        ledger.has("backend", [...readCaptureTurns("marker-gap", [pair])][0]),
+      ).toBe(false);
+      await exportBatch(
+        "backend",
+        ["marker-gap"],
+        1,
+        backend,
+        ledger,
+        readCommitted,
+      );
+      expect(backend.exportTurn).toHaveBeenCalledTimes(2);
+      expect(
+        ledger.has("backend", [...readCaptureTurns("marker-gap", [pair])][0]),
+      ).toBe(true);
+    } finally {
+      ledger.close();
+    }
+  });
+
   it("stops before remote I/O on lease cancellation without marking success", async () => {
     const pair = await appendTurn("cancelled");
     const ledger = new MemoryExportLedger(":memory:");

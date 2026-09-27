@@ -72,6 +72,8 @@ pnpm build
 pnpm start
 ```
 
+systemd等で管理している環境では`pnpm start`を二重起動せず、変換・build後に管理サービスを起動します。起動ログでDiscord backfill完了後にworker/cronが開始したこと、および旧payloadが残らないことを確認します。
+
 [converter](../scripts/convert-issue540-runtime.ts) は既存の[migration.ts](../src/queue/migration.ts)で未取り込みの旧`data/queue/inbox.jsonl`と`dead-letter.jsonl`をSQLiteへ取り込み、旧JSONLを`data/queue/archive/`へバックアップします。その後`jobs`・`deliveries`・`dead_letters`のMail/RSS入力をfeature envelopeへ短いSQLite transactionで変換し、queueのlease/fencing/status、idempotency、session ID、採用会話参照を保持します。RSSの別DB、Screen Capture、group session DB、Memory ledgerは変更しません。外部APIへの呼び出しは変換中にありません。再実行は拒否されます。変換が失敗した場合は新workerを起動せず、バックアップとエラーを確認してください。旧JSONLファイルを残しても新runtimeには再流入しません。カスタムRSS statePathを設定から外しqueue側にも参照がなくなったclaimは自動発見できないため、運用で確認してください。
 
 ## Session trajectory
