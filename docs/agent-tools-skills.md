@@ -80,7 +80,7 @@ approval UIは認可機構やpublic / multi-user環境の安全境界ではあ�
 
 ```json
 {
-  "model": { "provider": "zai", "modelId": "glm-4.7-flash" },
+  "model": { "provider": "zai-custom", "modelId": "glm-4.7-flash" },
   "tools": ["bash", "read", "write"],
   "allowMention": true,
   "toolLogArgs": true

@@ -1,5 +1,5 @@
 [
-  { "provider": "zai", "concurrency": "serial" },
+  { "provider": "zai-custom", "concurrency": "serial" },
   { "provider": "openai-codex", "concurrency": "parallel" },
   { "provider": "openai", "concurrency": "parallel" },
   { "provider": "anthropic", "concurrency": "parallel" },

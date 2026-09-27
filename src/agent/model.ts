@@ -79,13 +79,11 @@ export async function resolveModel(provider: string, modelId: string) {
   const entry = creds.find((e) => e.provider === provider);
   if (entry && !isLlmCredential(entry)) {
     throw new Error(
-      `${provider}: credential entry is not an LLM route; custom models require api or forceCustom`,
+      `${provider}: credential entry is not an LLM route; custom models require api`,
     );
   }
 
-  // forceCustom: pi-ai の KnownProvider 名と衝突していても
-  // credential-proxy 経由のカスタムプロバイダー解決を強制する
-  if (entry?.forceCustom || !providers.includes(builtinProvider)) {
+  if (!providers.includes(builtinProvider)) {
     if (!entry) {
       throw new Error(`不明なプロバイダ: ${provider}`);
     }

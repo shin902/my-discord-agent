@@ -15,7 +15,6 @@ Agent sandbox
 
 [Credential Proxy](../src/proxy/credential-proxy-server.ts) は[LLMとして宣言された接続](config/credential-proxy.md#llm-routeの公開条件)だけをrouteとして公開し、ホスト側で認証情報を解決します。非LLM entryはsandbox向けJSONから隠すだけでなくHTTP forwarding対象からも除き、直接 `/github/...`、`/tavily/...`、`/google-calendar/...` 等を呼んでも404になります。`envVars` は複数secretの注入指定ではなく、先頭から最初の空でない値を選ぶ候補一覧です。認証形式と未設定時の挙動は [設定リファレンス](config/credential-proxy.md#envvarsと認証) を参照してください。
 
-`forceCustom` はモデル解決の選択です。KnownProviderの組み込みモデル定義と、Credential Proxy用のカスタムモデル定義を区別します。詳細は [モデル解決](config/credential-proxy.md#モデル解決) を参照してください。
 
 Agent sandbox の direct egress は host-gateway の必要な proxy TCP port に制限します。Credential Proxy の責務は secret confidentiality と credential injection / forwarding です。Agent が inference credential を利用すること自体は許可し、provider/model/path/method 単位の認可、inference run token、approval、独自 rate limit は追加しません。credential-backed operation の利用自体を制限する必要がある場合は、Tool Proxy capability へ移します。Tool Proxy は run-scoped authority、capability 認可、schema validation、必要時 approval を担当します。ネットワーク境界の制約は [セキュリティ上のトレードオフ](security-tradeoffs.md) を参照してください。
 

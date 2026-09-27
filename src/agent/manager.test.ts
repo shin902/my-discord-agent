@@ -1181,7 +1181,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
-        forceCustom: true,
+        api: "openai-completions",
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
@@ -1251,7 +1251,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "my-provider",
-        forceCustom: true,
+        api: "openai-completions",
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
@@ -1269,7 +1269,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
-        forceCustom: true,
+        api: "openai-completions",
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
@@ -1334,7 +1334,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "github",
-        forceCustom: true,
+        api: "openai-completions",
         envVars: ["GITHUB_MODEL_TOKEN"],
         baseUrl: "https://models.example.com/v1",
       },
@@ -1348,6 +1348,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     expect(getCredJson(spawnMock)).toEqual([
       expect.objectContaining({
         provider: "github",
+        api: "openai-completions",
         baseUrl: "http://host.docker.internal:12345/github",
       }),
     ]);
@@ -1374,7 +1375,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
-        forceCustom: true,
+        api: "openai-completions",
         envVars: ["TEST_API_KEY"],
         auth: { type: "query-token" },
         baseUrl: "https://api.example.com/v1",
@@ -1391,7 +1392,6 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
-        forceCustom: true,
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
         api: "openai-completions",
@@ -1411,13 +1411,13 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "good",
-        forceCustom: true,
+        api: "openai-completions",
         envVars: ["TEST_API_KEY"],
         baseUrl: "https://api.example.com/v1",
       },
       {
         provider: "bad",
-        forceCustom: true,
+        api: "openai-completions",
         baseUrl: "https://api.example.com/{MISSING_VAR}/v1",
       },
     ]);
@@ -1438,7 +1438,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "local-llm",
-        forceCustom: true,
+        api: "openai-completions",
         baseUrl: "http://192.168.40.65:8080/v1",
       },
     ]);
@@ -1456,7 +1456,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const spawnMock = await setup([
       {
         provider: "test",
-        forceCustom: true,
+        api: "openai-completions",
         envVars: ["MISSING_KEY"],
         baseUrl: "https://api.example.com/v1",
       },

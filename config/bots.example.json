@@ -4,7 +4,7 @@
     "description": "Implements and reviews code changes.",
     "instructions": "コード変更を担当する worker",
     "model": {
-      "provider": "zai",
+      "provider": "zai-custom",
       "modelId": "glm-4.7-flash"
     },
     "tools": ["read", "write", "edit"],
