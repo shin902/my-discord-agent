@@ -1,6 +1,6 @@
 # 永続キューとDiscord配送
 
-この文書は現行のキュー処理の入口です。正本はホスト所有の `data/runtime.sqlite` であり、JSONLファイルやメモリ上のin-flight集合ではありません。保存先・backup・旧JSONL移行は [ストレージ設計](storage.md) を参照してください。
+この文書は現行のキュー処理の入口です。正本はホスト所有の `data/runtime.sqlite` であり、JSONLファイルやメモリ上のin-flight集合ではありません。保存先・backupは [ストレージ設計](storage.md) を参照してください。
 
 ## 処理の流れ
 
