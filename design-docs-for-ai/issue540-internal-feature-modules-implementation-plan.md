@@ -8,7 +8,7 @@
 
 ## 現状の正本と、維持する動作
 
-- `src/index.ts` はqueue初期化→RSS reconciliation→Discord login→backfill→startup job→poller/delivery/cronを起動する。`src/cron/runner.ts` は設定を起動時に読み、readyなDiscord clientがないtickを見送る。receiverは別に起動する。起動条件は変更しない。
+- `src/index.ts` はqueue初期化→RSS reconciliation→Discord login→backfill→startup job→poller/delivery/cronを起動する。現行の `initializeQueue()` はsession admission/期限切れleaseの復旧に加え、旧JSONLを `migrateLegacyQueue()` で読み込む。`src/cron/runner.ts` は設定を起動時に読み、readyなDiscord clientがないtickを見送る。receiverは別に起動する。起動条件は変更しない。
 - `src/queue/types.ts` の `InboxMessage` がMail/RSSのID、Memory用 `jobKind` を含む。`src/cron/enqueue.ts` がMail/RSS IDをqueueへコピー、`src/queue/repository.ts` の `jobs.payload_json` と `deliveries.payload_json` が永続化する。`QueueRepository.enqueue()` はMailのterminal後だけactive-only dedupeに切り替え、`claimDelivery()` のSQLはRSSの失敗chunk特例を持つ。後者も単なる呼び出し元の移動では取り除けない。
 - `src/queue/poller.ts` は `processMessage()` のMemory export分岐、RSS失敗・無配信確定、Mail無配信ACK、配送payloadへのMail/RSS ID注入を持つ。`src/queue/delivery.ts` の `DeliveryWorker.process()` はchunk送信結果を更新し、Mailは全chunk `sent` 後にACK、RSSはsettle／releaseする。`src/queue/reconciliation.ts` は起動時にRSS claimとqueue結果を照合する（移動後の旧importも更新する）。配送結果の `ambiguous` は送信成功を意味しない。`QueueRepository.commitResult()` がAgent結果・delivery intent・採用会話参照をfenced transactionで確定することを維持する。
 - MailはGraph未読を次回cronで取得し直す。失敗したAgentにACK-only retryは作らない。既読化失敗時は未読が残りterminal job後のDiscord投稿重複があり得る。`<NO_REPLY>` 成功では配送なしでACKする。RSSはclaim→投入→配送全chunk成功か明示的抑制で既読、失敗時は解放、起動時に再照合。`Screen Capture` はfull batchのみ要約、成功後 `completed_at` を付け、GCは完了後24時間超のみ削除。Memory exportは `committed_conversations` とgroup `sessions.sqlite` を読み、remote受理後に `memory-export.sqlite` にmarkerを記録し、無効なcron IDの待機jobはno-op。remote受理とmarker記録間で落ちたときの重複は許容する。
@@ -35,7 +35,7 @@
 
 ### 3. 旧データを変換する（本番の自動migrationではない）
 
-**新規 `scripts/convert-issue540-runtime.ts`**：明示的に一回実行する変換スクリプト。現在の `jobs.payload_json`、`deliveries.payload_json`、`dead_letters.payload_json`（存在する場合）についてMail/RSS/Memory識別情報を新source envelope／host-only識別へ変換する。必要な新しい識別columnがあれば既存queueとdeliveryの参照関係、`idempotency_keys`、`jobs.session_id`、fencing/status/attempt、`committed_conversations` を維持する。Mailのactive-only terminal key、RSSのdispatch ID／statePath／dispatch job key、Memoryのcron IDを失わない。RSSのclaimを持つ別DB・Screen Capture・group session DB・Memory ledgerの**内容**を削除しない。変換スクリプトを実行した後の形式だけ新runtimeが読む。旧形式読み取り互換、起動時の自動移行、旧jobの手作業点検、専用エラー画面、スクリプト再実行対応は作らない。SQLiteの短いtransactionで変換し、LLM/HTTPをtransaction中に呼ばない。元形式のファイルコピー保持は要件ではない。実装計画に従う運用では旧workerと新workerを同一queueで並走させない。
+**新規 `scripts/convert-issue540-runtime.ts`**：明示的に一回実行する変換スクリプト。現在の `jobs.payload_json`、`deliveries.payload_json`、`dead_letters.payload_json`（存在する場合）についてMail/RSS/Memory識別情報を新source envelope／host-only識別へ変換する。必要な新しい識別columnがあれば既存queueとdeliveryの参照関係、`idempotency_keys`、`jobs.session_id`、fencing/status/attempt、`committed_conversations` を維持する。Mailのactive-only terminal key、RSSのdispatch ID／statePath／dispatch job key、Memoryのcron IDを失わない。RSSのclaimを持つ別DB・Screen Capture・group session DB・Memory ledgerの**内容**を削除しない。変換スクリプトを実行した後の形式だけ新runtimeが読む。移行手順は①旧worker停止、②変換スクリプトが旧形式を扱う段階で既存の `migrateLegacyQueue()` を一度呼び、未取り込みの旧JSONLをSQLiteへ取り込む（ファイルが無ければ何もしない）、③同じ一回限りのスクリプトでSQLiteを新形式へ変換、④新runtime起動。新runtimeでは `src/queue/migration.ts` の `initializeQueue()` から `migrateLegacyQueue()` の起動時呼び出しを除去する。session admissionと期限切れleaseの復旧は残す。未取り込みの旧JSONLが新runtime起動後に再流入することはない。旧形式読み取り互換、起動時の旧JSONL自動移行、旧jobの手作業点検、専用エラー画面、スクリプト再実行対応は作らない。SQLiteの短いtransactionで変換し、LLM/HTTPをtransaction中に呼ばない。元形式のファイルコピー保持は要件ではない。実装計画に従う運用では旧workerと新workerを同一queueで並走させない。
 
 ### 4. テストと文書
 
@@ -47,6 +47,7 @@
 | `src/cron/jobs/mail.test.ts`、`src/cron/jobs/rss-pipeline.test.ts`、`src/cron/jobs/screen-capture-summary.test.ts`、`src/cron/jobs/screen-capture-gc.test.ts` | 現行producer／full batch／成功後 `completed_at`／24h GCの回帰 |
 | `src/memory/export.test.ts`、`src/cron/runner.integration.test.ts` | 成功marker、失敗retry、disabled no-op、設定再起動反映、cron開始条件とbackfill後起動順 |
 | **新規** `src/queue/job-handlers.test.ts`、`scripts/convert-issue540-runtime.test.ts` | 明示登録の重複・不明kind拒否、実SQLiteの旧形式→新形式変換と未完了job／配送payload／採用会話参照の維持。移行後に後続jobが動くことまで検証 |
+| `src/queue/migration.ts`、`src/queue/migration.test.ts`、`src/index.test.ts` | 起動時の旧JSONL取り込みを停止しつつ、session admission・期限切れlease復旧が残ること、変換後の旧JSONLが再投入されないことを検証 |
 | `docs/inbox-queue.md`、`docs/storage.md`、`docs/spec/cron.md`、`docs/agent-memory.md`、`docs/config.md` | 実際に変わった内部接続・一回限り変換の運用だけ更新。RSSの旧「queue投入で既読」記述は現在の配送後settlementと整合させる。設定例の場所／形式は変更しない |
 
 上表の「新規」以外のテストパスはcheckout内で存在を確認した。テストではGraph／Discord／backendの実接続をしない最小fakeを使い、実SQLite（temp path）でlease・fencing・transaction／復旧を確かめる。実外部APIのexactly-onceや外部side effectの取り消しをfakeで保証したことにはしない。source callbackの失敗位置（commit直後、最終chunk直後、ACK前、remote受理後marker前）を個別に検証する。既存テスト内で差し替えるより小さいテストを優先し、不要な大量のテスト雛形は増やさない。
@@ -69,6 +70,6 @@
 
 ## 完了前の照合
 
-- 各機能の現行仕様の維持を上記テストで確認し、旧・新両形式のqueue workerが同時に走らないことを運用手順に残す。
+- 各機能の現行仕様の維持を上記テストで確認し、旧・新両形式のqueue workerが同時に走らず、新runtimeが旧JSONLを取り込まないことを運用手順に残す。
 - 新規ファイルは全て「新規」と明記した。既存関数・DB columnはコードで突合し、変更時は命名規則とコメント規則（`code-naming`、`code-comments`）を使う。計画にしか残らない重要な判断理由は実装のcommit／PR本文へ移す。
 - 他cron job、file memory／bootstrap、config移設、汎用hook、Redis等の新基盤は追加しない。実装中に現行コードとIssueの意図が重大に矛盾したら推測で仕様を変更せず所有者へ確認する。
