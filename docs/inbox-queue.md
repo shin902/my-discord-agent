@@ -15,9 +15,9 @@ Discord / cron
 
 - [QueueRepository](../src/queue/repository.ts) がenqueue、冪等性、claim、lease、fencing、結果保存、配送状態を管理します。
 - [poller](../src/queue/poller.ts) はdurable claimを取得し、[manager](../src/agent/manager.ts) を通じて使い捨てのsandbox containerを起動します。
-- [delivery worker](../src/queue/delivery.ts) は保存済みの配送内容を送信します。配送失敗を理由に完了済みAgentを再実行しません。
+- [delivery worker](../src/queue/delivery.ts) は保存済みの配送内容を送信します。配送失敗を理由に完了済みAgentを再実行しません。Mail/RSSの入力は`jobs.payload_json`と`deliveries.payload_json`の`feature: {kind, input}`として保持し、起動時に明示登録された所有モジュールが検証・完了判断を行います。`jobs.source_kind`と`allow_failed_predecessor`はSQL claim用の共通識別／配送policyです。
 - 会話履歴はgroupごとの `sessions.sqlite` に保存し、runtime DBとは分離します。runnerは採用する入力user / final assistantのstable entry IDをhostへ返します。entry保存だけでは成功の証明にならず、既存のfenced結果commitと同一transactionで `committed_conversations` へ参照を確定します。Memory exporterはこの参照とsession本文だけを消費し、attemptや最終応答を再推論しません。参照はjobs retentionと独立し、session renameでもentry IDを維持します。
-- Memory export cronは `jobKind: memory-export` とcron IDを持つ内部jobをenqueueします。pollerはAgent実行・Discord配送を経由せず、startup cron cacheとread-only session storeからbounded batchを処理します。既存の `session_id: memory-export:<cronJobId>` ordering、heartbeat、lease、fencing、retryを使い、Memory専用queueは持ちません。詳細は [Agent Memory export](agent-memory.md) を参照してください。
+- Memory export cronは `jobKind: memory-export` とcron IDだけのhost-only入力をenqueueします。queueが内部保存用の `session_id: memory-export:<cronJobId>` を補い、明示登録されたMemory handlerをpollerがAgent実行・Discord配送なしで処理します。startup cron cacheとread-only session storeからbounded batchを処理し、既存のordering、heartbeat、lease、fencing、retryを使います。Memory専用queueは持ちません。詳細は [Agent Memory export](agent-memory.md) を参照してください。
 
 ## 状態と順序
 
@@ -37,9 +37,9 @@ SQL上の `jobs.status` が状態の正本です。旧 `claimed` 整数列は互
 
 ## 起動・復旧
 
-[起動処理](../src/index.ts) は、管理対象・孤立runnerの停止をstrictに確認してからgroup promptの初期読み込み、設定検証を行います。その後にqueueを初期化し、前プロセスの未完了Bot admission・期限切れ実行の回収と旧queue JSONL移行を行います。
+[起動処理](../src/index.ts) は、管理対象・孤立runnerの停止をstrictに確認してからgroup promptの初期読み込み、設定検証を行います。その後にqueueを初期化し、前プロセスの未完了Bot admission・期限切れ実行を回収します。旧queue JSONLは起動時に取り込みません。旧Mail/RSS payloadが残るDBでは起動を拒否します。初回更新前に[一回限りの変換](storage.md#issue-540-一回限りのruntime変換)を実行してください。
 
-cron設定を読み、RSS reconciliationとruntime health checkを実行してからpoller・delivery worker・cronを開始し、Discordへloginします。Discord ready時の履歴backfillは全Botを通じて一度だけ開始します。詳細は [起動時Discord履歴バックフィル](config.md#起動時discord履歴バックフィル) を参照してください。runnerの停止確認に失敗した場合、queue回収へは進みません。
+cron設定を読み、RSS reconciliationとruntime health checkを実行します。その後Discordへloginし、backfill完了後にpoller・delivery worker・cronを開始します。Discord ready時の履歴backfillは全Botを通じて一度だけ開始します。詳細は [起動時Discord履歴バックフィル](config.md#起動時discord履歴バックフィル) を参照してください。runnerの停止確認に失敗した場合、queue回収へは進みません。
 
 調査は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順を使います。lease、fencing、delivery、idempotencyの関係を無視した手動の `UPDATE` / `DELETE` は行わないでください。
 

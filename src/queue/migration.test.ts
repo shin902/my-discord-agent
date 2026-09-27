@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { migrateLegacyQueue } from "./migration.js";
+import { initializeQueue, migrateLegacyQueue } from "./migration.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 
 let tempDirs: string[] = [];
@@ -161,6 +161,45 @@ describe("migrateLegacyQueue", () => {
           })
         ).migrated,
       ).toBe(0);
+    } finally {
+      repo.close();
+    }
+  });
+});
+
+describe("normal runtime startup", () => {
+  it("does not import a leftover JSONL file", async () => {
+    const paths = await makePaths(`${JSON.stringify(message())}\n`);
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      await initializeQueue(repo);
+      expect(
+        repo.db.prepare("SELECT count(*) AS count FROM jobs").get(),
+      ).toEqual({ count: 0 });
+      expect(await readFile(paths.inbox, "utf8")).toContain("legacy-1");
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("rejects unconverted legacy source rows before claiming any job", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      const job = repo.enqueue({
+        channelId: "channel",
+        groupName: "group",
+        sessionId: "session",
+        content: "mail",
+        timestamp: new Date().toISOString(),
+      }).job;
+      repo.db
+        .prepare(
+          "UPDATE jobs SET payload_json=json_set(payload_json,'$.mailEmailId','email-1') WHERE id=?",
+        )
+        .run(job.id);
+      await expect(initializeQueue(repo)).rejects.toThrow(
+        /conversion is required/,
+      );
     } finally {
       repo.close();
     }

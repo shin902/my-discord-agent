@@ -21,20 +21,18 @@ import {
   type ProviderConcurrency,
   resolveProviderLockTarget,
 } from "../config/providers.js";
-import { acknowledgeEmail } from "../cron/mail-ack.js";
-import { getCachedCronJob, isCronHandler } from "../cron/runner.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
-import { MEMORY_EXPORT_HANDLER, runMemoryExport } from "../memory/export.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
 import { acquireInferenceLock } from "./inference-lock.js";
-import { settleRssDispatch } from "./reconciliation.js";
+import { JobHandlers } from "./job-handlers.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
+import { SourceHandlers } from "./source-handlers.js";
 import type { InboxMessage } from "./types.js";
 
 function trustedDiscordDestination(
@@ -196,85 +194,31 @@ function isEmptyAgentResponse(response: string): boolean {
   return response.trim().length === 0;
 }
 
-async function finalizeSuppressedSource(msg: InboxMessage): Promise<void> {
-  if (msg.mailEmailId) {
-    try {
-      await acknowledgeEmail(msg.mailEmailId);
-    } catch (error) {
-      console.error(
-        `[poller] 無配信mailの既読化に失敗しました (${msg.id}):`,
-        error,
-      );
-    }
-  }
-
-  if (!msg.rssDispatchId) return;
+async function finalizeSuppressedSource(
+  msg: InboxMessage,
+  sources: SourceHandlers,
+): Promise<void> {
+  if (!msg.feature) return;
   try {
-    const settled = settleRssDispatch(
-      msg.rssStatePath,
-      msg.rssDispatchId,
-      msg.idempotencyKey,
-      "completed",
-    );
-    if (settled === 1) return;
-    throw new Error("RSS dispatch claim was not found or could not be opened");
-  } catch (settleError) {
-    console.error(
-      `[poller] 無配信RSSの確定に失敗しました (${msg.id}):`,
-      settleError,
-    );
-    try {
-      const released = settleRssDispatch(
-        msg.rssStatePath,
-        msg.rssDispatchId,
-        msg.idempotencyKey,
-        "dead_letter",
-      );
-      if (released !== 1) {
-        throw new Error(
-          "RSS dispatch claim was not found or could not be opened",
-        );
-      }
-    } catch (releaseError) {
-      console.error(
-        `[poller] 無配信RSSのclaim解放にも失敗しました (${msg.id}):`,
-        releaseError,
-      );
-    }
+    await sources.suppressed(msg);
+  } catch (error) {
+    // The queue result is durable. Mail retries from Graph unread state and
+    // RSS recovery reconciles claims at startup.
+    console.error(`[poller] source suppression failed (${msg.id}):`, error);
   }
 }
 
-function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
-  // RSS success is settled by the Discord delivery worker, not queue completion.
-  // This keeps the article unread until the post actually exists in Discord.
-  if (!msg.rssDispatchId) return;
-  if (
-    msg.cronDeliveryMode === "direct" ||
-    msg.cronDeliveryMode === "new-thread" ||
-    msg.cronDeliveryMode === "item-thread"
-  )
-    return;
+async function settleSourceAfterQueueTransition(
+  msg: InboxMessage,
+  sources: SourceHandlers,
+): Promise<void> {
+  if (!msg.feature) return;
   try {
-    const job = getQueueRepository().get(msg.id);
-    if (!job) return;
-    const resolution =
-      job.status === "completed"
-        ? "completed"
-        : job.status === "dead_letter"
-          ? "dead_letter"
-          : undefined;
-    if (!resolution) return;
-    settleRssDispatch(
-      msg.rssStatePath,
-      msg.rssDispatchId,
-      job.idempotencyKey ?? msg.idempotencyKey,
-      resolution,
-    );
+    await sources.terminal(msg);
   } catch (error) {
-    // Queue terminal state is already durable; startup reconciliation can
-    // retry this cross-database update if the RSS store is unavailable.
+    // Queue state is already durable; RSS startup reconciliation can retry.
     console.error(
-      `[poller] RSS dispatch状態の収束に失敗しました (${msg.id}):`,
+      `[poller] source terminal callback failed (${msg.id}):`,
       error,
     );
   }
@@ -283,8 +227,15 @@ function settleRssDispatchAfterQueueTransition(msg: InboxMessage): void {
 // Durable claims provide session ordering; this set only prevents duplicate in-process dispatch.
 const inFlightIds = new Set<string>();
 
-export function startPoller(): void {
+let activeHandlers = new JobHandlers();
+let activeSources = new SourceHandlers();
+export function startPoller(
+  handlers: JobHandlers = new JobHandlers(),
+  sources: SourceHandlers = new SourceHandlers(),
+): void {
   if (running) return;
+  activeHandlers = handlers;
+  activeSources = sources;
   running = true;
   void poll();
 }
@@ -320,7 +271,7 @@ function dispatchClaimedMessage(msg: InboxMessage): void {
   }, LEASE_RENEWAL_MS);
   renewal.unref?.();
   inFlightIds.add(msg.id);
-  void processMessage(msg, controller.signal)
+  void processMessage(msg, controller.signal, activeHandlers, activeSources)
     .finally(() => {
       clearInterval(renewal);
       inFlightIds.delete(msg.id);
@@ -536,14 +487,24 @@ async function withInferenceLock<T>(
   }
 }
 
+function terminalSourceFailure(
+  msg: InboxMessage,
+  sources: SourceHandlers,
+): boolean {
+  return msg.feature
+    ? sources.policy(msg.feature).terminalOnAgentFailure
+    : false;
+}
+
 // 非ゼロ終了コードの扱いは通常メッセージと cron thread delivery で同一のため共通化する。
-// リトライ方針の決定は QueueRepository が所有するため、poller は記録するだけ。
 async function releaseRssAfterFailure(
   msg: InboxMessage,
   reason: string,
   timing: ResponseTiming,
+  sources: SourceHandlers,
 ): Promise<void> {
-  if (!msg.rssDispatchId || msg.fencingToken === undefined) return;
+  if (!terminalSourceFailure(msg, sources) || msg.fencingToken === undefined)
+    return;
   await getQueueRepository().deadLetter(
     msg.id,
     msg.fencingToken,
@@ -551,20 +512,25 @@ async function releaseRssAfterFailure(
     undefined,
     executionMetadata(timing),
   );
-  settleRssDispatch(
-    msg.rssStatePath,
-    msg.rssDispatchId,
-    msg.idempotencyKey,
-    "dead_letter",
-  );
+  if (msg.feature) {
+    try {
+      await sources.terminal(msg);
+    } catch (error) {
+      console.error(
+        `[poller] source failure settlement failed (${msg.id}):`,
+        error,
+      );
+    }
+  }
 }
 
 async function failEmptyAgentResponse(
   msg: InboxMessage,
   timing: ResponseTiming,
+  sources: SourceHandlers,
 ): Promise<void> {
-  if (msg.rssDispatchId) {
-    await releaseRssAfterFailure(msg, "empty_response", timing);
+  if (terminalSourceFailure(msg, sources)) {
+    await releaseRssAfterFailure(msg, "empty_response", timing, sources);
   } else {
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
@@ -583,13 +549,14 @@ async function failAttemptIfNonZeroExitCode(
   msg: InboxMessage,
   response: string,
   timing: ResponseTiming,
+  sources: SourceHandlers,
 ): Promise<boolean> {
   const exitCode = timing.agentExecution?.exitCode;
   if (exitCode === undefined || exitCode === null || exitCode === 0) {
     return false;
   }
-  if (msg.rssDispatchId) {
-    await releaseRssAfterFailure(msg, "agent_exit", timing);
+  if (terminalSourceFailure(msg, sources)) {
+    await releaseRssAfterFailure(msg, "agent_exit", timing, sources);
   } else {
     await getQueueRepository().failAttempt(
       msg.id,
@@ -735,7 +702,8 @@ async function ensureCronThread(msg: InboxMessage): Promise<void> {
 
 async function processCronThreadDelivery(
   msg: InboxMessage,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  sources: SourceHandlers,
 ): Promise<void> {
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
@@ -758,7 +726,7 @@ async function processCronThreadDelivery(
     // item-thread materializes only after a non-suppressed response exists.
     // new-thread keeps its existing destination-session behavior.
     if (
-      !msg.rssDispatchId &&
+      !terminalSourceFailure(msg, sources) &&
       msg.cronDeliveryMode !== "item-thread" &&
       usesCronDestinationSession(msg)
     ) {
@@ -821,10 +789,11 @@ async function processCronThreadDelivery(
         signal,
       },
     );
-    if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (await failAttemptIfNonZeroExitCode(msg, response, timing, sources))
+      return;
     if (isEmptyAgentResponse(response)) {
       outcome = "dead-letter";
-      await failEmptyAgentResponse(msg, timing);
+      await failEmptyAgentResponse(msg, timing, sources);
       return;
     }
     const suppressDelivery = hasNoReplyMarker(response);
@@ -845,23 +814,16 @@ async function processCronThreadDelivery(
             destinationId: msg.channelId,
             cronJobId: msg.cronJobId,
             cronThreadId: lateItemThread ? undefined : msg.cronThreadId,
-            ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
-            ...(msg.rssDispatchId
-              ? {
-                  rssDispatchId: msg.rssDispatchId,
-                  rssStatePath: msg.rssStatePath,
-                  rssDispatchJobId: msg.idempotencyKey,
-                }
-              : {}),
+            ...(msg.feature ? { feature: msg.feature } : {}),
           },
         },
       );
-    if (suppressDelivery) await finalizeSuppressedSource(msg);
+    if (suppressDelivery) await finalizeSuppressedSource(msg, sources);
     outcome = "success";
   } catch (error) {
-    if (msg.rssDispatchId) {
+    if (terminalSourceFailure(msg, sources)) {
       outcome = "dead-letter";
-      await releaseRssAfterFailure(msg, "agent_error", timing);
+      await releaseRssAfterFailure(msg, "agent_error", timing, sources);
       return;
     }
     const ambiguousMutation =
@@ -952,14 +914,17 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
 export async function processMessage(
   msg: InboxMessage,
   signal?: AbortSignal,
+  handlers: JobHandlers = new JobHandlers(),
+  sources: SourceHandlers = new SourceHandlers(),
 ): Promise<void> {
   if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
     const timing = startResponseTiming(msg);
-    if (msg.rssDispatchId) {
+    if (terminalSourceFailure(msg, sources)) {
       await releaseRssAfterFailure(
         msg,
         "unsupported_pre_materialized_item_thread",
         timing,
+        sources,
       );
     } else if (msg.fencingToken !== undefined) {
       await getQueueRepository().deadLetter(
@@ -970,17 +935,13 @@ export async function processMessage(
     }
     return;
   }
-  if (msg.jobKind === "memory-export") {
+  if (msg.jobKind) {
     if (msg.fencingToken === undefined)
       throw new Error(`fenced inbox message required: ${msg.id}`);
     const repository = getQueueRepository();
     try {
       repository.markRunning(msg.id, msg.fencingToken);
-      const job = msg.cronJobId ? getCachedCronJob(msg.cronJobId) : undefined;
-      if (job?.enabled && (await isCronHandler(job, MEMORY_EXPORT_HANDLER))) {
-        await runMemoryExport(job.id, job.settings, signal);
-      }
-      // Removed, disabled or repurposed cron identities terminally no-op.
+      await handlers.run(msg, signal);
       repository.commitResult(msg.id, msg.fencingToken, "", {
         suppressDelivery: true,
       });
@@ -997,6 +958,15 @@ export async function processMessage(
       }
     }
     return;
+  }
+  if (msg.feature) {
+    try {
+      sources.policy(msg.feature);
+    } catch (error) {
+      if (msg.fencingToken !== undefined)
+        getQueueRepository().failAttempt(msg.id, error, msg.fencingToken);
+      return;
+    }
   }
   if (msg.fencingToken !== undefined) {
     try {
@@ -1042,7 +1012,7 @@ export async function processMessage(
           },
         );
       }
-      settleRssDispatchAfterQueueTransition(msg);
+      await settleSourceAfterQueueTransition(msg, sources);
       return;
     }
   }
@@ -1052,9 +1022,9 @@ export async function processMessage(
     msg.cronThread
   ) {
     try {
-      return await processCronThreadDelivery(msg, signal);
+      return await processCronThreadDelivery(msg, signal, sources);
     } finally {
-      settleRssDispatchAfterQueueTransition(msg);
+      await settleSourceAfterQueueTransition(msg, sources);
     }
   }
   const timing = startResponseTiming(msg);
@@ -1073,8 +1043,13 @@ export async function processMessage(
     });
     if (!groupConfig) {
       outcome = "dead-letter";
-      if (msg.rssDispatchId) {
-        await releaseRssAfterFailure(msg, "config-unavailable", timing);
+      if (terminalSourceFailure(msg, sources)) {
+        await releaseRssAfterFailure(
+          msg,
+          "config-unavailable",
+          timing,
+          sources,
+        );
       } else if (msg.fencingToken !== undefined) {
         await getQueueRepository().deadLetter(
           msg.id,
@@ -1128,10 +1103,7 @@ export async function processMessage(
                   conversation = entries;
                 },
                 source:
-                  !msg.botId &&
-                  !msg.cronJobId &&
-                  !msg.mailEmailId &&
-                  !msg.rssDispatchId
+                  !msg.botId && !msg.cronJobId && !msg.feature
                     ? msg.source
                     : undefined,
                 onExecutionTiming: (executionTiming) => {
@@ -1180,9 +1152,9 @@ export async function processMessage(
       );
     } catch (err) {
       stopTyping();
-      if (msg.rssDispatchId) {
+      if (terminalSourceFailure(msg, sources)) {
         outcome = "dead-letter";
-        await releaseRssAfterFailure(msg, "agent_error", timing);
+        await releaseRssAfterFailure(msg, "agent_error", timing, sources);
         return;
       }
       if (err instanceof NonRetryableError) {
@@ -1215,10 +1187,11 @@ export async function processMessage(
       return;
     }
 
-    if (await failAttemptIfNonZeroExitCode(msg, response, timing)) return;
+    if (await failAttemptIfNonZeroExitCode(msg, response, timing, sources))
+      return;
     if (isEmptyAgentResponse(response)) {
       outcome = "dead-letter";
-      await failEmptyAgentResponse(msg, timing);
+      await failEmptyAgentResponse(msg, timing, sources);
       return;
     }
     const suppressDelivery = hasNoReplyMarker(response);
@@ -1239,28 +1212,18 @@ export async function processMessage(
           groupName: msg.groupName,
           destinationType: "channel",
           destinationId: msg.channelId,
-          ...(msg.mailEmailId && msg.mailRouteKey
-            ? { mailRouteKey: msg.mailRouteKey }
-            : {}),
           replyMessageId,
           allowMention: groupConfig.allowMention === true,
-          ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
-          ...(msg.rssDispatchId
-            ? {
-                rssDispatchId: msg.rssDispatchId,
-                rssStatePath: msg.rssStatePath,
-                rssDispatchJobId: msg.idempotencyKey,
-              }
-            : {}),
+          ...(msg.feature ? { feature: msg.feature } : {}),
         },
       },
     );
-    if (suppressDelivery) await finalizeSuppressedSource(msg);
+    if (suppressDelivery) await finalizeSuppressedSource(msg, sources);
     outcome = "success";
     stopTyping();
   } finally {
     stopTyping();
-    settleRssDispatchAfterQueueTransition(msg);
+    await settleSourceAfterQueueTransition(msg, sources);
     logResponseTiming(msg, timing, outcome);
   }
 }

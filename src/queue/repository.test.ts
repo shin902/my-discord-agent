@@ -5,15 +5,22 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  getMailThread,
+  registerMailSource,
+  setMailThread,
+} from "../features/mail.js";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
+import { SourceHandlers } from "./source-handlers.js";
 
 it("persists Mail thread routes by group, channel and key across restart", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mail-threads-"));
   const dbPath = join(dir, "runtime.sqlite");
   try {
     const first = new QueueRepository(dbPath);
-    first.setMailThread(
+    setMailThread(
+      first,
       "group-a",
       "channel-a",
       "mail:a@example.com",
@@ -23,25 +30,26 @@ it("persists Mail thread routes by group, channel and key across restart", async
     const reopened = new QueueRepository(dbPath);
     try {
       expect(
-        reopened.getMailThread("group-a", "channel-a", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-a", "mail:a@example.com"),
       ).toBe("thread-1");
       expect(
-        reopened.getMailThread("group-a", "channel-b", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-b", "mail:a@example.com"),
       ).toBeUndefined();
       expect(
-        reopened.getMailThread("group-b", "channel-a", "mail:a@example.com"),
+        getMailThread(reopened, "group-b", "channel-a", "mail:a@example.com"),
       ).toBeUndefined();
-      reopened.setMailThread(
+      setMailThread(
+        reopened,
         "group-a",
         "channel-b",
         "mail:a@example.com",
         "thread-2",
       );
       expect(
-        reopened.getMailThread("group-a", "channel-a", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-a", "mail:a@example.com"),
       ).toBe("thread-1");
       expect(
-        reopened.getMailThread("group-a", "channel-b", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-b", "mail:a@example.com"),
       ).toBe("thread-2");
     } finally {
       reopened.close();
@@ -62,16 +70,17 @@ it("creates channel-scoped Mail mappings on upgrade from v7", async () => {
     const upgraded = new QueueRepository(dbPath);
     try {
       expect(
-        upgraded.getMailThread("group", "channel", "mail:a@example.com"),
+        getMailThread(upgraded, "group", "channel", "mail:a@example.com"),
       ).toBeUndefined();
-      upgraded.setMailThread(
+      setMailThread(
+        upgraded,
         "group",
         "channel",
         "mail:a@example.com",
         "new-thread",
       );
       expect(
-        upgraded.getMailThread("group", "channel", "mail:a@example.com"),
+        getMailThread(upgraded, "group", "channel", "mail:a@example.com"),
       ).toBe("new-thread");
     } finally {
       upgraded.close();
@@ -143,12 +152,15 @@ describe("mail idempotency storage", () => {
     content: "content",
     timestamp: "2026-09-15T00:00:00.000Z",
     cronJobId: "mail",
-    mailEmailId: "mail-1",
+    feature: { kind: "mail", input: { emailId: "mail-1" } },
     idempotencyKey: "mail:graph:mail:mail-1",
   };
   let repo: QueueRepository;
   beforeEach(() => {
     repo = new QueueRepository(":memory:");
+    const sources = new SourceHandlers();
+    registerMailSource(sources);
+    repo.registerSources(sources);
   });
   afterEach(() => {
     repo.close();
@@ -158,7 +170,7 @@ describe("mail idempotency storage", () => {
     "completed",
     "dead_letter",
   ])("does not reuse non-mail %s keys, even after job retention", (status) => {
-    const generic = { ...payload, mailEmailId: undefined };
+    const generic = { ...payload, feature: undefined };
     const first = repo.enqueue(generic).job;
     const claim = expectDefined(repo.claim());
     if (status === "completed")
@@ -225,6 +237,9 @@ describe("mail idempotency storage", () => {
     const dir = await mkdtemp(join(tmpdir(), "mail-idempotency-"));
     const dbPath = join(dir, "runtime.sqlite");
     const initial = new QueueRepository(dbPath);
+    const initialSources = new SourceHandlers();
+    registerMailSource(initialSources);
+    initial.registerSources(initialSources);
     // Both a fresh key and reuse of a durable terminal key must be atomic.
     if (terminal) {
       const first = initial.enqueue(payload).job;
@@ -244,6 +259,10 @@ describe("mail idempotency storage", () => {
       require("tsx/cjs/api").register();
       const { QueueRepository } = require(workerData.repositoryPath);
       const repo = new QueueRepository(workerData.dbPath);
+      repo.registerSources({ policy: (envelope) => {
+        if (envelope.kind !== "mail") throw new Error("unknown source");
+        return { activeOnlyIdempotency: true, continueAfterFailedChunk: false };
+      } });
       parentPort.postMessage("ready");
       Atomics.wait(new Int32Array(workerData.gate), 0, 0);
       const result = repo.enqueue(workerData.payload);
@@ -279,6 +298,7 @@ describe("mail idempotency storage", () => {
       expect(values.filter((value) => value.inserted)).toHaveLength(1);
       expect(new Set(values.map((value) => value.id)).size).toBe(1);
       const restarted = new QueueRepository(dbPath);
+      restarted.registerSources(initialSources);
       try {
         expect(restarted.enqueue(payload).inserted).toBe(false);
         expect(

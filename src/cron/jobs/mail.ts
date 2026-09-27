@@ -1,5 +1,5 @@
+import { enqueueMail, mailRouteKey } from "../../features/mail.js";
 import { hostFetch } from "../../tools/host-fetch.js";
-import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 const MAX_BODY_CHARS = 8000;
@@ -26,24 +26,6 @@ interface UnreadEmail {
   from: string;
   senderAddress: string;
   headers: Array<{ name: string; value: string }>;
-}
-
-export function mailRouteKey({
-  subject,
-  senderAddress,
-  headers,
-}: Pick<UnreadEmail, "subject" | "senderAddress" | "headers">): string {
-  const sender = senderAddress.trim().toLowerCase();
-  if (sender === "notifications@github.com") {
-    const listId = headers.find(
-      (header) => header.name.toLowerCase() === "list-id",
-    )?.value;
-    const repo = listId?.match(/^\s*([\w.-]+)\/([\w.-]+)(?:\s|$)/i);
-    const item = subject.match(/\(#(\d+)\)\s*$/);
-    if (repo && item)
-      return `github:${repo[1].toLowerCase()}/${repo[2].toLowerCase()}:item:${item[1]}`;
-  }
-  return `mail:${sender}`;
 }
 
 async function listUnreadEmails(): Promise<UnreadEmail[]> {
@@ -125,16 +107,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
     try {
       const bodyText = await fetchEmailBody(meta.id);
       const emailText = `件名: ${meta.subject}\n送信者: ${meta.from}\n\n${bodyText}`;
-      await enqueueCronInbox(
-        {
-          ...ctx,
-          deliveryMode: "direct",
-          sessionMode: "per-run",
-          idempotencyKey: `mail:graph:${encodeURIComponent(ctx.id)}:${encodeURIComponent(meta.id)}`,
-          mailEmailId: meta.id,
-          mailRouteKey: mailRouteKey(meta),
-        },
+      await enqueueMail(
+        ctx,
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
+        meta.id,
+        mailRouteKey(meta),
       );
     } catch (err) {
       console.error(`[mail] メール ${meta.id} のキュー登録に失敗:`, err);

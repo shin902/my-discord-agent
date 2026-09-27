@@ -184,7 +184,7 @@ host専用DBの未完了画像が`settings.limit`枚揃ったときだけ、古�
 
 ## メール処理（`jobs/mail.ts`）
 
-メールハンドラーは未読メールを取得し、本文・ACK対象のメールID・送信元・`List-Id`・件名から決定論的なmailRouteKeyをinboxへ投入する（本文はroutingに使わない）。LLM sessionはメールごとに独立し、Discord deliveryはMail専用mappingで同じgroup・親channel・routeのthreadを再利用する。Mailの `channelId` は既存threadではなく親Text Channelが必要。全delivery chunkが`sent`になった後にだけメールを既読化する。
+メールハンドラーは未読メールを取得し、Mail機能モジュールで本文・ACK対象のメールID・送信元・`List-Id`・件名から決定論的なmailRouteKeyとfeature入力を作ってinboxへ投入する（本文はroutingに使わない）。LLM sessionはメールごとに独立する。Mail機能がrouteのthread名とmapping（group・親channel・route単位）を所有し、共通Discord deliveryはthreadの解決・作成・送信だけを行う。Mailの `channelId` は既存threadではなく親Text Channelが必要。全delivery chunkが`sent`になった後にだけメールを既読化する。
 
 1. 未読メールを取得して本文を取得する。
 2. `enqueueCronInbox()` にメールIDとcron job ID + Graph message ID由来の冪等キー `mail:graph:<encoded-cron-job-id>:<encoded-message-id>` を付けてjobを投入する。各IDは区切り文字との衝突を避けるためURI encodeする。Mailは `direct` + `per-run` として処理される。同一cron job + 同一Graph messageはqueue jobがactive（`queued` / `retry_wait` / `claimed` / `running`）の間だけdedupeし、別cron jobは独立してenqueueできる。

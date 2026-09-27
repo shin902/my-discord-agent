@@ -20,6 +20,12 @@ vi.mock("../discord/client.js", () => ({
 }));
 
 import {
+  getMailThread,
+  registerMailSource,
+  setMailThread,
+} from "../features/mail.js";
+import { registerRssSource } from "../features/rss.js";
+import {
   claimUnreadArticles,
   listDispatchClaims,
   listUnreadArticles,
@@ -34,12 +40,52 @@ import {
   DiscordDeliveryAdapter,
 } from "./delivery.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
+import { SourceHandlers } from "./source-handlers.js";
+
+function makeWorker(
+  repo: QueueRepository,
+  adapter: DeliveryAdapter = new DiscordDeliveryAdapter(),
+  options: ConstructorParameters<typeof DeliveryWorker>[2] = {},
+): DeliveryWorker {
+  const sources = new SourceHandlers();
+  registerMailSource(sources);
+  registerRssSource(sources, repo);
+  repo.registerSources(sources);
+  return new DeliveryWorker(repo, adapter, options, sources);
+}
 
 function completed(
   repo: QueueRepository,
   response: string,
   metadata: Record<string, unknown> = {},
 ) {
+  const mailId = metadata.mailEmailId;
+  const rssId = metadata.rssDispatchId;
+  const feature =
+    typeof mailId === "string"
+      ? {
+          kind: "mail",
+          input: { emailId: mailId, routeKey: metadata.mailRouteKey },
+        }
+      : typeof rssId === "string"
+        ? {
+            kind: "rss",
+            input: {
+              dispatchId: rssId,
+              statePath: metadata.rssStatePath,
+              dispatchJobId: metadata.rssDispatchJobId,
+            },
+          }
+        : undefined;
+  const rest = { ...metadata };
+  for (const key of [
+    "mailEmailId",
+    "mailRouteKey",
+    "rssDispatchId",
+    "rssStatePath",
+    "rssDispatchJobId",
+  ])
+    delete rest[key];
   const item = repo.enqueue({
     channelId: "channel",
     groupName: "group",
@@ -53,7 +99,8 @@ function completed(
       groupName: "group",
       destinationType: "channel",
       destinationId: "channel",
-      ...metadata,
+      ...rest,
+      ...(feature ? { feature } : {}),
     },
   });
   return item.job.id;
@@ -70,7 +117,7 @@ it("rejects pre-materialized placeholder delivery without Discord mutation", asy
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi.spyOn(client.channels, "fetch");
   try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-pre-materialized-reject",
       retryDelayMs: 0,
     });
@@ -113,7 +160,7 @@ it("durably persists the created thread before its first message send", async ()
     .spyOn(client.channels, "fetch")
     .mockResolvedValue(channel as never);
   try {
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -150,7 +197,7 @@ it("reuses the durably persisted cron thread for delivery", async () => {
       cronJobId: "daily",
       cronThreadId: "thread-actual",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -188,14 +235,40 @@ it("creates a Mail thread when no mapping exists", async () => {
       mailEmailId: "mail-1",
       mailRouteKey: "mail:a@example.com",
     });
-    await new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    await makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "mail-create",
     }).runOnce();
     expect(create).toHaveBeenCalledWith({ name: "a@example.com" });
-    expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
+    expect(getMailThread(repo, "group", "channel", "mail:a@example.com")).toBe(
       "thread-1",
     );
     expect(send).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
+it("uses the Mail-owned GitHub thread name", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const create = vi.fn(async () => ({
+    id: "github-thread",
+    isSendable: () => true,
+    send: async () => ({ id: "message-1" }),
+  }));
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi.spyOn(client.channels, "fetch").mockResolvedValue({
+    type: ChannelType.GuildText,
+    threads: { create },
+  } as never);
+  try {
+    completed(repo, "response", {
+      mailEmailId: "mail-1",
+      mailRouteKey: "github:owner/repo:item:42",
+    });
+    await makeWorker(repo).runOnce();
+    expect(create).toHaveBeenCalledWith({ name: "owner/repo #42" });
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();
@@ -218,7 +291,7 @@ it("rejects a Mail route whose destination is already a thread", async () => {
       mailEmailId: "mail-1",
       mailRouteKey: "mail:a@example.com",
     });
-    await new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    await makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "mail-thread-parent",
     }).runOnce();
     expect(create).not.toHaveBeenCalled();
@@ -245,7 +318,7 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     type: ChannelType.GuildText,
     threads: { create: vi.fn(async () => replacement) },
   };
-  repo.setMailThread("group", "channel", "mail:a@example.com", "thread-1");
+  setMailThread(repo, "group", "channel", "mail:a@example.com", "thread-1");
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
@@ -267,14 +340,15 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
       mailEmailId: "mail-1",
       mailRouteKey: "mail:a@example.com",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-keyed",
     });
     await worker.runOnce();
     expect(firstSend).toHaveBeenCalledOnce();
     expect(channel.threads.create).not.toHaveBeenCalled();
 
-    repo.setMailThread(
+    setMailThread(
+      repo,
       "group",
       "channel",
       "mail:a@example.com",
@@ -291,7 +365,7 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     expect(channel.threads.create).toHaveBeenCalledWith({
       name: "a@example.com",
     });
-    expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
+    expect(getMailThread(repo, "group", "channel", "mail:a@example.com")).toBe(
       "thread-2",
     );
   } finally {
@@ -317,7 +391,7 @@ it("marks transport failure during thread creation ambiguous without retrying", 
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -352,7 +426,7 @@ it("marks a 500 during thread creation ambiguous without retrying", async () => 
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -386,7 +460,7 @@ it("marks transport failure during message send ambiguous without retrying", asy
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -417,7 +491,7 @@ it("marks a 502 during message send ambiguous without retrying", async () => {
     .mockReturnValue(channel as never);
   try {
     const jobId = completed(repo, "response");
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -458,7 +532,7 @@ it("marks thread persistence failures ambiguous without creating a duplicate thr
       destinationId: "channel",
       cronJobId: "daily",
     });
-    const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+    const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
       workerId: "delivery-a",
     });
     await worker.runOnce();
@@ -487,7 +561,7 @@ describe("durable delivery worker", () => {
     const adapter: DeliveryAdapter = { send };
     try {
       const jobId = completed(repo, "a".repeat(2001));
-      const worker = new DeliveryWorker(repo, adapter, {
+      const worker = makeWorker(repo, adapter, {
         workerId: "delivery-a",
       });
       await worker.runOnce();
@@ -518,7 +592,7 @@ describe("durable delivery worker", () => {
         cronJobId: "mail-check",
         mailEmailId: "mail-1",
       });
-      const worker = new DeliveryWorker(repo, adapter, {
+      const worker = makeWorker(repo, adapter, {
         workerId: "delivery-a",
       });
 
@@ -540,7 +614,7 @@ describe("durable delivery worker", () => {
     });
     try {
       const jobId = completed(repo, "response");
-      const worker = new DeliveryWorker(
+      const worker = makeWorker(
         repo,
         { send },
         { workerId: "delivery-a", leaseMs: 1 },
@@ -605,7 +679,7 @@ describe("durable delivery worker", () => {
         rssStatePath: rssPath,
         rssDispatchJobId: dispatch.jobId,
       });
-      const worker = new DeliveryWorker(repo, adapter, {
+      const worker = makeWorker(repo, adapter, {
         workerId: "delivery-a",
       });
       await worker.runOnce();
@@ -672,7 +746,7 @@ describe("durable delivery worker", () => {
         rssStatePath: rssPath,
         rssDispatchJobId: dispatch.jobId,
       });
-      const worker = new DeliveryWorker(repo, adapter, {
+      const worker = makeWorker(repo, adapter, {
         workerId: "delivery-a",
       });
       await worker.runOnce();
@@ -725,7 +799,7 @@ describe("durable delivery worker", () => {
       vi.spyOn(repo, "failDeliveryBatch").mockImplementation(() => {
         throw new Error("stale fencing token");
       });
-      const worker = new DeliveryWorker(
+      const worker = makeWorker(
         repo,
         {
           send: vi.fn(async () => {
@@ -763,7 +837,7 @@ describe("durable delivery worker", () => {
     };
     try {
       const jobId = completed(repo, "response");
-      const worker = new DeliveryWorker(repo, adapter, {
+      const worker = makeWorker(repo, adapter, {
         workerId: "delivery-a",
         retryDelayMs: 0,
       });
@@ -806,7 +880,7 @@ describe("durable delivery worker", () => {
         destinationId: "channel",
         cronJobId: "daily",
       });
-      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
         workerId: "delivery-a",
       });
       while (await worker.runOnce()) {}
@@ -839,7 +913,7 @@ describe("durable delivery worker", () => {
         destinationId: "channel",
         replyMessageId: "original-message",
       });
-      const worker = new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+      const worker = makeWorker(repo, new DiscordDeliveryAdapter(), {
         workerId: "delivery-a",
       });
       while (await worker.runOnce()) {}
@@ -901,7 +975,7 @@ describe("durable delivery worker", () => {
       }),
     };
     try {
-      const worker = new DeliveryWorker(repo, adapter, {
+      const worker = makeWorker(repo, adapter, {
         workerId: "delivery-a",
         retryDelayMs: 0,
       });

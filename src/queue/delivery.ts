@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { ChannelType, type Client } from "discord.js";
 import { renameSession, sessionConversationPath } from "../agent/session.js";
-import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
 import { withDiscordSendOptions } from "../discord/send-options.js";
-import { settleRssDispatch } from "./reconciliation.js";
 
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
@@ -22,6 +20,8 @@ import type {
   DeliveryRow,
   QueueRepository,
 } from "./repository.js";
+import type { SourceEnvelope, ThreadRoute } from "./source-handlers.js";
+import { SourceHandlers } from "./source-handlers.js";
 
 export type DeliveryErrorKind = "retryable" | "non-retryable" | "unknown";
 export class DeliveryError extends Error {
@@ -38,17 +38,11 @@ export interface DeliverySendContext {
   isFinalChunk?: boolean;
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
-  resolveMailThread?: (
+  threadRoute?: (
+    envelope: SourceEnvelope,
     groupName: string,
     channelId: string,
-    mailRouteKey: string,
-  ) => string | undefined;
-  persistMailThread?: (
-    groupName: string,
-    channelId: string,
-    mailRouteKey: string,
-    threadId: string,
-  ) => Promise<void> | void;
+  ) => ThreadRoute | undefined;
 }
 export interface DeliveryAdapter {
   send(
@@ -84,8 +78,7 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
-  mailRouteKey?: string;
-  mailEmailId?: string;
+  feature?: SourceEnvelope;
 }
 type DeliveryMessage = {
   id?: unknown;
@@ -150,16 +143,15 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const isItemThread = destinationType === "item-thread";
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
-      if (
-        destinationType === "channel" &&
-        payload.mailEmailId &&
-        payload.mailRouteKey
-      ) {
-        threadId = context.resolveMailThread?.(
-          payload.groupName,
-          destinationId,
-          payload.mailRouteKey,
-        );
+      const route = payload.feature
+        ? context.threadRoute?.(
+            payload.feature,
+            payload.groupName,
+            destinationId,
+          )
+        : undefined;
+      if (destinationType === "channel" && route) {
+        threadId = route.resolve();
         if (threadId) {
           try {
             target = (await client.channels.fetch(
@@ -187,29 +179,19 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           )
             throw new DeliveryError(
               "non-retryable",
-              "Mail route thread requires a parent text channel",
+              "routed thread requires a parent text channel",
             );
           mutationAttempted = true;
-          target = await channel.threads.create({
-            name: payload.mailRouteKey
-              .replace(/^mail:/, "")
-              .replace(/^github:(.+):item:(\d+)$/, "$1 #$2")
-              .slice(0, 100),
-          });
+          target = await channel.threads.create({ name: route.name });
           threadId = String(target.id ?? "");
           if (!threadId)
             throw new DeliveryError("unknown", "Discord thread ID is empty");
           try {
-            await context.persistMailThread?.(
-              payload.groupName,
-              destinationId,
-              payload.mailRouteKey,
-              threadId,
-            );
+            await route.persist(threadId);
           } catch (error) {
             throw new DeliveryError(
               "unknown",
-              `failed to persist Mail Discord thread ${threadId}`,
+              `failed to persist routed Discord thread ${threadId}`,
               error,
             );
           }
@@ -431,6 +413,7 @@ export class DeliveryWorker {
     private readonly repository: QueueRepository,
     private readonly adapter: DeliveryAdapter = new DiscordDeliveryAdapter(),
     private readonly options: DeliveryWorkerOptions = {},
+    private readonly sources: SourceHandlers = new SourceHandlers(),
   ) {
     this.workerId = options.workerId ?? "delivery-single-host";
   }
@@ -466,6 +449,14 @@ export class DeliveryWorker {
       sourceJob.cronProvisioning !== true &&
       claim.row.destinationType === "new-thread";
     try {
+      const envelope = this.sourceOf(claim.row);
+      if (envelope) {
+        try {
+          this.sources.policy(envelope);
+        } catch (error) {
+          throw new DeliveryError("non-retryable", String(error), error);
+        }
+      }
       if (unsupportedPreMaterializedItemThread) {
         throw new DeliveryError(
           "non-retryable",
@@ -488,14 +479,12 @@ export class DeliveryWorker {
             claim.fencingToken,
             threadId,
           ),
-        resolveMailThread: (groupName, channelId, mailRouteKey) =>
-          this.repository.getMailThread(groupName, channelId, mailRouteKey),
-        persistMailThread: (groupName, channelId, mailRouteKey, threadId) =>
-          this.repository.setMailThread(
+        threadRoute: (envelope, groupName, channelId) =>
+          this.sources.threadRoute(
+            envelope,
+            this.repository,
             groupName,
             channelId,
-            mailRouteKey,
-            threadId,
           ),
         promoteCronItemSession: async (threadId) => {
           const job = this.repository.get(claim.row.jobId);
@@ -582,27 +571,35 @@ export class DeliveryWorker {
       const deliveries = this.repository
         .listDeliveries()
         .filter((delivery) => delivery.jobId === claim.row.jobId);
-      const allSent = deliveries.every(
-        (delivery) => delivery.status === "sent",
-      );
-      if (this.isRss(claim.row)) {
-        if (allSent) this.settleRss(claim.row, "completed");
-      } else {
-        this.settleRss(claim.row, "completed");
-      }
-      if (allSent) await this.acknowledgeMail(claim.row);
+      await this.notifySource(claim.row, deliveries);
     } catch (error) {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
-        const rss = this.isRss(claim.row);
-        if (rss || unsupportedPreMaterializedItemThread) {
+        const source = this.sourceOf(claim.row);
+        let continueAfterFailedChunk = false;
+        if (source) {
+          try {
+            continueAfterFailedChunk =
+              this.sources.policy(source).continueAfterFailedChunk;
+          } catch {
+            continueAfterFailedChunk = false;
+          }
+        }
+        if (continueAfterFailedChunk || unsupportedPreMaterializedItemThread) {
           this.repository.failDeliveryBatch(
             claim.row.id,
             claim.fencingToken,
             kind === "unknown" ? "ambiguous" : "failed",
             String(error),
           );
-          if (rss) this.settleRss(claim.row, "dead_letter");
+          if (source) {
+            await this.notifySource(
+              claim.row,
+              this.repository
+                .listDeliveries()
+                .filter((row) => row.jobId === claim.row.jobId),
+            );
+          }
         } else {
           const status =
             kind === "unknown"
@@ -632,49 +629,37 @@ export class DeliveryWorker {
     }
   }
 
-  private isRss(row: DeliveryRow): boolean {
-    if (!row.payloadJson) return false;
+  private sourceOf(row: DeliveryRow): SourceEnvelope | undefined {
+    if (!row.payloadJson) return undefined;
     try {
-      return (
-        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
-          .rssDispatchId === "string"
-      );
+      const payload = JSON.parse(row.payloadJson) as {
+        feature?: SourceEnvelope;
+      };
+      return payload.feature;
     } catch {
-      return false;
+      return undefined;
     }
   }
 
-  private async acknowledgeMail(row: DeliveryRow): Promise<void> {
-    if (!row.payloadJson) return;
-    try {
-      const payload = JSON.parse(row.payloadJson) as DeliveryPayload;
-      if (typeof payload.mailEmailId !== "string") return;
-      await acknowledgeEmail(payload.mailEmailId);
-    } catch (error) {
-      console.error("[mail] Discord配送後の既読化に失敗:", error);
-    }
-  }
-
-  private settleRss(
+  private async notifySource(
     row: DeliveryRow,
-    resolution: "completed" | "dead_letter",
-  ): void {
-    if (!row.payloadJson) return;
+    deliveries: readonly DeliveryRow[],
+  ): Promise<void> {
+    const source = this.sourceOf(row);
+    if (!source) return;
     try {
-      const payload = JSON.parse(row.payloadJson) as Record<string, unknown>;
-      if (typeof payload.rssDispatchId !== "string") return;
-      settleRssDispatch(
-        typeof payload.rssStatePath === "string"
-          ? payload.rssStatePath
-          : undefined,
-        payload.rssDispatchId,
-        typeof payload.rssDispatchJobId === "string"
-          ? payload.rssDispatchJobId
-          : undefined,
-        resolution,
+      await this.sources.delivery(
+        source,
+        row,
+        deliveries.map((delivery) => delivery.status),
       );
     } catch (error) {
-      console.error("[delivery] RSS状態の更新に失敗しました", error);
+      // Discord state is already fenced and durable. External ACK failure is
+      // recovered by the source's own unread/claim reconciliation path.
+      console.error(
+        `[delivery] ${source.kind} source finalization failed:`,
+        error,
+      );
     }
   }
 
@@ -697,8 +682,9 @@ export class DeliveryWorker {
 let defaultWorker: DeliveryWorker | undefined;
 export function startDeliveryWorker(
   repository: QueueRepository,
+  sources: SourceHandlers = new SourceHandlers(),
 ): DeliveryWorker {
-  defaultWorker ??= new DeliveryWorker(repository);
+  defaultWorker ??= new DeliveryWorker(repository, undefined, {}, sources);
   defaultWorker.start();
   return defaultWorker;
 }

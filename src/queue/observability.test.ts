@@ -8,10 +8,6 @@ describe("queue observability", () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
       const job = repo.enqueue({
-        channelId: "",
-        groupName: "",
-        sessionId: "memory-export:backend",
-        content: "",
         timestamp: new Date().toISOString(),
         jobKind: "memory-export",
         cronJobId: "backend",
@@ -22,10 +18,6 @@ describe("queue observability", () => {
       });
 
       const failedJob = repo.enqueue({
-        channelId: "",
-        groupName: "",
-        sessionId: "memory-export:backend",
-        content: "",
         timestamp: new Date().toISOString(),
         jobKind: "memory-export",
         cronJobId: "backend",

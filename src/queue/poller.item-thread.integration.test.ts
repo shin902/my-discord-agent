@@ -68,6 +68,9 @@ afterAll(async () => {
 const { sendMessage } = await import("../agent/manager.js");
 const { openRuntimeDb, QueueRepository } = await import("./repository.js");
 const { processMessage } = await import("./poller.js");
+const { registerRssSource } = await import("../features/rss.js");
+const { SourceHandlers } = await import("./source-handlers.js");
+const { JobHandlers } = await import("./job-handlers.js");
 
 describe("declarative item-thread poller integration", () => {
   beforeEach(() => {
@@ -129,6 +132,9 @@ describe("declarative item-thread poller integration", () => {
 
   it("runs the agent in the temporary session and defers Discord materialization to delivery", async () => {
     const repository = state.repository as InstanceType<typeof QueueRepository>;
+    const sources = new SourceHandlers();
+    registerRssSource(sources, repository);
+    repository.registerSources(sources);
     const item = repository.enqueue({
       channelId: "parent-channel",
       groupName: "group",
@@ -141,15 +147,21 @@ describe("declarative item-thread poller integration", () => {
       cronJobId: "item-job",
       cronProvisioning: true,
       idempotencyKey: "rss-dispatch-job",
-      rssDispatchId: "rss-dispatch-id",
-      rssStatePath: "data/rss.sqlite3",
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: "rss-dispatch-id",
+          statePath: "data/rss.sqlite3",
+          dispatchJobId: "rss-dispatch-job",
+        },
+      },
     }).job;
     const claimed = repository.claim("poller");
     if (!claimed) throw new Error("expected item-thread claim");
 
     vi.mocked(sendMessage).mockResolvedValue("item response");
 
-    await processMessage(claimed.job);
+    await processMessage(claimed.job, undefined, new JobHandlers(), sources);
 
     expect(vi.mocked(sendMessage)).toHaveBeenCalledWith(
       "group",
@@ -170,9 +182,14 @@ describe("declarative item-thread poller integration", () => {
     expect(delivery?.cronThreadId).toBeUndefined();
     expect(delivery?.payloadJson).not.toContain("cronPlaceholderMessageId");
     expect(JSON.parse(delivery?.payloadJson ?? "{}")).toMatchObject({
-      rssDispatchId: "rss-dispatch-id",
-      rssStatePath: "data/rss.sqlite3",
-      rssDispatchJobId: "rss-dispatch-job",
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: "rss-dispatch-id",
+          statePath: "data/rss.sqlite3",
+          dispatchJobId: "rss-dispatch-job",
+        },
+      },
     });
     expect(state.client.channels.fetch).not.toHaveBeenCalled();
   });

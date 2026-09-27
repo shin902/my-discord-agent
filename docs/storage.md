@@ -43,7 +43,7 @@ groups/
 
 | テーブル | 責務 |
 |---|---|
-| `jobs` | 入力payload、実行状態、lease・fencing、結果、Bot同期実行のadmission。`delivery_suppressed` は結果commit時に配送を意図的に抑制した成功を表す |
+| `jobs` | 入力payload、実行状態、lease・fencing、結果、Bot同期実行のadmission。`delivery_suppressed` は無配信成功、`source_kind` / `allow_failed_predecessor` は登録済みsourceの識別と配送順序policyを表す |
 | `deliveries` | Discordへ送るchunkと配送状態 |
 | `committed_conversations` | 結果commit時に採用したgroup + user/assistant entry ID。本文は持たず、jobs retentionと独立して保持 |
 | `idempotency_keys` | 受理済み・完了済み入力の冪等性 |
@@ -51,7 +51,7 @@ groups/
 | `discord_sync_cursors` | Discord履歴backfillの進行位置 |
 | `bot_task_sessions` | Bot Task Sessionのidentity・所有関係 |
 | `mail_threads` | `groupName + channelId + mailRouteKey` から再利用するMail専用Discord thread IDへのmapping。schema v8で追加 |
-| `schema_meta` | schema versionと旧queue移行marker |
+| `schema_meta` | schema versionと旧queue移行marker・Issue #540変換marker |
 
 runtime DBはWALを使用します。稼働中にmain fileだけをコピーしないでください。[backup.ts](../src/queue/backup.ts) はSQLiteのserializeで整合したsnapshotを作り、別DBとしてread-onlyで開いてintegrityを検証します。session DBやRSS DB、workspace、認証stateまで含む一括backupではありません。
 
@@ -61,11 +61,20 @@ runtime DBはWALを使用します。稼働中にmain fileだけをコピーし�
 
 実データの調査は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順を使ってください。通常の完了・retention・recoveryを、JSONL行の削除やad-hoc SQLで代用しないでください。
 
-### 旧queue JSONLの移行（現行の起動処理）
+### Issue #540 一回限りのruntime変換
 
-[migration.ts](../src/queue/migration.ts) は旧 `data/queue/inbox.jsonl` と `dead-letter.jsonl` が存在する場合に読みます。元データを `data/queue/archive/` へcopyし、内容を検証して読み取り専用にしてから、ファイル単位のtransactionでimportします。ファイル名と内容hashのmarkerにより同じ内容の再importを避けます。
+新runtimeはMail/RSSの旧top-level IDを処理せず、旧queue JSONLも起動時には読みません。schema v9は`jobs.source_kind`と`allow_failed_predecessor`を追加し、Mail/RSSのfeature envelopeを配送まで永続化します。旧DBを持つ環境では**旧workerを停止**し、SQLite online backupまたは停止中のDB一式のcopy（WAL/SHMを含む）を取得してから、同じcheckoutで一回だけ次を実行します。旧workerと新workerを同じqueueで並走させないでください。
 
-未完了入力はjobsへ、完了済み入力の冪等性はidempotency_keysへ、旧dead-letterや不正行はdead_lettersへ記録します。元JSONLはこの処理では削除・移動しません。runtimeは以後SQLiteへ書き込み、JSONLへのdual-writeやfallbackは行いません。旧JSONLが残っていても処理待ちqueueの正本として編集しないでください。
+```bash
+# サービス停止・バックアップ完了後。DBパスは実環境のものを明示する。
+pnpm exec tsx scripts/convert-issue540-runtime.ts data/runtime.sqlite
+pnpm build
+pnpm start
+```
+
+systemd等で管理している環境では`pnpm start`を二重起動せず、変換・build後に管理サービスを起動します。起動ログでDiscord backfill完了後にworker/cronが開始したこと、および旧payloadが残らないことを確認します。
+
+[converter](../scripts/convert-issue540-runtime.ts) は既存の[migration.ts](../src/queue/migration.ts)で未取り込みの旧`data/queue/inbox.jsonl`と`dead-letter.jsonl`をSQLiteへ取り込み、旧JSONLを`data/queue/archive/`へバックアップします。その後`jobs`・`deliveries`・`dead_letters`のMail/RSS入力をfeature envelopeへ短いSQLite transactionで変換し、queueのlease/fencing/status、idempotency、session ID、採用会話参照を保持します。RSSの別DB、Screen Capture、group session DB、Memory ledgerは変更しません。外部APIへの呼び出しは変換中にありません。再実行は拒否されます。変換が失敗した場合は新workerを起動せず、バックアップとエラーを確認してください。旧JSONLファイルを残しても新runtimeには再流入しません。カスタムRSS statePathを設定から外しqueue側にも参照がなくなったclaimは自動発見できないため、運用で確認してください。
 
 ## Session trajectory
 

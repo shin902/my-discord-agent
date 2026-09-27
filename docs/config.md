@@ -281,7 +281,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### jobs/mail.ts
 
-`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、LLM実行前に決定論的な `mailRouteKey` を付けて `enqueueCronInbox()` へ投入する。GitHub通知は送信元が `notifications@github.com` で、`List-Id` からowner/repo、件名末尾 `(#number)` からitem番号を取得できた場合だけ `github:<owner>/<repo>:item:<number>` にする。本文中のURLはroutingに使わない。それ以外は表示名を除いた小文字のsender addressから `mail:<address>` を生成する。Mailは常に `direct` + `per-run` で要約sessionをメールごとに分離し、親Text Channelの下に送信元別Discord threadを作る。`channelId` には既存threadではなく親Text Channelを指定する（既存threadなら配送を失敗として扱う）。mappingはgroup・親channel・routeごとに分離し、thread名にはsender addressまたは `owner/repo #number` を使う。保存済みthreadが削除されていれば新規作成して更新する。全delivery chunkが`sent`になった後にだけメールを既読化し、既存のretry / dedupe semanticsは変更しない。
+`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、Mail機能モジュールで決定論的な `mailRouteKey` を付けて共通cron enqueue経路へ投入する。GitHub通知は送信元が `notifications@github.com` で、`List-Id` からowner/repo、件名末尾 `(#number)` からitem番号を取得できた場合だけ `github:<owner>/<repo>:item:<number>` にする。本文中のURLはroutingに使わない。それ以外は表示名を除いた小文字のsender addressから `mail:<address>` を生成する。Mailは常に `direct` + `per-run` で要約sessionをメールごとに分離し、親Text Channelの下に送信元別Discord threadを作る。`channelId` には既存threadではなく親Text Channelを指定する（既存threadなら配送を失敗として扱う）。mappingはgroup・親channel・routeごとに分離し、thread名にはsender addressまたは `owner/repo #number` を使う。保存済みthreadが削除されていれば新規作成して更新する。全delivery chunkが`sent`になった後にだけメールを既読化し、既存のretry / dedupe semanticsは変更しない。
 
 AI・delivery・既読化の失敗時はメールが未読のまま残る。次回cronは過去jobを復旧せず、そのメールに新しいjobを作るため、失敗した試行のDiscord投稿が残る場合は同じthread内で重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
 
@@ -339,7 +339,7 @@ Dispatcherは`maxItemsPerRun`件の未読記事を1つのinboxメッセージへ
 
 Dispatcherの`settings.feeds`にはCollectorと同じURL文字列、または`{ "name": "表示名", "url": "URL" }`を指定でき、指定したフィードの未読記事だけを処理する。省略時は後方互換のため全フィードを処理する。複数Dispatcherを使う場合は全ジョブで`feeds`を指定し、対象URLが重複しないようにする。全件Dispatcherとフィード指定Dispatcherを同時に有効化すると、cronの並列実行時に同じ未読記事を重複投入する可能性がある。
 
-`appendInbox`が成功した直後に、今回投入した記事だけを既読にする。この既読は「Discord配信済み」ではなく「エージェントへ引き渡し済み」を意味する。エージェント処理やDiscord配信が後から失敗してもRSS側からは再投入しない。inbox投入自体が失敗した場合は未読のまま残る。
+dispatchは未読記事をclaimしてqueueへ投入する。配送の全chunkが`sent`になった場合、または明示的な`<NO_REPLY>`成功で配送を抑制した場合にだけ既読へ確定する。Agent処理・配送の失敗（`failed` / `ambiguous`を含む）ではclaimを解放し、次回dispatchで再取得できる。起動時にも保存済みqueue結果とclaimを照合する。投入失敗時もclaimを解放する。
 
 `maxSummaryChars`は記事ごとにinboxへ含めるRSS概要の最大文字数。`model`、`tools`、`skills`も通常の宣言的cronと同じようにエージェント実行へ引き継がれる。CollectorとDispatcherが同時実行にならないよう、設定例では5分ずらしている。
 

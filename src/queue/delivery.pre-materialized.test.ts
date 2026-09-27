@@ -11,7 +11,7 @@ const acknowledgeEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 
 const settleRssDispatch = vi.hoisted(() => vi.fn());
-vi.mock("./reconciliation.js", () => ({ settleRssDispatch }));
+vi.mock("../features/rss.js", () => ({ settleRssDispatch }));
 
 const client = vi.hoisted(() => ({
   isReady: vi.fn().mockReturnValue(true),

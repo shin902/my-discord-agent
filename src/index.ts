@@ -13,7 +13,6 @@ import { loadDefaultModel } from "./config/default-model.js";
 import { ensureGroupDirs, initGroupPrompts } from "./config/group-config.js";
 import { loadGroups } from "./config/groups.js";
 import { loadProviders } from "./config/providers.js";
-import { loadScreenCaptureReceiverConfig } from "./config/screen-capture.js";
 import {
   loadXSavedGalleryConfig,
   loadXSavedReceiverConfig,
@@ -37,7 +36,14 @@ import {
 } from "./discord/client.js";
 import { registerHandlers } from "./discord/handler.js";
 import { presentToolApprovalRequest } from "./discord/tool-approval.js";
-import { startScreenCaptureReceiver } from "./integrations/screen-capture/receiver.js";
+import { registerMailSource } from "./features/mail.js";
+import { registerMemoryExport } from "./features/memory-export.js";
+import {
+  discoverRssStatePaths,
+  reconcileRssDispatches,
+  registerRssSource,
+} from "./features/rss.js";
+import { startScreenCapture } from "./features/screen-capture.js";
 import { startXSavedGallery } from "./integrations/x-saved/gallery.js";
 import { startXSavedReceiver } from "./integrations/x-saved/receiver.js";
 import {
@@ -50,11 +56,12 @@ import {
   stopToolProxyServer,
 } from "./proxy/tool-proxy-server.js";
 import { startDeliveryWorker, stopDeliveryWorker } from "./queue/delivery.js";
+import { JobHandlers } from "./queue/job-handlers.js";
 import { initializeQueue } from "./queue/migration.js";
 import { runRuntimeOperator } from "./queue/operator.js";
 import { startPoller, stopPoller } from "./queue/poller.js";
-import { reconcileRssDispatches } from "./queue/reconciliation.js";
 import { getQueueRepository } from "./queue/repository.js";
+import { SourceHandlers } from "./queue/source-handlers.js";
 
 import {
   cleanupToolRuntimes,
@@ -65,6 +72,7 @@ const groups = await loadGroups();
 let xSavedReceiver: Server | undefined;
 let screenCaptureReceiver: Server | undefined;
 let xSavedGallery: Server | undefined;
+let sources: SourceHandlers;
 try {
   const discordConfig = await loadDiscordConfig();
   const botRegistry = await loadBotRegistry();
@@ -92,10 +100,14 @@ try {
   await validateBotConfigs(groups, botRegistry, defaultModel);
   await initDiscordClients();
   const queueRepository = getQueueRepository();
+  sources = new SourceHandlers();
+  registerMailSource(sources);
+  registerRssSource(sources, queueRepository);
+  queueRepository.registerSources(sources);
   await initializeQueue(queueRepository);
   const cronJobs = await loadAndValidateCron();
   const rssStatePaths = [
-    ...queueRepository.listRssStatePaths(),
+    ...discoverRssStatePaths(queueRepository),
     ...cronJobs.flatMap((job) => {
       if (
         typeof job.handler !== "string" ||
@@ -145,12 +157,7 @@ try {
   if (xSavedConfig.enabled) {
     xSavedReceiver = await startXSavedReceiver({ port: xSavedConfig.port });
   }
-  const screenCaptureConfig = await loadScreenCaptureReceiverConfig();
-  if (screenCaptureConfig.enabled) {
-    screenCaptureReceiver = await startScreenCaptureReceiver({
-      port: screenCaptureConfig.port,
-    });
-  }
+  screenCaptureReceiver = await startScreenCapture();
   if (galleryConfig.enabled && galleryConfig.origin) {
     xSavedGallery = await startXSavedGallery({
       port: galleryConfig.port,
@@ -172,8 +179,10 @@ try {
   await backfillDiscordMessages(groups);
   console.log("[discord-backfill] 起動時履歴復旧が完了しました");
   await enqueueStartupJobs();
-  startPoller();
-  startDeliveryWorker(getQueueRepository());
+  const handlers = new JobHandlers();
+  registerMemoryExport(handlers);
+  startPoller(handlers, sources);
+  startDeliveryWorker(getQueueRepository(), sources);
   startCron();
 } catch (err) {
   console.error("[startup] 起動処理に失敗しました:", err);
