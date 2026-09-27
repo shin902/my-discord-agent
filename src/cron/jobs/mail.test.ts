@@ -21,14 +21,14 @@ vi.mock("../../proxy/graph-auth.js", () => ({
   getGraphAccessToken: async () => "host-graph-token",
 }));
 
-import { registerMailSource } from "../../features/mail.js";
+import { mailRouteKey, registerMailSource } from "../../features/mail.js";
 import { DeliveryError, DeliveryWorker } from "../../queue/delivery.js";
 import { QueueRepository } from "../../queue/repository.js";
 import { SourceHandlers } from "../../queue/source-handlers.js";
 import type { QueueProducer } from "../../queue/types.js";
 import { expectDefined } from "../../test-utils.js";
 import type { CronContext } from "../runner.js";
-import handler, { mailRouteKey } from "./mail.js";
+import handler from "./mail.js";
 
 function makeContext(
   appendInbox: QueueProducer = vi.fn().mockResolvedValue(undefined),
@@ -171,7 +171,13 @@ describe("mail cron queue boundary", () => {
     await handler(makeContext(appendInbox));
     expect(appendInbox).toHaveBeenCalledWith(
       expect.objectContaining({
-        mailRouteKey: "github:owner/repo:item:533",
+        feature: {
+          kind: "mail",
+          input: {
+            emailId: "github-1",
+            routeKey: "github:owner/repo:item:533",
+          },
+        },
       }),
     );
   });
@@ -197,8 +203,10 @@ describe("mail cron queue boundary", () => {
     const payload = appendInbox.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.sessionId).toEqual(expect.stringMatching(/^cron-mail-/));
     expect(payload.idempotencyKey).toBe("mail:graph:mail:mail-1");
-    expect(payload.mailEmailId).toBe("mail-1");
-    expect(payload.mailRouteKey).toBe("mail:from@example.com");
+    expect(payload.feature).toEqual({
+      kind: "mail",
+      input: { emailId: "mail-1", routeKey: "mail:from@example.com" },
+    });
     expect(payload.cronPlaceholderMessageId).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -332,8 +340,10 @@ describe("mail cron queue boundary", () => {
       expect.objectContaining({
         cronDeliveryMode: "direct",
         cronSessionMode: "per-run",
-        mailRouteKey: "mail:from@example.com",
-        mailEmailId: "mail-1",
+        feature: {
+          kind: "mail",
+          input: { emailId: "mail-1", routeKey: "mail:from@example.com" },
+        },
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -497,13 +507,18 @@ describe("mail active-only dedupe", () => {
     const first = currentJob();
     const claim = expectDefined(repo.claim());
     repo.commitResult(first.id, claim.fencingToken, "response", {
-      deliveryPayload: { mailEmailId: first.mailEmailId },
+      deliveryPayload: { feature: first.feature },
     });
-    const worker = new DeliveryWorker(repo, {
-      send: async () => {
-        throw new DeliveryError(kind, "delivery failed");
+    const worker = new DeliveryWorker(
+      repo,
+      {
+        send: async () => {
+          throw new DeliveryError(kind, "delivery failed");
+        },
       },
-    });
+      {},
+      sources,
+    );
 
     await worker.runOnce();
 

@@ -33,10 +33,6 @@ export type CronEnqueueContext = {
   mode?: "to-channel" | "to-thread";
   idempotencyKey?: string;
   feature?: SourceEnvelope;
-  mailEmailId?: string;
-  mailRouteKey?: string;
-  rssDispatchId?: string;
-  rssStatePath?: string;
   appendInbox: QueueProducer;
 } & Partial<AgentConfig>;
 
@@ -155,9 +151,6 @@ async function registerCronItemThread(
     cronProvisioning: true,
     idempotencyKey: key,
     ...(ctx.feature ? { feature: ctx.feature } : {}),
-    ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
-    ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
-    ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
 }
@@ -198,12 +191,6 @@ export async function enqueueCronInbox(
     cronJobId: ctx.id,
     ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
     ...(ctx.feature ? { feature: ctx.feature } : {}),
-    ...(ctx.mailEmailId ? { mailEmailId: ctx.mailEmailId } : {}),
-    ...(ctx.mailEmailId && ctx.mailRouteKey
-      ? { mailRouteKey: ctx.mailRouteKey }
-      : {}),
-    ...(ctx.rssDispatchId ? { rssDispatchId: ctx.rssDispatchId } : {}),
-    ...(ctx.rssStatePath ? { rssStatePath: ctx.rssStatePath } : {}),
     ...(configOverride !== undefined ? { configOverride } : {}),
   });
 }

@@ -185,14 +185,18 @@ describe("normal runtime startup", () => {
   it("rejects unconverted legacy source rows before claiming any job", async () => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
     try {
-      repo.enqueue({
+      const job = repo.enqueue({
         channelId: "channel",
         groupName: "group",
         sessionId: "session",
         content: "mail",
         timestamp: new Date().toISOString(),
-        mailEmailId: "email-1",
-      });
+      }).job;
+      repo.db
+        .prepare(
+          "UPDATE jobs SET payload_json=json_set(payload_json,'$.mailEmailId','email-1') WHERE id=?",
+        )
+        .run(job.id);
       await expect(initializeQueue(repo)).rejects.toThrow(
         /conversion is required/,
       );

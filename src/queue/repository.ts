@@ -1320,7 +1320,7 @@ export class QueueRepository {
         const existing = idem.job_id ? this.get(idem.job_id) : undefined;
         const status = existing?.status ?? idem.status;
         if (
-          (sourcePolicy?.activeOnlyIdempotency || payload.mailEmailId) &&
+          sourcePolicy?.activeOnlyIdempotency &&
           (status === "completed" || status === "dead_letter")
         ) {
           // Mail uses Graph unread state to retry after terminal jobs. Reuse
@@ -1362,10 +1362,7 @@ export class QueueRepository {
         key ?? null,
         JSON.stringify(record),
         payload.feature?.kind ?? null,
-        Number(
-          sourcePolicy?.continueAfterFailedChunk ??
-            Boolean(payload.rssDispatchId),
-        ),
+        Number(sourcePolicy?.continueAfterFailedChunk ?? false),
         payload.sessionId,
         sequenceRow.sequence,
         "queued",

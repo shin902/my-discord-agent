@@ -48,8 +48,6 @@ export async function enqueueRssDispatch(
         kind: "rss",
         input: rssInput.parse({ dispatchId, dispatchJobId, statePath }),
       },
-      rssDispatchId: dispatchId,
-      rssStatePath: statePath,
     },
     content,
   );
@@ -58,27 +56,43 @@ export async function enqueueRssDispatch(
 export function registerRssSource(
   handlers: SourceHandlers,
   repo: QueueRepository,
+  settle: typeof settleRssDispatch = settleRssDispatch,
 ): void {
   handlers.register("rss", rssInput, {
     continueAfterFailedChunk: true,
     terminalOnAgentFailure: true,
     suppressed(input) {
-      const settled = settleRssDispatch(
-        input.statePath,
-        input.dispatchId,
-        input.dispatchJobId,
-        "completed",
-      );
-      if (settled !== 1) {
-        settleRssDispatch(
+      try {
+        const settled = settle(
           input.statePath,
           input.dispatchId,
           input.dispatchJobId,
-          "dead_letter",
+          "completed",
         );
-        throw new Error(
-          "RSS dispatch claim was not found or could not be opened",
-        );
+        if (settled !== 1)
+          throw new Error(
+            "RSS dispatch claim was not found or could not be opened",
+          );
+      } catch (error) {
+        try {
+          if (
+            settle(
+              input.statePath,
+              input.dispatchId,
+              input.dispatchJobId,
+              "dead_letter",
+            ) !== 1
+          )
+            throw new Error(
+              "RSS dispatch claim was not found or could not be opened",
+            );
+        } catch (releaseError) {
+          console.error(
+            "[rss] suppressed dispatch release failed:",
+            releaseError,
+          );
+        }
+        throw error;
       }
     },
     terminal(input, message: InboxMessage) {
@@ -93,7 +107,7 @@ export function registerRssSource(
         )
       )
         return;
-      settleRssDispatch(
+      settle(
         input.statePath,
         input.dispatchId,
         input.dispatchJobId,
@@ -102,7 +116,7 @@ export function registerRssSource(
     },
     delivery(input, _row, statuses) {
       if (statuses.every((status) => status === "sent")) {
-        settleRssDispatch(
+        settle(
           input.statePath,
           input.dispatchId,
           input.dispatchJobId,
@@ -111,7 +125,7 @@ export function registerRssSource(
       } else if (
         statuses.some((status) => status === "failed" || status === "ambiguous")
       ) {
-        settleRssDispatch(
+        settle(
           input.statePath,
           input.dispatchId,
           input.dispatchJobId,

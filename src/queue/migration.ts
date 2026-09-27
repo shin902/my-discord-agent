@@ -39,7 +39,7 @@ async function backupLegacyFile(
 
 function validMessage(value: unknown): value is InboxMessage {
   if (!value || typeof value !== "object") return false;
-  const message = value as Partial<InboxMessage>;
+  const message = value as Partial<InboxMessage> & Record<string, unknown>;
   if (
     typeof message.id !== "string" ||
     typeof message.channelId !== "string" ||

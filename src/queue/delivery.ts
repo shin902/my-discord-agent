@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { ChannelType, type Client } from "discord.js";
 import { renameSession, sessionConversationPath } from "../agent/session.js";
-import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
 import { withDiscordSendOptions } from "../discord/send-options.js";
-import { settleRssDispatch } from "../features/rss.js";
 
 function discordClientsReady(): boolean {
   return [...getDiscordClients().values()].some((value) => value.isReady());
@@ -87,8 +85,6 @@ interface DeliveryPayload {
   allowMention?: boolean;
   cronJobId?: string;
   cronThreadId?: string;
-  mailRouteKey?: string;
-  mailEmailId?: string;
   feature?: SourceEnvelope;
 }
 type DeliveryMessage = {
@@ -156,7 +152,7 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       let target: DeliveryTarget | undefined;
       const routeKey = payload.feature
         ? context.threadRouteKey?.(payload.feature)
-        : payload.mailRouteKey;
+        : undefined;
       if (destinationType === "channel" && routeKey) {
         threadId = context.resolveMailThread?.(
           payload.groupName,
@@ -595,32 +591,21 @@ export class DeliveryWorker {
       const deliveries = this.repository
         .listDeliveries()
         .filter((delivery) => delivery.jobId === claim.row.jobId);
-      const allSent = deliveries.every(
-        (delivery) => delivery.status === "sent",
-      );
-      if (this.sourceOf(claim.row)) {
-        await this.notifySource(claim.row, deliveries);
-      } else {
-        if (this.isRss(claim.row)) {
-          if (allSent) this.settleRss(claim.row, "completed");
-        } else {
-          this.settleRss(claim.row, "completed");
-        }
-        if (allSent) await this.acknowledgeMail(claim.row);
-      }
+      await this.notifySource(claim.row, deliveries);
     } catch (error) {
       const kind = error instanceof DeliveryError ? error.kind : "unknown";
       try {
         const source = this.sourceOf(claim.row);
-        let rss = this.isRss(claim.row);
+        let continueAfterFailedChunk = false;
         if (source) {
           try {
-            rss = this.sources.policy(source).continueAfterFailedChunk;
+            continueAfterFailedChunk =
+              this.sources.policy(source).continueAfterFailedChunk;
           } catch {
-            rss = false;
+            continueAfterFailedChunk = false;
           }
         }
-        if (rss || unsupportedPreMaterializedItemThread) {
+        if (continueAfterFailedChunk || unsupportedPreMaterializedItemThread) {
           this.repository.failDeliveryBatch(
             claim.row.id,
             claim.fencingToken,
@@ -634,7 +619,7 @@ export class DeliveryWorker {
                 .listDeliveries()
                 .filter((row) => row.jobId === claim.row.jobId),
             );
-          } else if (rss) this.settleRss(claim.row, "dead_letter");
+          }
         } else {
           const status =
             kind === "unknown"
@@ -695,52 +680,6 @@ export class DeliveryWorker {
         `[delivery] ${source.kind} source finalization failed:`,
         error,
       );
-    }
-  }
-
-  private isRss(row: DeliveryRow): boolean {
-    if (!row.payloadJson) return false;
-    try {
-      return (
-        typeof (JSON.parse(row.payloadJson) as Record<string, unknown>)
-          .rssDispatchId === "string"
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  private async acknowledgeMail(row: DeliveryRow): Promise<void> {
-    if (!row.payloadJson) return;
-    try {
-      const payload = JSON.parse(row.payloadJson) as DeliveryPayload;
-      if (typeof payload.mailEmailId !== "string") return;
-      await acknowledgeEmail(payload.mailEmailId);
-    } catch (error) {
-      console.error("[mail] Discord配送後の既読化に失敗:", error);
-    }
-  }
-
-  private settleRss(
-    row: DeliveryRow,
-    resolution: "completed" | "dead_letter",
-  ): void {
-    if (!row.payloadJson) return;
-    try {
-      const payload = JSON.parse(row.payloadJson) as Record<string, unknown>;
-      if (typeof payload.rssDispatchId !== "string") return;
-      settleRssDispatch(
-        typeof payload.rssStatePath === "string"
-          ? payload.rssStatePath
-          : undefined,
-        payload.rssDispatchId,
-        typeof payload.rssDispatchJobId === "string"
-          ? payload.rssDispatchJobId
-          : undefined,
-        resolution,
-      );
-    } catch (error) {
-      console.error("[delivery] RSS状態の更新に失敗しました", error);
     }
   }
 

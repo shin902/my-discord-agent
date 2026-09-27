@@ -1,4 +1,4 @@
-import { enqueueMail } from "../../features/mail.js";
+import { enqueueMail, mailRouteKey } from "../../features/mail.js";
 import { hostFetch } from "../../tools/host-fetch.js";
 import type { CronContext } from "../runner.js";
 
@@ -26,24 +26,6 @@ interface UnreadEmail {
   from: string;
   senderAddress: string;
   headers: Array<{ name: string; value: string }>;
-}
-
-export function mailRouteKey({
-  subject,
-  senderAddress,
-  headers,
-}: Pick<UnreadEmail, "subject" | "senderAddress" | "headers">): string {
-  const sender = senderAddress.trim().toLowerCase();
-  if (sender === "notifications@github.com") {
-    const listId = headers.find(
-      (header) => header.name.toLowerCase() === "list-id",
-    )?.value;
-    const repo = listId?.match(/^\s*([\w.-]+)\/([\w.-]+)(?:\s|$)/i);
-    const item = subject.match(/\(#(\d+)\)\s*$/);
-    if (repo && item)
-      return `github:${repo[1].toLowerCase()}/${repo[2].toLowerCase()}:item:${item[1]}`;
-  }
-  return `mail:${sender}`;
 }
 
 async function listUnreadEmails(): Promise<UnreadEmail[]> {

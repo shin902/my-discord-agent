@@ -102,8 +102,14 @@ describe("RSS item-thread dispatch identity", () => {
     const job = repository.findByIdempotencyKey(dispatch.dispatchJobId);
     expect(job).toMatchObject({
       idempotencyKey: dispatch.dispatchJobId,
-      rssDispatchId: dispatch.dispatchId,
-      rssStatePath: statePath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.dispatchId,
+          statePath,
+          dispatchJobId: dispatch.dispatchJobId,
+        },
+      },
       cronDeliveryMode: "item-thread",
       cronSessionMode: "destination",
       cronProvisioning: true,
@@ -119,9 +125,7 @@ describe("RSS item-thread dispatch identity", () => {
         destinationType: "item-thread",
         destinationId: job.channelId,
         cronJobId: job.cronJobId,
-        rssDispatchId: job.rssDispatchId,
-        rssStatePath: job.rssStatePath,
-        rssDispatchJobId: job.idempotencyKey,
+        feature: job.feature,
       },
     });
 
@@ -137,9 +141,14 @@ describe("RSS item-thread dispatch identity", () => {
     expect(delivery).toBeDefined();
     expect(JSON.parse(delivery?.payloadJson ?? "{}")).toMatchObject({
       destinationType: "item-thread",
-      rssDispatchId: dispatch.dispatchId,
-      rssStatePath: statePath,
-      rssDispatchJobId: dispatch.dispatchJobId,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.dispatchId,
+          statePath,
+          dispatchJobId: dispatch.dispatchJobId,
+        },
+      },
     });
 
     repository.close();

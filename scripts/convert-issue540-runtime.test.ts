@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,6 +15,28 @@ afterEach(() => {
 });
 
 describe("one-time Issue #540 runtime conversion", () => {
+  it("imports an unconsumed legacy JSONL row before converting it", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "issue540-legacy-"));
+    directories.push(directory);
+    const inboxPath = join(directory, "inbox.jsonl");
+    writeFileSync(inboxPath, JSON.stringify({
+      id: "legacy-mail", channelId: "channel", groupName: "group", sessionId: "session",
+      content: "prompt", timestamp: new Date().toISOString(), retries: 0,
+      mailEmailId: "email-1", idempotencyKey: "legacy-key",
+    }) + "\n");
+    const repo = new QueueRepository(join(directory, "runtime.sqlite"));
+    try {
+      await convertIssue540Runtime(repo, {
+        inboxPath,
+        deadLetterPath: join(directory, "missing-dead.jsonl"),
+        archiveDir: join(directory, "archive"),
+      });
+      expect(repo.get("legacy-mail")?.feature).toEqual({ kind: "mail", input: { emailId: "email-1" } });
+      expect(repo.getIdempotencyRecord("legacy-key")?.jobId).toBe("legacy-mail");
+    } finally {
+      repo.close();
+    }
+  });
   it("converts pending jobs, deliveries, dead letters and preserves queue relations", async () => {
     const directory = mkdtempSync(join(tmpdir(), "issue540-convert-"));
     directories.push(directory);

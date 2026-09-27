@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiscordEvent, SendMessageOptions } from "../agent/manager.js";
+import { registerMailSource } from "../features/mail.js";
 import { registerRssSource } from "../features/rss.js";
 import {
   type ArticleDispatch,
@@ -112,7 +113,21 @@ const { sendMessage } = await import("../agent/manager.js");
 const { findGroupByName } = await import("../config/groups.js");
 const { resolveProviderLockTarget } = await import("../config/providers.js");
 const client = discordClient;
-const { processMessage, startPoller, stopPoller } = await import("./poller.js");
+const {
+  processMessage: runProcessMessage,
+  startPoller,
+  stopPoller,
+} = await import("./poller.js");
+const sourceHandlers = new SourceHandlers();
+registerRssSource(
+  sourceHandlers,
+  { get: getJob } as unknown as QueueRepository,
+  settleRssDispatch,
+);
+registerMailSource(sourceHandlers);
+function processMessage(msg: InboxMessage, signal?: AbortSignal) {
+  return runProcessMessage(msg, signal, new JobHandlers(), sourceHandlers);
+}
 
 let tempDirs: string[] = [];
 
@@ -122,7 +137,10 @@ beforeEach(() => {
   settleRssDispatch.mockClear();
   claim.mockReset();
   claim.mockReturnValue(undefined);
-  deadLetter.mockClear();
+  deadLetter.mockReset();
+  deadLetter.mockImplementation(() => {
+    getJob.mockReturnValue({ status: "dead_letter" });
+  });
   failAttempt.mockReset();
   heartbeat.mockReset();
   markRunning.mockReset();
@@ -388,10 +406,17 @@ describe("processMessage - terminal queue transitions", () => {
       cronJobId: "item-job",
       cronProvisioning: false,
       cronThreadId: "thread-1",
-      rssDispatchId: "dispatch-1",
-      rssStatePath: "data/rss.sqlite3",
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: "dispatch-1",
+          statePath: "data/rss.sqlite3",
+          dispatchJobId: "dispatch-job-1",
+        },
+      },
       idempotencyKey: "dispatch-job-1",
     });
+    getJob.mockReturnValue({ status: "dead_letter" });
 
     await processMessage(msg);
 
@@ -861,8 +886,14 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     const msg = makeMsg({
       id: "rss-success",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
     getJob.mockReturnValue({
       status: "completed",
@@ -907,7 +938,7 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     const sources = new SourceHandlers();
     registerRssSource(sources, { get: getJob } as unknown as QueueRepository);
 
-    await processMessage(msg, undefined, new JobHandlers(), sources);
+    await runProcessMessage(msg, undefined, new JobHandlers(), sources);
 
     expect(commitInboxResult).toHaveBeenCalledWith(
       msg.id,
@@ -924,21 +955,32 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     }
   });
 
-  it("mail ACK失敗後もsuppressed RSS sourceを確定する", async () => {
+  it("mail ACK失敗後も別jobのsuppressed RSS sourceを確定する", async () => {
     const rssPath = await makeRssPath();
     seedUnreadArticles(rssPath, 1);
     const dispatch = claimRssArticles(rssPath, "cron-rss", 1);
     acknowledgeEmail.mockRejectedValueOnce(new Error("Graph unavailable"));
     vi.mocked(sendMessage).mockResolvedValue("<NO_REPLY>");
+    await processMessage(
+      makeMsg({
+        id: "mail-suppressed",
+        feature: { kind: "mail", input: { emailId: "mail-1" } },
+      }),
+    );
     const msg = makeMsg({
-      id: "mail-rss-suppressed",
-      mailEmailId: "mail-1",
+      id: "rss-suppressed-after-mail",
       cronJobId: "cron-rss",
       cronDeliveryMode: "direct",
       cronSessionMode: "per-run",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
 
     await processMessage(msg);
@@ -967,8 +1009,14 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       cronDeliveryMode: "direct",
       cronSessionMode: "per-run",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
 
     await processMessage(msg);
@@ -1005,8 +1053,14 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     const msg = makeMsg({
       id: "rss-retry",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
     getJob.mockReturnValue({
       status: "retry_wait",
@@ -1040,8 +1094,14 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
       id: "rss-config-unavailable",
       cronDeliveryMode: "direct",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
 
     await processMessage(msg);
@@ -1071,8 +1131,14 @@ describe("processMessage - RSS dispatch settlement wiring", () => {
     const msg = makeMsg({
       id: "rss-dead-letter",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
     getJob.mockReturnValue({
       status: "dead_letter",
@@ -2022,7 +2088,9 @@ describe("processMessage - durable result", () => {
       allowMention: false,
     });
     vi.mocked(sendMessage).mockResolvedValue("<NO_REPLY>");
-    const msg = makeMsg({ mailEmailId: "mail-1" });
+    const msg = makeMsg({
+      feature: { kind: "mail", input: { emailId: "mail-1" } },
+    });
 
     await processMessage(msg);
 
@@ -2035,7 +2103,7 @@ describe("processMessage - durable result", () => {
     );
   });
 
-  it("direct mail cron carries mailEmailId into delivery metadata", async () => {
+  it("direct mail cron carries the source envelope into delivery metadata", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
@@ -2045,7 +2113,7 @@ describe("processMessage - durable result", () => {
       cronJobId: "mail-check",
       cronDeliveryMode: "direct",
       cronSessionMode: "per-run",
-      mailEmailId: "mail-1",
+      feature: { kind: "mail", input: { emailId: "mail-1" } },
     });
 
     await processMessage(msg);
@@ -2057,7 +2125,7 @@ describe("processMessage - durable result", () => {
       expect.objectContaining({
         deliveryPayload: expect.objectContaining({
           destinationType: "channel",
-          mailEmailId: "mail-1",
+          feature: { kind: "mail", input: { emailId: "mail-1" } },
         }),
       }),
     );
@@ -2094,8 +2162,14 @@ describe("processMessage - durable result", () => {
       cronDeliveryMode: "new-thread",
       cronSessionMode: "per-run",
       idempotencyKey: dispatch.jobId,
-      rssDispatchId: dispatch.id,
-      rssStatePath: rssPath,
+      feature: {
+        kind: "rss",
+        input: {
+          dispatchId: dispatch.id,
+          statePath: rssPath,
+          dispatchJobId: dispatch.jobId,
+        },
+      },
     });
 
     await processMessage(msg);

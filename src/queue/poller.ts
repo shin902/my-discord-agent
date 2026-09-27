@@ -21,12 +21,10 @@ import {
   type ProviderConcurrency,
   resolveProviderLockTarget,
 } from "../config/providers.js";
-import { acknowledgeEmail } from "../cron/mail-ack.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
 } from "../discord/client.js";
-import { settleRssDispatch } from "../features/rss.js";
 import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
@@ -200,106 +198,27 @@ async function finalizeSuppressedSource(
   msg: InboxMessage,
   sources: SourceHandlers,
 ): Promise<void> {
-  if (msg.feature) {
-    try {
-      await sources.suppressed(msg);
-    } catch (error) {
-      console.error(`[poller] source suppression failed (${msg.id}):`, error);
-    }
-    return;
-  }
-  if (msg.mailEmailId) {
-    try {
-      await acknowledgeEmail(msg.mailEmailId);
-    } catch (error) {
-      console.error(
-        `[poller] 無配信mailの既読化に失敗しました (${msg.id}):`,
-        error,
-      );
-    }
-  }
-
-  if (!msg.rssDispatchId) return;
+  if (!msg.feature) return;
   try {
-    const settled = settleRssDispatch(
-      msg.rssStatePath,
-      msg.rssDispatchId,
-      msg.idempotencyKey,
-      "completed",
-    );
-    if (settled === 1) return;
-    throw new Error("RSS dispatch claim was not found or could not be opened");
-  } catch (settleError) {
-    console.error(
-      `[poller] 無配信RSSの確定に失敗しました (${msg.id}):`,
-      settleError,
-    );
-    try {
-      const released = settleRssDispatch(
-        msg.rssStatePath,
-        msg.rssDispatchId,
-        msg.idempotencyKey,
-        "dead_letter",
-      );
-      if (released !== 1) {
-        throw new Error(
-          "RSS dispatch claim was not found or could not be opened",
-        );
-      }
-    } catch (releaseError) {
-      console.error(
-        `[poller] 無配信RSSのclaim解放にも失敗しました (${msg.id}):`,
-        releaseError,
-      );
-    }
+    await sources.suppressed(msg);
+  } catch (error) {
+    // The queue result is durable. Mail retries from Graph unread state and
+    // RSS recovery reconciles claims at startup.
+    console.error(`[poller] source suppression failed (${msg.id}):`, error);
   }
 }
 
-async function settleRssDispatchAfterQueueTransition(
+async function settleSourceAfterQueueTransition(
   msg: InboxMessage,
   sources: SourceHandlers,
 ): Promise<void> {
-  if (msg.feature) {
-    try {
-      await sources.terminal(msg);
-    } catch (error) {
-      console.error(
-        `[poller] source terminal callback failed (${msg.id}):`,
-        error,
-      );
-    }
-    return;
-  }
-  // RSS success is settled by the Discord delivery worker, not queue completion.
-  // This keeps the article unread until the post actually exists in Discord.
-  if (!msg.rssDispatchId) return;
-  if (
-    msg.cronDeliveryMode === "direct" ||
-    msg.cronDeliveryMode === "new-thread" ||
-    msg.cronDeliveryMode === "item-thread"
-  )
-    return;
+  if (!msg.feature) return;
   try {
-    const job = getQueueRepository().get(msg.id);
-    if (!job) return;
-    const resolution =
-      job.status === "completed"
-        ? "completed"
-        : job.status === "dead_letter"
-          ? "dead_letter"
-          : undefined;
-    if (!resolution) return;
-    settleRssDispatch(
-      msg.rssStatePath,
-      msg.rssDispatchId,
-      job.idempotencyKey ?? msg.idempotencyKey,
-      resolution,
-    );
+    await sources.terminal(msg);
   } catch (error) {
-    // Queue terminal state is already durable; startup reconciliation can
-    // retry this cross-database update if the RSS store is unavailable.
+    // Queue state is already durable; RSS startup reconciliation can retry.
     console.error(
-      `[poller] RSS dispatch状態の収束に失敗しました (${msg.id}):`,
+      `[poller] source terminal callback failed (${msg.id}):`,
       error,
     );
   }
@@ -574,7 +493,7 @@ function terminalSourceFailure(
 ): boolean {
   return msg.feature
     ? sources.policy(msg.feature).terminalOnAgentFailure
-    : Boolean(msg.rssDispatchId);
+    : false;
 }
 
 // 非ゼロ終了コードの扱いは通常メッセージと cron thread delivery で同一のため共通化する。
@@ -602,13 +521,6 @@ async function releaseRssAfterFailure(
         error,
       );
     }
-  } else if (msg.rssDispatchId) {
-    settleRssDispatch(
-      msg.rssStatePath,
-      msg.rssDispatchId,
-      msg.idempotencyKey,
-      "dead_letter",
-    );
   }
 }
 
@@ -903,14 +815,6 @@ async function processCronThreadDelivery(
             cronJobId: msg.cronJobId,
             cronThreadId: lateItemThread ? undefined : msg.cronThreadId,
             ...(msg.feature ? { feature: msg.feature } : {}),
-            ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
-            ...(msg.rssDispatchId
-              ? {
-                  rssDispatchId: msg.rssDispatchId,
-                  rssStatePath: msg.rssStatePath,
-                  rssDispatchJobId: msg.idempotencyKey,
-                }
-              : {}),
           },
         },
       );
@@ -1108,7 +1012,7 @@ export async function processMessage(
           },
         );
       }
-      await settleRssDispatchAfterQueueTransition(msg, sources);
+      await settleSourceAfterQueueTransition(msg, sources);
       return;
     }
   }
@@ -1120,7 +1024,7 @@ export async function processMessage(
     try {
       return await processCronThreadDelivery(msg, signal, sources);
     } finally {
-      await settleRssDispatchAfterQueueTransition(msg, sources);
+      await settleSourceAfterQueueTransition(msg, sources);
     }
   }
   const timing = startResponseTiming(msg);
@@ -1199,11 +1103,7 @@ export async function processMessage(
                   conversation = entries;
                 },
                 source:
-                  !msg.botId &&
-                  !msg.cronJobId &&
-                  !msg.feature &&
-                  !msg.mailEmailId &&
-                  !msg.rssDispatchId
+                  !msg.botId && !msg.cronJobId && !msg.feature
                     ? msg.source
                     : undefined,
                 onExecutionTiming: (executionTiming) => {
@@ -1312,20 +1212,9 @@ export async function processMessage(
           groupName: msg.groupName,
           destinationType: "channel",
           destinationId: msg.channelId,
-          ...(msg.mailEmailId && msg.mailRouteKey
-            ? { mailRouteKey: msg.mailRouteKey }
-            : {}),
           replyMessageId,
           allowMention: groupConfig.allowMention === true,
           ...(msg.feature ? { feature: msg.feature } : {}),
-          ...(msg.mailEmailId ? { mailEmailId: msg.mailEmailId } : {}),
-          ...(msg.rssDispatchId
-            ? {
-                rssDispatchId: msg.rssDispatchId,
-                rssStatePath: msg.rssStatePath,
-                rssDispatchJobId: msg.idempotencyKey,
-              }
-            : {}),
         },
       },
     );
@@ -1334,7 +1223,7 @@ export async function processMessage(
     stopTyping();
   } finally {
     stopTyping();
-    await settleRssDispatchAfterQueueTransition(msg, sources);
+    await settleSourceAfterQueueTransition(msg, sources);
     logResponseTiming(msg, timing, outcome);
   }
 }
