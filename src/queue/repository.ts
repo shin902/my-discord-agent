@@ -892,33 +892,6 @@ export class QueueRepository {
       | undefined;
     return row ? parsePayload(row) : undefined;
   }
-  getMailThread(
-    groupName: string,
-    channelId: string,
-    routeKey: string,
-  ): string | undefined {
-    const row = this.db
-      .prepare(
-        "SELECT thread_id AS threadId FROM mail_threads WHERE group_name=? AND channel_id=? AND route_key=?",
-      )
-      .get(groupName, channelId, routeKey) as { threadId: string } | undefined;
-    return row?.threadId;
-  }
-  setMailThread(
-    groupName: string,
-    channelId: string,
-    routeKey: string,
-    threadId: string,
-  ): void {
-    this.db
-      .prepare(
-        `INSERT INTO mail_threads(group_name,channel_id,route_key,thread_id,updated_at)
-         VALUES (?,?,?,?,?)
-         ON CONFLICT(group_name,channel_id,route_key) DO UPDATE SET
-           thread_id=excluded.thread_id,updated_at=excluded.updated_at`,
-      )
-      .run(groupName, channelId, routeKey, threadId, nowIso());
-  }
   /** Paged references only; statements finish before yielding to remote I/O. */
   *readCommittedConversations(
     groupName: string,

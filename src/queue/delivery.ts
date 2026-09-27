@@ -20,7 +20,7 @@ import type {
   DeliveryRow,
   QueueRepository,
 } from "./repository.js";
-import type { SourceEnvelope } from "./source-handlers.js";
+import type { SourceEnvelope, ThreadRoute } from "./source-handlers.js";
 import { SourceHandlers } from "./source-handlers.js";
 
 export type DeliveryErrorKind = "retryable" | "non-retryable" | "unknown";
@@ -38,18 +38,11 @@ export interface DeliverySendContext {
   isFinalChunk?: boolean;
   persistCronThread?: (cronThreadId: string) => Promise<void> | void;
   promoteCronItemSession?: (cronThreadId: string) => Promise<void> | void;
-  resolveMailThread?: (
+  threadRoute?: (
+    envelope: SourceEnvelope,
     groupName: string,
     channelId: string,
-    mailRouteKey: string,
-  ) => string | undefined;
-  threadRouteKey?: (envelope: SourceEnvelope) => string | undefined;
-  persistMailThread?: (
-    groupName: string,
-    channelId: string,
-    mailRouteKey: string,
-    threadId: string,
-  ) => Promise<void> | void;
+  ) => ThreadRoute | undefined;
 }
 export interface DeliveryAdapter {
   send(
@@ -150,15 +143,15 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
       const isItemThread = destinationType === "item-thread";
       let threadId = row.cronThreadId ?? payload.cronThreadId;
       let target: DeliveryTarget | undefined;
-      const routeKey = payload.feature
-        ? context.threadRouteKey?.(payload.feature)
+      const route = payload.feature
+        ? context.threadRoute?.(
+            payload.feature,
+            payload.groupName,
+            destinationId,
+          )
         : undefined;
-      if (destinationType === "channel" && routeKey) {
-        threadId = context.resolveMailThread?.(
-          payload.groupName,
-          destinationId,
-          routeKey,
-        );
+      if (destinationType === "channel" && route) {
+        threadId = route.resolve();
         if (threadId) {
           try {
             target = (await client.channels.fetch(
@@ -186,29 +179,19 @@ export class DiscordDeliveryAdapter implements DeliveryAdapter {
           )
             throw new DeliveryError(
               "non-retryable",
-              "Mail route thread requires a parent text channel",
+              "routed thread requires a parent text channel",
             );
           mutationAttempted = true;
-          target = await channel.threads.create({
-            name: routeKey
-              .replace(/^mail:/, "")
-              .replace(/^github:(.+):item:(\d+)$/, "$1 #$2")
-              .slice(0, 100),
-          });
+          target = await channel.threads.create({ name: route.name });
           threadId = String(target.id ?? "");
           if (!threadId)
             throw new DeliveryError("unknown", "Discord thread ID is empty");
           try {
-            await context.persistMailThread?.(
-              payload.groupName,
-              destinationId,
-              routeKey,
-              threadId,
-            );
+            await route.persist(threadId);
           } catch (error) {
             throw new DeliveryError(
               "unknown",
-              `failed to persist Mail Discord thread ${threadId}`,
+              `failed to persist routed Discord thread ${threadId}`,
               error,
             );
           }
@@ -496,15 +479,12 @@ export class DeliveryWorker {
             claim.fencingToken,
             threadId,
           ),
-        threadRouteKey: (envelope) => this.sources.threadRouteKey(envelope),
-        resolveMailThread: (groupName, channelId, mailRouteKey) =>
-          this.repository.getMailThread(groupName, channelId, mailRouteKey),
-        persistMailThread: (groupName, channelId, mailRouteKey, threadId) =>
-          this.repository.setMailThread(
+        threadRoute: (envelope, groupName, channelId) =>
+          this.sources.threadRoute(
+            envelope,
+            this.repository,
             groupName,
             channelId,
-            mailRouteKey,
-            threadId,
           ),
         promoteCronItemSession: async (threadId) => {
           const job = this.repository.get(claim.row.jobId);

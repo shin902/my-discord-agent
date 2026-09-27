@@ -19,7 +19,11 @@ vi.mock("../discord/client.js", () => ({
   getDiscordClients: () => new Map([["personal", client]]),
 }));
 
-import { registerMailSource } from "../features/mail.js";
+import {
+  getMailThread,
+  registerMailSource,
+  setMailThread,
+} from "../features/mail.js";
 import { registerRssSource } from "../features/rss.js";
 import {
   claimUnreadArticles,
@@ -235,10 +239,36 @@ it("creates a Mail thread when no mapping exists", async () => {
       workerId: "mail-create",
     }).runOnce();
     expect(create).toHaveBeenCalledWith({ name: "a@example.com" });
-    expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
+    expect(getMailThread(repo, "group", "channel", "mail:a@example.com")).toBe(
       "thread-1",
     );
     expect(send).toHaveBeenCalledOnce();
+  } finally {
+    readySpy.mockRestore();
+    fetchSpy.mockRestore();
+    repo.close();
+  }
+});
+
+it("uses the Mail-owned GitHub thread name", async () => {
+  const repo = new QueueRepository(openRuntimeDb(":memory:"));
+  const create = vi.fn(async () => ({
+    id: "github-thread",
+    isSendable: () => true,
+    send: async () => ({ id: "message-1" }),
+  }));
+  const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
+  const fetchSpy = vi.spyOn(client.channels, "fetch").mockResolvedValue({
+    type: ChannelType.GuildText,
+    threads: { create },
+  } as never);
+  try {
+    completed(repo, "response", {
+      mailEmailId: "mail-1",
+      mailRouteKey: "github:owner/repo:item:42",
+    });
+    await makeWorker(repo).runOnce();
+    expect(create).toHaveBeenCalledWith({ name: "owner/repo #42" });
   } finally {
     readySpy.mockRestore();
     fetchSpy.mockRestore();
@@ -288,7 +318,7 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     type: ChannelType.GuildText,
     threads: { create: vi.fn(async () => replacement) },
   };
-  repo.setMailThread("group", "channel", "mail:a@example.com", "thread-1");
+  setMailThread(repo, "group", "channel", "mail:a@example.com", "thread-1");
   const readySpy = vi.spyOn(client, "isReady").mockReturnValue(true);
   const fetchSpy = vi
     .spyOn(client.channels, "fetch")
@@ -317,7 +347,8 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     expect(firstSend).toHaveBeenCalledOnce();
     expect(channel.threads.create).not.toHaveBeenCalled();
 
-    repo.setMailThread(
+    setMailThread(
+      repo,
       "group",
       "channel",
       "mail:a@example.com",
@@ -334,7 +365,7 @@ it("reuses a Mail thread and replaces a deleted mapping", async () => {
     expect(channel.threads.create).toHaveBeenCalledWith({
       name: "a@example.com",
     });
-    expect(repo.getMailThread("group", "channel", "mail:a@example.com")).toBe(
+    expect(getMailThread(repo, "group", "channel", "mail:a@example.com")).toBe(
       "thread-2",
     );
   } finally {

@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { registerMailSource } from "../features/mail.js";
+import {
+  getMailThread,
+  registerMailSource,
+  setMailThread,
+} from "../features/mail.js";
 import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 import { SourceHandlers } from "./source-handlers.js";
@@ -15,7 +19,8 @@ it("persists Mail thread routes by group, channel and key across restart", async
   const dbPath = join(dir, "runtime.sqlite");
   try {
     const first = new QueueRepository(dbPath);
-    first.setMailThread(
+    setMailThread(
+      first,
       "group-a",
       "channel-a",
       "mail:a@example.com",
@@ -25,25 +30,26 @@ it("persists Mail thread routes by group, channel and key across restart", async
     const reopened = new QueueRepository(dbPath);
     try {
       expect(
-        reopened.getMailThread("group-a", "channel-a", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-a", "mail:a@example.com"),
       ).toBe("thread-1");
       expect(
-        reopened.getMailThread("group-a", "channel-b", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-b", "mail:a@example.com"),
       ).toBeUndefined();
       expect(
-        reopened.getMailThread("group-b", "channel-a", "mail:a@example.com"),
+        getMailThread(reopened, "group-b", "channel-a", "mail:a@example.com"),
       ).toBeUndefined();
-      reopened.setMailThread(
+      setMailThread(
+        reopened,
         "group-a",
         "channel-b",
         "mail:a@example.com",
         "thread-2",
       );
       expect(
-        reopened.getMailThread("group-a", "channel-a", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-a", "mail:a@example.com"),
       ).toBe("thread-1");
       expect(
-        reopened.getMailThread("group-a", "channel-b", "mail:a@example.com"),
+        getMailThread(reopened, "group-a", "channel-b", "mail:a@example.com"),
       ).toBe("thread-2");
     } finally {
       reopened.close();
@@ -64,16 +70,17 @@ it("creates channel-scoped Mail mappings on upgrade from v7", async () => {
     const upgraded = new QueueRepository(dbPath);
     try {
       expect(
-        upgraded.getMailThread("group", "channel", "mail:a@example.com"),
+        getMailThread(upgraded, "group", "channel", "mail:a@example.com"),
       ).toBeUndefined();
-      upgraded.setMailThread(
+      setMailThread(
+        upgraded,
         "group",
         "channel",
         "mail:a@example.com",
         "new-thread",
       );
       expect(
-        upgraded.getMailThread("group", "channel", "mail:a@example.com"),
+        getMailThread(upgraded, "group", "channel", "mail:a@example.com"),
       ).toBe("new-thread");
     } finally {
       upgraded.close();
