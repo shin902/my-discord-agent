@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
@@ -262,6 +262,53 @@ export async function renameSession(
   } finally {
     db.close();
   }
+}
+
+export async function markEphemeralCronSession(
+  groupName: string,
+  sessionId: string,
+): Promise<void> {
+  validateName(groupName, "グループ名");
+  validateName(sessionId, "セッションID");
+  const db = await openDatabase(groupName);
+  try {
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO sessions(id, kind, created_at, updated_at)
+      VALUES (?, 'cron-per-run', ?, ?)
+      ON CONFLICT(id) DO NOTHING
+    `).run(sessionId, now, now);
+  } finally {
+    db.close();
+  }
+}
+
+/** Only tagged per-run cron sessions are eligible; legacy untagged sessions remain untouched. */
+export async function cleanupEphemeralCronSessions(
+  now = Date.now(),
+): Promise<number> {
+  let removed = 0;
+  for (const groupName of await readdir(SESSIONS_DIR).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    },
+  )) {
+    const dbPath = path.join(groupDir(groupName), DB_FILENAME);
+    if (!existsSync(dbPath)) continue;
+    const db = new Database(dbPath, { fileMustExist: true });
+    try {
+      initializeSchema(db);
+      removed += db
+        .prepare(
+          "DELETE FROM sessions WHERE kind = 'cron-per-run' AND updated_at < ?",
+        )
+        .run(now - 7 * 24 * 60 * 60 * 1000).changes;
+    } finally {
+      db.close();
+    }
+  }
+  return removed;
 }
 
 export async function appendMessage(

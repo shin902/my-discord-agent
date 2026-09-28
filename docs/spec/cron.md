@@ -97,6 +97,10 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 }
 ```
 
+### 使い捨てcron sessionのcleanup
+
+`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。通常会話、destination cron、タグのない旧cron sessionは対象外です。運用時はこのhandlerをcron設定に追加してください。
+
 ### deliveryMode / sessionMode
 
 投稿方法とセッションID戦略は独立して指定する。すべての組み合わせで `appendInbox()` 経由の非同期処理となり、cron tick はadmission後にハンドラー完了やキューへの追加を待たず返る。
