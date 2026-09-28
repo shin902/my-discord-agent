@@ -441,6 +441,11 @@ export async function runAgentLoop(
   onConversation?: (entries: ConversationEntries) => void,
   imagePaths?: string[],
 ): Promise<string> {
+  const modelConfig = groupConfig.model;
+  if (!modelConfig) {
+    throw new Error("実行モデルが設定されていません");
+  }
+
   const persistMessage = (
     message: AgentMessage,
     entrySource?: SessionSource,
@@ -642,13 +647,7 @@ export async function runAgentLoop(
     ];
   }
 
-  if (!groupConfig.model) {
-    throw new Error("実行モデルが設定されていません");
-  }
-  const model = await resolveModel(
-    groupConfig.model.provider,
-    groupConfig.model.modelId,
-  );
+  const model = await resolveModel(modelConfig.provider, modelConfig.modelId);
 
   const skillPrompt = formatSkillsForPrompt(skills);
 

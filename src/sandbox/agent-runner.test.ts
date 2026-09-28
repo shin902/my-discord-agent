@@ -110,6 +110,8 @@ describe("runAgentLoop", () => {
     await expect(
       runAgentLoopRaw("test-group", "session-1", "hi", {}),
     ).rejects.toThrow("実行モデルが設定されていません");
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(appendMessage).not.toHaveBeenCalled();
   });
   afterEach(() => {
     vi.useRealTimers();
