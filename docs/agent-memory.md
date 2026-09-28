@@ -141,7 +141,7 @@ Runnerはcanonical entryをappendし、そのrunの入力userと最終assistant�
 - 送信元はsession DBのみです。通常runtime jobのpayload/result、Discord deliveryから本文を再構築しません。本文はcanonicalに保存されたtextです（添付ファイル案内等を含む場合があります）。thinkingやtool payloadは送信しません。
 - `<NO_REPLY>` はDiscord配送の抑制であり、非空の正常assistantとして保存されていればexport対象になり得ます。
 
-session schema v1〜v3は通常のsession書き込み経路でv4へ更新されます。v3の `execution_json` とその検索indexはMemory以外に利用がないため削除します。entry ID・本文・sourceは保持し、migrationはwrite lock取得後にversionを再確認します。export側はDB作成・migrationをしません。既存履歴の採用結果を本文・旧attempt情報・runtime jobから推測してbackfillしません。
+旧rollout時、session schema v1〜v3は通常のsession書き込み経路でv4へ更新されていました。現行v5では旧schemaの自動移行はせず、[停止・バックアップ・手動変換](storage.md#session-trajectory)が必要です。v3の `execution_json` とその検索indexはMemory以外に利用がないため削除します。entry ID・本文・sourceは保持し、migrationはwrite lock取得後にversionを再確認します。export側はDB作成・migrationをしません。既存履歴の採用結果を本文・旧attempt情報・runtime jobから推測してbackfillしません。
 
 ## queueと成功ledger
 
