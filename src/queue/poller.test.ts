@@ -26,6 +26,8 @@ vi.mock("../agent/session.js", () => ({
   sessionConversationPath: (groupName: string, sessionId: string) =>
     `data/sessions/${groupName}/sessions.sqlite#session=${sessionId}`,
 }));
+const markEphemeralCronSession = vi.hoisted(() => vi.fn());
+vi.mock("../cron/session-retention.js", () => ({ markEphemeralCronSession }));
 const acknowledgeEmail = vi.hoisted(() => vi.fn());
 vi.mock("../cron/mail-ack.js", () => ({ acknowledgeEmail }));
 const settleRssDispatch = vi.hoisted(() => vi.fn());
@@ -670,6 +672,7 @@ describe("processMessage - terminal queue transitions", () => {
 
     await processMessage(msg);
 
+    expect(markEphemeralCronSession).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith({
       name: "cron-daily-2026-06-04-19-30",
     });
@@ -709,6 +712,7 @@ describe("processMessage - terminal queue transitions", () => {
 
     await processMessage(msg);
 
+    expect(markEphemeralCronSession).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith(
       msg.groupName,
       msg.sessionId,
@@ -741,6 +745,10 @@ describe("processMessage - terminal queue transitions", () => {
     vi.mocked(sendMessage).mockImplementation(
       async (_group, session, _content, options: unknown) => {
         expect(session).toBe("cron-daily-run-placeholder");
+        expect(markEphemeralCronSession).toHaveBeenCalledWith(
+          msg.groupName,
+          session,
+        );
         (options as SendMessageOptions | undefined)?.onContainerStarted?.();
         return "AI response";
       },
@@ -2120,6 +2128,10 @@ describe("processMessage - durable result", () => {
 
     await processMessage(msg);
 
+    expect(markEphemeralCronSession).toHaveBeenCalledWith(
+      msg.groupName,
+      msg.sessionId,
+    );
     expect(commitInboxResult).toHaveBeenCalledWith(
       msg.id,
       msg.fencingToken,

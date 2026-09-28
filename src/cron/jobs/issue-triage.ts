@@ -237,6 +237,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
         content: buildPrompt(owner, repo, issue),
         timestamp: new Date().toISOString(),
         cronJobId: ctx.id,
+        // #563: replace this direct enqueue with enqueueCronInbox().
+        cronDeliveryMode: "direct",
+        cronSessionMode: "per-run",
       });
       // appendInbox 成功直後にstateを保存することで、途中でクラッシュしても
       // 既に投入済みのIssueが重複してinboxに投入されることを防ぐ

@@ -127,6 +127,12 @@
     }
   },
   {
+    "id": "session-cleanup",
+    "schedule": "0 3 * * *",
+    "enabled": true,
+    "handler": "jobs/session-cleanup.ts"
+  },
+  {
     "id": "screen-capture-gc",
     "schedule": "0 */6 * * *",
     "enabled": false,

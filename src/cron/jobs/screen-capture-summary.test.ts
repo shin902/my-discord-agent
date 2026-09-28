@@ -18,6 +18,7 @@ import { resolveProviderLockTarget } from "../../config/providers.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
 import { acquireInferenceLock } from "../../queue/inference-lock.js";
 import type { CronContext } from "../runner.js";
+import { markEphemeralCronSession } from "../session-retention.js";
 import handler from "./screen-capture-summary.js";
 
 const magick = vi.hoisted(() => ({
@@ -53,6 +54,9 @@ vi.mock("@earendil-works/pi-ai/compat", async (original) => ({
 }));
 vi.mock("../../agent/model.js", () => ({ resolveModel: vi.fn() }));
 vi.mock("../../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+vi.mock("../session-retention.js", () => ({
+  markEphemeralCronSession: vi.fn(),
+}));
 vi.mock("../../config/credential-proxy.js", () => ({
   loadCredentialProxy: vi.fn(),
 }));
@@ -211,6 +215,13 @@ describe("screen capture summary cron", () => {
 
   it("summarizes images with settings.visionModel then gives text to the memory model", async () => {
     insert(2);
+    vi.mocked(sendMessage).mockImplementationOnce(async (_group, sessionId) => {
+      expect(markEphemeralCronSession).toHaveBeenCalledWith(
+        "logbook",
+        sessionId,
+      );
+      return "updated";
+    });
     await handler({
       ...ctx,
       settings: { visionModel, concurrency: 2, limit: 2 },
@@ -223,6 +234,10 @@ describe("screen capture summary cron", () => {
     );
     expect(resolveModel).toHaveBeenCalledWith("openai", "gpt-4o-mini");
     expect(completeSimple).toHaveBeenCalledTimes(2);
+    expect(markEphemeralCronSession).toHaveBeenCalledWith(
+      "logbook",
+      vi.mocked(sendMessage).mock.calls[0][1],
+    );
     expect(sendMessage).toHaveBeenCalledWith(
       "logbook",
       expect.stringMatching(/^cron-screen-capture-summary-/),
@@ -357,7 +372,11 @@ describe("screen capture summary cron", () => {
       process.cwd(),
       "groups/logbook/.screen-captures",
     );
-    vi.mocked(sendMessage).mockImplementationOnce(async () => {
+    vi.mocked(sendMessage).mockImplementationOnce(async (_group, sessionId) => {
+      expect(markEphemeralCronSession).toHaveBeenCalledWith(
+        "logbook",
+        sessionId,
+      );
       expect((await stat(directory)).mode & 0o777).toBe(0o700);
       for (const id of ids)
         expect(

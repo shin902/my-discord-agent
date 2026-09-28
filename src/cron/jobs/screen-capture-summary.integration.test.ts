@@ -24,6 +24,9 @@ vi.mock("node:child_process", () => ({
   ),
 }));
 vi.mock("../../agent/manager.js", () => ({ sendMessage: vi.fn() }));
+vi.mock("../session-retention.js", () => ({
+  markEphemeralCronSession: vi.fn(),
+}));
 vi.mock("../../config/credential-proxy.js", () => ({
   loadCredentialProxy: async () => state.entries,
 }));
