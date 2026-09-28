@@ -335,6 +335,22 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.initializeQueue).not.toHaveBeenCalled();
   });
 
+  it("予約済みmain Bot Task SessionはDiscord副作用前に停止する", async () => {
+    mocks.initializeQueue.mockRejectedValue(
+      new Error(
+        "Bot main の保存状態が不正です: main はMain専用の予約IDです (group/legacy-task)",
+      ),
+    );
+
+    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
+    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(mocks.registerHandlers).not.toHaveBeenCalled();
+    expect(mocks.loginDiscordClients).not.toHaveBeenCalled();
+    expect(mocks.startXSavedReceiver).not.toHaveBeenCalled();
+    expect(mocks.startScreenCaptureReceiver).not.toHaveBeenCalled();
+    expect(mocks.startXSavedGallery).not.toHaveBeenCalled();
+  });
+
   it("有効な設定では registerHandlers・startPoller・startDeliveryWorker・login が呼ばれる", async () => {
     mocks.loadGroups.mockResolvedValue([
       {

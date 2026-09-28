@@ -1,6 +1,16 @@
 import type { QueueRepository } from "./repository.js";
 
 export async function initializeQueue(repo: QueueRepository): Promise<void> {
+  const reserved = repo.db
+    .prepare(
+      "SELECT group_name, session_id FROM bot_task_sessions WHERE bot_id='main' LIMIT 1",
+    )
+    .get() as { group_name: string; session_id: string } | undefined;
+  if (reserved)
+    throw new Error(
+      `Bot main の保存状態が不正です: main はMain専用の予約IDです (${reserved.group_name}/${reserved.session_id})`,
+    );
+
   // Reject unconverted SQLite payloads before workers can claim them.
   const old = repo.db
     .prepare(

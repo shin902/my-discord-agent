@@ -30,6 +30,29 @@ describe("normal runtime startup", () => {
     }
   });
 
+  it("rejects the reserved main Bot ID before startup recovery", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    try {
+      repo.db
+        .prepare(
+          `INSERT INTO bot_task_sessions
+            (session_id,handle,group_name,bot_id,channel_id,created_at,last_used_at,preview)
+           VALUES ('legacy-task','legacy','group','main','','now','now','legacy')`,
+        )
+        .run();
+      const admissions = vi.spyOn(repo, "recoverBotTaskSessionAdmissions");
+      const expired = vi.spyOn(repo, "recoverExpired");
+
+      await expect(initializeQueue(repo)).rejects.toThrow(
+        "Bot main の保存状態が不正です: main はMain専用の予約IDです (group/legacy-task)",
+      );
+      expect(admissions).not.toHaveBeenCalled();
+      expect(expired).not.toHaveBeenCalled();
+    } finally {
+      repo.close();
+    }
+  });
+
   it("does not read or modify legacy queue JSONL", async () => {
     const dir = await mkdtemp(join(tmpdir(), "queue-startup-test-"));
     tempDirs.push(dir);
