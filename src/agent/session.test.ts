@@ -48,8 +48,11 @@ describe("SQLite session trajectory store", () => {
       ).run(now - 8 * 86_400_000);
       db.close();
     }
-    expect(await session.cleanupEphemeralCronSessions(now)).toBe(2);
-    expect(await session.cleanupEphemeralCronSessions(now)).toBe(0);
+    const { cleanupEphemeralCronSessions } = await import(
+      "../cron/jobs/session-cleanup.js"
+    );
+    expect(await cleanupEphemeralCronSessions(now)).toBe(2);
+    expect(await cleanupEphemeralCronSessions(now)).toBe(0);
     for (const group of ["cleanup-a", "cleanup-b"]) {
       const db = dbFor(group);
       expect(db.prepare("SELECT id FROM sessions ORDER BY id").all()).toEqual([
