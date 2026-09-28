@@ -9,7 +9,7 @@ import { type SessionSource, SessionSourceSchema } from "./source.js";
 const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -88,19 +88,21 @@ function initializeSchema(db: Database.Database): void {
   db.transaction(() => {
     // Another run/container may have migrated while we waited for the lock.
     const version = db.pragma("user_version", { simple: true }) as number;
-    if (version > SCHEMA_VERSION) {
+    if (version === SCHEMA_VERSION) return;
+    if (version !== 0) {
       throw new Error(
         `未対応のsession DB schema versionです: ${version} (対応: ${SCHEMA_VERSION})`,
       );
     }
-    if (version === 0) {
-      db.exec(`
+    db.exec(`
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY,
           kind TEXT NOT NULL DEFAULT 'conversation',
           created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
+          updated_at INTEGER NOT NULL,
+          agent_id TEXT NOT NULL DEFAULT 'main'
         );
+        CREATE INDEX sessions_agent_id_id ON sessions(agent_id, id);
         CREATE TABLE IF NOT EXISTS session_entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
@@ -108,26 +110,13 @@ function initializeSchema(db: Database.Database): void {
           entry_type TEXT NOT NULL,
           payload_json TEXT NOT NULL,
           created_at INTEGER NOT NULL,
+          source_json TEXT,
           UNIQUE(session_id, sequence)
         );
-        CREATE INDEX IF NOT EXISTS session_entries_session_id_id
+        CREATE INDEX session_entries_session_id_id
           ON session_entries(session_id, id);
-        PRAGMA user_version = 1;
-      `);
-    }
-    if (version < 2) {
-      db.exec(`
-        ALTER TABLE session_entries ADD COLUMN source_json TEXT;
         CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
-        PRAGMA user_version = 2;
       `);
-    }
-    if (version === 3) {
-      db.exec(`
-        DROP INDEX session_entries_execution;
-        ALTER TABLE session_entries DROP COLUMN execution_json;
-      `);
-    }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();
 }
@@ -227,6 +216,42 @@ export function* readConversations(
   }
 }
 
+/** Read-only trajectories with user input, ordered by creation time/ID then entry sequence. */
+export function* readOwnerSessions(
+  groupName: string,
+  agentId: string,
+): Generator<{ sessionId: string; message: AgentMessage }> {
+  validateName(groupName, "グループ名");
+  const dbPath = path.join(groupDir(groupName), DB_FILENAME);
+  if (!existsSync(dbPath)) return;
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const version = db.pragma("user_version", { simple: true }) as number;
+    if (version !== SCHEMA_VERSION)
+      throw new Error(`Unsupported session schema: ${version}`);
+    const sessions = db.prepare(
+      `SELECT id FROM sessions s WHERE agent_id=?
+        AND EXISTS (SELECT 1 FROM session_entries e
+          WHERE e.session_id=s.id AND e.entry_type='user')
+        ORDER BY created_at, id`,
+    );
+    const entries = db.prepare(
+      "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
+    );
+    for (const { id } of sessions.iterate(agentId) as Iterable<{
+      id: string;
+    }>) {
+      for (const { payload_json } of entries.iterate(id) as Iterable<{
+        payload_json: string;
+      }>) {
+        yield { sessionId: id, message: parseStoredMessage(payload_json) };
+      }
+    }
+  } finally {
+    db.close();
+  }
+}
+
 export async function renameSession(
   groupName: string,
   fromSessionId: string,
@@ -269,6 +294,7 @@ export async function appendMessage(
   sessionId: string,
   message: AgentMessage,
   source?: SessionSource,
+  agentId = "main",
 ): Promise<number> {
   if (source && message.role !== "user") {
     throw new Error("source provenance requires a user entry");
@@ -297,10 +323,10 @@ export async function appendMessage(
         if (existing) return existing.id;
       }
       db.prepare(`
-        INSERT INTO sessions(id, created_at, updated_at)
-        VALUES (?, ?, ?)
+        INSERT INTO sessions(id, created_at, updated_at, agent_id)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
-      `).run(sessionId, timestamp, timestamp);
+      `).run(sessionId, timestamp, timestamp, agentId);
       const inserted = db
         .prepare(`
         INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json)

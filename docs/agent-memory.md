@@ -141,7 +141,7 @@ Runnerはcanonical entryをappendし、そのrunの入力userと最終assistant�
 - 送信元はsession DBのみです。通常runtime jobのpayload/result、Discord deliveryから本文を再構築しません。本文はcanonicalに保存されたtextです（添付ファイル案内等を含む場合があります）。thinkingやtool payloadは送信しません。
 - `<NO_REPLY>` はDiscord配送の抑制であり、非空の正常assistantとして保存されていればexport対象になり得ます。
 
-session schema v1〜v3は通常のsession書き込み経路でv4へ更新されます。v3の `execution_json` とその検索indexはMemory以外に利用がないため削除します。entry ID・本文・sourceは保持し、migrationはwrite lock取得後にversionを再確認します。export側はDB作成・migrationをしません。既存履歴の採用結果を本文・旧attempt情報・runtime jobから推測してbackfillしません。
+旧rollout時、session schema v1〜v3は通常のsession書き込み経路でv4へ更新されていました。現行v5では旧schemaの自動移行はせず、[停止・バックアップ・手動変換](storage.md#session-trajectory)が必要です。v3の `execution_json` とその検索indexはMemory以外に利用がないため削除します。entry ID・本文・sourceは保持し、migrationはwrite lock取得後にversionを再確認します。export側はDB作成・migrationをしません。既存履歴の採用結果を本文・旧attempt情報・runtime jobから推測してbackfillしません。
 
 ## queueと成功ledger
 
@@ -177,9 +177,11 @@ network、timeout、408、429、5xxは既存queueのretryへ、明確な設定�
 - 通常queue/cronと同じ単一host process・Discord readinessの起動条件を引き継ぎます。Memory専用schedulerやmulti-host lockはありません。
 - queue状態は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順で確認します。`cronJobId` / `jobKind` と通常のjob statusを使い、成功件数はledgerをread-onlyで確認します。runtime backupにsession DB・export ledgerは含まれません（[storage.md](storage.md)）。
 
-### attempt照合方式からのrollout
+### attempt照合方式からのrollout（旧v4導入時の記録）
 
-更新前にexport可能な旧会話を既存exporterで処理し、runtimeを停止してruntime DB・session DB・ledgerをbackupします。**hostとAgent Runner imageを同じversionへ更新してから再起動**してください。旧runnerとの混在はサポートしません（旧runnerは採用参照を返さず、v4 sessionも読めません）。runtime schema v7は空の採用参照tableを追加し、各groupのsessionは通常アクセス時にv4へ更新されます。旧履歴の再exportは新方式へ自動移行しませんが、既存ledger / remote memoryは保持されます。downgrade時はhost / imageだけでなく更新前DBも復元が必要です。
+以下は過去のv4導入手順であり、現行v5への導入手順ではありません。現行runtimeはv1〜v4のsession DBを自動移行しません。停止・バックアップ後に[storageのv4→v5変換手順](storage.md#session-trajectory)を完了してから起動してください。
+
+旧導入時は、更新前にexport可能な旧会話を既存exporterで処理し、runtimeを停止してruntime DB・session DB・ledgerをbackupします。**hostとAgent Runner imageを同じversionへ更新してから再起動**してください。旧runnerとの混在はサポートしません（旧runnerは採用参照を返さず、v4 sessionも読めません）。runtime schema v7は空の採用参照tableを追加し、各groupのsessionは通常アクセス時にv4へ更新されます。旧履歴の再exportは新方式へ自動移行しませんが、既存ledger / remote memoryは保持されます。downgrade時はhost / imageだけでなく更新前DBも復元が必要です。
 
 ### 旧capture経路からのrollout
 

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import {
   afterAll,
   afterEach,
@@ -53,7 +54,9 @@ vi.mock("../queue/repository.js", async (importOriginal) => ({
 
 const sessions = await mkdtemp(join(tmpdir(), "bot-task-prompts-"));
 vi.stubEnv("SESSIONS_DIR", sessions);
-const { appendMessage, loadMessages } = await import("./session.js");
+const { appendMessage, loadMessages, readOwnerSessions } = await import(
+  "./session.js"
+);
 const { sendMessage } = await import("./manager.js");
 const { handleBotToolRequest } = await import("./bot-orchestration.js");
 const { executeBotCommand } = await import(
@@ -176,6 +179,24 @@ function task(handle: string) {
 }
 
 async function expectSnapshot(handle: string, content: string) {
+  const db = new Database(join(sessions, group.name, "sessions.sqlite"), {
+    readonly: true,
+    fileMustExist: true,
+  });
+  try {
+    expect(
+      db
+        .prepare("SELECT agent_id FROM sessions WHERE id=?")
+        .get(task(handle).sessionId),
+    ).toEqual({ agent_id: "worker" });
+  } finally {
+    db.close();
+  }
+  expect(
+    [...readOwnerSessions(group.name, "worker")].some(
+      ({ sessionId }) => sessionId === task(handle).sessionId,
+    ),
+  ).toBe(false);
   expect(await loadMessages(group.name, task(handle).sessionId)).toEqual([
     expect.objectContaining({
       role: "custom",
@@ -233,6 +254,29 @@ describe("Bot Task Session role snapshots", () => {
       mounts: group.mounts,
     });
     await expectSnapshot(handle, "Bot role A");
+    await appendMessage(group.name, task(handle).sessionId, {
+      role: "user",
+      content: "follow-up",
+      timestamp: 1,
+    });
+    expect(
+      [...readOwnerSessions(group.name, "worker")].some(
+        ({ sessionId, message }) =>
+          sessionId === task(handle).sessionId &&
+          "content" in message &&
+          message.content === "follow-up",
+      ),
+    ).toBe(true);
+    await appendMessage(group.name, "main-chat", {
+      role: "user",
+      content: "main",
+      timestamp: 1,
+    });
+    expect(
+      [...readOwnerSessions(group.name, "worker")].some(
+        ({ sessionId }) => sessionId === "main-chat",
+      ),
+    ).toBe(false);
 
     const newHandle = await invoke(surface, "run");
     expect(newHandle).not.toBe(handle);
@@ -252,6 +296,22 @@ describe("Bot Task Session role snapshots", () => {
       1,
     );
     await expectSnapshot(handle, "Bot role A");
+    const db = new Database(join(sessions, group.name, "sessions.sqlite"), {
+      readonly: true,
+      fileMustExist: true,
+    });
+    try {
+      expect(
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM sessions WHERE agent_id='worker'",
+          )
+          .get(),
+      ).toEqual({ count: 2 });
+    } finally {
+      db.close();
+    }
+    expect([...readOwnerSessions(group.name, "worker")]).toEqual([]);
     await processQueued();
     expectExecution("Bot role A");
     expect(repository.claim("test-worker")).toBeUndefined();

@@ -15,7 +15,16 @@ export type BotProfile = z.infer<typeof BotProfileSchema>;
 
 /** Named Bot profiles declared in the dedicated bots.json registry. */
 export const BotRegistrySchema = z
-  .record(z.string().min(1), BotProfileSchema)
+  .record(
+    z
+      .string()
+      .min(1)
+      .refine(
+        (id) => id !== "main",
+        "Bot main の設定が不正です: main はMain専用の予約IDです",
+      ),
+    BotProfileSchema,
+  )
   .default({});
 
 export type BotRegistry = z.infer<typeof BotRegistrySchema>;

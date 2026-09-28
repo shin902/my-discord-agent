@@ -80,7 +80,17 @@ session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
-`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v4ではMemory専用になっていたv3の `execution_json` と検索indexを削除します。v1/v2からも通常session書き込み時にv4へ更新し、既存entry ID・本文・sourceを保持します。migrationはwrite lock下でversionを再確認します。
+`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v5の`sessions.agent_id`はgroup内の不変なownerの正本で、通常会話は`main`、Bot TaskはBot IDです。Bot registryからBotを削除しても保存済みownerは変えません。`bot_task_sessions`はTaskのadmission/list/resume用であり、実行時のowner照合には使用しません。owner別のread-only trajectoryはuser entryを持つsessionだけをgroup DB内でsession作成時刻・ID、entry sequence順に走査します。未公開のsnapshot-only Bot sessionは含めません。既存sessionへの追記・renameはownerを変更しません。
+
+**v4→v5導入手順:** 稼働中のすべてのgroup DBの`PRAGMA user_version`をread-onlyで確認し、v4以外は変換せず運用者に扱いを確認してください。runtime/runnerを停止し、runtime DBと全group DBをWALを含めSQLite整合バックアップします。停止状態のまま`pnpm exec tsx scripts/convert-issue556-session-owners.ts <runtime.sqlite> <sessions-root>`を明示したパスで一度だけ実行し、各DBのversion・owner別件数・削除された未登録`bot-task-<UUID>`とentryをバックアップと照合します。登録済みBot Task（registryから削除されたBotも含む）は保持し、非該当IDは`main`のままです。旧Bot ID `main`がruntime DBにある場合は変換前に明示エラーとして停止します。groupごとのtransactionであり全group間のatomicityはありません。途中失敗時は停止を維持し、**全DBをバックアップから復元してから**再実行します。変換済みDBと旧runtimeを混在起動せず、同じcheckoutでRunner imageをbuild/pushし、Hostもbuildしてから起動してください（`pnpm build`だけではRunner imageは更新されません）。新runtimeはv4以前を自動移行しません。
+
+```bash
+pnpm exec tsx scripts/convert-issue556-session-owners.ts data/runtime.sqlite data/sessions
+# DB・owner件数・削除候補を照合してから、同じcheckoutで:
+pnpm sandbox build  # Agent Runnerをbundleしlocalhost:5050のregistryへpush
+pnpm build          # Hostをbuild
+pnpm start          # または管理サービスを起動
+```
 
 source付きappendは同じwrite transaction内で `(session_id, source.kind, source.sourceId)` を照合し、重複なら本文・時刻を変更せず元のentry IDを返します。[appendUserOnly](spec/channel-modes.md#appenduseronly)もこの既存schemaへのappendを使います。
 

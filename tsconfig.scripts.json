@@ -4,5 +4,5 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["scripts/convert-issue540-runtime.ts", "scripts/convert-issue540-runtime.test.ts"]
+  "include": ["scripts/convert-issue540-runtime.ts", "scripts/convert-issue540-runtime.test.ts", "scripts/convert-issue556-session-owners.ts", "scripts/convert-issue556-session-owners.test.ts"]
 }
