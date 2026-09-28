@@ -16,7 +16,6 @@ import type {
 import { loadSkills } from "../skills/loader.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
-import { markEphemeralCronSession } from "./session-retention.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
@@ -180,10 +179,6 @@ export async function enqueueCronInbox(
       : ctx.channelId;
   const configOverride = buildConfigOverride(ctx);
 
-  // Record provenance before admission so a worker never sees an untagged cron session.
-  if (sessionMode === "per-run") {
-    await markEphemeralCronSession(ctx.groupName, sessionId);
-  }
   await ctx.appendInbox({
     channelId: ctx.channelId,
     groupName: ctx.groupName,

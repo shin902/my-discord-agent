@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Exercise real hostFetch; no Credential Proxy listener or port is available.
-vi.mock("../session-retention.js", () => ({
-  markEphemeralCronSession: vi.fn(),
-}));
 vi.mock("../../config/credential-proxy.js", () => ({
   loadCredentialProxy: async () => [
     {

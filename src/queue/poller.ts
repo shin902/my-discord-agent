@@ -21,6 +21,7 @@ import {
   type ProviderConcurrency,
   resolveProviderLockTarget,
 } from "../config/providers.js";
+import { markEphemeralCronSession } from "../cron/session-retention.js";
 import {
   getDiscordClientForGroupName,
   getDiscordClients,
@@ -743,6 +744,9 @@ async function processCronThreadDelivery(
     const response = await withInferenceLock(
       lockTarget,
       async () => {
+        if (msg.cronSessionMode === "per-run") {
+          await markEphemeralCronSession(msg.groupName, sessionId);
+        }
         const agentStartedAt = Date.now();
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
@@ -1074,6 +1078,9 @@ export async function processMessage(
         lockTarget,
         async () => {
           stopTyping = startTypingLoop(msg.groupName, msg.channelId);
+          if (msg.cronSessionMode === "per-run") {
+            await markEphemeralCronSession(msg.groupName, msg.sessionId);
+          }
           const agentStartedAt = Date.now();
           try {
             return await sendMessage(
