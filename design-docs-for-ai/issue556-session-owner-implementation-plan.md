@@ -17,8 +17,9 @@
 2. **`src/queue/bot-task-sessions.ts`**: `prepareBotTaskSession()` の最初のsnapshot保存で、すでに入力にある `input.botId` を `appendMessage()` に渡しownerを確定。`loadBotTaskSystemPrompt()` 等のresumeはowner変更を行わない。これ以降のBot実行は既存sessionへの追記なので、runner側にBot判定やruntime DB照会を追加しない。
 3. **`src/config/bots.ts`**: Bot registryのvalidationで予約ID `main` を禁止する（Botが既存設定から削除されても、保存済みownerには影響させない）。`src/config/bots.test.ts` に拒否ケースを追加。Discord bot定義の `config/config.json` とは別のBot registryであることに注意。
 4. **`scripts/convert-issue556-session-owners.ts`（新規）**: operatorがruntime停止・バックアップ後に一度だけ実行するオフライン変換。引数でruntime DBとsession DB rootを明示させ、実環境を暗黙に決めない。session root配下の実在する `sessions.sqlite` だけを列挙し、変更開始前に全対象の `PRAGMA user_version` が4であることを確認（未作成のgroup DBを新たに作らない）。runtime DBの `bot_task_sessions` を `group_name + session_id` で参照し、group DBごとに1 transactionで `sessions.agent_id` を追加・Bot ownerを更新・未登録の**現行生成形式 `bot-task-<UUID>` に一致するsessionだけ**を削除し、v5にする。それ以外は `main`。登録済みBotのIDは現行registryに無くても保持する。各group DB接続で `PRAGMA foreign_keys = ON` を有効にし、`session_entries` は既存FKの `ON DELETE CASCADE` で残骸に対応させる。通常sessionのentries/source/IDsは保持する。途中失敗時は停止状態を維持してバックアップから復元してから再実行する手順にする（複数group間のatomicityは仮定しない）。runtime DBのqueue・admission・deliveryは書き換えない。サービス停止コマンド、常駐migration、v1〜v3変換、特別な復旧frameworkは実装しない。
-5. **`scripts/convert-issue556-session-owners.test.ts`（新規）**, **`src/agent/session.test.ts`**, **`src/agent/bot-task-session.integration.test.ts`**: 下記のテストを追加・既存v4期待値を更新。必要なら `src/queue/bot-task-sessions.test.ts` も、Bot準備時のowner確認に限って追加する。旧schemaの自動migrationを期待する既存の `src/agent/session.test.ts` のテストは、新しい停止・手動移行契約に合わせて変更し、run-timeがv4を暗黙に上げることを期待しない。
-6. **`docs/storage.md` と `docs/spec/entity-model.md`**: session ownerの正本・scope・移行順序・バックアップ・再起動条件を反映。`docs/agent-memory.md` はMemoryの動作を変更しないので、既存記述が矛盾する場合だけ最小限修正する。`README.md` / example configは実際のoperator導線・設定変更が必要な場合だけ更新する（`.pi/skills/update-docs/SKILL.md`）。
+5. **`tsconfig.scripts.json`**: 新規TypeScript変換スクリプトとそのテストを `include` に加え、`pnpm typecheck` の対象にする。
+6. **`scripts/convert-issue556-session-owners.test.ts`（新規）**, **`src/agent/session.test.ts`**, **`src/agent/bot-task-session.integration.test.ts`**: 下記のテストを追加・既存v4期待値を更新。必要なら `src/queue/bot-task-sessions.test.ts` も、Bot準備時のowner確認に限って追加する。旧schemaの自動migrationを期待する既存の `src/agent/session.test.ts` のテストは、新しい停止・手動移行契約に合わせて変更し、run-timeがv4を暗黙に上げることを期待しない。
+7. **`docs/storage.md` と `docs/spec/entity-model.md`**: session ownerの正本・scope・移行順序・バックアップ・再起動条件を反映。`docs/agent-memory.md` はMemoryの動作を変更しないので、既存記述が矛盾する場合だけ最小限修正する。`README.md` / example configは実際のoperator導線・設定変更が必要な場合だけ更新する（`.pi/skills/update-docs/SKILL.md`）。
 
 ## 移行と危険箇所
 
@@ -46,7 +47,7 @@
 本IssueにWeb UIはない。**ブラウザ確認は人間がDiscord Webを手動操作する**。Steelコンテナやブラウザ自動化環境の起動は不要。ブラウザだけでSQLiteのownerを直接確認することはできないので、既存Bot動線の回帰確認とownerのread-only DB確認を組み合わせる。実行環境にbot credential・テスト用guildが無い場合は本番で代用せず、手順を未実施として記録する。Vitestによる自動テストはmigration/ownerの破壊的境界に限定して残す。
 
 1. 対象checkoutで停止・バックアップ・**テスト用の複製DB**の移行を行い、`pnpm build` と必要なrunner image更新を済ませる。テスト用の設定・credential・guildを使い、このcheckoutから通常どおり `pnpm start`（既に管理サービスがある場合はそのサービス）で起動する。並列worktreeで別のサービスが稼働している場合は、`pwd` と `git rev-parse --show-toplevel`、起動プロセス・ログを照合し、テスト用BotとDBが**このcheckout**に結びついていることを確認する。同じBot tokenやDBに複数サービスを同時接続しない。Web配信サーバーや特別なportは不要。
-2. ブラウザのDiscord Webでテスト用guildを開き、Mainの通常チャンネルにメッセージを送って応答を確認。別スレッドでも応答を確認する。続いてBot Taskを新規実行してhandleを受け取り、同handleでresume/listを試し、同じBotの文脈が続くことを確認する。実際のslash command名・権限は `docs/guides/discord-bot-setup.md` と設定済みコマンドを確認し、今回コマンド定義・deploymentは変更しない。
+2. ブラウザのDiscord Webでテスト用guildを開き、テスト用チャンネルの `sessionMode` に合う場所からMainへメッセージを送って応答を確認する（`shared` は親チャンネル、`thread` はスレッドのみ受理。無視される入力を失敗と判定しない）。続いてBot Taskを新規実行してhandleを受け取り、同handleでresume/listを試し、同じBotの文脈が続くことを確認する。実際のslash command名・権限は `docs/guides/discord-bot-setup.md` と設定済みコマンドを確認し、今回コマンド定義・deploymentは変更しない。
 3. 起動したサービスが使用した**テスト用の複製DB**をread-onlyで確認: 上記の通常sessionは `agent_id='main'`、Bot Taskは `agent_id=<そのBot ID>`、resume後も同じowner、entryが維持されていること。ブラウザでの応答だけをowner分離の証拠にしない。
 
 ## 実装後セルフチェック
