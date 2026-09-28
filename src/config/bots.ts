@@ -19,7 +19,10 @@ export const BotRegistrySchema = z
     z
       .string()
       .min(1)
-      .refine((id) => id !== "main", "main is reserved for Main"),
+      .refine(
+        (id) => id !== "main",
+        "Bot main の設定が不正です: main はMain専用の予約IDです",
+      ),
     BotProfileSchema,
   )
   .default({});

@@ -100,7 +100,9 @@ describe("loadBotRegistry", () => {
     mockLoadRawBots.mockResolvedValue({
       main: { group: "main", description, instructions: "worker" },
     });
-    await expect(loadBotRegistry()).rejects.toThrow("main is reserved");
+    await expect(loadBotRegistry()).rejects.toThrow(
+      "Bot main の設定が不正です: main はMain専用の予約IDです",
+    );
   });
 
   it("専用 bots.json の registry map を読み込む", async () => {
