@@ -43,7 +43,7 @@
 
 ## ブラウザでの動作確認（該当範囲と限界）
 
-本IssueにWeb UIはない。ブラウザだけでSQLiteのownerを直接確認することはできないので、ブラウザのDiscord Webは既存Bot動線の回帰確認に使い、永続化はread-only SQLとテストで検証する。実行環境にbot credential・テスト用guildが無い場合は本番で代用せず、手順を未実施として記録する。
+本IssueにWeb UIはない。**ブラウザ確認は人間がDiscord Webを手動操作する**。Steelコンテナやブラウザ自動化環境の起動は不要。ブラウザだけでSQLiteのownerを直接確認することはできないので、既存Bot動線の回帰確認とownerのread-only DB確認を組み合わせる。実行環境にbot credential・テスト用guildが無い場合は本番で代用せず、手順を未実施として記録する。Vitestによる自動テストはmigration/ownerの破壊的境界に限定して残す。
 
 1. 対象checkoutで停止・バックアップ・**テスト用の複製DB**の移行を行い、`pnpm build` と必要なrunner image更新を済ませる。テスト用の設定・credential・guildを使い、このcheckoutから通常どおり `pnpm start`（既に管理サービスがある場合はそのサービス）で起動する。並列worktreeで別のサービスが稼働している場合は、`pwd` と `git rev-parse --show-toplevel`、起動プロセス・ログを照合し、テスト用BotとDBが**このcheckout**に結びついていることを確認する。同じBot tokenやDBに複数サービスを同時接続しない。Web配信サーバーや特別なportは不要。
 2. ブラウザのDiscord Webでテスト用guildを開き、Mainの通常チャンネルにメッセージを送って応答を確認。別スレッドでも応答を確認する。続いてBot Taskを新規実行してhandleを受け取り、同handleでresume/listを試し、同じBotの文脈が続くことを確認する。実際のslash command名・権限は `docs/guides/discord-bot-setup.md` と設定済みコマンドを確認し、今回コマンド定義・deploymentは変更しない。
