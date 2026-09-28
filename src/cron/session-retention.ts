@@ -47,9 +47,6 @@ export async function cleanupEphemeralCronSessions(
     try {
       db.pragma("foreign_keys = ON");
       db.pragma("busy_timeout = 5000");
-      if (db.pragma("user_version", { simple: true }) !== 4) {
-        throw new Error(`Unsupported session schema: ${dbPath}`);
-      }
       removed += db
         .prepare(
           "DELETE FROM sessions WHERE kind = 'cron-per-run' AND updated_at < ?",

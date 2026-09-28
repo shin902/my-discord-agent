@@ -36,6 +36,7 @@ it("deletes only expired tagged cron sessions and cascades entries across groups
     db.prepare(
       "UPDATE sessions SET updated_at=? WHERE id IN ('expired','destination','normal')",
     ).run(now - 8 * 86_400_000);
+    if (group === "cleanup-a") db.pragma("user_version = 1");
     db.close();
   }
   expect(await retention.cleanupEphemeralCronSessions(now)).toBe(2);
