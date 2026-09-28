@@ -44,8 +44,19 @@ vi.mock("../agent/session.js", () => ({
   appendMessage: vi.fn(),
 }));
 
-const { createRunnerLineRouter, runAgentLoop, DEFAULT_SYSTEM_PROMPT } =
-  await import("./agent-runner.js");
+const {
+  createRunnerLineRouter,
+  runAgentLoop: runAgentLoopRaw,
+  DEFAULT_SYSTEM_PROMPT,
+} = await import("./agent-runner.js");
+// Runner tests supply the model that manager normally resolves before invoking it.
+const runAgentLoop = (...args: Parameters<typeof runAgentLoopRaw>) => {
+  args[3] = {
+    model: { provider: "zai-custom", modelId: "glm-4.7-flash" },
+    ...args[3],
+  };
+  return runAgentLoopRaw(...args);
+};
 const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
 let lastAgentOptions: unknown;
@@ -95,6 +106,13 @@ describe("runner stdin transport", () => {
 });
 
 describe("runAgentLoop", () => {
+  it("rejects when manager has not resolved a model", async () => {
+    await expect(
+      runAgentLoopRaw("test-group", "session-1", "hi", {}),
+    ).rejects.toThrow("実行モデルが設定されていません");
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(appendMessage).not.toHaveBeenCalled();
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();

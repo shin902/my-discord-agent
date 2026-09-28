@@ -468,7 +468,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
           group,
           sessionId,
           content,
-          { skills: [] },
+          { skills: [], model: { provider: "test", modelId: "test" } },
           options,
           undefined,
           undefined,

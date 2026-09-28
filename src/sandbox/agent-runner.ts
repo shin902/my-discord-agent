@@ -27,7 +27,6 @@ import { resolveModel } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
 import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
-import { FALLBACK_DEFAULT_MODEL } from "../config/default-model.js";
 import {
   type AgentRuntimeConfig,
   AgentRuntimeConfigSchema,
@@ -301,6 +300,11 @@ export async function runAgentLoop(
   onConversation?: (entries: ConversationEntries) => void,
   imagePaths?: string[],
 ): Promise<string> {
+  const modelConfig = groupConfig.model;
+  if (!modelConfig) {
+    throw new Error("実行モデルが設定されていません");
+  }
+
   const persistMessage = (
     message: AgentMessage,
     entrySource?: SessionSource,
@@ -395,10 +399,7 @@ export async function runAgentLoop(
     ];
   }
 
-  const model = await resolveModel(
-    groupConfig.model?.provider ?? FALLBACK_DEFAULT_MODEL.provider,
-    groupConfig.model?.modelId ?? FALLBACK_DEFAULT_MODEL.modelId,
-  );
+  const model = await resolveModel(modelConfig.provider, modelConfig.modelId);
 
   const {
     fullSystemPrompt,
