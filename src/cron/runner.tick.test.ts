@@ -56,6 +56,9 @@ describe("tick() orchestration", () => {
     mockWriteFile = vi.fn().mockResolvedValue(undefined);
 
     vi.resetModules();
+    vi.doMock("../agent/session.js", () => ({
+      markEphemeralCronSession: vi.fn(),
+    }));
     vi.doMock("node:fs", () => ({ existsSync: mockExistsSync }));
     vi.doMock("node:fs/promises", () => ({
       readFile: vi.fn(),

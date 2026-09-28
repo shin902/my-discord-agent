@@ -5,11 +5,7 @@ import {
   type DiscordEvent,
   sendMessage,
 } from "../agent/manager.js";
-import {
-  loadMessages,
-  markEphemeralCronSession,
-  sessionConversationPath,
-} from "../agent/session.js";
+import { loadMessages, sessionConversationPath } from "../agent/session.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import { DEFAULT_DISCORD_BOT_ID } from "../config/constants.js";
@@ -1078,9 +1074,6 @@ export async function processMessage(
         lockTarget,
         async () => {
           stopTyping = startTypingLoop(msg.groupName, msg.channelId);
-          if (msg.cronSessionMode === "per-run") {
-            await markEphemeralCronSession(msg.groupName, msg.sessionId);
-          }
           const agentStartedAt = Date.now();
           try {
             return await sendMessage(

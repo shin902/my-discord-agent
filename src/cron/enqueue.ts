@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Client } from "discord.js";
 import { validateModel } from "../agent/model.js";
+import { markEphemeralCronSession } from "../agent/session.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
@@ -179,6 +180,10 @@ export async function enqueueCronInbox(
       : ctx.channelId;
   const configOverride = buildConfigOverride(ctx);
 
+  // Record provenance before admission so a worker never sees an untagged cron session.
+  if (sessionMode === "per-run") {
+    await markEphemeralCronSession(ctx.groupName, sessionId);
+  }
   await ctx.appendInbox({
     channelId: ctx.channelId,
     groupName: ctx.groupName,

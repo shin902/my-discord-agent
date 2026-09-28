@@ -23,7 +23,6 @@ vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const loadMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("../agent/session.js", () => ({
   loadMessages,
-  markEphemeralCronSession: vi.fn(),
   sessionConversationPath: (groupName: string, sessionId: string) =>
     `data/sessions/${groupName}/sessions.sqlite#session=${sessionId}`,
 }));
