@@ -20,13 +20,19 @@ export async function prepareBotTaskSession(
     sessionId: generateBotTaskSessionId(),
     handle: generateBotTaskSessionHandle(),
   };
-  await appendMessage(input.groupName, session.sessionId, {
-    role: "custom",
-    customType: "system-prompt-snapshot",
-    content: instructions,
-    display: false,
-    timestamp: Date.parse(input.createdAt),
-  });
+  await appendMessage(
+    input.groupName,
+    session.sessionId,
+    {
+      role: "custom",
+      customType: "system-prompt-snapshot",
+      content: instructions,
+      display: false,
+      timestamp: Date.parse(input.createdAt),
+    },
+    undefined,
+    input.botId,
+  );
   return session;
 }
 

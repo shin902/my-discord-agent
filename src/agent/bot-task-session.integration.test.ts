@@ -53,7 +53,9 @@ vi.mock("../queue/repository.js", async (importOriginal) => ({
 
 const sessions = await mkdtemp(join(tmpdir(), "bot-task-prompts-"));
 vi.stubEnv("SESSIONS_DIR", sessions);
-const { appendMessage, loadMessages } = await import("./session.js");
+const { appendMessage, loadMessages, readOwnerSessions } = await import(
+  "./session.js"
+);
 const { sendMessage } = await import("./manager.js");
 const { handleBotToolRequest } = await import("./bot-orchestration.js");
 const { executeBotCommand } = await import(
@@ -176,6 +178,16 @@ function task(handle: string) {
 }
 
 async function expectSnapshot(handle: string, content: string) {
+  expect(
+    [...readOwnerSessions(group.name, "worker")].some(
+      ({ sessionId }) => sessionId === task(handle).sessionId,
+    ),
+  ).toBe(true);
+  expect(
+    [...readOwnerSessions(group.name, "main")].some(
+      ({ sessionId }) => sessionId === task(handle).sessionId,
+    ),
+  ).toBe(false);
   expect(await loadMessages(group.name, task(handle).sessionId)).toEqual([
     expect.objectContaining({
       role: "custom",
@@ -233,6 +245,29 @@ describe("Bot Task Session role snapshots", () => {
       mounts: group.mounts,
     });
     await expectSnapshot(handle, "Bot role A");
+    await appendMessage(group.name, task(handle).sessionId, {
+      role: "user",
+      content: "follow-up",
+      timestamp: 1,
+    });
+    expect(
+      [...readOwnerSessions(group.name, "worker")].some(
+        ({ sessionId, message }) =>
+          sessionId === task(handle).sessionId &&
+          "content" in message &&
+          message.content === "follow-up",
+      ),
+    ).toBe(true);
+    await appendMessage(group.name, "main-chat", {
+      role: "user",
+      content: "main",
+      timestamp: 1,
+    });
+    expect(
+      [...readOwnerSessions(group.name, "worker")].some(
+        ({ sessionId }) => sessionId === "main-chat",
+      ),
+    ).toBe(false);
 
     const newHandle = await invoke(surface, "run");
     expect(newHandle).not.toBe(handle);

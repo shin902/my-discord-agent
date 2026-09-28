@@ -96,6 +96,13 @@ describe("resolveBotProfile", () => {
 });
 
 describe("loadBotRegistry", () => {
+  it("rejects the reserved main Bot ID", async () => {
+    mockLoadRawBots.mockResolvedValue({
+      main: { group: "main", description, instructions: "worker" },
+    });
+    await expect(loadBotRegistry()).rejects.toThrow("main is reserved");
+  });
+
   it("専用 bots.json の registry map を読み込む", async () => {
     mockLoadRawBots.mockResolvedValue({
       coding: {
