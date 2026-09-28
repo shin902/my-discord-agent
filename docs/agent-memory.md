@@ -177,9 +177,11 @@ network、timeout、408、429、5xxは既存queueのretryへ、明確な設定�
 - 通常queue/cronと同じ単一host process・Discord readinessの起動条件を引き継ぎます。Memory専用schedulerやmulti-host lockはありません。
 - queue状態は [runtime-dbスキル](../.pi/skills/runtime-db/SKILL.md) のread-only手順で確認します。`cronJobId` / `jobKind` と通常のjob statusを使い、成功件数はledgerをread-onlyで確認します。runtime backupにsession DB・export ledgerは含まれません（[storage.md](storage.md)）。
 
-### attempt照合方式からのrollout
+### attempt照合方式からのrollout（旧v4導入時の記録）
 
-更新前にexport可能な旧会話を既存exporterで処理し、runtimeを停止してruntime DB・session DB・ledgerをbackupします。**hostとAgent Runner imageを同じversionへ更新してから再起動**してください。旧runnerとの混在はサポートしません（旧runnerは採用参照を返さず、v4 sessionも読めません）。runtime schema v7は空の採用参照tableを追加し、各groupのsessionは通常アクセス時にv4へ更新されます。旧履歴の再exportは新方式へ自動移行しませんが、既存ledger / remote memoryは保持されます。downgrade時はhost / imageだけでなく更新前DBも復元が必要です。
+以下は過去のv4導入手順であり、現行v5への導入手順ではありません。現行runtimeはv1〜v4のsession DBを自動移行しません。停止・バックアップ後に[storageのv4→v5変換手順](storage.md#session-trajectory)を完了してから起動してください。
+
+旧導入時は、更新前にexport可能な旧会話を既存exporterで処理し、runtimeを停止してruntime DB・session DB・ledgerをbackupします。**hostとAgent Runner imageを同じversionへ更新してから再起動**してください。旧runnerとの混在はサポートしません（旧runnerは採用参照を返さず、v4 sessionも読めません）。runtime schema v7は空の採用参照tableを追加し、各groupのsessionは通常アクセス時にv4へ更新されます。旧履歴の再exportは新方式へ自動移行しませんが、既存ledger / remote memoryは保持されます。downgrade時はhost / imageだけでなく更新前DBも復元が必要です。
 
 ### 旧capture経路からのrollout
 
