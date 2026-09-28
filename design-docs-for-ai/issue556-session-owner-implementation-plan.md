@@ -45,9 +45,9 @@
 
 本IssueにWeb UIはない。ブラウザだけでSQLiteのownerを直接確認することはできないので、ブラウザのDiscord Webは既存Bot動線の回帰確認に使い、永続化はread-only SQLとテストで検証する。実行環境にbot credential・テスト用guildが無い場合は本番で代用せず、手順を未実施として記録する。
 
-1. 手元のcheckout / worktreeで `pwd` と `git rev-parse --show-toplevel` を確認。テスト用Botを動かすhost/runnerのprocess cwd・buildと接続先guildを照合し、別worktreeのプロセスが応答していないことをログで確認する。このBotはDiscord gatewayで動作しWebページ配信サーバーは必須ではない。ローカルHTTP endpointを使う構成の場合だけportとプロセスを照合し、別worktreeが使用中なら対象checkoutで空きportを選んで起動する。runtime移行のテストは**必ず複製したDB**で行う。
-2. Discord Webのテスト用guildで、Mainの通常チャンネルにメッセージを送信し応答を確認。別スレッドでも応答を確認する。続いてBot Taskを新規実行してhandleを受け取り、同handleでresume/listを試し、同じBotの文脈が続くことを確認する。実際のslash command名・権限は `docs/guides/discord-bot-setup.md` と設定済みコマンドを確認し、今回コマンド定義・deploymentは変更しない。
-3. 接続先に対応した**テスト用の複製DB**をread-onlyで確認: 上記の通常sessionは `agent_id='main'`、Bot Taskは `agent_id=<そのBot ID>`、resume後も同じowner、entryが維持されていること。ブラウザでの応答だけをowner分離の証拠にしない。
+1. 対象checkoutで停止・バックアップ・**テスト用の複製DB**の移行を行い、`pnpm build` と必要なrunner image更新を済ませる。テスト用の設定・credential・guildを使い、このcheckoutから通常どおり `pnpm start`（既に管理サービスがある場合はそのサービス）で起動する。並列worktreeで別のサービスが稼働している場合は、`pwd` と `git rev-parse --show-toplevel`、起動プロセス・ログを照合し、テスト用BotとDBが**このcheckout**に結びついていることを確認する。同じBot tokenやDBに複数サービスを同時接続しない。Web配信サーバーや特別なportは不要。
+2. ブラウザのDiscord Webでテスト用guildを開き、Mainの通常チャンネルにメッセージを送って応答を確認。別スレッドでも応答を確認する。続いてBot Taskを新規実行してhandleを受け取り、同handleでresume/listを試し、同じBotの文脈が続くことを確認する。実際のslash command名・権限は `docs/guides/discord-bot-setup.md` と設定済みコマンドを確認し、今回コマンド定義・deploymentは変更しない。
+3. 起動したサービスが使用した**テスト用の複製DB**をread-onlyで確認: 上記の通常sessionは `agent_id='main'`、Bot Taskは `agent_id=<そのBot ID>`、resume後も同じowner、entryが維持されていること。ブラウザでの応答だけをowner分離の証拠にしない。
 
 ## 実装後セルフチェック
 
