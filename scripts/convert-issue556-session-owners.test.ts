@@ -79,6 +79,21 @@ it("registered owners persist across groups; only orphan UUID sessions and their
   db.close();
 });
 
+it("preflight rejects a legacy Bot ID main before modifying any group", () => {
+  const { runtime, sessions } = fixture();
+  const db = group(sessions, "a");
+  entry(db, "legacy-task");
+  db.close();
+  const r = new Database(runtime);
+  r.prepare("INSERT INTO bot_task_sessions VALUES (?,?,?)").run("a", "legacy-task", "main");
+  r.close();
+  expect(() => convertSessionOwners(runtime, sessions)).toThrow("Reserved Bot ID main");
+  const inspect = new Database(path.join(sessions, "a", "sessions.sqlite"), { readonly: true });
+  expect(inspect.pragma("user_version", { simple: true })).toBe(4);
+  expect(inspect.pragma("table_info(sessions)")).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "agent_id" })]));
+  inspect.close();
+});
+
 it("preflight refuses any non-v4 group before modifying other groups", () => {
   const { runtime, sessions } = fixture();
   group(sessions, "a").close();

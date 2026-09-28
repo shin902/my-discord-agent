@@ -26,6 +26,12 @@ export function convertSessionOwners(runtimePath: string, sessionsRoot: string):
   }
   const runtime = new Database(runtimePath, { readonly: true, fileMustExist: true });
   try {
+    const reserved = runtime.prepare(
+      "SELECT group_name, session_id FROM bot_task_sessions WHERE bot_id='main' LIMIT 1",
+    ).get() as { group_name: string; session_id: string } | undefined;
+    if (reserved) throw new Error(
+      `Reserved Bot ID main in bot_task_sessions: ${reserved.group_name}/${reserved.session_id}`,
+    );
     const owners = runtime.prepare(
       "SELECT session_id, bot_id FROM bot_task_sessions WHERE group_name=?",
     );
