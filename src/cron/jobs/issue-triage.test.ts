@@ -124,6 +124,8 @@ describe("issue-triage handler", () => {
     const arg = (ctx.appendInbox as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(arg.channelId).toBe("channel-1");
     expect(arg.groupName).toBe("issue-triage");
+    expect(arg.cronDeliveryMode).toBe("direct");
+    expect(arg.cronSessionMode).toBe("per-run");
     expect(arg.content).toContain("#1");
     expect(arg.content).toContain("テストIssue");
     expect(JSON.stringify(arg)).not.toContain("host-github-token");

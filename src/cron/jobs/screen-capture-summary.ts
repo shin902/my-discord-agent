@@ -20,6 +20,7 @@ import { usesAnthropicOAuth } from "../../proxy/provider-auth.js";
 import { acquireInferenceLock } from "../../queue/inference-lock.js";
 import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
+import { markEphemeralCronSession } from "../session-retention.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const CommonSettings = {
@@ -101,6 +102,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
       memoryLockTarget.concurrency,
     );
     try {
+      // #562: remove when Memory Agent execution uses the durable cron poller path.
+      await markEphemeralCronSession(groupName, sessionId);
       return await sendMessage(groupName, sessionId, content, {
         ...options,
         heldInferenceResource:
