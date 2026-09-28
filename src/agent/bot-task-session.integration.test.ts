@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import {
   afterAll,
   afterEach,
@@ -178,13 +179,21 @@ function task(handle: string) {
 }
 
 async function expectSnapshot(handle: string, content: string) {
+  const db = new Database(join(sessions, group.name, "sessions.sqlite"), {
+    readonly: true,
+    fileMustExist: true,
+  });
+  try {
+    expect(
+      db
+        .prepare("SELECT agent_id FROM sessions WHERE id=?")
+        .get(task(handle).sessionId),
+    ).toEqual({ agent_id: "worker" });
+  } finally {
+    db.close();
+  }
   expect(
     [...readOwnerSessions(group.name, "worker")].some(
-      ({ sessionId }) => sessionId === task(handle).sessionId,
-    ),
-  ).toBe(true);
-  expect(
-    [...readOwnerSessions(group.name, "main")].some(
       ({ sessionId }) => sessionId === task(handle).sessionId,
     ),
   ).toBe(false);
@@ -287,6 +296,22 @@ describe("Bot Task Session role snapshots", () => {
       1,
     );
     await expectSnapshot(handle, "Bot role A");
+    const db = new Database(join(sessions, group.name, "sessions.sqlite"), {
+      readonly: true,
+      fileMustExist: true,
+    });
+    try {
+      expect(
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM sessions WHERE agent_id='worker'",
+          )
+          .get(),
+      ).toEqual({ count: 2 });
+    } finally {
+      db.close();
+    }
+    expect([...readOwnerSessions(group.name, "worker")]).toEqual([]);
     await processQueued();
     expectExecution("Bot role A");
     expect(repository.claim("test-worker")).toBeUndefined();

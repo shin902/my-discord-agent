@@ -36,6 +36,14 @@ describe("SQLite session trajectory store", () => {
     ).resolves.toEqual([]);
     const db = dbFor("empty-group");
     expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(
+      (
+        db.pragma("table_info(sessions)") as Array<{
+          name: string;
+          dflt_value: string | null;
+        }>
+      ).find(({ name }) => name === "agent_id")?.dflt_value,
+    ).toBe("'main'");
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all() as Array<{ name: string }>;
@@ -188,6 +196,40 @@ describe("SQLite session trajectory store", () => {
     const inspect = dbFor(group);
     expect(inspect.pragma("user_version", { simple: true })).toBe(4);
     inspect.close();
+  });
+
+  it("excludes snapshot-only Bot sessions until user input exists", async () => {
+    const snapshot = {
+      role: "custom" as const,
+      customType: "system-prompt-snapshot",
+      content: "role",
+      display: false,
+      timestamp: 1,
+    };
+    await session.appendMessage(
+      "snapshots",
+      "bot-task-orphan",
+      snapshot,
+      undefined,
+      "worker",
+    );
+    await session.appendMessage(
+      "snapshots",
+      "bot-task-real",
+      snapshot,
+      undefined,
+      "worker",
+    );
+    expect([...session.readOwnerSessions("snapshots", "worker")]).toEqual([]);
+    const user = { role: "user" as const, content: "work", timestamp: 2 };
+    await session.appendMessage("snapshots", "bot-task-real", user);
+    expect([...session.readOwnerSessions("snapshots", "worker")]).toEqual([
+      { sessionId: "bot-task-real", message: snapshot },
+      { sessionId: "bot-task-real", message: user },
+    ]);
+    expect(await session.loadMessages("snapshots", "bot-task-orphan")).toEqual([
+      snapshot,
+    ]);
   });
 
   it("ownerを初回作成時だけ設定しgroup別に順序よく読み出す", async () => {

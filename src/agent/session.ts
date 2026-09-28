@@ -100,7 +100,7 @@ function initializeSchema(db: Database.Database): void {
           kind TEXT NOT NULL DEFAULT 'conversation',
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
-          agent_id TEXT NOT NULL
+          agent_id TEXT NOT NULL DEFAULT 'main'
         );
         CREATE INDEX sessions_agent_id_id ON sessions(agent_id, id);
         CREATE TABLE IF NOT EXISTS session_entries (
@@ -216,7 +216,7 @@ export function* readConversations(
   }
 }
 
-/** Read-only owner trajectory, ordered by creation time/ID then entry sequence. */
+/** Read-only trajectories with user input, ordered by creation time/ID then entry sequence. */
 export function* readOwnerSessions(
   groupName: string,
   agentId: string,
@@ -230,7 +230,10 @@ export function* readOwnerSessions(
     if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
     const sessions = db.prepare(
-      "SELECT id FROM sessions WHERE agent_id=? ORDER BY created_at, id",
+      `SELECT id FROM sessions s WHERE agent_id=?
+        AND EXISTS (SELECT 1 FROM session_entries e
+          WHERE e.session_id=s.id AND e.entry_type='user')
+        ORDER BY created_at, id`,
     );
     const entries = db.prepare(
       "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
