@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import type { ConversationEntries } from "./conversation.js";
 import { type SessionSource, SessionSourceSchema } from "./source.js";
 
-export const SESSIONS_DIR =
+const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
 const SCHEMA_VERSION = 4;
@@ -259,25 +259,6 @@ export async function renameSession(
         fromSessionId,
       );
     })();
-  } finally {
-    db.close();
-  }
-}
-
-export async function markEphemeralCronSession(
-  groupName: string,
-  sessionId: string,
-): Promise<void> {
-  validateName(groupName, "グループ名");
-  validateName(sessionId, "セッションID");
-  const db = await openDatabase(groupName);
-  try {
-    const now = Date.now();
-    db.prepare(`
-      INSERT INTO sessions(id, kind, created_at, updated_at)
-      VALUES (?, 'cron-per-run', ?, ?)
-      ON CONFLICT(id) DO NOTHING
-    `).run(sessionId, now, now);
   } finally {
     db.close();
   }

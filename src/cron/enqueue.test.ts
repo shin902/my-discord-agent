@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { enqueueCronInbox } from "./enqueue.js";
 
 const markEphemeralCronSession = vi.hoisted(() => vi.fn());
-vi.mock("../agent/session.js", () => ({ markEphemeralCronSession }));
+vi.mock("./session-retention.js", () => ({ markEphemeralCronSession }));
 
 it("carries the noReply system-prompt option without changing content", async () => {
   const appendInbox = vi.fn();

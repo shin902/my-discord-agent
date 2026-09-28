@@ -4,7 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Client } from "discord.js";
 import { validateModel } from "../agent/model.js";
-import { markEphemeralCronSession } from "../agent/session.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
 import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
@@ -17,6 +16,7 @@ import type {
 import { loadSkills } from "../skills/loader.js";
 import { resolveTools } from "../tools/registry.js";
 import { NonRetryableError } from "../utils/error.js";
+import { markEphemeralCronSession } from "./session-retention.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");

@@ -33,8 +33,11 @@ describe("SQLite session trajectory store", () => {
   it("古いper-run cronだけを全groupで削除し、entryもcascadeする", async () => {
     const now = Date.now();
     for (const group of ["cleanup-a", "cleanup-b"]) {
-      await session.markEphemeralCronSession(group, "expired");
-      await session.markEphemeralCronSession(group, "recent");
+      const { markEphemeralCronSession } = await import(
+        "../cron/session-retention.js"
+      );
+      await markEphemeralCronSession(group, "expired");
+      await markEphemeralCronSession(group, "recent");
       for (const id of ["expired", "recent", "destination", "normal"]) {
         await session.appendMessage(group, id, {
           role: "user",
@@ -49,7 +52,7 @@ describe("SQLite session trajectory store", () => {
       db.close();
     }
     const { cleanupEphemeralCronSessions } = await import(
-      "../cron/jobs/session-cleanup.js"
+      "../cron/session-retention.js"
     );
     expect(await cleanupEphemeralCronSessions(now)).toBe(2);
     expect(await cleanupEphemeralCronSessions(now)).toBe(0);
