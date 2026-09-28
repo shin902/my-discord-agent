@@ -2,7 +2,7 @@
 
 GitHub Issue: #117 / 初期実装 PR: #122（マージ済み）
 
-> **ステータス**: 実装済み。本ドキュメントは `src/sandbox/agent-runner.ts` / `src/agent/session.ts` の現行実装を反映する。
+> **ステータス**: 実装済み。本ドキュメントは `src/sandbox/session-bootstrap.ts` / `src/sandbox/agent-runner.ts` / `src/agent/session.ts` の現行実装を反映する。
 
 ## 背景
 
