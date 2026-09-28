@@ -1,8 +1,6 @@
-import { once } from "node:events";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Worker } from "node:worker_threads";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -35,7 +33,7 @@ describe("SQLite session trajectory store", () => {
       session.loadMessages("empty-group", "missing"),
     ).resolves.toEqual([]);
     const db = dbFor("empty-group");
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all() as Array<{ name: string }>;
@@ -140,89 +138,62 @@ describe("SQLite session trajectory store", () => {
     ).toBe(20);
   });
 
-  it.each([
-    0, 1, 2, 3,
-  ])("rechecks stale v%s under the migration write lock across concurrent connections", async (version) => {
-    const group = `migration-v${version}`;
+  it("v4 DBをruntimeで暗黙移行しない", async () => {
+    const group = "legacy-v4";
     await mkdir(path.join(root, group), { recursive: true });
     const db = new Database(path.join(root, group, "sessions.sqlite"));
-    if (version >= 1) {
-      db.exec(`
-        CREATE TABLE sessions(id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'conversation', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-        CREATE TABLE session_entries(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE, sequence INTEGER NOT NULL, entry_type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(session_id, sequence));
-        PRAGMA user_version=1;
-        INSERT INTO sessions VALUES('old', 'conversation', 1, 1);
-        INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at) VALUES('old', 1, 'user', '{"role":"user","content":"old message","timestamp":1}', 1);
-      `);
-    }
-    if (version >= 2) {
-      db.exec(
-        "ALTER TABLE session_entries ADD COLUMN source_json TEXT; CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL; PRAGMA user_version=2;",
-      );
-    }
-    if (version === 3) {
-      db.exec(`ALTER TABLE session_entries ADD COLUMN execution_json TEXT;
-        CREATE INDEX session_entries_execution ON session_entries(session_id, json_extract(execution_json, '$.jobId'), json_extract(execution_json, '$.fencingToken'), sequence) WHERE execution_json IS NOT NULL;
-        PRAGMA user_version=3;`);
-    }
+    db.pragma("user_version = 4");
     db.close();
-    const gate = new Int32Array(new SharedArrayBuffer(4));
-    const worker = new Worker(
-      new URL("./__fixtures__/session-migration.cjs", import.meta.url),
-      {
-        workerData: { root, group, version, gate: gate.buffer },
-      },
+    await expect(session.loadMessages(group, "old")).rejects.toThrow(
+      "未対応のsession DB schema version",
     );
-    const signal = AbortSignal.timeout(10_000);
-    try {
-      expect(await once(worker, "message", { signal })).toEqual([
-        "stale-version-read",
-      ]);
-      await session.appendMessage(group, "main-session", {
-        role: "user",
-        content: "main message",
-        timestamp: 2,
-      });
-      const finished = once(worker, "message", { signal });
-      Atomics.store(gate, 0, 1);
-      Atomics.notify(gate, 0);
-      expect(await finished).toEqual([
-        { status: "appended", recheckedInTransaction: true },
-      ]);
-      const inspect = dbFor(group);
-      try {
-        expect(inspect.pragma("user_version", { simple: true })).toBe(4);
-        expect(
-          (
-            inspect.pragma("table_info(session_entries)") as Array<{
-              name: string;
-            }>
-          ).filter((column) =>
-            ["source_json", "execution_json"].includes(column.name),
-          ),
-        ).toHaveLength(1);
-        expect(
-          inspect
-            .prepare("SELECT COUNT(*) AS count FROM session_entries")
-            .get(),
-        ).toEqual({ count: version === 0 ? 2 : 3 });
-        if (version >= 1)
-          expect(
-            inspect
-              .prepare(
-                "SELECT source_json FROM session_entries WHERE session_id='old'",
-              )
-              .get(),
-          ).toEqual({ source_json: null });
-      } finally {
-        inspect.close();
-      }
-    } finally {
-      Atomics.store(gate, 0, 1);
-      Atomics.notify(gate, 0);
-      await worker.terminate();
-    }
-  }, 15_000);
+    const inspect = dbFor(group);
+    expect(inspect.pragma("user_version", { simple: true })).toBe(4);
+    inspect.close();
+  });
+
+  it("ownerを初回作成時だけ設定しgroup別に順序よく読み出す", async () => {
+    const user = { role: "user" as const, content: "first", timestamp: 1 };
+    const reply = {
+      role: "assistant" as const,
+      content: "reply",
+      timestamp: 2,
+    };
+    await session.appendMessage("owners", "b", user, undefined, "worker");
+    await session.appendMessage(
+      "owners",
+      "b",
+      reply as unknown as AgentMessage,
+    );
+    await session.appendMessage("owners", "a", user);
+    await session.appendMessage(
+      "another-owners",
+      "b",
+      user,
+      undefined,
+      "worker",
+    );
+    expect([...session.readOwnerSessions("owners", "worker")]).toEqual([
+      { sessionId: "b", message: user },
+      { sessionId: "b", message: reply },
+    ]);
+    expect([...session.readOwnerSessions("owners", "main")]).toEqual([
+      { sessionId: "a", message: user },
+    ]);
+    await session.renameSession("owners", "b", "c");
+    expect([...session.readOwnerSessions("owners", "worker")]).toEqual([
+      { sessionId: "c", message: user },
+      { sessionId: "c", message: reply },
+    ]);
+    expect([...session.readOwnerSessions("another-owners", "worker")]).toEqual([
+      { sessionId: "b", message: user },
+    ]);
+    expect([...session.readOwnerSessions("uncreated-owner", "main")]).toEqual(
+      [],
+    );
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(path.join(root, "uncreated-owner"))).toBe(false);
+  });
 
   it("session identityをtransactionでrenameしentryを維持する", async () => {
     await session.appendMessage("rename-group", "cron-temp", {

@@ -241,31 +241,19 @@ describe("committed conversation export", () => {
     ).rejects.toThrow(/user entry/);
   });
 
-  it.each([
-    1, 2, 3,
-  ])("does not migrate or infer old v%s history on export; migration preserves entry IDs", async (version) => {
-    const group = `legacy-${version}`;
+  it("does not migrate legacy v4 history during export or normal append", async () => {
+    const group = "legacy-v4";
     const pair = await appendTurn(group);
     const filename = join(root, group, "sessions.sqlite");
     const db = new Database(filename);
-    if (version === 1)
-      db.exec(
-        "DROP INDEX session_entries_source; ALTER TABLE session_entries DROP COLUMN source_json;",
-      );
-    if (version === 3)
-      db.exec(`ALTER TABLE session_entries ADD COLUMN execution_json TEXT;
-      CREATE INDEX session_entries_execution ON session_entries(session_id, json_extract(execution_json, '$.jobId'), json_extract(execution_json, '$.fencingToken'), sequence) WHERE execution_json IS NOT NULL;
-      UPDATE session_entries SET execution_json='{"jobId":"old","fencingToken":1}';`);
-    db.pragma(`user_version = ${version}`);
+    db.pragma("user_version = 4");
     db.close();
     const before = await readFile(filename);
     expect([...readCaptureTurns(group, [pair])]).toEqual([]);
     expect(await readFile(filename)).toEqual(before);
-    const newPair = await appendTurn(group, "new");
-    expect(newPair.userEntryId).toBeGreaterThan(pair.assistantEntryId);
-    expect([...readCaptureTurns(group, [newPair])]).toHaveLength(1);
-    // Old text is not automatically promoted to a reference during migration.
-    expect([...readCaptureTurns(group, [])]).toEqual([]);
+    await expect(appendTurn(group, "new")).rejects.toThrow(
+      "未対応のsession DB schema version",
+    );
     const inspect = new Database(filename, { readonly: true });
     expect(inspect.pragma("user_version", { simple: true })).toBe(4);
     expect(
@@ -273,11 +261,6 @@ describe("committed conversation export", () => {
         .prepare("SELECT id FROM session_entries WHERE id=?")
         .get(pair.userEntryId),
     ).toEqual({ id: pair.userEntryId });
-    expect(
-      (
-        inspect.pragma("table_info(session_entries)") as Array<{ name: string }>
-      ).map((column) => column.name),
-    ).not.toContain("execution_json");
     inspect.close();
   });
 
