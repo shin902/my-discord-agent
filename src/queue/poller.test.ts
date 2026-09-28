@@ -672,6 +672,7 @@ describe("processMessage - terminal queue transitions", () => {
 
     await processMessage(msg);
 
+    expect(markEphemeralCronSession).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith({
       name: "cron-daily-2026-06-04-19-30",
     });
@@ -711,6 +712,7 @@ describe("processMessage - terminal queue transitions", () => {
 
     await processMessage(msg);
 
+    expect(markEphemeralCronSession).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith(
       msg.groupName,
       msg.sessionId,
