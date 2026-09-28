@@ -1,6 +1,8 @@
+import { once } from "node:events";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -138,6 +140,42 @@ describe("SQLite session trajectory store", () => {
     ).toBe(20);
   });
 
+  it("concurrent fresh DB opens recheck v5 after the initialization lock", async () => {
+    const group = "fresh-race";
+    const gate = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(
+      new URL("./__fixtures__/session-migration.cjs", import.meta.url),
+      { workerData: { root, group, version: 0, gate: gate.buffer } },
+    );
+    const signal = AbortSignal.timeout(10_000);
+    try {
+      expect(await once(worker, "message", { signal })).toEqual([
+        "stale-version-read",
+      ]);
+      await session.appendMessage(group, "main-session", {
+        role: "user",
+        content: "main message",
+        timestamp: 1,
+      });
+      const finished = once(worker, "message", { signal });
+      Atomics.store(gate, 0, 1);
+      Atomics.notify(gate, 0);
+      expect(await finished).toEqual([
+        { status: "appended", recheckedInTransaction: true },
+      ]);
+      expect(await session.loadMessages(group, "worker-session")).toHaveLength(
+        1,
+      );
+      const db = dbFor(group);
+      expect(db.pragma("user_version", { simple: true })).toBe(5);
+      db.close();
+    } finally {
+      Atomics.store(gate, 0, 1);
+      Atomics.notify(gate, 0);
+      await worker.terminate();
+    }
+  }, 15_000);
+
   it("v4 DBをruntimeで暗黙移行しない", async () => {
     const group = "legacy-v4";
     await mkdir(path.join(root, group), { recursive: true });
@@ -167,6 +205,13 @@ describe("SQLite session trajectory store", () => {
     );
     await session.appendMessage("owners", "a", user);
     await session.appendMessage(
+      "owners",
+      "z-old",
+      { ...user, timestamp: 0 },
+      undefined,
+      "worker",
+    );
+    await session.appendMessage(
       "another-owners",
       "b",
       user,
@@ -174,6 +219,7 @@ describe("SQLite session trajectory store", () => {
       "worker",
     );
     expect([...session.readOwnerSessions("owners", "worker")]).toEqual([
+      { sessionId: "z-old", message: { ...user, timestamp: 0 } },
       { sessionId: "b", message: user },
       { sessionId: "b", message: reply },
     ]);
@@ -182,6 +228,7 @@ describe("SQLite session trajectory store", () => {
     ]);
     await session.renameSession("owners", "b", "c");
     expect([...session.readOwnerSessions("owners", "worker")]).toEqual([
+      { sessionId: "z-old", message: { ...user, timestamp: 0 } },
       { sessionId: "c", message: user },
       { sessionId: "c", message: reply },
     ]);

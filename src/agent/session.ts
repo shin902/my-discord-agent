@@ -88,13 +88,13 @@ function initializeSchema(db: Database.Database): void {
   db.transaction(() => {
     // Another run/container may have migrated while we waited for the lock.
     const version = db.pragma("user_version", { simple: true }) as number;
+    if (version === SCHEMA_VERSION) return;
     if (version !== 0) {
       throw new Error(
         `未対応のsession DB schema versionです: ${version} (対応: ${SCHEMA_VERSION})`,
       );
     }
-    if (version === 0) {
-      db.exec(`
+    db.exec(`
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY,
           kind TEXT NOT NULL DEFAULT 'conversation',
@@ -117,7 +117,6 @@ function initializeSchema(db: Database.Database): void {
           ON session_entries(session_id, id);
         CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
       `);
-    }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();
 }
@@ -217,7 +216,7 @@ export function* readConversations(
   }
 }
 
-/** Read-only owner trajectory, ordered by session ID then entry sequence. */
+/** Read-only owner trajectory, ordered by creation time/ID then entry sequence. */
 export function* readOwnerSessions(
   groupName: string,
   agentId: string,
@@ -231,7 +230,7 @@ export function* readOwnerSessions(
     if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
     const sessions = db.prepare(
-      "SELECT id FROM sessions WHERE agent_id=? ORDER BY id",
+      "SELECT id FROM sessions WHERE agent_id=? ORDER BY created_at, id",
     );
     const entries = db.prepare(
       "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
