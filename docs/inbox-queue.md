@@ -37,7 +37,7 @@ SQL上の `jobs.status` が状態の正本です。旧 `claimed` 整数列は互
 
 ## 起動・復旧
 
-[起動処理](../src/index.ts) は、管理対象・孤立runnerの停止をstrictに確認してからgroup promptの初期読み込み、設定検証を行います。その後にqueueを初期化し、前プロセスの未完了Bot admission・期限切れ実行を回収します。旧queue JSONLは起動時に取り込みません。旧Mail/RSS payloadが残るDBでは起動を拒否します。初回更新前に[一回限りの変換](storage.md#issue-540-一回限りのruntime変換)を実行してください。
+[起動処理](../src/index.ts) は、管理対象・孤立runnerの停止をstrictに確認してからgroup promptの初期読み込み、設定検証を行います。その後にqueueを初期化し、前プロセスの未完了Bot admission・期限切れ実行を回収します。回収より先に保存済みBot Task Sessionを検査し、予約ID `main` があればMain ownerとして扱わず設定エラーで停止します。旧queue JSONLは起動時に取り込みません。旧Mail/RSS payloadが残るDBでは起動を拒否します。移行と停止時の扱いは[ストレージ設計](storage.md#session-trajectory)、旧Mail/RSSの変換は[一回限りの変換](storage.md#issue-540-一回限りのruntime変換)を参照してください。
 
 cron設定を読み、RSS reconciliationとruntime health checkを実行します。その後Discordへloginし、backfill完了後にpoller・delivery worker・cronを開始します。Discord ready時の履歴backfillは全Botを通じて一度だけ開始します。詳細は [起動時Discord履歴バックフィル](config.md#起動時discord履歴バックフィル) を参照してください。runnerの停止確認に失敗した場合、queue回収へは進みません。
 

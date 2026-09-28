@@ -84,6 +84,8 @@ DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.s
 
 **v4→v5導入手順:** 稼働中のすべてのgroup DBの`PRAGMA user_version`をread-onlyで確認し、v4以外は変換せず運用者に扱いを確認してください。runtime/runnerを停止し、runtime DBと全group DBをWALを含めSQLite整合バックアップします。停止状態のまま`pnpm exec tsx scripts/convert-issue556-session-owners.ts <runtime.sqlite> <sessions-root>`を明示したパスで一度だけ実行し、各DBのversion・owner別件数・削除された未登録`bot-task-<UUID>`とentryをバックアップと照合します。登録済みBot Task（registryから削除されたBotも含む）は保持し、非該当IDは`main`のままです。旧Bot ID `main`がruntime DBにある場合は変換前に明示エラーとして停止します。groupごとのtransactionであり全group間のatomicityはありません。途中失敗時は停止を維持し、**全DBをバックアップから復元してから**再実行します。変換済みDBと旧runtimeを混在起動せず、同じcheckoutで`pnpm build`しhost/runner imageを揃えてから起動してください。新runtimeはv4以前を自動移行しません。
 
+変換済みDBを含め、起動時にも`bot_task_sessions.bot_id = 'main'`が1件でもあれば、予約済みMain ownerとは解釈せず設定エラーとして停止します。このエラーでは自動remapや削除を行いません。停止を維持してruntime DBと対応する全group DBをSQLite整合バックアップし、保存済みTask Sessionの扱いは運用者が判断してください。ad-hocなSQL更新・削除で起動を回避しないでください。
+
 source付きappendは同じwrite transaction内で `(session_id, source.kind, source.sourceId)` を照合し、重複なら本文・時刻を変更せず元のentry IDを返します。[appendUserOnly](spec/channel-modes.md#appenduseronly)もこの既存schemaへのappendを使います。
 
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。session renameはentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
