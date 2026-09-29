@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   loadXSavedReceiverConfig: vi.fn(),
   startXSavedReceiver: vi.fn(),
   loadScreenCaptureReceiverConfig: vi.fn(),
+  loadScreenCaptureSummaryConfig: vi.fn(),
   startScreenCaptureReceiver: vi.fn(),
   loadXSavedGalleryConfig: vi.fn(),
   startXSavedGallery: vi.fn(),
@@ -73,6 +74,7 @@ vi.mock("./integrations/x-saved/receiver.js", () => ({
 }));
 vi.mock("./config/screen-capture.js", () => ({
   loadScreenCaptureReceiverConfig: mocks.loadScreenCaptureReceiverConfig,
+  loadScreenCaptureSummaryConfig: mocks.loadScreenCaptureSummaryConfig,
 }));
 vi.mock("./integrations/screen-capture/receiver.js", () => ({
   startScreenCaptureReceiver: mocks.startScreenCaptureReceiver,
@@ -89,7 +91,10 @@ vi.mock("./queue/delivery.js", () => ({
   startDeliveryWorker: mocks.startDeliveryWorker,
   stopDeliveryWorker: mocks.stopDeliveryWorker,
 }));
-vi.mock("./config/groups.js", () => ({ loadGroups: mocks.loadGroups }));
+vi.mock("./config/groups.js", async (original) => ({
+  ...(await original<typeof import("./config/groups.js")>()),
+  loadGroups: mocks.loadGroups,
+}));
 vi.mock("./config/providers.js", () => ({
   loadProviders: mocks.loadProviders,
 }));
@@ -161,6 +166,7 @@ describe("index: 起動時バリデーション", () => {
       enabled: false,
       port: 8788,
     });
+    mocks.loadScreenCaptureSummaryConfig.mockResolvedValue(undefined);
     mocks.loadXSavedGalleryConfig.mockResolvedValue({
       enabled: false,
       port: 8789,
@@ -407,6 +413,7 @@ describe("index: 起動時バリデーション", () => {
     await import("./index.js");
     expect(mocks.startScreenCaptureReceiver).toHaveBeenCalledWith({
       port: 8788,
+      onStored: undefined,
     });
     mockExit.mockImplementation(() => undefined);
     const listener = process
