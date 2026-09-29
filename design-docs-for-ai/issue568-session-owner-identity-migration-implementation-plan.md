@@ -32,10 +32,6 @@
 
 ロールアウトは旧 worker/Runner を停止し書込が止まったことを確認、runtime DB と全 group session DB を SQLite 整合バックアップしてから version・件数を照合し、同じ checkout の converter を一度だけ実行。全 group DB の `foreign_key_check`, `integrity_check`, v6、owner 別 session/entry 件数、採用 entry ID 解決を検証後、同じ checkout の Host と Runner image を更新して起動。失敗時は停止を維持し、**全 group DB と runtime DB を一組として**バックアップへ戻す。旧/new プロセスを同じ DB に並走させない。既存 queue state は書換えない。実 DB の調査は `.pi/skills/runtime-db/SKILL.md` に従い read-only を原則とする。
 
-### ブラウザ確認（コード変更後の実施手順）
-
-この Issue に Web UI はない。実装担当者は自分の checkout の `pwd` と `git rev-parse HEAD` を記録し、実行中の Host/Runner がその build に由来することを起動コマンド・ログで照合する。他 worktree のサーバーへ接続しない。この repository に対象となる Web UI はない。隔離した test guild とテスト用 DB/設定が用意できた場合に限り、その checkout から Host/Runner を起動し、test channel に対し `direct + destination` の短周期 test cron を設定して実際の tick を待つ。Discord ブラウザで同じ channel に通常の human message を投稿し、Bot の cron 投稿と通常応答が同じ channel に届くことを確認する。続いて `new-thread + destination` の test cron で作られた thread に返信し、応答を確認する。期待する履歴継続はブラウザ上の投稿だけで断定せず、停止後の test session DB を read-only で開いて同じ `(main,channelId)` / `(main,threadId)` に entry が記録されたことを照合する。Memory export の対象判定は自動テストと read-only の採用参照照合で検証する。ブラウザで session DB の FK や entry ID は検証できないため上記自動テスト/SQLite read-only 照合を正本にする。guild/認証がなければブラウザ E2E は未実施と明記し、実行したふりをしない。
-
 ## 使用 API と一次情報
 
 現環境 `pnpm list better-sqlite3 --depth 0` は **12.11.1**。既存コードで使用中の `new Database(path, { readonly: true, fileMustExist: true })`, `db.pragma(...)`, `db.prepare(...).all()/get()/run()`, `db.transaction(fn).immediate()`, `db.close()` を再利用する。better-sqlite3 公式 API: https://github.com/WiseLibs/better-sqlite3/blob/v12.11.1/docs/api.md 。SQLite の table rebuild と FK 操作は https://www.sqlite.org/lang_altertable.html と https://www.sqlite.org/foreignkeys.html 、`PRAGMA user_version`, `foreign_key_check`, `integrity_check` は https://www.sqlite.org/pragma.html 、AUTOINCREMENT/`sqlite_sequence` は https://www.sqlite.org/autoinc.html を参照。`pnpm exec tsx` は既存 `scripts/convert-issue556-session-owners.ts` の実行方式を踏襲し、新規依存は追加しない。これら一次情報の URL は計画作成時に到達確認済み。
