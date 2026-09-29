@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_IMAGE_BYTES, startScreenCaptureReceiver } from "./receiver.js";
 import { openScreenCaptureDb } from "./store.js";
 
@@ -97,6 +97,20 @@ describe("screen capture HTTP / SQLite boundary", () => {
     } finally {
       reopened.close();
     }
+  });
+
+  it("notifies only for newly committed captures", async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const onStored = vi.fn();
+    server = await startScreenCaptureReceiver({ port: 0, dbPath, onStored });
+    endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/screen-captures`;
+    const id = randomUUID();
+    expect((await post(id)).status).toBe(200);
+    expect((await post(id)).status).toBe(200);
+    expect(
+      (await post(id, Buffer.concat([png, Buffer.from("different")]))).status,
+    ).toBe(409);
+    expect(onStored).toHaveBeenCalledTimes(1);
   });
 
   it("does not acknowledge a failed DB commit and can retry it", async () => {

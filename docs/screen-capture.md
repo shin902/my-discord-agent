@@ -3,10 +3,10 @@
 ```text
 Mac screencapture → HTTPS / Tailscale Serve → localhost receiver
   → data/screen-captures.sqlite（PNG + 未完了状態）
-  → cron → logbook Agentが全画像を一括確認 → Activity Memoryへ差分統合
+  → pendingがlimit枚に達したら → logbook Agentが1 batchを確認 → Activity Memoryへ差分統合
 ```
 
-PNGを収集し、指定AgentGroupの`capturelog`へ画面活動の差分を統合します。Discord配送、検索UI、Project Memoryへの昇格、PII分類は行いません。receiverとcronはそれぞれ既定で無効です。実設定やTailscaleの構成は自動変更しません。
+PNGを収集し、指定AgentGroupの`capturelog`へ画面活動の差分を統合します。Discord配送、検索UI、Project Memoryへの昇格、PII分類は行いません。receiverとsummaryはそれぞれ既定で無効です。実設定やTailscaleの構成は自動変更しません。
 
 ## Bot PCの受信設定
 
@@ -66,40 +66,39 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 同じUUIDと同じbytesの再送は冪等です。自動captureでは最後にACKされた画像とのSSIMが80%以上なら新しい時点として保存せずskipし、変化がある場合だけ新しいUUIDで送信します。既存PNGを明示的に送る場合は類似度判定を行わず、そのUUIDで送信します。UUIDをbasenameにした`.png`を指定してください。スクリプトはHTTPSの`.ts.net` URLだけを受理し、redirectを追わず、HTTP 200以外をACKとして扱いません。
 
-## cronによるActivity Memory更新
+## pending枚数によるActivity Memory更新
 
-未完了画像が`settings.limit`枚未満なら何もせず、以上なら古いものからちょうど`limit`枚を1 batchとして解析します。backlogが残っても1回のcron invocationでは1 batchだけを処理します。`settings.mode`が`summarize`なら、batchの画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、全画像の要約が揃ってから指定AgentGroupの通常LLMへまとめて渡します。`direct`ならbatchを1回の通常LLM実行へ直接添付します。通常LLMは既存`capturelog`を読み、差分だけを追記します。batch全体の処理成功後だけ`completed_at`を保存し、失敗時は全画像を未完了のまま再試行します。成功済みのVLM summaryは再利用します。
+capture保存後、未完了画像が`settings.limit`枚未満なら何もせず、以上なら古いものからちょうど`limit`枚を1 batchとして解析します。1 batch成功後も`limit`枚以上残る場合は次のbatchを直列に処理します。起動時にもpendingを確認して再開します。失敗したbatchはpendingのまま残り、次の新規captureまたはBot再起動で再試行します。`settings.mode`が`summarize`なら、batchの画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、全画像の要約が揃ってから指定AgentGroupの通常LLMへまとめて渡します。`direct`ならbatchを1回の通常LLM実行へ直接添付します。通常LLMは既存`capturelog`を読み、差分だけを追記します。batch全体の処理成功後だけ`completed_at`を保存し、失敗時は全画像を未完了のまま再試行します。成功済みのVLM summaryは再利用します。
 
 画像にはpassword、token、個人情報などが含まれ得ます。自動マスキングはありません。`summarize`では画像全体を`settings.visionModel`のproviderへ、`direct`ではMemory更新用の通常modelのproviderへ送信するため、**収集対象と両modeで利用するproviderを確認してから**有効化してください。
 
-`config/cron.example.json`のdisabled例を`config/cron.json`へ追加し、有効化します。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
+`config/config.example.json`のdisabled例を`config/config.json`へ追加し、有効化します。旧`config/cron.json`の`screen-capture-summary` jobは削除してください（有効のままだと起動時にエラーになります）。対象グループには画像を読む`read`とmemory更新用の`write` / `edit`を許可してください。
 
 ```json
 {
-  "id": "screen-capture-summary",
-  "schedule": "5m",
-  "enabled": true,
-  "groupName": "logbook",
-  "handler": "jobs/screen-capture-summary.ts",
-  "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
-  "settings": {
-    "mode": "summarize",
-    "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
-    "limit": 10,
-    "concurrency": 4
+  "screenCaptureSummary": {
+    "enabled": true,
+    "groupName": "logbook",
+    "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
+    "settings": {
+      "mode": "summarize",
+      "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
+      "limit": 10,
+      "concurrency": 4
+    }
   }
 }
 ```
 
-- `model`はMemory更新用の通常LLMです。cron指定を優先し、省略時はグループ設定へfallbackします。
+- `model`はMemory更新用の通常LLMです。この設定を優先し、省略時はグループ設定へfallbackします。
 - `settings.mode`は`summarize`（既定）または`direct`です。
 - `settings.visionModel`は`summarize`で必須です。Credential Proxyに定義した画像入力対応モデルを指定します。`direct`では指定しません。
 - `settings.concurrency`はVLM worker数（1–16、既定4）です。`providers.json`の既存provider concurrencyが`serial`なら実際の呼び出しは直列になります。
-- `settings.limit`はfull batchを開始する未完了画像数、1回の解析枚数、1 cron invocationの最大処理枚数を兼ねます（1以上、既定10）。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
+- `settings.limit`はfull batchを開始する未完了画像数、1回の解析枚数、1 batchの最大処理枚数を兼ねます（1以上、既定10）。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
 - screen-capture固有のtimeoutはありません。Agent実行には共通のAgent Runner timeoutが適用されます。実用上はresize済み画像を20〜数十枚程度扱うbest-effort運用を想定し、任意枚数の処理完了は保証しません。
 - VLMが1枚でも失敗したbatchは全画像が未完了で残り、成功済みsummaryは次回に再利用されます。通常LLM成功後・DB更新前に停止した場合も再実行されるため、既存`capturelog`との差分だけを反映するよう指示します。
-- ImageMagickがdecode不能と判定した画像は`accepted = 0`で完了します。そのrunでは不足したbatchを追加取得せず解析を行わず、次のcronで改めてfull batchを形成します。`magick` executable不在などの実行環境エラーは画像不正として完了させません。
-- 同一jobのtick重複はcron runnerが抑止します。同じscreen-capture DBを処理するhandlerは1 process内の1 jobだけに設定してください。別IDのjobや別processを含む複数consumerはサポートしません。変更反映にはBot再起動が必要です。
+- ImageMagickがdecode不能と判定した画像は`accepted = 0`で完了します。そのbatchでは不足分を追加取得せず解析を行わず、残るpendingが`limit`枚に達したら改めてfull batchを形成します。`magick` executable不在などの実行環境エラーは画像不正として完了させません。
+- 同一Host内のsummary consumerは一つだけです。別processを含む複数consumerはサポートしません。変更反映にはBot再起動が必要です。
 
 完了済み画像は専用の`screen-capture-gc` cronで`completed_at`から24時間後に削除します。`accepted`の値は問わず、未完了画像は削除しません。設定例は`config/cron.example.json`にあります。
 
@@ -137,4 +136,4 @@ sqlite3 -readonly data/screen-captures.sqlite \
 
 DB本体は0600、WAL運用です。稼働中にmain fileだけをcopyせず、SQLite backup API / CLIの`.backup`を使うかBot停止後にbackupしてください。**このDBのbackupは画像本体も含みます**。runtime DBのbackupとは別です。完了済みの画像・要約は24時間保持し、`screen-capture-gc`実行時に削除します。SQLiteファイル自体の即時縮小は保証せず、空きpageの再利用で将来の増加を抑えます。既存DBを縮小する必要がある場合だけ、Bot停止中に手動で`VACUUM`してください。未完了画像には自動削除期限がありません。Mac側は撮影時刻をPNGの更新時刻に保持し、再送時も同じ値を送ります（既存PNGの手動再送ではそのファイルの更新時刻を使用）。Mac側はACK後に削除しますが、未ACK・削除失敗のPNGは再送または明示削除が必要です。旧版で成功後も残ったPNGは自動走査しないため、同じパスで再送してACK後に削除するか、不要と確認して明示的に削除してください。
 
-導入時はMacから1枚撮影し、DBで未完了を確認→cron後の完了とActivity Memory更新を確認してください。receiverを止めた送信失敗→同じUUIDで再送し1行だけになること、Agent失敗中は未完了が残り復旧後に完了することも確認します。自動テストはHTTP / SQLite、全画像のworkspace配置、Agent成功・失敗時の完了状態、senderのMacコマンド模擬までを検証します。実Macの画面収録権限、Tailnet到達性、実providerの画面理解は別途実機確認が必要です。
+導入時はMacから1枚撮影し、DBで未完了を確認→limit枚到達後の完了とActivity Memory更新を確認してください。receiverを止めた送信失敗→同じUUIDで再送し1行だけになること、Agent失敗中は未完了が残り復旧後に完了することも確認します。自動テストはHTTP / SQLite、全画像のworkspace配置、Agent成功・失敗時の完了状態、senderのMacコマンド模擬までを検証します。実Macの画面収録権限、Tailnet到達性、実providerの画面理解は別途実機確認が必要です。

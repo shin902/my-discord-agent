@@ -125,8 +125,11 @@ async function ingest(
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 
-  // ThreadCreated is a system record in the parent channel, not a user turn.
-  if (message.type === MessageType.ThreadCreated && !isThread) {
+  // Rename notices and parent-channel thread creation records are not user turns.
+  if (
+    message.type === MessageType.ChannelNameChange ||
+    (message.type === MessageType.ThreadCreated && !isThread)
+  ) {
     return { status: "ignored", cursorScope: defaultCursorScope };
   }
 

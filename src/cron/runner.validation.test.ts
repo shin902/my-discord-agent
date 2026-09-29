@@ -125,6 +125,22 @@ describe("loadAndValidateCron", () => {
     expect(result[0].id).toBe("test-handler-job");
   });
 
+  it("rejects the obsolete periodic screen capture consumer", async () => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "screen-capture-summary",
+          schedule: "5m",
+          enabled: true,
+          handler: "jobs/screen-capture-summary.ts",
+        },
+      ]),
+    );
+    await expect(loadAndValidateCron()).rejects.toThrow(
+      "screen-capture-summary cron is obsolete",
+    );
+  });
+
   it("存在しないハンドラーパスでエラーになる", async () => {
     const cronJson = JSON.stringify([
       {

@@ -23,6 +23,17 @@
     "enabled": false,
     "port": 8788
   },
+  "screenCaptureSummary": {
+    "enabled": false,
+    "groupName": "my-group",
+    "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
+    "settings": {
+      "mode": "summarize",
+      "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
+      "limit": 10,
+      "concurrency": 4
+    }
+  },
   "xSavedGallery": {
     "enabled": false,
     "port": 8789,

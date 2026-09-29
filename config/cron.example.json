@@ -88,6 +88,7 @@
     }
   },
   {
+    "_comment": "Host-only Playwright refresh; run pnpm reddit:login first. No Tool Runtime / Agent tools.",
     "id": "reddit-cookie-refresh",
     "schedule": "0 4 */3 * *",
     "enabled": true,
@@ -110,20 +111,6 @@
     "settings": {
       "owner": "YOUR_GITHUB_USERNAME",
       "repo": "YOUR_REPO_NAME"
-    }
-  },
-  {
-    "id": "screen-capture-summary",
-    "schedule": "5m",
-    "enabled": false,
-    "groupName": "my-group",
-    "handler": "jobs/screen-capture-summary.ts",
-    "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
-    "settings": {
-      "mode": "summarize",
-      "visionModel": { "provider": "google", "modelId": "gemini-2.5-flash" },
-      "limit": 10,
-      "concurrency": 4
     }
   },
   {

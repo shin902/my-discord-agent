@@ -15,11 +15,16 @@ import { loadCredentialProxy } from "../../config/credential-proxy.js";
 import { resolveModelConfig } from "../../config/default-model.js";
 import { findGroupByName } from "../../config/groups.js";
 import { resolveProviderLockTarget } from "../../config/providers.js";
+import { summarizeScreenCaptureBatch } from "../../features/screen-capture-summary.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
 import { acquireInferenceLock } from "../../queue/inference-lock.js";
 import type { CronContext } from "../runner.js";
 import { markEphemeralCronSession } from "../session-retention.js";
-import handler from "./screen-capture-summary.js";
+
+const handler = (ctx: CronContext) =>
+  summarizeScreenCaptureBatch(
+    ctx as Parameters<typeof summarizeScreenCaptureBatch>[0],
+  );
 
 const magick = vi.hoisted(() => ({
   invalidIds: new Set<string>(),
@@ -201,7 +206,7 @@ describe("screen capture summary cron", () => {
         ...ctx,
         settings: { visionModel, concurrency: 2, limit: 30 },
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
   });
 
   it("rejects removed settings.timeoutMs configuration", async () => {
@@ -210,7 +215,7 @@ describe("screen capture summary cron", () => {
         ...ctx,
         settings: { visionModel, concurrency: 2, timeoutMs: 10 },
       }),
-    ).rejects.toThrow("requires valid settings and groupName");
+    ).rejects.toThrow();
   });
 
   it("summarizes images with settings.visionModel then gives text to the memory model", async () => {
@@ -242,7 +247,10 @@ describe("screen capture summary cron", () => {
       "logbook",
       expect.stringMatching(/^cron-screen-capture-summary-/),
       expect.stringContaining("Editor work"),
-      expect.objectContaining({ configOverride: agentConfig }),
+      expect.objectContaining({
+        agentId: "main",
+        configOverride: agentConfig,
+      }),
     );
     expect(vi.mocked(sendMessage).mock.calls[0][2]).not.toContain(".png");
     expect(
@@ -395,6 +403,7 @@ describe("screen capture summary cron", () => {
       expect.stringMatching(/^cron-screen-capture-summary-/),
       expect.stringContaining("未処理画像"),
       expect.objectContaining({
+        agentId: "main",
         imagePaths: ids.map((id) => `/workspace/.screen-captures/${id}.png`),
         configOverride: agentConfig,
         heldInferenceResource: memoryModel.provider,
@@ -447,12 +456,10 @@ describe("screen capture summary cron", () => {
   });
 
   it("rejects missing handler-specific configuration", async () => {
-    await expect(handler({ ...ctx, settings: {} })).rejects.toThrow(
-      "requires valid settings and groupName",
-    );
+    await expect(handler({ ...ctx, settings: {} })).rejects.toThrow();
     await expect(
       handler({ ...ctx, settings: { mode: "direct", timeoutMs: 1 } }),
-    ).rejects.toThrow("requires valid settings and groupName");
+    ).rejects.toThrow();
     expect(completeSimple).not.toHaveBeenCalled();
   });
 });

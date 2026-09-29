@@ -33,7 +33,7 @@ export async function createToolRuntimeFixture(baseImage: string): Promise<{
       timeout: 120_000,
       maxBuffer: 4 * 1024 * 1024,
     });
-    await mkdir(join(root, "data/reddit-browser-profile"), { recursive: true });
+    await mkdir(join(root, "data"), { recursive: true });
     await writeFile(
       join(root, "data/reddit-cookies.json"),
       JSON.stringify({

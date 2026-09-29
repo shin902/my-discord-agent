@@ -97,6 +97,33 @@ describe("Tool Runtime workspace mount", () => {
   });
 });
 
+describe("Reddit fetch state", () => {
+  it("mounts only the cookie read-only, never the browser profile", async () => {
+    vi.mocked(lstat).mockResolvedValue({
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      uid: 1000,
+      gid: 1000,
+    } as never);
+    try {
+      const args = await buildToolRuntimeArgs(
+        {
+          capability: "agent-reach",
+          args: { url: "https://www.reddit.com/r/test.json" },
+        },
+        "test-runtime",
+        { root: "/trusted" },
+      );
+      expect(args).toContain(
+        "type=bind,src=/trusted/data/reddit-cookies.json,dst=/var/lib/reddit/reddit-cookies.json,readonly",
+      );
+      expect(args.join(" ")).not.toContain("reddit-browser-profile");
+    } finally {
+      vi.mocked(lstat).mockRestore();
+    }
+  });
+});
+
 describe("Tool Runtime host diagnostics", () => {
   it("removes staging left behind by a failed Runtime call", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "runtime-stage-"));
@@ -136,7 +163,7 @@ describe("Tool Runtime host diagnostics", () => {
   it.each([
     [125, "", "failed to start or exited unexpectedly"],
     [0, "invalid JSON", "Invalid Tool Runtime response"],
-    [0, JSON.stringify({ error: "maintenance failed" }), "maintenance failed"],
+    [0, JSON.stringify({ error: "capability failed" }), "capability failed"],
   ])("logs stderr on failure without adding it to the caller error (%i, %s)", async (code, stdout, message) => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const diagnostic = "setpriv: private host path /fixture/private";

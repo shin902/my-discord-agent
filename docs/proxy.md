@@ -59,7 +59,7 @@ trustedなhost cron（mailの未読・本文取得、配送後のmail ACK、issu
 
 - Microsoft GraphのMSAL設定、GoogleのOAuth設定・token取得はホスト側で管理します。手順は [Azure app登録](guides/azure-app-registration.md) と [Google OAuth設定](guides/google-cloud-oauth-setup.md) を参照してください。
 - Google OAuthは起動時にtoken取得を試みます。認証が必要な場合は案内を出してバックグラウンドでdevice flowを進め、認証待ちのために起動をブロックしません。
-- Redditのcanonical認証状態は `data/reddit-browser-profile/` と `data/reddit-cookies.json` です。必要なcallのTool Runtimeへだけmountし、Agent sandboxへCookie・認証token・Runtime内のprivate pathを渡しません。`credentials.json` のReddit forwardingは使いません。[セットアップ](guides/reddit-cookie-setup.md) と [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
+- Redditのcanonical認証状態は `data/reddit-browser-profile/` と `data/reddit-cookies.json` です。host上でlogin / refreshし、必要な取得callのTool RuntimeへCookieだけをread-only mountします。profileはmountせず、Agent sandboxへCookie・認証token・Runtime内のprivate pathを渡しません。`credentials.json` のReddit forwardingは使いません。[セットアップ](guides/reddit-cookie-setup.md) と [Tool Runtime仕様](spec/tool-runtime.md) を参照してください。
 - CLIProxyAPIを使う構成では、ChatGPT/Codex OAuth tokenはsidecarが管理し、本アプリのCredential Proxyはsidecar用APIキーをホストで付与します。[構成手順](guides/codex-oauth-cliproxyapi.md) を参照してください。
 
 本プロジェクトはOneCLIを使用していません。旧文書の他プロジェクト比較や将来構想は現行の設定・認可仕様ではありません。

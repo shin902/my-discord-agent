@@ -224,6 +224,14 @@ export async function loadAndValidateCron(): Promise<CronJob[]> {
     throw err;
   }
   const jobs = CronJobsSchema.parse(raw);
+  if (
+    jobs.some(
+      (job) => job.enabled && job.handler === "jobs/screen-capture-summary.ts",
+    )
+  )
+    throw new Error(
+      "screen-capture-summary cron is obsolete; configure screenCaptureSummary in config/config.json",
+    );
   // enabled な handler 付きジョブのみ起動時に import 検証する（無効化ジョブは対象外）
   const handlers = jobs.filter(
     (j): j is CronJob & { handler: string } =>
