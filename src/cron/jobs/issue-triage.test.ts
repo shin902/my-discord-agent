@@ -141,6 +141,33 @@ describe("issue-triage handler", () => {
     );
   });
 
+  it("各Issueを独立した direct + per-run cron job として投入し、jobのAgent設定を引き継ぐ", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => [makeIssue(), makeIssue({ number: 2 })],
+    });
+    const { default: handler } = await import("./issue-triage.js");
+    const ctx = makeCtx({
+      deliveryMode: "new-thread",
+      sessionMode: "destination",
+      tools: [],
+    });
+    await handler(ctx);
+    const jobs = (ctx.appendInbox as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([job]) => job,
+    );
+    expect(jobs).toHaveLength(2);
+    expect(new Set(jobs.map((job) => job.sessionId)).size).toBe(2);
+    for (const job of jobs) {
+      expect(job).toMatchObject({
+        cronJobId: ctx.id,
+        cronDeliveryMode: "direct",
+        cronSessionMode: "per-run",
+        configOverride: { tools: [] },
+      });
+    }
+  });
+
   it("pull_request を含む結果は除外する", async () => {
     fetchMock.mockResolvedValue({
       ok: true,

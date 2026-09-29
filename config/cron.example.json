@@ -107,6 +107,8 @@
     "enabled": true,
     "groupName": "issue-triage",
     "channelId": "YOUR_CHANNEL_ID",
+    "deliveryMode": "direct",
+    "sessionMode": "per-run",
     "handler": "jobs/issue-triage.ts",
     "settings": {
       "owner": "YOUR_GITHUB_USERNAME",
