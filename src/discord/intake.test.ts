@@ -528,6 +528,42 @@ describe("ingestDiscordMessage", () => {
     expect(mocks.appendMessage).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["live", false],
+    ["backfill", false],
+    ["live", true],
+    ["backfill", true],
+  ] as const)("ignores ChannelNameChange in %s (thread=%s)", async (source, isThread) => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: isThread ? "thread" : "auto-thread",
+      },
+    });
+    const message = makeMessage({
+      id: `rename-${source}-${isThread}`,
+      type: MessageType.ChannelNameChange,
+      ...(isThread
+        ? { channelId: "thread-1", isThread: true, parentId: "root-1" }
+        : {}),
+    });
+    const result = await ingestDiscordMessage(message, {
+      source,
+      replyOnFailure: true,
+    });
+
+    expect(result).toEqual({
+      status: "ignored",
+      cursorScope: isThread ? "thread-1" : "root-1",
+    });
+    expect(
+      repo.findByIdempotencyKey(`discord-message:${message.id}`),
+    ).toBeUndefined();
+    expect(message.startThread).not.toHaveBeenCalled();
+    expect(message.reply).not.toHaveBeenCalled();
+  });
+
   it("thread messages retain the thread destination while routing by the parent channel", async () => {
     mocks.findGroup.mockResolvedValue({
       group: { name: "group" },
