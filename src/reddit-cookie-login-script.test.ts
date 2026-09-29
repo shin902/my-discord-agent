@@ -61,7 +61,7 @@ describe("reddit cookie login script", () => {
     });
     expect(options).toMatchObject({ mode: 0o600, flag: "wx" });
     const output = log.mock.calls.map((args) => args.join(" ")).join("\n");
-    expect(output).toContain("Tool Runtime");
+    expect(output).not.toContain("Tool Runtime image");
     expect(output).toContain("pnpm reddit:refresh");
     expect(output).toContain("host schedulerの reddit-cookie-refresh");
     expect(output).toContain("docs/guides/reddit-cookie-setup.md");

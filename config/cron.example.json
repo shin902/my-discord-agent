@@ -88,6 +88,7 @@
     }
   },
   {
+    "_comment": "Host-only Playwright refresh; run pnpm reddit:login first. No Tool Runtime / Agent tools.",
     "id": "reddit-cookie-refresh",
     "schedule": "0 4 */3 * *",
     "enabled": true,

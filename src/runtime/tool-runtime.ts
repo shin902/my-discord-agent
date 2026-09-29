@@ -1,5 +1,4 @@
 import { fileURLToPath } from "node:url";
-import { refreshRedditCookies } from "../proxy/reddit-cookie-refresh.js";
 import { getRuntimeCapability } from "../tools/runtime-capabilities.js";
 import {
   TOOL_RUNTIME_INPUT_MAX_BYTES,
@@ -7,7 +6,7 @@ import {
   type ToolRuntimeResponse,
 } from "./tool-runtime-protocol.js";
 
-/** A single stdin request. Maintenance is only selected by the trusted host launcher. */
+/** A single capability request from the trusted host. */
 export async function executeRuntimeRequest(
   request: unknown,
 ): Promise<ToolRuntimeResponse> {
@@ -15,31 +14,6 @@ export async function executeRuntimeRequest(
     if (!request || typeof request !== "object" || Array.isArray(request))
       throw new Error("Invalid Tool Runtime request");
     const input = request as Record<string, unknown>;
-    if (
-      Object.keys(input).length === 1 &&
-      input.maintenance === "reddit-cookie-refresh"
-    ) {
-      if (!process.env.REDDIT_PROFILE_DIR || !process.env.REDDIT_COOKIE_FILE)
-        throw new Error("Reddit maintenance state is unavailable");
-      // Browser diagnostics may contain private state; only the fixed outcome is returned.
-      try {
-        await refreshRedditCookies({
-          profileDir: process.env.REDDIT_PROFILE_DIR,
-          cookieFile: process.env.REDDIT_COOKIE_FILE,
-        });
-      } catch (error) {
-        console.error("[tool-runtime] Reddit cookie refresh failed:", error);
-        throw new Error(
-          "Reddit cookie refresh failed; check login and Runtime diagnostics",
-        );
-      }
-      return {
-        result: {
-          content: [{ type: "text", text: "Reddit cookies refreshed" }],
-          details: {},
-        },
-      };
-    }
     if (
       Object.keys(input).length !== 2 ||
       typeof input.capability !== "string" ||

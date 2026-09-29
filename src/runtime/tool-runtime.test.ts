@@ -1,12 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { refreshRedditCookies } from "../proxy/reddit-cookie-refresh.js";
 import { agentReachTool } from "../tools/agent-reach.js";
 import { arxivSearchTool } from "../tools/arxiv.js";
 import { executeRuntimeRequest } from "./tool-runtime.js";
 
-vi.mock("../proxy/reddit-cookie-refresh.js", () => ({
-  refreshRedditCookies: vi.fn(),
-}));
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
@@ -26,7 +22,6 @@ describe("one-shot Tool Runtime protocol", () => {
     { maintenance: "x-cookie-refresh" },
   ])("rejects unregistered operations or malformed requests: %j", async (request) => {
     expect(await executeRuntimeRequest(request)).toHaveProperty("error");
-    expect(refreshRedditCookies).not.toHaveBeenCalled();
   });
 
   it("returns raw large results without Runtime paths or externalization", async () => {
@@ -58,7 +53,7 @@ describe("one-shot Tool Runtime protocol", () => {
     expect(execute.mock.calls[0][1]).toBe(args);
   });
 
-  it("keeps maintenance separate from capability dispatch and suppresses browser diagnostics", async () => {
+  it("does not expose Reddit maintenance as a capability or protocol operation", async () => {
     expect(
       await executeRuntimeRequest({
         capability: "reddit-cookie-refresh",
@@ -68,24 +63,5 @@ describe("one-shot Tool Runtime protocol", () => {
     expect(
       await executeRuntimeRequest({ maintenance: "reddit-cookie-refresh" }),
     ).toHaveProperty("error");
-    vi.stubEnv("REDDIT_PROFILE_DIR", "/fixture/profile");
-    vi.stubEnv("REDDIT_COOKIE_FILE", "/fixture/cookies.json");
-    const diagnostic = new Error("private browser state /fixture/profile");
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(refreshRedditCookies).mockRejectedValueOnce(diagnostic);
-    expect(
-      await executeRuntimeRequest({ maintenance: "reddit-cookie-refresh" }),
-    ).toEqual({
-      error:
-        "Reddit cookie refresh failed; check login and Runtime diagnostics",
-    });
-    expect(log).toHaveBeenCalledExactlyOnceWith(
-      "[tool-runtime] Reddit cookie refresh failed:",
-      diagnostic,
-    );
-    expect(refreshRedditCookies).toHaveBeenCalledExactlyOnceWith({
-      profileDir: "/fixture/profile",
-      cookieFile: "/fixture/cookies.json",
-    });
   });
 });

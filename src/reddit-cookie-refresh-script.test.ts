@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const scriptPath = "../scripts/reddit-cookie-refresh.ts";
 const { main } = await import(scriptPath);
 
-import { refreshRedditCookiesInRuntime } from "./runtime/tool-runtime-client.js";
+import { refreshRedditCookies } from "./proxy/reddit-cookie-refresh.js";
 
-vi.mock("./runtime/tool-runtime-client.js", () => ({
-  refreshRedditCookiesInRuntime: vi.fn(),
+vi.mock("./proxy/reddit-cookie-refresh.js", () => ({
+  refreshRedditCookies: vi.fn(),
 }));
 
 afterEach(() => {
@@ -16,23 +16,26 @@ afterEach(() => {
 });
 
 describe("reddit:refresh command", () => {
-  it("runs the host-only one-shot maintenance launcher", async () => {
+  it("runs the host-only refresh helper", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     await main();
-    expect(refreshRedditCookiesInRuntime).toHaveBeenCalledExactlyOnceWith();
+    expect(refreshRedditCookies).toHaveBeenCalledExactlyOnceWith();
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("クッキーを更新しました"),
     );
   });
-  it("reports launcher errors with a nonzero exit code", async () => {
-    vi.mocked(refreshRedditCookiesInRuntime).mockRejectedValueOnce(
+  it("reports failures without leaking browser diagnostics", async () => {
+    vi.mocked(refreshRedditCookies).mockRejectedValueOnce(
       new Error("Reddit state is unavailable"),
     );
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await main();
     expect(process.exitCode).toBe(1);
     expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Reddit state is unavailable"),
+      expect.stringContaining("pnpm reddit:login"),
+    );
+    expect(log.mock.calls.flat().join(" ")).not.toContain(
+      "Reddit state is unavailable",
     );
   });
 });

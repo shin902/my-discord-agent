@@ -61,9 +61,9 @@ Runtimeは長い結果も本文で返します。native結果の50,000文字超�
 
 Runtimeのfirewallはpublic Internetを許可し、private／link-local／CGNAT／metadata相当／multicast等を拒否します。公開DNSを指定し、Docker embedded DNS用のloopback例外を維持します。agent-reachのURL・DNS・redirect検証も維持し、firewall設定後は非root UID/GIDへ切り替えて全capabilityをdropします。workspaceをmountしても、このnetwork境界とcredential境界は変更しません。credential fileとworkspaceのowner UID/GIDが異なる場合は明示エラーで起動を拒否します。API key、OAuth token、Cookie等をAgent-visibleな引数・結果・workspaceへ保存せず、credentialが必要なRuntime capabilityだけtrusted host設定から固定resourceを渡します。
 
-Redditを使わないcallはstateを参照せず、UID/GID 1000で実行します。通常のReddit取得は `data/reddit-cookies.json` だけをread-only mountします。hostが固定pathと非root所有者を確認し、そのUID/GIDを使います。maintenanceだけが同じ所有者の `data/reddit-browser-profile/` とCookieをread/write mountします。stateが無い場合もarXivやHN等は起動できます。
+Redditを使わないcallはstateを参照せず、UID/GID 1000で実行します。通常のReddit取得は `data/reddit-cookies.json` だけをread-only mountします。hostが固定pathと非root所有者を確認し、そのUID/GIDを使います。profileはmountしません。stateが無い場合もarXivやHN等は起動できます。
 
-Cookie更新はhostの `pnpm reddit:refresh` または既存cronから単発maintenance containerで実行します。maintenanceはAgent-facing capabilityに登録しません。CookieはRuntime内で読み、固定されたReddit取得へだけ付けます。初回loginは従来の `pnpm reddit:login` です。
+Cookie更新はhostの `pnpm reddit:refresh` または既存cronからhost上のPlaywrightで実行します。Docker / Tool Runtimeのmaintenance protocolはありません。CookieはRuntime内で読み、固定されたReddit取得へだけ付けます。初回loginは `pnpm reddit:login` です。
 
 ## X検索state
 
