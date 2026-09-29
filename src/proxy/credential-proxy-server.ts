@@ -222,12 +222,78 @@ async function handleRequest(
     timeout: timeoutMs,
   };
 
+  const requestId = randomUUID();
+  const startedAt = new Date().toISOString();
+  const start = performance.now();
+  let lastActivity = start;
+  let headersMs: number | undefined;
+  let firstChunkMs: number | undefined;
+  let lastChunkMs: number | undefined;
+  let responseBytes = 0;
+  let status: number | undefined;
+  let upstreamRequestId: string | undefined;
+  let outcome: string | undefined;
+  let completed = false;
+  let timedOut = false;
+  const finish = (result: string) => {
+    if (outcome) return;
+    outcome = result;
+    console.log(
+      JSON.stringify({
+        event: "upstream_request_timing",
+        requestId,
+        startedAt,
+        upstreamRequestId,
+        provider,
+        method: req.method,
+        route: parsedTarget.pathname,
+        status,
+        timeoutMs,
+        headersMs,
+        firstChunkMs,
+        lastChunkMs,
+        idleMsAtEnd: Math.round(performance.now() - lastActivity),
+        durationMs: Math.round(performance.now() - start),
+        responseBytes,
+        headersSent: res.headersSent,
+        outcome: result,
+      }),
+    );
+  };
+
   await new Promise<void>((resolve, reject) => {
     const upstream = httpModule.request(options, (upstreamRes) => {
+      status = upstreamRes.statusCode;
+      headersMs = Math.round(performance.now() - start);
+      lastActivity = performance.now();
+      const id =
+        upstreamRes.headers["x-request-id"] ??
+        upstreamRes.headers["request-id"];
+      if (typeof id === "string" && /^[a-zA-Z0-9._:-]{1,128}$/.test(id))
+        upstreamRequestId = id;
+      upstreamRes.on("data", (chunk: Buffer) => {
+        const now = performance.now();
+        firstChunkMs ??= Math.round(now - start);
+        lastChunkMs = Math.round(now - start);
+        lastActivity = now;
+        responseBytes += chunk.length;
+      });
+      upstreamRes.on("aborted", () =>
+        finish(timedOut ? "upstream-timeout" : "response-abort"),
+      );
+      upstreamRes.on("close", () => {
+        if (!completed)
+          finish(timedOut ? "upstream-timeout" : "response-abort");
+      });
       res.writeHead(upstreamRes.statusCode ?? 200, upstreamRes.headers);
       upstreamRes.pipe(res);
-      upstreamRes.on("end", resolve);
+      upstreamRes.on("end", () => {
+        completed = true;
+        finish("success");
+        resolve();
+      });
       upstreamRes.on("error", (err) => {
+        finish(timedOut ? "upstream-timeout" : "upstream-error");
         // upstream.destroyed === false: 通常の midstream エラー。upstream.on("error") より
         // 先に発火した場合は reject() が有効。後に発火した場合は Promise が settled 済みで
         // no-op になるが、.catch() → res.headersSent チェック → upstream.on("error") →
@@ -244,13 +310,30 @@ async function handleRequest(
       });
     });
 
+    req.on("aborted", () => {
+      finish("downstream-abort");
+      upstream.destroy();
+    });
+    res.on("close", () => {
+      if (!completed && !outcome) {
+        finish(timedOut ? "upstream-timeout" : "downstream-abort");
+        upstream.destroy();
+      }
+    });
+
     upstream.on("timeout", () => {
+      timedOut = true;
       upstream.destroy(
         new UpstreamTimeoutError(`upstream timeout for ${provider}`),
       );
     });
 
     upstream.on("error", (err) => {
+      finish(
+        timedOut || err instanceof UpstreamTimeoutError
+          ? "upstream-timeout"
+          : "upstream-error",
+      );
       console.error(
         `[credential-proxy] upstream error for ${provider}: ${err.message}`,
       );

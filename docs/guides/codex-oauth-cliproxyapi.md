@@ -107,6 +107,8 @@ Docker利用時もimageを検証済みtagまたはdigestへ固定し、OAuth dat
 
 `openai-codex`がmodel identity、`openai-responses`がwire API、CLIProxyAPIがgatewayである。`openai-codex-responses`はChatGPT OAuthを直接扱うadapterなので、この構成では使わない。Credential Proxyが`Authorization: Bearer $CLIPROXY_API_KEY`を注入し、sandboxへAPI keyやOAuth tokenを渡さない。
 
+切断調査ではhostログの`upstream_request_timing`を確認する。`requestId`はproxy内のリクエスト単位ID、`startedAt`は開始時刻、`headersMs`・`firstChunkMs`・`lastChunkMs`は開始からの経過時間（未到達なら省略）、`idleMsAtEnd`は最後のheaders/chunkから終了までの無通信時間。`outcome`で`success`・`upstream-timeout`・`upstream-error`・`downstream-abort`・`response-abort`を区別する。`route`にはqueryを含めない。
+
 OpenAI API key経路は`provider: "openai"`と`OPENAI_API_KEY`で設定可能だが、Issue #404では有料smokeを行わない。
 
 ## 接続先

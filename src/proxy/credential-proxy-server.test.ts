@@ -14,6 +14,7 @@ const makeReq = (
     method,
     ...(body !== undefined ? { body } : {}),
     pipe: vi.fn(),
+    on: vi.fn(),
   }) as unknown as IncomingMessage;
 
 const makeRes = () =>
@@ -21,6 +22,7 @@ const makeRes = () =>
     writeHead: vi.fn(),
     end: vi.fn(),
     headersSent: false,
+    on: vi.fn(),
   }) as unknown as ServerResponse & {
     writeHead: ReturnType<typeof vi.fn>;
     end: ReturnType<typeof vi.fn>;
