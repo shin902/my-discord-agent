@@ -125,7 +125,12 @@ describe("late item-thread delivery", () => {
       });
       await worker.runOnce();
 
-      expect(renameSession).toHaveBeenCalledWith("group", "cron-temp", "123");
+      expect(renameSession).toHaveBeenCalledWith(
+        "group",
+        "cron-temp",
+        "123",
+        "main",
+      );
       expect(repo.get(jobId)).toMatchObject({
         sessionId: "123",
         conversationPath: "data/sessions/group/sessions.sqlite#session=123",

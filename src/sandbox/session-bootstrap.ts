@@ -129,6 +129,7 @@ async function loadOrCreateSessionTimeAnchor(
   groupName: string,
   sessionId: string,
   messages: AgentMessage[],
+  agentId: string,
 ): Promise<number> {
   const existing = messages.find(isSessionTimeAnchorMessage);
   if (existing) return parseSessionTimeAnchor(existing);
@@ -141,7 +142,7 @@ async function loadOrCreateSessionTimeAnchor(
     display: false,
     timestamp: candidate,
   };
-  await appendMessage(groupName, sessionId, anchorMessage);
+  await appendMessage(groupName, sessionId, anchorMessage, agentId);
   return candidate;
 }
 
@@ -171,18 +172,20 @@ export interface FrozenExecutionIdentity {
   memorySnapshotPresent?: boolean;
   snapshotHash?: string;
   toolCallKey?: string;
+  agentId: string;
 }
 export async function initializeSessionBootstrap(
   groupName: string,
   sessionId: string,
   rawMessages: AgentMessage[],
   groupConfig: AgentRuntimeConfig,
-  identity?: FrozenExecutionIdentity,
+  identity: FrozenExecutionIdentity,
 ) {
   const sessionAnchorTimestamp = await loadOrCreateSessionTimeAnchor(
     groupName,
     sessionId,
     rawMessages,
+    identity.agentId,
   );
 
   // stopReason が error/aborted のメッセージはデバッグ用にセッションに残すが
@@ -249,7 +252,12 @@ export async function initializeSessionBootstrap(
       display: false,
       timestamp: Date.now(),
     };
-    await appendMessage(groupName, sessionId, systemPromptSnapshotMessage);
+    await appendMessage(
+      groupName,
+      sessionId,
+      systemPromptSnapshotMessage,
+      identity.agentId,
+    );
     newBootstrapMessages.push(systemPromptSnapshotMessage);
   }
 
@@ -268,7 +276,12 @@ export async function initializeSessionBootstrap(
         display: false,
         timestamp: Date.now(),
       };
-      await appendMessage(groupName, sessionId, bootstrapMessage);
+      await appendMessage(
+        groupName,
+        sessionId,
+        bootstrapMessage,
+        identity.agentId,
+      );
       newBootstrapMessages.push(bootstrapMessage);
     }
   }

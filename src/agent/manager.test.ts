@@ -138,7 +138,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("docker run --rm -i --pull=always --memory=512m --cpus=1 を含む", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain("--rm");
     expect(args).toContain("-i");
@@ -155,9 +155,9 @@ describe("sendMessage: Docker 起動構成", () => {
 
     beginManagerShutdown();
 
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
-      "シャットダウン中のため実行を開始できません",
-    );
+    await expect(
+      sendMessage("test-group", "session-1", "hi", { agentId: "main" }),
+    ).rejects.toThrow("シャットダウン中のため実行を開始できません");
     expect(findGroupMock).not.toHaveBeenCalled();
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -172,7 +172,9 @@ describe("sendMessage: Docker 起動構成", () => {
     const { beginManagerShutdown, killAllRunningContainers, sendMessage } =
       await import("./manager.js");
 
-    const pending = sendMessage("test-group", "session-1", "hi");
+    const pending = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+    });
     await vi.waitFor(() => expect(findGroupMock).toHaveBeenCalledOnce());
 
     beginManagerShutdown();
@@ -190,9 +192,9 @@ describe("sendMessage: Docker 起動構成", () => {
     spawnMock.mockReturnValueOnce(makeProc(null));
     const { sendMessage } = await import("./manager.js");
 
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
-      "コンテナがシグナルで終了しました",
-    );
+    await expect(
+      sendMessage("test-group", "session-1", "hi", { agentId: "main" }),
+    ).rejects.toThrow("コンテナがシグナルで終了しました");
   });
 
   it("runner完了通知後はsteerを受け付けない", async () => {
@@ -202,9 +204,9 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage } = await import("./manager.js");
     const { acquireActiveRun } = await import("./active-run-registry.js");
 
-    await expect(sendMessage("test-group", "session-1", "hi")).resolves.toBe(
-      "response",
-    );
+    await expect(
+      sendMessage("test-group", "session-1", "hi", { agentId: "main" }),
+    ).resolves.toBe("response");
     expect(acquireActiveRun("test-group", "session-1")).toBeUndefined();
   });
 
@@ -242,7 +244,9 @@ describe("sendMessage: Docker 起動構成", () => {
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
     const { acquireActiveRun } = await import("./active-run-registry.js");
-    const result = sendMessage("test-group", "session-1", "hi");
+    const result = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+    });
 
     await vi.waitFor(() =>
       expect(acquireActiveRun("test-group", "session-1")).toBeDefined(),
@@ -297,7 +301,9 @@ describe("sendMessage: Docker 起動構成", () => {
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage } = await import("./manager.js");
     const { acquireActiveRun } = await import("./active-run-registry.js");
-    const result = sendMessage("test-group", "session-1", "hi");
+    const result = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+    });
 
     await vi.waitFor(() =>
       expect(acquireActiveRun("test-group", "session-1")).toBeDefined(),
@@ -323,7 +329,10 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
-    await sendMessage("test-group", "session-1", "hi", { onExecutionTiming });
+    await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+      onExecutionTiming,
+    });
 
     expect(onExecutionTiming).toHaveBeenCalledWith({
       termination: "close",
@@ -340,7 +349,10 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage } = await import("./manager.js");
     const onExecutionTiming = vi.fn();
 
-    await sendMessage("test-group", "session-1", "hi", { onExecutionTiming });
+    await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+      onExecutionTiming,
+    });
 
     const timing = onExecutionTiming.mock.calls[0][0];
     expect(timing.imagePullMs).toBeUndefined();
@@ -374,6 +386,7 @@ describe("sendMessage: Docker 起動構成", () => {
       const onExecutionTiming = vi.fn();
 
       const result = sendMessage("test-group", "session-1", "hi", {
+        agentId: "main",
         onExecutionTiming,
       });
       const rejection = expect(result).rejects.toThrow(
@@ -407,7 +420,9 @@ describe("sendMessage: Docker 起動構成", () => {
       proc.on = vi.fn(); // close イベントを発火させず「実行中」の状態を維持する
       spawnMock.mockReturnValueOnce(proc);
 
-      const sendPromise = sendMessage("test-group", "session-1", "hi");
+      const sendPromise = sendMessage("test-group", "session-1", "hi", {
+        agentId: "main",
+      });
       sendPromise.catch(() => {});
       await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
 
@@ -600,14 +615,14 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("--add-host=host.docker.internal:host-gateway を含む", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain("--add-host=host.docker.internal:host-gateway");
   });
 
   it("/sessions/{groupName} にグループ単位でmountする", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
@@ -622,7 +637,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("/workspace を mount する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
@@ -634,7 +649,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("/config を mount しない", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
@@ -642,7 +657,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("trusted bootstrapでfirewallを設定し、Agent用UID:GIDを渡す", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const userIdx = args.indexOf("--user");
     expect(userIdx).toBeGreaterThanOrEqual(0);
@@ -670,7 +685,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_JSON="))).toBe(
@@ -680,7 +695,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("CREDENTIAL_PROXY_PATH 環境変数を渡さない", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const envArgs = args.filter((_, i) => args[i - 1] === "-e");
     expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_PATH="))).toBe(
@@ -690,7 +705,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("node /app/runner.mjs で実行する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const nodeIdx = args.indexOf("node");
     expect(nodeIdx).toBeGreaterThan(-1);
@@ -699,7 +714,7 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("カスタムイメージを使用する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain("localhost:5050/my-discord-agent-runner:latest");
   });
@@ -719,7 +734,9 @@ describe("sendMessage: Docker 起動構成", () => {
     }) as never;
     spawnMock.mockReturnValueOnce(proc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
-    const running = sendMessage("test-group", "session-1", "hi");
+    const running = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+    });
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
     await vi.waitFor(() =>
@@ -751,6 +768,7 @@ describe("sendMessage: Docker 起動構成", () => {
     const { sendMessage, stopAgentRun } = await import("./manager.js");
     const { acquireActiveRun } = await import("./active-run-registry.js");
     const running = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       onContainerStarted: vi.fn(),
     });
     running.catch(() => {});
@@ -800,7 +818,9 @@ describe("sendMessage: Docker 起動構成", () => {
     );
     spawnMock.mockReturnValueOnce(proc).mockImplementation(() => cleanupProc);
     const { sendMessage, stopAgentRun } = await import("./manager.js");
-    const running = sendMessage("test-group", "session-1", "hi");
+    const running = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+    });
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
     await vi.waitFor(() =>
@@ -832,7 +852,9 @@ describe("sendMessage: Docker 起動構成", () => {
     spawnMock.mockReturnValueOnce(proc);
     const { activeRunCount } = await import("./active-run-registry.js");
     const { sendMessage, stopAgentRun } = await import("./manager.js");
-    const running = sendMessage("test-group", "session-1", "hi");
+    const running = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+    });
     running.catch(() => {});
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
     await vi.waitFor(() =>
@@ -895,7 +917,10 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("添付ファイルを /workspace/attachments に読み取り専用でマウントする", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "見て", { attachments });
+    await sendMessage("test-group", "session-1", "見て", {
+      agentId: "main",
+      attachments,
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(attachments[0].url);
     const args = spawnMock.mock.calls[0][1] as string[];
@@ -909,6 +934,18 @@ describe("sendMessage: 添付ファイル", () => {
     ).toBe(true);
   });
 
+  it("passes the explicit run owner to Runner without inferring it from a snapshot", async () => {
+    const { sendMessage } = await import("./manager.js");
+    await sendMessage("test-group", "session-1", "run", {
+      agentId: "worker",
+      systemPromptSnapshotPresent: true,
+    });
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
+    expect(payload.agentId).toBe("worker");
+    expect(payload.sessionId).toBe("session-1");
+  });
+
   it("passes generic source provenance through the runner payload independently of prompt decoration", async () => {
     const { sendMessage } = await import("./manager.js");
     const source = {
@@ -919,6 +956,7 @@ describe("sendMessage: 添付ファイル", () => {
       createdAt: "2026-09-01T01:00:00.000Z",
     };
     await sendMessage("test-group", "session-1", "見て", {
+      agentId: "main",
       attachments,
       source,
     });
@@ -931,7 +969,10 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("プロンプトに添付ファイルのパス一覧を追記する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "見て", { attachments });
+    await sendMessage("test-group", "session-1", "見て", {
+      agentId: "main",
+      attachments,
+    });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -942,7 +983,10 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("画像添付がある場合は read ツールでの確認を促すヒントを追記する", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "見て", { attachments });
+    await sendMessage("test-group", "session-1", "見て", {
+      agentId: "main",
+      attachments,
+    });
 
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
     const payload = JSON.parse(proc.stdin.write.mock.calls[0][0] as string);
@@ -952,6 +996,7 @@ describe("sendMessage: 添付ファイル", () => {
   it("画像以外の添付ファイルのみの場合は read ツールのヒントを追記しない", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "見て", {
+      agentId: "main",
       attachments: [
         {
           url: "https://cdn.discordapp.com/attachments/x/y/note.txt",
@@ -969,7 +1014,7 @@ describe("sendMessage: 添付ファイル", () => {
 
   it("添付ファイルがない場合はマウントせず content も変更しない", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
 
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
@@ -984,9 +1029,14 @@ describe("sendMessage: 添付ファイル", () => {
   it("過去のメッセージで添付ディレクトリが作られていれば、添付なしの後続メッセージでもマウントする", async () => {
     const { sendMessage } = await import("./manager.js");
 
-    await sendMessage("test-group", "session-1", "見て", { attachments });
+    await sendMessage("test-group", "session-1", "見て", {
+      agentId: "main",
+      attachments,
+    });
 
-    await sendMessage("test-group", "session-1", "さっきの画像について教えて");
+    await sendMessage("test-group", "session-1", "さっきの画像について教えて", {
+      agentId: "main",
+    });
 
     const args = spawnMock.mock.calls[1][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
@@ -1007,6 +1057,7 @@ describe("sendMessage: 添付ファイル", () => {
     const { sendMessage } = await import("./manager.js");
     const tooLarge = [{ ...attachments[0], size: 11 * 1024 * 1024 }];
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       attachments: tooLarge,
     });
 
@@ -1048,7 +1099,7 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   it("絶対パスの host を container にそのままマウントする", async () => {
     await setup([{ host: "/host/repo", container: "/repo" }]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs).toContain("/host/repo:/repo");
@@ -1057,7 +1108,7 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   it("readOnly: true の場合は :ro が付与される", async () => {
     await setup([{ host: "/host/repo", container: "/repo", readOnly: true }]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs).toContain("/host/repo:/repo:ro");
@@ -1066,7 +1117,7 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   it("相対パスの host は ROOT 基準で解決される", async () => {
     await setup([{ host: "relative/dir", container: "/relative" }]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(
@@ -1080,7 +1131,7 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   it("mounts が未設定の場合は追加マウントなし", async () => {
     await setup(undefined);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
     const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
     expect(volumeArgs).toHaveLength(2);
@@ -1089,9 +1140,9 @@ describe("sendMessage: 追加マウント (config/groups.json の mounts)", () =
   it("相対パスの host がリポジトリルート外を指す場合は設定エラーを返す", async () => {
     await setup([{ host: "../outside", container: "/outside" }]);
     const { sendMessage } = await import("./manager.js");
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
-      /設定エラー.*リポジトリルート外/,
-    );
+    await expect(
+      sendMessage("test-group", "session-1", "hi", { agentId: "main" }),
+    ).rejects.toThrow(/設定エラー.*リポジトリルート外/);
   });
 });
 
@@ -1146,7 +1197,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds[0].sdkAuth).toBe(
       key.includes("sk-ant-oat") ? "anthropic-oauth" : undefined,
@@ -1166,7 +1217,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     expect(getCredJson(spawnMock)).toEqual([
       {
         provider: "openai-codex",
@@ -1187,7 +1238,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds[0].baseUrl).toBe("http://host.docker.internal:12345/test");
   });
@@ -1203,6 +1254,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ]);
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: { tools: ["tavily-search"] },
     });
     const credentialJson = JSON.stringify(getCredJson(spawnMock));
@@ -1221,6 +1273,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ]);
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: { tools: ["tavily-search"] },
     });
     const credentialJson = JSON.stringify(getCredJson(spawnMock));
@@ -1240,6 +1293,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     const { sendMessage } = await import("./manager.js");
     await expect(
       sendMessage("test-group", "session-1", "hi", {
+        agentId: "main",
         configOverride: { tools: ["tavily-search", "tavily-extract"] },
       }),
     ).rejects.toThrow("不明なツール名: tavily-extract");
@@ -1257,7 +1311,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds[0].baseUrl).toMatch(
       /^http:\/\/host\.docker\.internal:\d+\/my-provider$/,
@@ -1275,7 +1329,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds[0].envVars).toBeUndefined();
   });
@@ -1294,7 +1348,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds).toEqual([]);
   });
@@ -1321,7 +1375,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       { provider: "reddit", baseUrl: "https://www.reddit.com" },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     expect(
       getCredJson(spawnMock).map(
         (entry: { provider: string }) => entry.provider,
@@ -1341,6 +1395,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
     ]);
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: {
         model: { provider: "github", modelId: "test-model" },
       },
@@ -1366,7 +1421,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     expect(getCredJson(spawnMock)).toEqual([]);
   });
 
@@ -1382,7 +1437,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds[0].auth).toBeUndefined();
   });
@@ -1399,7 +1454,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds[0].api).toBe("openai-completions");
     expect(creds[0].reasoning).toBe(true);
@@ -1422,7 +1477,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds).toHaveLength(1);
     expect(creds[0].provider).toBe("good");
@@ -1443,7 +1498,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds[0].provider).toBe("local-llm");
     expect(creds[0].baseUrl).toBe(
@@ -1462,7 +1517,7 @@ describe("sendMessage: CREDENTIAL_PROXY_JSON の内容", () => {
       },
     ]);
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const creds = getCredJson(spawnMock);
     expect(creds).toHaveLength(0);
   });
@@ -1495,9 +1550,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
-      "設定エラー: 不明なツール名: invalid",
-    );
+    await expect(
+      sendMessage("test-group", "session-1", "hi", { agentId: "main" }),
+    ).rejects.toThrow("設定エラー: 不明なツール名: invalid");
   });
 
   it("不正なプロバイダを持つグループ設定は設定エラーを返す", async () => {
@@ -1511,9 +1566,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
-      "設定エラー: 不明なプロバイダ: unknown",
-    );
+    await expect(
+      sendMessage("test-group", "session-1", "hi", { agentId: "main" }),
+    ).rejects.toThrow("設定エラー: 不明なプロバイダ: unknown");
   });
 
   it("mounts.container が /workspace と重複する場合は設定エラーを返す", async () => {
@@ -1527,9 +1582,9 @@ describe("sendMessage: 設定バリデーション", () => {
 
     const { sendMessage, initManager } = await import("./manager.js");
     await initManager(12345);
-    await expect(sendMessage("test-group", "session-1", "hi")).rejects.toThrow(
-      /設定エラー.*\/workspace/,
-    );
+    await expect(
+      sendMessage("test-group", "session-1", "hi", { agentId: "main" }),
+    ).rejects.toThrow(/設定エラー.*\/workspace/);
   });
 });
 
@@ -1613,6 +1668,7 @@ describe("sendMessage: configOverride", () => {
 
     await expect(
       sendMessage("test-group", "session-1", "hi", {
+        agentId: "main",
         configOverride: { tools: ["bot", "get-current-weather"] },
       }),
     ).rejects.toMatchObject({
@@ -1629,6 +1685,7 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: {
         tools: ["get-current-weather"],
         approvalRequiredTools: ["get-current-weather"],
@@ -1666,6 +1723,7 @@ describe("sendMessage: configOverride", () => {
 
     await expect(
       sendMessage("test-group", "session-1", "hi", {
+        agentId: "main",
         configOverride: {
           tools: ["read"],
           approvalRequiredTools: ["get-current-weather"],
@@ -1719,6 +1777,7 @@ describe("sendMessage: configOverride", () => {
       ? ["agent-reach"]
       : [];
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: { tools, skills, toolSets, approvalRequiredTools },
     });
     if (allowed.length === 0) {
@@ -1759,6 +1818,7 @@ describe("sendMessage: configOverride", () => {
 
     await expect(
       sendMessage("test-group", "session-1", "hi", {
+        agentId: "main",
         configOverride: { tools: ["get-weather-forecast"] },
       }),
     ).rejects.toThrow("エージェント実行エラー");
@@ -1772,7 +1832,7 @@ describe("sendMessage: configOverride", () => {
   it("botとhost capabilityがeffective toolsにない場合はendpointとtokenを渡さない", async () => {
     const sendMessage = await setup();
 
-    await sendMessage("test-group", "session-1", "hi");
+    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
 
     expect(createInternalRequestConfigMock).not.toHaveBeenCalled();
     expect(createToolProxyRunMock).not.toHaveBeenCalled();
@@ -1787,6 +1847,7 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: { tools: ["bot"] },
     });
 
@@ -1824,6 +1885,7 @@ describe("sendMessage: configOverride", () => {
       research: { group: "other-group", description: "PRIVATE DESCRIPTION" },
     });
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: { tools: ["bot"] },
     });
     const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
@@ -1848,6 +1910,7 @@ describe("sendMessage: configOverride", () => {
       research: { group: "test-group", description: "Researches sources." },
     });
     await sendMessage("test-group", "session-1", "continue", {
+      agentId: "main",
       configOverride: { tools: ["bot"] },
     });
     const nextPayload = JSON.parse(proc.stdin.write.mock.calls[1][0] as string);
@@ -1862,6 +1925,7 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: { tools: ["bot"] },
       trustedDiscordDestination: { botId: "secondary", channelId: "channel-1" },
     });
@@ -1879,7 +1943,10 @@ describe("sendMessage: configOverride", () => {
   ])("無効なbot toolへendpointやcatalogを渡さない: %j", async (options) => {
     const sendMessage = await setup();
 
-    await sendMessage("test-group", "session-1", "hi", options);
+    await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+      ...options,
+    });
 
     expect(createInternalRequestConfigMock).not.toHaveBeenCalled();
     expect(loadBotRegistryMock).not.toHaveBeenCalled();
@@ -1892,6 +1959,7 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: {
         model: { provider: "provider-a", modelId: "model-x" },
         tools: ["bash"],
@@ -1915,6 +1983,7 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: { skills: ["override-skill"] },
     });
 
@@ -1923,7 +1992,7 @@ describe("sendMessage: configOverride", () => {
     ]);
 
     ensureGroupSkillsMock.mockClear();
-    await sendMessage("test-group", "session-2", "hi");
+    await sendMessage("test-group", "session-2", "hi", { agentId: "main" });
     expect(ensureGroupSkillsMock).not.toHaveBeenCalled();
   });
 
@@ -1931,6 +2000,7 @@ describe("sendMessage: configOverride", () => {
     const sendMessage = await setup();
 
     await sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
       configOverride: {
         mounts: [{ host: "/channel/repo", container: "/channel-repo" }],
       },
@@ -1979,7 +2049,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await sendMessage("g", "s", "hi", { onDiscordEvent });
+    await sendMessage("g", "s", "hi", { agentId: "main", onDiscordEvent });
 
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
   });
@@ -2020,7 +2090,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
 
     const onDiscordEvent = vi.fn();
-    await sendMessage("g", "s", "hi", { onDiscordEvent });
+    await sendMessage("g", "s", "hi", { agentId: "main", onDiscordEvent });
 
     expect(onDiscordEvent).toHaveBeenCalledTimes(2);
     expect(onDiscordEvent).toHaveBeenNthCalledWith(1, events[0]);
@@ -2044,6 +2114,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
       expect(onConversation).not.toHaveBeenCalled(),
     );
     const result = sendMessage("g", "s", "hi", {
+      agentId: "main",
       onConversation,
       onDiscordEvent,
       onExecutionTiming,
@@ -2072,7 +2143,11 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const onConversation = vi.fn();
     const onExecutionTiming = vi.fn();
     await expect(
-      sendMessage("g", "s", "hi", { onConversation, onExecutionTiming }),
+      sendMessage("g", "s", "hi", {
+        agentId: "main",
+        onConversation,
+        onExecutionTiming,
+      }),
     ).resolves.toBe("response");
     expect(onConversation).toHaveBeenCalledExactlyOnceWith(entries);
     expect(onExecutionTiming).toHaveBeenCalledWith(
@@ -2093,7 +2168,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
     const onConversation = vi.fn();
     await expect(
-      sendMessage("g", "s", "hi", { onConversation }),
+      sendMessage("g", "s", "hi", { agentId: "main", onConversation }),
     ).rejects.toThrow("invalid conversation entry reference");
     expect(onConversation).not.toHaveBeenCalled();
   });
@@ -2104,7 +2179,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     );
     const onConversation = vi.fn();
     await expect(
-      sendMessage("g", "s", "hi", { onConversation }),
+      sendMessage("g", "s", "hi", { agentId: "main", onConversation }),
     ).rejects.toThrow("late failure");
     expect(onConversation).not.toHaveBeenCalled();
   });
@@ -2129,7 +2204,11 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
     const onDiscordEvent = vi.fn();
     const onExecutionTiming = vi.fn();
 
-    await sendMessage("g", "s", "hi", { onDiscordEvent, onExecutionTiming });
+    await sendMessage("g", "s", "hi", {
+      agentId: "main",
+      onDiscordEvent,
+      onExecutionTiming,
+    });
 
     expect(onDiscordEvent).not.toHaveBeenCalled();
     expect(onExecutionTiming).toHaveBeenCalledWith(
@@ -2163,9 +2242,9 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
       `__DISCORD_EVENT__:${JSON.stringify(eventPayload)}\n`,
     );
 
-    await expect(sendMessage("g", "s", "hi")).rejects.toThrow(
-      "assistant stopReason=error",
-    );
+    await expect(
+      sendMessage("g", "s", "hi", { agentId: "main" }),
+    ).rejects.toThrow("assistant stopReason=error");
   });
 
   it("通常の stderr はコールバックに渡されずエラー文字列に含まれる", async () => {
@@ -2173,7 +2252,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
 
     const onDiscordEvent = vi.fn();
     await expect(
-      sendMessage("g", "s", "hi", { onDiscordEvent }),
+      sendMessage("g", "s", "hi", { agentId: "main", onDiscordEvent }),
     ).rejects.toThrow("plain error");
     expect(onDiscordEvent).not.toHaveBeenCalled();
   });
@@ -2187,7 +2266,7 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
 
     const onDiscordEvent = vi.fn();
     await expect(
-      sendMessage("g", "s", "hi", { onDiscordEvent }),
+      sendMessage("g", "s", "hi", { agentId: "main", onDiscordEvent }),
     ).rejects.toThrow(/log line[\s\S]*another log/);
     expect(onDiscordEvent).toHaveBeenCalledWith(eventPayload);
   });
@@ -2197,6 +2276,8 @@ describe("sendMessage: onDiscordEvent コールバック", () => {
       `__DISCORD_EVENT__:${JSON.stringify({ type: "tool_start", toolName: "x", args: {} })}\n`,
     );
 
-    await expect(sendMessage("g", "s", "hi")).resolves.toBe("response");
+    await expect(
+      sendMessage("g", "s", "hi", { agentId: "main" }),
+    ).resolves.toBe("response");
   });
 });

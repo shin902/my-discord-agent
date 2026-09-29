@@ -27,11 +27,11 @@ AgentGroup（エージェント設定プロファイル）
 |---|---|
 | `AgentGroup` | エージェントのAgentConfig既定値（モデル・ツール・スキル・mounts）とcontext/trust境界。複数チャンネルを持つ |
 | `Channel` | Discordチャンネル1つ。必ず1つのグループに属し、AgentConfigを任意でoverrideできる。`sessionMode`（`shared` / `thread` / `auto-thread`）を持つ |
-| `Session` | group内の1履歴。`sessions.agent_id` が不変のowner（通常会話は予約ID `main`、Bot TaskはBot ID）。通常会話のsessionIdはmessage.channelId。スレッドは独自のchannelIdを持つ |
+| `Session` | group内の1履歴。identityは `(agent_id,id)`、entryは `(agent_id,session_id)` の複合FK。`sessions.agent_id` が不変のowner（通常会話は予約ID `main`、Bot TaskはBot ID）。通常会話のsessionIdはmessage.channelId。スレッドは独自のchannelIdを持つ |
 | `Bot` | AgentGroupに所属する永続的なrole / config / capability。Bot単位で会話履歴を共有しない |
 | `Task Session` | BotのPR・Issue・調査テーマなど1仕事のworking context。handleで明示resumeし、delivery先とは分離する。初回snapshot保存時にBot ownerを固定する |
 
-ownerはgroup DBのsession identityに属し、別groupや別ownerのtrajectoryを混ぜない。Bot registryの`main` IDは予約済みで使用不可。`bot_task_sessions`はresume/list/admissionの管理情報でありownerの正本ではない。v4 DBの停止・バックアップ・手動変換と再起動の順序は[storage](../storage.md#session-trajectory)を参照。
+ownerはgroup DBのsession identityに属し、別groupや別ownerのtrajectoryを混ぜない。Bot registryの`main` IDは予約済みで使用不可。`bot_task_sessions`はresume/list/admissionの管理情報でありownerの正本ではない。v5→v6 DBの停止・バックアップ・手動変換と再起動の順序は[storage](../storage.md#session-trajectory)を参照。
 
 ## AgentGroupとBotのauthority境界
 

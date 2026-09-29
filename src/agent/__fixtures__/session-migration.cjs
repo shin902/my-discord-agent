@@ -22,11 +22,16 @@ Database.prototype.pragma = function (...args) {
 };
 
 const { appendMessage } = require("../session.ts");
-appendMessage(workerData.group, "worker-session", {
-  role: "user",
-  content: "worker message",
-  timestamp: 2,
-}).then(
+appendMessage(
+  workerData.group,
+  "worker-session",
+  {
+    role: "user",
+    content: "worker message",
+    timestamp: 2,
+  },
+  "main",
+).then(
   () => parentPort.postMessage({ status: "appended", recheckedInTransaction }),
   (error) => parentPort.postMessage({ error: String(error) }),
 );

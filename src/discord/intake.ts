@@ -168,6 +168,7 @@ async function ingest(
               : message.content,
             timestamp: message.createdAt.getTime(),
           },
+          "main",
           humanSource,
         ),
       );

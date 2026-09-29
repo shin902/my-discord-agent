@@ -30,7 +30,6 @@ export async function prepareBotTaskSession(
       display: false,
       timestamp: Date.parse(input.createdAt),
     },
-    undefined,
     input.botId,
   );
   return session;
@@ -39,8 +38,9 @@ export async function prepareBotTaskSession(
 export async function loadBotTaskSystemPrompt(
   groupName: string,
   sessionId: string,
+  agentId: string,
 ): Promise<string> {
-  const messages = await loadMessages(groupName, sessionId);
+  const messages = await loadMessages(groupName, sessionId, agentId);
   const snapshot = messages.find(
     (message) =>
       "customType" in message &&

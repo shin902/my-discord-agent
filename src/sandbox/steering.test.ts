@@ -24,7 +24,7 @@ describe("steering controller", () => {
     const steer = vi.fn(() => {
       order.push("steer");
     });
-    const controller = createSteeringController("group", "session");
+    const controller = createSteeringController("group", "session", "main");
     controller.attach({ steer });
 
     await expect(
@@ -50,11 +50,12 @@ describe("steering controller", () => {
         content: "API層は触らずUIだけ修正して",
         display: false,
       }),
+      "main",
     );
   });
 
   it("rejects without an attached active Agent and persists nothing", async () => {
-    const controller = createSteeringController("group", "session");
+    const controller = createSteeringController("group", "session", "main");
 
     await expect(controller.receive("no active run")).resolves.toBe(false);
     expect(appendMessage).not.toHaveBeenCalled();
@@ -63,7 +64,7 @@ describe("steering controller", () => {
   it("does not hand off when canonical persistence fails", async () => {
     vi.mocked(appendMessage).mockRejectedValueOnce(new Error("disk full"));
     const steer = vi.fn();
-    const controller = createSteeringController("group", "session");
+    const controller = createSteeringController("group", "session", "main");
     controller.attach({ steer });
 
     await expect(controller.receive("unpersisted")).resolves.toBe(false);
@@ -78,7 +79,7 @@ describe("steering controller", () => {
       }),
     );
     const steer = vi.fn();
-    const controller = createSteeringController("group", "session");
+    const controller = createSteeringController("group", "session", "main");
     controller.attach({ steer });
 
     const delivery = controller.receive("finish now");

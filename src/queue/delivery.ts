@@ -508,7 +508,12 @@ export class DeliveryWorker {
           }
           const originalSessionId = job.sessionId;
           const originalConversationPath = job.conversationPath;
-          await renameSession(job.groupName, originalSessionId, threadId);
+          await renameSession(
+            job.groupName,
+            originalSessionId,
+            threadId,
+            "main",
+          );
           try {
             if (promotedConversationPath) {
               const changed = this.repository.db
@@ -549,6 +554,7 @@ export class DeliveryWorker {
               job.groupName,
               threadId,
               originalSessionId,
+              "main",
             ).catch(() => {});
             throw error;
           }

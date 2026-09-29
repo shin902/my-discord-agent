@@ -44,12 +44,14 @@ async function appendTurn(
     group,
     "chat",
     user(),
+    "main",
     origin,
   );
   const assistantEntryId = await session.appendMessage(
     group,
     "chat",
     assistant(),
+    "main",
   );
   return { userEntryId, assistantEntryId };
 }
@@ -61,26 +63,40 @@ describe("committed conversation export", () => {
       group,
       "chat",
       user("original"),
+      "main",
       source("one"),
     );
-    await session.appendMessage(group, "chat", assistant("interim stop"));
+    await session.appendMessage(
+      group,
+      "chat",
+      assistant("interim stop"),
+      "main",
+    );
     await session.appendMessage(
       group,
       "chat",
       user("follow-up in the same run"),
+      "main",
     );
     const assistantEntryId = await session.appendMessage(
       group,
       "chat",
       assistant("adopted final"),
+      "main",
     );
     await session.appendMessage(
       group,
       "chat",
       user("abandoned retry"),
+      "main",
       source("one"),
     );
-    await session.appendMessage(group, "chat", assistant("stale response"));
+    await session.appendMessage(
+      group,
+      "chat",
+      assistant("stale response"),
+      "main",
+    );
     expect([...readCaptureTurns(group, [])]).toEqual([]);
     const turns = [
       ...readCaptureTurns(group, [{ userEntryId, assistantEntryId }]),
@@ -103,12 +119,19 @@ describe("committed conversation export", () => {
   ])("filters the adopted %s final without falling back to an earlier stop or marking export success", async (terminal) => {
     const group = `ineligible-${terminal}`;
     const interim = await appendTurn(group);
-    const assistantEntryId = await session.appendMessage(group, "chat", {
-      ...assistant(terminal === "empty" ? " \n" : "actual final"),
-      stopReason:
-        terminal === "empty" || terminal === "error-field" ? "stop" : terminal,
-      ...(terminal === "error-field" ? { errorMessage: "failed" } : {}),
-    } as AgentMessage);
+    const assistantEntryId = await session.appendMessage(
+      group,
+      "chat",
+      {
+        ...assistant(terminal === "empty" ? " \n" : "actual final"),
+        stopReason:
+          terminal === "empty" || terminal === "error-field"
+            ? "stop"
+            : terminal,
+        ...(terminal === "error-field" ? { errorMessage: "failed" } : {}),
+      } as AgentMessage,
+      "main",
+    );
     const references = [{ userEntryId: interim.userEntryId, assistantEntryId }];
     expect([...readCaptureTurns(group, references)]).toEqual([]);
     const backend = { exportTurn: vi.fn() };
@@ -138,16 +161,19 @@ describe("committed conversation export", () => {
       group,
       "other",
       assistant("wrong session"),
+      "main",
     );
     const unsourcedUser = await session.appendMessage(
       group,
       "chat",
       user("cron prompt"),
+      "main",
     );
     const unsourcedAnswer = await session.appendMessage(
       group,
       "chat",
       assistant("cron answer"),
+      "main",
     );
     const references = [
       { ...pair, userEntryId: 999 },
@@ -174,12 +200,14 @@ describe("committed conversation export", () => {
       group,
       "chat",
       user(content),
+      "main",
       source("one"),
     );
     const assistantEntryId = await session.appendMessage(
       group,
       "chat",
       assistant(),
+      "main",
     );
     expect([
       ...readCaptureTurns(group, [{ userEntryId, assistantEntryId }]),
@@ -194,19 +222,25 @@ describe("committed conversation export", () => {
       group,
       "chat",
       { ...user(), timestamp: processedAt },
+      "main",
       { ...source("one"), messageType: 19, createdAt },
     );
-    const assistantEntryId = await session.appendMessage(group, "chat", {
-      ...assistant(),
-      content: [
-        { type: "thinking", thinking: "private" },
-        { type: "text", text: "answer" },
-      ],
-      timestamp: processedAt + 1000,
-    } as AgentMessage);
-    expect((await session.loadMessages(group, "chat"))[0].timestamp).toBe(
-      processedAt,
+    const assistantEntryId = await session.appendMessage(
+      group,
+      "chat",
+      {
+        ...assistant(),
+        content: [
+          { type: "thinking", thinking: "private" },
+          { type: "text", text: "answer" },
+        ],
+        timestamp: processedAt + 1000,
+      } as AgentMessage,
+      "main",
     );
+    expect(
+      (await session.loadMessages(group, "chat", "main"))[0].timestamp,
+    ).toBe(processedAt);
     const turn = [
       ...readCaptureTurns(group, [{ userEntryId, assistantEntryId }]),
     ][0];
@@ -227,7 +261,7 @@ describe("committed conversation export", () => {
     expect(await readFile(filename)).toEqual(before);
     expect([...readCaptureTurns("absent", [pair])]).toEqual([]);
     expect(existsSync(join(root, "absent"))).toBe(false);
-    await session.renameSession("readonly", "chat", "materialized");
+    await session.renameSession("readonly", "chat", "materialized", "main");
     expect([...readCaptureTurns("readonly", [pair])][0].sessionId).toBe(
       "materialized",
     );
@@ -236,6 +270,7 @@ describe("committed conversation export", () => {
         "readonly",
         "materialized",
         assistant(),
+        "main",
         source("bad"),
       ),
     ).rejects.toThrow(/user entry/);
@@ -262,6 +297,50 @@ describe("committed conversation export", () => {
         .get(pair.userEntryId),
     ).toEqual({ id: pair.userEntryId });
     inspect.close();
+  });
+
+  it("does not pair adopted entries across owners of the same session ID", async () => {
+    const group = "cross-owner";
+    const userEntryId = await session.appendMessage(
+      group,
+      "shared",
+      user(),
+      "main",
+      source("one"),
+    );
+    const workerEntryId = await session.appendMessage(
+      group,
+      "shared",
+      assistant("worker"),
+      "worker",
+    );
+    expect([
+      ...readCaptureTurns(group, [
+        { userEntryId, assistantEntryId: workerEntryId },
+      ]),
+    ]).toEqual([]);
+    const mainEntryId = await session.appendMessage(
+      group,
+      "shared",
+      assistant("main"),
+      "main",
+    );
+    expect([
+      ...readCaptureTurns(group, [
+        { userEntryId, assistantEntryId: mainEntryId },
+      ]),
+    ]).toHaveLength(1);
+  });
+
+  it("fails fast on an unmigrated v5 store instead of silently exporting zero turns", async () => {
+    const pair = await appendTurn("legacy-v5");
+    const filename = join(root, "legacy-v5", "sessions.sqlite");
+    const db = new Database(filename);
+    db.pragma("user_version = 5");
+    db.close();
+    expect(() => [...readCaptureTurns("legacy-v5", [pair])]).toThrow(
+      "Unsupported session schema: 5",
+    );
   });
 
   it("keeps backend/group namespaces independent with the unchanged success-only ledger schema", async () => {

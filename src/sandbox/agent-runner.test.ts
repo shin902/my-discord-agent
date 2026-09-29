@@ -50,12 +50,21 @@ const {
   DEFAULT_SYSTEM_PROMPT,
 } = await import("./agent-runner.js");
 // Runner tests supply the model that manager normally resolves before invoking it.
-const runAgentLoop = (...args: Parameters<typeof runAgentLoopRaw>) => {
+type TestRunArgs = [
+  string,
+  string,
+  string,
+  Parameters<typeof runAgentLoopRaw>[3],
+  Partial<Parameters<typeof runAgentLoopRaw>[4]>?,
+  ...unknown[],
+];
+const runAgentLoop = (...args: TestRunArgs) => {
   args[3] = {
     model: { provider: "zai-custom", modelId: "glm-4.7-flash" },
     ...args[3],
   };
-  return runAgentLoopRaw(...args);
+  args[4] = { ...args[4], agentId: "main" };
+  return runAgentLoopRaw(...(args as Parameters<typeof runAgentLoopRaw>));
 };
 const { loadMessages, appendMessage } = await import("../agent/session.js");
 const { readFile, readdir } = await import("node:fs/promises");
@@ -108,7 +117,7 @@ describe("runner stdin transport", () => {
 describe("runAgentLoop", () => {
   it("rejects when manager has not resolved a model", async () => {
     await expect(
-      runAgentLoopRaw("test-group", "session-1", "hi", {}),
+      runAgentLoopRaw("test-group", "session-1", "hi", {}, { agentId: "main" }),
     ).rejects.toThrow("実行モデルが設定されていません");
     expect(loadMessages).not.toHaveBeenCalled();
     expect(appendMessage).not.toHaveBeenCalled();
@@ -204,17 +213,20 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       messages[0],
+      "main",
       source,
     );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       messages[1],
+      "main",
     );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
       messages[2],
+      "main",
     );
     if (failed) expect(onConversation).not.toHaveBeenCalled();
     else
@@ -345,7 +357,11 @@ describe("runAgentLoop", () => {
       {},
     );
 
-    expect(loadMessages).toHaveBeenCalledWith("test-group", "session-1");
+    expect(loadMessages).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      "main",
+    );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
       "session-1",
@@ -354,6 +370,7 @@ describe("runAgentLoop", () => {
         customType: "session-time-anchor",
         display: false,
       }),
+      "main",
     );
     expect(lastAgentOptions).toMatchObject({
       initialState: {
@@ -364,10 +381,15 @@ describe("runAgentLoop", () => {
     });
     expect(mockAgent.prompt).toHaveBeenCalledWith("こんにちは");
     expect(result).toBe("Hello world");
-    expect(appendMessage).toHaveBeenCalledWith("test-group", "session-1", {
-      role: "assistant",
-      content: [{ type: "text", text: "Hello world" }],
-    });
+    expect(appendMessage).toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello world" }],
+      },
+      "main",
+    );
   });
 
   it("accepts and loads more than 10 image paths", async () => {
@@ -460,6 +482,7 @@ describe("runAgentLoop", () => {
         display: false,
         timestamp: expectedAnchorTimestamp,
       }),
+      "main",
     );
     expect(lastAgentOptions).toMatchObject({
       initialState: {
@@ -996,6 +1019,7 @@ describe("runAgentLoop", () => {
         customType: "system-prompt-snapshot",
         content: "カスタムプロンプト",
       }),
+      "main",
     );
     expect(appendMessage).toHaveBeenCalledWith(
       "test-group",
@@ -1005,6 +1029,7 @@ describe("runAgentLoop", () => {
         customType: "context-bootstrap",
         content: expect.stringContaining("ユーザーは猫が好き"),
       }),
+      "main",
     );
 
     // messages 配列の先頭に system-prompt-snapshot、続いて context-bootstrap が含まれる
@@ -1061,6 +1086,7 @@ describe("runAgentLoop", () => {
           /ユーザーは猫が好き[\s\S]*一人称は「僕」/,
         ),
       }),
+      "main",
     );
 
     // messages 配列は system-prompt-snapshot → context-bootstrap の順で並ぶ
@@ -1385,6 +1411,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       expect.objectContaining({ customType: "context-bootstrap" }),
+      "main",
     );
   });
 
@@ -1440,6 +1467,7 @@ describe("runAgentLoop", () => {
         customType: "context-bootstrap",
         content: expect.stringContaining("保存するcontext"),
       }),
+      "main",
     );
   });
 
@@ -1842,6 +1870,7 @@ describe("runAgentLoop", () => {
       "test-group",
       "session-1",
       userMsg,
+      "main",
     );
   });
 
@@ -1975,6 +2004,7 @@ describe("runAgentLoop", () => {
         customType: "context-bootstrap",
         content: expect.stringContaining("初回context"),
       }),
+      "main",
     );
     expect(result).toContain("見つかりません");
     expect(AgentMock).not.toHaveBeenCalled();
@@ -1991,6 +2021,7 @@ describe("runAgentLoop", () => {
           content: "./command unknown",
           timestamp: expect.any(Number),
         },
+        "main",
         source,
       ],
       [
@@ -2003,6 +2034,7 @@ describe("runAgentLoop", () => {
           timestamp: expect.any(Number),
           usage: expect.objectContaining({ totalTokens: 0 }),
         }),
+        "main",
       ],
     ]);
   });
@@ -2058,6 +2090,7 @@ describe("runAgentLoop - errorMessage 付き assistant メッセージ", () => {
       "test-group",
       "session-1",
       errorMsg,
+      "main",
     );
     stderrSpy.mockRestore();
   });

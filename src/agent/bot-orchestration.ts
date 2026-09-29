@@ -162,9 +162,11 @@ export async function handleBotToolRequest(
             prompt,
             {
               configOverride,
+              agentId: session.botId,
               systemPromptSnapshotContent: await loadBotTaskSystemPrompt(
                 group.name,
                 session.sessionId,
+                session.botId,
               ),
               systemPromptSnapshotPresent: true,
               enableBotTool: false,

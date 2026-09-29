@@ -20,17 +20,42 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+it("keeps cleanup owner-neutral while only Main creates per-run sessions today", async () => {
+  const now = Date.now();
+  await retention.markEphemeralCronSession("owner-neutral", "shared");
+  await session.appendMessage(
+    "owner-neutral",
+    "shared",
+    { role: "user", content: "bot", timestamp: now },
+    "worker",
+  );
+  const db = new Database(path.join(root, "owner-neutral", "sessions.sqlite"));
+  db.prepare(
+    "UPDATE sessions SET kind='cron-per-run', updated_at=? WHERE agent_id='worker' AND id='shared'",
+  ).run(now - 8 * 86_400_000);
+  expect(await retention.cleanupEphemeralCronSessions(now)).toBe(1);
+  expect(
+    db.prepare("SELECT agent_id FROM sessions WHERE id='shared'").all(),
+  ).toEqual([{ agent_id: "main" }]);
+  db.close();
+});
+
 it("deletes only expired tagged cron sessions and cascades entries across groups", async () => {
   const now = Date.now();
   for (const group of ["cleanup-a", "cleanup-b"]) {
     await retention.markEphemeralCronSession(group, "expired");
     await retention.markEphemeralCronSession(group, "recent");
     for (const id of ["expired", "recent", "destination", "normal"]) {
-      await session.appendMessage(group, id, {
-        role: "user",
-        content: id,
-        timestamp: now,
-      });
+      await session.appendMessage(
+        group,
+        id,
+        {
+          role: "user",
+          content: id,
+          timestamp: now,
+        },
+        "main",
+      );
     }
     const db = new Database(path.join(root, group, "sessions.sqlite"));
     db.prepare(

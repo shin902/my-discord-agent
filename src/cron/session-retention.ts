@@ -12,15 +12,15 @@ export async function markEphemeralCronSession(
   sessionId: string,
 ): Promise<void> {
   // Let the session store validate names and initialize/migrate its schema.
-  await loadMessages(groupName, sessionId);
+  await loadMessages(groupName, sessionId, "main");
   const db = new Database(
     path.join(sessionsDir, groupName, "sessions.sqlite"),
     { fileMustExist: true },
   );
   try {
     const now = Date.now();
-    db.prepare(`INSERT INTO sessions(id, kind, created_at, updated_at)
-      VALUES (?, 'cron-per-run', ?, ?) ON CONFLICT(id) DO NOTHING`).run(
+    db.prepare(`INSERT INTO sessions(agent_id, id, kind, created_at, updated_at)
+      VALUES ('main', ?, 'cron-per-run', ?, ?) ON CONFLICT(agent_id, id) DO NOTHING`).run(
       sessionId,
       now,
       now,

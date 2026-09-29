@@ -94,7 +94,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
     content: string,
     options: Omit<
       NonNullable<Parameters<typeof sendMessage>[3]>,
-      "heldInferenceResource"
+      "heldInferenceResource" | "agentId"
     >,
   ) => {
     const release = await acquireInferenceLock(
@@ -105,6 +105,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
       // #562: remove when Memory Agent execution uses the durable cron poller path.
       await markEphemeralCronSession(groupName, sessionId);
       return await sendMessage(groupName, sessionId, content, {
+        agentId: "main",
         ...options,
         heldInferenceResource:
           memoryLockTarget.concurrency === "serial"

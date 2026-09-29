@@ -9,12 +9,18 @@ import { type SessionSource, SessionSourceSchema } from "./source.js";
 const SESSIONS_DIR =
   process.env.SESSIONS_DIR || path.join(process.cwd(), "data", "sessions");
 const DB_FILENAME = "sessions.sqlite";
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function validateName(name: string, label: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`不正な${label}: ${name}`);
   }
+}
+
+function validateOwner(agentId: string): void {
+  // Bot registry IDs are arbitrary non-empty strings, not path components.
+  if (typeof agentId !== "string" || agentId.length === 0)
+    throw new Error("Agent IDが不正です");
 }
 
 function groupDir(groupName: string): string {
@@ -96,25 +102,29 @@ function initializeSchema(db: Database.Database): void {
     }
     db.exec(`
         CREATE TABLE IF NOT EXISTS sessions (
-          id TEXT PRIMARY KEY,
+          id TEXT NOT NULL,
           kind TEXT NOT NULL DEFAULT 'conversation',
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
-          agent_id TEXT NOT NULL DEFAULT 'main'
+          agent_id TEXT NOT NULL,
+          PRIMARY KEY (agent_id, id)
         );
         CREATE INDEX sessions_agent_id_id ON sessions(agent_id, id);
         CREATE TABLE IF NOT EXISTS session_entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
+          session_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
           sequence INTEGER NOT NULL,
           entry_type TEXT NOT NULL,
           payload_json TEXT NOT NULL,
           created_at INTEGER NOT NULL,
           source_json TEXT,
-          UNIQUE(session_id, sequence)
+          FOREIGN KEY (agent_id, session_id) REFERENCES sessions(agent_id, id)
+            ON UPDATE CASCADE ON DELETE CASCADE,
+          UNIQUE(agent_id, session_id, sequence)
         );
         CREATE INDEX session_entries_session_id_id
-          ON session_entries(session_id, id);
+          ON session_entries(agent_id, session_id, id);
         CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
       `);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -147,16 +157,18 @@ export function sessionConversationPath(
 export async function loadMessages(
   groupName: string,
   sessionId: string,
+  agentId: string,
 ): Promise<AgentMessage[]> {
   validateName(groupName, "グループ名");
   validateName(sessionId, "セッションID");
+  validateOwner(agentId);
   const db = await openDatabase(groupName);
   try {
     const rows = db
       .prepare(
-        "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
+        "SELECT payload_json FROM session_entries WHERE agent_id=? AND session_id=? ORDER BY sequence",
       )
-      .all(sessionId) as Array<{ payload_json: string }>;
+      .all(agentId, sessionId) as Array<{ payload_json: string }>;
     return rows.map((row) => parseStoredMessage(row.payload_json));
   } finally {
     db.close();
@@ -183,13 +195,14 @@ export function* readConversations(
   try {
     const version = db.pragma("user_version", { simple: true }) as number;
     // Pre-reference stores have no adopted conversations; do not migrate on export.
-    if (version >= 1 && version < SCHEMA_VERSION) return;
+    if (version >= 1 && version < 5) return;
     if (version !== SCHEMA_VERSION)
       throw new Error(`Unsupported session schema: ${version}`);
     const lookup = db.prepare(`
       SELECT u.session_id, u.source_json, u.payload_json AS user_json,
         a.payload_json AS assistant_json
-      FROM session_entries u JOIN session_entries a ON a.session_id = u.session_id
+      FROM session_entries u JOIN session_entries a
+        ON a.agent_id = u.agent_id AND a.session_id = u.session_id
       WHERE u.id = ? AND a.id = ? AND u.entry_type = 'user'
         AND a.entry_type = 'assistant' AND u.source_json IS NOT NULL
     `);
@@ -222,6 +235,7 @@ export function* readOwnerSessions(
   agentId: string,
 ): Generator<{ sessionId: string; message: AgentMessage }> {
   validateName(groupName, "グループ名");
+  validateOwner(agentId);
   const dbPath = path.join(groupDir(groupName), DB_FILENAME);
   if (!existsSync(dbPath)) return;
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
@@ -232,16 +246,16 @@ export function* readOwnerSessions(
     const sessions = db.prepare(
       `SELECT id FROM sessions s WHERE agent_id=?
         AND EXISTS (SELECT 1 FROM session_entries e
-          WHERE e.session_id=s.id AND e.entry_type='user')
+          WHERE e.agent_id=s.agent_id AND e.session_id=s.id AND e.entry_type='user')
         ORDER BY created_at, id`,
     );
     const entries = db.prepare(
-      "SELECT payload_json FROM session_entries WHERE session_id=? ORDER BY sequence",
+      "SELECT payload_json FROM session_entries WHERE agent_id=? AND session_id=? ORDER BY sequence",
     );
     for (const { id } of sessions.iterate(agentId) as Iterable<{
       id: string;
     }>) {
-      for (const { payload_json } of entries.iterate(id) as Iterable<{
+      for (const { payload_json } of entries.iterate(agentId, id) as Iterable<{
         payload_json: string;
       }>) {
         yield { sessionId: id, message: parseStoredMessage(payload_json) };
@@ -256,33 +270,33 @@ export async function renameSession(
   groupName: string,
   fromSessionId: string,
   toSessionId: string,
+  agentId: string,
 ): Promise<void> {
   validateName(groupName, "グループ名");
   validateName(fromSessionId, "セッションID");
   validateName(toSessionId, "セッションID");
+  validateOwner(agentId);
   if (fromSessionId === toSessionId) return;
 
   const db = await openDatabase(groupName);
   try {
     db.transaction(() => {
       const source = db
-        .prepare("SELECT 1 FROM sessions WHERE id=?")
-        .get(fromSessionId);
+        .prepare("SELECT 1 FROM sessions WHERE agent_id=? AND id=?")
+        .get(agentId, fromSessionId);
       if (!source)
         throw new Error(`セッションが見つかりません: ${fromSessionId}`);
       const destination = db
-        .prepare("SELECT 1 FROM sessions WHERE id=?")
-        .get(toSessionId);
+        .prepare("SELECT 1 FROM sessions WHERE agent_id=? AND id=?")
+        .get(agentId, toSessionId);
       if (destination) {
         throw new Error(
           `リネーム先のセッションが既に存在します: ${toSessionId}`,
         );
       }
-      db.prepare("UPDATE sessions SET id=?, updated_at=? WHERE id=?").run(
-        toSessionId,
-        Date.now(),
-        fromSessionId,
-      );
+      db.prepare(
+        "UPDATE sessions SET id=?, updated_at=? WHERE agent_id=? AND id=?",
+      ).run(toSessionId, Date.now(), agentId, fromSessionId);
     })();
   } finally {
     db.close();
@@ -293,8 +307,8 @@ export async function appendMessage(
   groupName: string,
   sessionId: string,
   message: AgentMessage,
+  agentId: string,
   source?: SessionSource,
-  agentId = "main",
 ): Promise<number> {
   if (source && message.role !== "user") {
     throw new Error("source provenance requires a user entry");
@@ -304,6 +318,7 @@ export async function appendMessage(
     : null;
   validateName(groupName, "グループ名");
   validateName(sessionId, "セッションID");
+  validateOwner(agentId);
   const db = await openDatabase(groupName);
   const sanitized = sanitizeMessage(message);
   const timestamp = messageTimestamp(sanitized);
@@ -313,11 +328,11 @@ export async function appendMessage(
       if (source) {
         const existing = db
           .prepare(`
-            SELECT id FROM session_entries WHERE session_id=?
+            SELECT id FROM session_entries WHERE agent_id=? AND session_id=?
               AND json_extract(source_json, '$.kind')=?
               AND json_extract(source_json, '$.sourceId')=?
           `)
-          .get(sessionId, source.kind, source.sourceId) as
+          .get(agentId, sessionId, source.kind, source.sourceId) as
           | { id: number }
           | undefined;
         if (existing) return existing.id;
@@ -325,20 +340,22 @@ export async function appendMessage(
       db.prepare(`
         INSERT INTO sessions(id, created_at, updated_at, agent_id)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
+        ON CONFLICT(agent_id, id) DO UPDATE SET updated_at=excluded.updated_at
       `).run(sessionId, timestamp, timestamp, agentId);
       const inserted = db
         .prepare(`
-        INSERT INTO session_entries(session_id, sequence, entry_type, payload_json, created_at, source_json)
-        SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?
-        FROM session_entries WHERE session_id=?
+        INSERT INTO session_entries(agent_id, session_id, sequence, entry_type, payload_json, created_at, source_json)
+        SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?
+        FROM session_entries WHERE agent_id=? AND session_id=?
       `)
         .run(
+          agentId,
           sessionId,
           entryType(sanitized),
           JSON.stringify(sanitized),
           timestamp,
           sourceJson,
+          agentId,
           sessionId,
         );
       return Number(inserted.lastInsertRowid);
