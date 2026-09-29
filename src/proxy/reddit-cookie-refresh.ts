@@ -72,11 +72,6 @@ export async function readAuthenticatedRedditCookies(
     /\/login(?:[/?#]|$)/.test(page.url())
   )
     throw new Error("Reddit navigation failed or login expired");
-  // A 200 challenge/error document is not a successful Reddit page.
-  await page
-    .locator("shreddit-app")
-    .waitFor({ state: "attached", timeout: NAV_TIMEOUT_MS });
-
   const me = await context.request.get("https://www.reddit.com/api/me.json", {
     timeout: NAV_TIMEOUT_MS,
   });
@@ -90,10 +85,8 @@ export async function readAuthenticatedRedditCookies(
     throw new Error("Reddit session is not authenticated");
 
   const cookies = await context.cookies("https://www.reddit.com");
-  if (
-    !cookies.some((cookie) => cookie.name === "reddit_session" && cookie.value)
-  )
-    throw new Error("Reddit session cookie is missing");
+  if (!cookies.some((cookie) => cookie.value))
+    throw new Error("Reddit cookies are missing");
   return cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
 }
 

@@ -28,17 +28,11 @@ function browser(
   status = 200,
   url = "https://www.reddit.com/",
   identity: unknown = { kind: "t2", data: { name: "tester" } },
-  cookies = [{ name: "reddit_session", value: "private" }],
-  challenge = false,
+  cookies = [{ name: "token_v2", value: "private" }],
 ) {
   const page = {
     goto: vi.fn().mockResolvedValue({ ok: () => status < 400 }),
     url: () => url,
-    locator: vi.fn().mockReturnValue({
-      waitFor: challenge
-        ? vi.fn().mockRejectedValue(new Error("challenge"))
-        : vi.fn(),
-    }),
   };
   const context = {
     newPage: vi.fn().mockResolvedValue(page),
@@ -54,22 +48,19 @@ function browser(
 }
 
 describe("Reddit host refresh", () => {
-  it("requires a successful page, authenticated identity and session cookie", async () => {
+  it("accepts authenticated sessions without frontend or cookie-name assumptions", async () => {
     await expect(readAuthenticatedRedditCookies(browser())).resolves.toBe(
-      "reddit_session=private",
+      "token_v2=private",
     );
     for (const context of [
       browser(429),
       browser(503),
       browser(200, "https://www.reddit.com/login/"),
       browser(200, "https://www.reddit.com/", {}),
-      browser(200, "https://www.reddit.com/", undefined, undefined, true),
-      browser(
-        200,
-        "https://www.reddit.com/",
-        { kind: "t2", data: { name: "tester" } },
-        [{ name: "challenge", value: "1" }],
-      ),
+      browser(200, "https://www.reddit.com/", undefined, []),
+      browser(200, "https://www.reddit.com/", undefined, [
+        { name: "token_v2", value: "" },
+      ]),
     ])
       await expect(readAuthenticatedRedditCookies(context)).rejects.toThrow();
 
