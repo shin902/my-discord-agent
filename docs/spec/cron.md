@@ -182,9 +182,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
 backendごとに1 jobを定義し、`settings`にbackend接続・eligible groups・batch sizeを置きます。handlerは既存runtime queueへのenqueueのみを行います。queue workerがstartup時の `_jobs` cacheからcron IDを解決し、read-only canonical session trajectoryからbounded batchをexportします。restart前のjobも新cacheが正です。同一backendの直列化・retry・lease・recoveryは既存queueへ委譲します。詳細とexampleは [Agent Memory export](../agent-memory.md) を参照してください。
 
-## 画面画像の要約（`jobs/screen-capture-summary.ts`）
-
-host専用DBの未完了画像が`settings.limit`枚揃ったときだけ、古いものからちょうど`limit`枚を1 batchとして処理します。1回のcron invocationは1 batchだけです。`settings.mode`が`summarize`なら`settings.visionModel`で画像ごとの要約をDBへ保存し、全件揃ってからテキストを指定AgentGroupへ渡します。`direct`なら画像を直接渡して、既存`capturelog`との差分を統合します。VLMはCredential Proxyと既存provider concurrencyを使い、batch全体の通常LLM成功後にだけ`completed_at`を更新します。DB-level claimは持たないため、同じscreen-capture DBを処理するhandlerは1 process内の1 jobだけにします。設定とMac/Tailscale導入手順は [画面画像の収集と要約](../screen-capture.md) を参照してください。
+画面画像の要約はcronではなく、capture保存後とHost起動時にpending枚数を確認するScreen Capture機能が起動します。設定とMac/Tailscale導入手順は [画面画像の収集と要約](../screen-capture.md) を参照してください。
 
 ## メール処理（`jobs/mail.ts`）
 

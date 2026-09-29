@@ -7,11 +7,16 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { sendMessage } from "../../agent/manager.js";
 import type { CredentialEntry } from "../../config/credential-proxy.js";
+import { summarizeScreenCaptureBatch } from "../../features/screen-capture-summary.js";
 import { startScreenCaptureReceiver } from "../../integrations/screen-capture/receiver.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
 import { createRequestHandler } from "../../proxy/credential-proxy-server.js";
 import type { CronContext } from "../runner.js";
-import handler from "./screen-capture-summary.js";
+
+const handler = (ctx: CronContext) =>
+  summarizeScreenCaptureBatch(
+    ctx as Parameters<typeof summarizeScreenCaptureBatch>[0],
+  );
 
 const state = vi.hoisted(() => ({ port: 0, entries: [] as CredentialEntry[] }));
 vi.mock("node:child_process", () => ({

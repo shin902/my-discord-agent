@@ -17,6 +17,7 @@ function reply(response: ServerResponse, status: number, body: object): void {
 export async function startScreenCaptureReceiver(options: {
   port: number;
   dbPath?: string;
+  onStored?: () => void;
 }) {
   const db = openScreenCaptureDb(options.dbPath);
   const insert =
@@ -89,8 +90,9 @@ export async function startScreenCaptureReceiver(options: {
       return;
     }
     const id = parsedId.data.toLowerCase();
+    let inserted: boolean;
     try {
-      insert.run(id, image, capturedAt);
+      inserted = insert.run(id, image, capturedAt).changes > 0;
       // A retry must not replace a different capture or reset its summary.
       if (!matches.get(id, image)) {
         reply(response, 409, {
@@ -103,6 +105,7 @@ export async function startScreenCaptureReceiver(options: {
       return;
     }
     reply(response, 200, { accepted: id });
+    if (inserted) options.onStored?.();
   });
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;

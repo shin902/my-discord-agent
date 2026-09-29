@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { loadRawConfig } from "./config.js";
-import { loadScreenCaptureReceiverConfig } from "./screen-capture.js";
+import {
+  loadScreenCaptureReceiverConfig,
+  loadScreenCaptureSummaryConfig,
+} from "./screen-capture.js";
 
 vi.mock("./config.js", () => ({ loadRawConfig: vi.fn() }));
 
@@ -24,5 +27,34 @@ describe("screen capture receiver config", () => {
       screenCaptureReceiver: config,
     });
     await expect(loadScreenCaptureReceiverConfig()).rejects.toThrow();
+  });
+});
+
+describe("screen capture summary config", () => {
+  it("is disabled unless explicitly configured", async () => {
+    vi.mocked(loadRawConfig).mockResolvedValue({});
+    await expect(loadScreenCaptureSummaryConfig()).resolves.toBeUndefined();
+  });
+
+  it("validates the batch settings when enabled", async () => {
+    vi.mocked(loadRawConfig).mockResolvedValue({
+      screenCaptureSummary: {
+        enabled: true,
+        groupName: "logbook",
+        settings: { mode: "direct", limit: 2 },
+      },
+    });
+    await expect(loadScreenCaptureSummaryConfig()).resolves.toMatchObject({
+      groupName: "logbook",
+      settings: { mode: "direct", limit: 2 },
+    });
+    vi.mocked(loadRawConfig).mockResolvedValue({
+      screenCaptureSummary: {
+        enabled: true,
+        groupName: "logbook",
+        settings: { mode: "direct", limit: 0 },
+      },
+    });
+    await expect(loadScreenCaptureSummaryConfig()).rejects.toThrow();
   });
 });
