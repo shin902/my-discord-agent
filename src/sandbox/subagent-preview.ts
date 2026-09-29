@@ -1,8 +1,5 @@
 /** Return a compact, mention-safe preview suitable for Discord progress events. */
-export function sanitizeSubagentPreview(
-  value: string,
-  maxLength: number,
-): string {
+function sanitizeSubagentPreview(value: string, maxLength: number): string {
   const normalized = value
     .replace(/\r\n?|\n/g, " ")
     .replace(/@/g, "＠")

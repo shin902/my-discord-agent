@@ -35,6 +35,12 @@ pnpm typecheck
 pnpm test
 ```
 
+## Test ownership
+
+- Keep one primary proof per contract at its production boundary. Mocked startup failures should test orchestration once per callee, not replay validation that the mock bypasses.
+- Consolidate identical invocations without dropping their assertions, especially sandbox launch and credential boundaries.
+- Exercise production queries and transformations instead of copying their implementation into tests. Negative fixtures must reach the intended guard, not pass through another rejection or truncation.
+
 ## Architecture invariants
 
 - Normal agent tools run inside the sandbox container. Do not give them direct host filesystem or process access.

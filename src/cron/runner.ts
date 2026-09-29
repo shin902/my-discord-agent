@@ -184,7 +184,7 @@ export function parseIntervalMs(schedule: string): number | null {
   return parseInt(m[1], 10) * (m[2] === "h" ? 3_600_000 : 60_000);
 }
 
-export function isCronExpr(schedule: string): boolean {
+function isCronExpr(schedule: string): boolean {
   return schedule.trim().split(/\s+/).length === 5;
 }
 

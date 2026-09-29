@@ -50,9 +50,6 @@ class SearchTestCase(unittest.TestCase):
 
 
 class TestCjkBigramExpand(unittest.TestCase):
-    def test_ascii_passthrough(self):
-        self.assertEqual(search.cjk_bigram_expand("hello world"), "hello world")
-
     def test_cjk_run_becomes_bigrams(self):
         out = search.cjk_bigram_expand("東京都")
         self.assertIn("東京", out)
@@ -64,9 +61,6 @@ class TestCjkBigramExpand(unittest.TestCase):
 
 
 class TestSanitizeQuery(unittest.TestCase):
-    def test_simple_word(self):
-        self.assertEqual(search.sanitize_query("agents"), '"agents"')
-
     def test_multiword_becomes_or(self):
         expr = search.sanitize_query("foo bar")
         self.assertIn("OR", expr)

@@ -139,7 +139,7 @@ describe("createSubagentTool", () => {
     await expect(
       tool.execute(
         "tool-call",
-        { task: `@everyone investigate\n${"x".repeat(200)}` },
+        { task: `@everyone <@123> investigate\r\n${"x".repeat(200)}` },
         undefined,
         (update) => updates.push({ details: update.details }),
       ),
@@ -150,7 +150,12 @@ describe("createSubagentTool", () => {
       worker: "ephemeral",
       status: "running",
     });
+    expect(updates[0].details.taskPreview).toMatch(
+      /^＠everyone <＠123> investigate /,
+    );
+    expect(updates[0].details.taskPreview).not.toMatch(/[\r\n]/);
     expect(updates[0].details.taskPreview).not.toContain("@everyone");
+    expect(updates[0].details.taskPreview).not.toContain("<@123>");
     expect(String(updates[0].details.taskPreview).length).toBeLessThanOrEqual(
       120,
     );

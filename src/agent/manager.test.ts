@@ -136,7 +136,7 @@ describe("sendMessage: Docker 起動構成", () => {
     vi.resetModules();
   });
 
-  it("docker run --rm -i --pull=always --memory=512m --cpus=1 を含む", async () => {
+  it("isolates the default Docker launch with scoped mounts, firewall bootstrap, and proxy-only credentials", async () => {
     const { sendMessage } = await import("./manager.js");
     await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
     const args = spawnMock.mock.calls[0][1] as string[];
@@ -148,6 +148,54 @@ describe("sendMessage: Docker 起動構成", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--label", "my-discord-agent.runner=true"]),
     );
+    expect(args).toContain("--add-host=host.docker.internal:host-gateway");
+    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
+    expect(
+      volumeArgs.some(
+        (v) =>
+          v.includes("data/sessions/test-group") &&
+          v.endsWith(":/sessions/test-group"),
+      ),
+    ).toBe(true);
+    expect(volumeArgs.some((v) => v.endsWith(":/sessions"))).toBe(false);
+    expect(
+      volumeArgs.some(
+        (v) => v.includes("test-group") && v.includes(":/workspace"),
+      ),
+    ).toBe(true);
+    expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
+    const userIdx = args.indexOf("--user");
+    expect(userIdx).toBeGreaterThanOrEqual(0);
+    expect(args[userIdx + 1]).toBe("0:0");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--cap-drop=ALL",
+        "--cap-add=NET_ADMIN",
+        "--cap-add=SETUID",
+        "--cap-add=SETGID",
+        "--cap-add=SETPCAP",
+        "--security-opt=no-new-privileges",
+        "--network=bridge",
+        "--dns=127.0.0.1",
+        "--entrypoint=/bin/sh",
+        "/app/sandbox-entrypoint.sh",
+      ]),
+    );
+    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
+    expect(envArgs).toContain("HOME=/tmp");
+    expect(envArgs).toContain(`SANDBOX_UID=${process.getuid?.()}`);
+    expect(envArgs).toContain(`SANDBOX_GID=${process.getgid?.()}`);
+    expect(envArgs).toContain("SANDBOX_PROXY_PORTS=12345");
+    expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_JSON="))).toBe(
+      true,
+    );
+    expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_PATH="))).toBe(
+      false,
+    );
+    const nodeIdx = args.indexOf("node");
+    expect(nodeIdx).toBeGreaterThan(-1);
+    expect(args[nodeIdx + 1]).toBe("/app/runner.mjs");
+    expect(args).toContain("localhost:5050/my-discord-agent-runner:latest");
   });
 
   it("shutdown開始後の新規sendMessageはDockerをspawnしない", async () => {
@@ -611,112 +659,6 @@ describe("sendMessage: Docker 起動構成", () => {
       killAllRunningContainers({ includeOrphans: true, strict: true }),
     ).rejects.toThrow("container cleanup kill failed");
     expect(execFileMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("--add-host=host.docker.internal:host-gateway を含む", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    expect(args).toContain("--add-host=host.docker.internal:host-gateway");
-  });
-
-  it("/sessions/{groupName} にグループ単位でmountする", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
-    expect(
-      volumeArgs.some(
-        (v) =>
-          v.includes("data/sessions/test-group") &&
-          v.endsWith(":/sessions/test-group"),
-      ),
-    ).toBe(true);
-    expect(volumeArgs.some((v) => v.endsWith(":/sessions"))).toBe(false);
-  });
-
-  it("/workspace を mount する", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
-    expect(
-      volumeArgs.some(
-        (v) => v.includes("test-group") && v.includes(":/workspace"),
-      ),
-    ).toBe(true);
-  });
-
-  it("/config を mount しない", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    const volumeArgs = args.filter((_, i) => args[i - 1] === "-v");
-    expect(volumeArgs.some((v) => v.includes(":/config"))).toBe(false);
-  });
-
-  it("trusted bootstrapでfirewallを設定し、Agent用UID:GIDを渡す", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    const userIdx = args.indexOf("--user");
-    expect(userIdx).toBeGreaterThanOrEqual(0);
-    expect(args[userIdx + 1]).toBe("0:0");
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "--cap-drop=ALL",
-        "--cap-add=NET_ADMIN",
-        "--cap-add=SETUID",
-        "--cap-add=SETGID",
-        "--cap-add=SETPCAP",
-        "--security-opt=no-new-privileges",
-        "--network=bridge",
-        "--dns=127.0.0.1",
-        "--entrypoint=/bin/sh",
-        "/app/sandbox-entrypoint.sh",
-      ]),
-    );
-    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
-    expect(envArgs).toContain("HOME=/tmp");
-    expect(envArgs).toContain(`SANDBOX_UID=${process.getuid?.()}`);
-    expect(envArgs).toContain(`SANDBOX_GID=${process.getgid?.()}`);
-    expect(envArgs).toContain("SANDBOX_PROXY_PORTS=12345");
-  });
-
-  it("CREDENTIAL_PROXY_JSON 環境変数を渡す", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
-    expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_JSON="))).toBe(
-      true,
-    );
-  });
-
-  it("CREDENTIAL_PROXY_PATH 環境変数を渡さない", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    const envArgs = args.filter((_, i) => args[i - 1] === "-e");
-    expect(envArgs.some((v) => v.startsWith("CREDENTIAL_PROXY_PATH="))).toBe(
-      false,
-    );
-  });
-
-  it("node /app/runner.mjs で実行する", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    const nodeIdx = args.indexOf("node");
-    expect(nodeIdx).toBeGreaterThan(-1);
-    expect(args[nodeIdx + 1]).toBe("/app/runner.mjs");
-  });
-
-  it("カスタムイメージを使用する", async () => {
-    const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
-    const args = spawnMock.mock.calls[0][1] as string[];
-    expect(args).toContain("localhost:5050/my-discord-agent-runner:latest");
   });
 
   it("同じ group/session の active run は Agent.abort を優先する", async () => {

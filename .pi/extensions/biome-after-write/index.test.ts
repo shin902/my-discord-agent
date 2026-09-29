@@ -143,7 +143,12 @@ describe("biome-after-write extension", () => {
     ["missing file", { path: "src/missing.ts" }],
   ])("skips %s", async (_name, overrides) => {
     const root = await mkdtemp(join(tmpdir(), "biome-hook-"));
-    const deps = dependencies();
+    await mkdir(join(root, "src"));
+    await writeFile(join(root, "src/example.ts"), "const value=1");
+    await writeFile(join(root, "README.md"), "# Example");
+    const deps = dependencies(
+      vi.fn().mockResolvedValue({ code: 0, stdout: "", stderr: "" }),
+    );
 
     await createMutationHandler(deps)(mutation(overrides), context(root));
 

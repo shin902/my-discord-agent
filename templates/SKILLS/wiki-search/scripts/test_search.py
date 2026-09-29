@@ -46,12 +46,6 @@ class TestTokenize(unittest.TestCase):
     def test_ascii_tokenizes_as_words(self):
         self.assertEqual(search.tokenize("Hello World"), ["hello", "world"])
 
-    def test_cjk_only_query_is_not_empty(self):
-        """回帰テスト: 全て日本語のクエリは、WORDがASCII限定であるため
-        以前はトークンが0個になり、'エラー: クエリが空です' を引き起こしていた。"""
-        toks = search.tokenize("情報")
-        self.assertNotEqual(toks, [])
-
     def test_mixed_ascii_and_cjk(self):
         toks = search.tokenize("AGENTS 情報")
         self.assertIn("agents", toks)

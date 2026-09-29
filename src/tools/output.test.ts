@@ -288,15 +288,18 @@ describe("common tool output boundary", () => {
       "grep",
       textResult(text, { source: "wrapped" }, true),
     );
+    const execute = tool.execute;
     const wrapped = wrapToolOutput(tool);
+    const wrappedAgain = wrapToolOutput(wrapped);
 
-    const result = await wrapped.execute("call-1", {
+    const result = await wrappedAgain.execute("call-1", {
       pattern: "result",
       path: "input.txt",
     });
     const { details, path } = externalizedOutput(result);
     rememberOutput(path);
 
+    expect(execute).toHaveBeenCalledOnce();
     expect(result.terminate).toBe(true);
     expect(details.source).toBe("wrapped");
     expect(firstText(result)).toContain("grep");

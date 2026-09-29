@@ -376,23 +376,6 @@ describe("createRequestHandler: MSAL プロバイダー", () => {
     expect(res.writeHead).toHaveBeenCalledWith(404);
   });
 
-  it("MSAL route stays absent even when authentication would fail", async () => {
-    vi.doMock("./graph-auth.js", () => ({
-      initGraphAuth: vi.fn(),
-      getGraphAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
-    }));
-    const { createRequestHandler } = await import(
-      "./credential-proxy-server.js"
-    );
-    const handler = createRequestHandler(GRAPH_CREDS, 30000);
-    const req = makeReq("/graph/me/messages");
-    const res = makeRes();
-    handler(req, res as unknown as ServerResponse);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(res.writeHead).toHaveBeenCalledWith(404);
-    expect(requestMock).not.toHaveBeenCalled();
-  });
-
   it("upstreamRes の end イベントで handleRequest の Promise が解決され writeHead と pipe が呼ばれる", async () => {
     vi.doMock("./graph-auth.js", () => ({
       initGraphAuth: vi.fn(),
@@ -503,24 +486,6 @@ describe("createRequestHandler: Google OAuth プロバイダー", () => {
     expect(getGoogleAccessToken).not.toHaveBeenCalled();
     expect(requestMock).not.toHaveBeenCalled();
     expect(res.writeHead).toHaveBeenCalledWith(404);
-  });
-
-  it("Calendar route stays absent even when authentication would fail", async () => {
-    vi.doMock("./google-auth.js", () => ({
-      initGoogleAuth: vi.fn(),
-      getGoogleAccessToken: vi.fn().mockRejectedValue(new Error("auth failed")),
-      GoogleAuthRequiredError: class GoogleAuthRequiredError extends Error {},
-    }));
-    const { createRequestHandler } = await import(
-      "./credential-proxy-server.js"
-    );
-    const handler = createRequestHandler(GOOGLE_CREDS, 30000);
-    const req = makeReq("/google-calendar/calendars/primary/events");
-    const res = makeRes();
-    handler(req, res as unknown as ServerResponse);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(res.writeHead).toHaveBeenCalledWith(404);
-    expect(requestMock).not.toHaveBeenCalled();
   });
 });
 

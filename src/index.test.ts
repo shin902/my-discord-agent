@@ -246,7 +246,7 @@ describe("index: 起動時バリデーション", () => {
     expect(mocks.initDiscordClients).not.toHaveBeenCalled();
   });
 
-  it("不明なプロバイダーは [startup] ログを出して process.exit(1) する", async () => {
+  it("グループ設定の検証失敗は起動を停止し、handler を登録しない", async () => {
     mocks.loadGroups.mockResolvedValue([
       {
         name: "bad-group",
@@ -256,44 +256,6 @@ describe("index: 起動時バリデーション", () => {
     ]);
     mocks.validateGroupConfig.mockImplementation(() => {
       throw new Error("不明なプロバイダ: unknown");
-    });
-
-    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
-    expect(mockExit).toHaveBeenCalledWith(1);
-    expect(mocks.registerHandlers).not.toHaveBeenCalled();
-  });
-
-  it("不明なツール名は [startup] ログを出して process.exit(1) する", async () => {
-    mocks.loadGroups.mockResolvedValue([
-      {
-        name: "bad-tools-group",
-        channels: [],
-        model: { provider: "zai", modelId: "glm-4.7-flash" },
-        tools: ["unknown_tool"],
-      },
-    ]);
-    mocks.validateGroupConfig.mockImplementation(() => {
-      throw new Error("不明なツール名: unknown_tool");
-    });
-
-    await expect(import("./index.js")).rejects.toThrow("process.exit(1)");
-    expect(mockExit).toHaveBeenCalledWith(1);
-    expect(mocks.registerHandlers).not.toHaveBeenCalled();
-  });
-
-  it("不正な mounts 設定は [startup] ログを出して process.exit(1) する", async () => {
-    mocks.loadGroups.mockResolvedValue([
-      {
-        name: "bad-mounts-group",
-        channels: [],
-        model: { provider: "zai", modelId: "glm-4.7-flash" },
-        mounts: [{ host: "../outside", container: "/workspace/x" }],
-      },
-    ]);
-    mocks.validateGroupConfig.mockImplementation(() => {
-      throw new Error(
-        "mounts.host はリポジトリルート外を指しています: ../outside",
-      );
     });
 
     await expect(import("./index.js")).rejects.toThrow("process.exit(1)");

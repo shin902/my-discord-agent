@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { arxivSearchTool } from "./arxiv.js";
 import { dispatchCapability, materializeCapabilityArgs } from "./capability.js";
-import { wrapToolOutput } from "./output.js";
 import {
   type AgentToolFactory,
   getCapabilityDefinition,
@@ -556,25 +555,5 @@ describe("resolveTools", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
-
-  it("wrapToolOutput is idempotent for a singleton and invokes its execute once", async () => {
-    const execute = vi.fn(async () => ({
-      content: [{ type: "text" as const, text: "small output" }],
-      details: { source: "test" },
-    }));
-    const tool: AgentTool = {
-      name: "singleton-test",
-      label: "singleton-test",
-      description: "singleton-test",
-      parameters: {} as never,
-      execute,
-    };
-
-    const wrapped = wrapToolOutput(tool);
-    const wrappedAgain = wrapToolOutput(wrapped);
-    await wrappedAgain.execute("call-1", {});
-
-    expect(execute).toHaveBeenCalledTimes(1);
   });
 });
