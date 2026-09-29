@@ -10,7 +10,7 @@ const COOKIE_FILE = path.join(ROOT, "data/reddit-cookies.json");
 
 // 初回セットアップ専用。モニターが接続された実機で実行し、表示されたブラウザで
 // 捨て垢に手動ログインする。以降の延命・クッキー再取得は
-// Tool Runtime の reddit-cookie-refresh cron maintenance が定期的に行う。
+// host scheduler の reddit-cookie-refresh cron が定期的に行う。
 export async function main(): Promise<void> {
   console.log(`プロファイル保存先: ${PROFILE_DIR}`);
   console.log("ブラウザが起動します。reddit.com に手動でログインしてください。");
@@ -28,7 +28,7 @@ export async function main(): Promise<void> {
 
   await ensureRedditCookieFile(COOKIE_FILE);
   console.log(
-    "プロファイルを保存しました。Tool Runtime imageをbuildし、ホストで pnpm reddit:refresh を1回実行してください。その後は host schedulerの reddit-cookie-refresh が定期実行します。詳細: docs/guides/reddit-cookie-setup.md",
+    "プロファイルを保存しました。ホストで pnpm reddit:refresh を1回実行してください。その後は host schedulerの reddit-cookie-refresh が定期実行します。詳細: docs/guides/reddit-cookie-setup.md",
   );
 }
 

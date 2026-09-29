@@ -105,7 +105,6 @@ describe("tool runtime entrypoint identity", () => {
         TOOL_RUNTIME_SETPRIV_CAPTURE: fixture.capture,
         TOOL_RUNTIME_UID: undefined,
         TOOL_RUNTIME_GID: undefined,
-        REDDIT_PROFILE_DIR: undefined,
         REDDIT_COOKIE_FILE: undefined,
       },
     });

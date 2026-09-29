@@ -17,7 +17,6 @@ import {
   buildToolRuntimeArgs,
   cleanupToolRuntimes,
   executeToolRuntime,
-  refreshRedditCookiesInRuntime,
   stopToolRuntimes,
   toolRuntimeLabel,
 } from "./tool-runtime-client.js";
@@ -294,7 +293,7 @@ describe.skipIf(!baseImage)("disposable Tool Runtime Docker boundary", () => {
     await expectRemoved();
   }, 15_000);
 
-  it("retains fixed Reddit state across fetch and maintenance calls without exposing Cookie", async () => {
+  it("mounts fixed Reddit state read-only for fetch without exposing Cookie", async () => {
     const cookiePath = join(fixture.options.root, "data/reddit-cookies.json");
     const before = await readFile(cookiePath, "utf8");
     const args = await buildToolRuntimeArgs(
@@ -320,19 +319,6 @@ describe.skipIf(!baseImage)("disposable Tool Runtime Docker boundary", () => {
     expect(JSON.stringify(result)).toContain("Runtime Reddit fixture");
     expect(JSON.stringify(result)).not.toContain("fixture=only");
     expect(await readFile(cookiePath, "utf8")).toBe(before);
-    await refreshRedditCookiesInRuntime(fixture.options);
-    expect(
-      await readFile(
-        join(
-          fixture.options.root,
-          "data/reddit-browser-profile/fixture-refreshed",
-        ),
-        "utf8",
-      ),
-    ).toBe("refreshed");
-    expect(JSON.parse(await readFile(cookiePath, "utf8"))).toMatchObject({
-      cookieHeader: "fixture=only",
-    });
     await expectRemoved();
   }, 15_000);
 

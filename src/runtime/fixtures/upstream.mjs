@@ -1,8 +1,7 @@
 // Test-image-only upstream fixtures. The production image never imports this.
 import dns from "node:dns/promises";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
-import { chromium } from "/app/node_modules/playwright/index.mjs";
 
 dns.lookup = async (_hostname, options) =>
   options?.all
@@ -73,16 +72,4 @@ globalThis.fetch = async (input, options = {}) => {
     });
   }
   throw new Error(`Unexpected fixture upstream: ${url.hostname}`);
-};
-chromium.launchPersistentContext = async (profileDir) => {
-  await writeFile(`${profileDir}/fixture-refreshed`, "refreshed");
-  return {
-    newPage: async () => ({
-      goto: async () => {},
-      waitForTimeout: async () => {},
-      url: () => "https://www.reddit.com/",
-    }),
-    cookies: async () => [{ name: "fixture", value: "only" }],
-    close: async () => {},
-  };
 };

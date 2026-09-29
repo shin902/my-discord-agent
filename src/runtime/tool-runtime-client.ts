@@ -56,12 +56,8 @@ async function twitterMountArgs(root: string): Promise<string[]> {
   }
 }
 
-async function redditMountArgs(
-  root: string,
-  maintenance: boolean,
-): Promise<string[]> {
+async function redditMountArgs(root: string): Promise<string[]> {
   const cookie = resolve(root, "data/reddit-cookies.json");
-  const profile = resolve(root, "data/reddit-browser-profile");
   try {
     const cookieStat = await lstat(cookie);
     if (
@@ -71,16 +67,6 @@ async function redditMountArgs(
       cookieStat.gid === 0
     )
       throw new Error();
-    if (maintenance) {
-      const profileStat = await lstat(profile);
-      if (
-        !profileStat.isDirectory() ||
-        profileStat.isSymbolicLink() ||
-        profileStat.uid !== cookieStat.uid ||
-        profileStat.gid !== cookieStat.gid
-      )
-        throw new Error();
-    }
     return [
       "-e",
       `TOOL_RUNTIME_UID=${cookieStat.uid}`,
@@ -91,15 +77,7 @@ async function redditMountArgs(
       "-e",
       `REDDIT_COOKIE_MAX_AGE_DAYS=${process.env.REDDIT_COOKIE_MAX_AGE_DAYS ?? "7"}`,
       "--mount",
-      `type=bind,src=${cookie},dst=/var/lib/reddit/reddit-cookies.json${maintenance ? "" : ",readonly"}`,
-      ...(maintenance
-        ? [
-            "-e",
-            "REDDIT_PROFILE_DIR=/var/lib/reddit/profile",
-            "--mount",
-            `type=bind,src=${profile},dst=/var/lib/reddit/profile`,
-          ]
-        : []),
+      `type=bind,src=${cookie},dst=/var/lib/reddit/reddit-cookies.json,readonly`,
     ];
   } catch {
     throw new Error(
@@ -114,12 +92,8 @@ export async function buildToolRuntimeArgs(
   options: ToolRuntimeOptions = {},
 ): Promise<string[]> {
   const root = options.root ?? ROOT;
-  const maintenance = "maintenance" in request;
-  const capability = maintenance
-    ? undefined
-    : getRuntimeCapability(request.capability);
-  if (!maintenance && !capability)
-    throw new Error("Unknown Runtime capability");
+  const capability = getRuntimeCapability(request.capability);
+  if (!capability) throw new Error("Unknown Runtime capability");
   const workspace = options.workspace;
   if (capability?.tool === "git-clone" && !workspace)
     throw new Error("Git clone requires a trusted group workspace");
@@ -142,13 +116,10 @@ export async function buildToolRuntimeArgs(
       `type=bind,src=${workspace},dst=/workspace`,
     ];
   }
-  const mounts = capability?.needsTwitterCredentials
+  const mounts = capability.needsTwitterCredentials
     ? await twitterMountArgs(root)
-    : maintenance ||
-        capability?.needsRedditCookies?.(
-          "args" in request ? request.args : undefined,
-        )
-      ? await redditMountArgs(root, maintenance)
+    : capability.needsRedditCookies?.(request.args)
+      ? await redditMountArgs(root)
       : [];
   if (workspaceMount.length && mounts.length) {
     const credentialUid = mounts.find((arg) =>
@@ -352,16 +323,6 @@ export async function executeToolRuntime(
   const definition = getRuntimeCapability(capability);
   if (!definition) throw new Error("Unknown Runtime capability");
   return execute({ capability, args }, signal, options);
-}
-
-export async function refreshRedditCookiesInRuntime(
-  options: ToolRuntimeOptions = {},
-): Promise<void> {
-  await execute(
-    { maintenance: "reddit-cookie-refresh" },
-    AbortSignal.timeout(120_000),
-    options,
-  );
 }
 
 export async function stopToolRuntimes(): Promise<void> {
