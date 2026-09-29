@@ -277,6 +277,7 @@ describe.skipIf(!image || !runtimeImage)(
         const payload = {
           groupName: "network-test",
           sessionId: "fixture",
+          agentId: "main",
           content: "Read the page",
           groupConfig: {
             model: { provider: "fixture", modelId: "fixture" },
