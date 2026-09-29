@@ -39,7 +39,7 @@ session-wide modeではない。cron、`/skill`、`/bot`、既存queueなど他�
 ## `thread` モードの注意点
 
 Discord でスレッドを手動作成すると `ThreadCreated` という特殊なメッセージタイプが投稿される。
-これは通常メッセージと区別がつかないため、`message.type === MessageType.ThreadCreated` を明示的にフィルタする必要がある。
+親チャンネル上の `ThreadCreated` は Agent 入力から除外する。また、チャンネル名・スレッド名の変更通知 `ChannelNameChange` も、親チャンネル・スレッドのどちらでも除外する。通常メッセージ、Reply、許可された Webhook 投稿は従来どおり処理する。
 
 ---
 
