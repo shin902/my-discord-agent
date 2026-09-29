@@ -11,6 +11,7 @@ import {
 import { hostFetch } from "../../tools/host-fetch.js";
 import { NonRetryableError } from "../../utils/error.js";
 import { createFileLock } from "../../utils/lock.js";
+import { enqueueCronInbox } from "../enqueue.js";
 import type { CronContext } from "../runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,7 +64,7 @@ async function saveState(state: TriageState): Promise<void> {
 // 同一プロセス内の操作をPromiseチェーンで直列化することで読み書きをアトミックにする。
 const withStateLock = createFileLock();
 
-// appendInbox 成功直後に呼び、ロック内で最新状態に1キーだけ更新・書き戻す。
+// enqueue成功直後に呼び、ロック内で最新状態に1キーだけ更新・書き戻す。
 async function recordProcessed(
   key: string,
   updatedAt: string,
@@ -230,18 +231,11 @@ export default async function handler(ctx: CronContext): Promise<void> {
 
   for (const issue of targets) {
     try {
-      await ctx.appendInbox({
-        channelId: ctx.channelId,
-        groupName: ctx.groupName,
-        sessionId: `cron-${ctx.id}-${owner}-${repo}-${issue.number}-${Date.now()}`,
-        content: buildPrompt(owner, repo, issue),
-        timestamp: new Date().toISOString(),
-        cronJobId: ctx.id,
-        // #563: replace this direct enqueue with enqueueCronInbox().
-        cronDeliveryMode: "direct",
-        cronSessionMode: "per-run",
-      });
-      // appendInbox 成功直後にstateを保存することで、途中でクラッシュしても
+      await enqueueCronInbox(
+        { ...ctx, deliveryMode: "direct", sessionMode: "per-run" },
+        buildPrompt(owner, repo, issue),
+      );
+      // enqueue成功直後にstateを保存することで、途中でクラッシュしても
       // 既に投入済みのIssueが重複してinboxに投入されることを防ぐ
       await recordProcessed(
         stateKey(owner, repo, issue.number),
