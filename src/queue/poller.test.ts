@@ -1244,45 +1244,6 @@ describe("processMessage - allowMention", () => {
     mockSend.mockClear();
   });
 
-  it("allowMention metadata is handled without a final Discord send", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "g",
-      channels: [],
-      allowMention: true,
-    });
-
-    await processMessage(makeMsg({ messageId: "msg-original" }));
-
-    expect(mockSend).not.toHaveBeenCalled();
-    expect(commitInboxResult).toHaveBeenCalledOnce();
-  });
-
-  it("missing messageId does not trigger a final Discord send", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "g",
-      channels: [],
-      allowMention: true,
-    });
-
-    await processMessage(makeMsg({ messageId: undefined }));
-
-    expect(mockSend).not.toHaveBeenCalled();
-    expect(commitInboxResult).toHaveBeenCalledOnce();
-  });
-
-  it("allowMention false does not trigger a final Discord send", async () => {
-    vi.mocked(findGroupByName).mockResolvedValue({
-      name: "g",
-      channels: [],
-      allowMention: false,
-    });
-
-    await processMessage(makeMsg());
-
-    expect(mockSend).not.toHaveBeenCalled();
-    expect(commitInboxResult).toHaveBeenCalledOnce();
-  });
-
   it("attachments と configOverride を sendMessage に渡す", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "g",
@@ -2006,6 +1967,12 @@ describe("processMessage - durable result", () => {
   });
 
   it("commits the agent result and queues delivery metadata without Discord sends", async () => {
+    const send = vi.fn();
+    vi.mocked(client.channels.fetch).mockResolvedValue({
+      isSendable: () => true,
+      isTextBased: () => false,
+      send,
+    } as never);
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
@@ -2015,6 +1982,8 @@ describe("processMessage - durable result", () => {
 
     await processMessage(msg);
 
+    expect(send).not.toHaveBeenCalled();
+    expect(commitInboxResult).toHaveBeenCalledOnce();
     expect(commitInboxResult).toHaveBeenCalledWith(
       msg.id,
       4,

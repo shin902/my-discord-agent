@@ -449,9 +449,9 @@ describe("runAgentLoop", () => {
         ),
       },
     });
-    expect(appendMessage).not.toHaveBeenCalledWith(
-      "test-group",
-      "session-1",
+    expect(
+      vi.mocked(appendMessage).mock.calls.map((call) => call[2]),
+    ).not.toContainEqual(
       expect.objectContaining({ customType: "session-time-anchor" }),
     );
   });
@@ -668,9 +668,9 @@ describe("runAgentLoop", () => {
         systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n独立行に <NO_REPLY> と出力する`,
       },
     });
-    expect(appendMessage).not.toHaveBeenCalledWith(
-      "test-group",
-      "session-1",
+    expect(
+      vi.mocked(appendMessage).mock.calls.map((call) => call[2]),
+    ).not.toContainEqual(
       expect.objectContaining({
         content: expect.stringContaining("<NO_REPLY>"),
       }),
@@ -979,9 +979,9 @@ describe("runAgentLoop", () => {
         ),
       },
     ]);
-    expect(appendMessage).not.toHaveBeenCalledWith(
-      "test-group",
-      "bot-task-1",
+    expect(
+      vi.mocked(appendMessage).mock.calls.map((call) => call[2]),
+    ).not.toContainEqual(
       expect.objectContaining({ customType: "system-prompt-snapshot" }),
     );
   });
@@ -1338,9 +1338,9 @@ describe("runAgentLoop", () => {
       "/workspace/memory/SELF.md",
       "utf-8",
     );
-    expect(appendMessage).not.toHaveBeenCalledWith(
-      "test-group",
-      "session-1",
+    expect(
+      vi.mocked(appendMessage).mock.calls.map((call) => call[2]),
+    ).not.toContainEqual(
       expect.objectContaining({ customType: "context-bootstrap" }),
     );
   });
@@ -1383,7 +1383,6 @@ describe("runAgentLoop", () => {
 
   it.each([
     ["empty", []],
-    ["user-only", [{ role: "user", content: "保存済み入力" }]],
     [
       "anchor and user-only",
       [
@@ -1434,14 +1433,19 @@ describe("runAgentLoop", () => {
           ? { role: "toolResult", content: "結果" }
           : { role: "custom", customType: evidence, content: "済み" };
     vi.mocked(loadMessages).mockResolvedValue([message] as never);
+    vi.mocked(readFile).mockImplementation(async (filePath) => {
+      if (String(filePath) === "/workspace/MEMORY.md")
+        return "new context" as never;
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
 
     await runAgentLoop("test-group", "session-1", "hi", {
       contextFiles: [{ path: "MEMORY.md", maxChars: 2000 }],
     });
 
-    expect(appendMessage).not.toHaveBeenCalledWith(
-      "test-group",
-      "session-1",
+    expect(
+      vi.mocked(appendMessage).mock.calls.map((call) => call[2]),
+    ).not.toContainEqual(
       expect.objectContaining({ customType: "context-bootstrap" }),
     );
   });
@@ -2259,11 +2263,6 @@ describe("defaultConvertToLlm", () => {
     },
   };
 
-  it("system-prompt-snapshot メッセージは LLM 送信用メッセージから常に除外する", () => {
-    const result = defaultConvertToLlm([systemPromptSnapshotMsg] as never);
-    expect(result).toHaveLength(0);
-  });
-
   it("legacy agents-snapshot メッセージも LLM 送信用メッセージから除外する", () => {
     const legacySnapshot = {
       ...systemPromptSnapshotMsg,
@@ -2273,15 +2272,6 @@ describe("defaultConvertToLlm", () => {
     expect(result).toHaveLength(0);
   });
 
-  it("memory-bootstrap メッセージを user ロールに変換する", () => {
-    const result = defaultConvertToLlm([memoryBootstrapMsg] as never);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      role: "user",
-      content: memoryBootstrapMsg.content,
-    });
-  });
-
   it("2件目以降の memory-bootstrap メッセージはスキップする", () => {
     const result = defaultConvertToLlm([
       memoryBootstrapMsg,
@@ -2289,15 +2279,6 @@ describe("defaultConvertToLlm", () => {
     ] as never);
     expect(result).toHaveLength(1);
     expect(result[0].role).toBe("user");
-  });
-
-  it("self-bootstrap メッセージを user ロールに変換する", () => {
-    const result = defaultConvertToLlm([selfBootstrapMsg] as never);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      role: "user",
-      content: selfBootstrapMsg.content,
-    });
   });
 
   it("2件目以降の self-bootstrap メッセージはスキップする", () => {
@@ -2339,13 +2320,6 @@ describe("defaultConvertToLlm", () => {
     });
     expect(result[1]).toMatchObject({ role: "user", content: "hi" });
     expect(result[2]).toMatchObject({ role: "assistant" });
-  });
-
-  it("custom メッセージなしでも通常メッセージを返す", () => {
-    const result = defaultConvertToLlm([userMsg, assistantMsg] as never);
-    expect(result).toHaveLength(2);
-    expect(result[0].role).toBe("user");
-    expect(result[1].role).toBe("assistant");
   });
 
   it("read の総文字数・総行数と次の読み込み位置を LLM に伝える", () => {

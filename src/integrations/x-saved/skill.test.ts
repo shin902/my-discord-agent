@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ingestXSavedItems, openXSavedDb } from "./store.js";
+import {
+  ingestXSavedItems,
+  markInitialImportCompleted,
+  openXSavedDb,
+} from "./store.js";
 
 const script = path.resolve("templates/SKILLS/x-saved/scripts/x-saved.py");
 describe("x-saved Skill archive visibility", () => {
@@ -21,7 +25,7 @@ describe("x-saved Skill archive visibility", () => {
           seenBookmarked: false,
         },
       ],
-      { xSavedDbPath: dbPath },
+      { xSavedDbPath: dbPath, now: "2026-08-28T00:00:00Z" },
     );
     const db = openXSavedDb(dbPath);
     db.exec(`INSERT INTO x_media (tweet_id,kind,position,status,local_path) VALUES
@@ -59,6 +63,35 @@ describe("x-saved Skill archive visibility", () => {
       }),
       expect.objectContaining({ kind: "image", status: "failed", path: null }),
     ]);
+  });
+  it("pending applies the initial import cutoff and includes older inbox items when no marker exists", () => {
+    const db = openXSavedDb(dbPath);
+    try {
+      ingestXSavedItems(
+        [
+          {
+            tweetId: "456",
+            text: "new item",
+            seenLiked: true,
+            seenBookmarked: false,
+          },
+        ],
+        { xSavedDb: db, now: "2026-08-28T00:02:00Z" },
+      );
+      markInitialImportCompleted(db, "2026-08-28T00:01:00Z");
+      expect(
+        run("pending").items.map((item: { tweet_id: string }) => item.tweet_id),
+      ).toEqual(["456"]);
+
+      db.prepare(
+        "DELETE FROM x_meta WHERE key = 'initial_import_completed_at'",
+      ).run();
+      expect(
+        run("pending").items.map((item: { tweet_id: string }) => item.tweet_id),
+      ).toEqual(["123", "456"]);
+    } finally {
+      db.close();
+    }
   });
   it("remains usable before the schema migration and preserves mark/note", () => {
     const db = openXSavedDb(dbPath);

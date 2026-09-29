@@ -148,7 +148,7 @@ describe("splitMessage", () => {
     expect(result.join("\n")).toContain("完了".repeat(30));
   });
 
-  it("空文字列は空配列", () => {
+  it("空文字列は空文字列の1チャンクを返す", () => {
     const result = splitMessage("");
     expect(result).toEqual([""]);
   });
