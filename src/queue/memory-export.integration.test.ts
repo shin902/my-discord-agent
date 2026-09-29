@@ -107,12 +107,17 @@ function enqueueSource(
   }).job;
 }
 async function appendAnswer(job: QueueJob, answer: string): Promise<number> {
-  return appendMessage(job.groupName, job.sessionId, {
-    role: "assistant",
-    content: [{ type: "text", text: answer }],
-    stopReason: "stop",
-    timestamp: 2000,
-  } as AgentMessage);
+  return appendMessage(
+    job.groupName,
+    job.sessionId,
+    {
+      role: "assistant",
+      content: [{ type: "text", text: answer }],
+      stopReason: "stop",
+      timestamp: 2000,
+    } as AgentMessage,
+    "main",
+  );
 }
 async function appendAttempt(
   job: QueueJob,
@@ -122,6 +127,7 @@ async function appendAttempt(
     job.groupName,
     job.sessionId,
     { role: "user", content: job.content, timestamp: 1000 },
+    "main",
     job.source,
   );
   const assistantEntryId = await appendAnswer(job, answer);
@@ -388,7 +394,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
       { at: new Date(Date.now() + 60_000) },
     );
     expect(repo.get(job.id)).toBeUndefined();
-    await renameSession("main", "chat", "materialized-thread");
+    await renameSession("main", "chat", "materialized-thread", "main");
     expect([...repo.readCommittedConversations("main")]).toEqual([
       conversation,
     ]);
@@ -408,20 +414,26 @@ describe("cron + runtime queue + canonical trajectory export", () => {
     const job = enqueueSource("length");
     let conversation: ConversationEntries | undefined;
     vi.mocked(sendMessage).mockImplementationOnce(
-      async (group, sessionId, content, options = {}) => {
+      async (group, sessionId, content, options = { agentId: "main" }) => {
         const userEntryId = await appendMessage(
           group,
           sessionId,
           { role: "user", content, timestamp: 1000 },
+          "main",
           options.source,
         );
         await appendAnswer(job, "interim successful stop");
-        const assistantEntryId = await appendMessage(group, sessionId, {
-          role: "assistant",
-          content: [{ type: "text", text: "truncated final" }],
-          stopReason: "length",
-          timestamp: 2000,
-        } as AgentMessage);
+        const assistantEntryId = await appendMessage(
+          group,
+          sessionId,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "truncated final" }],
+            stopReason: "length",
+            timestamp: 2000,
+          } as AgentMessage,
+          "main",
+        );
         conversation = { userEntryId, assistantEntryId };
         options.onConversation?.(conversation);
         options.onExecutionTiming?.({
@@ -463,7 +475,7 @@ describe("cron + runtime queue + canonical trajectory export", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => accept());
     vi.mocked(sendMessage).mockImplementationOnce(
-      async (group, sessionId, content, options = {}) => {
+      async (group, sessionId, content, options = { agentId: "main" }) => {
         const response = await runAgentLoop(
           group,
           sessionId,

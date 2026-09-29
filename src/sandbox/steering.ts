@@ -21,6 +21,7 @@ export interface SteeringController {
 export function createSteeringController(
   groupName: string,
   sessionId: string,
+  agentId: string,
 ): SteeringController {
   let agent: SteeringAgent | undefined;
   let closed = false;
@@ -40,7 +41,7 @@ export function createSteeringController(
       };
       const operation = (async () => {
         try {
-          await appendMessage(groupName, sessionId, message);
+          await appendMessage(groupName, sessionId, message, agentId);
           target.steer(message);
           return true;
         } catch {

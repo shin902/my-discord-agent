@@ -32,10 +32,10 @@ function dbFor(group: string): Database.Database {
 describe("SQLite session trajectory store", () => {
   it("存在しないsessionは空配列を返し、per-group DBを作成する", async () => {
     await expect(
-      session.loadMessages("empty-group", "missing"),
+      session.loadMessages("empty-group", "missing", "main"),
     ).resolves.toEqual([]);
     const db = dbFor("empty-group");
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
     expect(
       (
         db.pragma("table_info(sessions)") as Array<{
@@ -43,7 +43,7 @@ describe("SQLite session trajectory store", () => {
           dflt_value: string | null;
         }>
       ).find(({ name }) => name === "agent_id")?.dflt_value,
-    ).toBe("'main'");
+    ).toBeNull();
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all() as Array<{ name: string }>;
@@ -56,23 +56,33 @@ describe("SQLite session trajectory store", () => {
   });
 
   it("messageを順序どおり追記しreasoning/thinkingを保存しない", async () => {
-    await session.appendMessage("group1", "session-a", {
-      role: "user",
-      content: "hello",
-      timestamp: 123,
-    });
-    await session.appendMessage("group1", "session-a", {
-      role: "assistant",
-      reasoning: "internal",
-      reasoning_content: "legacy",
-      content: [
-        { type: "thinking", thinking: "secret" },
-        { type: "text", text: "hi" },
-      ],
-      timestamp: 124,
-    } as unknown as AgentMessage);
+    await session.appendMessage(
+      "group1",
+      "session-a",
+      {
+        role: "user",
+        content: "hello",
+        timestamp: 123,
+      },
+      "main",
+    );
+    await session.appendMessage(
+      "group1",
+      "session-a",
+      {
+        role: "assistant",
+        reasoning: "internal",
+        reasoning_content: "legacy",
+        content: [
+          { type: "thinking", thinking: "secret" },
+          { type: "text", text: "hi" },
+        ],
+        timestamp: 124,
+      } as unknown as AgentMessage,
+      "main",
+    );
 
-    const messages = await session.loadMessages("group1", "session-a");
+    const messages = await session.loadMessages("group1", "session-a", "main");
     expect(messages).toEqual([
       { role: "user", content: "hello", timestamp: 123 },
       {
@@ -108,6 +118,7 @@ describe("SQLite session trajectory store", () => {
       "dedupe",
       "session-a",
       original,
+      "main",
       source,
     );
     const replays = await Promise.all(
@@ -116,30 +127,42 @@ describe("SQLite session trajectory store", () => {
           "dedupe",
           "session-a",
           { ...original, content: "edited", timestamp: 2 },
+          "main",
           source,
         ),
       ),
     );
     expect(replays).toEqual(Array(5).fill(first));
-    expect(await session.loadMessages("dedupe", "session-a")).toEqual([
+    expect(await session.loadMessages("dedupe", "session-a", "main")).toEqual([
       original,
     ]);
     expect(
-      await session.appendMessage("dedupe", "session-b", original, source),
+      await session.appendMessage(
+        "dedupe",
+        "session-b",
+        original,
+        "main",
+        source,
+      ),
     ).not.toBe(first);
   });
 
   it("並行appendを壊さず一意なsequenceとして保存する", async () => {
     await Promise.all(
       Array.from({ length: 20 }, (_, index) =>
-        session.appendMessage("concurrent", "shared", {
-          role: "user",
-          content: `message-${index}`,
-          timestamp: index,
-        }),
+        session.appendMessage(
+          "concurrent",
+          "shared",
+          {
+            role: "user",
+            content: `message-${index}`,
+            timestamp: index,
+          },
+          "main",
+        ),
       ),
     );
-    const messages = await session.loadMessages("concurrent", "shared");
+    const messages = await session.loadMessages("concurrent", "shared", "main");
     expect(messages).toHaveLength(20);
     expect(
       new Set(
@@ -148,7 +171,7 @@ describe("SQLite session trajectory store", () => {
     ).toBe(20);
   });
 
-  it("concurrent fresh DB opens recheck v5 after the initialization lock", async () => {
+  it("concurrent fresh DB opens recheck v6 after the initialization lock", async () => {
     const group = "fresh-race";
     const gate = new Int32Array(new SharedArrayBuffer(4));
     const worker = new Worker(
@@ -160,22 +183,34 @@ describe("SQLite session trajectory store", () => {
       expect(await once(worker, "message", { signal })).toEqual([
         "stale-version-read",
       ]);
-      await session.appendMessage(group, "main-session", {
-        role: "user",
-        content: "main message",
-        timestamp: 1,
-      });
+      await session.appendMessage(
+        group,
+        "main-session",
+        {
+          role: "user",
+          content: "main message",
+          timestamp: 1,
+        },
+        "main",
+      );
       const finished = once(worker, "message", { signal });
       Atomics.store(gate, 0, 1);
       Atomics.notify(gate, 0);
       expect(await finished).toEqual([
         { status: "appended", recheckedInTransaction: true },
       ]);
-      expect(await session.loadMessages(group, "worker-session")).toHaveLength(
-        1,
-      );
+      expect(
+        await session.loadMessages(group, "worker-session", "main"),
+      ).toHaveLength(1);
       const db = dbFor(group);
-      expect(db.pragma("user_version", { simple: true })).toBe(5);
+      expect(db.pragma("user_version", { simple: true })).toBe(6);
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('sessions_agent_id_id','session_entries_session_id_id','session_entries_source')",
+          )
+          .all(),
+      ).toEqual([]);
       db.close();
     } finally {
       Atomics.store(gate, 0, 1);
@@ -190,7 +225,7 @@ describe("SQLite session trajectory store", () => {
     const db = new Database(path.join(root, group, "sessions.sqlite"));
     db.pragma("user_version = 4");
     db.close();
-    await expect(session.loadMessages(group, "old")).rejects.toThrow(
+    await expect(session.loadMessages(group, "old", "main")).rejects.toThrow(
       "未対応のsession DB schema version",
     );
     const inspect = dbFor(group);
@@ -210,55 +245,56 @@ describe("SQLite session trajectory store", () => {
       "snapshots",
       "bot-task-orphan",
       snapshot,
-      undefined,
       "worker",
+      undefined,
     );
     await session.appendMessage(
       "snapshots",
       "bot-task-real",
       snapshot,
-      undefined,
       "worker",
+      undefined,
     );
     expect([...session.readOwnerSessions("snapshots", "worker")]).toEqual([]);
     const user = { role: "user" as const, content: "work", timestamp: 2 };
-    await session.appendMessage("snapshots", "bot-task-real", user);
+    await session.appendMessage("snapshots", "bot-task-real", user, "worker");
     expect([...session.readOwnerSessions("snapshots", "worker")]).toEqual([
       { sessionId: "bot-task-real", message: snapshot },
       { sessionId: "bot-task-real", message: user },
     ]);
-    expect(await session.loadMessages("snapshots", "bot-task-orphan")).toEqual([
-      snapshot,
-    ]);
+    expect(
+      await session.loadMessages("snapshots", "bot-task-orphan", "worker"),
+    ).toEqual([snapshot]);
   });
 
-  it("ownerを初回作成時だけ設定しgroup別に順序よく読み出す", async () => {
+  it("ownerを維持しgroup別に順序よく読み出す", async () => {
     const user = { role: "user" as const, content: "first", timestamp: 1 };
     const reply = {
       role: "assistant" as const,
       content: "reply",
       timestamp: 2,
     };
-    await session.appendMessage("owners", "b", user, undefined, "worker");
+    await session.appendMessage("owners", "b", user, "worker", undefined);
     await session.appendMessage(
       "owners",
       "b",
       reply as unknown as AgentMessage,
+      "worker",
     );
-    await session.appendMessage("owners", "a", user);
+    await session.appendMessage("owners", "a", user, "main");
     await session.appendMessage(
       "owners",
       "z-old",
       { ...user, timestamp: 0 },
-      undefined,
       "worker",
+      undefined,
     );
     await session.appendMessage(
       "another-owners",
       "b",
       user,
-      undefined,
       "worker",
+      undefined,
     );
     expect([...session.readOwnerSessions("owners", "worker")]).toEqual([
       { sessionId: "z-old", message: { ...user, timestamp: 0 } },
@@ -268,7 +304,7 @@ describe("SQLite session trajectory store", () => {
     expect([...session.readOwnerSessions("owners", "main")]).toEqual([
       { sessionId: "a", message: user },
     ]);
-    await session.renameSession("owners", "b", "c");
+    await session.renameSession("owners", "b", "c", "worker");
     expect([...session.readOwnerSessions("owners", "worker")]).toEqual([
       { sessionId: "z-old", message: { ...user, timestamp: 0 } },
       { sessionId: "c", message: user },
@@ -285,56 +321,164 @@ describe("SQLite session trajectory store", () => {
   });
 
   it("session identityをtransactionでrenameしentryを維持する", async () => {
-    await session.appendMessage("rename-group", "cron-temp", {
-      role: "user",
-      content: "hello",
-      timestamp: 123,
-    });
-    await session.renameSession("rename-group", "cron-temp", "1234567890");
+    await session.appendMessage(
+      "rename-group",
+      "cron-temp",
+      {
+        role: "user",
+        content: "hello",
+        timestamp: 123,
+      },
+      "main",
+    );
+    await session.renameSession(
+      "rename-group",
+      "cron-temp",
+      "1234567890",
+      "main",
+    );
 
     await expect(
-      session.loadMessages("rename-group", "cron-temp"),
+      session.loadMessages("rename-group", "cron-temp", "main"),
     ).resolves.toEqual([]);
     await expect(
-      session.loadMessages("rename-group", "1234567890"),
+      session.loadMessages("rename-group", "1234567890", "main"),
     ).resolves.toEqual([{ role: "user", content: "hello", timestamp: 123 }]);
   });
 
   it("rename先が存在する場合は上書きしない", async () => {
-    await session.appendMessage("rename-conflict", "from", {
-      role: "user",
-      content: "from",
-      timestamp: 1,
-    });
-    await session.appendMessage("rename-conflict", "to", {
-      role: "user",
-      content: "to",
-      timestamp: 2,
-    });
+    await session.appendMessage(
+      "rename-conflict",
+      "from",
+      {
+        role: "user",
+        content: "from",
+        timestamp: 1,
+      },
+      "main",
+    );
+    await session.appendMessage(
+      "rename-conflict",
+      "to",
+      {
+        role: "user",
+        content: "to",
+        timestamp: 2,
+      },
+      "main",
+    );
     await expect(
-      session.renameSession("rename-conflict", "from", "to"),
+      session.renameSession("rename-conflict", "from", "to", "main"),
     ).rejects.toThrow("リネーム先のセッションが既に存在します");
     await expect(
-      session.loadMessages("rename-conflict", "from"),
+      session.loadMessages("rename-conflict", "from", "main"),
     ).resolves.toHaveLength(1);
+  });
+
+  it("同名session IDでもowner別にload/append/source dedup/renameを隔離する", async () => {
+    const source = {
+      kind: "discord" as const,
+      sourceId: "shared-source",
+      actorId: "human",
+      messageType: 0 as const,
+    };
+    const user = { role: "user" as const, content: "same", timestamp: 10 };
+    const mainId = await session.appendMessage(
+      "two-owners",
+      "same-id",
+      user,
+      "main",
+      source,
+    );
+    const workerId = await session.appendMessage(
+      "two-owners",
+      "same-id",
+      user,
+      "worker",
+      source,
+    );
+    expect(workerId).not.toBe(mainId);
+    expect(
+      await session.appendMessage(
+        "two-owners",
+        "same-id",
+        user,
+        "worker",
+        source,
+      ),
+    ).toBe(workerId);
+    expect(
+      await session.appendMessage(
+        "two-owners",
+        "same-id",
+        user,
+        "main",
+        source,
+      ),
+    ).toBe(mainId);
+    const reply = {
+      role: "assistant" as const,
+      content: "only worker",
+      timestamp: 11,
+    };
+    await session.appendMessage(
+      "two-owners",
+      "same-id",
+      reply as unknown as AgentMessage,
+      "worker",
+    );
+    expect(await session.loadMessages("two-owners", "same-id", "main")).toEqual(
+      [user],
+    );
+    expect(
+      await session.loadMessages("two-owners", "same-id", "worker"),
+    ).toEqual([user, reply]);
+    await session.renameSession("two-owners", "same-id", "renamed", "worker");
+    expect(
+      await session.loadMessages("two-owners", "same-id", "worker"),
+    ).toEqual([]);
+    expect(
+      await session.loadMessages("two-owners", "renamed", "worker"),
+    ).toEqual([user, reply]);
+    expect(await session.loadMessages("two-owners", "same-id", "main")).toEqual(
+      [user],
+    );
+    const db = dbFor("two-owners");
+    expect(
+      db
+        .prepare(
+          "SELECT id,agent_id,session_id FROM session_entries WHERE id=?",
+        )
+        .get(workerId),
+    ).toEqual({ id: workerId, agent_id: "worker", session_id: "renamed" });
+    db.close();
+  });
+
+  it("保存済みBot IDに記号があってもowner identityを維持する", async () => {
+    const user = { role: "user" as const, content: "bot", timestamp: 1 };
+    await session.appendMessage("bot-ids", "same", user, "worker.v1");
+    expect(await session.loadMessages("bot-ids", "same", "worker.v1")).toEqual([
+      user,
+    ]);
+    expect(await session.loadMessages("bot-ids", "same", "main")).toEqual([]);
   });
 
   it("path traversalと未知のschema versionを拒否する", async () => {
     await expect(
-      session.loadMessages("../../etc/passwd", "session"),
+      session.loadMessages("../../etc/passwd", "session", "main"),
     ).rejects.toThrow("不正なグループ名");
-    await expect(session.loadMessages("group", "../secret")).rejects.toThrow(
-      "不正なセッションID",
-    );
+    await expect(
+      session.loadMessages("group", "../secret", "main"),
+    ).rejects.toThrow("不正なセッションID");
 
     const dir = path.join(root, "future");
     await mkdir(dir, { recursive: true });
     const db = new Database(path.join(dir, "sessions.sqlite"));
     db.pragma("user_version = 99");
     db.close();
-    await expect(session.loadMessages("future", "session")).rejects.toThrow(
-      "未対応のsession DB schema version",
-    );
+    await expect(
+      session.loadMessages("future", "session", "main"),
+    ).rejects.toThrow("未対応のsession DB schema version");
   });
 
   it("conversation pathはDBと論理session identityを表す", () => {

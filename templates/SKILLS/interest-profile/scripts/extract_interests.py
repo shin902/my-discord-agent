@@ -38,11 +38,12 @@ from pathlib import Path
 MIN_LENGTH = 20
 
 # 状態ファイル (last-sync.json) のスキーマバージョン。
-# version 3: SQLite session_entries の sequence をセッションごとに保持する（現行）。
+# version 4: SQLite session_entries の sequence を group/owner/session ごとに保持する。
+# version 3: SQLite session_entries の sequence を group/session ごとに保持する。
 # version 2: JSONL の行数を "{group}/{ファイル名}" ごとに保持する。
 # version 1相当（旧Claude Code会話ログ対象版）はフラットな "{ファイル名}" キーで、
 # schema_version フィールド自体を持たない。
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # role: "user" だが人間の発言ではない cron 合成メッセージのプレフィックス。
 # src/cron/jobs/mail.ts:215-216 でメールスレッド初期化時に、エージェントへ文脈を
@@ -226,16 +227,16 @@ def main():
         group = db_path.parent.name
         connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
-            raw_session_ids = [
-                row[0] for row in connection.execute("SELECT id FROM sessions ORDER BY id")
-            ]
-            for raw_session_id in raw_session_ids:
-                session_id = f"{group}/{raw_session_id}"
+            session_keys = connection.execute(
+                "SELECT agent_id, id FROM sessions ORDER BY agent_id, id"
+            )
+            for agent_id, raw_session_id in session_keys:
+                session_id = f"{group}/{agent_id}/{raw_session_id}"
                 prev_sequence = sessions_state.get(session_id, {}).get("sequence", 0)
                 rows = connection.execute(
                     "SELECT sequence, payload_json FROM session_entries "
-                    "WHERE session_id = ? AND sequence > ? ORDER BY sequence",
-                    (raw_session_id, prev_sequence),
+                    "WHERE agent_id = ? AND session_id = ? AND sequence > ? ORDER BY sequence",
+                    (agent_id, raw_session_id, prev_sequence),
                 )
                 for sequence, payload_json in rows:
                     new_state[session_id] = {"sequence": sequence}

@@ -429,6 +429,7 @@ interface InferenceLockTarget {
 
 async function resolveBotExecution(
   msg: InboxMessage,
+  agentId: string,
   groupConfig: GroupConfig | undefined,
 ): Promise<{
   configOverride?: Partial<AgentConfig>;
@@ -454,6 +455,7 @@ async function resolveBotExecution(
     systemPromptSnapshotContent: await loadBotTaskSystemPrompt(
       msg.groupName,
       msg.sessionId,
+      agentId,
     ),
   };
 }
@@ -709,6 +711,7 @@ async function processCronThreadDelivery(
   const timing = startResponseTiming(msg);
   let outcome: ResponseOutcome = "unexpected-error";
   let sessionId = cronSessionId(msg);
+  const agentId = msg.botId ?? "main";
   let conversation: ConversationEntries | undefined;
   try {
     // Declarative item-thread jobs execute in a temporary session and leave
@@ -735,7 +738,7 @@ async function processCronThreadDelivery(
       sessionId = cronSessionId(msg);
     }
     const groupConfig = await findGroupByName(msg.groupName);
-    const execution = await resolveBotExecution(msg, groupConfig);
+    const execution = await resolveBotExecution(msg, agentId, groupConfig);
     const lockTarget = await resolveInferenceLockTarget(
       msg,
       groupConfig?.model,
@@ -750,6 +753,7 @@ async function processCronThreadDelivery(
         const agentStartedAt = Date.now();
         try {
           return await sendMessage(msg.groupName, sessionId, msg.content, {
+            agentId,
             onConversation: (entries) => {
               conversation = entries;
             },
@@ -860,7 +864,10 @@ async function processCronThreadDelivery(
     logResponseTiming({ ...msg, sessionId }, timing, outcome);
   }
 }
-async function captureFrozenIdentity(msg: InboxMessage): Promise<{
+async function captureFrozenIdentity(
+  msg: InboxMessage,
+  agentId: string,
+): Promise<{
   systemPromptSnapshotContent?: string;
   memorySnapshotContent?: string;
   systemPromptSnapshotPresent: boolean;
@@ -870,11 +877,15 @@ async function captureFrozenIdentity(msg: InboxMessage): Promise<{
   toolCallKey: string;
 }> {
   let systemPromptSnapshotContent = msg.botId
-    ? await loadBotTaskSystemPrompt(msg.groupName, msg.sessionId)
+    ? await loadBotTaskSystemPrompt(msg.groupName, msg.sessionId, agentId)
     : ((await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
       undefined);
   let memorySnapshotContent: string | undefined;
-  const sessionMessages = await loadMessages(msg.groupName, msg.sessionId);
+  const sessionMessages = await loadMessages(
+    msg.groupName,
+    msg.sessionId,
+    agentId,
+  );
   for (const entry of sessionMessages as Array<{
     customType?: string;
     content?: unknown;
@@ -921,6 +932,7 @@ export async function processMessage(
   handlers: JobHandlers = new JobHandlers(),
   sources: SourceHandlers = new SourceHandlers(),
 ): Promise<void> {
+  const agentId = msg.botId ?? "main";
   if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
     const timing = startResponseTiming(msg);
     if (terminalSourceFailure(msg, sources)) {
@@ -987,7 +999,7 @@ export async function processMessage(
               snapshotHash: msg.snapshotHash,
               toolCallKey: msg.toolCallKey,
             }
-          : await captureFrozenIdentity(msg);
+          : await captureFrozenIdentity(msg, agentId);
       await getQueueRepository().freezeExecutionIdentity(
         msg.id,
         msg.fencingToken,
@@ -1068,7 +1080,7 @@ export async function processMessage(
     const replyMessageId = msg.messageId;
 
     try {
-      const execution = await resolveBotExecution(msg, groupConfig);
+      const execution = await resolveBotExecution(msg, agentId, groupConfig);
       const lockTarget = await resolveInferenceLockTarget(
         msg,
         groupConfig.model,
@@ -1088,6 +1100,7 @@ export async function processMessage(
               msg.sessionId,
               msg.content,
               {
+                agentId,
                 onDiscordEvent: (event) => {
                   // direct cron と Bot Task の実行進捗はチャネルを埋めるため抑制する。
                   // エラーは必要な通知として維持し、thread delivery は専用フローに委ねる。

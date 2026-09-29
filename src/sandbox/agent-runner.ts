@@ -290,7 +290,7 @@ export async function runAgentLoop(
   sessionId: string,
   content: string,
   groupConfig: AgentRuntimeConfig,
-  identity?: FrozenExecutionIdentity,
+  identity: FrozenExecutionIdentity,
   systemPromptAppend?: string,
   botToolConfig?: BotToolConfig,
   onAgentCreated?: (agent: Agent) => void,
@@ -310,9 +310,19 @@ export async function runAgentLoop(
     entrySource?: SessionSource,
   ) =>
     entrySource
-      ? appendMessage(groupName, sessionId, message, entrySource)
-      : appendMessage(groupName, sessionId, message);
-  const rawMessages = await loadMessages(groupName, sessionId);
+      ? appendMessage(
+          groupName,
+          sessionId,
+          message,
+          identity.agentId,
+          entrySource,
+        )
+      : appendMessage(groupName, sessionId, message, identity.agentId);
+  const rawMessages = await loadMessages(
+    groupName,
+    sessionId,
+    identity.agentId,
+  );
   const bootstrap = await initializeSessionBootstrap(
     groupName,
     sessionId,
@@ -641,6 +651,7 @@ export async function runAgentLoop(
 const PayloadSchema = z.object({
   groupName: z.string(),
   sessionId: z.string(),
+  agentId: z.string().min(1),
   content: z.string(),
   imagePaths: z.array(z.string().startsWith("/workspace/")).optional(),
   source: SessionSourceSchema.optional(),
@@ -698,8 +709,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         content: "runner image session store smoke test",
         timestamp: Date.now(),
       };
-      await appendMessage(groupName, sessionId, message);
-      const loaded = await loadMessages(groupName, sessionId);
+      await appendMessage(groupName, sessionId, message, "main");
+      const loaded = await loadMessages(groupName, sessionId, "main");
       if (
         loaded.length !== 1 ||
         loaded[0]?.role !== "user" ||
@@ -717,6 +728,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const steering = createSteeringController(
       payload.groupName,
       payload.sessionId,
+      payload.agentId,
     );
     const sendSteerAck = (requestId: string, accepted: boolean): void => {
       process.stderr.write(

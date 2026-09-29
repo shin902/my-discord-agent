@@ -247,7 +247,10 @@ describe("screen capture summary cron", () => {
       "logbook",
       expect.stringMatching(/^cron-screen-capture-summary-/),
       expect.stringContaining("Editor work"),
-      expect.objectContaining({ configOverride: agentConfig }),
+      expect.objectContaining({
+        agentId: "main",
+        configOverride: agentConfig,
+      }),
     );
     expect(vi.mocked(sendMessage).mock.calls[0][2]).not.toContain(".png");
     expect(
@@ -400,6 +403,7 @@ describe("screen capture summary cron", () => {
       expect.stringMatching(/^cron-screen-capture-summary-/),
       expect.stringContaining("未処理画像"),
       expect.objectContaining({
+        agentId: "main",
         imagePaths: ids.map((id) => `/workspace/.screen-captures/${id}.png`),
         configOverride: agentConfig,
         heldInferenceResource: memoryModel.provider,

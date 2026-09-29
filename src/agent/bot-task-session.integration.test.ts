@@ -197,7 +197,9 @@ async function expectSnapshot(handle: string, content: string) {
       ({ sessionId }) => sessionId === task(handle).sessionId,
     ),
   ).toBe(false);
-  expect(await loadMessages(group.name, task(handle).sessionId)).toEqual([
+  expect(
+    await loadMessages(group.name, task(handle).sessionId, "worker"),
+  ).toEqual([
     expect.objectContaining({
       role: "custom",
       customType: "system-prompt-snapshot",
@@ -210,6 +212,7 @@ async function expectSnapshot(handle: string, content: string) {
 function expectExecution(content: string) {
   const options = vi.mocked(sendMessage).mock.lastCall?.[3];
   expect(options).toMatchObject({
+    agentId: "worker",
     systemPromptSnapshotContent: content,
     systemPromptSnapshotPresent: true,
     enableBotTool: false,
@@ -254,11 +257,16 @@ describe("Bot Task Session role snapshots", () => {
       mounts: group.mounts,
     });
     await expectSnapshot(handle, "Bot role A");
-    await appendMessage(group.name, task(handle).sessionId, {
-      role: "user",
-      content: "follow-up",
-      timestamp: 1,
-    });
+    await appendMessage(
+      group.name,
+      task(handle).sessionId,
+      {
+        role: "user",
+        content: "follow-up",
+        timestamp: 1,
+      },
+      "worker",
+    );
     expect(
       [...readOwnerSessions(group.name, "worker")].some(
         ({ sessionId, message }) =>
@@ -267,11 +275,16 @@ describe("Bot Task Session role snapshots", () => {
           message.content === "follow-up",
       ),
     ).toBe(true);
-    await appendMessage(group.name, "main-chat", {
-      role: "user",
-      content: "main",
-      timestamp: 1,
-    });
+    await appendMessage(
+      group.name,
+      "main-chat",
+      {
+        role: "user",
+        content: "main",
+        timestamp: 1,
+      },
+      "main",
+    );
     expect(
       [...readOwnerSessions(group.name, "worker")].some(
         ({ sessionId }) => sessionId === "main-chat",
@@ -340,20 +353,30 @@ describe("Bot Task Session role snapshots", () => {
       repository.admitBotTaskSessionAdmission(admission);
       repository.completeBotTaskSessionAdmission(admission);
       if (customType) {
-        await appendMessage(group.name, sessionId, {
-          role: "custom",
-          customType,
-          content: "Legacy Main/group role",
-          display: false,
-          timestamp: 1,
-        } as Parameters<typeof appendMessage>[2]);
+        await appendMessage(
+          group.name,
+          sessionId,
+          {
+            role: "custom",
+            customType,
+            content: "Legacy Main/group role",
+            display: false,
+            timestamp: 1,
+          } as Parameters<typeof appendMessage>[2],
+          "worker",
+        );
       }
-      await appendMessage(group.name, sessionId, {
-        role: "user",
-        content: "old task",
-        timestamp: 2,
-      });
-      const before = await loadMessages(group.name, sessionId);
+      await appendMessage(
+        group.name,
+        sessionId,
+        {
+          role: "user",
+          content: "old task",
+          timestamp: 2,
+        },
+        "worker",
+      );
+      const before = await loadMessages(group.name, sessionId, "worker");
       if (!customType && surface === "direct") {
         await expect(invoke(surface, "resume", session.handle)).rejects.toThrow(
           "新しいBot run",
@@ -368,7 +391,9 @@ describe("Bot Task Session role snapshots", () => {
       }
       if (customType) expectExecution("Legacy Main/group role");
       else expect(sendMessage).not.toHaveBeenCalled();
-      expect(await loadMessages(group.name, sessionId)).toEqual(before);
+      expect(await loadMessages(group.name, sessionId, "worker")).toEqual(
+        before,
+      );
     }
   });
 });

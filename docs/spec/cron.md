@@ -99,7 +99,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 
 ### 使い捨てcron sessionのcleanup
 
-`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。通常会話、destination cron、タグのない旧cron sessionは対象外です。運用時はこのhandlerをcron設定に追加してください。
+`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。cleanupはownerに限定せず `kind` と期限で選別します（現行のper-run作成ownerは `main`）。通常会話、destination cron、タグのない旧cron sessionは対象外です。運用時はこのhandlerをcron設定に追加してください。
 
 ### deliveryMode / sessionMode
 
@@ -122,6 +122,8 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `destination` | 毎回新規スレッドを作り、その後のユーザー返信でも履歴を継続する |
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` 必須 |
+
+現行のitem-thread昇格・rollbackでsession renameするownerは `main`。#565でBot指定cronを全sessionModeへ広げる際は `src/queue/delivery.ts` のrename/rollbackを保存済みBot ownerへ切り替え、active-run registryとMain限定 `/steer` との衝突も検証する。
 
 応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 

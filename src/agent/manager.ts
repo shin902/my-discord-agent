@@ -586,6 +586,7 @@ async function downloadAttachments(
   return saved;
 }
 export interface SendMessageOptions {
+  agentId: string;
   source?: SessionSource;
   onConversation?: (entries: ConversationEntries) => void;
   onDiscordEvent?: (event: DiscordEvent) => void;
@@ -615,7 +616,7 @@ export async function sendMessage(
   groupName: string,
   sessionId: string,
   content: string,
-  options: SendMessageOptions = {},
+  options: SendMessageOptions,
 ): Promise<string> {
   assertSpawnAllowed();
   const {
@@ -771,6 +772,7 @@ export async function sendMessage(
   const payload = JSON.stringify({
     groupName,
     sessionId,
+    agentId: options.agentId,
     content: promptContent,
     ...(imagePaths?.length ? { imagePaths } : {}),
     ...(options.source ? { source: options.source } : {}),
