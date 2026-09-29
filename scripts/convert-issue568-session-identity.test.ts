@@ -65,6 +65,21 @@ it("rebuilds v5 without changing entry IDs, owners, or deleted ID high-water", (
   db.close();
 });
 
+it("preserves the issued ID high-water when all entries were deleted", () => {
+  const { root, file } = fixture();
+  const db = new Database(file);
+  db.prepare("DELETE FROM session_entries").run();
+  expect(db.prepare("SELECT seq FROM sqlite_sequence WHERE name='session_entries'").get()).toEqual({ seq: 8 });
+  db.close();
+
+  convertSessionIdentity(root);
+  const migrated = new Database(file);
+  expect(migrated.prepare("SELECT seq FROM sqlite_sequence WHERE name='session_entries'").get()).toEqual({ seq: 8 });
+  const appended = migrated.prepare("INSERT INTO session_entries(agent_id,session_id,sequence,entry_type,payload_json,created_at) VALUES ('main','shared',1,'user','{}',1)").run();
+  expect(Number(appended.lastInsertRowid)).toBeGreaterThan(8);
+  migrated.close();
+});
+
 it("preflights every group before the first write", () => {
   const { root, file } = fixture();
   mkdirSync(path.join(root, "invalid"));

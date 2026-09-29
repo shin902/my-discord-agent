@@ -68,7 +68,9 @@ export function convertSessionIdentity(sessionsRoot: string): void {
           ALTER TABLE sessions_v6 RENAME TO sessions;
           ALTER TABLE session_entries_v6 RENAME TO session_entries;
         `);
-        db.prepare("UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name='session_entries'").run(highWater);
+        const updated = db.prepare("UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name='session_entries'").run(highWater);
+        if (updated.changes === 0 && highWater > 0)
+          db.prepare("INSERT INTO sqlite_sequence(name, seq) VALUES ('session_entries', ?)").run(highWater);
         if ((db.pragma("foreign_key_check") as unknown[]).length)
           throw new Error(`Foreign key violation: ${file}`);
         if (db.pragma("integrity_check", { simple: true }) !== "ok")
