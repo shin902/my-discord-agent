@@ -22,9 +22,6 @@ export function convertSessionIdentity(sessionsRoot: string): void {
         throw new Error(`Corrupt session DB: ${file}`);
       if ((db.pragma("foreign_key_check") as unknown[]).length)
         throw new Error(`Orphaned session entries: ${file}`);
-      const missing = db.prepare(`SELECT 1 FROM session_entries e
-        LEFT JOIN sessions s ON s.id=e.session_id WHERE s.id IS NULL LIMIT 1`).get();
-      if (missing) throw new Error(`Orphaned session entries: ${file}`);
       const collisions = db.prepare(`SELECT 1 FROM session_entries e
         JOIN sessions s ON s.id=e.session_id
         GROUP BY s.agent_id,e.session_id,e.sequence HAVING count(*)>1 LIMIT 1`).get();
@@ -70,9 +67,6 @@ export function convertSessionIdentity(sessionsRoot: string): void {
           DROP TABLE sessions;
           ALTER TABLE sessions_v6 RENAME TO sessions;
           ALTER TABLE session_entries_v6 RENAME TO session_entries;
-          CREATE INDEX sessions_agent_id_id ON sessions(agent_id,id);
-          CREATE INDEX session_entries_session_id_id ON session_entries(agent_id,session_id,id);
-          CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
         `);
         db.prepare("UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name='session_entries'").run(highWater);
         if ((db.pragma("foreign_key_check") as unknown[]).length)

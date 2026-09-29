@@ -109,7 +109,6 @@ function initializeSchema(db: Database.Database): void {
           agent_id TEXT NOT NULL,
           PRIMARY KEY (agent_id, id)
         );
-        CREATE INDEX sessions_agent_id_id ON sessions(agent_id, id);
         CREATE TABLE IF NOT EXISTS session_entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           session_id TEXT NOT NULL,
@@ -123,9 +122,6 @@ function initializeSchema(db: Database.Database): void {
             ON UPDATE CASCADE ON DELETE CASCADE,
           UNIQUE(agent_id, session_id, sequence)
         );
-        CREATE INDEX session_entries_session_id_id
-          ON session_entries(agent_id, session_id, id);
-        CREATE INDEX session_entries_source ON session_entries(id) WHERE source_json IS NOT NULL;
       `);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();

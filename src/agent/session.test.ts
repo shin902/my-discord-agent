@@ -171,7 +171,7 @@ describe("SQLite session trajectory store", () => {
     ).toBe(20);
   });
 
-  it("concurrent fresh DB opens recheck v5 after the initialization lock", async () => {
+  it("concurrent fresh DB opens recheck v6 after the initialization lock", async () => {
     const group = "fresh-race";
     const gate = new Int32Array(new SharedArrayBuffer(4));
     const worker = new Worker(
@@ -204,6 +204,13 @@ describe("SQLite session trajectory store", () => {
       ).toHaveLength(1);
       const db = dbFor(group);
       expect(db.pragma("user_version", { simple: true })).toBe(6);
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('sessions_agent_id_id','session_entries_session_id_id','session_entries_source')",
+          )
+          .all(),
+      ).toEqual([]);
       db.close();
     } finally {
       Atomics.store(gate, 0, 1);

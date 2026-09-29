@@ -46,6 +46,7 @@ it("rebuilds v5 without changing entry IDs, owners, or deleted ID high-water", (
   const db = new Database(file);
   db.pragma("foreign_keys = ON");
   expect(db.pragma("user_version", { simple: true })).toBe(6);
+  expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('sessions_agent_id_id','session_entries_session_id_id','session_entries_source')").all()).toEqual([]);
   expect(db.pragma("foreign_key_check")).toEqual([]);
   expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
   expect(db.prepare("SELECT id,session_id,agent_id,sequence,payload_json,source_json FROM session_entries ORDER BY id").all()).toEqual([
