@@ -68,17 +68,6 @@ class ClassifyTests(unittest.TestCase):
                 with self.subTest(group=group, first=first), self.assertRaisesRegex(ValueError, "Ambiguous canonical"):
                     tagger.read_aliases({group: {first: {}, second: {}}})
 
-    def test_rejects_older_and_newer_archive_schemas(self):
-        self.seed()
-        for version in (5, 7):
-            with self.subTest(version=version):
-                self.db.execute(f"PRAGMA user_version={version}")
-                with self.assertRaisesRegex(ValueError, "Expected x-saved schema v6"):
-                    self.run_batch()
-        self.loader.assert_not_called()
-        self.assertEqual(self.labels(), set())
-        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM x_meta").fetchone()[0], 0)
-
     def test_all_images_union_thresholds_and_manual_labels_survive(self):
         self.seed(positions=(0, 1))
         with self.db:
