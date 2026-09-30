@@ -1,5 +1,9 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  agentMemoryPrompt,
+  INITIAL_MEMORY_TYPE,
+} from "../agent/memory-context.js";
 import { resolveAgentConfig } from "../config/agent-resolution.js";
 import { formatSessionTimeAnchor } from "../time/context.js";
 import { defaultConvertToLlm } from "./agent-runner.js";
@@ -340,6 +344,78 @@ describe("runAgentLoop", () => {
     expect(agent.abort).toHaveBeenCalledOnce();
   });
 
+  it("replays the saved initial memory once before user turns with owner-specific guidance", async () => {
+    const snapshot = {
+      role: "custom" as const,
+      customType: INITIAL_MEMORY_TYPE,
+      content: '## Agent Memory ("好み.md")\n\n保存済み本文',
+      outcome: "selected",
+      display: false,
+      timestamp: 1,
+    };
+    const role = {
+      role: "custom" as const,
+      customType: "system-prompt-snapshot",
+      content: "Bot role",
+      display: false,
+      timestamp: 0,
+    };
+    const previous = {
+      role: "user" as const,
+      content: "最初の依頼",
+      timestamp: 2,
+    };
+    const captured: Array<{
+      initialState: { messages: (typeof snapshot)[]; systemPrompt: string };
+    }> = [];
+    AgentMock.mockImplementation(function (options) {
+      captured.push(options);
+      return createMockAgent(["ok"], {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+      });
+    });
+    for (const history of [
+      [role, snapshot],
+      [role, snapshot, previous],
+    ]) {
+      vi.mocked(loadMessages).mockResolvedValue(history);
+      await runAgentLoopRaw(
+        "test-group",
+        "session-1",
+        "request",
+        {
+          model: { provider: "zai-custom", modelId: "glm-4.7-flash" },
+          tools: [],
+        },
+        { agentId: "review/bot" },
+      );
+    }
+    expect(captured[0].initialState.systemPrompt).toContain(
+      agentMemoryPrompt("review/bot"),
+    );
+    expect(captured[0].initialState.systemPrompt).toContain("500文字以内");
+    expect(captured[0].initialState.systemPrompt).toContain(
+      "許可されている既存",
+    );
+    const first = defaultConvertToLlm(captured[0].initialState.messages);
+    const resumed = defaultConvertToLlm(captured[1].initialState.messages);
+    expect(first).toEqual([
+      { role: "user", content: snapshot.content, timestamp: 1 },
+    ]);
+    expect(resumed).toEqual([...first, previous]);
+    expect(appendMessage).not.toHaveBeenCalledWith(
+      "test-group",
+      "session-1",
+      expect.objectContaining({ customType: INITIAL_MEMORY_TYPE }),
+      "review/bot",
+    );
+    expect(readFile).not.toHaveBeenCalledWith(
+      expect.stringContaining("agent-memory"),
+      expect.anything(),
+    );
+  });
+
   it("メッセージを送信して返答テキストを返す", async () => {
     const mockAgent = createMockAgent(["Hello", " world"], {
       role: "assistant",
@@ -374,7 +450,7 @@ describe("runAgentLoop", () => {
     );
     expect(lastAgentOptions).toMatchObject({
       initialState: {
-        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}`,
+        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n${agentMemoryPrompt("main")}`,
         model: { id: "glm-4.7-flash", provider: "zai-custom" },
         thinkingLevel: "off",
       },
@@ -665,7 +741,7 @@ describe("runAgentLoop", () => {
 
     expect(lastAgentOptions).toMatchObject({
       initialState: {
-        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n独立行に <NO_REPLY> と出力する`,
+        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n${agentMemoryPrompt("main")}\n\n独立行に <NO_REPLY> と出力する`,
       },
     });
     expect(
@@ -902,7 +978,7 @@ describe("runAgentLoop", () => {
       expect.objectContaining({
         initialState: expect.objectContaining({
           // AGENTS.md がある場合は DEFAULT_SYSTEM_PROMPT を完全に置き換える
-          systemPrompt: `カスタムプロンプト\n\n${datePromptJST()}`,
+          systemPrompt: `カスタムプロンプト\n\n${datePromptJST()}\n\n${agentMemoryPrompt("main")}`,
         }),
       }),
     );
@@ -2262,6 +2338,23 @@ describe("defaultConvertToLlm", () => {
       totalTokens: 0,
     },
   };
+
+  it.each([
+    "",
+    "メモリ選択に失敗しました。今回は追加メモリなしで続行します。",
+  ])("renders persisted empty/failure memory correctly and deduplicates: %s", (content) => {
+    const snapshot = {
+      role: "custom" as const,
+      customType: INITIAL_MEMORY_TYPE,
+      content,
+      display: false,
+      timestamp: 1,
+    };
+    const result = defaultConvertToLlm([snapshot, snapshot, userMsg]);
+    expect(result).toEqual(
+      content ? [{ role: "user", content, timestamp: 1 }, userMsg] : [userMsg],
+    );
+  });
 
   it("legacy agents-snapshot メッセージも LLM 送信用メッセージから除外する", () => {
     const legacySnapshot = {

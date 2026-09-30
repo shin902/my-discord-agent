@@ -138,7 +138,41 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("isolates the default Docker launch with scoped mounts, firewall bootstrap, and proxy-only credentials", async () => {
     const { sendMessage } = await import("./manager.js");
-    await sendMessage("test-group", "session-1", "hi", { agentId: "main" });
+    const initialMemory = await import("./initial-memory.js");
+    const prepareMemory = vi.spyOn(initialMemory, "prepareInitialMemory");
+    const cancellation = new AbortController();
+    const previousKey = process.env.TYPESAFE_API_KEY;
+    process.env.TYPESAFE_API_KEY = "host-only-memory-test-key";
+    try {
+      await sendMessage("test-group", "session-1", "hi", {
+        agentId: "main",
+        signal: cancellation.signal,
+      });
+    } finally {
+      if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+      else process.env.TYPESAFE_API_KEY = previousKey;
+    }
+    expect(prepareMemory).toHaveBeenCalledExactlyOnceWith(
+      path.join(GROUPS_DIR, "test-group"),
+      "test-group",
+      "session-1",
+      "main",
+      "hi",
+      600_000,
+      cancellation.signal,
+    );
+    prepareMemory.mockRestore();
+    const proc = spawnMock.mock.results[0].value as ReturnType<typeof makeProc>;
+    expect(
+      JSON.stringify([spawnMock.mock.calls, proc.stdin.write.mock.calls]),
+    ).not.toContain("host-only-memory-test-key");
+    const { loadMessages } = await import("./session.js");
+    expect(await loadMessages("test-group", "session-1", "main")).toEqual([
+      expect.objectContaining({
+        customType: "initial-agent-memory",
+        outcome: "no-candidates",
+      }),
+    ]);
     const args = spawnMock.mock.calls[0][1] as string[];
     expect(args).toContain("--rm");
     expect(args).toContain("-i");

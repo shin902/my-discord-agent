@@ -407,6 +407,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 |---|---|---|
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
+| `agentMemory` | — | `threshold`: owner別Markdownの初回選択閾値（0〜1、仮の初期値0.7）。Host認証は `TYPESAFE_API_KEY`。詳細・制約は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 | `xSavedReceiver` | — | `enabled`（既定: false）、`port`（既定: 8787、1–65535）。localhost 専用の X saved 受信サーバー。[Tailscale Serve と拡張の設定手順](x-saved.md#live-capture-setup)を参照。変更後は再起動が必要 |
 | `screenCaptureReceiver` | — | `enabled`（既定: false）、`port`（既定: 8788、1–65535）。localhost専用の画面PNG receiver。[Mac / Tailscale / 要約の設定](screen-capture.md)を参照。変更後は再起動が必要 |

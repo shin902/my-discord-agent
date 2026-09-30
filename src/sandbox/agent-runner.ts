@@ -23,6 +23,7 @@ import {
   CONVERSATION_ENTRIES_PREFIX,
   type ConversationEntries,
 } from "../agent/conversation.js";
+import { isInitialMemoryMessage } from "../agent/memory-context.js";
 import { resolveModel } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
 import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
@@ -266,6 +267,13 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   return messages.flatMap((msg) => {
     if (isSystemPromptSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg))
       return [];
+    if (isInitialMemoryMessage(msg)) {
+      if (bootstrapSeen.has(msg.customType)) return [];
+      bootstrapSeen.add(msg.customType);
+      return msg.content
+        ? [{ role: "user", content: msg.content, timestamp: msg.timestamp }]
+        : [];
+    }
     const customType = getCustomType(msg);
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];

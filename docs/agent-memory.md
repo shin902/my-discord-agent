@@ -1,9 +1,29 @@
 # Agent Memory
 
+## Owner別Markdownと新規sessionの初回選択
+
+Main、channel Bot、Bot Task、Bot cronは共通の実行経路で、既存の `groupName + agent_id` をownerとして使います。正本は既存group workspaceの `agent-memory/<encoded-owner>/` 内の直下の `.md` ファイルです。Agentには `/workspace/agent-memory/<encoded-owner>/` として見えます。`<encoded-owner>` は `owner-` + Agent IDのUTF-16LEバイト列のbase64url（paddingなし）。MainのIDは `main` です。任意のBot名を単一の安全なパス要素に変換し、Bot名の変更や新しいmountは不要です。
+
+共通system promptは、役立つ安定した事実・好み・教訓を得たとき、古い・誤った記憶に気づいたときにAgent自身が作成・更新・整理するよう指示します。1テーマ1Markdown、内容が分かるファイル名とし、**Agent自身が文字数を数えて本文を500文字以内**にします。詳細への参照を置く場合も判断に必要な要点は本文に残します。機械的な切断・文字数validatorはありません。read/write/edit等の既存権限を使い、ツール権限を暗黙に追加しません。
+
+Hostは新規sessionの最初の依頼本文（cronは実行プロンプト）と当該ownerの候補ファイル名をJevに送ります。本文はJevには送らず、公式 [`@typesafe-ai/sdk`](https://docs.typesafe.ai/sdk/javascript) の `systemOne({state, questions})` で候補ごとのNoul質問を1つのrequestにまとめます。質問IDだけでなくinstructionsにファイル名を含め、「似た話題か」ではなく「今回の回答や作業判断に具体的に役立つか」を判定します。返されたID・型・有限な0〜1の値を検証し、閾値以上から降順で最大5件を選びます。同点はファイル名の安定した順序です。無関係な記憶で件数を埋めません。サブディレクトリやsymlinkは自動選択対象にしません。
+
+`config/config.json` の `agentMemory.threshold` は0〜1（初期値 **0.7**）。未設定・不正値は0.7を使い、不正値には警告します。0.5付近の曖昧な関連より具体的な有用性を優先するための**仮値**であり、校正済みの正解確率・検証済みの精度ではありません。たとえば「京都旅行の夕食を決めたい」に対する「京都の食の好み.md」と「関連するだけ.md」をモックの0.90/0.89で比較し、閾値0.90なら前者だけを採用する境界動作をテストしています。これはJevが実際にそのスコアを返すという証拠ではありません。日本語ファイル名での実データ精度と閾値調整、実APIの利用はMVPでは未検証です。
+
+認証はHostの環境変数 **`TYPESAFE_API_KEY` のみ**を使います。通常の `pnpm start` はGit管理外の `.env` を読み込みます（開発起動等ではHost processの環境へ設定）。group設定やソース、Agent workspaceにキーを書かず、Runnerへの環境変数・payloadにも渡しません。候補なしならAPIも認証も不要です。候補があるのにキーがない場合は失敗コンテキストを保存し、会話を続行します。設定変更はHost再起動後に反映します。SDKの既定モデル `jev-latest` を使用し、SDKのHost環境設定はSDK仕様に従いますが、ログは明示的に `off` に固定して依頼・ファイル名・APIエラー本文を出力しません。
+
+インストールしたSDK **0.6.0** の型と実装に合わせ、`retry.maxRetries: 4`（初回込み最大5試行）、1試行10秒を使います。SDKのみが接続・timeout・408/429/5xxを再試行し、外側にretryを重ねません。SDK既定の500ms開始・指数backoff（上限5秒、最大25% jitter）、最大60秒のRetry-Afterを使います。選択全体のAPI待機上限には既存 `agent.timeoutMs` を使い、Runnerのtimeoutとは別に計測します。既存の実行AbortSignalはAPIと待機にも伝播します。認証・入力検証エラー、該当なし、キャンセルは再試行しません。
+
+session DBの既存custom entry `initial-agent-memory` に、`selected` / `no-candidates` / `no-match` / `failed` と実際に注入する本文を保存します。空結果は空文字のまま保存し、LLMへ空メッセージを送りません。最終失敗は「メモリ選択に失敗しました。今回は追加メモリなしで続行します。」を追加コンテキストにします。Markdownの後日の編集・削除は保存済みsnapshotに影響しません。実ユーザー発言・source provenanceとは別entryで、初回のユーザー発言より前に保存され、同じ順序でresume時も展開されます。既存contextFilesのbootstrapは従来どおり先頭へ並べられます。
+
+role snapshotしかないBot Taskでも初回選択を行います。結果はRunner起動**前**に保存するため、通常の実行retry・継続・rename/resumeでは再選定・重複注入しません。初回markerのない既存会話（user/assistant/toolResultあり）へは遡って注入しません。キャンセルは完了結果を保存せず中断し、保存前のプロセスクラッシュ・キャンセル後の再実行は選定し直せます。session DBへの保存失敗は実行を止めます。同一sessionの直列化は既存queue/admissionが担います。
+
+これは共有group workspace内のowner別自動選択であり、同じgroupのAgentが他ownerのファイルを手動で読むことを禁止するアクセス隔離ではありません。従来のgroup境界、memory_core/exportは変更しません。継続sessionでの再選定・追加注入（#580）、embedding、抽出cron、専用編集ツール、Subagent専用永続Memoryは対象外です。HostとRunnerを同じcheckoutからbuildし、Runner imageを更新してから再起動してください。DB schema変更・移行は不要です。
+
 ## NanoClaw-compatible workspace memory
 
 NanoClaw-style file memory is an opt-in third memory option implemented by the
-`agent-memory-setup` Skill. The host never creates memory files at startup or during
+`agent-memory-setup` Skill. For this NanoClaw option, the host never creates memory files at startup or during
 an Agent run. It does not replace or modify legacy `MEMORY.md` /
 `memory/SELF.md`, their cron jobs, MemoryCore, session trajectory, or exact
 RSS/queue state. Operators may use any of these options independently or

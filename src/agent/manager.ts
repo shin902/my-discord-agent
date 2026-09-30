@@ -48,6 +48,7 @@ import {
   type ConversationEntries,
   ConversationEntriesSchema,
 } from "./conversation.js";
+import { prepareInitialMemory } from "./initial-memory.js";
 import { resolveBaseUrl, validateModel } from "./model.js";
 import { sandboxNetworkArgs } from "./sandbox-network.js";
 import type { SessionSource } from "./source.js";
@@ -758,6 +759,15 @@ export async function sendMessage(
   }
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
+  await prepareInitialMemory(
+    path.join(ROOT, "groups", groupName),
+    groupName,
+    sessionId,
+    options.agentId,
+    content,
+    agentTimeoutMs,
+    signal,
+  );
   const botCatalog =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
       ? Object.entries(await loadBotRegistry())
