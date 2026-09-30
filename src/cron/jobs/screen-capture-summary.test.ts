@@ -467,6 +467,7 @@ describe("screen capture queue pipeline", () => {
           );
         }
         if (directories.length === 1) throw new Error("agent failed");
+        options.onConversation?.({ userEntryId: 41, assistantEntryId: 42 });
         return "";
       },
     );
@@ -490,7 +491,14 @@ describe("screen capture queue pipeline", () => {
     await expect(stat(directories[0])).rejects.toMatchObject({
       code: "ENOENT",
     });
-    expect((await runNext()).status).toBe("completed");
+    expect(await runNext()).toMatchObject({
+      status: "completed",
+      terminalState: "succeeded",
+      succeeded: true,
+    });
+    expect([...repository.readCommittedConversations("logbook")]).toEqual([
+      { userEntryId: 41, assistantEntryId: 42 },
+    ]);
     expect(directories[0]).not.toBe(directories[1]);
     await expect(stat(directories[1])).rejects.toMatchObject({
       code: "ENOENT",

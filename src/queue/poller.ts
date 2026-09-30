@@ -1235,7 +1235,7 @@ export async function processMessage(
       msg.fencingToken,
       response,
       {
-        empty: !response,
+        empty: msg.discordOutput !== "none" && !response,
         suppressDelivery,
         conversation,
         metadata: executionMetadata(timing),
