@@ -9,7 +9,17 @@ export type ThreadRoute = {
   persist: (threadId: string) => Promise<void> | void;
 };
 
+export type PreparedImages = {
+  imagePaths: string[];
+  cleanup: () => Promise<void>;
+};
+
 export interface SourceCallbacks<T> {
+  /** Prepare per-attempt Agent images; poller always cleans up after sendMessage. */
+  prepareImages?: (
+    input: T,
+    message: InboxMessage,
+  ) => Promise<PreparedImages | undefined>;
   /** Graph unread and RSS dispatch claims have different terminal semantics. */
   activeOnlyIdempotency?: boolean;
   /** RSS continues past a failed response chunk; ordinary sources do not. */
@@ -31,6 +41,10 @@ export interface SourceCallbacks<T> {
 }
 
 interface RegisteredSource {
+  prepareImages: (
+    input: unknown,
+    message: InboxMessage,
+  ) => Promise<PreparedImages | undefined>;
   activeOnlyIdempotency: boolean;
   continueAfterFailedChunk: boolean;
   terminalOnAgentFailure: boolean;
@@ -73,6 +87,8 @@ export class SourceHandlers {
       continueAfterFailedChunk: callbacks.continueAfterFailedChunk ?? false,
       terminalOnAgentFailure: callbacks.terminalOnAgentFailure ?? false,
       validate,
+      prepareImages: async (input, message) =>
+        callbacks.prepareImages?.(validate(input), message),
       threadRoute: (input, groupName, channelId) =>
         callbacks.threadRoute?.(validate(input), groupName, channelId),
       suppressed: async (input, message) => {
@@ -117,6 +133,17 @@ export class SourceHandlers {
       groupName,
       channelId,
     );
+  }
+
+  async prepareImages(
+    message: InboxMessage,
+  ): Promise<PreparedImages | undefined> {
+    return message.feature
+      ? this.resolve(message.feature).prepareImages(
+          message.feature.input,
+          message,
+        )
+      : undefined;
   }
 
   async suppressed(message: InboxMessage): Promise<void> {

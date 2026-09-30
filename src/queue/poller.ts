@@ -933,7 +933,11 @@ export async function processMessage(
   sources: SourceHandlers = new SourceHandlers(),
 ): Promise<void> {
   const agentId = msg.botId ?? "main";
-  if (msg.cronDeliveryMode === "item-thread" && msg.cronProvisioning !== true) {
+  if (
+    msg.discordOutput !== "none" &&
+    msg.cronDeliveryMode === "item-thread" &&
+    msg.cronProvisioning !== true
+  ) {
     const timing = startResponseTiming(msg);
     if (terminalSourceFailure(msg, sources)) {
       await releaseRssAfterFailure(
@@ -1033,9 +1037,10 @@ export async function processMessage(
     }
   }
   if (
-    msg.cronDeliveryMode === "new-thread" ||
-    msg.cronDeliveryMode === "item-thread" ||
-    msg.cronThread
+    msg.discordOutput !== "none" &&
+    (msg.cronDeliveryMode === "new-thread" ||
+      msg.cronDeliveryMode === "item-thread" ||
+      msg.cronThread)
   ) {
     try {
       return await processCronThreadDelivery(msg, signal, sources);
@@ -1089,10 +1094,12 @@ export async function processMessage(
       response = await withInferenceLock(
         lockTarget,
         async () => {
-          stopTyping = startTypingLoop(msg.groupName, msg.channelId);
+          if (msg.discordOutput !== "none")
+            stopTyping = startTypingLoop(msg.groupName, msg.channelId);
           if (msg.cronSessionMode === "per-run") {
             await markEphemeralCronSession(msg.groupName, msg.sessionId);
           }
+          const images = await sources.prepareImages(msg);
           const agentStartedAt = Date.now();
           try {
             return await sendMessage(
@@ -1101,7 +1108,9 @@ export async function processMessage(
               msg.content,
               {
                 agentId,
+                imagePaths: images?.imagePaths,
                 onDiscordEvent: (event) => {
+                  if (msg.discordOutput === "none") return;
                   // direct cron と Bot Task の実行進捗はチャネルを埋めるため抑制する。
                   // エラーは必要な通知として維持し、thread delivery は専用フローに委ねる。
                   if (
@@ -1148,10 +1157,10 @@ export async function processMessage(
                   : undefined,
                 signal,
                 configOverride: execution.configOverride,
-                trustedDiscordDestination: trustedDiscordDestination(
-                  groupConfig,
-                  msg.channelId,
-                ),
+                trustedDiscordDestination:
+                  msg.discordOutput === "none"
+                    ? undefined
+                    : trustedDiscordDestination(groupConfig, msg.channelId),
                 heldInferenceResource:
                   lockTarget.concurrency === "serial"
                     ? lockTarget.resource
@@ -1161,6 +1170,7 @@ export async function processMessage(
             );
           } finally {
             timing.agentTotalMs = Date.now() - agentStartedAt;
+            await images?.cleanup();
           }
         },
         {
@@ -1209,12 +1219,13 @@ export async function processMessage(
 
     if (await failAttemptIfNonZeroExitCode(msg, response, timing, sources))
       return;
-    if (isEmptyAgentResponse(response)) {
+    if (msg.discordOutput !== "none" && isEmptyAgentResponse(response)) {
       outcome = "dead-letter";
       await failEmptyAgentResponse(msg, timing, sources);
       return;
     }
-    const suppressDelivery = hasNoReplyMarker(response);
+    const suppressDelivery =
+      msg.discordOutput === "none" || hasNoReplyMarker(response);
     // Canonical result and durable delivery chunks commit atomically; Discord is never called here.
     if (msg.fencingToken === undefined) {
       throw new Error(`fenced inbox message required: ${msg.id}`);
@@ -1224,7 +1235,7 @@ export async function processMessage(
       msg.fencingToken,
       response,
       {
-        empty: !response,
+        empty: msg.discordOutput !== "none" && !response,
         suppressDelivery,
         conversation,
         metadata: executionMetadata(timing),

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -15,9 +15,17 @@ import { loadCredentialProxy } from "../../config/credential-proxy.js";
 import { resolveModelConfig } from "../../config/default-model.js";
 import { findGroupByName } from "../../config/groups.js";
 import { resolveProviderLockTarget } from "../../config/providers.js";
-import { summarizeScreenCaptureBatch } from "../../features/screen-capture-summary.js";
+import {
+  registerScreenCaptureSource,
+  summarizeScreenCaptureBatch,
+} from "../../features/screen-capture-summary.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
 import { acquireInferenceLock } from "../../queue/inference-lock.js";
+import { JobHandlers } from "../../queue/job-handlers.js";
+import { processMessage } from "../../queue/poller.js";
+import { QueueRepository } from "../../queue/repository.js";
+import { SourceHandlers } from "../../queue/source-handlers.js";
+import { NonRetryableError } from "../../utils/error.js";
 import type { CronContext } from "../runner.js";
 import { markEphemeralCronSession } from "../session-retention.js";
 
@@ -26,6 +34,13 @@ const handler = (ctx: CronContext) =>
     ctx as Parameters<typeof summarizeScreenCaptureBatch>[0],
   );
 
+const queue = vi.hoisted(() => ({
+  repository: undefined as QueueRepository | undefined,
+}));
+vi.mock("../../queue/repository.js", async (original) => ({
+  ...(await original<typeof import("../../queue/repository.js")>()),
+  getQueueRepository: () => queue.repository,
+}));
 const magick = vi.hoisted(() => ({
   invalidIds: new Set<string>(),
   errorCode: undefined as string | number | undefined,
@@ -123,7 +138,46 @@ function result(text = "Editor work"): AssistantMessage {
   };
 }
 
-describe("screen capture summary cron", () => {
+vi.mock("../../agent/session.js", () => ({
+  loadMessages: async () => [],
+  sessionConversationPath: () => "test-session",
+}));
+vi.mock("../../config/group-config.js", () => ({
+  loadGroupSystemPrompt: async () => undefined,
+}));
+vi.mock("../../discord/client.js", () => ({
+  getDiscordClientForGroupName: vi.fn(() => {
+    throw new Error("unexpected Discord access");
+  }),
+  getDiscordClients: () => new Map(),
+}));
+
+describe("screen capture queue pipeline", () => {
+  let repository: QueueRepository;
+  let sources: SourceHandlers;
+  const resume = vi.fn();
+  function jobs() {
+    return repository.db
+      .prepare("SELECT id FROM jobs ORDER BY rowid")
+      .all()
+      .map((row) => {
+        const job = repository.get((row as { id: string }).id);
+        if (!job) throw new Error("missing job");
+        return job;
+      });
+  }
+  async function runNext() {
+    const job = repository.claim(
+      "test",
+      60000,
+      new Date(Date.now() + 3600000),
+    )?.job;
+    if (!job) throw new Error("expected queued job");
+    await processMessage(job, undefined, new JobHandlers(), sources);
+    const updated = repository.get(job.id);
+    if (!updated) throw new Error("missing job");
+    return updated;
+  }
   let directory: string;
 
   beforeEach(async () => {
@@ -135,6 +189,12 @@ describe("screen capture summary cron", () => {
       "SCREEN_CAPTURE_DB_PATH",
       path.join(directory, "captures.sqlite"),
     );
+    vi.stubEnv("RUNTIME_DB_PATH", path.join(directory, "runtime.sqlite"));
+    repository = new QueueRepository(path.join(directory, "runtime.sqlite"));
+    sources = new SourceHandlers();
+    registerScreenCaptureSource(sources, repository, resume);
+    repository.registerSources(sources);
+    queue.repository = repository;
     vi.mocked(resolveModel).mockResolvedValue(model);
     vi.mocked(loadCredentialProxy).mockResolvedValue([
       { provider: "openai", baseUrl: "https://api.openai.com/v1" },
@@ -158,6 +218,7 @@ describe("screen capture summary cron", () => {
   });
 
   afterEach(async () => {
+    repository.close();
     vi.unstubAllEnvs();
     await rm(directory, { recursive: true, force: true });
   });
@@ -232,6 +293,9 @@ describe("screen capture summary cron", () => {
       settings: { visionModel, concurrency: 2, limit: 2 },
     });
 
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(rows().every((row) => row.completed_at === null)).toBe(true);
+    await runNext();
     expect(execFile).toHaveBeenCalledWith(
       "magick",
       ["identify", expect.stringMatching(/\.png$/)],
@@ -245,7 +309,7 @@ describe("screen capture summary cron", () => {
     );
     expect(sendMessage).toHaveBeenCalledWith(
       "logbook",
-      expect.stringMatching(/^cron-screen-capture-summary-/),
+      expect.stringMatching(/^screen-capture-/),
       expect.stringContaining("Editor work"),
       expect.objectContaining({
         agentId: "main",
@@ -266,7 +330,8 @@ describe("screen capture summary cron", () => {
   it("keeps VLM summaries pending when memory update fails and reuses them", async () => {
     insert(1);
     vi.mocked(sendMessage).mockRejectedValueOnce(new Error("agent failed"));
-    await expect(handler(ctx)).rejects.toThrow("agent failed");
+    await handler(ctx);
+    expect((await runNext()).status).toBe("retry_wait");
     expect(rows()[0]).toMatchObject({
       summary: "Editor work",
       completed_at: null,
@@ -275,6 +340,8 @@ describe("screen capture summary cron", () => {
     vi.mocked(completeSimple).mockClear();
     await handler(ctx);
     expect(completeSimple).not.toHaveBeenCalled();
+    expect(jobs()).toHaveLength(1);
+    await runNext();
     expect(rows()[0].completed_at).not.toBeNull();
   });
 
@@ -369,62 +436,78 @@ describe("screen capture summary cron", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("passes more than 10 images to one locked direct-mode agent call", async () => {
+  it("recreates all direct images from the DB for each attempt and cleans up", async () => {
     const ids = insert(12);
-    const release = vi.fn();
-    vi.mocked(resolveProviderLockTarget).mockImplementation(
-      async (provider) => ({ resource: provider, concurrency: "serial" }),
+    const directories: string[] = [];
+    vi.mocked(sendMessage).mockImplementation(
+      async (_group, sessionId, _content, options) => {
+        expect(markEphemeralCronSession).toHaveBeenCalledWith(
+          "logbook",
+          sessionId,
+        );
+        expect(options).toMatchObject({
+          agentId: "main",
+          configOverride: agentConfig,
+        });
+        expect(options?.imagePaths).toHaveLength(12);
+        if (!options?.imagePaths) throw new Error("missing images");
+        const directory = path.join(
+          process.cwd(),
+          "groups/logbook",
+          path.dirname(options.imagePaths[0]).replace("/workspace/", ""),
+        );
+        directories.push(directory);
+        expect((await stat(directory)).mode & 0o777).toBe(0o700);
+        for (const [index, id] of ids.entries()) {
+          expect(
+            (await stat(path.join(directory, `${id}.png`))).mode & 0o777,
+          ).toBe(0o600);
+          expect(await readFile(path.join(directory, `${id}.png`))).toEqual(
+            Buffer.from(`image-${index}`),
+          );
+        }
+        if (directories.length === 1) throw new Error("agent failed");
+        options.onConversation?.({ userEntryId: 41, assistantEntryId: 42 });
+        return "";
+      },
     );
-    vi.mocked(acquireInferenceLock).mockResolvedValue(release);
-    const directory = path.join(
-      process.cwd(),
-      "groups/logbook/.screen-captures",
-    );
-    vi.mocked(sendMessage).mockImplementationOnce(async (_group, sessionId) => {
-      expect(markEphemeralCronSession).toHaveBeenCalledWith(
-        "logbook",
-        sessionId,
-      );
-      expect((await stat(directory)).mode & 0o777).toBe(0o700);
-      for (const id of ids)
-        expect(
-          (await stat(path.join(directory, `${id}.png`))).mode & 0o777,
-        ).toBe(0o600);
-      return "updated";
-    });
-    await handler({
-      ...ctx,
-      settings: { mode: "direct", limit: 12 },
-    });
-
+    expect(
+      await handler({ ...ctx, settings: { mode: "direct", limit: 12 } }),
+    ).toBe(false);
     expect(completeSimple).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith(
-      "logbook",
-      expect.stringMatching(/^cron-screen-capture-summary-/),
-      expect.stringContaining("未処理画像"),
-      expect.objectContaining({
-        agentId: "main",
-        imagePaths: ids.map((id) => `/workspace/.screen-captures/${id}.png`),
-        configOverride: agentConfig,
-        heldInferenceResource: memoryModel.provider,
-      }),
-    );
-    expect(resolveProviderLockTarget).toHaveBeenCalledWith(
-      memoryModel.provider,
-    );
-    expect(acquireInferenceLock).toHaveBeenCalledWith(
-      memoryModel.provider,
-      "serial",
-    );
-    expect(release).toHaveBeenCalledOnce();
-    for (const id of ids) {
-      await expect(
-        readFile(path.join(directory, `${id}.png`)),
-      ).rejects.toMatchObject({ code: "ENOENT" });
-    }
+    expect(acquireInferenceLock).not.toHaveBeenCalled();
+    expect(jobs()[0]).toMatchObject({
+      discordOutput: "none",
+      cronSessionMode: "per-run",
+      channelId: "",
+      feature: {
+        kind: "screen-capture",
+        input: { mode: "direct", captureIds: ids },
+      },
+    });
+    expect(jobs()[0]).not.toHaveProperty("imagePaths");
+    expect((await runNext()).status).toBe("retry_wait");
+    expect(rows().every((row) => row.completed_at === null)).toBe(true);
+    await expect(stat(directories[0])).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await runNext()).toMatchObject({
+      status: "completed",
+      terminalState: "succeeded",
+      succeeded: true,
+    });
+    expect([...repository.readCommittedConversations("logbook")]).toEqual([
+      { userEntryId: 41, assistantEntryId: 42 },
+    ]);
+    expect(directories[0]).not.toBe(directories[1]);
+    await expect(stat(directories[1])).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(rows().every((row) => row.accepted === 1 && row.completed_at)).toBe(
       true,
     );
+    expect(resume).toHaveBeenCalledOnce();
+    expect(repository.db.prepare("SELECT * FROM deliveries").all()).toEqual([]);
   });
 
   it("omits configOverride when the cron has no AgentConfig fields", async () => {
@@ -440,19 +523,126 @@ describe("screen capture summary cron", () => {
       settings: { mode: "direct", limit: 1 },
     });
 
-    expect(vi.mocked(sendMessage).mock.calls[0][3]).not.toHaveProperty(
-      "configOverride",
-    );
+    expect(jobs()[0]).not.toHaveProperty("configOverride");
   });
 
   it("leaves direct-mode images pending when the memory agent fails", async () => {
     insert(1);
     vi.mocked(sendMessage).mockRejectedValue(new Error("agent failed"));
 
-    await expect(
-      handler({ ...ctx, settings: { mode: "direct", limit: 1 } }),
-    ).rejects.toThrow("agent failed");
+    await handler({ ...ctx, settings: { mode: "direct", limit: 1 } });
+    expect((await runNext()).status).toBe("retry_wait");
+    expect(resume).not.toHaveBeenCalled();
     expect(rows()[0].completed_at).toBeNull();
+  });
+
+  it("blocks additional batches through queued, claimed, running and retry_wait states", async () => {
+    insert(3);
+    const direct = { ...ctx, settings: { mode: "direct", limit: 1 } };
+    await handler(direct);
+    // Changing the batch size cannot bypass the group-wide active-job check.
+    const changed = { ...ctx, settings: { mode: "direct", limit: 2 } };
+    await handler(changed);
+    const claim = repository.claim();
+    if (!claim) throw new Error("missing claim");
+    await handler(changed);
+    repository.markRunning(claim.job.id, claim.fencingToken);
+    await handler(changed);
+    repository.failAttempt(
+      claim.job.id,
+      new Error("retry"),
+      claim.fencingToken,
+    );
+    await handler(changed);
+    expect(jobs()).toHaveLength(1);
+    expect(rows().every((row) => row.completed_at === null)).toBe(true);
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("advances to the next oldest full batch only after successful completion", async () => {
+    const ids = insert(5);
+    const config = { ...ctx, settings: { mode: "direct", limit: 2 } };
+    resume.mockImplementation(() => {
+      void handler(config);
+    });
+    await handler(config);
+    expect(jobs()).toHaveLength(1);
+    expect(jobs()[0].feature?.input).toMatchObject({
+      captureIds: ids.slice(0, 2),
+    });
+    await runNext();
+    await vi.waitFor(() => expect(jobs()).toHaveLength(2));
+    expect(jobs()[1].feature?.input).toMatchObject({
+      captureIds: ids.slice(2, 4),
+    });
+    await runNext();
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledTimes(2));
+    expect(jobs()).toHaveLength(2);
+    expect(
+      rows()
+        .filter((row) => row.completed_at === null)
+        .map((row) => row.id),
+    ).toEqual([ids[4]]);
+  });
+
+  it("rolls back a failed completion callback and permits re-enqueue with the same batch key", async () => {
+    const ids = insert(2);
+    const config = { ...ctx, settings: { mode: "direct", limit: 2 } };
+    const db = openScreenCaptureDb();
+    db.exec(`CREATE TRIGGER fail_completion BEFORE UPDATE OF completed_at ON screen_captures
+      WHEN NEW.id = '${ids[1]}' BEGIN SELECT RAISE(ABORT, 'completion failed'); END`);
+    db.close();
+    await handler(config);
+    const first = await runNext();
+    expect(first.status).toBe("completed");
+    expect(
+      rows().every((row) => row.completed_at === null && row.accepted === null),
+    ).toBe(true);
+    expect(resume).not.toHaveBeenCalled();
+    expect(jobs()).toHaveLength(1);
+    const repair = openScreenCaptureDb();
+    repair.exec("DROP TRIGGER fail_completion");
+    repair.close();
+    await handler(config); // Existing upload/startup entry point.
+    expect(jobs()).toHaveLength(2);
+    expect(jobs()[1].idempotencyKey).toBe(first.idempotencyKey);
+    expect(jobs()[1].sessionId).not.toBe(first.sessionId);
+    await runNext();
+    expect(rows().every((row) => row.completed_at && row.accepted === 1)).toBe(
+      true,
+    );
+  });
+
+  it("leaves terminal failures pending without immediately creating another job", async () => {
+    insert(1);
+    const config = { ...ctx, settings: { mode: "direct", limit: 1 } };
+    await handler(config);
+    vi.mocked(sendMessage).mockRejectedValueOnce(
+      new NonRetryableError("terminal failure"),
+    );
+    const first = await runNext();
+    expect(first.status).toBe("dead_letter");
+    expect(rows()[0].completed_at).toBeNull();
+    expect(resume).not.toHaveBeenCalled();
+    expect(jobs()).toHaveLength(1);
+    await handler(config);
+    expect(jobs()[1].idempotencyKey).toBe(first.idempotencyKey);
+    await runNext();
+    expect(rows()[0].accepted).toBe(1);
+  });
+
+  it("cleans partially prepared images when input preparation fails", async () => {
+    const ids = insert(2);
+    await handler({ ...ctx, settings: { mode: "direct", limit: 2 } });
+    magick.invalidIds.add(ids[1]);
+    expect((await runNext()).status).toBe("retry_wait");
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(
+      await readdir(
+        path.join(process.cwd(), "groups/logbook/.screen-captures"),
+      ),
+    ).toEqual([]);
+    expect(rows().every((row) => row.completed_at === null)).toBe(true);
   });
 
   it("rejects missing handler-specific configuration", async () => {

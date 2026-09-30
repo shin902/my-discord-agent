@@ -6,13 +6,23 @@ import {
 } from "../config/screen-capture.js";
 import { startScreenCaptureReceiver } from "../integrations/screen-capture/receiver.js";
 import { openScreenCaptureDb } from "../integrations/screen-capture/store.js";
-import { summarizeScreenCaptureBatch } from "./screen-capture-summary.js";
+import { getQueueRepository } from "../queue/repository.js";
+import type { SourceHandlers } from "../queue/source-handlers.js";
+import {
+  registerScreenCaptureSource,
+  summarizeScreenCaptureBatch,
+} from "./screen-capture-summary.js";
 
 /** Start the receiver and recover any full pending batches after host setup. */
-export async function startScreenCapture(): Promise<Server | undefined> {
+export async function startScreenCapture(
+  sources: SourceHandlers,
+): Promise<Server | undefined> {
   const config = await loadScreenCaptureReceiverConfig();
   const summary = await loadScreenCaptureSummaryConfig();
   const consume = summary ? createSummaryConsumer(summary) : undefined;
+  registerScreenCaptureSource(sources, getQueueRepository(), (groupName) => {
+    if (groupName === summary?.groupName) consume?.();
+  });
   const receiver = config.enabled
     ? await startScreenCaptureReceiver({ port: config.port, onStored: consume })
     : undefined;

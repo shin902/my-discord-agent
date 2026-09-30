@@ -10,6 +10,7 @@ import {
   type ScreenCaptureSummaryConfig,
 } from "../config/screen-capture.js";
 import { openScreenCaptureDb } from "../integrations/screen-capture/store.js";
+import { SourceHandlers } from "../queue/source-handlers.js";
 import { startScreenCapture } from "./screen-capture.js";
 import { summarizeScreenCaptureBatch } from "./screen-capture-summary.js";
 
@@ -17,8 +18,10 @@ vi.mock("../config/screen-capture.js", () => ({
   loadScreenCaptureReceiverConfig: vi.fn(),
   loadScreenCaptureSummaryConfig: vi.fn(),
 }));
+vi.mock("../queue/repository.js", () => ({ getQueueRepository: vi.fn() }));
 vi.mock("./screen-capture-summary.js", () => ({
   summarizeScreenCaptureBatch: vi.fn(),
+  registerScreenCaptureSource: vi.fn(),
 }));
 
 const image = Buffer.from("89504e470d0a1a0a01020304", "hex");
@@ -121,7 +124,7 @@ describe("screen capture event consumer", () => {
         active--;
       }
     });
-    server = await startScreenCapture();
+    server = await startScreenCapture(new SourceHandlers());
     await vi.waitFor(() =>
       expect(summarizeScreenCaptureBatch).toHaveBeenCalledTimes(1),
     ); // startup recovery
@@ -153,7 +156,7 @@ describe("screen capture event consumer", () => {
     );
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      server = await startScreenCapture();
+      server = await startScreenCapture(new SourceHandlers());
       await vi.waitFor(() => expect(error).toHaveBeenCalled());
       expect(pending()).toBe(2);
       expect(summarizeScreenCaptureBatch).toHaveBeenCalledTimes(1);
