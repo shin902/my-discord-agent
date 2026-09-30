@@ -41,8 +41,10 @@ function deliveryRow(payload: Record<string, unknown>) {
 function enqueueLateItemThread(
   repo: QueueRepository,
   withConversationPath: boolean,
+  botId?: string,
 ) {
   const enqueued = repo.enqueue({
+    botId,
     channelId: "channel",
     groupName: "group",
     sessionId: "cron-temp",
@@ -61,8 +63,7 @@ function enqueueLateItemThread(
     claim.fencingToken,
     withConversationPath
       ? {
-          conversationPath:
-            "data/sessions/group/sessions.sqlite#session=cron-temp",
+          conversationPath: `data/sessions/group/sessions.sqlite#session=cron-temp${botId ? `&agent=${botId}` : ""}`,
         }
       : {},
   );
@@ -107,9 +108,12 @@ describe("late item-thread delivery", () => {
     expect(renameSession).not.toHaveBeenCalled();
   });
 
-  it("updates the durable conversation path when the temporary session is promoted", async () => {
+  it.each([
+    undefined,
+    "research",
+  ])("updates the durable conversation path when the temporary session is promoted (bot=%s)", async (botId) => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    const jobId = enqueueLateItemThread(repo, true);
+    const jobId = enqueueLateItemThread(repo, true, botId);
     const startThread = vi.fn().mockResolvedValue({ id: "123" });
     const send = vi.fn().mockResolvedValue({ id: "123", startThread });
     client.channels.fetch.mockResolvedValue({
@@ -128,11 +132,11 @@ describe("late item-thread delivery", () => {
         "group",
         "cron-temp",
         "123",
-        "main",
+        botId ?? "main",
       );
       expect(repo.get(jobId)).toMatchObject({
         sessionId: "123",
-        conversationPath: "data/sessions/group/sessions.sqlite#session=123",
+        conversationPath: `data/sessions/group/sessions.sqlite#session=123${botId ? `&agent=${botId}` : ""}`,
         cronThreadId: "123",
       });
       expect(startThread).toHaveBeenCalledOnce();
@@ -148,9 +152,12 @@ describe("late item-thread delivery", () => {
     }
   });
 
-  it("restores Main conversation metadata when promotion rolls back", async () => {
+  it.each([
+    undefined,
+    "research",
+  ])("restores owner conversation metadata when promotion rolls back (bot=%s)", async (botId) => {
     const repo = new QueueRepository(openRuntimeDb(":memory:"));
-    const jobId = enqueueLateItemThread(repo, true);
+    const jobId = enqueueLateItemThread(repo, true, botId);
     client.channels.fetch.mockResolvedValue({
       type: ChannelType.GuildText,
       isSendable: () => true,
@@ -167,13 +174,12 @@ describe("late item-thread delivery", () => {
         ready: () => true,
       }).runOnce();
       expect(renameSession.mock.calls).toEqual([
-        ["group", "cron-temp", "123", "main"],
-        ["group", "123", "cron-temp", "main"],
+        ["group", "cron-temp", "123", botId ?? "main"],
+        ["group", "123", "cron-temp", botId ?? "main"],
       ]);
       expect(repo.get(jobId)).toMatchObject({
         sessionId: "cron-temp",
-        conversationPath:
-          "data/sessions/group/sessions.sqlite#session=cron-temp",
+        conversationPath: `data/sessions/group/sessions.sqlite#session=cron-temp${botId ? `&agent=${botId}` : ""}`,
       });
     } finally {
       repo.close();

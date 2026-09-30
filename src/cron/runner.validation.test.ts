@@ -36,6 +36,16 @@ describe("loadAndValidateCron", () => {
       getQueueRepository: () => ({ enqueue: vi.fn() }),
     }));
 
+    vi.doMock("../config/bots.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../config/bots.js")>()),
+      loadBotRegistry: vi.fn().mockResolvedValue({
+        research: {
+          group: "g",
+          instructions: "role",
+          tools: ["get-current-weather"],
+        },
+      }),
+    }));
     const runner = await import("./runner.js");
     loadAndValidateCron = runner.loadAndValidateCron;
 
@@ -46,6 +56,41 @@ describe("loadAndValidateCron", () => {
 
   afterEach(() => {
     vi.resetModules();
+  });
+
+  it.each([
+    { botId: "research", groupName: "g", valid: true },
+    { botId: "missing", groupName: "g", valid: false },
+    { botId: "research", groupName: "other", valid: false },
+    { botId: "research", groupName: undefined, valid: false },
+    { botId: "", groupName: "g", valid: false },
+  ])("validates cron Bot membership: %j", async ({
+    botId,
+    groupName,
+    valid,
+  }) => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id: "bot-job",
+          schedule: "5m",
+          groupName,
+          botId,
+          prompt: "p",
+          channelId: "c",
+          deliveryMode: "direct",
+          sessionMode: "destination",
+          approvalRequiredTools: ["get-current-weather"],
+        },
+      ]),
+    );
+    if (valid) {
+      await expect(loadAndValidateCron()).resolves.toEqual([
+        expect.objectContaining({ botId: "research", groupName: "g" }),
+      ]);
+    } else {
+      await expect(loadAndValidateCron()).rejects.toThrow();
+    }
   });
 
   it("スキーマ検証失敗（重複ID）でエラーになる", async () => {

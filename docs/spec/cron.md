@@ -31,6 +31,7 @@ data/cron/
     "id": "daily-report",
     "schedule": "0 9 * * *",
     "groupName": "my-group",
+    "botId": "research",
     "prompt": "昨日のログを分析して日次レポートを作成してください",
     "channelId": "12345",
     "deliveryMode": "new-thread",
@@ -38,6 +39,8 @@ data/cron/
   }
 ]
 ```
+
+上の `research` は `config/bots.json` で `group: "my-group"` として定義する。Mainで実行する場合は `botId` を省略する。
 
 ### カスタムジョブ（TSファイルをバインド）
 
@@ -66,6 +69,7 @@ data/cron/
 | `id` | ✓ | string | ジョブID（一意） |
 | `schedule` | ✓ | string | cron式 `"0 9 * * *"`、インターバル `"30m"` `"1h"`、または宣言型prompt job専用の `"@startup"` |
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
+| `botId` | オプション | string | 同じgroupに所属するAgent Bot profile ID。未指定はMain。指定時はhandlerでもgroupName必須 |
 | `prompt` | handler なし時必須 | string | エージェントへのプロンプト |
 | `channelId` | handler なし時必須 | string | 送信先 Discord チャンネル ID |
 | `deliveryMode` | handler なし時必須 | `"direct"` \| `"new-thread"` \| `"item-thread"` | Discordへの投稿方法（後述） |
@@ -84,7 +88,13 @@ data/cron/
 
 handlerが設定されてる場合、JSONの全フィールドは `CronContext` に詰めてハンドラーに渡す。"handler なし時必須" フィールドはhandlerありの場合オプション扱いになるが、記載すればハンドラーから参照できる。
 
-通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでも配送先channelのAgentConfigは継承しない。未指定フィールドは親を継承し、`approvalRequiredTools` のjobでの未指定も同様に親を継承する。`[]` は明示解除であり、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronのAgentConfig override対象ではない。cronのAgentConfigは信頼済みの静的設定からのみ投入する。
+通常のDiscord会話におけるAgentConfigの解決順は `group → Bot profile（指定時） → channel`、cron jobにおける解決順は `group → Bot profile（botId指定時） → cron job` である。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでも配送先channelのAgentConfigは継承しない。未指定フィールドは親を継承し、`approvalRequiredTools` のjobでの未指定も同様に親を継承する。`[]` は明示解除であり、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronのAgentConfig override対象ではない。cronのAgentConfigは信頼済みの静的設定からのみ投入する。
+
+### Bot owner
+
+`botId` は既存のcached Bot Registryで解決し、存在と `bot.group === cron.groupName` を検証する。不一致はエラーとし、groupの暗黙補正やBot設定のhot reloadは行わない。設定変更には再起動が必要。
+
+宣言型jobと `enqueueCronInbox()` を使うhandlerが対象。queueへ直接書き込むhandlerを暗黙にBot実行へ変換しない。配送先channelのBot指定も継承しない。Bot instructionsはchannel Botと同じ初回snapshot・既存snapshot再利用の規則で普通のowner-scoped sessionへ保存し、Bot Task Sessionは作らない。`sessions.agent_id` に選択Botを保持するが、Memory consolidationやeligibilityは変更しない。
 
 ### settings の例
 
@@ -99,7 +109,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 
 ### 使い捨てcron sessionのcleanup
 
-`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。cleanupはownerに限定せず `kind` と期限で選別します（現行のper-run作成ownerは `main`）。通常会話、destination cron、タグのない旧cron sessionは対象外です。運用時はこのhandlerをcron設定に追加してください。
+`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。cleanupはownerに限定せず `kind` と期限で選別します（作成ownerは `botId`、未指定なら `main`）。通常会話、destination cron、タグのない旧cron sessionは対象外です。運用時はこのhandlerをcron設定に追加してください。
 
 ### deliveryMode / sessionMode
 
@@ -123,7 +133,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 | `new-thread` + `per-run` | 毎回新規スレッドを作るが、cron実行の履歴はユーザー返信へ引き継がない |
 | `item-thread` + `destination` | 1項目ごとに一時sessionでAIを実行し、通常応答がある場合だけ親メッセージと独立スレッドを作り、そのthread IDへsessionを昇格する。`item-thread` は `destination` 必須 |
 
-現行のitem-thread昇格・rollbackでsession renameするownerは `main`。#565でBot指定cronを全sessionModeへ広げる際は `src/queue/delivery.ts` のrename/rollbackを保存済みBot ownerへ切り替え、active-run registryとMain限定 `/steer` との衝突も検証する。
+item-thread昇格・rollbackは保存済みjobのownerを維持する。同じgroup・Bot owner・投稿先を使うchannel会話とdestination cronは履歴を共有し、異なるownerの履歴は分離する。
 
 応答中にtrim後が完全一致する独立行 `<NO_REPLY>` があれば、通常会話、および`direct`/`new-thread`/`item-thread` cronは正常完了してDiscord deliveryを作らない。inlineの言及は通常どおり配送する。cronの`noReply: true`はこのプロトコルをsystem promptで案内するだけで、判定自体は常時有効である。`item-thread`はDiscord状態を応答後まで作らないため、NO_REPLY時は親メッセージもthreadも作成しない。Mail/RSS sourceは無配信でも正常にACK/finalizeする。Mail ACK失敗時は未読のまま次回cronで再取得し、RSS settle失敗時はclaimを解放して次回cronで再取得する。`new-thread` + `destination` はthread IDをAIセッションに使うため実行前にスレッドを作成し、NO_REPLY時も投稿のないスレッドが残る。
 

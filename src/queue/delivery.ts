@@ -485,7 +485,11 @@ export class DeliveryWorker {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);
           const promotedConversationPath = job.conversationPath
-            ? sessionConversationPath(job.groupName, threadId, "main")
+            ? sessionConversationPath(
+                job.groupName,
+                threadId,
+                job.botId ?? "main",
+              )
             : undefined;
           if (job.sessionId === threadId) {
             if (
@@ -512,7 +516,7 @@ export class DeliveryWorker {
             job.groupName,
             originalSessionId,
             threadId,
-            "main",
+            job.botId ?? "main",
           );
           try {
             if (promotedConversationPath) {
@@ -554,7 +558,7 @@ export class DeliveryWorker {
               job.groupName,
               threadId,
               originalSessionId,
-              "main",
+              job.botId ?? "main",
             ).catch(() => {});
             throw error;
           }
