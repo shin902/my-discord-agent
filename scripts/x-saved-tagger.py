@@ -125,8 +125,8 @@ def classify(db_path, aliases_raw, cache, device="cpu", limit=20, thresholds=Non
     infer = None
     processed = failed = 0
     try:
-        if db.execute("PRAGMA user_version").fetchone()[0] != 5:
-            raise ValueError("Expected x-saved schema v5; upgrade host first")
+        if db.execute("PRAGMA user_version").fetchone()[0] != 6:
+            raise ValueError("Expected x-saved schema v6; upgrade host first")
         db.execute("PRAGMA foreign_keys=ON")
         # ponytail: random batches avoid a stuck prefix without a retry ledger; no strict retry order.
         tweets = db.execute("""SELECT i.tweet_id, i.text

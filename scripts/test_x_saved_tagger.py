@@ -26,7 +26,7 @@ class ClassifyTests(unittest.TestCase):
         self.db = sqlite3.connect(self.db_path)
         self.addCleanup(self.db.close)
         self.db.executescript("""
-            PRAGMA user_version=5;
+            PRAGMA user_version=6;
             CREATE TABLE x_items (tweet_id TEXT PRIMARY KEY, text TEXT);
             CREATE TABLE x_media (tweet_id TEXT, kind TEXT, position INTEGER, status TEXT, local_path TEXT);
             CREATE TABLE x_item_labels (tweet_id TEXT, kind TEXT, value TEXT CHECK(length(value) BETWEEN 1 AND 100), PRIMARY KEY(tweet_id,kind,value));
@@ -67,6 +67,17 @@ class ClassifyTests(unittest.TestCase):
             for first, second in (("Alice", "alice"), ("Ａｌｉｃｅ", "alice"), ("alice smith", "alice_smith")):
                 with self.subTest(group=group, first=first), self.assertRaisesRegex(ValueError, "Ambiguous canonical"):
                     tagger.read_aliases({group: {first: {}, second: {}}})
+
+    def test_rejects_older_and_newer_archive_schemas(self):
+        self.seed()
+        for version in (5, 7):
+            with self.subTest(version=version):
+                self.db.execute(f"PRAGMA user_version={version}")
+                with self.assertRaisesRegex(ValueError, "Expected x-saved schema v6"):
+                    self.run_batch()
+        self.loader.assert_not_called()
+        self.assertEqual(self.labels(), set())
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM x_meta").fetchone()[0], 0)
 
     def test_all_images_union_thresholds_and_manual_labels_survive(self):
         self.seed(positions=(0, 1))
