@@ -43,7 +43,7 @@ export interface InboxMessage {
   /** Declarative item-thread jobs keep a temporary session until delivery materializes the destination. */
   cronProvisioning?: boolean;
   cronFailureNotified?: boolean;
-  /** A one-shot persistent Bot profile selected by a Discord command. */
+  /** Agent Bot profile selected by a channel or Bot Task command. */
   botId?: string;
   /** Internal durable admission marker; never claimed as an executable job. */
   botTaskSessionAdmission?: boolean;

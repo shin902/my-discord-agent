@@ -21,10 +21,9 @@ import type { InboxMessage } from "./types.js";
 
 vi.mock("../agent/manager.js", () => ({ sendMessage: vi.fn() }));
 const loadMessages = vi.hoisted(() => vi.fn().mockResolvedValue([]));
-vi.mock("../agent/session.js", () => ({
+vi.mock("../agent/session.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../agent/session.js")>()),
   loadMessages,
-  sessionConversationPath: (groupName: string, sessionId: string) =>
-    `data/sessions/${groupName}/sessions.sqlite#session=${sessionId}`,
 }));
 const markEphemeralCronSession = vi.hoisted(() => vi.fn());
 vi.mock("../cron/session-retention.js", () => ({ markEphemeralCronSession }));
@@ -285,6 +284,75 @@ describe("processMessage - Bot execution resolution", () => {
     expect(options?.systemPromptSnapshotContent).toBe("saved Bot role");
     expect(options?.systemPromptSnapshotPresent).toBe(true);
     expect(options?.enableBotTool).toBe(false);
+  });
+
+  it.each([
+    false,
+    true,
+  ])("runs a channel Bot with owner-scoped role and channel overrides (saved=%s)", async (saved) => {
+    loadMessages.mockImplementation(async (_group, _session, owner) =>
+      owner === "coding"
+        ? saved
+          ? [
+              {
+                customType: "system-prompt-snapshot",
+                content: "saved channel role",
+              },
+            ]
+          : []
+        : [{ customType: "system-prompt-snapshot", content: "Main role" }],
+    );
+    loadBotRegistry.mockResolvedValue({ coding: {} });
+    resolveBotProfile.mockReturnValue({
+      group: "default",
+      instructions: "channel role",
+      model: { provider: "bot-provider", modelId: "bot-model" },
+      tools: ["read"],
+      skills: ["research"],
+    });
+    vi.mocked(sendMessage).mockResolvedValue("response");
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 0 as const,
+      createdAt: new Date().toISOString(),
+    };
+    await processMessage(
+      makeMsg({
+        botId: "coding",
+        routingChannelId: "parent",
+        source,
+        configOverride: {
+          tools: [],
+          model: { provider: "channel-provider", modelId: "channel-model" },
+        },
+      }),
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      "default",
+      "ch-1",
+      "hello",
+      expect.objectContaining({
+        agentId: "coding",
+        source,
+        enableBotTool: false,
+        systemPromptSnapshotPresent: true,
+        systemPromptSnapshotContent: saved
+          ? "saved channel role"
+          : "channel role",
+        configOverride: {
+          tools: [],
+          skills: ["research"],
+          model: { provider: "channel-provider", modelId: "channel-model" },
+        },
+      }),
+    );
+    expect(resolveProviderLockTarget).toHaveBeenCalledWith("channel-provider");
+    expect(loadMessages.mock.calls.every((call) => call[2] === "coding")).toBe(
+      true,
+    );
+    expect(commitInboxResult).toHaveBeenCalled();
   });
 
   it("dead-letters an unknown Bot instead of retrying", async () => {
@@ -565,14 +633,25 @@ describe("processMessage - terminal queue transitions", () => {
     expect(deadLetter).not.toHaveBeenCalled();
   });
 
-  it("通常ルートの onContainerStarted は sessionId の conversationPath で running を記録する", async () => {
+  it.each([
+    undefined,
+    "research",
+    "worker&one",
+  ])("records the queued owner in conversationPath (Bot=%s)", async (botId) => {
+    if (botId) {
+      loadBotRegistry.mockResolvedValue({});
+      resolveBotProfile.mockReturnValue({
+        group: "default",
+        instructions: "Bot role",
+      });
+    }
     vi.mocked(sendMessage).mockImplementation(
       async (_group, _session, _content, options: unknown) => {
         (options as SendMessageOptions | undefined)?.onContainerStarted?.();
         return "AI response";
       },
     );
-    const msg = makeMsg();
+    const msg = makeMsg({ botId, routingChannelId: "parent" });
 
     await processMessage(msg);
 
@@ -582,7 +661,7 @@ describe("processMessage - terminal queue transitions", () => {
       expect.objectContaining({
         startedAt: expect.any(String),
         workspacePath: `groups/${msg.groupName}`,
-        conversationPath: `data/sessions/${msg.groupName}/sessions.sqlite#session=${msg.sessionId}`,
+        conversationPath: `data/sessions/${msg.groupName}/sessions.sqlite#session=${msg.sessionId}${botId ? `&agent=${encodeURIComponent(botId)}` : ""}`,
       }),
     );
   });

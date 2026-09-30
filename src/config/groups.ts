@@ -82,6 +82,7 @@ export const AgentRuntimeConfigSchema = AgentConfigSchema.extend({
 // チャンネル固有のrouting設定に加えて、AgentConfigを任意で上書きできる。
 const ChannelConfigSchema = AgentConfigSchema.extend({
   channelId: z.string(),
+  botId: z.string().min(1).optional(),
   sessionMode: z.enum(["shared", "thread", "auto-thread", "email-mode"]),
   appendUserOnly: z.boolean().optional(),
   // true の場合、親チャンネルとその配下スレッドの通常メッセージはBotへのmention時だけ処理する。

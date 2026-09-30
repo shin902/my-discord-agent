@@ -9,7 +9,11 @@ import {
   validateAgentConfig,
   validateApprovalRequiredTools,
 } from "../config/agent-validation.js";
-import { loadBotRegistry } from "../config/bots.js";
+import {
+  type BotRegistry,
+  loadBotRegistry,
+  resolveBotProfile,
+} from "../config/bots.js";
 import { loadCredentialProxy } from "../config/credential-proxy.js";
 import { resolveModelConfig } from "../config/default-model.js";
 import { ensureGroupSkills } from "../config/group-config.js";
@@ -256,13 +260,16 @@ export type StopAgentRunResult =
   | { status: "no-active-run" }
   | ActiveRunStopResult;
 
-/** Stop only the currently active runner for the exact group/session pair. */
+/** Stop only the currently active runner for the exact group/owner/session identity. */
 export async function stopAgentRun(
   groupName: string,
   sessionId: string,
+  agentId = "main",
 ): Promise<StopAgentRunResult> {
   return (
-    (await stopActiveRun(groupName, sessionId)) ?? { status: "no-active-run" }
+    (await stopActiveRun(groupName, sessionId, agentId)) ?? {
+      status: "no-active-run",
+    }
   );
 }
 
@@ -513,11 +520,21 @@ const extraMountArgsCache = new Map<string, string[]>();
 export async function validateGroupConfig(
   group: GroupConfig,
   defaultModel: { provider: string; modelId: string },
+  bots: BotRegistry = {},
 ): Promise<void> {
   await validateAgentConfig(resolveAgentConfig(group), defaultModel);
   await Promise.all(
     group.channels.map((channel) =>
-      validateAgentConfig(resolveAgentConfig(group, channel), defaultModel),
+      validateAgentConfig(
+        resolveAgentConfig(
+          group,
+          channel.botId
+            ? resolveBotProfile(bots, channel.botId, group.name)
+            : undefined,
+          channel,
+        ),
+        defaultModel,
+      ),
     ),
   );
   extraMountArgsCache.set(group.name, buildExtraMountArgs(group.mounts ?? []));
@@ -1132,6 +1149,7 @@ export async function sendMessage(
               sessionId,
               sendControl,
               stopCurrentRun,
+              options.agentId,
             );
           } catch (error) {
             cleanupActiveRunControl(

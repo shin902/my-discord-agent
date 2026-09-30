@@ -441,14 +441,37 @@ async function resolveBotExecution(
       `Bot ${msg.botId} のグループ設定が未定義です: ${msg.groupName}`,
     );
   const registry = await loadBotRegistry();
-  let configOverride: AgentConfig;
+  let profile: ReturnType<typeof resolveBotProfile>;
   try {
-    const profile = resolveBotProfile(registry, msg.botId, groupConfig.name);
-    configOverride = resolveAgentConfig(groupConfig, profile);
+    profile = resolveBotProfile(registry, msg.botId, groupConfig.name);
   } catch (error) {
     throw new NonRetryableError(
       error instanceof Error ? error.message : String(error),
     );
+  }
+  const configOverride = resolveAgentConfig(
+    groupConfig,
+    profile,
+    msg.routingChannelId ? msg.configOverride : undefined,
+  );
+  // routingChannelId is set by channel intake and /skill; Bot Tasks omit it.
+  // Reuse ordinary owner-scoped bootstrap without creating a Task admission.
+  if (msg.routingChannelId) {
+    const messages = await loadMessages(msg.groupName, msg.sessionId, agentId);
+    const snapshot = messages.find(
+      (entry) =>
+        "customType" in entry &&
+        (entry.customType === "system-prompt-snapshot" ||
+          entry.customType === "agents-snapshot"),
+    );
+    return {
+      configOverride,
+      systemPromptSnapshotContent:
+        msg.systemPromptSnapshotContent ??
+        (snapshot && "content" in snapshot
+          ? String(snapshot.content ?? "")
+          : profile.instructions),
+    };
   }
   return {
     configOverride,
@@ -585,7 +608,11 @@ function markRunningWhenContainerStarted(
       getQueueRepository().markRunning(msg.id, msg.fencingToken, {
         startedAt: new Date().toISOString(),
         workspacePath: `groups/${msg.groupName}`,
-        conversationPath: sessionConversationPath(msg.groupName, sessionId),
+        conversationPath: sessionConversationPath(
+          msg.groupName,
+          sessionId,
+          msg.botId ?? "main",
+        ),
       });
     }
   };
@@ -877,7 +904,15 @@ async function captureFrozenIdentity(
   toolCallKey: string;
 }> {
   let systemPromptSnapshotContent = msg.botId
-    ? await loadBotTaskSystemPrompt(msg.groupName, msg.sessionId, agentId)
+    ? msg.routingChannelId
+      ? (
+          await resolveBotExecution(
+            msg,
+            agentId,
+            await findGroupByName(msg.groupName),
+          )
+        ).systemPromptSnapshotContent
+      : await loadBotTaskSystemPrompt(msg.groupName, msg.sessionId, agentId)
     : ((await loadGroupSystemPrompt(msg.groupName, { refresh: true })) ??
       undefined);
   let memorySnapshotContent: string | undefined;
@@ -1114,7 +1149,8 @@ export async function processMessage(
                   // direct cron と Bot Task の実行進捗はチャネルを埋めるため抑制する。
                   // エラーは必要な通知として維持し、thread delivery は専用フローに委ねる。
                   if (
-                    (isDirectCronMessage(msg) || msg.botId !== undefined) &&
+                    (isDirectCronMessage(msg) ||
+                      (msg.botId !== undefined && !msg.routingChannelId)) &&
                     isDiscordProgressEvent(event)
                   ) {
                     return;
@@ -1132,7 +1168,9 @@ export async function processMessage(
                   conversation = entries;
                 },
                 source:
-                  !msg.botId && !msg.cronJobId && !msg.feature
+                  (!msg.botId || msg.routingChannelId) &&
+                  !msg.cronJobId &&
+                  !msg.feature
                     ? msg.source
                     : undefined,
                 onExecutionTiming: (executionTiming) => {

@@ -10,6 +10,26 @@ import {
 afterEach(() => clearActiveRunsForTests());
 
 describe("active run registry", () => {
+  it("isolates stop and cleanup by owner for identical session IDs", async () => {
+    const mainStop = vi.fn().mockResolvedValue({ status: "aborted" });
+    const botStop = vi.fn().mockResolvedValue({ status: "aborted" });
+    const mainCleanup = registerActiveRun("group", "same", vi.fn(), mainStop);
+    const botCleanup = registerActiveRun(
+      "group",
+      "same",
+      vi.fn(),
+      botStop,
+      "research",
+    );
+    await stopActiveRun("group", "same", "research");
+    expect(botStop).toHaveBeenCalledOnce();
+    expect(mainStop).not.toHaveBeenCalled();
+    botCleanup();
+    expect(acquireActiveRun("group", "same")).toBeDefined();
+    expect(acquireActiveRun("group", "same", "research")).toBeUndefined();
+    mainCleanup();
+  });
+
   it("delivers steering to the exact group and session", async () => {
     const control = vi.fn().mockResolvedValue(true);
     const cleanup = registerActiveRun("group-a", "session-a", control);

@@ -171,7 +171,7 @@ async function ingest(
               : message.content,
             timestamp: message.createdAt.getTime(),
           },
-          "main",
+          match.channel.botId ?? "main",
           humanSource,
         ),
       );
@@ -244,6 +244,7 @@ async function ingest(
       groupName: match.group.name,
       routingChannelId: lookupId,
       sessionId,
+      ...(match.channel.botId ? { botId: match.channel.botId } : {}),
       messageId: replyMessageId,
       ...(humanSource ? { source: humanSource } : {}),
       content: message.content,

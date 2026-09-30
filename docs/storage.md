@@ -80,7 +80,7 @@ session historyは`runtime.sqlite`へ統合せず、AgentGroupごとの`sessions
 
 DBはgroup directoryごとsandboxへmountされるため、他groupや`runtime.sqlite`は公開されない。DB backupは稼働停止中にcopyするかSQLite backup APIを使い、WAL運用へ変更した場合にmain fileだけをcopyしない。
 
-`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v6では同じgroup内の論理session identityは `(agent_id,id)`、entry所属は `(agent_id,session_id)` 複合FKです。v5で導入した`sessions.agent_id`はgroup内のownerの正本で、通常会話は`main`、Bot TaskはBot IDです。Bot registryからBotを削除しても保存済みownerは変えません。`bot_task_sessions`はTaskのadmission/list/resume用であり、実行時のowner照合には使用しません。owner別のread-only trajectoryはuser entryを持つsessionだけをgroup DB内でsession作成時刻・ID、entry sequence順に走査します。未公開のsnapshot-only Bot sessionは含めません。既存sessionへの追記・renameはownerを変更しません。
+`session_entries.source_json` はMemoryと独立したnullableなuser entryのsource provenanceです。通常human Discord messageのsourceを保存し、LLM contextには含めません。schema v6では同じgroup内の論理session identityは `(agent_id,id)`、entry所属は `(agent_id,session_id)` 複合FKです。v5で導入した`sessions.agent_id`はgroup内のownerの正本で、未設定の通常会話は`main`、Botを設定したchannel会話とBot TaskはBot IDです。Bot registryからBotを削除しても保存済みownerは変えません。`bot_task_sessions`はTaskのadmission/list/resume用であり、実行時のowner照合には使用しません。owner別のread-only trajectoryはuser entryを持つsessionだけをgroup DB内でsession作成時刻・ID、entry sequence順に走査します。未公開のsnapshot-only Bot sessionは含めません。既存sessionへの追記・renameはownerを変更しません。
 
 **v4→v5導入手順:** 稼働中のすべてのgroup DBの`PRAGMA user_version`をread-onlyで確認し、v4以外は変換せず運用者に扱いを確認してください。runtime/runnerを停止し、runtime DBと全group DBをWALを含めSQLite整合バックアップします。停止状態のまま`pnpm exec tsx scripts/convert-issue556-session-owners.ts <runtime.sqlite> <sessions-root>`を明示したパスで一度だけ実行し、各DBのversion・owner別件数・削除された未登録`bot-task-<UUID>`とentryをバックアップと照合します。登録済みBot Task（registryから削除されたBotも含む）は保持し、非該当IDは`main`のままです。旧Bot ID `main`がruntime DBにある場合は変換前に明示エラーとして停止します。groupごとのtransactionであり全group間のatomicityはありません。途中失敗時は停止を維持し、**全DBをバックアップから復元してから**再実行します。変換済みDBと旧runtimeを混在起動せず、同じcheckoutでRunner imageをbuild/pushし、Hostもbuildしてから起動してください（`pnpm build`だけではRunner imageは更新されません）。新runtimeはv4以前を自動移行しません。
 
@@ -97,6 +97,8 @@ pnpm start          # または管理サービスを起動
 source付きappendは同じwrite transaction内で `(agent_id, session_id, source.kind, source.sourceId)` を照合し、重複なら本文・時刻を変更せず元のentry IDを返します。[appendUserOnly](spec/channel-modes.md#appenduseronly)もこの既存schemaへのappendを使います。
 
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。ownerを指定したsession renameは複合FKのCASCADEでentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
+
+runtimeの `conversationPath` はMainでは従来の `data/sessions/<group>/sessions.sqlite#session=<id>`、Bot ownerでは末尾に `&agent=<URLエンコードしたBot ID>` を付ける。既存の保存済みmetadataは書き換えない。
 
 実装の正本は [session.ts](../src/agent/session.ts) です。
 

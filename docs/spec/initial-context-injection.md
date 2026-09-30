@@ -12,7 +12,7 @@ GitHub Issue: #117 / 初期実装 PR: #122（マージ済み）
 
 ## 基本方針
 
-- 通常sessionのグループsystem promptとAgentConfig `contextFiles`はセッション初回に固定し、2回目以降はファイルを再読込しない。
+- 通常sessionのbase roleは、Bot未指定ならグループsystem prompt、channelにBotを指定した場合は `bot.instructions` を使う。role snapshotとAgentConfig `contextFiles`はowner別sessionの初回に固定し、再開時はそのownerの保存済みsnapshotを維持する。
 - Bot Task Sessionのbase roleはgroup/Main promptではなく、Task作成時の `bot.instructions` を同じgeneric snapshotへ固定する。
 - セッション開始時刻は **hour単位の固定アンカー**として systemPrompt に含める。
 - 現在日時を毎ターン systemPrompt へ再注入しない。
@@ -26,7 +26,7 @@ pi-agent-core 標準の `CustomMessage`（`role: "custom"`）と独自 `convertT
 
 | customType | 対象 | LLM への渡し方 |
 |---|---|---|
-| `system-prompt-snapshot` | 通常sessionはグループsystem prompt（AGENTS.md）、Bot Task SessionはBot instructions | チャット履歴には乗せない。systemPrompt の組み立てにのみ使う |
+| `system-prompt-snapshot` | Bot未指定の通常sessionはグループsystem prompt（AGENTS.md）、channelにBotを指定した通常sessionとBot Task SessionはBot instructions。owner別sessionに固定する | チャット履歴には乗せない。systemPrompt の組み立てにのみ使う |
 | `context-bootstrap` | AgentConfig `contextFiles`で指定した存在するファイル（設定順に結合） | 最初の1件のみ `role: "user"` に展開 |
 | `memory-bootstrap` / `self-bootstrap` | 旧sessionのMEMORY.md / SELF.md snapshot | 後方互換として最初の1件のみ `role: "user"` に展開 |
 | `skill-invocation` | `./command` で明示実行したスキル本文 | 出現するたび `role: "user"` に展開 |

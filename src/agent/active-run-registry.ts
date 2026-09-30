@@ -19,20 +19,23 @@ type ActiveRun = {
 
 const activeRuns = new Map<string, ActiveRun>();
 
-function runKey(groupName: string, sessionId: string): string {
-  return `${groupName}\u0000${sessionId}`;
+function runKey(groupName: string, sessionId: string, agentId: string): string {
+  return JSON.stringify([groupName, agentId, sessionId]);
 }
 
-/** Register a ready Main Agent run for one (group, session) pair. */
+/** Register a ready Agent run for one (group, owner, session) identity. */
 export function registerActiveRun(
   groupName: string,
   sessionId: string,
   control: ActiveRunControl,
   stop?: ActiveRunStop,
+  agentId = "main",
 ): () => void {
-  const key = runKey(groupName, sessionId);
+  const key = runKey(groupName, sessionId, agentId);
   if (activeRuns.has(key)) {
-    throw new Error(`active run already exists: ${groupName}/${sessionId}`);
+    throw new Error(
+      `active run already exists: ${groupName}/${agentId}/${sessionId}`,
+    );
   }
   const run = { handle: { steer: control }, stop };
   activeRuns.set(key, run);
@@ -41,20 +44,22 @@ export function registerActiveRun(
   };
 }
 
-/** Capture the exact ready Main Agent run, if one exists now. */
+/** Capture the exact ready Agent run, if one exists now. */
 export function acquireActiveRun(
   groupName: string,
   sessionId: string,
+  agentId = "main",
 ): ActiveRunHandle | undefined {
-  return activeRuns.get(runKey(groupName, sessionId))?.handle;
+  return activeRuns.get(runKey(groupName, sessionId, agentId))?.handle;
 }
 
-/** Stop only the exact active (group, session) run. */
+/** Stop only the exact active (group, owner, session) run. */
 export async function stopActiveRun(
   groupName: string,
   sessionId: string,
+  agentId = "main",
 ): Promise<ActiveRunStopResult | undefined> {
-  const run = activeRuns.get(runKey(groupName, sessionId));
+  const run = activeRuns.get(runKey(groupName, sessionId, agentId));
   if (!run?.stop) return undefined;
   if (run.stopPromise) return run.stopPromise;
 

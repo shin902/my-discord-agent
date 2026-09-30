@@ -197,6 +197,33 @@ describe("skill command definition", () => {
 });
 
 describe("steer command", () => {
+  it("steers only the inherited Bot owner even when Main has the same session ID", async () => {
+    mocks.findGroupByChannelId.mockResolvedValue({
+      group: { name: "main" },
+      channel: { channelId: "parent", sessionMode: "thread", botId: "coding" },
+    });
+    const main = vi.fn();
+    const bot = vi.fn();
+    const cleanMain = registerActiveRun("main", "channel-1", main);
+    const cleanBot = registerActiveRun(
+      "main",
+      "channel-1",
+      bot,
+      undefined,
+      "coding",
+    );
+    const interaction = makeInteraction({
+      instruction: "change course",
+      isThread: true,
+      parentId: "parent",
+    });
+    await handleSteerCommand(interaction as never);
+    expect(bot).toHaveBeenCalledWith("change course");
+    expect(main).not.toHaveBeenCalled();
+    cleanMain();
+    cleanBot();
+  });
+
   it("defines a required instruction option", () => {
     const json = steerCommand.data.toJSON();
     expect(json.name).toBe("steer");
@@ -258,13 +285,34 @@ describe("steer command", () => {
 });
 
 describe("stop command", () => {
+  it("stops the configured Bot owner", async () => {
+    mocks.findGroupByChannelId.mockResolvedValue({
+      group: { name: "main" },
+      channel: {
+        channelId: "channel-1",
+        sessionMode: "shared",
+        botId: "coding",
+      },
+    });
+    await handleStopCommand(makeInteraction({}) as never);
+    expect(mocks.stopAgentRun).toHaveBeenCalledWith(
+      "main",
+      "channel-1",
+      "coding",
+    );
+  });
+
   it("stops the exact active session and displays the cooperative result", async () => {
     mocks.stopAgentRun.mockResolvedValueOnce({ status: "aborted" });
     const interaction = makeInteraction({ channelId: "session-1" });
 
     await handleStopCommand(interaction as never);
 
-    expect(mocks.stopAgentRun).toHaveBeenCalledWith("main", "session-1");
+    expect(mocks.stopAgentRun).toHaveBeenCalledWith(
+      "main",
+      "session-1",
+      "main",
+    );
     expect(interaction.editReply).toHaveBeenCalledWith({
       content: "実行を停止しました（協調的abort）。",
     });
@@ -522,10 +570,13 @@ describe("handleSkillCommand", () => {
     expect(mocks.enqueue.mock.calls[0]?.[0]).not.toHaveProperty("source");
   });
 
-  it("resolves a thread through its parent and keeps the thread session", async () => {
+  it.each([
+    undefined,
+    "coding",
+  ])("resolves a thread through its parent and keeps the thread session (Bot=%s)", async (botId) => {
     mocks.findGroupByChannelId.mockResolvedValueOnce({
       group: { name: "main" },
-      channel: { channelId: "parent-channel", sessionMode: "thread" },
+      channel: { channelId: "parent-channel", sessionMode: "thread", botId },
     });
     const interaction = makeSkillInteraction({
       skill: "agent-reach",
@@ -543,6 +594,7 @@ describe("handleSkillCommand", () => {
         routingChannelId: "parent-channel",
         sessionId: "thread-1",
         content: "./command agent-reach",
+        ...(botId ? { botId } : {}),
       }),
     );
   });

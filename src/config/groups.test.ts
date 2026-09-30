@@ -9,6 +9,31 @@ const setupRawGroups = async (raw: unknown) => {
 };
 
 describe("loadGroups", () => {
+  it.each([
+    undefined,
+    "research",
+  ])("preserves the optional channel Bot independently of Discord identity (%s)", async (botId) => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "group",
+        bot: "personal",
+        channels: [{ channelId: "parent", sessionMode: "shared", botId }],
+      },
+    ]);
+    expect(await loadGroups()).toMatchObject([
+      { bot: "personal", channels: [{ botId }] },
+    ]);
+  });
+  it("rejects an empty channel Bot ID", async () => {
+    const { loadGroups } = await setupRawGroups([
+      {
+        name: "group",
+        channels: [{ channelId: "parent", sessionMode: "shared", botId: "" }],
+      },
+    ]);
+    await expect(loadGroups()).rejects.toThrow();
+  });
+
   afterEach(() => {
     vi.resetModules();
   });
