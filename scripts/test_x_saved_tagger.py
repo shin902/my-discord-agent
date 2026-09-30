@@ -26,7 +26,7 @@ class ClassifyTests(unittest.TestCase):
         self.db = sqlite3.connect(self.db_path)
         self.addCleanup(self.db.close)
         self.db.executescript("""
-            PRAGMA user_version=5;
+            PRAGMA user_version=6;
             CREATE TABLE x_items (tweet_id TEXT PRIMARY KEY, text TEXT);
             CREATE TABLE x_media (tweet_id TEXT, kind TEXT, position INTEGER, status TEXT, local_path TEXT);
             CREATE TABLE x_item_labels (tweet_id TEXT, kind TEXT, value TEXT CHECK(length(value) BETWEEN 1 AND 100), PRIMARY KEY(tweet_id,kind,value));
