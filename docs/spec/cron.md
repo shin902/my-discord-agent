@@ -66,7 +66,7 @@ data/cron/
 
 | フィールド | 必須 | 型 | 説明 |
 |-----------|------|-----|------|
-| `id` | ✓ | string | ジョブID（一意） |
+| `id` | ✓ | string | ジョブID（一意）。空文字・空白のみは起動時の設定検証で拒否する。有効なIDはtrim・改名しない |
 | `schedule` | ✓ | string | cron式 `"0 9 * * *"`、インターバル `"30m"` `"1h"`、または宣言型prompt job専用の `"@startup"` |
 | `groupName` | handler なし時必須 / handler あり時オプション | string | エージェントグループ名。handler ありジョブでも記載すれば `CronContext.groupName` 経由で参照できる |
 | `botId` | オプション | string | 同じgroupに所属するAgent Bot profile ID。未指定はMain。指定時はhandlerでもgroupName必須 |

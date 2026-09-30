@@ -39,7 +39,9 @@ const STATE_PATH = path.join(ROOT, "data/cron/state.json");
 
 const CronJobSchema = z
   .object({
-    id: z.string(),
+    id: z.string().refine((id) => id.trim().length > 0, {
+      message: "cron job id must not be empty or whitespace-only",
+    }),
     schedule: z.string(),
     enabled: z.boolean().default(true),
     groupName: z.string().min(1).optional(),

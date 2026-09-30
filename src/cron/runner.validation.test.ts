@@ -93,6 +93,40 @@ describe("loadAndValidateCron", () => {
     }
   });
 
+  it.each([
+    { id: "", valid: false },
+    { id: "   ", valid: false },
+    { id: "\t\n", valid: false },
+    { id: "daily-report", valid: true },
+    { id: " daily report / v2 ", valid: true },
+  ])("validates nonblank cron IDs without normalizing them: %j", async ({
+    id,
+    valid,
+  }) => {
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          id,
+          schedule: "5m",
+          groupName: "g",
+          prompt: "p",
+          channelId: "c",
+          deliveryMode: "direct",
+          sessionMode: "per-run",
+        },
+      ]),
+    );
+    if (valid) {
+      await expect(loadAndValidateCron()).resolves.toEqual([
+        expect.objectContaining({ id }),
+      ]);
+    } else {
+      await expect(loadAndValidateCron()).rejects.toThrow(
+        "cron job id must not be empty or whitespace-only",
+      );
+    }
+  });
+
   it("スキーマ検証失敗（重複ID）でエラーになる", async () => {
     const cronJson = JSON.stringify([
       {

@@ -305,8 +305,6 @@ describe("processMessage - Bot execution resolution", () => {
     { saved: true, cronJobId: undefined },
     { saved: false, cronJobId: "daily" },
     { saved: true, cronJobId: "daily" },
-    { saved: false, cronJobId: "" },
-    { saved: true, cronJobId: "" },
   ])("runs ordinary Bot with owner-scoped role and overrides (%j)", async ({
     saved,
     cronJobId,
