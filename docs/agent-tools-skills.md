@@ -1,10 +1,10 @@
 # エージェントのツールとスキル
 
-エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、および `config/cron.json` のcron job）でどれを有効にするかを制御する。通常のDiscord会話は `group → channel`、cronは配送先channelの設定を継承せず `group → cron job` の順にAgentConfigを解決する。tools/skills/toolSetsは指定時にフィールド単位で完全置換する。context-created toolの `bot` と `subagent` は、正確な名前をtoolsへ明示的に追加したAgentだけが利用できます。
+エージェントが使えるツールとスキルの概要。AgentConfig（`config/groups.json` のgroup/channel、`config/bots.json` のBot profile、および `config/cron.json` のcron job）でどれを有効にするかを制御する。通常のDiscord会話は `group → Bot profile（指定時） → 親channel`、cronは配送先channelの設定を継承せず `group → Bot profile（指定時） → cron job` の順にAgentConfigを解決する。tools/skills/toolSetsは指定時にフィールド単位で完全置換する。context-created toolの `bot` と `subagent` は、正確な名前をtoolsへ明示的に追加したAgentだけが利用できます。
 
 ## ツール
 
-エージェントに渡す MCP ツール群。通常のDiscord会話では `groups[].tools` と `groups[].channels[].tools`、cronではgroupの `tools` とcron jobの `tools` で指定する。cronの `channelId` は配送先だけを表し、配送先channelの `tools` は継承しない。
+エージェントに渡す MCP ツール群。通常のDiscord会話ではgroup → Bot profile（指定時） → 親channel、cronではgroup → Bot profile（指定時） → cron jobの `tools` を使う。cronの `channelId` は配送先だけを表し、配送先channelの `tools` は継承しない。
 
 | ツール名 | 概要 |
 |---------|------|
@@ -92,7 +92,7 @@ approval UIは認可機構やpublic / multi-user環境の安全境界ではあ�
 
 ## スキル
 
-`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup/channel、cronではgroup/cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
+`groups/{name}/SKILLS/{skill}/SKILL.md` に配置するプロンプトテンプレート。通常のDiscord会話ではgroup → Bot profile（指定時） → 親channel、cronではgroup → Bot profile（指定時） → cron jobのAgentConfig `skills` フィールドで選択し、通常はシステムプロンプトの `<available_skills>` 一覧として渡される。cronの配送先channelの `skills` は継承しない。LLM が必要に応じて `read` ツールで読み込んで使う（自律判断）。
 
 `tools` は選択したnative schemaを、`skills` は明示した配置済みSkillの説明・場所をpromptへ提示します。`skills` はcapabilityを一切追加しません。Tool Proxyの実行権限はeffective native toolsのhost/runtime capabilityと、trusted codeで定義したeffective `toolSets` の和集合で、同じrun tokenをnative／CLIで共有します。Skillの名前・内容・hash・存在はauthority sourceではありません。`skills: [], toolSets: ["github"]` ならcapabilityだけを許可し、Skill説明は追加しません。`skills: ["github"], toolSets: []` だけではGitHub capabilityは使えません。
 
