@@ -20,9 +20,10 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-it("keeps cleanup owner-neutral while only Main creates per-run sessions today", async () => {
+it("tags and expires only the selected owner at a shared session ID", async () => {
   const now = Date.now();
   await retention.markEphemeralCronSession("owner-neutral", "shared");
+  await retention.markEphemeralCronSession("owner-neutral", "shared", "worker");
   await session.appendMessage(
     "owner-neutral",
     "shared",
@@ -30,8 +31,14 @@ it("keeps cleanup owner-neutral while only Main creates per-run sessions today",
     "worker",
   );
   const db = new Database(path.join(root, "owner-neutral", "sessions.sqlite"));
+  expect(
+    db.prepare("SELECT agent_id, kind FROM sessions ORDER BY agent_id").all(),
+  ).toEqual([
+    { agent_id: "main", kind: "cron-per-run" },
+    { agent_id: "worker", kind: "cron-per-run" },
+  ]);
   db.prepare(
-    "UPDATE sessions SET kind='cron-per-run', updated_at=? WHERE agent_id='worker' AND id='shared'",
+    "UPDATE sessions SET updated_at=? WHERE agent_id='worker' AND id='shared'",
   ).run(now - 8 * 86_400_000);
   expect(await retention.cleanupEphemeralCronSessions(now)).toBe(1);
   expect(

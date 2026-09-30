@@ -132,6 +132,20 @@ function processMessage(msg: InboxMessage, signal?: AbortSignal) {
   return runProcessMessage(msg, signal, new JobHandlers(), sourceHandlers);
 }
 
+function configureCronBot(botId?: string): void {
+  if (!botId) return;
+  vi.mocked(findGroupByName).mockResolvedValue({
+    name: "default",
+    channels: [],
+  });
+  loadBotRegistry.mockResolvedValue({ coding: {} });
+  resolveBotProfile.mockReturnValue({
+    group: "default",
+    instructions: "cron role",
+    tools: ["read"],
+  });
+}
+
 let tempDirs: string[] = [];
 
 beforeEach(() => {
@@ -287,9 +301,19 @@ describe("processMessage - Bot execution resolution", () => {
   });
 
   it.each([
-    false,
-    true,
-  ])("runs a channel Bot with owner-scoped role and channel overrides (saved=%s)", async (saved) => {
+    { saved: false, cronJobId: undefined },
+    { saved: true, cronJobId: undefined },
+    { saved: false, cronJobId: "daily" },
+    { saved: true, cronJobId: "daily" },
+  ])("runs ordinary Bot with owner-scoped role and overrides (%j)", async ({
+    saved,
+    cronJobId,
+  }) => {
+    const cron = cronJobId !== undefined;
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
     loadMessages.mockImplementation(async (_group, _session, owner) =>
       owner === "coding"
         ? saved
@@ -321,8 +345,14 @@ describe("processMessage - Bot execution resolution", () => {
     await processMessage(
       makeMsg({
         botId: "coding",
-        routingChannelId: "parent",
-        source,
+        ...(cron
+          ? {
+              cronJobId,
+              cronDeliveryMode: "direct" as const,
+              cronSessionMode: "destination" as const,
+            }
+          : { routingChannelId: "parent" }),
+        source: cron ? undefined : source,
         configOverride: {
           tools: [],
           model: { provider: "channel-provider", modelId: "channel-model" },
@@ -335,7 +365,7 @@ describe("processMessage - Bot execution resolution", () => {
       "hello",
       expect.objectContaining({
         agentId: "coding",
-        source,
+        source: cron ? undefined : source,
         enableBotTool: false,
         systemPromptSnapshotPresent: true,
         systemPromptSnapshotContent: saved
@@ -726,8 +756,13 @@ describe("processMessage - terminal queue transitions", () => {
     expect(commitInboxResult).not.toHaveBeenCalled();
   });
 
-  it("cron new-thread destination persists the created thread before using it as the session", async () => {
+  it.each([
+    undefined,
+    "coding",
+  ])("cron new-thread destination persists the created thread before using it as the session (bot=%s)", async (botId) => {
+    configureCronBot(botId);
     const msg = makeMsg({
+      botId,
       sessionId: "cron-daily-run-placeholder",
       cronDeliveryMode: "new-thread",
       cronSessionMode: "destination",
@@ -750,6 +785,12 @@ describe("processMessage - terminal queue transitions", () => {
     );
 
     await processMessage(msg);
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      expect.any(String),
+      msg.content,
+      expect.objectContaining({ agentId: botId ?? "main" }),
+    );
 
     expect(markEphemeralCronSession).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith({
@@ -777,10 +818,15 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
-  it("item-thread NO_REPLY suppresses late materialization", async () => {
+  it.each([
+    undefined,
+    "coding",
+  ])("item-thread NO_REPLY suppresses late materialization (bot=%s)", async (botId) => {
+    configureCronBot(botId);
     const response = "summary\n<NO_REPLY>";
     vi.mocked(sendMessage).mockResolvedValue(response);
     const msg = makeMsg({
+      botId,
       sessionId: "cron-item-job-temporary",
       cronDeliveryMode: "item-thread",
       cronSessionMode: "destination",
@@ -790,6 +836,12 @@ describe("processMessage - terminal queue transitions", () => {
     });
 
     await processMessage(msg);
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      expect.any(String),
+      msg.content,
+      expect.objectContaining({ agentId: botId ?? "main" }),
+    );
 
     expect(markEphemeralCronSession).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith(
@@ -814,8 +866,13 @@ describe("processMessage - terminal queue transitions", () => {
     );
   });
 
-  it("cron new-thread per-run はスレッド作成前の仮セッションを維持する", async () => {
+  it.each([
+    undefined,
+    "coding",
+  ])("cron new-thread per-run はスレッド作成前の仮セッションを維持する (bot=%s)", async (botId) => {
+    configureCronBot(botId);
     const msg = makeMsg({
+      botId,
       sessionId: "cron-daily-run-placeholder",
       cronDeliveryMode: "new-thread",
       cronSessionMode: "per-run",
@@ -827,6 +884,7 @@ describe("processMessage - terminal queue transitions", () => {
         expect(markEphemeralCronSession).toHaveBeenCalledWith(
           msg.groupName,
           session,
+          msg.botId ?? "main",
         );
         (options as SendMessageOptions | undefined)?.onContainerStarted?.();
         return "AI response";
@@ -834,6 +892,12 @@ describe("processMessage - terminal queue transitions", () => {
     );
 
     await processMessage(msg);
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      expect.any(String),
+      msg.content,
+      expect.objectContaining({ agentId: botId ?? "main" }),
+    );
 
     expect(updateRunning).not.toHaveBeenCalled();
     expect(commitInboxResult).toHaveBeenCalledWith(
@@ -2186,7 +2250,11 @@ describe("processMessage - durable result", () => {
     );
   });
 
-  it("NO_REPLYで抑止したmail sourceをACKする", async () => {
+  it.each([
+    undefined,
+    "coding",
+  ])("NO_REPLYで抑止したmail sourceをACKする (bot=%s)", async (botId) => {
+    configureCronBot(botId);
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
@@ -2194,6 +2262,8 @@ describe("processMessage - durable result", () => {
     });
     vi.mocked(sendMessage).mockResolvedValue("<NO_REPLY>");
     const msg = makeMsg({
+      botId,
+      cronJobId: "mail-check",
       feature: { kind: "mail", input: { emailId: "mail-1" } },
     });
 
@@ -2208,13 +2278,18 @@ describe("processMessage - durable result", () => {
     );
   });
 
-  it("direct mail cron carries the source envelope into delivery metadata", async () => {
+  it.each([
+    undefined,
+    "coding",
+  ])("direct mail cron carries the source envelope into delivery metadata (bot=%s)", async (botId) => {
+    configureCronBot(botId);
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",
       channels: [],
       allowMention: false,
     });
     const msg = makeMsg({
+      botId,
       cronJobId: "mail-check",
       cronDeliveryMode: "direct",
       cronSessionMode: "per-run",
@@ -2222,10 +2297,17 @@ describe("processMessage - durable result", () => {
     });
 
     await processMessage(msg);
+    expect(sendMessage).toHaveBeenCalledWith(
+      msg.groupName,
+      expect.any(String),
+      msg.content,
+      expect.objectContaining({ agentId: botId ?? "main" }),
+    );
 
     expect(markEphemeralCronSession).toHaveBeenCalledWith(
       msg.groupName,
       msg.sessionId,
+      msg.botId ?? "main",
     );
     expect(commitInboxResult).toHaveBeenCalledWith(
       msg.id,

@@ -452,11 +452,13 @@ async function resolveBotExecution(
   const configOverride = resolveAgentConfig(
     groupConfig,
     profile,
-    msg.routingChannelId ? msg.configOverride : undefined,
+    msg.routingChannelId || msg.cronJobId !== undefined
+      ? msg.configOverride
+      : undefined,
   );
-  // routingChannelId is set by channel intake and /skill; Bot Tasks omit it.
+  // Channel intake and cron use ordinary sessions; Bot Tasks require admission.
   // Reuse ordinary owner-scoped bootstrap without creating a Task admission.
-  if (msg.routingChannelId) {
+  if (msg.routingChannelId || msg.cronJobId !== undefined) {
     const messages = await loadMessages(msg.groupName, msg.sessionId, agentId);
     const snapshot = messages.find(
       (entry) =>
@@ -765,7 +767,11 @@ async function processCronThreadDelivery(
       sessionId = cronSessionId(msg);
     }
     const groupConfig = await findGroupByName(msg.groupName);
-    const execution = await resolveBotExecution(msg, agentId, groupConfig);
+    const execution = await resolveBotExecution(
+      { ...msg, sessionId },
+      agentId,
+      groupConfig,
+    );
     const lockTarget = await resolveInferenceLockTarget(
       msg,
       groupConfig?.model,
@@ -775,7 +781,7 @@ async function processCronThreadDelivery(
       lockTarget,
       async () => {
         if (msg.cronSessionMode === "per-run") {
-          await markEphemeralCronSession(msg.groupName, sessionId);
+          await markEphemeralCronSession(msg.groupName, sessionId, agentId);
         }
         const agentStartedAt = Date.now();
         try {
@@ -904,7 +910,7 @@ async function captureFrozenIdentity(
   toolCallKey: string;
 }> {
   let systemPromptSnapshotContent = msg.botId
-    ? msg.routingChannelId
+    ? msg.routingChannelId || msg.cronJobId !== undefined
       ? (
           await resolveBotExecution(
             msg,
@@ -1132,7 +1138,11 @@ export async function processMessage(
           if (msg.discordOutput !== "none")
             stopTyping = startTypingLoop(msg.groupName, msg.channelId);
           if (msg.cronSessionMode === "per-run") {
-            await markEphemeralCronSession(msg.groupName, msg.sessionId);
+            await markEphemeralCronSession(
+              msg.groupName,
+              msg.sessionId,
+              agentId,
+            );
           }
           const images = await sources.prepareImages(msg);
           const agentStartedAt = Date.now();

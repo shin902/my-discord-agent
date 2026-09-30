@@ -285,6 +285,7 @@ describe("screen capture queue pipeline", () => {
       expect(markEphemeralCronSession).toHaveBeenCalledWith(
         "logbook",
         sessionId,
+        "main",
       );
       return "updated";
     });
@@ -306,6 +307,7 @@ describe("screen capture queue pipeline", () => {
     expect(markEphemeralCronSession).toHaveBeenCalledWith(
       "logbook",
       vi.mocked(sendMessage).mock.calls[0][1],
+      "main",
     );
     expect(sendMessage).toHaveBeenCalledWith(
       "logbook",
@@ -444,6 +446,7 @@ describe("screen capture queue pipeline", () => {
         expect(markEphemeralCronSession).toHaveBeenCalledWith(
           "logbook",
           sessionId,
+          "main",
         );
         expect(options).toMatchObject({
           agentId: "main",

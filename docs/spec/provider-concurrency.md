@@ -43,7 +43,7 @@
 
 ## 設定解決
 
-通常の Discord メッセージはAgentConfigを `group → channel` の順に、cronは配送先channelの設定を継承せず `group → cron job` の順に解決する。その後の `model` を使い、最後に `defaultModel` で補完する。解決した `provider` と同名の `providers.json` エントリから `concurrency` を取得して LLM ロックを取る。
+通常の Discord メッセージはAgentConfigを `group → Bot profile（指定時） → 親channel` の順に、cronは配送先channelの設定を継承せず `group → Bot profile（指定時） → cron job` の順に解決する。その後の `model` を使い、最後に `defaultModel` で補完する。解決した `provider` と同名の `providers.json` エントリから `concurrency` を取得して LLM ロックを取る。
 
 ## 変更ファイル
 

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Client } from "discord.js";
 import { validateModel } from "../agent/model.js";
 import { pickAgentConfig } from "../config/agent-resolution.js";
+import { loadBotRegistry, resolveBotProfile } from "../config/bots.js";
 import type { AgentConfig, SkillSelection } from "../config/groups.js";
 import { buildExtraMountArgs } from "../config/mounts.js";
 import type { SourceEnvelope } from "../queue/source-handlers.js";
@@ -26,6 +27,7 @@ export type CronEnqueueContext = {
   id: string;
   client: Client;
   groupName?: string;
+  botId?: string;
   channelId?: string;
   deliveryMode?: CronDeliveryMode;
   sessionMode?: CronSessionMode;
@@ -140,6 +142,7 @@ async function registerCronItemThread(
   await ctx.appendInbox({
     channelId: ctx.channelId,
     groupName: ctx.groupName,
+    ...(ctx.botId !== undefined ? { botId: ctx.botId } : {}),
     sessionId,
     content,
     timestamp: new Date().toISOString(),
@@ -165,6 +168,16 @@ export async function enqueueCronInbox(
     );
   }
 
+  if (ctx.botId !== undefined) {
+    try {
+      resolveBotProfile(await loadBotRegistry(), ctx.botId, ctx.groupName);
+    } catch (error) {
+      throw new NonRetryableError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
   const { deliveryMode, sessionMode } = resolveModes(ctx);
   if (deliveryMode === "item-thread") {
     await registerCronItemThread(ctx, content);
@@ -182,6 +195,7 @@ export async function enqueueCronInbox(
   await ctx.appendInbox({
     channelId: ctx.channelId,
     groupName: ctx.groupName,
+    ...(ctx.botId !== undefined ? { botId: ctx.botId } : {}),
     sessionId,
     content,
     timestamp: new Date().toISOString(),

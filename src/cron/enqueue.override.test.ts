@@ -29,7 +29,10 @@ describe("cron AgentConfig override", () => {
         },
       ],
     });
-    vi.doMock("../config/groups.js", () => ({ findGroupByName }));
+    vi.doMock("../config/groups.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../config/groups.js")>()),
+      findGroupByName,
+    }));
 
     const { enqueueCronInbox } = await import("./enqueue.js");
     const appendInbox = vi.fn();
