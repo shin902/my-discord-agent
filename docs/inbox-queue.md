@@ -5,7 +5,7 @@
 ## 処理の流れ
 
 ```text
-Discord / cron
+Discord / cron / screen capture
   → QueueRepository.enqueue
   → runtime.sqlite: jobs
   → poller: claim → sandboxでAgent実行
@@ -19,6 +19,8 @@ Discord / cron
 - 会話履歴はgroupごとの `sessions.sqlite` に保存し、runtime DBとは分離します。runnerは採用する入力user / final assistantのstable entry IDをhostへ返します。entry保存だけでは成功の証明にならず、既存のfenced結果commitと同一transactionで `committed_conversations` へ参照を確定します。Memory exporterはこの参照とsession本文だけを消費し、attemptや最終応答を再推論しません。参照はjobs retentionと独立し、session renameでもentry IDを維持します。
 - Memory export cronは `jobKind: memory-export` とcron IDだけのhost-only入力をenqueueします。queueが内部保存用の `session_id: memory-export:<cronJobId>` を補い、明示登録されたMemory handlerをpollerがAgent実行・Discord配送なしで処理します。startup cron cacheとread-only session storeからbounded batchを処理し、既存のordering、heartbeat、lease、fencing、retryを使います。Memory専用queueは持ちません。詳細は [Agent Memory export](agent-memory.md) を参照してください。
 
+Screen Captureも通常Agent jobとしてこの経路を使います。capture側が選択・VLM前処理・SourceHandlersによる実行時画像準備/cleanup・成功後のDB更新を所有し、pollerは共通Agent実行を所有します。無配信jobのchannelIdは空文字で、Discord送信先は不要です。詳細は [画面画像の収集と要約](screen-capture.md) を参照してください。
+
 ## 状態と順序
 
 `jobs.status` の永続状態は `queued`、`retry_wait`、`claimed`、`running`、`completed`、`dead_letter` です。
@@ -27,7 +29,7 @@ claimはtransaction内でworker・lease期限・増分fencing tokenを記録し�
 
 同じ `session_id` の未完了先行jobがある場合は後続をclaimしません。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使います。provider単位の実行制限はこれとは別で、[provider concurrency設定](config.md#configprovidersjson) を参照してください。全チャンネルを単一のPromiseチェーンで直列化する設計ではありません。
 
-実行成功時は結果、必要なdelivery chunk、runnerから返された採用会話参照を同一transactionで確定します。Agentが空応答を返した場合は、理由 `empty_response` の `dead_letter` となり、正常完了にはなりません。明示的な配送抑制（独立行の `<NO_REPLY>`）や、意図的に空の結果を確定する内部jobは、deliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
+実行成功時は結果、必要なdelivery chunk、runnerから返された採用会話参照を同一transactionで確定します。通常の配信jobでAgentが空応答を返した場合は、理由 `empty_response` の `dead_letter` となり、正常完了にはなりません。job設定による自動Discord出力抑制（`discordOutput: "none"`、正常終了の空応答も許可）、明示的な配送抑制（独立行の `<NO_REPLY>`）や、意図的に空の結果を確定する内部jobは、deliveryを作らず完了できます。再試行可能な実行失敗は `retry_wait`、上限超過などは `dead_letter` へ進みます。完了済みjobは即座に削除するのではなく、retentionの対象になります。
 
 配送を意図的に抑制した成功結果では、結果commitと同じtransactionで `jobs.delivery_suppressed=1` を保存します。RSSのstartup reconciliationは `completed`・成功結果・この抑制フラグ・delivery 0件の組み合わせだけを無配信成功として既読化します。delivery 0件だけでは成功と推測せず、通常deliveryの `sent` / `failed` / `ambiguous` の意味論は変わりません。
 

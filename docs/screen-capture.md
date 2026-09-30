@@ -3,7 +3,7 @@
 ```text
 Mac screencapture → HTTPS / Tailscale Serve → localhost receiver
   → data/screen-captures.sqlite（PNG + 未完了状態）
-  → pendingがlimit枚に達したら → logbook Agentが1 batchを確認 → Activity Memoryへ差分統合
+  → pendingがlimit枚に達したら → 既存queue / pollerでMain Agentが1 batchを確認 → Activity Memoryへ差分統合
 ```
 
 PNGを収集し、指定AgentGroupの`capturelog`へ画面活動の差分を統合します。Discord配送、検索UI、Project Memoryへの昇格、PII分類は行いません。receiverとsummaryはそれぞれ既定で無効です。実設定やTailscaleの構成は自動変更しません。
@@ -68,7 +68,13 @@ bash scripts/capture-screen.sh "$RECEIVER_URL" '/path/to/<UUID>.png'
 
 ## pending枚数によるActivity Memory更新
 
-capture保存後、未完了画像が`settings.limit`枚未満なら何もせず、以上なら古いものからちょうど`limit`枚を1 batchとして解析します。1 batch成功後も`limit`枚以上残る場合は次のbatchを直列に処理します。起動時にもpendingを確認して再開します。失敗したbatchはpendingのまま残り、次の新規captureまたはBot再起動で再試行します。`settings.mode`が`summarize`なら、batchの画像を`settings.visionModel`で個別に並列要約してDBの`summary`へ保存し、全画像の要約が揃ってから指定AgentGroupの通常LLMへまとめて渡します。`direct`ならbatchを1回の通常LLM実行へ直接添付します。通常LLMは既存`capturelog`を読み、差分だけを追記します。batch全体の処理成功後だけ`completed_at`を保存し、失敗時は全画像を未完了のまま再試行します。成功済みのVLM summaryは再利用します。
+capture保存後、未完了画像が`settings.limit`枚未満なら何もせず、以上なら古いものからちょうど`limit`枚を1 batchとして解析します。`settings.mode`が`summarize`なら、capture側で画像を`settings.visionModel`により個別に並列要約してDBの`summary`へ保存し、全画像の要約が揃ってから通常Agent jobをenqueueします。`direct`ならcapture IDと入力文をenqueueし、各実行・retry時にcapture DBから一時画像をworkspaceへ展開します。実行終了時には画像をcleanupするため、queue待機中にproducerの一時ファイルを保持しません。
+
+Memory更新は既存queue / pollerがMain Agentのper-run sessionで実行します。共通のprovider lock、timeout / abort、retry、lease / fencing、結果commit、session retentionを利用します。同じgroupの未終了capture jobがある間は追加投入せず、Agent成功後のSourceHandlers完了callbackがcapture DBのtransactionで`completed_at`と`accepted = 1`を更新し、次のfull batchを再開します。batchのcapture IDを使ったkeyと既存のactive-only idempotencyで重複投入を抑止します。
+
+capture jobは`discordOutput: "none"`により最終応答・typing・progress・errorの自動Discord出力を抑止します。Discord送信先の設定や`<NO_REPLY>`の応答は不要で、正常終了した空応答も成功です。既存の`<NO_REPLY>`も利用できます。pollerのDiscord接続判定は変わらないため、実行開始には既存どおりDiscord readyが必要です。
+
+起動時にもpendingを確認します。queue内のretryは既存処理に任せ、VLM失敗・Agent終端失敗・完了callback失敗後は次の新規captureまたはHost再起動から再処理します。失敗直後に新jobを作り続けません。成功済みVLM summaryは再利用します。queueとcapture DBを跨ぐatomic commitやexactly-onceは保証しません。Agent成功後にcallbackが失敗した場合もcaptureはpendingのままで、終端jobが残っていても同じbatchを再投入できます。
 
 画像にはpassword、token、個人情報などが含まれ得ます。自動マスキングはありません。`summarize`では画像全体を`settings.visionModel`のproviderへ、`direct`ではMemory更新用の通常modelのproviderへ送信するため、**収集対象と両modeで利用するproviderを確認してから**有効化してください。
 

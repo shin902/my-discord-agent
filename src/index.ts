@@ -157,7 +157,7 @@ try {
   if (xSavedConfig.enabled) {
     xSavedReceiver = await startXSavedReceiver({ port: xSavedConfig.port });
   }
-  screenCaptureReceiver = await startScreenCapture();
+  screenCaptureReceiver = await startScreenCapture(sources);
   if (galleryConfig.enabled && galleryConfig.origin) {
     xSavedGallery = await startXSavedGallery({
       port: galleryConfig.port,

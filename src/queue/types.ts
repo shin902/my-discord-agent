@@ -23,6 +23,8 @@ export interface InboxMessage {
   jobKind?: string;
   /** Opaque feature-owned source input; validated by the registered owner. */
   feature?: { kind: string; input: unknown };
+  /** Suppress all automatic Discord output, including empty successful results. */
+  discordOutput?: "none";
   content: string;
   timestamp: string;
   enqueuedAt?: string;

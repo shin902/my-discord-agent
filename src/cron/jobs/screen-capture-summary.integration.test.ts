@@ -5,12 +5,17 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
-import { sendMessage } from "../../agent/manager.js";
+
 import type { CredentialEntry } from "../../config/credential-proxy.js";
-import { summarizeScreenCaptureBatch } from "../../features/screen-capture-summary.js";
+import {
+  registerScreenCaptureSource,
+  summarizeScreenCaptureBatch,
+} from "../../features/screen-capture-summary.js";
 import { startScreenCaptureReceiver } from "../../integrations/screen-capture/receiver.js";
 import { openScreenCaptureDb } from "../../integrations/screen-capture/store.js";
 import { createRequestHandler } from "../../proxy/credential-proxy-server.js";
+import { QueueRepository } from "../../queue/repository.js";
+import { SourceHandlers } from "../../queue/source-handlers.js";
 import type { CronContext } from "../runner.js";
 
 const handler = (ctx: CronContext) =>
@@ -18,6 +23,13 @@ const handler = (ctx: CronContext) =>
     ctx as Parameters<typeof summarizeScreenCaptureBatch>[0],
   );
 
+const queue = vi.hoisted(() => ({
+  repository: undefined as QueueRepository | undefined,
+}));
+vi.mock("../../queue/repository.js", async (original) => ({
+  ...(await original<typeof import("../../queue/repository.js")>()),
+  getQueueRepository: () => queue.repository,
+}));
 const state = vi.hoisted(() => ({ port: 0, entries: [] as CredentialEntry[] }));
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(
@@ -48,7 +60,7 @@ vi.mock("../../proxy/credential-proxy-server.js", async (original) => ({
   getProxyPort: () => state.port,
 }));
 
-it("runs upload → VLM through Credential Proxy → DB summary → memory agent", async () => {
+it("runs upload → VLM through Credential Proxy → DB summary → durable Memory Agent job", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "screen-pipeline-"));
   const servers: Server[] = [];
   async function listen(server: Server) {
@@ -60,7 +72,13 @@ it("runs upload → VLM through Credential Proxy → DB summary → memory agent
   }
   vi.stubEnv("SCREEN_CAPTURE_DB_PATH", path.join(directory, "captures.sqlite"));
   vi.stubEnv("SCREEN_PIPELINE_KEY", "fixture-host-secret");
-  vi.mocked(sendMessage).mockResolvedValue("updated");
+  const repository = new QueueRepository(
+    path.join(directory, "runtime.sqlite"),
+  );
+  queue.repository = repository;
+  const sources = new SourceHandlers();
+  registerScreenCaptureSource(sources, repository, () => {});
+  repository.registerSources(sources);
 
   try {
     let request:
@@ -135,12 +153,12 @@ it("runs upload → VLM through Credential Proxy → DB summary → memory agent
       type: "image_url",
       image_url: { url: `data:image/png;base64,${png.toString("base64")}` },
     });
-    expect(sendMessage).toHaveBeenCalledWith(
-      "logbook",
-      expect.any(String),
-      expect.stringContaining("エディタでコードを編集している。"),
-      expect.objectContaining({ configOverride: { model: memoryModel } }),
-    );
+    const job = repository.claim()?.job;
+    expect(job).toMatchObject({
+      content: expect.stringContaining("エディタでコードを編集している。"),
+      configOverride: { model: memoryModel },
+      discordOutput: "none",
+    });
     const db = openScreenCaptureDb();
     try {
       expect(
@@ -151,8 +169,8 @@ it("runs upload → VLM through Credential Proxy → DB summary → memory agent
           .get(id),
       ).toEqual({
         summary: "エディタでコードを編集している。",
-        accepted: 1,
-        completed: 1,
+        accepted: null,
+        completed: 0,
       });
     } finally {
       db.close();
@@ -162,6 +180,7 @@ it("runs upload → VLM through Credential Proxy → DB summary → memory agent
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+    repository.close();
     vi.unstubAllEnvs();
     await rm(directory, { recursive: true, force: true });
   }

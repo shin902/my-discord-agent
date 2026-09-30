@@ -1429,6 +1429,53 @@ describe("processMessage - empty agent responses", () => {
     freezeExecutionIdentity.mockResolvedValue(undefined);
   });
 
+  it.each([
+    "",
+    "  \n",
+    "ordinary response",
+    "<NO_REPLY>",
+  ])("silent jobs succeed with %j and produce no automatic Discord output", async (response) => {
+    const msg = makeMsg({
+      discordOutput: "none",
+      channelId: "",
+      cronSessionMode: "per-run",
+    });
+    const resolveCalls = getDiscordClientForGroupName.mock.calls.length;
+    vi.mocked(sendMessage).mockImplementationOnce(
+      async (_group, _session, _content, options) => {
+        expect(options?.systemPromptAppend).toBeUndefined();
+        expect(options?.trustedDiscordDestination).toBeUndefined();
+        options?.onDiscordEvent?.({ type: "tool_start", toolName: "read" });
+        options?.onDiscordEvent?.({ type: "error", message: "fixture" });
+        return response;
+      },
+    );
+    await processMessage(msg);
+    expect(commitInboxResult).toHaveBeenCalledWith(
+      msg.id,
+      msg.fencingToken,
+      response,
+      expect.objectContaining({ suppressDelivery: true }),
+    );
+    expect(deadLetter).not.toHaveBeenCalled();
+    expect(failAttempt).not.toHaveBeenCalled();
+    expect(getDiscordClientForGroupName).toHaveBeenCalledTimes(resolveCalls);
+  });
+
+  it("silent jobs retain queue failure handling when the manager rejects", async () => {
+    const msg = makeMsg({ discordOutput: "none", channelId: "" });
+    const error = new Error("agent execution failed");
+    vi.mocked(sendMessage).mockRejectedValueOnce(error);
+    await processMessage(msg);
+    expect(commitInboxResult).not.toHaveBeenCalled();
+    expect(failAttempt).toHaveBeenCalledWith(
+      msg.id,
+      error,
+      msg.fencingToken,
+      expect.any(Object),
+    );
+  });
+
   async function expectTerminalEmptyResponse(
     response: string,
     overrides: Partial<InboxMessage> = {},
