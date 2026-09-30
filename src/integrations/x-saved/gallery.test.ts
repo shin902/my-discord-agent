@@ -124,9 +124,11 @@ describe("x-saved gallery", () => {
 
   it("migrates v3 in place and reopening does not reset classifications, media, or state", () => {
     const before = getGalleryItem(db, "123");
-    db.exec("DROP TABLE x_item_labels; PRAGMA user_version=3;");
+    db.exec(
+      "ALTER TABLE x_items DROP COLUMN media_resolve_terminal_error; ALTER TABLE x_media DROP COLUMN terminal_error; ALTER TABLE x_media DROP COLUMN attempted_at; ALTER TABLE x_enrichment DROP COLUMN terminal_error; DROP TABLE x_item_labels; PRAGMA user_version=3;",
+    );
     const upgraded = openXSavedDb(dbPath);
-    expect(upgraded.pragma("user_version", { simple: true })).toBe(5);
+    expect(upgraded.pragma("user_version", { simple: true })).toBe(6);
     expect(getGalleryItem(upgraded, "123")).toEqual(before);
     updateGalleryItem(upgraded, "123", classification);
     upgraded.close();
@@ -137,7 +139,7 @@ describe("x-saved gallery", () => {
 
   it("keeps a legacy comma-containing tag as one value when editing status", async () => {
     db.exec(
-      "CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL); INSERT INTO x_tags VALUES ('123', 'AI,ML'); DROP TABLE x_item_labels; PRAGMA user_version=3;",
+      "CREATE TABLE x_tags (tweet_id TEXT NOT NULL, tag TEXT NOT NULL); INSERT INTO x_tags VALUES ('123', 'AI,ML'); ALTER TABLE x_items DROP COLUMN media_resolve_terminal_error; ALTER TABLE x_media DROP COLUMN terminal_error; ALTER TABLE x_media DROP COLUMN attempted_at; ALTER TABLE x_enrichment DROP COLUMN terminal_error; DROP TABLE x_item_labels; PRAGMA user_version=3;",
     );
     openXSavedDb(dbPath).close();
     expect(await (await get("/items/123")).text()).toContain(
