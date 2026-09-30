@@ -287,6 +287,75 @@ describe("processMessage - Bot execution resolution", () => {
     expect(options?.enableBotTool).toBe(false);
   });
 
+  it.each([
+    false,
+    true,
+  ])("runs a channel Bot with owner-scoped role and channel overrides (saved=%s)", async (saved) => {
+    loadMessages.mockImplementation(async (_group, _session, owner) =>
+      owner === "coding"
+        ? saved
+          ? [
+              {
+                customType: "system-prompt-snapshot",
+                content: "saved channel role",
+              },
+            ]
+          : []
+        : [{ customType: "system-prompt-snapshot", content: "Main role" }],
+    );
+    loadBotRegistry.mockResolvedValue({ coding: {} });
+    resolveBotProfile.mockReturnValue({
+      group: "default",
+      instructions: "channel role",
+      model: { provider: "bot-provider", modelId: "bot-model" },
+      tools: ["read"],
+      skills: ["research"],
+    });
+    vi.mocked(sendMessage).mockResolvedValue("response");
+    const source = {
+      kind: "discord" as const,
+      sourceId: "message",
+      actorId: "human",
+      messageType: 0 as const,
+      createdAt: new Date().toISOString(),
+    };
+    await processMessage(
+      makeMsg({
+        botId: "coding",
+        routingChannelId: "parent",
+        source,
+        configOverride: {
+          tools: [],
+          model: { provider: "channel-provider", modelId: "channel-model" },
+        },
+      }),
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      "default",
+      "ch-1",
+      "hello",
+      expect.objectContaining({
+        agentId: "coding",
+        source,
+        enableBotTool: false,
+        systemPromptSnapshotPresent: true,
+        systemPromptSnapshotContent: saved
+          ? "saved channel role"
+          : "channel role",
+        configOverride: {
+          tools: [],
+          skills: ["research"],
+          model: { provider: "channel-provider", modelId: "channel-model" },
+        },
+      }),
+    );
+    expect(resolveProviderLockTarget).toHaveBeenCalledWith("channel-provider");
+    expect(loadMessages.mock.calls.every((call) => call[2] === "coding")).toBe(
+      true,
+    );
+    expect(commitInboxResult).toHaveBeenCalled();
+  });
+
   it("dead-letters an unknown Bot instead of retrying", async () => {
     vi.mocked(findGroupByName).mockResolvedValue({
       name: "default",

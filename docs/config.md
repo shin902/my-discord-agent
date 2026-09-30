@@ -23,7 +23,7 @@ groups/{name}/
   AGENTS.md                # グループのシステムプロンプト
 ```
 
-AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → channel`、cronでは配送先のchannel/thread設定を継承せず `group → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
+AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → Bot profile（指定時） → channel`、cronでは配送先のchannel/thread設定を継承せず `group → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
 
 | ファイル | 必須 | トップレベル形式 | 内容 |
 |---|---|---|---|
@@ -194,6 +194,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 |---|---|---|
 | `name` | ✓ | `groups/{name}/` ディレクトリ名と対応 |
 | `channels` | ✓ | チャンネル ID とセッションモードのマッピング |
+| `botId` | — | channel限定。親チャンネルに割り当てるAgent Bot profile ID（`config/bots.json`）。子スレッドも継承し、未指定はMain。Discord接続identityのgroup `bot` とは別 |
 | `appendUserOnly` | — | channel限定の任意boolean。`true` はshared channelのlive human messageをuser entryとして保存し、Agent実行・応答しない。未指定 / `false` は通常挙動。詳細は [チャンネルモード](spec/channel-modes.md#appenduseronly) |
 | `requiredMention` | — | チャンネル単位で指定できる任意の boolean。`appendUserOnly` 無効時に `true` の場合はBotへのメンションを含む通常メッセージだけを処理し、省略時（既定）は制限しない。親チャンネルのポリシーは子スレッドにも適用され、スラッシュコマンドは対象外 |
 | `model` | — | AgentConfig。`provider`/`modelId`/`thinkingLevel`。`thinkingLevel`は`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`を許容し、各値の意味とwire mappingはPiのmodel metadataへ委譲する。channelで指定するとgroupのmodelオブジェクトを完全置換 |
@@ -208,7 +209,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 有効な追加mountがある場合、Agentのsystem contextにはcontainer側pathと読み書き権限（`ro` / `rw`）を列挙し、既存mountの直接利用を促す。host側pathは表示しない。mount未設定時はこの案内を追加せず、作業ディレクトリは引き続き `/workspace` とする。
 
-`sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
+`sessionMode` の正本は [チャンネルモード](spec/channel-modes.md) を参照。通常のDiscord会話におけるAgentConfigの解決順は `group → Bot profile（指定時） → channel`、cron jobにおける解決順は `group → cron job` である。`approvalRequiredTools` は他のAgentConfig配列と同様にfield単位で完全置換され、子layerで未指定なら親を継承し、`[]` は明示解除となる。既存mutation capabilityを自動的に必須化しない。cronの `channelId` は配送先を指定するためだけに使われ、通常チャンネルIDでも既存スレッドIDでもchannelのAgentConfigは継承しない。未指定フィールドは親を継承し、指定フィールドはモデルオブジェクトや配列を含めて完全置換する。`tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` の暗黙加算やdeep mergeは行わない。したがって、groupやcron jobで `subagent` を許可していても、channelやcron jobが `tools` を完全置換してその名前を含めなければ、実行時にsubagent toolは公開されない。`allowMention` / `toolLogArgs` はgroup限定で、AgentConfigには含まれない。
 
 ### 起動時Discord履歴バックフィル
 

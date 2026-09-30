@@ -139,3 +139,57 @@ describe("validateAgentConfig", () => {
     ).rejects.toThrow("リポジトリルート外");
   });
 });
+
+describe("channel Bot validation at startup", () => {
+  const bots = {
+    research: {
+      group: "group",
+      description: "Research",
+      instructions: "Research role",
+      tools: ["get-current-weather"],
+      approvalRequiredTools: ["get-current-weather"],
+    },
+  };
+  it.each([
+    "missing",
+    "research",
+  ])("rejects invalid assignment %s", async (botId) => {
+    const { validateGroupConfig } = await import("../agent/manager.js");
+    await expect(
+      validateGroupConfig(
+        {
+          name: "other",
+          channels: [{ channelId: "parent", sessionMode: "thread", botId }],
+        },
+        defaultModel,
+        bots,
+      ),
+    ).rejects.toThrow(botId === "missing" ? "未定義" : "利用できません");
+  });
+  it("validates the final group → Bot → channel config", async () => {
+    const { validateGroupConfig } = await import("../agent/manager.js");
+    const channel = {
+      channelId: "parent",
+      sessionMode: "shared" as const,
+      botId: "research",
+      tools: ["read"],
+    };
+    await expect(
+      validateGroupConfig(
+        { name: "group", channels: [channel] },
+        defaultModel,
+        bots,
+      ),
+    ).rejects.toThrow("承認必須ツール");
+    await expect(
+      validateGroupConfig(
+        {
+          name: "group",
+          channels: [{ ...channel, approvalRequiredTools: [] }],
+        },
+        defaultModel,
+        bots,
+      ),
+    ).resolves.toBeUndefined();
+  });
+});

@@ -96,6 +96,7 @@ export async function executeSkillCommand(
       groupName: match.group.name,
       routingChannelId: request.routingChannelId,
       sessionId: request.channelId,
+      ...(match.channel.botId ? { botId: match.channel.botId } : {}),
       content: `./command ${request.skillName}${request.prompt ? ` ${request.prompt}` : ""}`,
       timestamp: new Date().toISOString(),
       idempotencyKey: request.idempotencyKey,
@@ -135,7 +136,11 @@ export async function executeStopCommand(
   }
 
   try {
-    const result = await stopAgentRun(match.group.name, request.channelId);
+    const result = await stopAgentRun(
+      match.group.name,
+      request.channelId,
+      match.channel.botId ?? "main",
+    );
     switch (result.status) {
       case "aborted":
         return "実行を停止しました（協調的abort）。";
@@ -187,7 +192,11 @@ export async function executeSteerCommand(
     return steerCommandResult("このコマンドはスレッド内で実行してください。");
   }
 
-  const run = acquireActiveRun(match.group.name, request.channelId);
+  const run = acquireActiveRun(
+    match.group.name,
+    request.channelId,
+    match.channel.botId ?? "main",
+  );
   if (!run) return steerCommandResult("steer対象の実行中Agentがありません。");
   try {
     const accepted = await run.steer(instruction);

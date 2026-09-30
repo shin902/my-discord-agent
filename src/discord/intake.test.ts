@@ -126,6 +126,78 @@ function makeMessage(options: {
 }
 
 describe("ingestDiscordMessage", () => {
+  it.each([
+    "shared",
+    "thread",
+    "auto-thread",
+    "email-mode",
+  ] as const)("inherits the parent Bot without changing %s sessions", async (sessionMode) => {
+    mocks.findGroup.mockImplementation(async (id) => ({
+      group: { name: "group", bot: "personal" },
+      channel: {
+        channelId: id,
+        sessionMode,
+        botId: id === "root-1" ? "research" : "wrong-thread-bot",
+        tools: [],
+      },
+    }));
+    const threaded = sessionMode !== "shared";
+    const message = makeMessage({
+      id: "channel-bot",
+      isThread: threaded,
+      parentId: threaded ? "root-1" : null,
+      channelId: threaded ? "child" : "root-1",
+    });
+    await live(message);
+    expect(mocks.findGroup).toHaveBeenCalledWith("root-1");
+    expect(
+      repo.findByIdempotencyKey("discord-message:channel-bot"),
+    ).toMatchObject({
+      botId: "research",
+      routingChannelId: "root-1",
+      sessionId: threaded ? "child" : "root-1",
+      configOverride: { tools: [] },
+    });
+    expect(repo.listBotTaskSessions("group", "research")).toEqual([]);
+  });
+  it("assigns the parent Bot to an automatically created thread", async () => {
+    mocks.findGroup.mockResolvedValue({
+      group: { name: "group" },
+      channel: {
+        channelId: "root-1",
+        sessionMode: "auto-thread",
+        botId: "research",
+      },
+    });
+    await live(
+      makeMessage({
+        id: "auto-bot",
+        startThread: vi.fn().mockResolvedValue({ id: "new-thread" }),
+      }),
+    );
+    expect(repo.findByIdempotencyKey("discord-message:auto-bot")).toMatchObject(
+      { botId: "research", sessionId: "new-thread", channelId: "new-thread" },
+    );
+  });
+  it("appends to the selected owner and preserves Main history when assignment changes", async () => {
+    const channel = {
+      channelId: "root-1",
+      sessionMode: "shared",
+      appendUserOnly: true,
+      botId: undefined as string | undefined,
+    };
+    mocks.findGroup.mockResolvedValue({ group: { name: "group" }, channel });
+    await live(makeMessage({ id: "main-entry" }));
+    channel.botId = "research";
+    await live(makeMessage({ id: "bot-entry" }));
+    expect(await session.loadMessages("group", "root-1", "main")).toHaveLength(
+      1,
+    );
+    expect(
+      await session.loadMessages("group", "root-1", "research"),
+    ).toHaveLength(1);
+  });
+
   it("channelが解決できないメッセージを無視してカーソル範囲を返す", async () => {
     const result = await ingestDiscordMessage(
       makeMessage({ id: "message-without-channel", channel: null }),

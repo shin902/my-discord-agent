@@ -96,7 +96,9 @@ try {
   await initGroupPrompts(groups);
   await loadProviders();
   const defaultModel = await loadDefaultModel();
-  await Promise.all(groups.map((g) => validateGroupConfig(g, defaultModel)));
+  await Promise.all(
+    groups.map((g) => validateGroupConfig(g, defaultModel, botRegistry)),
+  );
   await validateBotConfigs(groups, botRegistry, defaultModel);
   await initDiscordClients();
   const queueRepository = getQueueRepository();

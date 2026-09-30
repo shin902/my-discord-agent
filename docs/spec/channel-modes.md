@@ -2,6 +2,20 @@
 
 Channel の `sessionMode` はDiscord channel/threadをsessionへ対応付ける方法を表す。設定変更は再起動後に反映される。
 
+## Agent Bot profile
+
+親チャンネルに `botId` を指定すると、そのチャンネルと処理対象の全子スレッドで同じAgent Bot profileを使う。スレッド単位のBot overrideはない。未指定はMain。接続に使うDiscord Botは従来どおりgroupの `bot` で選び、Agent profileの `botId` とは独立する。
+
+```json
+{ "channelId": "123", "sessionMode": "auto-thread", "botId": "research" }
+```
+
+`research` は `config/bots.json` に同じgroup所属で定義する。起動時に存在・group一致・最終AgentConfigの妥当性を検証する。AgentConfigは `group → Bot profile → parent channel override` の順でフィールド単位に完全置換する。BotのroleはMain/group promptへ追記せず、既存のowner別session snapshotとして初回実行時に固定する。Botとしての実行ではnested `bot` toolは公開しない。
+
+`shared` / `thread` / `auto-thread` / `email-mode` の入力対象・session ID・配送先は変わらない。`/skill` と `appendUserOnly` も選択したownerを使い、`/steer`・`/stop` はそのownerの実行だけを対象にする。`/bot` の明示的Task操作は独立したままで、channel会話からBot Task Sessionを作らない。cronにはこの設定を継承しない。
+
+設定変更は再起動後の新規入力に適用する。履歴identityは `(group, agent_id, sessionId)` なので、Bot変更後はそのownerの履歴を使用し、元のMain/Bot履歴を移行・削除しない。元のBotまたはMainへ戻すとその履歴を再利用する。同じBotの既存sessionは保存済みrole snapshotを維持する。受付済みqueueは保存されたBotとchannel overrideを保持する。
+
 ## `sessionMode`
 
 | 値 | 親チャンネルへの反応 | スレッド内への反応 |
