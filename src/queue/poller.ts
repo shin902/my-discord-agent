@@ -452,11 +452,13 @@ async function resolveBotExecution(
   const configOverride = resolveAgentConfig(
     groupConfig,
     profile,
-    msg.routingChannelId || msg.cronJobId ? msg.configOverride : undefined,
+    msg.routingChannelId || msg.cronJobId !== undefined
+      ? msg.configOverride
+      : undefined,
   );
   // Channel intake and cron use ordinary sessions; Bot Tasks require admission.
   // Reuse ordinary owner-scoped bootstrap without creating a Task admission.
-  if (msg.routingChannelId || msg.cronJobId) {
+  if (msg.routingChannelId || msg.cronJobId !== undefined) {
     const messages = await loadMessages(msg.groupName, msg.sessionId, agentId);
     const snapshot = messages.find(
       (entry) =>
@@ -908,7 +910,7 @@ async function captureFrozenIdentity(
   toolCallKey: string;
 }> {
   let systemPromptSnapshotContent = msg.botId
-    ? msg.routingChannelId || msg.cronJobId
+    ? msg.routingChannelId || msg.cronJobId !== undefined
       ? (
           await resolveBotExecution(
             msg,

@@ -268,6 +268,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 | フィールド | 値 | 動作 |
 |---|---|---|
+| `botId` | string（任意） | 同じgroupに所属するAgent Bot profile ID。未指定はMain。指定時はhandlerでもgroupName必須。宣言型jobと `enqueueCronInbox()` を使うhandlerが対象 |
 | `deliveryMode` | `direct` | `channelId` へ直接投稿する。通常チャンネルだけでなく既存スレッドのIDも指定可能 |
 | `deliveryMode` | `new-thread` | `channelId` を親として実行ごとに新しいスレッドを作成する |
 | `deliveryMode` | `item-thread` | 一時sessionでAIを実行し、応答がある場合だけ親メッセージを投稿してmessage/thread IDへsessionを昇格してから1項目用スレッドを作成する。`sessionMode` は `destination` 必須 |
@@ -279,7 +280,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 既存スレッドへ投稿しつつ毎回セッションを分離する場合は、`channelId` にスレッドID、`deliveryMode` に `direct`、`sessionMode` に `per-run` を指定する。`item-thread` は1項目ごとの独立スレッドを使うため `destination` と組み合わせる。旧 `mode` も後方互換のため読み込めるが、新しい設定では使用しない。`to-channel` は `direct` + `per-run`、`to-thread` は `new-thread` + `destination` として扱われる。
 
-`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、groupの既定値をそのジョブの実行時だけ上書きできる。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfigは継承しない。`skills` はスキル名の配列または `[]` を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
+`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` を任意で指定すると、`group → Bot profile（botId指定時） → cron job` の順でそのジョブの実行時設定を解決する。cronの `channelId` は配送先だけを表し、配送先channelまたは既存threadのAgentConfig・Bot指定は継承しない。`skills` はスキル名の配列または `[]` を指定できる。指定フィールドは完全置換で、モデルオブジェクトや配列のdeep merge・暗黙加算は行わない。上書きは cron 実行から生成される inbox メッセージにだけ付与され、通常の人間の会話や `config/groups.json` 自体には影響しない。`handler` 付きジョブは従来どおり `settings` 経由でハンドラー側が自由に扱う。`allowMention` / `toolLogArgs` はgroup設定のみで、cron jobからは変更できない。
 
 ### jobs/mail.ts
 

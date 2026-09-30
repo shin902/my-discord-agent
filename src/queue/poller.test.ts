@@ -301,14 +301,21 @@ describe("processMessage - Bot execution resolution", () => {
   });
 
   it.each([
-    { saved: false, cron: false },
-    { saved: true, cron: false },
-    { saved: false, cron: true },
-    { saved: true, cron: true },
+    { saved: false, cronJobId: undefined },
+    { saved: true, cronJobId: undefined },
+    { saved: false, cronJobId: "daily" },
+    { saved: true, cronJobId: "daily" },
+    { saved: false, cronJobId: "" },
+    { saved: true, cronJobId: "" },
   ])("runs ordinary Bot with owner-scoped role and overrides (%j)", async ({
     saved,
-    cron,
+    cronJobId,
   }) => {
+    const cron = cronJobId !== undefined;
+    vi.mocked(findGroupByName).mockResolvedValue({
+      name: "default",
+      channels: [],
+    });
     loadMessages.mockImplementation(async (_group, _session, owner) =>
       owner === "coding"
         ? saved
@@ -342,7 +349,7 @@ describe("processMessage - Bot execution resolution", () => {
         botId: "coding",
         ...(cron
           ? {
-              cronJobId: "daily",
+              cronJobId,
               cronDeliveryMode: "direct" as const,
               cronSessionMode: "destination" as const,
             }
