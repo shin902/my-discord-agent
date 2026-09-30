@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   lookupArchiveMedia,
   saveArchiveFile,
+  XArchiveTerminalError,
 } from "../../integrations/x-saved/archive.js";
 import {
   lookupXSavedEnrichment,
@@ -31,9 +32,9 @@ export default async function handler(ctx: CronContext): Promise<void> {
   let resolved = 0;
   let downloaded = 0;
   try {
-    // Null (never attempted) first, then oldest attempts: a 404 cannot block backlog.
+    // Never attempted first, then oldest retryable attempts.
     const tweets = db
-      .prepare(`SELECT tweet_id FROM x_items WHERE media_resolved_at IS NULL
+      .prepare(`SELECT tweet_id FROM x_items WHERE media_resolved_at IS NULL AND media_resolve_terminal_error IS NULL
       ORDER BY media_resolve_attempted_at, tweet_id LIMIT ?`)
       .all(limit) as { tweet_id: string }[];
     for (const { tweet_id } of tweets) {
@@ -45,6 +46,10 @@ export default async function handler(ctx: CronContext): Promise<void> {
       try {
         media = await lookupArchiveMedia(tweet_id);
       } catch (error) {
+        if (error instanceof XArchiveTerminalError)
+          db.prepare(
+            "UPDATE x_items SET media_resolve_terminal_error = ? WHERE tweet_id = ?",
+          ).run(String(error).slice(0, 1000), tweet_id);
         console.warn(
           `[x-saved-media-download] resolve ${tweet_id}: ${String(error).slice(0, 300)}`,
         );
@@ -56,18 +61,30 @@ export default async function handler(ctx: CronContext): Promise<void> {
     }
     const files = db
       .prepare(`SELECT tweet_id, kind, position, source_url FROM x_media
-      WHERE status IN ('pending', 'failed') AND (source_url IS NOT NULL OR status = 'pending')
+      WHERE status IN ('pending', 'failed') AND terminal_error IS NULL
+        AND (source_url IS NOT NULL OR tweet_id IN (
+          SELECT tweet_id FROM x_items WHERE media_resolved_at IS NOT NULL
+        ))
       ORDER BY status = 'failed', tweet_id, position, kind LIMIT ?`)
       .all(limit) as (Omit<ArchiveMedia, "source_url"> & {
       tweet_id: string;
       source_url: string | null;
     })[];
     for (const file of files) {
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE x_media SET attempted_at = ?
+        WHERE tweet_id = ? AND kind = ? AND position = ?`).run(
+        now,
+        file.tweet_id,
+        file.kind,
+        file.position,
+      );
+      let terminalError: string | null = null;
       let localPath: string | null = null;
       let error: string | null = null;
       try {
         if (!file.source_url)
-          throw new Error(
+          throw new XArchiveTerminalError(
             "Direct media URL unavailable (MP4 required for video)",
           );
         localPath = await saveArchiveFile(path.dirname(dbPath), file.tweet_id, {
@@ -76,12 +93,14 @@ export default async function handler(ctx: CronContext): Promise<void> {
         });
       } catch (cause) {
         error = String(cause).slice(0, 1000);
+        if (cause instanceof XArchiveTerminalError) terminalError = error;
       }
-      db.prepare(`UPDATE x_media SET status = ?, local_path = ?, last_error = ?
+      db.prepare(`UPDATE x_media SET status = ?, local_path = ?, last_error = ?, terminal_error = ?
         WHERE tweet_id = ? AND kind = ? AND position = ? AND status != 'done' AND source_url IS ?`).run(
         error ? "failed" : "done",
         localPath,
         error,
+        terminalError,
         file.tweet_id,
         file.kind,
         file.position,
@@ -93,8 +112,8 @@ export default async function handler(ctx: CronContext): Promise<void> {
     const backlog = db
       .prepare(`SELECT i.tweet_id FROM x_items i
       LEFT JOIN x_enrichment e ON e.tweet_id = i.tweet_id
-      WHERE e.resolved_at IS NULL
-        OR json_extract(e.document_json, '$.status.author.id') IS NULL
+      WHERE e.terminal_error IS NULL AND (e.resolved_at IS NULL
+        OR json_extract(e.document_json, '$.status.author.id') IS NULL)
       ORDER BY e.attempted_at, i.tweet_id LIMIT ?`)
       .all(limit) as { tweet_id: string }[];
     let enriched = 0;
@@ -111,8 +130,12 @@ export default async function handler(ctx: CronContext): Promise<void> {
       } catch (error) {
         const message = String(error).slice(0, 1000);
         db.prepare(
-          "UPDATE x_enrichment SET last_error = ? WHERE tweet_id = ?",
-        ).run(message, tweet_id);
+          "UPDATE x_enrichment SET last_error = ?, terminal_error = ? WHERE tweet_id = ?",
+        ).run(
+          message,
+          error instanceof XArchiveTerminalError ? message : null,
+          tweet_id,
+        );
         console.warn(
           `[x-saved-media-download] enrich ${tweet_id}: ${message.slice(0, 300)}`,
         );

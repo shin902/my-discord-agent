@@ -11,7 +11,7 @@ const ROOT = path.resolve(
   "../../..",
 );
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const XSAVED_BACKUP_PREFIX = "x-saved-";
 const LEGACY_XSAVED_BACKUP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.sqlite$/;
@@ -239,6 +239,27 @@ function ensureSchema(db: Database.Database): void {
         WHERE tweet_id IN (SELECT tweet_id FROM x_items)
           AND length(trim(tag)) BETWEEN 1 AND 100;`);
     }
+    if (version < 6) {
+      db.exec(`ALTER TABLE x_items ADD COLUMN media_resolve_terminal_error TEXT;
+        ALTER TABLE x_media ADD COLUMN terminal_error TEXT;
+        ALTER TABLE x_media ADD COLUMN attempted_at TEXT;
+        ALTER TABLE x_enrichment ADD COLUMN terminal_error TEXT;
+
+        -- Only exact errors written by the old archive code are evidence.
+        -- Legacy image errors omit orig/fallback outcomes; recheck them.
+        -- Old media attempts had no timestamp: leave that history unknown.
+        UPDATE x_media SET terminal_error = last_error
+        WHERE status = 'failed' AND (
+          (last_error = 'Error: Media exceeds byte limit' AND kind = 'video')
+          OR (last_error = 'Error: Direct media URL unavailable (MP4 required for video)'
+            AND kind = 'video' AND source_url IS NULL
+            AND tweet_id IN (SELECT tweet_id FROM x_items WHERE media_resolved_at IS NOT NULL))
+        );
+        UPDATE x_enrichment SET terminal_error = last_error
+        WHERE (resolved_at IS NULL OR json_extract(document_json, '$.status.author.id') IS NULL)
+          AND last_error IN ('Error: FxTwitter HTTP 401', 'Error: FxTwitter HTTP 404',
+            'Error: FxTwitter response exceeds 2 MiB');`);
+    }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }).immediate();
 }
@@ -374,6 +395,11 @@ export function mergeXSavedMedia(
       INSERT INTO x_media (tweet_id, kind, position, source_url, alt_text)
       VALUES (@tweetId, @kind, @position, @source, @alt)
       ON CONFLICT(tweet_id, kind, position) DO UPDATE SET
+        terminal_error = CASE WHEN x_media.status != 'done'
+          AND excluded.source_url IS NOT NULL
+          AND (@resolved OR x_media.source_url IS NULL)
+          AND x_media.source_url IS NOT excluded.source_url THEN NULL
+          ELSE x_media.terminal_error END,
         source_url = CASE WHEN x_media.status = 'done' THEN x_media.source_url
           WHEN @resolved THEN COALESCE(excluded.source_url, x_media.source_url)
           ELSE COALESCE(x_media.source_url, excluded.source_url) END,

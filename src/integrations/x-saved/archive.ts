@@ -7,6 +7,9 @@ import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import { type ArchiveMedia, isMediaUrl } from "./media-contract.js";
 
+/** Permanent failure of this X archive operation, not a cron/job failure. */
+export class XArchiveTerminalError extends Error {}
+
 const Id = z.string().regex(/^[1-9][0-9]{0,19}$/);
 const FxEntry = z.discriminatedUnion("type", [
   z.object({
@@ -108,7 +111,12 @@ export async function fetchFxTwitter(
     },
   );
   try {
-    if (!response.ok) throw new Error(`FxTwitter HTTP ${response.status}`);
+    if (!response.ok) {
+      const message = `FxTwitter HTTP ${response.status}`;
+      if (response.status === 401 || response.status === 404)
+        throw new XArchiveTerminalError(message);
+      throw new Error(message);
+    }
     if (
       !/^application\/json(?:\s*;|$)/i.test(
         response.headers.get("content-type") ?? "",
@@ -122,7 +130,7 @@ export async function fetchFxTwitter(
     for await (const chunk of response.body) {
       size += chunk.length;
       if (size > 2 * 1024 * 1024)
-        throw new Error("FxTwitter response exceeds 2 MiB");
+        throw new XArchiveTerminalError("FxTwitter response exceeds 2 MiB");
       chunks.push(chunk);
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -175,6 +183,7 @@ export async function saveArchiveFile(
       urls.unshift(orig.href);
   }
   const directory = await archiveDirectory(root, tweetId);
+  let retryableError: unknown;
   for (const [index, source] of urls.entries()) {
     if (!isMediaUrl(source, media.kind)) throw new Error("Unsafe media URL");
     const signal = AbortSignal.timeout(
@@ -208,13 +217,15 @@ export async function saveArchiveFile(
       const maximum =
         media.kind === "video" ? VIDEO_MAX_BYTES : IMAGE_MAX_BYTES;
       if (Number(response.headers.get("content-length")) > maximum)
-        throw new Error("Media exceeds byte limit");
+        throw new XArchiveTerminalError("Media exceeds byte limit");
       let bytes = 0;
       const counter = new Transform({
         transform(chunk: Buffer, _encoding, next) {
           bytes += chunk.length;
           next(
-            bytes > maximum ? new Error("Media exceeds byte limit") : null,
+            bytes > maximum
+              ? new XArchiveTerminalError("Media exceeds byte limit")
+              : null,
             chunk,
           );
         },
@@ -232,7 +243,9 @@ export async function saveArchiveFile(
       await rename(temp, path.join(directory, `${media.position}.${ext}`));
       return relative;
     } catch (error) {
-      if (index === urls.length - 1) throw error;
+      // One over-limit candidate does not prove the other is unavailable.
+      if (!(error instanceof XArchiveTerminalError)) retryableError = error;
+      if (index === urls.length - 1) throw retryableError ?? error;
     } finally {
       if (response?.body && !response.body.locked)
         await response.body.cancel().catch(() => {});

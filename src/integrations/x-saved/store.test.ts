@@ -76,6 +76,136 @@ function createLegacyXSavedFixture(
 }
 
 describe("x-saved persistence", () => {
+  it("migrates only proven terminal failures once, preserving saved data and unknown attempt times", () => {
+    const dbPath = path.join(makeTempDir(), "legacy.sqlite");
+    let db = openXSavedDb(dbPath);
+    const errors = [
+      "Error: Media exceeds byte limit",
+      "Error: Direct media URL unavailable (MP4 required for video)",
+      "Error: Media HTTP 403",
+      "Error: Media HTTP 429",
+      "Error: Media HTTP 503",
+      "TimeoutError: timed out",
+      "Error: Media exceeds byte limit (unverified suffix)",
+    ];
+    const contextErrors = [
+      "Error: FxTwitter HTTP 401",
+      "Error: FxTwitter HTTP 404",
+      "Error: FxTwitter response exceeds 2 MiB",
+      "Error: FxTwitter HTTP 429",
+      "Error: FxTwitter HTTP 503",
+      "TimeoutError: timed out",
+      "Error: FxTwitter HTTP 404 (unverified suffix)",
+    ];
+    ingestXSavedItems(
+      Array.from({ length: 12 }, (_, n) => ({
+        tweetId: String(n + 1),
+        text: "saved content",
+        seenLiked: true,
+        seenBookmarked: true,
+      })),
+      { xSavedDb: db, now: "saved" },
+    );
+    db.exec(`UPDATE x_items SET media_resolved_at = 'resolved', media_resolve_attempted_at = 'old attempt';
+      UPDATE x_item_state SET status='keep', note='saved note';
+      INSERT INTO x_item_labels VALUES ('1', 'tag', 'saved');
+      UPDATE x_items SET media_resolved_at = NULL WHERE tweet_id IN ('10', '11');`);
+    for (let n = 0; n < 12; n++) {
+      db.prepare(`INSERT INTO x_media (tweet_id, kind, position, source_url, local_path, status, last_error)
+        VALUES (?, ?, 0, ?, ?, ?, ?)`).run(
+        String(n + 1),
+        n === 11 ? "image" : "video",
+        n === 1 || n === 9
+          ? null
+          : n === 11
+            ? "https://pbs.twimg.com/media/a.jpg?name=small"
+            : "https://video.twimg.com/tweet_video/a.mp4",
+        n === 7 ? "media/8/0.mp4" : null,
+        n === 7 ? "done" : "failed",
+        n === 11 ? errors[0] : (errors[n] ?? errors[1]),
+      );
+      db.prepare(`INSERT INTO x_enrichment (tweet_id, document_json, resolved_at, attempted_at, last_error)
+        VALUES (?, ?, ?, 'old attempt', ?)`).run(
+        String(n + 1),
+        n === 7 ? '{"status":{"author":{"id":"42"}}}' : '{"status":{}}',
+        n === 7 || n === 8 ? "old success" : null,
+        n === 11 ? contextErrors[5] : (contextErrors[n] ?? contextErrors[0]),
+      );
+    }
+    db.exec(`ALTER TABLE x_items DROP COLUMN media_resolve_terminal_error;
+      ALTER TABLE x_media DROP COLUMN terminal_error;
+      ALTER TABLE x_media DROP COLUMN attempted_at;
+      ALTER TABLE x_enrichment DROP COLUMN terminal_error;
+      PRAGMA user_version=5;`);
+    const tables = [
+      "x_items",
+      "x_media",
+      "x_enrichment",
+      "x_item_state",
+      "x_item_labels",
+      "x_meta",
+    ];
+    const before = tables.map((table) =>
+      db.prepare(`SELECT * FROM ${table}`).all(),
+    );
+    // A failed migration must roll back columns, evidence updates and version.
+    db.exec(
+      "CREATE TRIGGER reject_terminal BEFORE UPDATE ON x_enrichment BEGIN SELECT RAISE(ABORT, 'migration failure'); END;",
+    );
+    db.close();
+    expect(() => openXSavedDb(dbPath)).toThrow("migration failure");
+    db = new Database(dbPath);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(
+      tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all()),
+    ).toEqual(before);
+    db.exec("DROP TRIGGER reject_terminal");
+    db.close();
+    db = openXSavedDb(dbPath);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
+    expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+    const after = tables.map((table) =>
+      db.prepare(`SELECT * FROM ${table}`).all(),
+    );
+    for (const [i, rows] of before.entries()) {
+      for (const [j, row] of rows.entries())
+        expect(after[i]?.[j]).toMatchObject(row as object);
+    }
+    expect(
+      db
+        .prepare(
+          "SELECT tweet_id FROM x_media WHERE terminal_error IS NOT NULL ORDER BY tweet_id",
+        )
+        .all(),
+    ).toEqual([{ tweet_id: "1" }, { tweet_id: "2" }]);
+    expect(
+      db
+        .prepare(
+          "SELECT tweet_id FROM x_enrichment WHERE terminal_error IS NOT NULL ORDER BY CAST(tweet_id AS INTEGER)",
+        )
+        .all(),
+    ).toEqual(
+      ["1", "2", "3", "9", "10", "11"].map((tweet_id) => ({ tweet_id })),
+    );
+    expect(
+      db.prepare("SELECT * FROM x_media WHERE attempted_at IS NOT NULL").all(),
+    ).toEqual([]);
+    expect(
+      db
+        .prepare(
+          "SELECT * FROM x_items WHERE media_resolve_terminal_error IS NOT NULL",
+        )
+        .all(),
+    ).toEqual([]);
+    db.close();
+    db = openXSavedDb(dbPath);
+    expect(
+      tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all()),
+    ).toEqual(after);
+    db.close();
+  });
+
   it("keeps backups outside the live DB mount", async () => {
     const dir = makeTempDir();
     const targetPath = path.join(dir, "x-saved.sqlite");
@@ -398,7 +528,7 @@ describe("x-saved persistence", () => {
         )
         .all(),
     ).toEqual([]);
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
     expect(
       db
         .prepare(

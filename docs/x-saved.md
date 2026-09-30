@@ -90,10 +90,16 @@ Enable the single disabled `x-saved-media-download` example deliberately, then r
 
 This is a deterministic host handler, not an Agent/LLM job. Each run has three sequential phases, each bounded by the same `limit` (1–100, default 20):
 
-1. Select unresolved `x_items`, never-attempted first then oldest attempt. Update `media_resolve_attempted_at`, look up **only the Tweet ID** through `https://api.fxtwitter.com/2/status/<id>`, upsert media and set `media_resolved_at` atomically on success. Empty media is also success and is not repeatedly looked up. Failures remain unresolved and rotate behind other IDs on later runs.
-2. Download pending/failed `x_media`, pending first. Save one image or one MP4 into a sibling temporary file, count streamed bytes, then atomically rename and commit a relative `local_path` / `done`. Individual failures become `failed` with `last_error`; other files continue and failed sources retry next run. A video without direct MP4 is marked failed and excluded from repeated download attempts while its source remains absent.
+1. Select unresolved `x_items`, never-attempted first then oldest attempt. Update `media_resolve_attempted_at`, look up **only the Tweet ID** through `https://api.fxtwitter.com/2/status/<id>`, upsert media and set `media_resolved_at` atomically on success. Empty media is also success and is not repeatedly looked up. Retryable failures remain unresolved and rotate behind other IDs on later runs; terminal failures retain a reason and are excluded.
+2. Download pending/failed `x_media`, pending first. Save one image or one MP4 into a sibling temporary file, count streamed bytes, then atomically rename and commit a relative `local_path` / `done`. Individual failures become `failed` with `last_error` and `attempted_at`; other files continue. Only failures without `terminal_error` retry. A source-less video hint waits for successful metadata resolution before a missing direct MP4 is treated as terminal.
 
-3. Backfill context from `https://api.fxtwitter.com/2/thread/<id>` for saved IDs with no completed `x_enrichment` snapshot (including snapshots missing the focal author's ID). Never-attempted IDs precede oldest attempts. Store the snapshot and `resolved_at` together; individual network/validation failures retain `last_error`, continue the batch and retry on later runs. This phase is independent of media completeness, so old completed archives and new captures both qualify without browser replay.
+3. Backfill context from `https://api.fxtwitter.com/2/thread/<id>` for saved IDs with no completed `x_enrichment` snapshot (including snapshots missing the focal author's ID). Never-attempted IDs precede oldest attempts. Store the snapshot and `resolved_at` together; individual failures retain `last_error` and continue the batch; only retryable failures return on later runs. This phase is independent of media completeness, so old completed archives and new captures both qualify without browser replay.
+
+FxTwitter HTTP 401/404, the 2 MiB JSON response cap, a missing required direct MP4 after successful resolution, and media byte-limit excess are terminal for the affected operation. Timeouts, HTTP 429/5xx, validation errors and raw media HTTP 403 remain retryable. Resolution and enrichment are independent: a failure in one does not discard a successful snapshot or archive in another. Image fallback to the supplied URL is still attempted before recording a download failure; either candidate failing transiently keeps the operation retryable. A later accepted source-URL change clears the old terminal reason for unfinished media; identical hints do not restart retries.
+
+Schema v6 adds nullable `x_items.media_resolve_terminal_error`, `x_media.terminal_error` / `attempted_at`, and `x_enrichment.terminal_error`. A non-null terminal reason excludes that operation from cron selection without pretending it succeeded. Existing resolution/enrichment attempt timestamps are retained; new media attempts record their start time. Saved text, status, notes, labels, successful snapshots and completed files remain intact.
+
+The normal store-open migration is transactional and runs once. It converts only exact stored legacy errors: failed videos over the byte cap, source-less videos with the missing-MP4 error **and completed metadata resolution**, and unfinished enrichment with FxTwitter 401/404 or the JSON byte-cap error. Media 403, ambiguous errors, incomplete hints and retry counts are not permanent evidence. Legacy image byte-cap errors omit the original/fallback outcomes, so they conservatively get a fresh attempt. Old media attempts had no recorded timestamp, so their new `attempted_at` remains null; migration time is not presented as an attempt. Metadata resolution had no stored error, so unresolved IDs require a fresh lookup before classification. Stop older host processes and take a consistent SQLite backup plus a separate media backup before upgrading; old binaries reject v6. Migration failure rolls back the transaction. Validate the backup/upgrade on a disposable copy first. Production backlog convergence and warning volume must be checked after a separately authorized deployment; fixture tests do not establish the live `58 / 67 / 2` outcome.
 
 FxTwitter's current [v2 API schema](https://github.com/FixTweet/FxTwitter/blob/main/packages/atmosphere/src/types/api-schemas.ts) is validated: matching focal status ID/type/provider, ordered `media.all`, supported image/video/gif entries. Quotes, cards, avatars, thumbnails and mosaic URLs are not archive sources. The highest-bitrate direct MP4 format is selected; a direct top-level MP4 URL is usable when formats are absent. HLS-only videos retain presence metadata but cannot be archived. No HLS, ffmpeg, variant table, provider abstraction, resolver queue or second cron is involved.
 
@@ -127,7 +133,7 @@ DB/schema/transaction errors fail the entire cron instead of being swallowed as 
 
 ### Rollout
 
-Back up SQLite and media separately before upgrading to schema v5. Deploy host receiver/cron/Gallery code together: older host binaries reject the newer schema. The existing enabled media cron automatically backfills context after upgrade; no extension update, re-scroll or second cron is needed for enrichment. With the browser closed, verify `x_enrichment.resolved_at`/`document_json` for an existing ID and inspect `last_error` for retries. Automated tests cover fresh context, full Article text, thread order, quotes/authors/facets, resolved absence, v4 migration, bounded retry selection, database failures and preservation of existing saved state. Live FxTwitter availability and production rollout require separate operator verification.
+Back up SQLite and media separately before upgrading to schema v6. Deploy host receiver/cron/Gallery code together: older host binaries reject the newer schema. The existing enabled media cron automatically backfills context after upgrade; no extension update, re-scroll or second cron is needed for enrichment. With the browser closed, verify `x_enrichment.resolved_at`/`document_json` for an existing ID and inspect `last_error` for retries. Automated tests cover fresh context, full Article text, thread order, quotes/authors/facets, resolved absence, v4 migration, bounded retry selection, database failures and preservation of existing saved state. Live FxTwitter availability and production rollout require separate operator verification.
 
 Deploy the receiver before reloading the updated extension (old strict receivers reject media fields). Install updated Skill templates, retain the existing directory mount, then enable the archive cron. No production configuration is changed automatically. Verify existing IDs resolve with the browser closed, confirm image/MP4 paths, and use Agent `read` on a downloaded image. Mac Chrome/Tailscale new-capture checks are still needed for installation validation, but not for stored-ID media backfill.
 
@@ -158,7 +164,7 @@ HF_HUB_DISABLE_IMPLICIT_TOKEN=1 "$TAGGER_ROOT/venv/bin/hf" download \
 
 Inference is offline (`local_files_only`, HF offline/telemetry disabled), sequential, FP32, with upstream preprocessing and one lazy model load per batch. CPU defaults to four OpenMP/MKL threads (`OMP_NUM_THREADS` / `MKL_NUM_THREADS` override). CUDA/MPS require compatible PyTorch and an explicit `device`; neither is verified here.
 
-Back up SQLite, run the host to migrate to schema v5, then smoke-test a **disposable archive copy**:
+Back up SQLite, run the host to migrate to schema v6, then smoke-test a **disposable archive copy**:
 
 ```bash
 "$TAGGER_ROOT/venv/bin/python" scripts/x-saved-tagger.py \
@@ -307,15 +313,15 @@ These are normal declarative agent cron jobs. Their `mounts` field replaces inhe
 
 The durable state is `data/x-saved/x-saved.sqlite`:
 
-- `x_items` — post body, author, URL, sticky like/bookmark history, ingest timestamps, nullable `media_resolved_at` / `media_resolve_attempted_at`
+- `x_items` — post body, author, URL, sticky like/bookmark history, ingest timestamps, nullable `media_resolved_at` / `media_resolve_attempted_at` / `media_resolve_terminal_error`
 - `x_item_state` — `inbox`, `reviewed`, `keep`, `try`, `done`, or `ignore`, plus an optional note and update time
-- `x_media` — `(tweet_id, kind, position)` primary key, source/alt text, relative file path, pending/done/failed status and last error; cascading ownership by `x_items`
-- `x_enrichment` — one context snapshot per saved Tweet (`document_json`), nullable `resolved_at`, `attempted_at` and `last_error`; cascading ownership by `x_items`, independent of media resolution
+- `x_media` — `(tweet_id, kind, position)` primary key, source/alt text, relative file path, pending/done/failed status, last error, terminal reason and last attempt; cascading ownership by `x_items`
+- `x_enrichment` — one context snapshot per saved Tweet (`document_json`), nullable `resolved_at`, `attempted_at`, `last_error` and `terminal_error`; cascading ownership by `x_items`, independent of media resolution
 - `x_item_labels` — `(tweet_id, kind, value)` primary key; multi-valued `series`, `character`, `tag`, with a lookup index and cascading ownership by `x_items`
 - `x_sync_runs` — optional source health records, timestamps, errors, and new-item count
 - `x_meta` — metadata such as the one-time `initial_import_completed_at` marker
 
-Schema v5 adds `x_enrichment` without rewriting existing rows. Snapshot authors are required for successful resolution; an absent row, null completion marker or missing focal author ID qualifies for automatic backfill. Context-only thread/quote posts are embedded in the snapshot, not inserted as newly saved `x_items`.
+Schema v5 adds `x_enrichment` without rewriting existing rows. Snapshot authors are required for successful resolution; an absent row, null completion marker or missing focal author ID qualifies for automatic backfill unless v6 terminal evidence excludes it. Context-only thread/quote posts are embedded in the snapshot, not inserted as newly saved `x_items`.
 
 Schema v4 adds `x_item_labels`. If a legacy `x_tags` table remains, valid nonempty trimmed tags (up to 100 characters) are imported once; the legacy table is retained unchanged, including values outside those limits. The current Gallery uses only `x_item_labels`, with no dual writes to legacy tables. Schema migration checks the version inside SQLite's write transaction so simultaneous opens cannot apply it twice.
 

@@ -86,6 +86,88 @@ describe("x-saved FxTwitter context backfill", () => {
     return JSON.parse(row(id)?.document_json ?? "null");
   }
 
+  it.each([
+    401,
+    404,
+    "oversized",
+  ] as const)("stops terminal metadata and enrichment failures (%s) across cron runs and reopening", async (failure) => {
+    seed("123", false);
+    db.exec("UPDATE x_item_state SET status='keep', note='retain me'");
+    const saved = db
+      .prepare("SELECT text, author_handle, tweet_created_at FROM x_items")
+      .get();
+    const state = db.prepare("SELECT * FROM x_item_state").get();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockImplementation(async () =>
+      failure === "oversized"
+        ? new Response(" ".repeat(2 * 1024 * 1024 + 1), {
+            headers: { "content-type": "application/json" },
+          })
+        : new Response(null, { status: failure }),
+    );
+    try {
+      await handler(ctx());
+      const item = db.prepare("SELECT * FROM x_items").get();
+      const enrichment = row();
+      expect(item).toMatchObject({
+        ...(saved as object),
+        media_resolved_at: null,
+        media_resolve_attempted_at: expect.any(String),
+        media_resolve_terminal_error: expect.stringContaining(
+          failure === "oversized" ? "exceeds" : `HTTP ${failure}`,
+        ),
+      });
+      expect(enrichment).toMatchObject({
+        resolved_at: null,
+        attempted_at: expect.any(String),
+        terminal_error: expect.stringContaining(
+          failure === "oversized" ? "exceeds" : `HTTP ${failure}`,
+        ),
+      });
+      db.close();
+      db = openXSavedDb();
+      await handler(ctx());
+      await handler(ctx());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(db.prepare("SELECT * FROM x_items").get()).toEqual(item);
+      expect(db.prepare("SELECT * FROM x_item_state").get()).toEqual(state);
+      expect(row()).toEqual(enrichment);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.each([
+    403,
+    429,
+    500,
+    503,
+    "timeout",
+  ] as const)("retries temporary metadata and enrichment failures (%s) on the next run", async (failure) => {
+    seed("123", false);
+    fetchMock.mockImplementation(async () => {
+      if (failure === "timeout")
+        throw new DOMException("timed out", "TimeoutError");
+      return new Response(null, { status: failure });
+    });
+    await handler(ctx());
+    expect(
+      db.prepare("SELECT media_resolve_terminal_error FROM x_items").get(),
+    ).toEqual({ media_resolve_terminal_error: null });
+    expect(row()).toMatchObject({ resolved_at: null, terminal_error: null });
+    fetchMock.mockImplementation(async () => Response.json(response("123")));
+    await handler(ctx());
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(row()).toMatchObject({
+      resolved_at: expect.any(String),
+      last_error: null,
+    });
+    expect(db.prepare("SELECT media_resolved_at FROM x_items").get()).toEqual({
+      media_resolved_at: expect.any(String),
+    });
+  });
+
   it("enriches a fresh saved middle post with ordered self-thread, one quote level, full article and facets", async () => {
     seed("123", false);
     const article = {
@@ -188,7 +270,7 @@ describe("x-saved FxTwitter context backfill", () => {
 
   it("migrates v4 and backfills completed media without changing any existing saved state", async () => {
     seed("123");
-    db.exec(`DROP TABLE x_enrichment; PRAGMA user_version=4;
+    db.exec(`ALTER TABLE x_items DROP COLUMN media_resolve_terminal_error; ALTER TABLE x_media DROP COLUMN terminal_error; ALTER TABLE x_media DROP COLUMN attempted_at; DROP TABLE x_enrichment; PRAGMA user_version=4;
       UPDATE x_item_state SET status='keep', note='important';
       INSERT INTO x_item_labels VALUES ('123', 'tag', 'retained');
       INSERT INTO x_meta VALUES ('initial_import_completed_at', 'old');
@@ -205,10 +287,18 @@ describe("x-saved FxTwitter context backfill", () => {
     );
     fetchMock.mockResolvedValueOnce(Response.json(response("123")));
     await handler(ctx());
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
     expect(
       tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all()),
-    ).toEqual(before);
+    ).toEqual(
+      before.map((rows, i) =>
+        rows.map((row) => ({
+          ...(row as object),
+          ...(i === 0 ? { media_resolve_terminal_error: null } : {}),
+          ...(i === 4 ? { terminal_error: null, attempted_at: null } : {}),
+        })),
+      ),
+    );
     expect(document().status.author).toEqual(author);
     expect(document().status).toMatchObject({
       quote: null,
@@ -229,7 +319,9 @@ describe("x-saved FxTwitter context backfill", () => {
     seed("123");
     seed("124");
     seed("125");
-    db.prepare("INSERT INTO x_enrichment VALUES (?, ?, ?, ?, NULL)").run(
+    db.prepare(
+      "INSERT INTO x_enrichment (tweet_id, document_json, resolved_at, attempted_at, last_error) VALUES (?, ?, ?, ?, NULL)",
+    ).run(
       "125",
       JSON.stringify({ status: { id: "125" } }),
       "2020-01-01T00:00:00.000Z",

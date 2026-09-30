@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IMAGE_MAX_BYTES } from "../../integrations/x-saved/archive.js";
 import {
   ingestXSavedItems,
   mergeXSavedMedia,
@@ -75,10 +76,170 @@ describe("one x-saved archive cron", () => {
       .all();
   }
 
+  it("persists terminal missing-MP4 and size failures while retaining a successful archive", async () => {
+    seed("123");
+    mergeXSavedMedia(
+      db,
+      "123",
+      [
+        { kind: "video", position: 0 },
+        { kind: "image", position: 1, source_url: image },
+        { kind: "video", position: 2, source_url: video },
+      ],
+      "resolved",
+    );
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response("x", {
+          headers: {
+            "content-type": "image/jpeg",
+            "content-length": String(IMAGE_MAX_BYTES + 1),
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response("archive", { headers: { "content-type": "video/mp4" } }),
+      );
+    await handler(ctx());
+    const rows = media();
+    expect(rows).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        terminal_error: expect.stringContaining("MP4 required"),
+        attempted_at: expect.any(String),
+      }),
+      expect.objectContaining({
+        status: "failed",
+        terminal_error: "Error: Media exceeds byte limit",
+        attempted_at: expect.any(String),
+      }),
+      expect.objectContaining({
+        status: "done",
+        terminal_error: null,
+        attempted_at: expect.any(String),
+      }),
+    ]);
+    db.close();
+    db = openXSavedDb(dbPath);
+    await handler(ctx());
+    await handler(ctx());
+    expect(media()).toEqual(rows);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await readFile(path.join(root, "media/123/2.mp4"), "utf8")).toBe(
+      "archive",
+    );
+  });
+
+  it.each([
+    403,
+    429,
+    503,
+    "timeout",
+  ] as const)("keeps media %s retryable", async (failure) => {
+    seed("123");
+    mergeXSavedMedia(
+      db,
+      "123",
+      [{ kind: "image", position: 0, source_url: image }],
+      "resolved",
+    );
+    if (failure === "timeout")
+      fetchMock.mockRejectedValueOnce(
+        new DOMException("timed out", "TimeoutError"),
+      );
+    else
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: failure }));
+    await handler(ctx());
+    expect(media()).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        terminal_error: null,
+        attempted_at: expect.any(String),
+      }),
+    ]);
+    fetchMock.mockResolvedValueOnce(
+      new Response("image", { headers: { "content-type": "image/jpeg" } }),
+    );
+    await handler(ctx());
+    expect(media()).toEqual([
+      expect.objectContaining({
+        status: "done",
+        last_error: null,
+        terminal_error: null,
+      }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a new resolved source after a hint exceeded the byte limit", async () => {
+    seed("123", [{ kind: "image", position: 0, source_url: image }]);
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response("x", {
+          headers: {
+            "content-type": "image/jpeg",
+            "content-length": String(IMAGE_MAX_BYTES + 1),
+          },
+        }),
+      );
+    await handler(ctx());
+    expect(media()).toEqual([
+      expect.objectContaining({
+        terminal_error: "Error: Media exceeds byte limit",
+      }),
+    ]);
+    // Repeated identical hints do not reopen a terminal operation.
+    seed("123", [{ kind: "image", position: 0, source_url: image }]);
+    expect(media()).toEqual([
+      expect.objectContaining({
+        terminal_error: "Error: Media exceeds byte limit",
+      }),
+    ]);
+    const replacement = image.replace("a.jpg", "resolved.jpg");
+    fetchMock
+      .mockResolvedValueOnce(fx("123", [{ type: "photo", url: replacement }]))
+      .mockResolvedValueOnce(
+        new Response("image", { headers: { "content-type": "image/jpeg" } }),
+      );
+    await handler(ctx());
+    expect(media()).toEqual([
+      expect.objectContaining({
+        status: "done",
+        source_url: replacement,
+        terminal_error: null,
+      }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[3]?.[0]).toBe(replacement);
+  });
+
+  it("waits for successful resolution before treating a source-less video hint as terminal", async () => {
+    seed("123", [{ kind: "video", position: 0 }]);
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await handler(ctx());
+    expect(media()).toEqual([
+      expect.objectContaining({
+        status: "pending",
+        terminal_error: null,
+        attempted_at: null,
+      }),
+    ]);
+    fetchMock
+      .mockResolvedValueOnce(fx("123", [{ type: "video", url: video }]))
+      .mockResolvedValueOnce(
+        new Response("video", { headers: { "content-type": "video/mp4" } }),
+      );
+    await handler(ctx());
+    expect(media()).toEqual([
+      expect.objectContaining({ status: "done", terminal_error: null }),
+    ]);
+  });
+
   it("backfills a v2 text-only database with image and MP4 in one run, preserving Tweet and Agent state", async () => {
     seed("123");
     db.exec(
-      "UPDATE x_item_state SET status='keep', note='important'; UPDATE x_items SET url='not-a-locator', author_handle=''; DROP INDEX idx_x_items_media_resolution; ALTER TABLE x_items DROP COLUMN media_resolved_at; ALTER TABLE x_items DROP COLUMN media_resolve_attempted_at; DROP TABLE x_media; PRAGMA user_version=2;",
+      "UPDATE x_item_state SET status='keep', note='important'; UPDATE x_items SET url='not-a-locator', author_handle=''; ALTER TABLE x_items DROP COLUMN media_resolve_terminal_error; ALTER TABLE x_enrichment DROP COLUMN terminal_error; DROP INDEX idx_x_items_media_resolution; ALTER TABLE x_items DROP COLUMN media_resolved_at; ALTER TABLE x_items DROP COLUMN media_resolve_attempted_at; DROP TABLE x_media; PRAGMA user_version=2;",
     );
     const before = db.prepare("SELECT * FROM x_items").get() as object;
     const state = db.prepare("SELECT * FROM x_item_state").get();
@@ -96,7 +257,7 @@ describe("one x-saved archive cron", () => {
         new Response("mp4", { headers: { "content-type": "video/mp4" } }),
       );
     await handler(ctx());
-    expect(db.pragma("user_version", { simple: true })).toBe(5);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
     expect(db.prepare("SELECT * FROM x_items").get()).toMatchObject({
       ...before,
       media_resolved_at: expect.any(String),
@@ -339,7 +500,7 @@ describe("one x-saved archive cron", () => {
   it("rolls back a failed schema migration and propagates it out of cron", async () => {
     seed("123");
     db.exec(
-      "DROP INDEX idx_x_items_media_resolution; ALTER TABLE x_items DROP COLUMN media_resolved_at; ALTER TABLE x_items DROP COLUMN media_resolve_attempted_at; DROP TABLE x_media; CREATE VIEW x_media AS SELECT tweet_id FROM x_items; PRAGMA user_version=2;",
+      "ALTER TABLE x_items DROP COLUMN media_resolve_terminal_error; ALTER TABLE x_enrichment DROP COLUMN terminal_error; DROP INDEX idx_x_items_media_resolution; ALTER TABLE x_items DROP COLUMN media_resolved_at; ALTER TABLE x_items DROP COLUMN media_resolve_attempted_at; DROP TABLE x_media; CREATE VIEW x_media AS SELECT tweet_id FROM x_items; PRAGMA user_version=2;",
     );
     await expect(handler(ctx())).rejects.toThrow();
     expect(db.pragma("user_version", { simple: true })).toBe(2);

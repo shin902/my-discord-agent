@@ -16,6 +16,7 @@ import {
   parseArchiveMedia,
   saveArchiveFile,
   VIDEO_MAX_BYTES,
+  XArchiveTerminalError,
 } from "./archive.js";
 import { isMediaUrl, MediaHintsSchema } from "./media-contract.js";
 
@@ -244,6 +245,57 @@ describe("archive network and files", () => {
     );
     expect(await readdir(path.join(root, "media/123"))).toEqual(["0.png"]);
   });
+  it.each([
+    false,
+    true,
+  ])("keeps image fallback retryable if either candidate is temporary (orig temporary=%s)", async (origTemporary) => {
+    const temporary = new Response(null, { status: 503 });
+    const oversized = new Response("x", {
+      headers: {
+        "content-type": "image/jpeg",
+        "content-length": String(IMAGE_MAX_BYTES + 1),
+      },
+    });
+    fetchMock
+      .mockResolvedValueOnce(origTemporary ? temporary : oversized)
+      .mockResolvedValueOnce(origTemporary ? oversized : temporary);
+    const media = {
+      kind: "image" as const,
+      position: 0,
+      source_url: "https://pbs.twimg.com/media/a.jpg?name=small",
+    };
+    const error = await saveArchiveFile(root, "123", media).catch(
+      (error) => error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(XArchiveTerminalError);
+    expect(error.message).toContain("HTTP 503");
+    fetchMock.mockResolvedValueOnce(
+      new Response("image", { headers: { "content-type": "image/jpeg" } }),
+    );
+    expect(await saveArchiveFile(root, "123", media)).toBe("media/123/0.jpg");
+  });
+
+  it("marks image fallback terminal when both candidates exceed the cap", async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response("x", {
+          headers: {
+            "content-type": "image/jpeg",
+            "content-length": String(IMAGE_MAX_BYTES + 1),
+          },
+        }),
+    );
+    await expect(
+      saveArchiveFile(root, "123", {
+        kind: "image",
+        position: 0,
+        source_url: "https://pbs.twimg.com/media/a.jpg?name=small",
+      }),
+    ).rejects.toThrow(XArchiveTerminalError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("streams an MP4 larger than the image cap without buffering the response", async () => {
     const chunk = new Uint8Array(1024 * 1024);
     let remaining = 11;
@@ -288,7 +340,7 @@ describe("archive network and files", () => {
         position: 0,
         source_url: video,
       }),
-    ).rejects.toThrow("byte limit");
+    ).rejects.toThrow(XArchiveTerminalError);
     expect(await readdir(path.join(root, "media/123"))).toEqual([]);
   }, 30_000);
   it.each([
@@ -311,7 +363,7 @@ describe("archive network and files", () => {
         position: 0,
         source_url: kind === "image" ? image : video,
       }),
-    ).rejects.toThrow("byte limit");
+    ).rejects.toThrow(XArchiveTerminalError);
     expect(await readdir(path.join(root, "media/123"))).toEqual([]);
   });
   it("does not publish partial downloads; only replaces the final file after stream completion", async () => {

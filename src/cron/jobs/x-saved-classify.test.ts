@@ -85,7 +85,7 @@ describe("x-saved PixAI host classification", () => {
         expect.any(Function),
       );
       const db = openXSavedDb();
-      expect(db.pragma("user_version", { simple: true })).toBe(5);
+      expect(db.pragma("user_version", { simple: true })).toBe(6);
       db.close();
     } finally {
       await rm(dir, { recursive: true, force: true });
