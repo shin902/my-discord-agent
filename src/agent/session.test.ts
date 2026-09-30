@@ -481,8 +481,32 @@ describe("SQLite session trajectory store", () => {
     ).rejects.toThrow("未対応のsession DB schema version");
   });
 
+  it("distinguishes owners of the same session and encodes Bot IDs", () => {
+    const main = session.sessionConversationPath("group1", "session-a", "main");
+    const bot = session.sessionConversationPath(
+      "group1",
+      "session-a",
+      "research",
+    );
+    expect(bot).toBe(`${main}&agent=research`);
+    const other = session.sessionConversationPath(
+      "group1",
+      "session-a",
+      "research&agent=main/# 日本語",
+    );
+    expect(other).not.toBe(bot);
+    const fragment = new URLSearchParams(other.split("#")[1]);
+    expect([...fragment]).toEqual([
+      ["session", "session-a"],
+      ["agent", "research&agent=main/# 日本語"],
+    ]);
+    expect(() =>
+      session.sessionConversationPath("group1", "session-a", ""),
+    ).toThrow("Agent ID");
+  });
+
   it("conversation pathはDBと論理session identityを表す", () => {
-    expect(session.sessionConversationPath("group1", "session-a")).toBe(
+    expect(session.sessionConversationPath("group1", "session-a", "main")).toBe(
       "data/sessions/group1/sessions.sqlite#session=session-a",
     );
   });

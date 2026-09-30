@@ -144,10 +144,14 @@ async function openDatabase(groupName: string): Promise<Database.Database> {
 export function sessionConversationPath(
   groupName: string,
   sessionId: string,
+  agentId: string,
 ): string {
   validateName(groupName, "グループ名");
   validateName(sessionId, "セッションID");
-  return `data/sessions/${groupName}/${DB_FILENAME}#session=${sessionId}`;
+  validateOwner(agentId);
+  const owner =
+    agentId === "main" ? "" : `&agent=${encodeURIComponent(agentId)}`;
+  return `data/sessions/${groupName}/${DB_FILENAME}#session=${sessionId}${owner}`;
 }
 
 export async function loadMessages(

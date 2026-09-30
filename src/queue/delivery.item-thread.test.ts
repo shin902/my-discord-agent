@@ -2,10 +2,9 @@ import { ChannelType } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renameSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-vi.mock("../agent/session.js", () => ({
+vi.mock("../agent/session.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../agent/session.js")>()),
   renameSession,
-  sessionConversationPath: (groupName: string, sessionId: string) =>
-    `data/sessions/${groupName}/sessions.sqlite#session=${sessionId}`,
 }));
 
 const acknowledgeEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -143,6 +142,38 @@ describe("late item-thread delivery", () => {
         status: "sent",
         cronThreadId: "123",
         externalMessageId: "123",
+      });
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("restores Main conversation metadata when promotion rolls back", async () => {
+    const repo = new QueueRepository(openRuntimeDb(":memory:"));
+    const jobId = enqueueLateItemThread(repo, true);
+    client.channels.fetch.mockResolvedValue({
+      type: ChannelType.GuildText,
+      isSendable: () => true,
+      send: vi.fn().mockResolvedValue({
+        id: "123",
+        startThread: vi.fn().mockResolvedValue({ id: "123" }),
+      }),
+    });
+    vi.spyOn(repo, "provisionCronJob").mockImplementation(() => {
+      throw new Error("promotion failed");
+    });
+    try {
+      await new DeliveryWorker(repo, new DiscordDeliveryAdapter(), {
+        ready: () => true,
+      }).runOnce();
+      expect(renameSession.mock.calls).toEqual([
+        ["group", "cron-temp", "123", "main"],
+        ["group", "123", "cron-temp", "main"],
+      ]);
+      expect(repo.get(jobId)).toMatchObject({
+        sessionId: "cron-temp",
+        conversationPath:
+          "data/sessions/group/sessions.sqlite#session=cron-temp",
       });
     } finally {
       repo.close();

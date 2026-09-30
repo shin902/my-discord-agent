@@ -608,7 +608,11 @@ function markRunningWhenContainerStarted(
       getQueueRepository().markRunning(msg.id, msg.fencingToken, {
         startedAt: new Date().toISOString(),
         workspacePath: `groups/${msg.groupName}`,
-        conversationPath: sessionConversationPath(msg.groupName, sessionId),
+        conversationPath: sessionConversationPath(
+          msg.groupName,
+          sessionId,
+          msg.botId ?? "main",
+        ),
       });
     }
   };

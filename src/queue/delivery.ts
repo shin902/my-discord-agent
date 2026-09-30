@@ -485,7 +485,7 @@ export class DeliveryWorker {
           const job = this.repository.get(claim.row.jobId);
           if (!job) throw new Error(`unknown job ${claim.row.jobId}`);
           const promotedConversationPath = job.conversationPath
-            ? sessionConversationPath(job.groupName, threadId)
+            ? sessionConversationPath(job.groupName, threadId, "main")
             : undefined;
           if (job.sessionId === threadId) {
             if (
