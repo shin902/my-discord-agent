@@ -10,6 +10,7 @@ import {
   isInitialMemoryMessage,
 } from "./memory-context.js";
 import { appendMessage, loadMessages } from "./session.js";
+import { typesafeFetch } from "./typesafe-fetch.js";
 
 const FAILURE_CONTEXT =
   "メモリ選択に失敗しました。今回は追加メモリなしで続行します。";
@@ -78,6 +79,7 @@ export async function prepareInitialMemory(
       const client = new TypeSafeClient({
         // Never permit SDK debug logging of the request or filenames via env overrides.
         logLevel: "off",
+        fetch: typesafeFetch,
         timeout: 10_000,
         retry: { maxRetries: 4 },
       });
