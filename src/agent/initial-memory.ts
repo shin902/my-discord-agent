@@ -12,6 +12,8 @@ import {
 import { appendMessage, loadMessages } from "./session.js";
 import { typesafeFetch } from "./typesafe-fetch.js";
 
+const MAX_MEMORY_FILE_BYTES = 8 * 1024;
+
 const FAILURE_CONTEXT =
   "メモリ選択に失敗しました。今回は追加メモリなしで続行します。";
 
@@ -126,14 +128,28 @@ export async function prepareInitialMemory(
         try {
           if (!(await file.stat()).isFile())
             throw new Error("Memory is not a file");
+          // A size check alone would race with sandbox writes; never buffer the whole file.
+          const buffer = Buffer.alloc(MAX_MEMORY_FILE_BYTES + 1);
+          let length = 0;
+          while (length < buffer.length) {
+            const { bytesRead } = await file.read(
+              buffer,
+              length,
+              buffer.length - length,
+              null,
+            );
+            if (bytesRead === 0) break;
+            length += bytesRead;
+          }
+          if (length > MAX_MEMORY_FILE_BYTES) continue;
           sections.push(
-            `## Agent Memory (${JSON.stringify(filename)})\n\n${await file.readFile("utf-8")}`,
+            `## Agent Memory (${JSON.stringify(filename)})\n\n${buffer.toString("utf-8", 0, length)}`,
           );
         } finally {
           await file.close();
         }
       }
-      outcome = selected.length ? "selected" : "no-match";
+      outcome = sections.length ? "selected" : "no-match";
       content = sections.join("\n\n");
     }
   } catch {

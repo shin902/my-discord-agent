@@ -5,6 +5,7 @@ import {
   rename,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -12,7 +13,11 @@ import path from "node:path";
 import type { SystemOneRequest } from "@typesafe-ai/sdk";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { agentMemoryPath, INITIAL_MEMORY_TYPE } from "./memory-context.js";
+import {
+  agentMemoryPath,
+  INITIAL_MEMORY_TYPE,
+  isInitialMemoryMessage,
+} from "./memory-context.js";
 
 const threshold = vi.hoisted(() => vi.fn(async () => 0.7));
 const beforeOpen = vi.hoisted(() => vi.fn(async (_filename: string) => {}));
@@ -121,6 +126,40 @@ describe("initial owner memory at the host/session boundary", () => {
         .join("\n\n"),
     });
     expect(debug).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { bytes: 8192, sparse: false, companion: true },
+    { bytes: 8193, sparse: false, companion: true },
+    { bytes: 64 * 1024 * 1024, sparse: true, companion: true },
+    { bytes: 8193, sparse: false, companion: false },
+  ])("skips oversized files without truncation and preserves usable memories: %j", async ({
+    bytes,
+    sparse,
+    companion,
+  }) => {
+    const body = sparse ? "" : "記".repeat(2730) + "x".repeat(bytes - 8190);
+    const filename = await memory("main", "a.md", body);
+    if (sparse) await truncate(filename, bytes);
+    if (companion) await memory("main", "b.md", "usable memory");
+    respond(companion ? [1, 0.9] : [1]);
+    await run();
+    const included = bytes <= 8192;
+    const content = [
+      ...(included ? [`## Agent Memory ("a.md")\n\n${body}`] : []),
+      ...(companion ? ['## Agent Memory ("b.md")\n\nusable memory'] : []),
+    ].join("\n\n");
+    const [snapshot] = await messages();
+    if (!isInitialMemoryMessage(snapshot))
+      throw new Error("Missing memory snapshot");
+    expect(snapshot.content.length).toBe(content.length);
+    expect(snapshot).toMatchObject({
+      outcome: included || companion ? "selected" : "no-match",
+      content,
+    });
+    await run();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await messages()).toEqual([snapshot]);
   });
 
   it("uses the configured inclusive threshold without filling unrelated slots", async () => {

@@ -16,7 +16,7 @@ Hostは新規sessionの最初の依頼本文（cronは実行プロンプト）�
 
 Node 22ではSDKのレスポンスcloneと通信中断の組み合わせでプロセスが終了する[既知問題](https://github.com/typesafe-ai/typesafe-sdk-js/issues/2)があるため、専用fetchが本文を読み切ってからSDKへ渡します。本文受信中も同じtimeout・AbortSignalが有効で、SDKがcloneする対象は通信から切り離されたメモリ上のレスポンスになります。
 
-Hostのファイル読み取りはLinuxの `/proc/self/fd` を使い、workspace・`agent-memory`・ownerの各ディレクトリを `O_DIRECTORY | O_NOFOLLOW` で順に開いて固定します。候補の列挙と本文のopenは固定したownerディレクトリを基準に行い、本文にも `O_NOFOLLOW` を適用します。別sandboxが途中で親ディレクトリ名をsymlinkへ交換しても、交換先のhostファイルへ追従しません。Linux/procfsが使えない場合はパスによる読み取りに切り替えず、メモリ選択失敗として続行します。
+Hostのファイル読み取りはLinuxの `/proc/self/fd` を使い、workspace・`agent-memory`・ownerの各ディレクトリを `O_DIRECTORY | O_NOFOLLOW` で順に開いて固定します。候補の列挙と本文のopenは固定したownerディレクトリを基準に行い、本文にも `O_NOFOLLOW` を適用します。別sandboxが途中で親ディレクトリ名をsymlinkへ交換しても、交換先のhostファイルへ追従しません。Linux/procfsが使えない場合はパスによる読み取りに切り替えず、メモリ選択失敗として続行します。OOM防止の安全境界として、選択された各本文は最大 **8 KiB + 1 byte** までしか読みません。8 KiBを超えるファイルは切り詰めずスキップし、残りの選択済みファイルだけを注入します。すべてスキップされた場合は `no-match` の空結果を保存します。このbyte上限はsystem promptの500文字指示とは独立しており、文字数validatorではありません。
 
 session DBの既存custom entry `initial-agent-memory` に、`selected` / `no-candidates` / `no-match` / `failed` と実際に注入する本文を保存します。空結果は空文字のまま保存し、LLMへ空メッセージを送りません。最終失敗は「メモリ選択に失敗しました。今回は追加メモリなしで続行します。」を追加コンテキストにします。Markdownの後日の編集・削除は保存済みsnapshotに影響しません。実ユーザー発言・source provenanceとは別entryで、初回のユーザー発言より前に保存され、同じ順序でresume時も展開されます。既存contextFilesのbootstrapは従来どおり先頭へ並べられます。
 
