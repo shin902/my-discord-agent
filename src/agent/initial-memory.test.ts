@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -14,6 +15,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentMemoryPath, INITIAL_MEMORY_TYPE } from "./memory-context.js";
 
 const threshold = vi.hoisted(() => vi.fn(async () => 0.7));
+const beforeOpen = vi.hoisted(() => vi.fn(async (_filename: string) => {}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...fs,
+    open: async (...args: Parameters<typeof fs.open>) => {
+      await beforeOpen(String(args[0]));
+      return fs.open(...args);
+    },
+  };
+});
 vi.mock("../config/agent-memory.js", () => ({
   loadAgentMemoryThreshold: threshold,
 }));
@@ -32,6 +44,7 @@ beforeEach(async () => {
   vi.stubEnv("TYPESAFE_API_KEY", "test-only-placeholder");
   vi.stubEnv("TYPESAFE_LOG_LEVEL", "debug");
   threshold.mockResolvedValue(0.7);
+  beforeOpen.mockReset();
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   session = await import("./session.js");
@@ -267,6 +280,71 @@ describe("initial owner memory at the host/session boundary", () => {
     expect((await messages("alias"))[0]).toMatchObject({ outcome: "failed" });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await readFile(filename, "utf-8")).toBe("do not read");
+  });
+
+  it.each([
+    "agent-memory",
+    "owner",
+  ])("reads only the pinned directory when %s is swapped immediately before file open", async (level) => {
+    const filename = await memory("main", "same.md", "workspace memory");
+    const owner = path.dirname(filename);
+    const target = level === "owner" ? owner : path.dirname(owner);
+    const outside = path.join(root, "host-private");
+    const outsideOwner =
+      level === "owner" ? outside : path.join(outside, path.basename(owner));
+    await mkdir(outsideOwner, { recursive: true });
+    await writeFile(path.join(outsideOwner, "same.md"), "HOST SECRET");
+    respond([1]);
+    let swapped = false;
+    beforeOpen.mockImplementation(async (file) => {
+      if (!file.endsWith("/same.md")) return;
+      await rename(target, `${target}-moved`);
+      await symlink(outside, target);
+      swapped = true;
+    });
+    await run();
+    expect(swapped).toBe(true);
+    expect(await messages()).toEqual([
+      expect.objectContaining({
+        outcome: "selected",
+        content: '## Agent Memory ("same.md")\n\nworkspace memory',
+      }),
+    ]);
+  });
+
+  it.each([
+    "agent-memory",
+    "owner",
+    "file",
+  ])("rejects a symlink swapped in immediately before opening the %s component", async (level) => {
+    const filename = await memory("main", "same.md");
+    const owner = path.dirname(filename);
+    const target =
+      level === "file"
+        ? filename
+        : level === "owner"
+          ? owner
+          : path.dirname(owner);
+    const outside = path.join(root, "host-private");
+    await mkdir(outside);
+    const secret = path.join(outside, "same.md");
+    await writeFile(secret, "HOST SECRET");
+    respond([1]);
+    let swapped = false;
+    beforeOpen.mockImplementation(async (file) => {
+      if (!file.endsWith(`/${path.basename(target)}`)) return;
+      await rename(target, `${target}-moved`);
+      await symlink(level === "file" ? secret : outside, target);
+      swapped = true;
+    });
+    await run();
+    expect(swapped).toBe(true);
+    expect(await messages()).toEqual([
+      expect.objectContaining({
+        outcome: "failed",
+        content: "メモリ選択に失敗しました。今回は追加メモリなしで続行します。",
+      }),
+    ]);
   });
 
   it.each([

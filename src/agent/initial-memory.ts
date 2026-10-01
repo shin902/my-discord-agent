@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { mkdir, open, readdir, realpath } from "node:fs/promises";
+import { type FileHandle, mkdir, open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { type NoulQuestion, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import { loadAgentMemoryThreshold } from "../config/agent-memory.js";
@@ -39,15 +39,27 @@ export async function prepareInitialMemory(
 
   let outcome: InitialMemoryMessage["outcome"];
   let content = "";
+  const directories: FileHandle[] = [];
   try {
-    const root = await realpath(workspace);
-    const directory = path.join(root, agentMemoryPath(agentId));
-    // Never follow workspace symlinks to another owner or host-private files.
-    for (const dir of [path.dirname(directory), directory]) {
-      await mkdir(dir, { recursive: true });
-      if ((await realpath(dir)) !== dir)
-        throw new Error("Memory directory is a symlink");
+    // Linux procfs lets Node resolve children relative to a pinned descriptor.
+    // Never fall back to path-based checks on hosts without this primitive.
+    if (process.platform !== "linux")
+      throw new Error("Memory selection requires Linux procfs");
+    const directoryFlags =
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+    let handle = await open(workspace, directoryFlags);
+    directories.push(handle);
+    // Open each sandbox-writable component separately with O_NOFOLLOW. Holding
+    // only the owner handle would still race while resolving its parent.
+    for (const component of agentMemoryPath(agentId).split("/")) {
+      const child = `/proc/self/fd/${handle.fd}/${component}`;
+      await mkdir(child).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "EEXIST") throw error;
+      });
+      handle = await open(child, directoryFlags);
+      directories.push(handle);
     }
+    const directory = `/proc/self/fd/${handle.fd}`;
     const filenames = (await readdir(directory, { withFileTypes: true }))
       .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
       .map((entry) => entry.name)
@@ -107,8 +119,6 @@ export async function prepareInitialMemory(
         .slice(0, 5);
       const sections: string[] = [];
       for (const { filename } of selected) {
-        if ((await realpath(directory)) !== directory)
-          throw new Error("Memory directory changed");
         const file = await open(
           path.join(directory, filename),
           constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -131,6 +141,8 @@ export async function prepareInitialMemory(
     signal?.throwIfAborted();
     outcome = "failed";
     content = FAILURE_CONTEXT;
+  } finally {
+    await Promise.all(directories.map((directory) => directory.close()));
   }
   signal?.throwIfAborted();
   const snapshot: InitialMemoryMessage = {

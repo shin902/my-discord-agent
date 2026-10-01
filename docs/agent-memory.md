@@ -16,6 +16,8 @@ Hostは新規sessionの最初の依頼本文（cronは実行プロンプト）�
 
 Node 22ではSDKのレスポンスcloneと通信中断の組み合わせでプロセスが終了する[既知問題](https://github.com/typesafe-ai/typesafe-sdk-js/issues/2)があるため、専用fetchが本文を読み切ってからSDKへ渡します。本文受信中も同じtimeout・AbortSignalが有効で、SDKがcloneする対象は通信から切り離されたメモリ上のレスポンスになります。
 
+Hostのファイル読み取りはLinuxの `/proc/self/fd` を使い、workspace・`agent-memory`・ownerの各ディレクトリを `O_DIRECTORY | O_NOFOLLOW` で順に開いて固定します。候補の列挙と本文のopenは固定したownerディレクトリを基準に行い、本文にも `O_NOFOLLOW` を適用します。別sandboxが途中で親ディレクトリ名をsymlinkへ交換しても、交換先のhostファイルへ追従しません。Linux/procfsが使えない場合はパスによる読み取りに切り替えず、メモリ選択失敗として続行します。
+
 session DBの既存custom entry `initial-agent-memory` に、`selected` / `no-candidates` / `no-match` / `failed` と実際に注入する本文を保存します。空結果は空文字のまま保存し、LLMへ空メッセージを送りません。最終失敗は「メモリ選択に失敗しました。今回は追加メモリなしで続行します。」を追加コンテキストにします。Markdownの後日の編集・削除は保存済みsnapshotに影響しません。実ユーザー発言・source provenanceとは別entryで、初回のユーザー発言より前に保存され、同じ順序でresume時も展開されます。既存contextFilesのbootstrapは従来どおり先頭へ並べられます。
 
 role snapshotしかないBot Taskでも初回選択を行います。結果はRunner起動**前**に保存するため、通常の実行retry・継続・rename/resumeでは再選定・重複注入しません。初回markerのない既存会話（user/assistant/toolResultあり）へは遡って注入しません。キャンセルは完了結果を保存せず中断し、保存前のプロセスクラッシュ・キャンセル後の再実行は選定し直せます。session DBへの保存失敗は実行を止めます。同一sessionの直列化は既存queue/admissionが担います。
