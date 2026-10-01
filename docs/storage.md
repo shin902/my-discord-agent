@@ -31,6 +31,7 @@ groups/
     AGENTS.md           # グループのシステムプロンプト
     SKILLS/             # グループのスキル
     memory/             # MEMORY.md / SELF.md等のグループ内ファイル
+    agent-memory/       # owner別Markdown。本文の正本（既存workspace共有）
 ```
 
 これは主要な保存先の一覧です。設定ファイルの内容・上書き環境変数は [config.md](config.md)、RSSの保存先設定は [RSS設定スキル](../.pi/skills/config-rss/SKILL.md)、認証用private stateは [proxy.md](proxy.md) を参照してください。`groups[].name` が `groups/<groupName>/` と対応します。
@@ -99,6 +100,8 @@ source付きappendは同じwrite transaction内で `(agent_id, session_id, sourc
 append APIはgroup DB内でstableなentry IDを返します。Runnerは入力user / final assistantのIDをhostへ返し、runtimeの採用参照が確定した後、exporterは指定entry本文だけをread-onlyで取得します。ownerを指定したsession renameは複合FKのCASCADEでentry IDを変えず、参照のsession ID更新は不要です。旧履歴や存在しないDBを補完・作成しません。export / re-exportにはsession DBとruntime内の採用参照の両方をbackup・保持してください。group DBを削除・再作成する際はID再利用を避けるため古い採用参照を残さない運用が必要です。host / runnerの同時更新と旧方式からの移行制限は [Agent Memory export](agent-memory.md#attempt照合方式からのrollout) を参照してください。
 
 runtimeの `conversationPath` はMainでは従来の `data/sessions/<group>/sessions.sqlite#session=<id>`、Bot ownerでは末尾に `&agent=<URLエンコードしたBot ID>` を付ける。既存の保存済みmetadataは書き換えない。
+
+`initial-agent-memory` custom entryはowner別Markdownの初回選択結果（空・失敗を含む）と実際の注入snapshotを保存します。実ユーザー発言とは区別し、resumeでは保存済み内容を再利用します。Agent Memory無効時は新規snapshotを作らず、保存済みsnapshotの保持・再生は維持します。既存schema v6を使い、role snapshotの有無とは独立して判定します。仕様は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) を参照してください。
 
 実装の正本は [session.ts](../src/agent/session.ts) です。
 

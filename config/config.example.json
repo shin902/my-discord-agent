@@ -42,6 +42,9 @@
   "proxy": {
     "requestTimeoutMs": 120000
   },
+  "agentMemory": {
+    "threshold": 0.7
+  },
   "agent": {
     "timeoutMs": 600000
   }

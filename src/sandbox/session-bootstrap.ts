@@ -7,6 +7,7 @@ import type {
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { appendMessage } from "../agent/session.js";
 import type { AgentRuntimeConfig } from "../config/groups.js";
+import { agentMemoryPrompt } from "../features/agent-memory/memory-context.js";
 import { loadSkills } from "../skills/loader.js";
 import { formatSkillsForPrompt } from "../skills/prompt.js";
 import { formatSessionTimeAnchor } from "../time/context.js";
@@ -414,6 +415,7 @@ export function buildBootstrapSystemPrompt(
     sessionTimeAnchorContent,
     skillPrompt,
     mountPrompt,
+    agentMemoryPrompt(groupConfig.agentMemory, identity?.agentId ?? "main"),
     systemPromptAppend,
   ]
     .filter(Boolean)

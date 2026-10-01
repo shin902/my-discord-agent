@@ -38,6 +38,7 @@ import { NonRetryableError, TransientError } from "../utils/error.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
+import { prepareInitialMemory } from "../features/agent-memory/initial-memory.js";
 import {
   type ActiveRunStopResult,
   registerActiveRun,
@@ -758,6 +759,16 @@ export async function sendMessage(
   }
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
+  await prepareInitialMemory(
+    effectiveConfig.agentMemory,
+    path.join(ROOT, "groups", groupName),
+    groupName,
+    sessionId,
+    options.agentId,
+    content,
+    agentTimeoutMs,
+    signal,
+  );
   const botCatalog =
     enableBotTool !== false && effectiveConfig.tools?.includes("bot") === true
       ? Object.entries(await loadBotRegistry())

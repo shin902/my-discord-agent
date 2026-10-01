@@ -1,5 +1,9 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import {
+  type AgentMemorySettings,
+  AgentMemorySettingsSchema,
+} from "../features/agent-memory/config.js";
 import { loadRawGroups } from "./config.js";
 
 const THINKING_LEVELS = [
@@ -50,6 +54,7 @@ export type ContextFileConfig = z.infer<typeof ContextFileConfigSchema>;
 
 /** Effective agent configuration after all trusted layers are resolved. */
 export interface AgentConfig {
+  agentMemory?: AgentMemorySettings;
   model?: ModelConfig;
   tools: string[];
   toolSets?: string[];
@@ -59,7 +64,7 @@ export interface AgentConfig {
   contextFiles?: ContextFileConfig[];
 }
 
-// 各信頼済み設定階層で指定できるエージェント実行設定。
+// 各信頼済み設定階層で指定できる共通override設定（agentMemoryは含めない）。
 // オブジェクト・配列を含め、階層解決時はフィールド単位で完全置換する。
 // tools は継承元で指定できるため、各入力階層では optional のままにする。
 export const AgentConfigSchema = z.object({
@@ -75,11 +80,12 @@ export const AgentConfigSchema = z.object({
 // sandboxへ渡す実行設定。group限定のtoolLogArgsはagentのイベント整形に必要だが、
 // channel/cronの共通override対象には含めない。
 export const AgentRuntimeConfigSchema = AgentConfigSchema.extend({
+  agentMemory: AgentMemorySettingsSchema.optional(),
   allowMention: z.boolean().optional(),
   toolLogArgs: z.boolean().optional(),
 });
 
-// チャンネル固有のrouting設定に加えて、AgentConfigを任意で上書きできる。
+// チャンネル固有のrouting設定と共通override。agentMemoryはGroup/Bot限定。
 const ChannelConfigSchema = AgentConfigSchema.extend({
   channelId: z.string(),
   botId: z.string().min(1).optional(),

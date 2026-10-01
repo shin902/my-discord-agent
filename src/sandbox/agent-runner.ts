@@ -31,6 +31,7 @@ import {
   type AgentRuntimeConfig,
   AgentRuntimeConfigSchema,
 } from "../config/groups.js";
+import { convertInitialMemoryToLlm } from "../features/agent-memory/memory-context.js";
 import {
   formatSkillCommandPrompt,
   parseSkillCommand,
@@ -266,6 +267,8 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   return messages.flatMap((msg) => {
     if (isSystemPromptSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg))
       return [];
+    const memoryMessages = convertInitialMemoryToLlm(msg, bootstrapSeen);
+    if (memoryMessages !== undefined) return memoryMessages;
     const customType = getCustomType(msg);
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];

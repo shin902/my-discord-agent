@@ -1,6 +1,6 @@
 import type { AgentConfig } from "./groups.js";
 
-/** AgentConfig fields that may be overridden at each trusted configuration layer. */
+/** Effective AgentConfig fields; input schemas restrict which layers may set them. */
 export const AGENT_CONFIG_FIELDS = [
   "model",
   "tools",
@@ -9,6 +9,7 @@ export const AGENT_CONFIG_FIELDS = [
   "skills",
   "mounts",
   "contextFiles",
+  "agentMemory",
 ] as const satisfies readonly (keyof AgentConfig)[];
 
 /** Pick only common AgentConfig fields from a group, channel, or job config. */
