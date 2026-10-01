@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { loadConfigField, loadRawConfig } from "./config.js";
+import { loadConfigField, loadRawConfig } from "../../config/config.js";
+
+export const AgentMemorySettingsSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export type AgentMemorySettings = z.infer<typeof AgentMemorySettingsSchema>;
 
 const AgentMemoryConfigSchema = z.object({
   threshold: z.number().min(0).max(1).optional(),

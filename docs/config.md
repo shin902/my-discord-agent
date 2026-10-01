@@ -23,7 +23,7 @@ groups/{name}/
   AGENTS.md                # グループのシステムプロンプト
 ```
 
-AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → Bot profile（指定時） → channel`、cronでは配送先のchannel/thread設定を継承せず `group → Bot profile（botId指定時） → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
+AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` / `agentMemory`）は、コンテナにマウントされない静的設定として管理する。通常のDiscord会話では `group → Bot profile（指定時） → channel`、cronでは配送先のchannel/thread設定を継承せず `group → Bot profile（botId指定時） → cron job` の順で解決する。`groups/{name}/` はコンテナに書き込み可能な領域としてマウントされるため、エージェント自身が設定を書き換えられないようにする。`agentMemory.enabled` はGroup / Bot profile限定のオプトイン設定で、MainはGroup、Botは未指定ならGroupを継承し、明示booleanで上書きする（Channel / cron job overrideはない）。`allowMention` と `toolLogArgs` はgroup限定の配送・観測設定であり、channel/cronからはoverrideできない。
 
 | ファイル | 必須 | トップレベル形式 | 内容 |
 |---|---|---|---|
@@ -205,6 +205,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 | `skills` | — | AgentConfig。`groups/{name}/SKILLS/` から説明・workflowを公開するスキル名の配列。capabilityは付与しない。親を継承後も未指定、または `[]` ならスキルなし。channelで指定するとgroupの指定を完全置換 |
 | `toolSets` | — | AgentConfig。trusted capability bundle名の配列。`agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` / `web` / `github` / `mail` / `calendar` / `weather`。native `tools` のhost/runtime capabilityとの和集合をrun authorityにする。Skill説明やnative schemaは追加しない。未指定なら親を継承、`[]` はbundle許可を解除、指定配列は完全置換。未知名と `"*"` は設定エラー |
 | `mounts` | — | AgentConfig。コンテナへの追加マウント設定。channelで指定するとgroupのmountsを完全置換 |
+| `agentMemory` | — | Group / Bot profile限定。`{ "enabled": true }` で有効化。未指定のGroupは無効、未指定のBotはGroupを継承。明示した `enabled` はboolean必須。Channel / cron jobでは指定不可。詳細は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
 | `contextFiles` | — | AgentConfig。workspace相対ファイルを配列順にsession初回のuser roleへ注入する。各要素は `{ "path": string, "maxChars": 正の整数 | "*" }`。`"*"` は無制限。absolute pathと`..`は禁止し、不存在ファイルは無視する。子layerの配列は完全置換し、`[]`で無効化 |
 
 有効な追加mountがある場合、Agentのsystem contextにはcontainer側pathと読み書き権限（`ro` / `rw`）を列挙し、既存mountの直接利用を促す。host側pathは表示しない。mount未設定時はこの案内を追加せず、作業ディレクトリは引き続き `/workspace` とする。
@@ -407,7 +408,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 |---|---|---|
 | `defaultModel` | ✓ | `groups[].model` 省略時に使うデフォルトモデル（`provider`/`modelId`） |
 | `proxy` | — | `requestTimeoutMs`: クレデンシャルプロキシの upstream リクエストタイムアウト（ms、デフォルト: 120000） |
-| `agentMemory` | — | `threshold`: owner別Markdownの初回選択閾値（0〜1、仮の初期値0.7）。Host認証は `TYPESAFE_API_KEY`。詳細・制約は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
+| `agentMemory` | — | `threshold`: owner別Markdownの初回選択閾値（0〜1、仮の初期値0.7）。有効化はGroup / Bot profileの `agentMemory.enabled` で行い、このglobal設定では行わない。Host認証は `TYPESAFE_API_KEY`。詳細・制約は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) |
 | `agent` | — | `timeoutMs`: エージェントプロセス（サンドボックスコンテナ）のタイムアウト（ms、デフォルト: 600000＝10分） |
 | `xSavedReceiver` | — | `enabled`（既定: false）、`port`（既定: 8787、1–65535）。localhost 専用の X saved 受信サーバー。[Tailscale Serve と拡張の設定手順](x-saved.md#live-capture-setup)を参照。変更後は再起動が必要 |
 | `screenCaptureReceiver` | — | `enabled`（既定: false）、`port`（既定: 8788、1–65535）。localhost専用の画面PNG receiver。[Mac / Tailscale / 要約の設定](screen-capture.md)を参照。変更後は再起動が必要 |
@@ -418,7 +419,7 @@ Botのauthority modelと、`bot` capabilityを明示的に許可する理由は 
 
 ## config/bots.json
 
-Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group`、caller-facing の空でない `description`、Bot本人向けの空でない `instructions`、任意の AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
+Agent Bot profile の canonical source です。トップレベルに Bot ID をキーとする map を置きます。各 profile は所属する `group`、caller-facing の空でない `description`、Bot本人向けの空でない `instructions`、任意の AgentConfig（`model` / `tools` / `toolSets` / `approvalRequiredTools` / `skills` / `mounts` / `contextFiles` / `agentMemory`）を持ちます。`config/config.json` の `discord.bots` は Discord application の接続設定であり、Agent Bot profile とは別の設定です。両ファイルの `bots` はmergeされません。
 
 ```json
 {
@@ -433,6 +434,8 @@ Agent Bot profile の canonical source です。トップレベルに Bot ID を
   }
 }
 ```
+
+`agentMemory` は省略するとGroupの設定を継承します。`"agentMemory": { "enabled": false }` でこのBotだけ無効にでき、`true` ならGroupの有効・無効にかかわらず有効になります。無効化後も既存snapshotの履歴再生は維持します。
 
 `description` は呼び出し側AgentがBotの用途を判断するための短いmetadataです。前後の空白を除去し、未指定・空文字・空白のみは起動時に拒否します。既存の各Bot profileにも用途を明示して追加してください。Bot IDや `instructions` からの自動推測・補完は行いません。秘密情報やBot内部の設定を記載しないでください。
 

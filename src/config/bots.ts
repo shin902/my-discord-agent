@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentMemorySettingsSchema } from "../features/agent-memory/config.js";
 import { resolveAgentConfig } from "./agent-resolution.js";
 import { validateAgentConfig } from "./agent-validation.js";
 import { loadRawBots } from "./config.js";
@@ -6,6 +7,7 @@ import { AgentConfigSchema, type GroupConfig } from "./groups.js";
 
 /** A persistent worker profile scoped to an AgentGroup. */
 export const BotProfileSchema = AgentConfigSchema.extend({
+  agentMemory: AgentMemorySettingsSchema.optional(),
   group: z.string().min(1),
   description: z.string().trim().min(1),
   instructions: z.string().min(1),

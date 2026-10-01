@@ -23,7 +23,6 @@ import {
   CONVERSATION_ENTRIES_PREFIX,
   type ConversationEntries,
 } from "../agent/conversation.js";
-import { isInitialMemoryMessage } from "../agent/memory-context.js";
 import { resolveModel } from "../agent/model.js";
 import { appendMessage, loadMessages } from "../agent/session.js";
 import { type SessionSource, SessionSourceSchema } from "../agent/source.js";
@@ -32,6 +31,7 @@ import {
   type AgentRuntimeConfig,
   AgentRuntimeConfigSchema,
 } from "../config/groups.js";
+import { convertInitialMemoryToLlm } from "../features/agent-memory/memory-context.js";
 import {
   formatSkillCommandPrompt,
   parseSkillCommand,
@@ -267,13 +267,8 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   return messages.flatMap((msg) => {
     if (isSystemPromptSnapshotMessage(msg) || isSessionTimeAnchorMessage(msg))
       return [];
-    if (isInitialMemoryMessage(msg)) {
-      if (bootstrapSeen.has(msg.customType)) return [];
-      bootstrapSeen.add(msg.customType);
-      return msg.content
-        ? [{ role: "user", content: msg.content, timestamp: msg.timestamp }]
-        : [];
-    }
+    const memoryMessages = convertInitialMemoryToLlm(msg, bootstrapSeen);
+    if (memoryMessages !== undefined) return memoryMessages;
     const customType = getCustomType(msg);
     if (customType && CONTEXT_BOOTSTRAP_TYPES.has(customType)) {
       if (bootstrapSeen.has(customType)) return [];

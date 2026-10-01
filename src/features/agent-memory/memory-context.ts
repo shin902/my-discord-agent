@@ -3,6 +3,9 @@ import type {
   CustomMessage,
 } from "@earendil-works/pi-agent-core";
 
+import type { Message } from "@earendil-works/pi-ai";
+import type { AgentMemorySettings } from "./config.js";
+
 export const INITIAL_MEMORY_TYPE = "initial-agent-memory";
 
 export type InitialMemoryMessage = Omit<CustomMessage, "content"> & {
@@ -25,7 +28,11 @@ export function agentMemoryPath(agentId: string): string {
   return `agent-memory/owner-${Buffer.from(agentId, "utf16le").toString("base64url")}`;
 }
 
-export function agentMemoryPrompt(agentId: string): string {
+export function agentMemoryPrompt(
+  settings: AgentMemorySettings | undefined,
+  agentId: string,
+): string {
+  if (settings?.enabled !== true) return "";
   return [
     "## Agent Memory",
     `あなたの記憶の保存先は /workspace/${agentMemoryPath(agentId)}/ です。`,
@@ -34,4 +41,17 @@ export function agentMemoryPrompt(agentId: string): string {
     "許可されている既存のread/write/edit等のツールだけを使ってください。権限がない場合は書き込みを行わないでください。秘密情報は保存しないでください。",
     "初回に選択された記憶は追加コンテキストです。現在の依頼と照合して利用してください。",
   ].join("\n");
+}
+
+/** Replay saved history even after opt-out; never rewrite existing trajectories. */
+export function convertInitialMemoryToLlm(
+  message: AgentMessage,
+  seen: Set<string>,
+): Message[] | undefined {
+  if (!isInitialMemoryMessage(message)) return undefined;
+  if (seen.has(message.customType)) return [];
+  seen.add(message.customType);
+  return message.content
+    ? [{ role: "user", content: message.content, timestamp: message.timestamp }]
+    : [];
 }

@@ -1,10 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveAgentConfig } from "../config/agent-resolution.js";
 import {
   agentMemoryPrompt,
   INITIAL_MEMORY_TYPE,
-} from "../agent/memory-context.js";
-import { resolveAgentConfig } from "../config/agent-resolution.js";
+} from "../features/agent-memory/memory-context.js";
 import { formatSessionTimeAnchor } from "../time/context.js";
 import { defaultConvertToLlm } from "./agent-runner.js";
 
@@ -344,7 +344,11 @@ describe("runAgentLoop", () => {
     expect(agent.abort).toHaveBeenCalledOnce();
   });
 
-  it("replays the saved initial memory once before user turns with owner-specific guidance", async () => {
+  it.each([
+    true,
+    false,
+    undefined,
+  ])("replays saved initial memory independently of enabled (%s), and adds guidance only on opt-in", async (enabled) => {
     const snapshot = {
       role: "custom" as const,
       customType: INITIAL_MEMORY_TYPE,
@@ -387,17 +391,24 @@ describe("runAgentLoop", () => {
         {
           model: { provider: "zai-custom", modelId: "glm-4.7-flash" },
           tools: [],
+          agentMemory: enabled === undefined ? undefined : { enabled },
         },
         { agentId: "review/bot" },
       );
     }
-    expect(captured[0].initialState.systemPrompt).toContain(
-      agentMemoryPrompt("review/bot"),
-    );
-    expect(captured[0].initialState.systemPrompt).toContain("500文字以内");
-    expect(captured[0].initialState.systemPrompt).toContain(
-      "許可されている既存",
-    );
+    if (enabled) {
+      expect(captured[0].initialState.systemPrompt).toContain(
+        agentMemoryPrompt({ enabled: true }, "review/bot"),
+      );
+      expect(captured[0].initialState.systemPrompt).toContain("500文字以内");
+      expect(captured[0].initialState.systemPrompt).toContain(
+        "許可されている既存",
+      );
+    } else {
+      expect(captured[0].initialState.systemPrompt).not.toContain(
+        "## Agent Memory",
+      );
+    }
     const first = defaultConvertToLlm(captured[0].initialState.messages);
     const resumed = defaultConvertToLlm(captured[1].initialState.messages);
     expect(first).toEqual([
@@ -450,7 +461,7 @@ describe("runAgentLoop", () => {
     );
     expect(lastAgentOptions).toMatchObject({
       initialState: {
-        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n${agentMemoryPrompt("main")}`,
+        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}`,
         model: { id: "glm-4.7-flash", provider: "zai-custom" },
         thinkingLevel: "off",
       },
@@ -741,7 +752,7 @@ describe("runAgentLoop", () => {
 
     expect(lastAgentOptions).toMatchObject({
       initialState: {
-        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n${agentMemoryPrompt("main")}\n\n独立行に <NO_REPLY> と出力する`,
+        systemPrompt: `${DEFAULT_SYSTEM_PROMPT}\n\n${datePromptJST()}\n\n独立行に <NO_REPLY> と出力する`,
       },
     });
     expect(
@@ -978,7 +989,7 @@ describe("runAgentLoop", () => {
       expect.objectContaining({
         initialState: expect.objectContaining({
           // AGENTS.md がある場合は DEFAULT_SYSTEM_PROMPT を完全に置き換える
-          systemPrompt: `カスタムプロンプト\n\n${datePromptJST()}\n\n${agentMemoryPrompt("main")}`,
+          systemPrompt: `カスタムプロンプト\n\n${datePromptJST()}`,
         }),
       }),
     );

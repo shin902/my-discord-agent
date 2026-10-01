@@ -2,6 +2,29 @@
 
 ## Owner別Markdownと新規sessionの初回選択
 
+このfeatureは**オプトイン（既定は無効）**です。`config/groups.json` のGroupに `"agentMemory": { "enabled": true }` を指定するとMainで有効になります。`config/bots.json` のBot profileは `agentMemory` 未指定ならGroupを継承し、`{ "enabled": true }` / `{ "enabled": false }` で個別に上書きします。Groupが無効でもBotだけ有効にできます。指定する場合の `enabled` は必須のbooleanです。Channel / cron job固有の設定軸はありません。既存のAgentConfig解決経路を使い、変更はHost再起動後に反映します。
+
+`config/groups.json` のGroup（Mainと、設定を継承するBotで有効）:
+
+```json
+{ "name": "default", "agentMemory": { "enabled": true }, "channels": [] }
+```
+
+`config/bots.json` のBot profile（このBotだけ無効）:
+
+```json
+{
+  "coding": {
+    "group": "default",
+    "description": "Implements and reviews code changes.",
+    "instructions": "コード変更を担当する worker",
+    "agentMemory": { "enabled": false }
+  }
+}
+```
+
+無効なAgentでは、Jev呼び出し・初回選択・Agent Memory directoryの作成や走査・Agent Memory用system promptの追加・新しい `initial-agent-memory` snapshotの保存を行いません。既存のtrajectory / snapshotは削除・移行せず、保存済みsnapshotは従来どおり履歴として再生します。`contextFiles` やMemory exportの有効・無効には影響しません。実装は `src/features/agent-memory/` にまとめ、共通runtimeには呼び出しと履歴変換の接続点だけを置きます。以下は有効時の仕様です。
+
 Main、channel Bot、Bot Task、Bot cronは共通の実行経路で、既存の `groupName + agent_id` をownerとして使います。正本は既存group workspaceの `agent-memory/<encoded-owner>/` 内の直下の `.md` ファイルです。Agentには `/workspace/agent-memory/<encoded-owner>/` として見えます。`<encoded-owner>` は `owner-` + Agent IDのUTF-16LEバイト列のbase64url（paddingなし）。MainのIDは `main` です。任意のBot名を単一の安全なパス要素に変換し、Bot名の変更や新しいmountは不要です。
 
 共通system promptは、役立つ安定した事実・好み・教訓を得たとき、古い・誤った記憶に気づいたときにAgent自身が作成・更新・整理するよう指示します。1テーマ1Markdown、内容が分かるファイル名とし、**Agent自身が文字数を数えて本文を500文字以内**にします。詳細への参照を置く場合も判断に必要な要点は本文に残します。機械的な切断・文字数validatorはありません。read/write/edit等の既存権限を使い、ツール権限を暗黙に追加しません。
@@ -16,7 +39,7 @@ Hostは新規sessionの最初の依頼本文（cronは実行プロンプト）�
 
 Node 22ではSDKのレスポンスcloneと通信中断の組み合わせでプロセスが終了する[既知問題](https://github.com/typesafe-ai/typesafe-sdk-js/issues/2)があるため、専用fetchが本文を読み切ってからSDKへ渡します。本文受信中も同じtimeout・AbortSignalが有効で、SDKがcloneする対象は通信から切り離されたメモリ上のレスポンスになります。
 
-Hostのファイル読み取りはLinuxの `/proc/self/fd` を使い、workspace・`agent-memory`・ownerの各ディレクトリを `O_DIRECTORY | O_NOFOLLOW` で順に開いて固定します。候補の列挙と本文のopenは固定したownerディレクトリを基準に行い、本文にも `O_NOFOLLOW` を適用します。別sandboxが途中で親ディレクトリ名をsymlinkへ交換しても、交換先のhostファイルへ追従しません。Linux/procfsが使えない場合はパスによる読み取りに切り替えず、メモリ選択失敗として続行します。OOM防止の安全境界として、選択された各本文は最大 **8 KiB + 1 byte** までしか読みません。8 KiBを超えるファイルは切り詰めずスキップし、残りの選択済みファイルだけを注入します。すべてスキップされた場合は `no-match` の空結果を保存します。このbyte上限はsystem promptの500文字指示とは独立しており、文字数validatorではありません。
+Hostのファイル読み取りはLinuxの `/proc/self/fd` を使い、workspace・`agent-memory`・ownerの各ディレクトリを `O_DIRECTORY | O_NOFOLLOW` で順に開いて固定します。候補の列挙と本文のopenは固定したownerディレクトリを基準に行い、本文にも `O_NOFOLLOW` を適用します。別sandboxが途中で親ディレクトリ名をsymlinkへ交換しても、交換先のhostファイルへ追従しません。Linux/procfsが使えない場合はパスによる読み取りに切り替えず、メモリ選択失敗として続行します。候補列挙は逐次読み取りとし、owner directory直下は **256 entry** まで（`.md`以外・サブディレクトリ・symlinkも数える）に制限します。257件目で走査を打ち切り、directoryを閉じ、Jevを呼ばず既存の `failed` 結果として保存して通常会話を継続します。任意の一部だけを選択する切り詰めは行いません。上限内では従来どおり全候補をファイル名順に評価します。OOM防止の安全境界として、選択された各本文は最大 **8 KiB + 1 byte** までしか読みません。8 KiBを超えるファイルは切り詰めずスキップし、残りの選択済みファイルだけを注入します。すべてスキップされた場合は `no-match` の空結果を保存します。このbyte上限はsystem promptの500文字指示とは独立しており、文字数validatorではありません。
 
 session DBの既存custom entry `initial-agent-memory` に、`selected` / `no-candidates` / `no-match` / `failed` と実際に注入する本文を保存します。空結果は空文字のまま保存し、LLMへ空メッセージを送りません。最終失敗は「メモリ選択に失敗しました。今回は追加メモリなしで続行します。」を追加コンテキストにします。Markdownの後日の編集・削除は保存済みsnapshotに影響しません。実ユーザー発言・source provenanceとは別entryで、初回のユーザー発言より前に保存され、同じ順序でresume時も展開されます。既存contextFilesのbootstrapは従来どおり先頭へ並べられます。
 

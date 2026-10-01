@@ -1,6 +1,7 @@
 [
   {
     "name": "default",
+    "agentMemory": { "enabled": false },
     "model": {
       "provider": "zai-custom",
       "modelId": "glm-4.7-flash"

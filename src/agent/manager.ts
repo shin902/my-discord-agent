@@ -38,6 +38,7 @@ import { NonRetryableError, TransientError } from "../utils/error.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "../../");
 
+import { prepareInitialMemory } from "../features/agent-memory/initial-memory.js";
 import {
   type ActiveRunStopResult,
   registerActiveRun,
@@ -48,7 +49,6 @@ import {
   type ConversationEntries,
   ConversationEntriesSchema,
 } from "./conversation.js";
-import { prepareInitialMemory } from "./initial-memory.js";
 import { resolveBaseUrl, validateModel } from "./model.js";
 import { sandboxNetworkArgs } from "./sandbox-network.js";
 import type { SessionSource } from "./source.js";
@@ -760,6 +760,7 @@ export async function sendMessage(
 
   const agentTimeoutMs = await loadAgentTimeoutMs();
   await prepareInitialMemory(
+    effectiveConfig.agentMemory,
     path.join(ROOT, "groups", groupName),
     groupName,
     sessionId,

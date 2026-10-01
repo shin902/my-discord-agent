@@ -10,6 +10,74 @@ const setupRawGroups = async (raw: unknown) => {
 
 describe("loadGroups", () => {
   it.each([
+    [undefined, undefined, undefined],
+    [undefined, true, true],
+    [undefined, false, false],
+    [true, undefined, true],
+    [true, true, true],
+    [true, false, false],
+    [false, undefined, false],
+    [false, true, true],
+    [false, false, false],
+  ])("resolves Group memory %s and Bot override %s to %s without a channel override", async (groupEnabled, botEnabled, expected) => {
+    const { loadGroups, AgentRuntimeConfigSchema } = await setupRawGroups([
+      {
+        name: "group",
+        agentMemory:
+          groupEnabled === undefined ? undefined : { enabled: groupEnabled },
+        channels: [
+          {
+            channelId: "channel",
+            sessionMode: "shared",
+            agentMemory: { enabled: !expected },
+          },
+        ],
+      },
+    ]);
+    const { BotProfileSchema } = await import("./bots.js");
+    const { resolveAgentConfig } = await import("./agent-resolution.js");
+    const [group] = await loadGroups();
+    const profile = BotProfileSchema.parse({
+      group: "group",
+      description: "worker",
+      instructions: "work",
+      agentMemory:
+        botEnabled === undefined ? undefined : { enabled: botEnabled },
+    });
+    expect(group.channels[0]).not.toHaveProperty("agentMemory");
+    expect(
+      resolveAgentConfig(group, group.channels[0]).agentMemory?.enabled,
+    ).toBe(groupEnabled);
+    const effective = resolveAgentConfig(group, profile, group.channels[0]);
+    expect(effective.agentMemory?.enabled).toBe(expected);
+    expect(AgentRuntimeConfigSchema.parse(effective).agentMemory).toEqual(
+      effective.agentMemory,
+    );
+    expect(resolveAgentConfig(group).agentMemory?.enabled).toBe(groupEnabled);
+  });
+
+  it.each([
+    {},
+    { enabled: "true" },
+    { enabled: 1 },
+    null,
+  ])("rejects invalid Group/Bot agentMemory (%j)", async (agentMemory) => {
+    const { loadGroups } = await setupRawGroups([
+      { name: "group", channels: [], agentMemory },
+    ]);
+    const { BotProfileSchema } = await import("./bots.js");
+    await expect(loadGroups()).rejects.toThrow();
+    expect(() =>
+      BotProfileSchema.parse({
+        group: "group",
+        description: "worker",
+        instructions: "work",
+        agentMemory,
+      }),
+    ).toThrow();
+  });
+
+  it.each([
     undefined,
     "research",
   ])("preserves the optional channel Bot independently of Discord identity (%s)", async (botId) => {

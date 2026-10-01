@@ -1,6 +1,7 @@
 import {
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -13,6 +14,7 @@ import path from "node:path";
 import type { SystemOneRequest } from "@typesafe-ai/sdk";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_MEMORY_DIRECTORY_ENTRIES } from "./initial-memory.js";
 import {
   agentMemoryPath,
   INITIAL_MEMORY_TYPE,
@@ -31,12 +33,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
-vi.mock("../config/agent-memory.js", () => ({
+vi.mock("./config.js", () => ({
   loadAgentMemoryThreshold: threshold,
 }));
 let root: string;
 let workspace: string;
-let session: typeof import("./session.js");
+let session: typeof import("../../agent/session.js");
 let prepare: typeof import("./initial-memory.js").prepareInitialMemory;
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -48,11 +50,11 @@ beforeEach(async () => {
   vi.stubEnv("SESSIONS_DIR", path.join(root, "sessions"));
   vi.stubEnv("TYPESAFE_API_KEY", "test-only-placeholder");
   vi.stubEnv("TYPESAFE_LOG_LEVEL", "debug");
-  threshold.mockResolvedValue(0.7);
+  threshold.mockReset().mockResolvedValue(0.7);
   beforeOpen.mockReset();
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
-  session = await import("./session.js");
+  session = await import("../../agent/session.js");
   ({ prepareInitialMemory: prepare } = await import("./initial-memory.js"));
 });
 
@@ -85,11 +87,91 @@ function respond(scores: number[]) {
 }
 
 const run = (owner = "main", request = "最初の依頼", signal?: AbortSignal) =>
-  prepare(workspace, "group", "session", owner, request, 60_000, signal);
+  prepare(
+    { enabled: true },
+    workspace,
+    "group",
+    "session",
+    owner,
+    request,
+    60_000,
+    signal,
+  );
 const messages = (owner = "main") =>
   session.loadMessages("group", "session", owner);
 
 describe("initial owner memory at the host/session boundary", () => {
+  it.each([
+    undefined,
+    { enabled: false },
+  ])("does no memory work when disabled (%j)", async (settings) => {
+    const original = {
+      role: "custom" as const,
+      customType: INITIAL_MEMORY_TYPE,
+      content: "saved memory",
+      outcome: "selected",
+      display: false,
+      timestamp: 1,
+    };
+    await session.appendMessage("group", "existing", original, "main");
+    const load = vi.spyOn(session, "loadMessages");
+    const append = vi.spyOn(session, "appendMessage");
+    for (const sessionId of ["fresh", "existing"]) {
+      await prepare(
+        settings,
+        workspace,
+        "group",
+        sessionId,
+        "main",
+        "request",
+        60_000,
+      );
+    }
+    expect(load).not.toHaveBeenCalled();
+    expect(append).not.toHaveBeenCalled();
+    expect(beforeOpen).not.toHaveBeenCalled();
+    expect(await readdir(workspace)).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(threshold).not.toHaveBeenCalled();
+    expect(await session.loadMessages("group", "existing", "main")).toEqual([
+      original,
+    ]);
+  });
+
+  it("evaluates all candidates at the directory limit", async () => {
+    for (let i = 0; i < MAX_MEMORY_DIRECTORY_ENTRIES; i++)
+      await memory("main", `${i}.md`);
+    respond(Array(MAX_MEMORY_DIRECTORY_ENTRIES).fill(0.8));
+    await run();
+    const request = JSON.parse(
+      fetchMock.mock.calls[0][1].body,
+    ) as SystemOneRequest;
+    expect(Object.keys(request.questions)).toHaveLength(
+      MAX_MEMORY_DIRECTORY_ENTRIES,
+    );
+    expect(await messages()).toEqual([
+      expect.objectContaining({ outcome: "selected" }),
+    ]);
+  });
+
+  it.each([
+    "md",
+    "txt",
+  ])("stops on too many directory entries (%s), saves failure once and never calls Jev", async (extension) => {
+    for (let i = 0; i <= MAX_MEMORY_DIRECTORY_ENTRIES; i++)
+      await memory("main", `${i}.${extension}`);
+    await run();
+    await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(threshold).not.toHaveBeenCalled();
+    expect(await messages()).toEqual([
+      expect.objectContaining({
+        outcome: "failed",
+        content: expect.stringContaining("メモリ選択に失敗"),
+      }),
+    ]);
+  });
+
   it("batches filenames (not bodies), validates independent scores, thresholds and selects at most five in rank order", async () => {
     const filenames = Array.from({ length: 8 }, (_, i) => `記憶${i}.md`);
     for (const filename of filenames)
@@ -230,7 +312,15 @@ describe("initial owner memory at the host/session boundary", () => {
     );
     await run(owner, "continuation");
     await session.renameSession("group", "session", "resumed", owner);
-    await prepare(workspace, "group", "resumed", owner, "resume", 60_000);
+    await prepare(
+      { enabled: true },
+      workspace,
+      "group",
+      "resumed",
+      owner,
+      "resume",
+      60_000,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(await session.loadMessages("group", "resumed", owner)).toEqual([
       ...initial,
@@ -290,6 +380,7 @@ describe("initial owner memory at the host/session boundary", () => {
     const otherWorkspace = path.join(root, "other-workspace");
     await mkdir(otherWorkspace);
     await prepare(
+      { enabled: true },
       otherWorkspace,
       "other-group",
       "session",
@@ -471,7 +562,15 @@ describe("initial owner memory at the host/session boundary", () => {
           );
         }),
     );
-    await prepare(workspace, "group", "session", "main", "request", 20);
+    await prepare(
+      { enabled: true },
+      workspace,
+      "group",
+      "session",
+      "main",
+      "request",
+      20,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((await messages())[0]).toMatchObject({ outcome: "failed" });
   });

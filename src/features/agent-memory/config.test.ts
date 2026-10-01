@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadAgentMemoryThreshold } from "./agent-memory.js";
-import { loadRawConfig } from "./config.js";
+import { loadRawConfig } from "../../config/config.js";
+import { loadAgentMemoryThreshold } from "./config.js";
 
-vi.mock("./config.js", async (original) => ({
-  ...(await original<typeof import("./config.js")>()),
+vi.mock("../../config/config.js", async (original) => ({
+  ...(await original<typeof import("../../config/config.js")>()),
   loadRawConfig: vi.fn(),
 }));
 afterEach(() => vi.restoreAllMocks());

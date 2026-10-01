@@ -138,8 +138,11 @@ describe("sendMessage: Docker 起動構成", () => {
 
   it("isolates the default Docker launch with scoped mounts, firewall bootstrap, and proxy-only credentials", async () => {
     const { sendMessage } = await import("./manager.js");
-    const initialMemory = await import("./initial-memory.js");
+    const initialMemory = await import(
+      "../features/agent-memory/initial-memory.js"
+    );
     const prepareMemory = vi.spyOn(initialMemory, "prepareInitialMemory");
+    findGroupMock.mockResolvedValue({ agentMemory: { enabled: true } });
     const cancellation = new AbortController();
     const previousKey = process.env.TYPESAFE_API_KEY;
     process.env.TYPESAFE_API_KEY = "host-only-memory-test-key";
@@ -153,6 +156,7 @@ describe("sendMessage: Docker 起動構成", () => {
       else process.env.TYPESAFE_API_KEY = previousKey;
     }
     expect(prepareMemory).toHaveBeenCalledExactlyOnceWith(
+      { enabled: true },
       path.join(GROUPS_DIR, "test-group"),
       "test-group",
       "session-1",

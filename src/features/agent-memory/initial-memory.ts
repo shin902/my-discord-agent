@@ -1,16 +1,21 @@
 import { constants } from "node:fs";
-import { type FileHandle, mkdir, open, readdir } from "node:fs/promises";
+import { type FileHandle, mkdir, open, opendir } from "node:fs/promises";
 import path from "node:path";
 import { type NoulQuestion, noul, TypeSafeClient } from "@typesafe-ai/sdk";
-import { loadAgentMemoryThreshold } from "../config/agent-memory.js";
+import { appendMessage, loadMessages } from "../../agent/session.js";
+import {
+  type AgentMemorySettings,
+  loadAgentMemoryThreshold,
+} from "./config.js";
 import {
   agentMemoryPath,
   INITIAL_MEMORY_TYPE,
   type InitialMemoryMessage,
   isInitialMemoryMessage,
 } from "./memory-context.js";
-import { appendMessage, loadMessages } from "./session.js";
 import { typesafeFetch } from "./typesafe-fetch.js";
+
+export const MAX_MEMORY_DIRECTORY_ENTRIES = 256;
 
 const MAX_MEMORY_FILE_BYTES = 8 * 1024;
 
@@ -19,6 +24,7 @@ const FAILURE_CONTEXT =
 
 /** Host-only selection. The queue/admission layer serializes executions of a session. */
 export async function prepareInitialMemory(
+  settings: AgentMemorySettings | undefined,
   workspace: string,
   groupName: string,
   sessionId: string,
@@ -27,6 +33,7 @@ export async function prepareInitialMemory(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (settings?.enabled !== true) return;
   signal?.throwIfAborted();
   const messages = await loadMessages(groupName, sessionId, agentId);
   if (messages.some(isInitialMemoryMessage)) return;
@@ -62,10 +69,19 @@ export async function prepareInitialMemory(
       directories.push(handle);
     }
     const directory = `/proc/self/fd/${handle.fd}`;
-    const filenames = (await readdir(directory, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-      .map((entry) => entry.name)
-      .sort();
+    const filenames: string[] = [];
+    // Bound scanning as well as request size, including non-candidate entries.
+    // Overflow fails the selection instead of choosing a filesystem-order subset.
+    const entries = await opendir(directory, { bufferSize: 32 });
+    let count = 0;
+    for await (const entry of entries) {
+      signal?.throwIfAborted();
+      if (++count > MAX_MEMORY_DIRECTORY_ENTRIES)
+        throw new Error("Memory directory entry limit exceeded");
+      if (entry.isFile() && entry.name.endsWith(".md"))
+        filenames.push(entry.name);
+    }
+    filenames.sort();
     outcome = "no-candidates";
     if (filenames.length > 0) {
       const threshold = await loadAgentMemoryThreshold();

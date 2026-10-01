@@ -101,7 +101,7 @@ append APIはgroup DB内でstableなentry IDを返します。Runnerは入力use
 
 runtimeの `conversationPath` はMainでは従来の `data/sessions/<group>/sessions.sqlite#session=<id>`、Bot ownerでは末尾に `&agent=<URLエンコードしたBot ID>` を付ける。既存の保存済みmetadataは書き換えない。
 
-`initial-agent-memory` custom entryはowner別Markdownの初回選択結果（空・失敗を含む）と実際の注入snapshotを保存します。実ユーザー発言とは区別し、resumeでは保存済み内容を再利用します。既存schema v6を使い、role snapshotの有無とは独立して判定します。仕様は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) を参照してください。
+`initial-agent-memory` custom entryはowner別Markdownの初回選択結果（空・失敗を含む）と実際の注入snapshotを保存します。実ユーザー発言とは区別し、resumeでは保存済み内容を再利用します。Agent Memory無効時は新規snapshotを作らず、保存済みsnapshotの保持・再生は維持します。既存schema v6を使い、role snapshotの有無とは独立して判定します。仕様は [Agent Memory](agent-memory.md#owner別markdownと新規sessionの初回選択) を参照してください。
 
 実装の正本は [session.ts](../src/agent/session.ts) です。
 
