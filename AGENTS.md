@@ -74,3 +74,11 @@ When behavior, configuration, examples, or operator workflows change, use the `u
 ## Discord commands
 
 Before adding or changing commands, read the [extension contract and deployment guide](docs/guides/discord-bot-setup.md#slash-command-extension-contract). Runtime startup must not deploy commands.
+
+## Module boundaries
+
+- Keep feature-specific knowledge inside the feature/module that owns it. Avoid central files that need to understand every feature.
+- Give each concern a clear owner and a canonical place to change its behavior. Do not duplicate the same semantics across layers.
+- Core/runtime code should provide generic execution and infrastructure contracts, not interpret feature-specific state or fields.
+- Prefer feature-local modules with small typed TypeScript interfaces at their boundaries. Add a shared API/SDK abstraction when a concrete cross-module contract is needed, not speculatively.
+- Adding or removing a feature should normally be localized to its module plus explicit registration/configuration. If a feature requires unrelated core files to learn its semantics, reconsider the boundary.
