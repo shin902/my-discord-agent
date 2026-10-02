@@ -1676,7 +1676,7 @@ describe("sendMessage: configOverride", () => {
     let settled = false;
     const run = sendMessage("test-group", "session-1", "hi", {
       agentId: "main",
-      heldInferenceResource: "resource:gpu",
+      heldInferenceResource: { resource: "resource:gpu", provider: "local" },
       configOverride: { tools: ["bot"] },
     }).finally(() => {
       settled = true;
@@ -1686,7 +1686,7 @@ describe("sendMessage: configOverride", () => {
       expect(settled).toBe(false);
       expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
         "test-group",
-        "resource:gpu",
+        { resource: "resource:gpu", provider: "local" },
         undefined,
       );
     } finally {

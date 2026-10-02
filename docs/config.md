@@ -105,16 +105,18 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
 ]
 ```
 
-- `resource`: 任意の推論リソース名。省略時は `provider` 名を使う
-- `serial`: 同じresourceの実行を FIFO で1件ずつ処理する。数値の `1` と同義
-- 正の安全な整数（例: `8`）: 同じresource全体で最大N枠。満杯ならFIFOで待機し、待機中のabortでは実行しない
-- `parallel`: 同じresourceでも上限なしで並列実行を許可する
+- `resource`: 任意の推論リソース名。省略時はprovider専用のリソースを使う
+- `serial`: 同じproviderの実行をFIFOで1件ずつ処理する。数値の `1` と同義
+- 正の安全な整数（例: `8`）: 同じprovider内で最大N枠。満杯ならFIFOで待機し、待機中のabortでは実行しない
+- `parallel`: 同じprovider内の実行数は無制限。ただし、同じresourceを使う別providerとは同時に実行しない
 
-同じGPUや推論backendを共有するproviderには、両方のentryで同じ`resource`を明示する。`resource`を省略したproviderは、そのprovider専用のlock keyを使うため、同名の明示resourceとは共有しない。同一resourceに異なる上限が混在する設定は起動時に拒否される（`serial`と`1`は同じ上限）。異なるresourceのロックは互いをブロックしない。同じセッションのメッセージはこの設定とは別に、`runtime.sqlite` の順序制御で未完了の先行jobを追い越さないよう処理される。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使う。詳細は [キューの状態と順序](inbox-queue.md#状態と順序) を参照。
+同じGPUや推論backendを共有するproviderには、両方のentryで同じ`resource`を明示する。resourceを使用できるのは一度に1つのproviderで、それぞれ異なる`concurrency`を指定できる。使用中のproviderは自身の上限まで追加実行でき、別providerが待っていても新しい要求を受け付ける。使用中providerの実行とロック待機要求がすべてなくなると、最も古い未キャンセル要求を持つproviderへ交代する。待機要求は共通のresource制御に登録済みのものだけを指し、DB上の未実行jobやsession順序待ちは含まない。要求が途切れないproviderはresourceを使い続けるため、別providerの待ち時間に上限はない。
 
-上限は単一hostプロセス内で共有する。通常Agentは`sendMessage()`の実行全体で1枠を保持し、Web検索などのtool待機中も枠を返さない。Screen CaptureのVLM要約は画像ごとに同じ制御で1枠を取得するため、同じresourceを指定した通常Agent・Bot・VLMの合計に上限が適用される。後段のMemory Agentも通常queue経由でこの上限に従う。backendへのHTTPリクエスト数を直接計測・制限する機能や、複数hostをまたぐ分散制限ではない。
+`resource`を省略したproviderは専用のlock keyを使い、同名の明示resourceとは共有しない。codex・claude-code・他APIなど、異なるresourceを使うprovider同士は並列に実行できる。同じセッションのメッセージはこの設定とは別に、`runtime.sqlite`の順序制御で未完了の先行jobを追い越さないよう処理される。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使う。詳細は[キューの状態と順序](inbox-queue.md#状態と順序)を参照。
 
-同期Botが親と同じresourceを使う場合は親の1枠を借りる。同じ親の枠を借りる子Botは1件ずつ実行し、別の親の子Botとは並列実行できる。親終了時は借用中の子をabortし、子の実行終了を待ってから親の枠を解放する。有限resourceの枠を保持する親から別の有限resourceへの同期呼び出し、および同じresourceのBot Task Sessionに先行処理がある同期呼び出しは、循環待ちを避けるため待機せず拒否する。無制限resourceへの呼び出しは通常どおり実行する。
+制御は単一hostプロセス内で共有する。通常Agentは`sendMessage()`の実行全体で1枠を保持し、Web検索などのtool待機中も枠を返さない。Screen CaptureのVLM要約は画像ごとに同じ制御で1枠を取得する。同じproviderの通常Agent・Bot・VLMは同じ上限を共有し、別providerが同じresourceを使う場合は交代で実行する。後段のMemory Agentも通常queue経由でこの制御に従う。backendへのHTTPリクエスト数を直接計測・制限する機能や、複数hostをまたぐ分散制限ではない。
+
+同期Botが親と同じresource・providerを使う場合は親の1枠を借りる。同じ親の枠を借りる子Botは1件ずつ実行し、別の親の子Botとは並列実行できる。親終了時は借用中の子をabortし、子の実行終了を待ってから親の枠を解放する。resourceを保持する親から別providerまたは別resourceの取得を必要とする同期呼び出し、および同じresourceのBot Task Sessionに先行処理がある同期呼び出しは、循環待ちを避けるため待機せず拒否する。明示resourceを持つ`parallel`もこの制約に従う。resource未指定の`parallel`は排他待ちがないため、通常どおり呼び出せる。
 
 ## config/credentials.json
 

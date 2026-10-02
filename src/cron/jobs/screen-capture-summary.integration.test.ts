@@ -49,6 +49,7 @@ vi.mock("../../config/credential-proxy.js", () => ({
 }));
 vi.mock("../../config/providers.js", () => ({
   resolveProviderLockTarget: async () => ({
+    provider: "provider-a",
     resource: "provider-a",
     concurrency: "parallel" as const,
   }),

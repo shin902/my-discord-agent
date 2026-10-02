@@ -38,6 +38,7 @@ describe("provider concurrency config", () => {
     ]);
     const { resolveProviderLockTarget } = await import("./providers.js");
     await expect(resolveProviderLockTarget("zai")).resolves.toEqual({
+      provider: "zai",
       resource: "provider:zai",
       concurrency: "serial",
     });
@@ -52,6 +53,7 @@ describe("provider concurrency config", () => {
     const { resolveProviderLockTarget } = await importFresh();
 
     await expect(resolveProviderLockTarget("zai")).resolves.toEqual({
+      provider: "zai",
       resource: "provider:zai",
       concurrency: "serial",
     });
@@ -64,6 +66,7 @@ describe("provider concurrency config", () => {
     const { resolveProviderLockTarget } = await importFresh();
 
     await expect(resolveProviderLockTarget("codex-oauth")).resolves.toEqual({
+      provider: "codex-oauth",
       resource: "provider:codex-oauth",
       concurrency: "parallel",
     });
@@ -80,10 +83,12 @@ describe("provider concurrency config", () => {
     const { resolveProviderLockTarget } = await importFresh();
 
     await expect(resolveProviderLockTarget("local-vlm")).resolves.toEqual({
+      provider: "local-vlm",
       resource: "resource:local-gpu",
       concurrency: "serial",
     });
     await expect(resolveProviderLockTarget("unknown")).resolves.toEqual({
+      provider: "unknown",
       resource: "provider:unknown",
       concurrency: "serial",
     });
@@ -91,42 +96,61 @@ describe("provider concurrency config", () => {
 
   it("明示resourceと同名providerの暗黙fallbackを別keyにする", async () => {
     vi.mocked(loadRawProviders).mockResolvedValue([
-      { provider: "gateway", resource: "local", concurrency: "parallel" },
+      {
+        provider: "gateway",
+        resource: "local",
+        concurrency: "parallel",
+      },
       { provider: "local", concurrency: "serial" },
     ]);
     const { loadProviders, resolveProviderLockTarget } = await importFresh();
 
     await expect(loadProviders()).resolves.toHaveLength(2);
     await expect(resolveProviderLockTarget("gateway")).resolves.toEqual({
+      provider: "gateway",
       resource: "resource:local",
       concurrency: "parallel",
     });
     await expect(resolveProviderLockTarget("local")).resolves.toEqual({
+      provider: "local",
       resource: "provider:local",
       concurrency: "serial",
     });
   });
 
-  it("同一resourceのconcurrency矛盾を拒否する", async () => {
+  it("同一resourceでproviderごとに異なるconcurrencyを許可する", async () => {
     vi.mocked(loadRawProviders).mockResolvedValue([
-      { provider: "local-llm", resource: "gpu", concurrency: "serial" },
-      { provider: "local-vlm", resource: "gpu", concurrency: "parallel" },
+      {
+        provider: "local-llm",
+        resource: "gpu",
+        concurrency: "serial",
+      },
+      {
+        provider: "local-vlm",
+        resource: "gpu",
+        concurrency: "parallel",
+      },
     ]);
     const { loadProviders } = await importFresh();
 
-    await expect(loadProviders()).rejects.toThrow(/一致しません/);
+    await expect(loadProviders()).resolves.toHaveLength(2);
   });
 
   it("有限上限とserial=1を同一resource内で検証する", async () => {
     vi.mocked(loadRawProviders).mockResolvedValue([
       { provider: "llm", resource: "gpu", concurrency: 8 },
       { provider: "vlm", resource: "gpu", concurrency: 8 },
-      { provider: "a", resource: "single", concurrency: "serial" },
+      {
+        provider: "a",
+        resource: "single",
+        concurrency: "serial",
+      },
       { provider: "b", resource: "single", concurrency: 1 },
     ]);
     const { loadProviders, resolveProviderLockTarget } = await importFresh();
     await expect(loadProviders()).resolves.toHaveLength(4);
     await expect(resolveProviderLockTarget("vlm")).resolves.toEqual({
+      provider: "vlm",
       resource: "resource:gpu",
       concurrency: 8,
     });
@@ -136,13 +160,13 @@ describe("provider concurrency config", () => {
     1,
     4,
     "parallel",
-  ])("同じresourceの上限8と%sの混在を拒否する", async (concurrency) => {
+  ])("同じresourceの上限8と%sの混在を許可する", async (concurrency) => {
     vi.mocked(loadRawProviders).mockResolvedValue([
       { provider: "llm", resource: "gpu", concurrency: 8 },
       { provider: "vlm", resource: "gpu", concurrency },
     ]);
     const { loadProviders } = await importFresh();
-    await expect(loadProviders()).rejects.toThrow(/一致しません/);
+    await expect(loadProviders()).resolves.toHaveLength(2);
   });
 
   it.each([

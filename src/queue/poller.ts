@@ -18,7 +18,7 @@ import {
   type ModelConfig,
 } from "../config/groups.js";
 import {
-  type ProviderConcurrency,
+  type ProviderLockTarget,
   resolveProviderLockTarget,
 } from "../config/providers.js";
 import { markEphemeralCronSession } from "../cron/session-retention.js";
@@ -30,7 +30,10 @@ import type { TrustedDiscordDestination } from "../proxy/tool-proxy-server.js";
 import { NonRetryableError } from "../utils/error.js";
 import { loadBotTaskSystemPrompt } from "./bot-task-sessions.js";
 import { classifyDiscordError, DeliveryError } from "./delivery.js";
-import { acquireInferenceLock } from "./inference-lock.js";
+import {
+  acquireInferenceLock,
+  requiresInferenceOwnership,
+} from "./inference-lock.js";
 import { JobHandlers } from "./job-handlers.js";
 import { type ExecutionMetadata, getQueueRepository } from "./repository.js";
 import { SourceHandlers } from "./source-handlers.js";
@@ -422,11 +425,6 @@ interface InferenceLockOptions {
   signal?: AbortSignal;
 }
 
-interface InferenceLockTarget {
-  resource: string;
-  concurrency: ProviderConcurrency;
-}
-
 async function resolveBotExecution(
   msg: InboxMessage,
   agentId: string,
@@ -489,7 +487,7 @@ async function resolveInferenceLockTarget(
   msg: InboxMessage,
   groupModel?: ModelConfig,
   configOverride = msg.configOverride,
-): Promise<InferenceLockTarget> {
+): Promise<ProviderLockTarget> {
   const model = await resolveModelConfig(
     resolveAgentConfig({ model: groupModel }, configOverride).model,
   );
@@ -497,13 +495,13 @@ async function resolveInferenceLockTarget(
 }
 
 async function withInferenceLock<T>(
-  target: InferenceLockTarget,
+  target: ProviderLockTarget,
   fn: () => Promise<T>,
   options: InferenceLockOptions = {},
 ): Promise<T> {
   const waitStartedAt = Date.now();
   const release = await acquireInferenceLock(
-    target.resource,
+    target,
     target.concurrency,
     options.signal,
   );
@@ -813,10 +811,9 @@ async function processCronThreadDelivery(
             systemPromptAppend: msg.cronNoReply
               ? NO_REPLY_SYSTEM_PROMPT
               : undefined,
-            heldInferenceResource:
-              lockTarget.concurrency !== "parallel"
-                ? lockTarget.resource
-                : undefined,
+            heldInferenceResource: requiresInferenceOwnership(lockTarget)
+              ? lockTarget
+              : undefined,
             ...(msg.botId ? { enableBotTool: false } : {}),
           });
         } finally {
@@ -1209,10 +1206,9 @@ export async function processMessage(
                   msg.discordOutput === "none"
                     ? undefined
                     : trustedDiscordDestination(groupConfig, msg.channelId),
-                heldInferenceResource:
-                  lockTarget.concurrency !== "parallel"
-                    ? lockTarget.resource
-                    : undefined,
+                heldInferenceResource: requiresInferenceOwnership(lockTarget)
+                  ? lockTarget
+                  : undefined,
                 ...(msg.botId ? { enableBotTool: false } : {}),
               },
             );

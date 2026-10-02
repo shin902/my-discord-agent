@@ -39,9 +39,11 @@ vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi.fn(async (model: unknown) => model),
 }));
 vi.mock("../config/providers.js", () => ({
-  resolveProviderLockTarget: vi
-    .fn()
-    .mockResolvedValue({ resource: "provider-a", concurrency: "parallel" }),
+  resolveProviderLockTarget: vi.fn().mockResolvedValue({
+    provider: "provider-a",
+    resource: "provider-a",
+    concurrency: "parallel",
+  }),
 }));
 vi.mock("../discord/client.js", () => ({
   getDiscordClientForGroupName: vi.fn().mockResolvedValue({
@@ -103,6 +105,7 @@ let requestNumber: number;
 beforeEach(async () => {
   vi.clearAllMocks();
   vi.mocked(resolveProviderLockTarget).mockResolvedValue({
+    provider: "provider-a",
     resource: "provider-a",
     concurrency: "parallel",
   });
@@ -412,13 +415,24 @@ describe("Bot Task Session role snapshots", () => {
 
 it("eight parents lend their slots to concurrent child calls without deadlock or exceeding resource capacity", async () => {
   vi.mocked(resolveProviderLockTarget).mockResolvedValue({
+    provider: "provider-a",
     resource: "provider-a",
     concurrency: 8,
   });
   const parents = await Promise.all(
-    Array.from({ length: 8 }, () => acquireInferenceLock("provider-a", 8)),
+    Array.from({ length: 8 }, () =>
+      acquireInferenceLock(
+        { resource: "provider-a", provider: "provider-a" },
+        8,
+      ),
+    ),
   );
-  const scopes = parents.map(() => createHeldInferenceResource("provider-a"));
+  const scopes = parents.map(() =>
+    createHeldInferenceResource({
+      resource: "provider-a",
+      provider: "provider-a",
+    }),
+  );
   let unblock!: () => void;
   const blocked = new Promise<void>((resolve) => {
     unblock = resolve;
@@ -440,7 +454,10 @@ it("eight parents lend their slots to concurrent child calls without deadlock or
     }
   });
   let ninthStarted = false;
-  const ninth = acquireInferenceLock("provider-a", 8).then((release) => {
+  const ninth = acquireInferenceLock(
+    { resource: "provider-a", provider: "provider-a" },
+    8,
+  ).then((release) => {
     ninthStarted = true;
     return release;
   });

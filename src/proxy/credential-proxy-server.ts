@@ -9,6 +9,7 @@ import {
 } from "../config/credential-proxy.js";
 import { isLlmCredential } from "../config/llm-credentials.js";
 import { loadRequestTimeoutMs } from "../config/proxy-config.js";
+import type { InferenceOwner } from "../queue/inference-lock.js";
 import {
   createHeldInferenceResource,
   type HeldInferenceResource,
@@ -26,7 +27,7 @@ class UpstreamTimeoutError extends Error {
 let proxyPort: number | null = null;
 interface InternalRequestAuthorization {
   scope: string;
-  /** Inference resource whose finite slot is held by the parent run, if any. */
+  /** Inference resource and provider held by the parent run, if any. */
   heldResource?: HeldInferenceResource;
   /** Trusted Discord destination captured outside the sandbox. */
   trustedDiscordDestination?: TrustedDiscordDestination;
@@ -64,7 +65,7 @@ export function registerInternalRequestHandler(
 /** Issue a group-scoped credential for one sandbox run. The caller must revoke it when the run ends. */
 export function createInternalRequestConfig(
   scope: string,
-  heldResource?: string,
+  heldResource?: InferenceOwner,
   trustedDiscordDestination?: TrustedDiscordDestination,
 ): InternalRequestConfig | undefined {
   if (proxyPort === null) return undefined;

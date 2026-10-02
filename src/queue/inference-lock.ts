@@ -8,8 +8,10 @@ interface SemaphoreState {
   waiters: Array<() => void>;
 }
 
-const resources = new Map<string, SemaphoreState>();
-const noopRelease = () => {};
+export interface InferenceOwner {
+  resource: string;
+  provider: string;
+}
 
 function acquire(
   state: SemaphoreState,
@@ -29,6 +31,7 @@ function acquire(
       if (index >= 0) state.waiters.splice(index, 1);
       signal?.removeEventListener("abort", abort);
       reject(new Error("inference lock aborted"));
+      if (state.active === 0 && state.waiters.length === 0) onIdle?.();
     };
     const grant = () => {
       if (signal?.aborted) {
@@ -61,6 +64,7 @@ function acquire(
 /** Host-only scope for lending one parent's slot to one child at a time. */
 export interface HeldInferenceResource {
   readonly resource: string;
+  readonly provider: string;
   readonly signal: AbortSignal;
   /** Cancel borrowers and wait for their executions to release the slot. */
   close(): Promise<void>;
@@ -68,8 +72,9 @@ export interface HeldInferenceResource {
 }
 
 export function createHeldInferenceResource(
-  resource: string,
+  target: InferenceOwner,
 ): HeldInferenceResource {
+  const { resource, provider } = target;
   const state: SemaphoreState = { active: 0, limit: 1, waiters: [] };
   const controller = new AbortController();
   let resolveDrained!: () => void;
@@ -78,6 +83,7 @@ export function createHeldInferenceResource(
   });
   return {
     resource,
+    provider,
     signal: controller.signal,
     borrow: (signal) =>
       acquire(
@@ -97,20 +103,104 @@ export function createHeldInferenceResource(
   };
 }
 
+/** Dedicated unlimited providers cannot block; explicit shared resources can. */
+export function requiresInferenceOwnership(
+  target: InferenceOwner & { concurrency: ProviderConcurrency },
+): boolean {
+  return (
+    target.concurrency !== "parallel" || target.resource.startsWith("resource:")
+  );
+}
+
+interface ResourceWaiter {
+  provider: string;
+  limit: number;
+  grant(): void;
+}
+interface OwnedResource {
+  owner?: string;
+  active: number;
+  limit: number;
+  waiters: ResourceWaiter[];
+}
+const ownedResources = new Map<string, OwnedResource>();
+
 export async function acquireInferenceLock(
-  resource: string,
+  target: InferenceOwner,
   concurrency: ProviderConcurrency,
   signal?: AbortSignal,
 ): Promise<Release> {
   if (signal?.aborted) throw new Error("inference lock aborted");
-  if (concurrency === "parallel") return noopRelease;
-  const limit = concurrency === "serial" ? 1 : concurrency;
-  const state = resources.get(resource) ?? { active: 0, limit, waiters: [] };
-  if (state.limit !== limit) {
+  const { resource, provider } = target;
+  const limit =
+    concurrency === "parallel"
+      ? Infinity
+      : concurrency === "serial"
+        ? 1
+        : concurrency;
+  const state = ownedResources.get(resource) ?? {
+    active: 0,
+    limit,
+    waiters: [],
+  };
+  if (
+    (state.owner === provider && state.limit !== limit) ||
+    state.waiters.some((w) => w.provider === provider && w.limit !== limit)
+  ) {
     throw new Error(`inference resource limit mismatch: ${resource}`);
   }
-  resources.set(resource, state);
-  return acquire(state, signal, () => {
-    if (resources.get(resource) === state) resources.delete(resource);
+  ownedResources.set(resource, state);
+  const pump = () => {
+    // Skip cancelled grants without recursion, then reserve slots synchronously.
+    do {
+      if (
+        state.active === 0 &&
+        !state.waiters.some((waiter) => waiter.provider === state.owner)
+      ) {
+        state.owner = state.waiters[0]?.provider;
+        state.limit = state.waiters[0]?.limit ?? limit;
+      }
+      while (state.active < state.limit) {
+        const index = state.waiters.findIndex(
+          (waiter) => waiter.provider === state.owner,
+        );
+        if (index < 0) break;
+        state.waiters.splice(index, 1)[0].grant();
+      }
+    } while (state.active === 0 && state.waiters.length > 0);
+    if (state.active === 0 && state.waiters.length === 0)
+      ownedResources.delete(resource);
+  };
+  return new Promise<Release>((resolve, reject) => {
+    const abort = () => {
+      const index = state.waiters.indexOf(waiter);
+      if (index < 0) return;
+      state.waiters.splice(index, 1);
+      signal?.removeEventListener("abort", abort);
+      reject(new Error("inference lock aborted"));
+      pump();
+    };
+    const waiter: ResourceWaiter = {
+      provider,
+      limit,
+      grant: () => {
+        signal?.removeEventListener("abort", abort);
+        if (signal?.aborted) {
+          reject(new Error("inference lock aborted"));
+          return;
+        }
+        state.active++;
+        let released = false;
+        resolve(() => {
+          if (released) return;
+          released = true;
+          state.active--;
+          pump();
+        });
+      },
+    };
+    state.waiters.push(waiter);
+    signal?.addEventListener("abort", abort, { once: true });
+    pump();
   });
 }

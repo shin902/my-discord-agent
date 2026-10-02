@@ -831,7 +831,7 @@ describe("internal agent route: scoped authorization", () => {
     const destination = { botId: "secondary", channelId: "channel-1" };
     const config = proxy.createInternalRequestConfig(
       "main",
-      "openai",
+      { resource: "provider:openai", provider: "openai" },
       destination,
     );
     expect(config).toMatchObject({ port: 12345, token: expect.any(String) });
@@ -857,7 +857,8 @@ describe("internal agent route: scoped authorization", () => {
       expect.anything(),
       "main",
       expect.objectContaining({
-        resource: "openai",
+        resource: "provider:openai",
+        provider: "openai",
         borrow: expect.any(Function),
       }),
       {
@@ -874,7 +875,8 @@ describe("internal agent route: scoped authorization", () => {
       expect.anything(),
       "main",
       expect.objectContaining({
-        resource: "openai",
+        resource: "provider:openai",
+        provider: "openai",
         borrow: expect.any(Function),
       }),
       {

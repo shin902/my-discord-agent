@@ -46,9 +46,11 @@ vi.mock("../config/default-model.js", () => ({
     .mockResolvedValue({ provider: "test", modelId: "test" }),
 }));
 vi.mock("../config/providers.js", () => ({
-  resolveProviderLockTarget: vi
-    .fn()
-    .mockResolvedValue({ resource: "provider-a", concurrency: "parallel" }),
+  resolveProviderLockTarget: vi.fn().mockResolvedValue({
+    provider: "provider-a",
+    resource: "provider-a",
+    concurrency: "parallel",
+  }),
 }));
 vi.mock("../discord/client.js", () => ({
   getDefaultDiscordClient: () => state.client,
