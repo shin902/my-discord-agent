@@ -425,8 +425,13 @@ it("eight parents lend their slots to concurrent child calls without deadlock or
   });
   let active = 0;
   let peak = 0;
+  let notifyAllStarted!: () => void;
+  const allStarted = new Promise<void>((resolve) => {
+    notifyAllStarted = resolve;
+  });
   vi.mocked(sendMessage).mockImplementation(async () => {
     peak = Math.max(peak, ++active);
+    if (active === 8) notifyAllStarted();
     try {
       await blocked;
       return "child result";
@@ -444,7 +449,8 @@ it("eight parents lend their slots to concurrent child calls without deadlock or
     invoke("direct", "run", "", undefined, held),
   ]);
   try {
-    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(8));
+    await allStarted;
+    expect(sendMessage).toHaveBeenCalledTimes(8);
     expect(peak).toBe(8);
     expect(ninthStarted).toBe(false);
     unblock();
