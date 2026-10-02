@@ -1,6 +1,6 @@
 # 添付ファイル対応
 
-Discordメッセージの添付ファイル（画像）をエージェントに渡す仕組み。issue #94。
+Discordメッセージの添付ファイルをエージェントに渡す仕組み。画像は `read`、動画は設定済みの [`video-understand`](../video-understanding.md) で解析できる。issue #94。
 
 ## フロー
 
@@ -35,5 +35,6 @@ Discordメッセージの添付ファイル（画像）をエージェントに�
 
 ## スコープ外（別issue予定）
 
-- GLM-OCR / Gemini動画理解 / Whisper / Embedding 等のマルチモーダルツール対応
+- GLM-OCR / Whisper / Embedding 等のマルチモーダルツール対応
+- 10MiB超の添付動画・Gemini Files API対応
 - PDFのページ画像変換対応（poppler-utils等のコンテナ依存追加が必要）

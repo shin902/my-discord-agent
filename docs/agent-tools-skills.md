@@ -12,6 +12,7 @@
 | `subagent` | toolsへ正確に明示したAgentだけが利用できる、自己完結したタスクをephemeral subagentへ委譲する組み込みツール。親の実行設定を引き継ぎ、bounded recursive delegationを行う。 |
 | `bash` | サンドボックス内でシェルコマンドを実行 |
 | `date` | Asia/Tokyo（JST）の正確な現在日時を取得。Bash・ネットワーク不要。セッション開始時刻ではなく「今」の確認に使う |
+| `video-understand` | Geminiで映像・音声を解析。公開YouTube動画URLと10MiB以下のsandbox内動画に対応。[設定と制限](video-understanding.md) |
 | `finance-record-transaction` | 収入・支出を正の整数円とtypeで記録し、保存時の符号変換をTool側で行う |
 | `finance-list-transactions` | 日付範囲・category・income/expenseで収支履歴を絞り込む |
 | `finance-summary` | 期間内の収入・支出・収支と支出category別集計を返す。期間省略時は当月 |
