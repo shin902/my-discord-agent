@@ -292,7 +292,7 @@ API キーなどの機密情報は `.env` に記載し、`envVars` で参照す�
 
 ### jobs/mail.ts
 
-`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、Mail機能モジュールで決定論的な `mailRouteKey` を付けて共通cron enqueue経路へ投入する。GitHub通知は送信元が `notifications@github.com` で、`List-Id` からowner/repo、件名末尾 `(#number)` からitem番号を取得できた場合だけ `github:<owner>/<repo>:item:<number>` にする。本文中のURLはroutingに使わない。それ以外は表示名を除いた小文字のsender addressから `mail:<address>` を生成する。Mailは常に `direct` + `per-run` で要約sessionをメールごとに分離し、親Text Channelの下に送信元別Discord threadを作る。`channelId` には既存threadではなく親Text Channelを指定する（既存threadなら配送を失敗として扱う）。mappingはgroup・親channel・routeごとに分離し、thread名にはsender addressまたは `owner/repo #number` を使う。保存済みthreadが削除されていれば新規作成して更新する。全delivery chunkが`sent`になった後にだけメールを既読化し、既存のretry / dedupe semanticsは変更しない。
+`mail.ts` は未読メールごとに本文とACK対象のメールIDを取得し、Mail機能モジュールで決定論的な `mailRouteKey` を付けて共通cron enqueue経路へ投入する。GitHub通知は送信元が `notifications@github.com` で、`List-Id` からowner/repo、件名末尾 `(#number)` または `(PR #number)` からitem番号を取得できた場合だけ `github:<owner>/<repo>:item:<number>` にする。PRのCI失敗通知（`PR run failed:`）は件名末尾のコミットハッシュをGitHub APIで照会し、同じリポジトリの関連PRを一意に特定できれば同じitem routeにする。候補なし・複数候補・取得上限の場合は送信元routeへ戻す。APIエラー時はenqueueせず未読のまま次回の収集で再試行する。この照会には `github` providerと対象リポジトリへの読み取り権限が必要。本文中のURLはroutingに使わない。それ以外は表示名を除いた小文字のsender addressから `mail:<address>` を生成する。Mailは常に `direct` + `per-run` で要約sessionをメールごとに分離し、親Text Channelの下に送信元別Discord threadを作る。`channelId` には既存threadではなく親Text Channelを指定する（既存threadなら配送を失敗として扱う）。mappingはgroup・親channel・routeごとに分離し、thread名にはsender addressまたは `owner/repo #number` を使う。保存済みthreadが削除されていれば新規作成して更新する。全delivery chunkが`sent`になった後にだけメールを既読化し、既存のretry / dedupe semanticsは変更しない。
 
 AI・delivery・既読化の失敗時はメールが未読のまま残る。次回cronは過去jobを復旧せず、そのメールに新しいjobを作るため、失敗した試行のDiscord投稿が残る場合は同じthread内で重複しうる。これはmailの既知の残余リスクとして扱い、RSS dispatchなど別目的の冪等性は維持する。
 
