@@ -109,7 +109,7 @@ handlerが設定されてる場合、JSONの全フィールドは `CronContext` 
 
 ### 使い捨てcron sessionのcleanup
 
-`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。cleanupはownerに限定せず `kind` と期限で選別します（作成ownerは `botId`、未指定なら `main`）。通常会話、destination cron、タグのない旧cron sessionは対象外です。運用時はこのhandlerをcron設定に追加してください。
+`jobs/session-cleanup.ts` を毎日1回実行する設定例は `config/cron.example.json` を参照。LLMを起動せず、全groupのsession DBから `kind=cron-per-run` かつ最終更新から7日を超えたsessionを削除します。`session_entries` はcascadeで削除されます。cleanupはownerに限定せず `kind` と期限で選別します（作成ownerは `botId`、未指定なら `main`）。通常会話、destination cron、タグのない旧cron sessionは対象外です。削除したDBは `VACUUM` でファイル容量も回収します。前回の圧縮失敗などで空きページが残っているDBも再度圧縮します。圧縮中はDBの書き込みが待機するため、低負荷の時間帯に実行してください。削除した履歴は再参照・Memoryへの再exportができません。運用時はこのhandlerをcron設定に追加してください。
 
 ### deliveryMode / sessionMode
 

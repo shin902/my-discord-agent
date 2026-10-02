@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -47,8 +47,9 @@ it("tags and expires only the selected owner at a shared session ID", async () =
   db.close();
 });
 
-it("deletes only expired tagged cron sessions and cascades entries across groups", async () => {
+it("expires per-run histories across groups and reclaims disk without deleting destination or normal histories", async () => {
   const now = Date.now();
+  const originalSizes = new Map<string, number>();
   for (const group of ["cleanup-a", "cleanup-b"]) {
     await retention.markEphemeralCronSession(group, "expired");
     await retention.markEphemeralCronSession(group, "recent");
@@ -58,7 +59,7 @@ it("deletes only expired tagged cron sessions and cascades entries across groups
         id,
         {
           role: "user",
-          content: id,
+          content: id === "expired" ? "x".repeat(1_000_000) : id,
           timestamp: now,
         },
         "main",
@@ -68,8 +69,15 @@ it("deletes only expired tagged cron sessions and cascades entries across groups
     db.prepare(
       "UPDATE sessions SET updated_at=? WHERE id IN ('expired','destination','normal')",
     ).run(now - 8 * 86_400_000);
+    db.prepare("UPDATE sessions SET updated_at=? WHERE id='recent'").run(
+      now - 7 * 86_400_000,
+    );
     if (group === "cleanup-a") db.pragma("user_version = 1");
     db.close();
+    originalSizes.set(
+      group,
+      (await stat(path.join(root, group, "sessions.sqlite"))).size,
+    );
   }
   expect(await retention.cleanupEphemeralCronSessions(now)).toBe(2);
   expect(await retention.cleanupEphemeralCronSessions(now)).toBe(0);
@@ -91,6 +99,10 @@ it("deletes only expired tagged cron sessions and cascades entries across groups
       { session_id: "normal" },
       { session_id: "recent" },
     ]);
+    expect(db.pragma("freelist_count", { simple: true })).toBe(0);
     db.close();
+    expect(
+      (await stat(path.join(root, group, "sessions.sqlite"))).size,
+    ).toBeLessThan(originalSizes.get(group) ?? 0);
   }
 });
