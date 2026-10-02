@@ -32,6 +32,8 @@ if grep -Eqi 'gyp (info|err)|node-gyp rebuild.*(failed|error)' "$normal_build_lo
   exit 1
 fi
 
+RUNNER_IMAGE="$image" bash scripts/anydoc-smoke.sh
+
 timezone_output="$(docker run --rm "$image" sh -c 'printf "%s\n" "$TZ"; date +%Z')"
 printf '%s\n' "$timezone_output"
 grep -qx 'Asia/Tokyo' <<<"$timezone_output"

@@ -137,6 +137,19 @@ describeは現在のrun tokenで認可済みのcapabilityだけに対して、�
 
 **移行:** 旧Skill名からの暗黙grantは削除しました。既存の `agent-reach` / `arxiv-search` / `arxiv-survey` / `last30days` Skillは、同名の `toolSets` で必要なcapabilityだけを許可できます。複数のWeb系capabilityをまとめて許可する場合は `toolSets: ["web"]`、native schemaも提示する場合は個別の `tools` を使います。bashを許可しないAgentでは、必要なcapabilityを従来どおりnative Toolとして設定できます。
 
+### anydoc
+
+**場所:** `templates/SKILLS/anydoc/SKILL.md`
+
+Runner imageにbuild時インストールした `@firecrawl/anydoc` CLIで、`/workspace` 内のPDF・Word・PowerPoint・ExcelをMarkdownへローカル変換します。利用するAgentConfigの `skills` に `anydoc`、`tools` に `bash` とSkill・出力確認用の `read` を指定します。toolSetや新しいcapabilityは不要です。既存のSkill配置手順でコピーされ、CLIを追加するにはRunner imageを再buildします。
+
+```bash
+cd /workspace
+anydoc document.docx -o document.md
+```
+
+runtime中のnpm install / npx downloadや認証は不要です。OCRは対象外で、スキャン・画像のみのPDFがOCRを必要とする場合は変換できません。hosted OCRや外部送信は使用しません。
+
 ### スキルの明示的実行（`./command`）
 
 LLM の自律判断を待たず、ユーザーが特定のスキルを確実に実行させたい場合は次の形式で発火できる。
