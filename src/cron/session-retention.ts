@@ -56,7 +56,14 @@ export async function cleanupEphemeralCronSessions(
         .run(now - 7 * 24 * 60 * 60 * 1000).changes;
       removed += deleted;
       if (deleted > 0 || db.pragma("freelist_count", { simple: true }) !== 0) {
-        db.exec("VACUUM");
+        try {
+          db.exec("VACUUM");
+        } catch (error) {
+          console.warn(
+            `[session-cleanup] VACUUM failed for ${groupName}`,
+            error,
+          );
+        }
       }
     } finally {
       db.close();

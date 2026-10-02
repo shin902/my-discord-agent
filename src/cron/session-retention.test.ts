@@ -2,7 +2,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 let root: string;
 let retention: typeof import("./session-retention.js");
@@ -104,5 +104,62 @@ it("expires per-run histories across groups and reclaims disk without deleting d
     expect(
       (await stat(path.join(root, group, "sessions.sqlite"))).size,
     ).toBeLessThan(originalSizes.get(group) ?? 0);
+  }
+});
+
+it("continues retention after a VACUUM failure and retries compaction without further deletions", async () => {
+  const groups = ["vacuum-failure-a", "vacuum-failure-b"];
+  for (const group of groups) {
+    await retention.markEphemeralCronSession(group, "expired");
+    await session.appendMessage(
+      group,
+      "expired",
+      { role: "user", content: "x".repeat(100_000), timestamp: 0 },
+      "main",
+    );
+    const db = new Database(path.join(root, group, "sessions.sqlite"));
+    db.prepare("UPDATE sessions SET updated_at=?").run(-8 * 86_400_000);
+    db.close();
+  }
+  const error = new Error("SQLITE_FULL");
+  const exec = Database.prototype.exec;
+  let failNextVacuum = true;
+  const vacuum = vi
+    .spyOn(Database.prototype, "exec")
+    .mockImplementation(function (this: Database.Database, sql: string) {
+      if (sql === "VACUUM" && failNextVacuum) {
+        failNextVacuum = false;
+        throw error;
+      }
+      return exec.call(this, sql);
+    });
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(await retention.cleanupEphemeralCronSessions(0)).toBe(2);
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[session-cleanup\] VACUUM failed for /),
+      error,
+    );
+    const freePages = groups.map((group) => {
+      const db = new Database(path.join(root, group, "sessions.sqlite"));
+      try {
+        expect(db.prepare("SELECT id FROM sessions").all()).toEqual([]);
+        expect(db.prepare("SELECT id FROM session_entries").all()).toEqual([]);
+        return db.pragma("freelist_count", { simple: true }) as number;
+      } finally {
+        db.close();
+      }
+    });
+    expect(freePages.filter((pages) => pages > 0)).toHaveLength(1);
+    expect(freePages.filter((pages) => pages === 0)).toHaveLength(1);
+    expect(await retention.cleanupEphemeralCronSessions(0)).toBe(0);
+    for (const group of groups) {
+      const db = new Database(path.join(root, group, "sessions.sqlite"));
+      expect(db.pragma("freelist_count", { simple: true })).toBe(0);
+      db.close();
+    }
+  } finally {
+    vacuum.mockRestore();
+    warning.mockRestore();
   }
 });
