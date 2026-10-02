@@ -192,7 +192,7 @@ export async function summarizeScreenCaptureBatch(
               let summary: string;
               try {
                 const release = await acquireInferenceLock(
-                  lockTarget.resource,
+                  lockTarget,
                   lockTarget.concurrency,
                 );
                 try {

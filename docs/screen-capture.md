@@ -99,7 +99,7 @@ capture jobは`discordOutput: "none"`により最終応答・typing・progress�
 - `model`はMemory更新用の通常LLMです。この設定を優先し、省略時はグループ設定へfallbackします。
 - `settings.mode`は`summarize`（既定）または`direct`です。
 - `settings.visionModel`は`summarize`で必須です。Credential Proxyに定義した画像入力対応モデルを指定します。`direct`では指定しません。
-- `settings.concurrency`はVLM worker数（1–16、既定4）です。実際の要約実行は [provider / resourceの共有上限](config.md#configprovidersjson) にも従います。例えばworker数4・resource上限2なら、同じresourceの通常AgentやBotを含め合計2枠までです。`serial`なら直列になります。
+- `settings.concurrency`はVLM worker数（1–16、既定4）です。実際の要約実行は [providerの同時実行上限とresourceの排他制御](config.md#configprovidersjson) にも従います。例えばworker数4・provider上限2なら、同じproviderの通常AgentやBotを含め合計2枠までです。同じresourceを使う別providerとは交代で実行します。`serial`なら直列になります。
 - `settings.limit`はfull batchを開始する未完了画像数、1回の解析枚数、1 batchの最大処理枚数を兼ねます（1以上、既定10）。上限はありませんが、Agent Runnerの実行時間と512 MiB sandboxに収まる有限のwork budgetとして設定してください。
 - screen-capture固有のtimeoutはありません。Agent実行には共通のAgent Runner timeoutが適用されます。実用上はresize済み画像を20〜数十枚程度扱うbest-effort運用を想定し、任意枚数の処理完了は保証しません。
 - VLMが1枚でも失敗したbatchは全画像が未完了で残り、成功済みsummaryは次回に再利用されます。通常LLM成功後・DB更新前に停止した場合も再実行されるため、既存`capturelog`との差分だけを反映するよう指示します。

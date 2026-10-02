@@ -22,7 +22,6 @@ const ProvidersConfigSchema = z
   .array(ProviderConfigSchema)
   .superRefine((entries, ctx) => {
     const seen = new Set<string>();
-    const resourceConcurrency = new Map<string, number | "parallel">();
     for (const [index, entry] of entries.entries()) {
       if (seen.has(entry.provider)) {
         ctx.addIssue({
@@ -32,19 +31,6 @@ const ProvidersConfigSchema = z
         });
       }
       seen.add(entry.provider);
-
-      const resource = inferenceResourceKey(entry.provider, entry.resource);
-      const existing = resourceConcurrency.get(resource);
-      const concurrency =
-        entry.concurrency === "serial" ? 1 : entry.concurrency;
-      if (existing !== undefined && existing !== concurrency) {
-        ctx.addIssue({
-          code: "custom",
-          message: `resource の concurrency が一致しません: ${resource}`,
-          path: [index, "concurrency"],
-        });
-      }
-      resourceConcurrency.set(resource, concurrency);
     }
   });
 
@@ -59,6 +45,7 @@ export function loadProviders(): Promise<ProviderConfig[]> {
 }
 
 export interface ProviderLockTarget {
+  provider: string;
   resource: string;
   concurrency: ProviderConcurrency;
 }
@@ -71,6 +58,7 @@ export async function resolveProviderLockTarget(
     (candidate) => candidate.provider === provider,
   );
   return {
+    provider,
     resource: inferenceResourceKey(provider, entry?.resource),
     concurrency: entry?.concurrency ?? "serial",
   };

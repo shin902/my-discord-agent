@@ -90,7 +90,8 @@ vi.mock("../../config/groups.js", async (original) => ({
 vi.mock("../../config/providers.js", () => ({
   resolveProviderLockTarget: vi.fn(),
 }));
-vi.mock("../../queue/inference-lock.js", () => ({
+vi.mock("../../queue/inference-lock.js", async (original) => ({
+  ...(await original<typeof import("../../queue/inference-lock.js")>()),
   acquireInferenceLock: vi.fn(),
 }));
 vi.mock("../../proxy/credential-proxy-server.js", () => ({
@@ -210,7 +211,11 @@ describe("screen capture queue pipeline", () => {
         : memoryModel,
     );
     vi.mocked(resolveProviderLockTarget).mockImplementation(
-      async (provider) => ({ resource: provider, concurrency: "parallel" }),
+      async (provider) => ({
+        provider,
+        resource: provider,
+        concurrency: "parallel",
+      }),
     );
     vi.mocked(acquireInferenceLock).mockResolvedValue(vi.fn());
     vi.mocked(completeSimple).mockResolvedValue(result());
@@ -261,17 +266,20 @@ describe("screen capture queue pipeline", () => {
     }
   }
 
-  it("shares finite capacity between a normal Agent and VLM workers using different providers", async () => {
+  it("switches shared resource ownership between a normal Agent and VLM workers", async () => {
     const actual = await vi.importActual<
       typeof import("../../queue/inference-lock.js")
     >("../../queue/inference-lock.js");
     vi.mocked(acquireInferenceLock).mockImplementation(
       actual.acquireInferenceLock,
     );
-    vi.mocked(resolveProviderLockTarget).mockResolvedValue({
-      resource: "resource:shared-gpu",
-      concurrency: 2,
-    });
+    vi.mocked(resolveProviderLockTarget).mockImplementation(
+      async (provider) => ({
+        provider,
+        resource: "resource:shared-gpu",
+        concurrency: provider === "text-provider" ? 1 : 2,
+      }),
+    );
     insert(3);
     let finishAgent!: () => void;
     let finishVision!: () => void;
@@ -319,14 +327,21 @@ describe("screen capture queue pipeline", () => {
       settings: { visionModel, concurrency: 3, limit: 3 },
     });
     try {
-      await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledTimes(1));
-      expect(peak).toBe(2);
+      await vi.waitFor(() =>
+        expect(acquireInferenceLock).toHaveBeenCalledTimes(4),
+      );
+      expect(completeSimple).not.toHaveBeenCalled();
+      expect(peak).toBe(1);
       expect(sendMessage).toHaveBeenCalledWith(
         "logbook",
         "normal-agent",
         "normal work",
         expect.objectContaining({
-          heldInferenceResource: "resource:shared-gpu",
+          heldInferenceResource: {
+            provider: "text-provider",
+            resource: "resource:shared-gpu",
+            concurrency: 1,
+          },
         }),
       );
       finishAgent();

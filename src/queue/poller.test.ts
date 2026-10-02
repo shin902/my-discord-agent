@@ -54,6 +54,7 @@ vi.mock("../config/groups.js", async (importOriginal) => {
 });
 vi.mock("../config/providers.js", () => ({
   resolveProviderLockTarget: vi.fn().mockImplementation(async (provider) => ({
+    provider,
     resource: provider,
     concurrency: "serial",
   })),
@@ -172,6 +173,7 @@ beforeEach(() => {
   });
   vi.mocked(client.isReady).mockReturnValue(false);
   vi.mocked(resolveProviderLockTarget).mockImplementation(async (provider) => ({
+    provider,
     resource: provider,
     concurrency: "serial",
   }));
@@ -2430,6 +2432,7 @@ describe("processMessage - provider ごとの LLM ロック", () => {
 
   it("parallel provider は同じ provider でも並列に sendMessage を実行する", async () => {
     vi.mocked(resolveProviderLockTarget).mockResolvedValue({
+      provider: "provider-a",
       resource: "provider-a",
       concurrency: "parallel",
     });

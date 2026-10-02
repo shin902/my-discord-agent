@@ -30,6 +30,7 @@ import {
   createToolProxyRun,
   type TrustedDiscordDestination,
 } from "../proxy/tool-proxy-server.js";
+import type { InferenceOwner } from "../queue/inference-lock.js";
 import type { AttachmentRef } from "../queue/types.js";
 import { resolveTools } from "../tools/registry.js";
 import { runCapabilityNames } from "../tools/tool-sets.js";
@@ -626,8 +627,8 @@ export interface SendMessageOptions {
   systemPromptAppend?: string;
   /** Disable nested agent-facing Bot delegation for a Bot execution. */
   enableBotTool?: boolean;
-  /** Inference resource whose finite slot is held by the caller, if any. */
-  heldInferenceResource?: string;
+  /** Inference resource and provider held by the caller, if any. */
+  heldInferenceResource?: InferenceOwner;
 }
 
 export async function sendMessage(

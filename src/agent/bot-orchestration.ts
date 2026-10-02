@@ -15,6 +15,7 @@ import {
 import {
   acquireInferenceLock,
   type HeldInferenceResource,
+  requiresInferenceOwnership,
 } from "../queue/inference-lock.js";
 import { getQueueRepository } from "../queue/repository.js";
 import { withBotTaskSessionAdmission } from "../queue/session-admission.js";
@@ -112,11 +113,12 @@ export async function handleBotToolRequest(
     const lockTarget = await resolveProviderLockTarget(model.provider);
     if (
       heldResource !== undefined &&
-      heldResource.resource !== lockTarget.resource &&
-      lockTarget.concurrency !== "parallel"
+      requiresInferenceOwnership(lockTarget) &&
+      (heldResource.resource !== lockTarget.resource ||
+        heldResource.provider !== lockTarget.provider)
     ) {
       throw new Error(
-        "親が有限inference resourceの枠を保持しているため、異なる有限resourceへの同期Bot呼び出しは利用できません",
+        "親がinference resourceを保持しているため、異なるresourceまたはproviderへの同期Bot呼び出しは利用できません",
       );
     }
 
@@ -156,7 +158,7 @@ export async function handleBotToolRequest(
           heldResource?.resource === lockTarget.resource
             ? await heldResource.borrow(signal)
             : await acquireInferenceLock(
-                lockTarget.resource,
+                lockTarget,
                 lockTarget.concurrency,
                 signal,
               );
@@ -194,7 +196,7 @@ export async function handleBotToolRequest(
       {
         failIfBlocked:
           heldResource?.resource === lockTarget.resource &&
-          lockTarget.concurrency !== "parallel",
+          requiresInferenceOwnership(lockTarget),
       },
     );
 

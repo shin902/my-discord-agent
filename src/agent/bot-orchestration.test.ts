@@ -15,7 +15,7 @@ const {
   acquireInferenceLock: vi.fn().mockResolvedValue(vi.fn()),
   resolveProviderLockTarget: vi
     .fn()
-    .mockResolvedValue({ resource: "p", concurrency: "serial" }),
+    .mockResolvedValue({ provider: "p", resource: "p", concurrency: "serial" }),
   repository: {
     listBotTaskSessions: vi.fn(),
     createBotTaskSessionAndAdmission: vi.fn(() => ({
@@ -124,7 +124,7 @@ function response() {
 function invoke(
   req: MockRequest,
   res: ReturnType<typeof response>,
-  heldResource?: string,
+  heldResource?: string | { resource: string; provider: string },
   scope?: string,
   trustedDiscordDestination?: {
     botId: string;
@@ -137,7 +137,11 @@ function invoke(
     scope,
     heldResource === undefined
       ? undefined
-      : createHeldInferenceResource(heldResource),
+      : createHeldInferenceResource(
+          typeof heldResource === "string"
+            ? { resource: heldResource, provider: heldResource }
+            : heldResource,
+        ),
     trustedDiscordDestination,
   );
 }
@@ -328,9 +332,11 @@ describe("handleBotToolRequest", () => {
   it.each([
     "serial",
     8,
-  ] as const)("親と同じ有限resourceは枠を借りて完了する (%s)", async (concurrency) => {
+    "parallel",
+  ] as const)("親と同じ共有resourceは枠を借りて完了する (%s)", async (concurrency) => {
     resolveProviderLockTarget.mockResolvedValueOnce({
-      resource: "p",
+      provider: "p",
+      resource: "resource:gpu",
       concurrency,
     });
     findGroupByName.mockResolvedValue({ name: "main" });
@@ -347,18 +353,21 @@ describe("handleBotToolRequest", () => {
         }),
       ),
       response(),
-      "p",
+      { resource: "resource:gpu", provider: "p" },
     );
 
+    expect(sendMessage).toHaveBeenCalledOnce();
     expect(acquireInferenceLock).not.toHaveBeenCalled();
   });
 
   it.each([
     "serial",
     8,
-  ] as const)("先行処理がある同じ有限resourceの同期resumeは待たずに拒否する (%s)", async (concurrency) => {
+    "parallel",
+  ] as const)("先行処理がある同じ共有resourceの同期resumeは待たずに拒否する (%s)", async (concurrency) => {
     resolveProviderLockTarget.mockResolvedValueOnce({
-      resource: "p",
+      provider: "p",
+      resource: "resource:gpu",
       concurrency,
     });
     findGroupByName.mockResolvedValue({ name: "main" });
@@ -377,7 +386,7 @@ describe("handleBotToolRequest", () => {
         }),
       ),
       res,
-      "p",
+      { resource: "resource:gpu", provider: "p" },
     );
 
     expect(repository.tryAdmitBotTaskSessionAdmission).toHaveBeenCalledWith(
@@ -399,6 +408,7 @@ describe("handleBotToolRequest", () => {
     8,
   ] as const)("親が別の有限resourceを保持中なら同期Bot呼び出しを拒否する (%s)", async (concurrency) => {
     resolveProviderLockTarget.mockResolvedValueOnce({
+      provider: "p",
       resource: "p",
       concurrency,
     });
@@ -421,10 +431,41 @@ describe("handleBotToolRequest", () => {
 
     expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
     expect(JSON.parse(res.end.mock.calls[0][0]).error).toContain(
-      "異なる有限resourceへの同期Bot呼び出しは利用できません",
+      "異なるresourceまたはproviderへの同期Bot呼び出しは利用できません",
     );
     expect(acquireInferenceLock).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "serial",
+    "parallel",
+    3,
+  ] as const)("同じresourceの別providerへの同期呼び出しを拒否する (%s)", async (concurrency) => {
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      provider: "child",
+      resource: "resource:gpu",
+      concurrency,
+    });
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    const res = response();
+    await invoke(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ),
+      res,
+      "resource:gpu",
+    );
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(acquireInferenceLock).not.toHaveBeenCalled();
+    expect(repository.createBotTaskSessionAndAdmission).not.toHaveBeenCalled();
   });
 
   it("親lockなしのserial providerはlockを取得し、エラー時も解放する", async () => {
@@ -433,6 +474,7 @@ describe("handleBotToolRequest", () => {
     const release = vi.fn();
     acquireInferenceLock.mockResolvedValueOnce(release);
     resolveProviderLockTarget.mockResolvedValueOnce({
+      provider: "p",
       resource: "p",
       concurrency: "serial",
     });
@@ -451,7 +493,7 @@ describe("handleBotToolRequest", () => {
     );
 
     expect(acquireInferenceLock).toHaveBeenCalledWith(
-      "p",
+      { provider: "p", resource: "p", concurrency: "serial" },
       "serial",
       expect.any(AbortSignal),
     );
@@ -462,6 +504,7 @@ describe("handleBotToolRequest", () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     resolveProviderLockTarget.mockResolvedValueOnce({
+      provider: "p",
       resource: "p",
       concurrency: "parallel",
     });
@@ -486,10 +529,11 @@ describe("handleBotToolRequest", () => {
     expect(sendMessage).toHaveBeenCalledOnce();
   });
 
-  it("parallel providerはlock待機なしで実行し、releaseはnoop契約に委ねる", async () => {
+  it("専用resourceのparallel providerは親のresourceに関係なく実行できる", async () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     resolveProviderLockTarget.mockResolvedValueOnce({
+      provider: "p",
       resource: "p",
       concurrency: "parallel",
     });
@@ -509,7 +553,7 @@ describe("handleBotToolRequest", () => {
     );
 
     expect(acquireInferenceLock).toHaveBeenCalledWith(
-      "p",
+      { provider: "p", resource: "p", concurrency: "parallel" },
       "parallel",
       expect.any(AbortSignal),
     );
@@ -542,10 +586,11 @@ describe("handleBotToolRequest", () => {
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     resolveProviderLockTarget.mockResolvedValueOnce({
+      provider: "p",
       resource: "p",
       concurrency: 8,
     });
-    const held = createHeldInferenceResource("p");
+    const held = createHeldInferenceResource({ resource: "p", provider: "p" });
     let finishCleanup!: () => void;
     const cleanup = new Promise<void>((resolve) => {
       finishCleanup = resolve;
