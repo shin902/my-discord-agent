@@ -261,6 +261,93 @@ describe("screen capture queue pipeline", () => {
     }
   }
 
+  it("shares finite capacity between a normal Agent and VLM workers using different providers", async () => {
+    const actual = await vi.importActual<
+      typeof import("../../queue/inference-lock.js")
+    >("../../queue/inference-lock.js");
+    vi.mocked(acquireInferenceLock).mockImplementation(
+      actual.acquireInferenceLock,
+    );
+    vi.mocked(resolveProviderLockTarget).mockResolvedValue({
+      resource: "resource:shared-gpu",
+      concurrency: 2,
+    });
+    insert(3);
+    let finishAgent!: () => void;
+    let finishVision!: () => void;
+    const agentGate = new Promise<void>((resolve) => {
+      finishAgent = resolve;
+    });
+    const visionGate = new Promise<void>((resolve) => {
+      finishVision = resolve;
+    });
+    let active = 0;
+    let peak = 0;
+    vi.mocked(sendMessage).mockImplementation(async () => {
+      peak = Math.max(peak, ++active);
+      try {
+        await agentGate;
+        return "agent result";
+      } finally {
+        active--;
+      }
+    });
+    vi.mocked(completeSimple).mockImplementation(async () => {
+      peak = Math.max(peak, ++active);
+      try {
+        await visionGate;
+        return result();
+      } finally {
+        active--;
+      }
+    });
+    repository.enqueue({
+      groupName: "logbook",
+      channelId: "",
+      sessionId: "normal-agent",
+      content: "normal work",
+      timestamp: new Date().toISOString(),
+      discordOutput: "none",
+      configOverride: {
+        model: { provider: "text-provider", modelId: "text-model" },
+      },
+    });
+    const normal = runNext();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce());
+    const captures = handler({
+      ...ctx,
+      settings: { visionModel, concurrency: 3, limit: 3 },
+    });
+    try {
+      await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledTimes(1));
+      expect(peak).toBe(2);
+      expect(sendMessage).toHaveBeenCalledWith(
+        "logbook",
+        "normal-agent",
+        "normal work",
+        expect.objectContaining({
+          heldInferenceResource: "resource:shared-gpu",
+        }),
+      );
+      finishAgent();
+      expect((await normal).status).toBe("completed");
+      await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledTimes(2));
+      finishVision();
+      await captures;
+      expect(completeSimple).toHaveBeenCalledTimes(3);
+      expect(peak).toBe(2);
+      expect(resolveProviderLockTarget).toHaveBeenCalledWith("text-provider");
+      expect(resolveProviderLockTarget).toHaveBeenCalledWith(
+        visionModel.provider,
+      );
+      expect(rows().every((row) => row.summary === "Editor work")).toBe(true);
+    } finally {
+      finishAgent();
+      finishVision();
+      await Promise.allSettled([normal, captures]);
+    }
+  });
+
   it("accepts a limit above 10", async () => {
     await expect(
       handler({

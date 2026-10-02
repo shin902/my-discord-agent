@@ -12,7 +12,10 @@ import {
   prepareBotTaskSession,
   previewBotTaskPrompt,
 } from "../queue/bot-task-sessions.js";
-import { acquireInferenceLock } from "../queue/inference-lock.js";
+import {
+  acquireInferenceLock,
+  type HeldInferenceResource,
+} from "../queue/inference-lock.js";
 import { getQueueRepository } from "../queue/repository.js";
 import { withBotTaskSessionAdmission } from "../queue/session-admission.js";
 import { type AgentExecutionTiming, sendMessage } from "./manager.js";
@@ -58,11 +61,14 @@ export async function handleBotToolRequest(
   req: IncomingMessage,
   res: ServerResponse,
   scope?: string,
-  heldResource?: string,
+  heldResource?: HeldInferenceResource,
   trustedDiscordDestination?: TrustedDiscordDestination,
 ): Promise<void> {
   const controller = new AbortController();
   const abort = () => controller.abort();
+  const signal = heldResource
+    ? AbortSignal.any([controller.signal, heldResource.signal])
+    : controller.signal;
   req.once("aborted", abort);
   res.once("close", () => {
     if (!res.writableEnded) abort();
@@ -106,11 +112,11 @@ export async function handleBotToolRequest(
     const lockTarget = await resolveProviderLockTarget(model.provider);
     if (
       heldResource !== undefined &&
-      heldResource !== lockTarget.resource &&
-      lockTarget.concurrency === "serial"
+      heldResource.resource !== lockTarget.resource &&
+      lockTarget.concurrency !== "parallel"
     ) {
       throw new Error(
-        "親がserial inference resourceのlockを保持しているため、異なるserial resourceへの同期Bot呼び出しは利用できません",
+        "親が有限inference resourceの枠を保持しているため、異なる有限resourceへの同期Bot呼び出しは利用できません",
       );
     }
 
@@ -147,12 +153,12 @@ export async function handleBotToolRequest(
       admission,
       async () => {
         const release =
-          heldResource === lockTarget.resource
-            ? undefined
+          heldResource?.resource === lockTarget.resource
+            ? await heldResource.borrow(signal)
             : await acquireInferenceLock(
                 lockTarget.resource,
                 lockTarget.concurrency,
-                controller.signal,
+                signal,
               );
         try {
           let timing: AgentExecutionTiming | undefined;
@@ -170,7 +176,7 @@ export async function handleBotToolRequest(
               ),
               systemPromptSnapshotPresent: true,
               enableBotTool: false,
-              signal: controller.signal,
+              signal,
               trustedDiscordDestination,
               onExecutionTiming: (value) => {
                 timing = value;
@@ -181,14 +187,14 @@ export async function handleBotToolRequest(
             throw new Error("Botが空の応答で終了しました");
           execution = { content, timing };
         } finally {
-          release?.();
+          release();
         }
       },
-      controller.signal,
+      signal,
       {
         failIfBlocked:
-          heldResource === lockTarget.resource &&
-          lockTarget.concurrency === "serial",
+          heldResource?.resource === lockTarget.resource &&
+          lockTarget.concurrency !== "parallel",
       },
     );
 

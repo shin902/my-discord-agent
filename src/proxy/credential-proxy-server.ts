@@ -9,6 +9,10 @@ import {
 } from "../config/credential-proxy.js";
 import { isLlmCredential } from "../config/llm-credentials.js";
 import { loadRequestTimeoutMs } from "../config/proxy-config.js";
+import {
+  createHeldInferenceResource,
+  type HeldInferenceResource,
+} from "../queue/inference-lock.js";
 import { nativeProviderAuth, usesAnthropicOAuth } from "./provider-auth.js";
 import type { TrustedDiscordDestination } from "./tool-proxy-server.js";
 
@@ -22,8 +26,8 @@ class UpstreamTimeoutError extends Error {
 let proxyPort: number | null = null;
 interface InternalRequestAuthorization {
   scope: string;
-  /** Inference resource whose serial lock is held by the parent run, if any. */
-  heldResource?: string;
+  /** Inference resource whose finite slot is held by the parent run, if any. */
+  heldResource?: HeldInferenceResource;
   /** Trusted Discord destination captured outside the sandbox. */
   trustedDiscordDestination?: TrustedDiscordDestination;
 }
@@ -33,7 +37,7 @@ let internalRequestHandler:
       req: IncomingMessage,
       res: ServerResponse,
       scope: string,
-      heldResource?: string,
+      heldResource?: HeldInferenceResource,
       trustedDiscordDestination?: TrustedDiscordDestination,
     ) => Promise<void>)
   | null = null;
@@ -41,7 +45,7 @@ let internalRequestHandler:
 export interface InternalRequestConfig {
   port: number;
   token: string;
-  revoke: () => void;
+  revoke: () => Promise<void>;
 }
 
 /** Register the host-only handler used by sandbox agent tools. */
@@ -50,7 +54,7 @@ export function registerInternalRequestHandler(
     req: IncomingMessage,
     res: ServerResponse,
     scope: string,
-    heldResource?: string,
+    heldResource?: HeldInferenceResource,
     trustedDiscordDestination?: TrustedDiscordDestination,
   ) => Promise<void>,
 ): void {
@@ -65,15 +69,20 @@ export function createInternalRequestConfig(
 ): InternalRequestConfig | undefined {
   if (proxyPort === null) return undefined;
   const token = randomUUID();
+  const held =
+    heldResource === undefined
+      ? undefined
+      : createHeldInferenceResource(heldResource);
   internalRequestTokens.set(token, {
     scope,
-    heldResource,
+    heldResource: held,
     ...(trustedDiscordDestination
       ? { trustedDiscordDestination: { ...trustedDiscordDestination } }
       : {}),
   });
   const revoke = () => {
     internalRequestTokens.delete(token);
+    return held?.close() ?? Promise.resolve();
   };
   return { port: proxyPort, token, revoke };
 }

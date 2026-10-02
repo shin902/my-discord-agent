@@ -856,7 +856,10 @@ describe("internal agent route: scoped authorization", () => {
       expect.anything(),
       expect.anything(),
       "main",
-      "openai",
+      expect.objectContaining({
+        resource: "openai",
+        borrow: expect.any(Function),
+      }),
       {
         botId: "secondary",
         channelId: "channel-1",
@@ -870,7 +873,10 @@ describe("internal agent route: scoped authorization", () => {
       expect.anything(),
       expect.anything(),
       "main",
-      "openai",
+      expect.objectContaining({
+        resource: "openai",
+        borrow: expect.any(Function),
+      }),
       {
         botId: "secondary",
         channelId: "channel-1",

@@ -80,10 +80,17 @@ vi.mock("../config/default-model.js", () => ({
   resolveModelConfig: vi.fn(async (model: unknown) => model),
 }));
 vi.mock("../config/providers.js", () => ({ resolveProviderLockTarget }));
-vi.mock("../queue/inference-lock.js", () => ({ acquireInferenceLock }));
+vi.mock("../queue/inference-lock.js", async (original) => ({
+  ...(await original<typeof import("../queue/inference-lock.js")>()),
+  acquireInferenceLock,
+}));
 vi.mock("../queue/repository.js", () => ({
   getQueueRepository: () => repository,
 }));
+
+const { createHeldInferenceResource } = await import(
+  "../queue/inference-lock.js"
+);
 
 const { handleBotToolRequest } = await import("./bot-orchestration.js");
 const { appendMessage } = await import("./session.js");
@@ -128,7 +135,9 @@ function invoke(
     req as unknown as import("node:http").IncomingMessage,
     res as unknown as import("node:http").ServerResponse,
     scope,
-    heldResource,
+    heldResource === undefined
+      ? undefined
+      : createHeldInferenceResource(heldResource),
     trustedDiscordDestination,
   );
 }
@@ -316,7 +325,14 @@ describe("handleBotToolRequest", () => {
     });
   });
 
-  it("親と同じserial providerはlockを再取得せず完了する", async () => {
+  it.each([
+    "serial",
+    8,
+  ] as const)("親と同じ有限resourceは枠を借りて完了する (%s)", async (concurrency) => {
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      resource: "p",
+      concurrency,
+    });
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     sendMessage.mockResolvedValue("結果");
@@ -337,7 +353,14 @@ describe("handleBotToolRequest", () => {
     expect(acquireInferenceLock).not.toHaveBeenCalled();
   });
 
-  it("先行処理がある同じserial providerの同期resumeは待たずに拒否する", async () => {
+  it.each([
+    "serial",
+    8,
+  ] as const)("先行処理がある同じ有限resourceの同期resumeは待たずに拒否する (%s)", async (concurrency) => {
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      resource: "p",
+      concurrency,
+    });
     findGroupByName.mockResolvedValue({ name: "main" });
     loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     repository.tryAdmitBotTaskSessionAdmission.mockReturnValueOnce("blocked");
@@ -371,13 +394,16 @@ describe("handleBotToolRequest", () => {
     );
   });
 
-  it("親が別のserial providerを保持中なら同期Bot呼び出しを拒否する", async () => {
-    findGroupByName.mockResolvedValue({ name: "main" });
-    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+  it.each([
+    "serial",
+    8,
+  ] as const)("親が別の有限resourceを保持中なら同期Bot呼び出しを拒否する (%s)", async (concurrency) => {
     resolveProviderLockTarget.mockResolvedValueOnce({
       resource: "p",
-      concurrency: "serial",
+      concurrency,
     });
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
     const res = response();
 
     await invoke(
@@ -395,7 +421,7 @@ describe("handleBotToolRequest", () => {
 
     expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
     expect(JSON.parse(res.end.mock.calls[0][0]).error).toContain(
-      "異なるserial resourceへの同期Bot呼び出しは利用できません",
+      "異なる有限resourceへの同期Bot呼び出しは利用できません",
     );
     expect(acquireInferenceLock).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
@@ -510,6 +536,60 @@ describe("handleBotToolRequest", () => {
     await invoke(req, response());
 
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("親の終了は借用中の子をabortし、その実行がsettleするまで待つ", async () => {
+    findGroupByName.mockResolvedValue({ name: "main" });
+    loadBotRegistry.mockResolvedValue({ coding: { group: "main" } });
+    resolveProviderLockTarget.mockResolvedValueOnce({
+      resource: "p",
+      concurrency: 8,
+    });
+    const held = createHeldInferenceResource("p");
+    let finishCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    let childSignal: AbortSignal | undefined;
+    sendMessage.mockImplementationOnce(
+      async (_group, _session, _prompt, options) => {
+        childSignal = options.signal;
+        await cleanup;
+        throw new Error("child aborted");
+      },
+    );
+    const res = response();
+    const execution = handleBotToolRequest(
+      new MockRequest(
+        JSON.stringify({
+          groupName: "main",
+          action: "run",
+          bot: "coding",
+          prompt: "inspect",
+        }),
+      ) as unknown as import("node:http").IncomingMessage,
+      res as unknown as import("node:http").ServerResponse,
+      "main",
+      held,
+    );
+    try {
+      await vi.waitFor(() => expect(childSignal).toBeDefined());
+      let closed = false;
+      const closing = held.close().then(() => {
+        closed = true;
+      });
+      expect(childSignal?.aborted).toBe(true);
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      finishCleanup();
+      await Promise.all([closing, execution]);
+      expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+      expect(acquireInferenceLock).not.toHaveBeenCalled();
+    } finally {
+      finishCleanup();
+      await execution;
+      await held.close();
+    }
   });
 
   it("lock待機中のabortでは取得後のreleaseなしで失敗する", async () => {

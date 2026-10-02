@@ -1661,6 +1661,41 @@ describe("sendMessage: configOverride", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
+  it("親runの完了を返す前に借用した子Botのcleanup完了を待つ", async () => {
+    const sendMessage = await setup();
+    let finishChild!: () => void;
+    const childCleanup = new Promise<void>((resolve) => {
+      finishChild = resolve;
+    });
+    const revoke = vi.fn(() => childCleanup);
+    createInternalRequestConfigMock.mockReturnValueOnce({
+      port: 12345,
+      token: "internal-token",
+      revoke,
+    });
+    let settled = false;
+    const run = sendMessage("test-group", "session-1", "hi", {
+      agentId: "main",
+      heldInferenceResource: "resource:gpu",
+      configOverride: { tools: ["bot"] },
+    }).finally(() => {
+      settled = true;
+    });
+    try {
+      await vi.waitFor(() => expect(revoke).toHaveBeenCalledOnce());
+      expect(settled).toBe(false);
+      expect(createInternalRequestConfigMock).toHaveBeenCalledWith(
+        "test-group",
+        "resource:gpu",
+        undefined,
+      );
+    } finally {
+      finishChild();
+      await run;
+    }
+    expect(settled).toBe(true);
+  });
+
   it("host capabilityのrun tokenをpayloadへ渡し、完了時にrevokeする", async () => {
     const sendMessage = await setup();
 

@@ -626,7 +626,7 @@ export interface SendMessageOptions {
   systemPromptAppend?: string;
   /** Disable nested agent-facing Bot delegation for a Bot execution. */
   enableBotTool?: boolean;
-  /** Inference resource whose serial lock is held by the caller, if any. */
+  /** Inference resource whose finite slot is held by the caller, if any. */
   heldInferenceResource?: string;
 }
 
@@ -902,18 +902,20 @@ export async function sendMessage(
   ];
 
   const dockerStartedAt = Date.now();
-  let runResourcesRevoked = false;
-  const revokeRunResources = (): void => {
-    if (runResourcesRevoked) return;
-    runResourcesRevoked = true;
-    internalRequest?.revoke();
-    toolProxyRun?.revoke();
+  let resourceRevocation: Promise<void> | undefined;
+  const revokeRunResources = (): Promise<void> => {
+    if (!resourceRevocation) {
+      resourceRevocation = Promise.resolve(internalRequest?.revoke());
+      toolProxyRun?.revoke();
+    }
+    // A child borrowing this run's slot must settle before the caller releases it.
+    return resourceRevocation;
   };
   return new Promise<string>((resolve, reject) => {
     try {
       assertSpawnAllowed();
     } catch (error) {
-      revokeRunResources();
+      void revokeRunResources();
       throw error;
     }
     const proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
