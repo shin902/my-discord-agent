@@ -1,13 +1,19 @@
 import type { Server } from "node:http";
 import {
+  loadScreenCaptureDailySummaryConfig,
   loadScreenCaptureReceiverConfig,
   loadScreenCaptureSummaryConfig,
+  type ScreenCaptureDailySummaryConfig,
   type ScreenCaptureSummaryConfig,
 } from "../config/screen-capture.js";
 import { startScreenCaptureReceiver } from "../integrations/screen-capture/receiver.js";
 import { openScreenCaptureDb } from "../integrations/screen-capture/store.js";
 import { getQueueRepository } from "../queue/repository.js";
 import type { SourceHandlers } from "../queue/source-handlers.js";
+import {
+  enqueueScreenCaptureDailySummary,
+  registerScreenCaptureDailySource,
+} from "./screen-capture-daily-summary.js";
 import {
   registerScreenCaptureSource,
   summarizeScreenCaptureBatch,
@@ -19,10 +25,22 @@ export async function startScreenCapture(
 ): Promise<Server | undefined> {
   const config = await loadScreenCaptureReceiverConfig();
   const summary = await loadScreenCaptureSummaryConfig();
-  const consume = summary ? createSummaryConsumer(summary) : undefined;
+  const daily = await loadScreenCaptureDailySummaryConfig();
+  if (daily && (!summary || daily.groupName !== summary.groupName))
+    throw new Error(
+      "screenCaptureDailySummary requires enabled screenCaptureSummary with the same groupName",
+    );
+  const consume = summary ? createSummaryConsumer(summary, daily) : undefined;
   registerScreenCaptureSource(sources, getQueueRepository(), (groupName) => {
     if (groupName === summary?.groupName) consume?.();
   });
+  registerScreenCaptureDailySource(
+    sources,
+    getQueueRepository(),
+    (groupName) => {
+      if (groupName === summary?.groupName) consume?.();
+    },
+  );
   const receiver = config.enabled
     ? await startScreenCaptureReceiver({ port: config.port, onStored: consume })
     : undefined;
@@ -30,7 +48,10 @@ export async function startScreenCapture(
   return receiver;
 }
 
-function createSummaryConsumer(config: ScreenCaptureSummaryConfig): () => void {
+function createSummaryConsumer(
+  config: ScreenCaptureSummaryConfig,
+  daily: ScreenCaptureDailySummaryConfig | undefined,
+): () => void {
   let running = false;
   let signaled = false;
   return () => {
@@ -48,6 +69,19 @@ function createSummaryConsumer(config: ScreenCaptureSummaryConfig): () => void {
           } catch (error) {
             // Leave failed batches pending for a future upload or host restart.
             console.error("[screen-capture-summary] processing failed:", error);
+          }
+          if (daily) {
+            try {
+              await enqueueScreenCaptureDailySummary(
+                daily,
+                getQueueRepository(),
+              );
+            } catch (error) {
+              console.error(
+                "[screen-capture-daily-summary] processing failed:",
+                error,
+              );
+            }
           }
         } while (signaled);
       } finally {

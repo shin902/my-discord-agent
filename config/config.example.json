@@ -34,6 +34,17 @@
       "concurrency": 4
     }
   },
+  "screenCaptureDailySummary": {
+    "enabled": false,
+    "groupName": "my-group",
+    "startDate": "2026-10-03",
+    "prompt": "capturelog内の対象日 {{date}} の活動ログを分析して日次レポートを作成してください。",
+    "channelId": "YOUR_CHANNEL_ID",
+    "deliveryMode": "new-thread",
+    "sessionMode": "per-run",
+    "model": { "provider": "google", "modelId": "gemini-2.5-flash" },
+    "tools": ["read"]
+  },
   "xSavedGallery": {
     "enabled": false,
     "port": 8789,
