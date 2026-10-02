@@ -49,11 +49,22 @@ export async function cleanupEphemeralCronSessions(
     try {
       db.pragma("foreign_keys = ON");
       db.pragma("busy_timeout = 5000");
-      removed += db
+      const deleted = db
         .prepare(
           "DELETE FROM sessions WHERE kind = 'cron-per-run' AND updated_at < ?",
         )
         .run(now - 7 * 24 * 60 * 60 * 1000).changes;
+      removed += deleted;
+      if (deleted > 0 || db.pragma("freelist_count", { simple: true }) !== 0) {
+        try {
+          db.exec("VACUUM");
+        } catch (error) {
+          console.warn(
+            `[session-cleanup] VACUUM failed for ${groupName}`,
+            error,
+          );
+        }
+      }
     } finally {
       db.close();
     }
