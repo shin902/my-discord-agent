@@ -15,6 +15,11 @@ import {
 } from "vitest";
 import type { BotProfile } from "../config/bots.js";
 import type { GroupConfig } from "../config/groups.js";
+import {
+  acquireInferenceLock,
+  createHeldInferenceResource,
+  type HeldInferenceResource,
+} from "../queue/inference-lock.js";
 
 const state = vi.hoisted(() => ({ repository: undefined as unknown }));
 vi.mock("./manager.js", () => ({ sendMessage: vi.fn() }));
@@ -57,6 +62,7 @@ vi.stubEnv("SESSIONS_DIR", sessions);
 const { appendMessage, loadMessages, readOwnerSessions } = await import(
   "./session.js"
 );
+const { resolveProviderLockTarget } = await import("../config/providers.js");
 const { sendMessage } = await import("./manager.js");
 const { handleBotToolRequest } = await import("./bot-orchestration.js");
 const { executeBotCommand } = await import(
@@ -96,6 +102,10 @@ let requestNumber: number;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(resolveProviderLockTarget).mockResolvedValue({
+    resource: "provider-a",
+    concurrency: "parallel",
+  });
   await rm(join(sessions, group.name), { recursive: true, force: true });
   repository = new QueueRepository(openRuntimeDb(":memory:"));
   state.repository = repository;
@@ -121,6 +131,7 @@ async function invoke(
   action: "run" | "resume",
   handle = "",
   idempotencyKey = `request-${++requestNumber}`,
+  heldResource?: HeldInferenceResource,
 ): Promise<string> {
   if (surface === "discord") {
     const result = await executeBotCommand({
@@ -157,6 +168,7 @@ async function invoke(
     req as unknown as IncomingMessage,
     res as unknown as ServerResponse,
     group.name,
+    heldResource,
   );
   const body = JSON.parse(res.end.mock.calls[0][0]);
   if (body.error) throw new Error(body.error);
@@ -396,4 +408,64 @@ describe("Bot Task Session role snapshots", () => {
       );
     }
   });
+});
+
+it("eight parents lend their slots to concurrent child calls without deadlock or exceeding resource capacity", async () => {
+  vi.mocked(resolveProviderLockTarget).mockResolvedValue({
+    resource: "provider-a",
+    concurrency: 8,
+  });
+  const parents = await Promise.all(
+    Array.from({ length: 8 }, () => acquireInferenceLock("provider-a", 8)),
+  );
+  const scopes = parents.map(() => createHeldInferenceResource("provider-a"));
+  let unblock!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    unblock = resolve;
+  });
+  let active = 0;
+  let peak = 0;
+  let notifyAllStarted!: () => void;
+  const allStarted = new Promise<void>((resolve) => {
+    notifyAllStarted = resolve;
+  });
+  vi.mocked(sendMessage).mockImplementation(async () => {
+    peak = Math.max(peak, ++active);
+    if (active === 8) notifyAllStarted();
+    try {
+      await blocked;
+      return "child result";
+    } finally {
+      active--;
+    }
+  });
+  let ninthStarted = false;
+  const ninth = acquireInferenceLock("provider-a", 8).then((release) => {
+    ninthStarted = true;
+    return release;
+  });
+  const children = scopes.flatMap((held) => [
+    invoke("direct", "run", "", undefined, held),
+    invoke("direct", "run", "", undefined, held),
+  ]);
+  try {
+    await allStarted;
+    expect(sendMessage).toHaveBeenCalledTimes(8);
+    expect(peak).toBe(8);
+    expect(ninthStarted).toBe(false);
+    unblock();
+    const handles = await Promise.all(children);
+    expect(new Set(handles).size).toBe(16);
+    expect(sendMessage).toHaveBeenCalledTimes(16);
+    expect(peak).toBe(8);
+    expect(ninthStarted).toBe(false);
+  } finally {
+    unblock();
+    await Promise.allSettled(children);
+    await Promise.all(scopes.map((held) => held.close()));
+    parents.forEach((release) => {
+      release();
+    });
+    (await ninth)();
+  }
 });

@@ -814,7 +814,7 @@ async function processCronThreadDelivery(
               ? NO_REPLY_SYSTEM_PROMPT
               : undefined,
             heldInferenceResource:
-              lockTarget.concurrency === "serial"
+              lockTarget.concurrency !== "parallel"
                 ? lockTarget.resource
                 : undefined,
             ...(msg.botId ? { enableBotTool: false } : {}),
@@ -1210,7 +1210,7 @@ export async function processMessage(
                     ? undefined
                     : trustedDiscordDestination(groupConfig, msg.channelId),
                 heldInferenceResource:
-                  lockTarget.concurrency === "serial"
+                  lockTarget.concurrency !== "parallel"
                     ? lockTarget.resource
                     : undefined,
                 ...(msg.botId ? { enableBotTool: false } : {}),

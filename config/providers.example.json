@@ -13,5 +13,11 @@
     "resource": "local-gpu",
     "concurrency": "serial"
   },
-  { "provider": "ollama-qwen3", "concurrency": "serial" }
+  { "provider": "ollama-qwen3", "concurrency": "serial" },
+  { "provider": "halogen", "resource": "halogen-backend", "concurrency": 8 },
+  {
+    "provider": "halogen-vision",
+    "resource": "halogen-backend",
+    "concurrency": 8
+  }
 ]

@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { loadRawProviders } from "./config.js";
 
-export const ProviderConcurrencySchema = z.enum(["serial", "parallel"]);
+export const ProviderConcurrencySchema = z.union([
+  z.enum(["serial", "parallel"]),
+  z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+]);
 export type ProviderConcurrency = z.infer<typeof ProviderConcurrencySchema>;
 
 export const ProviderConfigSchema = z.object({
@@ -19,7 +22,7 @@ const ProvidersConfigSchema = z
   .array(ProviderConfigSchema)
   .superRefine((entries, ctx) => {
     const seen = new Set<string>();
-    const resourceConcurrency = new Map<string, ProviderConcurrency>();
+    const resourceConcurrency = new Map<string, number | "parallel">();
     for (const [index, entry] of entries.entries()) {
       if (seen.has(entry.provider)) {
         ctx.addIssue({
@@ -32,19 +35,27 @@ const ProvidersConfigSchema = z
 
       const resource = inferenceResourceKey(entry.provider, entry.resource);
       const existing = resourceConcurrency.get(resource);
-      if (existing !== undefined && existing !== entry.concurrency) {
+      const concurrency =
+        entry.concurrency === "serial" ? 1 : entry.concurrency;
+      if (existing !== undefined && existing !== concurrency) {
         ctx.addIssue({
           code: "custom",
           message: `resource の concurrency が一致しません: ${resource}`,
           path: [index, "concurrency"],
         });
       }
-      resourceConcurrency.set(resource, entry.concurrency);
+      resourceConcurrency.set(resource, concurrency);
     }
   });
 
-export async function loadProviders(): Promise<ProviderConfig[]> {
-  return ProvidersConfigSchema.parse(await loadRawProviders());
+let providersSnapshot: Promise<ProviderConfig[]> | undefined;
+
+/** Startup validates and pins execution policies until the host restarts. */
+export function loadProviders(): Promise<ProviderConfig[]> {
+  providersSnapshot ??= loadRawProviders().then((raw) =>
+    ProvidersConfigSchema.parse(raw),
+  );
+  return providersSnapshot;
 }
 
 export interface ProviderLockTarget {

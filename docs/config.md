@@ -89,7 +89,7 @@ Composeは`config/memory-core.yaml`を読み取り専用でマウントします
 
 ## config/providers.json
 
-AI プロバイダーごとの同時実行ポリシー。ファイルを省略した場合や provider のエントリがない場合は、安全側の `serial` を使う。複数実行できる provider だけ `parallel` を明示する。
+AI プロバイダーごとの同時実行ポリシー。ファイルを省略した場合や provider のエントリがない場合は、安全側の `serial` を使う。有限の並列数は正の整数、無制限の並列実行は `parallel` で指定する。起動時に検証・固定するため、変更の反映にはhostの再起動が必要。
 
 ```json
 [
@@ -99,15 +99,22 @@ AI プロバイダーごとの同時実行ポリシー。ファイルを省略�
     "provider": "llama-cpp",
     "resource": "local-gpu",
     "concurrency": "serial"
-  }
+  },
+  { "provider": "halogen", "resource": "halogen-backend", "concurrency": 8 },
+  { "provider": "halogen-vision", "resource": "halogen-backend", "concurrency": 8 }
 ]
 ```
 
 - `resource`: 任意の推論リソース名。省略時は `provider` 名を使う
-- `serial`: 同じresourceの実行を FIFO で1件ずつ処理する
-- `parallel`: 同じresourceでも並列実行を許可する
+- `serial`: 同じresourceの実行を FIFO で1件ずつ処理する。数値の `1` と同義
+- 正の安全な整数（例: `8`）: 同じresource全体で最大N枠。満杯ならFIFOで待機し、待機中のabortでは実行しない
+- `parallel`: 同じresourceでも上限なしで並列実行を許可する
 
-同じGPUや推論backendを共有するproviderには、両方のentryで同じ`resource`を明示する。`resource`を省略したproviderは、そのprovider専用のlock keyを使うため、同名の明示resourceとは共有しない。同一resourceに`serial`と`parallel`が混在する設定は起動時に拒否される。異なるresourceのロックは互いをブロックしない。同じセッションのメッセージはこの設定とは別に、`runtime.sqlite` の順序制御で未完了の先行jobを追い越さないよう処理される。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使う。詳細は [キューの状態と順序](inbox-queue.md#状態と順序) を参照。
+同じGPUや推論backendを共有するproviderには、両方のentryで同じ`resource`を明示する。`resource`を省略したproviderは、そのprovider専用のlock keyを使うため、同名の明示resourceとは共有しない。同一resourceに異なる上限が混在する設定は起動時に拒否される（`serial`と`1`は同じ上限）。異なるresourceのロックは互いをブロックしない。同じセッションのメッセージはこの設定とは別に、`runtime.sqlite` の順序制御で未完了の先行jobを追い越さないよう処理される。Bot Task Sessionの同期実行も同じDBのadmission ledgerを使う。詳細は [キューの状態と順序](inbox-queue.md#状態と順序) を参照。
+
+上限は単一hostプロセス内で共有する。通常Agentは`sendMessage()`の実行全体で1枠を保持し、Web検索などのtool待機中も枠を返さない。Screen CaptureのVLM要約は画像ごとに同じ制御で1枠を取得するため、同じresourceを指定した通常Agent・Bot・VLMの合計に上限が適用される。後段のMemory Agentも通常queue経由でこの上限に従う。backendへのHTTPリクエスト数を直接計測・制限する機能や、複数hostをまたぐ分散制限ではない。
+
+同期Botが親と同じresourceを使う場合は親の1枠を借りる。同じ親の枠を借りる子Botは1件ずつ実行し、別の親の子Botとは並列実行できる。親終了時は借用中の子をabortし、子の実行終了を待ってから親の枠を解放する。有限resourceの枠を保持する親から別の有限resourceへの同期呼び出し、および同じresourceのBot Task Sessionに先行処理がある同期呼び出しは、循環待ちを避けるため待機せず拒否する。無制限resourceへの呼び出しは通常どおり実行する。
 
 ## config/credentials.json
 
@@ -415,7 +422,7 @@ Discord runtime は `discord.bots` map に定義した Bot を使用します。
 | `screenCaptureSummary` | — | `enabled`（既定: false）、`groupName`、任意のAgent設定、`settings`（mode / visionModel / limit / concurrency）。pending枚数で要約を起動。[詳細](screen-capture.md) |
 | `xSavedGallery` | — | `enabled`（既定: false）、`port`（既定: 8789、1–65535）。有効時はPOST元検証用の `origin`（HTTPS `.ts.net` origin、末尾 `/` なし）が必須。receiverとは別のlocalhost listener。Gallery自身の認証はなく、アクセス制限はTailscale側で行う。[Gallery設定・アクセス・編集](x-saved.md#gallery-browse-and-edit-over-tailscale)を参照。変更後は再起動が必要 |
 
-Botのauthority modelと、`bot` capabilityを明示的に許可する理由は [エンティティモデルのauthority境界](spec/entity-model.md#agentgroupとbotのauthority境界) を参照。`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。通常のDiscord会話では `group → Bot profile（指定時） → 親channel` の順でAgentConfigを解決する。明示的なBot Task実行（Discordの `/bot` コマンド・agent-facing `bot` tool）では `group → Bot profile` の順で解決し、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。手動の`run` / `resume`では、Interaction ACKとしてephemeral responseをdeferするが、成功時の受付情報としては残さない。受付成功時はBot ID、実際に渡したprompt、Task Session情報をephemeral responseとは独立した通常の永続メッセージとして投稿し、その後ephemeral ACKを削除する。validation / enqueue等の受付失敗時は、従来どおりephemeral responseへエラーを表示する。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示し、応答はephemeralのままになる。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。Bot Task内部のtool / Subagent progressは通常channelへ送信せず、error通知と最終応答は維持する。メインAgentには同じBot Registryを呼び出す組み込み `bot` toolが、effective `tools` に正確な名前 `bot` を明示した場合だけ提供され、`action=run|resume|list` を指定できる。Bot profileやqueued/direct Bot childの実行では再帰的な `bot` toolを常に無効化する。`run` / `resume` はキューへ積まず、同じtool call内でsandbox実行の完了まで待って結果を返す（非同期handle返却やpollingは行わない）。親Agentが現在保持しているものと同じserial providerをBotが使い、対象Task Sessionに先行処理がある場合は、deadlockを避けるため同期Bot呼び出しを待機せず拒否する。親が保持していないproviderでも、異なるserial providerを対象とする場合は既存のdeadlock防止ガードにより拒否する。parallel providerは通常どおり実行する。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同じordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しない。プロセス起動時は管理対象コンテナ（現行labelと旧形式の名前のものを含む）の停止を確認した後、前回プロセスの未完了admissionとqueue実行を回収する。Dockerのdiscoveryまたは停止確認に失敗した場合は起動を中止し、実行状態を回収しない。
+Botのauthority modelと、`bot` capabilityを明示的に許可する理由は [エンティティモデルのauthority境界](spec/entity-model.md#agentgroupとbotのauthority境界) を参照。`bots` の `group` は Bot が所属する AgentGroup の trust/context boundary を指定する。通常のDiscord会話では `group → Bot profile（指定時） → 親channel` の順でAgentConfigを解決する。明示的なBot Task実行（Discordの `/bot` コマンド・agent-facing `bot` tool）では `group → Bot profile` の順で解決し、channel の設定は継承しない。Bot profile の effective `model` / `tools` / `mounts` は起動時に検証され、不正な設定があれば Discord client 初期化前に起動を停止する。Discordでは `/bot` コマンドに `bot` を指定し、`action`（`run` / `resume` / `list`）を選択できる。`run`（action省略時も同じ）は `prompt` で新しいTask Sessionを作成し、応答に表示された `session` handleを `resume` で明示指定すると同じ仕事を続行できる。手動の`run` / `resume`では、Interaction ACKとしてephemeral responseをdeferするが、成功時の受付情報としては残さない。受付成功時はBot ID、実際に渡したprompt、Task Session情報をephemeral responseとは独立した通常の永続メッセージとして投稿し、その後ephemeral ACKを削除する。validation / enqueue等の受付失敗時は、従来どおりephemeral responseへエラーを表示する。`list` は現在のAgentGroupとBotが所有するTask Sessionだけを表示し、応答はephemeralのままになる。Botの実行は通常のキュー・sandbox・Discord配送経路を利用するが、Task Sessionの履歴・添付領域は呼び出し元の通常channel/thread sessionから分離され、応答の配送先だけが呼び出しchannel/threadに残る。Bot Task内部のtool / Subagent progressは通常channelへ送信せず、error通知と最終応答は維持する。メインAgentには同じBot Registryを呼び出す組み込み `bot` toolが、effective `tools` に正確な名前 `bot` を明示した場合だけ提供され、`action=run|resume|list` を指定できる。Bot profileやqueued/direct Bot childの実行では再帰的な `bot` toolを常に無効化する。`run` / `resume` はキューへ積まず、同じtool call内でsandbox実行の完了まで待って結果を返す（非同期handle返却やpollingは行わない）。親の推論枠の借用とdeadlock防止は [provider concurrency設定](#configprovidersjson) に従う。Bot Task Sessionのqueued/direct実行はruntime.sqliteの同じordered jobs/direct-admission ledgerで直列化され、agent toolとDiscordの`/bot`が同じTask Sessionを同時にresumeしても履歴を同時更新しない。プロセス起動時は管理対象コンテナ（現行labelと旧形式の名前のものを含む）の停止を確認した後、前回プロセスの未完了admissionとqueue実行を回収する。Dockerのdiscoveryまたは停止確認に失敗した場合は起動を中止し、実行状態を回収しない。
 
 ## config/bots.json
 

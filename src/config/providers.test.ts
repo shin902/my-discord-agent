@@ -10,7 +10,7 @@ async function importFresh() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe("provider concurrency config", () => {
@@ -27,7 +27,7 @@ describe("provider concurrency config", () => {
     ]);
   });
 
-  it("同一 import でも毎回最新の concurrency を読み込む", async () => {
+  it("起動時のsnapshotを共有し、設定変更は再起動まで反映しない", async () => {
     vi.mocked(loadRawProviders)
       .mockResolvedValueOnce([{ provider: "zai", concurrency: "serial" }])
       .mockResolvedValueOnce([{ provider: "zai", concurrency: "parallel" }]);
@@ -36,10 +36,15 @@ describe("provider concurrency config", () => {
     await expect(loadProviders()).resolves.toEqual([
       { provider: "zai", concurrency: "serial" },
     ]);
+    const { resolveProviderLockTarget } = await import("./providers.js");
+    await expect(resolveProviderLockTarget("zai")).resolves.toEqual({
+      resource: "provider:zai",
+      concurrency: "serial",
+    });
     await expect(loadProviders()).resolves.toEqual([
-      { provider: "zai", concurrency: "parallel" },
+      { provider: "zai", concurrency: "serial" },
     ]);
-    expect(loadRawProviders).toHaveBeenCalledTimes(2);
+    expect(loadRawProviders).toHaveBeenCalledTimes(1);
   });
 
   it("未設定 provider は安全側の serial にする", async () => {
@@ -110,6 +115,49 @@ describe("provider concurrency config", () => {
     const { loadProviders } = await importFresh();
 
     await expect(loadProviders()).rejects.toThrow(/一致しません/);
+  });
+
+  it("有限上限とserial=1を同一resource内で検証する", async () => {
+    vi.mocked(loadRawProviders).mockResolvedValue([
+      { provider: "llm", resource: "gpu", concurrency: 8 },
+      { provider: "vlm", resource: "gpu", concurrency: 8 },
+      { provider: "a", resource: "single", concurrency: "serial" },
+      { provider: "b", resource: "single", concurrency: 1 },
+    ]);
+    const { loadProviders, resolveProviderLockTarget } = await importFresh();
+    await expect(loadProviders()).resolves.toHaveLength(4);
+    await expect(resolveProviderLockTarget("vlm")).resolves.toEqual({
+      resource: "resource:gpu",
+      concurrency: 8,
+    });
+  });
+
+  it.each([
+    1,
+    4,
+    "parallel",
+  ])("同じresourceの上限8と%sの混在を拒否する", async (concurrency) => {
+    vi.mocked(loadRawProviders).mockResolvedValue([
+      { provider: "llm", resource: "gpu", concurrency: 8 },
+      { provider: "vlm", resource: "gpu", concurrency },
+    ]);
+    const { loadProviders } = await importFresh();
+    await expect(loadProviders()).rejects.toThrow(/一致しません/);
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    "8",
+    null,
+  ])("不正な上限%sを拒否する", async (concurrency) => {
+    vi.mocked(loadRawProviders).mockResolvedValue([
+      { provider: "p", concurrency },
+    ]);
+    const { loadProviders } = await importFresh();
+    await expect(loadProviders()).rejects.toThrow();
   });
 
   it("不正な concurrency を拒否する", async () => {
