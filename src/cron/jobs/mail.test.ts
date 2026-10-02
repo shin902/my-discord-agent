@@ -12,6 +12,7 @@ vi.mock("../../config/credential-proxy.js", () => ({
         scopes: ["Mail.ReadWrite"],
       },
     },
+    { provider: "github", baseUrl: "https://github.fixture.test" },
   ],
 }));
 vi.mock("../../config/proxy-config.js", () => ({
@@ -146,7 +147,7 @@ describe("mail cron queue boundary", () => {
             value: [
               {
                 id: "github-1",
-                subject: "[Owner/Repo] Fix #42 (#533)",
+                subject: "Re: [Owner/Repo] Fix #42 (PR #533)",
                 from: { emailAddress: { address: "notifications@github.com" } },
                 internetMessageHeaders: [
                   {
@@ -177,6 +178,152 @@ describe("mail cron queue boundary", () => {
             emailId: "github-1",
             routeKey: "github:owner/repo:item:533",
           },
+        },
+      }),
+    );
+  });
+
+  it.each([
+    {
+      label: "unique PR",
+      numbers: [533],
+      status: 200,
+      expected: "github:owner/repo:item:533",
+    },
+    {
+      label: "ambiguous PRs",
+      numbers: [533, 534],
+      status: 200,
+      expected: "mail:notifications@github.com",
+    },
+    {
+      label: "no PR",
+      numbers: [],
+      status: 200,
+      expected: "mail:notifications@github.com",
+    },
+    {
+      label: "different repository",
+      numbers: [533],
+      repository: "Other/Repo",
+      status: 200,
+      expected: "mail:notifications@github.com",
+    },
+    {
+      label: "full page",
+      numbers: Array.from({ length: 100 }, (_, i) => i + 1),
+      status: 200,
+      expected: "mail:notifications@github.com",
+    },
+    { label: "API failure", numbers: [], status: 503, expected: undefined },
+  ])("routes PR CI failures using commit-associated PRs: $label", async ({
+    numbers,
+    status,
+    expected,
+    repository,
+  }) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          value: [
+            {
+              id: "ci-mail",
+              subject: "[Owner/Repo] PR run failed: CI - Fix #999 (6cc261d)",
+              from: { emailAddress: { address: "notifications@github.com" } },
+              internetMessageHeaders: [
+                {
+                  name: "List-Id",
+                  value: "Owner/Repo <repo.owner.github.com>",
+                },
+              ],
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(bodyResponse())
+      .mockResolvedValueOnce(
+        jsonResponse(
+          numbers.map((number) => ({
+            number,
+            base: { repo: { full_name: repository ?? "Owner/Repo" } },
+          })),
+          status,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const appendInbox = vi.fn().mockResolvedValue(undefined);
+    await handler(makeContext(appendInbox));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "https://github.fixture.test/repos/owner/repo/commits/6cc261d/pulls?per_page=100",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: "application/vnd.github+json",
+        }),
+      }),
+    );
+    if (expected)
+      expect(appendInbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          feature: {
+            kind: "mail",
+            input: { emailId: "ci-mail", routeKey: expected },
+          },
+        }),
+      );
+    else expect(appendInbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      sender: "other@example.com",
+      headers: [
+        { name: "List-Id", value: "Owner/Repo <repo.owner.github.com>" },
+      ],
+      subject: "[Owner/Repo] PR run failed: CI - Fix (6cc261d)",
+    },
+    {
+      sender: "notifications@github.com",
+      headers: [],
+      subject: "[Owner/Repo] PR run failed: CI - Fix (6cc261d)",
+    },
+    {
+      sender: "notifications@github.com",
+      headers: [
+        { name: "List-Id", value: "Owner/Repo <repo.owner.github.com>" },
+      ],
+      subject: "[Owner/Repo] Run failed: CI - main (6cc261d)",
+    },
+  ])("does not query GitHub for non-PR CI mail: $sender $subject", async ({
+    sender,
+    headers,
+    subject,
+  }) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          value: [
+            {
+              id: "ci-mail",
+              subject,
+              from: { emailAddress: { address: sender } },
+              internetMessageHeaders: headers,
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(bodyResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const appendInbox = vi.fn().mockResolvedValue(undefined);
+    await handler(makeContext(appendInbox));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(appendInbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feature: {
+          kind: "mail",
+          input: { emailId: "ci-mail", routeKey: `mail:${sender}` },
         },
       }),
     );

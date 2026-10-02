@@ -1,4 +1,4 @@
-import { enqueueMail, mailRouteKey } from "../../features/mail.js";
+import { enqueueMail, resolveMailRouteKey } from "../../features/mail.js";
 import { hostFetch } from "../../tools/host-fetch.js";
 import type { CronContext } from "../runner.js";
 
@@ -111,7 +111,7 @@ export default async function handler(ctx: CronContext): Promise<void> {
         ctx,
         `${ctx.prompt ?? DEFAULT_SUMMARY_PROMPT}\n\n${emailText}`,
         meta.id,
-        mailRouteKey(meta),
+        await resolveMailRouteKey(meta),
       );
     } catch (err) {
       console.error(`[mail] メール ${meta.id} のキュー登録に失敗:`, err);
