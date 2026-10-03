@@ -1,11 +1,35 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reconcileRssDispatches } from "../features/rss.js";
 import { openRssDb, resolveRssDbPath } from "../rss/store.js";
 import { runRuntimeOperator } from "./operator.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
+
+// Keep default-store inspection enabled without opening the checkout's live DB.
+const rssDefaults = vi.hoisted(() => ({ path: "" }));
+vi.mock("../rss/store.js", async (importOriginal) => {
+  const store = await importOriginal<typeof import("../rss/store.js")>();
+  return {
+    ...store,
+    tryOpenRssDb: (path?: string) =>
+      store.tryOpenRssDb(
+        store.resolveRssDbPath(path) === store.resolveRssDbPath()
+          ? rssDefaults.path
+          : path,
+      ),
+  };
+});
+
+beforeEach(async () => {
+  const dir = await mkdtemp(join(tmpdir(), "operator-rss-default-"));
+  rssDefaults.path = join(dir, "rss.sqlite3");
+  openRssDb(rssDefaults.path).close();
+});
+afterEach(async () => {
+  await rm(dirname(rssDefaults.path), { recursive: true, force: true });
+});
 
 describe("runtime operator", () => {
   it("runs health and metrics while keeping retention opt-in and dry-run by default", async () => {
@@ -173,6 +197,12 @@ describe("runtime operator", () => {
         rssDbPaths: [customPath],
       });
 
+      expect(report.observability.rss?.byPath[rssDefaults.path]).toMatchObject({
+        feeds: 0,
+        articles: 0,
+        claimed: 0,
+        orphanDispatches: [],
+      });
       expect(
         report.observability.rss?.byPath[resolveRssDbPath(customPath)],
       ).toMatchObject({
