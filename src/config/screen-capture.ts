@@ -43,8 +43,9 @@ export async function loadScreenCaptureReceiverConfig() {
 }
 
 // Delivery fields must stay aligned with CronDeliveryMode because the daily
-// summary is enqueued through enqueueCronInbox, which owns the
-// item-thread/sessionMode compatibility rule.
+// summary is enqueued through enqueueCronInbox. The item-thread/sessionMode
+// contract is checked at startup as well: sessionMode defaults to "per-run",
+// and an enqueue-time rejection would only be logged by the summary consumer.
 const DailySummaryConfigSchema = AgentConfigSchema.extend({
   enabled: z.boolean().default(false),
   groupName: z.string().min(1),
@@ -58,21 +59,14 @@ const DailySummaryConfigSchema = AgentConfigSchema.extend({
   sessionMode: z.enum(["per-run", "destination"]).default("per-run"),
 })
   .strict()
-  .superRefine((config, ctx) => {
-    // sessionMode の default が不正な組み合わせを作ってしまうため、enqueue まで
-    // 待たず startup で拒否する（cron.json の CronJobSchema と同じ契約）。
-    if (
-      config.deliveryMode === "item-thread" &&
-      config.sessionMode !== "destination"
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["sessionMode"],
-        message:
-          "item-thread は sessionMode=destination と組み合わせてください",
-      });
-    }
-  });
+  .refine(
+    ({ deliveryMode, sessionMode }) =>
+      deliveryMode !== "item-thread" || sessionMode === "destination",
+    {
+      path: ["sessionMode"],
+      message: "item-thread は sessionMode=destination と組み合わせてください",
+    },
+  );
 
 export type ScreenCaptureDailySummaryConfig = z.infer<
   typeof DailySummaryConfigSchema
