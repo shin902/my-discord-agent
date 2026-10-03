@@ -5,7 +5,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   repository: undefined as unknown,
+  defaultRssPath: "",
 }));
+
+// Reconciliation also scans the default store, which must not be the live DB.
+vi.mock("../../rss/store.js", async (importOriginal) => {
+  const store = await importOriginal<typeof import("../../rss/store.js")>();
+  return {
+    ...store,
+    tryOpenRssDb: (path?: string) =>
+      store.tryOpenRssDb(
+        store.resolveRssDbPath(path) === store.resolveRssDbPath()
+          ? state.defaultRssPath
+          : path,
+      ),
+  };
+});
 
 vi.mock("../../queue/repository.js", async () => {
   const actual = await vi.importActual<
@@ -41,6 +56,8 @@ let repository: QueueRepository;
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "rss-item-thread-dispatch-test-"));
   statePath = join(tmpDir, "rss.sqlite3");
+  state.defaultRssPath = join(tmpDir, "default-rss.sqlite3");
+  openRssDb(state.defaultRssPath).close();
   repository = new QueueRepository(join(tmpDir, "runtime.sqlite"));
   const sources = new SourceHandlers();
   registerRssSource(sources, repository);

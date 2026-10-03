@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   reconcileRssDispatches,
   registerRssSource,
@@ -18,7 +18,26 @@ import { expectDefined } from "../test-utils.js";
 import { openRuntimeDb, QueueRepository } from "./repository.js";
 import { SourceHandlers } from "./source-handlers.js";
 
+// Keep default-store recovery enabled without opening the checkout's live DB.
+const rssDefaults = vi.hoisted(() => ({ path: "" }));
+vi.mock("../rss/store.js", async (importOriginal) => {
+  const store = await importOriginal<typeof import("../rss/store.js")>();
+  return {
+    ...store,
+    tryOpenRssDb: (path?: string) =>
+      store.tryOpenRssDb(
+        store.resolveRssDbPath(path) === store.resolveRssDbPath()
+          ? rssDefaults.path
+          : path,
+      ),
+  };
+});
+
 let tempDirs: string[] = [];
+beforeEach(async () => {
+  rssDefaults.path = await makeRssPath();
+  openRssDb(rssDefaults.path).close();
+});
 afterEach(async () => {
   await Promise.all(
     tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
@@ -502,6 +521,26 @@ describe("reconcileRssDispatches", () => {
       } finally {
         check.close();
       }
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("recovers default-store claims even when only custom paths are supplied", async () => {
+    const rssPath = await makeRssPath();
+    seedUnread(rssDefaults.path);
+    seedUnread(rssPath);
+    claimOne(rssDefaults.path, "default-crash-before-enqueue");
+    claimOne(rssPath, "custom-crash-before-enqueue");
+    const repo = registeredRepo();
+    try {
+      expect(reconcileRssDispatches(repo, [rssPath])).toBe(2);
+      expect(dispatchColumns(rssDefaults.path)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
+      expect(dispatchColumns(rssPath)).toEqual([
+        { dispatch_id: null, dispatch_job_id: null },
+      ]);
     } finally {
       repo.close();
     }
