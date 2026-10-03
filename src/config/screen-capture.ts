@@ -56,7 +56,23 @@ const DailySummaryConfigSchema = AgentConfigSchema.extend({
     .enum(["direct", "new-thread", "item-thread"])
     .default("direct"),
   sessionMode: z.enum(["per-run", "destination"]).default("per-run"),
-}).strict();
+})
+  .strict()
+  .superRefine((config, ctx) => {
+    // sessionMode の default が不正な組み合わせを作ってしまうため、enqueue まで
+    // 待たず startup で拒否する（cron.json の CronJobSchema と同じ契約）。
+    if (
+      config.deliveryMode === "item-thread" &&
+      config.sessionMode !== "destination"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sessionMode"],
+        message:
+          "item-thread は sessionMode=destination と組み合わせてください",
+      });
+    }
+  });
 
 export type ScreenCaptureDailySummaryConfig = z.infer<
   typeof DailySummaryConfigSchema

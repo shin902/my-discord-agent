@@ -100,6 +100,7 @@ describe("screen capture daily summary config", () => {
   it.each([
     { startDate: "2026-02-30" }, // SQL比較が前提とする実在するISO日付
     { channelId: "" }, // 出力先は必須
+    { deliveryMode: "item-thread" }, // default の per-run とは組めない
     { schedule: "0 9 * * *" }, // cron job用のフィールドは受け付けない
   ])("rejects invalid daily configuration: %j", async (override) => {
     vi.mocked(loadRawConfig).mockResolvedValue({
