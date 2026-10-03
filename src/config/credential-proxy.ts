@@ -30,11 +30,23 @@ export const RedditCookieConfigSchema = z.object({
 
 export type RedditCookieConfig = z.infer<typeof RedditCookieConfigSchema>;
 
+const ThinkingLevelMapSchema = z.object({
+  off: z.string(),
+  minimal: z.string().optional(),
+  low: z.string().optional(),
+  medium: z.string().optional(),
+  high: z.string().optional(),
+  xhigh: z.string().optional(),
+});
+
 // プロバイダー単位の設定のうち、modelId ごとに上書き可能なもの
 // （同一サーバーで複数モデルを切り替える場合に使う）
 const ModelOverrideSchema = z.object({
   // モデルが受け付ける入力モダリティ。省略時は ["text"]
   input: z.array(z.enum(["text", "image"])).optional(),
+  contextWindow: z.number().int().min(1).optional(),
+  maxTokens: z.number().int().min(1).optional(),
+  thinkingLevelMap: ThinkingLevelMapSchema.optional(),
 });
 
 export const CredentialEntrySchema = z.object({
@@ -89,16 +101,7 @@ export const CredentialEntrySchema = z.object({
       // thinkingLevel をサーバー固有の effort 値にマッピングする。
       // Ollama の OpenAI 互換 API（reasoning.effort）など、
       // pi-ai のデフォルトマップと異なる値体系を使うサーバーで指定する。
-      thinkingLevelMap: z
-        .object({
-          off: z.string(),
-          minimal: z.string().optional(),
-          low: z.string().optional(),
-          medium: z.string().optional(),
-          high: z.string().optional(),
-          xhigh: z.string().optional(),
-        })
-        .optional(),
+      thinkingLevelMap: ThinkingLevelMapSchema.optional(),
       // model.ts の compat スプレッド経由で pi-ai に渡り、tool_use を含む
       // assistant メッセージへの reasoning_content 補完を有効化する。
       // DeepSeek 系プロバイダーは pi-ai が自動検出するが、カスタムプロバイダーで
@@ -106,8 +109,6 @@ export const CredentialEntrySchema = z.object({
       requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
     })
     .optional(),
-  // modelId ごとの上書き設定。同一サーバー（同一 baseUrl）で複数モデルを
-  // 切り替える場合に、input をモデル単位で指定する
   models: z.record(z.string(), ModelOverrideSchema).optional(),
 });
 
