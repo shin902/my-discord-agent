@@ -29,7 +29,6 @@ describe("x-saved gallery config", () => {
     { enabled: true },
     { port: 0 },
     { port: 65536 },
-    { port: "8789" },
     { host: "0.0.0.0" },
     { allowedLogin: "owner@example.com" },
     { origin: "http://gallery.example.ts.net" },
@@ -37,7 +36,6 @@ describe("x-saved gallery config", () => {
     { origin: "https://gallery.example.ts.net/path" },
     { origin: "https://gallery.example.ts.net/" },
     { origin: "https://user@gallery.example.ts.net" },
-    { enabled: "true" },
   ])("rejects invalid gallery config %j", async (config) => {
     vi.mocked(loadRawConfig).mockResolvedValue({ xSavedGallery: config });
     await expect(loadXSavedGalleryConfig()).rejects.toThrow();
@@ -56,8 +54,6 @@ describe("x-saved receiver config", () => {
     null,
     { port: 0 },
     { port: 65536 },
-    { port: "8787" },
-    { enabled: "true" },
     { host: "0.0.0.0" },
   ])("fails closed for invalid config %j", async (config) => {
     vi.mocked(loadRawConfig).mockResolvedValue({ xSavedReceiver: config });

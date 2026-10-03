@@ -35,7 +35,7 @@ describe("x-saved PixAI host classification", () => {
   it.each([
     "python",
     "cache",
-  ])("rejects the removed %s setting", async (key) => {
+  ])("rejects the %s path override before spawning", async (key) => {
     await expect(
       handler({
         settings: {
@@ -49,7 +49,9 @@ describe("x-saved PixAI host classification", () => {
 
   it("validates settings before spawning and uses fixed host paths without a shell", async () => {
     await expect(
-      handler({ settings: { limit: 0 } } as CronContext),
+      handler({
+        settings: { aliases: "config/x-saved-aliases.json", limit: 0 },
+      } as CronContext),
     ).rejects.toThrow("Invalid");
     expect(execFile).not.toHaveBeenCalled();
     const dir = await mkdtemp(path.join(os.tmpdir(), "x-classify-"));

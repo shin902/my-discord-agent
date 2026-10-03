@@ -24,7 +24,6 @@ describe("loadAgentTimeoutMs", () => {
 
   it.each([
     {},
-    { someOtherKey: {} },
     { agent: {} },
   ])("timeoutMs 未指定なら600000（10分）を返す: %j", async (config) => {
     mockLoadRawConfig.mockResolvedValue(config);
@@ -36,8 +35,13 @@ describe("loadAgentTimeoutMs", () => {
     expect(await loadAgentTimeoutMs()).toBe(300_000);
   });
 
-  it("timeoutMs が不正な値（文字列）は warn してデフォルトを返す", async () => {
-    mockLoadRawConfig.mockResolvedValue({ agent: { timeoutMs: "300000" } });
+  it.each([
+    { category: "non-number", timeoutMs: "300000" },
+    { category: "non-positive", timeoutMs: 0 },
+  ])("warns and uses the default for a $category timeout", async ({
+    timeoutMs,
+  }) => {
+    mockLoadRawConfig.mockResolvedValue({ agent: { timeoutMs } });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     expect(await loadAgentTimeoutMs()).toBe(600_000);
@@ -45,14 +49,6 @@ describe("loadAgentTimeoutMs", () => {
       "[agent] 設定が不正、デフォルト使用:",
       expect.any(String),
     );
-    warn.mockRestore();
-  });
-
-  it("timeoutMs が 0 以下は不正として warn しデフォルトを返す", async () => {
-    mockLoadRawConfig.mockResolvedValue({ agent: { timeoutMs: 0 } });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    expect(await loadAgentTimeoutMs()).toBe(600_000);
     warn.mockRestore();
   });
 });

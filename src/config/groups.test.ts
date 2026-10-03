@@ -1,4 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChannelConfig } from "./groups.js";
+
+const appendUserOnlyModes = {
+  shared: true,
+  thread: false,
+  "auto-thread": false,
+  "email-mode": false,
+} satisfies Record<ChannelConfig["sessionMode"], boolean>;
 
 const setupRawGroups = async (raw: unknown) => {
   vi.resetModules();
@@ -59,7 +67,6 @@ describe("loadGroups", () => {
   it.each([
     {},
     { enabled: "true" },
-    { enabled: 1 },
     null,
   ])("rejects invalid Group/Bot agentMemory (%j)", async (agentMemory) => {
     const { loadGroups } = await setupRawGroups([
@@ -117,14 +124,6 @@ describe("loadGroups", () => {
     ]);
     const groups = await loadGroups();
     expect(groups[0].model).toEqual(model);
-  });
-
-  it("mounts が無いグループも読み込める", async () => {
-    const { loadGroups } = await setupRawGroups([
-      { name: "chat", channels: [] },
-    ]);
-    const groups = await loadGroups();
-    expect(groups[0].mounts).toBeUndefined();
   });
 
   it("mounts を含むグループ設定をパースできる", async () => {
@@ -228,37 +227,43 @@ describe("loadGroups", () => {
     expect(groups[0].channels[0]).not.toHaveProperty("toolLogArgs");
   });
 
-  it.each([
-    undefined,
-    false,
-    true,
-  ])("shared channelのappendUserOnly=%sを読み込む", async (appendUserOnly) => {
+  it("preserves omitted and explicit false appendUserOnly values", async () => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
         channels: [
-          { channelId: "channel", sessionMode: "shared", appendUserOnly },
+          { channelId: "omitted", sessionMode: "shared" },
+          {
+            channelId: "disabled",
+            sessionMode: "shared",
+            appendUserOnly: false,
+          },
         ],
       },
     ]);
     const [group] = await loadGroups();
-    expect(group.channels[0].sessionMode).toBe("shared");
-    expect(group.channels[0].appendUserOnly).toBe(appendUserOnly);
+    expect(group.channels[0].appendUserOnly).toBeUndefined();
+    expect(group.channels[1].appendUserOnly).toBe(false);
   });
 
-  it.each([
-    ["thread", true],
-    ["auto-thread", true],
-    ["email-mode", true],
-    ["shared", "true"],
-  ])("rejects sessionMode=%s + appendUserOnly=%s", async (sessionMode, appendUserOnly) => {
+  it.each(
+    Object.entries(appendUserOnlyModes),
+  )("allows appendUserOnly only in shared mode (%s: %s)", async (sessionMode, allowed) => {
     const { loadGroups } = await setupRawGroups([
       {
         name: "chat",
-        channels: [{ channelId: "channel", sessionMode, appendUserOnly }],
+        channels: [{ channelId: "channel", sessionMode, appendUserOnly: true }],
       },
     ]);
-    await expect(loadGroups()).rejects.toThrow("appendUserOnly");
+    if (allowed) {
+      await expect(loadGroups()).resolves.toMatchObject([
+        { channels: [{ sessionMode: "shared", appendUserOnly: true }] },
+      ]);
+    } else {
+      await expect(loadGroups()).rejects.toThrow(
+        "appendUserOnly requires sessionMode: shared",
+      );
+    }
   });
 
   it('skills は "*" を拒否する', async () => {

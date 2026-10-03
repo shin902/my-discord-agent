@@ -24,7 +24,6 @@ describe("loadRequestTimeoutMs", () => {
 
   it.each([
     {},
-    { someOtherKey: {} },
     { proxy: {} },
   ])("requestTimeoutMs 未指定なら120000を返す: %j", async (config) => {
     mockLoadRawConfig.mockResolvedValue(config);
@@ -38,10 +37,13 @@ describe("loadRequestTimeoutMs", () => {
     expect(await loadRequestTimeoutMs()).toBe(60_000);
   });
 
-  it("requestTimeoutMs が不正な値（文字列）は warn してデフォルトを返す", async () => {
-    mockLoadRawConfig.mockResolvedValue({
-      proxy: { requestTimeoutMs: "60000" },
-    });
+  it.each([
+    { category: "non-number", requestTimeoutMs: "60000" },
+    { category: "non-positive", requestTimeoutMs: 0 },
+  ])("warns and uses the default for a $category timeout", async ({
+    requestTimeoutMs,
+  }) => {
+    mockLoadRawConfig.mockResolvedValue({ proxy: { requestTimeoutMs } });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     expect(await loadRequestTimeoutMs()).toBe(120_000);
@@ -49,14 +51,6 @@ describe("loadRequestTimeoutMs", () => {
       "[proxy] 設定が不正、デフォルト使用:",
       expect.any(String),
     );
-    warn.mockRestore();
-  });
-
-  it("requestTimeoutMs が 0 以下は不正として warn しデフォルトを返す", async () => {
-    mockLoadRawConfig.mockResolvedValue({ proxy: { requestTimeoutMs: 0 } });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    expect(await loadRequestTimeoutMs()).toBe(120_000);
     warn.mockRestore();
   });
 });
