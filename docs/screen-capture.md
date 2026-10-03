@@ -131,7 +131,8 @@ capture jobは`discordOutput: "none"`により最終応答・typing・progress�
 - `groupName` は有効な `screenCaptureSummary` と同じgroupを指定します。
 - `startDate` はこの方式で最初にレポートを生成する日（JST、`YYYY-MM-DD`、その日を含む）です。既存cronから移行する場合、最後にレポート済みの日の翌日を指定します。既存cronの成功履歴は自動移行しません。
 - `prompt` は必須です。`{{date}}` は対象日に置換され、対象日を明示した指示も付加されます。既存promptの「昨日」は対象日に読み替えてください。
-- `channelId` は必須のDiscord出力先です。`deliveryMode` は `direct`（既定）または `new-thread`、`sessionMode` は `per-run`（既定）または `destination` で、通常cronと同じ意味です。
+- `channelId` は必須のDiscord出力先です。`deliveryMode` は `direct`（既定）/ `new-thread` / `item-thread`、`sessionMode` は `per-run`（既定）または `destination` で、通常cronと同じ意味です。`item-thread` は `sessionMode: "destination"` と組み合わせてください。
+- `botId` は省略可能です。指定すると通常cronと同じくBot profileを適用し、`groupName` から利用できるBotに限られます。
 - `model` / `tools` / `skills` / `contextFiles` / `mounts` などのAgent設定は日次job専用です。省略時はgroup設定を継承します。画像batchのAgent設定は継承しません。
 
 通常batchの `limit` 条件は変更しません。前日分に端数が残る場合は、後日のcaptureでfull batchが成立し、前日分まで完了するのを待ちます。翌日の画像処理が未完了でも、対象日以前のpendingがなければ日次レポートを生成できます。

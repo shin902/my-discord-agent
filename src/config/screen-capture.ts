@@ -42,13 +42,19 @@ export async function loadScreenCaptureReceiverConfig() {
   );
 }
 
+// Delivery fields must stay aligned with CronDeliveryMode because the daily
+// summary is enqueued through enqueueCronInbox, which owns the
+// item-thread/sessionMode compatibility rule.
 const DailySummaryConfigSchema = AgentConfigSchema.extend({
   enabled: z.boolean().default(false),
   groupName: z.string().min(1),
+  botId: z.string().min(1).optional(),
   startDate: z.iso.date(),
   prompt: z.string().trim().min(1),
   channelId: z.string().min(1),
-  deliveryMode: z.enum(["direct", "new-thread"]).default("direct"),
+  deliveryMode: z
+    .enum(["direct", "new-thread", "item-thread"])
+    .default("direct"),
   sessionMode: z.enum(["per-run", "destination"]).default("per-run"),
 }).strict();
 
